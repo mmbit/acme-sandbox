@@ -113,7 +113,7 @@ services:
       HQ_URL: http://coordinator:8080
       SEATS: ${SEATS:-claude-1:claude,codex-1:codex}   # the first list (company/infra.env): HQ's Seats keeps it after
       SEAT_MOVES: ${SEAT_MOVES:-}       # renamed seats' logins, old:new (worker.ts moveSeats)
-      CODEX_SEAT_RUNS: ${CODEX_SEAT_RUNS:-2}   # Codex runs one seat carries at once (worker.ts SEAT_RUNS)
+      CODEX_SEAT_RUNS: ${CODEX_SEAT_RUNS:-}   # a cap on the Codex runs one seat carries at once, none if unset (worker.ts SEAT_RUNS)
     volumes:
       - seats:/seats                    # seat logins and sessions (for resuming)
       - work:/work                      # the repo mirror, and each job's clone and home

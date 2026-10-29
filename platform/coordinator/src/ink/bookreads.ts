@@ -87,9 +87,9 @@ const minute = (iso: string) => iso.slice(0, 16).replace('T', ' ');
 const listed = (who: string) =>
   db.prepare(`select ${COLUMNS} from book_pages where who = ? order by updated desc, id desc`).all(who) as Page[];
 
-// A call's page (its notes page, ink/callnotes.ts, or what the board drew on it) is the board's like any page, read by
-// anyone at work on it; only a call about a card for keys (memory.ts keysCall) keeps its pages as it keeps its lines,
-// its own agent's (charter rule 8). A call's own pages are its own (own: a live call reading).
+// A call's page (its notes page, ink/callnotes.ts, what the board drew on it, or a try's versions page from its note:
+// booktry.ts) reads like any page, by every job. Only a call about a card for keys (memory.ts keysCall) keeps its pages
+// as it keeps its lines, for its own agent (charter rule 8). A call's own pages are its own (own: a live call reading).
 function callRead(p: Page, reader: Reader, own?: number): true | 404 | [403, string] {
   if (p.call == null || p.call === own || !keysCall(p.call)) return true;
   return callAccess(p.call, reader);

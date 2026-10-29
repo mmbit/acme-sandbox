@@ -611,8 +611,9 @@ export function gitFlow(o: {
       return { sha, files, links, frontmatter, knowledge, pushedSince, lines, settings };
     }
 
-    // A re-sync takes main as it pushes, including commits that landed during the session. A new conflict fails the
-    // run before any push or review. The clone keeps the merge in progress for the author's retry.
+    // Main that lands during a run merges here when clean. A new conflict is aborted and the completed work pushed as
+    // it is: the next task's clone (threads.ts bringUpToDate) or the merge check's fix job (coordinator review.ts
+    // bringUpToDate) brings it up to date.
     async function pushUpdated(dir: string, branch: string) {
       fetchMirror();
       ag(dir, 'fetch', '-q', 'origin', `+refs/heads/${base}:refs/remotes/origin/${base}`);
@@ -621,10 +622,8 @@ export function gitFlow(o: {
       } catch (err) {
         const conflicts = ag(dir, 'diff', '--name-only', '--diff-filter=U', '-z').split('\0').filter(Boolean);
         if (!conflicts.length) throw err;
-        throw new Error(
-          `Main changed during the run and conflicts in ${conflicts.join(', ')}. Resolve the merge before pushing`,
-          { cause: err },
-        );
+        ag(dir, 'merge', '--abort');
+        o.log?.(`${branch}: main conflicts in ${conflicts.join(', ')}, pushed without main`);
       }
       return push(dir, branch);
     }

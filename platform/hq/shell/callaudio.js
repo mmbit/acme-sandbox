@@ -16,6 +16,9 @@ const TAPS = ['touchend', 'click'];
 // microphone checked as it starts, and one that couldn't be replaced kept while it still runs)
 const MIC_SILENT_MS = 2500,
   MIC_START_MS = 5000;
+// The native shell, when the page runs in it (platform/ios: CallAudio.swift): told as a call starts and ends, it keeps
+// the call going with the screen off and plays it from the earpiece at the ear.
+const toShell = message => window.webkit?.messageHandlers?.shell?.postMessage(message);
 
 export class CallAudio {
   // what a call's playback did, for its hang-up numbers (report())
@@ -81,6 +84,7 @@ export class CallAudio {
 
   // The audio context, the microphone and its worklet, then the call's sound: throws if the microphone doesn't start.
   async start() {
+    toShell({ call: true });
     const ctx = (this.ctx = new AudioContext());
     // (a tap brings back a context iOS stopped; the first one, in this tap: iOS starts a context back from the background
     // only in one)
@@ -389,6 +393,7 @@ export class CallAudio {
     if (this.speaker) this.speaker.srcObject = null;
     this.ctx?.close().catch(() => {});
     this.lock?.release().catch(() => {});
+    toShell({ call: false });
   }
 
   // What played when, numbers only: [when (performance.now()), kind, ...numbers]. A long call keeps its last 300, and

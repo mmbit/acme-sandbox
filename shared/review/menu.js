@@ -1,6 +1,4 @@
-// Review mode's menu: a small button beside the pin: General note, and the board's Open the book, whose sheet for the
-// page's owner its notes join (the board's count is that sheet's). An outsider's notes join the board's sheet as they
-// write them: their menu says so. The pin stays just the pin.
+// Review mode's menu, with the writer's notebook destination and a general-note control.
 import { label } from './base.js';
 import { uncoach } from './dock.js';
 import { general } from './postit.js';
@@ -63,7 +61,7 @@ export async function refresh(r) {
 // doesn't say. An outsider's: where their notes go.
 export function paint(r) {
   if (r.outside) {
-    r.$('.cap').textContent = `Review · to ${r.OUTSIDE}’s book`;
+    r.$('.cap').textContent = 'Review · your Notebook';
     return;
   }
   r.more.querySelector('.count').textContent = r.state.notes || '';

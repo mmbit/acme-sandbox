@@ -11,6 +11,7 @@ export type TimingFlag =
   | 'limited'
   | 'lost'
   | 'snagged'
+  | 'up' // a run handed up from a lighter model
   | 'unknown_outcome'
   | 'replacement';
 export type TimingEvidence = {
@@ -37,4 +38,4 @@ export function timingFlags(evidence: TimingEvidence): TimingFlag[] {
   }
   return flags;
 }
-const OUTCOMES = new Set(['rebuilt', 'yielded', 'parked', 'interrupted', 'failed', 'limited', 'lost', 'snagged']);
+const OUTCOMES = new Set(['rebuilt', 'yielded', 'parked', 'interrupted', 'failed', 'limited', 'lost', 'snagged', 'up']);

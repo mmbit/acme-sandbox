@@ -59,6 +59,8 @@ export type Browser = {
   tab: (answer: (asked: Asked) => Promise<Answer>, listen?: Listener) => Promise<Tab>;
   close: () => Promise<void>;
   closed: Promise<void>;
+  // Settles once the browser's own process answers, whatever its tabs' pages are doing.
+  answered: () => Promise<void>;
   pid?: number;
 };
 
@@ -99,7 +101,8 @@ export async function launch(abort?: AbortSignal): Promise<Browser> {
     await closed;
     clearTimeout(killed);
   };
-  return { tab, close, closed, pid: chromium.pid };
+  const answered = async () => void (await devtools.send(undefined, 'Browser.getVersion'));
+  return { tab, close, closed, answered, pid: chromium.pid };
 }
 
 // Browser.tab(): a new tab over this connection, in a window of its own: tabs sharing a window are hidden behind the

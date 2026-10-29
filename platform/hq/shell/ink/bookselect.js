@@ -1,16 +1,18 @@
 // The book's Select tool: a loop drawn round things (a lasso), or a drag from corner to corner (a box), picks the ink,
 // pictures and typed words in it; a click picks the one on top, Shift adds or takes away, a click on bare paper lets
-// go. What's picked shows in a frame with a handle at each corner: pressed inside and dragged, it moves; a handle
-// scales it about the opposite corner. Cut, copy, paste, duplicate and delete are bookselectclip.js's (the keys, the
-// clipboard and the bar beside the frame); the live move and resize bookselectlift.js's. Post-its keep their own order
-// on their sheet and are never picked (booktools.js sends their presses elsewhere).
+// go. A press on anything in a group (bookgroups.js) picks the whole group, which moves as one. What's picked shows in a
+// frame with a handle at each corner: pressed inside and dragged, it moves; a handle scales it about the opposite
+// corner. Select is the only way things move on a page (one way to move things: job #13071). Cut, copy, paste,
+// duplicate and delete are bookselectclip.js's (the keys, the clipboard and the bar beside the frame); the live move
+// and resize bookselectlift.js's. Post-its keep their own order on their sheet and are never picked (booktools.js sends
+// their presses elsewhere).
 //
 // booktools.js mounts it and calls press(e) for a mouse's or a Pencil's press on the page in select mode, and settle()
 // before Undo or Redo and when the tool changes. Every change is one step through hooks.begin(view) (bookedit.js).
 import { stylesheet } from '../../util.js';
 import { sfx } from '../audio.js';
 import { grownTo } from './bookrow.js';
-import { boundsOf, gestureOf, picked, topAt, union, within } from './bookselectmath.js';
+import { boundsOf, gestureOf, groupOf, picked, topAt, union, within } from './bookselectmath.js';
 import { mountClip } from './bookselectclip.js';
 import { drag } from './bookselectlift.js';
 import { followPress } from './bookpress.js';
@@ -30,9 +32,10 @@ const EDGE_PX = 24,
   BACK_MS = 2000;
 // the frame stands this far (screen px) outside what it holds; a press this near it is still inside
 const FRAME_PX = 8;
-// the room the bar needs on the paper (screen px): under the frame (the pages' row at the paper's foot too), over it,
-// beside it, clear of the islands across its rows (its own size measured), and its gap to the frame (bookselect.css's).
-const BAR = { below: 130, above: 70, side: 8, gap: 16 };
+// the room the bar needs on the paper (screen px) past its own height (measured: one row, or more on a narrow paper):
+// under the frame (the pages' row at the paper's foot too, its name over its buttons: about 100 px), over it, beside
+// it, clear of the islands across its rows (its own width measured), and its gap to the frame (bookselect.css's).
+const BAR = { below: 128, above: 28, side: 8, gap: 16 };
 // a box of words with no words measured: one line of booktexts.js's TEXT
 const LINE_PX = 25;
 const LASSO = 'http://www.w3.org/2000/svg';
@@ -48,8 +51,8 @@ export function mountSelect(book, hooks) {
   return {
     press: e => press(sel, e),
     settle: () => letGo(sel),
-    // Things just put on the page shown picked, whatever the tool: a picture taped in moves and scales at once. And
-    // whether a press is on what's picked (its frame or a handle), for the other tools to give it here.
+    // Things just put on the page shown picked, whatever the tool: a picture taped in moves and scales by its handles at
+    // once. And whether a press is on the frame's handles or its bar, for the other tools to give it here.
     pick: (view, things) => view === book.view() && choose(sel, view, things),
     holds: e => holds(sel, e),
   };
@@ -57,8 +60,8 @@ export function mountSelect(book, hooks) {
 
 // ---- a press
 
-// A press on the page: a handle scales, the selection or a thing on the page moves (picked first), Shift adds or takes
-// away, bare paper draws a loop. A second click on a box of words edits it.
+// A press on the page: a handle scales, the selection or a thing on the page moves (picked first, with the rest of its
+// group), Shift adds or takes away, bare paper draws a loop. A second click on a box of words edits it.
 function press(sel, e) {
   const { book, hooks } = sel,
     at = book.at(e.clientX, e.clientY);
@@ -79,22 +82,20 @@ function press(sel, e) {
   const p = [at.x, at.y],
     page = at.view.page,
     hit = box ? { kind: 'texts', item: box.typed } : topAt(p, page, t => boxOfText(sel, t), NEAR_PX / book.scale);
+  const things = hit && groupOf(page, hit);
   if (e.shiftKey && hit) {
-    toggle(sel, at.view, hit);
+    toggle(sel, at.view, hit, things);
     return true;
   }
-  if (hit && !sel[hit.kind].includes(hit.item)) choose(sel, at.view, { [hit.kind]: [hit.item] });
+  if (hit && !sel[hit.kind].includes(hit.item)) choose(sel, at.view, things);
   if (hit || onFrame(sel, p)) return drag(sel, e, { corner: -1 });
   return lasso(sel, e, at);
 }
-// A press on the selection's handles or its bar, or a Pencil's inside its frame (a mouse's press moves a picture
-// with any tool: booktools.js)
+// A press on the selection's handles or its bar (with another tool, a press inside the frame draws: only Select moves)
 function holds(sel, e) {
   if (!current(sel)) return false;
-  const at = sel.book.at(e.clientX, e.clientY),
-    target = e.target instanceof Element ? e.target : null,
-    inside = e.pointerType !== 'mouse' && at?.view === sel.view && onFrame(sel, [at.x, at.y]);
-  return !!target?.closest('.bk-sel-handle, .bk-sel-bar') || inside;
+  const target = e.target instanceof Element ? e.target : null;
+  return !!target?.closest('.bk-sel-handle, .bk-sel-bar');
 }
 const doubled = (sel, e, box) => {
   const last = sel.last;
@@ -220,11 +221,13 @@ export function choose(sel, view, { ink = [], scraps = [], texts = [] }) {
   framed(sel);
   if (fresh) sfx.tick();
 }
-function toggle(sel, view, { kind, item }) {
+// A thing and the rest of its group (things) added to what's picked, or taken away when the thing is picked
+function toggle(sel, view, { kind, item }, things) {
   if (sel.view !== view) letGo(sel);
   const now = { ink: sel.ink, scraps: sel.scraps, texts: sel.texts },
     has = now[kind].includes(item);
-  now[kind] = has ? now[kind].filter(x => x !== item) : [...now[kind], item];
+  for (const [k, xs] of Object.entries(things))
+    now[k] = has ? now[k].filter(x => !xs.includes(x)) : [...new Set([...now[k], ...xs])];
   choose(sel, view, now);
 }
 // Nothing picked (and no loop waiting at the screen's edge)
@@ -288,6 +291,7 @@ export function framed(sel, b = bounds(sel)) {
     sel.frame = { el, bar: sel.clip.bar() };
   }
   const { el, bar } = sel.frame;
+  sel.clip.fit();
   // (appended once: a node put back starts its fade in again)
   if (el.parentNode !== sel.view.el) sel.view.el.append(el, bar);
   Object.assign(el.style, {
@@ -299,11 +303,14 @@ export function framed(sel, b = bounds(sel)) {
   // (its bar under it, else over it, else over its foot, always where the paper shows it clear of the islands across
   // its rows: the strip's at its left too)
   const s = sel.book.scale,
-    shown = sel.book.shown(),
-    under = b.y1 + BAR.below / s < shown.y1,
-    y = Math.min(under ? b.y1 : Math.max(b.y0, shown.y0 + BAR.above / s), shown.y1 - BAR.below / s),
+    shown = sel.book.shown();
+  // (never wider than the paper shows clear: on a phone's its words go on in a second row.)
+  bar.style.maxWidth = `${(clearShown(sel.book).x1 - shown.x0) * s - 2 * BAR.side}px`;
+  // (over, the bar hangs above y: only its foot's room under it, and its whole height over it, its top on the paper.
+  const h = bar.offsetHeight,
+    under = b.y1 + (BAR.below + h) / s < shown.y1,
+    y = under ? b.y1 : Math.max(Math.min(b.y0, shown.y1 - BAR.below / s), shown.y0 + (BAR.above + h) / s),
     top = sel.book.desk.getBoundingClientRect().top + (y - shown.y0) * s,
-    h = bar.offsetHeight,
     clear = clearShown(sel.book, under ? [top + BAR.gap, top + BAR.gap + h] : [top - BAR.gap - h, top - BAR.gap]),
     half = (bar.offsetWidth / 2 + BAR.side) / s,
     x = Math.min(Math.max((b.x0 + b.x1) / 2, clear.x0 + half), clear.x1 - half);

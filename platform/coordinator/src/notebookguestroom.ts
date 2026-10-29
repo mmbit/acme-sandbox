@@ -1,56 +1,50 @@
 // The authenticated guest notebook room and its page-scoped JSON and picture routes.
-import { readFileSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import * as guests from './guests.ts';
+import { voice } from './feedback.ts';
+import * as handwriting from './handwriting.ts';
+import { fetchPicture } from './ink/bookfetch.ts';
+import * as files from './notebookguestfiles.ts';
 import * as notebooks from './notebookguests.ts';
 import * as pictures from './notebookpictures.ts';
 import * as bookpicture from './ink/bookpicture.ts';
 import * as slips from './ink/bookslips.ts';
 import { db } from './db.ts';
-import { hqDir } from './files.ts';
 import { reply } from './uploads.ts';
 import { isRefused, SAVE_MAX } from './pagechecks.ts';
 import { readBody } from '../../../shared/routes/routes.ts';
 
 const base = '/guest/notebooks/api';
-const roomWords = {
-  en: { title: 'Your notebooks', footer: 'Notes are answered by our AI team.' },
-  nl: { title: 'Je notitieboeken', footer: 'Ons AI-team beantwoordt je notities.' },
-  de: { title: 'Deine Notizbücher', footer: 'Unser KI-Team beantwortet deine Notizen.' },
-};
 guests.addRoom({
   path: 'notebooks',
   opens: name => notebooks.forGuest(name).length > 0,
-  label: lang => roomWords[lang].title,
+  label: files.roomTitle,
+  link: notebooks.roomLink,
   serve: serveRoom,
 });
 
 async function serveRoom(req: IncomingMessage, res: ServerResponse, name: string, rest: string) {
   const url = new URL(req.url ?? '/', 'http://x'),
     path = rest.split('?')[0];
-  if (req.method === 'GET' && (path === '' || path === '/'))
-    return servePage(res, name, guests.langOf(guests.signedIn(req)!));
-  if (
-    req.method === 'GET' &&
-    ['/notebookguest.js', '/notebookpen.js', '/notebookcards.js', '/notebookwords.js', '/notebookguest.css'].includes(
-      path,
-    )
-  ) {
-    const file = `/shell/ink${path}`,
-      body = readFileSync(`${hqDir(file)}${file}`);
-    res.writeHead(200, {
-      'content-type': path.endsWith('.css') ? 'text/css' : 'text/javascript',
-      'cache-control': 'no-cache',
-    });
-    return res.end(body);
-  }
-  if (req.method === 'GET' && path === '/api/list')
-    return answer(res, guestUrls(notebooks.listNotebooks(name, Number(url.searchParams.get('notebook')) || undefined)));
-  if (req.method === 'GET' && path === '/api/groups')
-    return answer(res, guestUrls(notebooks.listGroups({ page: url.searchParams.get('page') }, name)));
-  if (req.method === 'GET' && ['/api/pictures', '/api/picture', '/api/slip/picture', '/api/slip/now'].includes(path))
-    return servePicture(req, res, name, path, url);
+  if (req.method === 'GET') return serveRead(req, res, name, path, url);
   if (req.method !== 'POST' || !path.startsWith('/api/')) return reply(res, 404, { error: 'not found' });
+  // (still signed in as this guest and a member somewhere, asked again past the body before any model work)
+  const stillIn = () =>
+    guests.signedIn(req)?.name.toLowerCase() === name.toLowerCase() && notebooks.forGuest(name).length > 0;
+  if (path === '/api/voice') return answer(res, await voice(`notebook:${name}`, req, true, stillIn));
+  if (path === '/api/pictures') {
+    const member = notebooks.pageMember(Number(url.searchParams.get('page')), name);
+    if (!member) return answer(res, 404);
+    return pictures.uploadPicture(
+      req,
+      res,
+      notebooks.whoOf(member),
+      () =>
+        guests.signedIn(req)?.name.toLowerCase() === name.toLowerCase() &&
+        !!notebooks.pageMember(Number(url.searchParams.get('page')), name),
+      `${base}/pictures`,
+    );
+  }
   const raw = await readBody(req, SAVE_MAX);
   if (!raw) return reply(res, 413, { error: 'too large' }, true);
   let body: unknown;
@@ -61,8 +55,13 @@ async function serveRoom(req: IncomingMessage, res: ServerResponse, name: string
   }
   if (guests.signedIn(req)?.name.toLowerCase() !== name.toLowerCase())
     return reply(res, 401, { error: 'sign in again', reason: 'signIn' });
+  if (path === '/api/book/read') {
+    const [member] = notebooks.forGuest(name);
+    if (!member) return answer(res, 403);
+    return answer(res, await handwriting.read(body, notebooks.whoOf(member)));
+  }
   const acted = await notebooks.act(
-    path.slice('/api/'.length),
+    guestAction(path),
     body,
     name,
     () => guests.signedIn(req)?.name.toLowerCase() === name.toLowerCase(),
@@ -70,12 +69,44 @@ async function serveRoom(req: IncomingMessage, res: ServerResponse, name: string
   return answer(res, guestUrls(acted));
 }
 
+function serveRead(req: IncomingMessage, res: ServerResponse, name: string, path: string, url: URL) {
+  if (path === '') {
+    res.writeHead(302, { location: '/guest/notebooks/' + url.search, 'cache-control': 'no-store' });
+    return res.end();
+  }
+  if (path === '/') return files.servePage(res, name, guests.langOf(guests.signedIn(req)!));
+  if (files.serveFile(res, path)) return;
+  if (path === '/api/pages')
+    return answer(res, guestUrls(notebooks.guestPages({ notebook: url.searchParams.get('notebook') }, name)));
+  if (path === '/api/list')
+    return answer(res, guestUrls(notebooks.listNotebooks(name, Number(url.searchParams.get('notebook')) || undefined)));
+  if (['/api/groups', '/api/pages/groups'].includes(path))
+    return answer(res, guestUrls(notebooks.listGroups({ page: url.searchParams.get('page') }, name)));
+  if (
+    req.method === 'GET' &&
+    [
+      '/api/pictures',
+      '/api/picture',
+      '/api/book/picture',
+      '/api/slip/picture',
+      '/api/slip/now',
+      '/api/book/slip/picture',
+      '/api/book/slip/now',
+    ].includes(path)
+  )
+    return servePicture(req, res, name, path.replace('/api/book/', '/api/'), url);
+  if (path === '/api/book/fetch') return fetchPicture(res, url.searchParams.get('url') ?? '');
+  return reply(res, 404, { error: 'not found' });
+}
+
 function servePicture(req: IncomingMessage, res: ServerResponse, name: string | undefined, path: string, url: URL) {
   const id = Number(url.searchParams.get('id'));
   let page = path === '/api/picture' ? id : Number(url.searchParams.get('file')?.split('-')[0]);
   if (path.startsWith('/api/slip/')) {
     const g = db
-      .prepare('select g.page from notebook_groups g join book_slips s on s.note = g.note where s.id = ?')
+      .prepare(
+        'select g.page from notebook_groups g join book_slips s on s.note = g.note or s.grp = g.id where s.id = ?',
+      )
       .get(id) as { page: number } | undefined;
     page = g?.page ?? 0;
   }
@@ -115,30 +146,17 @@ const answer = (res: ServerResponse, value: unknown) =>
       ? reply(res, value[0], { error: value[1], ...(value[2] ? { reason: value[2] } : {}) })
       : reply(res, 200, value);
 
-function servePage(res: ServerResponse, name: string, lang: guests.Lang) {
-  res.writeHead(200, {
-    'content-type': 'text/html; charset=utf-8',
-    'cache-control': 'no-store',
-    'content-security-policy':
-      "default-src 'none'; script-src 'self'; style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
-    'referrer-policy': 'same-origin',
-  });
-  res.end(notebookGuestPage(name, lang));
-}
-const notebookGuestPage = (
-  name: string,
-  lang: guests.Lang,
-) => `<!doctype html><html lang="${lang}"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><meta name="robots" content="noindex">
-<title>${roomWords[lang].title}</title><link rel="stylesheet" href="/guest/notebooks/notebookguest.css"></head>
-<body class="notebook-guest-room"><main id="notebook-guest" data-api="/guest/notebooks/api"></main>
-<footer>${roomWords[lang].footer} ${guests.passkeyButton(name, lang)}<span data-guest-passkey-status role="status"></span></footer>
-<script type="module" src="/guest/notebooks/notebookguest.js"></script>
-<script src="/guest/webauthn.js" defer></script><script src="/guest/guestkeys.js" defer></script></body></html>`;
-
 export const listBoardGroups = (body: any) => guestUrls(notebooks.listGroups(body), '/api/notebooks/guests');
 export function serveBoardPicture(req: IncomingMessage, res: ServerResponse) {
   const url = new URL(req.url ?? '/', 'http://x');
   const path = url.pathname.replace('/api/notebooks/guests', '/api');
   return servePicture(req, res, undefined, path, url);
+}
+
+function guestAction(path: string) {
+  const action = path.slice('/api/'.length);
+  if (action.startsWith('groups/')) return action.slice('groups/'.length);
+  if (action === 'pages/send' || action === 'pages/undo') return action.slice('pages/'.length);
+  if (action === 'book/slip/tick') return 'answers/tick';
+  return action;
 }

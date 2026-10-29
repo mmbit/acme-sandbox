@@ -20,7 +20,8 @@ const vocabulary = () => {
 const clean = (s: string) => s.replace(/\[[^\]]*\]|\([^)]*\)|\*[^*]*\*/g, ' ').replace(/\s+/g, ' ').trim();
 
 // lang: the language it's heard in, else the request's own (?lang=), else whisper guesses
-export async function transcribe(req: IncomingMessage, lang?: string) {
+// still: whether the speaker may still be heard, asked again once the body is in, before any speech-to-text
+export async function transcribe(req: IncomingMessage, lang?: string, still = () => true) {
   const type = String(req.headers['content-type'] ?? '').split(';')[0].trim().toLowerCase();
   if (!/^(audio|video)\/[\w.+-]+$/.test(type)) return 415; // iOS labels its AAC recordings video/mp4 at times
   if (Number(req.headers['content-length'] ?? 0) > MAX_BYTES) return 413;
@@ -28,6 +29,7 @@ export async function transcribe(req: IncomingMessage, lang?: string) {
   let size = 0;
   for await (const c of req) { if ((size += c.length) > MAX_BYTES) return 413; chunks.push(c); }
   if (size < 200) return 400;
+  if (!still()) return 403;
   return speechToText(Buffer.concat(chunks), type, lang ?? new URL(req.url ?? '/', 'http://x').searchParams.get('lang') ?? 'auto');
 }
 

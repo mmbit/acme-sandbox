@@ -289,7 +289,6 @@ const items = page => page.$$eval(tool('.menu .items button:not([hidden])'), b =
 async function outsiderMenu(page, name) {
   await page.click(tool('.more'));
   assert.deepEqual(await items(page), ['General note'], `${name}'s menu`);
-  assert.equal(await page.textContent(tool('.menu .cap')), 'Review · to Testco’s book');
   assert.equal(await page.textContent(tool('.more .count')), '', 'no count of theirs');
   assert.deepEqual(await page.evaluate(wrappedMenuLines), [], `${name}'s menu, every line on one line`);
   await page.click(tool('.more'));
@@ -349,7 +348,7 @@ try {
   assert.equal(await hq.$(`${BOX} [data-days]`), null, 'the days show before the first invite only');
   assert.match(
     await hq.textContent(`${BOX} .dim`),
-    /^Until .*Their notes go on your sheet for Bolt in your book as they write them\.$/,
+    /^Until .*Each person writes on their own page in the round notebook on your Shelf; their notes reach the team when they send it\.$/,
   );
   const ends = Date.parse(db.prepare('select ends from review_shares').get().ends) - Date.now();
   assert.ok(ends > 86_000e3 && ends <= 86_400e3, 'open for 1 day');

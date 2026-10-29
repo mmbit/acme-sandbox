@@ -49,15 +49,18 @@ export type Task = jobs.Named & {
   branch: string | null;
   session: string | null;
   started: string | null;
+  created: string;
+  finished: string | null;
   until: number; // (the time it waits for, hq job --when, while it waits)
 };
 const OPEN = ['queued', 'running', 'blocked'];
 
 // A thread's tasks in order: those cancelled, and those failed with another in their place or an open pull request on their
 // branch (jobs.ts failedAside), aside. A replacement takes the place of the task it replaces (jobs.ts createJob).
+// (created and finished)
 export const tasksOf = (thread: string) => {
   return prepared(
-    `select j.id, j.agent, j.title, j.step, j.round, j.status, j.branch, j.session, j.started,
+    `select j.id, j.agent, j.title, j.step, j.round, j.status, j.branch, j.session, j.started, j.created, j.finished,
       max(0, coalesce((select max(cast(arg as real)) from wakes where job = j.id and kind = 'at' and met is null), 0)) until
       from jobs j where j.thread = ? and j.kind = 'work' and j.pr is null and j.status != 'cancelled' and not ${jobs.failedAside('j')}
       order by coalesce(j.seq, j.id), j.id`,
@@ -79,11 +82,11 @@ export function inTurn(tasks: Task[], now = Date.now()) {
 const compareTimestamps = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
 // What holds a task in its thread's order: the task before it still to end (follows: until it's done, pushed with its
-// gates passed), a task before it that failed with nothing in its place (failed), and for the thread's next task to
-// start the open job of the thread's pull request that pushes to its branch (round: a fix, or a ruling that may touch
-// it up), so two sessions never push to one branch, and each thread it needs that isn't done (needs: that thread's last
-// task still to merge, until it merges; null for a thread with no such task, which holds it until its owner draws it or
-// closes it).
+// gates passed), a task before it that failed with nothing in its place before the task was drawn (failed), and for
+// the thread's next task to start the open job of the thread's pull request that pushes to its branch (round: a fix,
+// or a ruling that may touch it up), so two sessions never push to one branch, and each thread it needs that isn't
+// done (needs: that thread's last task still to merge, until it merges; null for a thread with no such task, which
+// holds it until its owner draws it or closes it). (failed, drawn before)
 export type Waits = {
   follows: number | null;
   failed: number | null;
@@ -124,9 +127,15 @@ export function reader() {
     // (work not in the thread yet, hq when's: at its end, before the tasks waiting for a time)
     const before = at < 0 ? turn.slice(0, timedFrom) : turn.slice(0, at);
     const next = !before.some(t => OPEN.includes(t.status));
+    // A failed task holds the tasks drawn before it ended, which counted on its work. One drawn since (its redo queued
+    // without --lands, the next step) is its owner's call, made knowing it failed, as is work not drawn yet: held, it
+    // would wait for a replacement that is already there. The failed task still
+    // keeps the deliverable unfinished, and its merge wakes the owner (threadends.ts).
+    const drawnAt = at < 0 ? null : turn[at].created;
+    const countedOn = (t: Task) => drawnAt !== null && (t.finished === null || drawnAt < t.finished);
     return {
       follows: before.findLast(t => OPEN.includes(t.status))?.id ?? null,
-      failed: before.find(t => t.status === 'failed' || t.status === 'stopped')?.id ?? null,
+      failed: before.find(t => (t.status === 'failed' || t.status === 'stopped') && countedOn(t))?.id ?? null,
       round: next ? round : null,
       needs: next ? needsOpen(thread) : [],
     };

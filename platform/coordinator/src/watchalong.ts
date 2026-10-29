@@ -19,7 +19,9 @@ import { findFile, hqDir } from './files.ts';
 import { timeZone } from './company.ts';
 import * as store from '../../../shared/watchalong/store.ts';
 import { Moments, lines } from '../../../shared/watchalong/moments.ts';
-import { LOADING_MS, Mirrors, type Region, type Shows } from '../../../shared/watchalong/mirror.ts';
+import { LOADING_MS, Mirrors, type Shows } from '../../../shared/watchalong/mirror.ts';
+import { WHEN_WORDS, when } from './watchtimes.ts';
+import { regionOf } from './region.ts';
 import { mirrored } from './previewfiles.ts';
 import { readBody } from '../../../shared/routes/routes.ts';
 import { opensCall } from './pictures.ts';
@@ -53,7 +55,8 @@ const posting = (session: { id: number; key: string }) => ({
 });
 
 // POST /api/watchalong/events?id=<id>&key=<key>: one batch from the page. seen: whether the agent sees it, so a share
-// reaching nobody says so, once a mirror opening for it opened or failed
+// reaching nobody says so, once a mirror opening for it opened or failed. A mirror that failed opens again with the
+// batch, so the share comes back by itself, whether or not the agent asks to look meanwhile.
 export async function addEvents(req: IncomingMessage, res: ServerResponse) {
   const query = new URL(req.url ?? '/', 'http://x').searchParams;
   const id = Number(query.get('id')),
@@ -61,7 +64,11 @@ export async function addEvents(req: IncomingMessage, res: ServerResponse) {
   const body = await readBody(req, store.BATCH_BYTES);
   if (!body) return refuse(req, res, 413, 'too large');
   const status = store.add(kept, id, key, body);
-  if (status === 200) await mirrors.settled(id); // (the page may send no other batch to be told by)
+  if (status === 200) {
+    const watch = mirrors.seen(id) === false ? watches.get(id) : undefined;
+    if (watch) reopen(watch);
+    await mirrors.settled(id); // (the page may send no other batch to be told by)
+  }
   return reply(res, status, status === 200 ? { ok: true, seen: mirrors.seen(id) } : { error: ERRORS[status] });
 }
 const ERRORS: Record<number, string> = {
@@ -109,7 +116,8 @@ export function forgetCallout(callout: number) {
 // The tool's moment list: at most LIST_LINES, the latest.
 const TURN_LINES = 20,
   LIST_LINES = 60,
-  TURN_PX = 1024;
+  TURN_PX = 1024,
+  TURN_PICTURE_MS = 1_000; // (a picture of an open mirror takes about 0.2 s: server.py)
 export const TOOL_PX = 1568;
 // A watched session: its moments, how far the page's clock runs behind the server's, how many events have changed what
 // its screen shows (a turn's picture goes when that moved since the last one), and its last tap
@@ -193,10 +201,14 @@ function live(purpose: string, ref: string) {
   const session = sessions.findLast(session => !session.ended);
   const watch = session && watches.get(session.id);
   if (!watch) return session && watchFrom(session.id);
-  // (its mirror closed while idle: it opens again from the recording, with what the screen still shows: mirror.ts)
+  reopen(watch);
+  return watch;
+}
+// A watched session's mirror, closed while idle or failed: it opens again from the recording, with what the screen
+// still shows (mirror.ts)
+function reopen(watch: Watch) {
   const recording = !mirrors.has(watch.id) && store.read(kept, watch.id);
   if (recording) mirrorOf(recording);
-  return watch;
 }
 function unwatch(id: number) {
   watches.delete(id);
@@ -242,7 +254,11 @@ const BRIEFS = new Map([
 // last (after: the last moment it had), and a picture of the screen now when it changed since the one it has (seen: that
 // picture's version), the last tap since then ringed. While paused, the lines up to the pause and no picture. brief:
 // what the agent is told of a walk-through (BRIEFS), for a session that hasn't had it (briefed false). picture false:
-// none (the call has had all it can hold).
+// none (the call has had all it can hold). A picture not there within TURN_PICTURE_MS (its mirror opening, stalled or
+// failed) leaves the lines to go without it, saying so, and comes with a later turn: the line waits 1.5 s for the
+// whole answer (platform/voice/server.py SCREEN_TURN_SECONDS) and drops the lines with it. (28 Oct, call 161: every
+// turn waited 15 s on a stalled mirror, so the agent heard of the board's screen once in half an hour, while it was
+// paused, and took the share for dropped.)
 export async function screenTurn(b: Record<string, unknown>) {
   const purpose = String(b.purpose ?? ''),
     brief = BRIEFS.get(purpose);
@@ -263,9 +279,15 @@ export async function screenTurn(b: Record<string, unknown>) {
   };
   if (paused || watch.version === seen || b.picture === false) return answer;
   const ring = watch.tap && watch.tap.version > seen ? watch.tap : undefined;
-  const picture = await mirrors.now(watch.id, { long: TURN_PX, ring });
-  return picture ? { ...answer, picture: { type: 'image/jpeg', data: picture.bytes.toString('base64') } } : answer;
+  const picture = await inTime(mirrors.now(watch.id, { long: TURN_PX, ring }), TURN_PICTURE_MS);
+  return picture
+    ? { ...answer, picture: { type: 'image/jpeg', data: picture.bytes.toString('base64') } }
+    : { ...answer, lines: [...answer.lines, NO_PICTURE] };
 }
+const NO_PICTURE = '(no picture of their screen came with this turn: it comes with a later one)';
+// What a step gives within ms, else undefined (failed too)
+const inTime = <T>(step: Promise<T>, ms: number) =>
+  Promise.race([step.catch(() => undefined), new Promise<undefined>(done => setTimeout(done, ms))]);
 // At most TURN_LINES: the latest, and how many earlier ones the screen tool lists
 function turnLines(moments: Moments['list'], clock: (at: number) => string) {
   const all = lines(moments, clock);
@@ -313,59 +335,10 @@ export async function screen(b: Record<string, unknown>) {
     : [404, NOTHING];
 }
 export const NOTHING = 'Nothing of the screen was recorded by then.';
-const WHEN_WORDS =
-  "a time is 'now', some seconds or minutes ago ('-20s', '-2m'), a time of day ('17:03:12') or a moment ('#12')";
 const pictured = (jpeg: Buffer, words: string) => ({
   picture: { type: 'image/jpeg', data: jpeg.toString('base64') },
   line: words,
 });
-
-// A time asked for, on the page's clock: some seconds or minutes ago, a time of day today on the company's clock, or a
-// moment's. undefined: none of those
-export function when(spec: string, watch: { moments: Pick<Moments, 'list'>; clockMs: number }, now = Date.now()) {
-  const ago = /^-(\d+)\s*(s|m)$/.exec(spec);
-  if (ago) return now - Number(ago[1]) * (ago[2] === 'm' ? 60_000 : 1000) - watch.clockMs;
-  const moment = /^#(\d+)$/.exec(spec);
-  if (moment) return watch.moments.list.find(m => m.n === Number(moment[1]))?.at;
-  const time = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(spec);
-  if (!time) return undefined;
-  const [hours, minutes, seconds] = [time[1], time[2], time[3] ?? '0'].map(Number);
-  if (hours > 23 || minutes > 59 || seconds > 59) return undefined;
-  // (today's date on the company's clock, and how far that clock is from UTC now)
-  const parts = Object.fromEntries(
-    new Intl.DateTimeFormat('en-GB', {
-      timeZone: timeZone(),
-      hourCycle: 'h23',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-    })
-      .formatToParts(now)
-      .map(part => [part.type, Number(part.value)]),
-  );
-  const offset =
-    Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second) -
-    Math.floor(now / 1000) * 1000;
-  let at = Date.UTC(parts.year, parts.month - 1, parts.day, hours, minutes, seconds) - offset;
-  if (at > now + 60_000) at -= 86_400_000; // (a time later than now: yesterday's, a call past midnight)
-  return at - watch.clockMs;
-}
-function regionOf(asked: unknown): Region | undefined | null {
-  if (asked == null) return undefined;
-  const { x, y, width, height } = asked as Record<string, unknown>;
-  const all = [x, y, width, height];
-  if (!all.every(v => typeof v === 'number' && v >= 0 && v <= 1)) return null;
-  const region = { x: x as number, y: y as number, width: width as number, height: height as number };
-  return region.width > 0 &&
-    region.height > 0 &&
-    region.x + region.width <= 1.0001 &&
-    region.y + region.height <= 1.0001
-    ? region
-    : null;
-}
 
 // ---------------------------------------------------------------- watching a call back
 // A call's recording, every session of it in order (a call minimised again after a restore records anew), with its

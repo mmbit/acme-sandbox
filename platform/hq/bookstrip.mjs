@@ -1,13 +1,15 @@
 // book-check.mjs's stories of the board's controls (shell/ink/bookstrip.js, bookinput.js, bookpan.js, booktools.js,
-// bookprefs.js): on a desktop with a mouse, the strip on the page's left naming its tool, the wheel stepping through
-// the tools, Ctrl and the wheel zooming, Shift's drag moving the page, Ctrl's drag selecting and giving the tool back, a
-// press held still a voice note whose words land where it was held, the cog's preferences kept on this device and its
-// hold time obeyed; on a touch screen (Chromium's own touch and pen events, trusted), one finger drawing and two moving
-// the page with no stray line, a slide along the strip picking a tool, a double tap held a voice note, the radial
-// menu on a long press, and a finger that pans once the pen's been used where the preferences say so. Each asserts
-// what the board sees and what the store keeps.
+// bookprefs.js): on a desktop with a mouse, the strip naming its tool (where it sits, and the wheel: bookwheel.mjs),
+// Shift's drag moving the page, Ctrl's drag selecting and giving the tool back, a press held still a voice note whose
+// words land where it was held, the cog's preferences kept on this device and its hold time obeyed; on a touch screen
+// (Chromium's own touch and pen events, trusted), one finger drawing and two moving the page with no stray line, a
+// slide along the strip picking a tool, drifting off it sideways too, a double tap held a voice note, the radial menu
+// on a long press, and a finger that pans once the pen's been used where the preferences say so. Each asserts what the
+// board sees and what the store keeps.
 import assert from 'node:assert/strict';
 import { freePage, onDesk, paperBox, savedWhere, colourIn, BLUE } from './bookmouse.mjs';
+import { wheelStories } from './bookwheel.mjs';
+import { barStories } from './bookbar.mjs';
 
 export const MINI = { width: 1133, height: 744 };
 // how long a story waits to be sure something didn't happen (the page is saved this soon after a change)
@@ -18,8 +20,9 @@ export const HEARD = 'order the blue mugs';
 // c: book-check.mjs's played store and helpers
 export function stripStories(c) {
   return {
-    'controls with a mouse: the strip on the left names its tool; the wheel steps through tools, Ctrl zooms, Shift pans, Ctrl selects':
-      browser => mouse(browser, c),
+    'controls with a mouse: the strip names its tool, Shift pans, Ctrl selects': browser => mouse(browser, c),
+    ...wheelStories(c, { desk, now, pressed, until }),
+    ...barStories(c, { desk }),
     'controls with a mouse: held still, a voice note lands its words where it was held; Undo takes them back':
       browser => voiceByMouse(browser, c),
     "controls with a mouse: the cog's preferences stick on this device, and the hold waits as long as they say":
@@ -37,18 +40,9 @@ async function mouse(browser, c) {
   const free = freePage(c);
   const { page, errors, done } = await desk(browser, c);
   try {
-    const paper = await paperBox(page),
-      strip = await page.locator('#book .bk-strip [data-island=tools]').boundingBox();
-    assert.ok(strip.x < paper.x + 120, `the strip on the page's left: ${strip.x} against ${paper.x}`);
+    const paper = await paperBox(page);
     assert.equal(await now(page), 'Pen', 'the tool in use named');
-    // the wheel: one notch on, one back
     const mid = [paper.x + paper.width / 2, paper.y + paper.height / 2];
-    await page.mouse.move(...mid);
-    await page.mouse.wheel(0, 100);
-    await until(async () => (await now(page)) === 'Highlighter', 'the next tool after a notch');
-    await page.waitForTimeout(300);
-    await page.mouse.wheel(0, -100);
-    await until(async () => (await now(page)) === 'Pen', 'the tool before after a notch back');
     // a blue line, then Shift's drag moves it on the screen, drawing nothing
     await page.keyboard.press('3');
     await stroke(page, [mid[0] - 80, mid[1]], [mid[0] + 80, mid[1]]);
@@ -67,14 +61,8 @@ async function mouse(browser, c) {
     await page.keyboard.up('Control');
     await page.locator('#book .bk-sel-bar').waitFor({ timeout: 2000 });
     assert.equal(await pressed(page), 'Pen', 'the pen back after the Ctrl drag');
-    // Ctrl and the wheel zoom: the % shows
-    await page.mouse.move(...mid);
-    await page.keyboard.down('Control');
-    await page.mouse.wheel(0, -200);
-    await page.keyboard.up('Control');
-    await until(() => page.locator('#book .bk-pct').isVisible(), 'the zoom off 100%');
     await page.waitForTimeout(QUIET_MS);
-    assert.equal(stored(c, free).ink.length, 1, 'Shift, Ctrl and the wheel drew nothing');
+    assert.equal(stored(c, free).ink.length, 1, 'Shift and Ctrl drew nothing');
     await c.shot('book-strip-desktop', page);
     assert.deepEqual(errors, []);
   } finally {
@@ -153,7 +141,8 @@ async function fingers(browser, c) {
     const [select, eraser] = [await b('Select'), await b('Eraser')];
     await touch.down([[select.x + select.width / 2, select.y + select.height / 2]]);
     await page.waitForTimeout(300);
-    await touch.move([[eraser.x + eraser.width / 2, eraser.y + eraser.height / 2]], 8);
+    // (drifting off the strip sideways onto the paper: the tool level with the finger)
+    await touch.move([[eraser.x - 60, eraser.y + eraser.height / 2]], 8);
     await until(async () => (await page.locator('#bk-tip').textContent()).startsWith('Eraser'), "the eraser's name");
     await c.shot('book-strip-slide', page);
     await touch.up();
@@ -197,9 +186,9 @@ async function shortStrip(page, touch, b) {
   const island = page.locator('#book .bk-strip .bk-island');
   await until(() => island.evaluate(el => el.hasAttribute('data-scrolls')), 'the strip scrolling on a short screen');
   const was = await pressed(page),
-    type = await b('Type');
-  await touch.down([middleOf(type)]);
-  await touch.move([[type.x + type.width / 2, type.y - 180]], 8);
+    eraser = await b('Eraser');
+  await touch.down([middleOf(eraser)]);
+  await touch.move([[eraser.x + eraser.width / 2, eraser.y - 180]], 8);
   await touch.up();
   await until(() => island.evaluate(el => el.scrollTop > 0), 'the strip scrolled by a drag');
   assert.equal(await pressed(page), was, 'a drag along a scrolling strip picks nothing');
@@ -270,9 +259,9 @@ async function desk(browser, c, opts) {
   return opened;
 }
 // The iPad mini as a touch screen with a pen, in Chromium (its own touch and pen events, trusted)
-async function mini(browser, c) {
+export async function mini(browser, c, more = {}) {
   // (at 1x, so a screenshot's px are the screen's: colourIn)
-  const context = await c.hqIn(browser, MINI, { hasTouch: true, deviceScaleFactor: 1 });
+  const context = await c.hqIn(browser, MINI, { hasTouch: true, deviceScaleFactor: 1, ...more });
   const page = await context.newPage(),
     errors = [];
   page.on('pageerror', e => errors.push(e.message));
@@ -297,13 +286,17 @@ export function record({ onSegment } = {}) {
 }`,
     }),
   );
+  // (and allowed already)
+  await page.route('**/__review/micallowed.js', r =>
+    r.fulfill({ contentType: 'text/javascript', body: 'export const micAllowed = () => true, gotStream = () => {};' }),
+  );
   await page.route('**/api/voice**', r => r.fulfill({ json: { text: HEARD } }));
   await page.addInitScript(() => {
     if (navigator.mediaDevices)
       navigator.mediaDevices.enumerateDevices = async () => [{ kind: 'audioinput', deviceId: 'mic', label: '' }];
   });
 }
-function penOf(cdp) {
+export function penOf(cdp) {
   const send = (type, [x, y], down) =>
     cdp.send('Input.dispatchMouseEvent', {
       type,
@@ -326,7 +319,7 @@ function penOf(cdp) {
   };
 }
 // Fingers: down at points, moved to others in steps, lifted
-function touchOf(cdp) {
+export function touchOf(cdp) {
   let last = [];
   const points = all => all.map(([x, y], id) => ({ x, y, id, radiusX: 4, radiusY: 4, force: 1 }));
   const t = {
@@ -359,12 +352,12 @@ async function stroke(page, [x0, y0], [x1, y1]) {
   await page.mouse.up();
 }
 // Where the page is on the paper: its top-left's shift on the screen (bookview.js draws it there)
-const placed = page =>
+export const placed = page =>
   page.evaluate(() => {
     const m = new DOMMatrix(getComputedStyle(document.querySelector('#book .bk-world')).transform);
     return [Math.round(m.e), Math.round(m.f)];
   });
-const now = page => page.locator('#book .bk-now').textContent();
+export const now = page => page.locator('#book .bk-now').textContent();
 export const pressed = page =>
   page.evaluate(
     () => document.querySelector('#book .bk-strip [aria-pressed=true]')?.getAttribute('aria-label') ?? null,

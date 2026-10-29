@@ -12,7 +12,7 @@
 // The book beside HQ's page, on an iPad mini, a desktop and a phone, in WebKit and Chromium (HQ in dev mode, on its
 // mock data): HQ's page laid out in the room the book leaves (its toolbar whole, nothing of it under the book), the
 // rail put, the book folded away to its lip with HQ's page the whole screen and brought back, spread, portrait starting
-// folded, a phone's book opening as one whole page that stays whole, what's remembered after a reload, a page that
+// folded and opening as the spread, a phone's book opening as one whole page that stays whole, what's remembered after a reload, a page that
 // grows as it's written down and New page starting the next. A ring on a phone, the book folded, rests into the book.
 // The Pencil on HQ's page, never over the book beside it, in WebKit and Chromium at iPad mini landscape: review mode's
 // layer the page's width, a pen on the book's paper drawing nothing, a ring at the page's edge going in, the pin on the
@@ -24,6 +24,7 @@
 // pointing and ringing inside it. (the preview: job #18848)
 // An agent's answer under its group within seconds, ticked and replied to (booknotebook.mjs), and an agent's
 // desk-phone card about a note under the note's group, answered there by a chip (booknotebookasks.mjs).
+// A lone picture, which has no clip, moved to another page and deleted from Select's bar (booknotebookselect.mjs).
 // Search (bookfind.mjs): a word said while drawing yesterday found as it's written, an answer by its words, and the
 // find opening its page at the note, its number lit. On a desktop, the caret in
 // the field, Search put away with the book and back with it.
@@ -42,6 +43,10 @@
 // picture dragged in from beside, taped where it's let go. (Wire: job #19263)
 // The drawing tools (bookdraw.mjs): erased at two sizes, shapes filled and outlined, an arrow, ink and a picture
 // selected, moved, cut, pasted and deleted, Undo and Redo through all of it, with a mouse and the Pencil.
+// One way to move things (bookmove.mjs): the pen draws across a scrap, which stays put; Select pressed on one line of a
+// group moves the whole group, live, nothing jumping as it's let go. On a desktop and an iPad mini.
+// A note sent from review mode (booknewest.mjs): it lands under the newest thing on the current page, the book opens to
+// it, and the pin menu's Open the Notebook goes there, opening the book or turning the open one. On a desktop and a phone.
 // Ink answers any note (bookanswers.mjs): the agent's face and dots, then its answer written in by a pen beside the note,
 // never over the board's ink; a symbol in its reply area reaching the agent; a drawing, a form and a question; the
 // overview's open list; versions on a page of their own; a call's page.
@@ -72,6 +77,7 @@ import { shareStories } from './bookshare.mjs';
 import { pinStory, pinScreensStory } from './bookpin.mjs'; // (pinScreensStory: job #20358)
 import { tipsStory } from './booktips.mjs';
 import { chromeStories } from './bookchrome.mjs';
+import { titleStories } from './booktitles.mjs';
 import { circleStories } from './bookcircle.mjs';
 import { liftStories } from './booklift.mjs';
 import { penStories } from './bookpen.mjs';
@@ -79,13 +85,19 @@ import { answerStories } from './bookanswers.mjs'; // (Ink answers any note)
 import { pickStories } from './bookpicks.mjs'; // (circle a version to pick it)
 import { pasteStories } from './bookpaste.mjs';
 import { stripStories } from './bookstrip.mjs';
+import { handStories } from './bookhand.mjs';
+import { micStories } from './bookmic.mjs';
 import { webkitStories } from './bookwebkit.mjs';
 import { editStories } from './bookedits.mjs';
 import { notebookPlay } from './shell/ink/notebookplay.js';
 import { notebookStories } from './booknotebook.mjs';
 import { notebookAskStories } from './booknotebookasks.mjs';
 import { notebookRowStories } from './booknotebookrow.mjs';
-import { scrapStories, savedScrap, talked } from './bookscrap.mjs'; // (the pin flow)
+import { notebookSelectStories } from './booknotebookselect.mjs';
+import { moveStories } from './bookmove.mjs';
+import { newestStories } from './booknewest.mjs';
+import { scrapStories, savedScrap } from './bookscrap.mjs'; // (the pin flow)
+import { talked } from './bookvoice.mjs';
 import { groupsOf } from './bookplayed.mjs';
 // (LOOKS: job #19359)
 import { morningStory, everyWidthStory, LOOKS } from './bookfilm.mjs';
@@ -363,17 +375,32 @@ function voiceLine(ws) {
 const reader = { words: '', ms: 0, inks: [], refused: null };
 
 const IPAD_MINI = { viewport: { width: 744, height: 1133 }, deviceScaleFactor: 2, hasTouch: true };
-// HQ held like an iPad mini in a browser, its coordinator and voice line played. more: the context's options, and
-// notebooks, the Notebook's seed (notebookplay.js; none: My Notebook with one blank page), played on context.notebook.
+// The board's one tap on the pen as the book's tools come and each time the book opens, on the hand (bookview.js):
+// the stories write at once. A story of the opening itself passes pen: false.
+function penOnOpen() {
+  let had = null,
+    away = true;
+  new MutationObserver(() => {
+    const pen = document.querySelector('#book .bk-strip button[aria-label="Pen"]'),
+      hidden = document.getElementById('book')?.classList.contains('bk-away') ?? true;
+    if (pen && (pen !== had || (away && !hidden))) pen.click();
+    had = pen;
+    away = hidden;
+  }).observe(document, { subtree: true, childList: true, attributes: true, attributeFilter: ['class'] });
+}
+// HQ held like an iPad mini in a browser, its coordinator and voice line played. more: the context's options (pen:
+// penOnOpen's; the microphone allowed unless they say otherwise), and notebooks, the Notebook's seed (notebookplay.js; none: My Notebook with one blank page), played on
+// context.notebook.
 // (notebooks)
-async function hqIn(browser, viewport = IPAD_MINI.viewport, { notebooks, ...more } = {}) {
+async function hqIn(browser, viewport = IPAD_MINI.viewport, { notebooks, pen = true, ...more } = {}) {
   const context = await browser.newContext({
     ...IPAD_MINI,
+    permissions: ['microphone'],
     ...more,
     viewport,
     serviceWorkers: 'block',
-    permissions: ['microphone'],
   });
+  if (pen) await context.addInitScript(penOnOpen);
   // review mode's closed shadow root opened, and a recorder for the microphone (the browser's own stand-in, once
   // allowed): Safari has MediaRecorder, Linux's headless WebKit doesn't (the words come over the live line, the clip is
   // only its fallback)
@@ -424,6 +451,8 @@ async function hqIn(browser, viewport = IPAD_MINI.viewport, { notebooks, ...more
       if (r.request().method() === 'GET') carryNotes(context.notebook);
       return notebookRoute(r, url, context.notebook);
     }
+    // Voice uploads contain audio bytes, while the routes below read JSON.
+    if (url.pathname === '/api/voice') return r.fulfill({ json: { text: SAID[1] } });
     const body =
       r.request().method() === 'POST' && url.pathname !== '/api/book/scrap' ? r.request().postDataJSON() : null;
     if (url.pathname === '/api/org') return r.fulfill({ json: org });
@@ -496,18 +525,18 @@ function carryNotes(play) {
 // A picture's bytes WebKit didn't hand over (a blob's body comes as null there) with none pasted before: the snip
 // stands in for them.
 const unseen = () => Buffer.from(SNIP.split(',')[1], 'base64');
-// The Notebook's routes answered by a story's play (notebookplay.js): a refusal as the coordinator's, the posts kept
-// (a picture's as its type and size).
 // A live call's notes page, as the store makes it at pickup (ink/callnotes.ts openFor): a new page of My Notebook,
-// titled for the call, the same page at the call's every ask
-const callPages = new Map();
+// titled for the call, the same page at the call's every ask; each play's own, as each call's page is
+const callPages = new WeakMap();
 function callPage(play, { call }) {
   const mine = play.route('/api/notebooks').shelf.find(n => n.kind === 'mine').id;
-  const key = `${mine} ${call}`;
-  if (!callPages.has(key)) callPages.set(key, play.route('/api/notebooks/pages/create', {}, { notebook: mine }).id);
-  const page = play.route('/api/notebooks/pages/title', {}, { id: callPages.get(key), title: 'Call with Lyra, 15:34' });
+  const made = callPages.get(play) ?? callPages.set(play, new Map()).get(play);
+  if (!made.has(call)) made.set(call, play.route('/api/notebooks/pages/create', {}, { notebook: mine }).id);
+  const page = play.route('/api/notebooks/pages/title', {}, { id: made.get(call), title: 'Call with Lyra, 15:34' });
   return { notebook: mine, page, day: page.created.slice(0, 10) };
 }
+// The Notebook's routes answered by a story's play (notebookplay.js): a refusal as the coordinator's, the posts kept
+// (a picture's as its type and size).
 function notebookRoute(r, url, play) {
   const req = r.request(),
     picture = url.pathname === '/api/notebooks/pictures';
@@ -551,7 +580,12 @@ function STORIES() {
     // (the Notebook's page: its groups, Send, the store's changes and answers, on an iPad mini, a desktop and a phone.
     ...notebookStories({ hqIn, base, settled, shot, noErrorsIn, shots }),
     ...notebookRowStories({ hqIn, base, settled, shot, noErrorsIn, shots }),
+    ...notebookSelectStories({ hqIn, base, settled, shot, noErrorsIn, shots }),
     ...notebookAskStories({ hqIn, base, settled, shot, noErrorsIn, shots, org }),
+    // (one way to move things: the pen draws on a scrap, Select moves a group as one.)
+    ...moveStories({ hqIn, base, settled, shot, noErrorsIn, shots }),
+    // (a note sent from review mode finds the board.)
+    ...newestStories({ hqIn, base, settled, shot, noErrorsIn, shots, org }),
     // (the book's tools with a mouse on a desktop.)
     ...mouseStories({
       hqIn,
@@ -570,7 +604,11 @@ function STORIES() {
     }),
     // (the board's controls: the strip, the mouse's, a finger's and the Pencil's bindings, the preferences, the voice
     // note held.)
+    'a voice upload leaves the book check ready for a JSON request': voiceUpload,
     ...stripStories({ hqIn, base, store, pages, notebook, shot, settled }),
+    ...handStories({ hqIn, base, store, pages, notebook, shot, settled }),
+    // (the microphone asked for only at a mic's tap.)
+    ...micStories({ hqIn, base, MINI, settled, penOn, ring, noErrorsIn, notebook, pages }),
     ...webkitStories({ hqIn, base, store, pages, notebook, shot, settled }),
     // (handwriting edited with the pen and the mouse: a word struck out, a sentence sliced open.)
     ...editStories({ hqIn, base, store, pages, notebook, shot, settled, noErrorsIn }),
@@ -642,6 +680,7 @@ function STORIES() {
     ...bodyStories({ hq, shot, settled, settle: SETTLE_MS }),
     // (the book's chrome: the column, the foot and the overview, the pages' names, Safari's strip.)
     ...chromeStories({ base, hqIn, shot, settled, settle: SETTLE_MS }),
+    ...titleStories({ base, hqIn, shot, settled }),
     'iPad mini landscape: the book open beside the page, HQ whole in it': async browser => {
       const { page, errors, done } = await hq(browser, MINI);
       try {
@@ -721,26 +760,35 @@ function STORIES() {
           await done();
         }
       },
-    'portrait starts folded; pulled in, the book opens beside a narrower page, never over it': async browser => {
-      const { page, errors, done } = await hq(browser, MINI_PORTRAIT);
-      try {
-        const start = await sight(page);
-        assert.equal(start.mode, 'folded');
-        folded(start, MINI_PORTRAIT);
-        await pullLip(page, -420);
-        await settled(page, 'open');
-        const seen = await sight(page);
-        assert.equal(seen.mode, 'open');
-        assert.ok(seen.page < start.page, `the page stayed ${seen.page} px wide`);
-        beside(seen);
-        onScreen(seen.rail, MINI_PORTRAIT, 'the rail');
-        hqWhole(seen);
-        await shot('book-portrait', page);
-        assert.deepEqual(errors, []);
-      } finally {
-        await done();
-      }
-    },
+    // (beside HQ's page an upright iPad mini's book would leave an answer a column of 17 characters)
+    "portrait starts folded; pulled in, the book opens as the spread, as on a phone; its cover's edge drawn right lays it beside a narrower page":
+      async browser => {
+        const { page, errors, done } = await hq(browser, MINI_PORTRAIT);
+        try {
+          const start = await sight(page);
+          assert.equal(start.mode, 'folded');
+          folded(start, MINI_PORTRAIT);
+          await pullLip(page, -600);
+          await settled(page, 'spread');
+          let seen = await sight(page);
+          assert.equal(seen.mode, 'spread');
+          assert.ok(seen.book.left <= 40 && seen.book.width >= 680, `the paper: ${JSON.stringify(seen.book)}`);
+          onScreen(seen.rail, MINI_PORTRAIT, 'the rail');
+          await shot('book-portrait', page);
+          await drag(page, await spineAt(page), 400, 14, undefined, HOLD_MS);
+          await settled(page, 'open');
+          seen = await sight(page);
+          assert.equal(seen.mode, 'open');
+          assert.ok(seen.page < start.page, `the page stayed ${seen.page} px wide`);
+          beside(seen);
+          onScreen(seen.rail, MINI_PORTRAIT, 'the rail');
+          hqWhole(seen);
+          await shot('book-portrait-beside', page);
+          assert.deepEqual(errors, []);
+        } finally {
+          await done();
+        }
+      },
     'turning the iPad keeps each shape its own: landscape open, portrait folded, landscape open again':
       async browser => {
         const { page, errors, done } = await hq(browser, MINI);
@@ -899,8 +947,8 @@ function STORIES() {
           ...{ browser, hqIn, base, MINI, settled, shot, posts, pages, org, penOn, ring, noErrorsIn, look },
         }),
       ),
-    'the pin away as HQ loads on a desktop and a phone, summoned and put away; an artifact keeps its own': browser =>
-      pinScreensStory({ browser, hqIn, base, settled, shot, noErrorsIn, reviewJs }),
+    "the pin away as HQ loads on a desktop and a phone, summoned and put away, beside an upright iPad's book too; an artifact keeps its own":
+      browser => pinScreensStory({ browser, hqIn, base, settled, shot, noErrorsIn, reviewJs }),
     'the Tips control opens the tips book open flat, the contents beside every tip with its scene, changed at once; put away by Escape or a tap outside':
       browser => tipsStory({ browser, hqIn, base, settled, shot, noErrorsIn }),
     // (a circle on HQ, on a call or not, and the pen's tap.)
@@ -1094,14 +1142,16 @@ function STORIES() {
           assert.equal(far.books[0], 'My Notebook', 'My Notebook first on it');
           assert.ok(far.first >= far.strip, `the notebooks clear of the tool strip: ${far.first} ${far.strip}`);
           await shot('book-pinch-shelf', page);
-          // pinched in, the notebook's pages again; its first page tapped opens it in the book, on its own day
+          // pinched in, the notebook's pages again; its first page tapped opens it in the book
           await pinch(page, paper, 2);
           assert.equal((await farView(page)).level, 'pages', 'a pinch in goes back to the pages');
           await page.locator('#book .bk-far .bk-tile[data-id] .bk-tile-open').first().click();
           await page.waitForTimeout(SETTLE_MS);
           assert.equal((await farView(page)).level, undefined, 'a page tapped goes back to the page');
-          const day = await page.locator('#book .bk-page:not([hidden]) .bk-when').textContent();
-          assert.doesNotMatch(day, /today/i, `the oldest page, on its own day: ${day}`);
+          // (the oldest page, the notebook's first: the bar's place in it)
+          const where = page.locator('#book').getByRole('button', { name: /^The notebook's pages/ });
+          assert.ok(await where.isVisible());
+          assert.match(await where.getAttribute('aria-label'), /, 1 of \d+$/, 'the oldest page shown');
           // and a pinch in comes back from the pages
           await overviewButton(page).click();
           await page.waitForTimeout(SETTLE_MS);
@@ -1347,9 +1397,11 @@ async function write(page, x, y) {
   await page.mouse.up();
 }
 
-// HQ in a fresh context at a size, the book drawn (look: '&renderer=wire' for Wire)
-async function hq(browser, viewport, options = {}, look = '') {
+// HQ in a fresh context at a size, the book drawn (look: '&renderer=wire' for Wire; options: the context's, and pen:
+// penOnOpen's)
+async function hq(browser, viewport, { pen = true, ...options } = {}, look = '') {
   const { context, page, errors } = await openPage(browser, { viewport, hasTouch: true, ...options });
+  if (pen) await context.addInitScript(penOnOpen);
   await page.goto(`${base}/?intro=0${look}`);
   await ready(page);
   return { page, errors, done: () => context.close() };
@@ -1468,13 +1520,44 @@ const HOLD_MS = 200;
 async function putAway(page) {
   await page.locator('#book .bk-lip').click();
 }
-// The book in a mode, laid out: headless WebKit's frames come slowly under HQ's scene, and it tells the page a new
-// size up to a second or two late
+// The book in a mode, its swing over, laid out: lifted from shut, the book is 'folded' all the while it swings, so its
+// mode alone says nothing; and headless WebKit's frames come slowly under HQ's scene, and it tells the page a new size
+// up to a second or two late
 async function settled(page, mode) {
-  for (const end = Date.now() + 5000; Date.now() < end; await page.waitForTimeout(100))
-    if ((await page.evaluate(() => document.documentElement.dataset.book)) === mode) break;
+  await page.waitForFunction(
+    m => document.documentElement.dataset.book === m && !document.querySelector('#book.bk-swinging'),
+    mode,
+  );
   await page.waitForTimeout(SETTLE_MS);
 }
+// A raw recording and the next JSON post both pass through the shared API fixture.
+async function voiceUpload(browser) {
+  const context = await hqIn(browser);
+  try {
+    const page = await context.newPage();
+    await page.goto(`${base}/?intro=0`);
+    const replies = await page.evaluate(async () => {
+      const voice = await fetch('/api/voice?lang=en', {
+        method: 'POST',
+        body: new Blob(['RIFF\u0000\u0000\u0000\u0000WAVE'], { type: 'audio/wav' }),
+      });
+      const transcript = await voice.json();
+      const read = await fetch('/api/book/read', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ink: [] }),
+      });
+      return { voice: voice.status, transcript, read: read.status, handwriting: await read.json() };
+    });
+    assert.equal(replies.voice, 200, 'the raw recording is accepted');
+    assert.equal(replies.transcript.text, SAID[1], 'the played transcription is returned');
+    assert.equal(replies.read, 200, 'the next JSON post is still answered');
+    assert.equal(typeof replies.handwriting.writing, 'boolean');
+  } finally {
+    await context.close();
+  }
+}
+
 async function bookStories(browser, which) {
   let failed = 0;
   for (const [name, story] of Object.entries(STORIES())) {

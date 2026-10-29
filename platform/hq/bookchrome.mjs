@@ -26,6 +26,9 @@ export function chromeStories(c) {
       browser => column(browser, c),
     "the overview from the foot: Search in it, no tools, the foot only its own button, pressed; the Shelf's Search naming your notebooks":
       browser => overview(browser, c),
+    'the shelf opens a notebook with a zoom on desktop': browser => shelfZoom(browser, c, { width: 1440, height: 900 }),
+    'the shelf opens a notebook with a zoom on a phone': browser => shelfZoom(browser, c, { width: 390, height: 844 }),
+    'the shelf opens a notebook with reduced motion': browser => shelfZoom(browser, c, MINI, true),
     "the pages' names stay put: a titled page's, an untitled one's from its first moment, written on or not": browser =>
       names(browser, c),
   };
@@ -120,8 +123,99 @@ async function overview(browser, c) {
   }
 }
 
+// A notebook opens from the Shelf by zoom, and its archive action still moves it into the Archive; the overview's
+// button on the Shelf zooms back to the page too.
+async function shelfZoom(browser, c, viewport, reduced = false) {
+  const seed = namedNotebook();
+  seed.notebooks.push({ id: 2, kind: 'call', name: 'Call with Ansel', created: new Date().toISOString() });
+  const context = await c.hqIn(browser, viewport, {
+    notebooks: seed,
+    deviceScaleFactor: 1,
+    hasTouch: viewport.width < 500,
+    isMobile: viewport.width < 500,
+    reducedMotion: reduced ? 'reduce' : 'no-preference',
+  });
+  const page = await context.newPage(),
+    label = reduced ? 'reduced' : viewport.width < 500 ? 'phone' : 'desktop';
+  try {
+    await page.goto(`${c.base}/?intro=0&renderer=wire`);
+    await until(page, '#loading.gone');
+    if (viewport.width < 500) await page.locator('#book .bk-lip').tap();
+    await c.settled(page, viewport.width < 500 ? 'spread' : 'open');
+    await page
+      .locator('#book')
+      .getByRole('button', { name: /^The overview/ })
+      .click();
+    await page.waitForTimeout(c.settle);
+    const far = page.getByRole('list', { name: 'The overview' });
+    const outward = await shelfTransition(page, far.getByRole('button', { name: /^The Shelf/ }));
+    await page.waitForTimeout(c.settle);
+    await shelfArchive(page, far, c, label, viewport);
+    const inward = await shelfTransition(page, far.getByRole('button', { name: /^My Notebook,/ }));
+    assert.equal(inward.leaf, false, 'opening a notebook never turns a leaf on the Shelf');
+    assert.equal(outward.leaf, false, 'closing to the Shelf uses a zoom');
+    assert.equal(inward.duration, outward.duration, 'opening and closing use the same duration');
+    assert.equal(inward.easing, outward.easing, 'opening and closing use the same easing');
+    if (reduced) assert.deepEqual(inward.scales, [], 'reduced motion only fades');
+    else assert.deepEqual(inward.scales, [...outward.scales].reverse(), 'the same zoom scales in opposite directions');
+    await page.waitForTimeout(c.settle);
+    assert.ok(await far.locator('.bk-tile[data-id="1"]').isVisible(), 'the notebook opens to its pages');
+    await c.shot(`shelf-open-${label}`, page);
+    await shelfTransition(page, far.getByRole('button', { name: /^The Shelf/ }));
+    await page.waitForTimeout(c.settle);
+    const overview = page.locator('#book').getByRole('button', { name: /^The overview/ }),
+      home = await shelfTransition(page, overview);
+    assert.equal(home.leaf, false, "the overview's button on the Shelf zooms back to the page, no leaf");
+    await page.waitForTimeout(c.settle);
+    assert.ok(await far.isHidden(), 'back on the page');
+  } finally {
+    await context.close();
+  }
+}
+
+// The tile's box archives the notebook, which then appears on the Archive tab.
+async function shelfArchive(page, far, c, label, viewport) {
+  const archive = far.getByRole('button', { name: 'Archive: Call with Ansel', exact: true });
+  if (viewport.width >= 500) await far.locator('.bk-book[data-book="2"]').hover();
+  await c.shot(`shelf-${label}`, page);
+  await archive.click();
+  await page.waitForTimeout(c.settle);
+  await far.getByRole('tab', { name: /^Archive/ }).click();
+  await page.waitForTimeout(c.settle);
+  assert.ok(await far.getByRole('button', { name: /^Call with Ansel,/ }).isVisible());
+  await far.getByRole('tab', { name: /^Shelf/ }).click();
+  await page.waitForTimeout(c.settle);
+}
+
+// Read the transition while it is on screen, including a leaf if the Shelf incorrectly turns one.
+async function shelfTransition(page, control) {
+  await page.waitForFunction(() => !document.querySelector('#book .bk-turn-picture, #book .bk-turn-leaf'));
+  const watched = page.waitForFunction(
+    () => {
+      const picture = document.querySelector('#book .bk-turn-picture'),
+        animation = picture?.getAnimations()[0],
+        leaf = document.querySelector('#book .bk-turn-leaf');
+      if (!animation && !leaf) return false;
+      const animations = document.querySelector('#book .bk-paper').getAnimations({ subtree: true });
+      const scales = animations.flatMap(a =>
+        a.effect.getKeyframes().flatMap(k => {
+          const match = /^scale\(([^)]+)\)$/.exec(k.transform ?? '');
+          return match ? [Number(match[1])] : [];
+        }),
+      );
+      const timing = animation?.effect.getTiming();
+      return { leaf: !!leaf, scales, duration: timing?.duration, easing: timing?.easing };
+    },
+    null,
+    { timeout: 30_000 },
+  );
+  await control.click();
+  const transition = await watched;
+  return transition.jsonValue();
+}
+
 // (My Notebook: a page sent yesterday with its title, and today's untitled one)
-function namedNotebook() {
+export function namedNotebook() {
   const day = 86_400_000,
     at = ms => new Date(ms).toISOString();
   return {
@@ -192,7 +286,7 @@ async function onMini(browser, c) {
   await c.settled(page, 'open');
   return { page, errors, done: () => context.close() };
 }
-const button = (page, name, exact = false) => page.locator('#book').getByRole('button', { name, exact });
+export const button = (page, name, exact = false) => page.locator('#book').getByRole('button', { name, exact });
 // The names of the buttons in the column's islands that show
 // The overview or the Shelf: the phone with the book's controls, and no tools, Undo, Redo or dog-ear, with nothing to
 // draw on
@@ -212,10 +306,10 @@ const columnNames = page =>
   page
     .locator('#book [role=toolbar][aria-orientation=vertical] button')
     .evaluateAll(all => all.filter(b => b.getBoundingClientRect().width).map(b => b.getAttribute('aria-label')));
-// Every control, field and heading of the book that shows starts below the strip
+// Every visible control, field and send stamp starts below the strip
 async function clearOfTheStrip(page, when) {
   const under = await page.evaluate(() =>
-    [...document.querySelectorAll('#book button, #book input, #book [role=toolbar], #book .bk-title')]
+    [...document.querySelectorAll('#book button, #book input, #book [role=toolbar], #book .bk-send-stamp')]
       .filter(el => {
         const r = el.getBoundingClientRect();
         return r.width && r.height && r.bottom > 0 && getComputedStyle(el).visibility !== 'hidden';

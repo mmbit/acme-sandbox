@@ -185,11 +185,13 @@ const inkAt = (x, y) =>
     [x, y],
   );
 const red = ([r, g, b, a]) => a > 200 && r > 200 && g < 140 && b < 140,
-  blue = ([r, , b, a]) => a > 200 && b > 180 && r < 120;
+  blue = ([r, , b, a]) => a > 200 && b > 180 && r < 120,
+  black = ([r, g, b, a]) => a > 200 && r < 80 && g < 60 && b < 80;
 
 // ---- the board's iPad
 const context = await device(reviewJs);
 await penNote({ board: true });
+await writingArea();
 
 // ---- a note drawn with the pen, sent (board: the board's; else an invited reviewer's, told once what goes with a
 // note).
@@ -242,9 +244,10 @@ async function penNote({ board }) {
   await page.locator(inUi('.strip .undo')).tap();
   assert.equal((await inkAt(h1.x + 160, h1.y + 200))[3], 0, 'undo takes the last line back');
   assert.ok(red(await inkAt(h1.x + 160, h1.y + 120)), 'and leaves the others');
+  await penTools();
   assert.deepEqual(
     await page.locator(inUi('.sheet .row button:visible')).allInnerTexts(),
-    ['', 'Cancel', 'Pin it'],
+    ['', 'Cancel', board ? 'Save' : 'Pin it'],
     'the post-it: the mic, Cancel and one Send',
   );
   await page.locator(inUi('textarea')).fill('Bigger, and lose the second line');
@@ -282,6 +285,116 @@ async function penNote({ board }) {
   assert.ok(onShot[0] > 200 && onShot[1] < 150, `the screenshot carries the ink (${onShot})`);
   assert.deepEqual(await state(), { veil: false, sheet: false, marked: false }, 'sent, the page is the page again');
   assert.equal((await inkAt(h1.x + 160, h1.y + 120))[3], 0, 'and the ink is gone with the note');
+}
+
+// ---- the strip's tools with the Pencil: on an iPad a touch whose move the page refuses is no tap, so the Pencil's
+// moves are refused on the page and never on the strip; then its taps choose an ink, the eraser takes lines out, and
+// Undo brings them back
+async function penTools() {
+  const refused = s =>
+    page.evaluate(s => {
+      const r = document.querySelector('review-mode').shadowRoot,
+        el = r.querySelector(s),
+        b = el.getBoundingClientRect(),
+        // (Chromium's touches have no touchType: the Pencil's, as Safari gives it)
+        touch = Object.defineProperty(
+          new Touch({ identifier: 7, target: el, clientX: b.x + b.width / 2, clientY: b.y + b.height / 2 }),
+          'touchType',
+          { value: 'stylus' },
+        ),
+        fire = type =>
+          el.dispatchEvent(
+            new TouchEvent(type, {
+              touches: [touch],
+              changedTouches: [touch],
+              bubbles: true,
+              composed: true,
+              cancelable: true,
+            }),
+          );
+      fire('touchstart');
+      const moved = !fire('touchmove');
+      fire('touchend');
+      return moved;
+    }, s);
+  assert.equal(await refused('.strip .pot[aria-label=Black]'), false, "the Pencil's move on an ink is never refused");
+  assert.equal(await refused('.strip .undo'), false, 'nor on Undo');
+  assert.equal(await refused('.sheet textarea'), false, 'nor on the post-it');
+  assert.equal(await refused('.veil'), true, 'and is on the page being marked, which never scrolls under it');
+  const tap = async s => {
+    const b = await page.locator(inUi(s)).boundingBox();
+    await pen([
+      [b.x + b.width / 2, b.y + b.height / 2],
+      [b.x + b.width / 2 + 1, b.y + b.height / 2],
+    ]);
+  };
+  await tap('.strip .pot[aria-label=Black]');
+  await pen(across(h1.x + 20, h1.y + 240, h1.x + 300, h1.y + 240));
+  assert.ok(black(await inkAt(h1.x + 160, h1.y + 240)), "the Pencil's tap on Black: it draws black");
+  await tap('.strip .eraser');
+  assert.equal(
+    await page.locator(inUi('.strip .eraser')).getAttribute('aria-pressed'),
+    'true',
+    'the eraser is in hand',
+  );
+  await pen(across(h1.x + 160, h1.y + 90, h1.x + 160, h1.y + 260));
+  assert.equal((await inkAt(h1.x + 160, h1.y + 240))[3], 0, 'the eraser passed across it, the black line goes');
+  assert.equal((await inkAt(h1.x + 160, h1.y + 120))[3], 0, 'and the red cross-out it passed');
+  assert.ok(red(await inkAt(h1.x + 360, h1.y + h1.height / 2)), 'and the ring it missed stays');
+  await tap('.strip .undo');
+  assert.ok(black(await inkAt(h1.x + 160, h1.y + 240)), "the Pencil's tap on Undo brings back what was erased");
+  assert.ok(red(await inkAt(h1.x + 160, h1.y + 120)), 'all of it');
+  await tap('.strip .undo');
+  assert.equal((await inkAt(h1.x + 160, h1.y + 240))[3], 0, 'and again takes the black line back');
+  await tap('.strip .pot[aria-label=Blue]'); // (the ink last chosen before: the mouse's rectangle draws in it)
+  assert.equal(
+    await page.locator(inUi('.strip .eraser')).getAttribute('aria-pressed'),
+    'false',
+    'an ink tapped puts the eraser down',
+  );
+}
+
+// ---- the post-it's writing area: the iPad's handwriting (Scribble) looks for a field in a box round the pen's start,
+// and stops at the first thing over it whose box fills that box: nothing that takes a touch may, anywhere on the words'
+// field, the photo's framed screenshot included (wider than the photo, clipped only to the eye). The pen there brings no
+// keyboard, a finger's tap does; and the post-it names the page: Home, never a lone "/"
+async function writingArea() {
+  // (the board's: its big button circled, so the photo's framed screenshot is many times the photo's size)
+  await pen(loop(buy.x + buy.width / 2, buy.y + buy.height / 2, buy.width / 2 + 24, buy.height / 2 + 20));
+  await page.waitForFunction(
+    () => {
+      const r = document.querySelector('review-mode').shadowRoot;
+      return !r.querySelector('.sheet').hidden && r.querySelector('.polaroid:not(.busy) canvas.framed');
+    },
+    null,
+    { timeout: 10_000 },
+  );
+  const over = await ui(() => {
+    const r = document.querySelector('review-mode').shadowRoot,
+      field = r.querySelector('.sheet textarea'),
+      f = field.getBoundingClientRect(),
+      found = [];
+    for (const side of [40, 120])
+      for (let x = f.left; x + side <= f.right; x += 20) {
+        const y = f.top + f.height / 2 - side / 2;
+        for (const el of r.querySelectorAll('.sheet *')) {
+          if (el === field || el.contains(field) || getComputedStyle(el).pointerEvents === 'none') continue;
+          const b = el.getBoundingClientRect();
+          if (b.left <= x && b.top <= y && b.right >= x + side && b.bottom >= y + side)
+            found.push(`${el.className || el.tagName} over ${Math.round(x - f.left)}px in (${side}px)`);
+        }
+      }
+    return [...new Set(found)];
+  });
+  assert.deepEqual(over, [], 'nothing hides the words’ field from the handwriting, end to end');
+  const mode = () => page.locator(inUi('.sheet textarea')).getAttribute('inputmode');
+  assert.equal(await mode(), 'none', 'the pen on the field brings no keyboard');
+  await page.locator(inUi('.sheet textarea')).tap();
+  assert.equal(await mode(), null, "a finger's tap asks for it");
+  await page.locator(inUi('.sheet textarea')).blur();
+  assert.equal(await mode(), 'none', 'and once the field is left, the pen brings none again');
+  assert.equal(await page.locator(inUi('.sheet .page')).innerText(), 'Home', 'the post-it names the home page');
+  await page.locator(inUi('[data-cancel]')).tap();
 }
 
 // ---- the pin drags from its menu's handle, with a mouse and a finger, and a tap on the handle still opens the menu
@@ -425,6 +538,23 @@ assert.ok(
 );
 await page.keyboard.press('ControlOrMeta+z');
 assert.equal((await inkAt(240, 300))[3], 0, 'Cmd or Ctrl+Z takes it back');
+// the strip's inks, eraser and Undo with a mouse too, and the page named
+const mouseLine = async (x0, y0, x1, y1) => {
+  await page.mouse.move(x0, y0);
+  await page.mouse.down();
+  await page.mouse.move(x1, y1, { steps: 8 });
+  await page.mouse.up();
+};
+await page.locator(inUi('.strip .pot[aria-label=Black]')).click();
+await mouseLine(100, 240, 300, 240);
+assert.ok(black(await inkAt(200, 240)), 'a click on Black: it draws black');
+await page.locator(inUi('.strip .eraser')).click();
+await mouseLine(200, 140, 200, 260);
+assert.equal((await inkAt(200, 240))[3] + (await inkAt(200, 170))[3], 0, 'the eraser takes both lines it crosses');
+await page.locator(inUi('.strip .undo')).click();
+assert.ok(black(await inkAt(200, 240)) && blue(await inkAt(200, 170)), 'and Undo brings them back');
+await page.locator(inUi('.strip .pot[aria-label=Blue]')).click();
+assert.equal(await page.locator(inUi('.sheet .page')).innerText(), 'Home', 'the post-it names the home page');
 // a note keeps 64 lines (the coordinator's cap), and the pen says so rather than drop one unseen
 for (let i = 0; i < 64; i++) {
   const x = 20 + (i % 7) * 48,
@@ -523,5 +653,5 @@ assert.deepEqual(errors, []);
 await browser.close();
 server.close();
 console.log(
-  `pen-check: a pen's tap is the page's, a pen line starts a note where it's drawn, open lines until it goes, a palm draws nothing, inks and undo, the lines (pressure, time) and a screenshot with them on the note, the pin dragged by its handle (mouse and finger) and the handle's tap opening the menu, the mic started by its button, never the mark, live words and the clip when the line is down, a mouse's lines, rectangle, Cmd+Z and pin${shots ? `, HQ in each look` : ''}, and the same pen for an invited reviewer (no language of ours)${shots ? ` (screenshots in ${shots})` : ''}`,
+  `pen-check: a pen's tap is the page's, a pen line starts a note where it's drawn, open lines until it goes, a palm draws nothing, inks and undo, the lines (pressure, time) and a screenshot with them on the note, the pin dragged by its handle (mouse and finger) and the handle's tap opening the menu, the mic started by its button, never the mark, live words and the clip when the line is down, a mouse's lines, rectangle, Cmd+Z, inks, eraser and pin; the Pencil's taps on the strip, its eraser and Undo, the post-it's writing area clear for the handwriting with no keyboard for the pen, and the home page named${shots ? `, HQ in each look` : ''}, and the same pen for an invited reviewer (no language of ours)${shots ? ` (screenshots in ${shots})` : ''}`,
 );

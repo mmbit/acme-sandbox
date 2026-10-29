@@ -1,4 +1,4 @@
-// Review mode: the board's feedback tool on every product page (shared/review/README.md).
+// Review mode: the feedback tool on shared product previews (shared/review/README.md).
 // The coordinator serves this file only to the board (a valid preview key on <slug>.preview.<zone>); everyone
 // else gets only the watch-along's answer to HQ's frame (shared/watchalong/framed.js, which it serves after this file
 // for the board too), so it never runs for customers. Tap the pin (or draw on the page with a pen), then tap
@@ -14,7 +14,7 @@
   // For an outside reviewer (a link the board shared) the coordinator writes in the company's name: whose crew the notes go to.
   const OUTSIDE = '{{OUTSIDE}}',
     outside = !OUTSIDE.startsWith('{{');
-  // Their notes join the board's sheet as they write them (sketchpeople.ts), drawn in their own colour (INK, #rrggbb).
+  // Their notes become scraps on their review page, drawn in their own colour (INK, #rrggbb).
   const THEIRS = '{{INK}}',
     INK = outside && /^#[0-9a-f]{6}$/i.test(THEIRS) ? THEIRS : null;
   // The menus' colours are the guest pages': the coordinator writes in the company's

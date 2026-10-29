@@ -2,8 +2,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { appendFileSync } from 'node:fs';
-import { completeTriage } from './reviewfixture.ts';
-import { harness } from './harness.ts';
+import { completeTriage, retryNow } from './reviewfixture.ts';
+import { harness, until } from './harness.ts';
 
 const h = await harness('models', {
   before: repo =>
@@ -144,6 +144,64 @@ test("a Codex agent's fallback: its job leaves its own Codex seat once that seat
   } finally {
     clear();
     await report('codex-1', 'codex', 'ready');
+    await pick('nib', null);
+  }
+});
+
+test("a fix that failed on its agent's fallback is made again on the agent's own model, which its seats take", async () => {
+  clear();
+  const review = await import('./review.ts');
+  assert.equal((await pick('vera', null, 'gpt-6.1-sol')).status, 200);
+  review.startReview(9701, 'job/9701', 'vera', ['platform/x.ts'], 'b'.repeat(40));
+  h.cancelQueued();
+  const fix = h.jobs.createJob({
+    agent: 'vera',
+    title: 'Bringing up to date',
+    prompt: 'x',
+    pr: 9701,
+    branch: 'job/9701',
+    stage: 'fix',
+  });
+  try {
+    await report('claude-1', 'claude', 'sleeping');
+    assert.equal((await worker('claim', { seat: 'codex-1', engine: 'codex' })).body.id, fix.id);
+    assert.deepEqual(jobOf(fix.id), { engine: 'codex', cli: 'codex', for_seat: 'codex-1' });
+    await worker('finish', { job: fix.id, seat: 'codex-1', status: 'failed', result: 'it broke' });
+    const retry = h.db.prepare("select id from jobs where pr = 9701 and status = 'queued'").get() as { id: number };
+    assert.deepEqual(
+      jobOf(retry.id),
+      { engine: 'claude', cli: null, for_seat: null },
+      "no Codex seat or CLI on the agent's own Claude job",
+    );
+    retryNow(h.db, retry.id);
+    await report('claude-1', 'claude', 'ready');
+    assert.equal((await worker('claim', { seat: 'claude-1', engine: 'claude' })).body?.id, retry.id);
+  } finally {
+    clear();
+    await report('claude-1', 'claude', 'ready');
+    await pick('vera', null);
+  }
+});
+
+test("a Codex reviewer's security read is made again on Codex's own CLI, whatever CLI its main model runs on", async () => {
+  clear();
+  const review = await import('./review.ts');
+  assert.equal((await pick('nib', 'mistral-medium-3.5')).status, 200);
+  try {
+    review.startReview(9702, 'job/9702', 'bolt', ['platform/coordinator/src/review.ts'], 'c'.repeat(40));
+    await completeTriage(h, 9702, ['nib'], null, ['nib']);
+    const read = h.db.prepare("select id from jobs where pr = 9702 and kind = 'review'").get() as { id: number };
+    assert.equal(jobOf(read.id).cli, 'codex', 'made for Codex, not Vibe');
+    assert.equal((await worker('claim', { seat: 'codex-1', engine: 'codex' })).body.id, read.id);
+    await worker('finish', { job: read.id, seat: 'codex-1', status: 'failed', result: 'it broke' });
+    const queued = () =>
+      h.db.prepare("select id from jobs where pr = 9702 and kind = 'review' and status = 'queued'").get() as
+        { id: number } | undefined;
+    await until(queued, 'the retry');
+    const retry = queued()!;
+    assert.deepEqual([jobOf(retry.id).engine, jobOf(retry.id).cli], ['codex', 'codex']);
+  } finally {
+    clear();
     await pick('nib', null);
   }
 });

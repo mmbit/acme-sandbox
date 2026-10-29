@@ -5,6 +5,7 @@ import { chips, given, inputHtml, said } from '../questions.js';
 import { esc } from '../../util.js';
 import { lineOf, pathsOf } from './bookanswerart.js';
 import { INK } from './bookwrite.js';
+import { word } from './bookscope.js';
 
 // How long the pen rests before what it wrote goes
 const REST_MS = 800;
@@ -15,7 +16,7 @@ const WET = ':scope > .bk-reply-ink .bk-reply-wet';
 
 // The strip's markup: its sent replies' ink (page px, put in place by fitReplies) and room to write
 export const replyHtml = (replies, label) =>
-  `<div class="bk-answer-reply" role="img" aria-label="${esc(label)}"><svg class="bk-reply-ink" aria-hidden="true"><g class="bk-reply-sent">${pathsOf(
+  `<div class="bk-answer-reply" role="img" aria-label="${esc(label)}" data-hint="${esc(word('reply'))}"><svg class="bk-reply-ink" aria-hidden="true"><g class="bk-reply-sent">${pathsOf(
     replies.flatMap(r => r.ink ?? []),
   )}</g><g class="bk-reply-wet"></g></svg></div>`;
 
@@ -112,10 +113,10 @@ export function formHtml(a) {
       (q, k) =>
         `<div class="bk-answer-q" data-q="${k}"><label class="bk-answer-qt" for="bk-q-${a.id}-${k}">${esc(q.title)}</label>${
           q.detail ? `<span class="bk-answer-qd">${esc(q.detail)}</span>` : ''
-        }<div class="qa">${inputHtml(q, { id: `bk-q-${a.id}-${k}`, placeholder: q.optional ? 'Optional' : '' })}</div></div>`,
+        }<div class="qa">${inputHtml(q, { id: `bk-q-${a.id}-${k}`, placeholder: q.optional ? word('Optional') : '' })}</div></div>`,
     )
     .join('');
-  return `<div class="bk-answer-form">${asked}<p class="bk-answer-foot"><span class="bk-answer-said" role="status"></span><button type="button" class="bk-answer-send">Send</button></p></div>`;
+  return `<div class="bk-answer-form">${asked}<p class="bk-answer-foot"><span class="bk-answer-said" role="status"></span><button type="button" class="bk-answer-send">${word('Send')}</button></p></div>`;
 }
 
 // The form's chips and Send: the answers, each checked, go with send(answers); refused, it says why there
@@ -129,9 +130,9 @@ export function wireForm(form, a, send) {
   button.addEventListener('click', async () => {
     const answers = a.form.map((q, k) => answerIn(form.querySelector(`[data-q="${k}"]`), q));
     const missing = a.form.findIndex((q, k) => given(q, answers[k]) === null);
-    if (missing >= 0) return tell(`Question ${missing + 1} still needs its answer`);
+    if (missing >= 0) return tell(word('Question {n} still needs its answer', { n: missing + 1 }));
     button.disabled = true;
-    tell('Sending…');
+    tell(word('Sending…'));
     try {
       await send(answers);
       tell('');

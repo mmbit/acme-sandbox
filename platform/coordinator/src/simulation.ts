@@ -15,7 +15,15 @@ import { expandRows, sized, type Expansion } from './rounds.ts';
 import * as capacity from './playseats.ts';
 import * as playclaims from './playclaims.ts';
 import * as reviewroom from './reviewroom.ts';
-import { hold, holdFullRoom, makeRoom, releaseHold, reviewOccupants, unreported } from './playroom.ts';
+import {
+  activeReservations,
+  hold,
+  holdFullRoom,
+  makeRoom,
+  releaseHold,
+  reviewOccupants,
+  unreported,
+} from './playroom.ts';
 import type { Span } from './playtime.ts';
 import { outlook } from './playoutlook.ts';
 import * as events from './playevents.ts';
@@ -56,7 +64,6 @@ export type Run = {
   active: Span[];
   held: { since: number; by: Wait } | null;
   reviewSeat: string | null;
-  roomFor: { waiter: Run; seat: capacity.Seat } | null;
   queueWait: Wait;
   nextHold: Wait | null;
 };
@@ -67,6 +74,9 @@ export type Play = {
   // the running and pausing runs, in the runs' order, and the resolutions still to resolve: a moment goes through these,
   // not every unfinished run
   started: Run[];
+  // The waiters a pause made room for, each with its reserved seat, until it starts. Only waiters a seat still takes
+  // hold later claims on every engine (playroom.ts activeReservations, the claim's freedFor).
+  roomFor: Map<Run, capacity.Seat>;
   resolutions: Set<Run>;
   // the runs that may claim a seat, in their order: none whose needs are blocked, which never starts (ready)
   claimants: Set<Run>;
@@ -157,6 +167,7 @@ function preparedPlay(
     timings,
     unfinished: new Set(unfinished),
     started: unfinished.filter(run => run.state === 'running'),
+    roomFor: new Map(),
     resolutions: new Set(unfinished.filter(run => run.row.kind === 'resolution')),
     claimants: new Set(
       unfinished
@@ -247,7 +258,6 @@ function runOf(row: QueuedJob, size: Size, order: Timing, now: number, deployLag
     active: [],
     held: null,
     reviewSeat: null,
-    roomFor: null,
     queueWait: { on: 'queue', engine: row.engine, minutes: 0 },
     nextHold: null,
   };
@@ -279,6 +289,7 @@ function start(play: Play, now: number) {
   // Started claims join this list. Runs paused by makeRoom stay in it until they stop.
   const running = [...play.started];
   const seats = capacity.at(play.seats, now);
+  const reservations = activeReservations(play, seats);
   if (play.account) ledger.pacing(play.account, seats);
   const claims = playclaims.queue(
     [...waiting.filter(r => !spareOnly(r.row, r.order)), ...waiting.filter(r => spareOnly(r.row, r.order))],
@@ -291,12 +302,13 @@ function start(play: Play, now: number) {
   // (the seats' choices hold until a claim starts and fills one)
   let choose = capacity.choices(seats, busy, limits);
   while (claims.pending.size) {
-    if (holdFullRoom(play, claims.pending, running, seats, busy, use.room)) break;
+    if (holdFullRoom(play, claims.pending, running, seats, busy, use.room, reservations)) break;
     const run = playclaims.take(claims, seats, limits, choose, seat => reviewOccupants(running, seat));
     if (!(run.row.engine in play.snapshot.slots)) {
       hold(run, now, unreported(run));
       continue;
     }
+    if (holdReserved(run, reservations, claims, now)) continue;
     const engineFull = (use.onEngine.get(run.row.engine) ?? 0) >= (play.snapshot.slots[run.row.engine] ?? 0);
     const memoryFull = !memory.canStart(use.room, run.row);
     // (another ordinary claim on its engine still waits: the run itself is one while it's ordinary)
@@ -305,7 +317,7 @@ function start(play: Play, now: number) {
     if ((engineFull || memoryFull || (!('id' in seat) && seat.on === 'queue')) && 'id' in roomSeat) {
       const pressure = memoryFull ? 'memory' : engineFull ? 'engine' : roomSeat;
       const resource = reviewroom.reviewCapped(run.row, seat) ? roomSeat : pressure;
-      const pausing = makeRoom(play, run, running, now, resource, roomSeat, use.room);
+      const pausing = makeRoom(play, run, running, now, resource, roomSeat, use.room, reservations);
       hold(run, now, { on: 'queue', engine: run.row.engine, minutes: 0, ...(pausing ? { pausing: true } : {}) });
       continue;
     }
@@ -314,9 +326,22 @@ function start(play: Play, now: number) {
       continue;
     }
     begin(play, run, seat, now, running, busy);
+    reservations.delete(run);
     took(use, run);
     choose = capacity.choices(seats, busy, limits);
   }
+}
+
+function holdReserved(
+  run: Run,
+  reservations: Map<Run, capacity.Seat>,
+  claims: ReturnType<typeof playclaims.queue<Run>>,
+  now: number,
+) {
+  const behindReserved = [...reservations.keys()].some(waiter => claims.base(waiter.row, run.row) < 0);
+  if (!behindReserved) return false;
+  hold(run, now, run.queueWait);
+  return true;
 }
 
 // The moment's room in use, and per engine its running runs and its ordinary claims still waiting: counted once, then
@@ -347,6 +372,7 @@ const add = (counts: Map<string, number>, key: string, by: number) => counts.set
 function begin(play: Play, run: Run, seat: capacity.Seat, now: number, running: Run[], busy: Map<string, number>) {
   if (play.account) ledger.resume(play.account, run, seat, now);
   releaseHold(run, now);
+  play.roomFor.delete(run);
   Object.assign(run, { state: 'running', start: run.start ?? now, ends: now + run.left, seat });
   running.push(run);
   play.started.splice(play.started.findLastIndex(r => r.index < run.index) + 1, 0, run);

@@ -9,7 +9,8 @@
 //   GET /api/notebooks/open → { forms: [item], questions: [item] }, an item { id, group, page, notebook, day, by, name,
 //     text, created }.
 //   POST /api/notebooks/groups/reply { answer, ink, frame? } (frame: where a version's picture shows, page px), POST /api/notebooks/answers/form { id, answers }.
-import { act, copy, get } from '../data.js';
+import { copy, get } from '../data.js';
+import { notebookRequest, scope } from './bookscope.js';
 
 // A page's groups; null when it isn't a notebook page (the store has none of it)
 export const loadGroups = (dev, page) =>
@@ -22,6 +23,7 @@ export const sendForm = (dev, id, answers) =>
 
 // The route read plainly, so a check can stand in for it; in dev mode, where nothing answers it, the mock
 async function read(dev, url, mocked) {
+  if (scope) return notebookRequest(url);
   const res = await fetch(url, { credentials: 'same-origin', headers: { accept: 'application/json' } });
   if (res.ok) return res.json();
   if (dev) return mocked();
@@ -32,7 +34,7 @@ async function read(dev, url, mocked) {
 
 // The route posted to; in dev mode, where nothing answers it, the mock
 const sent = (dev, url, body, mocked) =>
-  act(url, body).catch(e => (dev && e.status === 404 ? mocked() : Promise.reject(e)));
+  notebookRequest(url, body).catch(e => (dev && e.status === 404 ? mocked() : Promise.reject(e)));
 
 // ---- dev mode
 let mock = null;

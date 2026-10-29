@@ -54,6 +54,7 @@ const COMMANDS: Record<string, Command> = {
   meeting,
   cancel: jobs.cancel,
   stop: jobs.stopJob,
+  up: jobs.up,
   expedite: jobs.expedite,
   waits: jobs.waits,
   review: jobs.review,

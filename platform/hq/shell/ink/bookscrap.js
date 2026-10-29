@@ -24,7 +24,7 @@ export function placeScrap({ nw, nh }, page, { at = null, view, i = 0, rand = Ma
     w = round(Math.max(MIN, nw * f)),
     h = round(Math.max(MIN, nh * f));
   const [cx, cy] = at ?? [(view.x0 + view.x1) / 2, (view.y0 + view.y1) / 2];
-  // (kept on the page, any way from its heading.)
+  // (kept on the page, any way from its origin.)
   const on = pageBox(page),
     keep = (c, side, from, to) => Math.min(Math.max(c, from + side / 2), Math.max(from + side / 2, to - side / 2));
   const x = keep(cx + i * DEALT[0], w, on.x0, on.x1) - w / 2,
@@ -47,13 +47,4 @@ export function scrapAt(scraps, [x, y]) {
     if (Math.abs(u) <= s.w / 2 && Math.abs(v) <= s.h / 2) return i;
   }
   return -1;
-}
-// A scrap's place moved by [dx, dy] (page px), its middle kept on its page's box: { x, y }.
-export function slid(s, [dx, dy], page) {
-  const on = pageBox(page),
-    keep = (c, from, to) => Math.min(Math.max(c, from), to);
-  return {
-    x: round(keep(s.x + s.w / 2 + dx, on.x0, on.x1) - s.w / 2),
-    y: round(keep(s.y + s.h / 2 + dy, on.y0, on.y1) - s.h / 2),
-  };
 }

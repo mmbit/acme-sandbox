@@ -10,8 +10,19 @@ import { render } from './ink/bookrender.ts';
 import { DIR } from './pagescraps.ts';
 import { SEND_MS, insertNote, note, sheetRow, type Note } from './ink/booknotes.ts';
 import { deliverDue } from './ink/booksheets.ts';
-import { changed, gone, mine, newPage, pageOf, pageRow, shut, triesPageOfNote, type NotebookPage } from './notebook.ts';
-import { insertGroup, partsOf, putAside, row, type Group } from './notebookgroups.ts';
+import {
+  changed,
+  gone,
+  mine,
+  newPage,
+  openPageOf,
+  pageOf,
+  pageRow,
+  shut,
+  triesPageOfNote,
+  type NotebookPage,
+} from './notebook.ts';
+import { groupOn, insertGroup, partsOf, putAside, rootOf, row, type Group } from './notebookgroups.ts';
 import { boxOf } from './notebookparts.ts';
 import { judgeLater } from './ink/bookjudge.ts';
 import { frameOf, replySnip, sentSnip } from './ink/bookpick.ts';
@@ -49,8 +60,10 @@ export async function sendPage(b: any, who = BOARD, stillOpen?: () => boolean) {
     return [409, RESEND, 'pageChanged'] as Refused;
   if (stillOpen && !stillOpen()) return [403, 'this invitation has closed', 'invitationEnded'] as Refused;
   inOneStep(() => {
-    const at = asNotes(who, groups, snips);
-    db.prepare('update book_pages set send_at = ?, fresh = ? where id = ?').run(at, newPage(p.notebook), p.id);
+    db.prepare('update book_pages set send_at = ? where id = ?').run(asNotes(who, groups, snips), p.id);
+    // (a fresh page only when no other is open: never a second blank one.)
+    const fresh = openPageOf(p.notebook) === null ? newPage(p.notebook) : null;
+    db.prepare('update book_pages set fresh = ? where id = ?').run(fresh, p.id);
     changed(p.notebook, p.id);
   });
   deliverLater();
@@ -165,10 +178,7 @@ export async function replyTo(b: any, who = BOARD, stillOpen?: () => boolean) {
   // (an answer on a group not sent yet is on its grp)
   const slip = db.prepare('select id, note, grp, by from book_slips where id = ?').get(Number(b?.answer)) as
     { id: number; note: number | null; grp: number | null; by: string } | undefined;
-  const answered =
-    slip &&
-    ((slip.grp !== null ? row(slip.grp) : db.prepare('select * from notebook_groups where note = ?').get(slip.note)) as
-      Group | undefined);
+  const answered = slip && groupOn(slip);
   // (a version of an old book's note, a call's, has no group: the reply is a note on its versions page, under the
   // note's anchor; a note wiped, its versions kept for Undo, takes none.)
   const tried = !answered && slip?.note ? note(slip.note) : undefined;
@@ -187,7 +197,7 @@ export async function replyTo(b: any, who = BOARD, stillOpen?: () => boolean) {
     if (!still) return 404;
     return replyOnNote(p, slip, JSON.parse(still.anchor) as Anchor, said, snip, who);
   }
-  const top = answered.parent === null ? answered : row(answered.parent)!;
+  const top = rootOf(answered);
   const parts = { ink, texts: [], pictures: [] };
   const snip = ink.length
     ? ((await replySnip(slip.id, frameOf(b.frame), ink)) ?? (await snipOf({ ...top, ...partsJson(parts) })))

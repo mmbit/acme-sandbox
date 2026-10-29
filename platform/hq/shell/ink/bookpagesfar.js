@@ -1,7 +1,7 @@
 // The book's pages' overview mounted on them (bookzoom.js, its screens bookshelf.js): the notebook the book shows, the
 // page it shows, what's drawn saved before the grid reads the store, and a page tapped in the grid opened.
 import { mountZoom } from './bookzoom.js';
-import { turn, zoomOut } from './bookflip.js';
+import { turn, zoom } from './bookflip.js';
 import { saved } from './booksave.js';
 import { viewOf } from './bookview.js';
 
@@ -9,7 +9,9 @@ import { viewOf } from './bookview.js';
 // a notebook opened at a page.
 export const mountFar = (book, paper, { goTo, openNotebook }) =>
   mountZoom(paper.querySelector('.bk-pages'), {
+    desk: book.desk,
     dev: book.dev,
+    scope: book.scope,
     notebook: () => book.notebook,
     page: () => viewOf(book)?.page.id ?? null,
     // (what's drawn and not yet saved, saved first: the grid reads the store)
@@ -20,7 +22,7 @@ export const mountFar = (book, paper, { goTo, openNotebook }) =>
         ? goTo(book, { page: page.id })
         : openNotebook(book, id, { page: page.id }),
     turn: (dir, midway) => turn(paper, { dir, midway }),
-    zoomOut: (coming, midway) => zoomOut(paper, { coming, midway }),
+    zoom: (coming, midway, dir) => zoom(paper, { coming, midway, dir }),
     changed: level => farAt(paper, level, book),
   });
 

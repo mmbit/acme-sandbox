@@ -339,7 +339,6 @@ test('pictures sent to the book wait on a new page or the free page last opened,
 // shows it on the page): their session cookie for /guest/
 const guests = await import('../guests.ts');
 const shares = await import('../shares.ts');
-const { request } = await import('node:http');
 let clients = 0;
 async function invited(name: string) {
   guests.invite(name, `${name.toLowerCase()}@example.org`);
@@ -381,196 +380,73 @@ const as = (cookie: string) => async (path: string, body?: unknown) => {
 };
 const room = '/guest/sketchbook';
 
-// (an invite gives the book, with no switch)
-test("an invited person's own Sketchbook: given at the invite, their own pages only, theirs on the board's shelf", async () => {
-  const ines = await invited('Ines'),
-    odile = await invited('Odile'),
-    i = as(ines.cookie),
-    o = as(odile.cookie);
-  assert.equal((await i(`${room}/api/list`)).status, 200, 'theirs from the invite');
-  assert.equal((await as('')(`${room}/api/list`)).status, 401);
-
-  // the page, from their link's page, and the files it draws with: HQ's Sketchbook and nothing else of HQ's
-  assert.match((await i(new URL(ines.link).pathname)).text, /href="\/guest\/sketchbook\/">Your Notebook</);
-  const page = await i(`${room}/`);
-  assert.equal(page.status, 200);
-  assert.match(page.headers.get('content-security-policy')!, /script-src 'self';/);
-  for (const file of ['shell/ink/sketchguest.js', 'shell/ink/sketchpage.js', 'util.js', 'foley.js'])
-    assert.equal((await i(`${room}/${file}`)).status, 200, file);
-  for (const file of ['shell/desk.js', 'shell/data.js', 'shell/ink/sketchdata.js'])
-    assert.equal((await i(`${room}/${file}`)).status, 404, file);
-
-  // their own book: made, saved, listed, its picture theirs; the board's and another person's out of reach
-  const mine = (await i(`${room}/api/create`, { label: 'Logo idea', w: 800, h: 600 })).body;
-  assert.equal(mine.label, 'Logo idea');
-  const saved = (await i(`${room}/api/save`, { id: mine.id, ink: [STROKE], picture: DRAWN, scraps: [] })).body;
-  assert.match(saved.picture, new RegExp(`^/guest/sketchbook/api/picture\\?id=${mine.id}&v=`));
-  assert.deepEqual(
-    ((await i(`${room}/api/list`)).body.sketches as any[]).map(s => s.id),
-    [mine.id],
-  );
-  assert.equal((await i(saved.picture)).status, 200);
-  assert.deepEqual((await o(`${room}/api/list`)).body.sketches, []);
-  assert.equal((await o(`${room}/api/ink?id=${mine.id}`)).status, 404);
-  assert.equal((await o(saved.picture)).status, 404);
-  assert.equal((await o(`${room}/api/save`, { id: mine.id, ink: [], scraps: [] })).status, 404);
-  const boards = await create();
-  assert.equal((await i(`${room}/api/ink?id=${boards.id}`)).status, 404);
-  assert.ok(!(await listed()).some(s => s.id === mine.id), "not among the board's own");
-
-  // the board sees it on a shelf of their name, and its picture, but draws only on its own
-  const shelf = ((await h.board('/api/sketches')).body.guests as any[]).find(g => g.name === 'Ines');
-  assert.deepEqual([shelf.on, shelf.sketches.map((s: any) => s.id)], [true, [mine.id]]);
-  assert.equal((await shown(shelf.sketches[0].picture)).status, 200);
-  assert.equal((await save(mine.id, [])).status, 404);
-
-  // Send: on the intercom as their line, not the board's, marked as outside text for the CEO
-  const sent = (await i(`${room}/api/send`, { id: mine.id })).body;
-  const line = ((await h.board('/api/chat')).body.messages as any[]).find(m => m.id === sent.line);
-  assert.deepEqual([line.who, line.text], ['guest', `From Ines’s Notebook: “Logo idea” (sketch #${mine.id})`]);
-  const turn = (await h.claim('claude', { kind: 'chat' }))!;
-  assert.match(turn.note, /Not the board's words: Ines, a person the board invited, sent this sketch/);
-  await h.finish(turn, { status: 'done' });
-  const job = await h.start({ agent: 'wren' });
-  assert.equal((await agent(`sketch?id=${mine.id}`, job.token)).body.from, 'Ines');
-  await h.finish(job);
-  assert.equal((await i(`${room}/api/send`, { id: mine.id })).status, 409, 'once a version');
-  await i(`${room}/api/label`, { id: mine.id, label: 'Logo idea, round' });
-  assert.equal((await i(`${room}/api/send`, { id: mine.id })).status, 200);
-
-  // invited again: the same book
-  await invited('Ines');
-  assert.deepEqual(
-    ((await i(`${room}/api/list`)).body.sketches as any[]).map(s => s.id),
-    [mine.id],
-  );
+test('the retired guest Sketchbook has no door link, page, assets or write routes', async () => {
+  const ines = await invited('Ines');
+  const guest = as(ines.cookie);
+  assert.doesNotMatch((await guest(new URL(ines.link).pathname)).text, /href="\/guest\/sketchbook\/"/);
+  for (const path of ['/', '/api/list', '/shell/ink/sketchguest.js'])
+    assert.ok((await guest(room + path)).status >= 400);
+  assert.ok((await guest(`${room}/api/create`, { w: 800, h: 600 })).status >= 400);
 });
 
-test("the board opens an invited person's book and draws in it; two writers never save over each other", async () => {
-  const pia = as((await invited('Pia')).cookie);
-  // her book in the board's rail, in her colour; not a book that isn't one
+test("the board still opens an invited person's legacy pages and saves without overwriting another writer", async () => {
+  guests.invite('Pia', 'pia@example.org');
   const listedPia = ((await h.board('/api/book/people')).body as any[]).find(p => p.name === 'Pia');
-  assert.match(listedPia.who, /^guest:\d+$/);
   assert.match(listedPia.colour, /^#[0-9a-f]{6}$/);
-  const { who } = listedPia,
-    hers = (await pia(`${room}/api/create`, { w: 800, h: 600 })).body;
-  const theirs = (await pia(`${room}/api/save`, { id: hers.id, ink: [STROKE], scraps: [], since: hers.updated })).body;
-  for (const nobody of ['guest:999999', 'someone'])
-    assert.equal((await h.board(`/api/book?who=${nobody}`)).status, 404);
-  // the board reads her day and her page, and draws on it in its own ink, from what it read
+  const { who } = listedPia;
+  const hers = book.createPage({ kind: 'free', w: 800, h: 600 }, who) as { id: number };
+  const theirs = book.savePage({ id: hers.id, ink: [STROKE], scraps: [] }, who) as { updated: string };
   const day = (await h.board(`/api/book?who=${encodeURIComponent(who)}`)).body;
-  assert.deepEqual(
-    day.pages.map((p: any) => p.id),
-    [hers.id],
-  );
-  assert.ok(!(await h.board('/api/book')).body.pages.some((p: any) => p.id === hers.id), "not in the board's own");
+  assert.ok(day.pages.some((p: any) => p.id === hers.id));
+  assert.ok(!(await h.board('/api/book')).body.pages.some((p: any) => p.id === hers.id));
   const read = (await h.board(`/api/book/page?id=${hers.id}&who=${encodeURIComponent(who)}`)).body;
-  const NIGHT = {
-    ...STROKE,
-    color: '#2a2352',
-    points: [
-      [300, 300, 0.5, 0],
-      [320, 330, 0.5, 16],
-    ],
-  };
-  const boards = await h.board('/api/book/page/save', {
+  const saved = await h.board('/api/book/page/save', {
     who,
     id: hers.id,
-    ink: [...read.ink, NIGHT],
+    ink: [...read.ink, LIGHT],
     scraps: [],
     since: read.updated,
   });
-  assert.equal(boards.status, 200, JSON.stringify(boards.body));
-  // she sees it in her book; her save from before it is refused, not laid over it, and once merged, both stay
-  assert.deepEqual((await pia(`${room}/api/ink?id=${hers.id}`)).body.ink, [{ ...STROKE, color: '#2b2230' }, NIGHT]);
-  const late = await pia(`${room}/api/save`, { id: hers.id, ink: [STROKE, LIGHT], scraps: [], since: theirs.updated });
-  assert.equal(late.status, 409);
+  assert.equal(saved.status, 200);
   assert.equal(
     (
-      await pia(`${room}/api/save`, {
+      await h.board('/api/book/page/save', {
+        who,
         id: hers.id,
-        ink: [STROKE, NIGHT, LIGHT],
+        ink: [STROKE],
         scraps: [],
-        since: boards.body.updated,
+        since: theirs.updated,
       })
     ).status,
-    200,
-  );
-  assert.equal(
-    (await h.board('/api/book/page/save', { who, id: hers.id, ink: [], scraps: [], since: boards.body.updated }))
-      .status,
     409,
   );
-  // a page the board starts in her book is hers, a free one; nothing else of the board's goes there
-  const started = await h.board('/api/book/page/new', { who, kind: 'free', w: 600, h: 800 });
-  assert.equal(started.status, 200);
-  assert.ok(((await pia(`${room}/api/list`)).body.sketches as any[]).some(s => s.id === started.body.id));
-  assert.equal(
-    (await h.board('/api/book/page/new', { who, kind: 'sheet', owner: 'wren', url: '/', w: 600, h: 800 })).status,
-    400,
-  );
-  // the board's own pages stay out of her reach
   const own = await create();
   assert.equal((await h.board('/api/book/page/save', { who, id: own.id, ink: [], scraps: [] })).status, 404);
+  for (const nobody of ['guest:999999', 'someone'])
+    assert.equal((await h.board(`/api/book?who=${nobody}`)).status, 404);
 });
 
-test("an invited person's book takes GUEST_SPACE at most, and their sends SEND_SPACE apart from it", async () => {
-  const u = as((await invited('Uma')).cookie);
-  const first = (await u(`${room}/api/create`, { w: 800, h: 600 })).body;
-  assert.equal((await u(`${room}/api/save`, { id: first.id, ink: [STROKE], scraps: [] })).status, 200);
-  // a scrap file of theirs filling the rest (sparse: its size without the bytes)
+test("an invited person's legacy pages retain their storage and send quotas", async context => {
+  context.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+  guests.invite('Uma', 'uma@example.org');
+  const who = people.whoOf(people.grantOf('Uma')!);
+  const first = book.createPage({ kind: 'free', w: 800, h: 600 }, who) as { id: number };
+  book.savePage({ id: first.id, ink: [STROKE], scraps: [] }, who);
   const filler = `${DIR}/${first.id}-s-00000000.png`;
   writeFileSync(filler, '');
   truncateSync(filler, people.GUEST_SPACE);
-  assert.equal((await u(`${room}/api/save`, { id: first.id, ink: [STROKE, STROKE], scraps: [] })).status, 413);
-  assert.equal((await u(`${room}/api/create`, { w: 800, h: 600 })).status, 413);
-  const scrap = await fetch(`${base}${room}/api/scrap?id=${first.id}`, {
-    method: 'POST',
-    headers: { cookie: (await invited('Uma')).cookie, origin: ORIGIN, 'content-type': 'image/png' },
-    body: new Uint8Array(PNG),
-  });
-  assert.equal(scrap.status, 413);
-  assert.equal((await u(`${room}/api/send`, { id: first.id })).status, 200, "a send isn't the book's");
+  assert.equal((book.savePage({ id: first.id, ink: [STROKE, STROKE], scraps: [] }, who) as any)[0], 413);
+  assert.equal((book.createPage({ kind: 'free', w: 800, h: 600 }, who) as any)[0], 413);
+  const sketchbook = await import('./sketchbook.ts');
+  assert.ok(!Array.isArray(await sketchbook.sendSketch(first.id, who)));
   rmSync(filler);
-
-  // the sends' own space: a changed page whose picture would pass it is refused, and drawing goes on
-  await u(`${room}/api/save`, { id: first.id, ink: [STROKE, STROKE], scraps: [] });
-  await u(`/guest/sketchbook/api/picture?id=${first.id}`); // (drawn and kept)
-  const { picture } = h.db.prepare('select picture from book_pages where id = ?').get(first.id) as { picture: string };
+  context.mock.timers.tick(1);
+  book.savePage({ id: first.id, ink: [STROKE, STROKE], scraps: [] }, who);
+  const { pictureOf } = await import('./bookpicture.ts');
+  const picture = (await pictureOf(book.row(first.id, who)!))!;
   truncateSync(`${DIR}/${picture}`, people.SEND_SPACE);
-  assert.equal((await u(`${room}/api/send`, { id: first.id })).status, 413);
-  assert.equal((await u(`${room}/api/create`, { w: 800, h: 600 })).status, 200);
-});
-
-// A body held back while the book closes (the board's switch did that before every invite gave a book, job #19223; now
-// their grant at an address the board has since moved them from): when it comes in, nothing changes
-const close = (name: string) =>
-  h.db.prepare('update sketch_guests set withdrawn = ? where guest = ?').run(new Date().toISOString(), name);
-test("an invited person's request that comes in after their book was taken back changes nothing", async () => {
-  const hester = await invited('Hester');
-  const mine = (await as(hester.cookie)(`${room}/api/create`, { w: 800, h: 600 })).body;
-  // the request's head now, its body once the board has acted
-  const held = (path: string, type: string) => {
-    const q = request(`${base}${room}/api/${path}`, {
-      method: 'POST',
-      headers: { cookie: hester.cookie, origin: ORIGIN, 'content-type': type },
-    });
-    const status = new Promise<number>((resolve, reject) =>
-      q.on('response', r => (r.resume(), resolve(r.statusCode!))).on('error', reject),
-    );
-    q.flushHeaders();
-    return { end: (body: string | Buffer) => (q.end(body), status) };
-  };
-  const label = held('label', 'application/json'),
-    scrap = held(`scrap?id=${mine.id}`, 'image/png');
-  await new Promise(r => setTimeout(r, 100));
-  close('Hester');
-  assert.equal(await label.end(JSON.stringify({ id: mine.id, label: 'Too late' })), 403);
-  assert.equal(await scrap.end(PNG), 403);
-  people.give('Hester');
-  const kept = ((await h.board('/api/sketches')).body.guests as any[]).find(g => g.name === 'Hester').sketches[0];
-  assert.deepEqual([kept.label, kept.pictures], ['', 0]);
-  assert.ok(!scrapsOf(mine.id).length, 'no scrap kept');
+  assert.equal(((await sketchbook.sendSketch(first.id, who)) as any)[0], 413);
+  assert.ok(!Array.isArray(book.createPage({ kind: 'free', w: 800, h: 600 }, who)));
 });
 
 test("a person's book keeps their name at their address once a page is in it; an empty one keeps nothing", async () => {
@@ -587,29 +463,4 @@ test("a person's book keeps their name at their address once a page is in it; an
   // its page gone, the book is empty again and keeps nothing
   book.deletePage(page.id, rafas);
   assert.ok(!Array.isArray(guests.invite('Rafa', 'rafa@example.org')));
-});
-
-test("an invited person's request that comes in after the company shut the books changes nothing", async () => {
-  const ida = await invited('Ida');
-  const mine = (await as(ida.cookie)(`${room}/api/create`, { w: 800, h: 600 })).body;
-  const brandFile = `${h.repo}/company/brand.yaml`,
-    brandBefore = existsSync(brandFile) ? readFileSync(brandFile, 'utf8') : '';
-  const q = request(`${base}${room}/api/label`, {
-    method: 'POST',
-    headers: { cookie: ida.cookie, origin: ORIGIN, 'content-type': 'application/json' },
-  });
-  const status = new Promise<number>((resolve, reject) =>
-    q.on('response', r => (r.resume(), resolve(r.statusCode!))).on('error', reject),
-  );
-  q.flushHeaders();
-  await new Promise(r => setTimeout(r, 100));
-  writeFileSync(brandFile, `${brandBefore}\nguest: { sketchbook: false }\n`);
-  try {
-    q.end(JSON.stringify({ id: mine.id, label: 'Too late' }));
-    assert.equal(await status, 403);
-  } finally {
-    writeFileSync(brandFile, brandBefore);
-  }
-  const kept = ((await h.board('/api/sketches')).body.guests as any[]).find(g => g.name === 'Ida').sketches[0];
-  assert.equal(kept.label, '');
 });

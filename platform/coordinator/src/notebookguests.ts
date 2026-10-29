@@ -2,20 +2,19 @@
 import * as mailout from './mailout.ts';
 import { db, inOneStep } from './db.ts';
 import * as guests from './guests.ts';
+import * as shares from './shares.ts';
+import { reviewAccess } from './notebookreviews.ts';
+import { managedNotebook } from './notebookaccess.ts';
+export { managedNotebook, managedPage } from './notebookaccess.ts';
 import * as people from './ink/sketchpeople.ts';
 import * as notebook from './notebook.ts';
 import * as groups from './notebookgroups.ts';
-import * as sending from './notebooksend.ts';
+export { act } from './notebookguestactions.ts';
 import * as rounds from './notebookrounds.ts';
 import { findAgent } from './jobs.ts';
 import { BOARD } from './ink/book.ts';
 import { isRefused, labelOf, type Refused } from './pagechecks.ts';
 
-db.exec(`create table if not exists notebook_guests (id integer primary key autoincrement, notebook integer not null,
-  guest text not null collate nocase, grant_id integer not null, page integer not null, link text not null,
-  ends text, revoked text, invited_by text, unique(notebook, guest));
-  create index if not exists notebook_guests_link on notebook_guests(link);
-  create table if not exists notebook_colleagues (notebook integer primary key, allowed integer not null)`);
 export type Membership = {
   id: number;
   notebook: number;
@@ -29,11 +28,33 @@ export type Membership = {
 };
 const memberships = () => db.prepare('select * from notebook_guests order by id').all() as Membership[];
 export const active = (m: Membership) =>
-  !m.revoked && (!m.ends || m.ends > new Date().toISOString()) && people.grantOf(m.guest)?.id === m.grant_id;
+  !m.revoked &&
+  (!m.ends || m.ends > new Date().toISOString()) &&
+  people.grantOf(m.guest)?.id === m.grant_id &&
+  reviewAccess(m);
+export function createInvitedNotebook(b: any) {
+  if (b?.kind !== undefined && b.kind !== 'invited') return [400, 'start a review round from Reviews'] as Refused;
+  const person = Array.isArray(b?.people) && b.people.length === 1 ? b.people[0] : null;
+  if (!person) return [400, 'an invited notebook has one invitee'] as Refused;
+  const email = person.email === undefined ? guests.emailOf(String(person.name ?? '').trim()) : person.email;
+  return createNotebook({
+    kind: 'invited',
+    name: b.name === undefined || b.name === '' ? person.name : b.name,
+    people: [{ name: person.name, email }],
+  });
+}
+
 export const whoOf = (m: Membership) => `guest:${m.grant_id}`;
 const membersOf = (notebookId: number) => memberships().filter(m => m.notebook === notebookId);
 export const forGuest = (name: string) =>
   memberships().filter(m => m.guest.toLowerCase() === name.toLowerCase() && active(m));
+export const invitedPeople = () => [
+  ...new Set(
+    memberships()
+      .filter(m => notebook.notebookRow(m.notebook, BOARD)!.kind === 'invited')
+      .map(m => m.guest),
+  ),
+];
 const linkFor = (m: Membership) => guests.doorLink(`notebook:${m.id}`);
 const doorWords = {
   en: { text: 'Your own notebook, with answers from the AI team.', button: 'Open notebook' },
@@ -214,56 +235,14 @@ export function listGroups(b: any, name?: string) {
               )
               .get(g.note) as { agent: string } | undefined);
       const owner = holder?.agent ?? g.owner;
-      return { ...g, owner, owner_name: owner ? (findAgent(owner)?.name ?? owner) : null };
+      return {
+        ...g,
+        ...(name ? { asks: [] } : {}),
+        owner,
+        owner_name: owner ? (findAgent(owner)?.name ?? owner) : null,
+      };
     }),
   };
-}
-
-export async function act(action: string, b: any, name: string, stillSignedIn = () => true) {
-  if (action === 'invite') return inviteColleague(b, name);
-  if (action === 'pages/create') return createPage(b, name);
-  const page = actionPage(action, b);
-  const m = pageMember(page, name);
-  if (!m) return 404;
-  const round = rounds.roundOf(m.notebook);
-  if (round?.closed && !['reply', 'replies/delete'].includes(action))
-    return [409, 'the round has closed', 'roundClosed'] as Refused;
-  const who = whoOf(m);
-  if (action === 'restore' && round && notebook.pageRow(page, who)!.send_at !== null)
-    return [409, 'un-send this round page before restoring a group', 'roundRestore'] as Refused;
-  const stillOpen = () => stillSignedIn() && !!pageMember(page, name);
-  if (action === 'send') return rounds.handIn(page, who, stillOpen);
-  if (action === 'undo') return rounds.takeBack(page, who);
-  if (action === 'reply') return sending.replyTo(b, who, stillOpen);
-  if (action === 'replies/delete') return sending.deleteReply(b, who);
-  const actions: Record<string, (b: any, who: string) => unknown> = {
-    create: groups.createGroup,
-    edit: groups.editGroup,
-    delete: groups.deleteGroup,
-    restore: groups.restoreGroup,
-  };
-  return actions[action]?.(b, who) ?? 404;
-}
-
-function actionPage(action: string, b: any) {
-  if (action === 'create') return Number(b?.page);
-  if (action === 'send' || action === 'undo') return Number(b?.id);
-  if (action === 'reply') {
-    const g = db
-      .prepare('select g.page from notebook_groups g join book_slips s on s.note = g.note where s.id = ?')
-      .get(Number(b?.answer)) as { page: number } | undefined;
-    return g?.page ?? 0;
-  }
-  return groups.row(Number(b?.id))?.page ?? 0;
-}
-
-function createPage(b: any, name: string) {
-  const m = forGuest(name).find(m => m.notebook === Number(b?.notebook));
-  if (!m) return 404;
-  if (rounds.roundOf(m.notebook)) return [409, 'a round has one page per guest', 'roundPage'] as Refused;
-  const id = notebook.newPage(m.notebook);
-  db.prepare('update book_pages set who = ? where id = ?').run(whoOf(m), id);
-  return notebook.pageOf(notebook.pageRow(id, whoOf(m))!);
 }
 
 const domainOf = (email: string) => email.split('@')[1]?.toLowerCase();
@@ -280,7 +259,7 @@ function invitesFor(m: Membership) {
   return { domain, left: Math.max(0, 3 - used) };
 }
 
-function inviteColleague(b: any, name: string) {
+export function inviteColleague(b: any, name: string) {
   const m = forGuest(name).find(m => m.notebook === Number(b?.notebook));
   if (!m) return 404;
   const permission = invitesFor(m);
@@ -312,11 +291,6 @@ function inviteColleague(b: any, name: string) {
   });
 }
 
-export const managedNotebook = (id: number) => !!db.prepare('select 1 from notebook_guests where notebook = ?').get(id);
-export const managedPage = (id: number) => {
-  const p = notebook.pageRow(id, null);
-  return !!p && managedNotebook(p.notebook);
-};
 export function boardPages(b: any) {
   if (!managedNotebook(Number(b?.notebook))) return notebook.listPages(b);
   const described = describe(Number(b.notebook));
@@ -328,4 +302,45 @@ export function boardPages(b: any) {
 }
 export function boardCreatePage(b: any) {
   return managedNotebook(Number(b?.notebook)) ? 403 : notebook.createPage(b);
+}
+
+export function syncReviewer(notebookId: number, person: shares.Person, share: shares.Share) {
+  let member = membersOf(notebookId).find(m => m.guest.toLowerCase() === person.guest.toLowerCase());
+  if (!member && shares.onIt(person)) {
+    addMember(notebookId, person.guest, share.ends);
+    member = membersOf(notebookId).at(-1)!;
+  }
+  const grant = people.grantOf(person.guest);
+  if (member && grant && member.grant_id !== grant.id) {
+    db.prepare('update notebook_guests set grant_id = ? where id = ?').run(grant.id, member.id);
+    db.prepare('update book_pages set who = ? where id = ?').run(people.whoOf(grant), member.page);
+  }
+  if (member)
+    db.prepare('update notebook_guests set revoked = ?, ends = ? where id = ?').run(
+      person.removed || share.ended,
+      share.ends,
+      member.id,
+    );
+}
+
+// The same page-list contract the board's Ink shell reads, limited to this guest's membership.
+export function guestPages(b: any, name: string) {
+  const member = forGuest(name).find(m => m.notebook === Number(b?.notebook));
+  if (!member) return 404;
+  const described = describe(member.notebook, name);
+  return { notebook: described, pages: described.pages.filter(p => !p.archived), archived: [] };
+}
+export function reviewMember(share: number, name: string) {
+  const linked = db.prepare('select notebook from notebook_reviews where share = ?').get(share) as
+    { notebook: number } | undefined;
+  return linked && forGuest(name).find(m => m.notebook === linked.notebook);
+}
+
+export function roomLink(name: string, door: string) {
+  const own = forGuest(name).find(m => m.link === door);
+  if (own) return `/guest/notebooks/?notebook=${own.notebook}`;
+  const person = db.prepare('select share from review_share_people where link = ? and guest = ?').get(door, name) as
+    { share: number } | undefined;
+  const member = person && reviewMember(person.share, name);
+  return member ? `/guest/notebooks/?notebook=${member.notebook}` : '/guest/notebooks/';
 }

@@ -12,6 +12,7 @@
 import { showGuestNotebooks } from './bookinvites.js';
 import { esc } from '../../util.js';
 import { island } from './bookui.js';
+import { word } from './bookscope.js';
 // (the Notebook's store)
 import {
   archiveNotebook,
@@ -45,10 +46,11 @@ const HTML = `<div class="bk-far-head" role="presentation"><nav class="bk-far-na
 // Returns { show(level, id), again(), hide() }: show draws 'pages' (notebook id's; null: current()'s) or 'shelf', at
 // once from what it read before, and resolves once it's read (the first time only, FIRST_MS at most: a turn never
 // waits on the store).
-export function mountScreens(far, { dev, current, page, saved, open, shelf, notebook }) {
+export function mountScreens(far, { dev, current, page, saved, open, shelf, notebook, scope = null }) {
   far.innerHTML = HTML;
   const s = {
     far,
+    scope,
     dev,
     current,
     page,
@@ -72,19 +74,14 @@ export function mountScreens(far, { dev, current, page, saved, open, shelf, note
   };
   far.querySelector('.bk-far-head').prepend(island('overview'));
   mountTold(s);
-  mountOpen(far.querySelector('.bk-far-head'), { open }); // (the open forms and questions)
+  if (!scope) mountOpen(far.querySelector('.bk-far-head'), { open }); // (the open forms and questions)
   far.addEventListener('click', e => clicked(s, e));
   far.addEventListener('keydown', e => keyed(s, e));
   drags(s, (from, to) => reorder(s, from, to));
   // (the store's notebooks changed: read again while it shows)
   for (const name of ['book:changed', 'book:notebook']) document.addEventListener(name, () => s.level && refresh(s));
   // (a wider or narrower book: the grids' columns again)
-  let width = 0;
-  new ResizeObserver(() => {
-    if (!s.level || far.clientWidth === width) return;
-    width = far.clientWidth;
-    columns(s);
-  }).observe(far);
+  watchGrid(s);
   return {
     show: (level, id) => show(s, level, id),
     again: () => refresh(s),
@@ -94,6 +91,16 @@ export function mountScreens(far, { dev, current, page, saved, open, shelf, note
       told(s, null);
     },
   };
+}
+
+function watchGrid(s) {
+  const far = s.far;
+  let width = 0;
+  new ResizeObserver(() => {
+    if (!s.level || far.clientWidth === width) return;
+    width = far.clientWidth;
+    columns(s);
+  }).observe(far);
 }
 
 // ---- reading and drawing
@@ -132,11 +139,14 @@ function draw(s) {
   far.dataset.tab = s.tab;
   far.setAttribute('role', 'list');
   // (the Shelf or the Archive: its tabs say which)
-  far.setAttribute('aria-label', 'The overview');
+  far.setAttribute('aria-label', word('The overview'));
   if (s.level === 'pages' && s.id !== null) drawPages(s);
   else drawShelf(s);
   if (s.lost)
-    s.body.insertAdjacentHTML('beforeend', `<p class="bk-far-none bk-far-lost">${esc(s.lost)} Tap to try again.</p>`);
+    s.body.insertAdjacentHTML(
+      'beforeend',
+      `<p class="bk-far-none bk-far-lost">${esc(word('{error} Tap to try again.', { error: s.lost }))}</p>`,
+    );
   columns(s);
 }
 
@@ -146,11 +156,15 @@ function drawPages(s) {
     book =
       read?.notebook ?? [...(s.read.shelf?.shelf ?? []), ...(s.read.shelf?.archive ?? [])].find(n => n.id === s.id),
     archived = read?.archived ?? [];
-  s.head.innerHTML = `<button type="button" class="bk-far-go" data-go="shelf" aria-label="The Shelf: every notebook">${
-    ICONS.shelf
-  }<span>Shelf</span></button><b class="bk-far-title">${esc(book?.name ?? '')}</b>${
+  s.head.innerHTML = `${
+    s.scope
+      ? ''
+      : `<button type="button" class="bk-far-go" data-go="shelf" aria-label="The Shelf: every notebook">${
+          ICONS.shelf
+        }<span>Shelf</span></button>`
+  }<b class="bk-far-title">${esc(book?.name ?? '')}</b>${
     archived.length || s.archived
-      ? `<button type="button" class="bk-far-go bk-far-toggle" data-archived aria-pressed="${s.archived}">Archived <small>${archived.length}</small></button>`
+      ? `<button type="button" class="bk-far-go bk-far-toggle" data-archived aria-pressed="${s.archived}">${word('Archived')} <small>${archived.length}</small></button>`
       : ''
   }`;
   if (!read) return void (s.body.innerHTML = '');
@@ -158,14 +172,14 @@ function drawPages(s) {
   const here = s.id === s.here ? s.page() : null,
     adds = book?.kind === 'mine';
   s.body.innerHTML = `<div class="bk-grid" data-grid="pages" role="presentation">${read.pages
-    .map((p, i) => pageTile(p, i, { here, drag: true }))
+    .map((p, i) => pageTile(p, i, { here, drag: !s.scope, manage: !s.scope }))
     .join('')}${
     adds
-      ? `<div class="bk-tile bk-tile-new" role="listitem"><button type="button" class="bk-tile-open" data-new aria-label="New page"><span class="bk-tile-paper">${ICONS.add}</span><span class="bk-tile-name"><span>New page</span></span></button></div>`
+      ? `<div class="bk-tile bk-tile-new" role="listitem"><button type="button" class="bk-tile-open" data-new aria-label="${word('New page')}"><span class="bk-tile-paper">${ICONS.add}</span><span class="bk-tile-name"><span>${word('New page')}</span></span></button></div>`
       : ''
-  }</div>${!read.pages.length && !adds ? '<p class="bk-far-none">No pages here yet.</p>' : ''}${
+  }</div>${!read.pages.length && !adds ? `<p class="bk-far-none">${word('No pages here yet.')}</p>` : ''}${
     s.archived && archived.length
-      ? `<h3 class="bk-far-sub">Archived</h3><div class="bk-grid" data-grid="pages" role="presentation">${archived
+      ? `<h3 class="bk-far-sub">${word('Archived')}</h3><div class="bk-grid" data-grid="pages" role="presentation">${archived
           .map((p, i) => pageTile(p, i, { here, archived: true }))
           .join('')}</div>`
       : ''

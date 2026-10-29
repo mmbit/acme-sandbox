@@ -3,7 +3,7 @@ import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { carrySession, project } from './carry.ts';
+import { carrySession, closingLines, project } from './carry.ts';
 import { jobDirs } from './slots.ts';
 
 const work = mkdtempSync(`${tmpdir()}/carry-test-`);
@@ -75,4 +75,23 @@ test('a session of another CLI, or one whose home is gone, starts afresh', () =>
     ),
     null,
   );
+});
+
+test("a fix after the author's session went cold is briefed with each closing report and the branch's commits", () => {
+  const closing = {
+    reports: [
+      { job: 40, report: 'Built the checkout.\n' },
+      { job: 41, report: 'Fixed the notes.' },
+    ],
+  };
+  const lines = closingLines(closing, 'b2c3d4e Bolt: fix the notes\na1b2c3d Bolt: the checkout\n');
+  for (const part of [
+    "Job #40's closing report",
+    'Built the checkout.',
+    "Job #41's closing report",
+    'Fixed the notes.',
+  ])
+    assert.ok(lines.includes(part), part);
+  assert.ok(lines.indexOf('Built the checkout.') < lines.indexOf('Fixed the notes.'), 'oldest first');
+  assert.ok(lines.includes('b2c3d4e Bolt: fix the notes\na1b2c3d Bolt: the checkout'));
 });

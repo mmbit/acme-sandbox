@@ -4,7 +4,8 @@ code folder, run by /bin/sh), with real processes and signals; no Docker.
 
 Checks that a reload (SIGUSR2) starts the worker again from the code staged now while the run it launched goes on, that
 the run's exit code reaches its marker once its worker has gone, that a worker that crashes starts again, and that a
-stop (SIGTERM) reaches the worker and ends the supervisor with it.
+stop (SIGTERM) reaches the worker and ends the supervisor with it. And that every worker gets the same refresh socket,
+which the supervisor holds across reloads (WORKER_REFRESH_FD).
 """
 import os, signal, subprocess, sys, tempfile, time, unittest
 
@@ -14,6 +15,7 @@ here = os.path.dirname(os.path.abspath(__file__))
 # told to, and its marker, as detached.ts makes one), leaves on SIGUSR2 without stopping it, stops it on SIGTERM.
 WORKER = r'''
 echo "$$ $CODE_NAME" >> "$T/workers"
+readlink "/proc/$$/fd/$WORKER_REFRESH_FD" >> "$T/sockets"
 if [ ! -f "$T/launched" ]; then
   touch "$T/launched"
   sh -c 'while [ ! -f "$T/go" ]; do sleep 0.05; done; exit 7' &
@@ -93,6 +95,10 @@ class Supervise(unittest.TestCase):
         self.assertNotEqual(self.workers()[0][0], self.workers()[1][0])
         self.assertEqual(os.readlink(f'{self.code}/running'), 'v2')
         self.assertTrue(self.run_alive(), 'the run goes on through the reload')
+        sockets = read(f'{self.t}/sockets').split()
+        self.assertEqual(len(sockets), 2)
+        self.assertTrue(sockets[0].startswith('socket:'), sockets)
+        self.assertEqual(sockets[0], sockets[1], 'the reloaded worker listens on the same socket, never a new port')
         pid, start = read(f'{self.t}/run').split()
         self.assertEqual(read(f'{self.runs}/pid-{pid}-{start}'), '')
         # its worker has gone: the supervisor reaps it and notes how it ended

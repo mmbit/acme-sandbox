@@ -1,6 +1,6 @@
 // Words typed on a page of the book: a box placed at a point (the text tool, or a double click on the paper) with the
-// caret in it, typed, kept as it's left, edited again by a click or by the pen (bookamend.js), moved by its grip, and
-// gone once it's emptied. Each change is one step Undo takes back (book.steps). A page keeps them as texts: [{ x, y, w, text, color }],
+// caret in it, typed, kept as it's left, edited again by a click or by the pen (bookamend.js), moved by Select
+// (bookselect.js), and gone once it's emptied. Each change is one step Undo takes back (book.steps). A page keeps them as texts: [{ x, y, w, text, color }],
 // x and y the words' top-left and w the width they wrap at, in the page's px, saved with its ink (booksave.js) and set
 // in its picture by the store (bookrender.ts: the same size, line and wrap). The boxes are the page's own elements, so
 // the book's pan and zoom carry them.
@@ -10,6 +10,7 @@ import { wandered } from '/__review/tap.js';
 import { followPress } from './bookpress.js';
 import { button } from './bookui.js';
 import { boxesOf } from './bookwords.js';
+import { word } from './bookscope.js';
 
 // The words' size and line in page px (bookrender.ts TEXT), and the room round them inside the box, for the caret
 export const TEXT = { size: 18, line: 1.4 };
@@ -17,8 +18,8 @@ const PAD = 4;
 // a new box wraps at this width, or less where the paper shown ends sooner, never less than NARROW
 const WIDE = 360,
   NARROW = 160;
-// a press on a box moves it once it has moved this far (screen px): less is a click, which edits it (a Pencil's: once
-// it has gone past a tap, tap.js wandered)
+// a press on a box draws once it has moved this far (screen px): less is a click, which edits it (a Pencil's: once it
+// has gone past a tap, tap.js wandered)
 const DRAG_PX = 3;
 
 // book: bookpages.js's; hooks: { changed(page), color() (the pen's colour now) }
@@ -27,7 +28,7 @@ export function mountTexts(book, hooks) {
   return {
     // A view's boxes made again from its page's texts (the page shown, or read)
     added: view => drawAll(tx, view),
-    // A press on a box: its grip or a box not being edited moves it, a click edits it. True: the box took it.
+    // A press on a box not being edited: a drag over it draws, a click edits it. True: the box took it.
     press: (box, e) => pressed(tx, box, e),
     // A new box at a point of a page ({ view, x, y } in its px), the caret in it, its words wrapping before right
     place: (at, right) => place(tx, at, right),
@@ -62,9 +63,6 @@ function boxFor(tx, view, t) {
   const el = document.createElement('div');
   el.className = 'bk-typed';
   el.innerHTML = '<div class="bk-typed-words"></div>';
-  el.insertAdjacentHTML('beforeend', '<i class="bk-typed-grip" aria-hidden="true"></i>');
-  // (a Pencil on the grip moves the box: Apple's handwriting never takes that touch for words in the box.)
-  el.lastElementChild.addEventListener('touchstart', e => stylus(e) && e.preventDefault(), { passive: false });
   el.append(fixes(el));
   el.words = el.firstElementChild;
   el.typed = t;
@@ -84,8 +82,6 @@ function setBox(el, t) {
   el.words.textContent = t.text;
 }
 
-const stylus = e => [...e.changedTouches].some(t => t.touchType === 'stylus');
-
 // ---- typing
 
 // The keys a Pencil has no keyboard for, beside the box being typed in: delete the letter before the caret (or what's
@@ -99,7 +95,7 @@ function fixes(el) {
       icon: svg(icon),
       onClick: () => el.words.isContentEditable && document.execCommand(command, false, value),
     });
-  keys.append(key('Delete the letter before', BACKSPACE, 'delete'), key('Space', SPACE, 'insertText', ' '));
+  keys.append(key(word('Delete the letter before'), BACKSPACE, 'delete'), key(word('Space'), SPACE, 'insertText', ' '));
   // (their press is theirs: never the words' blur, the paper's pan or its ink)
   for (const type of ['pointerdown', 'mousedown', 'touchstart'])
     keys.addEventListener(type, e => {
@@ -209,45 +205,21 @@ function step(tx, view, undo) {
   });
 }
 
-// ---- moving
+// ---- a press
 
-// A press on a box. Its grip, or the box when it isn't being typed in: it follows the pointer once it moves, and lands
-// where it's let go (one step), anywhere on the endless paper; a click without a move edits it, the caret where it was
-// clicked. (a Pencil's tap, and no stop at the page's top-left.) A drag over its words, but by its grip, writes over
-// them instead, as on the paper.
+// A press on a box not being typed in: a click without a move edits it, the caret where it was clicked (a Pencil's
+// tap); a drag over its words writes over them instead, as on the paper. (Select moves boxes: one way to move things.)
 function pressed(tx, el, e) {
-  const grip = !!e.target.closest('.bk-typed-grip');
-  if (!grip && el.dataset.editing !== undefined) return true; // (the words' own: the caret, a selection)
+  if (el.dataset.editing !== undefined) return true; // (the words' own: the caret, a selection)
   e.preventDefault();
-  const t = el.typed,
-    from = { x: t.x, y: t.y },
-    scale = tx.book.scale || 1;
-  let moved = false,
-    inked = false;
+  let moved = false;
   const move = m => {
-    const dx = (m.clientX - e.clientX) / scale,
-      dy = (m.clientY - e.clientY) / scale;
-    if (inked || (!moved && !far(e, m))) return;
-    if (!moved && !grip && (inked = inkFrom(tx, e, m))) return;
-    if (!moved) {
-      moved = true;
-      el.dataset.lifted = '';
-    }
-    el.style.left = `${from.x + dx - PAD}px`;
-    el.style.top = `${from.y + dy - PAD}px`;
+    if (moved || !far(e, m)) return;
+    moved = true;
+    inkFrom(tx, e, m);
   };
   const up = u => {
-    if (inked) return;
-    delete el.dataset.lifted;
-    if (!moved) return grip || u.type === 'pointercancel' ? null : edit(tx, el, { at: [u.clientX, u.clientY] });
-    const to = {
-      x: round(from.x + (u.clientX - e.clientX) / scale),
-      y: round(from.y + (u.clientY - e.clientY) / scale),
-    };
-    if (u.type === 'pointercancel') return setBox(el, t);
-    Object.assign(t, to);
-    setBox(el, t);
-    step(tx, el.view, () => Object.assign(t, from));
+    if (!moved && u.type !== 'pointercancel') edit(tx, el, { at: [u.clientX, u.clientY] });
   };
   followPress(e, { move, up });
   return true;

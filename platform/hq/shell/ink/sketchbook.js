@@ -4,7 +4,7 @@
 // (the shelf moved to sketchshelf.js, shared with an invited person's book; this
 // is the board's book)
 import { stylesheet } from '../../util.js';
-import { toast } from '../hud.js';
+import { toast } from '../toast.js';
 import { ceoName, openIntercom } from '../desk.js';
 import { loadSketches, loadSketch, sketchAction, uploadScrap } from './sketchdata.js';
 import { shelf, back } from './sketchshelf.js';

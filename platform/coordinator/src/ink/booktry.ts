@@ -1,25 +1,26 @@
-// A try (Ink answers, DESIGN section 3): the judge (bookjudge.ts) reads a board's note as asking to see something made,
-// so its owner makes a few versions of the real thing in a try run, and each lands on the note as a version.
+// A try: the judge (bookjudge.ts) reads a board's note as asking to see something made, so its owner makes a few
+// versions of the real thing in a try run, and each lands on the note as a version.
 //   - The try run is a jobs.ts job of kind 'try': it starts at once on a free work slot (never the chat slot), ahead of
 //     the plan as the board's own word (expedite), in no thread, and commits nothing and opens no pull request (the
 //     worker throws its clone away, as a meeting seat's): what it makes lives in the book.
 //   - Its versions are answers on the note's root group (hq answer g<group> --version, bookanswer.ts), and they get a
 //     page of their own right after the group's page in its notebook (book_pages.tries: the group), headed "<Agent>
 //     tries: <words>". An old book's note (a call's page) has its versions page after its page (tries_note: the note),
-//     which reads the note's versions (groupanswers.ts triedNoteOf), and a reply on one is a note there (notebooksend.ts
-//     replyTo).
+//     which reads the note's versions as HQ reads a group's (groupanswers.ts readOf), and a reply on one is a note
+//     there (notebooksend.ts replyTo).
 //   - One run per note at a time: a note written on the group or one of its versions while its try still runs goes to
 //     that run (a message its hook hands the session at its next step; one not started yet takes it in its brief).
 //   - On a call the run's the same; the call's agent writes text answers itself (answer_note: callanswer.ts), so onCall
 //     tells the quick run's caller to leave the note to it.
 import { readFileSync } from 'node:fs';
 import { db, lacks } from '../db.ts';
-import { ceo, companyDay } from '../company.ts';
+import { brand, ceo, companyDay } from '../company.ts';
 import { createJob, findAgent } from '../jobs.ts';
+import { keysCall } from '../memory.ts';
 import * as feedback from '../feedback.ts';
 import { forRun } from '../messages.ts';
 import { changed, pageRow } from '../notebook.ts';
-import { row as groupRow, type Group } from '../notebookgroups.ts';
+import { groupOn, rootOf, row as groupRow, type Group } from '../notebookgroups.ts';
 import { row as bookPage } from './book.ts';
 import { note as noteRow, sheetRow, type Note } from './booknotes.ts';
 import { keep } from './booksheets.ts';
@@ -45,11 +46,11 @@ type Version = { name: string; text: string; patch: string | null };
 type Common = { page: number; words: string; owner: string; anchor: Anchor | null; reply: Reply };
 type On = ({ kind: 'group'; root: Group } | { kind: 'note'; root: Note }) & Common;
 function on(t: Target): On | null {
-  const g = t.grp ? groupRow(t.grp) : t.note ? groupOfNote(t.note) : undefined;
+  const g = groupOn(t);
   if (g) {
-    const root = g.parent ? groupRow(g.parent) : g;
-    const p = root && pageRow(root.page, null);
-    if (!root || !p) return null;
+    const root = rootOf(g),
+      p = pageRow(root.page, null);
+    if (!p) return null;
     const words = root.words || g.words,
       reply = g.id === root.id ? null : { words: g.words, version: versionOf(g.answers) };
     const owner = root.owner ?? p.owner ?? ceo();
@@ -79,8 +80,6 @@ function versionOf(slip: number | null): Version | null {
   if (!s) return null;
   return { name: s.version, text: s.text, patch: s.patch && readFileSync(`${DIR}/${s.patch}`, 'utf8') };
 }
-const groupOfNote = (note: number) =>
-  db.prepare('select * from notebook_groups where note = ? and deleted is null').get(note) as Group | undefined;
 const anchorOf = (g: Group) => (g.anchor ? (JSON.parse(g.anchor) as Anchor) : null);
 
 // The try run on a group or note, if one is still open
@@ -107,8 +106,13 @@ export function onCall(t: Target): number | null {
   const call = o && callOf(o.page);
   return call && db.prepare("select 1 from calls where id = ? and status = 'live'").get(call) ? call : null;
 }
-// The call a page is of (a call's notes page, in the book or My Notebook), live or ended, or null
-const callOf = (page: number) => bookPage(page, null)?.call ?? null;
+// The call a page is the notes page of (in the book or My Notebook), live or ended, or null. A try's versions page
+// keeps its call only for reading (bookreads.ts callRead), so a note there gets a quick run like any other note: its
+// page's owner's, the call's agent's on a call about a card for keys (versionsPage)
+const callOf = (page: number) => {
+  const p = bookPage(page, null);
+  return p?.kind === 'call' ? p.call : null;
+};
 
 // ---------------------------------------------------------------- a try
 // The judge's verdict 'try' on a board's note (bookjudge.ts): a note on a try still going goes to it; else its
@@ -157,17 +161,25 @@ const versionName = (slip: number) => {
 };
 
 // The versions page: right after the note's page in its notebook (between it and the next), made once per note; an old
-// book's page has no order but its day's, so it goes last in the day
+// book's page has no order but its day's, so it goes last in the day. It takes its note's page's call, so a call about a
+// card for keys keeps it for its own agent as it keeps its notes page (bookreads.ts callRead). There the call's agent
+// owns it too, so a note on it is that agent's to answer, try and be sent (booknotes.ts addNote's sheet), never the
+// CEO's as a page nobody owns
 function versionsPage(o: On) {
   const column = o.kind === 'group' ? 'tries' : 'tries_note';
   const found = db.prepare(`select id from book_pages where ${column} = ?`).get(o.root.id) as
     { id: number } | undefined;
   if (found) return found.id;
-  const p = db.prepare('select who, notebook, pos from book_pages where id = ?').get(o.page) as {
+  const p = db.prepare('select who, notebook, pos, call from book_pages where id = ?').get(o.page) as {
     who: string;
     notebook: number | null;
     pos: number | null;
+    call: number | null;
   };
+  const owner =
+    p.call !== null && keysCall(p.call)
+      ? (db.prepare('select agent from calls where id = ?').get(p.call) as { agent: string }).agent
+      : null;
   const next =
     p.notebook === null
       ? null
@@ -184,10 +196,10 @@ function versionsPage(o: On) {
   const id = Number(
     db
       .prepare(
-        `insert into book_pages (who, day, kind, label, created, updated, w, h, notebook, pos, ${column})
-          values (?, ?, 'free', ?, ?, ?, 1200, 1600, ?, ?, ?)`,
+        `insert into book_pages (who, day, kind, owner, label, created, updated, w, h, notebook, pos, call, ${column})
+          values (?, ?, 'free', ?, ?, ?, ?, 1200, 1600, ?, ?, ?, ?)`,
       )
-      .run(p.who, companyDay(Date.now()), title, now, now, p.notebook, pos, o.root.id).lastInsertRowid,
+      .run(p.who, companyDay(Date.now()), owner, title, now, now, p.notebook, pos, p.call, o.root.id).lastInsertRowid,
   );
   if (p.notebook !== null) changed(p.notebook, id);
   return id;
@@ -206,12 +218,12 @@ ${said}. The next versions start from that one and take what the board wrote int
 }
 
 // ---------------------------------------------------------------- the try run's brief
-// (the board's screens when the note has no view of its own: desktop Chrome and the iPad mini, sideways)
-const SCREENS = 'desktop Chrome at 1440 × 900, or the iPad mini at 1180 × 820';
+// The board's screens, when the note has no view of its own: the company's (brand.yaml screens), else a desktop's
+const screens = () => brand().screens ?? 'a desktop browser at 1440 × 900';
 function tryBrief(o: On, page: number, verdict: { why: string }, review: number | null) {
   const target = o.kind === 'group' ? `g${o.root.id}` : String(review);
   const view = o.anchor?.view;
-  const screen = view ? `${Math.round(view.w)} × ${Math.round(view.h)} CSS px at ${view.dpr}x` : SCREENS;
+  const screen = view ? `${Math.round(view.w)} × ${Math.round(view.h)} CSS px at ${view.dpr}x` : screens();
   const where = o.anchor?.url ? `on HQ's page ${o.anchor.url}` : 'on a page of its notebook';
   const snip =
     o.kind === 'group'

@@ -2,6 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { inspect, play, type QueuedJob, type Snapshot } from './eta.ts';
+import { memoryReport } from './memory.fixture.ts';
 import { DEADLINE_PAUSE_MS, PAUSE_MS } from './planner.ts';
 import { extraClaude } from './seatcapacity.ts';
 import { paceChange, pacingLifts } from '../../worker/src/pace.ts';
@@ -679,17 +680,11 @@ test('a running job releases its measured memory so the queue can use the worker
       room: 1,
       slots: { claude: 4 },
       seatRuns: { claude: 4 },
-      memory: {
-        at: 0,
+      memory: memoryReport({
         availableMb: 1900,
-        freeReserveMb: 1500,
-        defaultRunMb: 700,
         totalSlots: 4,
-        heldSlots: 0,
-        heldMb: 0,
-        starting: [],
         runningMb: { 1: 2400 },
-      },
+      }),
     },
   );
   const played = play(
@@ -709,17 +704,13 @@ test('startup memory reservations expire at their recorded time while holds and 
     room: 0,
     slots: { codex: 2 },
     seatRuns: { codex: 2 },
-    memory: {
-      at: 0,
+    memory: memoryReport({
       availableMb: 2600,
-      freeReserveMb: 1500,
-      defaultRunMb: 700,
       totalSlots: 2,
       heldSlots: 1,
       heldMb: 400,
       starting: [{ until: MINUTE, mb: 700 }],
-      runningMb: {},
-    },
+    }),
   });
   const played = play(
     input,
@@ -737,17 +728,10 @@ test('unmeasured future demand spends the real worker startup allowance', () => 
     room: 8,
     slots: { codex: 8 },
     seatRuns: { codex: 8 },
-    memory: {
-      at: 0,
+    memory: memoryReport({
       availableMb: 2200,
-      freeReserveMb: 1500,
-      defaultRunMb: 700,
       totalSlots: 8,
-      heldSlots: 0,
-      heldMb: 0,
-      starting: [],
-      runningMb: {},
-    },
+    }),
   });
   const played = play(
     input,
@@ -767,17 +751,10 @@ test('a job measured past the room the snapshot leaves starts on the allowance, 
     room: 8,
     slots: { codex: 8 },
     seatRuns: { codex: 8 },
-    memory: {
-      at: 0,
+    memory: memoryReport({
       availableMb: 2200,
-      freeReserveMb: 1500,
-      defaultRunMb: 700,
       totalSlots: 8,
-      heldSlots: 0,
-      heldMb: 0,
-      starting: [],
-      runningMb: {},
-    },
+    }),
   });
   const played = play(
     input,
@@ -1025,17 +1002,11 @@ test('seats without subscription windows run while an existing window with no re
 
 test('known finished occupants return memory and slots while unknown occupants remain reserved', () => {
   const input = snapshot([work(1, { status: 'done', finished: 0 }), work(2)], {
-    memory: {
-      at: 0,
+    memory: memoryReport({
       availableMb: 1500,
-      freeReserveMb: 1500,
-      defaultRunMb: 700,
       totalSlots: 1,
-      heldSlots: 0,
-      heldMb: 0,
-      starting: [],
       runningMb: { 1: 700 },
-    },
+    }),
   });
   const durations = sizes([
     [1, 1],
@@ -1059,17 +1030,11 @@ for (const neededMb of [900, 1200])
       {
         slots: { codex: 4, claude: 1 },
         seatRuns: { codex: 4, claude: 1 },
-        memory: {
-          at: 0,
+        memory: memoryReport({
           availableMb: 1600,
-          freeReserveMb: 1500,
-          defaultRunMb: 700,
           totalSlots: 3,
-          heldSlots: 0,
-          heldMb: 0,
-          starting: [],
           runningMb: { 1: 400, 2: 400, 3: 1400 },
-        },
+        }),
       },
     );
     for (const pace of ['usual', 'slow'] as const) {
@@ -1133,17 +1098,11 @@ for (const arrivesAt of [0, DEADLINE_PAUSE_MS / 2])
       {
         slots: { codex: 5, claude: 1 },
         seatRuns: { codex: 5, claude: 1 },
-        memory: {
-          at: 0,
+        memory: memoryReport({
           availableMb: 1600,
-          freeReserveMb: 1500,
-          defaultRunMb: 700,
           totalSlots: 6,
-          heldSlots: 0,
-          heldMb: 0,
-          starting: [],
           runningMb: { 1: 400, 2: 400, 3: 400, 4: 1400 },
-        },
+        }),
       },
     );
     for (const pace of ['usual', 'slow'] as const) {
@@ -1178,17 +1137,11 @@ for (const constrained of ['engine', 'seat'] as const)
       {
         slots: { codex: constrained === 'engine' ? 1 : 5, claude: 3 },
         seatRuns: { codex: constrained === 'seat' ? 1 : 5, claude: 3 },
-        memory: {
-          at: 0,
+        memory: memoryReport({
           availableMb: 1600,
-          freeReserveMb: 1500,
-          defaultRunMb: 700,
           totalSlots: 5,
-          heldSlots: 0,
-          heldMb: 0,
-          starting: [],
           runningMb: { 1: 2000, 2: 400, 3: 400 },
-        },
+        }),
       },
     );
     for (const pace of ['usual', 'slow'] as const) {
@@ -1208,3 +1161,114 @@ for (const constrained of ['engine', 'seat'] as const)
       assert.equal(seen.get(5)!.start, seen.get(4)!.done);
     }
   });
+
+for (const [availableMb, start] of [
+  [2000, DEADLINE_PAUSE_MS],
+  [2300, 0],
+] as const)
+  test(`deadline work on an idle seat starts ${start ? 'after the pause' : 'at once'} with ${availableMb} MB free, and lower work cannot take its room`, () => {
+    const input = snapshot(
+      [
+        work(1, { engine: 'claude', status: 'running', seat: 'claude-busy', memoryMb: 300 }),
+        work(2, { engine: 'claude', memoryMb: 700, due: -MINUTE }),
+        work(3, { engine: 'claude', memoryMb: 400 }),
+      ],
+      {
+        seats: ['claude-idle', 'claude-busy'].map(id => ({
+          id,
+          engine: 'claude',
+          state: 'ready',
+          until: null,
+          fiveHour: id === 'claude-idle' ? 0.03 : 0.6,
+          fiveHourResets: null,
+          week: 0.1,
+          weekResets: null,
+          stop: 0.99,
+        })),
+        slots: { claude: 15 },
+        seatRuns: {},
+        room: 15,
+        memory: memoryReport({ availableMb, runningMb: { 1: 300 } }),
+      },
+    );
+    for (const pace of ['usual', 'slow'] as const) {
+      const seen = play(
+        input,
+        sizes([
+          [1, 60],
+          [2, 10],
+          [3, 60],
+        ]),
+        { pace },
+      );
+      assert.equal(seen.get(2)!.start, start);
+      assert.notEqual(seen.get(1)!.done, null, 'the lower run eventually finishes');
+      assert.notEqual(seen.get(3)!.done, null, 'new lower work eventually finishes');
+    }
+  });
+
+for (const [memoryMb, codexSlots, start] of [
+  [400, 2, MINUTE / 2],
+  [700, 1, MINUTE / 2 + DEADLINE_PAUSE_MS],
+] as const)
+  test(`a waiter whose seat drains during its pause releases room for ${memoryMb} MB of independent work`, () => {
+    const input = snapshot(
+      [
+        work(1, { status: 'running', seat: 'codex', memoryMb: 300 }),
+        work(2, { engine: 'claude', status: 'running', seat: 'claude', followThrough: true, memoryMb: 100 }),
+        work(3, { engine: 'claude', memoryMb: 700, due: 0 }),
+        work(4, { engine: 'claude', status: 'running', seat: 'claude', memoryMb: 300 }),
+        work(5, { memoryMb, due: MINUTE }),
+      ],
+      {
+        slots: { claude: 3, codex: codexSlots },
+        seatRuns: { claude: 3, codex: codexSlots },
+        rates: { claude: { five: { claude: 0.6 }, week: 0 } },
+        memory: memoryReport({ runningMb: { 1: 300, 2: 100, 4: 300 } }),
+      },
+    );
+    Object.assign(input.seats[1], { fiveHour: 0.845, fiveHourResets: 240 * MINUTE });
+    for (const pace of ['usual', 'slow'] as const) {
+      const seen = play(
+        input,
+        sizes([
+          [1, 60],
+          [2, 10],
+          [3, 10],
+          [4, 60],
+          [5, 10],
+        ]),
+        { pace },
+      );
+      assert.ok(seen.get(3)!.start! >= 240 * MINUTE, 'the waiter must wait for its seat to reset');
+      assert.equal(Math.round(seen.get(5)!.start!), start, 'independent work uses its own ready seat');
+    }
+  });
+
+test('an older spare claim on another engine cannot spend an ordinary waiter’s reserved room', () => {
+  const input = snapshot(
+    [
+      work(1, { engine: 'claude', status: 'running', seat: 'claude', memoryMb: 300, downtime: 1 }),
+      work(2, { memoryMb: 400, downtime: 1 }),
+      work(3, { engine: 'claude', memoryMb: 700 }),
+    ],
+    {
+      slots: { claude: 2, codex: 1 },
+      seatRuns: { claude: 2, codex: 1 },
+      memory: memoryReport({ runningMb: { 1: 300 } }),
+    },
+  );
+  for (const pace of ['usual', 'slow'] as const) {
+    const seen = play(
+      input,
+      sizes([
+        [1, 60],
+        [2, 60],
+        [3, 10],
+      ]),
+      { pace },
+    );
+    assert.equal(seen.get(3)!.start, PAUSE_MS);
+    assert.ok(seen.get(2)!.start! >= seen.get(3)!.done!);
+  }
+});

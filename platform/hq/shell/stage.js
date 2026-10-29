@@ -176,7 +176,5 @@ function draw() {
   scene.draw(now);
   overlay.draw();
 }
-// A screenshot about to copy the stage's canvas: a frame drawn now, as a WebGL look's last one is gone once shown
-document.addEventListener('snapshot:draw', e => { if (e.target === cv && scene) scene.draw(now); }, true);
 // dev: one frame at time t, with the loop held
 export function frame(t) { step(0); now = t; draw(); }

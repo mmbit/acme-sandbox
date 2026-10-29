@@ -9,6 +9,16 @@ export function setupPostitPen(r) {
   r.wordSteps = [];
   r.penWords = keepFromScribble(r.text);
   strokesOn(r.text, { use: () => penEdits(r.text), end: points => amended(r, points) });
+  penWithoutKeyboard(r.text);
+}
+// On a touch screen the pen's handwriting (Scribble) brings no keyboard: the field asks for none until a finger's (or a
+// mouse's) press on it, and again once it's left.
+function penWithoutKeyboard(field) {
+  if (!matchMedia('(any-pointer: coarse)').matches) return;
+  const none = () => (field.inputMode = 'none');
+  field.addEventListener('pointerdown', e => e.pointerType !== 'pen' && field.removeAttribute('inputmode'), true);
+  field.addEventListener('blur', none);
+  none();
 }
 // What a reset leaves: no gap open (what's written in it and not read yet dropped, never put in the next post-it's
 // words), nothing to undo, the words (none now) the field's own again

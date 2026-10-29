@@ -92,7 +92,9 @@ export function dried(book, stroke, hooks) {
   };
   // Only the pen edits content. A highlighter always leaves ink.
   if (!(line.alpha < 1)) {
+    // A scratch-out deletes its group without keeping the gesture as ink.
     if (book.groups?.scratch(v, line)) return book.ink.clear();
+    // A line across words strikes them out or slices them open instead of adding ink.
     if (book.amend?.claim(stroke, book.pointer)) return book.ink.clear();
   }
   // (a page written on keeps its size, whatever the paper does next, and grows to hold what's written on it)

@@ -12,15 +12,14 @@ import { existsSync, rmSync } from 'node:fs';
 import { ours, pictureUrl } from './notebookpictures.ts';
 import { boxOf, emptyGroup, hasAny, joined, picks, shifted, type Parts } from './notebookparts.ts';
 import { db, inOneStep, lacks } from './db.ts'; // (lacks)
-import { findAgent } from './jobs.ts';
 import { BOARD } from './ink/book.ts';
 import { inkOf, isRefused, textsOf, wordsOf, type Anchor, type Refused } from './pagechecks.ts';
 import { DIR, SWEEP_MS, scrapsOf } from './pagescraps.ts';
 import { listedOnce } from './ink/bookslips.ts';
-import { answersOf, triesOf } from './ink/groupanswers.ts';
+import { answersOf, readOf, triesOf } from './ink/groupanswers.ts';
 import { changed, currentPage, pageRow, shut, type NotebookPage } from './notebook.ts';
 import { judgeEdited, judgeLater } from './ink/bookjudge.ts';
-import { spotsClear } from './ink/answerplace.ts';
+import { spotsAgain, spotsClear } from './ink/answerplace.ts';
 
 // parent: a reply's group. answers: the slip a reply is under. owner: the agent a scrap was cut from the work of (the
 // page's data-owner), who gets it when its page is sent; null, the routing check decides. note: the note it went as.
@@ -31,8 +30,9 @@ db.exec(`create table if not exists notebook_groups (id integer primary key auto
   said text, owner text, status text not null default 'open', note integer, created text not null, updated text not null,
   deleted integer, asked integer, asked_spot text, expect integer);
   create index if not exists notebook_groups_page on notebook_groups (page)`);
-// (the answers' columns, as Group has them; tried: the try run making its versions, booktry.ts)
-for (const column of ['asked integer', 'asked_spot text', 'expect integer', 'tried integer'])
+// (the answers' columns, as Group has them; tried: the try run making its versions, booktry.ts; reason: bookanswer.ts
+// noAnswer's)
+for (const column of ['asked integer', 'asked_spot text', 'expect integer', 'tried integer', 'reason integer'])
   if (lacks('notebook_groups', column.split(' ')[0])) db.exec(`alter table notebook_groups add column ${column}`);
 
 export type Group = {
@@ -57,10 +57,11 @@ export type Group = {
   asked: number | null; // (the run answering it, bookanswer.ts.)
   asked_spot: string | null; // (where its answer lies: JSON {dx, dy, w, h})
   expect: number | null; // (how many versions its try run makes: hq answer --expect)
+  reason: number | null; // (the slip saying why no answer came, while it's shown)
 };
 
 // ---------------------------------------------------------------- a page whole
-// GET /api/notebooks/pages/groups?page=: the page and its groups, each with its children
+// GET /api/notebooks/pages/groups?page=: the page, its notebook and its groups, each with its children
 export function listGroups(b: any, who = BOARD) {
   const p = pageRow(Number(b?.page), who);
   if (!p) return 404;
@@ -71,6 +72,8 @@ export function listGroups(b: any, who = BOARD) {
   const replies = rows.filter(g => g.parent !== null);
   return {
     page: p.id,
+    notebook: p.notebook,
+    title: p.label,
     groups: rows.filter(g => g.parent === null).map(g => groupOf(g, replies, listed)),
     ...triesOf(p, shown, listed), // (a try's versions page: what it tries.)
   };
@@ -153,6 +156,8 @@ export function restoreGroup(b: any, who = BOARD) {
     g.deleted,
   );
   spotsClear(page);
+  // (its own answers placed again too: a spot kept from before the controls grew, or from the page it was on)
+  spotsAgain(page, g.parent ?? g.id);
   changed(p.notebook, page);
   return shown(row(g.id)!);
 }
@@ -316,6 +321,15 @@ export const groupsBox = (page: number) => boxOf(drawnGroups(page));
 export const row = (id: number) =>
   (Number.isInteger(id) && id > 0 ? db.prepare('select * from notebook_groups where id = ?').get(id) : undefined) as
     Group | undefined;
+// A group's root: a reply's parent (the board's note it's written under), else the group itself
+export const rootOf = (g: Group) => (g.parent === null ? g : row(g.parent)!);
+// The group a book note went as, unless it's deleted: a deleted group is kept only for Undo, so nothing answers on it
+// or tries it
+export const groupOfNote = (note: number) =>
+  db.prepare('select * from notebook_groups where note = ? and deleted is null').get(note) as Group | undefined;
+// The group an answer or a judged target is on: its own (grp), else the group its note went as
+export const groupOn = (x: { grp?: number | null; note?: number | null }) =>
+  x.grp != null ? row(x.grp) : x.note != null ? groupOfNote(x.note) : undefined;
 // What HQ reads of a group: its elements, its box, its children (answers and replies, in the order they came), asks
 export const shown = (g: Group) =>
   groupOf(g, db.prepare('select * from notebook_groups where parent = ? and deleted is null').all(g.id) as Group[]);
@@ -323,17 +337,13 @@ function groupOf(g: Group, replies: Group[], listed = listedOnce()) {
   const parts = partsOf(g),
     mineReplies = replies.filter(r => r.parent === g.id);
   const { answers, ...about } = answersOf(g, mineReplies, listed); // (waiting, tries_page, asks)
-  return {
-    ...element(g, parts),
-    anchor: g.anchor ? (JSON.parse(g.anchor) as Anchor) : null,
-    owner: g.owner,
-    owner_name: g.owner ? (findAgent(g.owner)?.name ?? g.owner) : null,
-    ...about,
-    children: [
-      ...answers.map(a => ({ kind: 'answer' as const, ...a })),
-      ...mineReplies.map(r => ({ ...element(r, partsOf(r)), kind: 'reply' as const, answers: r.answers })),
-    ].sort((a, b) => a.created.localeCompare(b.created)),
-  };
+  const head = { ...element(g, parts), anchor: g.anchor ? (JSON.parse(g.anchor) as Anchor) : null, ...about };
+  return readOf(
+    head,
+    g.owner,
+    answers,
+    mineReplies.map(r => ({ ...element(r, partsOf(r)), answers: r.answers })),
+  );
 }
 const element = (g: Group, parts: Parts) => ({
   id: g.id,

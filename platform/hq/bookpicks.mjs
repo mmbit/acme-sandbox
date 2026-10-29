@@ -5,8 +5,8 @@
 // it was. Nothing in HQ reads the ring: the store's judge does, played here by the reply route, which picks the version
 // it was on, and the page stamps it. A tick on another moves the pick. On a call's page the same.
 import assert from 'node:assert/strict';
-import { inStory, triedNote } from './bookanswers.mjs';
-import { layer, stroke } from './bookanswersplay.mjs';
+import { inStory } from './bookanswers.mjs';
+import { layer, stroke, triedNote } from './bookanswersplay.mjs';
 
 // The ring sent once the pen rests, read as a pick and the page read again: about a second, but the played store's
 // routes hand a post back several seconds late while the browser's connections are taken (a reply's own wait)
@@ -70,6 +70,7 @@ async function picked(browser, c, { viewport, size, pointer, options = {}, moves
     const frame = id => layer(page).locator(`.bk-version[data-answer="${id}"]`);
     await frame(4612).waitFor({ timeout: LANDS_MS });
     await page.waitForTimeout(c.settle);
+    await clearOfTools(page);
     await ring(page, 4611, pointer);
     await wetRound(page, 4611);
     await frame(4611).locator('.bk-version-stamp').waitFor({ timeout: LANDS_MS });
@@ -107,6 +108,18 @@ async function wetRound(page, id) {
   assert.ok(
     wet && wet.x < paper.x && wet.y < paper.y && wet.x + wet.width > paper.x + paper.width,
     `the ring drawn round it as the pen goes: ${JSON.stringify([wet, paper])}`,
+  );
+}
+
+// Every frame right of the tool strip floating over the paper's left, so a ring round one starts on the page
+async function clearOfTools(page) {
+  const strip = await page.locator('#book .bk-strip .bk-island').boundingBox(),
+    lefts = await layer(page)
+      .locator('.bk-version-paper')
+      .evaluateAll(els => els.map(el => el.getBoundingClientRect().left));
+  assert.ok(
+    lefts.every(x => x >= strip.x + strip.width),
+    `the versions clear of the tools: ${JSON.stringify([lefts, strip])}`,
   );
 }
 

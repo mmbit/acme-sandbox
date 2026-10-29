@@ -16,12 +16,11 @@ import {
   typedBoxes,
   wordsOf,
 } from './notebookplaychecks.js';
+import { STACK, nextScrap } from './bookgroupbox.js';
 
 export const BOARD = 'board';
 export const CHANGED = 'this group changed on another screen: read it again';
 const SENT = 'a sent page is read-only: what the board wrote there stays';
-// Where a scrap lands on its page: under what's there, this far apart
-const STACK = { x: 40, gap: 32, w: 360, top: 80 }; // (top: under the page's heading)
 
 // A route's handler for its 'METHOD path': (s, the body)
 export const GROUP_ROUTES = {
@@ -100,17 +99,19 @@ function createScrap(s, b) {
   const snip = dataUrlPicture(b.snip);
   const p = s.page(s.currentPage(nb.id)),
     w = Math.min(STACK.w, snip.width);
-  const picture = { file: keepPicture(s, p.id, snip), x: STACK.x, y: stackFoot(s, p.id), w, tilt: 0 };
-  picture.h = Math.round((snip.height * w) / snip.width);
+  const h = Math.round((snip.height * w) / snip.width),
+    picture = { file: keepPicture(s, p.id, snip), ...stackSpot(s, p.id, h), w, h, tilt: 0 };
   const more = { anchor, words: said.words, said: said.said, owner: b.owner ?? null };
   return shown(s, insertGroup(s, p, 'scrap', BOARD, { ...emptyGroup, pictures: [picture] }, more));
 }
 // A note with no picture: its words typed in the post-it's ink, stacked as a scrap is (notebookgroups.ts typedNote)
 function typedNote(s, nb, said, more) {
   if (!said.words) refuse(400, 'a note with no picture holds words');
-  const texts = textsOf(typedBoxes(said.words, { x: STACK.x, w: STACK.w, color: '#1d1a2f' })),
-    p = s.page(s.currentPage(nb.id));
-  return shown(s, insertGroup(s, p, 'drawing', BOARD, shifted({ ...emptyGroup, texts }, 0, stackFoot(s, p.id)), more));
+  const texts = textsOf(typedBoxes(said.words, { x: 0, w: STACK.w, color: '#1d1a2f' })),
+    p = s.page(s.currentPage(nb.id)),
+    typed = { ...emptyGroup, texts },
+    { x, y } = stackSpot(s, p.id, boxOf(typed).h);
+  return shown(s, insertGroup(s, p, 'drawing', BOARD, shifted(typed, x, y), more));
 }
 // Open groups of one page as one, the first's (or the scrap's): the others deleted, for Undo's split
 function joinGroups(s, b) {
@@ -198,14 +199,14 @@ export function putAside(s, g, p) {
   s.changed(p.notebook, p.id);
 }
 const partsOf = g => ({ ink: g.ink, texts: g.texts, pictures: g.pictures });
-// The foot of what's on a page, where the next scrap goes
-function stackFoot(s, page) {
-  const feet = s.groups
-    .filter(g => g.page === page && g.deleted === null)
-    .map(g => boxOf(partsOf(g)))
-    .filter(b => b !== null)
-    .map(b => b.y + b.h);
-  return feet.length ? Math.round(Math.max(...feet) + STACK.gap) : STACK.top;
+// Where the next scrap on a page goes, h tall (bookgroupbox.js)
+function stackSpot(s, page, h) {
+  const groups = s.groups.filter(g => g.page === page && g.parent === null && g.deleted === null);
+  const { x, y } = nextScrap(
+    groups.map(g => ({ id: g.id, box: boxOf(partsOf(g)) })),
+    h,
+  );
+  return { x, y };
 }
 // What HQ reads of a group: its elements, its box, its children (answers and replies, in the order they came) and its
 // asks

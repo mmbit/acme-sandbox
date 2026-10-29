@@ -50,7 +50,12 @@ html, body { margin: 0; height: 100%; height: var(--app-h, 100dvh); overflow: hi
    queries and vw can't. It clips rather than hides: the fixed layers overflow it now, and a focus or a scrollIntoView
    must never scroll the page sideways. */
 body { width: calc(100% - var(--book-room, 0px)); contain: layout; container: page / inline-size; overflow: clip; }
-button { font: inherit; color: inherit; cursor: pointer; touch-action: manipulation; }
+/* No double-tap zoom anywhere, so quick taps each count (Safari zooms on a second tap where touch-action is auto). The
+   rule sits on every element because touch-action isn't inherited: an element's own value combines only with its
+   ancestors' up to the nearest scroll container, so a rule on the page alone stops at the first box that scrolls.
+   Pinch and pans stay, and a canvas's none or a list's pan-y still wins. */
+* { touch-action: manipulation; }
+button { font: inherit; color: inherit; cursor: pointer; }
 #hud, #zoom, #status, #hint, .toast, #card { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 .muted { color: var(--muted); }
@@ -70,7 +75,7 @@ button { font: inherit; color: inherit; cursor: pointer; touch-action: manipulat
 #hud { position: fixed; z-index: 6; top: 0; left: 0; right: 0; display: flex; justify-content: space-between; align-items: flex-start; gap: 8px;
   padding: max(10px, var(--sat)) max(12px, var(--sar)) 0 max(12px, var(--sal)); pointer-events: none; }
 #hud > * { pointer-events: auto; }
-.brand, .tools button, .tools a.desk, #zoom button, #status > span, .toast {
+.brand, .tools button, .tools a.desk, #zoom button, #status > span {
   background: var(--cream); border: var(--bw) solid var(--line); box-shadow: var(--shadow); border-radius: var(--r); }
 .brand { display: flex; align-items: center; gap: 8px; padding: 4px 10px 4px 6px; }
 .brand img { width: auto; height: 30px; flex: none; } /* the foundation's 15 px wordmark at 2x (whole pixels), any logo at its own shape */
@@ -128,10 +133,6 @@ body:not(.keys) #status > span { flex: none; } /* (never narrower than its words
 #hint { position: fixed; left: 50%; top: calc(var(--app-h, 100dvh) - max(12px, var(--sab)) - var(--status-h, 0px) - 8px); transform: translate(-50%, -100%); color: var(--on-deep); background: rgba(29, 26, 47, .75);
   padding: 4px 12px; border-radius: var(--r); font-size: 14px; pointer-events: none; transition: opacity .6s; white-space: nowrap; }
 #hint.gone { opacity: 0; }
-#toasts { position: fixed; top: calc(70px + var(--sat)); left: 50%; transform: translateX(-50%); display: grid; gap: 8px; z-index: 5; width: min(92cqw, 420px); }
-.toast { padding: 8px 12px; text-align: left; animation: drop .35s var(--ease, steps(4)); transition: opacity .4s; }
-.toast.gone { opacity: 0; }
-@keyframes drop { from { transform: translateY(-16px); opacity: 0; } }
 #loading { position: fixed; inset: 0; display: grid; place-items: center; color: var(--gold); background: var(--deep); font-size: 20px; transition: opacity .4s; }
 #loading.gone { opacity: 0; pointer-events: none; }
 
@@ -245,7 +246,7 @@ mark { background: var(--gold); color: var(--on-accent); }
 #card.show { animation: card 4s var(--ease, steps(24)) forwards; }
 @keyframes card { 0% { opacity: 0; transform: translateY(20px); } 8%, 88% { opacity: 1; transform: none; } 100% { opacity: 0; transform: translateY(-6px); } }
 body.touring #hud .tools > :not(#btn-tour):not(#btn-music):not(#btn-sound) { display: none; }
-body.touring #zoom, body.touring #status, body.touring #hint, body.touring #toasts { display: none; }
+body.touring #zoom, body.touring #status, body.touring #hint { display: none; }
 
 @container page (max-width: 700px) {
   #card b { font-size: 22px; } #card span { font-size: 14px; } #card { bottom: 20px; }
@@ -269,7 +270,7 @@ body.touring #zoom, body.touring #status, body.touring #hint, body.touring #toas
   .tools .lbl, .brand small { display: none; }
   .brand { flex-shrink: 1; min-width: 0; } .brand :is(img, svg.logo) { flex: 0 1 auto; min-width: 0; object-fit: contain; object-position: left center; }
 }
-@media (prefers-reduced-motion: reduce) { #panel, .toast { transition: none; animation: none; } }
+@media (prefers-reduced-motion: reduce) { #panel { transition: none; animation: none; } }
 
 .tools a.desk { color: inherit; text-decoration: none; position: relative; } #btn-news { position: relative; }
 /* each above the buttons after it, so their edge doesn't cut its count badge (a look's backdrop blur makes every button
@@ -641,7 +642,7 @@ body.touring #zoom, body.touring #status, body.touring #hint, body.touring #toas
 .intercom .call { text-align: center; padding: 8px 4px; }
 .intercom .call .who { margin: 0; font-size: 14px; color: var(--muted); }
 .intercom .call .state { margin: 6px 0; font-size: 22px; font-weight: 600; }
-.intercom .call .note { margin: 8px 0 0; } /* (an alert) */
+.intercom .call .note { margin: 0 0 8px; } /* (an alert, HQ's gap from the transcript under it.) */
 /* The call's own little screen at its top: the agent's pixel figure standing in the screen's light, bobbing on two frames
    while it speaks (the bob alone says it speaks: no ring), and what it's doing in the corner. Under it the transcript,
    the board's lines and the agent's, plain boxes in a box of its own that scrolls. */
@@ -663,10 +664,10 @@ body.touring #zoom, body.touring #status, body.touring #hint, body.touring #toas
 .intercom .call .cf-picture::before { content: ''; position: absolute; inset: 0; pointer-events: none;
   background: radial-gradient(ellipse 46% 70% at 50% 100%, color-mix(in srgb, var(--cb-accent) calc(22% + var(--cb-level) * 40%), transparent), transparent 70%); }
 .intercom .call .cf-figure { position: relative; z-index: 1; display: grid; place-items: end center; margin-bottom: 12px; }
-.intercom .call .cf-figure > canvas { width: 70px; height: 140px; image-rendering: pixelated; transform-origin: 50% 100%; }
+.intercom .call .cf-figure > img { width: 70px; height: 140px; image-rendering: pixelated; transform-origin: 50% 100%; -webkit-touch-callout: none; } /* (an image of the portrait: callscreen.js faceOf.) */
 .intercom .call .cf-figure > .cb-initial { margin-bottom: 30px; font-size: 52px; line-height: 1; color: var(--scr); text-shadow: var(--scr-glow); }
 .intercom .call .call-face.talking .cf-figure > * { animation: cb-talk .24s steps(2) infinite; }
-.intercom .call .call-face[data-state=thinking] .cf-figure > canvas { animation: cb-think 1.6s steps(4) infinite; }
+.intercom .call .call-face[data-state=thinking] .cf-figure > img { animation: cb-think 1.6s steps(4) infinite; }
 .intercom .call .call-face .state { position: absolute; z-index: 1; left: 10px; top: 8px; margin: 0; font-size: 13px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase;
   color: var(--scr); text-shadow: var(--scr-glow); }
 /* (its whole height, the call's keys on one row on a phone too.) */
@@ -679,7 +680,7 @@ body.touring #zoom, body.touring #status, body.touring #hint, body.touring #toas
 .intercom .call .lines .board { align-self: flex-end; background: var(--gold); color: var(--on-accent); }
 @keyframes cs-line-in { from { opacity: 0; transform: translateY(6px); } }
 /* a phone on its side: the little screen smaller, so the keys stay in view */
-@media (max-height: 560px) { .intercom .call .call-face { height: 104px; } .intercom .call .cf-figure > canvas { width: 28px; height: 56px; } .intercom .call .lines { height: 136px; } }
+@media (max-height: 560px) { .intercom .call .call-face { height: 104px; } .intercom .call .cf-figure > img { width: 28px; height: 56px; } .intercom .call .lines { height: 136px; } }
 .intercom .call .row { justify-content: center; gap: 12px; }
 .intercom .call .row button { min-height: 52px; padding: 0 22px; font-size: 18px; border: var(--bw) solid var(--line); box-shadow: var(--shadow); background: var(--paper); color: var(--ink); }
 .intercom .call .row button.hangup { background: var(--red); color: #fff; }
@@ -741,11 +742,11 @@ body.touring #zoom, body.touring #status, body.touring #hint, body.touring #toas
 .callbubble[data-drop] { outline-color: var(--cb-accent); scale: 1.12; }
 .callbubble .cb-face { position: relative; display: grid; place-items: end center; height: 84px; padding: 0; overflow: hidden; cursor: inherit; font: inherit;
   background: var(--scr-bg); border: var(--bw) solid var(--scr-frame); border-radius: var(--r); } /* (the bob says it speaks: no ring.) */
-.callbubble .cb-face > canvas { width: 36px; height: 72px; image-rendering: pixelated; transform-origin: 50% 100%; }
+.callbubble .cb-face > img { width: 36px; height: 72px; image-rendering: pixelated; transform-origin: 50% 100%; -webkit-touch-callout: none; }
 .callbubble .cb-face > .cb-initial { align-self: center; font-size: 34px; color: var(--scr); text-shadow: var(--scr-glow); }
 /* alive with its voice: the pixel figure bobs on two frames while it speaks, leans in while it thinks */
-.callbubble.talking .cb-face > :is(canvas, .cb-initial) { animation: cb-talk .24s steps(2) infinite; }
-.callbubble[data-state=thinking] .cb-face > canvas { animation: cb-think 1.6s steps(4) infinite; }
+.callbubble.talking .cb-face > :is(img, .cb-initial) { animation: cb-talk .24s steps(2) infinite; }
+.callbubble[data-state=thinking] .cb-face > img { animation: cb-think 1.6s steps(4) infinite; }
 @keyframes cb-talk { 50% { transform: translateY(-3px) scaleY(1.04); } }
 @keyframes cb-think { 50% { transform: rotate(-4deg); } }
 .callbubble .cb-eye { position: absolute; left: 10px; top: 10px; display: grid; place-items: center; width: 26px; height: 20px; color: #fff; background: var(--red);
@@ -767,7 +768,7 @@ body.touring #zoom, body.touring #status, body.touring #hint, body.touring #toas
 @media (max-width: 599px), (max-height: 499px) {
   .callbubble { width: 108px; gap: 4px; padding: 4px; }
   .callbubble .cb-face { height: 62px; }
-  .callbubble .cb-face > canvas { width: 26px; height: 52px; }
+  .callbubble .cb-face > img { width: 26px; height: 52px; }
   .callbubble .cb-face > .cb-initial { font-size: 26px; }
   .callbubble .cb-keys { gap: 4px; }
   .callbubble .cb-keys button { min-height: 30px; font-size: 12px; }
@@ -797,7 +798,7 @@ body.keys.keys #call-cards .call-card :is([data-show], [data-keep], [data-open])
 body.keys .callbubble { background: var(--key-bg); border: 1.5px solid var(--key-edge); border-radius: 22px; box-shadow: var(--key-lip), 0 18px 40px rgba(0, 0, 0, .22); transition: box-shadow .2s, scale .2s cubic-bezier(.2, 1.4, .4, 1); }
 body.keys .callbubble.held { box-shadow: var(--key-lip), 0 26px 50px rgba(0, 0, 0, .28); }
 body.keys .callbubble .cb-face { border-radius: 16px; border: 0; background: color-mix(in srgb, var(--k-ink) 8%, var(--key-bg)); }
-body.keys .callbubble.talking .cb-face > :is(canvas, .cb-initial) { animation: cb-talk-smooth .5s ease-in-out infinite; }
+body.keys .callbubble.talking .cb-face > :is(img, .cb-initial) { animation: cb-talk-smooth .5s ease-in-out infinite; }
 @keyframes cb-talk-smooth { 50% { transform: translateY(-3px) scale(1.03); } }
 body.keys .callbubble .cb-eye { border: 0; border-radius: 999px; box-shadow: 0 2px 0 color-mix(in srgb, var(--red) 60%, #000); }
 body.keys .callbubble .cb-eye svg { fill: none; stroke: currentColor; }
@@ -882,7 +883,7 @@ body.keys .intercom .chat .hint .langs button { background: var(--key-bg); color
      the search and the world's keys above them.) */
   .tools { flex-wrap: wrap-reverse; justify-content: flex-end; max-width: calc(5 * 38px + 4 * 6px); } .brand { flex-shrink: 1; min-width: 0; } .brand b { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .tools > :not(.board-tool) { order: 2; }
-  #toasts, #call-cards { top: calc(102px + var(--sat)); } /* below the second row of tools */
+  #call-cards { top: calc(102px + var(--sat)); } /* below the second row of tools */
   /* the logo and the tools beside it, in rows: a long logo shrinks whole, and the tools never stack into a column that
      pushes the projects down. The logo leaves room for four keys a row and the gap beside it, so Brownstone's eight
      tools keep to two rows: 40 px each, the widest key's (its desk link: a 20 px icon, 8 px padding and a 2 px border a
@@ -1095,7 +1096,6 @@ body.keys .rows.settings li > button.danger-row b { color: color-mix(in srgb, #e
 .crt .looks [aria-pressed=true], .crt .look-settings [aria-pressed=true] { background: var(--scr); color: var(--scr-ink); }
 .crt .look-settings { margin-top: 22px; } /* (the look on stage's own settings: desk.js looks) */
 .crt .look-settings .cap { margin: 0 0 8px; } .crt .look-settings .acts + .cap { margin-top: 18px; }
-.toast.sticky { background: var(--gold); color: var(--on-accent); }
 /* Settings › Notifications (desk.js alerts): Seats' rows, this device's switch with its state under it (or the word for
    why it has none, and the steps to it), a test ring, then what rings in a sentence */
 .push-app .cap:not(:first-child) { margin-top: 22px; }
@@ -1188,12 +1188,6 @@ body.keys .mailfwd .act:disabled { transform: var(--key-down); box-shadow: var(-
 .prose code { font-family: ui-monospace, Menlo, monospace; font-size: .9em; }
 /* a job's number in any of HQ's words opens that job (prose.js jobLink): in the words' own colour, underlined */
 .job-link { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
-/* a tap target whose words hold job links (prose.js covered): its button stretched over the box, each link above it
-   */
-.covered { position: relative; isolation: isolate; }
-.covered > .cover { all: unset; position: absolute; inset: 0; z-index: 1; cursor: pointer; border-radius: inherit; -webkit-tap-highlight-color: transparent; }
-.covered .job-link { position: relative; z-index: 2; }
-.covered:has(> .cover:focus-visible) { outline: 2px solid currentColor; outline-offset: -2px; }
 .prose > .table { margin: 0 0 .5em; } /* a table in small type, at the column's width: a wider one scrolls sideways inside it */
 .prose .table { max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; }
 .prose table { border-collapse: collapse; font-size: 13px; line-height: 1.35; font-variant-numeric: tabular-nums; overflow-wrap: normal; word-break: normal; }

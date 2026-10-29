@@ -2,7 +2,7 @@
 // the page is watched along, Pause, hang up and open. Dragged anywhere, it settles into the nearest corner on a spring.
 // HQ's call (callscreen.js) and the join link's page (joinpage.js) both use it; each styles `.callbubble` in its own look.
 //   words      { call, pause, resume, hangUp, open, watched, paused }: the buttons' and the eye's words
-//   face       the element drawn in the bubble (a portrait canvas, an svg)
+//   face       the element drawn in the bubble (a portrait image, an svg)
 //   icons      { eye, hangUp }: the page's own drawings of them, as markup (else simple ones of this file's)
 //   keep       a localStorage key for the corner it last settled in, or none
 //   onPause, onResume, onHangUp, onOpen, onSound(name): name is 'settle' as it lands in a corner

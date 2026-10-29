@@ -220,9 +220,10 @@ claim, the worker and the review panel (`threadorder.ts`). There is no setting f
 - **The order.** A task (a work job in a deliverable that isn't a pull request's fix or update) starts once the task before
   it in its deliverable (`jobs.seq`, else ids) is done: pushed, not merged. The deliverable's next task to
   start also waits until every deliverable it needs is done and merged. A task before it that failed with nothing in its
-  place holds it; a replacement (`--lands`) takes the failed task's place. A failed task whose branch has an open pull
+  place holds it when it was drawn before that failure, counting on its work; one drawn since (a redo queued without
+  `--lands`, the next step) is the owner's call, made knowing it failed, and goes on. A replacement (`--lands`) takes the failed task's place. A failed task whose branch has an open pull
   request (open, stuck or with the board) holds nothing, since the deliverable's later tasks still push there (`jobs.ts`
-  `failedAside`); once that pull request merges or closes, the failed task holds the deliverable again and the deliverable stays
+  `failedAside`); once that pull request merges or closes, the failed task again holds the tasks drawn before it failed and the deliverable stays
   open. A task waiting for a time still to come
   (`hq job --when`) holds nothing: until then the tasks after it that haven't started go first, and once it's due it
   follows those that did (`inTurn`). The claim and the play read both as edges of

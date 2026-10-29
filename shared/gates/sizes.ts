@@ -75,9 +75,19 @@ export async function crossedLimits(
 async function sizesAtBase(tools: Tools, root: string, base: string, change: Change) {
   if (!change.basePath || !SIZED.test(change.basePath)) return null;
   const path = change.path || change.basePath;
-  if (SCRIPT.test(change.basePath)) return scriptSizes(path, git(root, 'show', `${base}:${change.basePath}`));
+  if (SCRIPT.test(change.basePath)) {
+    return scriptSizes(path, git(root, 'show', `${base}:${change.basePath}`)).catch(err => unreadableBase(err, change));
+  }
   const before = await baseLint(tools, root, base, change);
   return { text: before.text, ...codeSizes(tools, path, before.text, before.messages) };
+}
+
+// A Python file Python couldn't parse at the base has no sizes there to keep: it's measured as a new file, saying so.
+// Any other failure still stops the gates.
+function unreadableBase(err: unknown, change: Change) {
+  if (!(err instanceof UnreadablePython)) throw err;
+  console.log(`${change.basePath} at the base: ${err.message}; measured as a new file`);
+  return null;
 }
 
 // A touched file's sizes now: code by ESLint's findings on it
@@ -191,10 +201,16 @@ export async function scriptSizes(path: string, text: string): Promise<Sizes> {
   return { text, longFile, longFunctions };
 }
 
+// Python couldn't parse a file's text: spans.py's UNREADABLE exit
+const UNREADABLE = 3;
+class UnreadablePython extends Error {}
+
 // A Python file's functions (spans.py). One Python can't parse stops the gates, saying which.
 function functionSpans(path: string, text: string) {
   const run = spawnSync('python3', ['-I', join(import.meta.dirname, 'spans.py')], { input: text, encoding: 'utf8' });
   if (run.error) throw run.error;
-  if (run.status !== 0) throw new Error(`${path}: Python can't read it: ${run.stderr.trim().split('\n').at(-1)}`);
+  const why = run.stderr.trim().split('\n').at(-1);
+  if (run.status === UNREADABLE) throw new UnreadablePython(`${path}: Python can't read it: ${why}`);
+  if (run.status !== 0) throw new Error(`${path}: spans.py failed: ${why}`);
   return JSON.parse(run.stdout) as { name: string; line: number; first: number; end: number }[];
 }

@@ -83,8 +83,8 @@ async def main(port):
             return await room_call(ws, *given)
         server.room_call = any_page
     server.Call.transcribe = lambda self, seg: 'Can you hear me?'
-    server.pocket.generate_audio_stream = lambda state, text, stop=None: iter([NS(numpy=lambda: hum(text))]) (the route is given its call maker and what the line is wired to, which it
-    # hands to its calls)
+    server.pocket.generate_audio_stream = lambda state, text, stop=None: iter([NS(numpy=lambda: hum(text))])
+    # (the route is given its call maker and what the line is wired to, which it hands to its calls)
     files = Path(os.environ.get('TMPDIR', '/tmp'), f'room-standin-{os.getpid()}')
     files.mkdir(parents=True, exist_ok=True)
     wiring = server.Wiring(hq=coordinator, paths=server.Paths(calls=files, live=files))

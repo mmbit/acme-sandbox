@@ -1,13 +1,15 @@
 // The controls for moving about the book, in the row at the paper's foot (bookui.js): the overview at its left end, the
 // page before and after, the page's name and where it is in the notebook, which opens the notebook's pages by name, New
-// page, and Send (the page shown sent whole, bookpagesend.js; none on a page sent). While the zoom is off 100% its %
-// shows at the row's right end, a tap back to 100%. Ctrl/⌘ with +, − and 0 zoom too, while the book has the pointer or
-// the focus (never HQ's page's own zoom). (the overview and the zoom's % in the row: job #19861; a notebook's pages and
-// Send, Your book and the days gone)
+// page, and Send at the row's right end, the page's own action (the page shown sent whole, bookpagesend.js; none on a
+// page sent). While the zoom is off 100% its % shows beside the page after, a tap back to 100%, apart from Send. Ctrl/⌘
+// with +, − and 0 zoom too, while the book has the pointer or the focus (never HQ's page's own zoom). (the overview and
+// the zoom's % in the row: job #19861; a notebook's pages and Send, Your book and the days gone; Send apart from the
+// zoom: the board, 28 Oct)
 import { button, island, setPressed, MOD, lineIcon } from './bookui.js';
 import { esc } from '../../util.js';
 import { nameOf } from './bookhead.js';
 import { shut } from './booksave.js';
+import { mountTitle } from './booktitle.js';
 
 const ICONS = {
   // (the notebook's pages laid out: four leaves in a grid, as far apart top to bottom as side to side: the board's call
@@ -21,6 +23,7 @@ const ICONS = {
   // (a paper plane)
   send: lineIcon('<path d="M21 3L3 10.5l7 2.5 2.5 7z"/><path d="M21 3l-11 10"/>'),
 };
+import { word } from './bookscope.js';
 
 // book (bookpages.js): { views, cur, scale }. act: what the controls do, bookpages.js's: zoom(k), actual(), overview(),
 // level(), turnTo(i), newPage(), send(). Returns { update() }: the controls say where the book is now.
@@ -28,16 +31,17 @@ export function mountControls(book, act) {
   const pages = island('pages'),
     over = button({
       icon: ICONS.overview,
-      label: "The overview: the notebook's pages, and the Shelf",
+      label: book.scope ? word("The notebook's pages") : "The overview: the notebook's pages, and the Shelf",
       onClick: () => act.overview(),
       pressed: false,
     }),
-    pct = button({ text: '100%', label: 'Back to 100%', keys: `${MOD}0`, onClick: () => act.actual() });
+    pct = button({ text: '100%', label: word('Back to 100%'), keys: `${MOD}0`, onClick: () => act.actual() });
   pct.classList.add('bk-quiet', 'bk-pct');
   const { before, after, name, add, send } = pageButtons(book, act),
     rule = document.createElement('hr');
   send.classList.add('bk-send');
-  pages.append(over, before, name, after, rule, add, send, pct);
+  // (the zoom's % with the page it's of; New page, then Send at the row's end, the page's own action)
+  pages.append(over, before, name, after, pct, rule, add, send);
   keys(book, act);
 
   return {
@@ -49,8 +53,9 @@ export function mountControls(book, act) {
       setPressed(over, far);
       // (the overview open: only its own button, pressed, to come back by)
       for (const el of [before, name, after, rule]) el.hidden = far;
-      add.hidden = far;
-      send.hidden = far || !page || shut(page);
+      over.hidden = !!book.scope?.singlePage;
+      add.hidden = far || !!book.scope?.singlePage;
+      send.hidden = far || !page || shut(page) || page.readonly;
       pct.hidden = far || percent === 100;
       pct.querySelector('span').textContent = `${percent}%`;
       before.disabled = book.cur <= 0;
@@ -62,7 +67,8 @@ export function mountControls(book, act) {
       name.innerHTML = `<span>${esc(nameOf(page))}</span>${many ? `<small>${book.cur + 1} / ${n}</small>` : ''}`;
       name.setAttribute(
         'aria-label',
-        `The notebook's pages: ${nameOf(page)}${many ? `, ${book.cur + 1} of ${n}` : ''}`,
+        word("The notebook's pages: {page}", { page: nameOf(page) }) +
+          (many ? word(', {at} of {n}', { at: book.cur + 1, n }) : ''),
       );
     },
   };
@@ -70,37 +76,47 @@ export function mountControls(book, act) {
 
 // The pages' buttons: the page before and after, the page's name (the notebook's pages), New page and Send
 function pageButtons(book, act) {
-  const name = button({ text: 'Page', label: "The notebook's pages", onClick: () => menu(book, act, name) });
+  const name = button({
+    text: word('Page'),
+    label: word("The notebook's pages"),
+    onClick: () => menu(book, act, name),
+  });
   name.classList.add('bk-quiet', 'bk-where');
-  name.setAttribute('aria-haspopup', 'menu');
+  name.setAttribute('aria-haspopup', 'dialog');
   return {
-    before: button({ icon: ICONS.before, label: 'The page before', onClick: () => act.turnTo(book.cur - 1) }),
-    after: button({ icon: ICONS.after, label: 'The page after', onClick: () => act.turnTo(book.cur + 1) }),
+    before: button({ icon: ICONS.before, label: word('The page before'), onClick: () => act.turnTo(book.cur - 1) }),
+    after: button({ icon: ICONS.after, label: word('The page after'), onClick: () => act.turnTo(book.cur + 1) }),
     name,
     add: button({
       icon: ICONS.page,
-      label: 'New page',
-      keys: 'A blank page after the last, for the next part',
+      label: word('New page'),
+      keys: word('A blank page after the last, for the next part'),
       onClick: () => act.newPage(),
     }),
     send: button({
       icon: ICONS.send,
-      text: 'Send',
-      label: 'Send',
-      keys: 'This page to the agents: 10 seconds to undo',
+      text: word('Send'),
+      label: word('Send'),
+      keys: word('This page to the agents: 10 seconds to undo'),
       onClick: () => act.send(),
     }),
   };
 }
 
-// The notebook's pages by name, in order, the one shown marked; a choice turns to it
+// The shown page's title field and the notebook's pages by name, in order. A choice turns to that page.
 let open = null;
 function menu(book, act, from) {
   if (open) return close();
   const card = document.createElement('div');
   card.className = 'bk-card bk-pages-menu';
-  card.setAttribute('role', 'menu');
+  card.setAttribute('role', 'dialog');
+  card.setAttribute('aria-label', word('Page title and pages'));
   card.innerHTML = menuOf(book);
+  const field = mountTitle(card, book, () => {
+    book.controls.update();
+    close();
+    from.focus();
+  });
   (from.closest('#book') ?? document.body).append(card);
   const r = from.closest('.bk-island').getBoundingClientRect(),
     c = card.getBoundingClientRect();
@@ -110,7 +126,7 @@ function menu(book, act, from) {
   });
   card.addEventListener('click', e => {
     const b = e.target.closest('button');
-    if (!b) return;
+    if (!b?.hasAttribute('data-i')) return;
     close();
     act.turnTo(Number(b.dataset.i));
   });
@@ -120,7 +136,12 @@ function menu(book, act, from) {
   addEventListener('keydown', esc_);
   from.setAttribute('aria-expanded', 'true');
   open = { card, shut: () => (removeEventListener('pointerdown', away, true), removeEventListener('keydown', esc_)) };
-  card.querySelector('[aria-current]')?.focus({ preventScroll: true });
+  // (a touch screen raises its keyboard over the pages for a focused field: there the shown page's row has the focus,
+  // and a tap on the field types)
+  if (matchMedia('(pointer: fine)').matches) {
+    field.focus({ preventScroll: true });
+    field.select();
+  } else card.querySelector('[aria-current]')?.focus({ preventScroll: true });
   function close() {
     open?.shut();
     open?.card.remove();
@@ -131,7 +152,7 @@ function menu(book, act, from) {
 
 // The menu's rows: the notebook's pages
 function menuOf(book) {
-  return `<ul class="bk-menu">${book.views
+  return `<ul class="bk-menu" role="menu" aria-label="${word('Pages')}">${book.views
     .map(
       (v, i) =>
         `<li><button role="menuitem" data-i="${i}"${i === book.cur ? ' aria-current="page"' : ''}><small>${i + 1}</small>${esc(

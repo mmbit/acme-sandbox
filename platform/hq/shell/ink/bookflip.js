@@ -1,5 +1,5 @@
 // A leaf of the book turning: the one quick page-turn every change of page uses (a page to the next, to and from the
-// overview), so they all feel the same; out to the Shelf the book draws back instead (zoomOut). turn(paper, { dir,
+// overview), so they all feel the same; to and from the Shelf the view zooms instead (zoom). turn(paper, { dir,
 // midway }): forward (dir 1) the page shown lifts at its outer edge and turns over towards the spine, the new page
 // already under it; back (dir -1)
 // the page before swings back from the spine onto the page shown: the same turn played backwards, frame for frame.
@@ -148,10 +148,9 @@ function pair(a, b, scrolled) {
 }
 const frame = () => new Promise(r => requestAnimationFrame(() => r()));
 
-// The book drawing back to the Shelf: the view shown shrinks away as coming (the Shelf, swapped in under it by
-// midway()) settles from a little nearer, a camera stepping back rather than a leaf turning. Reduced motion: the
-// cross-fade alone.
-export async function zoomOut(el, { coming, midway }) {
+// The view zooms out to the Shelf (dir -1), or in to a notebook (dir 1). Both use the same scales and timing,
+// in opposite directions. midway() swaps the view under its picture. Reduced motion uses the cross-fade alone.
+export async function zoom(el, { coming, midway, dir = -1 }) {
   running.get(el)?.finish();
   if (!el.isConnected || !el.clientWidth) {
     await midway();
@@ -165,11 +164,11 @@ export async function zoomOut(el, { coming, midway }) {
   try {
     await midway();
     const still = matchMedia('(prefers-reduced-motion: reduce)').matches,
-      opts = { duration: ZOOM.ms, easing: ZOOM.easing, fill: 'both' };
-    anims.push(
-      shown.animate([{ opacity: 1 }, { opacity: 0, transform: still ? 'none' : `scale(${ZOOM.away})` }], opts),
-    );
-    if (!still) anims.push(coming.animate([{ transform: `scale(${ZOOM.near})` }, { transform: 'none' }], opts));
+      opts = { duration: ZOOM.ms, easing: ZOOM.easing, fill: 'both' },
+      leaving = dir < 0 ? ZOOM.away : ZOOM.near,
+      arriving = dir < 0 ? ZOOM.near : ZOOM.away;
+    anims.push(shown.animate([{ opacity: 1 }, { opacity: 0, transform: still ? 'none' : `scale(${leaving})` }], opts));
+    if (!still) anims.push(coming.animate([{ transform: `scale(${arriving})` }, { transform: 'none' }], opts));
     await Promise.all(anims.map(a => a.finished.catch(() => {})));
   } finally {
     shown.remove();

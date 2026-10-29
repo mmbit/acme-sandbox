@@ -26,9 +26,10 @@ const loadsOf = (code: string) => LOADS.flatMap(pattern => [...code.matchAll(pat
 const asBoard = { cookie: h.boardCookie, host: new URL(ORIGIN).host };
 
 test("every module and page HQ's pages load, and every one those load, is answered for the board", async () => {
-  // HQ's browser code and pages: its shell, world, looks and apps (its .mjs files are Node's: the servers and the checks)
+  // HQ's browser code and pages: its shell, world, looks and apps (its .mjs files are Node's: the servers and the checks;
+  // and its .test.js files, which run in Node)
   const modules = readdirSync(HQ_DIR, { recursive: true, encoding: 'utf8' })
-    .filter(file => /\.(js|html)$/.test(file))
+    .filter(file => /\.(js|html)$/.test(file) && !file.endsWith('.test.js'))
     .map(file => ({ address: `/${file}`, code: readFileSync(`${HQ_DIR}/${file}`, 'utf8') }));
   const asked = new Set(modules.map(module => module.address)),
     own = modules.length,

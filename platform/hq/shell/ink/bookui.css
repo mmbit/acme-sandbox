@@ -185,7 +185,9 @@
   z-index: 60;
   display: flex;
   align-items: center;
-  gap: 8px;
+  /* (keys stay on the label's line while they fit, else wrap under it, whole) */
+  flex-wrap: wrap;
+  gap: 2px 8px;
   /* (as wide as its words up to its max, then wrapped) */
   width: max-content;
   max-width: min(260px, calc(100vw - 8px));
@@ -203,7 +205,6 @@
   display: none;
 }
 .bk-tip kbd {
-  white-space: nowrap;
   font: inherit;
   font-weight: 400;
   opacity: 0.62;
@@ -217,6 +218,15 @@
 }
 .bk-tip[data-side='right'] {
   animation-name: bk-tip-in-r;
+}
+.bk-tip[data-side='above'] {
+  animation-name: bk-tip-in-up;
+}
+@keyframes bk-tip-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
 }
 @keyframes bk-tip-in-r {
   from {

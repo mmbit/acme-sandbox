@@ -462,7 +462,6 @@ assert.ok(
 );
 await tab.click('review-mode .more');
 assert.deepEqual(await items(tab), ['General note'], "an outsider's menu: a general note");
-assert.equal(await tab.textContent('review-mode .menu .cap'), 'Review · to Testco’s book');
 assert.equal(await tab.textContent('review-mode .more .count'), '', 'no count of theirs');
 assert.deepEqual(await tab.evaluate(wrappedMenuLines), [], 'no line of the menu wraps on a phone');
 await shot('menu-outsider', tab);

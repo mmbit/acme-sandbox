@@ -1,4 +1,4 @@
-// A guest's Notebook and the board's read-only live view of it.
+// The board's read-only live view of an invited notebook.
 import { renderGroups } from './notebookcards.js';
 import { mountPen } from './notebookpen.js';
 import { words, refusals } from './notebookwords.js';
@@ -6,7 +6,7 @@ import { words, refusals } from './notebookwords.js';
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`);
 const POLL_MS = 1000;
 
-export function mountNotebook(host, { api, watch = false, notebook = null }) {
+export function mountNotebook(host, { api, watch = true, notebook = null }) {
   const text = words[document.documentElement.lang];
   host.classList.add('ng-book');
   host.innerHTML = `<header class="ng-head"><div><p class="ng-eyebrow">${text.notebook}${watch ? ` · ${text.watching}` : ''}</p>
@@ -332,10 +332,3 @@ async function deleteNote(s, button) {
 function showError(s, error) {
   s.host.querySelector('.ng-error').textContent = error.message;
 }
-
-const guest = document.querySelector('#notebook-guest');
-if (guest)
-  mountNotebook(guest, {
-    api: guest.dataset.api,
-    notebook: Number(new URLSearchParams(location.search).get('notebook')) || null,
-  });

@@ -40,6 +40,11 @@ const myNotebook = async () => (await shelf()).shelf[0].id as number;
 const pages = async (notebook: number) => (await h.board(`/api/notebooks/pages?notebook=${notebook}`)).body;
 const groups = async (page: number) => (await h.board(`/api/notebooks/pages/groups?page=${page}`)).body.groups as any[];
 const current = async (notebook: number) => (await pages(notebook)).pages.at(-1).id as number;
+// Every open page of a notebook archived: the next one made is its only open page
+async function noneOpen(notebook: number) {
+  for (const p of (await pages(notebook)).pages)
+    if (!p.sending && !p.sent && !p.tries) await h.board('/api/notebooks/pages/archive', { id: p.id, archived: true });
+}
 const draw = (page: number, ink: unknown[]) => h.board('/api/notebooks/groups/create', { page, ink });
 const scrap = (body: Record<string, unknown> = {}) =>
   h.board('/api/notebooks/groups/scrap', {
@@ -117,7 +122,7 @@ test('the old book carried into My Notebook once, nothing lost: its ink in group
     'a waiting reply an open scrap, sent with its page',
   );
   await h.board('/api/notebooks/pages/send', { id: kits.id });
-  const fresh = await current(books[0].id);
+  assert.equal(await current(books[0].id), free.id, 'no fresh page while another is open');
   const { job: replyRun } = await delivered(waiting.id);
   const replyJob = db.prepare('select agent, prompt from jobs where id = ?').get(replyRun.id) as any;
   assert.equal(replyJob.agent, 'kit', 'it goes to kit');
@@ -144,7 +149,7 @@ test('the old book carried into My Notebook once, nothing lost: its ink in group
   const late = (await h.board('/api/sketches/create', { w: 800, h: 600 })).body;
   assert.deepEqual(
     (await pages(books[0].id)).pages.map((p: any) => p.id),
-    [kits.id, sheet.id, free.id, fresh, late.id],
+    [kits.id, sheet.id, free.id, late.id],
   );
   assert.equal((await shelf()).shelf.length, 1, 'one My Notebook');
   // (a note written the old way since, onto a page already carried: an open scrap on the current page, under what's
@@ -238,6 +243,28 @@ test('a scrap lands on the current page, under what is there; its picture is ser
 });
 
 // Review mode's note with nothing to show, or a general one (the pin flow, bookreview.ts)
+test("a scrap lands under the newest thing on its page, past what's in its way; the pin counts the board's notes there", async () => {
+  const { menuOf } = await import('./ink/bookreview.ts'),
+    { HQ } = await import('./feedback.ts');
+  const nb = await myNotebook();
+  await noneOpen(nb);
+  assert.equal(menuOf(HQ, '/').notes, 0, 'no page open: no count');
+  const page = (await h.board('/api/notebooks/pages/create', { notebook: nb })).body.id;
+  assert.equal(menuOf(HQ, '/').notes, 0, 'a blank page: no count');
+  await draw(page, [stroke(600, 3000)]);
+  const inWay = (await draw(page, [stroke(1550, 330)])).body.box,
+    newest = (await draw(page, [stroke(1500, 200)])).body.box;
+  const first = (await scrap()).body.box,
+    second = (await scrap()).body.box;
+  assert.deepEqual(
+    [first.x, first.y],
+    [Math.round(newest.x), Math.round(inWay.y + inWay.h + 32)],
+    'under the newest drawing and past the one in its way, not under the far one',
+  );
+  assert.deepEqual([second.x, second.y], [first.x, first.y + first.h + 32], 'the next under it');
+  assert.equal(menuOf(HQ, '/').notes, 5, "the board's open notes on the page");
+});
+
 test('a scrap with no picture is its words typed on the current page, stacked, kept where it was written; none without words', async () => {
   const nb = await myNotebook(),
     page = await current(nb);
@@ -278,6 +305,7 @@ test('a scrap with no picture is its words typed on the current page, stacked, k
 
 test('send a page: undo in its seconds, then each group to its agent, a fresh page, the page read-only but answered', async () => {
   const nb = (await h.board('/api/notebooks')).body.shelf[0].id;
+  await noneOpen(nb);
   const page = (await h.board('/api/notebooks/pages/create', { notebook: nb })).body.id;
   const cut = (await scrap({ owner: 'moss', words: 'The basket button is tiny' })).body;
   const sketch = (await draw(page, [stroke(600, 600)])).body;
@@ -360,13 +388,15 @@ test('send a page: undo in its seconds, then each group to its agent, a fresh pa
 
 test('pages: titled, reordered, archived; a notebook archived, My Notebook stays; nothing of another person', async () => {
   const nb = await myNotebook();
-  const all = (await pages(nb)).pages.map((p: any) => p.id);
+  const before = await pages(nb),
+    all = [...before.pages, ...before.archived].map((p: any) => p.id);
   const titled = (await h.board('/api/notebooks/pages/title', { id: all[0], title: '  Shop  ideas ' })).body;
   assert.equal(titled.title, 'Shop ideas');
+  assert.equal((await h.board(`/api/notebooks/pages/groups?page=${all[0]}`)).body.notebook, nb, 'its notebook said');
   const reversed = [...all].reverse();
   assert.deepEqual(
     (await h.board('/api/notebooks/pages/order', { notebook: nb, pages: reversed })).body.pages.map((p: any) => p.id),
-    reversed,
+    reversed.filter(id => before.pages.some((p: any) => p.id === id)),
   );
   assert.equal((await h.board('/api/notebooks/pages/order', { notebook: nb, pages: reversed.slice(1) })).status, 400);
   const archived = (await h.board('/api/notebooks/pages/archive', { id: all[0], archived: true })).body;
@@ -382,6 +412,7 @@ test('pages: titled, reordered, archived; a notebook archived, My Notebook stays
 
 test("two pages sent to one agent in their seconds go as two sheets, and an old book's note keeps to its own", async () => {
   const nb = await myNotebook();
+  await noneOpen(nb);
   const first = (await h.board('/api/notebooks/pages/create', { notebook: nb })).body.id;
   await scrap({ owner: 'kit', words: 'Rounder corners' });
   assert.equal((await h.board('/api/notebooks/pages/send', { id: first })).status, 200);

@@ -141,3 +141,41 @@ function loadPicks(choices = listChoices()) {
   const find = (id: string | null) => choices.find(c => c.id === id) ?? null;
   return new Map<string, AgentPick>(rows.map(r => [r.agent, { main: find(r.main), fallback: find(r.fallback) }]));
 }
+
+// A lighter model for a small, fully specified job (hq job --model), which its queuer judges from the job's scope as it
+// judges its size: one the company lists as lighter for the engine (models.yaml's `lighter` under it), on the seats of
+// the engine's own model, by its id, its name or its name's first word (sonnet). A run that finds the work bigger than it
+// looked hands it up to the agent's own model in a new session (jobs.ts handUp). An engine with no list takes no
+// --model, and an agent on another model than its engine's own (a lighter worker already, or the board's pick) takes
+// none. The choice, or why not in the queuer's words.
+export function lighterChoice(id: string, asked: string): Choice | string {
+  const own = fileAgents().find(a => a.id === id);
+  if (!own) return `there's no agent ${id} to queue it for`;
+  const a = asPicked(own),
+    engine = String(a.engine),
+    name = own.name ?? id;
+  const main = engineModel(engine),
+    lighter = lighterChoices(engine);
+  if (!lighter.length)
+    return `--model takes a lighter model models.yaml lists for ${name}'s engine, and ${engine} lists none`;
+  if ((a.model ?? main) !== main)
+    return `${name} runs on ${choiceName(a.model ?? '')} already, not ${engine}'s own model: queue it without --model`;
+  const word = asked.trim().toLowerCase();
+  const said = (c: Choice) => [c.id, c.name, c.name.split(/\s+/)[0]].map(w => w.toLowerCase()).includes(word);
+  const matching = lighter.filter(said);
+  if (matching.length === 1) return matching[0];
+  if (main && [main, choiceName(main), choiceName(main).split(/\s+/)[0]].some(w => w.toLowerCase() === word))
+    return `${choiceName(main)} is ${name}'s own model: queue it without --model`;
+  return `--model takes a lighter model models.yaml lists for ${engine}: ${lighter.map(c => `${c.id} (${c.name})`).join(', ')}`;
+}
+// The engine's own model and the lighter ones models.yaml lists for it, on the same seats, for the briefing's line on
+// --model (jobs.ts claimed).
+const engineModel = (engine: string): string | undefined => yamlFile('company/models.yaml')[engine]?.model;
+export function lighterChoices(engine: string) {
+  const file = yamlFile('company/models.yaml')[engine],
+    on = listChoices().find(c => c.id === file?.model);
+  const listed: string[] = file?.lighter ?? [];
+  if (!on) return [];
+  return listChoices().filter(c => listed.includes(c.id) && runner(c) === runner(on));
+}
+export const choiceName = (id: string) => listChoices().find(c => c.id === id)?.name ?? id;

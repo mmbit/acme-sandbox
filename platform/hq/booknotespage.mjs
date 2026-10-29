@@ -20,7 +20,8 @@ export const notesPageStories = c => ({
 });
 
 async function scrapsLand(browser, c, viewport, device) {
-  const context = await c.hqIn(browser, viewport);
+  // (a store of its own, My Notebook made at its first read: the call's page starts empty, whichever story ran before)
+  const context = await c.hqIn(browser, viewport, { notebooks: {} });
   const line = await playLine(context);
   const page = await context.newPage(),
     asked = [];

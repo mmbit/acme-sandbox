@@ -119,7 +119,9 @@ Agents can't watch video, so a session reaches one as lines and pictures.
   one below it never loads, so never decodes), and every step has `STEP_MS`: one that fails or runs past it closes
   its mirror, which opens again from the recording when next asked for (`seen` says false until then). Without that a
   step left hanging held every later picture of its session behind it, silently. 15 s is how long the voice line waits
-  for the coordinator. A mirror opens with only what the screen still shows (`shown`): the events since the last full
+  for the coordinator. A step past its time closes only its own tab while Chromium still answers (`ANSWER_MS`), so a
+  slow page leaves the other mirrors alone. A Chromium that doesn't answer closes, every mirror with it, and the next
+  opens in a fresh one. A mirror opens with only what the screen still shows (`shown`): the events since the last full
   snapshot, each canvas's latest picture alone (canvas.js's wipe the whole canvas). From the whole recording a share of
   HQ's building took 2.8 s to its first picture after 10 minutes and past 15 s after 30; now 0.9 s after 60 (measured
   with Chromium 1243, a 744 × 1133 canvas at 0.5 frames a second, 58 KB each).
@@ -129,7 +131,8 @@ Agents can't watch video, so a session reaches one as lines and pictures.
 - The coordinator (`watchalong.ts`) mirrors and folds every live session from its first batch, and answers the voice
   line: `POST /api/voice/screen-turn` (with a caller's turn: the moments since the agent's last, at most 20, and a
   picture at 1024 px when the screen changed, the last tap ringed; while paused, lines only; the briefing's paragraph
-  for a session that hasn't had it) and `POST /api/voice/screen` (the agent's screen tool: now or a past moment at 1568
+  for a session that hasn't had it; a picture not there within 1 s, the lines without it and a line saying so, as the
+  voice line waits 1.5 s for the whole answer) and `POST /api/voice/screen` (the agent's screen tool: now or a past moment at 1568
   px, a region, or the moments since a time). Both by the session's purpose and the thing it belongs to, and only for a
   purpose with its own briefing (`BRIEFS`: the board's call, a guest's walk-through), so no other is ever told it sees
   the board's screen.
@@ -147,9 +150,10 @@ the voice line keeps when each was said (`calls.line_times`: a turn's start, the
 the agent's reply from when it was first heard); a call from before they were kept has none, and lists only its moments.
 ## Checking it
 
-- `node --test shared/watchalong/store.test.ts shared/watchalong/moments.test.ts shared/watchalong/mirror.test.ts`
-  (the mirror's needs `CHROMIUM_PATH`), and the coordinator's
-  `src/watchalong.test.ts` and `src/callviews.test.ts` (hq call's views; their pictures need `CHROMIUM_PATH`). `walk.test.json.gz` is a walk-through recorded with
+- `node --test shared/watchalong/store.test.ts shared/watchalong/moments.test.ts shared/watchalong/shown.test.ts
+  shared/watchalong/mirror.test.ts` (the mirror's needs `CHROMIUM_PATH`), and the coordinator's
+  `src/watchalong.test.ts`, `src/watchtimes.test.ts` and `src/callviews.test.ts` (hq call's views; their pictures need
+  `CHROMIUM_PATH`). `walk.test.json.gz` is a walk-through recorded with
   watchalong.js in Chromium (moments.test.ts says what's in it).
 - `node shared/watchalong/check.mjs [--shots dir]`: a page and a page of another origin in its frame are recorded in
   Chromium, as a guest and as the board, while someone taps, types and moves on in the frame. It checks what the

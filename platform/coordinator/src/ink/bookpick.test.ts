@@ -11,8 +11,6 @@ const { agent, db } = h;
 const judge = await import('./bookjudge.ts');
 const { withPicks, pickedOn } = await import('./bookpick.ts');
 afterEach(() => h.cancelQueued());
-// (an answer or a try the judge asks for starts nothing here: the pick's route is the real one)
-judge.routeTo({ answer: () => null, try: () => null });
 
 const png = async (background: string) =>
   `data:image/png;base64,${(
@@ -73,6 +71,9 @@ async function tried() {
     })
   ).body;
   await say((await judged())!, 'try', 'wonders about a colour');
+  // (the judge's try queued the real run; this test's own run, claimed alone, stands in for it)
+  await until(() => !!(db.prepare('select tried from notebook_groups where id = ?').get(g.id) as any).tried);
+  h.cancelQueued();
   const run = await h.start({ agent: 'juno' });
   db.prepare('update notebook_groups set tried = ? where id = ?').run(run.id, g.id);
   const version = async (name: string, colour: string) =>
@@ -102,6 +103,7 @@ test('a ring round a version goes as a reply over its frame; the judge’s pick 
   assert.ok(seen.width! > seen.height!, 'the frame’s shape, not the ring’s alone');
   assert.match(text.text, /version 2 of 2, “Brick red”/);
   assert.match(text.text, /pick: only for a note on one of an agent's versions/);
+  assert.deepEqual(JSON.parse(c.schema), judge.schemaOf(true), 'pick offered on a version');
   await say(c, 'pick', 'rings one version to choose it');
   await until(() => pickedIds([v1.id, v2.id]).length === 1);
   assert.deepEqual(pickedIds([v1.id, v2.id]), [v2.id]);

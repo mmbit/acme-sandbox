@@ -2,7 +2,7 @@
 // tiles to draw. No DOM, so node tests it. (one endless page; was a row of pages
 // on a table)
 //
-// One page fills the book's paper. The page has its own px, its CSS px at a zoom of 1, its heading written at 0,0.
+// One page fills the book's paper. The page has its own px, its CSS px at a zoom of 1, with its origin at 0,0.
 // What's on it may lie any way from there, above and left too: the page is the box { x, y, w, h } that holds it, its
 // top-left (x, y) at or above and left of 0,0 (a page with no x and y starts at 0,0). The view is { pan, scale }: pan
 // is the page's point at the paper's top-left, scale how many CSS px a page px is on screen. A point on the paper (CSS
@@ -115,6 +115,14 @@ export function scrapBoxOf(s) {
     r = Math.hypot(s.w, s.h) / 2;
   return { x0: cx - r, y0: cy - r, x1: cx + r, y1: cy + r };
 }
+
+// How much of the paper's dots shows at a zoom of s: drawn to the zoom, they ease out as they shrink (0 at DOTS.gone,
+// whole from DOTS.whole) and are gone before they'd be under a pixel across (2.8 px at a zoom of 1: bookdesk.css)
+export const DOTS = { gone: 0.4, whole: 0.8 };
+export const dotsShown = s => {
+  const t = Math.min(1, Math.max(0, (s - DOTS.gone) / (DOTS.whole - DOTS.gone)));
+  return t * t * (3 - 2 * t);
+};
 
 // The zoom a page's tiles are drawn for at a zoom of s: the power of two at or above it, so the ink is never drawn
 // coarser than it shows, and a zoom only a little different keeps the tiles it has

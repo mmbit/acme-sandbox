@@ -3,10 +3,9 @@
 // alone (perspective and a turn round the spine; the edge, leaf and pull tab book.js lays out). While it's lifted it
 // reads closer, its page face shades, the page block's edge shows at its outer edge, and it casts a soft shadow on HQ's
 // page that tightens as it nears the surface. HQ's page dissolves (blurred and faded) as the board lowers, gone by the
-// time it lands, settles into its new room while it's gone, and only then fades back in, sharp and slowly; closing the
-// same in reverse. (settled first, slower: the board's call 148) The landing thuds: a sound,
-// a 1 to 2 px nudge of the page, a haptic tick where there is one. Shutting, it closes with a gentler sound than the
-// landing's (the board's call 149).
+// time it lands, settles into its new room while it's gone, and only then fades back in, sharp and slowly, so the board
+// never sees it jump; closing the same in reverse. The landing thuds: a sound, a 1 to 2 px nudge of the page, a haptic
+// tick where there is one. Shutting, it closes with a gentler sound than the landing's, as a cover laid down does.
 // The pull tab's gestures are here: pulled while shut (or mid-swing), it lifts the board, which follows the finger
 // with a slight lag; let go, gravity or the close takes it (letGo). Held on after it lands, the book stays put for
 // HOLD ms, then the same drag resizes it, the edge catching up with the finger once. Open, pulled left first, it
@@ -139,7 +138,7 @@ function rest() {
   cast.style.visibility = 'hidden';
   shade.style.opacity = 0;
   block.style.transform = '';
-  for (const el of [parts.edge, parts.table]) el.style.removeProperty('--bk-shadow');
+  parts.edge.style.removeProperty('--bk-shadow');
 }
 
 function run() {
@@ -233,9 +232,9 @@ function draw() {
     el.style.transformOrigin = `${innerWidth - left - shift}px 50%`;
     el.style.transform = turn;
   }
-  // (the tab follows the cover's outer edge, at the screen's edge once the board's slid off it, inside the screen where
-  // the book lies over all of it)
-  const tab = Math.max(innerWidth - Math.max(0, reachAt(a, b)), geo.over ? lipWidth : 0);
+  // (the tab follows the cover's outer edge, at the screen's edge once the board's slid off it, inside the book's edge
+  // where the book lies over all of it, a margin in: book.js)
+  const tab = Math.max(innerWidth - Math.max(0, reachAt(a, b)), geo.over ? geo.x + lipWidth : 0);
   parts.lip.style.transform = `translate3d(${(tab - geo.x).toFixed(2)}px, 0, 0)`;
   shade.style.opacity = (0.22 * Math.sin(a)).toFixed(3);
   block.style.transform = `scaleX(${Math.sin(a).toFixed(3)})`;
@@ -249,11 +248,9 @@ function draw() {
   cast.style.transform = `translate3d(${sl.toFixed(1)}px, ${(z * 0.03).toFixed(1)}px, 0) scaleX(${(Math.max(0, x) / (innerWidth - geo.x)).toFixed(4)})`;
   cast.firstChild.style.opacity = (dark * lift).toFixed(3);
   cast.lastChild.style.opacity = (dark * (1 - lift)).toFixed(3);
-  // (the book's own shadow on the page beside it grows in over the last SHADOW_GROW_PX of its drop, as the cast draws
-  // in under it, and goes as it lifts; set on the shadows' own hosts, as on #book it would restyle the whole notebook
-  // every frame.)
-  const shadow = ((1 - Math.min(1, z / SHADOW_GROW_PX)) ** 2).toFixed(3);
-  for (const el of [parts.edge, parts.table]) el.style.setProperty('--bk-shadow', shadow);
+  // (the book's one shadow grows in over the last SHADOW_GROW_PX of its drop, as the cast draws in under it, and goes
+  // as it lifts; set on its host, the cover's edge, as on #book it would restyle the whole notebook every frame.
+  parts.edge.style.setProperty('--bk-shadow', ((1 - Math.min(1, z / SHADOW_GROW_PX)) ** 2).toFixed(3));
 }
 
 // HQ's page dissolving as the board lowers and back in, sharp, in its new room (never where the book lies over it)

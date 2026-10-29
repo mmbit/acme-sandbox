@@ -8,6 +8,7 @@ import ctypes
 import os
 import shutil
 import signal
+import socket
 import sys
 import time
 
@@ -47,6 +48,20 @@ def note_exit(pid, info):
         log(f"couldn't note how process {pid} ended:", err)
 
 
+def refresh_socket():
+    """The loopback socket Codex runs send their sign-in refreshes to (the worker's refreshes.ts), bound once for the
+    container's life: a reload of the worker never frees its port for a job's process to take.
+"""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.bind(("127.0.0.1", 0))
+    sock.listen(128)
+    sock.set_inheritable(True)
+    return sock
+
+
+REFRESH = None   # main's refresh_socket()
+
+
 def start_worker():
     """The worker from the code staged now, or None while there's none yet (a new server's first deploy stages it)."""
     current = f"{CODE}/current"
@@ -58,7 +73,8 @@ def start_worker():
         os.remove(f"{CODE}/running.new")
     os.symlink(os.path.basename(code), f"{CODE}/running.new")
     os.replace(f"{CODE}/running.new", f"{CODE}/running")
-    pid = os.posix_spawn(NODE, [NODE, f"{code}/src/worker.ts"], os.environ, setsigmask=())
+    env = {**os.environ, "WORKER_REFRESH_FD": str(REFRESH.fileno())}
+    pid = os.posix_spawn(NODE, [NODE, f"{code}/src/worker.ts"], env, setsigmask=())
     log(f"worker started (pid {pid}, code {os.path.basename(code)})")
     return pid
 
@@ -69,6 +85,8 @@ def main():
     for s in SIGNALS:
         signal.signal(s, lambda *_: None)   # a handler, so PID 1 isn't immune to them; they're taken by sigwaitinfo
     signal.pthread_sigmask(signal.SIG_BLOCK, SIGNALS)
+    global REFRESH
+    REFRESH = refresh_socket()
     worker, reloading, stopping, pause, started = start_worker(), False, False, RESTART_S, time.monotonic()
     due = None if worker else time.monotonic() + 10   # (no code yet: look again in a while)
     if not worker:

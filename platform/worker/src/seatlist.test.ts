@@ -1,7 +1,7 @@
 // node --test src/seatlist.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { applyList, carryOut, off, spendCredits, type Listed } from './seatlist.ts';
+import { applyList, carryOut, creditsNote, off, spendCredits, type Listed } from './seatlist.ts';
 import {
   checkDue,
   codexReading,
@@ -468,4 +468,12 @@ test("a reading a job planted (credits and a full week) can't hold a seat past o
     [false, reset],
     'confirmed: no more reads, and HQ hears the real end',
   );
+});
+
+// The board's switch lets a seat spend credits past its limits. Its line says it's on them only once a window is full.
+test("a seat the board lets spend credits says it's on them only past its limits", () => {
+  const seat = { util: 0.2, week: 0.05, creditsLeft: 45275 };
+  assert.equal(creditsNote(seat), 'may use credits past its limits (45,275 left)');
+  assert.equal(creditsNote({ ...seat, week: 1 }), 'on credits past its limits (45,275 left)');
+  assert.equal(creditsNote({ ...seat, util: 1, creditsLeft: undefined }), 'on credits past its limits');
 });

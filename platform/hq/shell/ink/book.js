@@ -18,12 +18,15 @@ import { mountHandle } from './bookhandle.js';
 import * as swing from './bookswing.js';
 import { mountLanding } from './booklanding.js'; // (a mark lifted into the book.)
 import { showGroup } from './bookgroupshow.js';
+import { aimAt, mountNewest, openNewest } from './booknewest.js';
 import { island } from './bookui.js';
 import { mountPages } from './bookpages.js';
 import { PAPER } from '/__review/paper.js';
 import { mountSearch } from './booksearch.js';
-import { look } from '../stage.js';
 import { follow } from './bookfollow.js';
+import { setScope, word } from './bookscope.js';
+import { useFaces } from './bookfaces.js';
+import { STYLES } from './bookstyles.js';
 
 // How long the book takes to slide from one open width to another: a notebook pushed aside on a desk, quick and soft
 // at the end. (Opening and shutting is the swing's: bookswing.js.)
@@ -42,31 +45,27 @@ let placed = null; // where the parts are on the screen now (placeOf's shape), m
 let laid = null; // where they're laid out ({ x, width, room }, the leaf's width as set): a move is a transform from it
 let moving = []; // the slide or fade under way: its animations
 
-// The book's styles. (out of initBook) (the sheets' and the faces' gone, pages now sent whole)
-const STYLES = [
-  'shell/ink/book.css',
-  'shell/ink/booklook.css',
-  'shell/ink/bookgroups.css', // (a page's groups)
-  'shell/ink/booksearch.css', // (Search)
-  'shell/ink/bookui.css', // (the controls' one style)
-  'shell/ink/bookdesk.css', // (the page, its heading)
-  'shell/ink/bookshelf.css', // (the overview: a notebook's pages, the Shelf.)
-  'shell/ink/bookasks.css', // (the desk phone's cards in the book)
-  'shell/ink/bookshare.css', // (a page shared by its corner)
-  'shell/ink/bookpaper.css', // (the paper's effects)
-];
-
-export async function initBook() {
+export async function initBook({ scope = null } = {}) {
+  setScope(scope);
+  if (!scope) {
+    const stage = await import('../stage.js');
+    useFaces({
+      look: () => stage.look,
+      draw: id => (world.agents.has(id) ? stage.scene?.portrait?.({ kind: 'agent', id }) : null),
+    });
+  }
   await Promise.all(STYLES.map(href => stylesheet(href)));
   mountRoot();
   state = recall(store, shape());
+  if (scope) state.mode = 'open';
   mountRail(parts.rail, {
     undo: () => pages.undo(),
     redo: () => pages.redo(),
   });
-  pages = mountPages(parts.paper, { dev: world.dev, shape });
+  const calls = scope ? null : await import('../calldrop.js');
+  pages = mountPages(parts.paper, { dev: world.dev, shape, scope, calls });
   // (Search, in the overview's head: a find opens its page at its note.)
-  mountSearch(island('overview'), { dev: world.dev, find: at => pages.find(at) });
+  if (!scope) mountSearch(island('overview'), { dev: world.dev, find: at => pages.find(at) });
   // (a note or page asked from elsewhere, the desk phone's Open in the book: the book lands on it as on a find, its day's
   // row turned to its note, the number lit.)
   document.addEventListener('book:find', e => pages.find(e.detail));
@@ -81,6 +80,7 @@ export async function initBook() {
   mountSwing();
   mountHandle(parts.lip, { open: openBook, fold: foldBook, openOn, shut: shutOrShutting });
   mountLanding({ pages, lip: parts.lip, paper: parts.paper, layout: bookLayout });
+  if (!scope) mountNewest(pages, openBook); // (the note the board just pinned, shown as the book opens)
   watchSize();
 }
 // A turn or a new window size: the shape's own remembered state, laid out at once (nothing slides). Watched on <html>'s
@@ -104,9 +104,11 @@ function mountRoot() {
   root.id = 'book';
   root.style.cssText = PAPER;
   root.innerHTML = `<div class="bk-table"></div><div class="bk-edge" role="separator" aria-orientation="vertical"
-    aria-label="The Notebook's edge: drag it to make the Notebook wider or narrower"></div>
-    <section class="bk-leaf" aria-label="The Notebook"><div class="bk-paper"></div><nav class="bk-rail" aria-label="The Notebook's controls"></nav></section>
-    <button class="bk-lip" aria-label="The Notebook: tap or pull it to open"></button>`;
+    aria-label="${word("The Notebook's edge: drag it to make the Notebook wider or narrower")}"></div>
+    <section class="bk-leaf" aria-label="${word('The Notebook')}"><div class="bk-paper"></div><nav class="bk-rail" aria-label="${word(
+      "The Notebook's controls",
+    )}"></nav></section>
+    <button class="bk-lip" aria-label="${word('The Notebook: tap or pull it to open')}"></button>`;
   document.documentElement.append(root);
   parts = Object.fromEntries(
     ['table', 'edge', 'leaf', 'paper', 'rail', 'lip'].map(k => [k, root.querySelector(`.bk-${k}`)]),
@@ -121,21 +123,20 @@ export const foldBook = () => go({ ...state, mode: 'folded' });
 // pages are laid out for the paper's new width: a turn before that would be undone by the pages laid out again.
 // (desk.js's bookAt, the lip.: was desk.js's) (an owner's sheet gone with the sheets) (notebook)
 export function openAt(at = null) {
-  if (at?.page)
-    document.addEventListener(
-      'book:layout',
-      () =>
-        requestAnimationFrame(() =>
-          requestAnimationFrame(() => document.dispatchEvent(new CustomEvent('book:find', { detail: at }))),
-        ),
-      { once: true },
-    );
-  openBook();
+  if (!at?.page) return openNewest();
+  openTo(() =>
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => document.dispatchEvent(new CustomEvent('book:find', { detail: at }))),
+    ),
+  );
 }
 // Open the book on a note of today's (the handle's tap after a mark landed in it), found once its pages are laid out for
 // the paper's width; a Notebook scrap's (group) on its page, slid into view. (group)
-export function openOn({ page, id, group = false }) {
-  const find = () => (group ? showGroup(pages, { page, id }) : pages.find({ page, note: id }));
+export const openOn = ({ page, id, group = false }) =>
+  openTo(() => (group ? showGroup(pages, { page, id }) : pages.find({ page, note: id })));
+// The book opened at a place of its own, found once it's laid out (book:layout)
+function openTo(find) {
+  aimAt('place');
   document.addEventListener('book:layout', find, { once: true });
   openBook();
 }
@@ -179,7 +180,7 @@ function mountSwing() {
       laid = { ...placed, leaf: Math.max(at.width, reach(at)) };
       parts.edge.style.left = `${at.x}px`;
       parts.leaf.style.left = `${at.x + EDGE}px`;
-      parts.leaf.style.width = `${laid.leaf}px`;
+      leafTo(laid.leaf);
       parts.lip.style.left = `${at.x}px`;
       shift(0);
       away(false);
@@ -245,14 +246,16 @@ function fade(to) {
 }
 
 // Where the parts sit: x, the cover's edge's left (px); width, the leaf's; room, what HQ's page gives up. Shut, the
-// book keeps its open width and lies past the screen's right edge; the spread starts at the screen's left edge with its
-// cover's edge, and HQ's page keeps its open width under it.
+// book keeps its open width and lies past the screen's right edge; the spread starts its cover's edge a margin from the
+// screen's left edge, and HQ's page keeps its open width under it.
 function placeOf(l) {
   const w = innerWidth;
   if (l.mode === 'folded') return { x: w, width: bookWidth(w, state.book), room: 0 };
-  if (l.mode === 'spread') return { x: 0, width: w - EDGE, room: l.room };
+  if (l.mode === 'spread') return { x: margin(), width: w - EDGE - margin(), room: l.room };
   return { x: l.page, width: l.book, room: l.room };
 }
+// (the spread's margin from the screen's left edge, as the book has at the others: book.css's --bk-gap)
+const margin = () => parseFloat(getComputedStyle(root).getPropertyValue('--bk-gap'));
 // The parts laid out where they are (the book at rest): the room HQ's page gives up (faded into when the board moved
 // the book), the table under it, the cover's edge, the leaf (at least to the screen's right edge) and the pull tab at
 // the cover's edge, none moved by a transform
@@ -267,7 +270,7 @@ function place(at, mode, act, fade = act) {
   parts.table.style.width = `${Math.round(room)}px`;
   parts.edge.style.left = `${x}px`;
   parts.leaf.style.left = `${x + EDGE}px`;
-  parts.leaf.style.width = `${laid.leaf}px`;
+  leafTo(laid.leaf);
   parts.lip.style.left = `${x}px`;
   shift(0);
   away(mode === 'folded' && x >= innerWidth);
@@ -316,7 +319,13 @@ function hold(at) {
 function widen(px) {
   if (px <= laid.leaf) return;
   laid.leaf = px;
+  leafTo(px);
+}
+// The leaf this wide, and the book's one shadow with it: the cover's edge casts it for the whole book (book.css), so
+// it moves and swings with the book
+function leafTo(px) {
   parts.leaf.style.width = `${px}px`;
+  parts.edge.style.setProperty('--bk-leaf', `${px}px`);
 }
 // How wide the leaf must be to reach the screen's right edge from where it is
 const reach = at => innerWidth - at.x - EDGE;
@@ -336,11 +345,11 @@ function stop() {
 // none). Read as the book is laid out or starts to move, and as a look is worn, once per look. (its checkerboard a classic one)
 let toned = null;
 function tones() {
-  if (toned === look) return;
-  toned = look;
   const ground = [document.body, document.documentElement]
     .map(box => getComputedStyle(box).backgroundColor)
     .find(c => c !== 'rgba(0, 0, 0, 0)');
+  if (toned === ground) return;
+  toned = ground;
   parts.table.style.setProperty('--bk-ground', ground);
 }
 // The layout settled: placed, told to the page (data-book on <html>, and a book:layout event for whoever lays out by it,

@@ -6,7 +6,7 @@ import { readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { ResponseError } from './reports.ts';
 
 // lost: what the run had running besides its CLI when it was cut, and when that was looked at (detached.ts processesOf);
-// its next run is told (jobs.ts cutNote).
+// its next run is told (jobs.ts cutNote). lostAt also ends the run at its cut, before restart downtime.
 export type RunHandBack = {
   job: number;
   seat: string;

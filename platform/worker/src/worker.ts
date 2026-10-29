@@ -13,11 +13,13 @@
 import { seatPlaces } from './places.ts';
 import { assertOwned, ownRun, ownershipSignal, requestSignal, sleepOwned, waitOwned } from './ownership.ts';
 import { readAs, returnSignIn } from './signin.ts';
+import { REFRESH_URL_VAR, codexRefreshes, exchangeWithOpenAI, serveRefreshes } from './refreshes.ts';
 import { measurement } from '../tooling/metrics.ts';
 import { DEFAULT_ESTIMATE_SCALE } from './estimating.ts';
+import { handedUpLines, lighterLine, lightLines } from './lighter.ts';
 import { execFile, execFileSync, spawn, spawnSync } from 'node:child_process';
 import { availableParallelism } from 'node:os';
-import { existsSync, mkdirSync, chmodSync, lchownSync, lstatSync, readdirSync, readFileSync, realpathSync, renameSync, utimesSync } from 'node:fs';
+import { existsSync, mkdirSync, chmodSync, lchownSync, lstatSync, readdirSync, readFileSync, realpathSync, renameSync, utimesSync, writeFileSync } from 'node:fs';
 import { keepRenders } from './renders.ts';
 import { agentEnv, redact, redactJson, PROFILE_BRANCH, workRunsOn, BRANCH_CONFIG, REVIEW_STRIP, claudeArgs, codexAskArgs, SIGN_IN } from './safety.ts';
 import { TOUCHUP_LINES, FetchUnreachedError, PushUnreachedError, answerMainMerge, branchLines, gitFlow, pinnedGitEnv, runAs } from './git.ts';   // (pinnedGitEnv)
@@ -35,8 +37,8 @@ import { detailOf, stepOf, shown, guard, memberReturned, memberOf, writtenTokens
 import { completionHooks } from './completion.ts';
 import { claudeEnv, cliOf, codexArgs, credentialFile, modelFor, type SeatProvider } from './providers.ts';
 import { CLIS, CLI_CONFIG, resumeOn, sessionTag, type Cli } from './clis.ts';
-import { carrySession, project, type Resumes } from './carry.ts';
-import { applyList, carryOut, off, type Listed, type SeatAction } from './seatlist.ts';
+import { carrySession, closingLines, project, type ClosingReports, type Resumes } from './carry.ts';
+import { applyList, carryOut, creditsNote, off, type Listed, type SeatAction } from './seatlist.ts';
 import { SEAT_NAME } from './seatid.ts';
 import { moveSeats } from './seatmoves.ts';
 import { closing, type OwnedProject } from './closing.ts';
@@ -82,8 +84,8 @@ export type SeatState = 'login' | 'ready' | 'draining' | 'sleeping' | 'closed'; 
 // start downtime work to measure an unknown window, kept after a run that found no reading (slotLoop). limits: its runs
 // in a row that hit a usage limit, for the backoff when the CLI names no reset time (a job's attempts restart at each).
 // checked: when a held Codex seat last let a job through to measure it (checkSeat), or had its account read (readLimits). hasCredits: a Codex seat's account
-// pays for use past its limits (codexReading); credits: it runs on them, only while the board lets it (useCredits,
-// seatlist.ts spendCredits). confirmed: its reading is the worker's own read of
+// pays for use past its limits (codexReading); credits: it may run on them past its limits, only while the board lets it
+// (useCredits, seatlist.ts spendCredits): it runs on them only once a window is full (creditsNote). confirmed: its reading is the worker's own read of
 // its account (readLimits), not a job's log, and readFailed: the latest such read failed. refusals: its runs in a row whose first request the
 // API refused, for the backoff, and refused: the latest one's error, for its note. closed: when its provider closed its account, and what it
 // said (close). The rest is the board's, from HQ's Seats (syncSeats): its provider (providers.ts), paused, and gone once
@@ -121,18 +123,19 @@ function lastList() {
     return list.map(s => `${s.id}:${s.engine}`);
   } catch { return undefined; }
 }
-// How many runs one Codex seat carries at once (CODEX_SEAT_RUNS, 2 if unset). Each run signs in with its own copy of the
-// seat's sign-in, and OpenAI keeps a ChatGPT sign-in used in automation to "one machine or serialized job stream" per
-// copy: fewer copies at once, fewer refreshes racing (keepCodexAuth). Claude seats have no cap of their own. A seat's
-// runs are counted from the pick (slotLoop), so two slots can't both take its last place.
-const SEAT_RUNS: Record<string, number> = { codex: Math.max(1, Math.floor(Number(process.env.CODEX_SEAT_RUNS ?? 2)) || 2) };
+// How many runs one Codex seat carries at once: as many as the room lets start, like a Claude seat, unless CODEX_SEAT_RUNS
+// sets a cap. Each run signs in with its own copy of the seat's sign-in, and refreshes it through the worker
+// (refreshes.ts), so no run spends another's copy. A seat's runs are counted from the pick (slotLoop), so two slots can't
+// both take a capped seat's last place.
+const CODEX_RUNS = Math.floor(Number(process.env.CODEX_SEAT_RUNS));
+const SEAT_RUNS: Record<string, number> = CODEX_RUNS >= 1 ? { codex: CODEX_RUNS } : {};
 const places = seatPlaces(SEAT_RUNS), { roomOn } = places;
 const lastClaimAt = new Map<string, number>();   // when each Codex seat last claimed (inTurn)
 // How many jobs run at once is the room's to decide: the worker has a hard memory cap (infra/compose.yaml), and a free
 // slot (WORK_SLOTS, any engine's) only starts an ordinary job if its JOB_MB allowance fits above FREE_MB in both the
 // worker and server, after reservations for young starts and held meeting seats. Young starts reserve JOB_MB
 // each until they reach their full size. Usage limits are watched per seat (drainUntil in downtime.ts), and a Codex
-// seat carries SEAT_RUNS at most.
+// seat carries SEAT_RUNS at most when it's set.
 // Below a full starting allowance a slot may claim a job whose measured memory fits above FREE_MB, once a minute for each
 // engine's slots: the claim carries that room (the coordinator's claim `room`, room.ts measuredMb). Undefined: no claim
 // now.
@@ -660,10 +663,7 @@ async function smallCall(kind: 'gists' | 'names' | 'reads', keys: string[]) {
 const seatNote = (s: Seat) => (s.util !== undefined ? `${pct(s)} of the 5-hour window`
   : s.week === undefined ? '5-hour window not measured yet' : 'no 5-hour window') +
   (s.week === undefined ? '' : `, ${Math.round(s.week * 100)}% of the week`) +   // a full week drains a seat too
-  (s.credits ? `, ${onCredits(s)}` : '');
-// (with the balance its account's reading gave, when it gave one.)
-const onCredits = (s: Seat) =>
-  `on credits past its limits${s.creditsLeft === undefined ? '' : ` (${s.creditsLeft.toLocaleString('en-US')} left)`}`;
+  (s.credits ? `, ${creditsNote(s)}` : '');
 // (each seat's pacing as last reported, whether paced and on credits: keepSeats reports a change)
 const reportedPace = new Map<string, string>();
 const paceKey = (s: Seat) => `${pacedOf(s)}:${!!s.credits}`;
@@ -685,7 +685,7 @@ function reportSeat(s: Seat) {
   const until = reportedUntil(s), held = until !== s.until ? `held until ${new Date(s.until).toISOString()}, ${!keepsToPlan(s) ? 'one job an hour' : s.readFailed ? 'account read failed, read again in an hour' : 'its account read an hour'}` : '';
   const paced = pacedOf(s), pace = paced === undefined ? undefined : true;
   reportedPace.set(s.id, paceKey(s));
-  const rest = [s.util === undefined && s.week === undefined ? '5-hour window not measured yet' : '', s.credits ? onCredits(s) : s.hasCredits ? 'keeps to its plan: its credits wait for the board' : '', held];
+  const rest = [s.util === undefined && s.week === undefined ? '5-hour window not measured yet' : '', s.credits ? creditsNote(s) : s.hasCredits ? 'keeps to its plan: its credits wait for the board' : '', held];
   const note = s.paused ? 'Paused: it takes no new work'
     : s.state === 'login' ? s.signIn === 'key' ? 'Needs a key' : 'Needs signing in'
     : s.state === 'closed' ? `closed by its provider (${s.closed ?? 'no reason given'}): its share of the work waits, and no other account takes it over until the board decides`
@@ -722,7 +722,11 @@ async function codexWindow(seat: Seat, me: Me, home: string, session: string | u
 // keeps its hold or lifts it (takeRead).
 async function readLimits(seat: Seat) {
   seat.checked = Date.now();
-  const r = limitsReading(await codexLimits({ ...keeperIds, env: keeperEnv({ CODEX_HOME: seatDir(seat.id) }) }));
+  // (its app server may refresh the seat's sign-in: through the worker, like a run's)
+  const signIn = readAs(keeper, `${seatDir(seat.id)}/auth.json`), holder = `limits ${seat.id}`;
+  const vars = { CODEX_HOME: seatDir(seat.id), ...refreshVars(signIn && refreshes.handOut(holder, seat.id, signIn)) };
+  const answer = await codexLimits({ ...keeperIds, env: keeperEnv(vars, Object.keys(vars)) }).finally(() => refreshes.end(holder));
+  const r = limitsReading(answer);
   if (seat.gone) return;
   takeRead(seat, r);
   log(`${seat.id}: account read ${r ? `at ${seatNote(seat)}` : 'failed: held, no job through, read again in an hour'}`);
@@ -1003,7 +1007,7 @@ function syncSeats(list: Listed[]) {
   applyList(SEATS, list, { held: heldOff, make: newListed, start: loginLoop, drop: dropSeat,
     changed: seat => { log(`${seat.id}: ${off(seat) ? 'takes no new work now' : 'takes work again'}`); reportSeat(seat); } });
   for (const [seat, was] of levels) if (!seat.gone && `${seat.drainAt}:${!!seat.credits}` !== was && (seat.state === 'ready' || seat.state === 'draining')) {
-    log(`${seat.id}: ${seat.credits ? 'spends credits past its limits' : `stops at ${seat.drainAt === undefined ? 'its level' : `${Math.round(seat.drainAt * 100)}%`}`} now`);
+    log(`${seat.id}: ${seat.credits ? 'may spend credits past its limits' : `stops at ${seat.drainAt === undefined ? 'its level' : `${Math.round(seat.drainAt * 100)}%`}`} now`);
     drain(seat);
   }
   // (a seat not read since this process started is paced by the week HQ last heard)
@@ -1062,6 +1066,8 @@ function close(seat: Seat, words: string) {
 // --- Running a job -----------------------------------------------------------------------------
 
 type Job = { id: number; agent: string; title: string; prompt: string; engine: string; branch: string | null;
+  quickReply?: boolean;
+  quickReplyUntil?: number;
   code: string | null;   // its task's code (the coordinator's jobcodes.ts).
   session: string | null; note: string | null; attempts: number; kind: string; pr: number | null; stage?: string | null;
   customers: number;     // it held a customer's own details as it was claimed (jobs.ts holdsCustomerData)
@@ -1071,18 +1077,23 @@ type Job = { id: number; agent: string; title: string; prompt: string; engine: s
   archiving?: number | null;   // the agent's open pull request that already moves lines to its archive (review.ts archiving)
   cut?: string;   // what a stop of the worker's container cut in its last run (jobs.ts finish).
   resumes?: Resumes;   // its author's last session on its branch (jobs.ts claim)
+  closingReports?: ClosingReports;   // or its author's closing reports there, once that session went cold
   ownsProject?: OwnedProject;   // the project its agent owns through its thread (closing.ts).
   inThread?: InThread;   // a task in a thread (threads.ts).
   resize?: { size: string | null };   // its saved size and author (sizes.ts withSize)
   stopping?: string | null;   // hq stop: who stopped it, and why (jobs.ts stopJob)
   landing?: string | null;   // JSON: its last run ended well, but its push or pull request snagged; this run only lands it (land).
   carry?: string | null;   // a commit main took outside a pull request: this run only checks it (carryChecks).
+  // a run on the lighter model its queuer chose (lightLines), and the run after its hand-up (handedUpLines).
+  lighter?: { name: string; own: string };
+  handedUp?: { from: string; note: string };
   agentInfo?: { name: string; role: string; department: string; charter: string; model?: string | null; effort?: string | null;
     autocompact?: number | string | null };
   company: Partial<Company> & Pick<Company, 'stylePrompt'> };
 // The company the job works for, as the coordinator reads it (brand.yaml's names, infra.env's addresses: jobs.ts claim)
 type Company = { name: string; phone: string; newsletter: string; intercom: string; agentEmailDomain: string; agentsEmail: string;
-  language?: string; timeZone?: string; stylePrompt: string };
+  language?: string; timeZone?: string; stylePrompt: string;
+  lighter?: { id: string; name: string }[] };   // the lighter models a hand-off can run on (lighterLine)
 const company = (job: Job): Company => ({ name: 'the company', phone: 'desk phone', newsletter: 'the newsletter', intercom: 'intercom',
   agentEmailDomain: 'agents.invalid', agentsEmail: 'agents@agents.invalid', ...job.company });
 
@@ -1225,7 +1236,7 @@ function carry(job: Job, from: Resumes, cli: string, seat: Seat, me: Me) {
     return null;
   }
 }
-function briefing(job: Job, dir: string, conflicts: string[] = []) {
+function briefing(job: Job, dir: string, conflicts: string[] = [], closingBriefing = '') {
   const a = job.agentInfo ?? { name: job.agent, role: 'agent', department: '', charter: '' }, c = company(job);
   const people = companyFile(dir, 'company/people/README.md'), charter = a.charter && existsSync(`${dir}/company/${a.charter}`);
   return `You are ${a.name}, ${a.role} at ${c.name}, an AI-run company (department: ${a.department}).
@@ -1239,7 +1250,7 @@ things every agent here knows.
 
 Your job #${job.id}: ${job.title}${unnamed(job)}
 
-${inThreadLines(job, conflicts)}${job.prompt}${job.inFlight ? `\n\n${job.inFlight}` : ''}
+${inThreadLines(job, conflicts)}${job.prompt}${closingBriefing}${job.inFlight ? `\n\n${job.inFlight}` : ''}${lightLines(job)}
 
 How work happens here:
 - Before you change code, read CODE_STYLE.md at the repo root and follow it: among other things, the platform is
@@ -1286,7 +1297,7 @@ How work happens here:
   Inspect \`hq estimate "..."\` for clean past jobs and compare their scope, briefs, reports and changes.
   Choose the agent time yourself, then queue with \`hq job ... --size <90m> --refs <job,job> --why "scope comparison"\`.
   Omit --refs only when no comparable job fits, and say why. HQ saves this estimate once, when queued.
-  ${DEFAULT_ESTIMATE_SCALE}
+  ${DEFAULT_ESTIMATE_SCALE}${lighterLine(job)}
   For new work, get the time for the board with \`hq when "..." --size <90m>\`,
   with its dependencies and \`--by\` the board's time when it named one. For queued work, read \`hq deliverable <project>/<slug>\` (by its name or words: \`hq projects <words>\`). Give one plain time.${resizeLine(job)}${budget(job.engine)}${boardLanguage(c)}${boardClock(c, job.kind === 'chat')}${job.kind === 'chat' ? '' : `
 - Nobody reads this session live, the board included: you run in the background, and your messages go to the job's
@@ -1294,6 +1305,18 @@ How work happens here:
   The board sees only the ${c.phone}, ${c.newsletter} and the ${c.intercom} (and a call's notes, when your job says so).
   Anything that needs its judgment goes on the desk phone (\`hq ask\`/\`hq request\`); thanks and "on it" go nowhere.`}
 ${closing(job)}`;
+}
+
+// Quick replies read their own context, without the work job's housekeeping or shared CLI memory.
+function quickBriefing(job: Job) {
+  const a = job.agentInfo, c = company(job);
+  return `You are ${a?.name ?? job.agent}, ${a?.role ?? 'agent'} at ${c.name}.
+This is one immediate reply to the board: the brief below says where it appears and how to give it.
+Read company/CHARTER.md and company/people/${job.agent}.md first. Use tools only when the answer needs them.
+Do not run gates or update your profile. If you cannot answer, say why. Answer now.
+Current time: ${new Date().toISOString()}.${boardLanguage(c)}${boardClock(c, true)}
+
+${job.prompt}`;
 }
 
 // A task HQ made without a code (a bug report, a call's follow-up): its agent names it, having read it.
@@ -1415,6 +1438,7 @@ function parkRun(seat: Seat, job: Job, me: Me) {
   remove(`${TESTED}/${job.id}`);
   handed.delete(job.id);
   handedFiles.delete(job.id);
+  refreshes.end(runRefreshes(job.id));
   for (const folder of Object.values(jobDirs(WORK, job.id))) if (existsSync(folder)) {
     own([folder], { uid: 0, gid: 0 });
     const now = new Date(); utimesSync(folder, now, now);
@@ -1433,8 +1457,7 @@ type Me = ReturnType<typeof slotAgent>;
 
 async function settle(seat: Seat, job: Job, me: Me, status?: string) {
   const { dir, home } = jobDirs(WORK, job.id);
-  const reviewing = job.kind === 'review' || job.kind === 'consolidate';
-  if (cliOf(seat) === 'claude' && !reviewing) {
+  if (cliOf(seat) === 'claude' && runModeOf(job).sharesMemory) {
     const customers = await holdsCustomerData(job);
     assertOwned();
     try {
@@ -1446,10 +1469,12 @@ async function settle(seat: Seat, job: Job, me: Me, status?: string) {
   try { keepSignIn(me, seat, home, job.id); } catch (err) { log(`job #${job.id}: ${cliOf(seat)} sign-in:`, err); }
   handed.delete(job.id);
   handedFiles.delete(job.id);
+  refreshes.end(runRefreshes(job.id));
   // Waiting folders are root's, stamped now: takeVolumes clears a folder by when its job last ran.
   const park = (p: string) => { own([p], { uid: 0, gid: 0 }); const now = new Date(); utimesSync(p, now, now); };
   // (a snagged run's clone holds what its next run lands, or picks up from: land.)
-  if (status === 'interrupted' || status === 'limited' || status === 'yielded' || status === 'snagged') { if (existsSync(dir)) park(dir); } else remove(dir);
+  // (and a handed-up run's, which its next run goes on in)
+  if (status === 'interrupted' || status === 'limited' || status === 'yielded' || status === 'snagged' || status === 'up') { if (existsSync(dir)) park(dir); } else remove(dir);
   // a home holds the CLI's session: the intercom's goes on at the board's next message, so a chat job keeps its home
   // when a turn ends done too (takeVolumes clears it once it's long unused, like any other)
   if ((status !== 'done' || job.kind === 'chat') && existsSync(home)) park(home);
@@ -1482,14 +1507,14 @@ const realDir = (p: string) => { try { return lstatSync(p).isDirectory() && real
 // Each run: the job's config in its home (or the one a reviewer is asked again in: askHome, slots.ts). Codex gets the
 // seat's sign-in (Claude's comes on a pipe: SIGN_IN); a Claude work job gets the shared memory, a reviewer none (nothing
 // another job wrote reaches a verdict that way).
-async function prepareHome(seat: Seat, job: Job, me: Me, reviewing: boolean, home = jobDirs(WORK, job.id).home) {
+async function prepareHome(seat: Seat, job: Job, me: Me, home = jobDirs(WORK, job.id).home) {
   const { dir } = jobDirs(WORK, job.id);
   runAs(me, 'mkdir', ['-p', '-m', '700', `${home}/tmp`, `${home}/.claude`, `${home}/.codex`]);
   // Only the sign-in: the seat's config.toml was writable by every agent before, and could start a command.
   const auth = cliOf(seat) === 'codex' ? readAs(keeper, `${seatDir(seat.id)}/auth.json`) : undefined;
-  if (auth !== undefined) { runAs(me, 'sh', ['-c', 'umask 077 && cat > "$1"', 'sh', `${home}/.codex/auth.json`], auth); handed.set(job.id, auth); }
+  if (auth !== undefined) { runAs(me, 'sh', ['-c', 'umask 077 && cat > "$1"', 'sh', `${home}/.codex/auth.json`], auth); handed.set(job.id, auth); refreshes.handOut(runRefreshes(job.id), seat.id, auth); }
   if (CLIS[cliOf(seat)]) handOutSignIn(me, seat, home, job.id);
-  if (cliOf(seat) === 'claude' && !reviewing) {
+  if (cliOf(seat) === 'claude' && runModeOf(job).sharesMemory) {
     // One it can't mask isn't handed out, and its copy is removed; one that can't be removed throws: the job doesn't
     // start with it
     const out = await masked(memoryFolders(me, job, dir, home), mask);
@@ -1564,9 +1589,8 @@ function memoryFolders(me: Me, job: Job, dir: string, home: string): Folders {
 // refresh time unchanged, the account included. (A job can still spoil its seat's tokens: that costs a sign-in.)
 // And only from a run whose copy is still the seat's own (from: the sign-in as prepareHome handed it out). Once one run's
 // refresh is back, or a new sign-in replaced the seat's, every other copy is of a sign-in that's gone, and its refresh
-// could only put an older one back: so one run at a time writes a refresh back, the first to settle. (A second copy that
-// refreshes with a refresh token another already used is refused by OpenAI, "refresh token was already used", which is
-// why a seat carries few runs at once: SEAT_RUNS.)
+// could only put an older one back: so one run at a time writes a refresh back, the first to settle. (A run launched with
+// the worker's refreshes, REFRESH_URL_VAR, has nothing to write back: the worker saved each of its refreshes as it came.)
 const handed = new Map<number, string>();
 // Another CLI's sign-in (clis.ts credentials) goes into the job's home as Codex's does, and a refresh of it comes back the
 // same way: only from a run whose copy is still the seat's own, the first to settle.
@@ -1584,6 +1608,34 @@ function handOutSignIn(me: Me, seat: Seat, home: string, job: number) {
 function keepSignIn(me: Me, seat: Seat, home: string, job: number) {
   returnSignIn({ me, keeper, seat, home, directory: seatDir(seat.id), cli: cliOf(seat),
     from: handed.get(job), files: handedFiles.get(job) });
+}
+// Each Codex seat's refreshes, which its runs send to the worker (refreshes.ts), each run on a secret path of its own.
+// They come in on supervise.py's socket, which outlives a reload of the worker's process, so no job can take its port
+// and the runs a new worker takes over still reach it. What the refreshes know (the sign-ins handed out, the tokens
+// spent, the runs' paths) is kept in a file only root reads, so a new worker carries on where the last one stopped.
+const REFRESHES_FILE = `${WORK}/codex-refreshes.json`;
+const refreshes = codexRefreshes({
+  read: id => SEATS.some(s => s.id === id && !s.gone && cliOf(s) === 'codex') ? readAs(keeper, `${seatDir(id)}/auth.json`) : undefined,
+  save: (id, text) => saveAs(`${seatDir(id)}/auth.json`, text),
+  exchange: exchangeWithOpenAI,
+  state: existsSync(REFRESHES_FILE) ? JSON.parse(readFileSync(REFRESHES_FILE, 'utf8')) : { lineages: {}, holders: {} },
+  keep: state => {
+    writeFileSync(`${REFRESHES_FILE}.new`, JSON.stringify(state), { mode: 0o600 });
+    renameSync(`${REFRESHES_FILE}.new`, REFRESHES_FILE);
+  },
+});
+let refreshPort: number;
+const runRefreshes = (job: number) => `job ${job}`;
+const refreshVars = (capability: string | undefined): Record<string, string> =>
+  capability ? { [REFRESH_URL_VAR]: `http://127.0.0.1:${refreshPort}/codex/${capability}` } : {};
+// supervise.py binds the socket and hands it down (WORKER_REFRESH_FD). A worker started on its own (a local test run)
+// listens on a free port.
+async function serveCodexRefreshes() {
+  const fd = process.env.WORKER_REFRESH_FD;
+  if (ROOT && !fd) throw new Error('No refresh socket from supervise.py (WORKER_REFRESH_FD): Codex runs would have nowhere to refresh');
+  ({ port: refreshPort } = await serveRefreshes(refreshes.refresh, fd ? { fd: Number(fd) } : { port: 0 }, log));
+  refreshes.endAllBut([...adopted.values()].map(r => runRefreshes(r.job.id)));
+  log(`Codex refreshes on port ${refreshPort}`);
 }
 
 // A paused run's clone, if it's still on the job's branch.
@@ -1619,9 +1671,7 @@ const AUTO_MODE = { environment: ['$defaults',
 
 // adopted: a run another worker process launched and handed over (a reload, detached.ts), taken over where it got to.
 async function runJobIn(seat: Seat, job: Job, slot: string, me: Me, spent: Spent, launches: Launched[], adopted: RunRecord | undefined, tooling: ReturnType<typeof measurement>): Promise<Record<string, unknown>> {
-  const reviewing = job.kind === 'review' || job.kind === 'consolidate';
-  const meeting = job.kind === 'meeting';
-  const trying = job.kind === 'try';
+  const mode = runModeOf(job), { reviewing, meeting, trying } = mode;
   const branch = job.branch ?? `job/${job.id}`;
   if (!reviewing && !workRunsOn(branch, job.pr)) throw new Error(`Refused branch ${branch}: work jobs only run on job/<n>, or a profile pull request's fix on its profile/<n>`);   // (workRunsOn)
   const { dir, home } = jobDirs(WORK, job.id);
@@ -1645,11 +1695,12 @@ async function runJobIn(seat: Seat, job: Job, slot: string, me: Me, spent: Spent
   const launchEnv = async (h = home) => {
     const keys = reviewing ? {} : await safe(() => hq.api('secrets')) ?? {};
     const signIn = cli !== 'claude' ? undefined : readAs(keeper, `${seatDir(seat.id)}/${credentialFile(seat)}`)?.trim() ?? '';
-    const seatVars = other ? { ...other.home(h), ...other.env?.({ model, effort: effort ?? undefined }) } : cli === 'codex' ? { CODEX_HOME: `${h}/.codex` } : { CLAUDE_CONFIG_DIR: `${h}/.claude`, ...claudeEnv(seat),
+    const seatVars = other ? { ...other.home(h), ...other.env?.({ model, effort: effort ?? undefined }) } : cli === 'codex' ? { CODEX_HOME: `${h}/.codex`, ...refreshVars(refreshes.capabilityOf(runRefreshes(job.id))) } : { CLAUDE_CONFIG_DIR: `${h}/.claude`, ...claudeEnv(seat),
       // A lead's session waits for its background team members instead of exiting after its own turn.
       CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: String(3 * 3600e3), CLAUDE_CODE_DISABLE_AUTO_MEMORY: reviewing ? '1' : undefined };
     return { signIn, env: envFor({ ...me.env, HOME: h, TMPDIR: `${h}/tmp`, ...seatVars, HQ_URL: HQ, HQ_TOKEN: job.token, HQ_AGENT: job.agent,
-      HQ_JOB: String(job.id), HQ_JOB_DIR: hqDir, HQ_RENDERS: RENDERS, ...boardTimes(job) }, keys, Object.keys(seatVars)) };
+      HQ_JOB: String(job.id), HQ_JOB_DIR: hqDir, HQ_RENDERS: RENDERS, ...boardTimes(job),
+      ...(job.lighter && !reviewing && { HQ_LIGHTER: job.lighter.own }) }, keys, Object.keys(seatVars)) };   // (hq up)
   };
   // Both read the prompt from stdin, so a long one (a long message from the board) is never cut short, and it's on
   // no command line (any uid can read /proc/<pid>/cmdline). A launch of its own, so a reviewer can be asked about its
@@ -1684,7 +1735,7 @@ async function runJobIn(seat: Seat, job: Job, slot: string, me: Me, spent: Spent
     if (job.carry) return await carryChecks(job, me, launches);
     // A fresh run starts clean. A paused review keeps its verdict file with its session.
     if (!job.session) remove(home);
-    if (!job.session) remove(dir);
+    if (!job.session && !job.handedUp) remove(dir);   // (a hand-up's next run keeps its clone)
     for (const p of [dir, home]) if (existsSync(p)) own([p], me);
     if (existsSync(dir) && !(reviewing ? atCommit(me, dir, job.sha) : resumable(me, dir, branch))) remove(dir);
     const newHome = !existsSync(home), fresh = !existsSync(dir);
@@ -1719,18 +1770,15 @@ async function runJobIn(seat: Seat, job: Job, slot: string, me: Me, spent: Spent
     const { session: ownSession, switched } = resumeOn(cli, job.engine, job.session);
     const carried = ownSession || reviewing || !job.resumes ? null : carry(job, job.resumes, cli, seat, me);
     const session = ownSession ?? carried;
+    const closingBriefing = session || reviewing || !job.closingReports ? ''
+      : `\n\n${closingLines(job.closingReports, g.ag(dir, 'log', '--no-merges', '--format=%h %s', `origin/${BASE}..HEAD`))}`;
     runAs(me, 'mkdir', ['-p', hqDir]);
     runAs(me, 'chmod', ['700', hqDir]);
-    await prepareHome(seat, job, me, reviewing);
+    await prepareHome(seat, job, me);
     const gatesRoots = { checkout: dir, readable: [`${WORK}/mirror.git`] };   // what a work job's gates may touch (completion.ts)
     // (a Codex work run hears HQ's word on memory after each tool call: inbox.ts)
     if (cli === 'codex') runAs(me, 'sh', ['-c', 'cat > "$1"', 'sh', `${home}/.codex/hooks.json`], JSON.stringify({ hooks: completionHooks(job.kind, { messages: (job.kind === 'work' || trying) && 'steps', ...gatesRoots }) }));
-    // a resumed session (the intercom's every turn, work back from the board) gets what's in flight now, after its note,
-    // and what a stop of the worker's container cut (the coordinator's cut).
-    let prompt = ownSession ? (job.note ?? 'Continue where you left off.') + (job.cut ? `\n\n${job.cut}` : '') + (job.inFlight ? `\n\n${job.inFlight}` : '')
-      : carried ? `${carriedNote(job, dir)}\n\n${inThreadLines(job, conflicts)}${job.prompt}` + (job.note ? `\n\n${job.note}` : '') + (job.inFlight ? `\n\n${job.inFlight}` : '')
-      : (reviewing ? reviewBriefing(job) : meeting ? meetingBriefing(job) : trying ? tryBriefing(job) : briefing(job, dir, conflicts)) + (switched && !reviewing && !fresh ? `\n\n${SWITCHED}${job.cut ? `\n\n${job.cut}` : ''}` : '') + (job.note ? `\n\n${job.note}` : '');
-    prompt += `\n\n${job.company.stylePrompt}`;
+    const prompt = `${promptOf(job, mode, { dir, conflicts, ownSession, carried, switched, fresh, closing: closingBriefing })}\n\n${job.company.stylePrompt}`;
     const args = other ? other.run({ home, model, effort: effort ?? undefined, session, reviewing })
       : cli === 'codex'
       // Codex: automatic review of each action, sandboxed to the worktree (network allowed for installs and APIs).
@@ -1762,7 +1810,7 @@ async function runJobIn(seat: Seat, job: Job, slot: string, me: Me, spent: Spent
   // going (a test run in the background) and the team members still at work, whose sessions end with the lead's.
   let cut: { lost?: string[]; lostAt?: string } = {};
   const endRun = () => {
-    if (me.uid !== undefined) cut = { lost: processesOf(me.uid, first.launched.pid), lostAt: new Date().toISOString() };
+    cut = { lost: me.uid === undefined ? [] : processesOf(me.uid, first.launched.pid), lostAt: new Date().toISOString() };
     stopped = true; run.steady = false; current.stop();
   };
   const stop = () => { if (!ended && !stopped) endRun(); };
@@ -1794,7 +1842,7 @@ async function runJobIn(seat: Seat, job: Job, slot: string, me: Me, spent: Spent
   // reading). A day's lines come from main's history (the coordinator's commitlines.ts). A reviewer or a meeting's seat changes nothing to count.
   let lines: { add: number; del: number } | undefined, start: { add: number; del: number } | undefined, reading = false, unread = false;
   const countLines = async () => {
-    if (ownershipSignal()?.aborted || reviewing || meeting || trying || reading) return;
+    if (ownershipSignal()?.aborted || !mode.changesBranch || reading) return;
     reading = true;
     try {
       const n = await branchLines(me, dir, BASE), was = lines;
@@ -1908,7 +1956,7 @@ async function runJobIn(seat: Seat, job: Job, slot: string, me: Me, spent: Spent
         say(s.text!, job.agent, s.board);
         logged(s);
       }
-      account(spent, e, model, resumed);   // its token use, and whether it started anyone (spent.ts)
+      account(spent, e, model, resumed, quiet ? undefined : Date.now());   // its token use, and whether it started anyone (spent.ts; now)
       if (e.type === 'turn.completed') ended = true;
       // yielding: stop between steps (a tool's result is in, Claude's or Codex's), so it resumes cleanly. Not after a
       // Codex reply: its last one comes just before turn.completed, and a finished job would be reported as paused.
@@ -1924,10 +1972,10 @@ async function runJobIn(seat: Seat, job: Job, slot: string, me: Me, spent: Spent
     read: { out: at.out - pending.length, err: at.err }, session: run.session, usage: spent.usage, handed: handed.get(job.id), ...lastLook });
   run.keep = (look = false) => {
     if (ownershipSignal()?.aborted) return;
-    if (look && me.uid !== undefined) lastLook = { lost: processesOf(me.uid, first.launched.pid), lostAt: new Date().toISOString() };
+    if (look) lastLook = { lost: me.uid === undefined ? [] : processesOf(me.uid, first.launched.pid), lostAt: new Date().toISOString() };
     keepRecord(RUNS, recordNow());
   };
-  run.keep();
+  run.keep(true);
   launches.push(first.launched);
   await first.sent;   // (a reload before the prompt is in the CLI's pipe would cut a long one)
   run.steady = true;
@@ -1935,7 +1983,16 @@ async function runJobIn(seat: Seat, job: Job, slot: string, me: Me, spent: Spent
   const looking = setInterval(() => { try { run.keep(true); } catch (err) { log(`job #${job.id}: run record:`, err); } }, 60_000);
   // a step that never ends (a long build, no output) still yields in time
   // (and a job stopped with hq stop, at once)
+  // A quick run stops at the end of its turn on the chat slot (the coordinator's quickruns.ts QUICK_RUN_MS), which a
+  // reload doesn't renew: its run record keeps the job as claimed.
+  let overtime = false;
   const yieldCheck = setInterval(() => {
+    if (mode.quickRun && Date.now() >= mode.quickRun.until) {
+      overtime = true;
+      killAll(me);
+      stop();
+      return;
+    }
     if (stopAsked.has(job.id)) {
       halt();
       return;
@@ -1982,7 +2039,7 @@ async function runJobIn(seat: Seat, job: Job, slot: string, me: Me, spent: Spent
       killAll(me);
       keepSignIn(me, seat, home, job.id);
       confirmationHome = askHome(me, jobDirs(WORK, job.id).confirmationHome);
-      await prepareHome(seat, job, me, reviewing, confirmationHome);
+      await prepareHome(seat, job, me, confirmationHome);
       runAs(me, 'mkdir', ['-m', '700', `${confirmationHome}/work`]);
       log(`job #${job.id}: ended without its verdict as JSON, asking a fresh session once whether the verdict it wrote stands`);
       // the second launch's own state: its outcome, errors and events, its tokens on top of the first's
@@ -2045,6 +2102,7 @@ async function runJobIn(seat: Seat, job: Job, slot: string, me: Me, spent: Spent
 
   if (shuttingDown) return {};
   const session = run.session;
+  if (overtime) return { status: 'failed', session, overtime, result: 'Stopped at its quick-run deadline' };
   // An emergency stop preserves its work without starting review.
   const stopWhy = stopAsked.get(job.id);
   const pauseCut = () => ({ ...(cut.lost?.length ? cut : {}), ...(working.size ? { members: [...working].map(c => members.get(c)!.name) } : {}) });
@@ -2074,6 +2132,11 @@ async function runJobIn(seat: Seat, job: Job, slot: string, me: Me, spent: Spent
   // An account its provider closed: no sign-in card that can't work, and no other seat takes its share (close). The job
   // goes back to the queue, for its seat.
   if (cause === 'closed') { close(seat, told || 'account deactivated'); return { status: 'interrupted', session }; }
+  // A Codex run's failed sign-in that isn't the seat's (refreshes.ts signedOut) failed only its own copy.
+  if (cause === 'auth' && cli === 'codex' && !refreshes.signedOut(seat.id)) {
+    log(`job #${job.id}: its sign-in failed, but the provider hasn't refused ${seat.id}'s: back to the queue, the seat still signed in`);
+    return { status: 'interrupted', session };
+  }
   if (cause === 'auth') {
     log(`${seat.id}: signed out, the board signs it in again in Seats: ${told}`);
     as('rm', ['-f', ...signInFiles(seat)]);
@@ -2099,6 +2162,11 @@ async function runJobIn(seat: Seat, job: Job, slot: string, me: Me, spent: Spent
     log(`${seat.id}: its runs are refused, sleeping until ${new Date(seat.until).toISOString()}: ${told}`);
   }
 
+  // A quick run's answer is its last message: nothing in its clone is committed or pushed, and one stopped has none.
+  if (mode.quickRun) return code !== 0 || stopWhy
+    ? { status: 'failed', session, result: failure(result, `${how.cli} ${errors}`) }
+    : { status: 'done', session, result };
+
   g.settle(dir, cloneIdentity(job));   // (nothing the session set in its clone's git config runs in the worker's git)
   if (reviewing) {
     // The verdict whole (review.ts parses the consolidator's as JSON: a cut one would read as no verdict at all), redacted
@@ -2114,15 +2182,19 @@ async function runJobIn(seat: Seat, job: Job, slot: string, me: Me, spent: Spent
 
   if (stopWhy) return await stopWork(g, dir, branch, job, session, stopWhy, result);
   const parked = readAs(me, `${hqDir}/request.json`);
+  // A run handed up to its agent's own model (hq up) keeps its work on its branch and in its clone, like a parked one,
+  // whatever its exit code: the coordinator queues the job again at once (jobs.ts handUp).
+  const up = parked === undefined ? readAs(me, `${hqDir}/up.json`) : undefined;
   // A run that didn't end well keeps its work on its branch, with no pull request. A refused push (say, workflow files
   // with a token that may not change them), or one that never reached GitHub in all its tries (git.ts pushToGitHub),
   // fails the job with the reason.
-  if (parked !== undefined || code !== 0) {
+  if (parked !== undefined || up !== undefined || code !== 0) {
     const to: Pushed = {};
     try { await pushRun(g, dir, branch, job, to); }
     catch (err) { return { status: 'failed', session, branch, profile: to.profile, result: failure(result, `the push failed: ${String((err as Error).message ?? err)}`) }; }
     // (photo and document fields too: outcome.ts parkedRequest.)
     if (parked !== undefined) return { status: 'parked', session, branch, profile: to.profile, request: parkedRequest(parked) };
+    if (up !== undefined) return { status: 'up', session, branch, profile: to.profile, up: upNote(up) };
     // how it failed, in the CLI's own signals and never its words, for the server's log: a report may hold a
     // customer's details, which stay out of logs (an intercom turn failing on every resume, 2026-10-02)
     log(`job #${job.id}: failed, exit ${code}${how.error ? `, ${how.error}` : ''}${how.status ? `, HTTP ${how.status}` : ''}${how.events ? `, after ${how.events} events` : ', before any event'}${job.session ? ', resumed' : ''}`
@@ -2131,6 +2203,41 @@ async function runJobIn(seat: Seat, job: Job, slot: string, me: Me, spent: Spent
     return { status: 'failed', session, branch, profile: to.profile, result: failure(result, `${how.cli} ${errors}`) };
   }
   return await land({ g, dir, branch, job, me, session, summary: last, result, spent, launches, failure, keep: checks => { if (!ownershipSignal()?.aborted) keepRecord(RUNS, { ...recordNow(), checks }); } });
+}
+
+// How a job's run differs by its kind: a reviewer's (review, consolidate) judges one commit, a meeting's seat and a try
+// run leave their outcome in HQ, and a quick run (the coordinator's quickruns.ts) gives one answer within its turn on
+// the chat slot. Every Claude run but a reviewer's and a quick run's shares the agent's memory (copyback.ts), and only
+// a run that may change its branch has lines to count and commits.
+function runModeOf(job: Job) {
+  const reviewing = job.kind === 'review' || job.kind === 'consolidate', meeting = job.kind === 'meeting', trying = job.kind === 'try';
+  const quickRun = job.quickReply ? { until: job.quickReplyUntil! } : undefined;
+  return { reviewing, meeting, trying, quickRun, sharesMemory: !reviewing && !quickRun, changesBranch: !reviewing && !meeting && !trying && !quickRun };
+}
+type RunMode = ReturnType<typeof runModeOf>;
+
+// A run's prompt: a quick run's own briefing; a resumed session's note (the intercom's every turn, work back from the
+// board) with what's in flight now and what a stop of the worker's container cut (the coordinator's cut); a session
+// carried from its author's last run on the branch (carry); else its kind's briefing (a work run's with its closing
+// reports), saying so when its CLI switched.
+function promptOf(job: Job, mode: RunMode, run: { dir: string; conflicts: string[]; ownSession?: string | null; carried?: string | null; switched: boolean; fresh: boolean; closing: string }) {
+  const note = job.note ? `\n\n${job.note}` : '', cut = job.cut ? `\n\n${job.cut}` : '', inFlight = job.inFlight ? `\n\n${job.inFlight}` : '';
+  if (mode.quickRun) return quickBriefing(job);
+  if (run.ownSession) return (job.note ?? 'Continue where you left off.') + cut + inFlight;
+  if (run.carried) return `${carriedNote(job, run.dir)}\n\n${inThreadLines(job, run.conflicts)}${job.prompt}${note}${inFlight}`;
+  const newSession = run.switched && !mode.reviewing && !run.fresh ? `\n\n${SWITCHED}${cut}` : '';
+  // (a hand-up's run hears why it was handed up: lighter.ts handedUpLines)
+  const handedUp = job.handedUp && !mode.reviewing ? `\n\n${handedUpLines(job.handedUp)}` : '';
+  const brief = BRIEFINGS[job.kind]?.(job, run.dir, run.conflicts) ?? briefing(job, run.dir, run.conflicts, run.closing);
+  return brief + newSession + handedUp + note;
+}
+const BRIEFINGS: Record<string, (job: Job, dir: string, conflicts: string[]) => string> = { review: reviewBriefing, consolidate: reviewBriefing, meeting: meetingBriefing, try: tryBriefing };
+
+// hq up's note (up.json), whole as the agent wrote it: a file hq up didn't write fails the run, as a request.json that doesn't parse does.
+function upNote(json: string) {
+  const { note } = JSON.parse(json) as { note?: unknown };
+  if (typeof note !== 'string' || !note.trim()) throw new Error('up.json has no note: hq up writes one');
+  return whole(redact(note.trim()), 20_000);
 }
 
 async function stopWork(g: ReturnType<typeof flow.forAgent>, dir: string, branch: string, job: Job, session: string | undefined, why: string, result = `Stopped by ${why}`) {
@@ -2546,6 +2653,9 @@ const claimOn = (seat: Seat, engine: string, kind?: string) => ({ seat: seat.id,
 
 // A slot runs one job at a time, for whichever engine's seat it claims on (nextClaim). The intercom has a slot of its own
 // (kind 'chat') on the healthiest Claude seat, so the board's chat with the CEO never waits behind long jobs.
+// The idle chat slot asks for a quick run this often: its answer is due within seconds of the board's question, and an
+// empty claim is one small request to HQ.
+const CHAT_POLL_MS = 1_000;
 // adopted: the run the last worker process left running in this slot (takeOver), which goes on here first.
 async function slotLoop(slot: string, kind?: string, adopted?: RunRecord) {
   if (adopted) await takeBack(slot, adopted);
@@ -2578,7 +2688,7 @@ async function slotLoop(slot: string, kind?: string, adopted?: RunRecord) {
           const job = attempt.job = answer as Job | null;
           if (!kind && room === undefined) turns.found(engine, !!job);
           if (!kind && !held && !check && engine === 'claude') claimAnswered(pacedEmpty, picked, claimed.pacedUntil !== undefined, !!job);
-          if (!job) { if (check) picked.checked = 0; reserve.giveBack(t); await sleep(15_000); return; }
+          if (!job) { if (check) picked.checked = 0; reserve.giveBack(t); await sleep(kind === 'chat' ? CHAT_POLL_MS : 15_000); return; }
           reserve.started();
           log(`${slot} on ${picked.id}: job #${job.id} ${job.title}${check ? ` (held ${picked.state}: its check)` : ''}`);
           if (check) reportSeat(picked);   // (its next check)
@@ -2626,8 +2736,8 @@ process.on('SIGTERM', () => {
   const lost = runs.map(r => { try { return r.uid === undefined ? [] : processesOf(r.uid, r.cli.pid); } catch { return []; } });
   for (const r of runs) r.stop();
   try {
-    noteHandBacks(HANDBACK, runs.map(({ job, seat, session, spent }, i) => ({ job, seat, session, usage: spent.usage,
-      ...(lost[i].length ? { lost: lost[i], lostAt: at } : {}) })));
+    noteHandBacks(HANDBACK, runs.map(({ job, seat, session, spent }, i) => ({ job, seat, session, usage: spent.usage, lostAt: at,
+      ...(lost[i].length ? { lost: lost[i] } : {}) })));
     for (const r of runs) dropRun(RUNS, r.job);
   } catch (err) { log('runs not written down for the next start, so they count as abandoned:', err); }
   process.exit(0);
@@ -2673,8 +2783,8 @@ function takeOver() {
       continue;
     }
     for (const c of launchesOf(r)) if (c.start && alive(c.pid, c.start)) process.kill(c.pid, 'SIGTERM');   // (its seat or slot is gone: it starts again)
-    back.push({ job: r.job.id, seat: r.seat, session: r.session ?? r.job.session ?? undefined, usage: r.usage,
-      ...(r.lost?.length ? { lost: r.lost, lostAt: r.lostAt } : {}) });
+    back.push({ job: r.job.id, seat: r.seat, session: r.session ?? r.job.session ?? undefined, usage: r.usage, lostAt: r.lostAt,
+      ...(r.lost?.length ? { lost: r.lost } : {}) });
     dropRun(RUNS, r.job.id);
   }
   if (back.length) noteHandBacks(HANDBACK, back);
@@ -2727,7 +2837,7 @@ capacityTrial.note(`Capacity settings: ${capacitySettings}`);
 // and the figures the environment can change, as this process took them.)
 log(`Worker starting: seats ${SEATS.map(s => `${s.id} (${s.engine})`).join(', ')}; ${WORK_SLOTS.length} slots and the intercom's; base ${BASE}; ` +
   `memory ${cgroup('memory.max') || '?'}, swap ${cgroup('memory.swap.max') || '?'} (${cgroup('memory.swap.current') || '?'} swapped); ` +
-  `Codex runs a seat ${SEAT_RUNS.codex}, a job's share ${JOB_SHARE_MB} MB starved, ${JOB_MOST_MB} MB at most`);
+  `Codex runs a seat ${SEAT_RUNS.codex ?? 'as the room allows'}, a job's share ${JOB_SHARE_MB} MB starved, ${JOB_MOST_MB} MB at most`);
 const refuse = (why: string) => { log(why); return setInterval(() => log(why), 60_000); };
 if (!ROOT && !DEV) {
   // Not root means agents would run with our uid and could read our tokens: run nothing, and say so.
@@ -2756,13 +2866,14 @@ function startWork() {
   readLoop();
   voiceLoop();
   watchShares();
+  const serving = serveCodexRefreshes();   // (no slot starts without it: a run's refreshes go only through it)
   // The runs the last worker's stop cut off go back first, or a claim would count them abandoned. A file that can't be
   // read or kept still lets the slots start (a worker that runs nothing is worse than runs counted as abandoned), and
 
   handBack(HANDBACK, b => hq.api('finish', b), log).catch(err => {
     log('hand-back failed, so its runs count as abandoned:', err);
     try { renameSync(HANDBACK, `${HANDBACK}.failed-${Date.now()}`); } catch { /* no file left to set aside */ }
-  }).then(() => {
+  }).then(() => serving).then(() => {
     for (const slot of WORK_SLOTS) slotLoop(slot, undefined, adopted.get(slot));
     slotLoop(CHAT_SLOT, 'chat', adopted.get(CHAT_SLOT));
   });

@@ -28,7 +28,6 @@
   color: var(--bk-night);
   -webkit-user-select: text;
   user-select: text;
-  touch-action: manipulation;
 }
 #book .bk-find input::placeholder {
   color: rgba(90, 84, 120, 0.42);

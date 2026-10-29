@@ -1,15 +1,4 @@
-// Review mode's notes on a product preview (feedback.ts saveNote), into the board's book: each one a scrap on the
-// newest page of the board's My Notebook, for the product's owner (a cycle folder's maker; HQ's the Process role's),
-// the board's own and an invited person's alike. Nothing there reaches an agent
-// until the board sends that page in HQ, behind its sign-in, after seeing the notes on it (notebooksend.ts), so a note
-// the product's own code posted waits with the rest, in plain sight.
-//   - The note keeps its anchor (anchor.js v1: the page's whole address, the element, the view, the lines) and its
-//     words. Its snip is the screenshot around the mark, with the pictures added to it below, in one picture (the book
-//     keeps one a note). Its trail, the element's HTML and the browser it was seen on stay out: the book has no place
-//     for them.
-//   - A note's words never ask from here: only the board's own, in HQ.
-//   - The limits review mode always had hold: PER_HOUR notes an hour for each writer on each product, the ink's and
-//     pictures' caps, and no screenshot while the disk is low (feedback.ts).
+// Review-mode marks become scraps on the writer's Ink page, ready for its Send control.
 import { readFileSync } from 'node:fs';
 import sharp from 'sharp';
 import { db, once } from '../db.ts';
@@ -23,7 +12,8 @@ import * as feedback from '../feedback.ts';
 import { BOARD, sheetPageFor } from './book.ts';
 import { addNote } from './booknotes.ts';
 import { WORDS_MAX, isRefused } from '../pagechecks.ts';
-import { createScrap } from '../notebookscraps.ts';
+import { createScrap, createPageScrap } from '../notebookscraps.ts';
+import { openPageOf, pageRow } from '../notebook.ts';
 
 // The words' most: the book's, the cut's mark ("… (cut here)") included
 const WORDS_CUT = WORDS_MAX - 20;
@@ -40,7 +30,8 @@ const OVER_HOUR = {
   status: 429,
   error: `${feedback.PER_HOUR} notes in an hour is the most, so a page stuck in a loop can't flood the book. Try again in a while.`,
 };
-// The note review mode posted (feedback.ts saveNote's body), for its owner, in the board's Notebook. by: who wrote it ('board', or an
+// The note review mode posted (feedback.ts saveNote's body), for its owner: the board's in its Notebook, a guest's on
+// their page in the round notebook. by: who wrote it ('board', or an
 // invited guest's 'guest:<grant>'). open: checked after the snip is cut, before anything is written (a guest's link may
 // have ended meanwhile).
 export async function toBook(
@@ -50,6 +41,7 @@ export async function toBook(
   b: any,
   by = BOARD,
   open: () => feedback.Refusal | null = () => null,
+  guestPage?: number,
 ): Promise<feedback.Refusal | Scrap> {
   const words = feedback.words(b?.note, WORDS_CUT);
   if (!words) return { status: 400, error: 'bad note' };
@@ -80,18 +72,21 @@ export async function toBook(
   const { v, el, view, ink, video } = element,
     anchor = { v, url: element.url, el, view, ink, video };
   const said = b.said === 'spoken' ? 'spoken' : 'typed';
-  // A note is a scrap on the newest page of the board's My Notebook, not on a sheet (the board's pin flow, 27 Oct): it
-  // reaches the owner when the board sends that page. An invited person's too, theirs (by), where the board sees its own
-  // (a sheet's notes had no view since the pin flow)
-  return scrapped(slug, page, { anchor, words, said, snip, owner, name }, by);
+  // The board uses My Notebook. The authenticated review share selects its guest's page.
+  const note = { anchor, words, said, snip, owner, name };
+  if (by === BOARD) return scrapped(slug, page, note);
+  const target = guestPage && pageRow(guestPage, by);
+  if (!target) return { status: 403, error: 'open the notebook from your review invitation first' };
+  const group = createPageScrap({ ...note, anchor: { ...anchor, ink: [] } }, target, by);
+  if (isRefused(group)) return { status: group[0], error: group[1] };
+  return { ok: true, id: group.id, page: group.page, owner, name };
 }
-
-// The note as a scrap (notebookscraps.ts createScrap), heard by the owner's log as a sheet's note was
-function scrapped(slug: string, page: string, b: Scrapped, by: string): feedback.Refusal | Scrap {
+// The board's note as a scrap (notebookscraps.ts createScrap), heard by the owner's log as a sheet's note was
+function scrapped(slug: string, page: string, b: Scrapped): feedback.Refusal | Scrap {
   // (its lines only in its snip, never on its anchor: rule zero, the board's, 2026-10-27)
   const anchor = { ...(b.anchor as object), ink: [] };
   // (no notebook asked for: My Notebook, made when there's none, so never createScrap's 404)
-  const g = createScrap({ anchor, words: b.words, said: b.said, snip: b.snip, owner: b.owner }, BOARD, by) as Exclude<
+  const g = createScrap({ anchor, words: b.words, said: b.said, snip: b.snip, owner: b.owner }) as Exclude<
     ReturnType<typeof createScrap>,
     number
   >;
@@ -123,18 +118,21 @@ function ownerOf(slug: string, page: string) {
   return named(findAgent(agent) ? agent : ceo());
 }
 const named = (owner: string) => ({ owner, name: findAgent(owner)?.name ?? owner });
-// The board's open groups on the newest page of My Notebook, where its notes go now: none before it has one
-const onNewestPage = () =>
-  (
-    db
-      .prepare(
-        `select count(*) n from notebook_groups where parent is null and deleted is null and page = (
-           select p.id from book_pages p join notebooks b on b.id = p.notebook
-           where b.who = ? and b.kind = 'mine' and p.archived = 0 and p.send_at is null order by p.created desc, p.id desc
-           limit 1)`,
-      )
-      .get(BOARD) as { n: number }
-  ).n;
+// The board's notes on My Notebook's current page, where its notes go now and the book opens (notebook.ts openPageOf):
+// what it wrote or cut there and hasn't sent. None before it has one.
+function onNewestPage() {
+  const mine = db.prepare("select id from notebooks where who = ? and kind = 'mine'").get(BOARD) as
+    { id: number } | undefined;
+  const page = mine && openPageOf(mine.id);
+  if (!page) return 0;
+  const { n } = db
+    .prepare(
+      `select count(*) n from notebook_groups where page = ? and by = ? and parent is null and deleted is null
+       and status = 'open'`,
+    )
+    .get(page, BOARD) as { n: number };
+  return n;
+}
 // Whether a writer has had PER_HOUR notes on this product (its pages' addresses start with origin) in the last hour
 function overHour(by: string, origin: string) {
   const hourAgo = new Date(Date.now() - 36e5).toISOString();

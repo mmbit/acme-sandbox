@@ -72,9 +72,9 @@ async function foldedStory(c) {
   }
 }
 
-// A ring drawn with the pen and saved from its post-it: the lift's flight as the page saw it, { id, page: its scrap's,
-// from, land, path: the layer's box each frame, landed: every book:landed's { id, page, group } }, once its layer has
-// gone and the scrap is in the store
+// A ring drawn with the pen and saved from its post-it: the lift's flight as the page saw it, { id, page, picture: its
+// scrap's, from, land, path: the layer's box each frame, landed: every book:landed's { id, page, group } }, once its
+// layer has gone and the scrap is in the store
 async function lifted(c, page, ring) {
   await page.evaluate(() => {
     const f = (window.__flight = { path: [], gone: false });
@@ -106,20 +106,38 @@ async function lifted(c, page, ring) {
   await page.waitForFunction(() => window.__flight.gone, null, { timeout: FLIGHT_MS });
   const scrap = groupsOf(page.context().notebook).at(-1);
   await page.waitForTimeout(300); // (book:scrap, after the post)
-  return { ...(await page.evaluate(() => window.__flight)), id: scrap.id, page: scrap.page };
+  return {
+    ...(await page.evaluate(() => window.__flight)),
+    id: scrap.id,
+    page: scrap.page,
+    picture: scrap.pictures[0],
+  };
 }
-// The book open on the scrap's page, showing the scrap
-async function shows(page, { id }, what) {
-  const note = `#book .bk-world .bk-page:not([hidden]) .bk-clip[data-g="${id}"]`;
+// The book open on the scrap's page, showing the scrap: its picture on the paper
+async function shows(page, { id, page: on, picture }, what) {
   const seen = await page
-    .waitForFunction(s => document.querySelector(s)?.getBoundingClientRect().width > 0, note, { timeout: 5000 })
+    .waitForFunction(
+      ([on, scrap]) => {
+        const layer = document.querySelector(`#book .bk-world .bk-page:not([hidden]) > .bk-groups[data-page="${on}"]`);
+        if (!layer) return false;
+        const el = layer.parentElement,
+          o = el.getBoundingClientRect(),
+          k = o.width / el.offsetWidth,
+          paper = document.querySelector('#book .bk-desk').getBoundingClientRect(),
+          x = o.left + (scrap.x + scrap.w / 2) * k,
+          y = o.top + (scrap.y + scrap.h / 2) * k;
+        return x > paper.left && x < paper.right && y > paper.top && y < paper.bottom;
+      },
+      [on, picture],
+      { timeout: 5000 },
+    )
     .then(
       () => null,
       () =>
         page.evaluate(id => {
           const el = document.querySelector(`#book .bk-clip[data-g="${id}"]`),
-            shown = document.querySelector('#book .bk-world .bk-page:not([hidden]) .bk-title')?.textContent;
-          return `the book shows "${shown}"; the scrap ${el ? `on "${el.closest('.bk-page')?.querySelector('.bk-title')?.textContent}"` : 'nowhere'}`;
+            shown = document.querySelector('#book .bk-world .bk-page:not([hidden])')?.ariaLabel;
+          return `the book shows "${shown}"; the scrap ${el ? `on "${el.closest('.bk-page')?.ariaLabel}"` : 'nowhere'}`;
         }, id),
     );
   assert.equal(seen, null, `${what}: the book shows its scrap on its page`);

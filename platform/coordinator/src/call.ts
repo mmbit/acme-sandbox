@@ -253,7 +253,7 @@ export function handOver(agent: string, lines: string[], request = 0, token = ''
   const said = lineTimes(lines, times);
   if (was?.status === 'ended' && was.lines === '[]' && lines?.length) { ledger.late(was.id, lines, said); return { ok: true }; }
   const live = was?.status === 'live' ? was.id : undefined;
-  // (its notes page sent and archived, or gone if nothing's on it.)
+  // (its notes page sent, staying in My Notebook, or gone if nothing's on it.)
   if (live) ledger.callEnded(live);
   const recorded = live ? ledger.items(live).length > 0 : false;
   if ((!lines?.length && !recorded) || !findAgent(agent)) {

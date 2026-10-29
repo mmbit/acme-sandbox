@@ -9,12 +9,23 @@
 // desktop.
 import assert from 'node:assert/strict';
 import { freePage } from './bookmouse.mjs';
-import { SYMBOLS, layer, notebookOn, onScreen, opened, overlaps, pagePx, routed, stroke } from './bookanswersplay.mjs';
-import { NARROWEST, answerSpot } from '../coordinator/src/ink/answerspot.ts';
+import {
+  FEED_MS,
+  SYMBOLS,
+  layer,
+  notebookOn,
+  onScreen,
+  opened,
+  overlaps,
+  pagePx,
+  placed,
+  routed,
+  stroke,
+  triedNote,
+} from './bookanswersplay.mjs';
+import { NARROWEST } from '../coordinator/src/ink/answerspot.ts';
 import { besideOnNarrower } from './bookanswersnarrow.mjs';
 
-const WRITE_MS = 4000; // an answer seen and written in, as the feed brings it (its pen: well under two seconds)
-const REST_MS = 1500; // a reply's ink, the pen rested, posted
 const WENT_LIVE = 'Yes: it went live this morning, at 09:12.';
 
 // c: book-check's { hqIn, base, store, pages, posts, org, shot, settled, settle }
@@ -22,8 +33,9 @@ export function answerStories(c) {
   return {
     'an answer: the face and its dots, then written in by a pen beside the note, never over the board’s ink; each symbol in its reply area reaches the agent':
       browser => answered(browser, c, c.MINI, 'mini'),
-    'an answer on a phone and a desktop, in free paper': async browser => {
+    'an answer on a phone, an iPad upright and a desktop, in free paper': async browser => {
       await answered(browser, c, c.PHONE, 'phone', { hasTouch: true, isMobile: true });
+      await answered(browser, c, { width: 744, height: 1133 }, 'mini-upright');
       await answered(browser, c, c.DESKTOP, 'desktop', { hasTouch: false, deviceScaleFactor: 1 });
     },
     'an agent’s drawing, form and question; the form answered; the overview lists what’s open': browser =>
@@ -54,28 +66,45 @@ export async function inStory(browser, c, { viewport, nb, made, options = {}, mo
     await done();
   }
 }
-export const written = (page, id) =>
-  layer(page).locator(`.bk-answer[data-answer="${id}"][data-written]`).waitFor({ timeout: WRITE_MS });
+// An answer settled: its pen done (data-written), and its box the same two frames running, the book done laying it out
+export async function written(page, id) {
+  await layer(page).locator(`.bk-answer[data-answer="${id}"][data-written]`).waitFor({ timeout: FEED_MS });
+  await page.waitForFunction(
+    sel => {
+      const box = () => JSON.stringify(document.querySelector(sel)?.getBoundingClientRect());
+      const before = box();
+      return new Promise(go => requestAnimationFrame(() => requestAnimationFrame(() => go(box() === before))));
+    },
+    `#book .bk-answers .bk-answer[data-answer="${id}"]`,
+    { timeout: FEED_MS },
+  );
+}
 const overview = page =>
   page
     .locator('#book')
     .getByRole('button', { name: /^The overview/ })
     .click();
-const posted = (c, from, path) => c.posts.slice(from).find(x => x.path === path);
+// The first post to path since from, once it's made (null if none is by FEED_MS)
+async function postOf(c, from, path) {
+  for (const end = Date.now() + FEED_MS; Date.now() < end; await new Promise(go => setTimeout(go, 100))) {
+    const sent = c.posts.slice(from).find(x => x.path === path);
+    if (sent) return sent;
+  }
+  return null;
+}
 // An answer as the board sees it (or its dots, waiting: the selector): across inside the paper the book shows, left of
-// the controls at its right edge and clear of the tool strip over its left, all of it. On paper with no room for an
-// answer at its least between them (the book at its least: answerspot.ts NARROWEST) it runs into the controls' column,
-// never under the controls floating at its foot.
+// the controls at its right edge, Undo's column and the tool strip beside it, all of it, wherever the page is scrolled.
+// Only on paper narrower than the narrowest an answer is placed for (answerspot.ts
+// NARROWEST) may it run into their column, never under them.
 export async function inPaper(page, id, selector = `.bk-answer[data-answer="${id}"]`) {
   const { at, paper, rail, strip } = await onScreen(page, selector);
-  const shown = `answer ${id} at ${Math.round(at.x)}..${Math.round(at.x + at.w)}`;
+  const shown = `answer ${id} at ${Math.round(at.x)}..${Math.round(at.x + at.w)} on paper ${Math.round(paper.w)} wide`;
   assert.ok(at.x >= paper.x && at.x + at.w <= paper.x + paper.w, `${shown}: inside the paper`);
-  for (const r of rail)
+  for (const r of [...rail, strip])
     assert.ok(
       paper.w < NARROWEST ? !overlaps(at, r) : at.x + at.w <= r.x,
       `${shown}: left of the controls from ${Math.round(r.x)}`,
     );
-  assert.ok(!overlaps(at, strip), `${shown}: clear of the tool strip to ${Math.round(strip.x + strip.w)}`);
 }
 
 async function answered(browser, c, viewport, size, options = {}) {
@@ -96,8 +125,7 @@ async function answered(browser, c, viewport, size, options = {}) {
   ];
   beside.box = { x: 60, y: 60 + 80, w: 640, h: 60 };
   nb.groups.push(asked, beside);
-  // (where the store puts it, with its narrow spot for a narrower book: answerspot.ts.)
-  const spot = answerSpot(asked.box, { text: WENT_LIVE }, [asked.box, beside.box], { x: 0, w: 1200 });
+  const spot = placed(nb, asked, { text: WENT_LIVE });
   await inStory(browser, c, { viewport, nb, made: [p], options }, async page => {
     await waitingFor(c, nb, page, asked, spot, size);
     const slip = await writtenIn(c, nb, page, asked, spot, size);
@@ -149,8 +177,17 @@ async function waitingFor(c, nb, page, asked, spot, size) {
   asked.waiting = { by: nb.ceo, name: nb.name, style: 'text', spot };
   nb.tell();
   const waiting = layer(page).locator(`.bk-answer-waiting[data-group="${asked.id}"]`);
-  await waiting.waitFor({ timeout: WRITE_MS });
+  await waiting.waitFor({ timeout: FEED_MS });
   assert.ok(await waiting.locator('.bk-answer-dots').count(), 'its pencil dots');
+  for (const reason of ['Waiting for my turn to answer.', "I couldn't answer that. Ask again."]) {
+    asked.waiting.reason = reason;
+    nb.tell();
+    await waiting.getByText(reason, { exact: true }).waitFor();
+    assert.equal(await waiting.locator('.bk-answer-dots').count(), 0, 'the face explains why instead of thinking');
+  }
+  delete asked.waiting.reason;
+  nb.tell();
+  await waiting.locator('.bk-answer-dots').waitFor();
   await inPaper(page, asked.id, `.bk-answer-waiting[data-group="${asked.id}"]`);
   await c.shot(`answers-waiting-${size}`, page);
 }
@@ -160,7 +197,7 @@ async function writtenIn(c, nb, page, asked, spot, size) {
   asked.children = [nb.answer(4201, 'text', WENT_LIVE, spot)];
   nb.tell();
   const slip = layer(page).locator('.bk-answer[data-answer="4201"]');
-  await slip.waitFor({ timeout: WRITE_MS });
+  await slip.waitFor({ timeout: FEED_MS });
   const t0 = Date.now();
   await written(page, 4201);
   // (its pen takes 1.5 s at most, bookanswerpace.test.js; headless WebKit draws about a frame a second)
@@ -185,9 +222,7 @@ async function symbols(c, nb, page, asked, slip, type, size) {
       r = await reply.boundingBox();
     assert.ok(r, 'the reply area shows');
     await stroke(page, draw(r.x + 12 + i * 44, r.y + 6, Math.min(28, r.height - 10)), type);
-    for (const t = Date.now(); Date.now() - t < REST_MS + 2000; await page.waitForTimeout(100))
-      if (posted(c, from, '/api/notebooks/groups/reply')) break;
-    const sent = posted(c, from, '/api/notebooks/groups/reply');
+    const sent = await postOf(c, from, '/api/notebooks/groups/reply');
     assert.ok(sent, `the ${name} went as a reply`);
     assert.equal(sent.body.answer, 4201, `the ${name} under its answer`);
     assert.ok(sent.body.ink?.length, `the ${name} as ink`);
@@ -198,7 +233,7 @@ async function symbols(c, nb, page, asked, slip, type, size) {
     await slip
       .locator('.bk-reply-sent path')
       .nth(strokes - 1)
-      .waitFor({ state: 'attached', timeout: WRITE_MS });
+      .waitFor({ state: 'attached', timeout: FEED_MS });
   }
   await c.shot(`answers-symbols-${size}`, page);
 }
@@ -220,24 +255,14 @@ async function kinds(browser, c) {
       { title: 'Which colour?', options: ['Warm', 'Cool'] },
       { title: 'Anything else?', optional: true },
     ];
-  // (each below its note: no room beside it left of the controls on the mini's paper, as the store places them)
-  const below = { dx: 0, dy: 64, w: 300 };
-  chart.children = [nb.answer(4310, 'drawing', 'Up a bit since Monday:', below, { ink })];
-  colour.children = [nb.answer(4311, 'form', 'Two quick ones:', below, { form })];
-  banner.children = [nb.answer(4312, 'question', 'Shall I make it one line on phones?', below)];
   nb.groups.push(chart, colour, banner);
-  const listed = (g, a) => ({
-    id: a.id,
-    group: g.id,
-    page: p.id,
-    notebook: 1,
-    by: a.by,
-    name: a.name,
-    text: a.text,
-    created: a.created,
-  });
-  nb.open.forms.push(listed(colour, colour.children[0]));
-  nb.open.questions.push(listed(banner, banner.children[0]));
+  // (each where the store places it: beside its note on a wide book, below it, right of the tool strip, on the mini's.
+  const [up, two, shall] = ['Up a bit since Monday:', 'Two quick ones:', 'Shall I make it one line on phones?'];
+  chart.children = [nb.answer(4310, 'drawing', up, placed(nb, chart, { text: up, ink: 80 }), { ink })];
+  colour.children = [nb.answer(4311, 'form', two, placed(nb, colour, { text: two, questions: form.length }), { form })];
+  banner.children = [nb.answer(4312, 'question', shall, placed(nb, banner, { text: shall }))];
+  nb.open.forms.push(listed(p, colour, colour.children[0]));
+  nb.open.questions.push(listed(p, banner, banner.children[0]));
   await inStory(browser, c, { viewport: c.MINI, nb, made: [p] }, async page => {
     await written(page, 4310);
     assert.ok(
@@ -245,34 +270,47 @@ async function kinds(browser, c) {
       'a drawing, in ink',
     );
     const sheet = layer(page).locator('.bk-answer[data-answer="4311"] .bk-answer-form');
-    await sheet.waitFor({ timeout: WRITE_MS });
+    await sheet.waitFor({ timeout: FEED_MS });
     assert.ok(await layer(page).locator('.bk-answer[data-answer="4312"]').count(), "the agent's question");
     for (const id of [4310, 4311, 4312]) await inPaper(page, id);
     await c.shot('answers-kinds', page);
     await formSent(c, page, sheet);
-    await openListed(c, page);
+    await openListed(c, page, p);
   });
 }
+// An answer a on group g of page p as the overview's open list has it
+const listed = (p, g, a) => ({
+  id: a.id,
+  group: g.id,
+  page: p.id,
+  notebook: 1,
+  by: a.by,
+  name: a.name,
+  text: a.text,
+  created: a.created,
+});
 // the form answered, and sent
 async function formSent(c, page, sheet) {
   await sheet.getByRole('button', { name: 'Warm' }).click();
   const from = c.posts.length;
   await sheet.locator('button.bk-answer-send').click();
-  await page.waitForTimeout(600);
-  const sent = posted(c, from, '/api/notebooks/answers/form');
+  const sent = await postOf(c, from, '/api/notebooks/answers/form');
   assert.ok(sent, 'the form went');
   assert.equal(sent.body.id, 4311);
   assert.equal(sent.body.answers?.[0], 'Warm', "the board's pick");
 }
-// the overview lists what's open, a tap turning to its page
-async function openListed(c, page) {
+// the overview lists what's open beside its grid of pages, which shows the story's page and no error, a tap turning to its page
+async function openListed(c, page, p) {
   await overview(page);
   // (the turn's picture of the overview gone first: it shows the same list for a moment.)
   await page.waitForSelector('#book .bk-turn-picture', { state: 'detached' });
   const item = page.locator('#book .bk-open .bk-open-item[data-answer="4312"][data-kind="question"]:visible');
-  await item.waitFor({ timeout: WRITE_MS });
+  await item.waitFor({ timeout: FEED_MS });
   const form = page.locator('#book .bk-open .bk-open-item[data-answer="4311"][data-kind="form"]:visible');
   assert.ok(await form.count(), 'the open form');
+  const grid = page.getByRole('list', { name: 'The overview' });
+  await grid.locator(`.bk-tile[data-id="${p.id}"]`).waitFor({ timeout: FEED_MS });
+  assert.equal(await grid.locator('.bk-far-lost').count(), 0, 'the grid read, no error in its place');
   await c.shot('answers-open', page);
   await item.click();
   await page.waitForTimeout(c.settle);
@@ -281,41 +319,6 @@ async function openListed(c, page) {
   assert.ok(await layer(page).locator('.bk-answer[data-answer="4312"]').isVisible(), 'a tap turns to its page');
 }
 
-// (a version's frame: an 8 × 6 picture, as the try run shoots them)
-const RED =
-  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAgAAAAGCAIAAABxZ0isAAAAEUlEQVR4nGN4ZmODFTEMpAQAW3NBof5buBkAAAAASUVORK5CYII=';
-// A board's note tried in versions: its page (p), its versions page made after it (tries, the one the book opens on),
-// the played Notebook on them, the note, a version made, and the store's routes listing the pages (shared with bookpicks.mjs)
-export function triedNote(c) {
-  const p = freePage(c),
-    tries = freePage(c),
-    nb = notebookOn(c, p),
-    warmer = nb.typed(4400, 'warmer?', 60, 60);
-  Object.assign(tries, { label: `${nb.name} tries: warmer?`, tries: warmer.id });
-  warmer.tries_page = tries.id;
-  const version = (id, name, picture = RED) =>
-    nb.answer(id, 'version', `${name}, as it would look`, null, { version: name, picture });
-  nb.groups.push(warmer);
-  const tile = x => ({
-    id: x.id,
-    title: x.label || 'Free page',
-    tries: x.tries ?? null,
-    sent: null,
-    sending: false,
-    archived: false,
-    groups: 0,
-  });
-  const listed = () => ({
-    notebook: { id: 1, name: 'My Notebook', kind: 'mine', archived: false },
-    pages: c.pages.map(tile),
-    archived: [],
-  });
-  const more = {
-    '/api/notebooks': () => ({ shelf: [listed().notebook], archive: [] }),
-    '/api/notebooks/pages': listed,
-  };
-  return { p, tries, nb, warmer, version, more };
-}
 async function versions(browser, c) {
   const { p, tries, nb, warmer, version, more } = triedNote(c);
   warmer.waiting = { by: nb.ceo, name: nb.name, style: 'versions', count: 3, spot: { dx: 280, dy: 0, w: 160 } };
@@ -323,7 +326,7 @@ async function versions(browser, c) {
   await inStory(browser, c, { viewport: c.MINI, nb, made: [tries, p], more }, async page => {
     await tabbed(c, page, p);
     const frame = which => page.locator(`#book .bk-versions .bk-version${which}`);
-    await frame('').first().waitFor({ timeout: WRITE_MS });
+    await frame('').first().waitFor({ timeout: FEED_MS });
     assert.equal(await frame('[data-answer]').count(), 2, 'two in');
     assert.equal(await frame('[data-empty]').count(), 1, 'one still coming');
     await c.shot('answers-versions-filling', page);
@@ -331,7 +334,7 @@ async function versions(browser, c) {
     warmer.children.push(version(4412, 'Late sun'));
     nb.feed.push({ type: 'book', agent: nb.ceo, text: 'notebook', page: tries.id });
     nb.tell();
-    await frame('[data-answer="4412"]').waitFor({ timeout: WRITE_MS });
+    await frame('[data-answer="4412"]').waitFor({ timeout: FEED_MS });
     assert.equal(await frame('[data-empty]').count(), 0, 'all three in');
     await c.shot('answers-versions', page);
   });
@@ -344,7 +347,7 @@ async function tabbed(c, page, p) {
     await page.getByRole('list', { name: 'The overview' }).locator(`.bk-tile[data-id="${p.id}"] .bk-tile-open`).click();
     await page.waitForTimeout(c.settle);
   }
-  await tab.waitFor({ timeout: WRITE_MS });
+  await tab.waitFor({ timeout: FEED_MS });
   assert.match(await tab.innerText(), /3 versions/);
   await c.shot('answers-versions-tab', page);
   await tab.click();
@@ -359,9 +362,8 @@ async function onCall(browser, c) {
     asked = nb.typed(4500, 'what does reach count here?', 60, 60);
   nb.groups.push(asked);
   await inStory(browser, c, { viewport: c.MINI, nb, made: [p] }, async page => {
-    asked.children = [
-      nb.answer(4501, 'text', 'People who saw it at least once, not views.', { dx: 0, dy: 64, w: 300 }),
-    ];
+    const text = 'People who saw it at least once, not views.';
+    asked.children = [nb.answer(4501, 'text', text, placed(nb, asked, { text }))];
     nb.tell();
     await written(page, 4501);
     const at = await pagePx(page, '.bk-answer[data-answer="4501"]');

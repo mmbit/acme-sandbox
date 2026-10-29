@@ -1,17 +1,19 @@
 // book-check.mjs's stories of the book's tools with a mouse on a desktop (shell/ink/booktools.js, booktexts.js; Ink's
-// folder): a picture on a page moved by a press and a drag, and Undo putting it
-// back; a line in another colour and a highlighted line, the colour remembered; a note typed on the page, kept through
+// folder): a line drawn with the pen across a picture just taped in, which stays put (only Select moves things);
+// a line in another colour and a highlighted line, the colour remembered; a note typed on the page, kept through
 // a reload, edited, and emptied away. Each asserts what the board sees (pixels on the book's paper, the words on it)
 // and what the store keeps (the page saved).
 import assert from 'node:assert/strict';
 
-const DESKTOP = { width: 1440, height: 900 };
+export const DESKTOP = { width: 1440, height: 900 },
+  MINI = { width: 1133, height: 744 };
 
 // c: book-check.mjs's played store and helpers: { hqIn, base, store, pages, notes, posts, org, renumber, shot, settled,
 // noErrorsIn, settle }
 export function mouseStories(c) {
   return {
-    'with a mouse: a picture on a page moved, and Undo puts it back': browser => movesAPicture(browser, c),
+    'with a mouse: the pen draws across a picture just taped in, which stays put': browser =>
+      drawsOnAPicture(browser, c),
     'with a mouse: a line in another colour and a highlighted line, the colour remembered': browser => inks(browser, c),
     'with a mouse: a note typed on the page, kept after a reload, edited, and emptied away': browser =>
       typed(browser, c),
@@ -20,7 +22,7 @@ export function mouseStories(c) {
 
 // ---- the stories
 
-async function movesAPicture(browser, c) {
+async function drawsOnAPicture(browser, c) {
   const free = freePage(c);
   const { page, errors, done } = await onDesk(browser, c);
   try {
@@ -30,36 +32,19 @@ async function movesAPicture(browser, c) {
     const before = await colourIn(page, GREEN);
     assert.ok(before.n > 2000, `the picture shows on the paper (${before.n} px)`);
     const strokes = placed.ink.length;
-    // pressed in its middle and dragged: it follows the pointer, lifted, and lands there
-    await page.mouse.move(before.x, before.y);
-    await page.mouse.down();
-    // (left only so far that it lands clear of the tool strip down the paper's left, which would hide some of it.
-    await page.mouse.move(before.x - 15, before.y + 40, { steps: 6 });
-    const lifted = await page.evaluate(() => !!document.querySelector('#book canvas.bk-lifted'));
-    assert.ok(lifted, 'the picture lifts as it moves');
-    await page.mouse.move(before.x - 30, before.y + 110, { steps: 6 });
-    await c.shot('book-mouse-picture-lifted', page);
-    await page.mouse.up();
-    const moved = await savedWhere(c, free.id, p => p.scraps[0].x !== placed.scraps[0].x);
+    // the pen pressed in its middle (just taped in, it's picked: its frame round it) and dragged across it: a line on
+    // it, never a move
+    await line(page, before.x - 40, before.y, 80);
+    const drawn = await savedWhere(c, free.id, p => p.ink.length === strokes + 1);
+    assert.deepEqual(
+      [drawn.scraps[0].x, drawn.scraps[0].y],
+      [placed.scraps[0].x, placed.scraps[0].y],
+      'the picture stays where it was',
+    );
     await page.waitForTimeout(300);
     const after = await colourIn(page, GREEN);
-    assert.ok(
-      Math.abs(after.x - before.x + 30) < 6 && Math.abs(after.y - before.y - 110) < 6,
-      `the picture lands where it's let go: moved ${after.x - before.x}, ${after.y - before.y}`,
-    );
-    assert.ok(Math.abs(after.n - before.n) < before.n * 0.05, 'the same picture, whole');
-    assert.equal(moved.ink.length, strokes, 'no ink drawn by the drag');
-    await c.shot('book-mouse-picture-moved', page);
-    // one Undo: back where it was
-    await page.keyboard.press('Control+z');
-    await savedWhere(c, free.id, p => p.scraps[0].x === placed.scraps[0].x && p.scraps[0].y === placed.scraps[0].y);
-    await page.waitForTimeout(300);
-    const back = await colourIn(page, GREEN);
-    assert.ok(Math.abs(back.x - before.x) < 4 && Math.abs(back.y - before.y) < 4, 'Undo puts it back');
-    // a drag on bare paper still draws
-    const paper = await paperBox(page);
-    await line(page, paper.x + 120, paper.y + paper.height - 160, 240);
-    await savedWhere(c, free.id, p => p.ink.length === strokes + 1);
+    assert.ok(Math.abs(after.x - before.x) < 4 && Math.abs(after.y - before.y) < 4, 'nothing moved on the paper');
+    await c.shot('book-mouse-picture-drawn-on', page);
     c.noErrorsIn(errors);
   } finally {
     await done();
@@ -182,15 +167,17 @@ export function freePage(c) {
   c.pages.push(Object.assign(p, { ink: [], scraps: [], texts: [] }));
   return p;
 }
-// HQ on the played store in a desktop Chromium with a mouse, the book open on its last page (keep: this browser's
-// storage kept, a reload)
-export async function onDesk(browser, c, { keep = false } = {}) {
+// HQ on the played store, the book open on its last page. Defaults to a desktop mouse, with context options for
+// other devices. With keep, this browser's storage survives a reload.
+export async function onDesk(browser, c, { keep = false, viewport = DESKTOP, initScript, ...options } = {}) {
   onDesk.state = keep ? onDesk.state : undefined;
-  const context = await c.hqIn(browser, DESKTOP, {
+  const context = await c.hqIn(browser, viewport, {
     hasTouch: false,
     deviceScaleFactor: 1,
+    ...options,
     ...(onDesk.state && { storageState: onDesk.state }),
   });
+  if (initScript) await context.addInitScript(initScript);
   const page = await context.newPage(),
     errors = [];
   page.on('pageerror', e => errors.push(e.message));
@@ -221,18 +208,43 @@ export async function line(page, x, y, dx) {
   for (let i = 1; i <= 20; i++) await page.mouse.move(x + (i * dx) / 20, y + 3 * Math.sin(i / 3));
   await page.mouse.up();
 }
-// The page as the store has it once a save says so (it's saved a moment after a change), as it is then
+// The Pencil along points, as Safari hands it over (book-check.mjs's penOn)
+export const pen = (page, points) =>
+  page.evaluate(pts => {
+    const at = (kind, [x, y], pressure) =>
+      (document.elementFromPoint(x, y) ?? document.body).dispatchEvent(
+        new PointerEvent(kind, {
+          pointerId: 7,
+          pointerType: 'pen',
+          isPrimary: true,
+          clientX: x,
+          clientY: y,
+          pressure,
+          buttons: kind === 'pointerup' ? 0 : 1,
+          bubbles: true,
+          composed: true,
+          cancelable: true,
+        }),
+      );
+    at('pointerdown', pts[0], 0.4);
+    pts.slice(1).forEach(p => at('pointermove', p, 0.5));
+    at('pointerup', pts.at(-1), 0);
+  }, points);
+// The page as the store has it once a save says so (it's saved a moment after a change), as it is then. (waited on as
+// long as Playwright waits for anything: on a loaded worker the page's 600 ms save timer fires seconds late, a
+// strike's once 8 s after it)
 export async function savedWhere(c, id, ok) {
   const page = () => c.pages.find(p => p.id === id);
   return until(
     () => (page() && ok(page()) ? structuredClone(page()) : null),
-    6000,
+    30_000,
     `the page saved as expected: ${JSON.stringify(page())}`,
   );
 }
+// What read gives (or a promise of it: awaited) once it's something, looked at every tenth of a second
 export async function until(read, ms = 5000, what = 'in time') {
   for (const end = Date.now() + ms; Date.now() < end; await new Promise(r => setTimeout(r, 100))) {
-    const v = read();
+    const v = await read();
     if (v) return v;
   }
   throw new Error(`not ${what}`);

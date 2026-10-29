@@ -1,24 +1,22 @@
-// The book's judge: every note the board makes in its book, once its words have
-// settled, is read by a small model that says whether it calls for a reply now and what kind (DESIGN section 1 of
-// company/briefs/2026-10-27-ink-from-onlyonery/ink-answers):
+// The book's judge: every note the board makes in its book, once its words have settled, is read by a small model that
+// says whether it calls for a reply now and what kind:
 //   - answer: a question or a doubt a few words settle; the quick run writes them (bookanswer.ts answerNow).
 //   - try: a change to something the board can see, where a few versions to look at help it decide (booktry.ts tryNow).
+//   - pick: a reply on one of a try's versions that chooses it; that version is picked (bookpick.ts pickNow).
 //   - none: everything else, most notes: it waits for its sheet as ever, and shows nothing.
 // It's guided, not ruled: the prompt says what each reply is for and shows real notes with their verdicts. Nothing here
 // looks at the words' shape. Each verdict is kept with its why (ink_verdicts), so a wrong call can be found: a reply the
-// board wiped unread is marked (markWiped), and that's the list the examples learn from.
+// board wiped unread is marked (markWiped), and that's the list the examples learn from. A note it can't judge (the
+// model gave no verdict, or the day's JUDGES_A_DAY are used) says why where its answer would lie (unjudged).
 // What it judges (a target): a group on a notebook page (grp: a scrap, a drawing, a reply under an answer), a note on the
 // old book's pages (note), or a box typed on one (page + text: booktyped.ts). Only the board's own: a guest's note is
 // outside text (charter rule 9) and waits for the board's plane. Judging runs after the board's request has answered.
-import { readFileSync, existsSync } from 'node:fs';
-import { db, redacted } from '../db.ts';
+import { db, lacks, once, redacted } from '../db.ts';
 import { companyDay } from '../company.ts';
-import { ORIGIN } from '../config.ts';
-import { findAgent } from '../jobs.ts';
-import { DIR } from '../pagescraps.ts';
 import { answerOf, smallCall } from '../smallmodel.ts';
 import { isRefused } from '../pagechecks.ts';
 import { BOARD } from './book.ts';
+import { isVersion, seenOf, slipText, type Seen } from './bookseen.ts';
 
 // Each judging spends a little of a Claude seat's window, which the company's jobs live on: JUDGES_A_DAY bounds what a
 // page or a client gone wrong can take in a day, as handwriting's READS_A_DAY does. It's the judge's only limit: a day
@@ -29,22 +27,32 @@ const WAIT_MS = 10 * 60_000;
 const WHY_MAX = 300;
 
 // grp: a notebook group's; note: an old-book note's; page: a typed box's page. words: what was judged (a later edit to the
-// same words isn't judged again). wiped: when the board wiped the reply unread.
+// same words isn't judged again). wiped: when the board wiped the reply unread. saved: when the words judged were saved
+// (their group's, note's or page's updated); job: the run its route started or joined, whose answers are its own
+// (book_slips.job; a typed box's is typed on at the run's end): what the status report measures it by (infra/report.sh).
 db.exec(`create table if not exists ink_verdicts (id integer primary key autoincrement, grp integer, note integer,
-  page integer, reply text not null, why text not null, words text not null, created text not null, wiped text);
+  page integer, reply text not null, why text not null, words text not null, created text not null, wiped text,
+  saved text, job integer);
   create index if not exists ink_verdicts_grp on ink_verdicts (grp) where grp is not null;
   create index if not exists ink_verdicts_note on ink_verdicts (note) where note is not null;
   create table if not exists ink_judges (day text primary key, judges integer not null)`);
 redacted('ink_verdicts', 'why', 'words');
+once('2026-10-28-ink-verdicts-runs', () => {
+  for (const column of ['saved text', 'job integer'])
+    if (lacks('ink_verdicts', column.split(' ')[0])) db.exec(`alter table ink_verdicts add column ${column}`);
+});
 
-// (pick: a reply on a version that chooses it, bookpick.ts.)
-export type Reply = 'none' | 'answer' | 'try' | 'pick';
+// The replies a verdict can be, the one list the type, the routes and the model's schema are read from
+const REPLIES = ['none', 'answer', 'try', 'pick'] as const;
+export type Reply = (typeof REPLIES)[number];
 export type Target = { grp?: number; note?: number; page?: number; text?: string };
 export type Verdict = { id: number; reply: Reply; why: string };
-// Where a verdict goes: answer and try, each given the target and the verdict
+// Where a verdict goes: answer and try, each given the target and the verdict, give the run they started or joined (null:
+// none, as on a call, where the call's agent answers itself)
+type Run = number | null | Promise<number | null>;
 export type Routes = {
-  answer: (t: Target, v: { id: number; why: string }) => unknown;
-  try: (t: Target, v: { id: number; why: string }) => unknown;
+  answer: (t: Target, v: { id: number; why: string }) => Run;
+  try: (t: Target, v: { id: number; why: string }) => Run;
   pick: (t: Target, v: { id: number; why: string }) => unknown;
 };
 const routes: Routes = {
@@ -53,19 +61,14 @@ const routes: Routes = {
   try: (t, v) => import('./booktry.ts').then(m => m.tryNow(t, v)),
   pick: t => import('./bookpick.ts').then(m => m.pickNow(t)),
 };
-// The routes a test drives instead; the old ones back with the function it returns
-export function routeTo(r: Partial<Routes>) {
-  const was = { ...routes };
-  Object.assign(routes, r);
-  return () => Object.assign(routes, was);
-}
 
-export const SCHEMA = {
+// The verdict asked of the model: pick is offered only for a note on a version, the one thing a pick can choose
+export const schemaOf = (onVersion: boolean) => ({
   type: 'object',
   properties: {
     reply: {
       type: 'string',
-      enum: ['none', 'answer', 'try', 'pick'],
+      enum: REPLIES.filter(r => onVersion || r !== 'pick'),
       description:
         'answer: a few words settle it; try: a few versions to look at; pick: on a version, it chooses that one; none: no reply now',
     },
@@ -73,7 +76,7 @@ export const SCHEMA = {
   },
   required: ['reply', 'why'],
   additionalProperties: false,
-};
+});
 const PROMPT = `You read one note the board (the person who runs the company) just made in its book in HQ, and decide \
 whether an agent replies to it right away, and how. A note is a mark on a page: words written by hand (read into type, \
 so a word may be misread), typed or said aloud, often with a ring, an arrow or a scribble on the page around it, which \
@@ -118,15 +121,6 @@ Notes and their verdicts:
 - "this, but softer" (written, on version 3 of 3, "Late sun") -> try: wants one more round from that version.
 - a cross over the frame (written, on version 1 of 2, "Bold") -> none: rules that one out, nothing to choose yet.`;
 
-// What the judge reads of a target: whose, its words and how they came, its picture, its page, what it replies to
-type Seen = {
-  by: string;
-  words: string;
-  said: string | null;
-  picture: { type: string; data: Buffer } | null;
-  where: string;
-  repliesTo: string | null;
-};
 const SAID: Record<string, string> = {
   written: 'written by hand, read into type',
   typed: 'typed',
@@ -146,26 +140,38 @@ export async function judge(t: Target, via?: Partial<Routes>): Promise<Verdict |
     if (judging.has(key) || verdictOf(t)?.words === seen.words) return null;
     if (!counted()) {
       console.error(`The book's judge: ${JUDGES_A_DAY} notes judged today, ${keyOf(t)} not`);
-      return null;
+      return unjudged(t, 'day');
     }
     judging.add(key);
     const said = await ask(seen).finally(() => judging.delete(key));
-    if (isRefused(said)) {
-      console.error(`The book's judge: ${keyOf(t)} wasn't judged: ${said[1]}`);
-      return null;
-    }
     // (changed while it was judged: the newer words are judged in their turn)
     if ((await seenOf(t, false))?.words !== seen.words) return null;
-    const v = keep(t, said, seen.words);
+    if (isRefused(said)) {
+      console.error(`The book's judge: ${keyOf(t)} wasn't judged: ${said[1]}`);
+      return unjudged(t, 'unread');
+    }
+    const v = keep(t, said, seen);
     if (v.reply !== 'none')
       Promise.resolve()
         .then(() => (via?.[v.reply as keyof Routes] ?? routes[v.reply as keyof Routes])(t, { id: v.id, why: v.why }))
+        .then(job => {
+          if (v.reply !== 'pick' && typeof job === 'number')
+            db.prepare('update ink_verdicts set job = ? where id = ?').run(job, v.id);
+        })
         .catch(err => console.error(`The book's judge: ${keyOf(t)}'s ${v.reply} didn't start:`, err));
     return v;
   } catch (err) {
     console.error(`The book's judge: ${keyOf(t)} wasn't judged:`, err);
     return null;
   }
+}
+// A group or a note left unjudged says why where its answer would lie (a typed box's page has no place for it)
+function unjudged(t: Target, why: 'day' | 'unread') {
+  if (t.grp || t.note)
+    void import('./bookanswer.ts')
+      .then(m => m.noAnswer(t, why))
+      .catch(err => console.error(`The book's judge: ${keyOf(t)}'s reason wasn't shown:`, err));
+  return null;
 }
 // judge() after the board's request has answered: the routes call this
 export function judgeLater(t: Target) {
@@ -212,28 +218,30 @@ function ask(seen: Seen) {
     type: 'image',
     source: { type: 'base64', media_type: seen.picture.type, data: seen.picture.data.toString('base64') },
   };
+  const repliesTo = slipText(seen.answers),
+    onVersion = isVersion(seen.answers);
   const about = [
     seen.words
       ? `Its words (${SAID[seen.said ?? ''] ?? 'typed'}): ${JSON.stringify(seen.words)}`
       : 'It has no words: only marks.',
     `Where: ${seen.where}.`,
-    seen.repliesTo ? `It replies to an agent's answer: ${JSON.stringify(seen.repliesTo)}` : '',
+    repliesTo ? `It replies to an agent's answer: ${JSON.stringify(repliesTo)}` : '',
     seen.picture ? 'The picture: the page around the note, its mark drawn on it.' : 'There is no picture of it.',
   ].filter(Boolean);
   return smallCall({
     name: "the book's judge",
     content: [...(image ? [image] : []), { type: 'text', text: `${PROMPT}\n\nThe note:\n${about.join('\n')}` }],
-    schema: SCHEMA,
-    check: verdictAnswer,
+    schema: schemaOf(onVersion),
+    check: (result: unknown) => verdictAnswer(result, onVersion),
     wait: WAIT_MS,
     keepAlive: false,
   });
 }
-function verdictAnswer(result: unknown): { reply: Reply; why: string } | string {
+function verdictAnswer(result: unknown, onVersion: boolean): { reply: Reply; why: string } | string {
   const a = answerOf(result);
   if (typeof a === 'string') return a;
-  if (!['none', 'answer', 'try', 'pick'].includes(a.reply as string))
-    return 'a reply that is none, answer, try or pick';
+  const offered = schemaOf(onVersion).properties.reply.enum;
+  if (!offered.includes(a.reply as Reply)) return `a reply that is ${offered.join(', ')}`;
   const why = typeof a.why === 'string' ? a.why.replace(/\s+/g, ' ').trim().slice(0, WHY_MAX) : '';
   if (!why) return 'a verdict without its why';
   return { reply: a.reply as Reply, why };
@@ -250,145 +258,23 @@ function counted() {
   db.prepare('delete from ink_judges where day < ?').run(companyDay(Date.now() - 7 * 864e5));
   return true;
 }
-function keep(t: Target, v: { reply: Reply; why: string }, words: string): Verdict {
+function keep(t: Target, v: { reply: Reply; why: string }, seen: Seen): Verdict {
   const id = Number(
     db
-      .prepare('insert into ink_verdicts (grp, note, page, reply, why, words, created) values (?, ?, ?, ?, ?, ?, ?)')
+      .prepare(
+        'insert into ink_verdicts (grp, note, page, reply, why, words, created, saved) values (?, ?, ?, ?, ?, ?, ?, ?)',
+      )
       .run(
         t.grp ?? null,
         t.note ?? null,
         t.grp || t.note ? null : (t.page ?? null),
         v.reply,
         v.why,
-        words,
+        seen.words,
         new Date().toISOString(),
+        seen.saved,
       ).lastInsertRowid,
   );
   return { id, ...v };
 }
 const keyOf = (t: Target) => (t.grp ? `group ${t.grp}` : t.note ? `note ${t.note}` : `a box on page ${t.page}`);
-
-// ---------------------------------------------------------------- what it sees
-type PageRow = { id: number; kind: string; owner: string | null; url: string | null; call: number | null };
-const pageOf = (id: number) =>
-  db.prepare('select id, kind, owner, url, call from book_pages where id = ?').get(id) as PageRow | undefined;
-const nameOf = (agent: string | null) => (agent ? (findAgent(agent)?.name ?? agent) : null);
-// (a version says which of its set it is, and its name)
-const slipText = (id: number | null) => {
-  const s =
-    id &&
-    (db.prepare('select text, style, version, grp, note from book_slips where id = ?').get(id) as
-      | { text: string; style: string | null; version: string | null; grp: number | null; note: number | null }
-      | undefined);
-  if (!s) return null;
-  if (s.style !== 'version') return s.text;
-  const set = (
-    db
-      .prepare(
-        "select id from book_slips where style = 'version' and ((grp is not null and grp = ?) or (note is not null and note = ?)) order by id",
-      )
-      .all(s.grp, s.note) as { id: number }[]
-  ).map(x => x.id);
-  return `version ${set.indexOf(id as number) + 1} of ${set.length}, “${s.version ?? ''}”, one of a few the agent made for the board to choose from: ${s.text}`;
-};
-
-// (picture false: only the words, to check they're still the ones judged)
-async function seenOf(t: Target, picture = true): Promise<Seen | null> {
-  if (t.grp) return groupSeen(t.grp, picture);
-  if (t.note) return noteSeen(t.note, picture);
-  if (t.page && t.text !== undefined) return boxSeen(t.page, t.text);
-  return null;
-}
-async function groupSeen(id: number, picture: boolean): Promise<Seen | null> {
-  const g = db.prepare('select * from notebook_groups where id = ? and deleted is null').get(id) as
-    | {
-        id: number;
-        page: number;
-        parent: number | null;
-        answers: number | null;
-        kind: string;
-        by: string;
-        texts: string;
-        anchor: string | null;
-        words: string;
-        said: string | null;
-        owner: string | null;
-      }
-    | undefined;
-  const p = g && pageOf(g.page);
-  if (!g || !p) return null;
-  const typed = (JSON.parse(g.texts) as { text: string }[]).map(x => x.text).join('\n');
-  const words = g.words || typed,
-    said = g.words ? g.said : typed ? 'typed' : null;
-  let pic: Seen['picture'] = null;
-  // (a reply: its note's picture, the answer's frame under the ink when it's on a version.)
-  const sent = picture && g.kind === 'reply' && noteSnip(g.id);
-  if (sent) pic = sent;
-  else if (picture) {
-    const { snipOf } = await import('../notebooksend.ts');
-    const drawn = await snipOf(g as never);
-    pic = drawn && { type: drawn.type, data: drawn.clean };
-  }
-  const anchor = g.anchor ? (JSON.parse(g.anchor) as { url?: string }) : null;
-  const where =
-    g.kind === 'scrap' && anchor?.url
-      ? `a scrap the board cut from ${pageWhere(anchor.url, g.owner)}, kept on a page of its notebook`
-      : p.kind === 'call'
-        ? callWhere(p)
-        : g.kind === 'reply'
-          ? 'under an answer on a page of its notebook'
-          : 'drawn on a free page of its notebook';
-  return { by: g.by, words, said, picture: pic, where, repliesTo: slipText(g.answers) };
-}
-function noteSnip(grp: number) {
-  const n = db
-    .prepare('select n.snip from book_notes n join notebook_groups g on g.note = n.id where g.id = ?')
-    .get(grp) as { snip: string | null } | undefined;
-  const file = n?.snip ? `${DIR}/${n.snip}` : null;
-  return file && existsSync(file)
-    ? { type: file.endsWith('.png') ? 'image/png' : 'image/jpeg', data: readFileSync(file) }
-    : null;
-}
-async function noteSeen(id: number, picture: boolean): Promise<Seen | null> {
-  const n = db.prepare('select * from book_notes where id = ?').get(id) as
-    | {
-        page: number;
-        by: string;
-        anchor: string;
-        words: string;
-        said: string | null;
-        snip: string | null;
-        answers: number | null;
-      }
-    | undefined;
-  const p = n && pageOf(n.page);
-  if (!n || !p) return null;
-  const file = picture && n.snip ? `${DIR}/${n.snip}` : null;
-  const pic =
-    file && existsSync(file)
-      ? { type: file.endsWith('.png') ? 'image/png' : 'image/jpeg', data: readFileSync(file) }
-      : null;
-  const url = (JSON.parse(n.anchor) as { url?: string }).url ?? p.url;
-  const where =
-    p.kind === 'call' ? callWhere(p) : p.kind === 'free' || !url ? 'a free page of its book' : pageWhere(url, p.owner);
-  return { by: n.by, words: n.words, said: n.said, picture: pic, where, repliesTo: slipText(n.answers) };
-}
-function boxSeen(page: number, text: string): Seen | null {
-  const p = db.prepare('select id, kind, owner, url, call, who from book_pages where id = ?').get(page) as
-    (PageRow & { who: string }) | undefined;
-  if (!p) return null;
-  const where = p.kind === 'call' ? callWhere(p) : p.url ? pageWhere(p.url, p.owner) : 'a free page of its book';
-  return { by: p.who, words: text, said: 'typed', picture: null, where: `a box typed on ${where}`, repliesTo: null };
-}
-// HQ's own page (its path) or an app's address, and whose work it is
-function pageWhere(url: string, owner: string | null) {
-  const own = nameOf(owner),
-    hq = url.startsWith('/') || url.startsWith(ORIGIN);
-  const at = hq ? `HQ's page ${url.slice(url.startsWith(ORIGIN) ? ORIGIN.length : 0) || '/'}` : `the page ${url}`;
-  return own ? `${at} (${own}'s work)` : at;
-}
-function callWhere(p: PageRow) {
-  const agent = (db.prepare('select agent from calls where id = ?').get(p.call) as { agent: string } | undefined)
-    ?.agent;
-  return `the page of a call with ${nameOf(agent ?? null) ?? 'an agent'}, during the call`;
-}

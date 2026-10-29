@@ -11,9 +11,19 @@ db.exec('create index if not exists runs_ended on runs (ended)');
 
 // How a run ended: the worker's outcome as its job finished (jobs.ts finish), lost with its worker, or rebuilt from the
 // records from before this table.
-// (snagged)
+// (snagged; up: handed up from a lighter model, jobs.ts handUp.)
 export type RunEnd =
-  'done' | 'failed' | 'stopped' | 'limited' | 'parked' | 'interrupted' | 'yielded' | 'lost' | 'rebuilt' | 'snagged';
+  | 'done'
+  | 'failed'
+  | 'stopped'
+  | 'limited'
+  | 'parked'
+  | 'interrupted'
+  | 'yielded'
+  | 'lost'
+  | 'rebuilt'
+  | 'snagged'
+  | 'up';
 
 const iso = (ms: number) => new Date(ms).toISOString();
 
@@ -22,12 +32,15 @@ export function runStarted(job: number, seat: string) {
   db.prepare('insert into runs (job, seat, started) values (?, ?, ?)').run(job, seat, iso(Date.now()));
 }
 
-export function runEnded(job: number, endedAs: RunEnd) {
-  db.prepare('update runs set ended = ?, ended_as = ? where job = ? and ended is null').run(
-    iso(Date.now()),
-    endedAs,
-    job,
-  );
+// When the job's latest run started (usage.ts: how long a resumed session sat idle)
+export const runStart = (job: number) =>
+  (
+    db.prepare('select started from runs where job = ? order by id desc limit 1').get(job) as
+      { started: string } | undefined
+  )?.started;
+
+export function runEnded(job: number, endedAs: RunEnd, endedAt = Date.now()) {
+  db.prepare('update runs set ended = ?, ended_as = ? where job = ? and ended is null').run(iso(endedAt), endedAs, job);
 }
 
 // Runs whose worker went quiet end at its last heartbeat, not when the coordinator notices.

@@ -188,3 +188,15 @@ test("a work job runs on its job/<n>, and a profile pull request's fix on that p
   for (const [branch, pr] of [['profile/12', null], ['main', 40], ['profile/12x', 40], ['review/12', 40]] as const)
     assert.ok(!workRunsOn(branch, pr), `${branch} ${pr}`);
 });
+
+test("a job's settings leave out the terminal's own tools and skills, and keep its own", () => {
+  const settingsOf = (args: string[]) => JSON.parse(args[args.indexOf('--settings') + 1]);
+  const s = settingsOf(claudeArgs({ reviewing: false, settings: { autoMode: { environment: ['x'] }, permissions: { deny: ['WebFetch'] } } }));
+  assert.deepEqual(s.autoMode, { environment: ['x'] });
+  assert.ok(s.permissions.deny.includes('WebFetch'), "a job's own deny stays");
+  for (const tool of ['ScheduleWakeup', 'EnterWorktree', 'CronCreate']) assert.ok(s.permissions.deny.includes(tool), `${tool} is off`);
+  for (const tool of ['Agent', 'Bash', 'SendMessage', 'Workflow', 'Monitor']) assert.ok(!s.permissions.deny.includes(tool), `${tool} stays`);
+  assert.equal(s.skillOverrides.loop, 'off');
+  assert.equal(s.skillOverrides.dataviz, undefined, 'skills a job may use stay listed');
+  assert.equal(settingsOf(claudeArgs({ reviewing: true, settings: {} })).skillOverrides['keybindings-help'], 'off', 'a reviewer too');
+});

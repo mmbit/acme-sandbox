@@ -1,8 +1,6 @@
 // The Sketchbook's shelf: a book's sketches as small pages (the newest change first, a New sketch first of all), the
 // archive on a shelf of its own. Each one's menu renames, archives and deletes it in place, and a tap opens it full
-// screen to draw on (sketchpage.js). Whose book it is, and what's around it, is the book's (sketchbook.js: HQ's, the
-// board's; sketchguest.js: an invited person's on the guest desk). (from
-// sketchbook.js)
+// screen to draw on (sketchpage.js). sketchbook.js supplies HQ's surrounding app.
 //   book: { dev, list() → { sketches, guests? }, load(id), act(what, body), upload(id, blob), to: whom Send goes to,
 //     sent(): after a send, toast(words, tap), ago(iso) }. guests: the invited people's books the board looks at, each
 //     { name, sketches } on a shelf of its name, where a tap shows its picture.

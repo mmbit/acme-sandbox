@@ -365,10 +365,10 @@ export async function sendChat(dev, text, pictures = []) {
 }
 // Voice: the intercom's recording, transcribed by the coordinator. Rejects with the HTTP status (413: too long,
 // 503: the transcriber is down), or 0 when the coordinator can't be reached.
-export async function transcribe(clip, lang) {
-  const res = await fetch(`/api/voice?lang=${encodeURIComponent(lang)}`, { method: 'POST', credentials: 'same-origin',
+export async function transcribe(clip, lang, api = '/api/voice') {
+  const res = await fetch(`${api}?lang=${encodeURIComponent(lang)}`, { method: 'POST', credentials: 'same-origin',
     headers: { 'content-type': clip.type || 'audio/webm' }, body: clip }).catch(() => ({ status: 0 }));
-  if (res.status === 401) return toLogin();
+  if (res.status === 401 && api === '/api/voice') return toLogin();
   if (res.status !== 200) throw res.status;
   return (await res.json()).text || '';
 }

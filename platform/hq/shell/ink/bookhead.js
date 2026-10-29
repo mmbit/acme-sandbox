@@ -1,9 +1,8 @@
-// A page's heading, as it's written at the page's top-left (bookpage.js): its day, today's marked, over whose page it
-// is ("For Lark", "Call with Juno, 00:34", a free page's label); and the names the book gives its days and pages
-// elsewhere (the pages control, the overview, Search's finds). A page keeps one name from the moment it shows.
+// The names the book gives its pages in the bar, overview and search.
 import { DAYS, MONTHS, titleCase } from '../../util.js';
 import * as world from '../../world/world.js';
 import { clockWhen } from '../../world/clock.js';
+import { word } from './bookscope.js';
 
 // A page's title: a notebook page's own (its label, '' for one with none), or an old page's: whose sheet it is, a call's
 // (who it was with and when it started, on the company's clock: "00:34" today, "Mon 00:34" another day; just "Call"
@@ -18,22 +17,7 @@ export function titleOf(page) {
 }
 // A page's name where pages are listed (the pages control, a group's Move to page…): its title, or Untitled page when
 // it has none
-export const nameOf = page => titleOf(page) || 'Untitled page';
-
-// A page's heading: { title, day, today, colour }, its day written out ("Monday 26 October") and whether it's today's;
-// in an invited person's book (whose: { name, colour }), whose it is before the day, in their colour
-export const headOf = (page, today, whose = null) => ({
-  title: titleOf(page),
-  day: `${whose ? `${whose.name}’s book · ` : ''}${longDate(page.day)}`,
-  today: page.day === today,
-  colour: whose?.colour ?? null,
-});
-const LONG_DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'],
-  LONG_MONTHS = 'January February March April May June July August September October November December'.split(' ');
-function longDate(day) {
-  const d = new Date(`${day}T12:00:00Z`);
-  return `${LONG_DAYS[d.getUTCDay()]} ${d.getUTCDate()} ${LONG_MONTHS[d.getUTCMonth()]}`;
-}
+export const nameOf = page => titleOf(page) || word('Untitled page');
 
 // A day as the book names it, in its overview (bookzoom.js), the pages control and Search's finds (booksearch.js):
 // Today, or "Mon 26 Oct".

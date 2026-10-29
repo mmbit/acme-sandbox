@@ -1,53 +1,39 @@
 #!/usr/bin/env python3
-"""A day of one service's log on stdin, its warnings and errors out: counted, deduplicated, most frequent first.
-
-report.sh runs it per service with `docker compose logs --since 24h --no-log-prefix`, since the report's own log
-tails are only 40 lines and a night's error scrolls out of them. Lines are cut down
-to what repeats: Caddy's JSON keeps only level, logger, message and error (no request fields, headers or cookies, house rule
-7), and in all lines timestamps, numbers and ids (so client IPs too) become N, so the same fault counts once.
-It lists keyword matches (error, warn, fail, *Error names, ...), not every warning: Node's console adds no level.
-
-With --counts (product apps) no log text is printed at all: their errors carry customer data (e-mail addresses, order
-details) that cannot be scrubbed out of free text. Only one count of their warning and error lines is shown.
-
-With --tail (report.sh's last-40-lines of each platform service) every line goes through, keys redacted, and a JSON
-line (Caddy's) keeps only the fields in TAIL_FIELDS: never the request, whose headers carry a shop's X-Order-Token and
-the inbound mail's sender, and whose remote_ip is a customer's (house rule 7). In every line, JSON or plain, IP addresses
-become N.N.N.N and e-mail addresses [email].
-"""
+"""A day of one service's log on stdin, its warnings and errors out: counted, deduplicated, most frequent first."""
 import datetime, json, re, sys
 
 TOP = 12
-BAD = re.compile(r'\b(\w*error|err|warn(ing)?|fail(ed|ure|s)?|fatal|panic|exception|refused|timed? ?out|unhandled|denied|unconfirmed|no answer)\b',
-                 re.I)
+BAD = re.compile(r'\b(\w*error|err|warn(ing)?|fail(ed|ure|s)?|fatal|panic|exception|refused|timed? ?out|unhandled'
+                 r'|denied|unconfirmed|no answer)\b', re.I)
 JSON_BAD = {'warn', 'warning', 'error', 'fatal', 'panic', 'dpanic'}
-SECRET = re.compile(r'(sk-|sk_|rk_|whsec_|gh[pousr]_|github_pat_)[A-Za-z0-9_-]{8,}|x-access-token:[^@ ]+@?|Bearer [A-Za-z0-9._~+/=-]{8,}')
+SECRET = re.compile(r'(sk-|sk_|rk_|whsec_|gh[pousr]_|github_pat_)[A-Za-z0-9_-]{8,}|x-access-token:[^@ ]+@?'
+                    r'|Bearer [A-Za-z0-9._~+/=-]{8,}')
 STAMP = re.compile(r'^\s*(\d{4}-\d\d-\d\d[T ][\d:.]+Z?|time="[^"]*")\s*')
 NOISE = re.compile(r'\b[0-9a-f]{8,}\b|\b[0-9a-f-]{36}\b|\d+(\.\d+)?', re.I)
 
-# (the --tail mode)
+# A Caddy line in --tail keeps only these: never the request, whose headers carry a shop's X-Order-Token and the
+# inbound mail's sender, and whose remote_ip is a customer's (house rule 7)
 TAIL_FIELDS = ('level', 'logger', 'msg', 'error', 'status', 'upstream', 'duration', 'identifiers', 'domains', 'file')
 PREFIX = re.compile(r'^([\w.-]+\s+\| )?(.*)$', re.S)   # compose's "caddy-1  | " when logs run with a prefix
 EMAIL = re.compile(r'[\w.+-]+@[\w-]+(\.[\w-]+)+')
-IP = re.compile(r'\b\d{1,3}(\.\d{1,3}){3}\b|(?<![\w:])(?:[0-9a-f]{0,4}:){3,7}[0-9a-f]{0,4}(?![\w:])', re.I)   # v4, v6 (3+ colons)
+# v4, v6 (3+ colons)
+IP = re.compile(r'\b\d{1,3}(\.\d{1,3}){3}\b|(?<![\w:])(?:[0-9a-f]{0,4}:){3,7}[0-9a-f]{0,4}(?![\w:])', re.I)
 
 def tail_line(line):
     prefix, rest = PREFIX.match(line.rstrip('\n')).groups()
-    if rest.startswith('{'):
-        try:
-            j = json.loads(rest)
-        except ValueError:
-            j = None
-        if isinstance(j, dict):
-            ts, when = j.get('ts'), ''
-            try:   # a ts out of range (milliseconds, say) leaves the time out, never the rest of the report
-                when = datetime.datetime.fromtimestamp(ts, datetime.timezone.utc).isoformat(timespec='seconds') if isinstance(ts, (int, float)) else ''
-            except (ValueError, OverflowError, OSError):
-                pass
-            kept = {k: j[k] for k in TAIL_FIELDS if k in j}
-            if isinstance(j.get('request'), dict):   # which site and method only (a host is ours, a product's)
-                kept.update({f'request_{k}': j['request'][k] for k in ('host', 'method') if isinstance(j['request'].get(k), str)})
-            rest = f"{when} {json.dumps(kept, ensure_ascii=False)}".strip()
+    j = json_line(rest)
+    if j is not None:
+        ts, when = j.get('ts'), ''
+        try:   # a ts out of range (milliseconds, say) leaves the time out, never the rest of the report
+            if isinstance(ts, (int, float)):
+                when = datetime.datetime.fromtimestamp(ts, datetime.timezone.utc).isoformat(timespec='seconds')
+        except (ValueError, OverflowError, OSError):
+            pass
+        kept = {k: j[k] for k in TAIL_FIELDS if k in j}
+        if isinstance(j.get('request'), dict):   # which site and method only (a host is ours, a product's)
+            request = j['request']
+            kept.update({f'request_{k}': request[k] for k in ('host', 'method') if isinstance(request.get(k), str)})
+        rest = f"{when} {json.dumps(kept, ensure_ascii=False)}".strip()
     return (prefix or '') + EMAIL.sub('[email]', IP.sub('N.N.N.N', SECRET.sub('[redacted]', rest)))
 
 def cut(text):
@@ -58,28 +44,36 @@ def level_bad(level):
         return level >= 40
     return str(level).lower() in JSON_BAD
 
+# What repeats in a line, so the same fault counts once: Caddy's JSON keeps only level, logger, message and error (no
+# request fields, headers or cookies, house rule 7), and timestamps, numbers and ids (client IPs too) become N. Lines
+# count by keyword (error, warn, fail, *Error names...): Node's console adds no level.
 def key(line):
     line = line.rstrip('\n')
-    if line.startswith('{'):
-        try:
-            j = json.loads(line)
-        except ValueError:
-            j = None
-        if isinstance(j, dict):
-            if not level_bad(j.get('level', '')):
-                return None
-            err = f" ({j['error']})" if j.get('error') else ''
-            return cut(NOISE.sub('N', f"{j.get('level')}: {j.get('logger', '')} {j.get('msg', '')}{err}".replace('  ', ' ')))
+    j = json_line(line)
+    if j is not None:
+        if not level_bad(j.get('level', '')):
+            return None
+        err = f" ({j['error']})" if j.get('error') else ''
+        said = f"{j.get('level')}: {j.get('logger', '')} {j.get('msg', '')}{err}".replace('  ', ' ')
+        return cut(NOISE.sub('N', said))
     if not BAD.search(line):
         return None
     return cut(NOISE.sub('N', STAMP.sub('', line)).strip())
 
+def json_line(text):
+    """The line's JSON object (Caddy's), or None for any other line."""
+    try:
+        j = json.loads(text) if text.startswith('{') else None
+    except ValueError:
+        return None
+    return j if isinstance(j, dict) else None
+
 def main():
-    if '--tail' in sys.argv[1:]:
+    if '--tail' in sys.argv[1:]:   # report.sh's 40-line tails: every line, keys, IP and e-mail addresses redacted
         for line in sys.stdin:
             print(tail_line(line))
         return
-    if '--counts' in sys.argv[1:]:
+    if '--counts' in sys.argv[1:]:   # product apps: their errors carry customer data no scrub gets out of free text
         n = sum(1 for line in sys.stdin if key(line))
         return print(f'  {n} warning/error lines (text withheld)' if n else '  none')
     counts = {}

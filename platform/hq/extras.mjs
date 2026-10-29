@@ -43,6 +43,8 @@ export const REVIEW_PARTS = {
   '/__review/anchor.js': 'shared/review/anchor.js',
   '/__review/paper.js': 'shared/review/paper.js',
   '/__review/tap.js': 'shared/review/tap.js',
+  // (whether the microphone is allowed, which HQ's voice.js shares with review mode)
+  '/__review/micallowed.js': 'shared/review/micallowed.js',
 };
 
 // The file in the repo an address names in one of the tables above, or undefined

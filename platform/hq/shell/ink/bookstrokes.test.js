@@ -1,7 +1,18 @@
 // node --test platform/hq/shell/ink/bookstrokes.test.js   (the book's shapes and eraser as plain numbers; no DOM)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { SHAPE_P, cut, inside, radius, rub, shape } from './bookstrokes.js';
+import { registerHooks } from 'node:module';
+
+// (the browser has review mode's files at /__review/, as the coordinator serves them)
+const REVIEW = new URL('../../../../shared/review/', import.meta.url);
+registerHooks({
+  resolve: (specifier, context, next) =>
+    next(
+      specifier.startsWith('/__review/') ? new URL(specifier.slice('/__review/'.length), REVIEW).href : specifier,
+      context,
+    ),
+});
+const { SHAPE_P, cut, inside, radius, rub, shape } = await import('./bookstrokes.js');
 
 const INK = { color: '#2a2352', size: 4 };
 const line = (pts, more = {}) => ({ ...INK, ...more, points: pts.map(([x, y], i) => [x, y, 0.5, i * 10]) });

@@ -3,6 +3,7 @@
 // else, or Escape, closes it.
 import { esc } from '../../util.js';
 import { sfx } from '../audio.js';
+import { word } from './bookscope.js';
 
 // the ring's radius, how far out from the middle a slide picks, and the room kept round it at the screen's edges (px)
 const RADIUS = 64,
@@ -45,7 +46,7 @@ function ring(tools, mode, [x, y], pick) {
   const el = document.createElement('div');
   el.className = 'bk-radial';
   el.setAttribute('role', 'menu');
-  el.setAttribute('aria-label', 'Tools');
+  el.setAttribute('aria-label', word('Tools'));
   Object.assign(el.style, { left: `${x}px`, top: `${y}px` });
   const step = (2 * Math.PI) / tools.length;
   const items = tools.map((t, i) => {

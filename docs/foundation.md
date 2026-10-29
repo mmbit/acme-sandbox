@@ -22,8 +22,8 @@ where it suffices.
   and keeps only its own additions in `prompt`.
 - **Roles**: who does what (`roles:` in `company/org.yaml`), never an agent's name in platform code.
 - **Settings**: the server's names and switches in `company/infra.env`; a product's needs in its `product.yaml`.
-  `company/brand.yaml` `names: book` names the board's book on its tips book's cover; left out, the cover reads Tips
-.
+  `company/brand.yaml` `names: book` names the board's book on its tips book's cover; left out, the cover reads Tips.
+  Its `screens` names the screens the board reads on, which a try's versions are shot at; left out, a desktop's.
 - **Looks**: the company's HQ theme and renderer choice in `theme/hq.yaml`. Wire's colourways name the one thing lit
   `accent`, `side` and `onAccent`: a company's `theme/hq.yaml` still saying `knop` and `onKnop` renames them at the
   carry, or Wire falls back to its own Day and Night.
@@ -49,12 +49,14 @@ where it suffices.
 - **The board's book replaces the first Sketchbook, and HQ's own review notes go into it** (26 October): HQ's first
   Sketchbook screens are gone for every company, and a note pinned on one of HQ's own screens goes to the board's book
   (`/api/book`) rather than Reviews, with no setting: one way for both companies. Knop doesn't use the first
-  Sketchbook (the board moved the pencil work to Onlyonery on 24 October). The guest room's Sketchbook stays, a
-  setting of its own: brand.yaml `guest: { sketchbook: false }` shuts it, and left out it follows
-  `computer: { sketchbook }` as before.
+  Sketchbook (the board moved the pencil work to Onlyonery on 24 October).
 
 ## Open
 
+- The guest room's Sketchbook is gone, for every company: an invited person writes in the Notebook room
+  (`/guest/notebooks/`), on their own page of a round from Reviews or a notebook the board invited them into, and
+  brand.yaml `guest: { sketchbook }` is gone with it (a company that still sets it gets nothing from it). Before it
+  carries, Onlyonery's agreement is asked through the Overseer.
 - `platform/hq/shell/desk.js`: decks built before 4 October tag their messages `{ onlyonery: 'deck' }`, so the desk
   still answers to one company's name. Generic form: rebuild those decks, then drop the old tag.
 - Review mode's notes into the board's book: the board's notes on any product
@@ -77,3 +79,9 @@ where it suffices.
   company runs it from its `company/schedule.yaml` and keeps its numbers in its own note. The first has no setting;
   the second is a routine like any other. Before they carry, Knop's agreement is asked through the Overseer; a switch
   only if Knop asks for one.
+- Ink's customer-call marking is gone, for every company, with no setting. A call's notebook pages and their tries'
+  versions pages read like any page, by every job. The tasks and try runs a call's notes make mark nothing. Only a call
+  about a card for keys keeps its pages, versions pages included, for its own agent (`ink/bookreads.ts` callRead),
+  who also owns its versions pages, so the board's notes there are that agent's to answer. An invited guest's notes
+  are still outside text. Before it carries, Onlyonery's agreement is asked through the
+  Overseer; a switch only if Onlyonery asks for one.

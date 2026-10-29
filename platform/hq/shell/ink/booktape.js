@@ -11,9 +11,9 @@
 // that page has been sent); carried, on the current page.
 // (words, links and pictures by address, and bookbrought.js reading what came)
 import { refused } from '../data.js';
+import { scopedUrl, word } from './bookscope.js';
 import { stylesheet } from '../../util.js';
 import { sfx } from '../audio.js';
-import { pasteForCall } from '../calldrop.js';
 import { keepPicture } from './notebookdata.js';
 import { changed, said, shut } from './booksave.js';
 import { grownTo, pageBox, scrapBoxOf } from './bookrow.js';
@@ -65,7 +65,7 @@ const theirs = e => {
 // Cmd/Ctrl+V with the book open: what the clipboard holds, on the page in view. One while the board is in a call's
 // window is the call's (calldrop.js).
 function pasted(tape, e) {
-  if (!open() || theirs(e) || e.defaultPrevented || pasteForCall()) return;
+  if (!open() || theirs(e) || e.defaultPrevented || tape.book.calls?.pasteForCall()) return;
   const came = brought.whatCame(brought.carried(e.clipboardData));
   if (!came) return;
   e.preventDefault();
@@ -104,7 +104,7 @@ function held(tape) {
 function offerPaste(tape, [x, y]) {
   tape.bubble?.remove();
   const box = tape.paper.getBoundingClientRect();
-  const bubble = Object.assign(document.createElement('button'), { className: 'bk-paste', textContent: 'Paste' });
+  const bubble = Object.assign(document.createElement('button'), { className: 'bk-paste', textContent: word('Paste') });
   Object.assign(bubble.style, { left: `${x - box.left}px`, top: `${y - box.top}px` });
   tape.paper.append((tape.bubble = bubble));
   sfx.tick();
@@ -167,7 +167,7 @@ async function land(tape, came, { at = null }) {
 // coordinator (bookfetch.ts), since that site's CORS keeps HQ's page from reading it
 async function pictureAt(url) {
   const here = /^(data|blob):/.test(url) || new URL(url, location.href).origin === location.origin;
-  const got = await fetch(here ? url : `/api/book/fetch?url=${encodeURIComponent(url)}`, {
+  const got = await fetch(here ? url : scopedUrl(`/api/book/fetch?url=${encodeURIComponent(url)}`), {
     credentials: 'same-origin',
   }).catch(() => null);
   if (!got) throw refused(0, 'it couldn’t be reached');
@@ -224,15 +224,15 @@ async function wordsIn(tape, words, { at = null }) {
   }
 }
 // How far words just put on a view's page, moved by [dx, dy], must move down to clear its other boxes of words and
-// its pictures and the page's heading
+// its pictures and send stamp.
 function below(v, texts, [dx, dy]) {
   const mine = stackOf(v, texts),
-    heading = v.el.querySelector(':scope > .bk-title'),
+    stamp = v.el.querySelector(':scope > .bk-send-stamp'),
     others = [...v.el.querySelectorAll(':scope > .bk-typed')].filter(el => !texts.includes(el.typed));
   const stack = { x0: mine.x0 + dx, y0: mine.y0 + dy, x1: mine.x1 + dx, y1: mine.y1 + dy };
   return downToClear(
     stack,
-    [...[...others, ...(heading ? [heading] : [])].map(edges), ...v.page.scraps.map(scrapBoxOf)],
+    [...[...others, ...(stamp ? [stamp] : [])].map(edges), ...v.page.scraps.map(scrapBoxOf)],
     EDGE,
   );
 }

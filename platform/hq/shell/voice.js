@@ -4,6 +4,7 @@
 // Where the browser also has speech recognition and can share the microphone without a fight (desktop Chrome
 // and Edge), the words appear live while the board talks; the transcript then replaces that preview.
 import { levelMeter } from './audio.js';
+import { gotStream } from '/__review/micallowed.js';
 
 const ua = navigator.userAgent;
 const mobile = /Android|iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
@@ -21,7 +22,7 @@ export function record({ lang = 'en', onPreview, onSegment } = {}) {
   const s = { chunks: [], t0: 0, done: false };
   const release = () => { s.cut?.close(); s.meter?.close(); s.stream?.getTracks().forEach(t => t.stop()); try { s.sr?.abort(); } catch { /* not started */ } };
   s.ready = navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 } }).then(stream => {
-    s.stream = stream;
+    s.stream = stream; gotStream();
     if (s.done) { release(); throw new DOMException('Cancelled', 'AbortError'); }
     const type = TYPES.find(t => MediaRecorder.isTypeSupported?.(t));
     s.rec = new MediaRecorder(stream, type ? { mimeType: type, audioBitsPerSecond: 32000 } : undefined);

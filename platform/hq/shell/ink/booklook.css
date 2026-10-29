@@ -1,5 +1,5 @@
-/* The Notebook's own look (book.css lays it out): a black hardcover, the same on every HQ look. Its board shows round
-   the pages at the head, the foot and the outer edge, its spine at the screen's right edge; its one colour is the pull
+/* The Notebook's own look (book.css lays it out): its pages bound in a black cover, the same on every HQ look. The
+   cover shows only as the binding on HQ's side; its one colour is the pull
    tab's, the brand's accent (brand.yaml's colours.notebook, set at onboarding; --notebook on :root, main.js), never a
    colour of the platform's own. No cover title: the book opens straight onto its page (the page and the overview are
    bookdesk.css's). (the hardcover) */
@@ -13,29 +13,11 @@
   --bk-accent: var(--notebook, var(--ink, #1d1a2f));
 }
 
-/* the board under the pages, lit softly from the upper left */
-#book .bk-leaf,
+/* the binding: the cover's board, lit softly from the upper left, square at its corners like the paper beside it (a
+   rounded one let the table show there) */
 #book .bk-edge {
   background:
     radial-gradient(130% 60% at 0% 0%, rgba(255, 255, 255, 0.07), transparent 60%), var(--bk-grain), var(--bk-cloth);
-  /* (inside the leaf's border: the table's margin past the spine, book.css) */
-  background-clip: padding-box;
-}
-/* the cover's outer edge: the board's rounded edge, a hair of light along it */
-#book .bk-edge {
-  border-radius: 7px 0 0 7px;
-  box-shadow: inset 1px 0 0 rgba(255, 255, 255, 0.12);
-}
-/* the spine, a margin from the screen's right edge: the board rounding into the book's back */
-#book .bk-leaf::after {
-  content: '';
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  right: 0;
-  width: var(--bk-back);
-  background: linear-gradient(90deg, rgba(0, 0, 0, 0.6), rgba(255, 255, 255, 0.08) 45%, rgba(0, 0, 0, 0.5));
-  pointer-events: none;
 }
 /* the pull tab: a ribbon of fabric in the brand's accent, stitched round its edge, sewn to the cover's outer edge and
    hanging out of it over HQ's page (at the screen's edge while the book's shut). No outline: its stitching shows it on

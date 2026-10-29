@@ -251,8 +251,8 @@ async def main():
     care_engines = {'care': {'url': care.url, 'token': 'load-check', 'calls': max(len(langs), 2)}}
     coordinator = lambda method, path, body=None: (
         {'agent': 'poppy', 'lang': 'nl', 'kind': 'care', 'langs': ['nl', 'en'], 'voice': 'bill_boerst',
-         'voices': {'nl': 'alex', 'de': 'thorsten'}} if path == 'call-ticket' else {}) (the routes are given what the line is wired to, which they hand to their
-    # calls, and the board's route its call maker)
+         'voices': {'nl': 'alex', 'de': 'thorsten'}} if path == 'call-ticket' else {})
+    # (the routes are given what the line is wired to, which they hand to their calls, and the board's route its call maker)
     files = Path(tempfile.mkdtemp())  # (the line's /data, here)
     wiring = server.Wiring(hq=coordinator, paths=server.Paths(calls=files, live=files), care_engines=care_engines)
     make_board_call = lambda *args, **kwargs: server.Call(*args, **kwargs, brain=Board())

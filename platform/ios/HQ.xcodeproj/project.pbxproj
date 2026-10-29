@@ -1,0 +1,181 @@
+// !$*UTF8*$!
+/* The shell's Xcode project (README.md). */
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXFileReference section */
+		C0FFEE000000000000000001 /* HQ.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = HQ.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		C0FFEE000000000000000003 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		C0FFEE000000000000000002 /* Shell.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Shell.xcconfig; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		C0FFEE000000000000000004 /* HQ */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = HQ;
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		C0FFEE000000000000000007 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		C0FFEE000000000000000006 = {
+			isa = PBXGroup;
+			children = (
+				C0FFEE000000000000000004 /* HQ */,
+				C0FFEE000000000000000003 /* Info.plist */,
+				C0FFEE000000000000000002 /* Shell.xcconfig */,
+				C0FFEE000000000000000005 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		C0FFEE000000000000000005 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				C0FFEE000000000000000001 /* HQ.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		C0FFEE00000000000000000A /* HQ */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = C0FFEE00000000000000000D /* Build configuration list for PBXNativeTarget "HQ" */;
+			buildPhases = (
+				C0FFEE000000000000000008 /* Sources */,
+				C0FFEE000000000000000007 /* Frameworks */,
+				C0FFEE000000000000000009 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				C0FFEE000000000000000004 /* HQ */,
+			);
+			name = HQ;
+			productName = HQ;
+			productReference = C0FFEE000000000000000001 /* HQ.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		C0FFEE000000000000000011 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1600;
+				LastUpgradeCheck = 1600;
+				TargetAttributes = {
+					C0FFEE00000000000000000A = {
+						CreatedOnToolsVersion = 16.0;
+					};
+				};
+			};
+			buildConfigurationList = C0FFEE000000000000000010 /* Build configuration list for PBXProject "HQ" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = C0FFEE000000000000000006;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = C0FFEE000000000000000005 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				C0FFEE00000000000000000A /* HQ */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		C0FFEE000000000000000009 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		C0FFEE000000000000000008 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		C0FFEE00000000000000000E /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+			};
+			name = Debug;
+		};
+		C0FFEE00000000000000000F /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+			};
+			name = Release;
+		};
+		C0FFEE00000000000000000B /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = C0FFEE000000000000000002 /* Shell.xcconfig */;
+			buildSettings = {
+			};
+			name = Debug;
+		};
+		C0FFEE00000000000000000C /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = C0FFEE000000000000000002 /* Shell.xcconfig */;
+			buildSettings = {
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		C0FFEE000000000000000010 /* Build configuration list for PBXProject "HQ" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C0FFEE00000000000000000E /* Debug */,
+				C0FFEE00000000000000000F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		C0FFEE00000000000000000D /* Build configuration list for PBXNativeTarget "HQ" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C0FFEE00000000000000000B /* Debug */,
+				C0FFEE00000000000000000C /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = C0FFEE000000000000000011 /* Project object */;
+}

@@ -36,8 +36,8 @@ export function inkPicture(lines) {
 
 // Lines of handwriting read into words, '' when they aren't writing: what the pen writes in words opened for more
 // (penwords.js, the book's and the post-it's).
-export const readWords = lines =>
-  send('/read', { ink: inkPicture(lines) }).then(({ writing, words }) => (writing ? words : ''));
+export const readWords = (lines, read = body => send('/read', body)) =>
+  read({ ink: inkPicture(lines) }).then(({ writing, words }) => (writing ? words : ''));
 
 // Words typed in the post-it are the board's: words read, changed, no longer stand beside the ink as type
 export function typing(r) {

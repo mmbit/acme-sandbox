@@ -52,6 +52,8 @@ colour: '#4f7cff'
 # The company's mascots (none is fine; never agents): id, name, kind, role, home, favours, rules.
 mascots: []
 calendar: { founded: 'MM-DD', holidays: [] }
+# The screens the board reads on, in a line (a try's versions are shot at them): left out, a desktop browser at 1440 × 900
+# screens: desktop Chrome at 1440 × 900, or an iPad at 1180 × 820
 app:
   title: New Company HQ
   description: 'The New Company office, live: see what every agent is up to.'
@@ -83,11 +85,8 @@ mail: { domain: example.com, boardOnly: [board], groups: [board, hello] }
 # neutral. Files go in theme/guest/ (svg, png, woff2) and are served at /guest/theme/<file>, only those named here.
 # logoHeight: px (a pixel wordmark at a whole multiple of its height stays crisp, with pixelated: true); a font file has
 # a weight and a style (normal or italic); colours: #hex; buttonRadius: px (0 to 40, a pill without it);
-# dark: false for a brand with no dark variant (then no logoDark either). sketchbook: false keeps the Sketchbook every
-# invited person has of their own off their door's page; left out, it opens where HQ's own does (computer:
-# { sketchbook }).
+# dark: false for a brand with no dark variant (then no logoDark either).
 # guest:
-#   sketchbook: true
 #   logo: wordmark.svg
 #   logoDark: wordmark-dark.svg
 #   logoHeight: 45

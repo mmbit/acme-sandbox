@@ -568,7 +568,7 @@ export async function history(reader: Reader, q: unknown, limit?: unknown) {
   const where = (k: 'job' | 'request' | 'call', col: string) => exact ? ` and ${col} = ${Number(exact)}` : ids ? ` and ${col} in (${ids[k].join(',') || 0})` : '';
   const order = <T extends { id: number }>(k: 'job' | 'request' | 'call', rows: T[]) => ids ? rows.sort((a, b) => ids![k].indexOf(a.id) - ids![k].indexOf(b.id)) : rows;
   // db.ts jobs_agent_work: the query reads only the rows it shows.
-  const done = db.prepare(`select j.id, j.code, j.created, j.title, j.step, j.round, j.status, ${PR} pr, j.result report, j.customers from jobs j
+  const done = db.prepare(`select j.id, j.code, j.created, j.title, j.step, j.round, j.status, ${PR} pr, j.result report, j.customers, j.up from jobs j
     indexed by jobs_agent_work where j.agent = ? and j.kind = 'work'${where('job', 'j.id')} order by j.id desc limit ?`).all(agent, n) as any[];
   // closing: HQ's line, apart from the board's answer.
   const requests = db.prepare(`select r.id, r.created, r.kind, r.title, r.status, r.body, r.answer, r.closing, r.customers from requests r
@@ -579,8 +579,9 @@ export async function history(reader: Reader, q: unknown, limit?: unknown) {
   if (done.some(j => j.report && reportShown(j) && keysReport(j.id))) jobs.handedKeys(reader.id);
   return { agent,
     // (a review loop's job by its full name, its step and round with the work's title: nameOf.)
-    jobs: order('job', done.map(({ pr, customers, step, round, ...j }) => ({ ...j, title: jobs.nameOf({ title: j.title, step, round }),
-      pr: pr ? { number: Number(pr.split(' ')[0]), status: pr.split(' ')[1] } : null,
+    // (up: its hand-up from a lighter model, with its note where the report shows)
+    jobs: order('job', done.map(({ pr, customers, step, round, up, ...j }) => ({ ...j, title: jobs.nameOf({ title: j.title, step, round }),
+      pr: pr ? { number: Number(pr.split(' ')[0]), status: pr.split(' ')[1] } : null, ...(up && { up: jobs.handUpLine(up, reportShown({ id: j.id, customers })) }),
       ...(reportShown({ id: j.id, customers }) ? {} : { report: null, report_left_out: jobs.REPORT_LEFT_OUT }) }))),
     requests: order('request', requests.map(({ customers, ...r }) => !customers || cardShown(r) ? r : { ...r, body: null, answer: null, left_out: jobs.CARD_REFUSED })),
     calls: order('call', calls.map(c => ({ id: c.id, ts: c.ts, request: c.request, job: c.job, pointer: `hq call ${c.id}` }))),

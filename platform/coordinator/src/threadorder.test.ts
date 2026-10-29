@@ -25,6 +25,7 @@ const plan = await import('./plan.ts');
 const threadends = await import('./threadends.ts');
 const backlog = await import('./backlog.ts');
 const predictions = await import('./predictions.ts');
+const ledger = await import('./ledger.ts');
 const meetings = await import('./meetings.ts');
 const wakes = await import('./wakes.ts');
 const forecast = await import('./forecast.ts');
@@ -634,7 +635,7 @@ test('a failed task releases later tasks while its pull request is open, but kee
   const t = thread('open');
   const one = task(t);
   await h.finish((await claim())!, { pr: 9601, branch: `job/${one}`, files: ['platform/x.ts'], sha: sha('4') });
-  const [two, three] = [task(t), task(t)];
+  const [two, three, four] = [task(t), task(t), task(t)];
   const run = await claim();
   assert.equal(run?.id, two);
   await h.finish(run!, { status: 'failed', branch: `job/${one}`, result: 'the push failed' });
@@ -646,9 +647,44 @@ test('a failed task releases later tasks while its pull request is open, but kee
   h.mergedPr(9601);
   threadends.merged(9601);
   assert.equal(projects.findThread(t)!.status, 'open', 'the merge does not complete the failed task');
-  const four = task(t);
   assert.deepEqual(h.job(four).wakes, [`task #${two} before it failed`]);
-  assert.equal(await claim(), null, 'without an open pull request the failed task holds later work');
+  assert.equal(
+    await claim(),
+    null,
+    'without an open pull request the failed task holds the work drawn before it failed',
+  );
+});
+
+test("a task drawn after a failed one is its owner's call: a redo queued without --lands runs", async () => {
+  const t = thread('redo');
+  const [one, two] = [task(t), task(t)];
+  await h.finish((await claim())!, { status: 'failed', branch: `job/${one}`, result: 'nothing pushed' });
+  assert.equal(h.job(one).status, 'failed');
+  assert.deepEqual(
+    h.job(two).wakes,
+    [`task #${one} before it failed`],
+    'drawn before it failed, it counted on its work',
+  );
+  const stall = { on: 'stalled', why: `task #${one} before it in its deliverable failed with nothing in its place` };
+  assert.deepEqual(
+    predictions
+      .outlook(Date.now())
+      .get(two)!
+      .waits.filter(w => w.on === 'stalled'),
+    [stall],
+    'its outlook lists the stall once, though each review round played after it carries it too',
+  );
+  assert.ok(ledger.cancelJob(two, 'the redo takes its place'));
+  const redo = task(t);
+  assert.deepEqual(h.job(redo).wakes, []);
+  const placed = backlog.orderingSnapshot(Date.now()).jobs.find(j => j.id === redo)!;
+  assert.deepEqual(
+    placed.reasons.filter(r => r.on === 'stalled'),
+    [],
+    'the play holds it on nothing',
+  );
+  assert.equal((await claim())?.id, redo, 'the claim starts it');
+  assert.equal(projects.findThread(t)!.status, 'open', 'the failed task still keeps the deliverable unfinished');
 });
 
 test("a first push whose pull request GitHub refused fails, and its branch stays the thread's", async () => {

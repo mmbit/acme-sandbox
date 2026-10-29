@@ -13,9 +13,13 @@ import { aim, boxOfLines } from './mark.js';
 import { unpicture } from './pictures.js';
 import { under } from './layer.js';
 import { paint as paintMarks } from './marks.js';
+import { ERASER_PATHS, segmentsApart } from './eraser.js';
 
 const UNDO =
   '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14L4 9l5-5" stroke="currentColor" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 9h10.5a5.5 5.5 0 010 11H11" stroke="currentColor" stroke-width="2.4" fill="none" stroke-linecap="round"/></svg>';
+
+// the book's eraser, in the strip's line
+const ERASER_ICON = `<svg viewBox="0 0 20 20" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${ERASER_PATHS}</g></svg>`;
 
 export const CSS = `
       .veil { pointer-events: auto; position: absolute; inset: 0; touch-action: none; cursor: crosshair;
@@ -37,6 +41,9 @@ export const CSS = `
       .strip .pot[aria-pressed="true"] i { transform: translateY(-3px) scale(1.12); box-shadow: 0 0 0 2px #fffdf6, 0 0 0 4px #2b2230, 0 5px 6px rgba(43,34,48,.35); }
       .strip .pot.wide[aria-pressed="true"] i { transform: translateY(-3px) rotate(-20deg) scale(1.12); }
       .strip .pot[aria-pressed="true"] i::after { opacity: 1; }
+      .strip .eraser i { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; color: #2b2230; transition: transform .2s cubic-bezier(.3,1.6,.5,1), box-shadow .2s; }
+      .strip .eraser svg { width: 22px; height: 22px; }
+      .strip .eraser[aria-pressed="true"] i { transform: translateY(-3px) scale(1.08); background: #fffdf6; box-shadow: 0 0 0 2px #2b2230, 0 5px 6px rgba(43,34,48,.35); }
       .strip .sep { width: 2px; height: 24px; margin: 0 4px; border-radius: 1px; background: rgba(43,34,48,.18); }
       .strip .undo { color: #2b2230; } .strip .undo svg { width: 22px; height: 22px; } .strip .undo:disabled { opacity: .3; cursor: default; }
       .strip .undo:not(:disabled):active svg { transform: rotate(-40deg); transition: transform .1s; }
@@ -58,6 +65,9 @@ export const HTML = `<div class="veil" hidden><div class="bar"><div class="hint"
 
 const MAX_LINES = 64; // a note's, as the coordinator keeps them (feedback.ts inkOf)
 const INK_KEY = '__hq_review_ink';
+// The eraser: passed across the open mark, every line it touches goes (Undo brings them back). What it draws as it goes
+// is its trail, soft and gone as it lifts.
+const ERASER = { name: 'Eraser', color: '#8f88a8', size: 24, alpha: 0.35 };
 
 // (shown: a walk-through's recording follows it) On HQ the page's numbered marks are drawn with them (marks.js).
 export function paintInk(r, lines) {
@@ -70,6 +80,8 @@ export function pick(r) {
   r.undoTo = { mark: r.mark, shot: r.shot, exposure: r.exposure };
   r.mode = 'pick';
   r.strokes = [];
+  r.inkSteps = [];
+  holdEraser(r, false); // (each note starts with an ink in hand)
   r.veil.hidden = false;
   r.veil.classList.remove('marked');
   r.undoButton.disabled = true;
@@ -82,6 +94,7 @@ function stroked(r, stroke, e) {
   if (e.pointerType === 'pen') r.penSeen = true;
   const area = boxOfLines([stroke]);
   r.penOn.clear();
+  if (r.eraserInHand) return erase(r, stroke);
   if (area.w < 24 && area.h < 24) {
     // a tap: as the first mark, it pins the element under it; beside the note, nothing
     if (r.mode !== 'pick') return;
@@ -96,7 +109,7 @@ function stroked(r, stroke, e) {
     r.msg.textContent = `A note keeps ${MAX_LINES} lines at most: undo one to draw another.`;
     return;
   } else {
-    r.strokes.push(stroke);
+    setLines(r, [...r.strokes, stroke]);
     if (r.mode === 'pick') r.mark = { kind: 'circle' };
     aim(r);
     // (dry at once as the wet goes, so the first line doesn't blink out until the note lands)
@@ -109,13 +122,38 @@ function stroked(r, stroke, e) {
     develop(r);
   }
 }
-// Undo: the last line goes; the last mark gone, it's back to tapping or drawing, the words kept
+// The open mark's lines, changed (a line drawn, lines erased): a step Undo takes back. Only the veil's marking sets
+// them while it's open (the Pencil's, the call's and the other screen's lines are HQ's, the veil hidden: pencil.js)
+function setLines(r, lines) {
+  r.inkSteps.push({ was: r.strokes });
+  r.strokes = lines;
+}
+// The eraser lifted: the open mark's lines its pass touched go
+function erase(r, pass) {
+  if (r.mode !== 'note') return;
+  const left = r.strokes.filter(s => !touches(pass, s));
+  if (left.length === r.strokes.length) return;
+  setLines(r, left);
+  if (left.length) aim(r); // (all erased: the mark stays on what it was, for Undo to bring its lines back)
+  redrawInk(r);
+  develop(r);
+}
+// Whether the eraser's pass goes over a line: some piece of one within their two half-widths of a piece of the other
+function touches(pass, line) {
+  const reach = (pass.size + line.size) / 2,
+    pieces = ({ points }) =>
+      points.length > 1 ? points.slice(1).map((q, i) => [points[i], q]) : [[points[0], points[0]]];
+  return pieces(pass).some(([a, b]) => pieces(line).some(([c, d]) => segmentsApart(a, b, c, d) <= reach));
+}
+
+// Undo: the last change to the lines goes back (a line drawn, lines erased); the last mark gone, it's back to
+// tapping or drawing, the words kept
 export function undo(r) {
   if (r.mode !== 'note' || r.veil.hidden) return;
   // (the post-it's words edited with the Pencil first: postitpen.js.)
   if (r.wordSteps?.length) return r.wordSteps.pop()();
-  if (r.strokes.length) {
-    r.strokes.pop();
+  if (r.inkSteps.length) {
+    r.strokes = r.inkSteps.pop().was;
     if (r.strokes.length || r.mark.kind === 'pin') {
       aim(r);
       redrawInk(r);
@@ -141,11 +179,17 @@ const inksOf = r =>
   r.INK ? [{ ...inkjs.INKS[0], name: 'Your ink', color: r.INK }, ...inkjs.INKS.slice(1)] : inkjs.INKS;
 function inks(r) {
   r.inks = inksOf(r);
+  const eraser = button('', 'eraser');
+  eraser.setAttribute('aria-label', ERASER.name);
+  eraser.title = ERASER.name;
+  eraser.setAttribute('aria-pressed', 'false');
+  eraser.append(Object.assign(document.createElement('i'), { innerHTML: ERASER_ICON }));
+  eraser.onclick = () => holdEraser(r, true);
   r.inkNow = Math.min(Number(kept(localStorage, INK_KEY)) || 0, r.inks.length - 1);
   const choose = i => {
     r.inkNow = i;
     keep(localStorage, INK_KEY, String(i));
-    r.strip.querySelectorAll('.pot').forEach((b, j) => b.setAttribute('aria-pressed', String(j === i)));
+    holdEraser(r, false);
   };
   r.strip.prepend(
     ...r.inks.map((k, i) => {
@@ -158,7 +202,14 @@ function inks(r) {
       b.onclick = () => choose(i);
       return b;
     }),
+    eraser,
   );
+}
+// The eraser in hand, or the ink chosen
+function holdEraser(r, on) {
+  r.eraserInHand = on;
+  r.strip.querySelectorAll('.pot').forEach((b, j) => b.setAttribute('aria-pressed', String(!on && j === r.inkNow)));
+  r.strip.querySelector('.eraser').setAttribute('aria-pressed', String(on));
 }
 // A pen on the page while review mode rests: its first move draws (the line from where it touched), and the page
 // never scrolls under it. Its tap stays the page's own.
@@ -195,16 +246,26 @@ function penOnPage(r) {
     true,
   );
   addEventListener('pointerup', e => penDown?.pointerId === e.pointerId && (penDown = null), true);
-  // (Safari scrolls under a pen until its first touchmove says no)
+  // (Safari scrolls under a pen until its first touchmove says no. Not on review mode's own controls: on an iPad a
+  // touch whose move says no is no tap, so the Pencil's tap on the strip or the post-it would press nothing. A touch
+  // starting inside review mode is heard in its closed root, after the window's.)
   const marking = () => penDown || r.mode === 'pick' || r.mode === 'note';
+  let onControls = false;
+  addEventListener('touchstart', () => (onControls = false), true);
+  r.root.addEventListener(
+    'touchstart',
+    e => (onControls = !e.composedPath().includes(r.veil) || e.composedPath().includes(r.strip)),
+    true,
+  );
   addEventListener(
     'touchmove',
-    e => marking() && [...e.changedTouches].some(t => t.touchType === 'stylus') && e.preventDefault(),
+    e => marking() && !onControls && [...e.changedTouches].some(t => t.touchType === 'stylus') && e.preventDefault(),
     { capture: true, passive: false },
   );
 }
 
 export function setupSurface(r) {
+  r.inkSteps = [];
   inks(r);
   const drawable = e =>
     (r.mode === 'pick' || (r.mode === 'note' && !r.veil.hidden)) &&
@@ -216,8 +277,8 @@ export function setupSurface(r) {
     halo: true,
     under: r.haloCanvas,
     use: drawable,
-    ink: () => r.inks[r.inkNow],
-    shape,
+    ink: () => (r.eraserInHand ? ERASER : r.inks[r.inkNow]),
+    shape: e => (r.eraserInHand ? '' : shape(e)),
     end: (s, e) => stroked(r, s, e),
   });
   if (!r.book) penOnPage(r); // (on HQ the Pencil draws without marking: pencil.js.)

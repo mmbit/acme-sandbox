@@ -1,9 +1,9 @@
 // The post-it: the note for the team, stuck over the page once something is marked (or as a general note, pinned to
 // nothing): a polaroid of the screen as it was, framed on the mark and developed again with every line drawn, the
 // words typed or said, the pictures added, one Send ("Pin it") and Cancel.
-import { MIC, kept, keep, post, refusal, RefusedError } from './base.js';
+import { MIC, post, refusal, RefusedError } from './base.js';
 import { frameMark } from './frame.js';
-import { here } from './trail.js';
+import { pageName } from './trail.js';
 import { clock, describe, marked, onScreen, videoAt, viewNow } from './mark.js';
 import { box } from './anchor.js';
 import { expose, photo, snapshot } from './snapshot.js';
@@ -16,6 +16,7 @@ import { openLines, paint as paintInk } from './marks.js';
 import { PAPER } from './paper.js';
 import { ownerNamed } from './markpage.js';
 import { setupPostitPen } from './postitpen.js';
+import { showNotice } from './postitnotice.js';
 
 export const CSS = `
       /* The post-it is a scrap of the book (paper.js): its paper and dot grid, a head torn along
@@ -35,7 +36,9 @@ export const CSS = `
       @keyframes pop { from { transform: translateX(-50%) translateY(40px) rotate(3deg) scale(.9); opacity: 0 } }
       @keyframes away { to { transform: translate(35vw, 20vh) rotate(25deg) scale(.1); opacity: 0 } }
       .top { display: flex; gap: 16px; align-items: flex-start; }
-      .polaroid { flex: none; width: 112px; background: #fff; padding: 6px 6px 18px; box-shadow: 0 3px 10px rgba(29,26,47,.25); transform: rotate(2.5deg); position: relative; }
+      /* (the photo takes no touch: the iPad's handwriting looks for a field round the pen's start, and the framed
+         screenshot's whole box, far wider than the photo, would hide the words' field from it.) */
+      .polaroid { pointer-events: none; flex: none; width: 112px; background: #fff; padding: 6px 6px 18px; box-shadow: 0 3px 10px rgba(29,26,47,.25); transform: rotate(2.5deg); position: relative; }
       .polaroid::before { content: ""; position: absolute; left: 50%; top: -8px; width: 54px; height: 15px; z-index: 1; transform: translateX(-50%) rotate(-4deg); background: rgb(246 236 200 / 80%); box-shadow: 0 1px 2px rgba(29,26,47,.12); }
       .polaroid .img { width: 100%; aspect-ratio: 3 / 4; background: #3a3148; display: grid; place-items: center; overflow: hidden; position: relative; } /* (relative: a framed img sits on the mark) */
       .polaroid img, .polaroid canvas { width: 100%; height: 100%; object-fit: cover; object-position: top; display: block; animation: develop 1.2s ease-out; }
@@ -68,8 +71,6 @@ export const HTML = `<div class="sheet" hidden role="dialog" aria-label="A note 
         <p class="msg" aria-live="polite"></p>
       </div>`;
 
-// TOLD: an outsider was told what goes with a note
-const TOLD = '__hq_review_told';
 // Whether the open mark is this screen's own on the page's screen of a pairing (<html data-paired="page">), which goes
 // to the other screen (handover.js) rather than open its post-it here, nor the mic. Never on HQ, where a mark goes into the book from the screen it's drawn on (settle.js)
 export const across = r => !r.book && document.documentElement.dataset.paired === 'page' && !r.mark?.taken && !r.call;
@@ -138,7 +139,7 @@ function stuck(r, mark, unseen) {
   const t = mark.element,
     words = t.text ? ` “${t.text.slice(0, 40)}${t.text.length > 40 ? '…' : ''}”` : '';
   r.$('.chip').textContent = `<${t.tag}>${t.video ? ` at ${clock(t.video.time)}` : ''}${words}`; // (the moment before the words the chip may cut)
-  r.$('.page').textContent = r.towards ?? here(); // (whose sheet, on HQ: towards, below.)
+  r.$('.page').textContent = r.towards ?? pageName(); // (whose sheet, on HQ: towards, below.)
   r.$('.who h2').textContent = mark.kind === 'circle' ? 'About this bit…' : 'About this…';
   if (unseen && across(r)) return; // (the pairing ended meanwhile: it shows here.)
   showSheet(r);
@@ -177,7 +178,7 @@ export function general(r) {
   r.dock.hidden = true;
   r.sheet.classList.add('bare');
   r.$('.who h2').textContent = 'A general note';
-  r.$('.page').textContent = `About it all · written on ${here()}`;
+  r.$('.page').textContent = `About it all · written on ${pageName()}`;
   r.text.placeholder = 'Something across the pages, or that differs between them? Type it, or tap the mic and say it.';
   showSheet(r);
   if (r.book) towards(r, r.mark);
@@ -193,7 +194,7 @@ export function snapped(r, snap, el) {
   r.mark.snap = snap;
   r.mark.taken = true;
   r.$('.who h2').textContent = 'From your other screen';
-  r.$('.page').textContent = `${snap ? 'As it looked there' : 'No picture came across'} · ${here()}`;
+  r.$('.page').textContent = `${snap ? 'As it looked there' : 'No picture came across'} · ${pageName()}`;
   r.text.placeholder = r.ask;
   if (!snap) return;
   r.sheet.classList.remove('bare');
@@ -210,14 +211,7 @@ export function showSheet(r) {
   r.msg.textContent = '';
   r.sheet.hidden = false;
   r.sheet.classList.remove('away');
-  // an outsider hears once what goes with a note (a general note has no picture, so its line doesn't count as that)
-  if (r.outside && r.mark && !kept(localStorage, TOLD)) {
-    if (r.mark.kind === 'general') r.msg.textContent = 'Your notes go to the crew. Please don’t type personal details.';
-    else {
-      r.msg.textContent = 'Your notes and a picture of the screen go to the crew. Please don’t type personal details.';
-      keep(localStorage, TOLD, '1');
-    }
-  }
+  showNotice(r);
   if (matchMedia('(pointer: fine)').matches) r.text.focus();
 }
 
@@ -269,8 +263,8 @@ async function pinIt(r) {
   r.msg.textContent = 'Sending…';
   return pinned(r, note, url, added);
 }
-// A new note: once it's in, the post-it flies off and the board's menu counts it. The board's goes on its book's sheet
-// for the page's owner, and so does an outsider's; said: how its words came. Each step after a wait is this note's
+// A saved note becomes a scrap on the writer's Notebook page. The post-it flies off and the menu counts it.
+// said: how its words came. Each step after a wait is this note's
 // only while its mark is still the one open: a post-it cancelled meanwhile, and another begun, is left alone
 async function pinned(r, note, url, added) {
   const mark = r.mark;

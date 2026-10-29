@@ -1,8 +1,7 @@
 // node platform/hq/book-check.mjs --stories highlighter [--webkit]   (desktop mouse and iPad mini Pencil)
 import assert from 'node:assert/strict';
-import { freePage, paperBox, pick, savedWhere } from './bookmouse.mjs';
-
-const MINI = { width: 1133, height: 744 };
+import { freePage, onDesk, paperBox, pick, savedWhere, until, DESKTOP, MINI } from './bookmouse.mjs';
+import { pen } from './bookmouse.mjs';
 
 export function highlightStories(c) {
   return Object.fromEntries(
@@ -10,6 +9,7 @@ export function highlightStories(c) {
       [
         ['highlighter only adds marks over groups and typed words', addsMarks],
         ['highlighter erases along its whole length like pen ink', erasesMarks],
+        ["a deleted group's ink and highlight leave the page at once, and Undo brings them back", deletesMarks],
       ].map(([name, story]) => [
         `${pencil ? 'iPad mini Pencil' : 'desktop mouse'}: ${name}`,
         browser => play(browser, c, pencil, story),
@@ -20,19 +20,13 @@ export function highlightStories(c) {
 
 async function play(browser, c, pencil, story) {
   const free = freePage(c);
-  const context = await c.hqIn(browser, pencil ? MINI : { width: 1440, height: 900 }, {
+  const { page, errors, done } = await onDesk(browser, c, {
+    viewport: pencil ? MINI : DESKTOP,
     hasTouch: pencil,
-    deviceScaleFactor: 1,
+    initScript: () => {
+      navigator.mediaDevices.enumerateDevices = async () => [];
+    },
   });
-  await context.addInitScript(() => {
-    navigator.mediaDevices.enumerateDevices = async () => [];
-  });
-  const page = await context.newPage(),
-    errors = [];
-  page.on('pageerror', error => errors.push(error.message));
-  await page.goto(`${c.base}/?intro=0`);
-  await page.waitForSelector('#book .bk-desk');
-  await c.settled(page, 'open');
   try {
     const box = await paperBox(page);
     const draw = points =>
@@ -51,7 +45,7 @@ async function play(browser, c, pencil, story) {
     await c.shot(`book-highlighter-${pencil ? 'ipad' : 'desktop'}-${story.name}-failed`, page);
     throw error;
   } finally {
-    await context.close();
+    await done();
     c.pages.splice(c.pages.indexOf(free), 1);
   }
 }
@@ -119,6 +113,36 @@ async function erasesMarks(page, c, free, draw) {
   }
 }
 
+// A scratch-out with the pen, and the clip menu's Delete, each take the group's painted ink off at once (no wait)
+async function deletesMarks(page, c, free, draw) {
+  await pick(page, 'Pen');
+  await draw([
+    [250, 180],
+    [250, 280],
+  ]);
+  await pick(page, 'Highlighter');
+  await draw([
+    [250, 230],
+    [420, 230],
+    [140, 230],
+  ]);
+  await savedWhere(c, free.id, p => p.ink.length === 2);
+  const paper = await paperBox(page);
+  const painted = () => Promise.all([170, 250].map(x => inkInColumn(page, paper.x + x, paper.y + 150)));
+  await until(async () => (await painted()).every(Boolean), 5000, 'the pen line and its highlight painted');
+  await pick(page, 'Pen');
+  // (from its right: its clip is a button of its own)
+  await draw(Array.from({ length: 12 }, (_, i) => [i % 2 ? 140 : 420, 175 + i * 10]));
+  assert.deepEqual(await painted(), [0, 0], "the scratch-out takes the group's ink and highlight off at once");
+  await savedWhere(c, free.id, p => p.ink.length === 0);
+  await page.locator('#book').getByRole('button', { name: 'Undo' }).first().click();
+  await until(async () => (await painted()).every(Boolean), 5000, 'Undo paints them again');
+  await savedWhere(c, free.id, p => p.ink.length === 2);
+  await page.locator('#book .bk-clip').first().click();
+  await page.locator('#book .bk-group-menu [data-act=delete]').click();
+  assert.deepEqual(await painted(), [0, 0], "the menu's Delete takes them off at once too");
+}
+
 const offColumn = (ink, x) =>
   ink.every(stroke => stroke.points.every(point => point[0] < x) || stroke.points.every(point => point[0] > x));
 
@@ -142,36 +166,17 @@ async function inkInColumn(page, x, y) {
 }
 
 async function stroke(page, points, pencil) {
-  const dense = points.flatMap((point, i) => {
-    if (!i) return [point];
-    const previous = points[i - 1];
-    const n = Math.max(1, Math.ceil(Math.hypot(point[0] - previous[0], point[1] - previous[1]) / 6));
-    return Array.from({ length: n }, (_, j) => previous.map((v, k) => v + ((point[k] - v) * (j + 1)) / n));
-  });
   if (!pencil) {
     await page.mouse.move(...points[0]);
     await page.mouse.down();
     for (const point of points.slice(1)) await page.mouse.move(...point, { steps: 2 });
     return page.mouse.up();
   }
-  await page.evaluate(points => {
-    const send = (type, [clientX, clientY]) =>
-      document.elementFromPoint(clientX, clientY).dispatchEvent(
-        new PointerEvent(type, {
-          pointerId: 7,
-          pointerType: 'pen',
-          isPrimary: true,
-          clientX,
-          clientY,
-          pressure: type === 'pointerup' ? 0 : 0.5,
-          buttons: type === 'pointerup' ? 0 : 1,
-          bubbles: true,
-          composed: true,
-          cancelable: true,
-        }),
-      );
-    send('pointerdown', points[0]);
-    points.slice(1).forEach(point => send('pointermove', point));
-    send('pointerup', points.at(-1));
-  }, dense);
+  const dense = points.flatMap((point, i) => {
+    if (!i) return [point];
+    const previous = points[i - 1];
+    const n = Math.max(1, Math.ceil(Math.hypot(point[0] - previous[0], point[1] - previous[1]) / 6));
+    return Array.from({ length: n }, (_, j) => previous.map((v, k) => v + ((point[k] - v) * (j + 1)) / n));
+  });
+  await pen(page, dense);
 }

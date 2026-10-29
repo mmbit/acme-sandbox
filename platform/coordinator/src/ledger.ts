@@ -791,7 +791,7 @@ const callAt = (c: Call) => companyFormats().time(Date.parse(c.ts), 'en');
 export function sweep(now = Date.now()) {
   for (const c of db.prepare("select * from calls where status = 'live' and ts < ?").all(new Date(now - LIVE_MS).toISOString()) as Call[]) try {
     // (its token goes with it: calls.id can be used again, and a late hand-over must not find another call)
-    // (its notes page sent and archived, or gone if nothing's on it.)
+    // (its notes page sent, staying in My Notebook, or gone if nothing's on it.)
     callEnded(c.id);
     if (!count(c.id)) { db.prepare('delete from calls where id = ?').run(c.id); db.prepare('delete from call_tokens where call = ?').run(c.id); pictures.forgetCall(c.id); watchalong.forgetCall(c.id); continue; }
     db.prepare("update calls set status = 'ended' where id = ?").run(c.id);

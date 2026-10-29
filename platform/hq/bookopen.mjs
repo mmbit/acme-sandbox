@@ -104,7 +104,7 @@ async function shutAgain(browser, c) {
     await page.waitForTimeout(500);
     assert.ok((await seen(page)).angle > 1.05, 'lifted only a little');
     await page.mouse.up();
-    await page.waitForTimeout(1200);
+    await c.settled(page, 'folded');
     let now = await seen(page);
     assert.equal(now.mode, 'folded');
     assert.equal(now.angle, 0, 'at rest, untransformed');
@@ -112,21 +112,10 @@ async function shutAgain(browser, c) {
     // open by a tap, then flicked right: shut
     await page.click('#book .bk-lip');
     await c.settled(page, 'open');
-    const open = await tabAt(page);
-    await page.mouse.move(open.x, open.y);
-    await page.mouse.down();
-    await page.mouse.move(open.x + 60, open.y, { steps: 2 });
-    await page.mouse.up();
+    await flicked(page, 60);
     await c.settled(page, 'folded');
     assert.equal((await seen(page)).mode, 'folded', 'a flick right shuts it');
-    // a tap mid-swing turns it round: opening, it's shut again
-    await page.click('#book .bk-lip');
-    await page.waitForTimeout(120);
-    const midway = await seen(page);
-    assert.ok(midway.angle > 0.05, `mid-swing at ${midway.angle.toFixed(2)}`);
-    await page.click('#book .bk-lip');
-    await page.waitForTimeout(1500);
-    assert.equal((await seen(page)).mode, 'folded', 'turned round mid-swing');
+    await turnedRound(page, c);
     // the keyboard: the tab is a button, Enter opens and shuts
     await page.focus('#book .bk-lip');
     await page.keyboard.press('Enter');
@@ -154,7 +143,8 @@ async function onAPhone(browser, c) {
     const over = await seen(page);
     await c.shot('swing-phone', page);
     assert.equal(over.mode, 'spread');
-    assert.ok(over.tabLeft >= 0 && over.tabLeft < 4, `the tab at ${over.tabLeft}, inside the screen's left edge`);
+    // (at the book's edge, the margin in that shows its shadow)
+    assert.ok(over.tabLeft >= 0 && over.tabLeft < 24, `the tab at ${over.tabLeft}, inside the screen's left edge`);
     // (the book lies over HQ's page: it never dissolves)
     assert.equal(midway.hq.opacity, 1);
     await page.tap('#book .bk-lip');
@@ -168,6 +158,22 @@ async function onAPhone(browser, c) {
 
 // ---- helpers
 
+// A tap mid-swing turns it round: opening, it's shut again, never having lain open
+async function turnedRound(page, c) {
+  await page.evaluate(() => {
+    window.__layOpen = false;
+    document.addEventListener('book:layout', e => (window.__layOpen ||= e.detail.mode !== 'folded'));
+  });
+  await page.click('#book .bk-lip');
+  await swingDrawn(page);
+  const midway = await seen(page);
+  assert.ok(midway.angle > 0.05, `mid-swing at ${midway.angle.toFixed(2)}`);
+  // The tab's own click(): Playwright's page.click waits for the tab to hold still, and on a loaded machine that's
+  // not till the swing is over
+  await page.$eval('#book .bk-lip', lip => lip.click());
+  await c.settled(page, 'folded');
+  assert.equal(await page.evaluate(() => window.__layOpen), false, 'turned round mid-swing, not landed and shut');
+}
 // Let go lowered: it lands open, its own shadow on HQ's page beside it growing in with its drop
 async function letGoShadowGrowing(page, c) {
   await shadowWatched(page);
@@ -217,6 +223,37 @@ const shadowWatched = page =>
     };
     requestAnimationFrame(frame);
   });
+// The swing's first frame drawn: the cover's edge turned round the spine
+const swingDrawn = page =>
+  page.waitForFunction(() => document.querySelector('#book .bk-edge').style.transform.includes('rotateY'));
+// A flick on the tab dx px (+ right), its pointer events and the click a browser sends after them dispatched in one
+// go. Playwright's mouse moves can come further apart than bookfollow.js's FLICK_MS on a loaded machine, and then the
+// flick reads as still.
+const flicked = (page, dx) =>
+  page.evaluate(dx => {
+    const lip = document.querySelector('#book .bk-lip'),
+      r = lip.getBoundingClientRect(),
+      [x, y] = [r.x + r.width / 2, r.y + r.height / 2];
+    const at = (type, clientX) =>
+      lip.dispatchEvent(
+        new PointerEvent(type, {
+          bubbles: true,
+          composed: true,
+          pointerId: 1,
+          pointerType: 'mouse',
+          isPrimary: true,
+          button: type === 'pointermove' ? -1 : 0,
+          buttons: type === 'pointerup' ? 0 : 1,
+          clientX,
+          clientY: y,
+        }),
+      );
+    at('pointerdown', x);
+    at('pointermove', x + dx / 2);
+    at('pointermove', x + dx);
+    at('pointerup', x + dx);
+    lip.click();
+  }, dx);
 // The tab's middle
 const tabAt = page =>
   page

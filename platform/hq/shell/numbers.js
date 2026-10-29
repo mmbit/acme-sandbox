@@ -348,8 +348,9 @@ function companyHtml(b, v) {
   const days = dailyColumns.length && dailyRows.length ? `<div class="card">${sec(daily.title ?? 'Per day')}<p class="sub">${esc(dailyColumns[0].label ?? dailyColumns[0].key)} a day${daily.sub ? `. ${esc(daily.sub)}` : '.'}</p>
     <div class="chart" data-nx-cols tabindex="0">${columns(dailyRows, dailyColumns[0].key, dailyColumns[0].label ?? dailyColumns[0].key)}</div><p class="read" data-nx-read>${dailyRows.some(r => Number(r[dailyColumns[0].key])) ? 'Tap or point at a day to read it.' : 'Nothing on any day yet.'}</p>
     <details data-k="days"><summary>As a table</summary><table><thead><tr><th>Day</th>${dailyColumns.map(c => `<th>${esc(c.label ?? c.key)}</th>`).join('')}</tr></thead><tbody>${dailyRows.slice().reverse().map(r => `<tr><td>${esc(dayName(r.day))}</td>${dailyColumns.map(c => `<td>${cell(r[c.key], c.unit)}</td>`).join('')}</tr>`).join('')}</tbody></table></details></div>` : '';
+  // (share: false, a bar whose values don't add up, a median or a rate: no share beside each)
   const bars = (b.bars ?? []).map(bar => {
-    const barRows = (bar.rows ?? []).map(r => ({ ...r, known: r.value != null, count: Number(r.value) || 0 })), barTotal = barRows.every(r => r.known) ? sum(barRows.map(r => r.count)) : null, max = Math.max(1, ...barRows.map(r => r.count));
+    const barRows = (bar.rows ?? []).map(r => ({ ...r, known: r.value != null, count: Number(r.value) || 0 })), barTotal = bar.share !== false && barRows.every(r => r.known) ? sum(barRows.map(r => r.count)) : null, max = Math.max(1, ...barRows.map(r => r.count));
     return `<div class="card">${sec(bar.title ?? 'A breakdown')}${bar.sub ? `<p class="sub">${esc(bar.sub)}</p>` : ''}${barRows.length ? hbars(barRows.map(r => ({ key: esc(r.label), v: r.count, val: fig(cell(r.value, r.unit), barTotal ? pct(r.count / barTotal, 0) : '') })), max) : '<p class="nodata">Nothing counted yet.</p>'}</div>`;
   }).join('');
   const targets = (b.targets ?? []).length ? targetsHtml(b.targets, sec, 'What the team works from.', '') : '';

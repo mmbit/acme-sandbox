@@ -69,6 +69,8 @@ compose="docker compose -f $root/infra/compose.yaml -f $root/infra/generated/pro
     // Every agent reads this report: the one of a job handed a customer's own details stays with its agent (memory.ts),
     // and a customer card's text never shows here.
     const said = (col, n) => \`iif(customers, '(holds a customer''s details)', substr(\${col},1,\${n}))\`;
+    // the seconds from one time column to another, to a tenth
+    const secs = (from, to) => \`round((julianday(\${to}) - julianday(\${from})) * 86400, 1)\`;
     console.table(db.prepare('select id, created, kind, seat, status, title, customers from requests order by id').all());
     console.log('company paused:', db.prepare(\"select value from settings where key = 'company.paused'\").get()?.value ?? 'no');
     // a seat's windows: the share used of each, and whether its week is paced (it takes only the board's word and work
@@ -150,6 +152,20 @@ compose="docker compose -f $root/infra/compose.yaml -f $root/infra/generated/pro
     } catch { /* the aim column is added when the coordinator starts */ }
     console.log('== calls');
     console.table(db.prepare('select c.id, c.ts, c.agent, c.request, c.job, j.status, length(c.lines) chars from calls c left join jobs j on j.id = c.job order by c.id desc limit 10').all());
+    // The book's judge (ink/bookjudge.ts) on the board's notes: each verdict on its target (g<group>, n<an old book's
+    // note> or p<page>: a box typed on it), seconds from the save of the words it judged, the run its answer or try
+    // started or joined (none: on a call, whose agent answers itself, or a pick), and that run's answers after it, a
+    // slip it clipped or a typed box's answer typed on at its end, with the seconds to the first and last. 'none'
+    // verdicts, most, only counted. No words and no why: a call's note can hold a customer's.
+    const since = \"strftime('%Y-%m-%dT%H:%M:%S', 'now', '-2 days')\";
+    console.log('== the book\'s judge (the last 2 days, in UTC: a verdict, its run and when its answers landed, in seconds)');
+    console.table(db.prepare(\"select v.id, v.reply, coalesce('g' || v.grp, 'n' || v.note, 'p' || v.page) target, substr(v.created, 1, 19) judged, \"
+      + secs('v.saved', 'v.created') + ' after_save_s, v.job, j.status, count(a.at) answers, ' + secs('v.created', 'min(a.at)') + ' first_s, '
+      + secs('v.created', 'max(a.at)') + \" last_s, iif(v.wiped is null, '', 'wiped') wiped from ink_verdicts v left join jobs j on j.id = v.job \"
+      + \"left join (select job, created at from book_slips union all select job, typed from book_typed_asks where typed is not null) a \"
+      + \"on a.job = v.job and a.at >= v.created \"
+      + \"where v.created > \" + since + \" and v.reply != 'none' group by v.id order by v.id desc\").all());
+    console.log(\"'none' verdicts:\", db.prepare(\"select count(*) n from ink_verdicts where reply = 'none' and created > \" + since).get().n);
     // Every request Twilio made to the phone line and HQ's answer, never the caller's number (phone.ts): nothing at the
     // time of a call means Twilio never asked HQ (the number's webhook, the account, the number).
     try {
@@ -209,18 +225,17 @@ compose="docker compose -f $root/infra/compose.yaml -f $root/infra/generated/pro
     // brief and report came off the disk, seconds while HQ's writes waited
     console.log('== usage per job (latest 25; a run is one start of the job, resumed after a limit or restart)');
     console.table(db.prepare('select u.job, j.agent, j.kind, count(*) runs, group_concat(distinct u.seat) seats, group_concat(distinct u.models) models, sum(u.input) input, sum(u.cache_write) cache_write, sum(u.cache_read) cache_read, sum(u.output) output, round(sum(u.cost),2) cost_usd, max(u.ts) finished from usage u join jobs j indexed by jobs_report on j.id = u.job group by u.job order by max(u.id) desc limit 25').all());
-    // How much of a
-    // seat goes to the review loop: the jobs review.ts makes for an author ('pr fix': a fix, bringing a branch up to
-    // date, a re-land) carry the pull request's number; the board's notes on one are its own kind. Downtime is
-    // maintenance on spare capacity; 'scheduled' is the rest of schedule.ts's jobs (titled '<entry> (<slot>)'). An entry's
-    // own kind (schedule.yaml's kind: refactoring) comes first and takes its pull request's reviews and fixes along: the
-    // process review checks that refactoring is near its share of our work.
-    const own = \"(select s.kind from schedule_runs s where s.kind is not null and (s.job = j.id or j.branch = 'job/' || s.job))\";
+    // How much of a seat goes to the review loop, and to each other kind of job: the kinds are the coordinator's
+    // (jobkinds.ts), as Numbers' Tokens dashboard reads them
     const hasOwn = db.prepare(\"select 1 from pragma_table_info('schedule_runs') where name = 'kind'\").get();
-    const kindOf = \"case \" + (hasOwn ? \"when \" + own + \" is not null then \" + own + \" \" : '') + \"when j.kind <> 'work' then j.kind when j.stage = 'feedback' then 'board notes' when j.pr is not null and j.queued_by is null then 'pr fix' when j.downtime then 'downtime' when j.queued_by is null and exists (select 1 from schedule_runs s where j.title like '% (' || s.slot || ')') then 'scheduled' else 'work' end\";
+    const kindOf = (await import('./src/jobkinds.ts')).kindOf(!!hasOwn);
     const spend = \"iif(u.engine = 'codex', u.input + u.cache_read, u.cost)\";
     console.log('== usage per kind of job, last 7 days (per UTC day; share: of the day\\'s cost_usd for Claude, of its input + cache_read for Codex)');
     console.table(db.prepare(\"select substr(u.ts,1,10) day, u.engine, \" + kindOf + \" kind, count(distinct u.job) jobs, sum(u.input) input, sum(u.cache_write) cache_write, sum(u.cache_read) cache_read, sum(u.output) output, round(sum(u.cost),2) cost_usd, round(100.0 * sum(\" + spend + \") / sum(sum(\" + spend + \")) over (partition by substr(u.ts,1,10), u.engine), 1) share from usage u join jobs j indexed by jobs_report on j.id = u.job where u.ts >= date('now','-6 days') group by 1, 2, 3 order by day desc, u.engine, share desc\").all());
+    console.log('== up-front context per kind of job, last 7 days (runs whose worker measured it, Claude only: opening, the first message\\'s whole context; written, the part its start or resume wrote to the cache; turns, its messages; upfront_share: opening × turns, of the same runs\\' input + cache_write + cache_read)');
+    console.table(db.prepare(\"select u.engine, \" + kindOf + \" kind, count(*) runs, cast(median(u.opening) as integer) median_opening, cast(avg(u.opening) as integer) mean_opening, cast(avg(u.opening_written) as integer) mean_written, round(avg(u.turns), 1) mean_turns, round(100.0 * sum(u.opening * u.turns) / sum(u.input + u.cache_write + u.cache_read), 1) upfront_share from usage u join jobs j indexed by jobs_report on j.id = u.job where u.ts >= date('now','-6 days') and u.opening is not null group by 1, 2 order by u.engine, runs desc\").all());
+    console.log('== resumed runs per kind of job, last 7 days (runs that took their session up again; idle: from the session\\'s previous run\\'s end to this run\\'s start; written: what the resume wrote to the cache again, Claude only)');
+    console.table(db.prepare(\"select u.engine, \" + kindOf + \" kind, count(*) runs, round(avg(u.idle_ms) / 60000.0, 1) mean_idle_min, cast(avg(u.opening_written) as integer) mean_written, round(sum(u.cost), 2) cost_usd from usage u join jobs j indexed by jobs_report on j.id = u.job where u.ts >= date('now','-6 days') and u.resumed = 1 group by 1, 2 order by u.engine, sum(u.cost) desc\").all());
     console.log('== review loop per pull request, last 7 days (the top ten by its reviews\\' and checks\\' cost_usd; codex_tokens: their Codex input + cache_read; fixes: the author\\'s pr fix jobs)');
     // The fixes' cost is summed once and looked up per pull request: usage has no index on job, so a subquery per pull
     // request would read all of usage each time

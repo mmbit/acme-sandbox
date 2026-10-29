@@ -1,16 +1,17 @@
 // The select tool's live move and resize (bookselect.js): what's picked lifts off its page's tiles onto a canvas of its
 // own over them and follows the pointer by a CSS transform (moved, or scaled about the opposite corner), its boxes of
-// words by a translate, so what shows while it's held is what lands. Let go, it lands as new things in the page's lists
+// words by a translate, and a whole group's clip, post-it words and answers (bookgroups.js, bookanswers.js) with it, so
+// what shows while it's held is what lands and nothing jumps once it's let go. Let go, it lands as new things in the page's lists
 // (bookselectmath.js), one step for Undo, and the canvas goes once the tiles under it show them. Carried onto a call's
 // window instead, its pictures go to the call (calldrop.js) and everything stays where it was on the page.
 import { draw } from '/__review/ink.js';
 import { drawScrap } from './sketchscraps.js';
 import { sfx } from '../audio.js';
 import { grownTo } from './bookrow.js';
-import { boundsOf, mapBox, moveBy, movedText, movedThings, scaleAt, union } from './bookselectmath.js';
+import { boundsOf, mapBox, mapped, moveBy, movedText, movedThings, scaleAt, union } from './bookselectmath.js';
+import { boxOf } from './bookgroupmath.js';
 import { bounds, boxOfText, frameAt, frameDown, pageOf, swapIn, textEl } from './bookselect.js';
 import { followPress } from './bookpress.js';
-import { callWindowAt, dropOnCall, lightCall } from '../calldrop.js';
 
 // a press moves or scales once it has moved this far (screen px); let go, the lifted things settle in SETTLE_MS
 // (bookselect.css: .bk-sel-lifted's transition)
@@ -34,17 +35,18 @@ export function drag(sel, e, { corner }) {
     const to = pageOf(book, m);
     tr = corner < 0 ? moved(from, to, m.shiftKey) : scaleAt(b, corner, to, book.scale, sel.ink);
     shown(sel, held, tr);
-    held.onCall = !!sel.scraps.length && !!callWindowAt(m.clientX, m.clientY);
-    lightCall(held.onCall);
+    held.onCall = !!sel.scraps.length && !!book.calls?.callWindowAt(m.clientX, m.clientY);
+    book.calls?.lightCall(held.onCall);
   };
   const up = u => {
     if (!held) return;
-    const onCall = held.onCall && u.type !== 'pointercancel';
-    lightCall(false);
+    const cancelled = u.type === 'pointercancel',
+      onCall = held.onCall && !cancelled;
+    book.calls?.lightCall(false);
     // (on the call, the page keeps its own: the things land back where they were, at once)
-    if (onCall && held.canvas) held.canvas.style.transform = '';
-    drop(sel, held, onCall || u.type === 'pointercancel' ? null : tr);
-    if (onCall) dropOnCall(sel.scraps.map(s => fetch(s.url).then(got => got.blob())));
+    if (onCall) held.canvas.style.transform = '';
+    drop(sel, held, onCall || cancelled ? null : tr);
+    if (onCall) book.calls.dropOnCall(sel.scraps.map(s => s.url));
   };
   followPress(e, { move, up });
   return true;
@@ -68,6 +70,7 @@ function lift(sel, corner) {
     was: { ink: page.ink.slice(), scraps: page.scraps.slice() },
     drawn: boundsOf({ ink: sel.ink, scraps: sel.scraps }, null),
     texts: sel.texts.map(t => ({ t, box: boxOfText(sel, t), el: textEl(view, t) })),
+    groups: groupsHeld(view, { ink: sel.ink, scraps: sel.scraps, texts: sel.texts }),
   };
   held.canvas = held.drawn && canvasFor(book, view, held.things, held.drawn);
   const out = new Set([...sel.ink, ...sel.scraps]);
@@ -117,7 +120,27 @@ function shown(sel, held, tr) {
     if (el) el.style.translate = `${dx}px ${dy}px`;
     return { x0: box.x0 + dx, y0: box.y0 + dy, x1: box.x1 + dx, y1: box.y1 + dy };
   });
+  for (const { at, els } of held.groups) {
+    const [x, y] = mapped(tr, at.x, at.y);
+    for (const el of els) el.style.translate = `${x - at.x}px ${y - at.y}px`;
+  }
   frameAt(sel, [...(drawn ? [mapBox(tr, drawn)] : []), ...boxes].reduce(union));
+}
+// The groups held whole (every element of theirs on the page picked): where each one's box starts (its clip's place)
+// and what's drawn at it on the page, its clip and post-it words (.bk-groups) and its answers (.bk-answers)
+function groupsHeld(view, things) {
+  const page = view.page,
+    held = new Set([...things.ink, ...things.scraps, ...things.texts]),
+    ids = new Set([...held].map(x => x.g).filter(g => g !== undefined && page.groups?.has(g)));
+  return [...ids].flatMap(g => {
+    const of = k => (page[k] ?? []).filter(x => x.g === g);
+    const parts = { ink: of('ink'), texts: of('texts'), pictures: of('scraps') };
+    if (![...parts.ink, ...parts.texts, ...parts.pictures].every(x => held.has(x))) return [];
+    const els = [...view.el.querySelectorAll(':is(.bk-groups, .bk-answers) > [data-g]')].filter(
+      el => el.dataset.g === String(g),
+    );
+    return [{ at: boxOf(parts), els }];
+  });
 }
 
 // Let go: the things land as new ones in their places in the page's lists (none when they didn't move, or the press
@@ -140,6 +163,10 @@ function drop(sel, held, tr) {
   hooks.lay();
   for (const { el } of held.texts) if (el) el.style.translate = '';
   if (!still) hooks.texts.added(view);
+  // (a group's clip and words drawn at once where it landed; its answers stay moved until they're read again from the
+  // store, which places them at the group's saved box)
+  if (still) for (const { els } of held.groups) for (const el of els) el.style.translate = '';
+  else if (held.groups.length) book.groups?.drawn(page);
   delete book.desk.dataset.drag;
   Object.assign(sel, after);
   frameDown(sel);

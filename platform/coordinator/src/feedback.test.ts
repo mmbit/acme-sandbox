@@ -3,9 +3,11 @@ import { test, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { basename } from 'node:path';
 import { createServer, request } from 'node:http';
 import { fixtureRepo } from './fixture.ts';
 import { framedAnswer, reviewModeOff } from './testreview.ts';
+import { REVIEW_PARTS } from '../../hq/extras.mjs';
 
 fixtureRepo();
 process.env.DATA_DIR = mkdtempSync(`${tmpdir()}/feedback-test-`);
@@ -112,11 +114,11 @@ test('the script is the real tool only for the board, on an existing product pre
   }
 });
 
-test("the framing rule review mode and HQ's note thumbnails share, the pen, the anchor and the book's paper are served on every host, to anyone", async () => {
-  for (const file of ['frame.js', 'ink.js', 'inklive.js', 'inkshape.js', 'anchor.js', 'paper.js']) {   // (ink.js, anchor.js; paper.js; inklive.js, inkshape.js)
-    const rule = readFileSync(new URL(`../../../shared/review/${file}`, import.meta.url), 'utf8');
+test("review mode's open parts (the framing rule HQ's note thumbnails share, the pen, the anchor, the book's paper, whether the mic is allowed) are served on every host, to anyone", async () => {
+  for (const [address, file] of Object.entries(REVIEW_PARTS)) {   // (HQ's extras)
+    const rule = readFileSync(new URL(`../../../${file}`, import.meta.url), 'utf8');
     for (const opts of [{}, { key: null }, { host: 'hq.company.test', key: null }]) {
-      const r = await call(`/__review/${file}`, opts);
+      const r = await call(address, opts);
       assert.equal(r.status, 200, JSON.stringify(opts));
       assert.equal(r.text, rule);
       assert.match(r.headers['content-type'], /^text\/javascript/);
@@ -128,7 +130,8 @@ test("the framing rule review mode and HQ's note thumbnails share, the pen, the 
 // review.js, and never from a cache to someone else
 test("review mode's parts are served only to whoever gets the tool", async () => {
   const dir = new URL('../../../shared/review/', import.meta.url);
-  const open = ['review.js', 'thanks.js', 'ink.js', 'inklive.js', 'inkshape.js', 'frame.js', 'anchor.js', 'paper.js', 'tap.js']; // (paper.js; tap.js; inklive.js, inkshape.js)
+  // (review.js and thanks.js have their own answers, and HQ's extras are anyone's)
+  const open = ['review.js', 'thanks.js', ...Object.values(REVIEW_PARTS).map(file => basename(file))];
   const parts = readdirSync(dir).filter(f => f.endsWith('.js') && !f.endsWith('.test.js') && !open.includes(f));
   assert.ok(parts.includes('tool.js') && parts.length > 10, parts.join());
   for (const file of parts) {

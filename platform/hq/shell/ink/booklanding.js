@@ -65,16 +65,14 @@ function landGroup(desk, pages, ask) {
 function underGroups(desk, pages, page, from) {
   const onPage = page && pages.page()?.id === page ? desk.querySelector('.bk-world .bk-page:not([hidden])') : null,
     d = desk.getBoundingClientRect(),
-    snip = snipOf(from);
-  const foot = nextScrap([...(pageOf(page)?.groups.values() ?? [])]),
-    origin = onPage?.getBoundingClientRect() ?? { left: d.left, top: d.top },
-    k = onPage ? scaleOf(onPage) : 1,
+    snip = snipOf(from),
     // (the snip's picture is cut at the screenshot's pixels per px.)
-    w = Math.min(STACK.w, snip.w * snapScale(innerWidth, innerHeight)) * k;
-  return within(
-    inkIn({ x: origin.left + foot.x * k, y: origin.top + foot.y * k, w, h: (w * snip.h) / snip.w }, from),
-    d,
-  );
+    w = Math.min(STACK.w, snip.w * snapScale(innerWidth, innerHeight)),
+    h = (w * snip.h) / snip.w;
+  const spot = nextScrap([...(pageOf(page)?.groups.values() ?? [])], h),
+    origin = onPage?.getBoundingClientRect() ?? { left: d.left, top: d.top },
+    k = onPage ? scaleOf(onPage) : 1;
+  return within(inkIn({ x: origin.left + spot.x * k, y: origin.top + spot.y * k, w: w * k, h: h * k }, from), d);
 }
 // Where the ink is on a scrap's photo once its page shows with the scrap read (the photo's one of the page's pictures,
 // in its group: bookpage.js draws it)

@@ -13,6 +13,7 @@ import { keepAgain } from './booktape.js';
 import { crumple } from './bookpaper.js'; // (what's deleted balls up and drops off)
 import { thingsPicture } from './bookpaperdraw.js';
 import { said } from './booksave.js';
+import { word } from './bookscope.js';
 import { mapBox, moveBy, movedScrap, movedStroke, movedText, movedThings, pasteAt, union } from './bookselectmath.js';
 import { bounds, boxOfText, changed, choose, current, framed, letGo, redrawn, swapIn } from './bookselect.js';
 
@@ -27,8 +28,9 @@ const NUDGE = 1,
 const ARROWS = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
 const FIELD = 'input, textarea, select, [contenteditable], review-mode';
 
-// sel: bookselect.js's. Returns { bar() (the bar beside a frame), offer([clientX, clientY]) (Paste there, when the
-// clip holds something), away() (before a press: the bubble gone, a burst of nudges ended), settle() (the nudges ended) }
+// sel: bookselect.js's. Returns { bar() (the bar beside a frame), fit() (the bar fitted to what's picked), offer([clientX,
+// clientY]) (Paste there, when the clip holds something), away() (before a press: the bubble gone, a burst of nudges
+// ended), settle() (the nudges ended) }
 export function mountClip(sel) {
   const clip = { sel, held: null, word: '', again: null, nudging: null, bubble: null, key: null, last: null };
   keys(clip);
@@ -36,6 +38,7 @@ export function mountClip(sel) {
   following(clip);
   return {
     bar: () => barOf(clip),
+    fit: () => fit(clip),
     offer: at => offer(clip, at),
     away: () => {
       gone(clip);
@@ -72,16 +75,34 @@ function cut(clip) {
   clip.held.cut = true;
   return remove(clip, false);
 }
-// (deleted: it crumples; cut: it's kept in the clip)
+// (deleted: it crumples; cut: it's kept in the clip. One whole group of a Notebook page goes as its clip's Delete does,
+// Undo in a toast too: bookgroups.js)
 function remove(clip, crumpled = true) {
   const { sel } = clip;
   if (!current(sel)) return false;
+  const one = crumpled && lone(sel);
+  if (one) {
+    letGo(sel);
+    one.remove();
+    return true;
+  }
   const out = new Set([...sel.ink, ...sel.scraps, ...sel.texts]);
   if (crumpled) crumple(...thingsPicture(sel.view, sel, bounds(sel), sel.book.scale));
   changed(sel, sel.view, page => {
     for (const k of ['ink', 'scraps', 'texts']) page[k].splice(0, page[k].length, ...page[k].filter(x => !out.has(x)));
     return {};
   });
+  return true;
+}
+// One whole group of a Notebook page picked: what its clip's menu does (bookgroups.js lone); else null
+const lone = sel => sel.book.groups?.lone(sel.view, sel) ?? null;
+// One whole group picked moved to another page, from its menu at the pages (from: the bar's button)
+function move(clip, from) {
+  const { sel } = clip,
+    one = current(sel) && lone(sel);
+  if (!one?.move) return false;
+  one.move(from);
+  letGo(sel);
   return true;
 }
 // What's picked as one group on its page (a Notebook page's: bookgroups.js)
@@ -274,38 +295,45 @@ function following(clip) {
 
 // ---- the bar and the bubble
 
-// The bar beside the selection: Cut, Copy, Paste (once the clip holds something: copied, it shows), Duplicate, Delete
-// and Group (what's picked made one group: bookgroups.js.), for a Pencil or a
+// The bar beside the selection: Cut, Copy, Paste (once the clip holds something: copied, it shows), Duplicate, Delete,
+// Move to page… (one whole group picked, as its clip's menu has it: fit) and Group (what's picked made one group:
+// bookgroups.js.), for a Pencil or a
 // finger (a mouse has them too). Its touches are its own: never the paper's pan or ink,
 // which would take their click. (Paste, its own touches)
 function barOf(clip) {
   const bar = document.createElement('div');
   bar.className = 'bk-sel-bar';
   bar.setAttribute('role', 'toolbar');
-  bar.setAttribute('aria-label', 'Selection');
+  bar.setAttribute('aria-label', word('Selection'));
   for (const type of ['pointerdown', 'touchstart', 'touchmove']) bar.addEventListener(type, e => e.stopPropagation());
   const acts = [
-    ['Cut', `${MOD}+X`, () => cut(clip) && copied(clip)],
-    ['Copy', `${MOD}+C`, () => copy(clip) && copied(clip)],
-    ['Paste', `${MOD}+V`, () => pasteBeside(clip)],
-    ['Duplicate', `${MOD}+D`, () => duplicate(clip)],
-    ['Delete', 'Delete', () => remove(clip)],
-    ['Group', 'What’s picked as one group', () => group(clip)],
+    [word('Cut'), `${MOD}+X`, () => cut(clip) && copied(clip)],
+    [word('Copy'), `${MOD}+C`, () => copy(clip) && copied(clip)],
+    [word('Paste'), `${MOD}+V`, () => pasteBeside(clip)],
+    [word('Duplicate'), `${MOD}+D`, () => duplicate(clip)],
+    [word('Delete'), 'Delete', () => remove(clip)],
+    [word('Move to page…'), '', b => move(clip, b)],
+    [word('Group'), word('What’s picked as one group'), () => group(clip)],
   ];
   for (const [text, keys, act] of acts)
     bar.append(
       button({
         text,
         keys,
-        onClick: () => {
+        onClick: e => {
           settle(clip);
-          act();
+          act(e.currentTarget);
         },
       }),
     );
   clip.pasting = bar.children[2];
   clip.pasting.hidden = !clip.held;
+  clip.moving = bar.children[5];
   return bar;
+}
+// Move to page… in the bar while one whole group is picked and another page is open to take it
+function fit(clip) {
+  clip.moving.hidden = !lone(clip.sel)?.move;
 }
 // Paste shown in the bar, coming in as Copy or Cut fills the clip (the bar placed again for its width)
 function offered(clip) {
@@ -355,7 +383,7 @@ function offer(clip, [x, y]) {
   const bubble = Object.assign(document.createElement('button'), {
     type: 'button',
     className: 'bk-paste',
-    textContent: 'Paste',
+    textContent: word('Paste'),
   });
   Object.assign(bubble.style, { left: `${x - box.left}px`, top: `${y - box.top}px` });
   book.paper.append((clip.bubble = bubble));

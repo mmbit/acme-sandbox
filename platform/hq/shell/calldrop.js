@@ -31,13 +31,14 @@ export function stopDrop(c) {
 
 // The call's window under a point on the screen, or null (no call, or not over it)
 export const callWindowAt = (x, y) => call && windowOf(call, document.elementFromPoint(x, y));
-// The call's window lit as a place to let go, or not
+// The call's window lit as a place to let go, or not, until the carry says otherwise: a pointer carry sends no moves
+// while it's held still
 export const lightCall = on => call && light(call, on);
 // Whether a paste is the call's: the board pressed or focused its window last
 export const pasteForCall = () => !!call?.inWindow;
-// Pictures let go on the call's window from inside HQ (each a File or a promise of one), as a drop's go: a picture
-// taped in the notebook, carried there by the Select tool (bookselectlift.js).
-export const dropOnCall = files => call && showPictures(call, files);
+// Pictures let go on the call's window from inside HQ, by their addresses, as a drop's go: a picture taped in the
+// notebook, carried there by the Select tool (bookselectlift.js).
+export const dropOnCall = urls => call && showPictures(call, urls.map(pictureAt));
 
 // The window shown: the call's screen, or its bubble while it's small; the one an element is in, else null
 function windowOf(c, el) {
@@ -47,7 +48,6 @@ function windowOf(c, el) {
 function light(c, on) {
   clearTimeout(c.lit);
   for (const el of [c.bubble?.el, c.layer?.querySelector('.device')]) el?.toggleAttribute('data-drop', on);
-  if (on) c.lit = setTimeout(() => light(c, false), LIT_MS);
 }
 
 // A drag over the window: taken when it carries files or a picture's address; let go, its pictures go to the agent
@@ -57,8 +57,10 @@ function dragged(c, e) {
   e.preventDefault();
   e.stopPropagation();
   e.dataTransfer.dropEffect = 'copy';
-  light(c, e.type !== 'drop');
-  if (e.type === 'drop') showPictures(c, picturesIn(e.dataTransfer));
+  const over = e.type !== 'drop';
+  light(c, over);
+  if (over) c.lit = setTimeout(() => light(c, false), LIT_MS);
+  else showPictures(c, picturesIn(e.dataTransfer));
 }
 // The pictures a drop carries: its picture files, else the picture at the address it carries (a page's own <img>)
 function picturesIn(data) {
@@ -68,5 +70,6 @@ function picturesIn(data) {
     .getData('text/uri-list')
     .split(/\r?\n/)
     .find(line => line && !line.startsWith('#'));
-  return url ? [fetch(url).then(answer => answer.blob())] : [];
+  return url ? [pictureAt(url)] : [];
 }
+const pictureAt = url => fetch(url).then(answer => answer.blob());

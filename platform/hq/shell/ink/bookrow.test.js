@@ -2,6 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  DOTS,
   GROWN_MAX,
   ROOM_PX,
   TILE_PX,
@@ -9,6 +10,7 @@ import {
   around,
   clampPan,
   clampScale,
+  dotsShown,
   drawScale,
   leastScale,
   grownTo,
@@ -29,7 +31,7 @@ const page = { w: 455, h: 1050 };
 // (the page grows every way)
 test('every way, the page reaches half a paper past what it holds, so the paper never shows an end', () => {
   const near = clampPan({ x: -99_999, y: -99_999 }, page, view, 1);
-  assert.deepEqual(near, { x: -view.w / 2, y: -view.h / 2 }, 'up and left of its heading too');
+  assert.deepEqual(near, { x: -view.w / 2, y: -view.h / 2 }, 'up and left of its origin too');
   assert.deepEqual(clampPan({ x: 120, y: 300 }, page, view, 1), { x: 120, y: 300 });
   const far = clampPan({ x: 99_999, y: 99_999 }, page, view, 1);
   assert.equal(far.x, page.w + view.w / 2 - view.w);
@@ -109,6 +111,18 @@ test('the ink is drawn for the power of two at or above the zoom, in tiles the s
   assert.equal(drawScale(0.4), 0.5);
   assert.equal(drawScale(4), 4);
   assert.equal(tileSide(2) * 2, TILE_PX);
+});
+
+test("the paper's dots ease out as the zoom shrinks them, and are gone before they'd be under a pixel", () => {
+  assert.equal(dotsShown(1), 1);
+  assert.equal(dotsShown(ZOOM_MAX), 1);
+  assert.equal(dotsShown(DOTS.whole), 1);
+  assert.equal(dotsShown(DOTS.gone), 0);
+  assert.equal(dotsShown(0.1), 0);
+  // (2.8 px across at a zoom of 1: bookdesk.css)
+  assert.ok(2.8 * DOTS.gone >= 1);
+  const steps = Array.from({ length: 21 }, (_, i) => dotsShown(DOTS.gone + ((DOTS.whole - DOTS.gone) * i) / 20));
+  steps.slice(1).forEach((a, i) => assert.ok(a > steps[i] && a - steps[i] < 0.1));
 });
 
 test('only the tiles near what the paper shows are drawn, and none past the page', () => {

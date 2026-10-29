@@ -89,6 +89,19 @@ test("a stop that cut a job's own processes tells its next run which, once; a cu
   }
 });
 
+test('a handed-back run ends at its cut, not when its report arrives', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+  const id = h.queue({ agent: 'kit', engine: 'cut', title: 'A cut run' });
+  await claim('cut');
+  t.mock.timers.tick(30_000);
+  const lostAt = new Date().toISOString();
+  deploy(id, 's-cut', { lostAt });
+  t.mock.timers.tick(60_000); // the restart's downtime
+  await handBackAll();
+  const run = h.db.prepare('select ended from runs where job = ?').get(id) as { ended: string };
+  assert.equal(run.ended, lostAt);
+});
+
 // ---- after a deploy, an open HQ hears what changed in its files (main.js checkHealth: the renovated toast)
 test("an open HQ hears what changed in HQ's files since the checkout it loaded from, newest first, and nothing else", async () => {
   commitFile('company/notes.md', 'x', 'The test company starts');
