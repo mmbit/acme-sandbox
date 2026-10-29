@@ -1,18 +1,18 @@
 // book-check.mjs's stories of a page shared by its corner and of the paper's feel (shell/ink/bookdogear.js, bookshare.js,
 // bookpaper.js), on a desktop in Chromium with the played store. The corner drawn away with a mouse and with a finger
-// shows PDF, PNG and Juno, the page in hand torn out at the spine while the book's stays whole: let go on PNG the system's share sheet gets the page's picture, named for its title and
-// day; on PDF a one-page PDF; on Juno a call starts with the page's picture in front of Juno; let go
+// shows PDF, PNG and Juno, the page in hand torn out at the spine while the book's stays whole: let go on PNG the page's
+// picture downloads, named for its title and day, and no share sheet opens; on PDF a one-page PDF; on Juno a call starts with the page's picture in front of Juno; let go
 // anywhere else nothing goes. With the call on, the page carried onto the call's window, a picture file dropped there,
 // and a paste once the board pressed in it all go to Juno, the window lit as they come, and the book takes none; a
 // picture taped on the page, picked with Select and carried onto the window or its bubble, goes too, and stays taped
 // where it was. (the call's window; the taped picture, held still) Tapped, the corner opens the same three as a menu, its keys going round it and Escape
 // putting it away. Things deleted crumple over the paper, already gone underneath: the store has them gone at once, a
-// press goes through the crumple, and it's over within half a second.
+// press goes through the crumple, and it's over within half a second. (a long page's: booksharelong.mjs)
 import assert from 'node:assert/strict';
 import { playLine } from './bookcall.mjs';
-import { freePage, line, paperBox, pick, savedWhere, tool, until } from './bookmouse.mjs';
+import { freePage, line, paperBox, pick, savedWhere, tool } from './bookmouse.mjs';
+import { DESKTOP, until } from './bookkit.mjs';
 
-const DESKTOP = { width: 1440, height: 900 };
 // longer than a native drag's light lasts (calldrop.js LIT_MS, 300 ms), so a light that goes out is caught
 const HELD_STILL_MS = 650;
 
@@ -40,35 +40,35 @@ async function shareStory(browser, c) {
     const corner = page.locator('#book .bk-dogear');
     await corner.waitFor({ timeout: 5000 });
     await c.shot('share-corner', page);
-    // PNG with the mouse: the share sheet gets the page's picture, named for it
-    await dragTo(page, 'mouse', 'png', async () => {
-      await page.waitForTimeout(400);
-      await c.shot('share-targets', page);
-      assert.ok(await tornInHand(page), 'the page in hand torn out at the spine, the book’s page whole');
-    });
-    const png = await sharedFile(page);
+    // PNG with a finger: the page's picture downloads, named for it
+    const png = await downloaded(page, () => dragTo(page, 'touch', 'png'));
     assert.deepEqual(
-      { name: png.name, type: png.type, head: png.head.slice(0, 4) },
-      { name: `Shop the price ${day}.png`, type: 'image/png', head: [0x89, 0x50, 0x4e, 0x47] },
-      'the PNG shared, named for its page',
+      { name: png.name, head: [...png.bytes.subarray(0, 4)] },
+      { name: `Shop the price ${day}.png`, head: [0x89, 0x50, 0x4e, 0x47] },
+      'the PNG downloaded, named for its page',
     );
-    // PDF with a finger: a one-page PDF of it
-    await dragTo(page, 'touch', 'pdf');
-    const pdf = await sharedFile(page);
+    // PDF with the mouse: a one-page PDF of it
+    const pdf = await downloaded(page, () =>
+      dragTo(page, 'mouse', 'pdf', async () => {
+        await page.waitForTimeout(400);
+        await c.shot('share-targets', page);
+        assert.ok(await tornInHand(page), 'the page in hand torn out at the spine, the book’s page whole');
+      }),
+    );
     assert.equal(pdf.name, `Shop the price ${day}.pdf`);
-    assert.equal(pdf.type, 'application/pdf');
-    assert.equal(String.fromCharCode(...pdf.head.slice(0, 8)), '%PDF-1.4', 'a PDF');
+    assert.equal(pdf.text.slice(0, 8), '%PDF-1.4', 'a PDF');
     assert.match(pdf.text, /\/Count 1/, 'of one page');
+    assert.equal(await page.evaluate(() => window.__shared.length), 0, 'no share sheet');
     // let go off the targets: nothing goes, the corner back
     await dragTo(page, 'mouse', null);
     await page.waitForTimeout(600);
-    assert.equal(await page.evaluate(() => window.__shared.length), 0, 'nothing shared');
+    assert.equal(await page.evaluate(() => window.__downloads.length), 0, 'nothing downloaded');
     assert.equal(await page.locator('#book > .bk-held').count(), 0, 'the page back in its corner');
     assert.equal(await page.locator('#book .bk-share').isHidden(), true, 'the targets gone');
     await menuOfCorner(c, page, corner);
     // Juno: the call starts with the page's picture in front of Juno
     await dragTo(page, 'mouse', 'call');
-    await until(() => s.line.hello, 8000, 'a call started');
+    await until(() => s.line.hello, 'a call started');
     assert.equal(s.line.hello.agent, 'juno');
     await ontoTheCall(c, s);
     await tapedOntoTheCall(c, s, free);
@@ -193,8 +193,8 @@ async function minimised(page) {
   return bubble;
 }
 // The line shown its n-th picture of the call (the played store numbers them from 1)
-async function shownOnCall(s, n, what) {
-  await until(() => s.line.said.some(e => e.type === 'picture' && e.id === n), 15_000, `${what} went to the call`);
+export async function shownOnCall(s, n, what) {
+  await until(() => s.line.said.some(e => e.type === 'picture' && e.id === n), `${what} went to the call`, 15_000);
 }
 
 async function crumpleStory(browser, c) {
@@ -232,16 +232,26 @@ async function crumpleStory(browser, c) {
 // ---- the parts
 
 // HQ on the played store on a desktop, the book open on its last page; the store's picture of a page served, the system's
-// share sheet played (what it's given kept: window.__shared) and a call's line
-async function opened(browser, c) {
+// share sheet played (what it's given kept: window.__shared), a download's link pressed (the file kept:
+// window.__downloads, as Chromium holds back a second download a played finger starts) and a call's line
+export async function opened(browser, c, picture = c.SNIP) {
   const context = await c.hqIn(browser, DESKTOP, { hasTouch: true, deviceScaleFactor: 1 });
   await context.route(`${c.base}/api/book/picture**`, r =>
-    r.fulfill({ contentType: 'image/png', body: Buffer.from(c.SNIP.split(',')[1], 'base64') }),
+    r.fulfill({ contentType: 'image/png', body: Buffer.from(picture.split(',')[1], 'base64') }),
   );
-  // (a call's pictures, numbered as they come)
-  let pictures = 0;
-  await context.route(`${c.base}/api/pictures**`, r => r.fulfill({ json: { id: ++pictures, type: 'image/jpeg' } }));
+  // (a call's pictures, numbered as they come, their bytes kept)
+  const uploads = [];
+  await context.route(`${c.base}/api/pictures**`, r => {
+    uploads.push(r.request().postDataBuffer());
+    r.fulfill({ json: { id: uploads.length, type: 'image/jpeg' } });
+  });
   await context.addInitScript(() => {
+    window.__downloads = [];
+    const press = HTMLAnchorElement.prototype.click;
+    HTMLAnchorElement.prototype.click = function () {
+      if (!this.download) return press.call(this);
+      window.__downloads.push({ name: this.download, href: this.href });
+    };
     window.__shared = [];
     navigator.canShare = d => !!d?.files?.length;
     navigator.share = async ({ files }) => {
@@ -263,13 +273,13 @@ async function opened(browser, c) {
   await page.goto(`${c.base}/?intro=0`);
   await page.waitForSelector('#book .bk-desk', { timeout: 30_000 });
   await c.settled(page, 'open');
-  return { page, errors, line, done: () => context.close() };
+  return { page, errors, line, uploads, done: () => context.close() };
 }
 
 // The corner drawn away and let go on a target ('pdf' | 'png' | 'call', or the call's window by its selector), or off
 // them all (null): with the mouse, or as a finger (pointer events of that type). held: done while the page is in hand
 // over its target.
-async function dragTo(page, how, kind, held = async () => {}) {
+export async function dragTo(page, how, kind, held = async () => {}) {
   const corner = await page.locator('#book .bk-dogear').boundingBox(),
     from = [corner.x + corner.width - 8, corner.y + 8],
     peeled = [from[0] - 40, from[1] + 30];
@@ -303,10 +313,16 @@ const tornInHand = page =>
       [...document.querySelectorAll('#book .bk-desk, #book .bk-desk *')].every(el => clip(el) === 'none')
     );
   });
-// What the share sheet was given last, waited for (and the list cleared)
-async function sharedFile(page) {
-  await page.waitForFunction(() => window.__shared.length > 0, null, { timeout: 8000 });
-  return page.evaluate(() => window.__shared.splice(0).at(-1));
+// The file act() downloads (its link's press, played: opened()): its name, its bytes and their first 1200 as text
+export async function downloaded(page, act) {
+  await act();
+  await page.waitForFunction(() => window.__downloads.length > 0, null, { timeout: 15_000 });
+  const { name, bytes } = await page.evaluate(async () => {
+    const { name, href } = window.__downloads.shift();
+    return { name, bytes: [...new Uint8Array(await (await fetch(href)).arrayBuffer())] };
+  });
+  const file = Buffer.from(bytes);
+  return { name, bytes: file, text: file.subarray(0, 1200).toString('latin1') };
 }
 const steps = ([x0, y0], [x1, y1], n) =>
   Array.from({ length: n }, (_, i) => [x0 + ((x1 - x0) * (i + 1)) / n, y0 + ((y1 - y0) * (i + 1)) / n]);
@@ -339,7 +355,7 @@ const pointer = (page, type, points, last) =>
     [type, points, last],
   );
 // A page of the board's writing with a picture taped below it (the picture kept by the played store, the page's own)
-function tapedPage(c) {
+export function tapedPage(c) {
   const free = freePage(c),
     kept = c.notebook.route(
       '/api/notebooks/pictures',
@@ -350,7 +366,7 @@ function tapedPage(c) {
 }
 const TAPED = { x: 160, y: 330, w: 220, h: 150, tilt: 0 };
 // A line of the board's writing across the page
-const inkLine = () => ({
+export const inkLine = () => ({
   color: '#1d9a5b',
   size: 5,
   points: Array.from({ length: 30 }, (_, i) => [60 + i * 12, 220 + 14 * Math.sin(i / 2), 0.5, i * 16]),

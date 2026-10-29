@@ -29,6 +29,7 @@ type Threads = {
   waiting_share: number | null;
   handoffs: { count: number; review: Minutes; start: Minutes };
   waiting_split: Record<WaitPart, { minutes: number; share: number | null }>;
+  line_split: Record<'line' | 'line_review', Record<LineHold, { minutes: number; share: number | null }>>;
   side_by_side: Record<'held' | 'apart' | 'shared_files' | 'one_pr' | 'unknown', Minutes & { count: number }>;
 };
 type WaitPart = 'line' | 'line_review' | 'order' | 'after' | 'card_or_time' | 'fix_drawn' | 'other';
@@ -41,6 +42,14 @@ const WAIT_WORDS: Record<WaitPart, string> = {
   card_or_time: 'a card, a time or an event',
   fix_drawn: 'a fix still to be drawn',
   other: 'nothing queued otherwise',
+};
+// What stood in the way of the line's ready jobs (threadwaits.ts lineHolds), each a share of its line
+type LineHold = 'seats' | 'memory' | 'slots' | 'unrecorded';
+const LINE_WORDS: Record<LineHold, string> = {
+  seats: 'no ready seat for its engine (draining, a limit, a paced week)',
+  memory: 'the worker short of memory',
+  slots: 'every slot taken',
+  unrecorded: 'before seats and memory were recorded',
 };
 type Calibration = {
   days: number;
@@ -131,8 +140,15 @@ function threads(t: Threads) {
 function waitingSplit(t: Threads) {
   const parts = Object.entries(t.waiting_split) as [WaitPart, { minutes: number; share: number | null }][];
   print('  The waiting, by what held the deliverable (a minute two held counts for the first):');
-  for (const [part, { minutes, share }] of parts)
+  for (const [part, { minutes, share }] of parts) {
     print(`    ${WAIT_WORDS[part]}: ${duration(minutes)}${share === null ? '' : ` (${percent(share)})`}`);
+    const split = part === 'line' || part === 'line_review' ? Object.entries(t.line_split[part]) : [];
+    const held = (split as [LineHold, { minutes: number; share: number | null }][]).filter(([, h]) => h.minutes);
+    if (held.length)
+      print(
+        `      of it: ${held.map(([h, m]) => `${LINE_WORDS[h]} ${duration(m.minutes)} (${percent(m.share ?? 0)})`).join('; ')}`,
+      );
+  }
   const s = t.side_by_side;
   if (!s.held.count) return print('  Tasks held for another job (side by side?): none.');
   const each = (n: Minutes & { count: number }) => `${plural(n.count, 'task')}, ${minutesWords(n, 'task')}`;

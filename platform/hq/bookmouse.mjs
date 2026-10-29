@@ -4,9 +4,7 @@
 // a reload, edited, and emptied away. Each asserts what the board sees (pixels on the book's paper, the words on it)
 // and what the store keeps (the page saved).
 import assert from 'node:assert/strict';
-
-export const DESKTOP = { width: 1440, height: 900 },
-  MINI = { width: 1133, height: 744 };
+import { DESKTOP, until } from './bookkit.mjs';
 
 // c: book-check.mjs's played store and helpers: { hqIn, base, store, pages, notes, posts, org, renumber, shot, settled,
 // noErrorsIn, settle }
@@ -208,28 +206,6 @@ export async function line(page, x, y, dx) {
   for (let i = 1; i <= 20; i++) await page.mouse.move(x + (i * dx) / 20, y + 3 * Math.sin(i / 3));
   await page.mouse.up();
 }
-// The Pencil along points, as Safari hands it over (book-check.mjs's penOn)
-export const pen = (page, points) =>
-  page.evaluate(pts => {
-    const at = (kind, [x, y], pressure) =>
-      (document.elementFromPoint(x, y) ?? document.body).dispatchEvent(
-        new PointerEvent(kind, {
-          pointerId: 7,
-          pointerType: 'pen',
-          isPrimary: true,
-          clientX: x,
-          clientY: y,
-          pressure,
-          buttons: kind === 'pointerup' ? 0 : 1,
-          bubbles: true,
-          composed: true,
-          cancelable: true,
-        }),
-      );
-    at('pointerdown', pts[0], 0.4);
-    pts.slice(1).forEach(p => at('pointermove', p, 0.5));
-    at('pointerup', pts.at(-1), 0);
-  }, points);
 // The page as the store has it once a save says so (it's saved a moment after a change), as it is then. (waited on as
 // long as Playwright waits for anything: on a loaded worker the page's 600 ms save timer fires seconds late, a
 // strike's once 8 s after it)
@@ -237,17 +213,8 @@ export async function savedWhere(c, id, ok) {
   const page = () => c.pages.find(p => p.id === id);
   return until(
     () => (page() && ok(page()) ? structuredClone(page()) : null),
-    30_000,
     `the page saved as expected: ${JSON.stringify(page())}`,
   );
-}
-// What read gives (or a promise of it: awaited) once it's something, looked at every tenth of a second
-export async function until(read, ms = 5000, what = 'in time') {
-  for (const end = Date.now() + ms; Date.now() < end; await new Promise(r => setTimeout(r, 100))) {
-    const v = await read();
-    if (v) return v;
-  }
-  throw new Error(`not ${what}`);
 }
 
 // The pixels of a colour on the book's paper: how many, and their middle on the screen

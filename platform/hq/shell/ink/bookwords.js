@@ -1,8 +1,6 @@
 // Words that land on a page from outside (pasted, dropped, heard), made tidy and cut into boxes the store keeps. No
 // DOM, so node tests it (bookwords.test.js); booktexts.js puts them on the page.
-
-// a box holds at most this many characters (pagechecks.ts TEXT_MAX)
-export const TEXT_MAX = 2000;
+import { TEXT_MAX } from './notebookparts.js';
 
 // Words as they read on paper: one kind of line break, no stray spaces or invisible characters, a blank line at most
 // between paragraphs, indents kept

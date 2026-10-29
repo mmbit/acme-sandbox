@@ -26,8 +26,8 @@ const loadsOf = (code: string) => LOADS.flatMap(pattern => [...code.matchAll(pat
 const asBoard = { cookie: h.boardCookie, host: new URL(ORIGIN).host };
 
 test("every module and page HQ's pages load, and every one those load, is answered for the board", async () => {
-  // HQ's browser code and pages: its shell, world, looks and apps (its .mjs files are Node's: the servers and the checks;
-  // and its .test.js files, which run in Node)
+  // HQ's browser code and pages are its shell, world, looks and apps. Its .mjs files (the servers and the checks) and
+  // its .test.js files run in Node, so the walk leaves them out
   const modules = readdirSync(HQ_DIR, { recursive: true, encoding: 'utf8' })
     .filter(file => /\.(js|html)$/.test(file) && !file.endsWith('.test.js'))
     .map(file => ({ address: `/${file}`, code: readFileSync(`${HQ_DIR}/${file}`, 'utf8') }));

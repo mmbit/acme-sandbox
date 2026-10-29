@@ -197,6 +197,8 @@ for (const column of ['basket_counted', 'checkout_counted'])
 // gift: what the basket's gift card paid of the line's card (basketGift), in session_lines as the checkout charged it
 for (const table of ['pay_lines', 'session_lines'])
   if (!columnsOf(table).includes('gift')) db.exec(`alter table ${table} add column gift integer`);
+// own_kind: which company kit a line of the shop's own is (addOwnLine's kind), so each kit prices and places only its own
+if (!columnsOf('pay_lines').includes('own_kind')) db.exec('alter table pay_lines add column own_kind text');
 // number: a basket's order number, the one its customer is told (shared/ordernumber), given as it's paid (settle), to a test
 // order as it's made, and here to every basket paid before numbers
 db.exec('create unique index if not exists payments_number on payments (number) where number is not null');
@@ -954,7 +956,7 @@ export type Line = { id: string; created: string; product: string; mode: 'test' 
   refund_status: string | null; refund_asked: string | null; updated: string;
   offer: number | null; code_saved: number | null; basket_counted: string | null; checkout_counted: string | null;
   goes_with: string | null; picture: string | null; number: string | null; kept_until: string | null; quantity: number;
-  gift: number | null };
+  gift: number | null; own_kind: string | null };
 // A refusal: its status, the reason in English, and for one a shop's customer can reach, why: a code the shop says in the
 // customer's language, and what those words need to say it (a code's minimum).
 // (a voucher's stall's name for voucher_no_line; a sale's most for giftcard_total;
@@ -1099,10 +1101,12 @@ export const basketGift: {
 } = {};
 
 // the shop's own lines. A company's kit may put a line of the front's own in a basket,
-// going with one of its things (goes_with: a gift made of it, say; addOwnLine). price says what each costs now, given the
-// basket's things, worked out again each time the basket is priced; at the checkout that price is the line's amount. They
-// take no postage saved and no code, count toward no code's minimum, and leave the basket (cancelled) with their thing.
-export const ownLines: { price?: (basket: string, things: Line[], own: Line[]) => number[] } = {};
+// going with one of its things (goes_with: a gift made of it, say; addOwnLine), each of a kind the kit names. prices, per
+// kind, says what each of that kind costs now, given the basket's things, worked out again each time the basket is priced
+// (a kind with none keeps the amount it was added at); at the checkout that price is the line's amount. They take no
+// postage saved and no code, count toward no code's minimum, and leave the basket (cancelled) with their thing.
+// (prices per kind)
+export const ownLines: { prices: Record<string, (basket: string, things: Line[], own: Line[]) => number[]> } = { prices: {} };
 
 const lineRow = (id: string) => db.prepare('select * from pay_lines where id = ?').get(id) as Line | undefined;
 export const lineOf = (c: Caller, reference: string) =>
@@ -1148,9 +1152,20 @@ function priced(all: Line[], country: string | null, tester = false): Priced[] {
     const saved = savedOn(i, i === without ? line.quantity - 1 : line.quantity);
     return { line, saved, code_saved: off[i] ?? 0, card: due[i] - saved };
   });
-  const prices = own.length && ownLines.price ? ownLines.price(own[0].basket!, lines, own) : own.map(line => line.amount);
+  const prices = ownPrices(lines, own);
   const owned = own.map((line, i) => ({ line: { ...line, amount: prices[i] }, saved: 0, code_saved: 0, card: prices[i] }));
   return all.map(line => (line.goes_with ? owned[own.indexOf(line)] : things[lines.indexOf(line)]));
+}
+// What each own line costs now, by its kind's prices, in the order given
+function ownPrices(things: Line[], own: Line[]) {
+  const prices = own.map(line => line.amount);
+  for (const [kind, price] of Object.entries(ownLines.prices)) {
+    const ofKind = own.filter(line => line.own_kind === kind);
+    if (!ofKind.length) continue;
+    const priced = price(ofKind[0].basket!, things, ofKind);
+    ofKind.forEach((line, i) => (prices[own.indexOf(line)] = priced[i]));
+  }
+  return prices;
 }
 // The day the printer should ship a line: its making time in working days (the company's calendar, as Care counts them),
 // counted from the day it was paid (or today), or from the next working day after the printer's cut-off hour.
@@ -1629,18 +1644,25 @@ function leave(id: string) {
 // a line of the shop's own going with a thing of the basket, for a company's kit, inside
 // changeBasket's apply (the basket's queue, its open session ended). Its amount is the price it has as it's added; its
 // order page its thing's; its detail its thing's.
-export function addOwnLine(basket: string, a: { goes_with: string; description: string; amount: number; ships_in: number; cutoff: number }): Refused | null {
+// kind: the kit's name for its lines (ownLines.prices)
+export function addOwnLine(basket: string, a: { kind: string; goes_with: string; description: string; amount: number; ships_in: number; cutoff: number }): Refused | null {
   const thing = lineRow(a.goes_with);
   if (!thing || thing.basket !== basket || thing.status !== 'open' || thing.goes_with) return [409, 'goes_with: a thing in this basket', 'own_thing'];
   if (thingsIn(basket) >= MAX_THINGS) return basketFull;
   const id = `ln_${randomBytes(12).toString('hex')}`, now = stamp();
   const position = (db.prepare('select coalesce(max(position), 0) + 1 p from pay_lines where basket = ?').get(basket) as { p: number }).p;
   db.prepare(`insert into pay_lines (id, created, product, mode, reference, amount, currency, description, detail, ships_in, cutoff, order_url,
-    basket, position, offer, goes_with, status, updated) values (?, ?, ?, ?, ?, ?, 'eur', ?, ?, ?, ?, ?, ?, ?, 0, ?, 'open', ?)`)
+    basket, position, offer, goes_with, own_kind, status, updated) values (?, ?, ?, ?, ?, ?, 'eur', ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, 'open', ?)`)
     .run(id, now, FRONT, thing.mode, `own_${id.slice(3)}`, a.amount, text(a.description).slice(0, 120), thing.detail, a.ships_in, a.cutoff,
-      thing.order_url, basket, position, thing.id, now);
+      thing.order_url, basket, position, thing.id, a.kind, now);
   db.prepare('update baskets set updated = ? where id = ?').run(now, basket);
   return null;
+}
+// A line of the shop's own taken out of its basket by its kit, inside changeBasket's apply, as the customer's remove
+// would
+export function removeOwnLine(basket: string, id: string) {
+  const line = lineRow(id);
+  if (line?.basket === basket && line.goes_with && line.status === 'open') cancel(id);
 }
 
 // A change to the basket itself (its code: codes.ts), in its queue like a line's: its open session ends first, then apply
@@ -1754,7 +1776,7 @@ const summary = (lines: Priced[], code: ShownCode | null, test = false, placed: 
   lines: lines.map(({ line, card, saved, code_saved }) => ({ line: line.id, product: line.product, shop: shopName(line.product),
     description: line.description, detail: line.detail, amount: line.amount, quantity: line.quantity, voucher_value: line.voucher_value,
     offer: !!line.offer, code_saved, saved, card, gift: line.gift ?? 0,
-    goes_with: line.goes_with ?? null,
+    goes_with: line.goes_with ?? null, own_kind: line.own_kind ?? null,
     ship_by: shipBy(line, placed), order_url: line.order_url, picture: line.picture ?? null,
     refund_status: line.refund_status })),   // set: its product cancelled it and asked for its money back
   total: lines.reduce((n, l) => n + l.card, 0), saved: lines.reduce((n, l) => n + l.saved, 0), ship_by: latest(lines.map(l => shipBy(l.line, placed))),

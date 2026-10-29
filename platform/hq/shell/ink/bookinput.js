@@ -1,9 +1,9 @@
 // The board's bindings on the page that are more than a tool's press (the strip, the wheel, Shift and Ctrl are
 // bookstrip.js, bookpan.js and booktools.js): a press held still, which becomes a voice note (a mouse's, where a
 // microphone is connected; a double tap held, by a finger or a pen) or, where this device's preferences want it, the
-// radial menu (a pen's or a finger's long press); and whether a finger moves the page or draws. A hold is a voice note
-// only where the microphone is already allowed: nothing on the book asks for it, only a tap on a mic does (the board,
-// call 158). Each waits the hold this device keeps (shared/review/prefs.js).
+// radial menu (a pen's or a finger's long press); and whether a finger moves the page or draws. A voice note listens
+// only where the microphone is already allowed, since only a tap on a mic may bring up the browser's question (the
+// board, call 158). Before that its slip says so, or that the microphone is blocked. Each waits the hold this device keeps (shared/review/prefs.js).
 //
 // book.input: { fingerPans(), claims(e) }. claims(e): whether a press on the paper is one of these, or the strip's,
 // for a part that would wait on a still finger itself (booktape.js's Paste bubble).
@@ -11,9 +11,9 @@ import { stylesheet } from '../../util.js';
 import { prefs, holdMs } from '/__review/prefs.js';
 import { isTap, wandered } from '/__review/tap.js';
 import { canRecord } from '../voice.js';
-import { micAllowed } from '/__review/micallowed.js';
+import { micAllowed, micBlocked } from '/__review/micallowed.js';
 import { scrapAt } from './bookscrap.js';
-import { listen } from './bookvoice.js';
+import { listen, cantListen } from './bookvoice.js';
 import { openRadial } from './bookradial.js';
 import { unmake } from './bookpan.js';
 
@@ -29,7 +29,9 @@ const HELD_TOOLS = ['pen', 'highlighter', 'eraser', 'shapes', 'text'];
 
 export function mountInput(book) {
   stylesheet('shell/ink/bookinput.css');
-  const input = { book, last: null, hold: null, pen: false, mic: null };
+  // last: a tap, the first half of a double tap maybe; step: the book's last step as the press began, for whether the
+  // tap drew a dot; at: the point on its page it pressed, where that dot is
+  const input = { book, last: null, step: null, at: null, hold: null, pen: false, mic: null };
   addEventListener('pointerdown', e => e.pointerType === 'pen' && (input.pen = true), true);
   book.desk.addEventListener('pointerdown', e => pressed(input, e), true);
   addEventListener('pointermove', e => input.hold && moved(input, e), true);
@@ -46,8 +48,8 @@ export function mountInput(book) {
 
 // ---- which hold a press may become
 
-// 'voice', 'radial' or null: a mouse's press held still is a voice note (a microphone connected and allowed); a
-// finger's or a pen's, the second of a double tap, is one too (one allowed), and a single one the radial menu where the
+// 'voice', 'radial' or null: a mouse's press held still is a voice note (a microphone connected); a finger's or a
+// pen's, the second of a double tap, is one too (one that can record), and a single one the radial menu where the
 // preferences want it
 function kindOf(input, e) {
   const { book } = input,
@@ -58,8 +60,8 @@ function kindOf(input, e) {
   if (e.target instanceof Element && e.target.closest(NOT_PAPER)) return null;
   const at = book.at(e.clientX, e.clientY);
   if (!at?.view.page.ink || scrapAt(at.view.page.scraps, [at.x, at.y]) >= 0) return null;
-  if (mouse) return input.mic && micAllowed() ? 'voice' : null;
-  if (doubled(input, e)) return canRecord && micAllowed() ? 'voice' : null;
+  if (mouse) return input.mic ? 'voice' : null;
+  if (doubled(input, e)) return canRecord ? 'voice' : null;
   return prefs().radial ? 'radial' : null;
 }
 const doubled = (input, e) => {
@@ -78,12 +80,15 @@ function pressed(input, e) {
   if (!e.isPrimary) return letGo(input);
   // (a finger's or a pen's press, for whether it was a tap)
   input.down = e.pointerType === 'mouse' ? null : e;
+  input.step = input.book.steps?.at(-1);
+  input.at = input.book.at(e.clientX, e.clientY);
   const kind = kindOf(input, e);
   if (!kind) return;
   clearTimeout(input.hold?.timer);
-  // (a finger that moves the page drew no dot with its first tap: nothing to take off)
-  const dotted = e.pointerType === 'pen' || (e.pointerType === 'touch' && !input.book.input.fingerPans());
-  input.hold = { down: e, kind, double: kind === 'voice' && dotted };
+  // (a double tap's first tap drew a dot only if the book has a step since it pressed: a finger that moved the page, the
+  // eraser, Shapes or Type drew none. dotted: that tap, where its dot is.)
+  const dotted = kind === 'voice' && doubled(input, e) && input.step !== input.last.step ? input.last : null;
+  input.hold = { down: e, kind, dotted };
   input.hold.timer = setTimeout(() => held(input), holdMs());
 }
 function moved(input, e) {
@@ -96,7 +101,9 @@ function lifted(input, e) {
   const down = input.down;
   if (down?.pointerId !== e.pointerId) return;
   input.down = null;
-  input.last = isTap(down, e) ? { t: e.timeStamp, x: e.clientX, y: e.clientY, type: e.pointerType } : null;
+  input.last = isTap(down, e)
+    ? { t: e.timeStamp, x: e.clientX, y: e.clientY, type: e.pointerType, step: input.step, at: input.at }
+    : null;
 }
 function letGo(input) {
   clearTimeout(input.hold?.timer);
@@ -107,14 +114,14 @@ function letGo(input) {
 // tap's first dot), and the voice note or the radial menu opens there
 function held(input) {
   const { book } = input,
-    { down, kind, double } = input.hold;
+    { down, kind, dotted } = input.hold;
   input.hold = null;
   if (book.ink?.drawing) book.ink.cancel();
   book.table?.letGo();
   unmake(book.desk, down);
-  if (double) book.tools?.undot?.(down.clientX, down.clientY);
+  if (dotted) book.tools?.undot?.(dotted.at);
   navigator.vibrate?.(8);
-  if (kind === 'voice') return listen(book, down);
+  if (kind === 'voice') return micAllowed() ? listen(book, down) : cantListen(down, micBlocked());
   const tools = Object.entries(book.tools?.buttons?.() ?? {})
     .filter(([, b]) => b.offsetParent)
     .map(([mode, b]) => ({ mode, label: b.getAttribute('aria-label'), icon: b.innerHTML }));

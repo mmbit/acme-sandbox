@@ -37,13 +37,26 @@
   // ...and data-book: HQ's own pages, where the Pencil writes on the page and its notes go to the board's book
   // (pencil.js).
   const book = summoned && !!document.currentScript?.hasAttribute('data-book');
-  const toHq = m => {
+  // Every message to HQ carries this page's own number (doc): HQ's viewer tells by it that another page is in its frame
+  // as that one says hello, before its load event (HQ's framemic.js). ports: handed over with it (dictation.js's ask).
+  const doc = Math.floor(Math.random() * 2 ** 30);
+  const toHq = (m, ports = []) => {
     if (!framed) return;
     try {
-      parent.postMessage({ hq: 'review', ...m }, HQ);
+      parent.postMessage({ hq: 'review', ...m, doc }, HQ, ports);
     } catch {
       /* not served by the coordinator */
     }
+  };
+  // Hello, with the page's own background colour (its body's, else its root's; null where both are clear): HQ lays it
+  // under the Notebook as it lifts off beside this page
+  const hello = () => {
+    const ground =
+      [document.body, document.documentElement]
+        .filter(Boolean)
+        .map(box => getComputedStyle(box).backgroundColor)
+        .find(c => c && !/^(transparent|rgba\(.*,\s*0\))$/.test(c)) ?? null;
+    toHq({ hello: 1, ground });
   };
   const config = {
     HQ,
@@ -71,7 +84,7 @@
       start().then(ui => {
         if (e.data.pin) ui.toggle(); // the pin button in HQ's viewer bar
       });
-      if (e.data.ask) toHq({ hello: 1 }); // HQ asks every page its frame loads
+      if (e.data.ask) hello(); // HQ asks every page its frame loads
       // the call's agent driving the preview (drive.js: HQ's calldrive.js).
       if (e.data.drive)
         import(new URL('drive.js', ROUTE).href)
@@ -81,7 +94,7 @@
     });
     // HQ hides its pin button until the next page says hello (when it arrives: Chromium drops it.)
     addEventListener('pagehide', () => toHq({ bye: 1 }));
-    addEventListener('pageshow', e => e.persisted && toHq({ hello: 1 }));
-    toHq({ hello: 1 });
+    addEventListener('pageshow', e => e.persisted && hello());
+    hello();
   }
 })();

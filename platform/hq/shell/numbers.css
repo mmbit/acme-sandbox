@@ -109,9 +109,14 @@ body.keys .nx .range button[aria-pressed=true]:active { box-shadow: var(--key-do
 @container (min-width: 640px) { .nx .tiles { grid-template-columns: 1.6fr 1fr 1fr 1fr; } .nx .tiles.figs { grid-template-columns: var(--cols); } }
 .nx .tile { background: var(--paper); border: var(--bw) solid var(--line); border-radius: var(--r-lg); box-shadow: var(--shadow); padding: 8px 11px 9px; min-width: 0; display: flex; flex-direction: column; }
 .nx .tile .l { font-size: 13px; color: var(--muted); line-height: 1.2; }
-.nx .tile .v { font-size: 28px; line-height: 1; margin: 6px 0 5px; white-space: nowrap; }
+.nx .tile .v { font-size: 28px; line-height: 1; margin: 6px 0 5px; overflow-wrap: anywhere; }
+/* (a figure's unit: smaller, and under its number when the tile is too narrow for both; a number too long for its
+   tile wraps rather than run out of it.) */
+.nx .u { font-size: max(.5em, 12px); white-space: nowrap; color: var(--muted); }
+.nx .tile .v .u { display: inline-block; }
 .nx .tile .s { font-size: 12px; color: var(--muted); margin-top: auto; line-height: 1.25; }
 .nx .tile.hero { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: auto 1fr auto; gap: 0 12px; background: var(--ac-soft); }
+.nx .tile.hero > :not(.sp) { grid-column: 1; } /* (a hero without a sparkline, a kit's: its words the tile's width) */
 .nx .tile.hero .v { font-size: 46px; }
 .nx .tile.hero .sp { grid-column: 2; grid-row: 1 / span 3; align-self: end; color: var(--ac); text-align: right; }
 .nx .tile.hero .sp svg { width: 130px; height: 40px; display: block; margin-left: auto; }
@@ -150,13 +155,25 @@ body.keys .nx .range button[aria-pressed=true]:active { box-shadow: var(--key-do
 .nx .chart .cursor-col { fill: color-mix(in srgb, var(--ink) 8%, transparent); opacity: 0; } .nx .chart .cursor-col.on { opacity: 1; }
 .nx .chart:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; border-radius: var(--r-sm); }
 .nx .read { margin: 6px 0 0; font-size: 13px; color: var(--muted); min-height: 2.6em; }
-.nx .read b { color: var(--ink); font-weight: 600; }
+.nx .read b { color: var(--ink); font-weight: 600; font-size: inherit; } /* (not style.css's .card b: the reading is one size.) */
+.nx .read b.f { font-weight: 400; }
 .nx details { margin-top: 6px; font-size: 13px; }
 .nx summary { cursor: pointer; color: var(--muted); }
+.nx details .scroll { overflow-x: auto; scrollbar-width: thin; } /* (a table wider than its card scrolls in it, never past it) */
 .nx details table { width: 100%; margin-top: 6px; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
-.nx details th { font-weight: 400; color: var(--muted); text-align: right; padding: 2px 4px; border-bottom: 1px solid var(--hair); }
+.nx details th { font-weight: 400; color: var(--muted); text-align: right; padding: 2px 4px; border-bottom: 1px solid var(--hair); vertical-align: bottom; }
+.nx details th small { display: block; font-size: 10px; }
 .nx details td { text-align: right; padding: 2px 4px; border-bottom: 1px solid var(--hair); white-space: nowrap; }
 .nx details :is(th, td):first-child { text-align: left; }
+/* (a narrow card's table, a phone's or a two-column page's: its columns 6 px apart, its outer cells flush with the card
+   and its head a size down, so its figures fit whole before the scroll has to take them.) */
+.nx details { container: nxt / inline-size; }
+@container nxt (max-width: 360px) {
+  .nx details :is(th, td) { padding-inline: 3px; }
+  .nx details :is(th, td):first-child { padding-left: 0; }
+  .nx details :is(th, td):last-child { padding-right: 0; }
+  .nx details th { font-size: 11px; }
+}
 .nx .where { display: grid; grid-template-columns: auto minmax(24px, 1fr) repeat(3, auto); gap: 8px clamp(6px, 2cqi, 10px); align-items: center; font-size: 14px; }
 .nx .where:not(:has(.hd:nth-child(5))) { grid-template-columns: auto minmax(24px, 1fr) repeat(2, auto); }
 .nx .where .k { display: flex; align-items: center; gap: 7px; }
@@ -171,8 +188,18 @@ body.keys .nx .range button[aria-pressed=true]:active { box-shadow: var(--key-do
 @container (max-width: 400px) { .nx .where .cn { display: none; } }
 
 /* 4. the app's own sections */
-.nx .hb { display: grid; grid-template-columns: minmax(0, max-content) minmax(40px, 1fr) auto; gap: 9px 10px; align-items: center; font-size: 14px; }
-.nx .hb .k { line-height: 1.15; overflow-wrap: anywhere; }
+/* (bars: a line each, label, bar and figure, the labels a column as wide as the longest up to 45%; in a narrow box the
+   label and figure over a bar the box's width.) */
+.nx .hbox { container: hb / inline-size; }
+.nx .hb { display: grid; grid-template-columns: minmax(0, max-content) minmax(40px, 1fr) auto; gap: 9px 14px; align-items: center; font-size: 14px; }
+.nx .hb .row { display: contents; }
+.nx .hb .k { line-height: 1.15; max-width: 45cqi; overflow-wrap: break-word; }
+@container hb (max-width: 380px) {
+  .nx .hb { grid-template-columns: minmax(0, 1fr); gap: 9px; }
+  .nx .hb .row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 3px 10px; align-items: baseline; }
+  .nx .hb .k { max-width: none; }
+  .nx .hb .tr { grid-column: 1 / -1; grid-row: 2; }
+}
 .nx .hb .tr { height: 12px; position: relative; }
 .nx .hb .tr i { position: absolute; inset: 0 auto 0 0; background: var(--ac); border-radius: 0 4px 4px 0; min-width: 3px; }
 .nx .hb .tr i.soft { background: var(--ac-soft); box-shadow: inset 0 0 0 1px var(--ac-mid); }
@@ -277,4 +304,5 @@ body.keys .nx .chat button:active { transform: var(--key-down); box-shadow: var(
   .nx .chat .tile .v { grid-column: 2; grid-row: 1 / span 2; margin: 0; font-size: 22px; }
   .nx .chat button { justify-self: stretch; }
 }
-@container (max-width: 639px) { .nx .tiles.figs { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@container (max-width: 639px) { .nx .tiles.figs { grid-template-columns: repeat(2, minmax(0, 1fr)); } .nx .tiles.figs > .tile:nth-child(even):last-child { grid-column: 1 / -1; } }
+/* (two to a row under the hero: the odd one out the row's width, no hole beside it.) */

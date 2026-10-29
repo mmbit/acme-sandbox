@@ -1,5 +1,6 @@
 // A change to what's on a page (its ink, pictures and typed words) as one step Undo takes back and Redo makes again:
-// the eraser's rub, a shape, a selection moved, resized, cut, pasted, duplicated or deleted. What the page held is
+// the eraser's rub, a shape, a selection moved, resized, cut, pasted, duplicated or deleted, and what a call's agent
+// changed (arrived). What the page held is
 // kept as it was before and as it is after (lists of the same objects: a change makes new ones rather than altering
 // these), so Undo and Redo only put a list back.
 //
@@ -56,6 +57,31 @@ export function edit(book, view, hooks, act) {
   act(view.page);
   return change.end();
 }
+
+// A change that came from someone else's hand through the store (a call's agent's: booksave.js) as one step of this
+// screen's, so Undo takes it back and Redo makes it again as the board's own are: read() puts the page's lists as the
+// store has them now. Its groups the hand deleted are kept as this screen's deleted ones (page.gone), so Undo putting
+// their elements back restores them, and a scrap's words it changed go back as typed. hooks: { changed(page),
+// refresh(page) (drawn again), words(id, text) }
+export function arrived(book, page, hooks, read) {
+  const before = { ...contents(page), words: wordsOf(page) },
+    had = page.groups;
+  read();
+  const after = { ...contents(page), words: wordsOf(page) };
+  for (const [id, g] of had ?? []) if (!page.groups.has(id)) page.gone.set(id, g);
+  // (read again, every element is a new object: compared by what they hold, an answer clipped on is no step)
+  const held = h => JSON.stringify([h.ink, h.scraps, h.texts, [...h.words]]);
+  if (held(before) === held(after)) return false;
+  const shown = (to, was) => {
+    put(page, to);
+    for (const [id, w] of to.words) if (was.words.has(id) && was.words.get(id) !== w) hooks.words(id, w);
+    hooks.refresh(page);
+    hooks.changed(page);
+  };
+  book.steps.push({ page, undo: () => shown(before, after), redo: () => shown(after, before) });
+  return true;
+}
+const wordsOf = page => new Map([...(page.groups ?? new Map()).values()].map(g => [g.id, g.words]));
 
 // The book's steps: a list whose new step clears what Redo could make again (book.undone). Steps are { undo(), redo()
 // } (redo: none when it can't be made again, a send that went). A step's list can be filtered in place only:

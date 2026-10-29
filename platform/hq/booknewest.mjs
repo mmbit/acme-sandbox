@@ -1,5 +1,5 @@
 // book-check.mjs's stories of a note the board sends from review mode finding it in the Notebook (shell/ink/booknewest.js,
-// bookgroupbox.js; shared/review/menu.js), on the played Notebook seeded as dev mode's (mock/notebook.json):
+// notebookstack.js; shared/review/menu.js), on the played Notebook seeded as dev mode's (mock/notebook.json):
 //   - a desktop and an iPad mini: a scrap sent while the book is shut, on another notebook (a desktop) or turned to
 //     another page (an iPad mini), lands under the newest thing on My Notebook's current page (on a desktop its ink in
 //     the folded book's handle); the pull tab opens the book there, the scrap in view; turned away again, the pin
@@ -8,17 +8,14 @@
 //   - a phone: the book folded onto HQ with the pin, the menu's Open the Notebook opens it at the scrap.
 import assert from 'node:assert/strict';
 import { open } from './booknotebook.mjs';
-import { until, where } from './booknotebookscreen.mjs';
-import { nextScrap } from './shell/ink/bookgroupbox.js';
+import { where } from './booknotebookscreen.mjs';
+import { DESKTOP, MINI, ui, until } from './bookkit.mjs';
 
-const DESKTOP = { width: 1440, height: 900 },
-  MINI = { width: 1133, height: 744 },
-  PHONE = { width: 390, height: 844 };
+const PHONE = { width: 390, height: 844 };
 // the seed's second page and its newest, the current page (mock/notebook.json)
 const SECOND = 2,
   NEWEST = 3,
   ESMEE = { notebook: 2, page: 4, name: 'Menu ideas' }; // (an invited notebook and its page)
-const ui = s => `review-mode >> css=${s}`;
 
 // c: book-check.mjs's hqIn, base, settled, shot, noErrorsIn, shots, org
 export function newestStories(c) {
@@ -129,9 +126,23 @@ async function sendScrap(page, play) {
     { anchor, words: 'The basket hides', said: 'typed', snip },
   );
   assert.equal(sent.page, NEWEST, 'on the current page');
-  const spot = nextScrap(before, sent.box.h);
-  assert.deepEqual([sent.box.x, sent.box.y], [spot.x, spot.y], 'under the newest thing on the page');
+  under(sent.box, before);
   return sent;
+}
+// A scrap's box under the newest of a page's groups (the highest id), at its left edge, and clear of every group
+function under(box, groups) {
+  const boxes = groups.filter(g => g.box),
+    newest = boxes.reduce((a, b) => (b.id > a.id ? b : a)).box;
+  assert.equal(box.x, Math.round(newest.x), "at the newest thing's left edge");
+  assert.ok(box.y >= newest.y + newest.h, `under the newest thing on the page (${box.y} by ${newest.y + newest.h})`);
+  const over = boxes.filter(
+    ({ box: b }) => box.x < b.x + b.w && b.x < box.x + box.w && box.y < b.y + b.h && b.y < box.y + box.h,
+  );
+  assert.deepEqual(
+    over.map(g => g.id),
+    [],
+    'over nothing already on the page',
+  );
 }
 // The scrap's ink lifted into the folded book as review mode's lift.js asks ('pencil:landing', a Notebook scrap's), the
 // handle then reading that a note just landed

@@ -14,6 +14,24 @@
   will-change: transform, clip-path;
   filter: drop-shadow(0 6px 8px rgba(20, 14, 40, 0.25));
 }
+/* a landing: its own shadow, under the picture, in place of the sheet's */
+.bk-fx-sheet.bk-fx-land {
+  filter: none;
+  will-change: transform, opacity;
+}
+.bk-fx-shade {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  filter: brightness(0) blur(5px);
+  will-change: translate, opacity;
+}
+/* words landing: their copy comes down, the box itself shows once it's down */
+.bk-typed.bk-landing {
+  visibility: hidden;
+}
 /* a crumple's bit of paper, what was deleted on it */
 .bk-fx-scrap {
   background: var(--bk-paper, #fffdf8);
@@ -35,6 +53,39 @@
 }
 .bk-fx-creases .bk-fx-crease-light {
   stroke: rgba(255, 255, 255, 0.85);
+}
+/* a paper plane, with its shadow under it as it flies: its folded flaps the page's blank back, shaded towards the fold; a crease down its middle, in ink
+ */
+.bk-fx-sheet.bk-fx-plane {
+  filter: drop-shadow(0 3px 4px rgba(20, 14, 40, 0.22));
+  will-change: transform;
+}
+/* (its paper, the page's own, which the folds clip) */
+.bk-fx-paper {
+  position: absolute;
+  inset: 0;
+  background: var(--bk-paper, #fffdf8);
+  will-change: clip-path;
+}
+.bk-fx-wing {
+  position: absolute;
+  inset: 0;
+  z-index: 29; /* (over the page's picture, bookflip.js's) */
+  background: linear-gradient(rgba(20, 14, 40, 0.02), rgba(20, 14, 40, 0.12)), var(--bk-paper, #fffdf8);
+}
+.bk-fx-keel {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+}
+.bk-fx-keel path {
+  fill: none;
+  stroke: rgba(20, 14, 40, 0.45);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
 }
 /* a fold's flap: the page's back coming down past the crease, shaded towards the fold */
 .bk-fx-flap {

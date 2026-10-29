@@ -1,6 +1,7 @@
 // The Notebook: a person's notebooks on a shelf (and its archive), each a row of pages in its own order. A page is an
-// endless canvas of groups (notebookgroups.ts); new groups land on the notebook's current page, the newest one not sent
-// or archived, made when there's none. A page is sent whole (notebooksend.ts), and stays, read-only, marked sent.
+// endless canvas of groups (notebookgroups.ts); new groups land on the notebook's current page, the newest one not sent,
+// archived or a try's versions page (notebookstack.js), made when there's none. A page is sent whole (notebooksend.ts),
+// and stays, read-only, marked sent.
 //   - A page is a book_pages row (book.ts) with its notebook, its place in the notebook's order (pos), its send's time
 //     (send_at, ms: still sending until then, sent from then on) and the fresh page its send made (fresh, which its
 //     Undo takes away while still blank). Its own ink, scraps and words are the old book's, carried into groups as a
@@ -16,6 +17,9 @@ import { groupsBox } from './notebookgroups.ts';
 import { DIR } from './pagescraps.ts';
 import { rmSync } from 'node:fs';
 import { titleLater } from './notebooktitles.ts';
+import { landingPage } from '../../hq/shell/ink/notebookstack.js';
+import { SCREEN_SHAPES } from '../../hq/shell/ink/booklayout.js';
+import { ZOOM_KEPT } from '../../hq/shell/ink/bookrow.js';
 
 // kind: 'mine' (a person's own, where pins and their notes go, and a call's notes page: ink/callnotes.ts), 'round' (a
 // guest review round) or 'invited' (one the board made for someone it invited). name: what the shelf shows.
@@ -32,6 +36,8 @@ for (const column of [
   'tries_note integer',
   "title_by text not null default ''",
   "title_seen text not null default ''",
+  "zooms text not null default '{}'",
+  'handed integer not null default 0',
 ])
   if (lacks('book_pages', column.split(' ')[0])) db.exec(`alter table book_pages add column ${column}`);
 db.exec('create index if not exists book_pages_notebook on book_pages (notebook, pos)');
@@ -59,8 +65,13 @@ export type NotebookPage = Page & {
   title_by: TitleBy;
   // SHA-256 of the ordered groups' ink, texts, pictures and words last checked by the title model. Empty until checked.
   title_seen: string;
+  // The zoom the board left the page at, by the book's shape on the screen (booklayout.js shapeOf): JSON, { wide: 0.72 }.
+  zooms: string;
+  // How many changes someone else's hand has made on it (byHand): a screen's read that finds more takes what it brings
+  // as a step of its own
+  handed: number;
 };
-const PAGE_COLUMNS = `${COLUMNS}, notebook, pos, send_at, fresh, tries, tries_note, title_by, title_seen`;
+const PAGE_COLUMNS = `${COLUMNS}, notebook, pos, send_at, fresh, tries, tries_note, title_by, title_seen, zooms, handed`;
 // The size a new page starts at: it grows every way as it's drawn on
 const NEW_PAGE = { w: 1200, h: 1600 };
 
@@ -172,21 +183,33 @@ export function titlePage(b: any, who = BOARD) {
   changed(p.notebook, p.id);
   return pageOf(pageRow(p.id, who)!);
 }
+// POST /api/notebooks/pages/zoom { id, shape, zoom }: the zoom the board left the page at on a screen of that shape,
+// which it opens at there again. Not a change to the page: its picture and other screens read it as they were.
+export function zoomPage(b: any, who = BOARD) {
+  const p = pageRow(Number(b?.id), who),
+    zoom = Number(b?.zoom);
+  if (!p) return 404;
+  if (!SCREEN_SHAPES.includes(b?.shape)) return [400, `shape is one of ${SCREEN_SHAPES.join(', ')}`] as Refused;
+  if (!(zoom >= ZOOM_KEPT.least && zoom <= ZOOM_KEPT.most))
+    return [400, `zoom is a number from ${ZOOM_KEPT.least} to ${ZOOM_KEPT.most}`] as Refused;
+  db.prepare("update book_pages set zooms = json_set(zooms, '$.' || ?, ?) where id = ?").run(
+    b.shape,
+    Math.round(zoom * 1000) / 1000,
+    p.id,
+  );
+  return pageOf(pageRow(p.id, who)!);
+}
 
-// The page new groups land on: the newest page of the notebook neither sent nor archived, made if there's none (never
-// a try's versions page)
+// The page new groups land on (notebookstack.js), made if there's none
 export function currentPage(notebook: number) {
   return openPageOf(notebook) ?? newPage(notebook);
 }
 // The current page if the notebook has one (review mode's count reads it: ink/bookreview.ts)
 export function openPageOf(notebook: number) {
-  const open = db
-    .prepare(
-      `select id from book_pages where notebook = ? and archived = 0 and send_at is null and tries is null
-        and tries_note is null order by created desc, id desc`,
-    )
-    .get(notebook) as { id: number } | undefined;
-  return open?.id ?? null;
+  const pages = db
+    .prepare('select id, created, archived, send_at, tries, tries_note from book_pages where notebook = ?')
+    .all(notebook) as Pick<NotebookPage, 'id' | 'created' | 'archived' | 'send_at' | 'tries' | 'tries_note'>[];
+  return landingPage(pages, (p: (typeof pages)[number]) => p.send_at !== null)?.id ?? null;
 }
 export function newPage(notebook: number) {
   const n = db.prepare('select who from notebooks where id = ?').get(notebook) as { who: string },
@@ -209,8 +232,10 @@ export function endOf(notebook: number) {
   return (last ?? -1) + 1;
 }
 // A page has changed: its box grows round its groups, its picture is drawn again when next read, its notebook moves up
-// the shelf, and every screen showing it reads it again
+// the shelf, and every screen showing it reads it again: as a step its Undo takes back when someone else's hand made it
+// (byHand)
 export function changed(notebook: number, page: number | null) {
+  if (hand && page) db.prepare('update book_pages set handed = handed + 1 where id = ?').run(page);
   const now = new Date().toISOString();
   if (page) {
     const p = pageRow(page, null)!,
@@ -227,6 +252,18 @@ export function changed(notebook: number, page: number | null) {
   db.prepare('update notebooks set updated = ? where id = ?').run(now, notebook);
   publish({ type: 'book', agent: BOARD, text: 'notebook', ...(page ? { page } : {}) });
   if (page) titleLater(page);
+}
+// A change someone else makes on the board's page (a call's agent's: ink/callpage.ts), counted on the page (handed), so
+// each screen showing the page takes it as a step of its own, which the board's Undo takes back like its own: a count
+// read with the page, not the change's event, as a read another event started may bring it first
+let hand: string | null = null;
+export function byHand<T>(who: string, act: () => T): T {
+  hand = who;
+  try {
+    return act();
+  } finally {
+    hand = null;
+  }
 }
 
 // ---------------------------------------------------------------- shared
@@ -286,6 +323,7 @@ export function pageOf(p: NotebookPage) {
     notebook: p.notebook,
     kind: p.kind,
     title: p.label,
+    zooms: JSON.parse(p.zooms),
     day: p.day,
     archived: !!p.archived,
     sending: p.send_at !== null && !went,

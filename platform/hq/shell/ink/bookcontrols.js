@@ -1,19 +1,18 @@
 // The controls for moving about the book, in the row at the paper's foot (bookui.js): the overview at its left end, the
-// page before and after, the page's name and where it is in the notebook, which opens the notebook's pages by name, New
-// page, and Send at the row's right end, the page's own action (the page shown sent whole, bookpagesend.js; none on a
-// page sent). While the zoom is off 100% its % shows beside the page after, a tap back to 100%, apart from Send. Ctrl/⌘
-// with +, − and 0 zoom too, while the book has the pointer or the focus (never HQ's page's own zoom). (the overview and
-// the zoom's % in the row: job #19861; a notebook's pages and Send, Your book and the days gone; Send apart from the
-// zoom: the board, 28 Oct)
+// page before and after, the page's name and where it is in the notebook, which opens the notebook's pages by name, and
+// New page. While the zoom is off 100% its % shows beside the page after, a tap back to 100%. Send, the page's own
+// action (the page shown sent whole, bookpagesend.js; none on a page sent, nor on a call's own page while it's on), is
+// its own island at the top of the stack over the paper's right edge, under the page's turned-down corner, so the row
+// stays one slim line with the page's name whole in it (the board, 28 Oct).
+// Ctrl/⌘ with +, − and 0 zoom too, while the book has the pointer or the focus (never HQ's page's own zoom).
 import { button, island, setPressed, MOD, lineIcon } from './bookui.js';
 import { esc } from '../../util.js';
 import { nameOf } from './bookhead.js';
 import { shut } from './booksave.js';
-import { mountTitle } from './booktitle.js';
+import { editTitle } from './booktitle.js';
 
 const ICONS = {
-  // (the notebook's pages laid out: four leaves in a grid, as far apart top to bottom as side to side: the board's call
-  // 149)
+  // (the notebook's pages laid out: four leaves in a grid, as far apart top to bottom as side to side.)
   overview: lineIcon(
     '<rect x="4" y="3" width="6.5" height="7.5" rx="1.2"/><rect x="13.5" y="3" width="6.5" height="7.5" rx="1.2"/><rect x="4" y="13.5" width="6.5" height="7.5" rx="1.2"/><rect x="13.5" y="13.5" width="6.5" height="7.5" rx="1.2"/>',
   ),
@@ -40,11 +39,12 @@ export function mountControls(book, act) {
   const { before, after, name, add, send } = pageButtons(book, act),
     rule = document.createElement('hr');
   send.classList.add('bk-send');
-  // (the zoom's % with the page it's of; New page, then Send at the row's end, the page's own action)
-  pages.append(over, before, name, after, pct, rule, add, send);
+  // (the zoom's % with the page it's of, then New page)
+  pages.append(over, before, name, after, pct, rule, add);
+  island('send').append(send);
   keys(book, act);
 
-  return {
+  const controls = {
     update() {
       const far = act.level() !== 'page',
         page = book.views[book.cur]?.page,
@@ -55,12 +55,14 @@ export function mountControls(book, act) {
       for (const el of [before, name, after, rule]) el.hidden = far;
       over.hidden = !!book.scope?.singlePage;
       add.hidden = far || !!book.scope?.singlePage;
-      send.hidden = far || !page || shut(page) || page.readonly;
+      send.hidden = far || !page || shut(page) || page.readonly || page.id === onCall;
       pct.hidden = far || percent === 100;
       pct.querySelector('span').textContent = `${percent}%`;
       before.disabled = book.cur <= 0;
       after.disabled = book.cur >= n - 1;
       name.disabled = !page;
+      // (the title being written goes when its page does, a save still out landing on its page alone)
+      if (titling && (far || titling.page !== page)) titling.end(false);
       if (!page) return;
       // (where it is in the notebook only when it has more than one page)
       const many = n > 1;
@@ -72,9 +74,18 @@ export function mountControls(book, act) {
       );
     },
   };
+  return followCall(controls);
+}
+// The call's own page while the call is on (calldraw.js's call:page), till it's off: no Send there, as it goes in by
+// itself as the call ends (the board's call 161.). → controls
+let onCall = null;
+function followCall(controls) {
+  document.addEventListener('call:page', e => ((onCall = e.detail.page), controls.update()));
+  document.addEventListener('call:off', () => ((onCall = null), controls.update()));
+  return controls;
 }
 
-// The pages' buttons: the page before and after, the page's name (the notebook's pages), New page and Send
+// The pages' buttons: the page before and after, the page's name (the notebook's pages), New page, and Send
 function pageButtons(book, act) {
   const name = button({
     text: word('Page'),
@@ -82,7 +93,7 @@ function pageButtons(book, act) {
     onClick: () => menu(book, act, name),
   });
   name.classList.add('bk-quiet', 'bk-where');
-  name.setAttribute('aria-haspopup', 'dialog');
+  name.setAttribute('aria-haspopup', 'menu');
   return {
     before: button({ icon: ICONS.before, label: word('The page before'), onClick: () => act.turnTo(book.cur - 1) }),
     after: button({ icon: ICONS.after, label: word('The page after'), onClick: () => act.turnTo(book.cur + 1) }),
@@ -95,7 +106,6 @@ function pageButtons(book, act) {
     }),
     send: button({
       icon: ICONS.send,
-      text: word('Send'),
       label: word('Send'),
       keys: word('This page to the agents: 10 seconds to undo'),
       onClick: () => act.send(),
@@ -103,19 +113,21 @@ function pageButtons(book, act) {
   };
 }
 
-// The shown page's title field and the notebook's pages by name, in order. A choice turns to that page.
-let open = null;
+// The notebook's pages by name, in order, the one shown marked; a choice turns to it once the title is through. The
+// shown page's title is written in place of its name meanwhile (booktitle.js): the pages close as it ends or its save
+// is refused, and it lasts until it's saved or let go, or its page goes.
+let open = null,
+  titling = null;
 function menu(book, act, from) {
   if (open) return close();
   const card = document.createElement('div');
   card.className = 'bk-card bk-pages-menu';
-  card.setAttribute('role', 'dialog');
-  card.setAttribute('aria-label', word('Page title and pages'));
+  card.setAttribute('role', 'menu');
+  card.setAttribute('aria-label', word('Pages'));
   card.innerHTML = menuOf(book);
-  const field = mountTitle(card, book, () => {
-    book.controls.update();
+  titling = editTitle(from, book, card, ended => {
+    if (ended) titling = null;
     close();
-    from.focus();
   });
   (from.closest('#book') ?? document.body).append(card);
   const r = from.closest('.bk-island').getBoundingClientRect(),
@@ -126,33 +138,34 @@ function menu(book, act, from) {
   });
   card.addEventListener('click', e => {
     const b = e.target.closest('button');
-    if (!b?.hasAttribute('data-i')) return;
+    if (!b) return;
     close();
-    act.turnTo(Number(b.dataset.i));
+    titling.end(true).then(saved => saved && act.turnTo(Number(b.dataset.i)));
   });
-  const away = e => !card.contains(e.target) && !from.contains(e.target) && close();
-  const esc_ = e => e.key === 'Escape' && (close(), from.focus());
+  // (a tap away closes the pages and saves the title, booktitle.js; Escape is the title's: letting it go closes them)
+  const away = e => ![card, titling.box].some(el => el.contains(e.target)) && close();
   addEventListener('pointerdown', away, true);
-  addEventListener('keydown', esc_);
   from.setAttribute('aria-expanded', 'true');
-  open = { card, shut: () => (removeEventListener('pointerdown', away, true), removeEventListener('keydown', esc_)) };
+  open = { card, from, shut: () => removeEventListener('pointerdown', away, true) };
   // (a touch screen raises its keyboard over the pages for a focused field: there the shown page's row has the focus,
-  // and a tap on the field types)
+  // and a tap on the title writes)
   if (matchMedia('(pointer: fine)').matches) {
-    field.focus({ preventScroll: true });
-    field.select();
+    titling.field.focus({ preventScroll: true });
+    titling.field.select();
   } else card.querySelector('[aria-current]')?.focus({ preventScroll: true });
-  function close() {
-    open?.shut();
-    open?.card.remove();
-    open = null;
-    from.setAttribute('aria-expanded', 'false');
-  }
+}
+// The pages closed, the title left as it is
+function close() {
+  if (!open) return;
+  open.shut();
+  open.card.remove();
+  open.from.setAttribute('aria-expanded', 'false');
+  open = null;
 }
 
 // The menu's rows: the notebook's pages
 function menuOf(book) {
-  return `<ul class="bk-menu" role="menu" aria-label="${word('Pages')}">${book.views
+  return `<ul class="bk-menu">${book.views
     .map(
       (v, i) =>
         `<li><button role="menuitem" data-i="${i}"${i === book.cur ? ' aria-current="page"' : ''}><small>${i + 1}</small>${esc(

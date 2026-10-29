@@ -33,6 +33,25 @@ export function bringUpToDate(clone: InClone, dir: string, branch: string, base:
   }
 }
 
+// The commit a task's run that didn't land pushed of its own (worker.ts): the pushed head, when it holds a commit, merges
+// aside, that neither main nor the branch on origin before the push had. A run that added nothing pushes its branch's
+// head, an earlier task's commit, and the merge bringing the branch up to date is main's work: neither is its own.
+// Its sha is what releases it once its branch merges (the coordinator's jobs.ts failedAside).
+export function ownCommit(clone: InClone, dir: string, branch: string, base: string, sha: string) {
+  const inClone = (...args: string[]) => clone.git(['-C', dir, ...args]).trim();
+  const before = inClone('for-each-ref', '--format=%(objectname)', `refs/remotes/origin/${branch}`);
+  const own = inClone(
+    'rev-list',
+    '--no-merges',
+    '-n1',
+    sha,
+    '--not',
+    `refs/remotes/origin/${base}`,
+    ...(before ? [before] : []),
+  );
+  return own ? sha : undefined;
+}
+
 // The briefing's lines for a task in a thread (a deliverable, in the board's word), after its title: the merge it must finish first, where it stands in the
 // thread, and what isn't part of it
 export function threadBriefing(thread: InThread, conflicts: string[]) {

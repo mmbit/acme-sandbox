@@ -23,6 +23,8 @@ hand({
   paint: menu.paint,
   refresh: menu.refresh,
   redrawInk: surface.redrawInk,
+  stopMic: dictation.stopMic, // (stopMic, words)
+  words: dictation.words,
 });
 
 // r: the config review.js hands over ({ HQ, framed, OUTSIDE, outside, INK, LOOK, ROUTE, summoned, book, toHq, covered,

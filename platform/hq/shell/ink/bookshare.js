@@ -1,18 +1,21 @@
 // Where a page goes by its folded corner (bookdogear.js): three targets over the paper, PDF, PNG and a call, the page
 // dimmed under them. They show as drop targets while the page is carried, or as a small menu (the corner pressed with a
-// key, or tapped). PDF and PNG hand the page's picture to the system's share sheet, or download it where there's none;
-// the call, named for the agent, rings the CEO with the page's picture, or with a call on shows it in that one. Its
-// look: bookshare.css. (dimmed, named)
+// key, or tapped). PDF and PNG download the page's picture, for the board to keep or share from its downloads
+//; the call, named for the agent, rings the CEO with the page's picture, or with
+// a call on shows it in that one. Its look: bookshare.css. (dimmed, named)
 import * as world from '../../world/world.js';
 import { callAgent, ceoName } from '../desk.js';
 import { callName } from '../call.js';
 import { titleOf } from './bookhead.js';
 import { pagePicture } from './bookpaperdraw.js';
 import { saved } from './booksave.js';
-import { POINTS_PER_PX, fileName, pdfOf } from './booksharefiles.js';
+import { POINTS_PER_PX, cutsOf, fileName, pdfOf, piecesFor } from './booksharefiles.js';
 
 // how a JPEG in a PDF is pressed (0–1): the paper's dots and the ink's edges kept clean
 const JPEG_QUALITY = 0.92;
+// A long page's picture drawn in strips at most this tall (px) for a PDF: iOS refuses a canvas over 16.7 million px,
+// and a picture can be 2400 wide.
+const STRIP_PX = 4000;
 
 // The three targets on el (the pages' box), hidden. act(kind, box) a target taken ('pdf' | 'png' | 'call', its box on
 // the screen); closed() the menu put away with a key. Returns { carrying(), menu(), under(x, y), over(kind), hide(),
@@ -116,7 +119,7 @@ export function filesOf(book, page) {
     png: shot.then(png => new File([png], named('png'), { type: 'image/png' })),
     pdf: shot.then(png => pdfFile(png, page, named('pdf'))),
   };
-  // (a failure is said when the file is asked for: shared())
+  // (a failure is said when the file is asked for: downloaded())
   for (const file of Object.values(files)) file.catch(() => {});
   return files;
 }
@@ -132,18 +135,27 @@ async function pictureOf(book, page) {
   if (!answer.ok) throw new Error(`The page’s picture couldn’t be made (${answer.status}). Try again in a moment.`);
   return answer.blob();
 }
-// The picture as a one-page PDF, the page's own shape at its size in the book
+// The picture as a one-page PDF, the page's own shape at its size in the book, its strips going down it
 async function pdfFile(png, page, name) {
   const bitmap = await createImageBitmap(png),
-    canvas = Object.assign(document.createElement('canvas'), { width: bitmap.width, height: bitmap.height });
-  canvas.getContext('2d').drawImage(bitmap, 0, 0);
-  const jpeg = new Uint8Array(await (await blobOf(canvas, 'image/jpeg', JPEG_QUALITY)).arrayBuffer()),
-    pageW = page.w * POINTS_PER_PX;
+    images = [];
+  for (let top = 0; top < bitmap.height; top += STRIP_PX) {
+    const canvas = cut(bitmap, top, Math.min(STRIP_PX, bitmap.height - top));
+    const jpeg = new Uint8Array(await (await blobOf(canvas, 'image/jpeg', JPEG_QUALITY)).arrayBuffer());
+    images.push({ jpeg, w: canvas.width, h: canvas.height });
+  }
+  const pageW = page.w * POINTS_PER_PX;
   const pdf = pdfOf({
-    ...{ jpeg, imageW: canvas.width, imageH: canvas.height },
-    ...{ pageW, pageH: (pageW * canvas.height) / canvas.width, title: titleOf(page) || 'Notebook page' },
+    images,
+    ...{ pageW, pageH: (pageW * bitmap.height) / bitmap.width, title: titleOf(page) || 'Notebook page' },
   });
   return new File([pdf], name, { type: 'application/pdf' });
+}
+// A strip of a picture as a canvas: its whole width, h px from top
+function cut(bitmap, top, h) {
+  const canvas = Object.assign(document.createElement('canvas'), { width: bitmap.width, height: h });
+  canvas.getContext('2d').drawImage(bitmap, 0, -top);
+  return canvas;
 }
 const blobOf = (canvas, type, quality) =>
   new Promise((done, failed) =>
@@ -154,18 +166,9 @@ const blobOf = (canvas, type, quality) =>
     ),
   );
 
-// A file handed to the system's share sheet; where there's none (or the board's press is too long ago for the
-// browser to open it), downloaded. Put away by the board, nothing more.
-export async function shared(file) {
+// A file downloaded, never the share sheet: the board keeps it, or shares it from its downloads.
+export async function downloaded(file) {
   const ready = await file;
-  if (navigator.canShare?.({ files: [ready] })) {
-    try {
-      await navigator.share({ files: [ready], title: ready.name });
-      return;
-    } catch (e) {
-      if (e.name === 'AbortError') return;
-    }
-  }
   const link = Object.assign(document.createElement('a'), { href: URL.createObjectURL(ready), download: ready.name });
   document.body.append(link);
   link.click();
@@ -174,10 +177,23 @@ export async function shared(file) {
 }
 
 // The page on a call: its picture (picture, a promise of its PNG: filesOf's) shown in the call on, or a call with the CEO
-// started with it (call.js). A page the store doesn't have yet (a blank one, or its first save still going) can't go:
-// that's said, and no call starts without it.
+// started with it (call.js), a long one's in readable pieces. A page the store doesn't have yet (a blank one, or its
+// first save still going) can't go: that's said, and no call starts without it.
 export async function callAbout(page, picture) {
   if (!page.id)
     throw new Error('The page isn’t saved yet, so it can’t go on a call: write on it, or try again in a moment.');
-  return callAgent(world.company.ceo, ceoName(), { pictures: [picture], page: page.id });
+  return callAgent(world.company.ceo, ceoName(), { pictures: piecesOf(picture), page: page.id });
+}
+// A page's picture in pieces down it, as many as the picture's own shape asks for (it grows past the page's box to the
+// answers under its groups: the coordinator's bookrender.ts), as the call's sketch tool cuts it (bookreads.ts): a
+// promise of their list, so the call starts as it's let go, each a promise of a PNG. One piece is the picture as it is.
+async function piecesOf(picture) {
+  const png = await picture,
+    whole = await createImageBitmap(png),
+    n = piecesFor(whole.width, whole.height);
+  if (n === 1) return [png];
+  return cutsOf(n, whole.height).map(async ({ top, height }, i) => {
+    const piece = await blobOf(cut(whole, top, height), 'image/png');
+    return new File([piece], `${png.name.replace(/\.png$/, '')} (${i + 1} of ${n}).png`, { type: 'image/png' });
+  });
 }

@@ -42,8 +42,12 @@ export const QUICK_RUN_MS = 3 * 60_000;
 export function quickRunStarted(job: { id: number; kind: string; agent: string }) {
   if (isQuickRun(job)) purposes.get(purposeOf(job.id)!)!.started?.(job);
 }
+// A quick run thinks at QUICK_EFFORT, whatever its agent's own (company/models.yaml), as the board's calls do: the board
+// waits for its answer. At the company's high effort a short answer took 30-40 s of Opus (29 Oct), most of it
+// thinking between its few reads.
+export const QUICK_EFFORT = 'low';
 // The turn the worker is given for a quick run as it's claimed: its end, what's left after the runs it had before
-// (agenttime.ts runs). Undefined for any other job.
+// (agenttime.ts runs), and its effort. Undefined for any other job.
 export function quickRunTurn(job: { id: number; kind: string }) {
   if (!isQuickRun(job)) return undefined;
   const { ran } = db
@@ -51,7 +55,7 @@ export function quickRunTurn(job: { id: number; kind: string }) {
       'select coalesce(sum(julianday(ended) - julianday(started)), 0) * 86400000 ran from runs where job = ? and ended is not null',
     )
     .get(job.id) as { ran: number };
-  return { until: Date.now() + QUICK_RUN_MS - Math.round(ran) };
+  return { until: Date.now() + QUICK_RUN_MS - Math.round(ran), effort: QUICK_EFFORT };
 }
 
 // Why a quick run's answer hasn't come, in the board's words where it asked (bookslips.ts waitingOf, booktyped.ts): its

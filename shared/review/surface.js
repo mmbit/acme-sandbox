@@ -66,7 +66,7 @@ export const HTML = `<div class="veil" hidden><div class="bar"><div class="hint"
 const MAX_LINES = 64; // a note's, as the coordinator keeps them (feedback.ts inkOf)
 const INK_KEY = '__hq_review_ink';
 // The eraser: passed across the open mark, every line it touches goes (Undo brings them back). What it draws as it goes
-// is its trail, soft and gone as it lifts.
+// is its pass, soft and gone as it lifts.
 const ERASER = { name: 'Eraser', color: '#8f88a8', size: 24, alpha: 0.35 };
 
 // (shown: a walk-through's recording follows it) On HQ the page's numbered marks are drawn with them (marks.js).

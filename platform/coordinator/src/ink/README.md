@@ -31,7 +31,9 @@ The Sketchbook is one part of Ink, and in code it is the book: one per person, a
   version) or the board's tick on it picks it (one per try),
   the try run and a call hear which, and the note the tried group goes as carries the frame and the patch.
 - `callnotes.ts` is a call's notes page in the Notebook: the agent's scraps (one per change, each its own crop), its
-  notes and title, sent as the call ends and left among My Notebook's pages; read like any page.
+  promises and title, sent as the call ends and left among My Notebook's pages; read like any page. It's the call's
+  one route for its asks: each scrap and promise is an item on the call's list, linked to the job it went as. `callasks.ts` keeps those asks following the page as the board leaves it: joined,
+  lifted apart, deleted or changed.
 - `bookfetch.ts` fetches a picture on the web dragged or pasted into the book.
 - `sketchbook.ts` keeps HQ's Sketchbook app. `sketchpeople.ts` keeps invited people's identity, colour and quota.
   Guests use the Notebook room, with no separate Sketchbook environment.

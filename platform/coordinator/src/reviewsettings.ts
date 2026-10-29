@@ -17,6 +17,9 @@ export function reviewSettings() {
     visual: (r.visual ?? []) as VisualCheck[],
     // A description for reviewer judgment, never a path rule.
     live: String(r.live ?? "Public sites and apps already in use, and HQ's own look."),
+    // What keeps a release bar of its own (reviewrounds.ts): a description for reviewer judgment, never a path rule.
+    // Everything else is internal work.
+    shipped: String(r.shipped ?? 'Games, apps and sites released to people outside the company.'),
     drawWindowedChanges: r.drawWindowedChanges === true,
   };
 }

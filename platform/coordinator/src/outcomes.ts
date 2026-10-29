@@ -1,5 +1,5 @@
 // STATUS.md's reading of the review findings (findings.ts): what became of each one that reached an author, per
-// engine and per reviewer, and the pre-existing ones the project's follow-ups take. It reads rows only, so infra/report.sh
+// engine and per reviewer, and the pre-existing ones the follow-up job takes. It reads rows only, so infra/report.sh
 // can import it.
 
 type Row = {

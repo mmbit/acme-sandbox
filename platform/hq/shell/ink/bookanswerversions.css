@@ -27,8 +27,13 @@
 #book .bk-versions-frames {
   position: relative;
 }
+/* the tool in use, named beside the strip (bookstrip.css), steps aside while a versions page shows: the frames end
+   just left of the strip, where it would lie over them. */
+#book:has(.bk-page:not([hidden]) .bk-versions) .bk-now {
+  opacity: 0;
+}
 /* the board's pen on the frames, and a little round them, so a ring that starts outside one is the frames' too: what it
-   writes goes to the version it's on */
+   writes goes to the version it's on (28 px round: bookanswerversions.js's PEN_REACH keeps it on the page). */
 #book .bk-versions-frames {
   pointer-events: auto;
   touch-action: none;

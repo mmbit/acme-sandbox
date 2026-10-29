@@ -8,11 +8,12 @@
 // leaving nothing behind. With reduced motion every scene holds still. (the open book)
 import assert from 'node:assert/strict';
 import { mockBrand } from './serve.mjs';
+import { DESKTOP, MINI } from './bookkit.mjs';
 
 const SCREENS = {
-  mini: { viewport: { width: 1133, height: 744 }, more: {}, mode: 'open' },
+  mini: { viewport: MINI, more: {}, mode: 'open' },
   phone: { viewport: { width: 390, height: 844 }, more: {}, mode: 'spread' },
-  desktop: { viewport: { width: 1440, height: 900 }, more: { deviceScaleFactor: 1, hasTouch: false }, mode: 'open' },
+  desktop: { viewport: DESKTOP, more: { deviceScaleFactor: 1, hasTouch: false }, mode: 'open' },
 };
 const CONTROL = '#book .bk-tips';
 // The book's name as HQ gets it here (none: no name over the contents)

@@ -114,6 +114,28 @@ export function hold(job: number, o: { from: string; project: string | null; why
   publish({ type: 'log', agent: row.agent, text: `Job #${job} waits for its sort into the plan (proposal #${id})` });
 }
 
+// Where the company asks for deliverables (projects.yaml requireThread), nobody's work but the CEO's own runs outside
+// one, however HQ made it: a job made with no deliverable to inherit or be given (no `made:` project for its kind, a
+// fault's, a call's follow-up for another agent) waits for the CEO to place it, as a held job (hold). Run before each
+// claim (jobs.ts claim), so whatever placed a job it just made (made.ts, a hold of its own) has done so. A step of a pull
+// request's loop goes where its lead is, an expedited job merges alone, and a job sorted once isn't held again.
+export function holdLoose() {
+  try {
+    if (!projects().requireThread) return;
+  } catch (err) {
+    return console.error('Claim: no hold for loose work:', err); // (a projects.yaml that stops parsing stops no claim)
+  }
+  const loose = db
+    .prepare(
+      `select j.id from jobs j where j.status = 'queued' and j.kind = 'work' and j.thread is null and j.agent != ?
+      and j.started is null and j.session is null and j.expedite = 0 and j.pr is null and j.branch is null
+      and not exists (select 1 from wakes w where w.job = j.id and w.kind = 'sorted')`,
+    )
+    .all(ceo()) as { id: number }[];
+  for (const { id } of loose)
+    hold(id, { from: 'hq', project: null, why: 'HQ made this job in no deliverable: place it in the one it serves.' });
+}
+
 // hq inbox accept on a held job: it keeps its brief, agent and thread (hq job move moves it first), gets the accepter's
 // title (and code, where it has none or one is given), and may start. The answer is the job, or why not.
 export function accept(
@@ -163,7 +185,7 @@ export function accept(
 // reads that project's inbox when it starts (proposals.ts list). It ends with the
 // levels each name shows, in the company's lines (levels.ts, related work chained in one deliverable), and how its plans look ahead.
 // (HQ's own to sort)
-// Needed colleague answers.
+// Needed colleague answers. A deliverable whose review has ruled takes only its fixes.
 export const planning = (
   project: string | null,
   own = levelsOf(),
@@ -195,7 +217,8 @@ export const planning = (
    - part of a feature an open deliverable makes, whoever proposed it and whichever agent does it: add it there,
      \`hq inbox accept <id> --deliverable <project>/<slug>\` (its "done when" grows with \`hq plan rename\` if it must),
      then \`hq plan move\` it to its place among the deliverable's tasks if it isn't last. Several agents take turns
-     in one deliverable, on one branch, reviewed once at its end;
+     in one deliverable, on one branch, reviewed once at its end, until its review has ruled ("A deliverable", below,
+     says what then);
    - a feature no open deliverable makes: a deliverable of its own (never one per note or proposal), \`hq inbox accept
      <id> --deliverable new:<project> "name" "done when"\`; a later piece of a feature is drawn first, needing the
      deliverable before it (\`hq plan deliverable <project> "name" "done when" --needs <project>/<slug>\`), then

@@ -129,7 +129,8 @@ export function orderingSnapshot(
     held = heldWindows(),
     rounds = reviewPlans(now, prospective);
   const byPr = Map.groupBy(rows, row => row.pr);
-  const holds = new Map([...new Set(rows.map(row => row.thread))].map(thread => [thread, pauses.holding(thread)]));
+  const holdingOf = pauses.holdings(); // (one read for every thread)
+  const holds = new Map([...new Set(rows.map(row => row.thread))].map(thread => [thread, holdingOf(thread)]));
   const queued = rows.map((row, index) => {
     const job = queuedJob(row, { open, waits, answers, lag, paused, due, held, now, byPr, holds, inOrder });
     if (row.id < 0) job.orderId = lastId + index + 1;

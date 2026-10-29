@@ -2,7 +2,8 @@
 
 The board draws with the Pencil on HQ's pages, and each note it draws comes to the line as it lifts the Pencil
 (server.py Call.note: the agent gets it as it gets a shared picture, the page around the note as its picture and the
-note's words in front of the board's). The agent asks to see the board's screen (ask_to_see) and draws a ring in its own
+note's words in front of the board's). It's for the agent, which makes a scrap of it only if it judges it worth keeping,
+and HQ keeps its ink drawn until the agent's turn on it is done (server.py Call.scribbled; the board, call 161.). The agent asks to see the board's screen (ask_to_see) and draws a ring in its own
 ink on the board's screen (draw), aimed from its picture of that screen: it says where on the picture, and HQ draws the
 ring exactly there, never choosing a target itself (the AI decides, not an algorithm). Both
 tools ask through the line's screen socket, as the sketch tool does, and only on the board's own calls. HQ shows the ask
@@ -28,8 +29,8 @@ NOTE_WORDS = {
     'picture': ': the picture is the page around it, my ink on it.)',
     'bare': '.)',
     'full': ". Its picture didn't fit: the call has had all the pictures it can hold.)",
-    'lost': ("\n(You can't see the board's {notes} any more: they were in the stopped session. They stay on this "
-             "call's page in its book: ask the board about them if you need them.)"),
+    'lost': ("\n(You can't see the board's {notes} any more: they were in the stopped session. A scrap can still be "
+             "cut from them: ask the board what they showed if you need to.)"),
 }
 # What the agent hears about its asks to see the board's screen: the tool's answer, its refusals, and the board's tap,
 # in front of the agent's next turn (or in a turn of its own once the line is quiet)

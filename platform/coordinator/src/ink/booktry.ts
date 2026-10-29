@@ -19,9 +19,9 @@ import { createJob, findAgent } from '../jobs.ts';
 import { keysCall } from '../memory.ts';
 import * as feedback from '../feedback.ts';
 import { forRun } from '../messages.ts';
-import { changed, pageRow } from '../notebook.ts';
-import { groupOn, rootOf, row as groupRow, type Group } from '../notebookgroups.ts';
-import { row as bookPage } from './book.ts';
+import { changed, pageRow, type NotebookPage } from '../notebook.ts';
+import { groupOn, rootOf, type Group } from '../notebookgroups.ts';
+import { row as bookPage, type Page } from './book.ts';
 import { note as noteRow, sheetRow, type Note } from './booknotes.ts';
 import { keep } from './booksheets.ts';
 import { heardOnCall } from './callanswer.ts';
@@ -38,37 +38,45 @@ export type Target = { grp?: number; note?: number };
 const OPEN = "('queued', 'running')";
 
 // ---------------------------------------------------------------- what a try is on
-// The note a target stands for: its root group (the board's note itself, a reply's parent), or an old book's note
-// (a call's page: no group) and the page it's on; reply: the target itself when it's a later note on it (its words,
-// and the version it's under, if it is)
-type Reply = { words: string; version: Version | null } | null;
-type Version = { name: string; text: string; patch: string | null };
-type Common = { page: number; words: string; owner: string; anchor: Anchor | null; reply: Reply };
-type On = ({ kind: 'group'; root: Group } | { kind: 'note'; root: Note }) & Common;
-function on(t: Target): On | null {
+// The note a target stands for (root) and the page it's on: a group's root (the board's note itself, a reply's
+// parent), or an old book's note (a call's page: no group). Its owner answers it, in words (bookanswer.ts answerNow) or
+// in versions: the root's (a scrap's, a sheet's), else its page's, else the CEO. null: the group deleted, or the note
+// or its page gone.
+type Root = (
+  | { kind: 'group'; root: Group; target: Group; page: NotebookPage }
+  | { kind: 'note'; root: Note; target: Note; page: Page }
+) & { owner: string };
+export function rootOn(t: Target): Root | null {
   const g = groupOn(t);
   if (g) {
     const root = rootOf(g),
-      p = pageRow(root.page, null);
-    if (!p) return null;
-    const words = root.words || g.words,
-      reply = g.id === root.id ? null : { words: g.words, version: versionOf(g.answers) };
-    const owner = root.owner ?? p.owner ?? ceo();
-    return { kind: 'group', root, page: p.id, words, owner, anchor: anchorOf(root), reply };
+      page = pageRow(root.page, null);
+    return page ? { kind: 'group', root, target: g, page, owner: root.owner ?? page.owner ?? ceo() } : null;
   }
-  const reply = t.note ? noteRow(t.note) : undefined;
-  if (!reply) return null;
-  // (a reply under a version or a slip: its note is the one the try is on)
-  const answered = reply.answers
-    ? (db.prepare('select note from book_slips where id = ?').get(reply.answers) as { note: number | null } | undefined)
+  const target = t.note ? noteRow(t.note) : undefined;
+  if (!target) return null;
+  // (a reply under a version or a slip: its note is the one it stands for)
+  const answered = target.answers
+    ? (db.prepare('select note from book_slips where id = ?').get(target.answers) as
+        { note: number | null } | undefined)
     : undefined;
-  const n = (answered?.note && noteRow(answered.note)) || reply;
-  const p = bookPage(n.page, null);
-  if (!p) return null;
-  const owner = sheetRow(n.sheet, null)?.owner ?? p.owner ?? ceo(),
-    later = n === reply ? null : { words: reply.words, version: versionOf(reply.answers) };
-  const words = n.words || reply.words;
-  return { kind: 'note', root: n, page: p.id, words, owner, anchor: JSON.parse(n.anchor), reply: later };
+  const root = (answered?.note && noteRow(answered.note)) || target;
+  const page = bookPage(root.page, null);
+  if (!page) return null;
+  return { kind: 'note', root, target, page, owner: sheetRow(root.sheet, null)?.owner ?? page.owner ?? ceo() };
+}
+// What a try is on: the target's root, its words and anchor; reply: the target itself when it's a later note on it (its
+// words, and the version it's under, if it is)
+type Reply = { words: string; version: Version | null } | null;
+type Version = { name: string; text: string; patch: string | null };
+type On = Root & { words: string; anchor: Anchor | null; reply: Reply };
+function on(t: Target): On | null {
+  const r = rootOn(t);
+  if (!r) return null;
+  const { root, target } = r;
+  const reply = target.id === root.id ? null : { words: target.words, version: versionOf(target.answers) };
+  const anchor = r.kind === 'group' ? anchorOf(r.root) : (JSON.parse(r.root.anchor) as Anchor);
+  return { ...r, words: root.words || target.words, anchor, reply };
 }
 // The version a slip is, if it is one: its name, its line, and its patch as kept
 function versionOf(slip: number | null): Version | null {
@@ -103,7 +111,7 @@ export function tryHolds(id: number, job: number, note = false) {
 // no quick run starts
 export function onCall(t: Target): number | null {
   const o = on(t);
-  const call = o && callOf(o.page);
+  const call = o && callOf(o.page.id);
   return call && db.prepare("select 1 from calls where id = ? and status = 'live'").get(call) ? call : null;
 }
 // The call a page is the notes page of (in the book or My Notebook), live or ended, or null. A try's versions page
@@ -122,7 +130,7 @@ export function tryNow(t: Target, verdict: { id: number; why: string }) {
   if (!o) return null;
   const going = openTry(o);
   if (going) {
-    toRun(going, o, t);
+    toRun(going, o);
     return going.id;
   }
   const page = versionsPage(o);
@@ -146,10 +154,10 @@ export function tryNow(t: Target, verdict: { id: number; why: string }) {
 }
 
 // A later note while the run goes: the session hears it at its next step; one not started yet takes it in its brief
-function toRun(going: { id: number; status: string }, o: On, t: Target) {
-  const later = t.grp ? groupRow(t.grp) : t.note ? noteRow(t.note) : undefined;
-  const words = oneLine(later?.words ?? '') || '(ink only: `hq sketch` the page to see it)';
-  const on = later && 'answers' in later && later.answers ? ` on version ${versionName(later.answers)}` : '';
+function toRun(going: { id: number; status: string }, o: On) {
+  const later = o.target;
+  const words = oneLine(later.words) || '(ink only: `hq sketch` the page to see it)';
+  const on = later.answers ? ` on version ${versionName(later.answers)}` : '';
   const line = `The board wrote again on the note you're trying${on}: “${words}”. Take it into the versions still to \
 come, or make one more for it, clipped the same way.`;
   if (going.status === 'running') return forRun(o.owner, line, going.id);
@@ -170,7 +178,7 @@ function versionsPage(o: On) {
   const found = db.prepare(`select id from book_pages where ${column} = ?`).get(o.root.id) as
     { id: number } | undefined;
   if (found) return found.id;
-  const p = db.prepare('select who, notebook, pos, call from book_pages where id = ?').get(o.page) as {
+  const p = db.prepare('select who, notebook, pos, call from book_pages where id = ?').get(o.page.id) as {
     who: string;
     notebook: number | null;
     pos: number | null;
@@ -220,6 +228,7 @@ ${said}. The next versions start from that one and take what the board wrote int
 // ---------------------------------------------------------------- the try run's brief
 // The board's screens, when the note has no view of its own: the company's (brand.yaml screens), else a desktop's
 const screens = () => brand().screens ?? 'a desktop browser at 1440 × 900';
+// The try run's brief: the note, where to see it, and how its versions go back
 function tryBrief(o: On, page: number, verdict: { why: string }, review: number | null) {
   const target = o.kind === 'group' ? `g${o.root.id}` : String(review);
   const view = o.anchor?.view;
@@ -227,7 +236,7 @@ function tryBrief(o: On, page: number, verdict: { why: string }, review: number 
   const where = o.anchor?.url ? `on HQ's page ${o.anchor.url}` : 'on a page of its notebook';
   const snip =
     o.kind === 'group'
-      ? `\`hq sketch ${o.page}\` saves the page it's on as a picture (the note is group ${o.root.id} there)`
+      ? `\`hq sketch ${o.page.id}\` saves the page it's on as a picture (the note is group ${o.root.id} there)`
       : `\`hq note ${review}\` saves its snip (the page around the mark, the ink on it)`;
   return `The board wrote a note ${where}, in its book, and it asks to see it made: show it a few versions of the real \
 thing, now. Why it reads as a try: ${verdict.why}

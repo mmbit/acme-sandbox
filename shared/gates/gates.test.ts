@@ -21,9 +21,11 @@ const CONFIGS = [
   'shared/gates/lent.ts',
   'shared/gates/lentsend.ts',
   'shared/gates/output.ts',
+  'shared/gates/reach.ts',
   'shared/gates/repo.ts',
   'shared/gates/sizes.ts',
   'shared/gates/spans.py',
+  'shared/gates/typecheck.ts',
   'shared/demo/renders.mjs',
 ];
 
@@ -226,6 +228,31 @@ test('a type error the change causes in a file it never touched fails it', () =>
   );
   assert.equal(status, 1);
   assert.match(out, /lib\/use\.ts:2: Expected 2 arguments, but got 1\. \(TS2554\)/);
+});
+
+test('the type check reaches what imports a changed file in turn, through a JSDoc type in a .js file too', () => {
+  const { status, out } = gates(
+    {
+      'lib/kind.ts': "export type Kind = 'a' | 'b';\n",
+      'lib/pick.js': "/** @returns {import('./kind.ts').Kind} */\nexport const pick = () => 'a';\n",
+      'lib/use.ts': "import { pick } from './pick.js';\nexport const k: 'a' | 'b' = pick();\n",
+    },
+    { 'lib/kind.ts': "export type Kind = 'a' | 'c';\n" },
+  );
+  assert.equal(status, 1, out);
+  assert.match(out, /lib\/use\.ts:2: Type 'Kind' is not assignable to type '"a" \| "b"'/);
+});
+
+test('a changed file that declares globals reaches every file, though none imports it', () => {
+  const { status, out } = gates(
+    {
+      'lib/limits.d.ts': 'declare const LIMIT: number;\n',
+      'lib/use.ts': 'export const twice: number = LIMIT * 2;\n',
+    },
+    { 'lib/limits.d.ts': 'declare const LIMIT: string;\n' },
+  );
+  assert.equal(status, 1, out);
+  assert.match(out, /lib\/use\.ts:1: .*\(TS2362\)/);
 });
 
 test('type errors the base already had pass, in a renamed file too', () => {

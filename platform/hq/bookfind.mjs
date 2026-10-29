@@ -6,6 +6,7 @@
 // (the Notebook's groups)
 import assert from 'node:assert/strict';
 import { errorsOf } from '../../shared/browser/browser.mjs';
+import { until } from './bookkit.mjs';
 
 // c: book-check's { hqIn, base, inBook, shot, noErrorsIn, viewport, settle }
 export async function findStory(browser, c) {
@@ -42,7 +43,7 @@ async function written(page, c) {
   await page.keyboard.insertText('lighter');
   assert.equal(await found(page, 'answer'), '1 Lighter now, half the old ink Moss’s answer · For Moss · Yesterday');
   await field.fill('purple');
-  await until(() => page.getByRole('search').textContent(), 'Nothing in the book says “purple”');
+  await reads(() => page.getByRole('search').textContent(), 'Nothing in the book says “purple”');
 }
 // Tapped, the book turns to yesterday's page, the scrap on it in view
 async function opened(page, c) {
@@ -57,7 +58,7 @@ async function opened(page, c) {
     .getByRole('search')
     .getByRole('button', { name: /tear line/ })
     .click();
-  await until(where, 'Tear-off cards, 1 of 2');
+  await reads(where, 'Tear-off cards, 1 of 2');
   await page.waitForTimeout(c.settle);
   assert.equal(await page.getByRole('search').isVisible(), false, 'Search steps aside');
   const scrap = page.locator('#book .bk-page:not([hidden]) .bk-scrap-words', { hasText: 'tear line' });
@@ -122,13 +123,13 @@ export async function keptStory(browser, c) {
     await page.keyboard.type('tea');
     await found(page, 'tear line');
     await overview.click();
-    await until(async () => String(await field.isVisible()), 'false');
+    await until(async () => !(await field.isVisible()), 'the field gone with the overview');
     await overview.click();
     assert.equal(await field.inputValue(), 'tea', 'the words written last still there');
     await found(page, 'tear line');
     await field.press('Escape');
     assert.equal(await field.inputValue(), '', 'Esc wipes the words');
-    await until(async () => String((await finds(page)) === ''), 'true');
+    await until(async () => (await finds(page)) === '', 'no finds left');
     c.noErrorsIn(errors);
   } finally {
     await done();
@@ -141,13 +142,13 @@ const finds = page =>
     .locator('#book [role=search] ol li')
     .evaluateAll(lis => lis.map(li => li.innerText.replace(/\s+/g, ' ').trim()).join('\n'));
 // The finds once they hold some words
-const found = (page, words) => until(() => finds(page), words);
-async function until(read, words, ms = 5000) {
-  let last;
-  for (const end = Date.now() + ms; Date.now() < end; await new Promise(r => setTimeout(r, 100)))
-    if ((last = await read()).includes(words)) return last;
-  assert.fail(`still ${JSON.stringify(last)}`);
-}
+const found = (page, words) => reads(() => finds(page), words);
+// What read gives (awaited) once it holds the words
+const reads = (read, words) =>
+  until(async () => {
+    const text = await read();
+    return text.includes(words) && text;
+  }, `reading “${words}”`);
 // A pen's touch on the field, as iPad Safari hands it over: whether the field is what's under it, whether anything of
 // HQ's cancelled its pointer or its touches (Scribble needs the touch left to Safari), and whether the field takes text
 const penOn = field =>

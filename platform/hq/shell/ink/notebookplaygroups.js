@@ -1,22 +1,8 @@
 // A notebook page's groups played in memory (notebookplay.js): notebookgroups.ts's routes with the same answers and
 // refusals, on the store's state s.
-import {
-  anchorOf,
-  boxOf,
-  dataUrlPicture,
-  emptyGroup,
-  hasAny,
-  inkOf,
-  joined,
-  picks,
-  picturesOf,
-  refuse,
-  shifted,
-  textsOf,
-  typedBoxes,
-  wordsOf,
-} from './notebookplaychecks.js';
-import { STACK, nextScrap } from './bookgroupbox.js';
+import { anchorOf, dataUrlPicture, inkOf, picturesOf, refuse, textsOf, wordsOf } from './notebookplaychecks.js';
+import { emptyGroup, hasAny, joined, picks, shifted, typedBoxes } from './notebookparts.js';
+import { boxOf, nextScrap, scrapSize, STACK } from './notebookstack.js';
 
 export const BOARD = 'board';
 export const CHANGED = 'this group changed on another screen: read it again';
@@ -98,20 +84,20 @@ function createScrap(s, b) {
   if (b.snip == null) return typedNote(s, nb, said, { anchor, said: said.said, owner: b.owner ?? null });
   const snip = dataUrlPicture(b.snip);
   const p = s.page(s.currentPage(nb.id)),
-    w = Math.min(STACK.w, snip.width);
-  const h = Math.round((snip.height * w) / snip.width),
-    picture = { file: keepPicture(s, p.id, snip), ...stackSpot(s, p.id, h), w, h, tilt: 0 };
+    { w, h } = scrapSize(snip.width, snip.height);
+  const picture = { file: keepPicture(s, p.id, snip), ...stackSpot(s, p, h), w, h, tilt: 0 };
   const more = { anchor, words: said.words, said: said.said, owner: b.owner ?? null };
   return shown(s, insertGroup(s, p, 'scrap', BOARD, { ...emptyGroup, pictures: [picture] }, more));
 }
-// A note with no picture: its words typed in the post-it's ink, stacked as a scrap is (notebookgroups.ts typedNote)
+// A note with no picture: its words typed in the post-it's ink, a post-it stacked as a scrap is (notebookscraps.ts
+// stackWords)
 function typedNote(s, nb, said, more) {
   if (!said.words) refuse(400, 'a note with no picture holds words');
   const texts = textsOf(typedBoxes(said.words, { x: 0, w: STACK.w, color: '#1d1a2f' })),
     p = s.page(s.currentPage(nb.id)),
     typed = { ...emptyGroup, texts },
-    { x, y } = stackSpot(s, p.id, boxOf(typed).h);
-  return shown(s, insertGroup(s, p, 'drawing', BOARD, shifted(typed, x, y), more));
+    { x, y } = stackSpot(s, p, boxOf(typed).h);
+  return shown(s, insertGroup(s, p, 'note', BOARD, shifted(typed, x, y), more));
 }
 // Open groups of one page as one, the first's (or the scrap's): the others deleted, for Undo's split
 function joinGroups(s, b) {
@@ -199,12 +185,13 @@ export function putAside(s, g, p) {
   s.changed(p.notebook, p.id);
 }
 const partsOf = g => ({ ink: g.ink, texts: g.texts, pictures: g.pictures });
-// Where the next scrap on a page goes, h tall (bookgroupbox.js)
-function stackSpot(s, page, h) {
-  const groups = s.groups.filter(g => g.page === page && g.parent === null && g.deleted === null);
+// Where the next scrap on a page goes, h tall (notebookstack.js)
+function stackSpot(s, p, h) {
+  const groups = s.groups.filter(g => g.page === p.id && g.parent === null && g.deleted === null);
   const { x, y } = nextScrap(
-    groups.map(g => ({ id: g.id, box: boxOf(partsOf(g)) })),
+    groups.map(g => ({ id: g.id, kind: g.kind, words: g.words, box: boxOf(partsOf(g)) })),
     h,
+    p.kind,
   );
   return { x, y };
 }

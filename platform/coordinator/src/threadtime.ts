@@ -65,7 +65,7 @@ const jobsById = (ids: number[]) =>
   (
     db
       .prepare(
-        `select id, kind, agent, pr, round, created, after, thread, coalesce(branch, 'job/' || id) branch,
+        `select id, kind, agent, engine, pr, round, created, after, thread, coalesce(branch, 'job/' || id) branch,
         coalesce(seq, id) seq, finished from jobs indexed by jobs_listed where id in (select value from json_each(?))`,
       )
       .all(JSON.stringify(ids)) as (Omit<Job, 'created' | 'finished'> & { created: string; finished: string | null })[]

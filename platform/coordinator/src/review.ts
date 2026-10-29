@@ -11,7 +11,7 @@ import { mergePullRequest, closePullRequest, pullRequestState, landed, pullReque
 import * as ledger from './ledger.ts';
 import * as pauses from './pauses.ts';
 import * as pausewake from './pausewake.ts';
-import { unreadable, missing, ceo, roles, names, infra, reviewSettings } from './company.ts';   // (names, infra)
+import { unreadable, missing, ceo, roles, names, infra } from './company.ts';   // (names, infra)
 import * as reviewtriage from './reviewtriage.ts';
 import { FOUNDATION_QUESTION } from './reviewlenses.ts';
 import * as reviewrefusals from './reviewrefusals.ts';
@@ -34,17 +34,23 @@ import * as waiting from './reviewpushes.ts';
 import * as boardmerges from './boardmerges.ts';
 import * as mergeorder from './mergeorder.ts';
 
-// A pull request merged: marked so, the threads whose work it held (threadends.ts merged), and what its reviews left
-// into the project's follow-ups, and the visual hold it was still in, when it landed another way (visualapproval.closed).
+// A pull request merged: marked so, what its reviews left into its author's follow-up job, queued in its thread before
+// the threads whose work it held let go of its branch (threadends.ts merged), and the visual hold it was still in, when
+// it landed another way (visualapproval.closed).
 const pullRequestMerged = (pr: number) => {
   markMerged(pr);
   visualapproval.closed(pr);
+  followUp(pr);
   threadends.merged(pr);
-  followUp(pr, true);
 };
-// A pull request ended: its follow-ups go to the project's owner (followups.ts)
-const followUp = (pr: number, merged: boolean) =>
-  void followups.collect(pr, merged).catch(err => console.error(`Could not bundle PR #${pr}'s review follow-ups:`, err));
+// Its follow-ups go to its author (followups.ts)
+function followUp(pr: number) {
+  try {
+    followups.collect(pr, work(branchOf(pr), pr));
+  } catch (err) {
+    console.error(`Could not queue PR #${pr}'s review follow-ups:`, err);
+  }
+}
 
 type Setting = { path: string; before: string | null; after: string | null };
 const OUT = '.hq/review.json';
@@ -652,14 +658,19 @@ const lookerOf = (pr: number, round: number, sha: string | null) => reviewtriage
 
 // What's wrong with a deciding verdict's outcomes, sources, diagnosis, tasks or findings. An unreadable ruling
 // decides nothing. Accepted rulings retain their judgment except for unread findings and a merge's visual judgment.
-// A merge check judges only findings.
+// A merge check judges only findings and their tasks.
 function misjudged(j: { id: number; pr: number; round: number; stage: string | null; output: string | null }, touchupsPending = false) {
   const v = parse(j.output ?? '');
   if (!DECIDES.includes(v.decision as string)) return undefined;
+  // (one refused when it was acted on: decide's undrawn fix task)
+  const refused = reviewrefusals.reason(db, j.id);
+  if (refused) return refused;
   const decision = decisionOf(j.output ?? '', j.stage);
   const unread = decision === 'changes' || decision === 'close' ? findings.unfound(v, j.stage === 'merge' && decision === 'changes') : undefined;
-  if (unread || j.stage === 'merge') return unread;
+  if (unread) return unread;
   if (v.decision !== 'merge' && findings.accepted(j.id)) return undefined;
+  // (a merge check's "changes" names its fix tasks as a ruling's does)
+  if (j.stage === 'merge') return untitled(j, v, false);
   if (typeof v.major_visual !== 'boolean') return 'the required "major_visual" judgment must be true or false';
   if (findings.accepted(j.id)) return undefined;
   const sources = reviewsources.problem(v, j.id);
@@ -667,25 +678,27 @@ function misjudged(j: { id: number; pr: number; round: number; stage: string | n
   // The Stop hook runs before the worker can publish touch-ups. Completed rulings need the pushed head.
   const touchedUp = !!touchupOf(j.id)?.head || (touchupsPending && j.stage === 'ruling' && listed(v.touchups));
   return findings.misjudged(j, v.outcomes) ?? sources ?? reviewtriage.rulingProblem(j.pr, v.blocking) ?? (undiagnosed ? `round ${j.round}'s "upstream" says nothing` : undefined)
-    ?? untitled(j, v, touchedUp) ?? (decision === 'changes' && undrawable(j, v, touchedUp) ? 'a "changes" with no blocking finding and no touch-ups pushed has nothing to fix' : undefined);
+    ?? untitled(j, v, touchedUp) ?? (decision === 'changes' ? unblocked(j, v, touchedUp) : undefined);
 }
-// A thread's "changes" whose owner gets nothing to draw a fix task for (ownerFindings): no blocking finding, no touch-ups
-// the worker pushed, and no nonblocking one sent to the author (from a later round on, those are the follow-ups'). Work
-// with no thread goes to its author at once, under its work's title.
-function undrawable(j: { id: number; pr: number; round: number }, v: ReturnType<typeof parse>, touchedUp: boolean) {
+// A "changes" with no blocking finding. From a later round on only blocking findings hold the merge, so it should have
+// merged and left the rest to the follow-up job (board, call 163).
+// On a first round, a thread's "changes" whose owner gets nothing to draw a fix task for (ownerFindings): no touch-ups the
+// worker pushed and no nonblocking one sent to the author. Work with no thread goes to its author at once, under its
+// work's title.
+function unblocked(j: { id: number; pr: number; round: number }, v: ReturnType<typeof parse>, touchedUp: boolean) {
+  if (listed(v.blocking)) return undefined;
   const branch = branchOf(j.pr);
-  if (!toOwner(branch) || listed(v.blocking) || touchedUp) return false;
-  return stageFor(branch, j.round) !== 'first' || !listed(v.nonblocking);
+  if (stageFor(branch, j.round) !== 'first')
+    return 'from a later round on only blocking findings hold the merge: with none, decide "merge", and the nonblocking ones go to the follow-up job';
+  if (!toOwner(branch) || touchedUp || listed(v.nonblocking)) return undefined;
+  return 'a "changes" with no blocking finding and no touch-ups pushed has nothing to fix';
 }
 // What's wrong with the fix tasks a "changes" ruling names, when its tasks are drawn automatically or its round goes
 // back to its author (decide: they're the fix job's title).
 function untitled(j: { id: number; pr: number; stage: string | null; output: string | null }, v: ReturnType<typeof parse>, touchedUp: boolean) {
   if (decisionOf(j.output ?? '', j.stage) !== 'changes') return undefined;
   const branch = branchOf(j.pr);
-  if (toOwner(branch)) {
-    const thread = findThread(panel.threadOfBranch(branch)!)!;
-    if (!reviewSettings().drawWindowedChanges || thread.status !== 'open' || thread.deadline === null) return undefined;
-  }
+  if (toOwner(branch) && !reviewinbox.drawReason({ branch, thread: panel.threadOfBranch(branch)! })) return undefined;
   const problem = reviewinbox.untitledRound(v, touchedUp);
   return problem && `its fix tasks can't title the round: ${problem}`;
 }
@@ -749,7 +762,11 @@ function again(j: Run, delay = RETRY_MS, agent = j.agent) {
   const moved = j.kind === 'work' && !!own && runner(j) !== runner(own);
   const keeps = agent === j.agent && !moved;
   const reason = reviewrefusals.reason(db, j.id);
-  const prompt = j.prompt + (j.kind === 'consolidate' ? visualapproval.reviewStep(j.round, j.stage) : '') + (reason ? `\n\nYour previous answer (job #${j.id}) was refused: ${reason}\n` : '');
+  // (a consolidation that judges outcomes hears of the findings its round's refused answer recorded, once: the run it
+  // stands in for may have heard already, as hq review's of a refused retry has)
+  const recorded = j.kind === 'consolidate' && !['triage', 'merge'].includes(j.stage ?? '') ? findings.recordedNote(j.pr, j.round) : '';
+  const prompt = j.prompt + (j.kind === 'consolidate' ? visualapproval.reviewStep(j.round, j.stage) : '') + (reason ? `\n\nYour previous answer (job #${j.id}) was refused: ${reason}\n` : '')
+    + (j.prompt.includes(recorded) ? '' : recorded);
   const { id } = j.stage === 'triage' ? retriage(j, prompt.slice(j.prompt.length)) : createJob({ agent, kind: j.kind, pr: j.pr, round: j.round, branch: j.branch, sha: j.sha ?? undefined, insteadOf: j.id, queuedBy: j.queued_by ?? undefined,
     downtime: !!j.downtime, stage: j.stage ?? undefined, step: j.step ?? undefined, title: j.title, prompt, customers: holdsCustomerData(j.id),
     writes: j.writes ? JSON.parse(j.writes) : undefined, forSeat: keeps ? j.for_seat : null, cli: keeps ? j.cli ?? undefined : undefined,
@@ -936,7 +953,7 @@ async function decide(job: { id: number; pr: number; round: number; sha: string 
   const before = decision === 'changes' ? fixAttempt(job, check.stage) : undefined;
   const previous = before && { id: before.id, pr: job.pr, blocking: parse(before.output).blocking };
   const reporters = [...roundReviews(job.pr, job.round, job.sha, pr.since), { agent, engine: findAgent(agent)!.engine }];
-  // From a later round on, the nonblocking findings are the project's follow-ups, not the author's (reviewrounds.ts)
+  // From a later round on, the nonblocking findings go to the follow-up job, not the fix round (reviewrounds.ts)
   const stage = stageFor(pr.branch, job.round), later = stage !== 'first';
   findings.record(job, decision, { ...v, outcomes: check.stage === 'merge' ? undefined : v.outcomes }, reporters.map(({ agent, engine }) => ({ agent, engine })), previous, later);
   // Whatever it decides, a ruling that owed it tells HQ's feed and the project's owner what went wrong before review
@@ -972,10 +989,19 @@ async function decide(job: { id: number; pr: number; round: number; sha: string 
     const brief = `${changesPrompt(pr, job.round, v, name, touchup)} ${rounds.briefing(stage, job.round).author} ${AUTHOR_TRUST}\n${findings.AUTHOR_CLASSES}\n\n${name}'s verdict:\n${out}`;
     // (a thread's findings go to its owner, who draws its fix tasks. Work with no thread, an HQ-made or call job, goes
     // back to its author at once, as nobody plans it.)
-    if (toOwner(pr.branch)) return ownerFindings(pr, job, v, 'changes', brief);
-    // (the fix round named by the consolidator, for what it fixes; one that names no fix, by its work, as a merge check's
-    // does: its prompt asks for no tasks, so misjudged never reads them.)
-    const tasks = check.stage === 'merge' ? undefined : reviewinbox.roundTitle(v, !!touchup?.head);
+    // (one whose fix task HQ draws at once and can't is refused the same way at every try: its consolidator rules again,
+    // then it's stuck, never held for a retry.)
+    if (toOwner(pr.branch)) {
+      const undrawn = await ownerFindings(pr, job, v, 'changes', brief).then(
+        () => undefined,
+        (err: unknown) => { if (err instanceof reviewinbox.DrawRefused) return `its fix task can't be drawn: ${err.message}`; throw err; });
+      if (!undrawn) return;
+      if (refusedRead(job.id, undrawn)) return;
+      return stuck(job.pr, `${name}'s "changes" (job #${job.id}): ${undrawn}, twice; \`hq review ${job.pr}\` has it ruled again`);
+    }
+    // (the fix round named by the consolidator, for what it fixes, a merge check's too; one that names no fix, by its
+    // work)
+    const tasks = reviewinbox.roundTitle(v, !!touchup?.head);
     fixJob(pr, { title: tasks ?? work(pr.branch, pr.number) }, brief, '', job.round);
   } else if (v.decision === 'board') {
     db.prepare("update prs set status = 'board' where number = ?").run(job.pr);
@@ -1472,13 +1498,17 @@ const hold = (pr: number, why: string | null) => db.prepare('update prs set why 
 // but the hand-off stopped before any review was queued, and nothing came back to it ("database is locked" in the middle
 // of it, or the restart a merge brings cutting off the merge that brought it).
 // At the start and every few minutes, an open pull request with no review or check since its round started and no job on
-// it for a while is looked up on GitHub. Round 0 never started one (the documents check sent it back): its fix job's
-// failure is fixFailed()'s, and what's left shows in STATUS.md. Merged or closed there, it's recorded so. Still open, it's stuck, and its author
+// it for a while is looked up on GitHub. Merged or closed there, it's recorded so. Still open, it's stuck, and its author
 // gets a job to push again, whose push gets that same round (startReview's redo).
+// Round 0 never started one (the documents check sent it back): its fix job's failure is fixFailed()'s, and one still open
+// is left as it is, shown in STATUS.md. It's asked about all the same, since its work may have landed through another
+// pull request that carried its branch, and GitHub then marks it merged too.
 const HANDOFF_MS = 10 * 60_000;
+// The start of revive's hold while GitHub can't tell: what a later answer clears
+const unanswered = (round: number) => `round ${round} never reached the panel, and GitHub `;
 export async function reviveRounds() {
   const quiet = new Date(Date.now() - HANDOFF_MS).toISOString();
-  const lost = (db.prepare(`select * from prs p where status = 'open' and round > 0
+  const lost = (db.prepare(`select * from prs p where status = 'open'
     and not exists (select 1 from jobs where pr = p.number and kind in ('review', 'consolidate') and id > p.since)
     and not exists (select 1 from jobs j where (j.pr = p.number or j.kind = 'work' and j.branch = p.branch)
       and (j.status in ('queued', 'running', 'blocked') or coalesce(j.finished, j.created) > ?))`).all(quiet) as Pr[])
@@ -1489,7 +1519,7 @@ export async function reviveRounds() {
     deciding.add(pr.number);
     try { await revive(pr); } catch (err) {
       console.error(`Could not bring PR #${pr.number}'s round back:`, err);
-      hold(pr.number, `round ${pr.round} never reached the panel, and GitHub didn't answer (${String((err as Error)?.message ?? err).slice(0, 200)}); HQ asks again every 5 minutes`);
+      hold(pr.number, `${unanswered(pr.round)}didn't answer (${String((err as Error)?.message ?? err).slice(0, 200)}); HQ asks again every 5 minutes`);
     } finally { deciding.delete(pr.number); }
   }
 }
@@ -1499,7 +1529,10 @@ async function revive(pr: Pr) {
   if (!db.prepare("select 1 from prs where number = ? and status = 'open' and round = ? and since = ?").get(pr.number, pr.round, pr.since)) return;
   if (await settled(pr.number, github?.state, 'its round never reached the panel')) return;   // (settled)
   // GitHub can't tell now: the next sweep asks again (and STATUS.md says so)
-  if (github?.state !== 'open') return hold(pr.number, `round ${pr.round} never reached the panel, and GitHub couldn't say whether it's still open; HQ asks again every 5 minutes`);
+  if (github?.state !== 'open') return hold(pr.number, `${unanswered(pr.round)}couldn't say whether it's still open; HQ asks again every 5 minutes`);
+  // round 0: nothing lost to push again for. GitHub answered, so the hold above is gone, and only it: a records-only
+  // pull request keeps its own (mergeOffice)
+  if (pr.round === 0) return db.prepare("update prs set why = null where number = ? and why like ? || '%'").run(pr.number, unanswered(0));
   // stuck and unruled, so the push gets that round again (startReview's redo)
   stuck(pr.number, `round ${pr.round} never reached the panel (its hand-off after the push was lost)`);
   fixJob(pr, 'Pushing again', `Your pull request #${pr.number} (branch ${pr.branch}) never got its review: the hand-off to the panel ` +
@@ -1779,7 +1812,6 @@ async function close(pr: number, why: string) {
   if (!done) reviewclosure.hold(row.branch, pr);
   db.prepare("update prs set status = 'closed', why = ? where number = ?").run(why, pr);
   visualapproval.closed(pr);
-  followUp(pr, false);
   publish({ type: 'log', agent: panel.attribution(pr), text: c.ok ? `Closed PR #${pr}: ${why}` : `PR #${pr} is closed here (${why}), but GitHub refused to close it (${c.why}): close it there by hand` });
   unmerged(pr, row.branch);
   if (done) {
@@ -1978,6 +2010,7 @@ const reviewerPrompt = (pr: number, branch: string, b: rounds.Briefing, high: bo
 You are on the review panel for pull request #${pr} (branch ${branch}); your worktree has that branch checked out.
 Read company/playbooks/review-panel.md, company/CHARTER.md and CODE_STYLE.md first${throwaway ? '.' : `: a change that breaks the code style
 (a company-specific line in a platform file included) is a finding.`}${high ? `\nTriage identified a security concern. Review with a security focus, ${DEFENSIVE}` : ''}${bar(files, throwaway)}
+${deliverableContext(branch)}
 ${b.reviewer}
 ${throwaway ? '' : HABITABILITY}
 ${TRUST_RULE}
@@ -2039,6 +2072,7 @@ const consolidatorPrompt = (pr: number, branch: string, author: string, b: round
   writes: string[] = [], base: string | null = null, throwaway = false) => `
 You are ${consolidatorName(pr)}, the meta-reviewer. Consolidate the panel's reviews of pull request #${pr} (branch ${branch}); your
 worktree has that branch checked out. Follow company/playbooks/review-panel.md, step 3.
+${deliverableContext(branch)}
 ${alone}
 Merge duplicates, verify every finding against the code (\`git diff ${base ? `${base}..HEAD` : 'origin/main...HEAD'}\` and the files themselves),
 drop anything you can't show concretely, and rank what remains. A finding only one model made gets checked extra
@@ -2068,7 +2102,20 @@ The panel's reports:
 
 ${reports}`;
 
-// Its blocking findings in the shape any ruling's take (findings.MERGE_BLOCKING)
+function deliverableContext(branch: string) {
+  const context = panel.threadContext(branch);
+  if (!context) return '';
+  return `
+## This pull request's deliverable
+Deliverable: ${context.id}
+Done when: ${context.goal}
+Tasks carried on this branch:
+${context.tasks.map(task => `- #${task.id}: ${task.title}`).join('\n')}
+Commits from these tasks are this pull request's work to review, not work to move to another branch or pull request.
+A later task can add planned work after a ruled commit. Review that work within your assigned scope too.`;
+}
+
+// Its blocking findings in the shape any ruling's take, each with its fix task (findings.MERGE_BLOCKING, TASK_NOTE)
 const mergePrompt = (pr: number, branch: string, author: string, before: string) => `
 You are ${consolidatorName(pr)}. Pull request #${pr} (branch ${branch}) passed review at ${before} but couldn't merge, so its author took main
 in. Check only that: \`git log --oneline ${before}..HEAD\` should be the merge (and main's commits it brings), and
@@ -2076,6 +2123,7 @@ in. Check only that: \`git log --oneline ${before}..HEAD\` should be the merge (
 that drops either side's intent, means "changes". ${ownProfile(author, [])} Don't re-review the rest.
 Don't modify any files.
 
+${TASK_NOTE}
 Write JSON to ${OUT}: {"decision": "merge" | "changes", "summary": "one line", "blocking": ${findings.MERGE_BLOCKING}}. ${STOP}`;
 
 // An author's own profile merges without a review (startReview), so no ruling blocks on an ordinary edit of it: a

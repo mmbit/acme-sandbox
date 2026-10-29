@@ -1,13 +1,13 @@
 // book-check.mjs's stories of the book's body (shell/ink/book.js, booklayout.js, bookhandle.js, bookflip.js; Ink's
 // folder): the shut book's pull tab, nudging no one, pulled in with the book on
 // it at its own width, tapped open and shut, and a mark landing in it showing its snip; the cover's edge let go
-// anywhere staying there, with HQ at a phone's width beside it, and never closing the book; the table's quiet
-// checkerboard where the book moves off it; the book opening straight onto its page, HQ's page fading into its room; on
+// anywhere staying there, with HQ at a phone's width beside it, and never closing the book; the table where the book
+// moves off it in HQ's own ground; the book opening straight onto its page, HQ's page fading into its room; on
 // a phone the book over HQ, its tab in reach; a page turned forward and back by one turn played either way. Each
 // asserts what the board sees: boxes, frames, words. (the hardcover's tab and edge)
 import assert from 'node:assert/strict';
+import { MINI, pixelsIn } from './bookkit.mjs';
 
-const MINI = { width: 1133, height: 744 };
 // (longer than a flick's reading of the last moves, booklayout.js: let go where it is)
 const HOLD_MS = 200;
 
@@ -21,7 +21,7 @@ export function bodyStories(c) {
       landing(browser, c),
     "the book's body: the cover's edge let go stays there, HQ a phone's width beside it; it never closes the book":
       browser => letGo(browser, c),
-    "the book's body: the table where the book moves off it is a classic checkerboard, not a flat fill": browser =>
+    "the book's body: the table where the book moves off it is HQ's own ground, the screen's whole height": browser =>
       table(browser, c),
     "the book's body: the book opens straight onto its page, no cover, and HQ fades into its room as it lands":
       browser => opening(browser, c),
@@ -150,11 +150,11 @@ async function table(browser, c) {
     await page.mouse.down();
     await page.mouse.move(x + 160, y, { steps: 12 });
     await page.waitForTimeout(HOLD_MS);
-    // mid-drag, between HQ's page and the book: two tones that alternate, not one flat fill
-    const tones = await lightsIn(page, { x: hq + 20, y: 200, width: 100, height: 200 });
+    // mid-drag, between HQ's page and the book, top to bottom: HQ's ground, one flat fill (the board's call 160:
+    const tones = await lightsIn(page, { x: hq + 20, y: 0, width: 100, height: MINI.height });
     await c.shot('book-body-table', page);
     await page.mouse.up();
-    assert.ok(tones.size >= 2 && tones.spread <= 40, `the table's tones: ${JSON.stringify(tones)}`);
+    assert.equal(tones.size, 1, `the table's tones: ${JSON.stringify(tones)}`);
     noErrors(errors);
   } finally {
     await done();
@@ -323,22 +323,8 @@ async function putAway(page, c) {
 }
 // The lightnesses (0-255, rounded to 2) in a box on the screen: how many there are, and how far apart
 async function lightsIn(page, clip) {
-  const png = await page.screenshot({ clip });
-  return page.evaluate(
-    async src => {
-      const img = new Image();
-      img.src = src;
-      await img.decode();
-      const cv = Object.assign(document.createElement('canvas'), { width: img.width, height: img.height }),
-        g = cv.getContext('2d');
-      g.drawImage(img, 0, 0);
-      const { data } = g.getImageData(0, 0, cv.width, cv.height),
-        seen = new Set();
-      for (let i = 0; i < data.length; i += 4) seen.add(Math.round((data[i] + data[i + 1] + data[i + 2]) / 6) * 2);
-      return { size: seen.size, spread: Math.max(...seen) - Math.min(...seen) };
-    },
-    `data:image/png;base64,${png.toString('base64')}`,
-  );
+  const seen = new Set((await pixelsIn(page, clip)).map(([r, g, b]) => Math.round((r + g + b) / 6) * 2));
+  return { size: seen.size, spread: Math.max(...seen) - Math.min(...seen) };
 }
 const noErrors = errors => assert.deepEqual(errors, []);
 // A snip: a small picture of HQ with a ring of red ink on it

@@ -35,7 +35,7 @@ from urllib.request import Request, urlopen
 from aloud import DAYS, aloud, number, respelt
 from drawing import ASK_WORDS, INK_SECONDS, INK_WORDS, Drawing, note_said, notes_lost, one_line, verdict_said
 from driving import DRIVE_WORDS, OPEN_WORDS, Driving
-from callnotes import SCRAP_WORDS, TITLE_WORDS_SAID, CallNotes
+from callnotes import CHANGE_WORDS, MARK_WORDS, PAGE_WORDS, SCRAP_WORDS, TITLE_WORDS_SAID, CallNotes
 from echo import Echo
 from endpoint import Endpoint
 from guard import PARTNER, TOOLS, agent_env, hq_tools_work, sign_in_pipe, take_token
@@ -436,9 +436,10 @@ async def serve_screens(path):
 
 # Each tool's ask on the line's socket, by the key it carries (the screen tool's has none of these), and the tool's words
 # (ask_to_see and draw; open_work and drive)
-# (scrap and title_page: the call's notes page)
+# (scrap and title_page: the call's notes page; read_page, mark_page and change_page: the agent working it)
 ASKED_WORDS = {'sketch': SKETCH_WORDS, 'ask_to_see': ASK_WORDS, 'draw': INK_WORDS, 'open_work': OPEN_WORDS, 'drive': DRIVE_WORDS,
-               'scrap': SCRAP_WORDS, 'title_page': TITLE_WORDS_SAID}
+               'scrap': SCRAP_WORDS, 'title_page': TITLE_WORDS_SAID, 'read_page': PAGE_WORDS, 'mark_page': MARK_WORDS,
+               'change_page': CHANGE_WORDS}
 
 
 async def screen_asked(reader, writer):
@@ -450,7 +451,8 @@ async def screen_asked(reader, writer):
         tool = call and {'screen': call.screen_tool, 'sketch': call.sketch_tool, 'ask_to_see': call.drawing.ask_tool,
                          'draw': call.drawing.ink_tool, 'open_work': call.driving.open_tool,
                          'drive': call.driving.drive_tool, 'scrap': call.page.scrap_tool,
-                         'title_page': call.page.title_tool}[kind]
+                         'title_page': call.page.title_tool, 'read_page': call.page.page_tool,
+                         'mark_page': call.page.mark_tool, 'change_page': call.page.change_tool}[kind]
         answer = await tool(asked) if tool else {'error': ASKED_WORDS.get(kind, SCREEN_WORDS)['gone']}
     except Exception as err:  # (the coordinator failed, or a request of another shape: the agent hears so)
         print(f'{kind} tool: {err!r}', flush=True)
@@ -1159,6 +1161,9 @@ class Call:
         self.pictures = []    # pictures the board shared that haven't gone to the agent yet, in the order it shared them
         self.known = set()    # the number of every picture HQ sent: HQ sends one again until it hears back (show)
         self.news = {}        # each note's verdict line the agent has heard (noted)
+        # The board's notes the agent has had in a turn not yet done (HQ's ids): HQ takes their ink off the board's screen
+        # once one is (scribbled).
+        self.scribbles = []
         self.picture_bytes = 0  # what the session has seen and what waits for it, as base64 (SESSION_BYTES)
         # the pictures the session has seen (shared ones and notes), by their numbers: a compacted session is sent them
         # again (compact), a restarted one has none of them
@@ -1332,7 +1337,16 @@ class Call:
         self.keep()
         if not stop.is_set():
             await self.send_event({'type': 'state', 'state': 'listening'})
+            await self.scribbled()
         return not stop.is_set()
+
+    async def scribbled(self):
+        """The agent's turn is done, not talked over: the board's notes it had go from the board's screen (HQ's
+        callnotes.js), so it circles afresh. Nothing of them is in the notebook unless the agent made a scrap of one
+        (the board, call 161). A turn the board talked over keeps them for the next."""
+        done, self.scribbles = self.scribbles, []
+        for note_id in done:
+            await self.tell_note(note_id, 'done')
 
     def open(self, greeting, at=None):
         """A call out: the other side has picked up and said its first words (greeting), or nothing for a while: the
@@ -1788,7 +1802,8 @@ class Call:
         self.known.add(('note', note_id))
         if len(self.pictures) >= PICTURES:
             return await self.tell_note(note_id, 'failed', 'too many')
-        entry = {'id': None, 'note': None, 'type': None, 'data': None}  # (no note: still on its way)
+        # (no note: still on its way. ink: HQ's id, for its ink to go once the agent's turn on it is done.)
+        entry = {'id': None, 'note': None, 'type': None, 'data': None, 'ink': note_id}
         self.pictures.append(entry)
         try:
             fetched = await asyncio.to_thread(fetch_note, self.wiring.hq, note_id, self.brain.call)
@@ -1871,6 +1886,9 @@ class Call:
         this request). HQ hears it once for each."""
         shown, self.unsent = [*self.unsent, *shown], []
         for picture in shown:
+            # (a note's ink, for HQ to take off once the turn is done: scribbled.)
+            if 'ink' in picture and picture['id'] not in self.held and picture['ink'] not in self.scribbles:
+                self.scribbles.append(picture['ink'])
             if picture['id'] not in self.held and picture['data']:  # (a note's picture too, which HQ hears nothing of)
                 self.held[picture['id']] = picture
                 if 'note' not in picture:
@@ -2032,8 +2050,9 @@ class Call:
 
     async def sketch_tool(self, asked):
         """The agent's sketch tool (hq_tools.py, through the line's socket): one of the board's sketches by its number
-        or the words of its label, from the coordinator's sketch route, its picture counted against the call's bytes.
-        Refused on a call out (its partner's words could steer a look-up: house rule 9) and past the budget."""
+        or the words of its label, from the coordinator's sketch route, its pictures (a long page's pieces down it)
+        counted against the call's bytes. Refused on a call out (its partner's words could steer a look-up: house rule
+        9) and past the budget."""
         if self.callout or not self.brain.call or not isinstance(asked.get('sketch'), str):
             return {'error': SKETCH_WORDS['none']}
         try:
@@ -2042,14 +2061,17 @@ class Call:
             if err.code not in (400, 404, 409):
                 raise
             return {'error': refusal(err) or "That sketch couldn't be found."}
-        if not (picture := picture_as(got.get('picture'), 'image/png')):
+        # (a long sketch's pieces down it)
+        pictures = [picture_as(picture, 'image/png') for picture in got.get('pictures') or [None]]
+        if not all(pictures):
             raise ValueError('the coordinator sent no PNG of the sketch')
-        if self.picture_bytes + len(picture['data']) > self.limits.session_bytes:
-            self.screen['refused'] = len(picture['data'])
+        size = sum(len(picture['data']) for picture in pictures)
+        if self.picture_bytes + size > self.limits.session_bytes:
+            self.screen['refused'] = size
             return {'error': SKETCH_WORDS['full']}
-        self.screen['bytes'] += len(picture['data'])
-        self.picture_bytes += len(picture['data'])
-        return {'picture': picture, 'line': ' '.join(str(got.get('line') or '').split())}
+        self.screen['bytes'] += size
+        self.picture_bytes += size
+        return {'pictures': pictures, 'line': ' '.join(str(got.get('line') or '').split())}
 
     async def cut_in(self, over):
         """The board talks over a reply (since over['since']), and it's clear it's them: stop it. If they started

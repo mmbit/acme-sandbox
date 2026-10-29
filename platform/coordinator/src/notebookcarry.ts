@@ -19,7 +19,7 @@ import { renumber, sheetRow, type Note } from './ink/booknotes.ts';
 import { unlink } from './ink/booklinks.ts';
 import { linesOf } from './ink/bookwriting.ts';
 import { DIR, type Scrap } from './pagescraps.ts';
-import { boxOf } from './notebookparts.ts';
+import { boxOf } from '../../hq/shell/ink/notebookstack.js';
 import { pictureSize } from '../../../shared/pictures/size.ts';
 
 // Where carried notes stand: a column this far right of what was drawn, this wide, this far apart

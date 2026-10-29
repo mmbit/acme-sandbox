@@ -1,10 +1,10 @@
 /* The tool strip down the page's right, beside the islands' stack (bookstrip.js): its island, the tool in use named
-   beside it, a slide along it, and the cog's preferences. Its width counts in the stack's, --bk-stack (bookui.js), for
-   what keeps clear of them. */
+   beside it, a slide along it, and the cog's preferences. It stands left of the stack (--bk-islands), and its width
+   counts in the controls', --bk-controls-width (bookui.js), for what keeps clear of them. */
 #book .bk-strip {
   position: absolute;
   top: calc(12px + var(--sat, 0px));
-  right: calc(12px + var(--bk-islands, 44px) + 8px);
+  right: calc(12px + var(--bk-islands, 52px) + 8px);
   bottom: max(12px, env(safe-area-inset-bottom));
   display: flex;
   flex-direction: column;
@@ -68,13 +68,17 @@
   color: var(--bk-ink);
 }
 
-/* ---- the cog's preferences: a card on the paper beside the strip */
+/* ---- the cog's preferences: a card on the paper beside the strip (bookui.js besideStrip sets its top), scrolling on a
+   screen shorter than it */
 #book .bk-prefs {
   position: absolute;
   right: calc(100% + 8px);
-  bottom: 0;
+  top: 0;
   width: max-content;
   max-width: min(320px, 70vw);
+  max-height: 100%;
+  overflow-y: auto;
+  pointer-events: auto;
   padding: 10px 14px 12px;
   display: flex;
   flex-direction: column;
@@ -117,10 +121,11 @@
     min-height: 44px;
   }
 }
-/* a narrow book (book.css's): the pages' row has the foot to itself, and the strip stands above it, as the stack does. */
-@container bk-rail (max-width: 600px) {
+/* a narrow book (a phone's): the pages' row has the foot to itself, and the strip stands above it, as the stack does
+   (book.css) */
+@container bk-rail (max-width: 460px) {
   #book .bk-strip {
-    bottom: calc(max(12px, env(safe-area-inset-bottom)) + 100px);
+    bottom: calc(max(12px, env(safe-area-inset-bottom)) + 64px);
   }
 }
 @media (prefers-reduced-motion: reduce) {

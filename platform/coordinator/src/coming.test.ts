@@ -20,6 +20,9 @@ const files: Record<string, string> = {
   // wrapped over two lines, as long comments are
   'infra/report.sh': `# the report (company${': job'} #14, not\n# upstream yet)\n`,
   'shared/craft/c.md': `${mark(15, ', kept here')}\n`,
+  // several jobs' marks: 'and', commas, both, wrapped
+  'platform/hq/d.js': `// company${': jobs'} #19 and #12, not upstream yet\n// (company${': jobs'} #23, #24 and\n// #25, not upstream yet)\n`,
+  'shared/e.ts': `// company${': jobs'} #26, #27, kept here\n`,
   'products/shop/app.ts': `// ${mark(16)}\n`,
   'company/notes.md': `${mark(17)}\n`,
 };
@@ -58,11 +61,15 @@ test('marked changes on main and open pull requests, foundation files only', asy
   assert.deepEqual(
     list.marked.map(c => [c.job, c.files]),
     [
-      [12, ['platform/coordinator/src/a.ts', 'platform/hq/b.js']],
+      [12, ['platform/coordinator/src/a.ts', 'platform/hq/b.js', 'platform/hq/d.js']],
       [14, ['infra/report.sh', 'platform/coordinator/src/a.ts']],
       [18, ['platform/hq/b.js']],
+      [19, ['platform/hq/d.js']],
+      [23, ['platform/hq/d.js']],
+      [24, ['platform/hq/d.js']],
+      [25, ['platform/hq/d.js']],
     ],
-    "by job, wrapped markers too; one kept here isn't coming, nor anything outside the foundation",
+    "by job, wrapped markers and several jobs' too; one kept here isn't coming, nor anything outside the foundation",
   );
   assert.equal(list.marked[0].title, 'Overrun pings ring against the latest size', "the title's first line");
   assert.equal(list.marked[1].title.length, 120, 'a long title cut');
@@ -77,10 +84,10 @@ test('marked changes on main and open pull requests, foundation files only', asy
   assert.deepEqual(list.open[0].files, ['infra/sync.sh', 'platform/coordinator/src/server.ts']);
 
   const text = section(list);
-  assert.match(text, /^marked on main, not carried back yet: 3$/m);
+  assert.match(text, /^marked on main, not carried back yet: 7$/m);
   assert.match(
     text,
-    /^#12 · platform\/coordinator\/src\/a\.ts, platform\/hq\/b\.js · Overrun pings ring against the latest size$/m,
+    /^#12 · platform\/coordinator\/src\/a\.ts, platform\/hq\/b\.js, platform\/hq\/d\.js · Overrun pings ring against the latest size$/m,
   );
   assert.match(text, /^in open pull requests: 2$/m);
   assert.match(

@@ -107,7 +107,7 @@ function split(tasks: { id: number; run: [number, number]; again?: [number, numb
   const ids = JSON.stringify(tasks.map(t => t.id));
   const rows = h.db
     .prepare(
-      `select id, kind, agent, pr, round, created, after, thread, coalesce(branch, 'job/' || id) branch,
+      `select id, kind, agent, engine, pr, round, created, after, thread, coalesce(branch, 'job/' || id) branch,
       coalesce(seq, id) seq, finished from jobs where id in (select value from json_each(?)) order by id`,
     )
     .all(ids) as any[];
@@ -120,10 +120,12 @@ function split(tasks: { id: number; run: [number, number]; again?: [number, numb
     ]),
   );
   const group = { key: jobs[0].thread, prs: [pr], tasks: jobs, work: jobs, reviews: [] };
-  const { waiting_split, side_by_side } = waitingSplit([group], runs, new Map([[pr.branch, [pr]]]));
+  const { waiting_split, line_split, side_by_side } = waitingSplit([group], runs, new Map([[pr.branch, [pr]]]));
   const parts = Object.entries(waiting_split).filter(([, p]) => p.minutes);
+  const inLine = Object.entries(line_split.line).filter(([, p]) => p.minutes);
   return {
     parts: Object.fromEntries(parts.map(([k, p]) => [k, p.minutes])),
+    inLine: Object.fromEntries(inLine.map(([k, p]) => [k, p.minutes])),
     held: side_by_side.held.count,
     heldFor: side_by_side.held.total,
   };
@@ -276,4 +278,59 @@ test('a task that started first stays ahead of one before it in its thread when 
   ]);
   assert.deepEqual(parts, { line: 50, other: 30 });
   assert.deepEqual([held, heldFor], [1, 20], 'only A was held, behind B');
+});
+
+test("the line splits by what stood in the way: a minute with every seat drained is the seats', not the memory's", async () => {
+  const { seatReported, roomReported } = await import('./startholds.ts');
+  // the seat drains from minute 0 to 60, the worker is short of memory from 30 to 80, the task starts at 90
+  const seat = (state: string, minute: number) => {
+    h.db
+      .prepare(
+        "insert into seats (id, engine, state) values ('drain-1', 'claude', ?) on conflict(id) do update set state = ?",
+      )
+      .run(state, state);
+    seatReported('drain-1', X + minute * MIN);
+  };
+  seat('draining', 0);
+  seat('draining', 1);
+  roomReported(true, X + 30 * MIN, X + 31 * MIN);
+  roomReported(true, X + 25 * MIN, X + 32 * MIN);
+  seat('ready', 60);
+  roomReported(false, undefined, X + 80 * MIN);
+  const spells = h.db.prepare("select state, began, ended from seat_spells where seat = 'drain-1' order by id").all();
+  assert.deepEqual(
+    spells.map(s => ({ ...s })),
+    [
+      { state: 'draining', began: X, ended: X + 60 * MIN },
+      { state: 'ready', began: X + 60 * MIN, ended: null },
+    ],
+    'a spell a state, not a report',
+  );
+  assert.deepEqual(
+    h.db
+      .prepare('select began, ended from room_spells')
+      .all()
+      .map(s => ({ ...s })),
+    [{ began: X + 30 * MIN, ended: X + 80 * MIN }],
+    "a short spell from the worker's since",
+  );
+  const id = h.pastJob({
+    agent: 'kit',
+    thread: 'hq/drained',
+    created: X,
+    run: { started: X + 90 * MIN, ended: X + 100 * MIN },
+  });
+  const { parts, inLine } = split([{ id, run: [90, 100] }]);
+  assert.deepEqual(parts, { line: 90, other: 20 });
+  assert.deepEqual(inLine, { seats: 60, memory: 20, slots: 10 });
+  // a job of another engine had no seat at all; one queued before the records began is unrecorded
+  const codex = h.pastJob({
+    agent: 'kit',
+    engine: 'codex',
+    thread: 'hq/codex',
+    created: X - 30 * MIN,
+    run: { started: X + 90 * MIN, ended: X + 100 * MIN },
+  });
+  assert.deepEqual(split([{ id: codex, run: [90, 100] }]).inLine, { unrecorded: 30, seats: 90 });
+  h.db.exec('delete from seat_spells; delete from room_spells');
 });

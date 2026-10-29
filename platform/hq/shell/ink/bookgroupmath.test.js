@@ -1,7 +1,8 @@
 // node --test platform/hq/shell/ink/bookgroupmath.test.js   (a Notebook page's groups as numbers; no DOM)
+// (a group's box is checked in notebookstack.test.js)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { boxOf, changesOf, emptyParts, gap, keyOf, NEAR, scratched, sortNew } from './bookgroupmath.js';
+import { changesOf, emptyParts, gap, keyOf, NEAR, scratched, sortNew } from './bookgroupmath.js';
 
 const line = (x0, y0, x1, y1) => ({
   size: 2,
@@ -12,10 +13,7 @@ const line = (x0, y0, x1, y1) => ({
 });
 const ink = el => ({ kind: 'ink', el });
 
-test('a group box holds its lines, boxes and pictures', () => {
-  assert.equal(boxOf(emptyParts()), null);
-  const b = boxOf({ ink: [line(10, 10, 50, 20)], texts: [{ x: 0, y: 40, w: 30, text: 'a\nb' }], pictures: [] });
-  assert.deepEqual(b, { x: 0, y: 9, w: 51, h: 79 });
+test('two boxes are as far apart as the gap between their edges', () => {
   assert.equal(gap({ x: 0, y: 0, w: 10, h: 10 }, { x: 13, y: 14, w: 5, h: 5 }), 5);
 });
 

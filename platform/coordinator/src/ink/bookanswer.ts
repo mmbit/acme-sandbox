@@ -17,19 +17,19 @@ import { onQuickRun, quickRun } from '../quickruns.ts';
 import { keepFile } from '../uploads.ts';
 import * as asking from '../../../hq/shell/questions.js';
 import { BOARD } from './book.ts';
-import { note, sheetRow, shown, type Note } from './booknotes.ts';
+import { note, shown, type Note } from './booknotes.ts';
 import { keep } from './booksheets.ts';
 import { SLIP_MAX, addSlip, slipOf, slipRow, type More, type Slip } from './bookslips.ts';
 import { type Contents, type Spot } from './answerspot.ts';
 import { placeFor, QUICK_WORDS } from './answerplace.ts';
-import { onCall, tryHolds } from './booktry.ts';
+import { onCall, rootOn, tryHolds } from './booktry.ts';
 import { pick } from './bookpick.ts';
 import { partsOfAnswer } from './answerparts.ts';
 import { isRefused, type Refused } from '../pagechecks.ts';
 import { DIR } from '../pagescraps.ts';
 import { changed, pageRow, triesPageOfNote } from '../notebook.ts';
-import { groupOfNote, groupOn, partsOf, rootOf, row, type Group } from '../notebookgroups.ts';
-import { boxOf } from '../notebookparts.ts';
+import { groupOfNote, groupOn, partsOf, rootOf, type Group } from '../notebookgroups.ts';
+import { boxOf } from '../../../hq/shell/ink/notebookstack.js';
 import { anchorOf, replyNote } from '../notebooksend.ts';
 
 export type Target = { grp?: number; note?: number };
@@ -44,23 +44,21 @@ if (lacks('book_notes', 'reason')) db.exec('alter table book_notes add column re
 const heardOnCall = (t: Target) => void import('./callanswer.ts').then(m => m.heardOnCall(t));
 
 // ---------------------------------------------------------------- the quick run
-// The owner's quick run for a verdict 'answer' (ownerOf). Not on a call: there the call's agent answers itself
-// (booktry.ts onCall).
+// The owner's quick run for a verdict 'answer' (booktry.ts rootOn: who answers). Not on a call: there the call's agent
+// answers itself (booktry.ts onCall).
 const PURPOSE = 'ink-answer';
 export function answerNow(t: Target, verdict: { id: number; why: string }) {
   if (onCall(t) !== null) {
     heardOnCall(t); // (the call's agent hears it calls for an answer: it writes it itself)
     return null;
   }
-  const agent = ownerOf(t);
-  if (agent === null) return null;
+  const root = rootOn(t);
+  if (root === null) return null;
   forgetReason(t);
-  if (t.grp !== undefined) {
-    const g = row(t.grp)!,
-      top = rootOf(g),
-      p = pageRow(top.page, null)!;
+  if (root.kind === 'group') {
+    const { target: g, root: top, page: p } = root;
     const spot = placeFor(top, { text: QUICK_WORDS }, null, null);
-    const job = quickRun(agent, 'A note in the board’s notebook', groupBrief(g, top, p.id, verdict.why), PURPOSE);
+    const job = quickRun(root.owner, 'A note in the board’s notebook', groupBrief(g, top, p.id, verdict.why), PURPOSE);
     movedOn(top);
     db.prepare('update notebook_groups set asked = ?, asked_spot = ? where id = ?').run(
       job,
@@ -70,24 +68,12 @@ export function answerNow(t: Target, verdict: { id: number; why: string }) {
     changed(p.notebook, p.id);
     return job;
   }
-  const n = note(t.note!)!,
+  const n = root.target,
     kept = keep(n, null);
-  const job = quickRun(agent, 'A note in the board’s book', noteBrief(kept.id, kept.text, verdict.why), PURPOSE);
+  const job = quickRun(root.owner, 'A note in the board’s book', noteBrief(kept.id, kept.text, verdict.why), PURPOSE);
   feedback.fromBook(kept.from, job);
   db.prepare('update book_notes set asked = ? where id = ?').run(job, n.id);
   return job;
-}
-// Who answers a target: a group's scrap's owner, else its page's, else the CEO; a note's sheet's owner, else the CEO
-// (null: the group deleted or the note gone)
-function ownerOf(t: Target) {
-  if (t.grp !== undefined) {
-    const g = row(t.grp),
-      top = g && rootOf(g),
-      p = top && pageRow(top.page, null);
-    return g && top && p && g.deleted === null ? (top.owner ?? p.owner ?? ceo()) : null;
-  }
-  const n = t.note === undefined ? undefined : note(t.note);
-  return n ? (sheetRow(n.sheet, null)?.owner ?? ceo()) : null;
 }
 const ANSWER_FIRST = `Answer it now: your final message is the answer, exactly as the board reads it, written in beside \
 its note. Plain words, the answer first, about 60 words. If it needs work rather than an answer, say what you'd do: the \
@@ -120,10 +106,11 @@ onQuickRun(PURPOSE, {
   // (the notebook's open pages read again: a face waiting for its turn becomes the owner writing, bookslips.ts waitingOf)
   started: job => publish({ type: 'book', agent: job.agent, text: 'notebook' }),
   // Its final message is the answer, unless it clipped one itself (a run that ended without one says why where it asked:
-  // bookslips.ts waitingOf)
+  // bookslips.ts waitingOf), or its group was deleted (kept for Undo, nothing answers on it: notebookgroups.ts groupOn)
   heard: (job, status, result) => {
     const answered = !!db.prepare('select 1 from book_slips where job = ?').get(job);
-    const g = db.prepare('select * from notebook_groups where asked = ?').get(job) as Group | undefined;
+    const g = db.prepare('select * from notebook_groups where asked = ? and deleted is null').get(job) as
+      Group | undefined;
     const n = g ? undefined : (db.prepare('select * from book_notes where asked = ?').get(job) as Note | undefined);
     if (status === 'done' && result && !answered && (g || n))
       return void clipText(g ? { grp: g.id } : { note: n!.id }, jobAgent(job) ?? ceo(), result.slice(0, SLIP_MAX), job);
@@ -144,8 +131,8 @@ export const NO_ANSWER = {
 // One reason a target: a later one rewrites the slip shown (reasonAt), and the next ask or answer takes its place
 // (forgetReason). The slip's id, or null when the note is gone.
 export function noAnswer(t: Target, why: keyof typeof NO_ANSWER) {
-  const by = ownerOf(t);
-  if (by === null) return null;
+  const by = rootOn(t)?.owner;
+  if (by === undefined) return null;
   const at = reasonAt(t);
   if (at.reason === null) {
     const id = clipText(t, by, NO_ANSWER[why]);
@@ -264,16 +251,16 @@ export function answer(b: any, me: Reader) {
     return { slip: slipOf(db.prepare('select * from book_slips where id = ?').get(slip.id) as Slip) };
   });
 }
-// Whose the answer is: a group's quick run's or try run's, a note's holder's or its quick run's
+// Whose the answer is: a group's quick run's or try run's (not a deleted group's), a note's holder's or its quick run's
 function targetOf(b: any, me: Reader): { group?: Group; note?: Note; held?: boolean } | Refused {
   if (b?.grp !== undefined) {
-    const g = row(Number(b.grp));
+    const g = groupOn({ grp: Number(b.grp) });
     const thread =
       g &&
       (db.prepare('select asked from notebook_groups where id = ? or parent = ?').all(rootOf(g).id, rootOf(g).id) as {
         asked: number | null;
       }[]);
-    if (!g || g.deleted !== null || !(thread!.some(x => x.asked === me.id) || tryHolds(g.id, me.id)))
+    if (!g || !(thread!.some(x => x.asked === me.id) || tryHolds(g.id, me.id)))
       return [404, `group g${b.grp} isn't one you were asked to answer`];
     return { group: g };
   }
@@ -287,10 +274,13 @@ function targetOf(b: any, me: Reader): { group?: Group; note?: Note; held?: bool
 }
 // ---------------------------------------------------------------- the board's side
 // POST /api/notebooks/answers/form { id, answers }: the board's answers to an answer's form, kept and gone to the agent
-// as a reply (a note on a sheet of its own, as groups/reply's)
+// as a reply (a note on a sheet of its own, as groups/reply's). None on a deleted group (kept for Undo: answered once
+// it's back).
 export function answerForm(b: any, who = BOARD) {
   const slip = slipRow(Number(b?.id), who);
   if (!slip?.form) return 404;
+  const g = groupOn(slip);
+  if (slip.grp !== null && !g) return 404;
   if (slip.form_answer) return [409, 'this form has been answered'] as Refused;
   const form = JSON.parse(slip.form) as { title: string }[];
   if (!Array.isArray(b.answers) || b.answers.length !== form.length)
@@ -298,7 +288,6 @@ export function answerForm(b: any, who = BOARD) {
   const answers = form.map((q, k) => asking.given(q, b.answers[k]));
   const wrong = answers.findIndex(a => a === null);
   if (wrong >= 0) return [400, `question ${wrong + 1}: that answer doesn't fit it`] as Refused;
-  const g = groupOn(slip);
   const top = g && rootOf(g),
     p = top && pageRow(top.page, who);
   inOneStep(() => {
@@ -316,11 +305,11 @@ export function tickAnswer(b: any, who = BOARD) {
   const slip = slipRow(Number(b?.id), who);
   if (!slip) return 404;
   if (typeof b.ticked !== 'boolean') return [400, 'ticked is true or false'] as Refused;
-  const at = b.ticked ? new Date().toISOString() : null;
-  if (slip.style === 'version' && at) pick(slip);
+  const when = b.ticked ? new Date().toISOString() : null;
+  if (slip.style === 'version' && when) pick(slip);
   else
     db.prepare(`update book_slips set ${slip.style === 'version' ? 'picked' : 'ticked'} = ? where id = ?`).run(
-      at,
+      when,
       slip.id,
     );
   if (slip.note !== null && slip.style !== 'version') {
@@ -340,7 +329,7 @@ export function tickAnswer(b: any, who = BOARD) {
   };
 }
 // GET /api/notebooks/open: what waits on the board: answers with a form not answered yet, and the agents' questions
-// with no reply or tick yet, oldest first
+// with no reply or tick yet, oldest first; none on a deleted group (kept for Undo: back with it)
 export function openList(who = BOARD) {
   const rows = db
     .prepare(
@@ -351,7 +340,7 @@ export function openList(who = BOARD) {
       order by s.id`,
     )
     .all() as Slip[];
-  const items = rows.filter(s => slipRow(s.id, who)).map(s => itemOf(s, who));
+  const items = rows.filter(s => slipRow(s.id, who) && (s.grp === null || groupOn(s))).map(s => itemOf(s, who));
   return {
     forms: items.filter(i => i.form).map(({ form: _form, ...i }) => i),
     questions: items.filter(i => !i.form).map(({ form: _form, ...i }) => i),

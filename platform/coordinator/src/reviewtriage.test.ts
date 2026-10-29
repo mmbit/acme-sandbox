@@ -88,6 +88,50 @@ async function blocked(pr: number, note = false, finder = 'rook', agent = 'bolt'
   return { head, finding: finding.id };
 }
 
+test("a deliverable's reviewers and ruling receive its tasks, including a later task after the ruled commit", async () => {
+  const projects = await import('./projects.ts');
+  const thread = projects.createThread({
+    project: 'office',
+    name: 'Notebook controls',
+    slug: 'notebook-controls',
+    goal: 'Arrival animates and the paper plane sends the note',
+  });
+  assert.notEqual(typeof thread, 'string');
+  if (typeof thread === 'string') return;
+  const pr = 1870,
+    branch = `review/${pr}`,
+    firstHead = sha();
+  const first = await h.start({ agent: 'bolt', title: 'Animate arrival', thread: thread.id, branch });
+  await h.finish(first, { pr, branch, files, sha: firstHead });
+  await until(() => pending(pr).some(job => job.stage === 'triage'), 'first triage');
+  await finish(pr, 'triage', selection([reader('rook')]));
+  const reviewer = await h.claim('claude', { seat: 'claude-1' });
+  assert.equal(reviewer?.agent, 'rook');
+  const later = await h.start({ agent: 'bolt', title: 'Send with the paper plane', thread: thread.id, branch });
+  const laterHead = sha();
+  await h.finish(later, { pr, branch, files, sha: laterHead, pushedSince: { sha: firstHead, files } });
+  await h.finish(reviewer!, { output: JSON.stringify({ findings: [] }) });
+  await until(() => pending(pr).some(job => job.stage === 'ruling'), 'first ruling');
+  const ruling = await finish(pr, 'ruling', { decision: 'merge', major_visual: false });
+  await until(() => pending(pr).some(job => job.stage === 'triage'), 'later task triage');
+  await finish(pr, 'triage', selection([]));
+  const next = pending(pr).find(job => job.stage === 'ruling')!;
+  const { prompt: nextPrompt, sha: nextSha } = db.prepare('select prompt, sha from jobs where id = ?').get(next.id) as {
+    prompt: string;
+    sha: string;
+  };
+  for (const prompt of [reviewer!.prompt, ruling.prompt, nextPrompt]) {
+    assert.ok(prompt.includes(thread.goal), 'the done-when reaches each read');
+    assert.ok(prompt.includes(`#${first.id}: Animate arrival`), 'the first task is named');
+    assert.match(prompt, /commits from these tasks are this pull request's work to review/i);
+    assert.match(prompt, /not work to move to another branch or pull request/i);
+  }
+  for (const prompt of [ruling.prompt, nextPrompt])
+    assert.ok(prompt.includes(`#${later.id}: Send with the paper plane`), 'the later task is named');
+  assert.equal(nextSha, laterHead, 'the next ruling reads the later task');
+  assert.equal(h.github.pr(pr).merged, false, 'the earlier ruling cannot merge the later task unread');
+});
+
 test('a running triage corrects unreadable answers against the live roster before it finishes', async () => {
   const pr = 155;
   await push(pr);
@@ -456,9 +500,14 @@ test('a new fix-round blocker without a regression cause decides nothing and an 
   );
   await until(
     () =>
-      (db.prepare("select count(*) n from proposals where brief like '%A naming suggestion%'").get() as { n: number })
-        .n > 0,
-    'the optional first-round note reaches follow-ups without another outcome',
+      (
+        db
+          .prepare(
+            "select count(*) n from jobs where kind = 'work' and title like 'Review follow-ups:%' and prompt like '%A naming suggestion%'",
+          )
+          .get() as { n: number }
+      ).n > 0,
+    'the optional first-round note reaches the follow-up job without another outcome',
   );
 });
 

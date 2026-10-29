@@ -5,7 +5,7 @@ import { harness } from './harness.ts';
 
 const h = await harness('quickruns');
 const { db } = h;
-const { onQuickRun, quickRun, QUICK_RUN_MS } = await import('./quickruns.ts');
+const { onQuickRun, quickRun, QUICK_RUN_MS, QUICK_EFFORT } = await import('./quickruns.ts');
 afterEach(() => h.cancelQueued());
 const PURPOSE = 'a test';
 const heard: { job: number; status: string; result: string }[] = [];
@@ -30,4 +30,13 @@ test('a quick run handed back keeps what was left of its turn when it is claimed
   );
   await h.finish(again, { result: 'It is 16:35 in Amsterdam.' });
   assert.deepEqual(heard.at(-1), { job, status: 'done', result: 'It is 16:35 in Amsterdam.' });
+});
+
+test("a quick run thinks at the quick effort, not its agent's, and the agent's work keeps its own", async () => {
+  const quick = await h.claimJob(quickRun('bolt', 'A question', 'Is this live yet?', PURPOSE));
+  assert.equal(quick.agentInfo.effort, QUICK_EFFORT);
+  assert.equal(QUICK_EFFORT, 'low', 'the board waits for its answer, as it does on a call');
+  const work = await h.claimJob(h.queue({ agent: 'bolt' }));
+  assert.notEqual(work.agentInfo.effort, QUICK_EFFORT, `its work runs at ${work.agentInfo.effort}`);
+  await h.finish(quick, { result: 'Yes.' });
 });

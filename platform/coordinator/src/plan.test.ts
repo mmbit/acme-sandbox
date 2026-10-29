@@ -21,6 +21,7 @@ const plan = await import('./plan.ts');
 const hqMade = await import('./made.ts');
 const proposals = await import('./proposals.ts');
 const forecast = await import('./forecast.ts');
+const pauses = await import('./pauses.ts');
 const file = `${h.repo}/company/projects.yaml`;
 
 beforeEach(() =>
@@ -104,8 +105,9 @@ test('a thread needs others, in any project; a loop is refused at any depth', as
   assert.match(String(plan.need(a, 'game/none', 'wren')), /no deliverable game\/none/);
   assert.match(String(plan.need(s, a, 'wren')), /The shop's plan is moss's .*hq propose --project shop/);
   assert.deepEqual(plan.need(s, a, 'juno'), { ok: true }, 'the CEO changes any plan');
-  assert.deepEqual(plan.unneed(c, b, 'wren'), { ok: true });
-  assert.match(String(plan.unneed(c, b, 'wren')), /doesn't need/);
+  assert.match(String(plan.unneed(c, b, 'wren', ' ')), /say why game\/c can run beside game\/b/);
+  assert.deepEqual(plan.unneed(c, b, 'wren', 'Its own screens'), { ok: true });
+  assert.match(String(plan.unneed(c, b, 'wren', 'Its own screens')), /doesn't need/);
   assert.deepEqual(plan.need(a, c, 'wren'), { ok: true }, 'no loop once c no longer needs b');
   // a thread drawn with its needs
   const wren = await h.start({ agent: 'wren' });
@@ -119,6 +121,83 @@ test('a thread needs others, in any project; a loop is refused at any depth', as
   const board = (await h.board('/api/projects')).body.projects.find((p: { id: string }) => p.id === 'game');
   const boss = board.threads.find((t: { id: string }) => t.id === 'game/boss');
   assert.deepEqual([boss.needs, boss.owner], [[a, c], 'wren']);
+});
+
+test('a deliverable drawn naming no needs chains after the one under way it continues; unneed sets it beside, with why', async () => {
+  const [own, a, idle] = [thread('own'), thread('a'), thread('idle')];
+  const wren = await h.start({ agent: 'wren', title: 'Plan the game', thread: own });
+  task(a, 'Build it');
+  const hqOwn = h.jobs.createJob({ agent: 'bolt', title: "HQ's own", prompt: 'Do it.', queuedBy: 'hq' }).id;
+  hqMade.oneTaskThread('game', { id: hqOwn, title: "HQ's own" });
+  assert.deepEqual([hqMade.oneTask(`game/job-${hqOwn}`), hqMade.oneTask(own)], [true, false]);
+  const drawn = plan.newThread({ project: 'game', name: 'Next', goal: 'It ships' }, { agent: 'wren' }) as any;
+  assert.deepEqual(drawn.needs, [a], "the project's newest under way: one with no open work and HQ's wrapper aside");
+  assert.match(drawn.chain, /^It starts once game\/a is done and merged, one after the other/);
+  const named = plan.newThread({ project: 'game', name: 'Named', goal: 'It works', needs: [idle] }, { agent: 'wren' });
+  assert.deepEqual((named as any).needs, [idle], 'the needs named, and only those');
+  const queued = await h.hq(
+    wren,
+    'job',
+    'bolt',
+    'Polish it',
+    '--deliverable',
+    'new:game',
+    'Polish',
+    'It shines',
+    '--new',
+  );
+  assert.match(
+    queued.out,
+    /In deliverable game\/polish\.\nIt starts once game\/own is done and merged/,
+    "the job's own",
+  );
+  assert.deepEqual(projects.needsOf('game/polish'), [own]);
+  const next = ['job', 'bolt', 'Shine it', '--deliverable', 'new:game', 'Shine', 'It sparkles', '--new'];
+  assert.match(
+    (await h.hq(wren, ...next)).out,
+    /It starts once game\/polish is done and merged/,
+    'after the one the job drew before it, not beside it',
+  );
+  const unneeded = ['plan', 'unneed', 'game/next', a];
+  assert.match((await h.hq(wren, ...unneeded)).out, /^usage: hq plan/);
+  assert.match(
+    (await h.hq(wren, ...unneeded, 'Only the menu screens')).out,
+    /can run beside it now\. Only work that changes other files runs beside it/,
+  );
+  assert.deepEqual(projects.needsOf('game/next'), []);
+  assert.equal((changes().at(-1) as { what?: string }).what, `no longer needs ${a}: Only the menu screens`);
+});
+
+test("deliverables drawn in a row chain one after another, an accept's after its accepter's own; a paused one is named", async () => {
+  const [base, menu] = [thread('base'), thread('menu')];
+  const wren = await h.start({ agent: 'wren', title: 'Plan the game', thread: base });
+  const bolt = await h.start({ agent: 'bolt', title: 'The menu', thread: menu });
+  const draw = async (name: string) => (await h.hq(wren, 'plan', 'deliverable', 'game', name, `${name} is in`)).out;
+  await draw('Extension');
+  await draw('Polish');
+  assert.deepEqual(
+    [projects.needsOf('game/extension'), projects.needsOf('game/polish')],
+    [[base], ['game/extension']],
+    'before either has a task, and with a newer one under way beside them',
+  );
+  try {
+    const proposed = await h.agent('proposals', bolt.token, {
+      title: 'Roll the credits',
+      brief: 'Roll them.',
+      project: 'game',
+    });
+    assert.equal(proposed.status, 200, JSON.stringify(proposed.body));
+    const id = /^#(\d+) Roll the credits /m.exec((await h.hq(wren, 'inbox')).out)![1];
+    const accepted = await h.hq(wren, 'inbox', 'accept', id, '--deliverable', 'new:game', 'Credits', 'They roll');
+    assert.match(accepted.out, /It starts once game\/polish is done and merged/, "the accepter's chain, not game/menu");
+    assert.equal(typeof pauses.pause({ thread: 'game/credits', why: 'Not yet', byHand: true }, 'juno'), 'object');
+    assert.match(
+      await draw('Sequel'),
+      /It starts once game\/polish is done and merged.* game\/credits is paused and was passed over: if this work changes its files, hq plan need game\/sequel game\/credits\./s,
+    );
+  } finally {
+    db.exec('delete from pauses; delete from proposals; delete from planning_jobs');
+  }
 });
 
 test("a thread's tasks in order: moved by the owner, a later task still last; a task dropped", async () => {
@@ -188,12 +267,64 @@ test("a move's loop check reads a failed task's replacements from their links, u
   }
 });
 
+test('an added wait is kept once when the plan already holds a loop elsewhere', () => {
+  const [a, b] = [task(thread('ask'), 'Ask'), task(thread('answer'), 'Answer')];
+  const [p, q] = [task(thread('ping'), 'Ping'), task(thread('pong'), 'Pong')];
+  try {
+    assert.deepEqual(h.jobs.addWait(a, b, 'wren'), { ok: true });
+    h.jobs.dropWait(a, b, 'wren');
+    // a loop HQ kept from before (written past the check): the add's own change is told from it
+    h.jobs.holdForMerge(p, q, 'wren');
+    h.jobs.holdForMerge(q, p, 'wren');
+    assert.deepEqual(h.jobs.addWait(a, b, 'wren'), { ok: true });
+    const added = `#${a} waits for #${b} too now`;
+    assert.equal(changes().filter(c => (c as { what: string }).what === added).length, 2);
+    assert.equal((db.prepare('select count(*) n from waits where job = ?').get(a) as { n: number }).n, 1);
+  } finally {
+    h.jobs.dropWait(a, b, 'wren');
+    h.jobs.dropWait(p, q, 'wren');
+    h.jobs.dropWait(q, p, 'wren');
+  }
+});
+
 test('hq plan lists threads with those they need first', async () => {
   const [late, early] = [thread('late'), thread('early')];
   plan.need(late, early, 'wren');
   const ids = (plan.planOf('game', forecast.current()) as any).threads.map((t: { id: string }) => t.id);
   assert.deepEqual(ids, [early, late]);
   assert.equal(plan.planOf('nowhere', forecast.current()), undefined);
+});
+
+test("hq plan says when a deliverable's review has ruled, so new work goes in the next one", async () => {
+  const id = thread('ruled');
+  const ruled = () =>
+    (plan.planOf('game', forecast.current()) as any).threads.find((t: { id: string }) => t.id === id).ruled;
+  db.prepare('update threads set branch = ? where id = ?').run('thread/ruled', id);
+  db.prepare(
+    "insert into prs (number, branch, author, status, round) values (91, 'thread/ruled', 'bolt', 'open', 2)",
+  ).run();
+  const ruling = () =>
+    h.jobs.createJob({
+      agent: 'quill',
+      title: 'Ruling',
+      prompt: 'Rule.',
+      kind: 'consolidate',
+      stage: 'ruling',
+      pr: 91,
+      round: 2,
+    }).id;
+  try {
+    assert.equal(ruled(), null);
+    db.prepare("update prs set verdict = '{}' where number = 91").run();
+    ruling();
+    assert.equal(ruled(), null, 'a ruling not acted on');
+    db.prepare("insert into finding_rulings (ruling, blocking) values (?, '[]')").run(ruling());
+    assert.deepEqual({ ...ruled() }, { pr: 91, round: 2 });
+    db.prepare("update prs set status = 'merged' where number = 91").run();
+    assert.equal(ruled(), null);
+  } finally {
+    db.exec('delete from prs where number = 91; delete from finding_rulings');
+  }
 });
 
 test("hq plan carries its product's other open projects, none for a project in no product", async () => {
@@ -295,13 +426,13 @@ test("a moved thread keeps what it needs and what needs it, the plan's tools tak
   assert.equal(typeof regroup.moveThread(a, 'shop', 'juno'), 'object');
   assert.deepEqual([projects.needsOf(b), projects.needsOf('shop/a')], [['shop/a'], [c]]);
   assert.match(String(plan.need(c, a, 'wren')), /needs game\/c already .* loop/, 'by its old id');
-  assert.deepEqual(plan.unneed(b, a, 'wren'), { ok: true });
+  assert.deepEqual(plan.unneed(b, a, 'wren', 'Apart'), { ok: true });
   assert.deepEqual(projects.needsOf(b), []);
   const [one, two] = [task(c, 'One'), task(c, 'Two')];
   assert.deepEqual(plan.move(two, 1, 'wren'), { ok: true, order: [two, one] });
   assert.equal(typeof regroup.moveJob(two, b, 'juno'), 'object');
   assert.equal((db.prepare('select seq from jobs where id = ?').get(two) as { seq: number | null }).seq, null);
-  assert.deepEqual(plan.unneed('shop/a', c, 'moss'), { ok: true });
+  assert.deepEqual(plan.unneed('shop/a', c, 'moss', 'Apart'), { ok: true });
   assert.deepEqual(plan.done(a, 'moss'), { ok: true });
   assert.equal(projects.findThread('shop/a')?.status, 'done');
 });

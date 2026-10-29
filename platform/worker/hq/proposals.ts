@@ -65,13 +65,14 @@ export const propose = {
   },
 };
 
+// (accept's --needs, and the drawn deliverable's chain)
 export const inbox = {
   help: `
    hq inbox [<id>] [--all]                           the work proposed to you (hq propose: for the projects you own, and
                                                      for the CEO what no owner has), then what became of your own
                                                      proposals; <id>: one proposal's brief; --all: the CEO's view of
                                                      every open proposal, whoever's it is
-   hq inbox accept <id> --code WORD --size <90m> --why "scope comparison" [--refs <job,job>] [--title "..."] [--for <agent>] [--deliverable <project>/<slug> | --deliverable new:<project> "name" "done when"]
+   hq inbox accept <id> --code WORD --size <90m> --why "scope comparison" [--refs <job,job>] [--title "..."] [--for <agent>] [--deliverable <project>/<slug> | --deliverable new:<project> "name" "done when" [--needs <deliverable>]...]
                                                      its project's owner (or the CEO) queues it as a job with its
                                                      proposer's brief, in a deliverable of their plan: the one named, else the
                                                      one proposed, else the proposer's job's when it's in that project.
@@ -140,7 +141,7 @@ async function accept(given: string[]) {
     );
   if (!INBOX_ID.test(id ?? '') || rest.length)
     stop(
-      'usage: hq inbox accept <id> --code WORD [--title "..."] [--for <agent>] [--deliverable <project>/<slug> | --deliverable new:<project> "name" "done when"]',
+      'usage: hq inbox accept <id> --code WORD [--title "..."] [--for <agent>] [--deliverable <project>/<slug> | --deliverable new:<project> "name" "done when" [--needs <deliverable>]...]',
     );
   const body = {
     ...(values.size && { size: values.size }),
@@ -160,10 +161,12 @@ async function accept(given: string[]) {
     code?: string | null;
     thread?: string | null;
     sorted?: boolean;
+    chain?: string;
   } | null;
   if (!api.isSuccess(answer.status) || !queued?.job) stop(`Not accepted: ${api.errorIn(answer.body, 'no answer')}`);
   print(
     `${queued.sorted ? 'Sorted' : 'Queued'} as job #${queued.job}${queued.code ? ` ${text(queued.code)}` : ''}${queued.thread ? `, in ${text(queued.thread)}` : ''}.`,
+    ...(queued.chain ? [text(queued.chain)] : []),
   );
 }
 

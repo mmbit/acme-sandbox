@@ -64,9 +64,9 @@ their notes is on the board's sheet once it's pinned. Both menus have:
 modules beside it, one concern each: `tool.js` puts them together (the shared state, Escape and Cmd+Z) and no part
 imports it, `acts.js` what a part asks of the parts above it (put the note away, shut the menu...), which tool.js
 hands in as it loads, so the imports form no circle, `dock.js` the pin, `menu.js` its menu, `surface.js` the page
-while it's marked (pen and finger), `mark.js` what a mark keeps, `postit.js` the note's sheet and its polaroid (in the look of a scrap torn from HQ's book, its paper and indigo, on every page),
+while it's marked (pen and finger), `eraser.js` the eraser's reach and icon, which HQ's book shares, `mark.js` what a mark keeps, `postit.js` the note's sheet and its polaroid (in the look of a scrap torn from HQ's book, its paper and indigo, on every page),
 `pictures.js` the pictures added, `dictation.js` the mic (with `micallowed.js`, whether it's allowed, which HQ's own
-recorder shares), `snapshot.js` (with `copy.js`, `flow.js`, `inline.js` and `faces.js`)
+recorder shares; and `hqmic.js`, its part in HQ's viewer, where HQ records), `snapshot.js` (with `copy.js`, `flow.js`, `inline.js` and `faces.js`)
 the screenshot, `trail.js` the trail, `layer.js` the layer over popups, `pencil.js`, `pentouch.js`, `tap.js`, `settle.js`, `lift.js`, `gestures.js`, `marks.js`, `markpage.js`, `markfollow.js` and `written.js` the Pencil on HQ
 and the mark being made (below), `penwords.js`, `penedit.js` and `postitpen.js` words edited with the pen (below),
 `slip.js` the answers on notes, `paper.js` the book's paper, `prefs.js` Ink's preferences on this device, `base.js` what
@@ -114,9 +114,11 @@ alone, so the imports form no circle.
   refuses a pen's touch moves so it never scrolls under the pen, but never on review mode's own controls: on an iPad a
   touch whose move is refused is no tap, and the Pencil's taps on the strip pressed nothing.
 - **The mic button starts the mic**, where the browser records, on a computer and a tablet alike: a mark never does
-  (the board changed its mind on recording at the mark: call 154). In HQ's
-  viewer the page's frame has no microphone, so a tap there asks HQ, which records on its own page and sends the words
-  back as they're heard (HQ's `framemic.js`).
+  (the board changed its mind on recording at the mark: call 154). In HQ's viewer the page's frame has no microphone,
+  so a tap there brings up HQ's own Talk key in the viewer's bar. The page's own script can post the same ask, even
+  from its own tap, so HQ records, on its own page, only from the board's tap on that key, and sends nothing back
+  before it. The words then come back as they're heard, on a line (a MessagePort) the page's ask hands over, so only
+  the page that asked hears them; the next page's hello in the frame ends it (HQ's `framemic.js`).
 - **The words as they're said:** the mic's audio goes as 16 kHz PCM to `/__review/dictate` and each phrase's words come
   back while the reviewer talks (above). The clip is recorded too, and where the line can't be reached (or drops), it's
   transcribed whole by `POST /__review/voice`. Five minutes at most.
@@ -150,8 +152,8 @@ it's the page's width and the book's spread covers it with the page; over a dial
 (`--book-room`); a pen or two fingers on the book are the book's.
 
 - **A mark** is the lines drawn while the pen keeps coming back, and the words typed, or said once its mic button is
-  tapped, go in its note; a pen held still listens at once (a pulse at the pen's tip while it listens; a tap never asks
-  for the mic, house rule 7). **The post-it** comes up at the bottom of HQ's page as on any page (the
+  tapped, go in its note; a pen held still listens where the microphone is already allowed, never in HQ's viewer (a
+  pulse at the pen's tip while it listens; a tap never asks for the mic, house rule 7). **The post-it** comes up at the bottom of HQ's page as on any page (the
   board's pin flow, 27 Oct): the Notebook's dot paper, its polaroid the live screenshot framed on the mark and
   developed again with every line, the words said or typed, **Save** and Cancel. Save (`postit.js` booked, then
   `settle.js` toBook) puts it in the Notebook as a **scrap on the newest page of My Notebook** (`marks.js` scrap:
@@ -167,7 +169,8 @@ it's the page's width and the book's spread covers it with the page; over a dial
   book, or it's let go, the page is clean at once, and its lines live only in the note's snip. The book keeps no lines
   of a note (the coordinator's `booknotes.ts` stores its anchor without them) and nothing reads a page's notes back to
   draw them, so no tab, screen, reload or call can bring one back. A second screen draws the other's mark only while
-  it's open (HQ's `pairink.js`); a call's agent's rings go at the end of its turn (below). `book-check.mjs` asserts it
+  it's open (HQ's `pairink.js`); a call's agent's rings go at the end of its turn, and so do the board's own marks on
+  a call, which are for the agent (below). `book-check.mjs` asserts it
   (`bookink.mjs` `nothingDrawn`).
 - **Wipe, undo:** a scribble over the mark being made lets it go, post-it and all. A two-finger tap or Cmd/Ctrl+Z
   takes back the last thing: a line, the mark let go, or the last note sent to its sheet (gone from the book). A finger
@@ -197,12 +200,15 @@ it's the page's width and the book's spread covers it with the page; over a dial
   the screen it's drawn on as it settles, its ink drifting off that screen, and the other screen's book turns to it
   (`pair.js` tells it the note's page; `pencil:wiped` has it read a wiped note's page again).
 
-**On a call** (`callnotes.js`; HQ's `shell/ink/calldraw.js` tells it through `call:on`, `call:off` and `call:heard`;
+**On a call** (`callnotes.js`; HQ's `shell/ink/calldraw.js` tells it through `call:on`, `call:off`, `call:heard` and `call:had`;
 Ink's folder): a mark goes on the call's page in the book (`kind: 'call'`, made
 at the call's first mark, its notes on a sheet of their own that's never sent: the coordinator's `bookcalls.ts`; the
 book shows them on that page), not on a sheet. No mic of its own: the words the call heard while it was drawn (or while
-the pen was held still, a voice note) are its words; it settles and lifts as every mark does, and HQ's call then sends
-it to the agent. The agent's ring (its `draw` tool) is not the Pencil's and never in the book: `drive.js` draws it
+the pen was held still, a voice note) are its words; it settles as every mark does, and HQ's call then sends it to the
+agent. It's for the agent (the board, call 161): nothing of it goes into the notebook by itself, the agent makes a scrap
+of what it judges worth keeping, and its ink doesn't lift: it stays drawn (`r.held`, following the page) until the line
+says the agent's turn on it is done or that it couldn't take it (`call:had`), then goes, so the board circles afresh;
+the call's end takes what's left. `callink-check.mjs` checks it. The agent's ring (its `draw` tool) is not the Pencil's and never in the book: `drive.js` draws it
 (`ring.js`) where the agent aimed on its picture of the board's screen, in its own ink with its words beside it, over
 the page, following what's under it as the page scrolls and gone with that, at the end of the agent's turn (the board
 speaks again, or the agent starts its next answer), or with the call. A mark's snip

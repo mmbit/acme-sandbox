@@ -4,7 +4,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import * as api from './api.ts';
 import { changeLines, lateLines, missWords, moveWords, threadWords, type Deadline, type Move } from './deadlines.ts';
 import { at } from './estimate.ts';
-import { isReadable, readText, readTextOrStdin } from './files.ts';
+import { isReadable, readGoalAndWords, readText, readTextOrStdin } from './files.ts';
 import { takeItemFlags, takeThread, takeValues, takeWhen } from './flags.ts';
 import { stopped } from './corrections.ts';
 import { minute, present, print, shown, stop, text, warn } from './output.ts';
@@ -31,8 +31,9 @@ export const code = {
 
 export const job = {
   // (the title's step alone; a feature's later piece chained)
+  // (--needs, and the drawn deliverable's chain)
   help: `
-   hq job [--after <job id> | --after request:<id>]... <agent> "title" [file | -] --code WORD [--downtime] [--when <event>]... [--deliverable <project>/<slug> | --deliverable new:<project> "name" "done when"] [--check]
+   hq job [--after <job id> | --after request:<id>]... <agent> "title" [file | -] --code WORD [--downtime] [--when <event>]... [--deliverable <project>/<slug> | --deliverable new:<project> "name" "done when" [--needs <deliverable>]...] [--check]
           [--item <item> | --lands <job>] [--findings <id,id,...>] [--notes <id,id,...>] [--now] [--only <id>]
           [--by <when | project/slug | none>] [--model <lighter model>] --size <90m> [--refs <job,job>] --why "scope comparison"
                                                      first inspect hq estimate for clean past jobs and judge their scope.
@@ -71,12 +72,12 @@ export const job = {
                                                      of its own after the release.
                                                      --deliverable <project>/<slug>
                                                      sends it to another (hq deliverable list), --deliverable
-                                                     new:<project> "name" "done when" draws one for it in the project's
-                                                     plan, as hq plan deliverable does (its owner or the CEO): related
-                                                     work joins the open deliverable it belongs to, and a later piece of
-                                                     a feature is drawn first with hq plan deliverable --needs the one
-                                                     before it, then given its tasks (a queued task can start at once),
-                                                     never drawn to run beside it. --thread,
+                                                     new:<project> "name" "done when" [--needs <deliverable>]... draws
+                                                     one for it in the project's plan, as hq plan deliverable does (its
+                                                     owner or the CEO), chained after the deliverables it needs: those
+                                                     named, else the last one chained from the one under way it most
+                                                     likely continues. Related work joins the open deliverable it
+                                                     belongs to. --thread,
                                                      the old name, still works. With requireThread enabled in
                                                      company/projects.yaml, a job with no deliverable to inherit must
                                                      name one. --check: QA, audits, security and compliance reads, which
@@ -160,8 +161,10 @@ export const job = {
     if (review.notes !== undefined && !/^#?[0-9]+(,#?[0-9]+)*$/.test(review.notes))
       stop('No job was queued: --notes takes the note numbers, comma-separated (hq route lists them)');
     if (!isNew && !process.env.HQ_CALL && review.notes === undefined) await refuseOverlap(agent);
-    // The brief is read from the file, never passed in argv. HQ adds who assigned it.
-    const brief = readTextOrStdin(briefPath).replace(/\s+$/u, '');
+    // The brief is read from the file, never passed in argv. HQ adds who assigned it. On a call it comes on stdin, with the
+    // board's why (--goal -), which a promise it carries on the call's notes page takes
+    const told = flags.goal === undefined ? undefined : goalAndBrief(briefPath);
+    const brief = (told?.words ?? readTextOrStdin(briefPath)).replace(/\s+$/u, '');
     const body = {
       agent,
       title,
@@ -177,6 +180,7 @@ export const job = {
       ...(review.by && { by: review.by }),
       ...(afterRequest !== null && { afterRequest }),
       ...(brief !== '' ? { prompt: brief } : flags.lands === undefined ? { prompt: title } : {}),
+      ...(told && { goal: told.goal }),
       ...(downtime && { downtime: true }),
       ...(thread !== undefined && { thread }),
       ...(newThread !== undefined && { newThread }),
@@ -213,6 +217,12 @@ export const job = {
     }
   },
 };
+
+// --goal -: the brief and the board's why together on stdin (files.ts readGoalAndWords)
+function goalAndBrief(briefPath: string) {
+  if (briefPath !== '-') stop('No job was queued: --goal - takes the brief on stdin with the goal (-)');
+  return readGoalAndWords() ?? stop('No job was queued: --goal - takes {"goal": "...", "words": "..."} on stdin');
+}
 
 // [--after <job id> | --after request:<id>]... <agent> "title" [file | -], checked. The job comes with its first
 // wait on a job (after, null without) and its first on a card (afterRequest); the rest of its waits are `more`.
@@ -268,6 +278,7 @@ function printQueued(
   // (its code after the number, which tools read; none for a step of a task that had none)
   print(`Queued job #${id}${present(queued.code) ? ` ${text(queued.code)}` : ''} for ${agent}: ${title}`);
   if (present(queued.thread)) print(`In deliverable ${text(queued.thread)}.`);
+  if (present(queued.chain)) print(text(queued.chain));
   if (present(queued.lighter))
     print(
       `It runs on ${text(queued.lighter)}, and hands itself up to ${agent}'s own model if it's bigger than it looks.`,

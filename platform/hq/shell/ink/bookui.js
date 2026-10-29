@@ -3,11 +3,12 @@
 // foot, and the overview's own tools (Search). Every part of the book makes its controls here, so they look and answer
 // alike. (the column cut to faces, tools and Undo: job #19861; the faces gone: job #20780)
 import { esc } from '../../util.js';
+import { CONTROLS } from './booklayout.js';
 
 // The islands, top to bottom over the paper's right edge, the tool strip down it beside them (bookstrip.js), the pages'
 // row at its foot, and the overview's tools (in its head, bookzoom.js). Each part appends its controls to its own. (the
-// strip: the board's tools, by Undo's on every device, so the page keeps its width) (the faces gone with the sheets)
-const ISLANDS = ['book'],
+// strip: the board's tools, by Undo's on every device, so the page keeps its width) (the faces gone with the sheets) (Send at the stack's top)
+const ISLANDS = ['send', 'book'],
   STRIP = 'tools',
   FOOT = 'pages',
   OVERVIEW = 'overview';
@@ -38,8 +39,8 @@ export const setPressed = (b, on) => b.setAttribute('aria-pressed', on ? 'true' 
 export const lineIcon = d =>
   `<svg viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${d}</g></svg>`;
 
-// The island named (faces, tools or book in the stack at the right, pages the row at the foot, overview the overview's
-// head): made once, in its place (islands(), which the rail puts over the paper; the overview's own, bookzoom.js). An
+// The island named (send or book in the stack at the right, tools the strip beside it, pages the row at the foot,
+// overview the overview's head): made once, in its place (islands(), which the rail puts over the paper; the overview's own, bookzoom.js). An
 // island with nothing in it doesn't show. (overview)
 let controls;
 const made = new Map();
@@ -73,50 +74,90 @@ export function islands() {
   controls.append(stack, strip, one(FOOT, true));
   one(OVERVIEW, true).classList.add('bk-far-tools');
   // A screen too short for one column even with the faces at their least: a second (bk-two, book.css). The stack's
-  // width, one column or two, goes on the book as --bk-islands, for the strip beside it (bookstrip.css); with the
-  // strip's, as --bk-stack for what lies beside them: the pairing card, the pages' row, answers.
+  // width, one column or two, goes on the book as --bk-islands, for the strip beside it (bookstrip.css). The controls'
+  // width, the stack's and the strip's, goes on it as --bk-controls-width for what lies beside them: the pairing card,
+  // answers; and the width of the ones beside the pages' row as --bk-foot, which
+  // the row keeps clear of.
   const fit = new ResizeObserver(() => {
     const shown = shownIslands();
     if (!shown.length) return;
     const gaps = parseFloat(getComputedStyle(stack).rowGap) * (shown.length - 1);
     stack.classList.toggle('bk-two', shown.reduce((h, el) => h + least(el), gaps) > stack.clientHeight);
+    // (in layout px, never the screen's: the book's parts are turned and scaled while it swings, and nothing resizes as
+    // it comes to rest.)
     const book = stack.closest('#book'),
-      right = stack.getBoundingClientRect().right,
-      own = Math.min(...shown.map(el => el.getBoundingClientRect().left));
+      right = laid(stack).right,
+      own = Math.min(...shown.map(el => laid(el).left));
     book.style.setProperty('--bk-islands', `${Math.round(right - own)}px`);
+    const foot = laid(made.get(FOOT)),
+      besideFoot = controlsLeft([foot.top, foot.bottom], laid) ?? right;
+    if (foot.bottom > foot.top) book.style.setProperty('--bk-foot', `${Math.round(right - besideFoot)}px`);
     // (told when it changes: the answers lie left of it, drawn again.)
-    const width = `${Math.round(right - stackLeft())}px`;
-    if (book.style.getPropertyValue('--bk-stack') === width) return;
-    book.style.setProperty('--bk-stack', width);
-    book.dispatchEvent(new Event('bk:stack'));
+    const width = `${Math.round(right - controlsLeft(null, laid))}px`;
+    if (book.style.getPropertyValue('--bk-controls-width') === width) return;
+    book.style.setProperty('--bk-controls-width', width);
+    book.dispatchEvent(new Event('bk:controls-width'));
   });
-  for (const el of [stack, ...stack.children, made.get(STRIP)]) fit.observe(el);
+  for (const el of [stack, ...stack.children, made.get(STRIP), made.get(FOOT)]) fit.observe(el);
   return controls;
+}
+// A card of the tool strip's (the colours, the preferences) on the paper beside it, level with the strip's island at
+// its top or its foot (end: 'top' | 'bottom') and inside the strip's height. It hangs on the strip, never in the
+// island: a short screen's island scrolls, and its scrolling cuts off whatever sticks out of it. Placed again while
+// it's open whenever the strip resizes (the iPad turning moves the island).
+export function besideStrip(card, end) {
+  const tools = made.get(STRIP),
+    strip = tools.parentElement;
+  strip.append(card);
+  const place = () => {
+    const room = strip.getBoundingClientRect(),
+      seen = tools.getBoundingClientRect(),
+      top = end === 'top' ? seen.top - room.top : seen.bottom - room.top - card.offsetHeight;
+    card.style.top = `${Math.round(Math.max(0, Math.min(top, strip.clientHeight - card.offsetHeight)))}px`;
+  };
+  place();
+  const resized = new ResizeObserver(() => (card.isConnected ? place() : resized.disconnect()));
+  resized.observe(strip);
 }
 // The stack's islands that show: one with nothing in it doesn't
 const shownIslands = () => ISLANDS.map(name => made.get(name)).filter(el => el.offsetWidth);
-// ...and the tool strip's beside them
-const besideEdge = () => [...shownIslands(), made.get(STRIP)].filter(el => el.offsetWidth);
+// The controls over the paper's right edge that show: the stack's islands and the tool strip beside them
+const shownControls = () => [...shownIslands(), made.get(STRIP)].filter(el => el.offsetWidth);
 // An island's height at its least: an island that shrinks (the faces') at its min-height, as it scrolls
 function least(el) {
   const style = getComputedStyle(el);
   return (style.flexShrink !== '0' && parseFloat(style.minHeight)) || el.offsetHeight;
 }
-// The left edge on the screen of the islands' stack, one column or two (a short screen's second goes on to the left),
-// and the tool strip beside it, or null while none shows. rows ([top, bottom] on the screen): only the islands across
-// them.
-export function stackLeft(rows = null) {
-  const shown = besideEdge()
-    .map(el => el.getBoundingClientRect())
+// The x a paper this wide keeps clear left of the controls at its right edge: their width (--bk-controls-width, as the
+// book last measured it on el or an element in it; CONTROLS.width until it has) and CONTROLS.clear from the paper's
+// edge. Answers, versions and scraps fitted to the paper keep left of it.
+export const clearOf = (el, paper) =>
+  paper - (parseFloat(getComputedStyle(el).getPropertyValue('--bk-controls-width')) || CONTROLS.width) - CONTROLS.clear;
+// The left edge on the screen of the controls: the islands' stack, one column or two (a short screen's second goes on
+// to the left), and the tool strip beside it, or null while none shows. rows ([top, bottom] on the screen): only the
+// islands across them. box: where an element is, the screen's by default, or laid's.
+export function controlsLeft(rows = null, box = el => el.getBoundingClientRect()) {
+  const shown = shownControls()
+    .map(box)
     .filter(r => across(r, rows));
   return shown.length ? Math.min(...shown.map(r => r.left)) : null;
 }
+// Where an element is laid out on the page, as if nothing were transformed
+function laid(el) {
+  let left = 0,
+    top = 0;
+  for (let at = el; at; at = at.offsetParent) {
+    left += at.offsetLeft;
+    top += at.offsetTop;
+  }
+  return { left, top, right: left + el.offsetWidth, bottom: top + el.offsetHeight };
+}
 // The part of the page shown that the paper shows clear of the islands over its right edge, the stack and the tool
-// strip (page px); with rows, of those across them only. (the selection's bar keeps to it too, bookselect.js:
+// strip (page px); with rows, of those across them only. The selection's bar keeps to it too (bookselect.js).
 export function clearShown(book, rows = null) {
   const view = book.shown(),
     desk = book.desk.getBoundingClientRect(),
-    right = Math.max(0, desk.right - (stackLeft(rows) ?? desk.right));
+    right = Math.max(0, desk.right - (controlsLeft(rows) ?? desk.right));
   return { ...view, x1: view.x1 - right / (book.scale || 1) };
 }
 const across = (r, rows) => !rows || (r.bottom > rows[0] && r.top < rows[1]);
@@ -170,19 +211,25 @@ function open(el, label, keys) {
     gap = 8,
     row = el.closest('[aria-orientation=horizontal]');
   // in a row (the pages' at the paper's foot), above the whole row, over none of its controls; under it when there's
-  // no room above (the board, 28 Oct)
+  // no room above. Left of the stack and the strip where they reach its height, as the islands' tips are
   if (row) {
     const box = row.getBoundingClientRect(),
-      above = box.top - gap - t.height >= 4;
+      above = box.top - gap - t.height >= 4,
+      top = above ? box.top - gap - t.height : box.bottom + gap,
+      end = Math.min(innerWidth - 4, (controlsLeft([top, top + t.height]) ?? innerWidth) - gap);
     return put(
-      Math.min(innerWidth - 4 - t.width, Math.max(4, r.left + r.width / 2 - t.width / 2)),
-      above ? box.top - gap - t.height : box.bottom + gap,
+      Math.max(4, Math.min(end - t.width, r.left + r.width / 2 - t.width / 2)),
+      top,
       above ? 'above' : 'below',
     );
   }
-  // left of it when there's room (the islands are at the paper's right), else right of it, else under it
-  let x = r.left - gap - t.width,
-    y = r.top + r.height / 2 - t.height / 2,
+  // left of it when there's room (the islands are at the paper's right), and of every control beside it there (the
+  // stack's and the strip's: never over a tool), else right of it, else under it
+  let y = r.top + r.height / 2 - t.height / 2,
+    x =
+      (el.closest('.bk-islands, .bk-strip') ? Math.min(r.left, controlsLeft([y, y + t.height]) ?? r.left) : r.left) -
+      gap -
+      t.width,
     side = 'left';
   if (x < 4 || x + t.width > innerWidth - 4) {
     x = r.right + gap;

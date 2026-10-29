@@ -122,6 +122,14 @@ test("HQ's standing watches each keep a code of their own, in the project their 
   assert.deepEqual([first, title], [disk, 'The disk is fine']);
 });
 
+// A task HQ made for something that happened, placed in the alarms' project as it's made (the company asks for
+// deliverables: sorting.ts holdLoose), and started
+const placed = async (j: Parameters<typeof h.queue>[0]) => {
+  const id = h.queue(j);
+  made('alarms', 'hq', { id });
+  return h.claimJob(id);
+};
+
 test("a standing task's word is HQ's: no queuer claims it, before its task first runs too", async () => {
   writeFileSync(
     `${h.repo}/company/schedule.yaml`,
@@ -139,14 +147,13 @@ test("a standing task's word is HQ's: no queuer claims it, before its task first
       word,
     );
   assert.equal(jobsOfCode('FD-BOOKS') ?? jobsOfCode('FD-PLACE'), undefined);
-  const report = await h.start({ agent: 'moss', title: 'A disk report', word: undefined });
+  const report = await placed({ agent: 'moss', title: 'A disk report', word: undefined });
   assert.match((await h.hq(report, 'code', 'DISK')).out, /Not named: DISK is the word of a standing task of HQ's/);
   writeFileSync(`${h.repo}/company/schedule.yaml`, '[]\n');
 });
 
 test("a task HQ made for one thing that happened is named by the agent doing it, once, and never as another's", async () => {
-  const report = await h.start({ agent: 'moss', title: 'A bug report from the shop', word: undefined });
-  made('alarms', 'hq', { id: report.id });
+  const report = await placed({ agent: 'moss', title: 'A bug report from the shop', word: undefined });
   assert.equal(codeOf(report.id), null);
   const named = await h.hq(report, 'code', 'checkout');
   assert.equal(named.out.trim(), 'This task is SH-CHECKOUT now.', 'in the project HQ put it in');
@@ -154,8 +161,7 @@ test("a task HQ made for one thing that happened is named by the agent doing it,
     (await h.hq(report, 'code', 'TILL')).out,
     /Not named: this task's code is SH-CHECKOUT: a code never changes/,
   );
-  const other = await h.start({ agent: 'wren', title: 'Another bug report', word: undefined });
-  made('alarms', 'hq', { id: other.id });
+  const other = await placed({ agent: 'wren', title: 'Another bug report', word: undefined });
   assert.match(
     (await h.hq(other, 'code', 'CHECKOUT')).out,
     new RegExp(`Not named: SH-CHECKOUT is task #${report.id}'s \\(moss: A bug report from the shop\\)`),

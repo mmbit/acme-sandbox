@@ -1,10 +1,12 @@
 // A commit that reaches main outside a pull request HQ merged (a foundation carry, any direct commit) gets a push's gates
 // and tests all the same: a check job of its own, which the worker runs with no agent (its carryChecks), and a red one
-// becomes the foundation keeper's fix.
+// becomes the foundation keeper's fix. Each is a one-task deliverable in the project projects.yaml's made.carries gives
+// HQ's (made.ts).
 import { ceo, roles } from './company.ts';
 import { db, remember, setting } from './db.ts';
 import { STANDING } from './jobcodes.ts';
 import { createJob, preview } from './jobs.ts';
+import { made, madeCode } from './made.ts';
 import type { Check } from './review.ts';
 
 // The newest commit on main HQ has heard of
@@ -58,12 +60,14 @@ export function ended(job: number, finish: Checked) {
     )
     .join('\n\n');
   const said = [...red.map(name => `${name} red`), ...unrun.map(name => `${name} not run`)].join(', ');
-  createJob({
+  const title = `The checks on ${sha.slice(0, 9)}, a commit main took outside review: ${said}`;
+  const { id } = createJob({
     agent: keeper(),
-    word: STANDING.carryFix,
-    title: `The checks on ${sha.slice(0, 9)}, a commit main took outside review: ${said}`,
+    code: madeCode('carries', 'hq', STANDING.carryFix),
+    title,
     prompt: fixBrief(sha, base, said, reports),
   });
+  made('carries', 'hq', { id, title });
 }
 
 const lineOf = (commits: unknown) => {
@@ -81,10 +85,11 @@ const hasChecks = (sha: string) => !!db.prepare('select 1 from jobs where carry 
 
 // One check job, the keeper's, which the worker runs with no agent
 function queueChecks(sha: string) {
+  const title = `The gates and tests on ${sha.slice(0, 9)}, a commit main took outside review`;
   const { id } = createJob({
     agent: keeper(),
-    word: STANDING.carryChecks,
-    title: `The gates and tests on ${sha.slice(0, 9)}, a commit main took outside review`,
+    code: madeCode('carries', 'hq', STANDING.carryChecks),
+    title,
     prompt:
       `Main took ${sha} outside a pull request HQ merged. The worker runs the gates and the tests every push gets on ` +
       `it, against main before it (${sha}^1), with no agent, and a red one queues the keeper's fix. An agent running ` +
@@ -92,16 +97,17 @@ function queueChecks(sha: string) {
       'reports what they say.',
     carry: sha,
   });
-  return id;
+  return made('carries', 'hq', { id, title });
 }
 
 // The keeper's job for main's history no longer reaching the commit HQ last heard of: what main took in between was
 // never checked
 function queueLost(seen: string, tip: string) {
+  const title = `Check what main took after ${seen.slice(0, 9)}, which its history no longer has`;
   const { id } = createJob({
     agent: keeper(),
-    word: STANDING.carryFix,
-    title: `Check what main took after ${seen.slice(0, 9)}, which its history no longer has`,
+    code: madeCode('carries', 'hq', STANDING.carryFix),
+    title,
     prompt:
       `HQ last heard of main at ${seen}, and main's history (now at ${tip}) no longer has that commit: it was replaced ` +
       'outside a pull request. What main took in between never had the gates and tests every push gets. Find the last ' +
@@ -109,7 +115,7 @@ function queueLost(seen: string, tip: string) {
       '`node shared/gates/gates.ts --base <that commit>` and `node shared/gates/tests.ts --base <that commit>` on main, ' +
       'and fix what comes back red in a pull request of your own. With nothing red, end saying so.',
   });
-  return id;
+  return made('carries', 'hq', { id, title });
 }
 
 const fixBrief = (sha: string, base: string, said: string, reports: string) =>

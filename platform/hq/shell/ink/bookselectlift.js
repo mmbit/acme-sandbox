@@ -8,8 +8,18 @@ import { draw } from '/__review/ink.js';
 import { drawScrap } from './sketchscraps.js';
 import { sfx } from '../audio.js';
 import { grownTo } from './bookrow.js';
-import { boundsOf, mapBox, mapped, moveBy, movedText, movedThings, scaleAt, union } from './bookselectmath.js';
-import { boxOf } from './bookgroupmath.js';
+import {
+  boundsOf,
+  mapBox,
+  mapped,
+  membersOf,
+  moveBy,
+  movedText,
+  movedThings,
+  scaleAt,
+  union,
+} from './bookselectmath.js';
+import { boxOf } from './notebookstack.js';
 import { bounds, boxOfText, frameAt, frameDown, pageOf, swapIn, textEl } from './bookselect.js';
 import { followPress } from './bookpress.js';
 
@@ -133,13 +143,12 @@ function groupsHeld(view, things) {
     held = new Set([...things.ink, ...things.scraps, ...things.texts]),
     ids = new Set([...held].map(x => x.g).filter(g => g !== undefined && page.groups?.has(g)));
   return [...ids].flatMap(g => {
-    const of = k => (page[k] ?? []).filter(x => x.g === g);
-    const parts = { ink: of('ink'), texts: of('texts'), pictures: of('scraps') };
-    if (![...parts.ink, ...parts.texts, ...parts.pictures].every(x => held.has(x))) return [];
+    const { ink, scraps, texts } = membersOf(page, g);
+    if (![...ink, ...scraps, ...texts].every(x => held.has(x))) return [];
     const els = [...view.el.querySelectorAll(':is(.bk-groups, .bk-answers) > [data-g]')].filter(
       el => el.dataset.g === String(g),
     );
-    return [{ at: boxOf(parts), els }];
+    return [{ at: boxOf({ ink, texts, pictures: scraps }), els }];
   });
 }
 

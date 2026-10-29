@@ -5,9 +5,10 @@
 // go mostly upright, it swings back shut; a flick right shuts the open book; a tap mid-swing turns it round; the tab is a
 // button for the keyboard. Each asserts what the board sees: the board's angle, the tab at its edge, HQ's page.
 import assert from 'node:assert/strict';
+import { MINI } from './bookkit.mjs';
+import { SETTLE_MAX } from './shell/ink/bookswingmath.js';
 
-const MINI = { width: 1133, height: 744 },
-  PHONE = { width: 390, height: 844 };
+const PHONE = { width: 390, height: 844 };
 
 // c: book-check.mjs's helpers: { hq(browser, viewport, options), shot(name, page), settled(page, mode), settle }
 export function openStories(c) {
@@ -18,6 +19,9 @@ export function openStories(c) {
       browser => shutAgain(browser, c),
     "the Notebook's swing on a phone: a tap opens it over the whole screen, its tab inside it, and shuts it": browser =>
       onAPhone(browser, c),
+    // (the board, 28 Oct)
+    "the Notebook's swing: shut as opened, HQ's page blurred and faded out wholly before it takes its room, and back in":
+      browser => roomWhileGone(browser, c),
   };
 }
 
@@ -48,12 +52,12 @@ async function pulledOpen(browser, c) {
       `the tab at ${held.tabRight}, the edge at ${held.edgeLeft}`,
     );
     assert.ok(held.hq.opacity < 0.95 && held.hq.opacity > 0, `HQ's page dissolving: ${JSON.stringify(held.hq)}`);
-    assert.ok(held.shadow < 0.1, `the book's own shadow beside it while it's high: ${held.shadow}`);
+    assert.equal(held.shadow, 1, "the book's own shadow, the one it rests with, while it's high");
     // lowered past halfway and let go still: gravity takes it, one tick as it lands, HQ's page back, sharp, in its room
     await page.mouse.move(720, tab.y, { steps: 4 });
     await page.waitForTimeout(500);
     assert.ok((await seen(page)).angle < 1.05, 'lowered past halfway');
-    await letGoShadowGrowing(page, c);
+    await letGoOneShadow(page, c);
     // (HQ's page settles in its room while it's gone, then comes back in slowly: the board's call 148)
     await page.waitForFunction(
       () => Number(document.body.style.opacity || 1) === 1 && !document.body.style.filter,
@@ -156,6 +160,84 @@ async function onAPhone(browser, c) {
   }
 }
 
+// The tab tapped, HQ's page watched on every frame from then (its room, gone, blurred, opacity, when) into __rooms
+const tappedWatched = page =>
+  page.evaluate(() => {
+    const frames = (window.__rooms = []);
+    const watch = () => {
+      const s = getComputedStyle(document.body);
+      frames.push({
+        room: document.documentElement.style.getPropertyValue('--book-room'),
+        gone: s.visibility === 'hidden',
+        blurred: s.filter !== 'none',
+        opacity: Number(s.opacity),
+        t: performance.now(),
+      });
+      if (frames.length < 2000) requestAnimationFrame(watch);
+    };
+    requestAnimationFrame(watch);
+    document.querySelector('#book .bk-lip').click();
+  });
+// How long HQ's page took to fade out (from the tap), stayed gone, and came back in (ms)
+function phases(frames) {
+  const first = frames.findIndex(f => f.gone),
+    last = frames.findLastIndex(f => f.gone),
+    clear = frames.findLastIndex(f => f.opacity < 1);
+  const ms = (i, j) => Math.round(frames[j].t - frames[i].t);
+  return { out: ms(0, first), gone: ms(first, last), back: ms(last, clear) };
+}
+
+// Opened and shut by the tab: on every frame HQ's page changes its room (laid out beside the book, or the whole screen
+// again), it's wholly gone, so its reflow never shows; it went blurred and faded, as it does on opening, and comes back.
+async function roomWhileGone(browser, c) {
+  const { page, errors, done } = await c.hq(browser, MINI),
+    times = {};
+  try {
+    // (twice round: the first swing on a slow machine still blurs, till the book turns its blur off there)
+    for (const [mode, way] of [
+      ['folded', 'shut'],
+      ['open', 'opened'],
+      ['folded', 'shut'],
+      ['open', 'opened'],
+    ]) {
+      await tappedWatched(page);
+      await page.waitForFunction(
+        mode =>
+          document.documentElement.dataset.book === mode &&
+          !document.querySelector('#book.bk-swinging') &&
+          getComputedStyle(document.body).opacity === '1',
+        mode,
+        { timeout: 120_000, polling: 100 },
+      );
+      const frames = await page.evaluate(() => window.__rooms.splice(0));
+      const moved = frames.flatMap((f, i) => (i && f.room !== frames[i - 1].room ? [f] : []));
+      assert.equal(moved.length, 1, `${way}: HQ's page took its new room once`);
+      assert.ok(moved[0].gone, `${way}: HQ's page wholly gone as it took its room (${JSON.stringify(moved[0])})`);
+      // (back: the wait above; the watcher's last frame can come before the one that cleared it)
+      assert.ok(
+        frames.some(f => f.blurred || f.opacity < 1),
+        `${way}: faded`,
+      );
+      times[way] = phases(frames);
+    }
+    // (the same timing both ways: fading out and back in, each within a third of the other's, as frames on a loaded
+    // machine come; gone, within the time the page's own transitions may take after its reflow, bookswingmath.js's
+    // SETTLE_MAX: the board's call 160)
+    for (const [k, slack] of [
+      ['out', 0],
+      ['gone', SETTLE_MAX],
+      ['back', 0],
+    ])
+      assert.ok(
+        Math.abs(times.shut[k] - times.opened[k]) <= Math.max(times.shut[k], times.opened[k]) / 3 + 50 + slack,
+        `${k}: shut ${times.shut[k]} ms, opened ${times.opened[k]} ms`,
+      );
+    assert.deepEqual(errors, []);
+  } finally {
+    await done();
+  }
+}
+
 // ---- helpers
 
 // A tap mid-swing turns it round: opening, it's shut again, never having lain open
@@ -174,23 +256,21 @@ async function turnedRound(page, c) {
   await c.settled(page, 'folded');
   assert.equal(await page.evaluate(() => window.__layOpen), false, 'turned round mid-swing, not landed and shut');
 }
-// Let go lowered: it lands open, its own shadow on HQ's page beside it growing in with its drop
-async function letGoShadowGrowing(page, c) {
+// Let go lowered: it lands open, its own shadow round it all the way down, the same as at rest: nothing pops in
+async function letGoOneShadow(page, c) {
   await shadowWatched(page);
   await page.mouse.up();
   await c.settled(page, 'open');
   const drop = await page.evaluate(() => window.__shadows);
-  assert.ok(
-    drop.some(s => s > 0.05 && s < 0.95),
-    `the shadow beside the book popped in: ${drop.map(s => s.toFixed(2)).join(' ')}`,
-  );
+  assert.ok(drop.length && drop.every(s => s === 1), `the book's shadow on its drop: ${drop.join(' ')}`);
+  assert.equal(await page.locator('#book .bk-cast').count(), 0, 'no second shadow under the book');
   assert.equal((await seen(page)).shadow, 1, "the book's own shadow beside it at rest");
 }
 
 // What the board sees: the book's mode, the board's angle round the spine (rad, from its transform), the paper's laid
 // width, the cover's edge's and the tab's boxes on the screen, HQ's page's width and how dissolved it is, and how
 // strong the book's own shadow on HQ's page beside it is
-const seen = page =>
+export const seen = page =>
   page.evaluate(() => {
     const edge = document.querySelector('#book .bk-edge'),
       leaf = document.querySelector('#book .bk-leaf'),
@@ -255,7 +335,7 @@ const flicked = (page, dx) =>
     lip.click();
   }, dx);
 // The tab's middle
-const tabAt = page =>
+export const tabAt = page =>
   page
     .locator('#book .bk-lip')
     .boundingBox()

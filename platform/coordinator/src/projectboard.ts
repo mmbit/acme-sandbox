@@ -2,6 +2,7 @@
 // projects.ts, which re-exports it. (Its own module)
 import { db, prepared } from './db.ts';
 import { coverOf, projects, type Project } from './company.ts';
+import { deskName } from './wherework.ts';
 import { isOpenJob, jobRows, OPEN_JOBS } from './jobs.ts';
 import { doneSince, linesOf, tallies, type Tallies } from './tallies.ts';
 import { inBoardOrder } from './projectorder.ts';
@@ -22,8 +23,8 @@ import { oneTask } from './made.ts';
 // them (jobs.ts jobRows). A routine's project (schedule.ts keepProjects) carries its schedule (schedule.ts routines), its
 // runs its threads. Jobs outside known threads are unsorted: the open ones, then
 // the latest finished (recentLoose).
-// Unsorted is the CEO's desk: call follow-ups and the CEO's own work, and other work outside the projects for the CEO
-// to place.
+// Unsorted is the CEO's desk, under its name (wherework.ts deskName): call follow-ups and the CEO's own work, and other
+// work outside the projects for the CEO to place.
 // Each job has its place in its thread (seq), a thread's owner is its project's, and it lists the threads it needs
 // (plan.ts). done threads' owners too:
 // completed: the projects done (hq project done, plan.ts), the latest first, each with its done time and threads, for the
@@ -72,7 +73,7 @@ export function listProjectBoard(t = Date.now()) {
   return {
     page: page && { text: page.text, at: page.at },
     businesses: projects().businesses,
-    groups: projects().groups,
+    groups: { ...projects().groups, unsorted: { ...projects().groups.unsorted, name: deskName() } },
     projects: inBoardOrder(listed),
     completed,
     unsorted: loose.filter(j => j.kind !== 'meeting'),

@@ -29,7 +29,9 @@ export async function morningStory(browser, c) {
     // (the turn's picture of the leaf gone first: it copies the pages it turns.)
     await page.waitForFunction(() => !document.querySelector('#book .bk-turn-picture'), null, { timeout: 5000 });
     // (what went, and when)
-    assert.match(await shown.locator('[data-slot=stamp]').textContent(), /^Sent \w+ \d\d:\d\d/, 'the page stamped');
+    // (the red stamp's words, its label)
+    const stamp = shown.locator('[data-slot=stamp] svg');
+    assert.match(await stamp.getAttribute('aria-label'), /^Sent \w+ \d\d:\d\d/, 'the page stamped');
     assert.match(await shown.locator('.bk-scrap-words').first().textContent(), /headline be a touch warmer/);
     await slip.scrollIntoViewIfNeeded();
     const answer = slip.getByText('Warmer it is', { exact: false });

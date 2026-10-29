@@ -17,6 +17,12 @@ export const RELATED_WORK =
   "gains. A small ask that isn't part of the feature never rides on its deliverable because the same agent has " +
   'both: it goes in the deliverable it belongs to, or one of its own.';
 
+// What running deliverables side by side (hq plan unneed) is for, said wherever it's offered (board, call 165).
+export const SIDE_BY_SIDE =
+  'Only work that changes other files runs beside it: work on the same files stays chained, as side by side it ' +
+  'collides and is merged by hand.';
+
+// The deliverable line's "until its review has ruled".
 export const LEVELS = {
   product: 'A product is what the company makes (a business in projects.yaml): it holds projects.',
   project:
@@ -28,7 +34,9 @@ export const LEVELS = {
     'A deliverable takes its project to its "done when": a piece of work the board will see go live, adding one part ' +
     'to its project or improving one. Its tasks run in turn on one branch, any agent taking a turn, and it gets one ' +
     'review at its end. Deliverables are cut by what goes live, never one per note or call item: new work that ' +
-    'belongs to an open deliverable is added to it before a new one is drawn. ' +
+    'belongs to an open deliverable is added to it before a new one is drawn, until its review has ruled (hq plan says ' +
+    "so): from then it takes only its rulings' fixes, and new work goes in the next deliverable, drawn needing it, so " +
+    'each round reviews one finished piece. ' +
     RELATED_WORK +
     ' Its name and "done when" are plain, short and ' +
     'concrete, saying what gets made ("Pick the shop\'s payment provider", "Sign-up emails in three languages", not ' +

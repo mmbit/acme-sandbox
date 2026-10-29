@@ -5,6 +5,7 @@ import { db, remember, setting } from './db.ts';
 import { yamlFile } from './company.ts';
 import { createRequest, endRequest, releaseSeat, setSeat } from './jobs.ts';
 import { SEAT_ID, SEAT_RULE } from '../../worker/src/seatid.ts';
+import { seatsGone } from './startholds.ts';
 
 // The work the worker runs comes in two engines: `claude`, the company's own work, and `codex`, the share a model of
 // another family takes (the second opinion in reviews). A seat runs one CLI at one provider, and takes its provider's
@@ -486,6 +487,7 @@ export function workerSeats() {
   const seats = listed();
   const kept = JSON.stringify(seats.filter(s => !s.removing).map(s => s.id));
   db.prepare('delete from seats where id not in (select value from json_each(?))').run(kept);
+  seatsGone();
   return {
     seats: seats
       .filter(s => !s.removing)
@@ -531,6 +533,7 @@ export function settleAction(id: number, status: unknown, words: unknown) {
 function forget(id: string) {
   db.prepare('delete from seat_list where id = ? and removing = 1').run(id);
   db.prepare('delete from seats where id = ?').run(id);
+  seatsGone();
   releaseSeat(id, true);
   closeCard(id, 'The seat was removed.');
 }

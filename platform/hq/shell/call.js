@@ -41,9 +41,9 @@ export const callName = () => call?.name ?? null;
 // Call someone: the call opens over whatever is on screen (their panel, a card, Reviews, the intercom), which is there
 // again when it ends. request: the card it's about. onIntercom: started from the intercom, which shows why it ended, if
 // not by hanging up.
-// walk: from a card's Walk me through it (calldraw.js). pictures: Files (or promises of them) the agent is shown once
-// the line picks up, a page of the Notebook shared by its corner (bookshare.js); with a call already on, they go into
-// that one. page: that page's id, brought to the call's notes page as its first scrap (calldraw.js). (request and the rest named; pictures)
+// walk: from a card's Walk me through it (calldraw.js). pictures: Files (or promises of them, or a promise of their
+// list: callpictures.js showPictures) the agent is shown once the line picks up,
+// a page of the Notebook shared by its corner (bookshare.js); with a call already on, they go into that one. page: that page's id, brought to the call's notes page as its first scrap (calldraw.js). (request and the rest named; pictures)
 export async function callAgent(
   agent = world.company.ceo,
   name = ceoName(),

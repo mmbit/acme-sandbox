@@ -31,9 +31,10 @@ export const OPEN_EXTRAS = {
   '/shared/watchalong/strokes.js': 'shared/watchalong/strokes.js',
 };
 
-// Review mode's parts anyone may load, on HQ's host and every product's: pure geometry and drawing, no review mode's own
-// logic (the framing rule HQ's note thumbnails share, the pen the Sketchbook draws with and its tap, the anchor, the
-// book's paper). Its other parts in shared/review/ go only to whoever gets the tool (feedback.ts).
+// Review mode's parts anyone may load, on HQ's host and every product's. None holds review mode's own logic. They are
+// its geometry and drawing (the framing rule HQ's note thumbnails share, the pen the Sketchbook draws with and its tap,
+// the anchor, the book's paper), and whether the microphone is allowed, which HQ's own recorders read too. Its other
+// parts in shared/review/ go only to whoever gets the tool (feedback.ts).
 export const REVIEW_PARTS = {
   '/__review/frame.js': 'shared/review/frame.js',
   '/__review/ink.js': 'shared/review/ink.js',

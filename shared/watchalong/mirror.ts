@@ -10,7 +10,7 @@
 //   - Pictures are JPEG (PNG when asked), LONG px on their long side, a tap ringed where it was, the pen's ink drawn.
 //   - Every step has STEP_MS: one that fails or runs past it closes its own tab. A live session's mirror then opens
 //     again from the recording when next asked for, and isn't seen until then (seen), so its page can say so. Chromium
-//     closes too only when it doesn't answer within ANSWER_MS once a step ran past its time (outOfTime), and the next
+//     closes too only when it doesn't reply within REPLY_MS once a step ran past its time (outOfTime), and the next
 //     mirror opens in a fresh one.
 import { readFileSync } from 'node:fs';
 import { launch, type Answer, type Asked, type Browser, type Tab } from '../chromium/chromium.ts';
@@ -30,10 +30,10 @@ export const LOADING_MS = 1_000; // (exported: the owner's answer takes no longe
 // server.py's hq()), so a later one reaches nobody. A mirror opens with what the screen still shows (shown): the whole
 // recording of a 30-minute share, with HQ's canvas frames (0.5 a second, 40 KB each), takes past 15 s to open.
 export const STEP_MS = 15_000;
-// How long Chromium's own process may take to answer once a step ran past its time. It answers apart from its tabs'
+// How long Chromium's own process may take to reply once a step ran past its time. It replies apart from its tabs'
 // pages: under a millisecond with a page that never yields, on the worker at a load of 13. One silent for 5 s has
-// stopped answering, and every later tab of it would hang.
-export const ANSWER_MS = 5_000;
+// stopped replying, and every later tab of it would hang.
+export const REPLY_MS = 5_000;
 
 // A tap to ring, a part of the screen (fractions of it, 0 to 1) to zoom into, and the long side in px
 export type Shot = { long: number; ring?: { x: number; y: number }; region?: Region; png?: boolean };
@@ -221,32 +221,31 @@ export class Mirrors {
   }
 
   // A step past STEP_MS in this Chromium. Its own tab closes (its caller closes it), and a slow page leaves the other
-  // mirrors alone. A Chromium that doesn't answer goes, as every later tab of it would hang. Every mirror goes with it,
+  // mirrors alone. A Chromium that doesn't reply goes, as every later tab of it would hang. Every mirror goes with it,
   // and the next opens in a fresh one. One still starting is killed. A Chromium that went already, or that another
   // step's check closes, is left as it is.
   private async outOfTime(browser: Promise<Browser>) {
     // (read at once, before the step's caller closes its tab: closing the last tab lets this Chromium go)
-    if (this.browser !== browser || (await answers(browser))) return;
+    if (this.browser !== browser || (await replies(browser))) return;
     const launch = this.launches.get(browser);
     if (!launch) return;
     this.launches.delete(browser);
     this.dropped(browser);
     console.error(
-      `Watch-along mirrors: a step ran past ${STEP_MS / 1000} s and their Chromium doesn't answer: it closes`,
+      `Watch-along mirrors: a step ran past ${STEP_MS / 1000} s and their Chromium doesn't reply: it closes`,
     );
     launch.abort();
     void browser.then(chromium => chromium.close()).catch(() => undefined);
   }
 
-  // Chromium stopped, or is to: every mirror goes with it, not seen until it opens again in a new one. False when it
-  // went already
+  // Chromium stopped, or is to: every mirror goes with it, not seen until it opens again in a new one. One that went
+  // already is left as it is.
   private dropped(browser: Promise<Browser>) {
-    if (this.browser !== browser) return false;
+    if (this.browser !== browser) return;
     this.browser = null;
     for (const id of this.mirrors.keys()) this.reached.set(id, false);
     this.mirrors.clear();
     this.tabs = 0;
-    return true;
   }
 
   private async closeTab(mirror: Mirror) {
@@ -311,17 +310,17 @@ function timed<T>(step: Promise<T>, what: string, outOfTime: () => Promise<void>
   return Promise.race([step, late]).finally(() => clearTimeout(timer));
 }
 
-// Whether Chromium, started by then, answers within ANSWER_MS
-async function answers(browser: Promise<Browser>) {
+// Whether Chromium, started by then, replies within REPLY_MS
+async function replies(browser: Promise<Browser>) {
   let timer: NodeJS.Timeout | undefined;
-  const late = new Promise<false>(resolve => (timer = setTimeout(() => resolve(false), ANSWER_MS)));
-  const answered = browser
-    .then(chromium => chromium.answered())
+  const late = new Promise<false>(resolve => (timer = setTimeout(() => resolve(false), REPLY_MS)));
+  const replied = browser
+    .then(chromium => chromium.replied())
     .then(
       () => true,
       () => false,
     );
-  return Promise.race([answered, late]).finally(() => clearTimeout(timer));
+  return Promise.race([replied, late]).finally(() => clearTimeout(timer));
 }
 
 // The origins of the pages these events were on that the mirror may show: the recorded page's addresses, and the page

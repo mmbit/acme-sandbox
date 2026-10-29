@@ -4,7 +4,8 @@
 // the radial menu on a long press. Chromium's trusted touch and pen: bookstrip.mjs.
 import assert from 'node:assert/strict';
 import { freePage, paperBox, savedWhere } from './bookmouse.mjs';
-import { MINI, QUIET_MS, HEARD, heard, middleOf, pressed, stored, until } from './bookstrip.mjs';
+import { QUIET_MS, HEARD, heard, middleOf, pressed, stored } from './bookstrip.mjs';
+import { MINI, until } from './bookkit.mjs';
 
 // c: book-check.mjs's played store and helpers
 export function webkitStories(c) {

@@ -23,7 +23,7 @@ import {
   type NotebookPage,
 } from './notebook.ts';
 import { groupOn, insertGroup, partsOf, putAside, rootOf, row, type Group } from './notebookgroups.ts';
-import { boxOf } from './notebookparts.ts';
+import { boxOf } from '../../hq/shell/ink/notebookstack.js';
 import { judgeLater } from './ink/bookjudge.ts';
 import { frameOf, replySnip, sentSnip } from './ink/bookpick.ts';
 import { inkOf, isRefused, wordsOf, type Anchor, type Refused } from './pagechecks.ts';
@@ -31,10 +31,12 @@ import { inkOf, isRefused, wordsOf, type Anchor, type Refused } from './pagechec
 // Room round a group's picture, in page px
 const PAD = 24;
 
-// POST /api/notebooks/pages/send { id }: the page's groups go in SEND_MS, unless it's undone first
-// (RESEND: a call's page sent at hang-up is sent again on it.)
+// POST /api/notebooks/pages/send { id }: the page's groups go in SEND_MS, unless it's undone first. The board's Send
+// leaves the book on the page under the one sent: a fresh one there when it was the notebook's last (the board's call
+// 161; under). (RESEND: a call's page sent at hang-up is sent again on it.)
 export const RESEND = 'the page changed while it was being sent: send it again';
-export async function sendPage(b: any, who = BOARD, stillOpen?: () => boolean) {
+export const sendShown = (b: any) => sendPage(b, BOARD, undefined, true);
+export async function sendPage(b: any, who = BOARD, stillOpen?: () => boolean, under = false) {
   const p = pageRow(Number(b?.id), who);
   if (!p) return 404;
   if (shut(p)) return [409, 'this page has been sent', 'pageSent'] as Refused;
@@ -61,14 +63,22 @@ export async function sendPage(b: any, who = BOARD, stillOpen?: () => boolean) {
   if (stillOpen && !stillOpen()) return [403, 'this invitation has closed', 'invitationEnded'] as Refused;
   inOneStep(() => {
     db.prepare('update book_pages set send_at = ? where id = ?').run(asNotes(who, groups, snips), p.id);
-    // (a fresh page only when no other is open: never a second blank one.)
-    const fresh = openPageOf(p.notebook) === null ? newPage(p.notebook) : null;
+    // (a fresh page only when no other is open, or under the board's Send of the last page)
+    const fresh = openPageOf(p.notebook) === null || (under && lastPage(p)) ? newPage(p.notebook) : null;
     db.prepare('update book_pages set fresh = ? where id = ?').run(fresh, p.id);
     changed(p.notebook, p.id);
   });
   deliverLater();
   return pageOf(pageRow(p.id, who)!);
 }
+// Whether no page of its notebook's comes after it in the book (archived ones aren't in it)
+const lastPage = (p: NotebookPage) =>
+  !db
+    .prepare(
+      `select 1 from book_pages where notebook = ?1 and archived = 0
+        and (coalesce(pos, -1) > ?2 or (coalesce(pos, -1) = ?2 and id > ?3))`,
+    )
+    .get(p.notebook, p.pos ?? -1, p.id);
 // Groups as notes on a sheet of this send's for each owner, their seconds started: when they go (inside inOneStep)
 function asNotes(who: string, groups: Group[], snips: ({ type: string; clean: Buffer } | null)[]) {
   const sheets = new Map<string | null, number>();
@@ -178,7 +188,7 @@ export async function replyTo(b: any, who = BOARD, stillOpen?: () => boolean) {
   // (an answer on a group not sent yet is on its grp)
   const slip = db.prepare('select id, note, grp, by from book_slips where id = ?').get(Number(b?.answer)) as
     { id: number; note: number | null; grp: number | null; by: string } | undefined;
-  const answered = slip && groupOn(slip);
+  const answered = slip && groupOn(slip); // (not a deleted one's)
   // (a version of an old book's note, a call's, has no group: the reply is a note on its versions page, under the
   // note's anchor; a note wiped, its versions kept for Undo, takes none.)
   const tried = !answered && slip?.note ? note(slip.note) : undefined;

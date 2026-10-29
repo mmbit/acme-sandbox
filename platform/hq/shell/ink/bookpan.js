@@ -3,8 +3,6 @@
 // hand tool or a trackpad's two fingers, gliding on after a flick; zoomed by two fingers' pinch, a trackpad's pinch or
 // a mouse's wheel, about the point between the fingers or under the pointer, out as far as the page's least zoom and
 // never on into the overview (its button and keys open that). Ctrl (or ⌘) held and the wheel steps through the tools.
-// (was the row of pages' table; one finger draws, Shift pans: the board's controls. The wheel zooms and Ctrl's picks
-// tools: the board, 28 Oct)
 //
 // The fingers down are only those the browser said are: a finger's lift, cancel or lost capture ends its part, a
 // first finger down (isPrimary) means no other is, and the window losing focus or the page hidden lets every gesture
@@ -43,6 +41,7 @@ export function panning(desk, book, { drawing }) {
     touches: new Map(),
     glide: 0,
     wheelRest: 0,
+    wheelZoomed: false,
     space: false,
     ctrl: false,
     toolRun: 0,
@@ -237,14 +236,13 @@ const within = (table, scale) => {
 };
 function pinchEnd(table) {
   table.pinch = null;
-  table.book.remember();
+  table.book.remember(true);
 }
 
 // ---- a wheel, a trackpad, Safari's pinch
 
 // A mouse's wheel: the zoom, about the pointer, as a trackpad's pinch (a wheel with ctrlKey, but no Ctrl key down on the
-// keyboard: that tells them apart, never the sizes; a mouse's wheel with ctrlKey is the key, held since before the
-// window had focus too); the browser never zooms the book itself. Ctrl or ⌘ held and the wheel, or a trackpad's two
+// keyboard: that tells them apart, never the sizes, Chromium's pinch coming in notches); the browser never zooms the book itself. Ctrl or ⌘ held and the wheel, or a trackpad's two
 // fingers: the next tool, or the one before, a notch (or TOOL_PX) each. A trackpad's two fingers alone: the page
 // follows them (Shift turns a wheel sideways).
 function wheeled(table, e, drawing) {
@@ -255,7 +253,7 @@ function wheeled(table, e, drawing) {
     k = e.deltaMode === 1 ? LINE_PX : e.deltaMode === 2 ? table.desk.clientHeight : 1,
     mouse = wheelOf(table, e) === 'mouse';
   clearTimeout(table.wheelRest);
-  if ((e.ctrlKey && (table.ctrl || mouse)) || e.metaKey) {
+  if ((e.ctrlKey && table.ctrl) || e.metaKey) {
     table.toolRun += mouse ? Math.sign(-e.wheelDeltaY || e.deltaY) * TOOL_PX : (e.deltaY || e.deltaX) * k;
     const by = Math.trunc(table.toolRun / TOOL_PX);
     if (by) {
@@ -270,6 +268,7 @@ function wheeled(table, e, drawing) {
       by = Math.exp(Math.max(-MOST, Math.min(MOST, -e.deltaY * k * WHEEL_ZOOM))),
       scale = within(table, book.scale * by);
     setView(book, { pan: zoomAt(book.pan, book.scale, scale, at), scale });
+    table.wheelZoomed = true;
     return rest(table);
   }
   const [dx, dy] = e.shiftKey && !e.deltaX ? [e.deltaY, 0] : [e.deltaX, e.deltaY];
@@ -280,11 +279,12 @@ const rest = table =>
   (table.wheelRest = setTimeout(() => {
     table.wheel = null;
     table.toolRun = 0;
-    table.book.remember();
+    table.book.remember(table.wheelZoomed);
+    table.wheelZoomed = false;
   }, WHEEL_REST_MS));
-// Whether a run of wheel events is a mouse's wheel or a trackpad's two fingers (which pan): a mouse's turns in notches
-// (lines, in Firefox), a trackpad's in any size and sideways too. One that isn't a notch makes the whole run the
-// trackpad's, so a pan never changes the tool halfway.
+// Whether a run of wheel events is a mouse's wheel (which zooms) or a trackpad's two fingers (which pan): a mouse's
+// turns in notches (lines, in Firefox), a trackpad's in any size and sideways too. One that isn't a notch makes the
+// whole run the trackpad's, so a pan never turns into a zoom halfway.
 function wheelOf(table, e) {
   const notch = e.deltaMode === 1 || (!e.deltaX && e.wheelDeltaY && e.wheelDeltaY % NOTCH === 0);
   if (!notch) table.wheel = 'pad';
@@ -308,16 +308,18 @@ function gestures(table) {
     setView(book, { pan: zoomAt(from.pan, from.scale, scale, from.at), scale });
   });
   desk.addEventListener('gestureend', () => {
-    if (from) book.remember();
+    if (from) book.remember(true);
     from = null;
   });
 }
 
-// ---- Ctrl held on the keyboard (a trackpad's pinch sets a wheel's ctrlKey with no key down: wheeled)
+// ---- Ctrl held on the keyboard (a trackpad's pinch sets a wheel's ctrlKey with no key down: wheeled), as its keys
+// tell it, and the pointer's moves for a key held since before the window had focus
 
 function ctrlKey(table) {
   for (const type of ['keydown', 'keyup'])
     addEventListener(type, e => e.key === 'Control' && (table.ctrl = e.type === 'keydown'));
+  addEventListener('pointermove', e => (table.ctrl = e.ctrlKey));
   addEventListener('blur', () => (table.ctrl = false));
 }
 

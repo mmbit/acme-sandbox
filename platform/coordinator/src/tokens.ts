@@ -1,8 +1,9 @@
 // Where the AI seats' tokens go, live from the usage table (usage.ts): the Numbers home's Tokens dashboard, the
-// platform's own beside the apps' and the kits'. Claude's API-equivalent cost
-// per day, kind of job and seat, Codex's tokens per kind, the up-front context a run reads again on every turn, and what
-// resumed runs cost. Numbers, kinds of job and seat ids only, never text. Its shape is a kit dashboard's
-// (template/kits/README.md, "Numbers").
+// platform's own beside the apps' and the kits'. Claude and Codex in one unit, tokens (all a run read and wrote, cache
+// reads included: both engines report them alike), per day, kind of job and seat, with Claude's API-equivalent cost
+// beside; the context a run opens with, read again on every turn; and what resumed runs cost. Numbers, kinds of job and
+// seat ids only, never text. Its shape is a kit dashboard's (template/kits/README.md, "Numbers").
+// (one unit for both engines, labels that say what they count)
 import { db } from './db.ts';
 import { companyDay, companyMoment } from './company.ts';
 import { addDays, daysFrom } from './metrics.ts';
@@ -45,86 +46,72 @@ export function dashboard(r: { from: string; to: string }) {
     medians = mediansIn(r.from, r.to);
   const claude = groups.filter(g => g.engine !== 'codex'),
     codex = groups.filter(g => g.engine === 'codex');
-  const kinds = kindsOf(claude);
   return {
     id: 'tokens',
     name: 'Tokens',
-    about: 'Where the AI seats’ tokens go: per kind of job and seat',
+    about: 'Where the AI seats’ tokens go: Claude and Codex, per kind of job and seat',
     icon: COINS,
-    tile: `${usd(sum(claude, g => g.cost))} Claude · ${millions(sum(codex, g => g.tokens))} M Codex tokens`,
+    tile: `Claude ${short(sum(claude, g => g.tokens))} · Codex ${short(sum(codex, g => g.tokens))} tokens`,
     figures: figuresOf(claude, codex, medians),
     daily: {
-      title: 'Claude per day',
-      sub: 'API-equivalent cost in US dollars, in all and per kind of job',
+      title: 'Tokens per day',
+      sub: 'Claude and Codex together; the table has each, and Claude at API prices',
       columns: [
-        { key: 'cost', label: 'All kinds', unit: 'USD' },
-        ...kinds.map(kind => ({ key: `kind:${kind}`, label: named(kind), unit: 'USD' })),
+        { key: 'tokens', label: 'Both engines', unit: 'tokens' },
+        { key: 'claude', label: 'Claude', unit: 'tokens' },
+        { key: 'codex', label: 'Codex', unit: 'tokens' },
+        { key: 'cost', label: 'Claude at API prices', unit: 'USD' },
       ],
-      rows: perDay(r.from, r.to, claude, kinds),
+      rows: perDay(r.from, r.to, groups),
     },
     bars: [
-      bar(
-        { title: 'Claude per kind of job', sub: COST, unit: 'USD' },
-        claude,
-        g => named(g.kind),
-        g => g.cost,
-      ),
-      bar(
-        { title: 'Claude per seat', sub: COST, unit: 'USD' },
-        claude,
-        g => g.seat ?? 'no seat',
-        g => g.cost,
-      ),
-      bar(
-        { title: 'Codex per kind of job', sub: CODEX, unit: 'M' },
-        codex,
-        g => named(g.kind),
-        g => g.tokens / 1e6,
-      ),
-      upfrontBar(claude, medians),
+      bar({ title: 'Claude per kind of job', sub: TOKENS }, claude, g => named(g.kind)),
+      bar({ title: 'Codex per kind of job', sub: TOKENS }, codex, g => named(g.kind)),
+      bar({ title: 'Tokens per seat', sub: `Claude’s seats and Codex’s. ${TOKENS}` }, groups, g => g.seat ?? 'no seat'),
+      openingBar(claude, medians),
       resumedBar(claude),
     ],
   };
 }
 
-const COST = 'API-equivalent cost',
-  CODEX = 'Millions of tokens: input and cache reads';
+const TOKENS = 'All a run read and wrote, cache reads included';
 type Medians = Map<string | null, number | null>;
 
 function figuresOf(claude: Group[], codex: Group[], medians: Medians) {
-  const share = percent(upfrontShare(claude));
+  const all = sum(claude, g => g.tokens) + sum(codex, g => g.tokens),
+    share = (groups: Group[]) => (all ? `${Math.round((100 * sum(groups, g => g.tokens)) / all)}% of all` : 'none yet');
+  const runs = (groups: Group[]) =>
+    plural(
+      sum(groups, g => g.runs),
+      'run',
+    );
   return [
+    { label: 'Claude', value: sum(claude, g => g.tokens), unit: 'tokens', sub: `${share(claude)} · ${runs(claude)}` },
+    { label: 'Codex', value: sum(codex, g => g.tokens), unit: 'tokens', sub: `${share(codex)} · ${runs(codex)}` },
     {
-      label: 'Claude, at API prices',
-      value: twoDecimals(sum(claude, g => g.cost)),
+      label: 'Claude at API prices',
+      value: dollars(sum(claude, g => g.cost)),
       unit: 'USD',
-      sub: `${sum(claude, g => g.runs)} runs`,
-    },
-    { label: 'Codex tokens', value: millions(sum(codex, g => g.tokens)), unit: 'M', sub: 'input and cache reads' },
-    {
-      label: 'Up-front context',
-      value: thousands(medians.get(null)),
-      unit: 'k tokens',
-      sub: `median at a run’s start · ${share ?? '–'}% of tokens`,
+      sub: 'what its tokens would cost on the API (the seats are flat-rate)',
     },
     {
-      label: 'Resumed runs',
-      value: twoDecimals(sum(claude, g => g.resumedCost)),
-      unit: 'USD',
-      sub: `${sum(claude, g => g.resumed)} runs`,
+      label: 'Context a run opens with',
+      value: hundreds(medians.get(null)),
+      unit: 'tokens',
+      sub: `Claude’s median, read again each turn: ${percent(upfrontShare(claude)) ?? '–'}% of what its measured runs read`,
     },
   ];
 }
 
-function upfrontBar(claude: Group[], medians: Medians) {
+function openingBar(claude: Group[], medians: Medians) {
   return {
-    title: 'Up-front context per kind of job',
-    sub: 'Median tokens a run starts with (Claude). Its share: of the tokens its runs read, how much is that context read again each turn',
+    title: 'Opening context per kind of job',
+    sub: 'The median a Claude run has read before it starts (its instructions, brief and tools), read again on every turn. After each kind: that context’s share of all its runs read',
     share: false,
     rows: kindsOf(claude.filter(g => g.measured)).map(kind => ({
-      label: `${named(kind)} · ${percent(upfrontShare(claude.filter(g => g.kind === kind))) ?? '–'}%`,
-      value: thousands(medians.get(kind)),
-      unit: 'k tokens',
+      label: `${named(kind)} · ${percent(upfrontShare(claude.filter(g => g.kind === kind))) ?? '–'}% of its measured reads`,
+      value: hundreds(medians.get(kind)),
+      unit: 'tokens',
     })),
   };
 }
@@ -132,13 +119,16 @@ function upfrontBar(claude: Group[], medians: Medians) {
 function resumedBar(claude: Group[]) {
   return {
     title: 'Resumed runs per kind of job',
-    sub: 'What a run that took its session up again cost, and how long the session sat idle before it',
+    sub: 'Claude runs that took their session up again: what they cost at API prices, and how long the session sat idle first',
     rows: kindsOf(claude.filter(g => g.resumed)).map(kind => {
       const of = claude.filter(g => g.kind === kind);
       const idle = sum(of, g => g.idled) ? sum(of, g => g.idle) / sum(of, g => g.idled) : null;
       return {
-        label: `${named(kind)} · ${sum(of, g => g.resumed)} runs, ${idle === null ? '–' : minutes(idle)} idle`,
-        value: twoDecimals(sum(of, g => g.resumedCost)),
+        label: `${named(kind)} · ${plural(
+          sum(of, g => g.resumed),
+          'run',
+        )}, ${idle === null ? '–' : minutes(idle)} idle`,
+        value: dollars(sum(of, g => g.resumedCost)),
         unit: 'USD',
       };
     }),
@@ -151,9 +141,9 @@ function groupsIn(from: string, to: string): Group[] {
     db
       .prepare(
         `with runs as materialized (select job, substr(ts, 1, 13) hour, engine, seat, coalesce(cost, 0) cost,
-        input, cache_write, cache_read, opening, turns, resumed, idle_ms from usage where ts >= ? and ts < ?),
+        input, cache_write, cache_read, output, opening, turns, resumed, idle_ms from usage where ts >= ? and ts < ?),
       ${KINDS}
-      select r.hour, r.engine, r.seat, k.kind, count(*) runs, sum(r.cost) cost, sum(r.input + r.cache_read) tokens,
+      select r.hour, r.engine, r.seat, k.kind, count(*) runs, sum(r.cost) cost, sum(r.input + r.cache_write + r.cache_read + r.output) tokens,
         count(r.opening) measured, coalesce(sum(r.opening * r.turns), 0) upfront,
         sum(iif(r.opening is null, 0, r.input + r.cache_write + r.cache_read)) measuredTokens,
         count(iif(r.resumed = 1, 1, null)) resumed, coalesce(sum(iif(r.resumed = 1, r.idle_ms, null)), 0) idle,
@@ -192,30 +182,23 @@ function periodOf(from: string, to: string) {
 }
 
 // ---- shaping
-function perDay(from: string, to: string, claude: Group[], kinds: string[]) {
+function perDay(from: string, to: string, groups: Group[]) {
   const days = Array.from({ length: daysFrom(from, to) + 1 }, (_, i) => addDays(from, i));
-  const rows = new Map(
-    days.map(day => [day, { day, cost: 0, ...Object.fromEntries(kinds.map(k => [`kind:${k}`, 0])) }]),
-  );
-  for (const g of claude) {
-    const row = rows.get(companyDay(Date.parse(`${g.hour}:00:00Z`))) as Record<string, number> | undefined;
+  const rows = new Map(days.map(day => [day, { day, tokens: 0, claude: 0, codex: 0, cost: 0 }]));
+  for (const g of groups) {
+    const row = rows.get(companyDay(Date.parse(`${g.hour}:00:00Z`)));
     if (!row) continue;
+    row.tokens += g.tokens;
+    row[g.engine === 'codex' ? 'codex' : 'claude'] += g.tokens;
     row.cost += g.cost;
-    row[`kind:${g.kind}`] += g.cost;
   }
-  return [...rows.values()].map(row =>
-    Object.fromEntries(Object.entries(row).map(([key, v]) => [key, typeof v === 'number' ? twoDecimals(v) : v])),
-  );
+  return [...rows.values()].map(row => ({ ...row, cost: dollars(row.cost) }));
 }
 
-function bar(
-  head: { title: string; sub: string; unit: string },
-  groups: Group[],
-  by: (g: Group) => string,
-  value: (g: Group) => number,
-) {
-  const sums = [...totals(groups, by, value)].sort((a, b) => b[1] - a[1]);
-  return { ...head, rows: sums.map(([label, v]) => ({ label, value: twoDecimals(v), unit: head.unit })) };
+// tokens per label, the most first
+function bar(head: { title: string; sub: string }, groups: Group[], by: (g: Group) => string) {
+  const sums = [...totals(groups, by, g => g.tokens)].sort((a, b) => b[1] - a[1]);
+  return { ...head, rows: sums.map(([label, v]) => ({ label, value: v, unit: 'tokens' })) };
 }
 
 // Of the tokens the measured runs read, the share that is their opening context read again on every turn.
@@ -234,16 +217,25 @@ const kindsOf = (groups: Group[]) =>
     ...totals(
       groups,
       g => g.kind,
-      g => g.cost,
+      g => g.tokens,
     ),
   ]
     .sort((a, b) => b[1] - a[1])
     .map(([k]) => k);
 const sum = (groups: Group[], value: (g: Group) => number) => groups.reduce((s, g) => s + value(g), 0);
-const named = (kind: string) => kind.charAt(0).toUpperCase() + kind.slice(1);
-const twoDecimals = (v: number) => Math.round(v * 100) / 100;
-const usd = (v: number) => `$${Math.round(v).toLocaleString('en-GB')}`;
-const millions = (v: number) => Math.round(v / 1e5) / 10;
-const thousands = (v: number | null | undefined) => (v == null ? null : Math.round(v / 100) / 10);
-const percent = (share: number | null) => (share === null ? null : Math.round(share * 1000) / 10);
+// (a kind as the board reads it: 'pr fix' is the fixes a pull request's review asked for)
+const named = (kind: string) =>
+  kind === 'pr fix' ? 'Fixes after review' : kind.charAt(0).toUpperCase() + kind.slice(1);
+// (dollars: cents only under $100, where they still say something)
+const dollars = (v: number) => (v < 100 ? Math.round(v * 100) / 100 : Math.round(v));
+const hundreds = (v: number | null | undefined) => (v == null ? null : Math.round(v / 100) * 100);
+const percent = (share: number | null) => (share === null ? null : Math.round(share * 100));
+const plural = (n: number, word: string) => `${n.toLocaleString('en-GB')} ${word}${n === 1 ? '' : 's'}`;
+// a big count as the tile's line says it: 3 figures and B, M or k
+const short = (v: number) =>
+  v >= 999.5e6
+    ? `${+(v / 1e9).toPrecision(3)} B`
+    : v >= 999.5e3
+      ? `${+(v / 1e6).toPrecision(3)} M`
+      : `${Math.round(v / 1e3)} k`;
 const minutes = (ms: number) => (ms < 3600e3 ? `${Math.round(ms / 60e3)} min` : `${Math.round(ms / 360e3) / 10} h`);

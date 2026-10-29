@@ -119,8 +119,8 @@ Agents can't watch video, so a session reaches one as lines and pictures.
   one below it never loads, so never decodes), and every step has `STEP_MS`: one that fails or runs past it closes
   its mirror, which opens again from the recording when next asked for (`seen` says false until then). Without that a
   step left hanging held every later picture of its session behind it, silently. 15 s is how long the voice line waits
-  for the coordinator. A step past its time closes only its own tab while Chromium still answers (`ANSWER_MS`), so a
-  slow page leaves the other mirrors alone. A Chromium that doesn't answer closes, every mirror with it, and the next
+  for the coordinator. A step past its time closes only its own tab while Chromium still replies (`REPLY_MS`), so a
+  slow page leaves the other mirrors alone. A Chromium that doesn't reply closes, every mirror with it, and the next
   opens in a fresh one. A mirror opens with only what the screen still shows (`shown`): the events since the last full
   snapshot, each canvas's latest picture alone (canvas.js's wipe the whole canvas). From the whole recording a share of
   HQ's building took 2.8 s to its first picture after 10 minutes and past 15 s after 30; now 0.9 s after 60 (measured

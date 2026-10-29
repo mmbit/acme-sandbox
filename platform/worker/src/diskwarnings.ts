@@ -1,7 +1,8 @@
 // A disk overage reaches the session inbox and every live command's output, leaving cleanup running.
 import { randomUUID } from 'node:crypto';
 import { procStat } from './detached.ts';
-import { runsOf, tellRun, type JobUse } from './shares.ts';
+import { runsOf, type JobUse } from './shares.ts';
+import { tellRun } from './stoprun.ts';
 import type { DiskShares, DiskUse } from './disk.ts';
 
 export async function warnDisk(

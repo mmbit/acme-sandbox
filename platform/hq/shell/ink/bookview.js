@@ -48,7 +48,7 @@ export function draw(book) {
 }
 // The book out of sight (shut past the screen's edge, book.js) or back: its pages paint nothing meanwhile, and what
 // changed is painted as it shows (bookpage.js). Back, it's on the hand, so a finger's first touch moves the page and
-// never scribbles on it (the board, call 159).
+// never scribbles on it.
 export function away(book, on) {
   if (book.away && !on) book.tools?.use('hand');
   book.away = on;
@@ -119,7 +119,7 @@ export function zoomBy(book, k, { at: point = null, slide = true } = {}) {
   const scale = clampScale(from * k, v.page, book.size),
     mid = point ?? { x: book.size.w / 2, y: book.size.h / 2 },
     pan = zoomAt(book.pan, from, scale, mid);
-  if (slide) slideTo(book, { pan, scale }, () => book.remember());
+  if (slide) slideTo(book, { pan, scale }, () => book.remember(true));
   else setView(book, { pan, scale });
   return true;
 }

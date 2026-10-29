@@ -493,6 +493,9 @@ test('the call ledger: item add takes the goal and the words on stdin, never in 
   assert.equal(seen.length, before, 'nothing sent');
   assert.equal((await piped(JSON.stringify({ goal: 'Juno knows the mission', words: 'Kit: I will send it.' }), true, 'item', 'add', 'promise', 'kit', 'Send the note', '-', '--goal', '-')).code, 0);
   assert.deepEqual(last().body, { kind: 'promise', owner: 'kit', what: 'Send the note', goal: 'Juno knows the mission', quote: 'Kit: I will send it.' });
+  // hq job on a call: the brief with the board's why, which a promise it carries on the call's notes page takes
+  assert.equal((await piped(JSON.stringify({ goal: 'Juno knows the mission', words: 'Send it today.' }), true, 'job', 'kit', 'Send the note', '-', '--goal', '-')).code, 0);
+  assert.deepEqual([last().url, last().body.prompt, last().body.goal], ['/api/agent/job', 'Send it today.', 'Juno knows the mission']);
   // hq item replace: the earlier item's kind and owner (the coordinator's); a follow-up's, or a live call's for an open item
   const replaced = await piped(JSON.stringify({ goal: 'Juno knows the mission', words: 'Board: only the note.' }), false, 'item', 'replace', '9', 'Only the note', '-', '2-2', '--goal', '-');
   assert.match(replaced.out, /Recorded item #42 \(task for kit\) on call #7[^]*Item #9 is replaced by this one/);

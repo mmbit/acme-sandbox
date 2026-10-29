@@ -28,6 +28,7 @@ import { dirname, join, relative } from 'node:path';
 import { compareBase } from './comparison.ts';
 import { HqUnreachable, NO_ROOM_EXIT, NoRoom, onLent, UNREACHED_EXIT } from './lent.ts';
 import { areaOf, git, gitFiles, plural, TOOLS_HOME, workingTree } from './repo.ts';
+import { helperBundle } from './bundle.ts';
 import { changeAt, noTests, SUITES, type Run } from './suites.ts';
 import type { FileEnd } from './timings.ts';
 
@@ -47,15 +48,20 @@ const stopAt = process.env.LENT_UNTIL ? Number(process.env.LENT_UNTIL) * 1000 - 
 const OUTCOMES_FILE = 'tests-outcomes.json';
 const COMPARISON_INPUT = 'base-comparison.json';
 const COMPARISON_OUTPUT = 'base-outcomes.json';
-// The tools the worker's image adds for the Python and shell suites (platform/worker/Dockerfile), which a helper's image
-// lacks and its proxy can't fetch: the worker's own copies go along in the bundle's tools/, first on PATH (lent.ts),
-// when a Python or shell suite runs.
-const TOOLS_BIN = process.env.TESTS_TOOLS_BIN ?? '/usr/local/bin'; // where the image puts them (the tests' stand-ins elsewhere)
-// Compose and static jq are optional until the worker image supplies them. Their infra tests skip when absent.
-const TOOLS = ['age', 'age-keygen', 'versitygw', 'caddy'];
-for (const tool of ['docker-compose', 'jq']) {
-  if (existsSync(join(TOOLS_BIN, tool))) TOOLS.push(tool);
-}
+// Browser test areas include the HQ-load entry points that import the coordinator's check.
+const BROWSER_AREAS = new Set([
+  'platform/coordinator',
+  'platform/hq',
+  'shared/review',
+  'shared/browser',
+  'shared/chromium',
+  'shared/watchalong',
+]);
+const bundleFor = (runs: Run[]) =>
+  helperBundle({
+    tools: runs.some(run => run.kind !== 'node'),
+    browsers: runs.some(run => BROWSER_AREAS.has(run.area)),
+  });
 
 type Failure = { key: string; file: string; text: string };
 type FailureTargets = Map<Run, { failures: Pick<Failure, 'key' | 'file'>[] }>;
@@ -121,7 +127,6 @@ async function onHelper(): Promise<number | undefined> {
   const change = changeAt(root, baseRef, all, atCommit);
   if (!change.runs.length) return undefined;
   const tree = changeTree();
-  const tools = change.runs.some(run => run.kind !== 'node') ? TOOLS.map(tool => join(TOOLS_BIN, tool)) : [];
   const ran = await onLent(root, {
     what: 'Tests',
     base: change.base,
@@ -130,7 +135,7 @@ async function onHelper(): Promise<number | undefined> {
     args: [...(all ? ['--all'] : []), '--attempt', `../${OUTCOMES_FILE}`],
     minutes: HELPER_MINUTES,
     bring: [OUTCOMES_FILE],
-    tools,
+    ...bundleFor(change.runs),
     limitIsResult: true,
     // (while a helper of the kind is there, they wait for it, its helpers busy with other pushes' tests or not: run here
     // instead they'd take the worker's memory, and a worker short of it stops them)
@@ -384,7 +389,6 @@ async function failingOnHelper(
     { failures: outcomes.get(run)!.failures.map(({ key, file }) => ({ key, file })) },
   ]);
   const request = JSON.stringify({ outcomes: targets, tests: [...among] });
-  const tools = failing.some(run => run.kind !== 'node') ? TOOLS.map(tool => join(TOOLS_BIN, tool)) : [];
   const ran = await onLent(root, {
     what: 'Base comparison',
     base,
@@ -393,8 +397,9 @@ async function failingOnHelper(
     args: ['--comparison', `../${COMPARISON_INPUT}`, '--outcomes', `../${COMPARISON_OUTPUT}`],
     minutes: HELPER_MINUTES,
     bring: [COMPARISON_OUTPUT],
-    tools,
+    ...bundleFor(failing),
     inputs: { [COMPARISON_INPUT]: request },
+    waitWhilePresent: true,
     fallback: false,
   });
   if (!ran) throw new Error(`The base could not be compared on ${helper.machine}`);

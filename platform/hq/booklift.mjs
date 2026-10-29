@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import { nothingDrawn } from './bookink.mjs';
 import { groupsOf } from './bookplayed.mjs';
 import { savedScrap } from './bookscrap.mjs';
+import { pressAlong } from './bookkit.mjs';
 
 const FLIGHT_MS = 6000; // (the lift's flight, on a loaded worker)
 const RINGS = [
@@ -14,7 +15,7 @@ const RINGS = [
   { x: 250, y: 480, rx: 70, ry: 40 },
 ];
 
-// c: book-check's { hqIn, base, MINI, settled, penOn, ring, inkAt, posts, hush, shot, noErrorsIn }
+// c: book-check's { hqIn, base, MINI, settled, ring, inkAt, posts, hush, shot, noErrorsIn }
 export function liftStories(c) {
   return {
     'a mark saved lifts off HQ into the open book, onto the newest page where its scrap shows, and leaves nothing behind':
@@ -101,7 +102,7 @@ async function lifted(c, page, ring) {
   });
   const from = c.posts.length;
   c.hush(true);
-  await c.penOn(page)(c.ring(ring.x, ring.y, ring.rx, ring.ry));
+  await pressAlong(page, c.ring(ring.x, ring.y, ring.rx, ring.ry));
   await savedScrap({ page, posts: c.posts }, from, 'the lift');
   await page.waitForFunction(() => window.__flight.gone, null, { timeout: FLIGHT_MS });
   const scrap = groupsOf(page.context().notebook).at(-1);

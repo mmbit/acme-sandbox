@@ -118,11 +118,13 @@ test("hq propose puts new work in its project owner's inbox, not the queue; the 
     newThread: { project: 'game', name: 'Boss rush', goal: 'Every boss plays' },
   });
   assert.equal(drawn.status, 200);
+  assert.match(drawn.body.chain, /^It starts once game\/levels is done and merged/, 'after the one under way');
   const history = db.prepare('select what, by from plan_changes where thread = ? order by id').all(drawn.body.thread);
   assert.deepEqual(
     history.map(c => [c.what, c.by]),
     [
       ['deliverable drawn: Boss rush', 'wren'],
+      ['needs game/levels', 'wren'],
       ['task #' + drawn.body.job + ' added: A boss rush', 'wren'],
     ],
   );

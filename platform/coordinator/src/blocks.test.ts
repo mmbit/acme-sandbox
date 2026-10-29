@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { commandOf } from '../../worker/src/shares.ts';
+import { commandOf } from '../../worker/src/stoprun.ts';
 import { procStat } from '../../worker/src/detached.ts';
 import assert from 'node:assert/strict';
 import { harness } from './harness.ts';

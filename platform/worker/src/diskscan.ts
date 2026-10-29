@@ -1,6 +1,7 @@
 // A slot-owned scanner keeps command-controlled paths away from worker filesystem privileges.
 import { AccountingError, type AccountingFailure } from './accounting.ts';
 import { fork, type ChildProcess } from 'node:child_process';
+import { PROBE_OLD_SPACE_MB } from './disktree.ts';
 
 export class DiskScan {
   private child: ChildProcess;
@@ -8,10 +9,14 @@ export class DiskScan {
   private failure?: Error;
   private closed = false;
 
-  constructor(roots: string[], ids: { uid: number; gid: number }) {
-    this.child = fork(new URL('./diskprobe.ts', import.meta.url), [JSON.stringify(ids), ...roots], {
+  constructor(roots: string[], ids: { uid: number; gid: number }, oldSpaceMb = PROBE_OLD_SPACE_MB) {
+    this.child = fork(new URL('./diskprobe.ts', import.meta.url), [JSON.stringify(ids), String(oldSpaceMb), ...roots], {
       env: { PATH: '/usr/bin:/bin' },
-      execArgv: [],
+      // One probe runs for each job its whole life. Its tree is ~30 MB of heap for a job's checkout, but V8's default
+      // young generation (sized for a 2 GB heap) kept ~40 MB more resident in each, memory the worker's admission
+      // counts against every start (diskscan.test.ts).
+      // Its old space is set too: the tree's bound is a share of it (disktree.ts).
+      execArgv: ['--max-semi-space-size=1', `--max-old-space-size=${oldSpaceMb}`],
       stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
     });
     this.child.on('message', (reading: { bytes: number; error?: AccountingFailure }) => {

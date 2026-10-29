@@ -8,10 +8,8 @@
 // board sees and what the store keeps.
 import assert from 'node:assert/strict';
 import { freePage, onDesk, paperBox, savedWhere, colourIn, BLUE } from './bookmouse.mjs';
-import { wheelStories } from './bookwheel.mjs';
-import { barStories } from './bookbar.mjs';
+import { MINI, chromiumPen, until } from './bookkit.mjs';
 
-export const MINI = { width: 1133, height: 744 };
 // how long a story waits to be sure something didn't happen (the page is saved this soon after a change)
 export const QUIET_MS = 1200;
 // what the stand-in microphone hears
@@ -21,8 +19,6 @@ export const HEARD = 'order the blue mugs';
 export function stripStories(c) {
   return {
     'controls with a mouse: the strip names its tool, Shift pans, Ctrl selects': browser => mouse(browser, c),
-    ...wheelStories(c, { desk, now, pressed, until }),
-    ...barStories(c, { desk }),
     'controls with a mouse: held still, a voice note lands its words where it was held; Undo takes them back':
       browser => voiceByMouse(browser, c),
     "controls with a mouse: the cog's preferences stick on this device, and the hold waits as long as they say":
@@ -249,8 +245,8 @@ async function pencil(browser, c) {
 
 // ---- helpers
 
-// A desktop with a mouse and a microphone (the stand-in: shell/voice.js's recording and /api/voice's words)
-async function desk(browser, c, opts) {
+// A desktop with a mouse and a microphone (the stand-in: shell/voice.js's recording and /api/voice's words).
+export async function desk(browser, c, opts) {
   const opened = await onDesk(browser, c, opts);
   await heard(opened.page);
   await opened.page.reload();
@@ -258,7 +254,8 @@ async function desk(browser, c, opts) {
   await c.settled(opened.page, 'open');
   return opened;
 }
-// The iPad mini as a touch screen with a pen, in Chromium (its own touch and pen events, trusted)
+// The iPad mini as a touch screen with a pen, in Chromium (its own touch and pen events, trusted); more: the context's
+// own options (exported for bookhand.mjs)
 export async function mini(browser, c, more = {}) {
   // (at 1x, so a screenshot's px are the screen's: colourIn)
   const context = await c.hqIn(browser, MINI, { hasTouch: true, deviceScaleFactor: 1, ...more });
@@ -270,16 +267,17 @@ export async function mini(browser, c, more = {}) {
   await page.waitForSelector('#book .bk-desk', { timeout: 30_000 });
   await c.settled(page, 'open');
   const cdp = await context.newCDPSession(page);
-  return { page, pen: penOf(cdp), touch: touchOf(cdp), errors, done: () => context.close() };
+  return { page, pen: chromiumPen(cdp), touch: touchOf(cdp), errors, done: () => context.close() };
 }
-// The microphone's stand-in: the recording module answered with one that hears at once, and its words
+// The microphone's stand-in: the recording module answered with one that hears at once, and its words; dictate.js runs
+// for real on it (seconds)
 export async function heard(page) {
   await page.route('**/shell/voice.js', r =>
     r.fulfill({
       contentType: 'text/javascript',
       body: `export const MAX_SECONDS = 1200, TRANSCRIBER = true, canRecord = true;
 export function record({ onSegment } = {}) {
-  const s = { ready: Promise.resolve(), level: () => 0.4, cancel() {} };
+  const s = { ready: Promise.resolve(), level: () => 0.4, seconds: () => 1, cancel() {} };
   setTimeout(() => onSegment?.(new Blob(['piece'], { type: 'audio/wav' })), 100);
   s.stop = async () => new Blob(['clip'], { type: 'audio/webm' });
   return s;
@@ -295,28 +293,6 @@ export function record({ onSegment } = {}) {
     if (navigator.mediaDevices)
       navigator.mediaDevices.enumerateDevices = async () => [{ kind: 'audioinput', deviceId: 'mic', label: '' }];
   });
-}
-export function penOf(cdp) {
-  const send = (type, [x, y], down) =>
-    cdp.send('Input.dispatchMouseEvent', {
-      type,
-      x,
-      y,
-      button: down || type === 'mouseReleased' ? 'left' : 'none',
-      buttons: down ? 1 : 0,
-      clickCount: 1,
-      pointerType: 'pen',
-      force: down ? 0.5 : 0,
-    });
-  return {
-    down: at => send('mousePressed', at, true),
-    move: at => send('mouseMoved', at, true),
-    up: at => send('mouseReleased', at, false),
-    tap: async at => {
-      await send('mousePressed', at, true);
-      await send('mouseReleased', at, false);
-    },
-  };
 }
 // Fingers: down at points, moved to others in steps, lifted
 export function touchOf(cdp) {
@@ -351,7 +327,8 @@ async function stroke(page, [x0, y0], [x1, y1]) {
   for (let i = 1; i <= 16; i++) await page.mouse.move(x0 + ((x1 - x0) * i) / 16, y0 + ((y1 - y0) * i) / 16);
   await page.mouse.up();
 }
-// Where the page is on the paper: its top-left's shift on the screen (bookview.js draws it there)
+// Where the page is on the paper: its top-left's shift on the screen (bookview.js draws it there), and the tool named
+// (both exported for bookhand.mjs)
 export const placed = page =>
   page.evaluate(() => {
     const m = new DOMMatrix(getComputedStyle(document.querySelector('#book .bk-world')).transform);
@@ -363,8 +340,3 @@ export const pressed = page =>
     () => document.querySelector('#book .bk-strip [aria-pressed=true]')?.getAttribute('aria-label') ?? null,
   );
 export const stored = (c, free) => c.pages.find(p => p.id === free.id);
-export async function until(read, what) {
-  for (const end = Date.now() + 4000; Date.now() < end; await new Promise(r => setTimeout(r, 100)))
-    if (await read().catch(() => false)) return;
-  throw new Error(`not ${what}`);
-}

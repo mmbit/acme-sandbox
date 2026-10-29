@@ -288,7 +288,7 @@ test("the board's note on a preview is a scrap on its Notebook's newest page, an
   const g2 = group(r2.json().id);
   assert.deepEqual(JSON.parse(g2.anchor), { v: 1, url: `${ORIGIN}/`, el: { selector: '', tag: '<img onerror=x>', text: '', box: { x: 0, y: 0, w: 0, h: 0 } },
     view: { w: 0, h: 0, x: 0, y: 0, dpr: 0 }, ink: [] }, 'the page as checked, never the one the page says');
-  assert.deepEqual([g2.kind, g2.pictures, typed(g2), g2.owner], ['drawing', '[]', 'Second', 'bolt']);
+  assert.deepEqual([g2.kind, g2.pictures, typed(g2), g2.owner], ['note', '[]', 'Second', 'bolt']);
 
   // the board sends the page: one job for bolt with the notes in its brief, each kept as a sent note its job reads
   const { job, ids, prompt } = await ship('bolt');
@@ -468,7 +468,7 @@ test('a general note is pinned to nothing: no element, spot or snip, and it read
   const g = group(r.json().id);
   assert.deepEqual(JSON.parse(g.anchor), { v: 1, url: `${ORIGIN}/shop?x=1#top`, el: null, view: VIEW, ink: [] }, 'saved with the page it was written on, no lines');
   // (on the Notebook's page, its words typed)
-  assert.deepEqual([g.kind, g.pictures, g.owner, typed(g)], ['drawing', '[]', 'bolt', 'The privacy pages differ from app to app'], 'no screenshot, even if one came');
+  assert.deepEqual([g.kind, g.pictures, g.owner, typed(g)], ['note', '[]', 'bolt', 'The privacy pages differ from app to app'], 'no screenshot, even if one came');
   const { prompt } = await ship('bolt');
   assert.match(prompt, /Note \(typed on the preview page\): The privacy pages differ from app to app\nGeneral note: pinned to nothing/);
   assert.doesNotMatch(prompt, /xyzzy|plugh|Pinned to|Drawn on|Where:/);

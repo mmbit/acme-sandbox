@@ -10,6 +10,10 @@
 // (written, edited, moved onto the page or brought back by Undo), that spot moves down clear again (downAgain, from
 // answerplace.ts spotsClear). Pure, so it's tested alone (answerspot.test.ts); bookanswer.ts gives it the page.
 
+// (HQ's layout, the papers and controls an answer is placed for)
+import { BOOK, CONTROLS, paperWidth } from '../../../hq/shell/ink/booklayout.js';
+import { boardScreens, type Screen } from '../screens.ts';
+
 export type Box = { x: number; y: number; w: number; h: number };
 // Relative to its group's box's top-left, in page px; h: its height there, as placed (what it holds measured once, a
 // picture by its real size); narrow: where it lies on the next narrower paper this spot runs past (NARROWER)
@@ -24,9 +28,9 @@ export type Contents = {
 };
 
 // An answer's width (about 42 characters a line in the hand, 24 px a line: bookanswers.css's 23 px Caveat; least: on
-// paper with less room than that left of the controls), the room kept round it, and the controls' columns at the
-// paper's right edge it keeps left of, as HQ keeps them (bookanswers.js edgeOf: bookui.js --bk-stack, Undo's column and
-// the tool strip beside it, 52 px each with a finger and 8 px apart, and 24 px: 12 in from the edge, 12 kept), and the room it keeps at the paper's left, where a phone's spread has its pull tab
+// paper with less room than that left of the controls), the room kept round it, the controls at the paper's right edge
+// it keeps left of, with the room kept clear of them (HQ's CONTROLS), and the
+// room it keeps at the paper's left, where a phone's spread has its pull tab
 export const ANSWER = {
   w: 400,
   least: 120,
@@ -36,14 +40,23 @@ export const ANSWER = {
   head: 40,
   reply: 48,
   question: 56,
-  rail: 136,
+  rail: CONTROLS.width + CONTROLS.clear,
   inset: 12,
 } as const;
-// The papers the board reads on narrower than a wide page's, widest first, each a book's width less its margin and page
-// edges (28 px; a phone's 36: HQ's booklayout.js): the book beside HQ's page (an iPad mini held sideways, 501 px; a
-// desktop's is wider), a phone's (the spread, 390 px across less its edge) and the book at its least (BOOK.min, 320 px,
-// dragged there with its cover's edge; an iPad upright opens as the spread, its paper wider than the first).
-export const NARROWER = [473, 342, 292] as const;
+const PHONE: Screen = { width: 390, height: 844 };
+// The papers the board reads on narrower than a wide page's, widest first, as HQ lays them out: the book beside HQ's
+// page on each of the company's screens (an upright tablet's opens as the spread), a phone's spread, and the book at its
+// least on each screen, dragged there with its cover's edge.
+function narrowerPapers(screens: Screen[]): number[] {
+  const papers = [
+    ...screens.map(s => paperWidth(s.width, s.height, { mode: 'open', book: null })),
+    paperWidth(PHONE.width, PHONE.height, { mode: 'open', book: null }),
+    ...screens.map(s => paperWidth(s.width, s.height, { mode: 'open', book: BOOK.min })),
+  ];
+  return [...new Set(papers)].sort((a, b) => b - a);
+}
+// The board's (brand.yaml screens, screens.ts), read once at start
+export const NARROWER = narrowerPapers(boardScreens());
 // The narrowest paper a narrow spot is placed for
 export const NARROWEST = NARROWER[NARROWER.length - 1];
 
@@ -63,7 +76,7 @@ export function answerHeight(a: Contents, w: number = ANSWER.w) {
 // its paper showed), with a narrow spot for the widest narrower paper it runs past (and so on, down to the narrowest)
 export function answerSpot(group: Box, a: Contents, taken: Box[], paper: { x: number; w: number }): Spot {
   const spot = spotOn(group, a, taken, paper),
-    past = NARROWER.find(w => w < paper.w && group.x + spot.dx + spot.w > paper.x + w - ANSWER.rail);
+    past = narrowerPast(group, spot, paper);
   return past === undefined ? spot : { ...spot, narrow: answerSpot(group, a, taken, { x: paper.x, w: past }) };
 }
 // A spot kept from before the controls grew (rail), placed again by answerSpot's rules: on each paper, from the spot's
@@ -80,10 +93,15 @@ export function spotAgain(
   let s = spot;
   while (s && group.x + s.dx + s.w > edge) s = s.narrow;
   const kept = s && !taken.some(t => overlapping(spotBox(group, s!), t)),
-    here: Spot = kept ? { dx: s!.dx, dy: s!.dy, w: s!.w, h: s!.h } : spotOn(group, a, taken, paper),
-    past = NARROWER.find(w => w < paper.w && group.x + here.dx + here.w > paper.x + w - ANSWER.rail);
+    here = kept ? alone(s!) : spotOn(group, a, taken, paper),
+    past = narrowerPast(group, here, paper);
   return past === undefined ? here : { ...here, narrow: spotAgain(group, s, a, taken, { x: paper.x, w: past }) };
 }
+// The widest paper narrower than paper that spot runs past, under its controls
+const narrowerPast = (group: Box, spot: Spot, paper: { x: number; w: number }) =>
+  NARROWER.find(w => w < paper.w && group.x + spot.dx + spot.w > paper.x + w - ANSWER.rail);
+// A spot without its narrow ones
+const alone = ({ narrow: _narrow, ...spot }: Spot): Spot => spot;
 export const overlapping = (a: Box, b: Box) => a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
 // A spot (an answer's, or one of its narrow spots) the board's groups now cover: in the first free place under its
 // group again, clear of every box taken, as wide and tall as it was
@@ -134,8 +152,7 @@ export const spotBox = (group: Box, spot: Spot): Box => ({
   w: spot.w,
   h: spot.h,
 });
+// An answer's spot and its narrow ones, widest first
+export const spotChain = (spot: Spot): Spot[] => [spot, ...(spot.narrow ? spotChain(spot.narrow) : [])];
 // The paper an answer's spot takes on any screen: its spot's box, and its narrow spots'
-export const spotBoxes = (group: Box, spot: Spot): Box[] => [
-  spotBox(group, spot),
-  ...(spot.narrow ? spotBoxes(group, spot.narrow) : []),
-];
+export const spotBoxes = (group: Box, spot: Spot): Box[] => spotChain(spot).map(s => spotBox(group, s));

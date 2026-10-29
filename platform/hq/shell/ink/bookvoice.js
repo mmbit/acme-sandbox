@@ -3,10 +3,10 @@
 // page (booktexts.js put), one step Undo takes back. Nothing heard, or the microphone blocked, says so and goes. The
 // listening slip is the moment's only: nothing of it stays drawn.
 //
-// The recording is the intercom's (voice.js: pieces cut at the pauses, each transcribed as the board talks; the whole
-// clip the fallback).
-import { record } from '../voice.js';
-import { transcribe, loadLanguage } from '../data.js';
+// The recording is dictate.js's (pieces cut at the pauses, each transcribed as the board talks; the whole clip
+// the fallback).
+import { dictate } from '../dictate.js';
+import { loadLanguage } from '../data.js';
 import { sfx } from '../audio.js';
 import { word } from './bookscope.js';
 
@@ -27,14 +27,7 @@ export function listen(book, down) {
         l => l?.lang || 'en',
         () => 'en',
       );
-  const v = {
-    parts: [],
-    pending: [],
-    failed: false,
-    done: false,
-    el: slip(down),
-    transcribe: (clip, code) => transcribe(clip, code, book.scope ? `${book.scope.api}/voice` : undefined),
-  };
+  const v = { done: false, el: slip(down), api: book.scope ? `${book.scope.api}/voice` : undefined };
   sfx.micOn();
   lang.then(code => !v.done && recording(v, code));
   // let go: the words land
@@ -65,24 +58,15 @@ export function listen(book, down) {
   return { cancel };
 }
 
+// A held press before the microphone is allowed here: the slip says how to allow it, or that it's blocked, and goes.
+// Only a tap on a mic may bring up the browser's question, so the hold never asks.
+export function cantListen(down, blocked) {
+  say({ el: slip(down) }, word(blocked ? 'The microphone is blocked here' : 'Tap a mic once to turn on voice notes'));
+}
+
 // The microphone on, in the board's language: each piece heard transcribed as it comes and shown in the slip
 function recording(v, code) {
-  v.code = code;
-  v.rec = record({
-    lang: code,
-    onSegment: clip => {
-      const i = v.parts.push('') - 1;
-      v.pending.push(
-        v.transcribe(clip, code).then(
-          text => {
-            v.parts[i] = text;
-            shown(v);
-          },
-          () => (v.failed = true),
-        ),
-      );
-    },
-  });
+  v.rec = dictate({ lang: code, api: v.api, onWords: text => shown(v, text) });
   v.rec.ready.catch(err => {
     if (v.done) return;
     v.stop();
@@ -91,24 +75,16 @@ function recording(v, code) {
   pulse(v);
 }
 
-// The words heard so far, joined
-const words = v => v.parts.filter(Boolean).join(' ').trim();
-
-// The recording stopped: the last piece transcribed (or the whole clip, where the pieces failed), and the words put on
-// the page where the press was
+// The recording stopped: its words put on the page where the press was
 async function landed(book, v, at, right) {
   if (!v.rec) return v.el.remove();
   v.el.dataset.state = 'writing';
-  const clip = await v.rec.stop();
-  await Promise.all(v.pending);
-  if ((!words(v) || v.failed) && clip && v.code) {
-    try {
-      v.parts = [await v.transcribe(clip, v.code)];
-    } catch {
-      return say(v, word('The transcriber isn’t available right now'));
-    }
+  let text;
+  try {
+    ({ text } = await v.rec.stop());
+  } catch {
+    return say(v, word('The transcriber isn’t available right now'));
   }
-  const text = words(v);
   if (!text) return say(v, word('No words came through'));
   v.el.remove();
   book.tools?.put?.(at, text, right);
@@ -140,8 +116,7 @@ function onScreen(el) {
   el.style.setProperty('--dx', `${Math.round(dx)}px`);
   if (y - ABOVE - el.offsetHeight < EDGE) el.dataset.below = '';
 }
-function shown(v) {
-  const text = words(v);
+function shown(v, text) {
   if (!text) return;
   v.el.querySelector('span').textContent = text;
   onScreen(v.el);

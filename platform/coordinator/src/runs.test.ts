@@ -743,14 +743,6 @@ test("a job's runs waiting for a helper are four at most: each holds its bundle 
   await h.finish(other);
 });
 
-// Kinds of run as a company declares them in org.yaml, for one test
-function declareKinds(t: TestContext, kinds: string, settings = '  helper: the lent machine\n') {
-  const file = `${h.repo}/company/org.yaml`;
-  const before = readFileSync(file, 'utf8');
-  writeFileSync(file, `${before}\nruns:\n${settings}  kinds:\n${kinds}`);
-  t.after(() => writeFileSync(file, before));
-}
-
 const TWO_KINDS = `
     simulation:
       about: long simulation runs
@@ -772,7 +764,7 @@ const TWO_KINDS = `
 `;
 
 test("with two kinds declared, each kind's helper takes only its kind's runs, and a run whose kind has no helper there goes to this server's helper of its kind at once", async t => {
-  declareKinds(t, TWO_KINDS);
+  h.declareKinds(t, TWO_KINDS);
   await lendOne();
   const job = await h.start({ agent: 'bolt' });
   const render = await sendRun(job.token, { command: 'true', kind: 'render' });
@@ -806,7 +798,7 @@ test("with two kinds declared, each kind's helper takes only its kind's runs, an
 });
 
 test("with a kind's lent helper away, its run uses that kind's tools on this server's helper, and never another kind's", async t => {
-  declareKinds(t, TWO_KINDS);
+  h.declareKinds(t, TWO_KINDS);
   await lendNone();
   const job = await h.start({ agent: 'bolt' });
   // (what the render kind's image has and the simulation kind's lacks, as ffmpeg would be)
@@ -845,7 +837,7 @@ test("with a kind's lent helper away, its run uses that kind's tools on this ser
 });
 
 test('a run must name a kind HQ knows when several are declared, and a helper must name its own', async t => {
-  declareKinds(t, TWO_KINDS);
+  h.declareKinds(t, TWO_KINDS);
   await lendOne();
   const job = await h.start({ agent: 'bolt' });
   const unnamed = await sendRun(job.token, { command: 'true' });
@@ -865,7 +857,7 @@ test('a run must name a kind HQ knows when several are declared, and a helper mu
 });
 
 test("each kind's start command runs its own container, image, caps and GPUs on the one key volume, and a kind that breaks a rule is left out and said why", async t => {
-  declareKinds(t, TWO_KINDS);
+  h.declareKinds(t, TWO_KINDS);
   const job = await h.start({ agent: 'bolt' });
   const machine = (await h.agent('runs/helper', job.token)).body;
   const start = Object.fromEntries(
@@ -891,9 +883,47 @@ test("each kind's start command runs its own container, image, caps and GPUs on 
   await h.finish(job);
 });
 
+test('checkout and browser capabilities follow settings for renamed kinds, and invalid flags are left out', async t => {
+  h.declareKinds(
+    t,
+    `
+    pages:
+      checkout: true
+      browsers: true
+    suites:
+      checkout: true
+    folders: {}
+    bad-checkout:
+      checkout: yes
+    bad-browsers:
+      browsers: 1
+`,
+  );
+  const job = await h.start({ agent: 'bolt' });
+  const response = await h.agent('runs/helper', job.token);
+  assert.equal(response.status, 200);
+  const capabilities = (kind: { name: string; checkout: boolean; browsers: boolean }) => [
+    kind.name,
+    kind.checkout,
+    kind.browsers,
+  ];
+  const expected = [
+    ['pages', true, true],
+    ['suites', true, false],
+    ['folders', false, false],
+  ];
+  assert.deepEqual(response.body.kinds.map(capabilities), expected);
+  assert.deepEqual(runs.offloadPlaces().kinds.map(capabilities), expected);
+  assert.deepEqual(response.body.leftOut, [
+    { name: 'bad-checkout', why: 'checkout: true or false' },
+    { name: 'bad-browsers', why: 'browsers: true or false' },
+  ]);
+  await h.finish(job);
+});
+
 test("this server's helpers are made from the kinds HQ takes, as it read them: their names and images, published for the deploy", t => {
   const published = () => JSON.parse(readFileSync(`${h.dataDir}/run-kinds.json`, 'utf8'));
-  declareKinds(t, TWO_KINDS);
+  h.declareKinds(t, TWO_KINDS);
   runs.publishKinds();
   assert.deepEqual(published(), [
     { name: 'simulation', image: 'node:24.22.1-slim' },
@@ -912,7 +942,7 @@ const RIG_ONLY = `
 `;
 
 test('a kind for the lent machine only: this server has no helper of it and never takes its runs, which wait for the lent machine, also after it goes quiet mid-run', async t => {
-  declareKinds(t, RIG_ONLY);
+  h.declareKinds(t, RIG_ONLY);
   await lendOne();
   runs.publishKinds();
   assert.deepEqual(JSON.parse(readFileSync(`${h.dataDir}/run-kinds.json`, 'utf8')), [
@@ -960,7 +990,7 @@ test('files git ignores go with a run that names them with --with, and no other 
 });
 
 test('with --fallback here, a run no helper may take runs in the job: its kind undeclared, or for the lent machine alone with none asking', async t => {
-  declareKinds(t, RIG_ONLY);
+  h.declareKinds(t, RIG_ONLY);
   await lendOne();
   const job = await h.start({ agent: 'bolt' });
   const tree = jobTree();
@@ -1003,7 +1033,7 @@ const SEEN = 'mkdir out && ls *.wav > out/seen.txt';
 const HERE = 'echo "$HQ_RUN_HERE $(ls seed.txt)" > here.txt';
 
 test("the machines in HQ's org read, for every look's rig: none lent but this server; then the lent machine away, and the run it has, since when and on how many cores", async t => {
-  declareKinds(t, RIG_ONLY);
+  h.declareKinds(t, RIG_ONLY);
   await lendNone();
   h.db.exec('delete from helper_runs');
   const lent = async () =>
@@ -1042,7 +1072,7 @@ const HELD_KIND = `
 `;
 
 test("a kind held for the lent machine: this server's helper takes none of its runs, and the departments named start no work, until the lent helper has finished one", async t => {
-  declareKinds(t, HELD_KIND);
+  h.declareKinds(t, HELD_KIND);
   await lendOne();
   runs.publishHolds();
   const job = await h.start({ agent: 'bolt' });
@@ -1095,7 +1125,7 @@ test("a kind held for the lent machine: this server's helper takes none of its r
 });
 
 test("an upload under way when the same lent helper takes its run again is refused, and the run waits for the new take's", async t => {
-  declareKinds(t, '    retake:\n      serverAfterLent: true\n      holdUntilLent: [studio]\n');
+  h.declareKinds(t, '    retake:\n      serverAfterLent: true\n      holdUntilLent: [studio]\n');
   await lendOne();
   runs.publishHolds();
   const job = await h.start({ agent: 'bolt' });
@@ -1139,7 +1169,7 @@ test("an upload under way when the same lent helper takes its run again is refus
 });
 
 test('a kinds list is refused instead of silently becoming the default kind', async t => {
-  declareKinds(t, '    - simulation\n');
+  h.declareKinds(t, '    - simulation\n');
   const job = await h.start({ agent: 'bolt' });
   const machine = (await h.agent('runs/helper', job.token)).body;
   assert.deepEqual(machine.kinds, []);
@@ -1155,7 +1185,7 @@ test("the browser harnesses' kind is runs.browser, render when it names none, le
     ['  browser: Shots!\n', '', true],
   ] as const)
     await t.test(browser || 'none', async row => {
-      declareKinds(row, TWO_KINDS, browser);
+      h.declareKinds(row, TWO_KINDS, browser);
       const machine = (await h.agent('runs/helper', job.token)).body;
       assert.equal(machine.browser, expected);
       assert.equal(
@@ -1167,7 +1197,7 @@ test("the browser harnesses' kind is runs.browser, render when it names none, le
 });
 
 test("two kinds' helpers started on one volume before the machine's key command wait for its key, then both are let in", async t => {
-  declareKinds(t, TWO_KINDS);
+  h.declareKinds(t, TWO_KINDS);
   await lendNone();
   const job = await h.start({ agent: 'bolt' });
   const lent = await lend('the lent machine');
@@ -1302,7 +1332,7 @@ const TESTS_KIND = `
 `;
 
 test("a machine set up with its install command: one command with its key, the manager's code pinned by its hash, its setup with each kind's helpers and those that have a run; a kind's runs that keep their sockets go to its locked helpers alone, two at once, each helper's start losing only its own", async t => {
-  declareKinds(t, TESTS_KIND);
+  h.declareKinds(t, TESTS_KIND);
   await lendNone();
   const added = await lend('the rig');
   lentKey = added.key;
@@ -1389,7 +1419,7 @@ test("a machine set up with its install command: one command with its key, the m
 test("a lent machine's pull of a kind's private image signs in with HQ's registry key, for an image a kind names alone", async t => {
   // (an owner whose sign-in isn't a multiple of 3 bytes long, so its base64 needs padding)
   const voice = `ghcr.io/acme1/voice@sha256:${'a'.repeat(64)}`;
-  declareKinds(
+  h.declareKinds(
     t,
     `${TESTS_KIND}
     voice:
@@ -1428,7 +1458,7 @@ test("a lent machine's pull of a kind's private image signs in with HQ's registr
 });
 
 test("a lent machine's runs fit its own memory cap together: a run of another kind waits while they'd pass it, and goes once one ends", async t => {
-  declareKinds(
+  h.declareKinds(
     t,
     '    simulation:\n      memoryGb: 8\n    render:\n      memoryGb: 6\n      helpers: 2\n',
     '  helper: the lent machine\n  machineMemoryGb: 12\n',

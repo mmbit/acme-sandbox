@@ -9,7 +9,7 @@ import { foley } from '../audio.js';
 import { picture } from './bookflip.js';
 import { fold, tear } from './bookpaper.js';
 import { said } from './booksave.js';
-import { callAbout, filesOf, mountTargets, shared } from './bookshare.js';
+import { callAbout, downloaded, filesOf, mountTargets } from './bookshare.js';
 import { callWindowAt, lightCall } from '../calldrop.js';
 
 // how far a press moves before the page comes off (less: a tap, the menu), the copy's width held, and its corner
@@ -168,5 +168,6 @@ function went(corner, kind, box, layer, v = shown(corner.book)) {
   if (layer) fold(layer.getBoundingClientRect(), layer, box);
   else fold(book.desk.getBoundingClientRect(), picture(book.desk), box);
   const files = corner.files;
-  (kind === 'call' ? callAbout(v.page, files.png) : shared(files[kind])).catch(e => said(book, v.page, e.message));
+  // (a file downloaded, never the share sheet)
+  (kind === 'call' ? callAbout(v.page, files.png) : downloaded(files[kind])).catch(e => said(book, v.page, e.message));
 }

@@ -55,9 +55,9 @@ export type Task = jobs.Named & {
 };
 const OPEN = ['queued', 'running', 'blocked'];
 
-// A thread's tasks in order: those cancelled, and those failed with another in their place or an open pull request on their
-// branch (jobs.ts failedAside), aside. A replacement takes the place of the task it replaces (jobs.ts createJob).
-// (created and finished)
+// A thread's tasks in order: those cancelled, and those failed with another in their place, an open pull request on their
+// branch, or their own pushed work merged (jobs.ts failedAside), aside. A replacement takes the place of the task it
+// replaces (jobs.ts createJob). (created and finished)
 export const tasksOf = (thread: string) => {
   return prepared(
     `select j.id, j.agent, j.title, j.step, j.round, j.status, j.branch, j.session, j.started, j.created, j.finished,
@@ -105,6 +105,7 @@ export function reader() {
     round: number | null;
   };
   const threads = new Map<string, Read>();
+  const openNeeds = needsReader();
   const of = (thread: string) => {
     if (!threads.has(thread)) {
       const tasks = tasksOf(thread),
@@ -137,10 +138,21 @@ export function reader() {
       follows: before.findLast(t => OPEN.includes(t.status))?.id ?? null,
       failed: before.find(t => (t.status === 'failed' || t.status === 'stopped') && countedOn(t))?.id ?? null,
       round: next ? round : null,
-      needs: next ? needsOpen(thread) : [],
+      needs: next ? openNeeds(thread) : [],
     };
   };
   return { of, waits };
+}
+// Each thread's open needs read once a reading, and the branches' review states once for all of them (reading them
+// builds the redraws' relations whole).
+function needsReader() {
+  const needs = new Map<string, ReturnType<typeof needsOpen>>();
+  let statusOf: ReturnType<typeof reviewclosure.statuses> | undefined;
+  const status = (branch: string) => (statusOf ??= reviewclosure.statuses())(branch);
+  return (thread: string) => {
+    if (!needs.has(thread)) needs.set(thread, needsOpen(thread, status));
+    return needs.get(thread)!;
+  };
 }
 // The open job of the branch's open pull request that pushes to the branch: its author's fix or update, or a ruling
 // that may push touch-ups (review.ts touchupFiles)
@@ -153,7 +165,7 @@ function pushingOn(branch: string) {
   return job?.id ?? null;
 }
 // Each thread whose work is still needed, with its last task still to merge
-function needsOpen(thread: string) {
+function needsOpen(thread: string, status: (branch: string) => string | null) {
   return needsOf(thread).flatMap(n => {
     const needed = findThread(n);
     if (!needed || needed.status === 'done') return [];
@@ -169,7 +181,7 @@ function needsOpen(thread: string) {
       ).all(needed.id) as Pick<Task, 'id' | 'status' | 'branch'>[];
       const settled = (t: (typeof tasks)[number]) =>
         t.status === 'cancelled' ||
-        (t.status === 'done' && ['merged', 'dropped'].includes(reviewclosure.status(jobs.workBranchOf(t)) ?? 'merged'));
+        (t.status === 'done' && ['merged', 'dropped'].includes(status(jobs.workBranchOf(t)) ?? 'merged'));
       if (tasks.length && tasks.every(settled)) return [];
     }
     return [{ thread: needed.id, task: last?.id ?? null }];
@@ -238,10 +250,14 @@ export function placeholders(): Omit<Planned, 'size'>[] {
       where j.thread = t.id and j.kind = 'work' and j.pr is null and j.status != 'cancelled') order by t.created, t.id`,
     )
     .all() as Thread[];
+  // One org-chart lookup per owner: findAgent copies the chart, and each plan write's loop check reads placeholders twice.
+  const engines = new Map<string, string>();
+  const engineOf = (owner: string) =>
+    engines.get(owner) ?? engines.set(owner, jobs.findAgent(owner)?.engine ?? 'claude').get(owner)!;
   return empty.flatMap((t, i) => {
     const owner = findProject(t.project)?.owner;
     if (!owner) return [];
-    const engine = jobs.findAgent(owner)?.engine ?? 'claude';
+    const engine = engineOf(owner);
     return [{ id: -1000 - i, agent: owner, title: `${t.name}: ${t.goal}`, engine, thread: t.id, placeholder: true }];
   });
 }
@@ -268,11 +284,17 @@ export function claimed(job: Job) {
 }
 
 // A task's finish that pushed work (a commit, a pull request) makes its branch the thread's, the branch each later task
-// runs on, until it merges (threadends.ts merged). So does one that failed after its push, with GitHub's refusal of its
-// pull request (the worker's land), so the task taking its place pushes there. One that pushed nothing leaves the
-// thread without a branch.
+// runs on, until it merges (threadends.ts merged). So does one that failed or was stopped after pushing a commit of its
+// own (the worker's ownCommit, or GitHub's refusal of its pull request in its land), so the task taking its place pushes
+// there. One that pushed nothing leaves the thread without a branch, and so does a parked or handed-up run's: its task
+// goes on.
 export function pushed(job: Job, r: { status: string; branch?: string; sha?: string; pr?: number }) {
-  if (!isTask(job) || !['done', 'failed'].includes(r.status) || !r.branch || !(r.sha || r.pr)) return;
+  if (!isTask(job) || !r.branch || !(r.sha || r.pr)) return;
+  // The task keeps the commit it pushed, from whichever of its runs pushed it (a later run that adds nothing reports
+  // none, as does a landing run after a snag): its pull request's merge brings that work to main (jobs.ts failedAside).
+  if (r.sha && ['done', 'failed', 'stopped', 'parked', 'up', 'snagged'].includes(r.status))
+    db.prepare('update jobs set sha = ? where id = ?').run(r.sha, job.id);
+  if (!['done', 'failed', 'stopped'].includes(r.status)) return;
   db.prepare("update threads set branch = ? where id = ? and branch is null and status = 'open'").run(
     r.branch,
     job.thread,

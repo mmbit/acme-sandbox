@@ -14,6 +14,7 @@ const { read } = await import('./followthrough.ts');
 const { agreements } = await import('./agreements.ts');
 const { snapshot } = await import('./backlog.ts');
 const { ceo } = await import('./company.ts');
+const { deskName } = await import('./wherework.ts');
 const { moveJob } = await import('./regroup.ts');
 const decisions = await import('./decisions.ts');
 const { agreed } = await followthroughFixture(h);
@@ -392,17 +393,22 @@ test('a pause of the work in no deliverable holds it, a fix round and review the
   const gate = await h.start({ agent: 'moss', thread: gates });
   assert.equal(
     pauses.pause({ project: 'unsorted', why: 'No new start' }, 'wren'),
-    `only ${ceo()} (work in no deliverable's owner) or the CEO pauses unsorted`,
+    `only ${ceo()} (${deskName()}'s owner) or the CEO pauses unsorted`,
   );
   assert.match(
     pauses.pause({ project: 'unsorted', why: 'No new start', until: [work] }, ceo()) as string,
-    new RegExp(`#${work} is on work in no deliverable, which the pause would hold`),
+    new RegExp(`#${work} is on ${deskName()}, which the pause would hold`),
   );
   const p = pause({ project: 'unsorted', why: 'No new start without a deadline', until: [gate.id] });
   assert.equal(p.held, 3, 'the work, the fix round and the review');
   for (const id of [work, fix, review]) assert.equal(await h.claim(engineOf(id)), null, `#${id} is held`);
-  assert.deepEqual(h.job(work).wakes, ['paused with work in no deliverable'], 'the projects view says what holds it');
-  assert.match(h.jobs.openJobs({}).find(j => j.id === fix)!.line, /queued paused with work in no deliverable:/);
+  assert.deepEqual(h.job(work).wakes, [`paused with ${deskName()}`], 'the projects view says what holds it');
+  assert.ok(
+    h.jobs
+      .openJobs({})
+      .find(j => j.id === fix)!
+      .line.includes(`queued paused with ${deskName()}:`),
+  );
   assert.deepEqual(snapshot(Date.now()).jobs.find(j => j.id === work)!.waitsFor, [gate.id], 'the play holds it too');
   const proposed = snapshot(Date.now(), [{ id: -1, agent: 'kit', title: 'Proposed work', engine: engineOf(work) }]);
   assert.deepEqual(proposed.jobs.find(j => j.id === -1)!.waitsFor, [gate.id], 'proposed work waits for the gate too');
@@ -462,12 +468,12 @@ test('a pause of the work in no deliverable waits only for work that can run and
   const why = 'No new start without a deadline';
   assert.match(
     String(pauses.pause({ project: 'unsorted', why, until: [followUp] }, ceo())),
-    new RegExp(`#${followUp} is on work in no deliverable, which the pause would hold`),
+    new RegExp(`#${followUp} is on ${deskName()}, which the pause would hold`),
     "the call's follow-up runs, but its review would wait",
   );
   assert.match(
     String(pauses.pause({ project: 'unsorted', why, until: [afterFollowUp] }, ceo())),
-    new RegExp(`#${afterFollowUp} needs #${followUp} first, on work in no deliverable, which the pause would hold`),
+    new RegExp(`#${afterFollowUp} needs #${followUp} first, on ${deskName()}, which the pause would hold`),
   );
   const p = pause({ project: 'unsorted', why, until: [afterExpedited] });
   assert.deepEqual(

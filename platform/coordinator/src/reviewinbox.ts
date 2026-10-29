@@ -1,6 +1,6 @@
 // Review rulings in the project owner's inbox, and the findings each ordered fix task answers.
 // (its messages say deliverable, the board's word for a thread)
-import { unassignedFindings, windowed } from './inbox.ts';
+import { unassignedFindings } from './inbox.ts';
 import { oneLine } from './agreements.ts';
 import { db, inOneStep } from './db.ts';
 import * as jobs from './jobs.ts';
@@ -9,6 +9,7 @@ import * as reviewwork from './reviewwork.ts';
 import { threadOfBranch } from './panel.ts';
 import * as reviewclosure from './reviewclosure.ts';
 import { findThread, type JobThreadAsk } from './projects.ts';
+import { reviewSettings } from './company.ts';
 
 export type Finding = {
   kind?: 'blocking' | 'nonblocking';
@@ -168,10 +169,15 @@ export function accept(id: string, by: string, ask: JobThreadAsk & { for?: unkno
 }
 class RefusedError extends Error {}
 
-export const drawReason = (item: Item) =>
-  jobs.itemWorkBranches().has(item.branch)
-    ? 'its work carries a live board call item'
-    : windowed(item.proposal) && 'its deliverable has a window';
+// Why a thread's "changes" gives its author the fix task at once (review.drawWindowedChanges), if it does: where it's
+// delivered (proposals.ts) and read (review.ts untitled), as nobody adds a --title there. A refusal repeats (DrawRefused).
+export function drawReason(work: { branch: string; thread: string }) {
+  if (!reviewSettings().drawWindowedChanges) return undefined;
+  const thread = findThread(work.thread)!;
+  if (thread.status === 'open' && thread.deadline !== null) return 'its deliverable has a window';
+  return jobs.itemWorkBranches().has(work.branch) ? 'its work carries a live board call item' : undefined;
+}
+export class DrawRefused extends Error {}
 
 // One author job answers the whole ruling. Separate pushes would each hold the branch for their tests.
 export function drawnAtOnce(item: Item, owner: string) {
@@ -181,7 +187,7 @@ export function drawnAtOnce(item: Item, owner: string) {
     for: author,
     findings: blocking.length ? blocking.map(f => f.id) : undefined,
   });
-  if (typeof made === 'string') throw new Error(made);
+  if (typeof made === 'string') throw new DrawRefused(made);
   return { jobs: [made.job], author };
 }
 

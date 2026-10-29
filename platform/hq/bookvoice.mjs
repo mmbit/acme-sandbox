@@ -1,17 +1,41 @@
-// book-check.mjs's board talking to a post-it's mic: on HQ's page over the stand-in voice line (book-check.mjs's
-// voiceLine), and from an artifact, a preview in HQ's viewer, through HQ's recording for its frame (shell/framemic.js:
-// pieces cut at the pauses, each transcribed by /api/voice). The preview never gets the microphone (the board, call 154):
-// every page's and frame's asks for it are counted, window.micsAsked.
+// book-check.mjs's board talking to a post-it's mic: on HQ's page over the stand-in voice line, and from an artifact, a
+// preview in HQ's viewer, through HQ's recording for its frame (shell/framemic.js: pieces cut at the pauses, each
+// transcribed by /api/voice). The preview never gets the microphone (the board, call 154): every page's and frame's asks
+// for it are counted, window.micsAsked.
 import assert from 'node:assert/strict';
-import { until } from './bookplayed.mjs';
+import { ui, until } from './bookkit.mjs';
 
-const ui = s => `review-mode >> css=${s}`;
-// What /api/voice hears: the pieces in turn, the whole clip (where no piece was) all of its words
+// The board's words: said in two pieces with a pause between
 const PIECES = ['Make this', 'headline shorter'];
+export const SAID = PIECES.join(' ');
+let hushed = false,
+  // the pieces /api/voice has transcribed in this recording
+  piecesHeard = 0;
 
-// c: book-check's { base }. Returns the voice's { pieces } transcribed so far (set it to 0 before a recording)
+// The stand-in voice line on HQ's page (book-check.mjs's /__review/dictate): the first piece comes as the microphone's
+// audio does, all the words when it ends (hush(true): the board says nothing)
+export function voiceLine(ws) {
+  let frames = 0,
+    said = 0;
+  ws.onMessage(m => {
+    if (typeof m !== 'string') {
+      frames += m.length;
+      if (!hushed && said < 1 && frames > 16000)
+        ws.send(JSON.stringify({ type: 'heard', text: PIECES[said++], partial: true }));
+      return;
+    }
+    if (JSON.parse(m).type !== 'end') return;
+    ws.send(JSON.stringify({ type: 'heard', text: hushed ? '' : SAID, partial: false }));
+    ws.send(JSON.stringify({ type: 'done' }));
+  });
+}
+export const hush = on => (hushed = on);
+// A recording's pieces counted from its first again (talked() starts so; booktalk.mjs's talkedInViewer too)
+export const piecesAfresh = () => (piecesHeard = 0);
+
+// The microphone and /api/voice for a preview's frame: HQ's recording, each piece it cuts transcribed in turn, the
+// whole clip (where no piece was) all the words. c: book-check's { base }
 export async function voiceServed(c, context) {
-  const voice = { pieces: 0 };
   // The microphone's voice: quiet, PIECES said with a pause between, then quiet (Chromium's stand-in beeps, which
   // voice.js cuts at no pause; Linux's WebKit has none). voice.js's cutting starts a moment after the voice does (on a
   // loaded worker more than a second), takes the room's level from what it hears first and cuts no piece shorter than
@@ -44,9 +68,8 @@ export async function voiceServed(c, context) {
   });
   await context.route(`${c.base}/api/voice**`, r => {
     const piece = r.request().headers()['content-type'] === 'audio/wav';
-    r.fulfill({ json: { text: piece ? (PIECES[voice.pieces++] ?? '') : PIECES.join(' ') } });
+    r.fulfill({ json: { text: piece ? (PIECES[piecesHeard++] ?? '') : SAID } });
   });
-  return voice;
 }
 
 // The post-it's mic tapped, the words said as they're heard, and tapped again: the mark never started it (the board,
@@ -55,12 +78,14 @@ export async function voiceServed(c, context) {
 export async function talked(on, { pieces = false } = {}) {
   const sheet = on.locator(ui('.sheet')),
     mic = sheet.locator('.mic'),
-    heard = re => until(async () => re.test(await sheet.locator('textarea').inputValue()), 15_000);
+    heard = (re, what) => until(async () => re.test(await sheet.locator('textarea').inputValue()), what, 15_000);
+  piecesAfresh();
   await sheet.waitFor({ state: 'visible', timeout: 15_000 });
   assert.equal(await mic.evaluate(b => b.classList.contains('on')), false, 'the mark started no recording');
   await mic.click();
-  assert.ok(await heard(/^Make this$/), 'the words come as they’re said, once the mic is tapped');
-  if (pieces) assert.ok(await heard(/^Make this headline shorter$/), '...and the rest as it’s said');
+  await heard(/^Make this$/, 'the words coming as they’re said, once the mic is tapped');
+  // (piece by piece, the last piece comes before the mic's tapped again: on the voice line, after)
+  if (pieces) await heard(/^Make this headline shorter$/, '...and the rest as it’s said');
   await mic.click();
-  assert.ok(await heard(/shorter$/), 'tapped again, the last words come in');
+  if (!pieces) await heard(/shorter$/, 'the last words coming in, the mic tapped again');
 }

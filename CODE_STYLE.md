@@ -26,6 +26,9 @@ checks types. Whatever they enforce isn't repeated here.
   size-limit twin in Python and shell (`# max-lines -- why`, `# max-lines-per-function -- why` above a function), and
   `// prettier-ignore` on a table that reads better aligned.
 
+Heavy checks belong on a lent helper, especially when HQ reports server pressure. `shared/browser/README.md` gives
+the browser, test and gates commands that carry this checkout's edits and pinned dependencies.
+
 ## Naming
 
 - **A real noun, kept whole:** `responseBody`, `receivedMessage`. Never `data`, `info`, `result`, an abbreviation or

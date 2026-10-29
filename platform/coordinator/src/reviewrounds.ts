@@ -1,10 +1,10 @@
 // The formal review process (the review-panel playbook, "Rounds"): each round's briefing, chosen by its stage, for its
-// reviewers, its ruling and its author. What blocks on every round is the same; what else may block, and where the rest
-// goes, isn't. The first round may block on code the next person can't live with and leaves the rest for the author to
-// fix if they like; from a later round on (or once the thread's deadline is near) only security, real bugs and what a
-// customer could meet block, and the rest goes to the project's follow-ups (followups.ts); from the upstream round on, the
-// pull request shows its project owner that something before review went wrong. No round closes anything. Work triage
-// judged throwaway blocks only on what blocks every round, and reports nothing else.
+// reviewers, its ruling and its author. The first round is free for all: the author fixes or answers every finding.
+// From a later round on (or once the thread's deadline is near) only blocking findings hold the merge, and the rest
+// goes into the author's follow-up job, done after the work is live (followups.ts). What blocks is narrow on internal
+// work (it breaks HQ, loops without end, loses data); what's shipped to users keeps its release bar (board, call 163).
+// From the upstream round on, the pull request shows its project owner that something before review went wrong. No
+// round closes anything. Work triage judged throwaway blocks only on what blocks every round, and reports nothing else.
 // (its messages say deliverable, the board's word for a thread)
 import { reviewSettings } from './reviewsettings.ts';
 
@@ -21,20 +21,26 @@ export function stageOf(round: number, deadline: number | null, now = Date.now()
   return 'first';
 }
 
-const ALWAYS = `Within the assigned scope, what blocks on every round: a security problem (secrets, keys, sign-in, customers' data, a way around the review,
-the gates or the sandbox); a real bug (the code does the wrong thing on inputs it will meet, shown as inputs → wrong
-outcome); anything a customer could see or meet (what a product, a page or a mail shows or does, the house rules);
-and a change that doesn't do what the board asked (its own section below, where there is one).`;
-const FOLLOW_UPS = `Refactoring, conventions, readability, documentation and hardening that isn't security, in the fixes' own code
-too, are nonblocking: they don't go back to the author, but into the project's follow-ups, a deliverable of their own that the
-project's owner prioritises and assigns.`;
-// What else blocks in the first look, for the reviewers and for the ruling
+// What blocks on every round, by what the change touches: what's shipped to users (review.shipped) or internal work
+const always =
+  () => `Within the assigned scope, what blocks on every round: a security problem (secrets, keys, sign-in, customers' data, a way
+around the review, the gates or the sandbox), and a change that doesn't do what the board asked (its own section below,
+where there is one). Besides those, it depends on what the change touches. On what's shipped to users (${reviewSettings().shipped}):
+a real bug (the code does the wrong thing on inputs it will meet, shown as inputs → wrong outcome) and anything a
+customer could see or meet (what a product, a page or a mail shows or does, the house rules). On everything else, the
+company's internal work (HQ and its tools among it), only what really gets in the board's way: it breaks HQ or the
+work it carries, it loops without end, or it loses data. Small bugs, styling, tidiness and hypothetical cases there
+don't block: the board would rather have the work live and see it.`;
+const FOLLOW_UPS = `Everything else is nonblocking, in the fixes' own code too: it doesn't hold the merge, and goes into one follow-up job
+for the author, queued in the same deliverable once this merges and done after it's live.`;
+// What else the first look asks, for the reviewers and for the ruling
 const FIRST_LOOK = {
-  reviewer: `In the first look, code the next person can't live with blocks too (below). Refactoring, conventions,
-documentation and hardening that isn't security are otherwise nonblocking notes, which the author may fix now.`,
-  ruling: `In the first look, so does code the next person can't live with (CODE_STYLE.md: hard to
+  reviewer: `The first look is free for all: raise anything worth raising, and the author fixes or answers every finding. On
+what's shipped to users, code the next person can't live with blocks too (below); on internal work it's a nonblocking note.`,
+  ruling: `On what's shipped to users, in the first look, so does code the next person can't live with (CODE_STYLE.md: hard to
 read or change, history in comments, general code copied into an app instead of a kit). "nonblocking" is the rest
-worth doing: the author may fix it now, and what's left when it merges goes to the project's follow-ups.`,
+worth doing: the author fixes or answers each this round, and none holds the merge after it; what's left when it
+merges goes to the follow-up job.`,
 };
 const THROWAWAY_REST = `Triage judged this throwaway work, which runs once or twice and goes to the archive: refactoring,
 conventions, readability, documentation and hardening that isn't security are no findings on it, blocking or not.`;
@@ -58,24 +64,26 @@ export function briefing(stage: Stage, round: number, throwaway = false): Briefi
   const first: Briefing = {
     reviewer: `
 ## Round ${round}: the first look
-${ALWAYS} ${throwaway ? THROWAWAY_REST : FIRST_LOOK.reviewer}`,
-    ruling: `${ALWAYS} ${throwaway ? THROWAWAY_REST : FIRST_LOOK.ruling}`,
+${always()} ${throwaway ? THROWAWAY_REST : FIRST_LOOK.reviewer}`,
+    ruling: `${always()} ${throwaway ? THROWAWAY_REST : FIRST_LOOK.ruling}`,
     touchups: `- Only when it saves the author a round: at least one blocking finding can be fixed this way. Then make the safe
   nonblocking fixes too.`,
-    author: `Fix the blocking findings. The nonblocking ones are yours to fix too where that's quick and safe; what you leave
-goes to the project's follow-ups when the pull request merges.`,
+    author: `Fix the blocking findings. Fix or answer each nonblocking one too: fix it where that's quick and safe, else say
+in your report why not. From the next round on only blocking findings hold the merge, and what you leave goes to your
+follow-up job once it merges.`,
     field: '',
   };
   const later = (why: string): Briefing => ({
     reviewer: `
 ## Round ${round}: ${why}
-${ALWAYS} Only those block now. ${throwaway ? THROWAWAY_REST : `${FOLLOW_UPS} Report one only when it's worth that deliverable.`}`,
-    ruling: `${ALWAYS} Only those block now. ${throwaway ? THROWAWAY_REST : `${FOLLOW_UPS} Put those in "nonblocking".`}`,
+${always()} Only those block now. ${throwaway ? THROWAWAY_REST : `${FOLLOW_UPS} Report one only when it's worth that job.`}`,
+    ruling: `${always()} Only those block now. ${throwaway ? THROWAWAY_REST : `${FOLLOW_UPS} Put those in "nonblocking".`} With no
+blocking finding, decide "merge", whatever else is listed.`,
     touchups: `- Only when it saves the author a round: at least one blocking finding can be fixed this way. Make only the
-  blocking fixes: the nonblocking findings go to the project's follow-ups.`,
+  blocking fixes: the nonblocking findings go to the follow-up job.`,
     author: `Fix only the blocking findings, and keep each fix small: most blocking findings on a later round sit in the code
-the last fix wrote. Give new code a fix adds its own test before you push. The nonblocking findings aren't yours: they
-go to the project's follow-ups.`,
+the last fix wrote. Give new code a fix adds its own test before you push. Leave the nonblocking findings: they go to
+your follow-up job once it merges.`,
     field: '',
   });
   if (stage === 'first') return first;

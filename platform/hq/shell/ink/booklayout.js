@@ -22,6 +22,16 @@ export const BOOK = { min: 320, max: 520 };
 const NARROW = 560;
 // From a laptop's width up, a screen is remembered apart from a tablet's landscape.
 const WIDE = 1280;
+// The table kept round the book (book.css --bk-gap, less on a screen SMALL px wide or less) and the page block's edge
+// showing past the paper on its right (--bk-pages)
+const GAP = 24,
+  SMALL_GAP = 16,
+  SMALL = 600,
+  PAGES = 4;
+// The controls floating over the paper's right edge, as bookui.css lays them: Undo's column and the tool strip beside
+// it, 52 px each with a finger and 8 apart (bookui.js measures them as --bk-controls-width), 12 px in from the paper's
+// edge and 12 more kept clear of them. What lies on the paper keeps left of them.
+export const CONTROLS = { width: 52 + 8 + 52, clear: 12 + 12 };
 // HQ's page narrower than a small phone's is no page: the book opens as the spread instead. A phone's width beside the
 // book still is one.
 const PAGE_MIN = 320;
@@ -33,6 +43,8 @@ const PULL_SHARE = 1 / 3;
 export const MODES = ['open', 'folded', 'spread'];
 
 // The shape a screen's size is remembered under
+// (every one shapeOf names: the store keeps a page's zoom for each, notebook.ts zoomPage.)
+export const SCREEN_SHAPES = ['narrow', 'portrait', 'landscape', 'wide'];
 export function shapeOf(w, h) {
   if (w <= NARROW) return 'narrow';
   if (h > w) return 'portrait';
@@ -62,6 +74,18 @@ export function layout(w, h, state) {
     return { shape, mode: 'spread', page, edge: EDGE, book: w - EDGE, room: w - page };
   }
   return { shape, mode: 'open', page: openPage, edge: EDGE, book, room: Math.min(w, EDGE + book) };
+}
+
+// The paper's width at a screen size and state, open or spread: the book less the table right of it and its pages'
+// edges, and on the spread the table at its left too (book.js). The coordinator places answers on it (answerspot.ts).
+export function paperWidth(w, h, state) {
+  // (upright, no table round the book and no page block's edge, and the spread's paper fills the screen, its cover's
+  // edge past the screen's left: book.css, book.js)
+  const l = layout(w, h, state),
+    upright = h >= w,
+    gap = upright ? 0 : w <= SMALL ? SMALL_GAP : GAP;
+  if (l.mode === 'spread' && upright) return w;
+  return l.book - (l.mode === 'spread' ? 2 : 1) * gap - (upright ? 0 : PAGES);
 }
 
 // The book's open width: the one the board gave it, within what this screen allows, or the default.

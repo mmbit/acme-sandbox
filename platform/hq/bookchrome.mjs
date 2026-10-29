@@ -8,8 +8,8 @@
 // make. Each asserts what the board sees: the buttons' names, boxes, the controls' words.
 import assert from 'node:assert/strict';
 import { errorsOf, openPage, until } from '../../shared/browser/browser.mjs';
+import { DESKTOP, MINI } from './bookkit.mjs';
 
-const MINI = { width: 1133, height: 744 };
 // a home-screen app's blurred strip at the top (style.css's standalone --sat: 48 px under the status bar)
 const SAT_PX = 72;
 // what the column may hold: the tools, then Undo and Redo with the book's own controls
@@ -26,9 +26,12 @@ export function chromeStories(c) {
       browser => column(browser, c),
     "the overview from the foot: Search in it, no tools, the foot only its own button, pressed; the Shelf's Search naming your notebooks":
       browser => overview(browser, c),
-    'the shelf opens a notebook with a zoom on desktop': browser => shelfZoom(browser, c, { width: 1440, height: 900 }),
-    'the shelf opens a notebook with a zoom on a phone': browser => shelfZoom(browser, c, { width: 390, height: 844 }),
-    'the shelf opens a notebook with reduced motion': browser => shelfZoom(browser, c, MINI, true),
+    'the Shelf on a desktop: a notebook opens by zooming into its tile and back out to it; Archive moves one to the Archive':
+      browser => shelfZoom(browser, c, DESKTOP),
+    'the Shelf on a phone: a notebook opens by zooming into its tile and back out to it; Archive moves one to the Archive':
+      browser => shelfZoom(browser, c, { width: 390, height: 844 }),
+    'the Shelf with reduced motion: a notebook opens with a fade, no zoom; Archive moves one to the Archive': browser =>
+      shelfZoom(browser, c, MINI, true),
     "the pages' names stay put: a titled page's, an untitled one's from its first moment, written on or not": browser =>
       names(browser, c),
   };
@@ -123,8 +126,9 @@ async function overview(browser, c) {
   }
 }
 
-// A notebook opens from the Shelf by zoom, and its archive action still moves it into the Archive; the overview's
-// button on the Shelf zooms back to the page too.
+// A notebook opens from the Shelf by zooming into its tile (the point that stays put as the view grows is inside it),
+// and leaving it draws back out to that tile; never a leaf turned. With reduced motion it fades, nothing grows. Its
+// Archive box moves a notebook into the Archive; the overview's button on the Shelf zooms back to the page too.
 async function shelfZoom(browser, c, viewport, reduced = false) {
   const seed = namedNotebook();
   seed.notebooks.push({ id: 2, kind: 'call', name: 'Call with Ansel', created: new Date().toISOString() });
@@ -148,16 +152,13 @@ async function shelfZoom(browser, c, viewport, reduced = false) {
       .click();
     await page.waitForTimeout(c.settle);
     const far = page.getByRole('list', { name: 'The overview' });
-    const outward = await shelfTransition(page, far.getByRole('button', { name: /^The Shelf/ }));
+    const mine = far.locator('.bk-book[data-book="1"]'),
+      outward = await shelfTransition(page, far.getByRole('button', { name: /^The Shelf/ }));
     await page.waitForTimeout(c.settle);
+    const tile = await mine.boundingBox();
     await shelfArchive(page, far, c, label, viewport);
     const inward = await shelfTransition(page, far.getByRole('button', { name: /^My Notebook,/ }));
-    assert.equal(inward.leaf, false, 'opening a notebook never turns a leaf on the Shelf');
-    assert.equal(outward.leaf, false, 'closing to the Shelf uses a zoom');
-    assert.equal(inward.duration, outward.duration, 'opening and closing use the same duration');
-    assert.equal(inward.easing, outward.easing, 'opening and closing use the same easing');
-    if (reduced) assert.deepEqual(inward.scales, [], 'reduced motion only fades');
-    else assert.deepEqual(inward.scales, [...outward.scales].reverse(), 'the same zoom scales in opposite directions');
+    zoomedRound(tile, { inward, outward, reduced });
     await page.waitForTimeout(c.settle);
     assert.ok(await far.locator('.bk-tile[data-id="1"]').isVisible(), 'the notebook opens to its pages');
     await c.shot(`shelf-open-${label}`, page);
@@ -187,32 +188,54 @@ async function shelfArchive(page, far, c, label, viewport) {
   await page.waitForTimeout(c.settle);
 }
 
-// Read the transition while it is on screen, including a leaf if the Shelf incorrectly turns one.
+// The step to or from the Shelf as the board sees it: whether a leaf turns, and where the view zooms round (the point
+// on the screen the outgoing view's picture grows or shrinks about, read from its box halfway through its animation,
+// seeked there: a loaded machine's WebKit may draw no frame between its first and its end; null if it never grows or
+// shrinks)
 async function shelfTransition(page, control) {
   await page.waitForFunction(() => !document.querySelector('#book .bk-turn-picture, #book .bk-turn-leaf'));
-  const watched = page.waitForFunction(
-    () => {
+  await page.evaluate(() => {
+    const seen = (window.__shelfStep = { leaf: false, still: null, began: false, over: false });
+    const watch = () => {
       const picture = document.querySelector('#book .bk-turn-picture'),
-        animation = picture?.getAnimations()[0],
         leaf = document.querySelector('#book .bk-turn-leaf');
-      if (!animation && !leaf) return false;
-      const animations = document.querySelector('#book .bk-paper').getAnimations({ subtree: true });
-      const scales = animations.flatMap(a =>
-        a.effect.getKeyframes().flatMap(k => {
-          const match = /^scale\(([^)]+)\)$/.exec(k.transform ?? '');
-          return match ? [Number(match[1])] : [];
-        }),
-      );
-      const timing = animation?.effect.getTiming();
-      return { leaf: !!leaf, scales, duration: timing?.duration, easing: timing?.easing };
-    },
-    null,
-    { timeout: 30_000 },
-  );
+      seen.leaf ||= !!leaf;
+      if (picture || leaf) seen.began = true;
+      else if (seen.began) return void (seen.over = true);
+      const going = picture?.getAnimations()[0];
+      if (going && !seen.still) {
+        const now = going.currentTime;
+        going.currentTime = going.effect.getTiming().duration / 2;
+        const p = picture.parentElement.getBoundingClientRect(),
+          r = picture.getBoundingClientRect(),
+          k = r.width / p.width;
+        going.currentTime = now;
+        if (Math.abs(1 - k) > 0.01)
+          seen.still = { x: (r.left - k * p.left) / (1 - k), y: (r.top - k * p.top) / (1 - k) };
+      }
+      requestAnimationFrame(watch);
+    };
+    requestAnimationFrame(watch);
+  });
   await control.click();
-  const transition = await watched;
-  return transition.jsonValue();
+  await page.waitForFunction(() => window.__shelfStep.over, null, { timeout: 30_000 });
+  return page.evaluate(() => {
+    const { leaf, still } = window.__shelfStep;
+    return { leaf, still };
+  });
 }
+// Into the notebook's tile and back out to it, never a leaf; with reduced motion nothing grows or shrinks
+function zoomedRound(tile, { inward, outward, reduced }) {
+  assert.equal(inward.leaf, false, 'opening a notebook never turns a leaf on the Shelf');
+  assert.equal(outward.leaf, false, 'closing to the Shelf uses a zoom');
+  if (reduced) return assert.deepEqual([inward.still, outward.still], [null, null], 'reduced motion only fades');
+  for (const [way, { still }] of Object.entries({ into: inward, 'back out to': outward }))
+    assert.ok(
+      still && inside(still, tile),
+      `the view zooms ${way} the notebook's tile ${JSON.stringify(tile)}: round ${JSON.stringify(still)}`,
+    );
+}
+const inside = (pt, box) => pt.x >= box.x && pt.x <= box.x + box.width && pt.y >= box.y && pt.y <= box.y + box.height;
 
 // (My Notebook: a page sent yesterday with its title, and today's untitled one)
 export function namedNotebook() {
@@ -246,7 +269,7 @@ async function names(browser, c) {
     assert.equal(await where(), "The notebook's pages: Untitled page, 2 of 2", 'the newest page, untitled');
     await c.shot('chrome-names', page);
     await button(page, 'New page', true).click();
-    await page.waitForTimeout(c.settle);
+    await button(page, "The notebook's pages: Untitled page, 3 of 3", true).waitFor();
     assert.equal(await where(), "The notebook's pages: Untitled page, 3 of 3");
     // written on, it keeps its name
     const desk = await page.locator('#book .bk-desk').boundingBox();
@@ -288,13 +311,13 @@ async function onMini(browser, c) {
 }
 export const button = (page, name, exact = false) => page.locator('#book').getByRole('button', { name, exact });
 // The names of the buttons in the column's islands that show
-// The overview or the Shelf: the phone with the book's controls, and no tools, Undo, Redo or dog-ear, with nothing to
+// The overview or the Shelf: the pin with the book's controls, and no tools, Undo, Redo or dog-ear, with nothing to
 // draw on
 async function nothingToDraw(page, where) {
   const names = await columnNames(page);
-  assert.ok(names.includes('Draw from your phone'), `the phone with the controls ${where}: ${names}`);
-  const inHead = page.locator('#book .bk-far-head').getByRole('button', { name: 'Draw from your phone' });
-  assert.equal(await inHead.count(), 0, `no phone in Search ${where}`);
+  assert.ok(names.includes('Pin a note on HQ'), `the pin with the controls ${where}: ${names}`);
+  const inHead = page.locator('#book .bk-far-head').getByRole('button', { name: 'Pin a note on HQ' });
+  assert.equal(await inHead.count(), 0, `no pin in Search ${where}`);
   assert.deepEqual(
     names.filter(name => TOOLS.some(t => (t.test ? t.test(name) : t === name)) || /^(Undo|Redo)$/.test(name)),
     [],

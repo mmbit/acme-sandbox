@@ -7,6 +7,7 @@
 import assert from 'node:assert/strict';
 import { groupsOf } from './bookplayed.mjs';
 import { savedScrap } from './bookscrap.mjs';
+import { pressAlong, until } from './bookkit.mjs';
 
 // A reading that comes after Save: longer than the post-it's photo takes to develop on a loaded worker
 const LATE_MS = 9000;
@@ -41,7 +42,10 @@ async function readAndSaved(s) {
     from = s.posts.length;
   const box = await write(page, 120, 300);
   assert.equal(await typeBeside(page, box), 0, 'no type before the words are read');
-  await until(() => page.locator(ui('.sheet textarea')).inputValue(), reader.words, 'the words read in its post-it');
+  await until(
+    async () => (await page.locator(ui('.sheet textarea')).inputValue()) === reader.words,
+    'the words read in its post-it',
+  );
   assert.equal(reader.inks.length, read + 1, 'one reading, once the pen rested');
   const ink = await picture(page, reader.inks.at(-1));
   assert.ok(ink.dark > 100 && ink.light > ink.dark * 4, `the ink alone, dark on white (${JSON.stringify(ink)})`);
@@ -64,14 +68,13 @@ async function readLate(s) {
   assert.equal(sent.words, '', 'in the Notebook with no words yet');
   assert.equal(reader.inks.length, read + 1, 'its lines read');
   const scrap = groupsOf(s.play).at(-1);
-  await until(
-    () => JSON.stringify(edits(s, from, scrap.id).map(({ words, said }) => ({ words, said }))[0] ?? null),
-    JSON.stringify({ words: 'Lighter ink', said: 'written' }),
-    'the words read go in the scrap',
-  );
+  await until(() => {
+    const first = edits(s, from, scrap.id)[0];
+    return first?.words === 'Lighter ink' && first.said === 'written';
+  }, 'the words read go in the scrap');
   await changed(s, scrap);
   const words = inBook(s, scrap);
-  await until(() => words.inputValue(), 'Lighter ink', 'the book shows the words read');
+  await until(async () => (await words.inputValue()) === 'Lighter ink', 'the book shows the words read');
   // (a finger's tap first: on a touch screen a field's words are the pen's to strike until one, penwords.js)
   await words.tap();
   assert.ok(await words.isEditable(), 'the words can be written over in the book');
@@ -95,8 +98,8 @@ async function typedLate(s) {
     {},
     { id: scrap.id, since: scrap.updated, words: 'Darker, please', said: 'typed' },
   );
-  await until(() => words.inputValue(), 'Darker, please', 'the book shows the words typed');
-  await until(() => edits(s, from, scrap.id).some(e => e.said === 'written'), true, 'the words read come');
+  await until(async () => (await words.inputValue()) === 'Darker, please', 'the book shows the words typed');
+  await until(() => edits(s, from, scrap.id).some(e => e.said === 'written'), 'the words read come');
   await page.waitForTimeout(500);
   assert.deepEqual([now(s, scrap).words, now(s, scrap).said], ['Darker, please', 'typed'], "the board's words stay");
   assert.equal(await words.inputValue(), 'Darker, please', '...in the book too');
@@ -111,7 +114,7 @@ async function notTaken(s) {
     const from = s.posts.length;
     await write(page, 300, 560);
     await savedScrap(s, from, 'not taken');
-    await until(() => page.locator(ui('.tip.show')).isVisible(), true, 'the board is told the words read went nowhere');
+    await until(() => page.locator(ui('.tip.show')).isVisible(), 'the board is told the words read went nowhere');
     assert.equal(
       await page.locator(ui('.tip')).textContent(),
       'The book said no: the store broke. The words read for the scrap aren’t in it.',
@@ -130,13 +133,14 @@ async function refusedSaved(s) {
     await write(page, 300, 700);
     await savedScrap(s, from, 'refused');
     // (shown for a while: its words read while it shows)
+    const tip = () =>
+      page
+        .locator(ui('.tip.show'))
+        .textContent({ timeout: 500 })
+        .catch(() => null);
     await until(
-      () =>
-        page
-          .locator(ui('.tip.show'))
-          .textContent({ timeout: 500 })
-          .catch(() => null),
-      'Your handwriting wasn’t read: the reader took too long. What it says isn’t in its note.',
+      async () =>
+        (await tip()) === 'Your handwriting wasn’t read: the reader took too long. What it says isn’t in its note.',
       'the board is told its handwriting went unread',
     );
   } finally {
@@ -171,27 +175,7 @@ async function write(page, x, y) {
     line([x, y + 20], [x + 22, y + 20]),
     line([x + 36, y + 14], [x + 36, y + 40]),
   ];
-  for (const pts of lines)
-    await page.evaluate(pts => {
-      const at = (kind, [x, y], pressure) =>
-        (document.elementFromPoint(x, y) ?? document.body).dispatchEvent(
-          new PointerEvent(kind, {
-            pointerId: 7,
-            pointerType: 'pen',
-            isPrimary: true,
-            clientX: x,
-            clientY: y,
-            pressure,
-            buttons: kind === 'pointerup' ? 0 : 1,
-            bubbles: true,
-            composed: true,
-            cancelable: true,
-          }),
-        );
-      at('pointerdown', pts[0], 0.4);
-      pts.slice(1).forEach(p => at('pointermove', p, 0.5));
-      at('pointerup', pts.at(-1), 0);
-    }, pts);
+  for (const pts of lines) await pressAlong(page, pts);
   return { x, y, w: 36, h: 40 };
 }
 // How many of review mode's ink pixels to the right of a box are type's dark (marks.js TYPE_INK), not the ink's red
@@ -228,13 +212,3 @@ const picture = (page, src) =>
     }
     return { width: img.width, height: img.height, dark, light };
   }, src);
-// Waits till what() is the value wanted, failing on what it was then
-async function until(what, want, why) {
-  let got;
-  for (let i = 0; i < 160; i++) {
-    got = await what();
-    if (got === want) return;
-    await new Promise(res => setTimeout(res, 150));
-  }
-  assert.equal(got, want, why);
-}

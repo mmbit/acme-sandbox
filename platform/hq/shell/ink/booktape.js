@@ -19,6 +19,7 @@ import { changed, said, shut } from './booksave.js';
 import { grownTo, pageBox, scrapBoxOf } from './bookrow.js';
 import { shrink } from './sketchscraps.js';
 import { placeScrap } from './bookscrap.js';
+import { arrive } from './bookarrive.js';
 import { READ } from './booktexts.js';
 import { clearShown } from './bookui.js';
 import { downToClear } from './bookwords.js';
@@ -297,6 +298,7 @@ async function tapeIn(tape, file, { at = null, i = 0, today = false }) {
     };
     page.scraps.push(scrap);
     shown(tape, v, scrap);
+    arrive(book, v, [scrap]);
     book.tools?.taped(v, scrap);
     sfx.land();
     changed(book, page);

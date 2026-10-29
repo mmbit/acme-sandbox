@@ -13,9 +13,12 @@ import { store } from '../../util.js';
 import { word } from './bookscope.js';
 import { createPage, loadPages, loadShelf } from './notebookdata.js';
 import { changed, readAgain, readPage, said, saveAll, shut } from './booksave.js';
+import { mountFit } from './bookscrapfit.js';
 import { pageView } from './bookpage.js';
+import { camOf, keepZoom, keptZoom } from './bookpagezoom.js';
 import { panning } from './bookpan.js';
 import { mountFar } from './bookpagesfar.js';
+import { landingPage } from './notebookstack.js';
 import { mountTape } from './booktape.js';
 import { mountGroups } from './bookgroups.js';
 import { sendShown, stamped } from './bookpagesend.js';
@@ -42,7 +45,7 @@ export function mountPages(paper, { dev, shape, scope = null, calls = null }) {
     at: (x, y) => at(book, x, y),
     shown: () => shown(book),
     view: () => viewOf(book),
-    remember: () => remember(book),
+    remember: zoomed => remember(book, zoomed),
     far: () => book.zoom.level() !== 'page',
     zoomed: () => book.controls?.update(),
     undo: () => stepped(book, undo),
@@ -68,6 +71,7 @@ export function mountPages(paper, { dev, shape, scope = null, calls = null }) {
   for (const type of ['book:notebook', 'book:changed'])
     document.addEventListener(type, e => storeChanged(book, e.detail?.page));
   new ResizeObserver(() => resized(book)).observe(book.desk);
+  mountFit(book, paper.closest('#book')); // (scraps fitted to the paper)
   // (back in front, or a note written the old way here, which the store carries onto the current page: the pages again)
   document.addEventListener('visibilitychange', () => (document.hidden ? saveAll(book) : pagesAgain(book)));
   document.addEventListener('pencil:note', () => pagesAgain(book));
@@ -106,7 +110,6 @@ function storeChanged(book, id) {
   if (v) return v.page.groups && readAgain(book, v.page);
   if (book.notebook) pagesAgain(book);
 }
-
 // The book's state as it opens on the paper
 const bookOf = (paper, { dev, shape, scope, calls }) => ({
   scope,
@@ -195,12 +198,10 @@ async function pagesAgain(book) {
   book.controls?.update();
   book.zoom.again();
 }
-// The newest page neither sent, archived nor a try's versions page: where new things land (notebook.ts currentPage)
+// Where new things land, the store's current page (notebookstack.js)
 const newest = book => newestOf(book.views.map(v => v.page));
 // (of a notebook's pages as the store lists them: booknewest.js)
-export const newestOf = pages =>
-  pages.filter(p => !shut(p) && !p.tries && !p.tries_note).sort((a, b) => b.created.localeCompare(a.created))[0]?.id ??
-  pages.at(-1)?.id;
+export const newestOf = pages => landingPage(pages, shut)?.id ?? pages.at(-1)?.id;
 // A page as the book keeps it while it shows: its summary, and its groups' ink, pictures and typed words once read
 function viewFor(book, page) {
   const v = pageView(page, book.away);
@@ -250,10 +251,7 @@ function show1(book, i, place = null) {
   book.views.forEach((v, k) => (v.el.hidden = k !== i));
   const v = viewOf(book);
   if (!v) return;
-  const cam = place
-    ? { pan: { x: place.x ?? 0, y: place.y ?? 0 }, scale: place.s ?? 1 }
-    : (book.cams.get(v.page) ?? { pan: { x: 0, y: 0 }, scale: 1 });
-  setView(book, cam);
+  setView(book, camOf(book, v.page, place));
   if (!v.page.ink) read(book, v);
   remember(book);
   book.controls?.update();
@@ -295,7 +293,7 @@ function goTo(book, place) {
   const ids = book.views.map(v => v.page.id),
     { i, at: on } =
       place && ids.includes(place.page) ? placeIn(ids, place) : { i: ids.indexOf(newest(book)), at: null };
-  show1(book, i, on && { x: on.x ?? 0, y: on.y ?? 0, s: on.s ?? 1 });
+  show1(book, i, on && { x: on.x ?? 0, y: on.y ?? 0, s: keptZoom(book, book.views[i].page) ?? on.s ?? 1 });
 }
 // The paper's size taken, and a place waiting for it opened
 function resized(book) {
@@ -311,7 +309,8 @@ function resized(book) {
   goTo(book, place);
 }
 const placeKey = book => `book.place.${book.scope ? `guest.${book.scope.notebook}.` : ''}${book.shape()}`;
-function remember(book) {
+// The view's place at rest, for this device; its zoom kept on the page only where the board zoomed (bookpagezoom.js)
+function remember(book, zoomed = false) {
   const v = viewOf(book);
   if (!v) return;
   const { pan, scale } = book;
@@ -322,6 +321,7 @@ function remember(book) {
     y: Math.round(pan.y),
     s: Math.round(scale * 1000) / 1000,
   });
+  if (zoomed) keepZoom(book, v.page);
   // (the page shown: book:turn on the document, for a second screen to follow.)
   document.dispatchEvent(new CustomEvent('book:turn', { detail: { page: v.page.id } }));
 }
@@ -332,10 +332,7 @@ function shownPage(book) {
   return { id, notebook, day, kind, label, w, h };
 }
 // Undo or Redo (bookedit.js): what's being typed kept and a selection let go first, so the step meets the page as it is
-function stepped(book, act) {
-  book.tools?.settle();
-  return act(book);
-}
+const stepped = (book, act) => (book.tools?.settle(), act(book));
 
 // ---- what the other parts ask
 
@@ -371,7 +368,12 @@ const controlsOf = book => ({
   level: () => book.zoom.level(),
   turnTo: i => turnTo(book, i),
   newPage: () => newPage(book),
-  send: () => sendShown(book, { pagesAgain: () => pagesAgain(book), show: id => show(book, id) }),
+  send: () =>
+    sendShown(book, {
+      pagesAgain: () => pagesAgain(book),
+      show: id => show(book, id),
+      under: id => show1(book, indexOf(book, id)),
+    }),
 });
 // A page of the notebook by its id (a second screen's turn, a send's fresh page), turned to at its top; y: that far
 // down it, Search's find. (y: job #18532)

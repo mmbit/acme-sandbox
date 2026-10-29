@@ -3,10 +3,11 @@
 // whole, its words under it too, clear of the islands over the paper's edges: a phone's book reads a page's scraps as a
 // list, and a stroke on a scrap must start on it, not on the tools.
 import { slideTo } from './bookview.js';
-import { island, stackLeft } from './bookui.js';
+import { island, controlsLeft } from './bookui.js';
 import { readAgain } from './booksave.js';
 import { loadGroups } from './notebookdata.js';
 import { store } from '../../util.js';
+import { fitOf } from './bookscrapfit.js';
 
 // room left of a scrap shown when the paper must pan to it (page px), and on screen between it and the islands (px)
 const ROOM = 24,
@@ -40,16 +41,19 @@ async function turnTo(pages, page) {
   const { notebook } = await loadGroups(pages.dev, page);
   return notebook === book.notebook ? pages.made(page) : pages.find({ page, notebook });
 }
-// A group's box with its words and answers under it (bookgroups.js draws them there), in the page's px
+// A group's box with its words and answers under it (bookgroups.js draws them there), in the page's px: a scrap's as
+// drawn to fit this screen (bookscrapfit.js, about its top-left)
 function reach(v, id) {
-  const box = v.page.groups.get(id)?.box,
+  const stored = v.page.groups.get(id)?.box,
+    k = fitOf(v.page, id),
+    box = stored && { ...stored, w: stored.w * k, h: stored.h * k },
     under = v.el.querySelector(`:scope > .bk-groups > .bk-under[data-g="${id}"]`);
   if (!box || !under) return box ?? null;
   return {
     x: box.x,
     y: box.y,
-    w: Math.max(box.w, under.offsetLeft + under.offsetWidth - box.x),
-    h: under.offsetTop + under.offsetHeight - box.y,
+    w: Math.max(box.w, under.offsetLeft + under.offsetWidth * k - box.x),
+    h: under.offsetTop + under.offsetHeight * k - box.y,
   };
 }
 // Where the paper shows a group: zoomed out (never in) till it fits the paper clear of the islands with a little room,
@@ -63,17 +67,17 @@ function inSight(r) {
     down = r.y >= y && r.y + r.h <= y + seen.h ? y : r.y - Math.min(seen.h / 4, seen.h - r.h - ROOM);
   return { pan: { x: across, y: down }, scale: s };
 }
-// The paper clear of the islands floating over it (bookui.js), the stack and the tool strip beside it at its right and
-// the pages' row at its foot, with a little room: in px of the paper on screen from its top left, as its share of the
-// paper so a book still swinging open measures the same
+// The paper clear of the islands floating over it (bookui.js), the controls at its right (the stack and the tool strip
+// beside it) and the pages' row at its foot, with a little room: in px of the paper on screen from its top left, as its
+// share of the paper so a book still swinging open measures the same
 function clearBand() {
   const desk = book.desk.getBoundingClientRect(),
     across = x => book.size.w * Math.min(1, Math.max(0, (x - desk.left) / desk.width)),
     down = y => book.size.h * Math.min(1, Math.max(0, (y - desk.top) / desk.height)),
-    stack = stackLeft(),
+    controls = controlsLeft(),
     foot = island('pages');
   return {
-    right: stack === null ? book.size.w : across(stack) - RAIL_GAP,
+    right: controls === null ? book.size.w : across(controls) - RAIL_GAP,
     bottom: foot?.offsetWidth ? down(foot.getBoundingClientRect().top) - RAIL_GAP : book.size.h,
   };
 }

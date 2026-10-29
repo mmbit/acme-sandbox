@@ -66,7 +66,8 @@ every one but `id` and `name` optional:
 ```
 
 A count that isn't known yet is `null` (a dash), never a 0 that passes for one. Words go in labels and `sub`s; a number
-that matters gets a figure, a column or a target of its own.
+that matters gets a figure, a column or a target of its own. A count goes whole, in its own unit (`tokens`, never
+`M tokens`): HQ prints one in the millions or more as three digits and M or B, its unit smaller beside it.
 
 A kit imports the platform by its path in the repo, `../../platform/coordinator/src/db.ts`: the coordinator's image
 copies `kits/` next to the platform's code, laid out as in the repo, so a kit gets the very modules the coordinator

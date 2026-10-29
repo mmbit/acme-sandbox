@@ -285,7 +285,8 @@ class HqTools(unittest.TestCase):
             out = self.call(('say', {'agent': 'bolt', 'text': 'the logs, please'}), env=env)
             self.assertFalse(Path(d, 'hq.log').exists())
         self.assertEqual([t['name'] for t in json.loads(r.stdout)['result']['tools']], ['job', 'promise', 'replace', 'expedite', 'add', 'reach', 'search', 'history', 'call', 'intercom', 'eta', 'estimate', 'when', 'report', 'git', 'manage', 'waiting', 'hang_up', 'screen', 'sketch',
-                                                                                'answer_note', 'ask_to_see', 'draw', 'open_work', 'drive', 'scrap', 'title_page'])
+                                                                                'answer_note', 'ask_to_see', 'draw', 'open_work', 'drive', 'scrap', 'title_page',
+                                                                                'read_page', 'mark_page', 'change_page'])
         self.assertTrue(out[1]['result']['isError'])
 
     def test_a_partner_call_has_exactly_its_tools_and_note_and_no_transcript_run_nothing(self):
@@ -342,11 +343,11 @@ class HqTools(unittest.TestCase):
         self.assertNotIn('SCREEN_', log)
 
     def test_the_sketch_tool_asks_the_voice_line_for_a_sketch_by_number_or_words(self):
-        """On the board's call: the line's answer as MCP content (the sketch's picture and its line, or the line's
-        refusal); an empty ask never reaches the line; a partner's call has no sketch tool; hq never gets the key."""
+        """On the board's call: the line's answer as MCP content (the sketch's pictures, a long one's pieces, and its
+        line, or the line's refusal); an empty ask never reaches the line; a partner's call has no sketch tool; hq never gets the key."""
         picture = {'type': 'image/png', 'data': 'iVBORw0K'}
         line = 'Sketch #12 “Tote bag”: drawn 2026-10-24 14:02 UTC, last changed 2026-10-24 15:10 UTC.'
-        path, asked = line_socket(self, [{'picture': picture, 'line': line}, {'error': 'No sketch has those words in its label.'}])
+        path, asked = line_socket(self, [{'pictures': [picture, picture], 'line': line}, {'error': 'No sketch has those words in its label.'}])
         with tempfile.TemporaryDirectory() as d:
             env = agent_env({'PATH': fake_hq(d)['PATH']}, 'http://127.0.0.1:9', SIGN_IN_FD, 'call-token', 'juno', (path, 'key-1'), **FOLDERS)
             out = self.call(('sketch', {'sketch': '#12'}), ('sketch', {'sketch': 'mug lid'}), ('sketch', {'sketch': ' '}),
@@ -356,7 +357,7 @@ class HqTools(unittest.TestCase):
             none = self.call(('sketch', {'sketch': '12'}), env=self.env(d, 'http://127.0.0.1:9'))
             self.assertFalse(Path(d, 'hq.log').exists(), 'none of them runs hq')
         replies = [(r['result']['isError'], r['result']['content']) for r in out[1:]]
-        self.assertEqual(replies[:2], [(False, [{'type': 'image', 'data': 'iVBORw0K', 'mimeType': 'image/png'}, {'type': 'text', 'text': line}]),
+        self.assertEqual(replies[:2], [(False, [*[{'type': 'image', 'data': 'iVBORw0K', 'mimeType': 'image/png'}] * 2, {'type': 'text', 'text': line}]),
                                        (True, [{'type': 'text', 'text': 'No sketch has those words in its label.'}])])
         self.assertEqual([error for error, _ in replies[2:]], [True, True])
         self.assertEqual(asked, [{'sketch': '#12', 'key': 'key-1'}, {'sketch': 'mug lid', 'key': 'key-1'}])
@@ -484,7 +485,7 @@ class HqTools(unittest.TestCase):
             out = self.call(('job', {'goal': 'g', 'agent': 'bolt', 'code': 'LOGS', **ESTIMATE, 'title': 'Check the phone logs', 'brief': brief}), env=self.env(d, url))
         self.assertEqual(len(brief), 600)
         self.assertEqual([s[1:3] for s in Coordinator.seen], [('/api/agent/job', 'Bearer call-token')])
-        self.assertEqual(Coordinator.seen[0][3], {'agent': 'bolt', 'title': 'Check the phone logs', 'after': None, 'code': 'LOGS', **ESTIMATE, 'prompt': f'Why the board wants this: g\n\n{brief}'})
+        self.assertEqual(Coordinator.seen[0][3], {'agent': 'bolt', 'title': 'Check the phone logs', 'after': None, 'code': 'LOGS', **ESTIMATE, 'prompt': f'Why the board wants this: g\n\n{brief}', 'goal': 'g'})
         self.assertFalse(out[1]['result']['isError'])
         words = '\n'.join(part['text'] for part in out[1]['result']['content'])
         self.assertIn('Queued job #1234 HQ-LOGS for bolt: Check the phone logs', words)
@@ -725,7 +726,7 @@ class HqTools(unittest.TestCase):
                             env=self.env(d, url))
             log = Path(d, 'hq.log').read_text()
         self.assertEqual([s[1:4] for s in Coordinator.seen], [('/api/agent/item', 'Bearer call-token', {'kind': 'promise', 'owner': 'bolt', 'what': what, 'goal': 'g', 'quote': what}),
-                                                              ('/api/agent/job', 'Bearer call-token', {'agent': 'bolt', 'title': 'Logs', 'after': None, 'code': 'LOGS', **ESTIMATE, 'prompt': 'Check them.', 'item': 1234})])
+                                                              ('/api/agent/job', 'Bearer call-token', {'agent': 'bolt', 'title': 'Logs', 'after': None, 'code': 'LOGS', **ESTIMATE, 'prompt': 'Check them.', 'item': 1234, 'goal': 'g'})])
         self.assertIn(f'ARG item\nARG add\nARG promise\nARG bolt\nARG {what}\nARG -\nARG --goal\nARG -\n', log)
         self.assertFalse(out[1]['result']['isError'])
         promise_words = '\n'.join(part['text'] for part in out[1]['result']['content'])
@@ -1201,7 +1202,7 @@ class CallAgent(unittest.TestCase):
         self.assertEqual(sorted(init['tools']), ['Glob', 'Grep', 'Read', 'WebFetch', 'WebSearch', *MCP])
         self.assertEqual(sorted(seen[0][1]), ['Glob', 'Grep', 'Read', 'WebFetch', 'WebSearch', *MCP])  # (what the model is offered: the call's tools, no say, no forward, no shell)
         self.assertIn(('hq', '/api/agent/job', 'Bearer call-token', {'agent': 'bolt', 'title': 'Check the phone logs',
-                                                                    'after': None, 'code': 'LOGS', **ESTIMATE, 'prompt': f'Why the board wants this: g\n\n{brief}'}), seen)
+                                                                    'after': None, 'code': 'LOGS', **ESTIMATE, 'prompt': f'Why the board wants this: g\n\n{brief}', 'goal': 'g'}), seen)
         self.assertIn("Queued job #1234 HQ-LOGS for bolt: Check the phone logs\\nNot started yet: it's on bolt's list", seen[-1][2])  # (a number, and that it's queued)
         self.assertIn('HQ_CALL=1', log)
         self.assertNotIn(SEAT, log)

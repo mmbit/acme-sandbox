@@ -11,6 +11,7 @@
 import assert from 'node:assert/strict';
 import { errorsOf, until } from '../../shared/browser/browser.mjs';
 import { nothingDrawn } from './bookink.mjs';
+import { pressAlong } from './bookkit.mjs';
 
 export const DESKTOP = { width: 1280, height: 800 },
   PHONE = { width: 390, height: 844 };
@@ -88,7 +89,7 @@ async function streamed(pr, side) {
   };
 }
 
-// c: book-check's { hqIn, base, penOn, ring, ui, posts, notes, shot }, with the iPad's browser (pad: WebKit) and the
+// c: book-check's { hqIn, base, ring, ui, posts, notes, shot }, with the iPad's browser (pad: WebKit) and the
 // desktop's (desk: Chromium, as a desktop's Chrome)
 export async function pairStory(c) {
   const route = pairRelay();
@@ -145,7 +146,7 @@ async function paired(c, desk, pad) {
 export const bookIs = (page, mode) =>
   page.waitForFunction(m => document.documentElement.dataset.book === m, mode, { timeout: 5000 });
 export const ringRound = (c, page, b, opts) =>
-  c.penOn(page)(c.ring(b.x, b.y, Math.min(140, b.w / 2 + 20), Math.min(60, b.h / 2 + 16)), opts);
+  pressAlong(page, c.ring(b.x, b.y, Math.min(140, b.w / 2 + 20), Math.min(60, b.h / 2 + 16)), opts);
 
 // A ring on the iPad, round something of the phone's (on the desktop it's elsewhere and another size): live on the
 // desktop while it's drawn, round the same element there

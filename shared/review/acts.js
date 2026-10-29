@@ -14,3 +14,6 @@ export const paint = r => doers.paint(r);
 export const refresh = r => doers.refresh(r);
 // (surface.js)
 export const redrawInk = r => doers.redrawInk(r);
+// (dictation.js: for hqmic.js, its part in HQ's viewer.)
+export const stopMic = r => doers.stopMic(r);
+export const words = (r, rec, heard) => doers.words(r, rec, heard);

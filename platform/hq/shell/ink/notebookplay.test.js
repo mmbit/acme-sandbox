@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { notebookPlay } from './notebookplay.js';
 import { CHANGED } from './notebookplaygroups.js';
+import { STACK, footprint } from './notebookstack.js';
 
 // A play on a story's clock, with the events it sends
 function played(seed) {
@@ -234,7 +235,10 @@ test('a picture uploaded to an open page is placed in a group; a scrap lands on 
   const anchor = { v: 1, url: '/gazette', el: null, view: { x: 0, y: 0, w: 1280, h: 800, dpr: 2 }, ink: [] };
   const snip = `data:image/png;base64,${btoa(String.fromCharCode(...PNG))}`;
   const scrap = post('groups/scrap', { anchor, words: 'Warmer?', said: 'typed', snip });
-  assert.deepEqual([scrap.kind, scrap.page, scrap.words, scrap.pictures[0].y], ['scrap', page, 'Warmer?', 82]);
+  assert.deepEqual(
+    [scrap.kind, scrap.page, scrap.words, scrap.pictures[0].y],
+    ['scrap', page, 'Warmer?', 10 + 40 + STACK.gap],
+  );
   assert.throws(
     () => post('groups/scrap', { anchor: {}, snip }),
     e => e.status === 400,
@@ -247,14 +251,17 @@ test("a page's first scrap goes near its origin; a note with no picture is its w
   const anchor = { v: 1, url: '/gazette', el: null, view: { x: 0, y: 0, w: 1280, h: 800, dpr: 2 }, ink: [] };
   const snip = `data:image/png;base64,${btoa(String.fromCharCode(...PNG))}`;
   const scrap = post('groups/scrap', { anchor, words: 'Warmer?', said: 'spoken', snip });
-  assert.deepEqual([scrap.page, scrap.pictures[0].x, scrap.pictures[0].y], [page, 40, 80]);
+  assert.deepEqual([scrap.page, scrap.pictures[0].x, scrap.pictures[0].y], [page, 24, 80]);
   const typed = post('groups/scrap', { anchor, words: 'Same everywhere', said: 'typed', owner: 'moss' });
   assert.deepEqual(
     [typed.kind, typed.page, typed.words, typed.said, typed.owner, typed.pictures],
-    ['drawing', page, '', 'typed', 'moss', []],
+    ['note', page, '', 'typed', 'moss', []],
   );
-  // (under the scrap's picture, the snip's 1 px, by the stack's gap)
-  assert.deepEqual(typed.texts, [{ x: 40, y: 80 + 1 + 32, w: 360, text: 'Same everywhere', color: '#1d1a2f' }]);
+  // (under the scrap's picture, the snip's 1 px, and its words, by the stack's gap, at the stack's readable width:
+  const under = footprint(scrap);
+  assert.deepEqual(typed.texts, [
+    { x: STACK.x, y: Math.round(under.y + under.h + STACK.gap), w: STACK.w, text: 'Same everywhere', color: '#1d1a2f' },
+  ]);
   assert.throws(() => post('groups/scrap', { anchor, words: '' }), refusal(400, 'a note with no picture holds words'));
 });
 

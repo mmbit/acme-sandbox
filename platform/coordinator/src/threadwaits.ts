@@ -9,6 +9,11 @@
 // - fix_drawn: nothing was queued, and the thread's next job was a fix on its pull request (its owner drawing it);
 // - other: nothing was queued otherwise (a push held for its thread, the merge itself, a task not drawn yet).
 // A minute two of these held counts once, for the first in that order: a thread with a job ready waits for the machine.
+// The line (and the review steps' line) splits again by what stood in the way of its ready jobs then (startholds.ts):
+// - seats: no seat of their engines was ready to take work (draining, at a limit, paced for its week, signed out, paused);
+// - memory: a seat was ready, but the worker was short of memory for a start (room.ts);
+// - slots: neither, so every slot was taken (or the claim's order put other work first);
+// - unrecorded: before the seats and the room were recorded.
 // Also the side-by-side question: the tasks held by order or by another job, and of them those whose pull request shares
 // no file with the holder's (apart: nothing says one needed the other's work). One on the holder's own pull request
 // can't be told apart by files (one_pr).
@@ -17,10 +22,14 @@ import { MINUTE_MS, minutes, share } from './arithmetic.ts';
 import { metAt, sortedSpans, type WakeRow } from './wakes.ts';
 import type { Span } from './playtime.ts';
 import { firstMergeAfter, spanOf, type Group, type Job, type Merge } from './threadgroups.ts';
+import { spellsOver, type Spells } from './startholds.ts';
 
 const PARTS = ['line', 'line_review', 'order', 'after', 'card_or_time', 'fix_drawn', 'other'] as const;
 type Part = (typeof PARTS)[number];
 type HoldPart = 'order' | 'after' | 'card_or_time';
+const LINE_HOLDS = ['seats', 'memory', 'slots', 'unrecorded'] as const;
+type LineHold = (typeof LINE_HOLDS)[number];
+type LinePart = 'line' | 'line_review';
 // What held a job from `from` until `until` (Infinity: until it started), and the job it waited for
 type Hold = { part: HoldPart; from: number; until: number; on?: number };
 
@@ -29,9 +38,16 @@ export function waitingSplit(groups: Group[], runs: Map<number, Span[]>, merges:
   const holds = holdsOf(jobs, groups, merges, runs);
   const totals = new Map<Part, number>(PARTS.map(p => [p, 0]));
   const held: { task: Job; on: number; ms: number }[] = [];
+  const spans = groups.map(spanOf);
+  const spells = spans.length
+    ? spellsOver(Math.min(...spans.map(s => s.start)), Math.max(...spans.map(s => s.end)))
+    : { recorded: null, seats: [], short: [] };
+  const inLine = { line: new Map<LineHold, number>(), line_review: new Map<LineHold, number>() };
   for (const g of groups) {
-    const each = threadWaits(g, runs, holds);
+    const each = threadWaits(g, runs, holds, spells);
     for (const [part, ms] of each.parts) totals.set(part, totals.get(part)! + ms);
+    for (const part of ['line', 'line_review'] as const)
+      for (const [hold, ms] of each.inLine[part]) inLine[part].set(hold, (inLine[part].get(hold) ?? 0) + ms);
     held.push(...each.held);
   }
   const all = [...totals.values()].reduce((sum, ms) => sum + ms, 0);
@@ -41,12 +57,21 @@ export function waitingSplit(groups: Group[], runs: Map<number, Span[]>, merges:
       { minutes: Math.round(totals.get(p)! / MINUTE_MS), share: all ? share(totals.get(p)! / all) : null },
     ]),
   ) as Record<Part, { minutes: number; share: number | null }>;
-  return { waiting_split, side_by_side: sideBySide(held, groups, merges) };
+  const splitOf = (part: LinePart) =>
+    Object.fromEntries(
+      LINE_HOLDS.map(hold => {
+        const ms = inLine[part].get(hold) ?? 0,
+          whole = totals.get(part)!;
+        return [hold, { minutes: Math.round(ms / MINUTE_MS), share: whole ? share(ms / whole) : null }];
+      }),
+    ) as Record<LineHold, { minutes: number; share: number | null }>;
+  const line_split = { line: splitOf('line'), line_review: splitOf('line_review') };
+  return { waiting_split, line_split, side_by_side: sideBySide(held, groups, merges) };
 }
 
 // ---- each thread's waiting, segment by segment
 
-function threadWaits(g: Group, runs: Map<number, Span[]>, holds: Map<number, Hold[]>) {
+function threadWaits(g: Group, runs: Map<number, Span[]>, holds: Map<number, Hold[]>, spells: Spells) {
   const jobs = [...g.work, ...g.reviews];
   const { start, end } = spanOf(g);
   const queued = jobs.map(j => ({ j, spans: queuedSpans(j, runs.get(j.id) ?? []) }));
@@ -61,6 +86,7 @@ function threadWaits(g: Group, runs: Map<number, Span[]>, holds: Map<number, Hol
   const edges = [...new Set(cuts.filter(t => t >= start && t <= end && Number.isFinite(t)))].sort((a, b) => a - b);
   const parts = new Map<Part, number>();
   const held = new Map<string, { task: Job; on: number; ms: number }>();
+  const inLine = { line: new Map<LineHold, number>(), line_review: new Map<LineHold, number>() };
   for (let i = 1; i < edges.length; i++) {
     const [from, to] = [edges[i - 1]!, edges[i]!];
     const waiting = queued.filter(q => q.spans.some(s => s.start <= from && s.end >= to));
@@ -75,8 +101,37 @@ function threadWaits(g: Group, runs: Map<number, Span[]>, holds: Map<number, Hol
     if (ran.some(s => s.start <= from && s.end >= to)) continue;
     const part = partOf(states, jobs, to);
     parts.set(part, (parts.get(part) ?? 0) + to - from);
+    if (part !== 'line' && part !== 'line_review') continue;
+    const ready = states.filter(s => !s.hold && (part === 'line_review' || s.j.kind === 'work'));
+    for (const [hold, ms] of lineHolds(spells, new Set(ready.map(s => s.j.engine)), from, to))
+      inLine[part].set(hold, (inLine[part].get(hold) ?? 0) + ms);
   }
-  return { parts, held: [...held.values()] };
+  return { parts, inLine, held: [...held.values()] };
+}
+
+// What stood in the way of these engines' ready jobs from `from` to `to`, cut where a seat's or the room's spell changed
+function lineHolds(spells: Spells, engines: Set<string>, from: number, to: number) {
+  const over = <T extends { began: number; ended: number }>(list: T[]) =>
+    list.filter(s => s.began < to && s.ended > from);
+  const seats = over(spells.seats).filter(s => engines.has(s.engine)),
+    short = over(spells.short);
+  const cuts = [from, to, spells.recorded ?? to, ...[...seats, ...short].flatMap(s => [s.began, s.ended])];
+  const edges = [...new Set(cuts.filter(t => t >= from && t <= to))].sort((a, b) => a - b);
+  const during = (s: { began: number; ended: number }, t: number) => s.began <= t && s.ended > t;
+  const holds = new Map<LineHold, number>();
+  for (let i = 1; i < edges.length; i++) {
+    const t = edges[i - 1]!;
+    const hold: LineHold =
+      spells.recorded === null || t < spells.recorded
+        ? 'unrecorded'
+        : !seats.some(s => s.ready && during(s, t))
+          ? 'seats'
+          : short.some(s => during(s, t))
+            ? 'memory'
+            : 'slots';
+    holds.set(hold, (holds.get(hold) ?? 0) + edges[i]! - t);
+  }
+  return holds;
 }
 
 // When a job was queued: from its creation to its first run, and between its runs

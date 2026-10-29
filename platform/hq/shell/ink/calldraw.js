@@ -4,6 +4,10 @@
 //   - Each note the Pencil puts on the call's page (shared/review/callnotes.js, told through the document's call:*
 //     events) goes to the line as it lifts ({ type: 'note', id }), sent again on a new connection until the line has
 //     it. The line fetches it from the book and gives the agent its snip and its words.
+//   - The line says when the agent's turn on a note is done, or that it couldn't take it ({ type: 'note', id, state:
+//     'done' or 'failed' }): its ink goes from the screen (review mode's callnotes.js, 'call:had'), so the board
+//     circles afresh. Nothing the Pencil draws on a call goes into the notebook by itself: the agent makes a scrap of
+//     what it judges worth keeping (the board, call 161.)
 //   - News on one of them (the book's verdict on it, a try's version landed: a 'book' event naming the call and the
 //     note) goes to the line too ({ type: 'noted', id }), which reads the note again.
 //   - The agent asks to see something by name: a card with Show and Not now, no countdown, blocking nothing, until it's
@@ -22,7 +26,8 @@
 //     with a page brought by its folded corner on it first (bookshare.js), and the agent's scraps land there one by
 //     one (asked twice at pickup, and a card says so if it couldn't be opened). The first to land opens the book there,
 //     where it starts open beside HQ's page (a desktop, an iPad or a phone held sideways); in portrait (a phone held
-//     upright) it stays shut. Hung up, the store sends the page, which stays in My Notebook. (opens)
+//     upright) it stays shut. Hung up, the store sends the page, which stays in My Notebook, so the book offers no Send
+//     on it while the call's on (call:page). (opens)
 import { esc } from '../../util.js';
 import { minimise, share, shown } from '../callscreen.js';
 import { aimed } from '../calldrive.js';
@@ -108,7 +113,9 @@ async function notesPage(c) {
     if (!r.ok) throw new Error(`the store answered ${r.status}`);
     const { page, notebook } = await r.json();
     c.notesPage = { id: page.id, notebook };
-    if (!c.over) event('book:paged', { page: page.id });
+    if (c.over) return;
+    event('book:paged', { page: page.id });
+    event('call:page', { page: page.id }); // (no Send on it while it's on.)
   } catch (err) {
     console.error("HQ: the call's notes page", err);
     if (!c.over) notesCard(c);
@@ -139,8 +146,11 @@ export const reconnected = c => c.notes?.forEach((_, id) => c.notes.set(id, fals
 
 // What the line says about drawing in (call.js FROM_LINE)
 export const FROM_LINE = {
-  // the line has a note, or gave up on it: either way, not sent again
-  note: (c, ev) => c.notes?.delete(ev.id),
+  // the line has a note, or gave up on it: either way, not sent again. Done with it, or given up: its ink goes
+  note(c, ev) {
+    c.notes?.delete(ev.id);
+    if (ev.state === 'done' || ev.state === 'failed') event('call:had', { note: ev.id });
+  },
   heard: (c, ev) => event('call:heard', { text: ev.text }),
   ask: (c, ev) => askCard(c, ev),
   async ink(c, ev) {

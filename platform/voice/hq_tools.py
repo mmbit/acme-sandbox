@@ -5,7 +5,8 @@ from concurrent.futures import ThreadPoolExecutor, wait
 import reads
 from drawing import ASK_WORDS, BESIDE_MOST, INK_WORDS, WHAT_MOST, ink_asked, what_asked
 from driving import BY, DRIVE_WORDS, OPEN_WORDS, move_asked, work_asked
-from callnotes import CHANGE_MOST, SCRAP_WORDS, TITLE_WORDS, TITLE_WORDS_SAID, scrap_asked, title_asked
+from callnotes import (CHANGE_MOST, CHANGE_WORDS, MARK_WORDS, MARKS, PAGE_WORDS, SCRAP_WORDS, TITLE_WORDS, TITLE_WORDS_SAID,
+                       change_asked, mark_asked, scrap_asked, title_asked)
 
 # The CLI starts this with the seat's sign-in in its environment: hq gets only the call's own HQ_* (HQ_TIME_ZONE: the
 # board's clock for hq's times, guard.py agent_env). The call's Waits runs hq in it.
@@ -62,7 +63,9 @@ TOOLS = [
      "queued only when this answers with a job number; if it answers 'Not confirmed', it may be, so don't send it "
      'again. If the board then adds to it or changes it, use add with that number: never a second job beside it, and '
      "never a promise to add it after the call. Its answer gives each agreed deadline's facts and the other threads it "
-     'moves: your briefing says what the board hears of them. First use estimate, compare the scopes, and give your own size, refs and why. HQ saves it once. Only the CEO changes it later.',
+     'moves: your briefing says what the board hears of them. First use estimate, compare the scopes, and give your own size, refs and why. HQ saves it once. Only the CEO changes it later. '
+     "On the board's call in HQ the job goes on the call's notes page as a promise it carries, so the board sees what "
+     "reaches the team: a promise you noted already, give as its item.",
      'inputSchema': {'type': 'object', 'required': ['agent', 'title', 'code', 'brief', 'goal', 'size', 'refs', 'why'],
                      'additionalProperties': False, 'properties': {
          'agent': ID,
@@ -98,8 +101,11 @@ TOOLS = [
                       'on its checks, its review after. Never for ordinary work'}}}},
     {'name': 'promise', 'description': "Note a promise on this call's list the moment you make it: whenever you tell "
      "the board that you, or a colleague, will do something. Note it before you say it's done. It's on the call's list "
-     'straight away, even if the line drops, but it reaches nobody live: after the call, the follow-up hands it out, '
-     'and the board sees whether it happened.',
+     "straight away, even if the line drops, but it reaches nobody live. On the board's call in HQ it's written on the "
+     "call's notes page too, and the page takes it to its owner once the call ends (a promise a job you queued "
+     "carries, or one about work under way, stays there and goes no further); on any other call the follow-up hands "
+     'it out. Either way the board sees whether it happened. A change on a scrap is on the list already: no promise '
+     'for it.',
      'inputSchema': {'type': 'object', 'required': ['owner', 'what', 'goal'], 'additionalProperties': False,
                      'properties': {
          'owner': {**ID, 'description': "who sees it through: your own id, or a colleague's (lowercase, e.g. ada)"},
@@ -162,7 +168,7 @@ TOOLS += [
     {'name': 'reach', 'description': "When the board's settled word matters to work already under way before the call "
      "ends, pass it on to that running job or pull request's review, by the number your briefing lists, as often as "
      "the board's word needs; anything still being worked out goes to the follow-up. It goes on this call's list "
-     "too. Tell the board where it went as this answers; if it answers 'Not confirmed', it may have gone, so don't send it again.",
+     "too, and on the board's call in HQ on its notes page, as passed on. Tell the board where it went as this answers; if it answers 'Not confirmed', it may have gone, so don't send it again.",
      'inputSchema': {'type': 'object', 'required': ['agent', 'job', 'words', 'what', 'goal'], 'additionalProperties': False,
                      'properties': {
          'agent': {**ID, 'description': "whose job or review it is, lowercase (e.g. ada): a number that isn't theirs "
@@ -452,25 +458,31 @@ TOOLS += [
 # The call's notes page in the board's Notebook (callnotes.py): the agent's scraps, one per change, and the page's title,
 # through the line too (the coordinator's Ink store cuts each scrap and puts it on the page).
 TOOLS += [
-    {'name': 'scrap', 'description': "Put one change the board asked for on the call's notes page in its Notebook, as a "
-     'scrap: a focused crop of what the board drew or showed for it, with the change in your words. When the board '
-     'says and draws several changes ("this should be smaller", an arrow: "and this should move here", a cross: '
-     '"then we don\'t need this"), make one scrap per change, each cropped to just its own part, never one scrap for '
-     "all of them. Cut from one of its notes on this call (from: 'note 3', its number as the line gave it; the region "
-     "is a part of that note's picture), or from its shown screen at the moment it drew (from: '-20s', '17:03:12' or "
-     "'#12' as the screen tool gives moments; the region a part of the whole screen then). Each lands on the page as "
-     "you make it, where the board sees it pop in. The page is sent when the call ends: each scrap reaches its owner "
-     "as a review note, so don't also queue a job for a change you've put on a scrap.",
-     'inputSchema': {'type': 'object', 'required': ['from', 'region', 'words'], 'additionalProperties': False,
+    {'name': 'scrap', 'description': "Put one change the board asked for on the call's notes page in its Notebook: a "
+     'plain note, your words alone on a post-it, or a scrap, the same with a focused crop of what the board drew or '
+     'showed for it. A plain note is your first choice whenever no picture is needed, and always when the change is '
+     'about the notes page itself or the only picture you could cut would show the page (a crop of the page nests '
+     'pictures of the page in it): leave from and region out. Crop only when a part of the board\'s note or of a '
+     "screen other than the page shows what the change is about. When the board says and draws several changes (\"this "
+     'should be smaller", an arrow: "and this should move here", a cross: "then we don\'t need this"), make one per '
+     "change, each cropped to just its own part, never one for all of them. Cut from one of its notes on this call "
+     "(from: 'note 3', its number as the line gave it; the region is a part of that note's picture), or from its shown "
+     "screen at the moment it drew (from: '-20s', '17:03:12' or '#12' as the screen tool gives moments; the region a "
+     "part of the whole screen then). Each lands on the page as you make it, where the board sees it pop in, and goes "
+     "on the call's list. The page is the call's route for what it asks of the team: it's sent when the call ends, "
+     "and each note and scrap reaches its owner once, as a review note. So never also queue a job or note a promise "
+     "for a change you've put on the page.",
+     'inputSchema': {'type': 'object', 'required': ['words', 'goal'], 'additionalProperties': False,
                      'properties': {
-         'from': {'type': 'string', 'description': "'note 3', or a moment of the shown screen: 'now', '-20s', "
-                  "'17:03:12', '#12'"},
+         'from': {'type': 'string', 'description': "for a crop: 'note 3', or a moment of the shown screen: 'now', "
+                  "'-20s', '17:03:12', '#12'"},
          'region': {'type': 'object', 'required': ['x', 'y', 'width', 'height'], 'additionalProperties': False,
                     'properties': {k: FRACTION for k in ('x', 'y', 'width', 'height')},
-                    'description': "the part of that picture the change is about, with a little room round it, in "
-                    'fractions of its width and height (0 to 1) from its top left'},
+                    'description': "for a crop: the part of that picture the change is about, with a little room round "
+                    'it, in fractions of its width and height (0 to 1) from its top left'},
          'words': {'type': 'string', 'minLength': 1, 'maxLength': CHANGE_MOST,
                    'description': 'the one change, in a short plain line ("Make the price smaller")'},
+         'goal': GOALS,
          'owner': {'type': 'string', 'description': "the id of the agent whose work it is, if you know; left out, "
                    'the routing check decides'}}}},
     {'name': 'title_page', 'description': "Title the call's notes page in a few words, once it's clear what the call is "
@@ -478,6 +490,45 @@ TOOLS += [
      'inputSchema': {'type': 'object', 'required': ['title'], 'additionalProperties': False, 'properties': {
          'title': {'type': 'string', 'minLength': 1, 'maxLength': 120,
                    'description': f'at most {TITLE_WORDS} words'}}}},
+]
+# The call's notes page worked as the board works it: read, drawn on, changed, moved and deleted, each a step the
+# board's Undo takes back (callnotes.py; the coordinator's ink/callpage.ts)
+PAGE_PX = {'type': 'number', 'minimum': -100000, 'maximum': 100000}
+POINT = {'type': 'array', 'items': PAGE_PX, 'minItems': 2, 'maxItems': 2}
+TOOLS += [
+    {'name': 'read_page', 'description': "What's on the call's notes page now, a line each: its number (#id), whose it "
+     'is, what it is (a note, a scrap, a drawing), its words and its box in the page\'s px (x, y, width, height, y '
+     'down). Read it before you mark, move or delete something you didn\'t just make: the board changes the page too. '
+     'The numbers are for your tools: never say them.',
+     'inputSchema': {'type': 'object', 'additionalProperties': False, 'properties': {}}},
+    {'name': 'mark_page', 'description': "Draw on the call's notes page in your own ink, as the board draws with its "
+     'pen, shapes and highlighter: a rectangle or ellipse round something (around: its number) or a box, a line or an '
+     'arrow from one point to another, a pen line through points, or a highlight over something, a box or along points. '
+     'Use it to point at what you mean on the page: a ring round two notes that belong together, an arrow from one to '
+     'where it should go, a highlight on the words that matter. A mark asks for nothing: what the team must do goes on a '
+     'note (scrap). It lands as the board watches, and the board can undo it.',
+     'inputSchema': {'type': 'object', 'required': ['mark'], 'additionalProperties': False, 'properties': {
+         'mark': {'type': 'string', 'enum': list(MARKS)},
+         'around': {'type': 'integer', 'minimum': 1, 'description': 'the number of what a rect, ellipse or highlight '
+                    'goes round or over, as read_page gives it'},
+         'box': {'type': 'object', 'required': ['x', 'y', 'width', 'height'], 'additionalProperties': False,
+                 'properties': {k: PAGE_PX for k in ('x', 'y', 'width', 'height')},
+                 'description': "instead of around: the box in the page's px"},
+         'points': {'type': 'array', 'items': POINT, 'minItems': 2, 'maxItems': 500,
+                    'description': "[[x, y], ...] in the page's px: from and to for a line or an arrow, the way a pen "
+                    'line or a highlight goes'},
+         'filled': {'type': 'boolean', 'description': 'a rect or ellipse filled in'}}}},
+    {'name': 'change_page', 'description': "Change one thing on the call's notes page, as the board can: the words of "
+     'one of your own notes or scraps (its item on the list takes them too, until it has gone to its work), anything '
+     'on the page moved (to: its new top left), or deleted. Use it when the board asks for it or a note of yours is '
+     'wrong, rather than adding another beside it. The board sees it happen and can undo it.',
+     'inputSchema': {'type': 'object', 'required': ['id'], 'additionalProperties': False, 'properties': {
+         'id': {'type': 'integer', 'minimum': 1, 'description': 'its number, as read_page or the scrap tool gives it'},
+         'words': {'type': 'string', 'minLength': 1, 'maxLength': CHANGE_MOST,
+                   'description': 'your note\'s or scrap\'s new words, one plain line'},
+         'to': {'type': 'object', 'required': ['x', 'y'], 'additionalProperties': False,
+                'properties': {'x': PAGE_PX, 'y': PAGE_PX}, 'description': "its new top left, in the page's px"},
+         'delete': {'type': 'boolean', 'enum': [True]}}}},
 ]
 # A call out to a partner. note and no_transcript run nothing: the voice line
 # reads them from the reply's stream (server.py, Call.noted and Call.object), keeps each note in order, and on
@@ -789,7 +840,9 @@ def job(waits, a):
     flags = [*(['--item', str(item)] if item else []), *(['--thread', thread] if thread else []),
              *(['--now'] if now else []), *(['--expedite'] if a.get('expedite') is True else []), '--code', code, '--size', size, '--why', why,
              *(['--refs', ','.join(map(str, refs))] if refs else [])]
-    r = run(waits, ['job', *(['--after', str(after)] if after else []), agent, title, '-', *flags], brief)
+    # (the goal too: on the board's call in HQ a job with no item carries its promise on the call's notes page.
+    r = run(waits, ['job', *(['--after', str(after)] if after else []), agent, title, '-', *flags, '--goal', '-'],
+            on_stdin(goal, brief))
     ok, text = answered(r, 'No job was queued', 'the job may or may not be queued', by='hq job')
     return ok, f"{text}\nNot started yet: it's on {agent}'s list, and nobody is on it until it runs." if ok else text
 
@@ -974,6 +1027,33 @@ def scrap(a):
     return said(line_asked({'scrap': asked}))
 
 
+def read_page(a):
+    """(ok, content) of the read_page tool: the voice line's answer on its socket."""
+    if a:
+        return False, [{'type': 'text', 'text': PAGE_WORDS['shape']}]
+    return page_said({'read_page': {}}, PAGE_WORDS)
+
+
+def mark_page(a):
+    """(ok, content) of the mark_page tool."""
+    if not (asked := mark_asked(a)):
+        return False, [{'type': 'text', 'text': MARK_WORDS['shape']}]
+    return page_said({'mark_page': asked}, MARK_WORDS)
+
+
+def change_page(a):
+    """(ok, content) of the change_page tool."""
+    if not (asked := change_asked(a)):
+        return False, [{'type': 'text', 'text': CHANGE_WORDS['shape']}]
+    return page_said({'change_page': asked}, CHANGE_WORDS)
+
+
+def page_said(asked, words):
+    if not SCREEN_SOCKET or not SCREEN_KEY:
+        return False, [{'type': 'text', 'text': words['none']}]
+    return said(line_asked(asked))
+
+
 def title_page(a):
     """(ok, content) of the title_page tool: the voice line's answer on its socket."""
     if not (title := title_asked(a.get('title'))) or set(a) - {'title'}:
@@ -997,11 +1077,13 @@ def line_asked(asked):
 
 
 def shown(got):
-    """(ok, content) of the line's answer: its refusal, or a picture and its line, as MCP content."""
+    """(ok, content) of the line's answer: its refusal, or a picture (a sketch's: its pieces) and its line, as MCP
+    content."""
     if 'error' in got:
         return False, [{'type': 'text', 'text': str(got['error'])}]
-    picture, line = got['picture'], got.get('line')
-    return True, [{'type': 'image', 'data': picture['data'], 'mimeType': picture['type']},
+    # (a long sketch's pieces down it)
+    pictures, line = got.get('pictures') or [got['picture']], got.get('line')
+    return True, [*({'type': 'image', 'data': picture['data'], 'mimeType': picture['type']} for picture in pictures),
                   *([{'type': 'text', 'text': line}] if line else [])]
 
 
@@ -1032,7 +1114,8 @@ def outcome(future):
 
 # The board's tools that the voice line answers, in words or a picture, by name
 LINE_TOOLS = {'sketch': sketch, 'ask_to_see': ask_to_see, 'draw': draw, 'open_work': open_work, 'drive': drive,
-              'scrap': scrap, 'title_page': title_page}
+              'scrap': scrap, 'title_page': title_page, 'read_page': read_page, 'mark_page': mark_page,
+              'change_page': change_page}
 
 
 def answer(msg, waits, offered=TOOLS):

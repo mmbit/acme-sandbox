@@ -46,7 +46,8 @@ export async function showNewest(pages, always = false) {
   return id ? showGroup(pages, { page, id }) : pages.find({ page, notebook });
 }
 // My Notebook's current page and its groups as the store has them, whichever notebook the book shows: the shelf's first,
-// where review mode's notes land (notebook.ts mine())
+// where review mode's notes land (notebook.ts mine()). There's always one: reading a notebook's pages makes it when none
+// is open (notebook.ts listPages)
 async function mine(pages) {
   await pages.opened;
   const notebook = (await loadShelf(pages.dev)).shelf[0].id,

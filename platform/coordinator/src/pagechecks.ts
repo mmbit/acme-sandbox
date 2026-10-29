@@ -3,6 +3,7 @@
 import * as pictures from './pictures.ts';
 import { MAX_SCRAPS } from './pagescraps.ts';
 import { noKeys } from '../../../shared/review/anchor.js';
+import { TEXT_MAX } from '../../hq/shell/ink/notebookparts.js';
 
 // The ink a page holds. The page draws all of it again at every undo, redo and
 // stroke the eraser takes, and the coordinator once more for its picture (bookrender.ts): ink.js
@@ -21,8 +22,7 @@ const SIZE = { min: 0.5, max: 200 };
 // (exported for a try's versions page title: ink/booktry.ts.)
 export const LABEL_MAX = 80;
 // Words typed on a page (the book's text tool): at most TEXTS_MAX boxes a page, each at most TEXT_MAX characters.
-export const TEXTS_MAX = 200,
-  TEXT_MAX = 2000;
+export const TEXTS_MAX = 200;
 // (a box narrower than this wraps every letter: never one HQ makes)
 const TEXT_W_MIN = 20;
 // A save's JSON: the ink and the scraps (the picture is drawn by the coordinator: bookrender.ts). ink.js writes a
@@ -84,8 +84,10 @@ export function inkOf(v: unknown): Stroke[] | Refused {
 }
 // The words typed on a page as HQ sent them: [{ x, y, w, text, color }], x and y the box's top-left and w the width
 // its words wrap at, in the page's px; every one checked, or the refusal. A box of no words is never kept (HQ drops
-// it), so it's refused here. undefined: none sent (a sketch's save), the page's kept as they are.
-export type Typed = { x: number; y: number; w: number; text: string; color: string };
+// it), so it's refused here. undefined: none sent (a sketch's save), the page's kept as they are. id: a typed line's own,
+// which it keeps through edits, joins and splits (notebookscraps.ts typedNote)
+export type Typed = { x: number; y: number; w: number; text: string; color: string; id?: string };
+export const LINE_ID = /^[0-9a-f]{12}$/;
 export function textsOf(v: unknown): Typed[] | Refused | undefined {
   if (v === undefined) return undefined;
   const why = [400, 'texts are a list of { x, y, w, text, color: "#rrggbb" }, x and y on the page'] as Refused;
@@ -101,8 +103,10 @@ export function textsOf(v: unknown): Typed[] | Refused | undefined {
     if (typeof t.text !== 'string' || !t.text.trim()) return why;
     if (t.text.includes('\0')) return [400, "a typed note can't hold a NUL character", 'noteCharacter'];
     if ([...t.text].length > TEXT_MAX) return [400, `a typed note is at most ${TEXT_MAX} characters`, 'noteLong'];
+    if (t.id !== undefined && !(typeof t.id === 'string' && LINE_ID.test(t.id))) return why;
     const round = (n: number) => Math.round(n * 100) / 100;
-    texts.push({ x: round(t.x), y: round(t.y), w: round(t.w), text: t.text, color: t.color.toLowerCase() });
+    const id = t.id === undefined ? {} : { id: t.id as string };
+    texts.push({ x: round(t.x), y: round(t.y), w: round(t.w), text: t.text, color: t.color.toLowerCase(), ...id });
   }
   return texts;
 }

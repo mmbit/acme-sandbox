@@ -33,6 +33,8 @@ export type Machine = {
     image: string;
     gpus: boolean;
     lentOnly: boolean;
+    checkout: boolean;
+    browsers: boolean;
     server: Presence;
     serverTakes: boolean;
     // the work this kind holds in the queue until a lent machine has finished a run of it, in a line ('' for none)
@@ -70,12 +72,18 @@ export async function showHelper() {
     `The fastest free machine takes a run. A slower one takes it after ${machine.takeMinutes} min while a faster one is busy.`,
     `${SERVER} takes a run only when its kind allows it, after ${machine.takeMinutes} min or while no machine is asking for work.`,
     `A run takes ${machine.maxMinutes} min at most.`,
+    ...(machine.kinds.some(kind => kind.checkout)
+      ? ['A checkout check stopped at its --minutes limit brings no files back.']
+      : []),
     ...(machine.machineMemoryGb
       ? [`A machine's runs hold ${machine.machineMemoryGb} GB at most together: one that would pass it waits.`]
       : []),
   );
   for (const kind of machine.kinds)
-    print('', `${kind.name}${kind.about ? `: ${kind.about}` : ''} (${kind.image}${kind.gpus ? ', GPUs' : ''})`);
+    print(
+      '',
+      `${kind.name}${kind.about ? `: ${kind.about}` : ''} (${kind.image}${kind.gpus ? ', GPUs' : ''}${kind.checkout ? ', this checkout' : ''}${kind.browsers ? ", the worker's Chromium" : ''})`,
+    );
   if (!machine.kinds.length) return;
   print(
     '',

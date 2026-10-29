@@ -27,11 +27,13 @@ Sketchbook app (`sketch*`). Invited people use the same Notebook shell with scop
 - `pair.js` shows a one-time sign-in code for another device. Notebook content syncs through its model.
   App annotations stay on the device that draws them.
 - `agentink.js` is an agent's own ink, and `pagemerge.js` merges two writers' saves of one page.
+- `bookarrive.js` sets down whatever arrives on a page (from the store, or pasted, dropped or heard here) with the
+  paper's landing (`bookpaper.js` `land`): held off the page while a copy comes down onto its place. Checked by
+  `bookarrival.mjs`.
 
 A scrap the board just saved (the pin flow) lands in the book: `booklanding.js` lands its ink on its photo
 (`pencil:landing` with `group`) and turns to one saved elsewhere (`book:scrap`); `bookgroupshow.js` turns to its page
-and slides it into view clear of the controls; `bookgroupbox.js` says where the store stacks the next one. Folded, the
-pull tab's tap opens the book at it.
+and slides it into view clear of the controls; `notebookstack.js` says where the store stacks the next one. Folded, the pull tab's tap opens the book at it.
 
 The book's routes keep their addresses (`/api/book/…`, `/api/sketches/…`): they are the Sketchbook's.
 

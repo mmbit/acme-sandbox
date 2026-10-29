@@ -7,7 +7,7 @@ import { db, once } from '../db.ts';
 import { pageRow } from '../notebook.ts';
 import { DIR } from '../pagescraps.ts';
 import { partsOf, type Group } from '../notebookgroups.ts';
-import { boxOf } from '../notebookparts.ts';
+import { boxOf } from '../../../hq/shell/ink/notebookstack.js';
 import { waitingOf, type Slip } from './bookslips.ts';
 import {
   answerHeight,
@@ -17,6 +17,7 @@ import {
   spotAgain,
   spotBox,
   spotBoxes,
+  spotChain,
   type Box,
   type Contents,
   type Spot,
@@ -57,9 +58,9 @@ export function spotsClear(page: number) {
   const { groups, kept } = paperOn(page, null);
   const written = groups.filter(g => g.top).map(g => g.box);
   for (const k of kept) {
-    if (!spotBoxes(k.root, k.spot).some(s => written.some(b => overlapping(s, b)))) continue;
+    const covered = (s: Spot) => written.some(b => overlapping(spotBox(k.root, s), b));
+    if (!spotChain(k.spot).some(covered)) continue;
     const taken = [...written, ...kept.filter(o => o !== k).flatMap(o => spotBoxes(o.root, o.spot))],
-      covered = (s: Spot) => written.some(b => overlapping(spotBox(k.root, s), b)),
       again = (s: Spot): Spot => ({
         ...(covered(s) ? downAgain(k.root, s, taken) : s),
         ...(s.narrow && { narrow: again(s.narrow) }),

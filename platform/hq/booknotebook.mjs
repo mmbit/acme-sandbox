@@ -16,12 +16,11 @@
 //     within seconds of the store's event, with a picture of what was made and its link, and ticked.
 import assert from 'node:assert/strict';
 import { readFile, rename } from 'node:fs/promises';
-import { clipped, held, onPaper, pen, stamp, tool, turnTo, until, where } from './booknotebookscreen.mjs';
+import { clipped, held, onPaper, pen, stamp, tool, turnTo, where } from './booknotebookscreen.mjs';
+import { DESKTOP, MINI, until } from './bookkit.mjs';
 
 const SEED = JSON.parse(await readFile(new URL('./mock/notebook.json', import.meta.url), 'utf8'));
-const MINI = { width: 1133, height: 744 },
-  DESKTOP = { width: 1440, height: 900 },
-  PHONE = { width: 390, height: 844 };
+const PHONE = { width: 390, height: 844 };
 // the seed's pages, and its groups on the newest (mock/notebook.json)
 const SENT = 1,
   SECOND = 2,
@@ -75,19 +74,19 @@ async function deleteAndUndo(page, play, c) {
 }
 
 async function linesAndScratch(page, play, c) {
-  // a line in a clear place: a group of its own; the next, near it and soon after, joins it, as the words of a line
-  // do. (drawn one after the other, as they're written: a wait on the store between them can put more than the join's
-  // 4 s between their saves on a loaded worker, whose save timers fire late.)
+  // a line in a clear place, left of the controls over the paper's right edge: a group of its own; the next, near it
+  // and soon after, joins it, as the words of a line do. (drawn one after the other: a wait on the store between them
+  // can put more than the join's 4 s between their saves on a loaded worker, whose save timers fire late.)
   const before = ids(play, NEWEST);
   const line = await onPaper(page, [
-    [300, 425],
-    [330, 432],
-    [355, 428],
+    [180, 425],
+    [210, 432],
+    [235, 428],
   ]);
   const next = await onPaper(page, [
-    [372, 426],
-    [400, 430],
-    [425, 427],
+    [252, 426],
+    [280, 430],
+    [305, 427],
   ]);
   await pen(page, line);
   await pen(page, next);
@@ -98,10 +97,9 @@ async function linesAndScratch(page, play, c) {
   assert.equal(ids(play, NEWEST).length, before.length + 1, 'one group for both lines');
   await until(async () => (await clipped(page)).includes(made), 'the new group has its clip');
   await c.shot('notebook-mini-lines', page);
-  // a scratch-out over it, from its middle (its clip at its left is a button of its own, and the Undo island floats
-  // over its right end): deleted, no ink kept
+  // a scratch-out over it, from its middle (its clip at its left is a button of its own): deleted, no ink kept
   const zig = [];
-  for (let i = 0; i < 7; i++) zig.push([380, 419 + i * 3], [i % 2 ? 318 : 440, 418 + i * 3]);
+  for (let i = 0; i < 7; i++) zig.push([260, 419 + i * 3], [i % 2 ? 198 : 320, 418 + i * 3]);
   await pen(page, await onPaper(page, zig));
   await until(() => !ids(play, NEWEST).includes(made), 'the scratch-out deletes the group');
   assert.deepEqual(ids(play, NEWEST), before, 'and leaves no ink of its own');
@@ -129,8 +127,8 @@ async function sendAndUndo(page, play, c) {
   await pen(
     page,
     await onPaper(page, [
-      [300, 425],
-      [400, 430],
+      [180, 425],
+      [280, 430],
     ]),
   );
   await page.waitForTimeout(1200);

@@ -11,7 +11,7 @@ const chat = await import('./chat.ts');
 
 const TRANSCRIPT = 'Board: the support chat has no live person; a person is reached by email only.';
 // Each test starts with nothing queued, nothing unsent on the intercom and no calls.
-const fresh = () => db.exec('delete from jobs; delete from wakes; delete from chat; delete from calls; delete from call_items; delete from call_tokens; delete from requests');
+const fresh = () => db.exec('delete from jobs; delete from wakes; delete from chat; delete from calls; delete from call_items; delete from call_tokens; delete from call_jobs; delete from requests');
 // The board on the intercom, and what HQ's intercom shows.
 const say = async (text: string) => assert.equal((await h.board('/api/chat', { text })).status, 200);
 const messages = async () => (await h.board('/api/chat')).body.messages as { who: string; text: string }[];
@@ -480,6 +480,23 @@ test('what the board adds on a call reaches the job the call queued, wherever th
   assert.equal((await add(waiting, ' ')).status, 400);
   const outside = await h.start({ agent: 'bolt', title: 'Elsewhere' });
   assert.equal((await h.agent('extend', outside.token, { id: paused, text: 'x' })).status, 404, "a job's hq extend still takes only work that never ran");
+});
+
+// A call that recorded nothing is deleted, by its hang-up or by the sweep after its line dropped, and its number comes
+// again: the next call can't add to the jobs it queued.
+test("a call that takes a deleted call's number can't add to that call's jobs", async () => {
+  fresh();
+  const { sweep, LIVE_MS } = await import('./ledger.ts');
+  for (const gone of ['hung up', 'swept']) {
+    const ctx = await context('kit');
+    const queued = (await h.agent('job', ctx.token, { agent: 'moss', title: 'Deck', prompt: 'Make the deck.' })).body.id as number;
+    if (gone === 'hung up') await hangUp('kit', [], { token: ctx.token });
+    else sweep(Date.now() + LIVE_MS + 60_000);   // (a minute past its token's life)
+    const next = await context('kit');
+    assert.equal(next.call, ctx.call, `${gone}: the next call has its number`);
+    assert.equal((await h.agent('extend', next.token, { id: queued, text: 'In Dutch.' })).status, 409, `${gone}: not this call's job`);
+    await hangUp('kit', [], { token: next.token });
+  }
 });
 
 test("what the board adds on an ordinary call isn't kept in the events log", async () => {

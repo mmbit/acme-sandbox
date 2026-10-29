@@ -997,13 +997,13 @@ sys.exit(backup.main(['backup.py', 'run', *sys.argv[3:]]))
     os.remove(f'{store}/{WRONG}')
     os.remove(oversized)
     open(f'{store}/{hashlib.sha256(big := os.urandom(30_000)).hexdigest()}', 'wb').write(big)
-    limit = backup.RENDERS_MAX_BYTES
-    backup.RENDERS_MAX_BYTES = sum(v[0] for v in now_held.values()) + len(big)
+    renders_max = backup.renders_max   #.
+    backup.renders_max = lambda: sum(v[0] for v in now_held.values()) + len(big)
     try:
         time.sleep(1.1)
         sc = backup.run(dict(opts))
     finally:
-        backup.RENDERS_MAX_BYTES = limit
+        backup.renders_max = renders_max
     rw = [backup.renders_warn(sc, datetime.datetime.fromisoformat(sn['renders_ok_at']) + datetime.timedelta(hours=h)) for h in (35, 37)]
     check(sc['state'] == 'ok' and sc['ok_key'] != sn['ok_key'] and sc['renders_pending'] == 1 and 'not uploaded' in sc['renders_error']
           and rw[0] is None and rw[1] and sn['renders_ok_at'][:10] in rw[1],
@@ -1105,29 +1105,29 @@ sys.exit(backup.main(['backup.py', 'run', *sys.argv[3:]]))
           and unreadable_store_status['renders_pending'] == 0 and unreadable_store_status['renders_ok_at'] == room_restored_status['renders_ok_at']
           and rw[0] is None and rw[1], f"a renders' store that can't be read: the board hears after 36 hours ({rw[1]})")
 
-    # ---- the renders' ceiling: the company's BACKUP_RENDERS_GB (whole GB), 3 unset; any other value holds every render
-    # back and says why, while the night itself still goes
-    for value, gb in {'8': 8, '': 3, '0': None, '2.5': None, '8GB': None}.items():
+    # ---- the renders' ceiling: the company's BACKUP_RENDERS_GB (whole GB), 3 unset; any other value, or a line company.py
+    # skips (never the default in its place), holds every render back and says why, while the night itself still goes
+    for value, gb in {'8': 8, '': 3, '0': None, '2.5': None, '8GB': None, '8 GB': None}.items():   #.
         env_file = f'{tmp}/infra-renders-{len(value)}.env'
         open(env_file, 'w').write(f'SERVER_NAME=t\nSERVER=t-1\nBACKUP_BUCKET=t\nBACKUP_RENDERS_GB={value}\n')
-        r = subprocess.run([sys.executable, '-c', 'import backup; print(backup.RENDERS_MAX_BYTES)'], cwd=here,
+        r = subprocess.run([sys.executable, '-c', 'import backup; print(backup.renders_max())'], cwd=here,
                            env={**os.environ, 'INFRA_ENV': env_file}, capture_output=True, text=True)
         check(r.stdout.split() == [str(gb * 1e9 if gb else None)], f'BACKUP_RENDERS_GB={value!r}: {r.stdout.strip()} bytes')
     waiting = os.urandom(10_000)
     open(f'{tmp}/work/{backup.RENDERS}/{(sha := hashlib.sha256(waiting).hexdigest())}', 'wb').write(waiting)
     waiting_key = backup.render_key(sha)
-    cap, backup.RENDERS_MAX_BYTES = backup.RENDERS_MAX_BYTES, None
+    backup.SKIPPED.add('BACKUP_RENDERS_GB')   #.
     try:
         time.sleep(1.1)
         stn = backup.run(dict(opts))
     finally:
-        backup.RENDERS_MAX_BYTES = cap
+        backup.SKIPPED.discard('BACKUP_RENDERS_GB')
     held_back = waiting_key not in r2.listing()
     time.sleep(1.1)
     sto = backup.run(dict(opts))
     check(stn['state'] == 'ok' and held_back and stn['renders_pending'] == 1 and 'BACKUP_RENDERS_GB' in stn['renders_error']
           and waiting_key in r2.listing() and sto['renders_pending'] == 0 and sto['renders_error'] is None,
-          f"BACKUP_RENDERS_GB not a whole number: the night goes, the render waits and the status names the setting ({stn['renders_error']})")
+          f"BACKUP_RENDERS_GB's line skipped: the night goes, the render waits and the status names the setting ({stn['renders_error']})")
 
     # ---- the records, night after night: one upload each, new mail next night, an invoice's copy gone after 8 years
     r2 = backup.R2(KEYS['BACKUP_R2_ENDPOINT'], KEY_ID, SECRET)

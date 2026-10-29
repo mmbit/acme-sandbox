@@ -4,6 +4,7 @@
 // A sketch keeps its lines in its own units, the CSS px of the page it was started on (w × h): on a smaller or larger
 // screen the page is drawn at scale k, and a line drawn there is divided by k as it ends, so it stays where it was drawn.
 import { pen, draw, fit, shown } from '/__review/ink.js';
+import { fromSegment } from '/__review/eraser.js';
 import { drawScrap, scrapLayer, setScrap } from './sketchscraps.js';
 
 export const PAPER = '#fffdf8';
@@ -197,18 +198,9 @@ function touches(line, x, y, r) {
   const pts = line.points,
     reach = r + line.size / 2;
   for (let i = 0; i < pts.length; i++) {
-    const [ax, ay] = pts[i],
-      [bx, by] = pts[i + 1] ?? pts[i];
-    if (fromSegment(x, y, ax, ay, bx, by) <= reach) return true;
+    if (fromSegment([x, y], pts[i], pts[i + 1] ?? pts[i]) <= reach) return true;
   }
   return false;
-}
-function fromSegment(x, y, ax, ay, bx, by) {
-  const dx = bx - ax,
-    dy = by - ay,
-    len = dx * dx + dy * dy;
-  const t = len ? Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / len)) : 0;
-  return Math.hypot(x - (ax + t * dx), y - (ay + t * dy));
 }
 
 // The sketch as a picture (a data URL): its pictures and lines on the paper, twice the page's size or at most PICTURE_PX

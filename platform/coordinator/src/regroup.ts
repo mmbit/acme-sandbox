@@ -11,6 +11,7 @@ import { dropped, finished } from './windows.ts';
 import { findProject, findThread, ownerOf, type Thread } from './projects.ts';
 import { threadClash } from './names.ts';
 import { oneTask } from './made.ts';
+import { leaving } from './threadends.ts';
 import { publish } from './events.ts';
 import { shedRefusal } from './pauses.ts';
 import * as redraws from './redraws.ts';
@@ -105,7 +106,8 @@ export function moveJob(
   if (held) return held;
   // (its place in its old thread's order stays there: by its id in the new one, plan.ts.)
   const from = on.map(r => r.thread).filter((id): id is string => id !== null && id !== thread.id);
-  const moved = moveGroup(loop, thread, from, { agent, job: senderJob });
+  // (HQ's one-task thread it leaves ends: threadends.ts leaving.)
+  const moved = leaving(from, () => moveGroup(loop, thread, from, { agent, job: senderJob }));
   if (typeof moved === 'string') return moved;
   publish({ type: 'log', agent, text: `Job #${row.lead} moved to ${thread.name}${why ? `: ${why}` : ''}` });
   return { thread: thread.id, ...moved };
@@ -137,11 +139,13 @@ export function takeOut(
       taken: false,
       refusal: `job #${job} has already run on the branch it shares with the rest of ${thread.id}, so it merges with that deliverable: ${QUEUE_THE_FIX}`,
     };
-  redraws.writePlan(() => {
-    redraws.rememberHolds();
-    db.prepare('update jobs set thread = null, seq = null, expedite = 1 where id = ?').run(job);
-    planChange({ project: thread.project, thread: thread.id, what: `task #${job} taken out, expedited`, by: agent });
-  });
+  leaving([thread.id], () =>
+    redraws.writePlan(() => {
+      redraws.rememberHolds();
+      db.prepare('update jobs set thread = null, seq = null, expedite = 1 where id = ?').run(job);
+      planChange({ project: thread.project, thread: thread.id, what: `task #${job} taken out, expedited`, by: agent });
+    }),
+  );
   publish({ type: 'log', agent, text: `Job #${job} left ${thread.name}, expedited` });
   return { taken: true, thread: thread.id };
 }
@@ -207,7 +211,8 @@ function notifyNeeds(from: string[], to: string, by: { agent: string; job: numbe
     const decisions = old
       .filter(n => from.includes(n.needs))
       .map(({ needs }) => {
-        const change = `${canRepoint ? 're-point' : 'remove'} it: hq plan unneed ${thread.id} ${needs}`;
+        // (unneed's why)
+        const change = `${canRepoint ? 're-point' : 'remove'} it: hq plan unneed ${thread.id} ${needs} "why"`;
         return `Work moved from ${needs} to ${to}. Decide: keep the need on ${needs} (no command), or ${change}.`;
       });
     const line = `${thread.id} (${owner}): ${preparation}${decisions.join(' ')}`;

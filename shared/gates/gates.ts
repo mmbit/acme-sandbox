@@ -15,13 +15,13 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, lstatSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
-import type { Diagnostic } from 'typescript';
 import { SIDE } from '../demo/renders.mjs';
 import { brandProblems } from './brand.ts';
 import { importProblems } from './imports.ts';
 import { HqUnreachable, NO_ROOM_EXIT, NoRoom, onLent, UNREACHED_EXIT } from './lent.ts';
 import { dataProblems, outputProblems, renderProblems, type Change, type Problem } from './output.ts';
-import { areaOf, missingPackage, git, gitFiles, linkModules, plural, TOOLS_HOME, workingTree } from './repo.ts';
+import { areaOf, git, gitFiles, linkModules, plural, TOOLS_HOME, workingTree } from './repo.ts';
+import { reachedRoots, typeErrors } from './typecheck.ts';
 import { crossedLimits, SCRIPT, scriptSizes, SIZE_RULES, sizedChanges } from './sizes.ts';
 
 const CODE = /\.(ts|js|mjs|cjs)$/;
@@ -81,6 +81,8 @@ async function checkChange(tools: Tools) {
     changes.map(c => c.path),
   );
   const checked = changes.filter(c => kept.has(c.path));
+  // (the type check first, in its threads (typecheck.ts), while this one holds no more than the tools)
+  const typeProblems = typeChecked(changes) ? await newTypeErrors(tools, base, changes) : [];
   const problems = [
     ...(await unformatted(
       tools,
@@ -93,7 +95,7 @@ async function checkChange(tools: Tools) {
       await sizedChanges(tools, root, changes, kept),
       checked.filter(c => CODE.test(c.path) || PAGE.test(c.path)),
     )),
-    ...(typeChecked(changes) ? await newTypeErrors(tools, base, changes) : []),
+    ...typeProblems,
     ...renderProblems(root, changes),
     ...dataProblems(root, changes),
     ...brandProblems(root, changes),
@@ -188,31 +190,38 @@ async function lintFindings(tools: Tools, base: string, sized: Change[], linted:
   return [...findings, ...(await crossedLimits(tools, root, base, sized, results))];
 }
 
-// The whole program is checked at the base and now, so a change that breaks a caller in a file it didn't touch is
-// caught too. An error is new when now has more of it (same file, code and message) than the base had. A renamed
-// file's errors at the base count under its new name.
+// The program is checked at the base and now, as far as the change reaches (reach.ts), so a change that breaks a caller
+// in a file it didn't touch is caught too. An error is new when now has more of it (same file, code and message) than
+// the base had. A renamed file's errors at the base count under its new name.
 async function newTypeErrors(tools: Tools, base: string, changes: Change[]): Promise<Problem[]> {
-  const listedNow = gitFiles(root, 'ls-files', '-co', '--exclude-standard', '*.ts');
-  const present = listedNow.filter(p => existsSync(join(root, p)));
-  const now = typeErrors(tools, root, [...(await inScope(tools, present))]);
+  const nowFiles = gitFiles(root, 'ls-files', '-co', '--exclude-standard').filter(p => CODE.test(p));
+  const now = { dir: root, files: nowFiles.filter(p => regularFile(join(root, p))) };
   const baseDir = mkdtempSync(join(tmpdir(), 'gates-base-'));
   try {
-    const listedBase = gitFiles(root, 'ls-tree', '-r', '--name-only', base);
+    const listedBase = gitFiles(root, 'ls-tree', '-r', '--name-only', base).filter(p => BASE_FILES.test(p));
     // (-m: no file times set, a call the work Stop hook's confinement refuses, platform/worker/hq/confine.py)
     const archive = 'git archive --format=tar "$0" -- "$@" | tar -x -m -C "$GATES_BASE_DIR"';
     const env = { ...process.env, GATES_BASE_DIR: baseDir, GIT_LITERAL_PATHSPECS: '1' };
-    execFileSync('sh', ['-c', archive, base, ...listedBase.filter(p => BASE_FILES.test(p))], { cwd: root, env });
+    execFileSync('sh', ['-c', archive, base, ...listedBase], { cwd: root, env });
     linkModules(root, root, baseDir);
-    const before = typeErrors(tools, baseDir, [...(await inScope(tools, listedBase, baseDir))]);
+    const before = { dir: baseDir, files: listedBase.filter(p => CODE.test(p) && regularFile(join(baseDir, p))) };
+    const sides = [now, before].map(side => ({ ...side, roots: side.files.filter(p => p.endsWith('.ts')) }));
+    for (const side of sides) side.roots = [...(await inScope(tools, side.roots, side.dir))];
+    const changed = changes.flatMap(c => [c.path, c.basePath ?? '']).filter(Boolean);
+    // (a package.json or tsconfig.json reaches every file)
+    const whole = changed.some(p => TYPED.test(p) && !CODE.test(p));
+    const reached = whole ? undefined : await reachedRoots(root, sides, changed);
+    const [nowRoots, baseRoots] = reached ?? sides.map(s => s.roots);
+    const errorsNow = await typeErrors(root, root, nowRoots);
     const renamed = new Map(
       changes.filter(c => c.path && c.basePath && c.basePath !== c.path).map(c => [c.basePath, c.path]),
     );
     const left = new Map<string, number>();
-    for (const error of before) {
+    for (const error of await typeErrors(root, baseDir, baseRoots)) {
       const key = errorKey(renamed.get(error.path) ?? error.path, error.code, error.message);
       left.set(key, (left.get(key) ?? 0) + 1);
     }
-    return now.filter(error => {
+    return errorsNow.filter(error => {
       const key = errorKey(error.path, error.code, error.message);
       left.set(key, (left.get(key) ?? 0) - 1);
       return left.get(key)! < 0;
@@ -220,41 +229,6 @@ async function newTypeErrors(tools: Tools, base: string, changes: Change[]): Pro
   } finally {
     rmSync(baseDir, { recursive: true, force: true });
   }
-}
-
-// Both checks use the change's own tsconfig.json, so the base is judged by today's rules. An error in no file (the
-// config, a `types` package that can't be found) means the check itself is broken: it can't run, so it fails.
-function typeErrors(tools: Tools, dir: string, files: string[]) {
-  const ts = tools.typescript;
-  const broken = (diagnostics: readonly Diagnostic[]) => {
-    const texts = diagnostics.map(d => `${ts.flattenDiagnosticMessageText(d.messageText, ' ')} (TS${d.code})`);
-    if (texts.length) throw new Error(`the type check's config: ${texts.join('; ')}`);
-  };
-  const { config, error } = ts.readConfigFile(join(root, 'tsconfig.json'), ts.sys.readFile);
-  broken(error ? [error] : []);
-  const { options, errors } = ts.convertCompilerOptionsFromJson(config.compilerOptions, dir);
-  broken(errors);
-  const program = ts.createProgram({ rootNames: files.filter(f => f.endsWith('.ts')).map(f => join(dir, f)), options });
-  const diagnostics = ts.getPreEmitDiagnostics(program);
-  broken(diagnostics.filter(d => !d.file));
-  return diagnostics.flatMap(diagnostic => {
-    if (!diagnostic.file || notInstalledYet(dir, diagnostic)) return [];
-    const path = relative(dir, diagnostic.file.fileName);
-    const message = ts.flattenDiagnosticMessageText(diagnostic.messageText, ' ').replaceAll(dir, '');
-    const line = diagnostic.file.getLineAndCharacterOfPosition(diagnostic.start ?? 0).line + 1;
-    return [{ path, line, code: diagnostic.code, message, text: `${message} (TS${diagnostic.code})` }];
-  });
-}
-
-// A package the change adds to a package.json: the image's copy (TOOLS_HOME) has it once built from the merged lock, and
-// the tests install it from the lock (tests.ts). Its types wait for the image.
-function notInstalledYet(dir: string, diagnostic: Diagnostic) {
-  const { code, file, start, length = 2 } = diagnostic;
-  if (code !== 2307 || !file || start === undefined) return false;
-  const name = missingPackage(dir, file.fileName, file.text.slice(start + 1, start + length - 1));
-  if (name)
-    console.log(`${relative(dir, file.fileName)}: '${name}' isn't installed here yet: its types aren't checked`);
-  return !!name;
 }
 
 // The compiler prints a union's members in the order it first met them, so a file the change adds can turn an old
@@ -298,7 +272,8 @@ async function countAll(tools: Tools) {
     if (sizes.longFile) area(path).long.add(join(root, path));
     area(path).functions += sizes.longFunctions.length;
   }
-  for (const error of typeErrors(tools, root, files))
+  const typed = files.filter(f => f.endsWith('.ts'));
+  for (const error of await typeErrors(root, root, typed))
     if (files.includes(error.path)) area(error.path).types.add(error.path);
   printAreas(areas);
   return 0;

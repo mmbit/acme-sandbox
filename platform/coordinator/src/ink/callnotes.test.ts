@@ -19,6 +19,7 @@ const { answerNow } = await import('./bookanswer.ts');
 const { ceo } = await import('../company.ts');
 const { moveGroup, deleteGroup } = await import('../notebookgroups.ts');
 const { currentPage } = await import('../notebook.ts');
+const { deliverDue } = await import('./booksheets.ts');
 const DIR = `${h.dataDir}/book`;
 const runAgent = (job: number) =>
   (db.prepare('select agent from jobs where id = ?').get(job) as { agent: string }).agent;
@@ -51,6 +52,8 @@ const anchor = {
     },
   ],
 };
+// The board's why, which every ask on the call carries
+const GOAL = 'A calmer shop';
 const groups = async (page: number) => (await h.board(`/api/notebooks/pages/groups?page=${page}`)).body.groups as any[];
 const fileOf = (g: any) => /file=([^&]+)/.exec(g.pictures[0].url)![1];
 // The colour in the middle of a group's picture
@@ -120,6 +123,7 @@ test("a call's notes page: open as the call starts, the agent's scraps landing o
       from: 'note 1',
       region: { x: c.x, y: 0, width: 1 / 3, height: 1 },
       words: c.words,
+      goal: GOAL,
     });
     assert.equal(made.status, 200, JSON.stringify(made.body));
     assert.match(made.body.ok, new RegExp(`^Scrap ${i + 1} is on the call's page`));
@@ -140,7 +144,11 @@ test("a call's notes page: open as the call starts, the agent's scraps landing o
       [100, 120],
     ],
   );
-  assert.ok(scraps[0].box.y + scraps[0].box.h < scraps[1].box.y, 'stacked under each other, never over');
+  // (in two columns across the page, each under the shorter one, never over another)
+  assert.equal(scraps[0].box.y, scraps[1].box.y, 'side by side');
+  assert.ok(scraps[0].box.x + scraps[0].box.w < scraps[1].box.x, 'a gap between the columns');
+  assert.equal(scraps[2].box.x, scraps[0].box.x, 'the third under the first');
+  assert.ok(scraps[2].box.y > scraps[0].box.y + scraps[0].box.h + 40, 'past its post-it words, a gap clear');
 
   // What the line can't cut is refused in words
   const refused = async (body: Record<string, unknown>) => {
@@ -149,6 +157,7 @@ test("a call's notes page: open as the call starts, the agent's scraps landing o
       from: 'note 1',
       region: { x: 0, y: 0, width: 0.5, height: 1 },
       words: 'x',
+      goal: GOAL,
       ...body,
     });
     return [r.status, r.body.error];
@@ -157,6 +166,7 @@ test("a call's notes page: open as the call starts, the agent's scraps landing o
   assert.equal((await refused({ region: { x: 0.8, y: 0, width: 0.5, height: 1 } }))[0], 400);
   assert.equal((await refused({ words: '' }))[0], 400);
   assert.equal((await refused({ owner: 'nobody' }))[0], 400);
+  assert.equal((await refused({ goal: '' }))[0], 400, 'an ask on the call has the board’s why');
   assert.deepEqual(await refused({ from: '-20s' }), [404, 'No screen is being shown on this call.']);
 
   // Its title, a few words; what the agent records on the call, written on the page
@@ -174,7 +184,7 @@ test("a call's notes page: open as the call starts, the agent's scraps landing o
   const typed = (await groups(page)).at(-1);
   assert.deepEqual(
     [typed.kind, typed.by, typed.texts[0].text],
-    ['drawing', 'juno', 'Promise for Juno: Send the board the new shop page'],
+    ['note', 'juno', 'Promise for Juno: Send the board the new shop page'],
   );
 
   // The board scribbles on the page: a line that starts on the first scrap, and one beside the scraps
@@ -207,11 +217,11 @@ test("a call's notes page: open as the call starts, the agent's scraps landing o
       ['scrap', 'juno', 'sent', true],
       ['scrap', 'juno', 'sent', true],
       ['scrap', 'juno', 'sent', true],
-      ['drawing', 'juno', 'sent', false],
+      ['note', 'juno', 'sent', true],
       ['drawing', 'board', 'sent', true],
       ['drawing', 'board', 'sent', true],
     ],
-    "the agent's own typed note goes back to nobody; the board's lines go",
+    "the agent's promise goes with the page, as the board's lines do",
   );
   const { shelf: afterShelf } = (await h.board('/api/notebooks')).body;
   assert.ok(
@@ -219,8 +229,15 @@ test("a call's notes page: open as the call starts, the agent's scraps landing o
     'My Notebook stays on the shelf',
   );
   assert.equal(
-    (await h.voice('scrap', { call, from: 'note 1', region: { x: 0, y: 0, width: 1, height: 1 }, words: 'late' }))
-      .status,
+    (
+      await h.voice('scrap', {
+        call,
+        from: 'note 1',
+        region: { x: 0, y: 0, width: 1, height: 1 },
+        words: 'late',
+        goal: GOAL,
+      })
+    ).status,
     404,
   );
 });
@@ -246,6 +263,442 @@ test("a call page with only what the agent recorded goes in, and isn't left as M
   assert.notEqual(currentPage(opened.notebook), opened.page.id, "not My Notebook's open page");
 });
 
+test("one route: each ask on the call's page reaches its owner once, and its item tracks the job it went as", async () => {
+  const { call, token, page } = await scrapped({ owner: 'wren' });
+  const promised = ledger.add(
+    call,
+    { kind: 'promise', owner: 'moss', what: 'Draw the new basket icon', goal: GOAL, quote: 'Moss draws it' },
+    null,
+  ) as { id: number };
+  ledger.add(
+    call,
+    { kind: 'promise', owner: 'kit', what: 'Tell the players', goal: GOAL, quote: 'Kit tells them' },
+    null,
+  );
+  const forBoard = ledger.add(
+    call,
+    { kind: 'promise', owner: 'board', what: 'Try the shop on the phone', goal: GOAL, quote: 'you try it' },
+    null,
+  ) as { id: number };
+  const asks = () => ledger.items(call).filter(i => i.id !== forBoard.id);
+  assert.deepEqual(
+    asks().map(i => [i.kind, i.owner, i.what]),
+    [
+      ['task', 'wren', 'Make the price smaller'],
+      ['promise', 'moss', 'Draw the new basket icon'],
+      ['promise', 'kit', 'Tell the players'],
+    ],
+    'the scrap is on the call’s list too',
+  );
+  // (a correction isn't an ask on the page: the follow-up passes it on)
+  ledger.add(
+    call,
+    {
+      what: 'Draw the basket icon in green',
+      goal: GOAL,
+      quote: 'green',
+      replaces: promised.id,
+      owner: 'moss',
+      kind: 'promise',
+    },
+    null,
+  );
+  assert.equal((await groups(page)).length, 4, 'the scrap and the three promises, no correction');
+  const replaced = ledger.items(call).at(-1)!;
+  for (const i of asks().filter(i => i.id !== replaced.id && i.status === 'open'))
+    assert.match(
+      String(ledger.handOut(i.id, () => true)),
+      /ask on the call's notes page/,
+      'never handed out beside it',
+    );
+
+  await h.voice('call-end', { agent: 'juno', lines: ['Board: smaller, and move it here.'], token });
+  await wentIn(page);
+  deliverDue(Date.now() + 60_000);
+  const [scrapItem, , kitItem] = asks();
+  await until(() => asks().every(i => i.job != null || i.owner === 'moss'), 'the page went, and its asks with it');
+  const went = db
+    .prepare(
+      `select s.owner, s.job from book_sheets s where s.status = 'sent' and s.id in (select n.sheet from book_notes n
+        where n.page = ?) order by s.owner`,
+    )
+    .all(page) as { owner: string; job: number }[];
+  assert.deepEqual(
+    went.map(s => s.owner),
+    ['kit', 'wren'],
+    'a sheet for each owner: the replaced promise and the board’s own stay on the page',
+  );
+  const jobOf = (id: number) => ledger.items(call).find(i => i.id === id)!.job;
+  assert.deepEqual(
+    [jobOf(kitItem.id), jobOf(scrapItem.id)],
+    went.map(s => s.job),
+    'each item has the job it went as',
+  );
+  for (const i of [kitItem, scrapItem])
+    assert.match(String(ledger.handOut(i.id, () => true)), /already has job/, 'never handed out again');
+  assert.deepEqual(
+    (await groups(page)).map(g => [g.kind, g.status, !!g.note]),
+    [
+      ['scrap', 'sent', true],
+      ['note', 'sent', false],
+      ['note', 'sent', true],
+      ['note', 'sent', false],
+    ],
+  );
+});
+
+const promise = (call: number, owner: string, what: string) =>
+  (ledger.add(call, { kind: 'promise', owner, what, goal: GOAL, quote: what }, null) as { id: number }).id;
+const groupOf = (item: number) =>
+  (db.prepare('select grp from call_asks where item = ?').get(item) as { grp: number }).grp;
+const itemOf = (call: number, id: number) => ledger.items(call).find(i => i.id === id)!;
+// The sheets a call's page went as, by owner
+const sheetsOf = (page: number) =>
+  db
+    .prepare(
+      `select s.owner, s.job from book_sheets s where s.status = 'sent' and s.id in (select n.sheet from book_notes n
+        where n.page = ?) order by s.owner`,
+    )
+    .all(page) as { owner: string; job: number }[];
+const goneAs = async (page: number, token: string) => {
+  await h.voice('call-end', { agent: 'juno', lines: ['Board: smaller, and move it here.'], token });
+  await wentIn(page);
+  deliverDue(Date.now() + 60_000);
+  await until(() => sheetsOf(page).length, 'the page went as sheets');
+};
+const stroke = {
+  color: '#dd2233',
+  size: 4,
+  points: [
+    [0, 0, 0.5, 0],
+    [40, 30, 0.5, 16],
+  ],
+};
+
+test('asks the board joins go with the group they joined into, and one it deletes is dropped', async () => {
+  const { call, token, page, scrap } = await scrapped({ owner: 'wren' });
+  const other = await h.voice('scrap', {
+    call,
+    from: 'note 1',
+    region: { ...THIRD, x: 1 / 3 },
+    words: 'Move the basket up',
+    goal: GOAL,
+    owner: 'wren',
+  });
+  assert.equal(other.status, 200, JSON.stringify(other.body));
+  const [scrapItem, otherItem] = ledger.items(call).map(i => i.id);
+  const icon = promise(call, 'moss', 'Draw the new basket icon'),
+    green = promise(call, 'moss', 'Colour it green'),
+    players = promise(call, 'kit', 'Tell the players');
+  for (const ids of [
+    [groupOf(icon), groupOf(green)],
+    [groupOf(players), scrap],
+  ])
+    assert.equal((await h.board('/api/notebooks/groups/join', { ids })).status, 200);
+  assert.equal((await h.board('/api/notebooks/groups/delete', { id: other.body.id })).status, 200);
+  // (one with work queued on the call: deleted, its job is cancelled)
+  const sign = await queuedOnCall(token, 'moss', 'Draw the shop sign', 'SIGN');
+  const signItem = h.job(sign).item as number;
+  assert.equal((await h.board('/api/notebooks/groups/delete', { id: groupOf(signItem) })).status, 200);
+  // (one about work under way from before the call: deleted, it stays linked to that work, which goes on)
+  const { id: under } = jobs.createJob({ agent: 'moss', title: 'Paint the shop door', prompt: 'x', queuedBy: 'lyra' });
+  const door = promise(call, 'moss', 'Paint the door');
+  assert.equal(
+    typeof ledger.link(door, { job: under }, 'juno', 0),
+    'object',
+    'linked on the call, as the item tool does',
+  );
+  assert.equal((await h.board('/api/notebooks/groups/delete', { id: groupOf(door) })).status, 200);
+  // (and one about work the call's own agent queued off the call during it, say from its follow-up of an earlier call:
+  const { id: aside } = jobs.createJob({
+    agent: 'moss',
+    title: 'Paint the shop window',
+    prompt: 'x',
+    queuedBy: 'juno',
+  });
+  const pane = promise(call, 'moss', 'Paint the window');
+  assert.equal(typeof ledger.link(pane, { job: aside }, 'juno', 0), 'object');
+  assert.equal(h.job(aside).item, pane, 'it carries the promise');
+  assert.equal((await h.board('/api/notebooks/groups/delete', { id: groupOf(pane) })).status, 200);
+  const all = [scrapItem, otherItem, icon, green, players];
+  for (const i of all) assert.match(String(ledger.handOut(i, () => true)), /ask on the call's notes page/);
+
+  await goneAs(page, token);
+  const [moss, wren] = sheetsOf(page);
+  assert.deepEqual([moss.owner, wren.owner], ['moss', 'wren']);
+  await until(() => itemOf(call, icon).job != null, 'the items have their jobs');
+  assert.deepEqual(
+    [icon, green, players, scrapItem].map(i => itemOf(call, i).job),
+    [moss.job, moss.job, wren.job, wren.job],
+    'each item has the job its joined group went as',
+  );
+  for (const off of [otherItem, signItem])
+    assert.deepEqual([itemOf(call, off).status, itemOf(call, off).why], ['dropped', "taken off the call's page"]);
+  assert.equal(h.job(sign).status, 'cancelled');
+  assert.deepEqual([itemOf(call, door).status, itemOf(call, door).job, h.job(under).status], ['open', under, 'queued']);
+  assert.deepEqual([itemOf(call, pane).status, itemOf(call, pane).job, h.job(aside).status], ['open', aside, 'queued']);
+  for (const i of all) assert.match(String(ledger.handOut(i, () => true)), /already has job|is dropped/, 'never again');
+});
+
+test("the board's ink, typed words or strike-out on an ask already queued go with the page; its item keeps its job", async () => {
+  const { call, token, page } = await scrapped({ owner: 'wren' });
+  const whats = ['Draw the new basket icon', 'Draw the new cart icon', 'Draw the new shop sign', 'Draw the new banner'];
+  const queued = [];
+  for (const [i, what] of whats.entries()) queued.push(await queuedOnCall(token, 'moss', what, `ICON${'ABCD'[i]}`));
+  const items = queued.map(id => h.job(id).item as number);
+  const [inked, typed, struck, kept] = await Promise.all(
+    items.map(async i => (await groups(page)).find(x => x.id === groupOf(i))),
+  );
+  const retyped = (g: any, text: string) => ({ id: g.id, since: g.updated, texts: [{ ...g.texts[0], text }] });
+  for (const edit of [
+    { id: inked.id, since: inked.updated, ink: [stroke] },
+    retyped(typed, `${typed.texts[0].text}, in green`),
+    retyped(struck, struck.texts[0].text.replace(' new', '')),
+  ]) {
+    const edited = await h.board('/api/notebooks/groups/edit', edit);
+    assert.equal(edited.status, 200, JSON.stringify(edited.body));
+  }
+
+  await goneAs(page, token);
+  const after = await groups(page);
+  assert.deepEqual(
+    [inked, typed, struck, kept].map(g => after.find(x => x.id === g.id)).map(g => [g.status, !!g.note]),
+    [
+      ['sent', true],
+      ['sent', true],
+      ['sent', true],
+      ['sent', false],
+    ],
+    "the board's changes go as its note; the ask as the agent wrote it stays with its job",
+  );
+  assert.deepEqual(
+    sheetsOf(page).map(s => s.owner),
+    ['moss', 'wren'],
+  );
+  assert.deepEqual(
+    items.map(i => itemOf(call, i).job),
+    queued,
+  );
+});
+
+test("an ask on a call page the board archived isn't going: the follow-up hands it out", async () => {
+  const { call, token, page } = await scrapped({ owner: 'wren' });
+  const [item] = ledger.items(call);
+  const deleted = promise(call, 'kit', 'Tell the players');
+  assert.match(String(ledger.handOut(item.id, () => true)), /ask on the call's notes page/);
+  assert.equal((await h.board('/api/notebooks/groups/delete', { id: groupOf(deleted) })).status, 200);
+  assert.equal((await h.board('/api/notebooks/pages/archive', { id: page, archived: true })).status, 200);
+  assert.equal(typeof ledger.handOut(item.id, () => true), 'object');
+  await h.voice('call-end', { agent: 'juno', lines: ['Board: smaller.'], token });
+  await until(() => itemOf(call, deleted).status === 'dropped', 'one it deleted is dropped all the same');
+  assert.equal(pageNow(page).send_at, null, 'an archived page never goes');
+  assert.equal(typeof ledger.handOut(item.id, () => true), 'object');
+  assert.match(String(ledger.handOut(deleted, () => true)), /is dropped/);
+});
+
+test("a sheet's job is the work of its asks: cancelled once none is current, else told to change course", async () => {
+  const { call, token, page } = await scrapped({ owner: 'wren' });
+  const icon = promise(call, 'moss', 'Draw the new basket icon'),
+    green = promise(call, 'moss', 'Colour it green'),
+    players = promise(call, 'kit', 'Tell the players');
+  await goneAs(page, token);
+  const [kit, moss] = sheetsOf(page);
+  await until(() => [icon, green, players].every(i => itemOf(call, i).job != null), 'the items have their jobs');
+  const followUp = (db.prepare('select job from calls where id = ?').get(call) as { job: number }).job;
+  const toldTo = (job: number) =>
+    (db.prepare('select text from messages where job = ?').all(job) as { text: string }[]).map(m => m.text).join('\n');
+
+  assert.equal(typeof ledger.drop(players, 'The board took it back', followUp), 'object');
+  assert.equal(h.job(kit.job).status, 'cancelled', 'its one ask withdrawn, before it started');
+  const round = ledger.add(
+    call,
+    { kind: 'promise', owner: 'moss', what: 'Draw it round', goal: GOAL, quote: 'round', replaces: icon },
+    followUp,
+  );
+  assert.equal(typeof round, 'object', JSON.stringify(round));
+  assert.equal(h.job(moss.job).status, 'queued', 'Colour it green is still its work');
+  assert.match(toldTo(moss.job), new RegExp(`item #${icon} .* was replaced .*Stop or change course`));
+  assert.doesNotMatch(toldTo(moss.job), /goes on as before/);
+});
+
+test("work a sheet's job hands on is its asks' work too: it hears a correction, and a drop cancels it", async () => {
+  const { call, token, page } = await scrapped({ owner: 'wren' });
+  const players = promise(call, 'kit', 'Tell the players'),
+    news = promise(call, 'kit', 'Write the news post');
+  await goneAs(page, token);
+  const kit = sheetsOf(page).find(s => s.owner === 'kit')!;
+  await until(() => [players, news].every(i => itemOf(call, i).job != null), 'the items have their jobs');
+  const run = await h.claimJob(kit.job);
+  const handed = await h.agent('job', run!.token, {
+    agent: 'moss',
+    title: 'Post the news',
+    prompt: 'Post it.',
+    code: 'NEWS',
+  });
+  assert.equal(handed.status, 200, JSON.stringify(handed.body));
+  const moss = handed.body.id as number;
+  const brief = (db.prepare('select prompt from jobs where id = ?').get(moss) as { prompt: string }).prompt;
+  assert.match(brief, new RegExp(`Why the board wants this \\(item #${players}, call #${call}\\): ${GOAL}`));
+  const followUp = (db.prepare('select job from calls where id = ?').get(call) as { job: number }).job;
+  const toldTo = (job: number) =>
+    (db.prepare('select text from messages where job = ?').all(job) as { text: string }[]).map(m => m.text).join('\n');
+
+  const later = {
+    kind: 'promise',
+    owner: 'kit',
+    what: 'Tell the testers',
+    goal: GOAL,
+    quote: 'testers',
+    replaces: players,
+  };
+  assert.equal(typeof ledger.add(call, later, followUp), 'object');
+  assert.equal(h.job(moss).status, 'queued', 'the news post is still its work');
+  assert.match(toldTo(moss), new RegExp(`item #${players} .* was replaced .*Stop or change course`));
+  assert.equal(typeof ledger.drop(news, 'The board took it back', followUp), 'object');
+  assert.equal(h.job(moss).status, 'cancelled', 'none of its asks is current');
+  // (and the sheet's job hands nothing more on)
+  const again = await h.agent('job', run!.token, {
+    agent: 'moss',
+    title: 'Post it after all',
+    prompt: 'Post it.',
+    code: 'POST',
+  });
+  assert.equal(again.status, 409, JSON.stringify(again.body));
+});
+
+// A job the live call queues for owner (the job tool), and its number
+async function queuedOnCall(token: string, owner: string, title: string, code: string, more = {}) {
+  const queued = await h.agent('job', token, { agent: owner, title, prompt: `${title}.`, goal: GOAL, code, ...more });
+  assert.equal(queued.status, 200, JSON.stringify(queued.body));
+  return queued.body.id as number;
+}
+
+test("a job the call queues carries its promise on the call's page, which stays there with it", async () => {
+  const { call, token, page } = await scrapped({ owner: 'wren' });
+  const icon = await queuedOnCall(token, 'moss', 'Draw the new basket icon', 'ICON');
+  const promised = ledger.items(call).find(i => i.what === 'Draw the new basket icon')!;
+  assert.deepEqual(
+    [promised.kind, promised.owner, promised.job, h.job(icon).item],
+    ['promise', 'moss', icon, promised.id],
+  );
+  assert.equal(
+    (await groups(page)).find(g => g.id === groupOf(promised.id)).texts[0].text,
+    'Promise for Moss: Draw the new basket icon',
+  );
+  // (a promise noted first goes as the job's item)
+  const players = promise(call, 'kit', 'Tell the players');
+  const told = await queuedOnCall(token, 'kit', 'Tell the players', 'PLAYERS', { item: players });
+  assert.equal(itemOf(call, players).job, told);
+  assert.equal(ledger.items(call).length, 3, 'the scrap and the two promises, none twice');
+
+  await goneAs(page, token);
+  const after = await groups(page);
+  assert.deepEqual(
+    [promised.id, players].map(i => after.find(g => g.id === groupOf(i))).map(g => [g.status, !!g.note]),
+    [
+      ['sent', false],
+      ['sent', false],
+    ],
+    'each stays on the page with its job',
+  );
+  assert.deepEqual(
+    sheetsOf(page).map(s => s.owner),
+    ['wren'],
+  );
+  assert.deepEqual([itemOf(call, promised.id).job, itemOf(call, players).job], [icon, told]);
+});
+
+test('an ask the board lifts out of a joined note goes with its own words, to its owner', async () => {
+  const { call, token, page } = await scrapped({ owner: 'wren' });
+  const players = promise(call, 'kit', 'Tell the players'),
+    icon = promise(call, 'moss', 'Draw the new basket icon');
+  const into = groupOf(players);
+  assert.equal((await h.board('/api/notebooks/groups/join', { ids: [into, groupOf(icon)] })).status, 200);
+  const joined = (await groups(page)).find(g => g.id === into);
+  const line = joined.texts.findIndex((t: any) => t.text.startsWith('Promise for Moss'));
+  const split = await h.board('/api/notebooks/groups/split', { id: into, texts: [line] });
+  assert.equal(split.status, 200, JSON.stringify(split.body));
+  assert.deepEqual([groupOf(icon), groupOf(players)], [split.body.split.id, into]);
+
+  await goneAs(page, token);
+  await until(() => [icon, players].every(i => itemOf(call, i).job != null), 'the items have their jobs');
+  const [kit, moss] = sheetsOf(page);
+  assert.deepEqual([kit.owner, moss.owner], ['kit', 'moss']);
+  assert.deepEqual([itemOf(call, players).job, itemOf(call, icon).job], [kit.job, moss.job]);
+});
+
+test("an ask follows its own lines however the board retypes them; the board's own lines lifted out go as its note", async () => {
+  const { call, token, page } = await scrapped({ owner: 'wren' });
+  const players = promise(call, 'kit', 'Tell the players'),
+    icon = promise(call, 'moss', 'Draw the new basket icon'),
+    sign = promise(call, 'moss', 'Draw the shop sign');
+  const into = groupOf(players);
+  const joining = { ids: [into, groupOf(icon), groupOf(sign)] };
+  assert.equal((await h.board('/api/notebooks/groups/join', joining)).status, 200);
+  const now = async () => (await groups(page)).find(g => g.id === into);
+  // (Moss's icon line retyped, and a line of the board's own typed into the note)
+  const joined = await now();
+  const iconLine = (t: any) => t.text.startsWith('Promise for Moss: Draw the new basket');
+  const texts = joined.texts.map((t: any) => (iconLine(t) ? { ...t, text: `${t.text}, in green` } : t));
+  const own = { ...joined.texts[0], id: undefined, y: joined.box.y + joined.box.h + 20, text: 'And the cart too' };
+  const edit = { id: into, since: joined.updated, texts: [...texts, own] };
+  assert.equal((await h.board('/api/notebooks/groups/edit', edit)).status, 200);
+  const lift = async (which: (t: any) => boolean) => {
+    const split = await h.board('/api/notebooks/groups/split', {
+      id: into,
+      texts: [(await now()).texts.findIndex(which)],
+    });
+    assert.equal(split.status, 200, JSON.stringify(split.body));
+    return split.body.split.id as number;
+  };
+  assert.equal(await lift(iconLine), groupOf(icon), 'the retyped line takes its ask');
+  const added = await lift((t: any) => t.text === 'And the cart too');
+  assert.equal(groupOf(sign), into);
+  const signed = await lift((t: any) => t.text.startsWith('Promise for Moss: Draw the shop sign'));
+  assert.equal(groupOf(sign), signed);
+  assert.equal((await h.board('/api/notebooks/groups/delete', { id: signed })).status, 200);
+
+  await goneAs(page, token);
+  assert.equal(itemOf(call, sign).status, 'dropped', 'its line deleted, the ask is taken off');
+  const after = await groups(page);
+  assert.deepEqual(
+    [groupOf(icon), added].map(id => after.find(g => g.id === id)).map(g => [g.status, !!g.note]),
+    [
+      ['sent', true],
+      ['sent', true],
+    ],
+    "the retyped ask goes as the board's note, and the board's own line reaches the team",
+  );
+  await until(() => itemOf(call, icon).job != null, 'the items have their jobs');
+  const sheets = sheetsOf(page);
+  assert.deepEqual(
+    [itemOf(call, players).job, itemOf(call, icon).job],
+    ['kit', 'moss'].map(o => sheets.find(s => s.owner === o)!.job),
+  );
+});
+
+test("the board's word passed on to running work is on the call's page as passed on, and goes no further", async () => {
+  const { call, token, page } = await scrapped({ owner: 'wren' });
+  const { id: running } = jobs.createJob({ agent: 'moss', title: 'Draw the icon', prompt: 'x' });
+  const item = ledger.reached(call, {
+    owner: 'moss',
+    what: 'Keep the icon round',
+    goal: GOAL,
+    words: 'Keep it round',
+    job: running,
+    ref: 'sent on the call',
+  });
+  const passed = (await groups(page)).find(g => g.id === groupOf(item));
+  assert.deepEqual(passed.texts.map((t: any) => t.text).join(' '), 'Message for Moss: Keep the icon round');
+  await goneAs(page, token);
+  const left = (await groups(page)).find(g => g.id === passed.id);
+  assert.deepEqual([left.status, !!left.note], ['sent', false], 'it reached its work already');
+  assert.deepEqual(
+    sheetsOf(page).map(s => s.owner),
+    ['wren'],
+  );
+});
+
 test('what the agent records on a call with no notes page (a phone call) makes none', async () => {
   const { call, token } = await h.liveCall('juno');
   const item = ledger.add(
@@ -260,7 +713,7 @@ test('what the agent records on a call with no notes page (a phone call) makes n
 });
 
 // A live call whose page has the agent's first scrap, cut from the board's note 1
-async function scrapped() {
+async function scrapped(more: { owner?: string } = {}) {
   const { call, token } = await h.liveCall('juno');
   const page = (await h.board('/api/notebooks/call', { call })).body.page.id as number;
   await h.board('/api/book/note', {
@@ -270,7 +723,14 @@ async function scrapped() {
     said: 'spoken',
     snip: `data:image/png;base64,${THREE.toString('base64')}`,
   });
-  const made = await h.voice('scrap', { call, from: 'note 1', region: THIRD, words: 'Make the price smaller' });
+  const made = await h.voice('scrap', {
+    call,
+    from: 'note 1',
+    region: THIRD,
+    words: 'Make the price smaller',
+    goal: GOAL,
+    ...more,
+  });
   assert.equal(made.status, 200, JSON.stringify(made.body));
   return { call, token, page, scrap: made.body.id as number };
 }
@@ -278,7 +738,13 @@ const THIRD = { x: 0, y: 0, width: 1 / 3, height: 1 };
 
 test('a scrap still being cut as the call ends is refused: the page goes in as it was', async () => {
   const { call, token, page } = await scrapped();
-  const late = callnotes.scrap({ call, from: 'note 1', region: { ...THIRD, x: 1 / 3 }, words: 'Move the basket up' });
+  const late = callnotes.scrap({
+    call,
+    from: 'note 1',
+    region: { ...THIRD, x: 1 / 3 },
+    words: 'Move the basket up',
+    goal: GOAL,
+  });
   handOver('juno', ['Board: smaller, and move it here.'], 0, token);
   assert.deepEqual(await late, [404, 'This call has ended: its page has gone in.']);
   await wentIn(page);
@@ -311,34 +777,34 @@ test("a call's page that can't be sent stays open on the shelf, and says so", as
   assert.equal((db.prepare('select archived from notebooks where id = ?').get(notebook) as any).archived, 0);
 });
 
-test("the board's mark no scrap was cut from goes in as its own scrap: nothing it drew is lost", async () => {
+test("the board's scribble on a call is for its agent: not judged, never a scrap by itself, gone with an empty page", async () => {
   const { call, token } = await h.liveCall('juno');
   const opened = (await h.board('/api/notebooks/call', { call })).body;
   // (the book's first mark on a call finds the notes page as the call's page, never a second one)
   const made = (await h.board('/api/book/page/new', { kind: 'call', call, w: 1024, h: 768 })).body;
   assert.equal(made.id, opened.page.id);
-  await h.board('/api/book/note', {
-    page: made.id,
-    anchor,
-    words: 'this is too loud',
-    said: 'spoken',
-    snip: `data:image/png;base64,${THREE.toString('base64')}`,
-  });
-  await h.voice('call-end', { agent: 'juno', lines: ['Board: this is too loud.'], token });
-  await wentIn(made.id);
-  const [kept] = await groups(made.id);
-  assert.deepEqual(
-    [kept.kind, kept.by, kept.words, kept.status, !!kept.note],
-    ['scrap', 'board', 'this is too loud', 'sent', true],
-  );
-  // (sent with the page, on a sheet that goes: not the call's own sheet, which never does)
-  const sheet = db
-    .prepare('select s.status, s.owner from book_notes n join book_sheets s on s.id = n.sheet where n.id = ?')
-    .get(kept.note) as { status: string; owner: string | null };
-  assert.ok(['sending', 'sent'].includes(sheet.status) && sheet.owner === null, JSON.stringify(sheet));
+  const { note } = (
+    await h.board('/api/book/note', {
+      page: made.id,
+      anchor,
+      words: 'move this here',
+      said: 'spoken',
+      snip: `data:image/png;base64,${THREE.toString('base64')}`,
+    })
+  ).body;
+  await new Promise(res => setTimeout(res, 50));
+  assert.deepEqual((await h.worker('reads/claim')).body, {}, 'no judge read: no reply or try starts by itself');
+  assert.equal((await groups(made.id)).length, 0, 'nothing on the page while the call is on');
+  const routings = () => db.prepare('select count(*) n from note_routes').get();
+  const before = routings();
+  await h.voice('call-end', { agent: 'juno', lines: ['Board: move this here.'], token });
+  await until(() => !pageNow(made.id), 'the empty page went');
+  assert.equal(db.prepare('select 1 from book_notes where id = ?').get(note.id), undefined, 'its scribble with it');
+  // (no routing check guesses at it without the call)
+  assert.deepEqual(routings(), before);
 });
 
-test("at hang-up every note no scrap was cut from, and the board's typed words and pictures, go in", async () => {
+test("at hang-up the agent's scraps and the board's typed words and pictures go in, its scribbles not", async () => {
   const { call, token } = await h.liveCall('juno');
   const page = (await h.board('/api/notebooks/call', { call })).body.page.id as number;
   const snip = `data:image/png;base64,${THREE.toString('base64')}`;
@@ -351,6 +817,7 @@ test("at hang-up every note no scrap was cut from, and the board's typed words a
     from: 'note 1',
     region: { x: 0, y: 0, width: 1 / 3, height: 1 },
     words: 'Make the price smaller',
+    goal: GOAL,
   });
   assert.equal(cut.status, 200, JSON.stringify(cut.body));
   // The board types on the page and tapes a picture on it
@@ -377,10 +844,8 @@ test("at hang-up every note no scrap was cut from, and the board's typed words a
       ['scrap', 'juno', 'Make the price smaller', 'typed', [], 1, 'sent'],
       ['drawing', 'board', '', null, ['Teal everywhere'], 0, 'sent'],
       ['drawing', 'board', '', null, [], 1, 'sent'],
-      ['scrap', 'board', 'and teal', 'spoken', [], 1, 'sent'],
-      ['scrap', 'board', 'the whole page is too busy', 'typed', [], 0, 'sent'],
     ],
-    "the note cut from is the agent's scrap; the other on its place, the one with no picture, the words and picture go",
+    "the note cut from is the agent's scrap; the words and picture go, and the notes it made nothing of stay out",
   );
   assert.deepEqual(
     { ...(db.prepare('select ink, texts, scraps from book_pages where id = ?').get(page) as object) },
@@ -475,6 +940,8 @@ test("a call's pages read like any page, a customer call's too, but a keys call'
     .note.id as number;
   const quick = answerNow({ note: question }, { id: 1, why: 'a question' })!;
   assert.equal(runAgent(quick), ceo());
+  // (the agent's own note keeps the page: the board's scribble alone doesn't go in.)
+  assert.equal((await h.voice('scrap', { call, words: 'Warmer colours', goal: GOAL })).status, 200);
   await h.voice('call-end', { agent: 'juno', lines: ['Board: that line.'], token });
   await wentIn(page);
   assert.ok((await sketches(kit.token)).includes(page));
@@ -520,6 +987,7 @@ test("a call's pages read like any page, a customer call's too, but a keys call'
     .prepare('select s.owner from book_notes n join book_sheets s on s.id = n.sheet where n.id = ?')
     .get(asked) as { owner: string | null };
   assert.equal(sheetOwner.owner, 'wren');
+  assert.equal((await h.voice('scrap', { call: keys.call, words: 'The key goes here', goal: GOAL })).status, 200);
   // (the voice line names the card it rang about again at hang-up: call.ts handOver)
   await h.voice('call-end', { agent: 'wren', lines: ['Board: done.'], request: card.id, token: keys.token });
   await wentIn(kept);

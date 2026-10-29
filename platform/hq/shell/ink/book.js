@@ -27,6 +27,7 @@ import { follow } from './bookfollow.js';
 import { setScope, word } from './bookscope.js';
 import { useFaces } from './bookfaces.js';
 import { STYLES } from './bookstyles.js';
+import { mountTones, tones, cover } from './booktable.js';
 
 // How long the book takes to slide from one open width to another: a notebook pushed aside on a desk, quick and soft
 // at the end. (Opening and shutting is the swing's: bookswing.js.)
@@ -69,8 +70,7 @@ export async function initBook({ scope = null } = {}) {
   // (a note or page asked from elsewhere, the desk phone's Open in the book: the book lands on it as on a find, its day's
   // row turned to its note, the number lit.)
   document.addEventListener('book:find', e => pages.find(e.detail));
-  // (the table's ground once HQ wears its look, and again as it changes: stage.js)
-  document.addEventListener('stage:look', tones);
+  mountTones(parts.table); // (the table's ground: booktable.js)
   // (a page made or thrown away outside the book, a call's: calldraw.js, markpage.js, which send book:paged: the
   // notebook's pages read again, at that page if it's new.)
   document.addEventListener('book:paged', e => pages.made(e.detail?.page));
@@ -184,6 +184,7 @@ function mountSwing() {
       parts.lip.style.left = `${at.x}px`;
       shift(0);
       away(false);
+      if (at.over) cover(parts.table, true);
     },
     widen,
     laidOpen: () => drawn.mode === 'open',
@@ -247,15 +248,19 @@ function fade(to) {
 
 // Where the parts sit: x, the cover's edge's left (px); width, the leaf's; room, what HQ's page gives up. Shut, the
 // book keeps its open width and lies past the screen's right edge; the spread starts its cover's edge a margin from the
-// screen's left edge, and HQ's page keeps its open width under it.
+// screen's left edge (upright, just past it, so its page fills the screen), and HQ's page keeps its open width under it.
 function placeOf(l) {
   const w = innerWidth;
   if (l.mode === 'folded') return { x: w, width: bookWidth(w, state.book), room: 0 };
-  if (l.mode === 'spread') return { x: margin(), width: w - EDGE - margin(), room: l.room };
+  if (l.mode === 'spread') {
+    const x = upright() ? -EDGE : margin();
+    return { x, width: w - EDGE - x, room: l.room };
+  }
   return { x: l.page, width: l.book, room: l.room };
 }
-// (the spread's margin from the screen's left edge, as the book has at the others: book.css's --bk-gap)
+// (the spread's margin from the screen's left edge, as the book has at the others: book.css's --bk-gap, none upright)
 const margin = () => parseFloat(getComputedStyle(root).getPropertyValue('--bk-gap'));
+const upright = () => matchMedia('(orientation: portrait)').matches;
 // The parts laid out where they are (the book at rest): the room HQ's page gives up (faded into when the board moved
 // the book), the table under it, the cover's edge, the leaf (at least to the screen's right edge) and the pull tab at
 // the cover's edge, none moved by a transform
@@ -267,7 +272,7 @@ function place(at, mode, act, fade = act) {
   toRoom(Math.round(room), fade);
   tones(); // (the table shows round the resting book)
   root.dataset.mode = mode;
-  parts.table.style.width = `${Math.round(room)}px`;
+  cover(parts.table, mode === 'spread', room, fade ? ROOM_MS.out + ROOM_MS.in : 0);
   parts.edge.style.left = `${x}px`;
   parts.leaf.style.left = `${x + EDGE}px`;
   leafTo(laid.leaf);
@@ -340,17 +345,6 @@ function stop() {
   moving = [];
   placed = { ...placed, x: laid.x + dx };
   shift(dx);
-}
-// The table's ground round the book (book.css), from the look on HQ's page: its ground (<html>'s where the page has
-// none). Read as the book is laid out or starts to move, and as a look is worn, once per look. (its checkerboard a classic one)
-let toned = null;
-function tones() {
-  const ground = [document.body, document.documentElement]
-    .map(box => getComputedStyle(box).backgroundColor)
-    .find(c => c !== 'rgba(0, 0, 0, 0)');
-  if (toned === ground) return;
-  toned = ground;
-  parts.table.style.setProperty('--bk-ground', ground);
 }
 // The layout settled: placed, told to the page (data-book on <html>, and a book:layout event for whoever lays out by it,
 // act true when the board moved the book, not a new window size or HQ's start: the pin's summon, pinsummon.js)

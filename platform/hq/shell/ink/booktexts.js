@@ -11,6 +11,8 @@ import { followPress } from './bookpress.js';
 import { button } from './bookui.js';
 import { boxesOf } from './bookwords.js';
 import { word } from './bookscope.js';
+import { landing } from './bookgroupmath.js';
+import { arrive } from './bookarrive.js';
 
 // The words' size and line in page px (bookrender.ts TEXT), and the room round them inside the box, for the caret
 export const TEXT = { size: 18, line: 1.4 };
@@ -67,6 +69,9 @@ function boxFor(tx, view, t) {
   el.words = el.firstElementChild;
   el.typed = t;
   el.view = view;
+  el.classList.toggle('bk-landing', landing(view.page, t));
+  // (words stacked as a note, a call's promise or review mode's general note: a post-it, as a scrap's words are.
+  if (view.page.groups?.get(t.g)?.kind === 'note') el.dataset.note = '';
   setBox(el, t);
   view.el.append(el);
   return el;
@@ -285,6 +290,7 @@ function put(tx, { view, x, y }, words, right, centre) {
   const after = page.texts.slice();
   tx.hooks.changed(page);
   tx.book.steps.push({ page, undo: () => shown(before), redo: () => shown(after) });
+  arrive(tx.book, view, texts);
   return texts;
 }
 // The widest line of the words in a box's face (page px)

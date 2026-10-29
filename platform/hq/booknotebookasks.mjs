@@ -9,10 +9,9 @@
 //     nothing to tap or type; the card with choices beside it answered with a click.
 import assert from 'node:assert/strict';
 import { open } from './booknotebook.mjs';
-import { until, where } from './booknotebookscreen.mjs';
+import { where } from './booknotebookscreen.mjs';
+import { DESKTOP, MINI, until } from './bookkit.mjs';
 
-const MINI = { width: 1133, height: 744 },
-  DESKTOP = { width: 1440, height: 900 };
 // the seed's sent page (the first of My Notebook's), the group the card's about, and the note that group went as
 const SENT = 1,
   GROUP = 2,

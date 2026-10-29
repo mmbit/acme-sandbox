@@ -12,6 +12,7 @@ import * as jam from './jam.ts';
 import type { Memory } from './eta.ts';
 import * as lowmemory from './lowmemory.ts';
 import * as meetingroom from './meetingroom.ts';
+import { roomReported } from './startholds.ts';
 
 export const STARVED_MS = 5 * 60_000;
 const STALE_MS = 3 * 60_000; // a report older than this says nothing: the worker is restarting, or gone
@@ -132,6 +133,7 @@ export function reportRoom(
     gathering: gatheringCount(workerReport.gathering),
   };
   lowmemory.report(workerReport.memory, lastReport.free, now);
+  roomReported(short, since, now);
   const s = starved(now);
   if (s && setting('room.told') !== String(s.since)) tell(s, now);
   jam.watch(s && { since: s.since, free: s.free, waiting: s.waiting, jobs: lastReport.jobs }, now);

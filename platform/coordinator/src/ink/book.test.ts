@@ -1,7 +1,16 @@
 // node --test src/book.test.ts   (the harness: the test company, the real server, the board's session, a job's hq)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import sharp, { type OutputInfo } from 'sharp';
 import { harness } from '../harness.ts';
@@ -117,9 +126,20 @@ test('a page is made today, saved with its ink and scraps, and drawn here as a p
     pixel(drawn, 20, 40).every(c => c < 80),
     'the ink',
   );
-  const kept = readdirSync(DIR).filter(f => new RegExp(`^${page.id}-[0-9a-f]{8}\\.png$`).test(f));
+  const kept = readdirSync(DIR).filter(f => new RegExp(`^${page.id}-w-[0-9a-f]{8}\\.png$`).test(f));
   assert.equal(kept.length, 1, 'one kept, however many read it at once, until the next change');
   assert.equal(statSync(`${DIR}/${kept[0]}`).mode & 0o777, 0o600);
+  // a picture kept from an older drawing (no mark in its name) is drawn again once, the old file gone
+  const old = `${page.id}-0000beef.png`;
+  renameSync(`${DIR}/${kept[0]}`, `${DIR}/${old}`);
+  db.prepare('update book_pages set picture = ? where id = ?').run(old, page.id);
+  await picture(saved.body.picture);
+  const pictures = readdirSync(DIR).filter(f => f.startsWith(`${page.id}-`) && !f.includes('-s-'));
+  assert.deepEqual(
+    pictures.map(f => /^\d+-w-[0-9a-f]{8}\.png$/.test(f)),
+    [true],
+    'drawn again, the old one gone',
+  );
 
   const today = (await h.board('/api/book')).body;
   assert.equal(today.day, today.today);
@@ -615,8 +635,26 @@ test('old sketches fold in as free pages under their numbers, ink, scraps and wa
   const shown = await h.voice('sketch', { call, sketch: 'tote' });
   assert.equal(shown.status, 200);
   assert.match(shown.body.line, /^Page #901 “Tote bag” of the board's book: made 2026-10-24 09:00 UTC/);
-  assert.equal((await sharp(Buffer.from(shown.body.picture.data, 'base64')).metadata()).width, 1568);
+  assert.equal(shown.body.pictures.length, 1, 'a page wider than tall: one picture');
+  assert.equal((await sharp(Buffer.from(shown.body.pictures[0].data, 'base64')).metadata()).width, 1568);
   assert.equal((await h.voice('sketch', { call, sketch: '99999' })).body.error.split('.')[0], 'No page #99999');
+  // (a long page, four times as tall as wide, in pieces each read at full size)
+  const long = await newPage({ kind: 'free', w: 600, h: 2400 });
+  await h.board('/api/book/page/label', { id: long.id, label: 'Long walk' });
+  const down = Array.from({ length: 12 }, (_, i) => ({
+    ...STROKE,
+    points: STROKE.points.map(([x, y, ...r]) => [x, y + i * 190, ...r]),
+  }));
+  assert.equal((await h.board('/api/book/page/save', { id: long.id, ink: down, scraps: [], h: 2400 })).status, 200);
+  const pieces = (await h.voice('sketch', { call, sketch: 'long walk' })).body;
+  assert.match(pieces.line, /in 3 pieces from its top down/);
+  const sizes = await Promise.all(
+    pieces.pictures.map(async (p: any) => (await sharp(Buffer.from(p.data, 'base64')).metadata()) as any),
+  );
+  assert.ok(
+    sizes.every(m => m.width >= 1000 && Math.max(m.width, m.height) <= 1568),
+    `each wide enough to read (${sizes.map(m => `${m.width}×${m.height}`)}), not the one ~390 px wide`,
+  );
   await h.voice('call-end', { agent: 'juno', lines: [], token });
 });
 

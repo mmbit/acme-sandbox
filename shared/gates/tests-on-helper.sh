@@ -1,13 +1,20 @@
 #!/bin/sh
-# A push's tests or gates on a lent machine's helper of the `tests` kind (lent.ts sends them, from the repo the bundle
-# holds, its origin/main the base): first what the worker's image has for them (platform/worker/Dockerfile), the gates'
-# tools laid out as the repo and Python's yaml, then the check's script (tests.ts or gates.ts, the first argument) with
+# Push tests, gates or authored checks on a lent helper (lent.ts sends them, origin/main is the base).
+# Set up the worker image's tools and Python's yaml, then run tests.ts, gates.ts or checks (the first argument) with
 # the arguments after it. The packages come through the manager's proxy, cached on the helper (npm and the wheel's hash
 # check what they read from it).
-set -e
+set -eu
+if [ -d "$PWD/../ms-playwright" ]; then
+  export PLAYWRIGHT_BROWSERS_PATH="$PWD/../ms-playwright"
+  export LD_LIBRARY_PATH="$PWD/../tools${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+fi
 script="$1"
 shift
 fail() { echo "The $script check could not run on the helper: $1"; exit 2; }
+# Return an empty artifact even when dependency setup fails before the command runs.
+if [ "$script" = checks ]; then
+  tar -czf ../check-files.tar.gz --files-from /dev/null
+fi
 tools="$HOME/gates"
 mkdir -p "$tools/platform/coordinator"
 cp package.json package-lock.json "$tools/"
@@ -33,4 +40,11 @@ if hashlib.sha256(data).hexdigest() != sha:
         pass
 zipfile.ZipFile(io.BytesIO(data)).extractall(os.path.expanduser('~/python'))
 PY
-PYTHONPATH="$HOME/python" GATES_HOME="$tools" exec node "shared/gates/$script" --base origin/main "$@"
+export PYTHONPATH="$HOME/python" GATES_HOME="$tools"
+if [ "$script" = checks ]; then
+  npm ci --prefix shared/browser $quiet >/dev/null || fail "npm ci of Playwright"
+  ln -s "$tools/node_modules" node_modules
+  ln -s "$tools/platform/coordinator/node_modules" platform/coordinator/node_modules
+  exec node "$PWD/../check-command.ts" "$@"
+fi
+exec node "shared/gates/$script" --base origin/main "$@"

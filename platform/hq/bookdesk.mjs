@@ -3,24 +3,22 @@
 // from its button and a page opened from it; the zoom by Ctrl with the wheel and with the keys (never when the pointer
 // is on HQ's page), its % at the foot back to 100%, and out past the page's width to the overview; the page panned by
 // Space and a drag and by the middle button, the paper showing nothing but paper; New page and back to the first from
-// the pages' list; the page's heading written on it, moving with it. Each asserts what the board sees: the paper's
+// the pages' list. Each asserts what the board sees: the paper's
 // pixels, the controls' words.
 import assert from 'node:assert/strict';
-import { freePage, onDesk as onLiveDesk } from './bookmouse.mjs';
+import { onDesk as onLiveDesk } from './bookmouse.mjs';
+import { button, namedNotebook } from './bookchrome.mjs';
+import { DESKTOP } from './bookkit.mjs';
 
-const DESKTOP = { width: 1440, height: 900 };
-// a page's day as its heading writes it: "Monday 26 October"
-const DATE = /^[A-Z][a-z]+day \d{1,2} [A-Z][a-z]+$/;
 // the book's paper colour (paper.js --bk-paper), and how far a patch of the paper may be from it (its dots)
 const PAPER = [255, 250, 240],
   NEAR_PAPER = 40;
-// what's left out of the paper when its ink is counted: the heading at its top, the islands at its right and foot
-const HEAD_PX = 64,
-  ISLANDS_PX = 90,
+// what's left out of the paper when its ink is counted: the islands at its right and foot
+const ISLANDS_PX = 90,
   FOOT_PX = 80;
 
 // c: book-check.mjs's helpers: { hq (HQ in dev mode, the book drawn), storedPages, shot, settle }, and for the played
-// store's (bookmouse.mjs's onDesk, freePage): { hqIn, base, store, pages, settled }
+// store's (bookmouse.mjs's onDesk): { hqIn, base, settled }
 export function deskStories(c) {
   return {
     'the overview from its button, and a page opened from it': browser => overview(browser, c),
@@ -29,8 +27,7 @@ export function deskStories(c) {
     'pan by Space and a drag and by the middle button, any way, the paper never showing an edge': browser =>
       pan(browser, c),
     'New page, and back to the first from the pages’ list': browser => newPage(browser, c),
-    'the page’s heading is written on it at its top-left, and moves with it': browser => heading(browser, c),
-    'a page tapped in the overview that can’t be read says why, and opens at a tap; New page opens from it': browser =>
+    'a notebook’s overview that can’t be read says why, retries at a tap; New page opens from it': browser =>
       unread(browser, c),
   };
 }
@@ -61,50 +58,31 @@ async function overview(browser, c) {
   }
 }
 
-// The store's notebook routes played over its pages (My Notebook, every page in it), its page read refused while
-// `refusing`: the board taps a page, sees why, taps again once it can be read; then New page, opened.
+// A refused overview read says why and retries at a tap. Its pages and New page open once the read works.
 async function unread(browser, c) {
-  // (two pages: the book opens on the last, the first is tapped)
-  const kept = freePage(c),
-    last = freePage(c),
-    { page, errors, done } = await onLiveDesk(browser, c),
-    mine = { id: 1, name: 'My Notebook', kind: 'mine', archived: false, updated: null, pages: 0 },
-    tile = p => ({ id: p.id, title: p.label || 'Free page', sent: false, sending: false, archived: false, groups: 0 });
+  const { page, errors, done } = await onLiveDesk(browser, c, { notebooks: namedNotebook() });
   let refusing = true;
-  await page.route(/\/api\/notebooks/, r => {
-    const path = new URL(r.request().url()).pathname;
-    if (path === '/api/notebooks') return r.fulfill({ json: { shelf: [mine], archive: [] } });
-    if (path === '/api/notebooks/pages')
-      return r.fulfill({ json: { notebook: mine, pages: c.pages.map(tile), archived: [] } });
-    if (path === '/api/notebooks/pages/create')
-      return r.fulfill({ json: tile(c.store('/api/book/page/new', { kind: 'free', w: 1000, h: 800 }, null)) });
-    return r.fallback();
-  });
-  await page.route(/\/api\/book\/page\?/, r =>
-    refusing ? r.fulfill({ status: 404, json: { error: 'That page isn’t here any more.' } }) : r.fallback(),
+  await page.route('**/api/notebooks/pages?notebook=1', r =>
+    refusing ? r.fulfill({ status: 503, json: { error: 'This notebook can’t be read.' } }) : r.fallback(),
   );
-  const lost = page.locator('#book .bk-lost'),
-    frame = id => page.getByRole('list', { name: 'The overview' }).locator(`.bk-tile[data-id="${id}"] .bk-tile-open`);
+  const overview = page.getByRole('list', { name: 'The overview' }),
+    lost = overview.locator('.bk-far-lost');
   try {
     await button(page, /^The overview/).click();
-    await frame(kept.id).waitFor();
-    await frame(kept.id).click();
-    await page.waitForTimeout(c.settle);
-    assert.equal(await lost.textContent(), 'That page isn’t here any more. Tap to try again.', 'why, over the paper');
-    assert.ok(await lost.isVisible(), 'it shows');
+    await lost.waitFor();
+    assert.equal(await lost.textContent(), 'This notebook can’t be read. Tap to try again.', 'why, over the paper');
     await c.shot('desk-unread', page);
     refusing = false;
     await lost.click();
-    await page.waitForTimeout(c.settle);
-    assert.ok(await lost.isHidden(), 'gone once it can be read');
-    const n = c.pages.indexOf(last) + 1;
-    assert.match(await where(page), new RegExp(`, ${c.pages.indexOf(kept) + 1} of ${n}$`), 'the page tapped');
-    // New page, from the overview: the page just made opens, not the one before it
+    await lost.waitFor({ state: 'hidden' });
+    await overview.getByRole('button', { name: 'Untitled page', exact: true }).click();
+    await overview.waitFor({ state: 'hidden' });
+    await button(page, /^The notebook's pages: Untitled page, 2 of 2$/).waitFor();
     await button(page, /^The overview/).click();
-    await page.getByRole('list', { name: 'The overview' }).locator('[data-new]').click();
-    await page.waitForTimeout(c.settle);
-    assert.match(await where(page), new RegExp(`Free page, ${n + 1} of ${n + 1}$`), 'the new page');
-    assert.equal(await inkPixels(page), 0, 'blank');
+    await overview.locator('[data-new]').click();
+    await button(page, /^The notebook's pages: Untitled page, 3 of 3$/).waitFor();
+    await page.waitForFunction(() => !document.querySelector('#book .bk-turn-picture, #book .bk-turn-leaf'));
+    assert.equal(await inkPixels(page), 0, 'the new page is blank');
     assert.deepEqual(errors, []);
   } finally {
     await done();
@@ -174,22 +152,22 @@ async function pan(browser, c) {
   try {
     const desk = await paperBox(page),
       at = [desk.x + desk.width / 2, desk.y + desk.height / 2],
-      from = await headingBox(page);
+      from = await originAt(page);
     // Space held, the mouse drags the page up and left
     await page.mouse.move(...at);
     await page.keyboard.down('Space');
     await drag(page, at, [-120, -80], 'left');
     await page.keyboard.up('Space');
     await page.waitForTimeout(c.settle);
-    near(await headingBox(page), from, [-120, -80], 'Space and a drag');
+    near(await originAt(page), from, [-120, -80], 'Space and a drag');
     // the middle button drags it back
     await drag(page, at, [120, 80], 'middle');
     await page.waitForTimeout(c.settle);
-    near(await headingBox(page), from, [0, 0], 'the middle button');
-    // dragged right and down past its top-left: the page goes on up and left of its heading, as far as half the paper
+    near(await originAt(page), from, [0, 0], 'the middle button');
+    // dragged right and down past its top-left: the page goes on up and left of its origin, as far as half the paper
     await drag(page, at, [200, 300], 'middle');
     await page.waitForTimeout(c.settle);
-    near(await headingBox(page), from, [Math.min(200, desk.width / 2), Math.min(300, desk.height / 2)], 'up and left');
+    near(await originAt(page), from, [Math.min(200, desk.width / 2), Math.min(300, desk.height / 2)], 'up and left');
     assert.deepEqual(await notPaper(page), [], 'nothing but paper there, no edge');
     // and far down and right: paper still
     await drag(page, at, [-500, -600], 'middle');
@@ -207,7 +185,7 @@ async function newPage(browser, c) {
   try {
     const [, n] = (await where(page)).match(/(\d+) of (\d+)$/);
     await button(page, 'New page', true).click();
-    await page.waitForTimeout(c.settle);
+    await button(page, new RegExp(`Untitled page, ${+n + 1} of ${+n + 1}$`)).waitFor();
     assert.match(await where(page), new RegExp(`Untitled page, ${+n + 1} of ${+n + 1}$`));
     assert.equal(await inkPixels(page), 0, 'a blank page');
     await button(page, /^The notebook's pages/).click();
@@ -221,43 +199,8 @@ async function newPage(browser, c) {
   }
 }
 
-async function heading(browser, c) {
-  const { page, errors, done } = await onDesk(browser, c);
-  try {
-    const desk = await paperBox(page),
-      day = page.locator('#book').getByText(DATE).locator('visible=true');
-    const box = await day.boundingBox();
-    assert.ok(box.x - desk.x < 60 && box.y - desk.y < 40, `the day at the paper's top-left: ${JSON.stringify(box)}`);
-    // a titled page: its title, beside the day
-    await button(page, /^The notebook's pages/).click();
-    await page
-      .getByRole('menuitem', { name: /Cover ideas/ })
-      .first()
-      .click();
-    await page.waitForTimeout(c.settle);
-    const name = 'Cover ideas',
-      title = page.getByRole('region', { name }).getByText(name).first();
-    await title.waitFor({ timeout: 5000 }).catch(async () => {
-      const regions = await page.evaluate(() =>
-        [...document.querySelectorAll('#book .bk-page')].map(p => `${p.ariaLabel}${p.hidden ? ' (hidden)' : ''}`),
-      );
-      assert.fail(`the page "${name}" shown, with its title (the pages: ${regions})`);
-    });
-    const top = (await title.boundingBox()).y;
-    await c.shot('desk-heading', page);
-    // panned down by the middle button (a mouse's wheel alone steps through the tools: bookpan.js.), the heading goes up with the page
-    await drag(page, [desk.x + desk.width / 2, desk.y + desk.height / 2], [0, -150], 'middle');
-    await page.waitForTimeout(c.settle);
-    assert.ok(Math.abs((await title.boundingBox()).y - (top - 150)) <= 2, 'it moves with the page');
-    assert.deepEqual(errors, []);
-  } finally {
-    await done();
-  }
-}
-
 // ---- what the board sees
 
-const button = (page, name, exact = false) => page.locator('#book').getByRole('button', { name, exact });
 // (the % at the foot shows only while the zoom is off 100%)
 const percent = async page => {
   const chip = button(page, 'Back to 100%');
@@ -265,7 +208,7 @@ const percent = async page => {
 };
 const where = page => button(page, /^The notebook's pages/).getAttribute('aria-label');
 const paperBox = page => page.locator('#book .bk-desk').boundingBox();
-const headingBox = page => page.locator('#book').getByText(DATE).locator('visible=true').boundingBox();
+const originAt = page => page.locator('#book .bk-page:not([hidden])').boundingBox();
 async function drag(page, [x, y], [dx, dy], which) {
   await page.mouse.move(x, y);
   await page.mouse.down({ button: which });
@@ -298,8 +241,8 @@ async function onPaper(page) {
   );
   return { data: Buffer.from(b64, 'base64'), w, h };
 }
-// The ink on the paper: how many dark px, away from the heading at its top, the islands at its right and foot, and
-// the tool strip beside them with the tool in use named beside it (bookstrip.js.)
+// The ink on the paper: how many dark px, away from the islands at its right and foot, and the tool strip beside
+// them with the tool in use named beside it (bookstrip.js.)
 export async function inkPixels(page) {
   const { data, w, h } = await onPaper(page),
     paper = await paperBox(page),
@@ -319,14 +262,14 @@ export async function inkPixels(page) {
     })),
     covered = (x, y) => out.some(r => x >= r.left && x < r.right && y >= r.top && y < r.bottom);
   let n = 0;
-  for (let y = HEAD_PX; y < h - FOOT_PX; y++)
+  for (let y = 0; y < h - FOOT_PX; y++)
     for (let x = 0; x < w - ISLANDS_PX; x++) {
       const i = (y * w + x) * 4;
       if (data[i] + data[i + 1] + data[i + 2] < 300 && !covered(x, y)) n++;
     }
   return n;
 }
-// The patches of the paper (its left edge, its foot's left, its top past the heading) whose colour is far from the
+// The patches of the paper (its left edge, its foot's left, its top) whose colour is far from the
 // paper's: a table, an edge, a shadow. [] when it's all paper.
 export async function notPaper(page) {
   const { data, w, h } = await onPaper(page),

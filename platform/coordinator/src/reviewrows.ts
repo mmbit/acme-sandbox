@@ -36,7 +36,7 @@ type Row = {
   proposal: number | null;
 };
 // A finding's fate: fixed (and the round that saw it so), kept on purpose, dropped (the ruling left it out, or the
-// author showed it wrong), moved to the project's follow-ups, left for them once the pull request ends, or still open
+// author showed it wrong), moved to the follow-up job, left for them once the pull request ends, or still open
 export type Fate = { fate: 'fixed' | 'kept' | 'dropped' | 'follow-up' | 'later' | 'open'; round?: number };
 export type Line = { issue: string; blocking: boolean } & Partial<Fate>;
 const RULINGS = "kind = 'consolidate' and stage in ('ruling', 'check', 'recheck', 'merge')";
@@ -252,8 +252,9 @@ function ruledEntries(ruling: Shown) {
 const rowsOf = (pr: number) =>
   db
     .prepare(
-      `select f.id, f.ruling, f.kind, f.outcome, f.right, u.proposal from findings f
-      left join review_followups u on u.finding = f.id where f.pr = ? order by f.id`,
+      `select f.id, f.ruling, f.kind, f.outcome, f.right, coalesce(u.proposal, v.job) proposal from findings f
+      left join review_followups u on u.finding = f.id left join review_followup_jobs v on v.finding = f.id
+      where f.pr = ? order by f.id`,
     )
     .all(pr) as Row[];
 

@@ -31,9 +31,9 @@ import { launched, openPage } from '../../../shared/browser/browser.mjs';
 
 const ASSEMBLED_MS = 20_000;
 type Asked = { url(): string; resourceType(): string };
-// (where Playwright or its Chromium isn't installed the test is skipped, saying so.)
+// The push checks require Chromium on both the worker and the tests helper.
 const browser = await launched();
-const noChromium = browser ? false : 'no Playwright or no Chromium for it here';
+assert.ok(browser, 'HQ load checks require Playwright and Chromium');
 test.after(async () => {
   await browser?.close();
   // (HQ's event stream stays open, through the door and on the server)
@@ -43,28 +43,24 @@ test.after(async () => {
 });
 
 for (const look of lookNames())
-  test(
-    `HQ loads whole for the board in ${look}: no page error, every script and stylesheet, the veil gone`,
-    { skip: noChromium },
-    async () => {
-      const { context, page, errors } = await openPage(browser!, { viewport: { width: 1400, height: 900 } });
-      await context.addCookies([{ name: 's', value: h.boardCookie.slice(2), url: hq }]);
-      const refused: string[] = [];
-      const asked = (type: string) => type === 'script' || type === 'stylesheet';
-      page.on('requestfailed', (r: Asked) => asked(r.resourceType()) && refused.push(`${r.url()} failed`));
-      page.on('response', (r: { url(): string; status(): number; request(): Asked }) => {
-        if (asked(r.request().resourceType()) && r.status() >= 400) refused.push(`${r.url()}: ${r.status()}`);
-      });
-      await page.goto(`${hq}/?renderer=${look}`);
-      const assembled = await page.waitForFunction(unveiled, null, { timeout: ASSEMBLED_MS, polling: 100 }).then(
-        () => true,
-        () => false,
-      );
-      assert.deepEqual([...errors, ...refused], [], `HQ in ${look}`);
-      assert.ok(assembled, `HQ in ${look} still says "Assembling the building" after ${ASSEMBLED_MS / 1000} s`);
-      await context.close();
-    },
-  );
+  test(`HQ loads whole for the board in ${look}: no page error, every script and stylesheet, the veil gone`, async () => {
+    const { context, page, errors } = await openPage(browser, { viewport: { width: 1400, height: 900 } });
+    await context.addCookies([{ name: 's', value: h.boardCookie.slice(2), url: hq }]);
+    const refused: string[] = [];
+    const asked = (type: string) => type === 'script' || type === 'stylesheet';
+    page.on('requestfailed', (r: Asked) => asked(r.resourceType()) && refused.push(`${r.url()} failed`));
+    page.on('response', (r: { url(): string; status(): number; request(): Asked }) => {
+      if (asked(r.request().resourceType()) && r.status() >= 400) refused.push(`${r.url()}: ${r.status()}`);
+    });
+    await page.goto(`${hq}/?renderer=${look}`);
+    const assembled = await page.waitForFunction(unveiled, null, { timeout: ASSEMBLED_MS, polling: 100 }).then(
+      () => true,
+      () => false,
+    );
+    assert.deepEqual([...errors, ...refused], [], `HQ in ${look}`);
+    assert.ok(assembled, `HQ in ${look} still says "Assembling the building" after ${ASSEMBLED_MS / 1000} s`);
+    await context.close();
+  });
 
 // (in the page, whole: it's sent there) whether HQ's loading veil is gone: its words faded out or not on screen
 function unveiled() {

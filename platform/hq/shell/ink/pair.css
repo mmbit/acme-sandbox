@@ -5,13 +5,13 @@
    own with Join beside it, never clipped. */
 #book .pair-card {
   position: absolute;
-  /* (beside the islands' stack, one column or two, and the tool strip: --bk-stack, bookui.js; in from the pages' edges,
-     --bk-pages, book.css.) */
-  right: calc(var(--bk-pages, 5px) + var(--bk-stack, 52px) + 18px);
+  /* (beside the islands' stack, one column or two, and the tool strip: --bk-controls-width, bookui.js; in from the
+     pages' edges, --bk-pages, book.css.) */
+  right: calc(var(--bk-pages, 5px) + var(--bk-controls-width, 112px) + 18px);
   bottom: calc(var(--bk-pages, 5px) + 64px);
   z-index: 7;
   box-sizing: border-box;
-  width: min(380px, calc(100% - var(--bk-pages, 5px) - var(--bk-stack, 52px) - 34px));
+  width: min(380px, calc(100% - var(--bk-pages, 5px) - var(--bk-controls-width, 112px) - 34px));
   display: flex;
   flex-wrap: wrap;
   align-items: center;

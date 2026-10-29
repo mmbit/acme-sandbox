@@ -12,7 +12,7 @@ import { publish } from '../events.ts';
 import { forRun } from '../messages.ts';
 import { changed, pageRow, triesPageOfNote } from '../notebook.ts';
 import { groupOfNote, partsOf, row, type Group } from '../notebookgroups.ts';
-import { boxOf } from '../notebookparts.ts';
+import { boxOf } from '../../../hq/shell/ink/notebookstack.js';
 import { DIR } from '../pagescraps.ts';
 import type { Stroke } from '../pagechecks.ts';
 import { note, type Note } from './booknotes.ts';

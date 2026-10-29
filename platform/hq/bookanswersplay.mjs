@@ -153,7 +153,6 @@ export const onScreen = (page, selector) =>
       strip: box(document.querySelector('#book .bk-strip')),
     };
   }, selector);
-export const overlaps = (a, b) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
 // A stroke in screen px, as Safari hands a pen's over (or a mouse's, on a desktop); pace: ms between its points, as a
 // hand draws it (0, at once)
 export async function stroke(page, points, type = 'pen', pace = 0) {

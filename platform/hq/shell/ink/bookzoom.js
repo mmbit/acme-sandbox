@@ -3,8 +3,8 @@
 // tapped opens its pages; zoomed in, it comes back to the page. Two fingers' pinch over the overview, a trackpad's
 // pinch (a wheel with Ctrl), Safari's gesture events and the view's controls (bookcontrols.js) step it; each step
 // turns a leaf within the notebook (bookflip.js), as a page change does. A pinch on the page itself never opens the
-// overview (only its button and the keys do: bookpages.js). To and from the Shelf, the view zooms instead (bookflip.js).
-// (the day and the week replaced by the notebook's pages and the Shelf)
+// overview (only its button and the keys do: bookpages.js). To and from the Shelf, the view zooms instead (bookflip.js),
+// into the notebook's own tile there and back out to it.
 import { mountScreens } from './bookshelf.js';
 
 // the views, nearest first: the page itself (bookpages.js), the notebook's pages, the Shelf
@@ -21,7 +21,8 @@ const WHEEL_STEP = 50,
 // (its id, or a promise of it; null: none on the Shelf); page(): the page it shows (its id); saved(): what's drawn
 // saved in the store, a promise. open(page, notebook): that page shown, of that notebook (notebookdata.js's page).
 // turn(dir, midway): a leaf turned over the paper, midway() swapping what's under it (bookflip.js). zoom(coming,
-// midway, dir): the same swap with the view zooming out (dir -1) or in (dir 1). changed(level): the overview opened,
+// midway, dir, at): the same swap with the view zooming out (dir -1) or in (dir 1), at() the notebook's tile on the
+// Shelf it zooms round. changed(level): the overview opened,
 // stepped or closed.
 export function mountZoom(paper, { desk, dev, notebook, page, saved, open, turn, zoom, changed, scope = null }) {
   const far = document.createElement('div');
@@ -154,13 +155,28 @@ function step(z, by) {
 // The overview at a level (the notebook's pages: that notebook's, the book's own (null) by default): out to the Shelf
 // the view zooms, in from the Shelf it zooms back. Within the notebook a leaf turns
 function go(z, level, id = null) {
-  const from = z.level;
+  const from = z.level,
+    out = level > from ? -1 : 1;
   z.level = level;
   z.notebook = id ?? z.notebook;
   z.changed(LEVELS[level]);
-  if (level === 2 || from === 2) return z.zoom(z.far, () => show(z), level > from ? -1 : 1);
-  return z.turn(level > from ? -1 : 1, () => show(z));
+  if (LEVELS[level] === 'shelf' || LEVELS[from] === 'shelf')
+    return z.zoom(
+      z.far,
+      () => show(z),
+      out,
+      () => tileOf(z),
+    );
+  return z.turn(out, () => show(z));
 }
+// The notebook's tile on the Shelf (the one the book shows where it names none), as a box on the screen: what the
+// view zooms into and back out to
+const tileOf = z =>
+  z.far
+    .querySelector(
+      z.notebook == null ? '.bk-book[aria-current]' : `.bk-book[data-book="${CSS.escape(String(z.notebook))}"]`,
+    )
+    ?.getBoundingClientRect() ?? null;
 function show(z) {
   z.far.hidden = false;
   z.far.dataset.level = LEVELS[z.level];
@@ -173,7 +189,7 @@ function back(z, to = null) {
     close(z);
     if (to) return z.open(to.page, to.id);
   };
-  if (LEVELS[z.level] === 'shelf') return z.zoom(z.desk, midway, 1);
+  if (LEVELS[z.level] === 'shelf') return z.zoom(z.desk, midway, 1, () => tileOf(z));
   return z.turn(1, midway);
 }
 function close(z) {

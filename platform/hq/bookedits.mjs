@@ -5,9 +5,9 @@
 // (played here). And a scrap's post-it words under it on an open page have a word struck out with the Pencil, saved to
 // its group. (the scrap's words: job #20856)
 import assert from 'node:assert/strict';
-import { freePage, onDesk, pen, savedWhere } from './bookmouse.mjs';
+import { freePage, onDesk, savedWhere } from './bookmouse.mjs';
+import { MINI, pressAlong, until } from './bookkit.mjs';
 
-const MINI = { width: 1133, height: 744 };
 const WORDS = 'Order the teal mugs today';
 // where a scrap was cut, and its picture (a pixel of paper)
 const ANCHOR = { v: 1, url: 'https://hq.example/', el: null, view: { x: 0, y: 0, w: 1200, h: 800, dpr: 1 }, ink: [] };
@@ -49,7 +49,7 @@ async function withMouse(browser, c) {
     assert.equal(await shownWords(page), WORDS, 'Undo brings the word back');
     // a drag down between "teal" and "mugs", from the paper above: the caret there, the words opened
     await drag(page, down(await wordBox(page, 'teal'), await wordBox(page, 'mugs')));
-    await until(() => opened(page), 3000, 'the words opened with the caret in the gap');
+    await until(() => opened(page), 'the words opened with the caret in the gap');
     await c.shot('book-edits-mouse-sliced', page);
     await page.keyboard.type('blue');
     await page.keyboard.press('Escape');
@@ -78,7 +78,7 @@ async function withPencil(browser, c) {
     await page.goto(`${c.base}/?intro=0`);
     await page.waitForSelector('#book .bk-desk', { timeout: 30_000 });
     await c.settled(page, 'open');
-    await pen(page, along(await wordBox(page, 'teal')));
+    await pressAlong(page, along(await wordBox(page, 'teal')));
     const struck = await savedWhere(c, free.id, p => p.texts[0]?.text === 'Order the mugs today');
     assert.equal(struck.ink.length, 0, 'the strike left no ink');
     assert.equal(await shownWords(page), 'Order the mugs today', 'the board sees the word go');
@@ -87,20 +87,20 @@ async function withPencil(browser, c) {
     assert.equal(await shownWords(page), WORDS, 'Undo brings the word back');
     // a slice between "teal" and "mugs": a gap there, and a word written in it read and put in
     const [teal, mugs] = [await wordBox(page, 'teal'), await wordBox(page, 'mugs')];
-    await pen(page, down(teal, mugs));
-    await until(() => opened(page), 3000, 'the words opened with a gap');
+    await pressAlong(page, down(teal, mugs));
+    await until(() => opened(page), 'the words opened with a gap');
     const gap = await page.evaluate(() => {
       const r = document.querySelector('#book .bk-typed span[style*="inline-block"]').getBoundingClientRect();
       return { x: r.x, y: r.y, w: r.width, h: r.height };
     });
-    await pen(page, scrawl(gap));
+    await pressAlong(page, scrawl(gap));
     await c.shot('book-edits-pencil-written', page);
     const written = await savedWhere(c, free.id, p => p.texts[0]?.text === 'Order the teal blue mugs today');
     assert.equal(written.ink.length, 0, 'what was written went into the words, not the page');
     assert.equal(inks.length, 1, 'one reading of what was written');
     // a tap elsewhere closes the gap; Undo takes the words written back out
     await page.locator('#book').getByRole('button', { name: 'Undo' }).first().tap();
-    await until(async () => !(await opened(page)), 3000, 'the gap closed by a tap elsewhere');
+    await until(async () => !(await opened(page)), 'the gap closed by a tap elsewhere');
     await savedWhere(c, free.id, p => p.texts[0]?.text === WORDS);
     c.noErrorsIn(errors);
   } finally {
@@ -222,10 +222,9 @@ async function scrapStruck(browser, c) {
     const field = page.locator(`#book .bk-under[data-g="${scrap.id}"] textarea.bk-scrap-words`);
     await field.waitFor();
     assert.equal(await field.getAttribute('data-pen'), '', 'the field kept from Scribble for the pen');
-    await pen(page, along(await scrapWordBox(page, 'teal')));
+    await pressAlong(page, along(await scrapWordBox(page, 'teal')));
     await until(
       () => kept().find(g => g.id === scrap.id)?.words === 'Order the mugs today',
-      6000,
       "the scrap's words saved without the word",
     );
     assert.equal(await field.inputValue(), 'Order the mugs today', 'the board sees the word go');
@@ -259,7 +258,7 @@ async function scrapTyped(browser, c) {
     await field.focus();
     await page.keyboard.press('Control+End');
     await page.keyboard.type(' soon ');
-    await until(() => kept().words === `${WORDS} soon`, 6000, "the scrap's words saved, trimmed");
+    await until(() => kept().words === `${WORDS} soon`, "the scrap's words saved, trimmed");
     const line = {
       points: [
         [620, 200, 0.5, 0],
@@ -271,18 +270,14 @@ async function scrapTyped(browser, c) {
     // (two lines, so their group has a clip to show it's drawn: a scrap or a lone line has none)
     const under = { ...line, points: line.points.map(([x, y, ...more]) => [x, y + 40, ...more]) };
     c.notebook.route('/api/notebooks/groups/create', {}, { page: free.id, ink: [line, under] });
-    await until(
-      async () => (await page.locator('#book .bk-clip').count()) === 1,
-      6000,
-      "the other screen's lines drawn",
-    );
+    await until(async () => (await page.locator('#book .bk-clip').count()) === 1, "the other screen's lines drawn");
     assert.equal(await field.inputValue(), `${WORDS} soon `, 'the space typed still under the caret');
     c.notebook.route(
       '/api/notebooks/groups/edit',
       {},
       { id: scrap.id, since: kept().updated, words: 'Order the mugs', said: 'typed' },
     );
-    await until(async () => (await field.inputValue()) === 'Order the mugs', 6000, "the other screen's words shown");
+    await until(async () => (await field.inputValue()) === 'Order the mugs', "the other screen's words shown");
     // (past a save's wait: nothing edits them back)
     await page.waitForTimeout(1500);
     assert.equal(kept().words, 'Order the mugs', "the other screen's words kept");
@@ -294,13 +289,6 @@ async function scrapTyped(browser, c) {
 }
 
 // ---- helpers
-
-// A read of the page (async) true in time
-async function until(read, ms, what) {
-  for (const end = Date.now() + ms; Date.now() < end; await new Promise(r => setTimeout(r, 100)))
-    if (await read()) return;
-  throw new Error(`not ${what}`);
-}
 
 // A free page of today's with a box of words on it
 function wordsPage(c) {

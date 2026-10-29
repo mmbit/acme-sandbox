@@ -6,9 +6,8 @@
 // that never came are events made without their ends.
 import assert from 'node:assert/strict';
 import { BLUE, freePage, paperBox, pick, savedWhere, tool } from './bookmouse.mjs';
+import { MINI, chromiumPen } from './bookkit.mjs';
 
-// an iPad mini in landscape, the book open beside HQ
-const PAD = { width: 1133, height: 744 };
 // how far a finger's pan or a pinch may land from where it was aimed (px): the pan's smoothing is none, its rounding one
 const NEAR_PX = 3;
 
@@ -171,7 +170,7 @@ const liftsNeverCame = (page, at) =>
 // (no flick). pen(points): the Pencil down at the first point, along the rest, and up.
 async function onPad(browser, c, { keep = false } = {}) {
   onPad.state = keep ? onPad.state : undefined;
-  const context = await c.hqIn(browser, PAD, {
+  const context = await c.hqIn(browser, MINI, {
     hasTouch: true,
     ...(onPad.state && { storageState: onPad.state }),
   });
@@ -203,21 +202,8 @@ function handsOn(page, cdp, settle) {
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
     await page.waitForTimeout(settle);
   };
-  const send = (type, [x, y], down) =>
-    cdp.send('Input.dispatchMouseEvent', {
-      type,
-      x,
-      y,
-      button: down || type === 'mouseReleased' ? 'left' : 'none',
-      buttons: down ? 1 : 0,
-      clickCount: 1,
-      pointerType: 'pen',
-      force: down ? 0.5 : 0,
-    });
   const pen = async points => {
-    await send('mousePressed', points[0], true);
-    for (const p of points.slice(1)) await send('mouseMoved', p, true);
-    await send('mouseReleased', points.at(-1), false);
+    await chromiumPen(cdp).stroke(points);
     await page.waitForTimeout(settle);
   };
   return { fingers, pen };

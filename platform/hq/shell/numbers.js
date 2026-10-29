@@ -99,6 +99,15 @@ const money = n => eur(n, Math.abs(n ?? 0) < 100 && n % 1 ? 2 : 0); // cents onl
 const pct = (f, dec) => f == null || !isFinite(f) ? '—' : `${num(f * 100, dec ?? (f < 0.1 ? (f < 0.01 ? 2 : 1) : 0))}%`;
 const ratio = (a, b) => b ? a / b : null;
 const sum = a => a.reduce((s, x) => s + (x ?? 0), 0);
+// a figure in the millions or more as 3 digits and M or B (2.41 B), any other whole (30,800) or to the cent
+const compact = v => {
+  const big = Math.abs(v) >= 999.5e6 ? [1e9, 'B'] : Math.abs(v) >= 1e6 ? [1e6, 'M'] : null;
+  if (!big) return num(v, v % 1 ? 2 : 0);
+  const r = +(v / big[0]).toPrecision(3);
+  return `${num(r, Math.min(2, String(r).split('.')[1]?.length ?? 0))} ${big[1]}`;
+};
+// a chart's half-height line above 50: a round number at or over half its top (1, 1.2, 1.5, 2, 2.5 … 8 times a power of ten)
+const niceHalf = top => { const p = 10 ** Math.floor(Math.log10(top / 2)); return Math.round([1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10].find(m => m * p >= top / 2) * p); };
 const dayName = s => companyFormats().day(s, 'en', { weekday: true, short: true });
 const short = s => companyFormats().day(s, 'en', { short: true });
 const range = (from, to) => from && to ? companyFormats().days(from, to, 'en') : '';
@@ -133,14 +142,20 @@ function spark(vals, { w = 104, h = 30, dot = 3 } = {}) {
 }
 // Paid orders per day: columns from one baseline, a dotted average, the busiest day labelled; every day readable by
 // pointing at it (the caption under the chart) and in the table below it.
+// (the left gutter is as wide as the longest of the axis's figures, L at the least: compact ones, so a count in the
+// billions reads 2.5 B there)
 const COLS = { w: 340, h: 132, L: 24, R: 4, T: 16, B: 18 };
+// (a figure's 10px axis text runs about 6 units a character; the gutter adds the 5 before the gridline and 4 at the edge)
+const AXIS_CHAR_WIDTH = 6, AXIS_PAD = 9;
 function columns(daily, key = 'paid', label = 'Paid orders') {
-  const { w, h, L, R, T, B } = COLS, vals = daily.map(d => Number(d[key]) || 0), top = Math.max(...vals, 0);
-  const step = top <= 4 ? 1 : top <= 10 ? 2 : top <= 25 ? 5 : top <= 50 ? 10 : Math.ceil(top / 50) * 10;
-  const max = Math.max(step, Math.ceil(top / step) * step), ih = h - T - B, band = (w - L - R) / vals.length;
+  const { w, h, R, T, B } = COLS, vals = daily.map(d => Number(d[key]) || 0), top = Math.max(...vals, 0);
+  const step = top <= 4 ? 1 : top <= 10 ? 2 : top <= 25 ? 5 : top <= 50 ? 10 : niceHalf(top);
+  const max = Math.max(step, Math.ceil(top / step) * step), ih = h - T - B, axis = [0, max / 2, max].map(g => [g, Number.isInteger(g) ? compact(g) : '']);
+  const gutter = AXIS_PAD + AXIS_CHAR_WIDTH * Math.max(...axis.map(([, t]) => t.length));
+  const L = Math.max(COLS.L, gutter), band = (w - L - R) / vals.length;
   const bw = Math.max(1, Math.min(band - (band > 4 ? 2 : 1), 24)), r = Math.min(3, bw / 2), Y = v => T + ih - v / max * ih, base = T + ih;
-  let s = `<svg viewBox="0 0 ${w} ${h}" role="img" aria-label="${esc(label)} per day">`;
-  for (const g of [0, max / 2, max]) s += `<line class="grid" x1="${L}" x2="${w - R}" y1="${Y(g)}" y2="${Y(g)}"/><text x="${L - 5}" y="${Y(g) + 3.5}" text-anchor="end">${Number.isInteger(g) ? g : ''}</text>`;
+  let s = `<svg viewBox="0 0 ${w} ${h}" role="img" aria-label="${esc(label)} per day" data-l="${L}">`;
+  for (const [g, t] of axis) s += `<line class="grid" x1="${L}" x2="${w - R}" y1="${Y(g)}" y2="${Y(g)}"/><text x="${L - 5}" y="${Y(g) + 3.5}" text-anchor="end">${t}</text>`;
   vals.forEach((v, i) => {
     if (!v) return;
     const x = L + i * band + (band - bw) / 2, y = Y(v);
@@ -149,15 +164,16 @@ function columns(daily, key = 'paid', label = 'Paid orders') {
   if (top) {
     const avg = sum(vals) / vals.length, peak = vals.lastIndexOf(top);
     s += `<line class="avg" x1="${L}" x2="${w - R}" y1="${Y(avg).toFixed(1)}" y2="${Y(avg).toFixed(1)}"/>`;
-    s += `<text class="v" x="${Math.min(w - 8, Math.max(L + 6, L + peak * band + band / 2))}" y="${Y(top) - 4}" text-anchor="middle">${top}</text>`;
+    s += `<text class="v" x="${Math.min(w - 8, Math.max(L + 6, L + peak * band + band / 2))}" y="${Y(top) - 4}" text-anchor="middle">${compact(top)}</text>`;
   }
   const ticks = vals.length <= 7 ? vals.map((_, i) => i) : [0, Math.round((vals.length - 1) / 3), Math.round(2 * (vals.length - 1) / 3), vals.length - 1];
   for (const i of ticks) s += `<text x="${L + i * band + band / 2}" y="${h - 4}" text-anchor="${i === 0 && vals.length > 7 ? 'start' : i === vals.length - 1 && vals.length > 7 ? 'end' : 'middle'}">${esc(vals.length <= 7 ? companyFormats().weekday(daily[i].day, 'en', { short: true }) : short(daily[i].day))}</text>`;
   s += `<rect class="cursor-col" x="0" y="${T}" width="${band}" height="${ih}"/></svg>`;
   return s;
 }
-// horizontal bars as HTML rows (labels wrap, never clip): [{ key (html), v, soft?, val (html), title }]
-const hbars = (rows, max) => `<div class="hb">${rows.map(r => `<span class="k">${r.key}</span><span class="tr"${r.title ? ` title="${esc(r.title)}"` : ''}>${r.soft != null ? `<i class="soft" style="width:${(100 * r.soft / max).toFixed(2)}%"></i>` : ''}<i class="${r.cls ?? ''}" style="width:${(100 * r.v / max).toFixed(2)}%"></i></span><span class="val">${r.val}</span>`).join('')}</div>`;
+// horizontal bars as HTML rows (labels wrap, never clip): [{ key (html), v, soft?, val (html), title }]. Each row a line
+// of label, bar and figure; where the box is narrow, the label and figure over a bar of the box's width (numbers.css).
+const hbars = (rows, max) => `<div class="hbox"><div class="hb">${rows.map(r => `<div class="row"><span class="k">${r.key}</span><span class="tr"${r.title ? ` title="${esc(r.title)}"` : ''}>${r.soft != null ? `<i class="soft" style="width:${(100 * r.soft / max).toFixed(2)}%"></i>` : ''}<i class="${r.cls ?? ''}" style="width:${(100 * r.v / max).toFixed(2)}%"></i></span><span class="val">${r.val}</span></div>`).join('')}</div></div>`;
 const fig = (v, small = '') => `<b class="f">${v}</b>${small ? `<small>${small}</small>` : ''}`;
 
 // ---------------------------------------------------------------- tests, in plain words
@@ -335,8 +351,32 @@ function companyIcon(b, cls = 'small') {
   return gridOr(ok ? gridArt(['.'.repeat(b.icon[0].length + 2), ...b.icon.map(r => `.${r}.`), '.'.repeat(b.icon[0].length + 2)], cls) : sigil(b.id), b.name, cls);
 }
 const amount = (v, u) => u === 'EUR' ? money(v) : unitVal(v, u); // (euros as the apps' printouts show them: cents only under €100)
-const figure = (f, i) => `<div class="tile${i ? '' : ' hero'}"><span class="l">${esc(f.label)}</span><span class="v">${f.value == null ? '—' : esc(typeof f.value === 'string' ? f.value : amount(Number(f.value), f.unit))}</span>${f.sub ? `<span class="s">${esc(f.sub)}</span>` : ''}</div>`;
+// A figure as html: the number, and its unit apart in a smaller hand that may wrap under it (a euro or % stays whole)
+const sized = (v, u) => u === 'EUR' || u === '%' || !u ? esc(amount(v, u)) : `${esc(unitVal(v))} <span class="u">${esc(u)}</span>`;
+const figure = (f, i) => `<div class="tile${i ? '' : ' hero'}"><span class="l">${esc(f.label)}</span><span class="v">${f.value == null ? '—' : typeof f.value === 'string' ? esc(f.value) : sized(Number(f.value), f.unit)}</span>${f.sub ? `<span class="s">${esc(f.sub)}</span>` : ''}</div>`;
 const cell = (v, u) => v == null ? '—' : esc(amount(Number(v), u)); // (a count not known yet is a dash, never a 0)
+// a table's column: its unit in the head, the figures bare under it (a euro or % keeps its sign in each cell)
+const bare = u => u === 'EUR' || u === '%' ? u : undefined;
+// Two columns of cards on wide paper, each with its share of the height: the cards stay in their order, the first ones
+// in the left column, as many as come closest to half (each card's height guessed from its lines). On a phone they're
+// one column, in the same order.
+function balanced(cards) {
+  const all = sum(cards.map(c => c.lines));
+  let split = 1, best = Infinity;
+  for (let i = 1, left = 0; i <= cards.length; i++) {
+    left += cards[i - 1].lines;
+    if (Math.abs(all - 2 * left) < best) { best = Math.abs(all - 2 * left); split = i; }
+  }
+  const stack = list => list.length ? `<div class="stack">${list.map(c => c.html).join('')}</div>` : '';
+  return cards.length ? `<section class="grid two">${stack(cards.slice(0, split))}${stack(cards.slice(split))}</section>` : '';
+}
+// A card's height guessed in lines of its sub: its head and padding 3, its sub at about 55 characters a line (half the
+// wide paper), and its rows. A bar's row is about 1.6 lines with its gap, 2.2 where its label wraps (past about 24
+// characters, at the label column's width); a target is 2; the day by day 12 (its chart about 9, the reading and the
+// table's switch 3 more).
+const CARD_LINES = 3, LINE_CHARS = 55;
+const BAR_LINES = 1.6, WRAPPED_BAR_LINES = 2.2, BAR_LABEL_CHARS = 24, TARGET_LINES = 2, CHART_LINES = 12;
+const height = (rows, sub) => CARD_LINES + Math.ceil(String(sub ?? '').length / LINE_CHARS) + rows;
 function companyHtml(b, v) {
   const n = { i: 0 }, sec = title => head(++n.i, title), figures = (b.figures ?? []).filter(f => f && f.label != null);
   const top = `<div class="dot"><span>${esc(names.os)} Numbers · printout</span><span class="sig" data-nx-signal hidden>no signal · retrying</span></div>
@@ -347,21 +387,23 @@ function companyHtml(b, v) {
   const daily = b.daily, dailyColumns = (daily?.columns ?? []).filter(c => c?.key), dailyRows = daily?.rows ?? [];
   const days = dailyColumns.length && dailyRows.length ? `<div class="card">${sec(daily.title ?? 'Per day')}<p class="sub">${esc(dailyColumns[0].label ?? dailyColumns[0].key)} a day${daily.sub ? `. ${esc(daily.sub)}` : '.'}</p>
     <div class="chart" data-nx-cols tabindex="0">${columns(dailyRows, dailyColumns[0].key, dailyColumns[0].label ?? dailyColumns[0].key)}</div><p class="read" data-nx-read>${dailyRows.some(r => Number(r[dailyColumns[0].key])) ? 'Tap or point at a day to read it.' : 'Nothing on any day yet.'}</p>
-    <details data-k="days"><summary>As a table</summary><table><thead><tr><th>Day</th>${dailyColumns.map(c => `<th>${esc(c.label ?? c.key)}</th>`).join('')}</tr></thead><tbody>${dailyRows.slice().reverse().map(r => `<tr><td>${esc(dayName(r.day))}</td>${dailyColumns.map(c => `<td>${cell(r[c.key], c.unit)}</td>`).join('')}</tr>`).join('')}</tbody></table></details></div>` : '';
+    <details data-k="days"><summary>As a table</summary><div class="scroll"><table><thead><tr><th>Day</th>${dailyColumns.map(c => `<th>${esc(c.label ?? c.key)}${c.unit && !bare(c.unit) ? `<small>${esc(c.unit)}</small>` : ''}</th>`).join('')}</tr></thead><tbody>${dailyRows.slice().reverse().map(r => `<tr><td>${esc(dayName(r.day))}</td>${dailyColumns.map(c => `<td>${cell(r[c.key], bare(c.unit))}</td>`).join('')}</tr>`).join('')}</tbody></table></div></details></div>` : '';
   // (share: false, a bar whose values don't add up, a median or a rate: no share beside each)
   const bars = (b.bars ?? []).map(bar => {
     const barRows = (bar.rows ?? []).map(r => ({ ...r, known: r.value != null, count: Number(r.value) || 0 })), barTotal = bar.share !== false && barRows.every(r => r.known) ? sum(barRows.map(r => r.count)) : null, max = Math.max(1, ...barRows.map(r => r.count));
-    return `<div class="card">${sec(bar.title ?? 'A breakdown')}${bar.sub ? `<p class="sub">${esc(bar.sub)}</p>` : ''}${barRows.length ? hbars(barRows.map(r => ({ key: esc(r.label), v: r.count, val: fig(cell(r.value, r.unit), barTotal ? pct(r.count / barTotal, 0) : '') })), max) : '<p class="nodata">Nothing counted yet.</p>'}</div>`;
-  }).join('');
-  const targets = (b.targets ?? []).length ? targetsHtml(b.targets, sec, 'What the team works from.', '') : '';
+    const html = `<div class="card">${sec(bar.title ?? 'A breakdown')}${bar.sub ? `<p class="sub">${esc(bar.sub)}</p>` : ''}${barRows.length ? hbars(barRows.map(r => ({ key: esc(r.label), v: r.count, val: fig(r.known ? sized(r.count, r.unit) : '—', barTotal ? pct(r.count / barTotal, 0) : '') })), max) : '<p class="nodata">Nothing counted yet.</p>'}</div>`;
+    const rowLines = sum(barRows.map(r => String(r.label).length > BAR_LABEL_CHARS ? WRAPPED_BAR_LINES : BAR_LINES));
+    return { html, lines: height(rowLines || 1, bar.sub) };
+  });
+  const targets = (b.targets ?? []).length ? [{ html: targetsHtml(b.targets, sec, 'What the team works from.', ''), lines: height(b.targets.length * TARGET_LINES) }] : [];
   return `<div class="nx">${top}${tiles}
-    ${days || bars || targets ? `<section class="grid two">${days}<div class="stack">${bars}${targets}</div></section>` : ''}
+    ${balanced([...days ? [{ html: days, lines: height(CHART_LINES, daily.sub) }] : [], ...bars, ...targets])}
     <div class="tear">End of printout · tear here</div></div>`;
 }
 function wireCompany(el, b) {
   wirePeriod(el);
   const dailyColumns = (b.daily?.columns ?? []).filter(c => c?.key);
-  wireChart(el, b.daily?.rows ?? [], x => `<b>${esc(dayName(x.day))}</b>: ${dailyColumns.map(c => `${cell(x[c.key], c.unit)} ${esc(String(c.label ?? c.key).toLowerCase())}`).join(' · ')}`);
+  wireChart(el, b.daily?.rows ?? [], x => `<b>${esc(dayName(x.day))}</b>: ${dailyColumns.map(c => `${esc(c.label ?? c.key)} <b class="f">${cell(x[c.key], c.unit)}</b>`).join(' · ')}`);
 }
 
 function abCard(t, label, sec) {
@@ -387,7 +429,7 @@ const abLine = (t, label) => { const [word, small] = testWords(t); return `<div 
 const targetsHtml = (tg, sec, sub, none) => `<div class="card">${sec('The numbers we work from')}<p class="sub">${esc(sub)}</p>${tg.length ? `<div class="kpis">${tg.map(k => `
     <div class="kpi"><span class="nm">${esc(k.label)}</span><span class="tg">${esc(goalWords(k))}</span><span class="nw f">${k.value == null ? '' : esc(unitVal(k.value, k.unit))}</span><span class="mk">${mark(k)}</span></div>`).join('')}</div>`
     : `<p class="nodata">${esc(none)}</p>`}</div>`;
-const unitVal = (v, u) => u === 'EUR' ? eur(v, v % 1 ? 2 : 0) : u === '%' ? `${num(v, v % 1 ? 1 : 0)}%` : `${num(v, v % 1 ? 2 : 0)}${u ? ` ${u}` : ''}`;
+const unitVal = (v, u) => u === 'EUR' ? eur(v, v % 1 ? 2 : 0) : u === '%' ? `${num(v, v % 1 ? 1 : 0)}%` : `${compact(v)}${u ? ` ${u}` : ''}`;
 function goalWords(k) {
   const g = unitVal(k.goal, k.unit), m = k.max != null ? unitVal(k.max, k.unit) : null;
   return k.lower ? `target ${g} or less${m ? `, at most ${m}` : ''}` : `target ${g} or more${m ? `, at least ${m}` : ''}`;
@@ -420,14 +462,14 @@ function wireDash(el, d) {
 function wireChart(el, daily, words) {
   const box = el.querySelector('[data-nx-cols]'), read = el.querySelector('[data-nx-read]');
   if (!box || !daily.length || !read) return;
-  const svg = box.querySelector('svg'), cur = svg.querySelector('.cursor-col'), band = (COLS.w - COLS.L - COLS.R) / daily.length;
+  const svg = box.querySelector('svg'), cur = svg.querySelector('.cursor-col'), L = Number(svg.dataset.l), band = (COLS.w - L - COLS.R) / daily.length;
   let at = -1;
   const show = i => {
     at = Math.max(0, Math.min(daily.length - 1, i)); const x = daily[at];
-    cur.classList.add('on'); cur.setAttribute('x', COLS.L + at * band); cur.setAttribute('width', band);
+    cur.classList.add('on'); cur.setAttribute('x', L + at * band); cur.setAttribute('width', band);
     read.innerHTML = words(x);
   };
-  const pick = e => { const r = svg.getBoundingClientRect(); show(Math.floor(((e.clientX - r.left) / r.width * COLS.w - COLS.L) / band)); };
+  const pick = e => { const r = svg.getBoundingClientRect(); show(Math.floor(((e.clientX - r.left) / r.width * COLS.w - L) / band)); };
   svg.addEventListener('pointermove', pick); svg.addEventListener('pointerdown', pick);
   box.addEventListener('keydown', e => { if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); show(at < 0 ? daily.length - 1 : at + (e.key === 'ArrowRight' ? 1 : -1)); } });
 }

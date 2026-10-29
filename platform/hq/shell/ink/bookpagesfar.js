@@ -22,7 +22,7 @@ export const mountFar = (book, paper, { goTo, openNotebook }) =>
         ? goTo(book, { page: page.id })
         : openNotebook(book, id, { page: page.id }),
     turn: (dir, midway) => turn(paper, { dir, midway }),
-    zoom: (coming, midway, dir) => zoom(paper, { coming, midway, dir }),
+    zoom: (coming, midway, dir, at) => zoom(paper, { coming, midway, dir, at }),
     changed: level => farAt(paper, level, book),
   });
 

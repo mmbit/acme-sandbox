@@ -23,6 +23,7 @@ const { db } = h;
 const projects = await import('./projects.ts');
 const plan = await import('./plan.ts');
 const threadends = await import('./threadends.ts');
+const threadorder = await import('./threadorder.ts');
 const backlog = await import('./backlog.ts');
 const predictions = await import('./predictions.ts');
 const ledger = await import('./ledger.ts');
@@ -685,6 +686,100 @@ test("a task drawn after a failed one is its owner's call: a redo queued without
   );
   assert.equal((await claim())?.id, redo, 'the claim starts it');
   assert.equal(projects.findThread(t)!.status, 'open', 'the failed task still keeps the deliverable unfinished');
+});
+
+// A run that exited nonzero or was stopped after pushing a commit of its own reports it (the worker's ownCommit)
+for (const [status, n] of [
+  ['failed', 9611],
+  ['stopped', 9612],
+] as const)
+  test(`a task ${status} after pushing its own work holds none of the tasks after it once its pull request merged`, async () => {
+    const t = thread(`merged-${status}`);
+    const one = task(t);
+    await h.finish((await claim())!, { pr: n, branch: `job/${one}`, files: ['platform/x.ts'], sha: sha('7') });
+    const [two, three] = [task(t), task(t)];
+    const run = await claim();
+    assert.equal(run?.id, two);
+    await h.finish(run!, {
+      status,
+      branch: `job/${one}`,
+      sha: sha('8'),
+      result: 'The run ended with an error: exit code 1',
+    });
+    h.mergedPr(n);
+    threadends.merged(n);
+    assert.deepEqual(
+      threadorder.tasksOf(t).map(j => j.id),
+      [one, three],
+      'its pushed work merged: it is set aside',
+    );
+    assert.ok(
+      !h.jobs.needsGraph().get(`job/${three}`)?.includes(`job/${two}`),
+      'no edge to it in the dependency graph',
+    );
+    assert.deepEqual(h.job(three).wakes, []);
+    assert.equal((await claim())?.id, three, 'the next task runs');
+  });
+
+// Its commit pushed in a run it handed up: the run after it, stopped, adds nothing and reports no sha (its clone's
+// origin/<branch> is already that commit)
+test('a task that handed up after pushing, then was stopped with no commit, holds none of the tasks after it once its pull request merged', async () => {
+  const t = thread('merged-up');
+  const one = task(t);
+  await h.finish((await claim())!, { pr: 9613, branch: `job/${one}`, files: ['platform/x.ts'], sha: sha('7') });
+  const two = h.jobs.createJob({
+    ...{ agent: 'bolt', title: "bolt's step", prompt: 'Do it.', thread: t, engine: 'tasks', queuedBy: 'wren' },
+    ...{ model: 'claude-sonnet-5-5', light: true },
+  }).id;
+  const three = task(t);
+  const light = await claim();
+  assert.equal(light?.id, two);
+  await h.finish(light!, { status: 'up', branch: `job/${one}`, sha: sha('8'), up: 'Bigger.' });
+  assert.equal(h.job(two).status, 'queued', 'handed up');
+  const run = await claim();
+  assert.equal(run?.id, two);
+  await h.finish(run!, { status: 'stopped', branch: `job/${one}`, result: 'Stopped by wren.' });
+  const kept = db.prepare('select sha from jobs where id = ?').get(two) as { sha: string | null };
+  assert.equal(kept.sha, sha('8'), 'the commit its earlier run pushed');
+  h.mergedPr(9613);
+  threadends.merged(9613);
+  assert.deepEqual(
+    threadorder.tasksOf(t).map(j => j.id),
+    [one, three],
+    'its pushed work merged: it is set aside',
+  );
+  assert.ok(!h.jobs.needsGraph().get(`job/${three}`)?.includes(`job/${two}`), 'no edge to it in the dependency graph');
+  assert.equal((await claim())?.id, three, 'the next task runs');
+});
+
+// Its land pushed, then GitHub couldn't be reached for the pull request: each landing run after pushes the same head and
+// reports no sha, until the last snag fails it
+test('a task whose landing snagged after pushing, then failed, holds none of the tasks after it once its pull request merged', async () => {
+  const t = thread('merged-snagged');
+  const one = task(t);
+  await h.finish((await claim())!, { pr: 9614, branch: `job/${one}`, files: ['platform/x.ts'], sha: sha('7') });
+  const [two, three] = [task(t), task(t)];
+  const landing = { summary: 'Done.', result: 'Done.' };
+  const snag = { status: 'snagged', branch: `job/${one}`, result: "GitHub couldn't be reached", landing };
+  const landed = async () => {
+    db.prepare('update jobs set not_before = 0 where id = ?').run(two);
+    const run = await claim();
+    assert.equal(run?.id, two);
+    return run!;
+  };
+  await h.finish(await landed(), { ...snag, sha: sha('9') });
+  for (let n = 0; n < 3; n++) await h.finish(await landed(), snag);
+  assert.equal(h.job(two).status, 'failed', 'its snags ran out');
+  const kept = db.prepare('select sha from jobs where id = ?').get(two) as { sha: string | null };
+  assert.equal(kept.sha, sha('9'), 'the commit its first landing pushed');
+  h.mergedPr(9614);
+  threadends.merged(9614);
+  assert.deepEqual(
+    threadorder.tasksOf(t).map(j => j.id),
+    [one, three],
+    'its pushed work merged: it is set aside',
+  );
+  assert.equal((await claim())?.id, three, 'the next task runs');
 });
 
 test("a first push whose pull request GitHub refused fails, and its branch stays the thread's", async () => {

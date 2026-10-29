@@ -125,6 +125,7 @@ import * as bookanswer from './ink/bookanswer.ts';   // the agents' answers ther
 import * as callanswer from './ink/callanswer.ts';   // and a call's agent's on its call's notes
 import * as notebookpictures from './notebookpictures.ts';   // and a group's pictures
 import * as callnotes from './ink/callnotes.ts';   // and a call's notes page
+import * as callpage from './ink/callpage.ts';   // the agent working it
 import * as pair from './pair.ts';   // two of the board's devices paired for a session
 import { NOTE_MAX, SAVE_MAX } from './pagechecks.ts';
 import * as seen from './seen.ts';   // what the board has read, for every device
@@ -485,7 +486,8 @@ const api: Record<string, BoardRoute> = {
   'POST /api/notebooks/pages/order': (q, s, b) => refusal(notebook.orderPages(b)),
   'POST /api/notebooks/pages/archive': (q, s, b) => refusal(notebook.archivePage(b)),
   'POST /api/notebooks/pages/title': (q, s, b) => refusal(notebook.titlePage(b)),
-  'POST /api/notebooks/pages/send': async (q, s, b) => refusal(await notebooksend.sendPage(b)),
+  'POST /api/notebooks/pages/zoom': (q, s, b) => refusal(notebook.zoomPage(b)),
+  'POST /api/notebooks/pages/send': async (q, s, b) => refusal(await notebooksend.sendShown(b)),
   'POST /api/notebooks/pages/undo': (q, s, b) => refusal(notebooksend.undoSend(b)),
   'GET /api/notebooks/pages/groups': (q, s, b) => refusal(notebookgroups.listGroups(b)),
   'POST /api/notebooks/groups/move': (q, s, b) => refusal(notebookgroups.moveGroup(b)),
@@ -709,10 +711,13 @@ const seePhotos = (id: number, me: Me, read: () => unknown) => {
 };
 // Work goes to an org.yaml agent or an alumnus (a lead brings one back), never to the board.
 const assignable = (id: string) => staff(id) || (org().alumni ?? []).some((a: { id: string }) => a.id === id);
-// The thread a job queued by an agent serves (hq job --thread; one started for it is the plan's: newthread.ts).
-function threadFor(b: any, me: Me): { thread: string } | { from?: number } | Refused {
-  const thread = jobThread(b, { agent: me.agent, job: me.id || undefined });
-  return 'refusal' in thread ? new Refused(thread.status, thread.refusal) : thread;
+// The thread a job queued by an agent serves (hq job --thread; one started for it is the plan's, with its chain's
+// words: newthread.ts). (chain)
+function threadFor(b: any, me: Me) {
+  const found = jobThread(b, { agent: me.agent, job: me.id || undefined });
+  if ('refusal' in found) return new Refused(found.status, found.refusal);
+  const { chain, ...thread } = found;
+  return { thread, chain };
 }
 function jobOrigin(b: any, me: Me) {
   const title = String(b.title ?? '').trim(), brief = me.call ? String(b.prompt ?? '').trim() : b.prompt;
@@ -734,10 +739,18 @@ function jobOrigin(b: any, me: Me) {
     : takeover.landing(failedJobId, String(b.agent), me.agent);
   if (typeof landingSource === 'string') return new Refused(409, landingSource);
   if (b.item != null) {
-    const h = ledger.handOut(Number(b.item), c => me.call ? c === me.callId : ledger.mine(me.id, c) || keepsAsks(me, c));
+    // (live)
+    const h = ledger.handOut(Number(b.item), c => me.call ? c === me.callId : ledger.mine(me.id, c) || keepsAsks(me, c), me.call === true);
     if (typeof h === 'string') return new Refused(409, h);
     from = h;
   } else if (own && !landingSource) from = { call: own.call, item: own.id, words: ledger.goalLine(own) };
+  // (a job queued off a call with no item named: no --item, none its queuer carries, no landing's. A call page's sheet
+  // job passes on the asks it was given, as one carrying an item does.)
+  const noItemNamed = !me.call && b.item == null && !own && !landingSource;
+  const sheet = noItemNamed ? ledger.givenTo(me.id) : [];
+  // (one whose asks were all dropped or replaced, and nothing more, queues nothing more)
+  const withdrawn = noItemNamed && !sheet.length ? ledger.withdrawnFrom(me.id) : undefined;
+  if (withdrawn) return new Refused(409, `this job's asks (call #${withdrawn.call}) were all dropped or replaced. If the board changed them, the call's follow-up hands out the new items`);
   const landingItem = landingSource ? ledger.carried(failedJobId!) : undefined;
   // An own brief takes the place of the failed job's, which carried its goal
   const landingGoal = brief && landingItem ? ledger.goalLine(landingItem) : '';
@@ -750,7 +763,17 @@ function jobOrigin(b: any, me: Me) {
   // hq job --when: it starts once those events have happened (wakes.ts)
   const when = wakes.readWhen(b.when);
   if (typeof when === 'string') return new Refused(400, when);
-  return { title, brief: ownBrief, hire, from, failedJobId, landingSource, landingBrief, card, when };
+  const sheetGoals = sheet.map(ledger.goalLine).filter(Boolean).map(g => `\n\n${g}`).join('');
+  return { title, brief: ownBrief, hire, from, sheet, sheetGoals, failedJobId, landingSource, landingBrief, card, when };
+}
+
+// A job the board's call in HQ queues with no item carries its promise, written on the call's notes page (ledger.ts
+// promiseOnPage): the item it then carries.
+function pagePromise(b: any, me: Me, title: string) {
+  if (!me.call || b.item != null) return undefined;
+  const promised = ledger.promiseOnPage(me.callId!, { owner: String(b.agent), what: title, goal: b.goal });
+  if (typeof promised === 'string') throw new Refused(400, promised);
+  return typeof promised === 'object' ? { call: promised.call, item: promised.id } : undefined;
 }
 
 function jobPlacement(b: any, me: Me, origin: Exclude<ReturnType<typeof jobOrigin>, Refused>) {
@@ -761,8 +784,9 @@ function jobPlacement(b: any, me: Me, origin: Exclude<ReturnType<typeof jobOrigi
   const early = b.newThread != null && !step ? jobcodes.claim(b.code, { project: String(b.newThread.project ?? '') }) : undefined;
   if (early && 'refused' in early) return new Refused(409, early.refused);
   const threadSource = failedJobId !== undefined && b.thread == null && b.newThread == null ? { ...me, id: failedJobId } : me;
-  const thread = threadFor(b, threadSource);
-  if (thread instanceof Refused) return thread;
+  const placed = threadFor(b, threadSource);
+  if (placed instanceof Refused) return placed;
+  const { thread, chain } = placed;   // (chain)
   // Its item's time, given on its call (by whoever was on the call), is the window of the job's thread: one named or
   // started, else the one it inherits (createJob's from). So is --by's (askwindow.ts). Work in no open thread has
   // nowhere to take it, so it's refused before anything is queued.
@@ -797,7 +821,7 @@ function jobPlacement(b: any, me: Me, origin: Exclude<ReturnType<typeof jobOrigi
     return new Refused(400, `--only names a rule of company/org.yaml engineOnly: ${engineOnly.rules().map(rule => rule.id).join(', ') || 'it has none'}`);
   const lighter = lighterModel(b, origin.hire);
   if (lighter instanceof Refused) return lighter;
-  return { thread, window, byCall: itemDue !== undefined, target, timed, untimed, source, fix, named, release, lighter };
+  return { thread, chain, window, byCall: itemDue !== undefined, target, timed, untimed, source, fix, named, release, lighter };   // (chain)
 }
 // hq job --model: a small, fully specified job on a lighter model, its queuer's judgment from its scope (models.ts
 // lighterChoice). Work only one engine does runs on its rule's model, and a colleague being hired on their own.
@@ -1004,16 +1028,19 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
     // (a task of notes held where it's placed: refused, the thread drawn for it too.)
     const held = notes && holds.placeRefusal({ thread: placement.target, after: Number(b.after) || null, card: origin.card ?? null });
     if (held) throw new Refused(409, held);
-    const { title, brief, hire, from, failedJobId, landingSource, landingBrief, card, when } = origin;
-    const { thread, window, byCall, target, timed, untimed, source, fix, named, release, lighter } = placement;
+    const { title, brief, hire, sheet, sheetGoals, failedJobId, landingSource, landingBrief, card, when } = origin;
+    const { thread, chain, window, byCall, target, timed, untimed, source, fix, named, release, lighter } = placement;   // (chain)
+    const noted = pagePromise(b, me, title);
+    const carried = noted ?? origin.from;   // (its promise on the call's notes page, else its origin's item)
     const earlier = moves.before();
     const job = jobs.createJob({ agent: String(b.agent), title, ...thread, check: b.check === true, only: b.only ?? undefined,
-      prompt: `${brief || title}${notes ? `\n\n${notes.text}` : ''}${fix ? `\n\n${reviewinbox.instructions(fix)}` : ''}${from?.words ? `\n\n${from.words}` : ''}${landingBrief}\n\n(Assigned by ${me.agent}${me.call ? ', on a call with the board' : ''}.)`,  // (notes)
+      prompt: `${brief || title}${notes ? `\n\n${notes.text}` : ''}${fix ? `\n\n${reviewinbox.instructions(fix)}` : ''}${origin.from?.words ? `\n\n${origin.from.words}` : ''}${sheetGoals}${landingBrief}\n\n(Assigned by ${me.agent}${me.call ? ', on a call with the board' : ''}.)`,  // (notes)
       after: Number(b.after) || undefined, queuedBy: me.agent, size, engine: hire ? hiring.HIRING : undefined,
-      downtime: b.downtime === true, call: from?.call, item: from?.item, insteadOf: failedJobId, code: named?.code, expedite: b.expedite === true,
+      downtime: b.downtime === true, call: carried?.call, item: carried?.item, insteadOf: failedJobId, code: named?.code, expedite: b.expedite === true,
       ...(lighter && { model: lighter.id, light: true }),   // (hq job --model)
       ...(fix && { branch: fix.branch, round: fix.round, stage: fix.stage, insteadOf: fix.replaces }) });
     if (fix) reviewinbox.recordTask(job.id, fix);
+    if (sheet.length) ledger.given(sheet.map(i => i.id), job.id, sheet.some(i => i.more === 1));   // (jobOrigin's sheet)
     notes?.take(job.id);
     // (a thread of its own after the release: jobPlacement)
     const ownThread = release && b.expedite !== true ? oneTaskThread(projects.findThread(target!)!.project, { id: job.id, title }) : null;
@@ -1025,18 +1052,18 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
     const untilEnd = me.callId && b.now !== true ? [{ kind: 'ended' as const, arg: String(me.callId) }] : [];
     wakes.hold(job.id, [...when, ...untilEnd]);
     if (me.callId) call.queuedOn(me.callId, job.id);   // (its agent may add to it while the call goes on: call.ts addToJob)
-    if (from && memory.customerCall(from.call)) jobs.handedCustomerData(job.id);   // a customer call's item: its job holds their details
+    if (carried && memory.customerCall(carried.call)) jobs.handedCustomerData(job.id);   // a customer call's item: its job holds their details
     if (landingSource?.customers) jobs.handedCustomerData(job.id);
     // (a correction handed out: the replaced item's running jobs hear it now, and the answer says which weren't told)
     // (a job on a paused thread is queued, and told it's held: pauses.ts)
     // (--by never loosens the window its thread has: askwindow.ts narrowed)
     const windowOn = timed && (ownThread ? projects.findThread(ownThread)! : timed);
     const given = windowOn && (byCall ? window : askwindow.narrowed(windowOn.id, window!));
-    const promised = given && windows.set(windowOn, given, byCall ? ledger.callAgent(from!.call) : me.agent);
+    const promised = given && windows.set(windowOn, given, byCall ? ledger.callAgent(carried!.call) : me.agent);
     const kept = windowOn && !promised ? { deadline: new Date(windowOn.deadline!).toISOString() } : {};
-    const ask = untimed ? askedForTime(me, { id: job.id, agent: String(b.agent), title }, untimed, from) : source ? servesOther(job.id) : {};
-    const due = { ...promised && { deadline: promised.deadline }, ...kept, ...ask, ...untilEnd.length && { untilCall: me.callId }, ...shownThread(job.id), ...followOn, ...pauses.heldBy(job.id), ...moves.since(earlier), ...lighter && { lighter: lighter.name } };
-    return b.item != null ? { ...job, ...due, ...ledger.handedOut(from!.item, job.id, me.call ? null : me.id) } : { ...job, ...due };
+    const ask = untimed ? askedForTime(me, { id: job.id, agent: String(b.agent), title }, untimed, carried) : source ? servesOther(job.id) : {};
+    const due = { ...promised && { deadline: promised.deadline }, ...kept, ...ask, ...untilEnd.length && { untilCall: me.callId }, ...shownThread(job.id), ...followOn, ...pauses.heldBy(job.id), ...moves.since(earlier), ...lighter && { lighter: lighter.name }, chain };  // (chain)
+    return b.item != null || noted ? { ...job, ...due, ...ledger.handedOut(carried!.item, job.id, me.call ? null : me.id) } : { ...job, ...due };
   }),
   // hq thread list, and hq project say: a project's threads and its owner's sentence (projects.ts), as the speaker (a
   // team member under its own name, never with its lead's rights).
@@ -1055,7 +1082,7 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
     const agent = speaker(b.as, me);
     if (!agent) return 403;
     const [thread, needs] = [b.thread, b.needs].map(v => String(v ?? ''));
-    return refusal(b.drop === true ? plan.unneed(thread, needs, agent) : plan.need(thread, needs, agent));
+    return refusal(b.drop === true ? plan.unneed(thread, needs, agent, b.why) : plan.need(thread, needs, agent));   // (why)
   },
   'POST /api/agent/plan/move': (b, me) => { const agent = speaker(b.as, me); return agent ? refusal(plan.move(Number(b.id), Number(b.place), agent)) : 403; },
   'POST /api/agent/plan/drop': (b, me) => { const agent = speaker(b.as, me); return agent ? refusal(plan.drop(Number(b.id), b.why, agent)) : 403; },
@@ -1150,7 +1177,7 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
   },
   'GET /api/agent/proposals': (b, me) => { const agent = speaker(b.as, me); return agent ? proposals.list(agent, b.all === '1', me.id) : 403; },
   'POST /api/agent/proposals/accept': (b, me) => { const agent = speaker(b.as, me); return agent
-    ? refusal(proposals.accept(reviewinbox.inboxId(b.id), agent, { thread: b.thread, newThread: b.newThread, for: b.for, findings: b.findings, code: b.code, title: b.title, size: b.size, refs: b.refs, why: b.why })) : 403; },  // (title)
+    ? refusal(proposals.accept(reviewinbox.inboxId(b.id), agent, { thread: b.thread, newThread: b.newThread, for: b.for, findings: b.findings, code: b.code, title: b.title, size: b.size, refs: b.refs, why: b.why }, me.id || undefined)) : 403; },  // (title; me.id)
   'POST /api/agent/proposals/drop': (b, me) => { const agent = speaker(b.as, me); return agent
     ? refusal(proposals.drop(reviewinbox.inboxId(b.id), { agent, job: me.id }, b.why)) : 403; },
   // hq meeting: an ask to the CEO, the CEO's open asks and the meetings set from them, and a seat's lines (meetings.ts).
@@ -1683,6 +1710,10 @@ const voice: Record<string, (b: any) => unknown> = {
   // (a call's notes page: the agent's scraps, one per change, and its title. callnotes.ts)
   'POST /api/voice/scrap': async b => refusal(await callnotes.scrap(b)),
   'POST /api/voice/title': b => refusal(callnotes.title(b)),
+  // (and the agent working the page as the board does: reads it, draws on it, changes what's there. callpage.ts)
+  'POST /api/voice/page': b => refusal(callpage.read(b)),
+  'POST /api/voice/mark': b => refusal(callpage.mark(b)),
+  'POST /api/voice/change': b => refusal(callpage.change(b)),
 };
 const voiceAuthed = (h?: string) => !!VOICE_TOKEN && timingSafeEqual(digest(h ?? ''), digest(`Bearer ${VOICE_TOKEN}`));
 const workerAuthed = (h?: string) => !!WORKER_TOKEN && timingSafeEqual(digest(h ?? ''), digest(`Bearer ${WORKER_TOKEN}`));

@@ -12,10 +12,9 @@ import { carried } from '../../shared/review/pincheck.mjs';
 import { shutBook } from './bookchrome.mjs';
 import { fulfilPart } from '../../shared/review/parts.mjs';
 import { savedScrap } from './bookscrap.mjs';
+import { DESKTOP, pressAlong, ui } from './bookkit.mjs';
 
-const ui = s => `review-mode >> css=${s}`;
-
-// c: book-check's { browser, hqIn, base, MINI, settled, shot, posts, pages, org, penOn, ring, noErrorsIn }, and look
+// c: book-check's { browser, hqIn, base, MINI, settled, shot, posts, pages, org, ring, noErrorsIn }, and look
 // ('&renderer=wire' for Wire)
 export async function pinStory(c) {
   const context = await c.hqIn(c.browser, c.MINI);
@@ -103,7 +102,7 @@ async function showing(page, shows, what) {
 // from a fresh load.
 // c: book-check's { browser, hqIn, base, settled, shot, noErrorsIn, reviewJs }
 export async function pinScreensStory(c) {
-  await onScreen(c, DESKTOP, async page => {
+  await onScreen(c, DESKTOP_SCREEN, async page => {
     await c.settled(page, 'open');
     await showing(page, false, 'a desktop: HQ loads with the book open and no pin');
     await page.click(PIN_CONTROL);
@@ -124,7 +123,7 @@ export async function pinScreensStory(c) {
     await c.settled(page, 'open');
     await showing(page, true, 'a desktop: resized as the book slides open, the pin still comes');
   });
-  await onScreen(c, PHONE, async page => {
+  await onScreen(c, PHONE_SCREEN, async page => {
     await c.settled(page, 'folded');
     await showing(page, false, 'a phone: HQ loads with no pin');
     await page.click('#book .bk-lip');
@@ -143,8 +142,8 @@ export async function pinScreensStory(c) {
   await uprightPin(c);
   await artifactPin(c);
 }
-const DESKTOP = { viewport: { width: 1440, height: 900 }, more: { deviceScaleFactor: 1, hasTouch: false } },
-  PHONE = { viewport: { width: 390, height: 844 }, more: {} },
+const DESKTOP_SCREEN = { viewport: DESKTOP, more: { deviceScaleFactor: 1, hasTouch: false } },
+  PHONE_SCREEN = { viewport: { width: 390, height: 844 }, more: {} },
   UPRIGHT_IPAD = { viewport: { width: 744, height: 1133 }, more: {} };
 // On an upright iPad the book opens as the spread; its cover's edge drawn right, it lies beside HQ: there the control
 // summons the pin and puts it away, the book left open.
@@ -188,7 +187,7 @@ async function onScreen(c, { viewport, more }, story) {
 // An artifact's page with review mode, as the coordinator serves a preview: its pin shows from the start
 const ARTIFACT = 'https://hello.preview.test';
 async function artifactPin(c) {
-  const context = await c.hqIn(c.browser, DESKTOP.viewport, DESKTOP.more);
+  const context = await c.hqIn(c.browser, DESKTOP_SCREEN.viewport, DESKTOP_SCREEN.more);
   try {
     await context.route(`${ARTIFACT}/**`, r => {
       const path = new URL(r.request().url()).pathname;
@@ -211,7 +210,7 @@ async function artifactPin(c) {
 // A ring with the pen, its post-it saved: the scrap that owner's, and the menu offering the Notebook it went to
 async function noted(c, page, { ring, owner, name, look }) {
   const from = c.posts.length;
-  await c.penOn(page)(c.ring(ring[0], ring[1], 70, 40));
+  await pressAlong(page, c.ring(ring[0], ring[1], 70, 40));
   const sent = await savedScrap({ page, posts: c.posts }, from, look);
   await c.shot(look, page);
   assert.equal(sent.owner ?? c.org.company.ceo, owner, `the scrap is ${name}'s`);

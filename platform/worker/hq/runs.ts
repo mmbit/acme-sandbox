@@ -5,13 +5,15 @@
 // declares (org.yaml's runs.kinds), which sets the image and caps it runs with on the lent machines, and whether this
 // server's helper takes it before a lent machine has finished one. With `--fallback here` a run no machine takes runs in
 // the job itself.
+// Kinds with checkout enabled send the whole checkout when --paths is omitted.
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, normalize } from 'node:path';
 import * as api from './api.ts';
+import { checkOnHelper } from './checks.ts';
 import { type Here, noTakerNow, runHere } from './here.ts';
-import { type Presence, SERVER, showHelper } from './machines.ts';
+import { type Machine, type Presence, SERVER, showHelper } from './machines.ts';
 import { minute, oneLine, present, print, stop, warn } from './output.ts';
 import { unpackInto } from './unpack.ts';
 
@@ -61,7 +63,11 @@ export const run = {
   help: `
    hq run [--kind <name>] [--paths <folders>] [--with <files>] [--bring <paths>] [--minutes n] [--commit <sha>]
           [--fallback here] -- <command> [args...]
-                                                     a long headless run (a simulation over many seeds) on the helper,
+                                                     Kinds with checkout enabled carry this checkout, including edits
+                                                     and local servers. No --paths needed. hq run helper lists the
+                                                     kinds, checkout and browser support.
+                                                     --bring returns screenshots and reports. Lent helper only.
+                                                     Other kinds: a long headless run on the helper,
                                                      a machine with more cores: worth it for a run expected to take 30
                                                      minutes or more here. Start it in the background: it ends when the
                                                      run does. --kind names its kind of run (hq run helper lists them),
@@ -101,10 +107,17 @@ export const run = {
 async function send(args: string[]) {
   const root = git(['rev-parse', '--show-toplevel']);
   const { spec, paths, carried, commit, fallback } = specOf(args, git(['rev-parse', '--show-prefix']));
+  const machine: Machine | undefined = !paths ? await api.getJson('runs/helper') : undefined;
+  const checkout = machine?.kinds.find(kind => kind.name === spec.kind && kind.checkout);
+  if (checkout) {
+    if (fallback) stop('hq run: checks stay on the helper, leave out --fallback here');
+    return checkOnHelper(root, spec, commit || treeNow(root, ['.'], carried), checkout.browsers);
+  }
+  const folders = runFolders(paths, spec.cwd);
   const here = fallback ? { root, spec } : null;
   const none = here && (await noTakerNow(spec.kind));
   if (none) return runHere(here, `hq run: ${none}`);
-  const bundle = bundleOf(root, paths, carried, commit);
+  const bundle = bundleOf(root, folders, carried, commit);
   const answer = await api.call('runs', {
     bytes: bundle,
     headers: { 'content-type': 'application/gzip', 'x-run': Buffer.from(JSON.stringify(spec)).toString('base64url') },
@@ -132,10 +145,7 @@ function specOf(args: string[], prefix: string) {
   const words = args.slice(dashes + 1);
   const command = words.length === 1 ? words[0] : words.map(shellQuoted).join(' ');
   const cwd = inTree(prefix, '.');
-  const paths = flags.paths ? flags.paths.split(',').map(path => inTree(prefix, path)) : [cwd];
-  if (paths.includes('')) stop('hq run: name the folders the run needs with --paths, not the whole repo');
-  if (cwd && !paths.some(path => cwd === path || cwd.startsWith(`${path}/`)))
-    stop(`hq run: this folder (${cwd}) must be inside --paths, where the command runs`);
+  const paths = flags.paths ? flags.paths.split(',').map(path => inTree(prefix, path)) : undefined;
   const bring = flags.bring ? flags.bring.split(',').map(path => inTree(prefix, path)) : [];
   if (bring.includes('')) stop('hq run: --bring names files or folders inside the repo');
   const carried = flags.with ? flags.with.split(',').map(path => inTree(prefix, path)) : [];
@@ -154,6 +164,14 @@ function inTree(prefix: string, given: string) {
   const path = normalize(join(prefix, given)).replace(/\/$/, '');
   if (given.startsWith('/') || path === '..' || path.startsWith('../')) stop(`hq run: ${given} is outside the repo`);
   return path === '.' ? '' : path;
+}
+
+function runFolders(paths: string[] | undefined, cwd: string) {
+  const folders = paths ?? [cwd];
+  if (folders.includes('')) stop('hq run: name the folders the run needs with --paths, not the whole repo');
+  if (cwd && !folders.some(path => cwd === path || cwd.startsWith(`${path}/`)))
+    stop(`hq run: this folder (${cwd}) must be inside --paths, where the command runs`);
+  return folders;
 }
 
 // The folders and carried files as a gzipped tar, at a commit or as the tree has them now

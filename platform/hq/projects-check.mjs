@@ -379,7 +379,7 @@ for (const look of RENDERERS)
     );
     assert.deepEqual(
       await texts(page, '[data-group] > .pj-tile-body > b'),
-      ['Recurring', 'Outside projects', 'Meetings'],
+      ['Recurring', "Juno's desk", 'Meetings'], // (the CEO's desk by name)
       at,
     );
     assert.equal(await page.$('[data-group] .pj-next'), null, `${at}: what our works are, never what's up next`);
@@ -1406,9 +1406,9 @@ for (const look of RENDERERS)
     await page.keyboard.press('Escape');
     await page.waitForSelector('[data-business]');
 
-    // the work outside the projects: its jobs open
+    // the work outside the projects, the CEO's desk: its jobs open
     await tap(page, '[data-group=unsorted]');
-    await level('Outside projects');
+    await level("Juno's desk");
     await tap(page, '.pj-level [data-job="48"]');
     await page.waitForSelector('.pj-card');
     await page.keyboard.press('Escape');

@@ -4,20 +4,12 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { once } from 'node:events';
-import { closeSync, existsSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { sampleWrites } from './diskwrites.ts';
-import { alive, procStat, processesOfUids } from './detached.ts';
-import {
-  cliProcesses,
-  commandOf,
-  processesFor,
-  overShare,
-  slowDown,
-  stopRun,
-  tally,
-  type ProcessSnapshot,
-} from './shares.ts';
+import { procStat, processesOfUids } from './detached.ts';
+import { cliProcesses, processesFor, overShare, slowDown, tally, type ProcessSnapshot } from './shares.ts';
+import { stopRun } from './stoprun.ts';
 
 const proc = (pid: number, uid: number, mb: number, ticks = 0, o: Partial<ProcessSnapshot> = {}): ProcessSnapshot => ({
   pid,
@@ -104,48 +96,6 @@ test('a job running too many processes has the run with the most blocked; one pa
   assert.equal(overShare(uses, new Set(), opts).block, undefined, 'busy, not for long yet: slowed only');
   const hot = overShare(uses, new Set(), { ...opts, hot: new Set([1501]) }).block!;
   assert.deepEqual([hot.root.pid, hot.measure, hot.used, hot.share], [30, 'cores', 7.1, 4]);
-});
-
-test("a blocked run hears why in its own output, then ends: frozen first, its words before it's Killed", async () => {
-  // (as Claude Code runs a command: its output to a file the tool reads back)
-  const me = { uid: process.getuid!(), gid: process.getgid!() };
-  const out = `${mkdtempSync(`${tmpdir()}/blocked-`)}/output`;
-  writeFileSync(out, 'started\n');
-  const fd = openSync(out, 'a');
-  const run = spawn('sh', ['-c', 'sleep 30 & wait'], { stdio: ['ignore', fd, fd] });
-  closeSync(fd);
-  await new Promise(r => setTimeout(r, 300));
-  const own = (await processesFor([me])).filter(p => p.pid === run.pid || p.ppid === run.pid);
-  const root = own.find(p => p.pid === run.pid)!;
-  assert.equal(commandOf(own), 'sleep 30', 'the program, not the shell around it');
-  await stopRun(own, me, root, async () => ({ text: "HQ's worker stopped this command: offload it." }));
-  const killed = await new Promise(r => run.on('close', (_code, sig) => r(sig)));
-  assert.equal(killed, 'SIGKILL');
-  assert.equal(readFileSync(out, 'utf8'), "started\n\nHQ's worker stopped this command: offload it.\n");
-  assert.ok(
-    own.every(p => !alive(p.pid, p.start)),
-    'every process of it ended',
-  );
-});
-
-test("a blocked run HQ can't be asked about still ends, and hears no words but HQ's", async () => {
-  const me = { uid: process.getuid!(), gid: process.getgid!() };
-  const out = `${mkdtempSync(`${tmpdir()}/blocked-`)}/output`;
-  writeFileSync(out, 'started\n');
-  const fd = openSync(out, 'a');
-  const run = spawn('sh', ['-c', 'sleep 30 & wait'], { stdio: ['ignore', fd, fd] });
-  closeSync(fd);
-  await new Promise(r => setTimeout(r, 300));
-  const own = (await processesFor([me])).filter(p => p.pid === run.pid || p.ppid === run.pid);
-  const root = own.find(p => p.pid === run.pid)!;
-  const away = new TypeError('fetch failed');
-  await assert.rejects(
-    stopRun(own, me, root, () => Promise.reject(away)),
-    away,
-    'the failure goes on to the shares loop',
-  );
-  assert.equal(await new Promise(r => run.on('close', (_code, sig) => r(sig))), 'SIGKILL', 'never left frozen');
-  assert.equal(readFileSync(out, 'utf8'), 'started\n');
 });
 
 test("a job's push checks, run after its CLI has ended, are held to its share too", () => {
@@ -686,7 +636,13 @@ for (const interruption of ['SIGSTOP', 'SIGKILL'] as const)
     const hot = overShare(uses, new Set(), { ...opts, hot: new Set([current[0].uid]) }).block!;
     assert.equal(hot.measure, 'cores');
     const closed = once(other, 'close');
-    await stopRun(memory.run, otherIds, memory.root, async () => ({ text: 'Memory share exceeded' }));
+    await stopRun(
+      memory.run,
+      otherIds,
+      memory.root,
+      async () => ({ text: 'Memory share exceeded' }),
+      () => {},
+    );
     assert.equal((await closed)[1], 'SIGKILL');
     await sampling;
     if (rootWorker) {

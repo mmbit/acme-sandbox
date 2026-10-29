@@ -1,7 +1,7 @@
 // Queue-time estimate contract fixtures.
 // node --test src/reviewrounds.test.ts   (uses a throwaway DATA_DIR; GitHub is played by the harness)
 // The formal review process through the review's own routes: each round's briefing by its stage, and what the reviews
-// leave going to the project's follow-ups.
+// leave going into the author's follow-up job.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -111,21 +111,30 @@ function draw(n: number) {
 }
 const fixPrompt = (n: number) => draw(n)!.prompt;
 const bundles = () =>
+  db.prepare("select id from proposals where title like 'Review follow-ups%'").all() as { id: number }[];
+const followUps = () =>
   db
-    .prepare("select id, project, brief, status from proposals where title like 'Review follow-ups%' order by id")
-    .all() as { id: number; project: string | null; brief: string; status: string }[];
+    .prepare(
+      "select id, agent, thread, title, prompt, status from jobs where kind = 'work' and stage is null and title like 'Review follow-ups:%' order by id",
+    )
+    .all() as { id: number; agent: string; thread: string | null; title: string; prompt: string; status: string }[];
 
-test('each round gets the briefing of its stage, and what the reviews leave goes to the project owner as one follow-up bundle', async () => {
+test('each round gets the briefing of its stage, and what the reviews leave goes to the author as one follow-up job', async () => {
   const n = 601;
   await push(n);
   const panel = await claim(n, 'review');
   for (const run of panel) {
     assert.match(run.prompt, /## Round 1: the first look/);
-    assert.match(run.prompt, /In the first look, code the next person can't live with blocks too/);
+    assert.match(run.prompt, /The first look is free for all/);
+    assert.match(run.prompt, /On\s+what's shipped to users, code the next person can't live with blocks too/);
+    assert.match(
+      run.prompt,
+      /On everything else, the\s+company's internal work[\s\S]*it breaks HQ or the\s+work it carries, it loops without end, or it loses data/,
+    );
     await end(run);
   }
   const [ruling] = await claim(n, 'consolidate');
-  assert.match(ruling.prompt, /In the first look, so does code the next person can't live with/);
+  assert.match(ruling.prompt, /in the first look, so does code the next person can't live with/);
   assert.match(ruling.prompt, /Then make the safe\s+nonblocking fixes too/);
   assert.doesNotMatch(ruling.prompt, /"upstream"/);
   await end(
@@ -134,7 +143,7 @@ test('each round gets the briefing of its stage, and what the reviews leave goes
       blocking: [at(3, 'the score adds the bonus twice'), at(7, 'a name that says nothing')],
       nonblocking: [at(30, 'a long function')],
       pre_existing: [
-        { ...at(9, 'the ship is drawn twice', 'kits/art/ship.ts'), cross_project: true },
+        at(9, 'the ship is drawn twice', 'kits/art/ship.ts'),
         at(2, 'an old loop', 'products/game/old.ts'),
       ],
       decision: 'changes',
@@ -143,15 +152,26 @@ test('each round gets the briefing of its stage, and what the reviews leave goes
   );
   const [bonus, name, long] = findingsOf(n).filter(f => f.kind !== 'pre-existing');
   assert.deepEqual([bonus.kind, name.kind, long.kind], ['blocking', 'blocking', 'nonblocking']);
-  assert.match(fixPrompt(n), /The nonblocking ones are yours to fix too/);
+  assert.match(fixPrompt(n), /Fix or answer each nonblocking one too/);
 
-  // round 2, a later round: only security, real bugs and what a customer meets block; the rest is the project's
+  // round 2, a later round: only blocking findings hold the merge; the rest is the follow-up job's
   await push(n);
   const [check] = await claim(n);
   assert.equal(check.stage, 'ruling');
   assert.match(check.prompt, /Only those block now/);
   assert.match(check.prompt, /a change that doesn't do what the board asked/);
   assert.match(check.prompt, /"nonblocking": \[the same shape\]/);
+  assert.match(check.prompt, /With no\s+blocking finding, decide "merge"/);
+  const refused = await h.agent('review-output', check.token, {
+    output: JSON.stringify({
+      major_visual: false,
+      outcomes: [bonus, name, long].map(f => ({ finding: f.id, outcome: 'fixed' })),
+      decision: 'changes',
+      blocking: [],
+      nonblocking: [at(12, 'tidy')],
+    }),
+  });
+  assert.match(String(refused.body.error), /from a later round on only blocking findings hold the merge/);
   await end(
     check,
     json({
@@ -171,7 +191,7 @@ test('each round gets the briefing of its stage, and what the reviews leave goes
   );
   assert.equal(findingsOf(n).find(f => f.issue === 'the helper could be shorter')?.kind, 'follow-up');
   assert.match(fixPrompt(n), /Fix only the blocking findings/);
-  assert.match(fixPrompt(n), /The nonblocking findings aren't yours/);
+  assert.match(fixPrompt(n), /Leave the nonblocking findings/);
 
   // round 3 merges: its own nonblocking finding and the one the author left open go with the rest
   await push(n);
@@ -190,17 +210,19 @@ test('each round gets the briefing of its stage, and what the reviews leave goes
       summary: 'fixed',
     }),
   );
-  await until(() => bundles().length === 2, 'the follow-ups bundled');
-  const [own, across] = bundles();
-  assert.equal(own.project, 'game', "the pull request's project");
+  // one job for the author, in the same deliverable, with every finding that didn't hold the merge
+  await until(() => followUps().length === 1, 'the follow-up job queued');
+  const [job] = followUps();
+  assert.deepEqual([job.agent, job.thread, job.status], ['bolt', 'game/world', 'queued']);
   for (const issue of [
     'a name that says nothing',
     'the helper could be shorter',
     'a comment says what, not why',
     'an old loop',
+    'the ship is drawn twice',
   ])
-    assert.ok(own.brief.includes(issue), issue);
-  assert.ok(!own.brief.includes('the bonus'), 'what blocked is fixed on the pull request');
+    assert.ok(job.prompt.includes(issue), issue);
+  assert.ok(!job.prompt.includes('the bonus'), 'what blocked is fixed on the pull request');
   assert.deepEqual(
     findingsOf(n)
       .filter(f => f.issue.includes('long'))
@@ -208,54 +230,29 @@ test('each round gets the briefing of its stage, and what the reviews leave goes
     [long.id],
     'an earlier finding moved into the follow-ups keeps its number',
   );
-  assert.equal(own.brief.match(/long function/g)?.length, 1);
-  assert.ok(!own.brief.includes('the ship'));
-  assert.equal(across.project, null, "a finding in another domain's code is the CEO's to pass on");
-  assert.ok(across.brief.includes('the ship is drawn twice'));
-  assert.equal(
-    proposals.list('wren').some(p => p.id === own.id),
-    true,
-    "in the owner's inbox",
-  );
+  assert.equal(job.prompt.match(/long function/g)?.length, 1);
+  assert.equal(bundles().length, 0, "no proposal in the owner's inbox");
 
-  // a later pull request's follow-ups join the open bundle, and the owner assigns it
+  // the follow-up's own pull request merges with findings of its own, and they end there: no follow-up of a follow-up
   const m = 602;
-  await push(m);
-  for (const run of await claim(m, 'review')) await end(run);
+  const run = (await h.claimJob(job.id)) as Run;
+  await end(run, {
+    pr: m,
+    branch: `job/${job.id}`,
+    files: [FILE],
+    sha: randomBytes(20).toString('hex'),
+    lines: { [FILE]: [[1, 10]] },
+    result: 'Fixed the follow-ups worth fixing.',
+  });
+  for (const r of await claim(m, 'review')) await end(r);
   const [quill] = await claim(m, 'consolidate');
   await end(quill, json({ blocking: [], nonblocking: [at(5, 'a magic number')], decision: 'merge', summary: 'ok' }));
-  await until(() => bundles()[0].brief.includes('a magic number'), 'the next follow-up joined');
-  assert.equal(bundles().length, 2);
-  const tidy = { project: 'game', name: 'Tidy the game code', goal: 'The follow-ups worth fixing are fixed' };
-  // (HQ's bundle under its template title: the owner names the task.)
-  assert.match(
-    String(
-      proposals.accept(own.id, 'wren', {
-        newThread: tidy,
-        for: 'moss',
-        code: 'TIDY',
-        size: '30m',
-        why: 'Name the bundled magic numbers',
-      }),
-    ),
-    /--title/,
+  await until(() => findingsOf(m).length === 1, "the follow-up's own finding recorded");
+  await until(
+    () => db.prepare("select 1 from prs where number = ? and status = 'merged'").get(m) !== undefined,
+    'merged',
   );
-  const title = 'Name the magic numbers in the game code';
-  const accepted = proposals.accept(own.id, 'wren', {
-    newThread: tidy,
-    for: 'moss',
-    code: 'TIDY',
-    title,
-    size: '30m',
-    why: 'Name the bundled magic numbers',
-  }) as {
-    job: number;
-  };
-  assert.deepEqual(
-    [h.job(accepted.job).agent, h.job(accepted.job).title],
-    ['moss', title],
-    'the owner assigns and names it',
-  );
+  assert.equal(followUps().length, 1);
 });
 
 test("a first round near its thread's deadline is a later one, and the upstream round shows what went wrong before review", async t => {

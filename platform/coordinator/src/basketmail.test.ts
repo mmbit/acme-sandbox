@@ -142,7 +142,7 @@ async function paidBasket(locale: string, email: string, country = 'NL', own: nu
   if (copies > 1) assert.equal((await call('/api/pay/basket/quantity', as('front'), { basket, line: lines[0].line, quantity: copies })).status, 200);
   for (const amount of own) {
     const added = await payments.changeBasket({ slug: 'front', mode: 'test' }, basket, id =>
-      payments.addOwnLine(id, { goes_with: lines[0].line, description: 'Fridge magnet', amount, ships_in: 1, cutoff: 12 }) ?? undefined);
+      payments.addOwnLine(id, { kind: 'magnet', goes_with: lines[0].line, description: 'Fridge magnet', amount, ships_in: 1, cutoff: 12 }) ?? undefined);
     assert.ok(!Array.isArray(added), JSON.stringify(added));
   }
   const c = await call('/api/pay/basket/checkout', as('front'), { basket, email, locale,
@@ -446,7 +446,7 @@ test("a company's own closing line ends both emails as they go, its picture besi
 });
 
 test("a bought magnet is listed after its thing; one refunded isn't, one whose refund failed is", async () => {
-  payments.ownLines.price = (_basket, _things, own) => own.map(() => 999);
+  payments.ownLines.prices.magnet = (_basket, _things, own) => own.map(() => 999);
   try {
     const session = await shipped('en', 'mo@example.com', 'https://jouw.postnl.nl/track-and-trace/3SMAGNET', [999, 999, 999]);
     const own = payments.paidLines(session).filter(l => l.goes_with);
@@ -460,6 +460,6 @@ test("a bought magnet is listed after its thing; one refunded isn't, one whose r
     assert.ok(text.includes('- Pinwheel: Textile poster (For Mila)\n- The Stalls: Fridge magnet (For Mila)\n- The Stalls: Fridge magnet (For Mila)\n- Hello Mug: Mug for Noor\n'), text);
     assert.equal(text.match(/Fridge magnet/g)?.length, 2, 'the refunded one left out');
   } finally {
-    delete payments.ownLines.price;
+    delete payments.ownLines.prices.magnet;
   }
 });
