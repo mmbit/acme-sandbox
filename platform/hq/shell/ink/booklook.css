@@ -1,5 +1,5 @@
 /* The Notebook's own look (book.css lays it out): its pages bound in a black cover, the same on every HQ look. The
-   cover shows only as the binding on HQ's side; its one colour is the pull
+   cover shows round the pages at their head, foot and outer edge (the binding on HQ's side); its one colour is the pull
    tab's, the brand's accent (brand.yaml's colours.notebook, set at onboarding; --notebook on :root, main.js), never a
    colour of the platform's own. No cover title: the book opens straight onto its page (the page and the overview are
    bookdesk.css's). (the hardcover) */
@@ -9,6 +9,9 @@
   --bk-grain:
     repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.025) 0 1px, transparent 1px 3px),
     repeating-linear-gradient(90deg, rgba(0, 0, 0, 0.18) 0 1px, transparent 1px 3px);
+  /* the board's rim at its head and foot, lit (its outer edge's: .bk-edge) */
+  --bk-rim-head: inset 0 1px 0 rgba(255, 255, 255, 0.14);
+  --bk-rim-foot: inset 0 -1px 0 rgba(255, 255, 255, 0.08);
   /* (without a brand setting, HQ's own ink: never a colour picked here) */
   --bk-accent: var(--notebook, var(--ink, #1d1a2f));
 }
@@ -18,6 +21,17 @@
 #book .bk-edge {
   background:
     radial-gradient(130% 60% at 0% 0%, rgba(255, 255, 255, 0.07), transparent 60%), var(--bk-grain), var(--bk-cloth);
+  box-shadow:
+    var(--bk-rim-head),
+    var(--bk-rim-foot),
+    inset 1px 0 0 rgba(255, 255, 255, 0.14);
+}
+/* the rest of the board, under the paper and showing round it: never under the leaf's margin to the screen's edge (its
+   transparent border, book.css). Its rim catches the light, so the board stands off a dark scene round it. */
+#book .bk-leaf {
+  background: var(--bk-grain), var(--bk-cloth);
+  background-clip: padding-box;
+  box-shadow: var(--bk-rim-head), var(--bk-rim-foot);
 }
 /* the pull tab: a ribbon of fabric in the brand's accent, stitched round its edge, sewn to the cover's outer edge and
    hanging out of it over HQ's page (at the screen's edge while the book's shut). No outline: its stitching shows it on
@@ -42,7 +56,6 @@
 }
 /* (lying over the whole screen, its outer edge at the screen's left: the tab hangs inward over the page) */
 #book[data-mode='spread'] .bk-lip {
-  translate: 0 -50%;
   border-radius: 0 10px 10px 0;
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.25),

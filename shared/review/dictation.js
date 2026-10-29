@@ -1,11 +1,12 @@
-// Dictation: the mic button taps to talk, taps to stop (a mark never starts it: the board, call 154). The words come as they're
+// Dictation: the mic button taps to talk, taps to stop (a mark never starts it). The words come as they're
 // said, as on a call: the microphone's audio goes as it's heard, 16 kHz PCM, over a WebSocket next to the script
 // (/__review/dictate, which the coordinator hands to the voice line's recogniser), and each phrase's words come back
 // while the board talks, into the note. The clip is recorded too: where that line can't be reached (or drops), the whole
 // clip is transcribed by the coordinator's speech-to-text (POST /__review/voice). In HQ's viewer the page's frame has no
-// microphone, so HQ records for it (askHq).
+// microphone, so HQ records for it once the board taps HQ's own Talk key (hqmic.js).
 import { ACCENT } from './base.js';
-import { micAllowed, gotStream } from './micallowed.js';
+import { gotStream } from './micallowed.js';
+import { askHq, endHq } from './hqmic.js';
 
 export const CSS = `
       .mic { position: relative; width: 52px; height: 52px; border-radius: 50%; background: #2b2230; color: #fff; display: grid; place-items: center; flex: none; }
@@ -18,17 +19,13 @@ export const CSS = `
 
 const TYPES = ['audio/webm;codecs=opus', 'audio/ogg;codecs=opus', 'audio/mp4', 'audio/webm'];
 export const canRecord = !!(window.isSecureContext && navigator.mediaDevices?.getUserMedia && window.MediaRecorder);
-// Whether a held pen may start the microphone without the browser asking: only a tap on the mic asks. In HQ's viewer
-// it's HQ's microphone, so HQ says (its framemic.js), and refuses a held start unless it's allowed.
-export const micGranted = r => (r.framed ? !!r.hqGranted : micAllowed());
 
 // r.rec: the recording under way (heard in the board's language, which the coordinator reads). ctx: an audio context
-// made at an earlier gesture (pentouch.js: the pen's touch, the mic asked for only once it draws or holds.) held: a
-// held pen's, not the mic's tap (HQ starts that one only where its microphone is allowed).
-export async function startMic(r, ctx = audioContext(), held = false) {
+// made at an earlier gesture (pentouch.js: the pen's touch, the mic asked for only once it draws or holds.)
+export async function startMic(r, ctx = audioContext()) {
   if (r.framed) {
     ctx?.close?.();
-    return askHq(r, held);
+    return askHq(r);
   }
   const rec = (r.rec = { chunks: [], said: r.text.value.trim(), shown: [], taken: [], ctx });
   // What the reviewer types meanwhile stays: the words in the note then are theirs, and only words heard after go in
@@ -171,7 +168,7 @@ function streaming(rec, ws, source) {
 // ones both share, a word the recogniser only recased or repunctuated still the same one), after the reviewer's own,
 // where their caret stays
 const plain = w => w.toLocaleLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
-function words(r, rec, heard) {
+export function words(r, rec, heard) {
   const said = heard.trim().split(/\s+/).filter(Boolean);
   let i = 0;
   while (i < rec.taken.length && plain(said[i] ?? '') === plain(rec.taken[i])) i++;
@@ -294,81 +291,10 @@ async function transcribed(r, rec, clip, m) {
   }
 }
 
-// ---- in HQ's viewer: HQ's page records (its framemic.js), and its words come back here as they're heard. rec.hq: the
-// recording's number, so a word from an earlier one is never taken for this one's.
-let asked = 0;
-function askHq(r, held) {
-  const rec = (r.rec = { hq: ++asked, said: r.text.value.trim(), shown: [], taken: [] });
-  rec.typed = () => {
-    rec.said = r.text.value;
-    rec.taken = rec.shown;
-    rec.edited = true;
-  };
-  rec.done = new Promise(resolve => (rec.finished = resolve));
-  r.text.addEventListener('input', rec.typed);
-  r.mic.classList.add('on');
-  r.msg.textContent = 'Listening… tap the mic to stop';
-  r.toHq({ mic: 'start', id: rec.hq, held });
-}
-// HQ's answers: the words so far, the voice's level, the mic refused, or the words once it's stopped
-function fromHq(r, e) {
-  const m = e.data?.mic;
-  if (e.source !== parent || e.origin !== r.HQ || e.data?.hq !== 'hq' || !m) return;
-  if (typeof m.granted === 'boolean') r.hqGranted = m.granted;
-  const rec = [r.rec, r.endingRec].find(x => x?.hq && x.hq === m.id);
-  if (!rec || rec.cancelled) return;
-  if (typeof m.heard === 'string') words(r, rec, m.heard);
-  if (typeof m.level === 'number' && r.rec === rec) r.mic.style.setProperty('--lvl', Math.min(0.6, m.level).toFixed(2));
-  if (m.failed && r.rec === rec) {
-    r.rec = null;
-    r.mic.classList.remove('on');
-    r.text.removeEventListener('input', rec.typed);
-    r.msg.textContent = refused(m.failed);
-  }
-  // (a held start's refusal can come after the pen is lifted: endHq is waiting for it then)
-  if ('done' in m || m.failed) rec.finished(m);
-}
-// What the note says when HQ didn't start its microphone (a held start HQ didn't take, its microphone not allowed: the
-// hold just doesn't listen)
-const refused = failed =>
-  failed === 'held'
-    ? ''
-    : failed === 'NotAllowedError'
-      ? 'The microphone is blocked for HQ. Type the note instead?'
-      : 'Could not start the microphone.';
-async function endHq(r, rec) {
-  r.rec = null;
-  r.mic.classList.remove('on');
-  r.mic.style.setProperty('--lvl', 0);
-  r.toHq({ mic: rec.cancelled ? 'cancel' : 'stop', id: rec.hq });
-  if (rec.cancelled) return;
-  const m = r.mark;
-  r.mic.classList.add('busy');
-  r.mic.disabled = true;
-  r.msg.textContent = 'Turning your words into text…';
-  const end = await Promise.race([rec.done, new Promise(res => setTimeout(() => res(null), 60_000))]);
-  r.mic.classList.remove('busy');
-  r.mic.disabled = false;
-  if (rec.cancelled || r.mark !== m) return;
-  if (end?.failed) return void (r.msg.textContent = refused(end.failed));
-  if (end?.done) words(r, rec, end.done);
-  r.msg.textContent = end?.done
-    ? 'Check the words, then pin it.'
-    : end?.why === 'short'
-      ? 'That was very short. Tap, talk, then tap again.'
-      : end?.why === 'transcriber' || !end
-        ? 'The transcriber isn’t available right now. Type it instead?'
-        : 'No words came through. Try again, a little closer?';
-}
-
 export function setupDictation(r) {
   r.rec = null;
   r.stopping = null;
   r.endingRec = null;
-  if (r.framed) {
-    addEventListener('message', e => fromHq(r, e));
-    r.toHq({ mic: 'state', id: 0 }); // (whether HQ's microphone is allowed: a held pen listens only then)
-  }
   if (!canRecord) {
     r.mic.disabled = true;
     r.mic.title = 'This browser can’t record here';

@@ -27,6 +27,8 @@ export function clone(before: Record<string, string>, after: Record<string, stri
   git('init', '-q', '-b', 'main');
   for (const path of [
     'shared/gates/tests.ts',
+    'shared/gates/bundle.ts',
+    'shared/gates/tests-on-helper.sh',
     'shared/gates/comparison.ts',
     'shared/gates/suites.ts',
     'shared/gates/repo.ts',
@@ -130,10 +132,10 @@ const answer = async (req, res) => {
     await new Promise(resolve => setTimeout(resolve, Number(process.env.PLAYED_STOP_MS ?? 0)));
     run.states = [['stopped', run.states[0][1]]];
   }
-  const [state, machine] = run.states.length > 1 ? run.states.shift() : run.states[0];
+  const [state, machine, present = true] = run.states.length > 1 ? run.states.shift() : run.states[0];
   const why = state === 'lost' ? machine + ' went quiet' : null;
   const timedOut = !!process.env.PLAYED_TIMED_OUT;
-  res.end(JSON.stringify({ state, exitCode: run.exitCode, timedOut, machine, why, helper: { takeMinutes: Number(process.env.HELPER_TAKE_MINUTES ?? 1), present: true } }));
+  res.end(JSON.stringify({ state, exitCode: run.exitCode, timedOut, machine, why, helper: { takeMinutes: Number(process.env.HELPER_TAKE_MINUTES ?? 1), present } }));
 };
 if (!process.env.RESTARTING) createServer(answer).listen(0, '127.0.0.1', function () { console.log(this.address().port); });
 // as a deploy does: down (connections refused) as the push sends its run, and again from the run's first poll, which
@@ -152,7 +154,10 @@ const down = ms => {
 };
 if (process.env.RESTARTING) restarting.listen(0, '127.0.0.1', () => { console.log(restarting.address().port); down(2000); });
 `;
-export async function playedHq(states: [string, string][] = [['done', 'attic']], env: NodeJS.ProcessEnv = {}) {
+export async function playedHq(
+  states: [string, string, boolean?][] = [['done', 'attic']],
+  env: NodeJS.ProcessEnv = {},
+) {
   const script = join(mkdtempSync(join(tmpdir(), 'tests-hq-')), 'hq.mjs');
   writeFileSync(script, PLAYED_HQ);
   const hq = spawn(process.execPath, [script, JSON.stringify(states)], {

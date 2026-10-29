@@ -11,7 +11,7 @@ import { db, inOneStep } from './db.ts';
 import { publish } from './events.ts';
 import * as jobs from './jobs.ts';
 import * as messages from './messages.ts';
-import { ceo, reviewSettings } from './company.ts';
+import { ceo } from './company.ts';
 import { findProject, findThread, ownerOf, threadForJob, type JobThreadAsk } from './projects.ts';
 import { openPlanning, planningJob, planningProject } from './planning.ts';
 import * as sorting from './sorting.ts';
@@ -98,11 +98,8 @@ export function deliverFindings(details: reviewinbox.Delivery, by?: { agent: str
     const item = reviewinbox.deliver(details);
     if (reviewinbox.sameDelivery(previous, item)) return item;
     const owner = ownerOf(item);
-    const reason = reviewinbox.drawReason(item);
-    const drawn =
-      item.decision === 'changes' && reviewSettings().drawWindowedChanges && reason
-        ? reviewinbox.drawnAtOnce(item, owner)
-        : undefined;
+    const reason = item.decision === 'changes' && reviewinbox.drawReason({ branch: item.branch, thread: item.thread! });
+    const drawn = reason ? reviewinbox.drawnAtOnce(item, owner) : undefined;
     if (drawn) {
       messages.withdraw(item.proposal);
       const tasks = drawn.jobs.map(job => `#${job}`).join(' and ');
@@ -133,7 +130,7 @@ export function deliverFindings(details: reviewinbox.Delivery, by?: { agent: str
   });
 }
 
-// The project's review follow-ups (followups.ts): a new open proposal from the consolidator, or the open one (`into`)
+// A bundle of HQ's (followups.ts upstream: what went wrong before review): a new open proposal, or the open one (`into`)
 // with the brief that now covers more. Its owner hears of it as of any other proposal, and
 // again when it grows: one a planning job left open was that job's to leave only as it stood (sweep). Its accepter names
 // the task (sorting.ts template).
@@ -246,8 +243,9 @@ export function list(agent: string, all = false, job?: number) {
 // hq inbox accept: the owner or the CEO (`by`) queues it, in the thread it names (an open one, or new:<project> "name"
 // "done when"), else the one proposed, else the proposer's job's when that's in the proposal's project. A thread of a
 // plan `by` may change only. The answer is the job, or why not, with an HTTP status for a refusal.
-// Its code's word is the accepter's (--code), as hq job's is the queuer's (jobcodes.ts claim).
-export function accept(id: number | string, by: string, o: acceptance.Ask) {
+// Its code's word is the accepter's (--code), as hq job's is the queuer's (jobcodes.ts claim). job: the accepter's own,
+// whose deliverable one drawn here chains after (newthread.ts chainedAfter).
+export function accept(id: number | string, by: string, o: acceptance.Ask, job?: number) {
   const external = typeof id === 'string' ? id : reviewinbox.externalId(id);
   if (typeof external === 'string') return reviewinbox.accept(external, by, o);
   const p = openProposal(external);
@@ -275,27 +273,23 @@ export function accept(id: number | string, by: string, o: acceptance.Ask) {
   const project = target ? findProject(target) : undefined;
   const refused = project && refusal(project, by);
   if (refused) return refused;
-  const thread = acceptedIn({ title }, ask, { by, inherited, code: o.code });
-  if (typeof thread === 'string') return thread;
+  const placed = acceptedIn({ title }, ask, { by, job, inherited, code: o.code });
+  if (typeof placed === 'string') return placed;
+  const { chain, ...thread } = placed;
   const named = claim(o.code, 'thread' in thread ? thread.thread : thread.from ? jobs.threadOf(thread.from) : null);
   if ('refused' in named) return named.refused;
-  return acceptance.queue(p, by, {
-    code: named.code,
-    agent: o.for != null ? String(o.for) : (p.for_agent ?? p.agent),
-    title,
-    size,
-    ...thread,
-  });
+  const agent = o.for != null ? String(o.for) : (p.for_agent ?? p.agent);
+  return { ...acceptance.queue(p, by, { code: named.code, agent, title, size, ...thread }), chain };
 }
 
-// The thread an accepted proposal is queued in (accept), or why not: one drawn for it in the plan, its word for its code
-// checked first so a refused code draws none (jobcodes.ts claim.), else the one
-// named or inherited
+// The thread an accepted proposal is queued in (accept), or why not: one drawn for it in the plan, with its chain's
+// words, its word for its code checked first so a refused code draws none (jobcodes.ts claim.), else the one named or
+// inherited
 function acceptedIn(
   p: { title: string },
   ask: JobThreadAsk,
-  o: { by: string; inherited: number | undefined; code: unknown },
-): { thread: string } | { from?: number } | string {
+  o: { by: string; job: number | undefined; inherited: number | undefined; code: unknown },
+): (({ thread: string } | { from?: number }) & { chain?: string }) | string {
   if (ask.newThread == null || ask.thread != null) {
     const found = threadForJob({ ...ask, title: p.title }, { agent: o.by, job: o.inherited });
     return 'refusal' in found ? found.refusal : found;
@@ -303,11 +297,12 @@ function acceptedIn(
   const project = String(ask.newThread.project ?? '');
   const named = claim(o.code, { project });
   if ('refused' in named) return named.refused;
+  // (its --needs, and the accepter's job)
   const drawn = newThread(
-    { project, name: ask.newThread.name, goal: ask.newThread.goal, task: p.title }, // (task)
-    { agent: o.by },
+    { project, name: ask.newThread.name, goal: ask.newThread.goal, needs: ask.newThread.needs, task: p.title }, // (task)
+    { agent: o.by, job: o.job },
   );
-  return typeof drawn === 'string' ? drawn : { thread: drawn.id };
+  return typeof drawn === 'string' ? drawn : { thread: drawn.id, chain: drawn.chain };
 }
 
 // hq inbox drop: its owner or the CEO drops it, why in a line, which the proposer's job hears if it still runs.

@@ -4,16 +4,18 @@
 // with the tool kept. (the board, 28 Oct)
 import assert from 'node:assert/strict';
 import { paperBox } from './bookmouse.mjs';
+import { desk, now, pressed } from './bookstrip.mjs';
+import { until } from './bookkit.mjs';
 
-// c: book-check.mjs's played store and helpers; desk, now, pressed and until: bookstrip.mjs's
-export function wheelStories(c, h) {
+// c: book-check.mjs's played store and helpers
+export function wheelStories(c) {
   return {
     "controls with a mouse: the strip beside Undo's, its tool's name fading; Ctrl and the wheel step through tools, the wheel and a pinch zoom":
-      browser => wheel(browser, c, h),
+      browser => wheel(browser, c),
   };
 }
 
-async function wheel(browser, c, { desk, now, pressed, until }) {
+async function wheel(browser, c) {
   const { page, errors, done } = await desk(browser, c);
   try {
     const paper = await paperBox(page),
@@ -45,7 +47,7 @@ async function wheel(browser, c, { desk, now, pressed, until }) {
     await page.mouse.wheel(0, -200);
     await until(() => page.locator('#book .bk-pct').isVisible(), 'the zoom off 100%');
     assert.equal(await pressed(page), 'Pen', 'the wheel kept the tool');
-    await pinched(page, mid, until);
+    await pinched(page, mid);
     assert.equal(await pressed(page), 'Pen', 'the pinch kept the tool');
     await c.shot('book-wheel-desktop', page);
     assert.deepEqual(errors, []);
@@ -54,20 +56,13 @@ async function wheel(browser, c, { desk, now, pressed, until }) {
   }
 }
 
-// A trackpad's pinch as Chromium hands it over, a wheel with ctrlKey and no key down: the zoom goes on
-async function pinched(page, at, until) {
+// A trackpad's pinch as Chromium hands it over, a wheel with ctrlKey and no key down: the zoom goes on. (Chromium's own
+// pinch, which comes as a wheel with no notch in it)
+async function pinched(page, at) {
   const pct = () => page.locator('#book .bk-pct').textContent(),
     was = await pct(),
     cdp = await page.context().newCDPSession(page);
-  for (let i = 0; i < 4; i++)
-    await cdp.send('Input.dispatchMouseEvent', {
-      type: 'mouseWheel',
-      x: at[0],
-      y: at[1],
-      deltaX: 0,
-      deltaY: -12.5,
-      modifiers: 2,
-    });
+  await cdp.send('Input.synthesizePinchGesture', { x: at[0], y: at[1], scaleFactor: 1.5, gestureSourceType: 'mouse' });
   await until(async () => (await pct()) !== was, 'the pinch zoomed');
 }
 

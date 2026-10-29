@@ -1,15 +1,17 @@
 // book-check.mjs's story of the pages' row at the paper's foot (shell/ink/bookcontrols.js), on a desktop and a phone:
-// each control's tooltip whole above the row, over none of its buttons, and Send at the row's end, apart from the
-// zoom's %. (the board, 28 Oct)
+// one slim row with the page's name whole in it (on a desktop; a phone's trails off), each control's tooltip whole above the row, over none of its buttons,
+// and Send out of it, its own island at the top of the stack, its tooltip over no other control. (the board, 28 Oct:
 import assert from 'node:assert/strict';
 import { paperBox } from './bookmouse.mjs';
+import { desk } from './bookstrip.mjs';
+import { islandsClearOf } from './bookkit.mjs';
 
 const PHONE = { width: 390, height: 844 };
 
-// c: book-check.mjs's played store and helpers; desk: bookstrip.mjs's, the book open on a desktop
-export function barStories(c, { desk }) {
+// c: book-check.mjs's played store and helpers
+export function barStories(c) {
   return {
-    "the pages' row: its tooltips whole above it, Send apart from the zoom, on a desktop and a phone":
+    "the pages' row: one slim line, its tooltips whole above it, Send at the stack's top, on a desktop and a phone":
       async browser => {
         const opened = await desk(browser, c);
         try {
@@ -44,16 +46,48 @@ async function row(page, c, where) {
   await page.mouse.wheel(0, -200);
   await page.locator('#book .bk-pct').waitFor({ state: 'visible', timeout: 10_000 });
   const bar = await page.locator('#book [data-island=pages]').boundingBox(),
-    send = await page.locator('#book .bk-btn.bk-send').boundingBox(),
-    add = await page.getByRole('button', { name: 'New page', exact: true }).boundingBox(),
-    pct = await page.locator('#book .bk-pct').boundingBox();
-  // Send at the row's right end after New page, the zoom's % with the pages, apart from both
-  assert.ok(bar.x + bar.width - (send.x + send.width) < 8, `${where}: Send ends the row`);
-  assert.ok(pct.x + pct.width <= add.x - 8 && add.x + add.width <= send.x, `${where}: the zoom's % apart from Send`);
+    send = await page.locator('#book [data-island=send] .bk-send').boundingBox();
+  await slim(page, where, bar, send);
   await c.shot(`book-bar-${where}`, page);
-  // every control's tooltip whole on the screen, above the row, clear of it
+  await rowTips(page, where, bar, paper);
+  if (where !== 'desktop') return;
+  await sendTip(page, send);
+  await c.shot('book-bar-desktop-send', page);
+}
+
+// One slim line: the page's name in it whole, the zoom's % with the pages, before New page; Send out of the row, at
+// the top of the stack over the paper's right edge, above Undo
+async function slim(page, where, bar, send) {
+  const undo = await page.locator('#book .bk-undo').boundingBox(),
+    add = await page.getByRole('button', { name: 'New page', exact: true }).boundingBox(),
+    pct = await page.locator('#book .bk-pct').boundingBox(),
+    button = await page.locator('#book [data-island=pages] .bk-btn').first().boundingBox();
+  assert.ok(bar.height <= button.height + 12, `${where}: one row, ${Math.round(bar.height)} px tall`);
+  const name = await page
+    .locator('#book .bk-where span')
+    .evaluate(el => ({ text: el.textContent, shown: el.clientWidth, whole: el.scrollWidth }));
+  // (a phone's row has the paper's width: there a long name trails off, whole in the notebook's pages)
+  if (where === 'desktop')
+    assert.ok(name.whole <= name.shown, `${where}: the page's name whole (${JSON.stringify(name)})`);
+  else assert.ok(name.shown >= 48, `${where}: the page's name shown (${JSON.stringify(name)})`);
+  assert.ok(pct.x + pct.width <= add.x - 8, `${where}: the zoom's % before New page`);
+  assert.equal(await page.locator('#book [data-island=pages] .bk-send').count(), 0, `${where}: no Send in the row`);
+  assert.ok(
+    send.y + send.height < undo.y && Math.abs(send.x + send.width - (undo.x + undo.width)) < 2,
+    `${where}: Send tops the stack`,
+  );
+  // (the strip placed beside the stack by its width, measured whichever way the book came to rest: a phone's opened
+  // from its lip.)
+  const strip = await page.locator('#book .bk-strip [data-island=tools]').boundingBox(),
+    island = await page.locator('#book [data-island=book]').boundingBox();
+  assert.ok(apart(strip, island), `${where}: the strip beside Undo's island, not over it`);
+}
+const apart = (a, b) => a.x + a.width <= b.x || b.x + b.width <= a.x || a.y + a.height <= b.y || b.y + b.height <= a.y;
+
+// Every control's tooltip in the row whole on the screen, above the row, clear of it
+async function rowTips(page, where, bar, paper) {
   const view = page.viewportSize();
-  for (const name of ["The overview: the notebook's pages, and the Shelf", 'Back to 100%', 'New page', 'Send']) {
+  for (const name of ["The overview: the notebook's pages, and the Shelf", 'Back to 100%', 'New page']) {
     const b = await page.locator('#book [data-island=pages]').getByRole('button', { name, exact: true }).boundingBox();
     await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 2 });
     const tip = page.locator('#bk-tip');
@@ -71,8 +105,18 @@ async function row(page, c, where) {
       }),
       `${where}: ${name}'s tooltip whole`,
     );
-    if (name === 'Send') await c.shot(`book-bar-${where}-send`, page);
+    assert.ok(await islandsClearOf(page, t), `${where}: ${name}'s tooltip over no control`);
     await page.mouse.move(paper.x + 40, paper.y + 40);
     await tip.waitFor({ state: 'hidden', timeout: 10_000 });
   }
+}
+
+// Send's tooltip left of it and of the tools beside it, whole on the screen, over no control
+async function sendTip(page, send) {
+  await page.mouse.move(send.x + send.width / 2, send.y + send.height / 2, { steps: 2 });
+  const tip = page.locator('#bk-tip');
+  await tip.waitFor({ state: 'visible', timeout: 10_000 });
+  const t = await tip.boundingBox();
+  assert.ok(t.x >= 0 && t.x + t.width <= send.x - 2, "desktop: Send's tooltip left of it");
+  assert.ok(await islandsClearOf(page, t), "desktop: Send's tooltip over no control");
 }

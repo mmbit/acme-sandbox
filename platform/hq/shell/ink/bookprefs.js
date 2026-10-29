@@ -1,7 +1,7 @@
 // The cog's small pop-up on the tool strip: this device's preferences (shared/review/prefs.js keeps them), each
 // kept the moment it's changed. A press anywhere else, or Escape, closes it.
 import { prefs, setPrefs, HOLDS } from '/__review/prefs.js';
-import { hide } from './bookui.js';
+import { hide, besideStrip } from './bookui.js';
 import { word } from './bookscope.js';
 
 const HOLD_NAMES = { short: 'Short', medium: 'Medium', long: 'Long' };
@@ -27,7 +27,7 @@ export function mountPrefs(cog) {
     if (card) return close();
     hide();
     card = filled();
-    cog.after(card);
+    besideStrip(card, 'bottom');
     cog.setAttribute('aria-expanded', 'true');
     setPressed(true);
     card.querySelector('input')?.focus({ preventScroll: true });

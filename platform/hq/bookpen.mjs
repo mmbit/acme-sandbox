@@ -7,8 +7,8 @@
 // row. Each asserts what the board sees and what the store keeps.
 import assert from 'node:assert/strict';
 import { freePage, paperBox, pasteGreen, savedWhere } from './bookmouse.mjs';
+import { MINI, chromiumPen, until } from './bookkit.mjs';
 
-const MINI = { width: 1133, height: 744 };
 // how long a story waits to be sure something didn't happen (the page is saved this soon after a change)
 const QUIET_MS = 1200;
 
@@ -212,28 +212,7 @@ async function onMini(browser, c) {
   await page.goto(`${c.base}/?intro=0`);
   await page.waitForSelector('#book .bk-desk', { timeout: 30_000 });
   await c.settled(page, 'open');
-  return { page, pen: await pencil(page), errors, done: () => context.close() };
-}
-// The Pencil as Chromium's own pen: down at the first point, along the rest, and up at the last
-async function pencil(page) {
-  const cdp = await page.context().newCDPSession(page);
-  const send = (type, [x, y], down) =>
-    cdp.send('Input.dispatchMouseEvent', {
-      type,
-      x,
-      y,
-      button: down || type === 'mouseReleased' ? 'left' : 'none',
-      buttons: down ? 1 : 0,
-      clickCount: 1,
-      pointerType: 'pen',
-      force: down ? 0.5 : 0,
-    });
-  const stroke = async points => {
-    await send('mousePressed', points[0], true);
-    for (const p of points.slice(1)) await send('mouseMoved', p, true);
-    await send('mouseReleased', points.at(-1), false);
-  };
-  return { stroke, tap: at => stroke([at]) };
+  return { page, pen: chromiumPen(await page.context().newCDPSession(page)), errors, done: () => context.close() };
 }
 // A tool's button tapped with a finger, unless it's the one in hand (pressed again, it opens its card over the paper
 // beside the strip.)
@@ -275,8 +254,3 @@ const onScreen = (page, free, [x, y]) =>
     [free.w, x, y],
   );
 const stored = (c, free) => c.pages.find(p => p.id === free.id);
-async function until(read, what) {
-  for (const end = Date.now() + 3000; Date.now() < end; await new Promise(r => setTimeout(r, 100)))
-    if (await read()) return;
-  throw new Error(`not ${what}`);
-}

@@ -19,14 +19,14 @@ export const style = 'any';
 const HOLD = 4.2;          // seconds the tour stays at each stop
 const SPARKS = [MAG, GOLD, TEAL, CORAL, VIOLET, WHITE];
 // One scene at a time: its state lives here, set up afresh by createScene
-let gl, R, S, world, shell, name, screen, labels, lit, camDt, lost, fit, lastFrameSeconds; // (lastFrameSeconds)
+let gl, R, S, world, shell, name, screen, labels, lit, camDt, lost, fit, lastPaintAt;
 
 // A scene, or a throw where the device has no WebGL2 (the shell then keeps the view it has).
 // brand: the company's name for the rim; settings.intro: the rooms print themselves in, one after another.
 export function createScene({ canvas: cv, world: w, brand, settings, shell: s }) {
   gl = context(cv);
   if (!gl) throw new Error('holo: this device has no WebGL2');
-  R = createRenderer(gl); world = w; shell = s; name = brand.name; screen = cv; lit = null; camDt = 0; lost = false; lastFrameSeconds = null;
+  R = createRenderer(gl); world = w; shell = s; name = brand.name; screen = cv; lit = null; camDt = 0; lost = false; lastPaintAt = null;
   labels = canvas(1, 1);
   view.chrome = s.chrome; reset();
   S = { t: 0, rooms: null, people: new Map(), mascots: null, flights: [], parcels: [], parts: [], pulses: [], tags: [], sweep: 1.2, half: 0.27, glitch: 0, docked: 0, rimTaps: [], hour: 12, day: 1, party: 0, requests: 0, holidays: new Set(), weather: { rain: 0, snow: 0, fog: 0, cloud: 0 } };
@@ -157,9 +157,9 @@ function draw(t) {
 // Paints the last frame again for shared/review's screenshot (snapshot:draw), which copies the canvas between frames,
 // where WebGL kept nothing. Unlike draw() it leaves the camera's step and the render scale's timing out, so the photo
 // moves nothing
-function repaint() { if (!lost && lastFrameSeconds !== null) paint(lastFrameSeconds); }
+function repaint() { if (!lost && lastPaintAt !== null) paint(lastPaintAt); }
 function paint(t) {
-  lastFrameSeconds = t; matrices();
+  lastPaintAt = t; matrices();
   for (const P of S.people.values()) P.hit = P.room === S.core || built(S, P.room) === 1 ? project(agentAt(S, P)) : null;
   for (const c of S.mascots) c.hit = project(add(mascotAt(c), [0, 0.08, 0]));
   hologram(S, t, view.eye, view.w * view.h < 600_000 ? 0.5 : 1);

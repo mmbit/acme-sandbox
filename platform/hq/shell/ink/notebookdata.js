@@ -40,6 +40,7 @@ export const createPage = (dev, notebook) => ask(dev, '/api/notebooks/pages/crea
 export const orderPages = (dev, notebook, pages) => ask(dev, '/api/notebooks/pages/order', null, { notebook, pages });
 export const archivePage = (dev, id, archived) => ask(dev, '/api/notebooks/pages/archive', null, { id, archived });
 export const titlePage = (dev, id, title) => ask(dev, '/api/notebooks/pages/title', null, { id, title });
+export const zoomPage = (dev, id, shape, zoom) => ask(dev, '/api/notebooks/pages/zoom', null, { id, shape, zoom });
 // A page sent with its 10 seconds to undo, or taken back in them: the page, sending, then sent
 export const sendPage = (dev, id) => ask(dev, '/api/notebooks/pages/send', null, { id });
 export const undoSend = (dev, id) => ask(dev, '/api/notebooks/pages/undo', null, { id });

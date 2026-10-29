@@ -1,5 +1,7 @@
-// A Notebook page's groups as plain numbers (bookgroups.js): a group's box, which group a new line or box joins, what
-// a scratch-out deletes, and what a page's change asks of the store. No DOM, so node tests it (bookgroupmath.test.js).
+// A Notebook page's groups as plain numbers (bookgroups.js): which group a new line or box joins, what a scratch-out
+// deletes, and what a page's change asks of the store (a group's box: the store's own, notebookstack.js). No DOM, so
+// node tests it (bookgroupmath.test.js).
+import { boxOf } from './notebookstack.js';
 
 // a line starting this near (page px) outside a group's box starts in it
 export const INSIDE_PX = 12;
@@ -8,24 +10,10 @@ export const INSIDE_PX = 12;
 export const NEAR = { ms: 4000, px: 72 };
 // a scratch-out deletes a group it covers this much of
 const COVERS = 0.5;
-// a typed box's line, as the store measures it (notebookparts.ts)
-const LINE_PX = 24;
 
 const KINDS = ['ink', 'texts', 'pictures'];
 export const emptyParts = () => ({ ink: [], texts: [], pictures: [] });
 
-// The box round a group's elements in page px, { x, y, w, h }, as the store works it out; null for none
-export function boxOf({ ink = [], texts = [], pictures = [] }) {
-  const boxes = [
-    ...ink.flatMap(s => s.points.map(([x, y]) => ({ x: x - s.size / 2, y: y - s.size / 2, w: s.size, h: s.size }))),
-    ...texts.map(t => ({ x: t.x, y: t.y, w: t.w, h: LINE_PX * t.text.split('\n').length })),
-    ...pictures.map(c => ({ x: c.x, y: c.y, w: c.w, h: c.h })),
-  ];
-  if (!boxes.length) return null;
-  const x = Math.min(...boxes.map(b => b.x)),
-    y = Math.min(...boxes.map(b => b.y));
-  return { x, y, w: Math.max(...boxes.map(b => b.x + b.w)) - x, h: Math.max(...boxes.map(b => b.y + b.h)) - y };
-}
 // One element's box (kind: 'ink' | 'texts' | 'pictures')
 export const elementBox = (kind, el) => boxOf({ [kind]: [el] });
 // Where an element starts: a line's first point, a box's top-left, a picture's middle
@@ -97,6 +85,22 @@ export function changesOf(base, now) {
   }
   return { edits, deletes };
 }
-// An element as the store keeps it, for comparing (what HQ adds to one to draw it left out)
-export const keyOf = el => JSON.stringify(el, (k, v) => (k === 'g' || k === 'img' || k === 'url' ? undefined : v));
+// An element as the store keeps it, for comparing (what HQ adds to one to draw it left out; one drawn to fit this
+// screen's paper, the one it was drawn from: bookscrapfit.js)
+export const keyOf = el =>
+  JSON.stringify(el.fit ?? el, (k, v) => (k === 'g' || k === 'img' || k === 'url' ? undefined : v));
+// Whether an element of a page is held off it while it lands (bookarrive.js)
+export const landing = (page, el) => !!page.landing?.size && page.landing.has(keyOf(el));
 const same = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
+// Elements' indexes in their group as the store keeps it (each matched once, in order: bookgroups.js's split.)
+export function indexesIn(g, els) {
+  const picks = {};
+  for (const [kind, list] of Object.entries(els)) {
+    const left = g.base[kind].map((key, i) => ({ key, i }));
+    picks[kind] = list.flatMap(el => {
+      const at = left.findIndex(x => x.key === keyOf(el));
+      return at < 0 ? [] : left.splice(at, 1).map(x => x.i);
+    });
+  }
+  return picks;
+}

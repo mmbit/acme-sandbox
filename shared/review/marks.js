@@ -16,10 +16,9 @@ const SNIP_MIN = { w: 240, h: 150 };
 const SCRIBBLE_PX = 10;
 
 // The open mark's lines where its element is now: drawn on the screen as it was at its first line, they move as the
-// element has moved since (the page scrolled under a finger, or a box of it did)
-export function openLines(r, lines = r.strokes) {
-  const m = r.mark,
-    then = m?.element?.rect,
+// element has moved since (the page scrolled under a finger, or a box of it did). m: another mark (a call's held one)
+export function openLines(r, lines = r.strokes, m = r.mark) {
+  const then = m?.element?.rect,
     el = m?.el;
   if (!then || !el?.isConnected) return lines;
   const now = el.getBoundingClientRect(),
@@ -38,12 +37,19 @@ export function intoMark(r, stroke) {
 // The page's ink layer: the mark being made, and nothing else (rule zero, the board's, 2026-10-27: strokes live only
 // while a note is being made; once it's saved or let go they're gone from the page at once, and live on only in its
 // snip). This draws only the open mark's lines and those waiting for the next (settle.js), never a note in the book:
-// the book keeps no lines of a note to draw (booknotes.ts), and no tab, screen or call has any to bring back.
+// the book keeps no lines of a note to draw (booknotes.ts), and no tab, screen or call has any to bring back. On a call
+// the board's marks the call's agent hasn't had its turn on yet stay too (r.held, callnotes.js): they're for the agent,
+// and go once its turn is done (the board, call 161).
 export function paint(r, lines = r.strokes) {
   const c = r.inkCanvas,
     g = inkjs.fit(c);
   const open = r.mark?.filed ? [] : lines === r.strokes ? openLines(r, lines) : lines;
   const shown = [];
+  for (const h of r.held ?? []) {
+    const held = openLines(r, h.lines, h.mark);
+    inkjs.draw(g, held, { halo: true });
+    shown.push(...held);
+  }
   if (open.length) {
     inkjs.draw(g, open, { halo: true });
     shown.push(...open);

@@ -42,9 +42,10 @@ const routinesFixture = await import('./schedule.fixture.ts');
 const outlooks = await import('./outlooks.ts');
 const forecast = await import('./forecast.ts');
 
+// (wakes, sorts and proposals too: a job's id comes back after its delete, and a hold left on the old one would hold it;
 const reset = () =>
   db.exec(
-    'delete from jobs; delete from prs; delete from threads; delete from project_notes; delete from schedule_runs; delete from messages',
+    'delete from jobs; delete from prs; delete from threads; delete from project_notes; delete from schedule_runs; delete from messages; delete from wakes; delete from sorts; delete from proposals',
   );
 const thread = (id: number) =>
   (db.prepare('select thread from jobs where id = ?').get(id) as { thread: string | null }).thread;
@@ -54,6 +55,16 @@ const started = (slug: string, project = 'game') => {
   return (t as { id: string }).id;
 };
 const inThread = (agent: string, id: string) => h.start({ agent, thread: id });
+// A job in no deliverable from before the company asked for them, running: sorted then, so HQ doesn't hold it for the
+// CEO to place (sorting.ts holdLoose)
+const legacy = async (j: Parameters<typeof h.queue>[0]) => {
+  const id = h.queue(j);
+  db.prepare("insert into wakes (job, kind, arg, since, met) values (?, 'sorted', '', ?, 'sorted before')").run(
+    id,
+    Date.now(),
+  );
+  return h.claimJob(id);
+};
 const handOff = (from: Running, body: Record<string, unknown> = {}) =>
   h.agent('job', from.token, { agent: 'moss', title: 'Next step', prompt: 'Do it.', ...body });
 
@@ -98,7 +109,7 @@ test('a hand-off stays in its thread, --thread sends it to another or starts one
 test('a job with no open thread to inherit must name one, and the refusal lists the open threads', async () => {
   reset();
   const levels = started('levels');
-  const loose = await h.start({ agent: 'wren' });
+  const loose = await legacy({ agent: 'wren' });
   const refused = await handOff(loose);
   assert.equal(refused.status, 409);
   assert.match(refused.body.error, /no open deliverable to inherit/);
@@ -125,7 +136,7 @@ test('a job with no open thread to inherit must name one, and the refusal lists 
 
 test('empty project configuration permits unthreaded work but malformed YAML refuses it', async () => {
   reset();
-  const loose = await h.start({ agent: 'wren' });
+  const loose = await legacy({ agent: 'wren' });
   const file = `${h.repo}/company/projects.yaml`;
   try {
     writeFileSync(file, 'requireThread: [');
@@ -200,6 +211,46 @@ test('the review loop, an answer and a message take the thread of the job they c
   assert.equal(thread(jobs.createJob({ agent: 'moss', title: 'Backup missed', prompt: 'x' }).id), null);
 });
 
+test("a records pull request's steps follow its job into its thread, open or done, off the CEO's desk", async () => {
+  reset();
+  // job n's records pull request (the worker's profile/<n>, its profile lines): the author's fix and the ruling on it
+  const records = (number: number, job: number) => {
+    h.storedPr(number, job, 'open');
+    db.prepare('update prs set branch = ? where number = ?').run(`profile/${job}`, number);
+    const fix = jobs.createJob({
+      agent: 'bolt',
+      title: 'Bringing up to date',
+      prompt: 'x',
+      kind: 'work',
+      branch: `profile/${job}`,
+      pr: number,
+      stage: 'fix',
+    }).id;
+    const ruling = jobs.createJob({
+      agent: 'quill',
+      title: `PR #${number}`,
+      prompt: 'x',
+      kind: 'consolidate',
+      pr: number,
+    });
+    return [fix, ruling.id];
+  };
+  const [open, closed] = [started('records-open'), started('records-done')];
+  const [one, two] = [open, closed].map(thread => h.pastJob({ agent: 'bolt', title: 'Done', thread }));
+  assert.deepEqual(plan.done(closed, 'wren'), { ok: true });
+  const steps = [...records(911, one), ...records(912, two)];
+  assert.deepEqual(steps.map(thread), [open, open, closed, closed]);
+  // a job from before deliverables: its records pull request's steps stay in none, as its own work is
+  const old = records(913, h.pastJob({ agent: 'bolt', title: 'Old' }));
+  assert.deepEqual(old.map(thread), [null, null]);
+  const desk = projects.listProjectBoard().unsorted.map(j => j.id);
+  assert.deepEqual(
+    steps.filter(id => desk.includes(id)),
+    [],
+    "the CEO's desk holds none of them",
+  );
+});
+
 // (a routine is a project like any other, each run a thread of its own)
 test("a schedule entry's runs are threads of its routine's project, which the schedule keeps", async t => {
   reset();
@@ -209,10 +260,10 @@ test("a schedule entry's runs are threads of its routine's project, which the sc
   // runs recorded before their routine had a project: one queued, one running, one done with nothing to merge, and one
   // in review with its review loop
   const queued = jobs.createJob({ agent: 'bolt', title: 'Log scan (2026-10-15)', prompt: 'x' }).id;
-  const running = await h.start({ agent: 'bolt', title: 'Log scan (2026-10-14)' });
-  const ended = await h.start({ agent: 'bolt', title: 'Log scan (2026-10-13)' });
+  const running = await legacy({ agent: 'bolt', title: 'Log scan (2026-10-14)' });
+  const ended = await legacy({ agent: 'bolt', title: 'Log scan (2026-10-13)' });
   assert.equal((await h.finish(ended)).status, 200);
-  const reviewed = await h.start({ agent: 'bolt', title: 'Log scan (2026-10-12)' });
+  const reviewed = await legacy({ agent: 'bolt', title: 'Log scan (2026-10-12)' });
   const pr = { pr: 52, branch: `job/${reviewed.id}`, sha: 'b'.repeat(40), files: ['platform/coordinator/src/jobs.ts'] };
   assert.equal((await h.finish(reviewed, pr)).status, 200);
   const loop = (db.prepare('select id from jobs where pr = 52').all() as { id: number }[]).map(j => j.id);
@@ -365,7 +416,7 @@ test("an owner's thread and HQ's other one-task threads keep a failed task's thr
 
 test("threads: drawn, listed and closed through hq plan, by the project's owner or the CEO", async () => {
   reset();
-  const lead = await h.start({ agent: 'wren' });
+  const lead = await legacy({ agent: 'wren' });
   const made = await h.agent('plan/thread', lead.token, {
     project: 'game',
     name: 'Boss fight! Final',
@@ -412,7 +463,7 @@ test("threads: drawn, listed and closed through hq plan, by the project's owner 
       ['game/boss-fight-final-2', 0],
     ],
   );
-  const other = await h.start({ agent: 'bolt' });
+  const other = await legacy({ agent: 'bolt' });
   const refused = await h.agent('plan/done', other.token, { thread: 'game/boss-fight-final' });
   assert.equal(refused.status, 400, "not bolt's");
   assert.match(refused.body.error, /propose it to wren with hq propose --project game/);
@@ -571,7 +622,11 @@ test("GET /api/projects: the board's projects, their threads and jobs, and the o
     { id: 'play', name: 'Play', cover: 'covers/play.png', owner: 'wren', style: 'pixel' },
     { id: 'trade', name: 'Trade' },
   ]);
-  assert.deepEqual(r.body.groups, { recurring: { cover: 'covers/recurring.png' } }, 'the side groups as declared');
+  assert.deepEqual(
+    r.body.groups,
+    { recurring: { cover: 'covers/recurring.png' }, unsorted: { name: "Juno's desk" } },
+    "the side groups as declared, the work in none the CEO's desk by the CEO's name",
+  );
   const game = r.body.projects[0];
   // (its names the board's, the agent's words until they're made: plainnames.test.ts.)
   assert.deepEqual(
@@ -697,7 +752,7 @@ test("a cover the board's browser holds is checked, never sent again, until it's
 
 test('hq plan thread, hq job --thread, hq project say and hq plan done, end to end', async () => {
   reset();
-  const lead = await h.start({ agent: 'wren' });
+  const lead = await legacy({ agent: 'wren' });
   const hq = async (...args: string[]) => h.hq(lead, ...args);
   assert.match(
     (await hq('plan', 'thread', 'game', 'Boss fight', 'You beat the boss')).out,
@@ -728,7 +783,7 @@ test('hq plan thread, hq job --thread, hq project say and hq plan done, end to e
   assert.equal(loose.status, 409);
   assert.match(
     loose.body.error,
-    /belongs to the project its work is for.*holds only the CEO's own work.*game\/boss-fight/s,
+    /belongs to the project its work is for.*holds only the CEO's own running of the company.*game\/boss-fight/s,
   );
   assert.equal(
     (db.prepare('select count(*) n from jobs where title = ?').get('A recurring check on the shop') as { n: number }).n,

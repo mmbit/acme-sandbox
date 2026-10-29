@@ -1,7 +1,8 @@
 // node --test platform/hq/shell/ink/bookwords.test.js
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { TEXT_MAX, boxesOf, downToClear, tidy } from './bookwords.js';
+import { boxesOf, downToClear, tidy } from './bookwords.js';
+import { TEXT_MAX } from './notebookparts.js';
 
 test('pasted words come tidy: one kind of break, no stray spaces, a blank line at most, indents kept', () => {
   const pasted = '\r\n\u00a0Title\u200b  \r\n\r\n\r\n\r\nFirst  line\tof it\u2028  indented\n\n\n';

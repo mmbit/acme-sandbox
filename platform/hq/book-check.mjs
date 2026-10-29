@@ -28,6 +28,12 @@
 // Search (bookfind.mjs): a word said while drawing yesterday found as it's written, an answer by its words, and the
 // find opening its page at the note, its number lit. On a desktop, the caret in
 // the field, Search put away with the book and back with it.
+// Things arriving on a Notebook page (bookarrival.mjs): a scrap from the store and a picture pasted each land once,
+// ending where the page draws them, on the iPad mini and a desktop.
+// A page's Send (booksend.mjs): a paper plane, the book left on the page under it, a fresh one only after the last;
+// sent pages stamped red with their day and time; no Send on a call's own page while it's on.
+// The tool strip's cards (bookcards.mjs): the preferences and the colours whole on the iPad mini, upright, on its side
+// and on a screen short enough that the strip scrolls, and on a desktop.
 // The tips book (booktips.mjs): the Tips control opens it flat in the middle, the contents beside the tip, every
 // tip changed at once, put away.
 // The pin (bookpin.mjs): away as HQ loads on a desktop, an iPad and a phone; summoned by opening the book or the book's
@@ -61,19 +67,23 @@ import { fulfilPart } from '../../shared/review/parts.mjs';
 import { wetDry, STILL } from '../../shared/review/inkcheck.mjs';
 import { callStory } from './bookcall.mjs';
 import { notesPageStories } from './booknotespage.mjs';
+import { agentPageStories } from './bookagentpage.mjs';
 import { walkStory } from './bookwalk.mjs';
 import { findStory, keptStory } from './bookfind.mjs';
 import { writtenStory } from './bookwritten.mjs';
 import { mouseStories } from './bookmouse.mjs';
+import { zoomKeptStories } from './bookzoomkept.mjs';
 import { drawStories } from './bookdraw.mjs';
 import { highlightStories } from './bookhighlight.mjs';
 import { spaceStories } from './bookspace.mjs';
 import { deskStories, notPaper, inkPixels } from './bookdesk.mjs';
 import { frameStories } from './bookframe.mjs';
 import { openStories } from './bookopen.mjs';
+import { underStories } from './bookunder.mjs';
 import { bodyStories } from './bookbody.mjs';
 import { inkStory, nothingDrawn } from './bookink.mjs';
 import { shareStories } from './bookshare.mjs';
+import { longShareStories } from './booksharelong.mjs';
 import { pinStory, pinScreensStory } from './bookpin.mjs'; // (pinScreensStory: job #20358)
 import { tipsStory } from './booktips.mjs';
 import { chromeStories } from './bookchrome.mjs';
@@ -85,6 +95,14 @@ import { answerStories } from './bookanswers.mjs'; // (Ink answers any note)
 import { pickStories } from './bookpicks.mjs'; // (circle a version to pick it)
 import { pasteStories } from './bookpaste.mjs';
 import { stripStories } from './bookstrip.mjs';
+import { cardStories } from './bookcards.mjs';
+import { strayStories } from './bookstray.mjs';
+import { sendStories } from './booksend.mjs';
+import { grabStories } from './bookgrab.mjs';
+import { backdropStories } from './bookbackdrop.mjs';
+import { arrivalStories } from './bookarrival.mjs';
+import { wheelStories } from './bookwheel.mjs';
+import { barStories } from './bookbar.mjs';
 import { handStories } from './bookhand.mjs';
 import { micStories } from './bookmic.mjs';
 import { webkitStories } from './bookwebkit.mjs';
@@ -93,11 +111,13 @@ import { notebookPlay } from './shell/ink/notebookplay.js';
 import { notebookStories } from './booknotebook.mjs';
 import { notebookAskStories } from './booknotebookasks.mjs';
 import { notebookRowStories } from './booknotebookrow.mjs';
+import { scrapsClearStories } from './booknotebookclear.mjs';
 import { notebookSelectStories } from './booknotebookselect.mjs';
 import { moveStories } from './bookmove.mjs';
 import { newestStories } from './booknewest.mjs';
 import { scrapStories, savedScrap } from './bookscrap.mjs'; // (the pin flow)
-import { talked } from './bookvoice.mjs';
+import { talked, voiceLine, hush, SAID } from './bookvoice.mjs';
+import { DESKTOP, MINI, pressAlong, ui } from './bookkit.mjs';
 import { groupsOf } from './bookplayed.mjs';
 // (LOOKS: job #19359)
 import { morningStory, everyWidthStory, LOOKS } from './bookfilm.mjs';
@@ -350,26 +370,6 @@ function keepScrap(id, type, bytes) {
   return { file, url: scrapUrl({ file }) };
 }
 
-// ---- a stand-in voice line: the words come as the microphone's audio does (hushed: the board says nothing)
-// (hushed)
-const SAID = ['Make this', 'Make this headline shorter'];
-let hushed = false;
-function voiceLine(ws) {
-  let frames = 0,
-    said = 0;
-  ws.onMessage(m => {
-    if (typeof m !== 'string') {
-      frames += m.length;
-      if (!hushed && said < 1 && frames > 16000)
-        ws.send(JSON.stringify({ type: 'heard', text: SAID[said++], partial: true }));
-      return;
-    }
-    if (JSON.parse(m).type !== 'end') return;
-    ws.send(JSON.stringify({ type: 'heard', text: hushed ? '' : SAID[1], partial: false }));
-    ws.send(JSON.stringify({ type: 'done' }));
-  });
-}
-
 // ---- a stand-in handwriting reader (handwriting.ts): any ink reads as its words, after ms (or refused: [status, why]);
 // the inks it was given kept. Its asks aren't the book's posts: one comes a moment after any mark's lines.
 const reader = { words: '', ms: 0, inks: [], refused: null };
@@ -389,9 +389,8 @@ function penOnOpen() {
   }).observe(document, { subtree: true, childList: true, attributes: true, attributeFilter: ['class'] });
 }
 // HQ held like an iPad mini in a browser, its coordinator and voice line played. more: the context's options (pen:
-// penOnOpen's; the microphone allowed unless they say otherwise), and notebooks, the Notebook's seed (notebookplay.js; none: My Notebook with one blank page), played on
-// context.notebook.
-// (notebooks)
+// penOnOpen's; the microphone allowed unless they say otherwise), and notebooks, the Notebook's seed (notebookplay.js;
+// none: My Notebook with one blank page), played on context.notebook.
 async function hqIn(browser, viewport = IPAD_MINI.viewport, { notebooks, pen = true, ...more } = {}) {
   const context = await browser.newContext({
     ...IPAD_MINI,
@@ -452,7 +451,7 @@ async function hqIn(browser, viewport = IPAD_MINI.viewport, { notebooks, pen = t
       return notebookRoute(r, url, context.notebook);
     }
     // Voice uploads contain audio bytes, while the routes below read JSON.
-    if (url.pathname === '/api/voice') return r.fulfill({ json: { text: SAID[1] } });
+    if (url.pathname === '/api/voice') return r.fulfill({ json: { text: SAID } });
     const body =
       r.request().method() === 'POST' && url.pathname !== '/api/book/scrap' ? r.request().postDataJSON() : null;
     if (url.pathname === '/api/org') return r.fulfill({ json: org });
@@ -526,14 +525,21 @@ function carryNotes(play) {
 // stands in for them.
 const unseen = () => Buffer.from(SNIP.split(',')[1], 'base64');
 // A live call's notes page, as the store makes it at pickup (ink/callnotes.ts openFor): a new page of My Notebook,
-// titled for the call, the same page at the call's every ask; each play's own, as each call's page is
+// titled for the call, the same page at the call's every ask; each play's own, as each call's page is. Today's book
+// lists it as the store's does (one table: kind 'call', in My Notebook), so the Pencil's first mark on the call finds it
+// there; an earlier play's page of that call number is another call's, gone from the list.
 const callPages = new WeakMap();
 function callPage(play, { call }) {
   const mine = play.route('/api/notebooks').shelf.find(n => n.kind === 'mine').id;
   const made = callPages.get(play) ?? callPages.set(play, new Map()).get(play);
   if (!made.has(call)) made.set(call, play.route('/api/notebooks/pages/create', {}, { notebook: mine }).id);
   const page = play.route('/api/notebooks/pages/title', {}, { id: made.get(call), title: 'Call with Lyra, 15:34' });
-  return { notebook: mine, page, day: page.created.slice(0, 10) };
+  const day = page.created.slice(0, 10),
+    was = pages.findIndex(p => p.kind === 'call' && p.call === call);
+  if (was >= 0) pages.splice(was, 1);
+  // (seeded: nothing of the old book's to put on it, the Notebook's groups mirrored onto it)
+  pages.push({ id: page.id, day, kind: 'call', call, label: page.label, notebook: mine, seeded: true });
+  return { notebook: mine, page, day };
 }
 // The Notebook's routes answered by a story's play (notebookplay.js): a refusal as the coordinator's, the posts kept
 // (a picture's as its type and size).
@@ -557,9 +563,7 @@ function notebookRoute(r, url, play) {
   }
 }
 // ---- the book beside HQ's page, a story at a time, in a browser: the failures counted, each one told
-const MINI = { width: 1133, height: 744 },
-  MINI_PORTRAIT = { width: 744, height: 1133 },
-  DESKTOP = { width: 1440, height: 900 },
+const MINI_PORTRAIT = { width: 744, height: 1133 },
   PHONE = { width: 390, height: 844 };
 const SETTLE_MS = 700; // the book's slide (260 ms) and HQ laying itself out again after it
 
@@ -580,12 +584,15 @@ function STORIES() {
     // (the Notebook's page: its groups, Send, the store's changes and answers, on an iPad mini, a desktop and a phone.
     ...notebookStories({ hqIn, base, settled, shot, noErrorsIn, shots }),
     ...notebookRowStories({ hqIn, base, settled, shot, noErrorsIn, shots }),
+    ...scrapsClearStories({ hqIn, base, settled, shot, noErrorsIn, snipPng }),
     ...notebookSelectStories({ hqIn, base, settled, shot, noErrorsIn, shots }),
     ...notebookAskStories({ hqIn, base, settled, shot, noErrorsIn, shots, org }),
     // (one way to move things: the pen draws on a scrap, Select moves a group as one.)
     ...moveStories({ hqIn, base, settled, shot, noErrorsIn, shots }),
     // (a note sent from review mode finds the board.)
     ...newestStories({ hqIn, base, settled, shot, noErrorsIn, shots, org }),
+    // (each page's zoom kept, on the played store.)
+    ...zoomKeptStories({ hqIn, base, notebook, pages, settled }),
     // (the book's tools with a mouse on a desktop.)
     ...mouseStories({
       hqIn,
@@ -604,11 +611,18 @@ function STORIES() {
     }),
     // (the board's controls: the strip, the mouse's, a finger's and the Pencil's bindings, the preferences, the voice
     // note held.)
-    'a voice upload leaves the book check ready for a JSON request': voiceUpload,
     ...stripStories({ hqIn, base, store, pages, notebook, shot, settled }),
+    ...cardStories({ hqIn, base, store, pages, notebook, shot, settled }),
+    ...strayStories({ hqIn, base, settled }),
+    ...sendStories({ hqIn, base, settled, shot, noErrorsIn }),
+    ...grabStories({ hqIn, base, settled }),
+    ...backdropStories({ hqIn, base, shot, settled }),
+    ...arrivalStories({ hqIn, base, settled, settle: SETTLE_MS, shot, noErrorsIn }),
+    ...wheelStories({ hqIn, base, store, pages, notebook, shot, settled }),
+    ...barStories({ hqIn, base, store, pages, notebook, shot, settled }),
     ...handStories({ hqIn, base, store, pages, notebook, shot, settled }),
-    // (the microphone asked for only at a mic's tap.)
-    ...micStories({ hqIn, base, MINI, settled, penOn, ring, noErrorsIn, notebook, pages }),
+    // (the microphone asked for only at a mic's tap)
+    ...micStories({ hqIn, base, reviewJs, posts, settled, ring, noErrorsIn, notebook, pages }),
     ...webkitStories({ hqIn, base, store, pages, notebook, shot, settled }),
     // (handwriting edited with the pen and the mouse: a word struck out, a sentence sliced open.)
     ...editStories({ hqIn, base, store, pages, notebook, shot, settled, noErrorsIn }),
@@ -630,6 +644,7 @@ function STORIES() {
     }),
     // (a call's notes page: the agent's scraps landing on it, the book opening there where it fits.)
     ...notesPageStories({ hqIn, base, shot, settled, noErrorsIn, MINI, DESKTOP, PHONE }),
+    ...agentPageStories({ hqIn, base, shot, settled, noErrorsIn, DESKTOP }),
     // (the drawing tools: the eraser, shapes, Select, Undo and Redo, with a mouse and the Pencil.)
     ...drawStories({ hqIn, base, store, pages, notebook, shot, settled, settle: SETTLE_MS }),
     ...highlightStories({ hqIn, base, pages, notebook, shot, settled }),
@@ -670,12 +685,13 @@ function STORIES() {
       PHONE,
       DESKTOP,
     }),
-    // (moving about the book's pages with a mouse: the overview, the zoom, the pan, New page, the heading.)
-    ...deskStories({ hq, storedPages, shot, settle: SETTLE_MS, hqIn, base, store, pages, settled }),
+    // (moving about the book's pages with a mouse: the overview, the zoom, the pan, New page.)
+    ...deskStories({ hq, storedPages, shot, settle: SETTLE_MS, hqIn, base, settled }),
     // (the book as an object: its shadow, its floating controls, its spine let go, its cover and name, the pairing
     // card at any width.)
     ...frameStories({ hq, shot, settled, settle: SETTLE_MS }),
     ...openStories({ hq, shot, settled, settle: SETTLE_MS }),
+    ...underStories({ hq, shot, settled, settle: SETTLE_MS }),
     // (the book's body: its handle, where it's let go, the table under it, its open and its turns.)
     ...bodyStories({ hq, shot, settled, settle: SETTLE_MS }),
     // (the book's chrome: the column, the foot and the overview, the pages' names, Safari's strip.)
@@ -775,11 +791,16 @@ function STORIES() {
           assert.ok(seen.book.left <= 40 && seen.book.width >= 680, `the paper: ${JSON.stringify(seen.book)}`);
           onScreen(seen.rail, MINI_PORTRAIT, 'the rail');
           await shot('book-portrait', page);
-          await drag(page, await spineAt(page), 400, 14, undefined, HOLD_MS);
+          // (upright, the spread's cover's edge lies past the screen's left: a finger grips it at the screen's edge,
+          // book.css.)
+          await drag(page, 12, 400, 14, undefined, HOLD_MS);
           await settled(page, 'open');
+          // (HQ's page lays itself out beside the book a moment after the book has settled.)
+          await page.waitForFunction(was => document.body.getBoundingClientRect().width < was, start.page, {
+            timeout: 30_000,
+          });
           seen = await sight(page);
           assert.equal(seen.mode, 'open');
-          assert.ok(seen.page < start.page, `the page stayed ${seen.page} px wide`);
           beside(seen);
           onScreen(seen.rail, MINI_PORTRAIT, 'the rail');
           hqWhole(seen);
@@ -944,7 +965,7 @@ function STORIES() {
     "the pin comes as the book opens, a note's sheet and the menu name one owner; dropped, it stays": browser =>
       inLooks(browser, (look, shot) =>
         pinStory({
-          ...{ browser, hqIn, base, MINI, settled, shot, posts, pages, org, penOn, ring, noErrorsIn, look },
+          ...{ browser, hqIn, base, MINI, settled, shot, posts, pages, org, ring, noErrorsIn, look },
         }),
       ),
     "the pin away as HQ loads on a desktop and a phone, summoned and put away, beside an upright iPad's book too; an artifact keeps its own":
@@ -963,7 +984,6 @@ function STORIES() {
       notes,
       snips,
       org,
-      penOn,
       ring,
       inkAt,
       shot,
@@ -975,13 +995,12 @@ function STORIES() {
       base,
       MINI,
       settled,
-      penOn,
       ring,
       inkAt,
       posts,
       shot,
       noErrorsIn,
-      hush: on => (hushed = on),
+      hush,
     }),
     'a picture pasted in the book lands taped, and one dragged in lands where it was let go': async browser => {
       const { page, errors, done } = await hqOnStore(browser);
@@ -1072,13 +1091,24 @@ function STORIES() {
     // (handwriting read into type, bookwritten.mjs)
     // (a page shared by its corner, the paper's feel)
     ...shareStories({ hqIn, base, store, pages, notebook, shot, settled, noErrorsIn, SNIP }),
+    ...longShareStories({
+      hqIn,
+      base,
+      pages,
+      notebook,
+      settled,
+      noErrorsIn,
+      SNIP,
+      TALL: snipPng(600, 2400),
+      GROWN: snipPng(600, 1200),
+    }),
     // (into its post-it, saved as a scrap)
     'handwriting on the page read into type: into its post-it, saved as written, read late, refused': browser =>
       writtenStory(browser, {
         hqOnStore,
         ui,
         reader,
-        hush: on => (hushed = on),
+        hush,
         posts,
         play: notebook,
         pages,
@@ -1090,14 +1120,14 @@ function STORIES() {
     'rule zero: nothing stays drawn on HQ once a note is saved or let go, sent, reloaded, or in another tab': browser =>
       inLooks(browser, (look, shot) =>
         inkStory({
-          ...{ browser, hqIn, base, MINI, settled, penOn, ring, inkAt, notes, org, posts },
+          ...{ browser, hqIn, base, MINI, settled, ring, inkAt, notes, org, posts },
           ...{ shot, noErrorsIn, look },
         }),
       ),
     // (the pin flow: a mark's post-it, Save, a scrap on the Notebook's newest page.)
     ...scrapStories({
-      ...{ hqIn, base, reviewJs, settled, penOn, ring, posts, shot, noErrorsIn },
-      hush: on => (hushed = on),
+      ...{ hqIn, base, reviewJs, settled, ring, posts, shot, noErrorsIn },
+      hush,
     }),
     "HQ's page never under the book, at every width that keeps a page: split screen to a big desktop": browser =>
       everyWidthStory(browser, { hq, sight, beside, hqWhole, settled, shot, noErrorsIn }),
@@ -1233,34 +1263,6 @@ const inkAt = (page, x, y) =>
         for (let i = 3; i < data.length; i += 4) most = Math.max(most, data[i]);
       }
       return most;
-    },
-    [x, y],
-  );
-// A finger's tap at a point, as Safari hands it over: what the page itself heard of it ({ up, cancel })
-const fingerTap = (page, x, y) =>
-  page.evaluate(
-    ([x, y]) => {
-      const heard = { up: 0, cancel: 0 },
-        count = e => (e.type === 'pointerup' ? heard.up++ : heard.cancel++),
-        target = document.elementFromPoint(x, y) ?? document.body;
-      document.addEventListener('pointerup', count);
-      document.addEventListener('pointercancel', count);
-      for (const type of ['pointerdown', 'pointerup'])
-        target.dispatchEvent(
-          new PointerEvent(type, {
-            pointerId: 9,
-            pointerType: 'touch',
-            isPrimary: true,
-            clientX: x,
-            clientY: y,
-            bubbles: true,
-            composed: true,
-            cancelable: true,
-          }),
-        );
-      document.removeEventListener('pointerup', count);
-      document.removeEventListener('pointercancel', count);
-      return heard;
     },
     [x, y],
   );
@@ -1530,37 +1532,9 @@ async function settled(page, mode) {
   );
   await page.waitForTimeout(SETTLE_MS);
 }
-// A raw recording and the next JSON post both pass through the shared API fixture.
-async function voiceUpload(browser) {
-  const context = await hqIn(browser);
-  try {
-    const page = await context.newPage();
-    await page.goto(`${base}/?intro=0`);
-    const replies = await page.evaluate(async () => {
-      const voice = await fetch('/api/voice?lang=en', {
-        method: 'POST',
-        body: new Blob(['RIFF\u0000\u0000\u0000\u0000WAVE'], { type: 'audio/wav' }),
-      });
-      const transcript = await voice.json();
-      const read = await fetch('/api/book/read', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ink: [] }),
-      });
-      return { voice: voice.status, transcript, read: read.status, handwriting: await read.json() };
-    });
-    assert.equal(replies.voice, 200, 'the raw recording is accepted');
-    assert.equal(replies.transcript.text, SAID[1], 'the played transcription is returned');
-    assert.equal(replies.read, 200, 'the next JSON post is still answered');
-    assert.equal(typeof replies.handwriting.writing, 'boolean');
-  } finally {
-    await context.close();
-  }
-}
-
-async function bookStories(browser, which) {
+async function bookStories(browser, which, more = {}) {
   let failed = 0;
-  for (const [name, story] of Object.entries(STORIES())) {
+  for (const [name, story] of Object.entries({ ...STORIES(), ...more })) {
     if (only && !only.split('|').some(w => name.includes(w))) continue;
     try {
       await story(browser);
@@ -1590,38 +1564,7 @@ const open = async url => {
   await until(page, '#loading.gone');
   await page.waitForSelector('review-mode .fab', { state: 'attached' }); // (away while the book's folded)
 };
-const ui = s => `review-mode >> css=${s}`;
-
-// A pen on the page, as Safari hands it over (pressure, then none at the lift): down, along the points, and up only
-// when asked (lift), so what's on screen just before the lift can be seen
-const penOn =
-  on =>
-  (points, { lift = true, type = 'pen' } = {}) =>
-    on.evaluate(
-      ([pts, lift, type]) => {
-        const at = (kind, [x, y], pressure) =>
-          (document.elementFromPoint(x, y) ?? document.body).dispatchEvent(
-            new PointerEvent(kind, {
-              pointerId: 7,
-              pointerType: type,
-              isPrimary: true,
-              clientX: x,
-              clientY: y,
-              pressure,
-              buttons: kind === 'pointerup' ? 0 : 1,
-              bubbles: true,
-              composed: true,
-              cancelable: true,
-            }),
-          );
-        at('pointerdown', pts[0], 0.4);
-        pts.slice(1).forEach((p, i) => at('pointermove', p, 0.35 + 0.4 * Math.sin((i / pts.length) * Math.PI)));
-        window.__lift = () => at('pointerup', pts.at(-1), 0);
-        if (lift) window.__lift();
-      },
-      [points, lift, type],
-    );
-const pen = (...a) => penOn(page)(...a);
+const pen = (points, options) => pressAlong(page, points, options);
 const ring = (cx, cy, rx, ry) =>
   Array.from({ length: 48 }, (_, i) => [
     cx + rx * Math.cos((i / 44) * 2 * Math.PI),
@@ -1707,8 +1650,8 @@ async function redAt(x, y) {
 }
 
 // ---- a ring round something on HQ's page: no button, no veil, and nothing moves at the lift; its number at it, the
-// words said once its post-it's mic is tapped (never at the ring: the board, call 154), no picture taken in, and Send. look: what the stills' names end in. Returns the note sent
-// and how much moved at the lift.
+// words said once its post-it's mic is tapped (never at the ring), no picture taken in, and Send. look: what the
+// stills' names end in. Returns the note sent and how much moved at the lift.
 async function ringed(look) {
   const url = new URL(page.url()),
     here = url.pathname + url.search,
@@ -1849,11 +1792,22 @@ const noErrors = () =>
     [],
   );
 
+// A call drawing in (bookcall.mjs), on a context of its own, in a look (none: HQ's own).
+async function called(browser, look) {
+  await context.close();
+  context = await hqIn(browser);
+  await callStory({ context, open, page: () => page, pen, ring, ui, posts, org, pixels, grab, shot, look });
+  noErrors();
+}
+
 // --stories <words>: only the book's stories whose names hold those words (or any of words|words), in Chromium (WebKit
 // with --webkit), nothing else (a check's share of the worker's memory holds one part at a time).
+// (the call's story too, in the look the whole check gives it in that browser: Brownstone in WebKit, Wire in Chromium)
 if (only) {
+  const failed = await bookStories(browser, inWebKit ? 'webkit' : 'chromium', {
+    'a call drawing in': () => called(browser, inWebKit ? undefined : 'wire'),
+  });
   await context.close();
-  const failed = await bookStories(browser, inWebKit ? 'webkit' : 'chromium');
   await browser.close();
   server.close();
   process.exit(failed ? 1 : 0);
@@ -1914,10 +1868,7 @@ assert.equal(
 noErrors();
 
 // ---- a call drawing in (bookcall.mjs; the agent's ink, aimed: bookaim.mjs.)
-await context.close();
-context = await hqIn(browser);
-await callStory({ context, open, page: () => page, pen, ring, ui, posts, pages, org, pixels, grab, shot });
-noErrors();
+await called(browser);
 // ---- a walk-through of finished work (bookwalk.mjs)
 await context.close();
 context = await hqIn(browser);
@@ -1950,24 +1901,7 @@ assert.equal(await page.evaluate(() => document.body.classList.contains('brownst
 const wire = await ringed('-wire');
 noErrors();
 // ---- a call drawing in, in Wire (bookcall.mjs)
-await context.close();
-context = await hqIn(chromium);
-await callStory({
-  context,
-  open,
-  page: () => page,
-  pen,
-  ring,
-  ui,
-  posts,
-  pages,
-  org,
-  pixels,
-  grab,
-  shot,
-  look: 'wire',
-});
-noErrors();
+await called(chromium, 'wire');
 await besideTheBook(chromium);
 failed += await bookStories(chromium, 'chromium');
 await chromium.close();

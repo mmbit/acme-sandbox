@@ -1,5 +1,6 @@
 // The board's Notebook as book-check's stories read it: from its play (a context's notebook: notebookplay.js), through
 // the store's own routes, and a scrap as the book shows it on screen.
+import { landingPage } from './shell/ink/notebookstack.js';
 
 // My Notebook's groups, every page's, the newest made last
 export function groupsOf(play) {
@@ -8,12 +9,9 @@ export function groupsOf(play) {
     .flatMap(p => play.route('/api/notebooks/pages/groups', { page: p.id }).groups)
     .sort((a, b) => a.id - b.id);
 }
-// My Notebook's newest page neither sending, sent nor archived: where the board's notes land
+// My Notebook's page where the board's notes land: the store's current page (notebookstack.js)
 export const newestPage = play =>
-  play
-    .route('/api/notebooks/pages', { notebook: mineOf(play) })
-    .pages.filter(p => !p.sending && !p.sent)
-    .sort((a, b) => b.created.localeCompare(a.created) || b.id - a.id)[0];
+  landingPage(play.route('/api/notebooks/pages', { notebook: mineOf(play) }).pages, p => p.sending || !!p.sent);
 const mineOf = play => play.route('/api/notebooks').shelf.find(n => n.kind === 'mine').id;
 // A scrap as the page shown draws it, on screen: its photo (one of the page's pictures), the right edge of it and its
 // words under it, those words, the paper, and the left of the islands over its right edge (null: not drawn there yet)
@@ -35,10 +33,3 @@ export const shownScrap = (page, g) =>
       tools: document.querySelector('#book .bk-islands').getBoundingClientRect().left,
     };
   }, g);
-// fn()'s answer once it has one, asked every tenth of a second till ms have gone (null: none by then)
-export async function until(fn, ms) {
-  for (const end = Date.now() + ms; ; await new Promise(r => setTimeout(r, 100))) {
-    const got = await fn();
-    if (got || Date.now() > end) return got || null;
-  }
-}

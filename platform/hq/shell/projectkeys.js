@@ -39,16 +39,16 @@ import { dayTime, fromNow } from '../world/clock.js';
 
 // The keys after the businesses: Recurring, the routines' projects (projects.ts gives each its schedule), and the work
 // outside the projects, each its name and a line icon (or the cover projects.yaml's groups name for it). A company's own
-// name for one wins (named), and a named unsorted is a standing tile.
+// name for one wins (named). The coordinator always names unsorted, the CEO's desk, so it is a standing tile.
 export const GROUPS = {
   recurring: {
     name: 'Recurring',
     icon: icon('group-recurring', 'pj-icon'),
   },
-  // Work with no project: call follow-ups, the CEO's own runs and open jobs for the CEO to place, and recent finished
-  // runs.
+  // Work with no project, the CEO's desk: call follow-ups, the CEO's own runs and open jobs for the CEO to place, and
+  // recent finished runs. The coordinator names it for the company's CEO ("Juno's desk": wherework.ts deskName).
   unsorted: {
-    name: 'Outside projects',
+    name: 'The CEO’s desk',
     icon: icon('group-unsorted', 'pj-icon'),
   },
   // The meetings, a tile each with everyone at it, there while there are some (projects.ts meetingSeats).

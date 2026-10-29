@@ -1,13 +1,13 @@
 // Closed reviews carry merge dependencies across owner decisions, branches and thread boundaries.
 // (its messages say deliverable, the board's word for a thread)
 import './inbox.ts';
-import { PlanCycleError, dependencyGraph, refuseNewLoops } from './plancycles.ts';
+import { PlanCycleError, dependencyGraph, hasLoop, refuseNewLoops } from './plancycles.ts';
 import { orderingSnapshot } from './backlog.ts';
 import { placeholders } from './threadorder.ts';
 import { expand } from './rounds.ts';
 import { db, inOneStep, mergePending } from './db.ts';
 import { findThread } from './projects.ts';
-import { OPEN_JOBS, OPEN_PRS, needsGraph, hasReplacement, waitRelations } from './jobs.ts';
+import { OPEN_JOBS, OPEN_PRS, needsGraph, hasReplacement, jobOfBranch, waitRelations } from './jobs.ts';
 
 export function close(pr: number, branch: string) {
   db.prepare('insert or ignore into review_redraws (pr, branch) values (?, ?)').run(pr, branch);
@@ -29,13 +29,6 @@ export function query(sql: string, waiter?: string) {
 
 export function relations(waiter?: string) {
   return `${branches()}, ${steps()}, ${walk()}, ${endpoints()}, ${mergedBranches()}, ${holds(waiter)}, ${waitRelations()}`;
-}
-
-export function states(origin?: string) {
-  if (!origin) return 'select * from redraw_states';
-  return `select * from redraw_states where origin = ${origin}
-    union all select branch, branch, null, status from review_branches p where branch = ${origin}
-      and not exists (select 1 from redraw_states s where s.origin = p.branch)`;
 }
 
 export function replacement(job: string) {
@@ -61,27 +54,44 @@ export function rememberHolds() {
 
 // Redraw and review-merge edges in the caller's tasks graph.
 export function dependencies() {
+  // Each edge starts from the few redraws and looks up their jobs by index (unary + as in holds()), so stale statistics
+  // can't make the planner scan every job.
   return `select 'thread/' || j.thread, 'job/' || s.job from redraw_states s
-        join jobs j on coalesce(j.branch, 'job/' || j.id) = s.origin
-        where $ordered and s.job is not null and s.state not in ('merged', 'dropped')
-          and j.kind = 'work' and j.thread is not null
-      union select 'job/' || j.id, 'job/' || s.job from redraw_states s
-        join jobs j on coalesce(j.branch, 'job/' || j.id) = s.origin
+        cross join jobs j indexed by jobs_work_branch on coalesce(j.branch, 'job/' || j.id) = +s.origin and j.kind = 'work'
+        where $ordered and s.job is not null and s.state not in ('merged', 'dropped') and j.thread is not null
+      union select 'job/' || j.id, 'job/' || s.job from redraw_states s cross join jobs j indexed by jobs_branch
+        on j.branch = +s.origin where s.job is not null and s.state not in ('merged', 'dropped')
+      union select 'job/' || j.id, 'job/' || s.job from redraw_states s cross join jobs j indexed by jobs_state
+        on j.id = ${jobOfBranch('s.origin')} and j.branch is null and s.origin = 'job/' || j.id
         where s.job is not null and s.state not in ('merged', 'dropped')
       union select 'job/' || source.id, 'job/' || fix.id from prs p
-        cross join jobs source on coalesce(source.branch, 'job/' || source.id) = p.branch
+        cross join jobs source indexed by jobs_work_branch on coalesce(source.branch, 'job/' || source.id) = +p.branch
         join review_fix_tasks f on f.pr = p.number and f.round = p.round
         join tasks fix on fix.id = f.job and fix.branch = p.branch
         where p.status in ${OPEN_PRS} and source.kind = 'work' and source.pr is null and source.status = 'done'
           and not exists (select 1 from review_fix_tasks own where own.job = source.id)
           and fix.status in ${OPEN_JOBS}
-      union select 'job/' || j.id, 'job/' || replacement.job from jobs j join redraw_current replacement
-        on replacement.prior = j.id where ${hasReplacement('j.id')} and replacement.job != j.id
+      union select 'job/' || j.id, 'job/' || replacement.job from redraw_current replacement
+        cross join jobs j indexed by jobs_state on j.id = replacement.prior where ${hasReplacement('j.id')} and replacement.job != j.id
       union select 'job/' || h.waiter, 'job/' || h.id from redraw_holds h where $ordered`;
 }
 
 // A plan write and its dependency check share one transaction, so a newly introduced loop rolls it back.
-export function writePlan<T>(change: () => T): T {
+// A repeatable change (one that only writes the database, its events going out once its step is kept) is tried against
+// one capture, after it: a plan with no loop then has no new one. Only a plan with a loop reads the plan before the
+// change too, to tell a loop it adds from one it had, and makes the change again.
+export function writePlan<T>(change: () => T, { repeatable = false } = {}): T {
+  if (repeatable) {
+    try {
+      return inOneStep(() => {
+        const done = change();
+        if (hasLoop(capturePlan().graph)) throw new PlanHasLoopError();
+        return done;
+      });
+    } catch (err) {
+      if (!(err instanceof PlanHasLoopError)) throw err;
+    }
+  }
   return inOneStep(() => {
     const before = capturePlan();
     const done = change();
@@ -89,6 +99,9 @@ export function writePlan<T>(change: () => T): T {
     return done;
   });
 }
+
+// The plan has a loop after a repeatable change: its step rolled back.
+class PlanHasLoopError extends Error {}
 
 // An owner's change to thread order or needs, rolled back if it introduces a dependency cycle.
 export function withoutLoop<T>(thread: string, change: () => T): T | string {
@@ -160,12 +173,13 @@ function branches() {
 }
 
 function steps() {
+  // A lands step reads its links first and then their jobs.
   return `redraw_steps(prior, job, kind, cancelled) as materialized (
       select source.id, r.job, 'redraw', 0 from redraw_origins r cross join jobs source indexed by jobs_work_branch
         on coalesce(source.branch, 'job/' || source.id) = +r.branch and source.kind = 'work'
         where r.job is not null
       union all select r.replaces, r.job, 'lands', j.status = 'cancelled' from job_replacement_links r
-        join jobs j indexed by jobs_state on j.id = r.job)`;
+        cross join jobs j indexed by jobs_state on j.id = r.job)`;
 }
 
 // Holds inherit every saved-work ancestor. Redraws follow only live takeovers and later accepted redraws.

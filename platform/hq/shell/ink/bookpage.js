@@ -8,6 +8,7 @@ import { draw } from '/__review/ink.js';
 import { drawScrap } from './sketchscraps.js';
 import { picture } from '../../util.js';
 import { around, boxOf, pageBox, scrapBoxOf, tileSide, tilesIn } from './bookrow.js';
+import { landing } from './bookgroupmath.js';
 import { mountAnswers } from './bookanswers.js';
 import { nameOf } from './bookhead.js';
 
@@ -23,8 +24,8 @@ export function pageView(page, held = false) {
   el.dataset.kind = page.kind;
   // Every page is a named region for whoever reads the book aloud.
   Object.assign(el, { role: 'region', ariaLabel: nameOf(page) });
-  // The title belongs in the bar. The canvas keeps only its send stamp.
-  const stamp = page.kind === 'guest' ? '' : '<span class="bk-send" data-slot="stamp"></span>';
+  // The title belongs in the bar. The canvas keeps only its send stamp. (its class)
+  const stamp = page.kind === 'guest' ? '' : '<span class="bk-sent" data-slot="stamp"></span>';
   // (the agents' answers over the page, .bk-answers: bookanswers.js.)
   el.innerHTML = `<div class="bk-send-stamp">${stamp}</div><div class="bk-answers" data-slot="answers"></div><p class="bk-refusal" role="status" hidden></p>`;
   const refusal = el.querySelector('.bk-refusal'),
@@ -135,9 +136,10 @@ function paintTile(st, c, row) {
   const g = penOn(st, tile),
     box = tileBox(st, tile);
   g.clearRect(box.x0, box.y0, t, t);
-  for (const s of page.scraps) if (overlaps(scrapBoxOf(s), box)) drawScrap(g, withPicture(st, s));
+  // (what's landing is drawn once it's down: bookarrive.js)
+  for (const s of page.scraps) if (overlaps(scrapBoxOf(s), box) && !landing(page, s)) drawScrap(g, withPicture(st, s));
   // (a highlighter's strokes under the ink, as a highlighter goes on paper)
-  const here = page.ink.filter(s => overlaps(boxOfStroke(s), box));
+  const here = page.ink.filter(s => overlaps(boxOfStroke(s), box) && !landing(page, s));
   draw(g, [...here.filter(s => s.alpha < 1), ...here.filter(s => !(s.alpha < 1))]);
 }
 // a scrap's picture, drawn again where it lies once it has loaded

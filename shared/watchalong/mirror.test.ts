@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { ANSWER_MS, Mirrors, STEP_MS } from './mirror.ts';
+import { REPLY_MS, Mirrors, STEP_MS } from './mirror.ts';
 import type { Asked } from '../chromium/chromium.ts';
 import type { RecordedEvent } from './store.ts';
 
@@ -225,10 +225,10 @@ test(
   },
 );
 
-// Chromium's process, gone within a few seconds of its answer's time (ANSWER_MS)
+// Chromium's process, gone within a few seconds of its reply's time (REPLY_MS)
 async function exited(pid: number | undefined) {
   assert.ok(pid);
-  for (let tries = 0; tries < (ANSWER_MS + 5_000) / 50; tries++) {
+  for (let tries = 0; tries < (REPLY_MS + 5_000) / 50; tries++) {
     try {
       process.kill(pid, 0);
     } catch {
@@ -273,7 +273,7 @@ test(
     await assert.rejects(past, /took over/);
     assert.ok(await exited(brokenPid), 'its tab closed, and Chromium with it');
     // a live mirror's step hangs (its page's frames stop once a batch with a change comes): it isn't seen and is gone,
-    // its tab closed, and it opens again from the recording. Chromium still answers, so the other mirror in it stays.
+    // its tab closed, and it opens again from the recording. Chromium still replies, so the other mirror in it stays.
     const hanging = new Mirrors(
       replay(
         'hanging',
@@ -288,7 +288,7 @@ test(
     hanging.feed(1, [{ type: 3, timestamp: start + 10, data: { source: 2 } }]);
     while (hanging.seen(1) !== false) await sleep(100);
     assert.equal(hanging.has(1), false, 'its step ran out of time and closed it');
-    await sleep(ANSWER_MS + 1_000); // (past Chromium's answer)
+    await sleep(REPLY_MS + 1_000); // (past Chromium's reply)
     assert.equal(hanging.seen(2), true, 'the other mirror in its Chromium is still seen');
     assert.equal(await hanging.pid(), hangingPid, 'in the same Chromium');
     await hanging.open(1, page(start), NONE);
@@ -299,7 +299,7 @@ test(
 );
 
 test(
-  'a Chromium that stops answering is closed once a step runs out of time, and the next mirror opens in a fresh one',
+  'a Chromium that stops replying is closed once a step runs out of time, and the next mirror opens in a fresh one',
   { skip, timeout: 90_000 },
   async () => {
     const stopping = new Mirrors(REPLAY, () => Promise.resolve(null));
@@ -331,7 +331,7 @@ test(
     process.kill(pid!, 'SIGSTOP');
     const change = [{ type: 3, timestamp: start + 10, data: { source: 2 } }];
     stopping.feed(1, change);
-    await sleep(ANSWER_MS + 2_000);
+    await sleep(REPLY_MS + 2_000);
     // (when mirror 2's step runs out of time: after the stopped one is let go, before it is killed)
     const late = Date.now() + STEP_MS;
     stopping.feed(2, change);
@@ -348,7 +348,7 @@ test(
 );
 
 test(
-  'a Chromium that stops answering as it starts is killed once its tab runs out of time',
+  'a Chromium that stops replying as it starts is killed once its tab runs out of time',
   { skip, timeout: 90_000 },
   async () => {
     const stopping = new Mirrors(REPLAY, () => Promise.resolve(null));
@@ -357,7 +357,7 @@ test(
     const opening = stopping.open(1, page(start), NONE);
     let pid: number | undefined;
     while (!(pid = children().find(child => !before.has(child)))) await sleep(5);
-    process.kill(pid, 'SIGSTOP'); // (frozen before it answers launch())
+    process.kill(pid, 'SIGSTOP'); // (frozen before it replies to launch())
     await assert.rejects(opening, /took over/);
     assert.equal(stopping.seen(1), false);
     assert.ok(await exited(pid), 'the stopped one is killed');

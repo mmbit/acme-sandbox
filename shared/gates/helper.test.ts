@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -26,6 +26,63 @@ test('--helper runs the tests on a lent machine and brings back its report, and 
   assert.match(lent.out, /^- kits\/adds \(node --test, 1 file\): 1 passed/m);
   assert.match(lent.out, /\(on attic\)$/m);
   assert.deepEqual(passed('lent.json'), { passed: 1 });
+});
+
+test('browser test areas receive executable runtime assets and their shared libraries, while other areas do not', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'tests-browsers-'));
+  const browsers = join(directory, 'ms-playwright');
+  const shell = 'chromium_headless_shell-fixture/chrome-headless-shell-linux64/chrome-headless-shell';
+  mkdirSync(join(browsers, shell, '..'), { recursive: true });
+  cpSync('/bin/true', join(browsers, shell));
+  const env = { ...(await playedHq()), TESTS_BROWSERS_PATH: browsers };
+  const bootstrap = {
+    'shared/gates/tests-on-helper.sh':
+      'export BROWSER_ASSETS="$PWD/../ms-playwright" BROWSER_LIBRARIES="$PWD/../tools"\n' + ON_HELPER,
+  };
+  const check = `import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
+test('the bundled runtime starts with its libraries', () => {
+  const assets = process.env.BROWSER_ASSETS;
+  const tools = process.env.BROWSER_LIBRARIES;
+  assert.ok(existsSync(tools + '/libc.so.6'));
+  execFileSync(assets + '/${shell}', { env: { LD_LIBRARY_PATH: tools } });
+});
+`;
+  const browser = clone(
+    { ...bootstrap, 'platform/coordinator/browser.test.ts': check },
+    { 'platform/coordinator/notes.md': 'touched\n' },
+  ).run(env, 'tests.ts', ['--helper']);
+  assert.equal(browser.status, 0, browser.out);
+  assert.match(browser.out, /1 passed/);
+  assert.doesNotMatch(browser.out, /failing|flaky/);
+  const ordinary = clone(
+    {
+      ...bootstrap,
+      'kits/adds/sum.ts': sum('a + b'),
+      'kits/adds/sum.test.ts': nodeTest('sums', 'assert.equal(sum(1, 2), 3);'),
+    },
+    { 'kits/adds/notes.md': 'touched\n' },
+  ).run({ ...env, TESTS_BROWSERS_PATH: join(directory, 'absent') }, 'tests.ts', ['--helper']);
+  assert.equal(ordinary.status, 0, ordinary.out);
+  assert.match(ordinary.out, /1 passed/);
+});
+
+test('a missing required tool stops helper bundling instead of counting as a failure shared with main', async () => {
+  const bin = mkdtempSync(join(tmpdir(), 'tests-missing-tool-'));
+  for (const tool of ['age', 'age-keygen', 'versitygw'])
+    writeFileSync(join(bin, tool), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  const { run } = clone(
+    {
+      'shared/gates/tests-on-helper.sh': ON_HELPER,
+      'infra/test_caddy.sh': 'caddy\n',
+    },
+    { 'infra/notes.md': 'touched\n' },
+  );
+  const ran = run({ ...(await playedHq()), TESTS_TOOLS_BIN: bin }, 'tests.ts', ['--helper']);
+  assert.equal(ran.status, 2, ran.out);
+  assert.match(ran.out, /ENOENT.*caddy/);
 });
 
 for (const withJq of [true, false]) {
@@ -134,8 +191,19 @@ test('helper reporting rides out disconnects in a row; HQ unreached past the win
   }
 });
 
-test('helper failures are compared in the helper environment, while a real regression still blocks', async () => {
-  const env = await playedHq(undefined, { HELPER_ENV: JSON.stringify({ TEST_ROOM: 'helper' }) });
+test('a base comparison waits past takeMinutes for the busy helper, classifies its outcomes there and still blocks a regression', async () => {
+  const env = await playedHq(undefined, {
+    HELPER_ENV: JSON.stringify({ TEST_ROOM: 'helper' }),
+    HELPER_TAKE_MINUTES: '0.001',
+    RUN_STATES: JSON.stringify([
+      [['done', 'attic']],
+      [
+        ['waiting', 'attic'],
+        ['waiting', 'attic'],
+        ['done', 'attic'],
+      ],
+    ]),
+  });
   const repo = clone(
     {
       'shared/gates/tests-on-helper.sh': ON_HELPER,
@@ -155,11 +223,12 @@ test('helper failures are compared in the helper environment, while a real regre
   assert.match(broken.out, /1 failing, 1 failing on main too/);
 });
 
-test('a missing or different comparison helper leaves the check incomplete', async () => {
-  for (const state of ['lost', 'done']) {
+test('an unavailable or different comparison helper leaves the check incomplete without local fallback', async () => {
+  for (const states of [[['lost', 'elsewhere']], [['done', 'elsewhere']], [['waiting', 'attic', false]]]) {
     const env = await playedHq(undefined, {
       HELPER_ENV: JSON.stringify({ TEST_ROOM: 'helper' }),
-      RUN_STATES: JSON.stringify([[['done', 'attic']], [[state, 'elsewhere']]]),
+      HELPER_TAKE_MINUTES: '0.001',
+      RUN_STATES: JSON.stringify([[['done', 'attic']], states]),
     });
     const repo = clone(
       {

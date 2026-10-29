@@ -6,7 +6,7 @@
 import { snapScale } from '/__review/snapshot.js';
 import { foley } from '../audio.js';
 import { pageOf, showGroup } from './bookgroupshow.js';
-import { STACK, nextScrap } from './bookgroupbox.js';
+import { nextScrap, scrapSize } from './notebookstack.js';
 
 // A snip as review mode cuts it (marks.js): the ink with this much room round it, at least this big
 const MARGIN = 24,
@@ -60,16 +60,16 @@ function landGroup(desk, pages, ask) {
   ask.aim = () => (id ? onPhoto(desk, pages, { id, page, from }) : null);
 }
 // Where the ink lands under a page's groups, where the store stacks its next scrap (a note written the old way is
-// carried there much the same, notebookcarry.ts), the snip's picture as wide as review mode cut it (at most STACK.w),
+// carried there much the same, notebookcarry.ts), the snip's picture as the store sizes it (notebookstack.js scrapSize),
 // kept in the paper's visible part; on a page not shown, where it would go on the paper
 function underGroups(desk, pages, page, from) {
   const onPage = page && pages.page()?.id === page ? desk.querySelector('.bk-world .bk-page:not([hidden])') : null,
     d = desk.getBoundingClientRect(),
     snip = snipOf(from),
     // (the snip's picture is cut at the screenshot's pixels per px.)
-    w = Math.min(STACK.w, snip.w * snapScale(innerWidth, innerHeight)),
-    h = (w * snip.h) / snip.w;
-  const spot = nextScrap([...(pageOf(page)?.groups.values() ?? [])], h),
+    px = snapScale(innerWidth, innerHeight),
+    { w, h } = scrapSize(snip.w * px, snip.h * px);
+  const spot = nextScrap([...(pageOf(page)?.groups.values() ?? [])], h, pageOf(page)?.kind),
     origin = onPage?.getBoundingClientRect() ?? { left: d.left, top: d.top },
     k = onPage ? scaleOf(onPage) : 1;
   return within(inkIn({ x: origin.left + spot.x * k, y: origin.top + spot.y * k, w: w * k, h: h * k }, from), d);

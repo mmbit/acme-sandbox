@@ -11,6 +11,7 @@ import type { Reader } from '../jobs.ts';
 import { callAccess, keysCall } from '../memory.ts';
 import { DIR } from '../pagescraps.ts';
 import { ownerOf } from './sketchpeople.ts';
+import { cutsOf, piecesFor } from '../../../hq/shell/ink/booksharefiles.js';
 
 // ---------------------------------------------------------------- agents: hq sketches, hq sketch <id>
 // Every book's pages the reader may read, archived ones (archived) or the rest, without HQ's picture address: whose
@@ -38,8 +39,9 @@ export async function getForAgent(id: number, reader: Reader) {
 // POST /api/voice/sketch { call, sketch }: on a live call with the board, one of its book's pages for the call's agent
 // (hq_tools.py's sketch tool, through the line, which counts the picture against the call's budget), archived ones
 // too: by its number ('12', '#12'), or by a few words of its label (each word in it, any case; the latest change of
-// those that match, the rest named). Its picture is a PNG VOICE_PX on the long side at most: what the model sees of a
-// bigger one, and within the API's 2,000 px for a request with over 20 pictures (a walk-through's).
+// those that match, the rest named). Its picture is PNGs VOICE_PX on the long side at most: what the model sees of a
+// bigger one, and within the API's 2,000 px for a request with over 20 pictures (a walk-through's). A long page goes in
+// pieces down it, as one dropped on a call does (booksharefiles.js), so its notes reach the model at a readable size.
 const VOICE_PX = 1568,
   NAMED = 8;
 export async function forVoice(b: any) {
@@ -69,19 +71,33 @@ export async function forVoice(b: any) {
   if (!p.strokes && !JSON.parse(p.scraps).length) return [409, `Page ${name(p)} has nothing on it yet.`] as Refused;
   const file = await pictureOf(p);
   if (!file) return 404; // (deleted while it was drawn)
-  const png = await sharp(readFileSync(`${DIR}/${file}`))
-    .resize(VOICE_PX, VOICE_PX, { fit: 'inside', withoutEnlargement: true })
-    .png()
-    .toBuffer();
+  const pictures = await piecesOf(readFileSync(`${DIR}/${file}`));
   const others = found
     .filter(f => f !== p)
     .slice(0, NAMED)
     .map(name);
   const line = [
     `Page ${name(p)} of the board's book${p.archived ? ' (archived)' : ''}${p.url ? `, on ${p.url}` : ''}: made ${minute(p.created)} UTC, last changed ${minute(p.updated)} UTC${p.sent ? `, last sent to the CEO ${minute(p.sent)} UTC` : ''}.`,
+    ...(pictures.length > 1
+      ? [`It's long: in ${pictures.length} pieces from its top down, each overlapping the last.`]
+      : []),
     ...(others.length ? [`Its label's words match ${others.join(', ')} too.`] : []),
   ].join(' ');
-  return { picture: { type: 'image/png', data: png.toString('base64') }, line };
+  return { pictures: pictures.map(png => ({ type: 'image/png', data: png.toString('base64') })), line };
+}
+// A page's picture (png, grown down to its last words) in as many pieces as its shape asks for, each VOICE_PX on its
+// long side at most
+async function piecesOf(png: Buffer) {
+  const { width = 1, height = 1 } = await sharp(png).metadata();
+  return Promise.all(
+    cutsOf(piecesFor(width, height), height).map(({ top, height }) =>
+      sharp(png)
+        .extract({ left: 0, top, width, height })
+        .resize(VOICE_PX, VOICE_PX, { fit: 'inside', withoutEnlargement: true })
+        .png()
+        .toBuffer(),
+    ),
+  );
 }
 const minute = (iso: string) => iso.slice(0, 16).replace('T', ' ');
 const listed = (who: string) =>

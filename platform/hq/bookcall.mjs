@@ -20,7 +20,7 @@ import { openedClean, openedPreview, theirInk } from './bookaim.mjs'; // (opened
 const SETTLE_MS = 1500; // (callnotes.js)
 const MASK = [0x8c, 0x8c, 0x8c]; // (snapshot.js)
 
-// c: book-check's { context, open, page (its page now), pen, ring, ui, posts, pages, org, pixels, grab, shot }, and
+// c: book-check's { context, open, page (its page now), pen, ring, ui, posts, org, pixels, grab, shot }, and
 // look: a renderer to run it in (its name on the shots), else HQ's own
 export async function callStory(c) {
   const line = await playLine(c.context);
@@ -29,8 +29,11 @@ export async function callStory(c) {
     s = { ...c, page, line, named: name => `${name}${c.look ? `-${c.look}` : ''}`, shown: 0, from: c.posts.length };
   // (the screen goes to the agent only as a watch-along: counted, to know it starts at Show and not before.)
   page.on('request', r => r.url().endsWith('/api/watchalong/start') && s.shown++);
+  // (the call's notes page, as the Notebook made it at pickup: its marks go on it.)
+  const asked = page.waitForResponse(r => new URL(r.url()).pathname === '/api/notebooks/call');
   await page.click('#call');
-  await page.waitForFunction(() => !document.querySelector('#call-screenshare')?.disabled, null, { timeout: 15_000 });
+  s.notesPage = (await (await asked).json()).page.id;
+  await page.waitForFunction(() => !document.querySelector('#call-screenshare')?.disabled);
   await noteOnTheCall(s);
   await drawnWhileFiling(s);
   await downWhileFiled(s);
@@ -101,7 +104,7 @@ async function noteOnTheCall(s) {
   );
   await s.pen(s.ring(372, 640, 120, 40), { lift: false });
   await page.waitForSelector('.callbubble', { state: 'visible' });
-  await page.waitForSelector('#call-layer', { state: 'hidden', timeout: 3000 }); // (the Pencil down makes the call small)
+  await page.waitForSelector('#call-layer', { state: 'hidden' }); // (the Pencil down makes the call small)
   assert.equal(await page.evaluate(() => !!document.querySelector('.callbubble .cb-eye:not([hidden])')), false);
   s.line.send({ type: 'heard', text: 'This one feels too big' }); // (the board talks while drawing)
   await page.waitForTimeout(100);
@@ -109,8 +112,8 @@ async function noteOnTheCall(s) {
   await page.waitForTimeout(400);
   assert.equal(await page.locator(s.ui('.sheet')).isHidden(), true, 'no post-it on a call: the call is listening');
   const sent = await heard(s, 'note');
-  onTheNotesPage(s);
   const note = lastNote(s);
+  onTheNotesPage(s, note);
   assert.equal(note.words, 'This one feels too big', 'the words the call heard while drawing are the note’s');
   assert.equal(note.said, 'spoken');
   assert.match(note.snip ?? '', /^data:image\/jpeg;base64,/, 'its snip goes with it');
@@ -136,8 +139,8 @@ async function noteOnTheCall(s) {
 }
 
 // The call's notes page, made as it was picked up: the mark goes on it, never a second page.
-function onTheNotesPage(s) {
-  assert.ok(s.pages.find(p => p.kind === 'call' && p.call === 9)?.notebook, "the call's page is its notes page");
+function onTheNotesPage(s, note) {
+  assert.equal(note.page, s.notesPage, "the call's page is its notes page");
   const made = s.posts.filter(p => p.path === '/api/book/page/new' && p.body.kind === 'call');
   assert.equal(made.length, 0, 'no second page at its first mark');
 }
@@ -194,7 +197,7 @@ async function drawnWhileFiling(s) {
 async function downWhileFiled(s) {
   const { page } = s,
     before = notes(s).length;
-  await page.waitForTimeout(800); // (the last note's ink lifting into the book)
+  await page.waitForTimeout(800); // (the last note going in: its ink stays for the agent, shared/review/callnotes.js)
   await once(page, r => new Promise(go => setTimeout(go, 1500)).then(() => r.fallback()));
   await s.pen(s.ring(480, 220, 70, 30), { lift: false }); // (clear of the marks above)
   s.line.send({ type: 'heard', text: 'This border' });
@@ -215,7 +218,7 @@ async function downWhileFiled(s) {
 async function notTaken(s) {
   const { page } = s,
     before = notes(s).length;
-  await page.waitForTimeout(800); // (the last note's ink lifting into the book)
+  await page.waitForTimeout(800); // (the last note going in: its ink stays for the agent, shared/review/callnotes.js)
   await once(page, r => r.abort());
   await s.pen(s.ring(220, 460, 70, 30));
   await page.waitForTimeout(SETTLE_MS + 800);
@@ -298,7 +301,7 @@ async function drawnAfterTheLoss(s, undo) {
   const { page } = s,
     sent = [];
   await page.click('#call');
-  await page.waitForFunction(() => !document.querySelector('#call-screenshare')?.disabled, null, { timeout: 15_000 });
+  await page.waitForFunction(() => !document.querySelector('#call-screenshare')?.disabled);
   const count = q =>
     q.method() === 'POST' && new URL(q.url()).pathname === '/api/book/note' && sent.push(q.postDataJSON());
   page.on('request', count);

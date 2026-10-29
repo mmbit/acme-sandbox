@@ -3,7 +3,8 @@ import { workerAccountingFailure } from './accounting.ts';
 import { randomUUID } from 'node:crypto';
 import { procStat, type CheckRun } from './detached.ts';
 import { ResponseError } from './reports.ts';
-import { commandOf, stopRun, type Block, type ProcessSnapshot } from './shares.ts';
+import type { Block, ProcessSnapshot } from './shares.ts';
+import { commandOf, stopRun } from './stoprun.ts';
 
 type BlockOptions = {
   ask: (body: Record<string, unknown>, signal?: AbortSignal) => Promise<{ text: string }>;
@@ -42,8 +43,10 @@ export async function blockRun(
     command: commandOf(live),
     accountingError: block.accountingError,
   };
+  // A run not frozen whole, said in the worker's log.
+  const said = (words: string) => options.stopped(`job #${owner.job}: ${words}`);
   try {
-    await stopRun(live, owner, block.root, () => options.ask(body));
+    await stopRun(live, owner, block.root, () => options.ask(body), said);
   } catch (err) {
     if (err instanceof ResponseError) throw err;
     throw new Error(`Job #${owner.job}: HQ's block report outcome is unknown. HQ may have recorded it.`, {

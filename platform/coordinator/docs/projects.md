@@ -302,12 +302,18 @@ claim, the worker and the review panel (`threadorder.ts`). There is no setting f
    "..."`).
 4. **Ask for deliverables from now on.** Once every job under way is in a deliverable, the CEO sets
    `requireThread: true` in `projects.yaml` by pull request. From then on, `hq job` refuses a job with no deliverable to
-   inherit unless it names one (`--deliverable <project>/<slug>`, or `--deliverable new:<project> "name" "done when"`). That
-   keeps every new piece of work inside one of the board's projects.
+   inherit unless it names one (`--deliverable <project>/<slug>`, or `--deliverable new:<project> "name" "done when"`), a
+   call's agent included, and a job HQ makes with none to inherit or be given (no `made:` project for its kind, a fault's,
+   a call's follow-up for another agent) waits unstarted for the CEO to place it, as a held job in the CEO's inbox
+   (`sorting.ts holdLoose`, before each claim; a pull request's loop steps go where their lead is). That keeps every piece
+   of work inside one of the board's projects but the CEO's own running of the company (its checks, rounds and call
+   follow-ups), which the projects view shows as the CEO's desk, named for the CEO (`wherework.ts deskName`: "Juno's desk",
+   or `groups.unsorted.name`).
 5. **Give HQ's own jobs a home.** The jobs HQ makes from the same template every time have no job to inherit a deliverable
    from. `made:` in `projects.yaml` sets a project per kind, by the app it's about: `errors` (the error scan's
    triage, by the app's slug, `care` for the support chat), `checks` (the CEO's hourly follow-through check and its
-   repair, `hq`) and `alarms` (the CEO's job about a platform alarm, `hq`), as in `made: { errors: { care: company }
+   repair, `hq`), `alarms` (the CEO's job about a platform alarm, `hq`) and `carries` (the checks on a commit main took
+   outside review and the foundation keeper's fix, `hq`), as in `made: { errors: { care: company }
    }`. The watch's repairs of a live app go to the project its `product.yaml` names (`project:`), and so do a
    product's return to the board and the job for the board's answer on a card about it (`owed.ts`); the board's notes
    become tasks in their deliverables as the CEO routes them (`routing.ts`). Each

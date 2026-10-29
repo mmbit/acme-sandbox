@@ -3311,12 +3311,12 @@ class Screen(Juno):
         self.looks = [{'type': 'image/jpeg', 'data': JPEG}]
         await self.call.show(17)
         await self.turn('Look.')
-        self.looks = [{'picture': {'type': 'image/png', 'data': png}, 'line': 'Sketch #3'}] * 3
-        self.assertIn('picture', await self.call.sketch_tool({'sketch': '3'}))
+        self.looks = [{'pictures': [{'type': 'image/png', 'data': png}], 'line': 'Sketch #3'}] * 3
+        self.assertIn('pictures', await self.call.sketch_tool({'sketch': '3'}))
         self.assertEqual(await self.call.sketch_tool({'sketch': '3'}), {'error': server.SKETCH_WORDS['full']})
         await self.turn('And now?')
         self.assertEqual((len(recaps), self.brain.shown[1]), (1, [17]), "compacted: the board's picture again")
-        self.assertIn('picture', await self.call.sketch_tool({'sketch': '3'}), 'the sketch shows again')
+        self.assertIn('pictures', await self.call.sketch_tool({'sketch': '3'}), 'the sketch shows again')
 
     async def test_a_screen_that_grows_while_the_session_is_renewed_is_sent_in_the_room_kept_for_it(self):
         self.new_call(screen_pictures=1, session_bytes=len(JPEG) + len(SHOT(2)))
@@ -3440,23 +3440,24 @@ class Screen(Juno):
         self.assertEqual(len(self.asked), 2)
 
     async def test_the_sketch_tool_shows_a_sketch_within_the_calls_bytes_and_never_on_a_call_out(self):
-        """The line asks the coordinator's sketch route for its call and counts the picture against the call's bytes; a
-        refusal comes back in the coordinator's words; a picture that isn't a PNG whose data decodes fails the tool,
-        uncounted; the socket routes a sketch ask to it."""
+        """The line asks the coordinator's sketch route for its call and counts its pictures (a long page's pieces)
+        against the call's bytes; a refusal comes back in the coordinator's words; a picture that isn't a PNG whose
+        data decodes fails the tool, uncounted; the socket routes a sketch ask to it."""
         png = base64.b64encode(b'\x89PNG\r\n\x1a\n sketch').decode()
         broken = base64.b64encode(b'\x89PNG\r\n\x1a\n' + bytes(96)).decode()
         broken = broken[:80] + '!' + broken[81:]  # (a PNG's start, its base64 broken well past it)
         line = 'Sketch #3 “Tote bag”: drawn 2026-10-24 14:02 UTC, last changed 2026-10-24 15:10 UTC.'
-        sketch = {'picture': {'type': 'image/png', 'data': png}, 'line': line}
+        piece = {'type': 'image/png', 'data': png}
+        sketch = {'pictures': [piece, piece], 'line': line}
         refused = HTTPError('http://hq/api/voice/sketch', 404, 'Not Found', {}, io.BytesIO(b'{"error": "No sketch #9."}'))
-        self.looks = [sketch, refused, {'picture': {'type': 'image/jpeg', 'data': JPEG}, 'line': line},
-                      {'picture': {'type': 'image/png', 'data': broken}, 'line': line}, sketch, sketch]
-        self.assertEqual(await self.call.sketch_tool({'sketch': 'tote'}), {'picture': sketch['picture'], 'line': line})
+        self.looks = [sketch, refused, {'pictures': [piece, {'type': 'image/jpeg', 'data': JPEG}], 'line': line},
+                      {'pictures': [{'type': 'image/png', 'data': broken}], 'line': line}, sketch, sketch]
+        self.assertEqual(await self.call.sketch_tool({'sketch': 'tote'}), {'pictures': [piece, piece], 'line': line})
         self.assertEqual(await self.call.sketch_tool({'sketch': '9'}), {'error': 'No sketch #9.'})
-        for asked in ('mug', 'cap'):  # (a JPEG, not a sketch's PNG; a PNG broken partway)
+        for asked in ('mug', 'cap'):  # (a JPEG among its pieces, not a sketch's PNG; a PNG broken partway)
             with self.assertRaises(ValueError):
                 await self.call.sketch_tool({'sketch': asked})
-        self.assertEqual(self.call.picture_bytes, len(png))
+        self.assertEqual(self.call.picture_bytes, 2 * len(png), 'every piece counted')
         self.assertEqual(self.call.screen['pictures'], 0, "a sketch isn't a picture of the screen")
         socket_path = Path(self.tmp.name) / 'screen.sock'
         screens = await server.serve_screens(socket_path)
@@ -3465,9 +3466,9 @@ class Screen(Juno):
         self.call.new_screen_key()
         reader, writer = await asyncio.open_unix_connection(str(socket_path))
         writer.write((json.dumps({'sketch': '3', 'key': self.call.screen_key}) + '\n').encode())
-        self.assertEqual(json.loads(await reader.read()), {'picture': sketch['picture'], 'line': line})
+        self.assertEqual(json.loads(await reader.read()), {'pictures': [piece, piece], 'line': line})
         writer.close()
-        self.new_call(session_bytes=len(png) - 1)  # (a new call with no room for one)
+        self.new_call(session_bytes=2 * len(png) - 1)  # (a new call with room for one piece, not both)
         self.assertEqual(await self.call.sketch_tool({'sketch': '3'}), {'error': server.SKETCH_WORDS['full']})
         self.assertEqual(self.call.picture_bytes, 0)
         self.assertEqual([body for path, body in self.asked],
@@ -3540,6 +3541,8 @@ class BoardDrawing(Juno):
         await self.turn('Is that right?')
         drawn = "(I drew note 2 on HQ's page /projects/teacups, saying “this feels high”: the picture is the page around it, my ink on it.)"
         self.assertEqual((self.brain.asked, self.brain.shown), ([f'{drawn}\n\nIs that right?'], [['note 2']]))
+        # (the agent's turn on it is done: HQ takes its ink off the board's screen.)
+        self.assertEqual(self.told('note'), [{'id': 41, 'state': 'received'}, {'id': 41, 'state': 'done'}])
         self.assertEqual(self.call.lines[:2], ['Board: (drew note 2 on /projects/teacups)', 'Board: Is that right?'])
         self.assertEqual(self.call.picture_bytes, len(DOT))
         self.assertEqual(self.fetched, ['note?id=41&call=7'])
@@ -3549,7 +3552,18 @@ class BoardDrawing(Juno):
         self.assertEqual(self.brain.shown[1], [], 'once')
         recap = await self.call.lose_pictures([])  # (a restarted session: the recap names it, HQ hears nothing)
         self.assertIn("You can't see the board's note 2 any more", recap)
-        self.assertEqual(len(self.events), len([e for e in self.events if e['type'] != 'note']) + 1)
+        self.assertEqual(len(self.events), len([e for e in self.events if e['type'] != 'note']) + 2)
+
+    async def test_a_notes_ink_stays_through_a_turn_the_board_talked_over_and_goes_after_the_next(self):
+        await self.call.note(41)
+        await self.call.seen(self.call.ready())  # (the turn's request started: the agent has it)
+        talked_over = threading.Event()
+        talked_over.set()
+        await self.call.ended_turn('', talked_over, {'back': False})
+        self.assertEqual(self.told('note'), [{'id': 41, 'state': 'received'}], 'the board is still showing it')
+        await self.call.ended_turn('', threading.Event(), {'back': False})
+        await self.call.ended_turn('', threading.Event(), {'back': False})
+        self.assertEqual(self.told('note'), [{'id': 41, 'state': 'received'}, {'id': 41, 'state': 'done'}], 'once')
 
     async def test_a_notes_verdict_comes_with_it_or_later_once_and_versions_as_they_land(self):
         self.judged[41] = {'verdict': {'reply': 'answer', 'why': 'a question'}, 'versions': []}
@@ -3593,7 +3607,7 @@ class BoardDrawing(Juno):
         self.new_call(session_bytes=len(DOT) - 1)
         await self.call.note(41)
         await self.turn('See?')
-        self.assertEqual(self.told('note'), [{'id': 41, 'state': 'received'}])
+        self.assertEqual(self.told('note'), [{'id': 41, 'state': 'received'}, {'id': 41, 'state': 'done'}])
         self.assertEqual(self.brain.shown, [[]])
         self.assertEqual(self.brain.asked, ["(I drew note 2 on HQ's page /projects/teacups, saying “this feels high”. Its "
                                             "picture didn't fit: the call has had all the pictures it can hold.)\n\nSee?"])
@@ -3771,6 +3785,9 @@ class BoardCallNotes(Juno):
         self.asked = []
 
     def coordinator(self, method, path, body=None):
+        if path in ('page', 'mark', 'change'):
+            self.asked.append((method, path, body))
+            return {'ok': '#5 yours note: “Smaller price”\n#6 yours drawing' if path == 'page' else 'Done.'}
         if path in ('scrap', 'title'):
             self.asked.append((method, path, body))
             if body.get('from') == 'note 9':
@@ -3790,12 +3807,14 @@ class BoardCallNotes(Juno):
                    ({'x': 0.66, 'y': 0, 'width': 0.34, 'height': 1}, 'Drop the banner')]
         for region, words in changes:
             reader, writer = await asyncio.open_unix_connection(str(socket_path))
-            asked = {'scrap': {'from': 'note 2', 'region': region, 'words': words}, 'key': self.call.screen_key}
+            asked = {'scrap': {'from': 'note 2', 'region': region, 'words': words, 'goal': 'A calmer shop'},
+                     'key': self.call.screen_key}
             writer.write((json.dumps(asked) + '\n').encode())
             self.assertIn('is on the call', json.loads(await reader.read())['ok'])
             writer.close()
         self.assertEqual(self.asked, [('POST', 'scrap', {'call': 7, 'from': 'note 2', 'region': {k: float(v) for k, v in r.items()},
-                                                         'words': ' '.join(w.split())}) for r, w in changes])
+                                                         'words': ' '.join(w.split()), 'goal': 'A calmer shop'})
+                                      for r, w in changes])
         self.assertEqual(self.events, [], 'nothing of the page goes through HQ\'s socket: the store tells the screens')
         title = await self.call.page.title_tool({'title_page': 'Shop page: price, basket'})
         self.assertEqual((title, self.asked[-1]), ({'ok': 'Titled.'}, ('POST', 'title', {'call': 7, 'title': 'Shop page: price, basket'})))
@@ -3804,9 +3823,10 @@ class BoardCallNotes(Juno):
         tool = self.call.page.scrap_tool
         box = {'x': 0, 'y': 0, 'width': 0.5, 'height': 1}
         for wrong in ({'from': 'the pricing page', 'region': box, 'words': 'x'}, {'from': 'note 2', 'region': {**box, 'x': 0.8}, 'words': 'x'},
-                      {'from': 'note 2', 'region': box, 'words': ''}, {'from': 'note 2', 'region': box, 'words': 'x', 'colour': 'red'}):
+                      {'from': 'note 2', 'region': box, 'words': ''}, {'from': 'note 2', 'region': box, 'words': 'x', 'colour': 'red'},
+                      {'from': 'note 2', 'region': box, 'words': 'x'}):
             self.assertEqual(await tool({'scrap': wrong}), {'error': server.SCRAP_WORDS['shape']})
-        self.assertEqual(await tool({'scrap': {'from': 'note 9', 'region': box, 'words': 'x'}}),
+        self.assertEqual(await tool({'scrap': {'from': 'note 9', 'region': box, 'words': 'x', 'goal': 'y'}}),
                          {'error': 'The board has no note 9 with a picture on this call.'})
         self.assertEqual(await self.call.page.title_tool({'title_page': 'a title of far more than eight words for this one call'}),
                          {'error': server.TITLE_WORDS_SAID['shape']})
@@ -3816,6 +3836,33 @@ class BoardCallNotes(Juno):
         self.call.callout, self.call.phone, self.call.ended = 0, False, True
         self.assertEqual(await tool({'scrap': {'from': '-20s', 'region': box, 'words': 'x'}}), {'error': server.SCRAP_WORDS['gone']})
         self.assertEqual(len(self.asked), 1)
+
+    async def test_a_plain_note_and_the_page_worked_as_the_board_does_go_straight_to_the_store(self):
+        page = self.call.page
+        note = await page.scrap_tool({'scrap': {'words': 'Give the agent a plain note', 'goal': 'No nested pictures'}})
+        self.assertIn('is on the call', note['ok'])
+        self.assertEqual(self.asked[-1], ('POST', 'scrap', {'call': 7, 'words': 'Give the agent a plain note',
+                                                            'goal': 'No nested pictures'}))
+        # (a crop is from and region both: one alone is refused)
+        self.assertEqual(await page.scrap_tool({'scrap': {'from': 'note 2', 'words': 'x', 'goal': 'y'}}),
+                         {'error': server.SCRAP_WORDS['shape']})
+        self.assertEqual(await page.page_tool({'read_page': {}}), {'ok': '#5 yours note: “Smaller price”\n#6 yours drawing'})
+        self.assertEqual(self.asked[-1], ('POST', 'page', {'call': 7}))
+        for mark in ({'mark': 'rect', 'around': 5}, {'mark': 'highlight', 'box': {'x': 10, 'y': 20, 'width': 300, 'height': 40}},
+                     {'mark': 'arrow', 'points': [[0, 0], [120, 80]]}):
+            self.assertEqual(await page.mark_tool({'mark_page': mark}), {'ok': 'Done.'})
+            self.assertEqual(self.asked[-1], ('POST', 'mark', {'call': 7, **mark}))
+        for change in ({'id': 5, 'words': 'Make the price  smaller'}, {'id': 5, 'to': {'x': 40, 'y': 400}}, {'id': 6, 'delete': True}):
+            self.assertEqual(await page.change_tool({'change_page': change}), {'ok': 'Done.'})
+        self.assertEqual(self.asked[-3][2], {'call': 7, 'id': 5, 'words': 'Make the price smaller'})
+        asked = len(self.asked)
+        for wrong in ({'mark': 'star'}, {'mark': 'rect', 'around': 'the price'}, {'mark': 'pen', 'points': [[1, 2, 3]]}):
+            self.assertEqual(await page.mark_tool({'mark_page': wrong}), {'error': server.MARK_WORDS['shape']})
+        for wrong in ({'id': 5}, {'id': 5, 'words': 'x', 'delete': True}, {'id': 5, 'delete': False}, {'id': 'five', 'delete': True}):
+            self.assertEqual(await page.change_tool({'change_page': wrong}), {'error': server.CHANGE_WORDS['shape']})
+        self.call.ended = True
+        self.assertEqual(await page.page_tool({'read_page': {}}), {'error': server.PAGE_WORDS['gone']})
+        self.assertEqual(len(self.asked), asked)
 
     def test_the_call_engine_reads_nothing_of_the_page(self):
         """The engine's split: the line's drawing and driving halves, and the screen tool, import nothing of the notes

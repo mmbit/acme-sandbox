@@ -9,28 +9,19 @@ const h = await harness('bookcalls');
 const { db } = h;
 const { ORIGIN } = await import('../config.ts');
 const DIR = `${h.dataDir}/book`;
-const bookjudge = await import('./bookjudge.ts');
-// The book's judge's call on these words answered with reply (any before it with none): its prompt
-async function judgeSays(words: string, reply: 'none' | 'answer' | 'try') {
-  for (let i = 0; i < 100; i++) {
+// No judge's call on these words comes for a while (any other's answered with none): a note on a call is its agent's
+// to act on
+async function unjudged(words: string) {
+  for (let i = 0; i < 15; i++) {
     const c = (await h.worker('reads/claim')).body;
-    if (!c.reading || !JSON.parse(c.schema).properties.reply) {
-      await new Promise(res => setTimeout(res, 20));
-      continue;
+    if (c.reading && JSON.parse(c.schema).properties.reply) {
+      assert.ok(!(c.content.at(-1).text as string).includes(JSON.stringify(words)), `${words}: judged`);
+      const structured_output = { reply: 'none', why: 'test' };
+      await h.worker('reads/answer', { reading: c.reading, result: { is_error: false, structured_output } });
     }
-    const text = c.content.at(-1).text as string,
-      mine = text.includes(JSON.stringify(words));
-    const structured_output = { reply: mine ? reply : 'none', why: 'test' };
-    await h.worker('reads/answer', { reading: c.reading, result: { is_error: false, structured_output } });
-    if (mine) return text;
+    await new Promise(res => setTimeout(res, 20));
   }
-  throw new Error(`${words}: not judged`);
 }
-const verdictSoon = async (note: number, reply: string) => {
-  for (let i = 0; i < 100 && bookjudge.verdictOf({ note })?.reply !== reply; i++)
-    await new Promise(res => setTimeout(res, 10));
-  return bookjudge.verdictOf({ note });
-};
 
 const ring = (color: string) => ({
   color,
@@ -66,9 +57,8 @@ test("a call's page: the board's notes numbered on it, never on a sheet to send,
   const one = (await note({ page: page.id, words: 'This feels high?', snip: SNIP })).body;
   assert.equal(one.note.n, 1);
   assert.equal(one.note.by, 'board');
-  // (a note on a call is judged as anywhere, knowing it's a call's: the verdict goes to the call's agent with the note.)
-  assert.match(await judgeSays('This feels high?', 'answer'), /the page of a call with Juno/);
-  assert.equal((await verdictSoon(one.note.id, 'answer'))?.reply, 'answer');
+  // (a note on a call isn't judged: it's for the call's agent, who decides what becomes of it. The board, call 161)
+  await unjudged('This feels high?');
   // (the agent's rings are never kept)
   for (const by of ['juno', 'lark']) {
     const theirs = await note({ page: page.id, anchor: anchor('#7b5ea7'), words: 'this one', by });
@@ -98,7 +88,7 @@ test("a call's page: the board's notes numbered on it, never on a sheet to send,
   );
   assert.equal((await h.board('/api/book/calls?pages=')).status, 400);
   assert.match((await h.board('/api/book/send', { id: one.sheet.id })).body.error, /stay on its page/);
-  // ...nor moved to a sheet that is, and words written over again are judged again
+  // ...nor moved to a sheet that is, and words written over again aren't judged either
   const moved = await h.board('/api/book/note/move', { id: one.note.id, to: 'juno' });
   assert.equal(moved.status, 409);
   assert.match(moved.body.error, /stays on its call's page/);
@@ -106,15 +96,14 @@ test("a call's page: the board's notes numbered on it, never on a sheet to send,
     await h.board('/api/book/note/edit', { id: two.note.id, words: 'Or with shipping in?', said: 'typed' })
   ).body;
   assert.equal(edited.note.words, 'Or with shipping in?');
-  await judgeSays('Or with shipping in?', 'none');
-  // ...as the board's handwriting is, read after the note went in (job #19916)
+  await unjudged('Or with shipping in?');
+  // ...nor the board's handwriting, read after the note went in
   const written = (await note({ page: page.id })).body.note;
   const late = (
     await h.board('/api/book/note/edit', { id: written.id, words: 'What time is it?', said: 'written', was: '' })
   ).body;
   assert.equal(late.note.words, 'What time is it?');
-  await judgeSays('What time is it?', 'answer');
-  assert.equal((await verdictSoon(written.id, 'answer'))?.reply, 'answer');
+  await unjudged('What time is it?');
 
   // the voice line reads the board's note, on this live call only
   const read = await h.voice(`note?id=${one.note.id}&call=${call}`);

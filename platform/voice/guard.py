@@ -6,10 +6,10 @@ HQ_TOOLS = [sys.executable, str(Path(__file__).with_name('hq_tools.py'))]
 # (when: eta)
 # (git, report; ask_to_see, draw; drive, open_work; the pins' removal)
 # (answer_note)
-# (scrap and title_page: the call's notes page, callnotes.py.)
-CALL_TOOLS = ['add', 'answer_note', 'ask_to_see', 'call', 'draw', 'drive', 'estimate', 'eta', 'expedite', 'git', 'hang_up', 'history', 'intercom', 'job',
-              'manage', 'open_work', 'promise', 'reach', 'replace', 'report', 'scrap', 'screen', 'search', 'sketch', 'title_page',
-              'waiting', 'when']
+# (scrap and title_page: the call's notes page, callnotes.py; change_page, mark_page and read_page: the agent working it.)
+CALL_TOOLS = ['add', 'answer_note', 'ask_to_see', 'call', 'change_page', 'draw', 'drive', 'estimate', 'eta', 'expedite', 'git',
+              'hang_up', 'history', 'intercom', 'job', 'manage', 'mark_page', 'open_work', 'promise', 'reach', 'read_page',
+              'replace', 'report', 'scrap', 'screen', 'search', 'sketch', 'title_page', 'waiting', 'when']
 PARTNER_TOOLS = ['hang_up', 'no_transcript', 'note', 'screen']
 # Off limits to Read, Grep and Glob, where a set has them
 FENCED = ('/proc', '/seat', '/data', '/dev', '/sys', '/etc', '/models', '/tmp')

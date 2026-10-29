@@ -18,13 +18,13 @@
 //   A group asked for stays pending, busy or not, until it's at nice 10 or gone. A job past the cores for long (`hot`,
 //   the worker's count) has its busiest run blocked. An interrupted priority helper also blocks a busy job's run.
 import type { AccountingFailure } from './accounting.ts';
-import { execFile, spawn } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { readFileSync, statSync } from 'node:fs';
 import type { Ids } from './slots.ts';
-import { WRAPPERS, procStat, processesOfUids, type ProcStat } from './detached.ts';
+import { procStat, processesOfUids, type ProcStat } from './detached.ts';
 import type { DiskUse } from './disk.ts';
 import { storedWrites, sharedWritableFiles, diskWrites, diskAccountingError, type WritableFile } from './diskwrites.ts';
-import { redact } from './safety.ts';
+import { PLAIN_ENV } from './stoprun.ts';
 import { runsOf } from './runs.ts';
 export { cliProcesses, runsOf } from './runs.ts';
 
@@ -54,7 +54,6 @@ type Autogroup = { id: string; nice: number; writable: boolean };
 export type JobUse = { uid: number; memoryMb: number; cores: number; processes: ProcessSnapshot[] };
 
 const CPU_TICKS_PER_SECOND = 100; // clock ticks a second (getconf CLK_TCK)
-const PLAIN_ENV = { PATH: '/usr/bin:/bin' }; // (a slot's command gets nothing of the worker's environment)
 // SIGTERM cannot finish a helper stopped by another process in its slot.
 const slotOptions = (ids: Required<Ids>) => ({
   ...ids,
@@ -335,61 +334,3 @@ const runAsSlot = (ids: Required<Ids>, cmd: string, args: string[]) =>
   new Promise<boolean>(resolve =>
     execFile(cmd, args, slotOptions(ids), err => resolve(Boolean(err?.signal || err?.killed))),
   );
-
-// A blocked run's processes, each still the one looked at, sent the signal: SIGSTOP freezes it (it neither grows nor
-// starts anything), SIGKILL ends it
-export function signal(run: ProcessSnapshot[], name: NodeJS.Signals) {
-  for (const p of run)
-    try {
-      if (procStat(p.pid)?.start === p.start) process.kill(p.pid, name);
-    } catch {
-      /* ended meanwhile */
-    }
-}
-
-// A blocked run: frozen while HQ is asked for its words (ask: the coordinator's blocks.ts), told them in its own output,
-// then ended. An ask that fails still ends the run, never leaving it frozen, and goes on to the caller: the run hears
-// no words but HQ's.
-export async function stopRun(
-  run: ProcessSnapshot[],
-  ids: Required<Ids>,
-  root: { pid: number },
-  ask: () => Promise<{ text: string }>,
-) {
-  signal(run, 'SIGSTOP');
-  try {
-    await tellRun(ids, root, (await ask()).text);
-  } finally {
-    signal(run, 'SIGKILL');
-  }
-}
-
-// The command the agent ran, as the words about its block name it: the run's first program that isn't a shell (a tool's
-// bash -c around it says nothing). HQ redacts full saved secret values before shortening it for the run output.
-export function commandOf(run: ProcessSnapshot[]) {
-  const named = run.find(p => !WRAPPERS.has(p.comm)) ?? run[0];
-  try {
-    const args = readFileSync(`/proc/${named.pid}/cmdline`, 'utf8').split('\0').filter(Boolean).join(' ');
-    return redact(args) || named.comm;
-  } catch {
-    return named.comm;
-  }
-}
-
-// The words about a block go where the agent reads its command's end: the run's first process's stderr (what its tool
-// returns), opened as the job's own user and appended to (root opening another's descriptor could write where the job may
-// not). A run whose stderr isn't there to open (closed, a socket) loses them; HQ's log keeps them.
-export function tellRun(ids: Required<Ids>, root: { pid: number }, words: string) {
-  return new Promise<boolean>(resolve => {
-    const c = spawn('sh', ['-c', 'cat >> "/proc/$1/fd/2"', 'sh', String(root.pid)], {
-      ...ids,
-      env: PLAIN_ENV,
-      stdio: ['pipe', 'ignore', 'ignore'],
-      timeout: 5_000,
-    });
-    c.on('error', () => resolve(false));
-    c.on('close', code => resolve(code === 0));
-    c.stdin.on('error', () => {});
-    c.stdin.end(`\n${words}\n`);
-  });
-}

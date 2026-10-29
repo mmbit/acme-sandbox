@@ -16,14 +16,13 @@ import {
   notebookOn,
   onScreen,
   opened,
-  overlaps,
   pagePx,
   placed,
   routed,
   stroke,
   triedNote,
 } from './bookanswersplay.mjs';
-import { NARROWEST } from '../coordinator/src/ink/answerspot.ts';
+import { NARROWEST, overlapping } from '../coordinator/src/ink/answerspot.ts';
 import { besideOnNarrower } from './bookanswersnarrow.mjs';
 
 const WENT_LIVE = 'Yes: it went live this morning, at 09:12.';
@@ -102,7 +101,7 @@ export async function inPaper(page, id, selector = `.bk-answer[data-answer="${id
   assert.ok(at.x >= paper.x && at.x + at.w <= paper.x + paper.w, `${shown}: inside the paper`);
   for (const r of [...rail, strip])
     assert.ok(
-      paper.w < NARROWEST ? !overlaps(at, r) : at.x + at.w <= r.x,
+      paper.w < NARROWEST ? !overlapping(at, r) : at.x + at.w <= r.x,
       `${shown}: left of the controls from ${Math.round(r.x)}`,
     );
 }
@@ -209,7 +208,7 @@ async function writtenIn(c, nb, page, asked, spot, size) {
   assert.equal(await slip.locator('.bk-answer-pen').count(), 0, 'the pen away once written');
   const at = await pagePx(page, '.bk-answer[data-answer="4201"]');
   assert.ok(at, 'the answer in page px');
-  for (const g of nb.groups) assert.ok(!overlaps(at, g.box), `the answer clear of group ${g.id}`);
+  for (const g of nb.groups) assert.ok(!overlapping(at, g.box), `the answer clear of group ${g.id}`);
   await inPaper(page, 4201);
   await c.shot(`answers-written-${size}`, page);
   return slip;
@@ -367,7 +366,7 @@ async function onCall(browser, c) {
     nb.tell();
     await written(page, 4501);
     const at = await pagePx(page, '.bk-answer[data-answer="4501"]');
-    assert.ok(at && !overlaps(at, asked.box), "clear of the board's note");
+    assert.ok(at && !overlapping(at, asked.box), "clear of the board's note");
     await inPaper(page, 4501);
     await c.shot('answers-call', page);
   });

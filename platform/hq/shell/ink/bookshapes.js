@@ -4,7 +4,7 @@
 // step for Undo and Redo (bookedit.js). A shape is ink like any line: a ring round something is a mark as the pen's
 // ring is.
 import { draw, fit } from '/__review/ink.js';
-import { shape } from './bookstrokes.js';
+import { shape } from './bookinkmath.js';
 import { boxOf, grownTo } from './bookrow.js';
 import { followPress } from './bookpress.js';
 

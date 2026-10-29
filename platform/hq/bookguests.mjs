@@ -4,7 +4,7 @@ import { mkdir, rename } from 'node:fs/promises';
 import { coordinator, openVisitor } from './bookguestserver.mjs';
 import { createNotebook, inviteScreens, createReviewRound, knownInvitation, readyHQ } from './bookinvitechecks.mjs';
 import { artifactScrap } from './bookguestartifact.mjs';
-import { until as waitFor } from './booknotebookscreen.mjs';
+import { until as waitFor } from './bookkit.mjs';
 import { refusalStory } from './bookguestrefusals.mjs';
 import {
   readyNotebook,

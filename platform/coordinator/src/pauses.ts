@@ -252,24 +252,39 @@ export function heldBy(job: number) {
 // The open pauses on a thread, each with its time, the jobs it still waits for and the open card of the board's decision
 // it waits for, if any (the play: backlog.ts).
 export function holding(thread: string | null) {
-  // (kept prepared: each open job's on every play of the queue.)
+  return holdings()(thread);
+}
+// Every thread's holding() from one read of the open pauses: the play asks it of each open job's thread, and a read
+// builds the redraws' relations whole (redraws.ts query).
+export function holdings() {
+  // (kept prepared: on every play of the queue.)
   const rows = prepared(
-    redraws.query(`select coalesce(p.thread, p.project) target, (select json_group_array(${redraws.current('u.job')}) from pause_until u join jobs prior
+    redraws.query(`select p.project, p.thread, coalesce(p.thread, p.project) target, (select json_group_array(${redraws.current('u.job')}) from pause_until u join jobs prior
         on prior.id = u.job where u.pause = p.id and not ${jobs.merged('prior')}) until, p.until_time,
         (select d.request from decisions d where d.id = p.decision and d.answered is null and d.released is null) card
-      from pauses p where ${jobs.pauseHolds('p')} and p.project = ? and (p.thread is null or p.thread = ?) order by p.id`),
-  ).all(thread?.split('/')[0] ?? jobs.DESK, thread) as {
+      from pauses p where ${jobs.pauseHolds('p')} order by p.id`),
+  ).all() as {
+    project: string;
+    thread: string | null;
     target: string;
     until: string;
     until_time: string | null;
     card: number | null;
   }[];
-  return rows.map(r => ({
-    target: r.target,
-    untilTime: r.until_time === null ? null : Date.parse(r.until_time),
-    until: JSON.parse(r.until) as number[],
-    card: r.card,
+  const held = rows.map(r => ({
+    project: r.project,
+    thread: r.thread,
+    pause: {
+      target: r.target,
+      untilTime: r.until_time === null ? null : Date.parse(r.until_time),
+      until: JSON.parse(r.until) as number[],
+      card: r.card,
+    },
   }));
+  return (thread: string | null) => {
+    const project = thread?.split('/')[0] ?? jobs.DESK;
+    return held.filter(h => h.project === project && (h.thread === null || h.thread === thread)).map(h => h.pause);
+  };
 }
 
 // GET /api/projects with each paused project's and thread's pause: why, by whom since when, the time and the jobs it

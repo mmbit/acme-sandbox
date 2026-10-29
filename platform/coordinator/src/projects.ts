@@ -177,10 +177,10 @@ function ownedProject(job: { agent: string; thread: string | null }) {
 // from). A thread drawn for it is handled by newthread.ts jobThread.
 // Where the company asks for threads, a job with no open one to inherit is refused, with the open ones listed, but the
 // CEO's own (the desk's), a call's too. A refusal carries its HTTP status.
-// A title the thread or its project has is refused (taskClash).
+// A title the thread or its project has is refused (taskClash). newThread.needs: its --needs.
 export type JobThreadAsk = {
   thread?: unknown;
-  newThread?: { project?: unknown; name?: unknown; goal?: unknown };
+  newThread?: { project?: unknown; name?: unknown; goal?: unknown; needs?: unknown };
   agent?: unknown;
   title?: unknown;
 };

@@ -1,5 +1,5 @@
 // book-check.mjs's pin-flow story (the board's, 27 Oct: shared/review/postit.js, settle.js, lift.js; shell/ink/
-// bookgroups.js; Ink's folder), on book-check's played store, on an iPad mini with the Pencil, a phone in portrait with
+// bookgroups.js; Ink's folder), each on its own played store, on an iPad mini with the Pencil, a phone in portrait with
 // a finger and a desktop with a mouse. A mark on HQ's page opens the post-it at the foot of the screen, its photo
 // framed on the mark; words said (the voice line's) or typed; Save, and the mark is gone from the screen at once, the
 // note a scrap on the Notebook's newest page (groups/scrap: its anchor, words and photo). The book open, it turns there
@@ -12,12 +12,14 @@
 import assert from 'node:assert/strict';
 import { fulfilPart } from '../../shared/review/parts.mjs';
 import { nothingDrawn } from './bookink.mjs';
-import { groupsOf, newestPage, shownScrap, until } from './bookplayed.mjs';
+import { groupsOf, newestPage, shownScrap } from './bookplayed.mjs';
 import { talked, voiceServed } from './bookvoice.mjs';
+import { talkedInViewer, askLeftBehind, pagesWatched } from './booktalk.mjs';
+import { DESKTOP, MINI, pressAlong, ui, until } from './bookkit.mjs';
 
 // ---- the stories
-const IPAD = { name: 'ipad', viewport: { width: 1133, height: 744 }, more: {}, starts: 'open', hand: 'pen' },
-  PHONE = {
+const IPAD_SCREEN = { name: 'ipad', viewport: MINI, more: {}, starts: 'open', hand: 'pen' },
+  PHONE_SCREEN = {
     name: 'phone',
     viewport: { width: 390, height: 844 },
     // (2x, not an iPhone's 3x: HQ's scene drawn without a GPU at 3x took a second a frame on a loaded worker, the
@@ -26,51 +28,48 @@ const IPAD = { name: 'ipad', viewport: { width: 1133, height: 744 }, more: {}, s
     starts: 'folded',
     hand: 'touch',
   },
-  DESKTOP = {
+  DESKTOP_SCREEN = {
     name: 'desktop',
-    viewport: { width: 1440, height: 900 },
+    viewport: DESKTOP,
     more: { deviceScaleFactor: 1, hasTouch: false },
     starts: 'open',
     hand: 'mouse',
   };
-const PREVIEW = 'https://scrap.preview.test';
+export const PREVIEW = 'https://scrap.preview.test';
 const PREVIEW_PAGE = `<!doctype html><meta name="viewport" content="width=device-width"><title>Basket</title>
 <body style="margin: 0; font: 16px system-ui, sans-serif">
 <h1 style="margin: 24px">Your basket</h1>
 <p style="margin: 24px; max-width: 30em">Two jars of plum jam, gift-wrapped, at the pick-up point by Friday.</p>
 <script src="/__review/review.js"></script>`;
-const ui = s => `review-mode >> css=${s}`;
 // How long a saved mark's ink may take to fly into the book: its flight is half a second, but HQ's scene drawn without a
 // GPU on a loaded worker holds the page's frames up for seconds (job #12594's desktop run: past the default's 0.9 s)
 const FLIGHT_MS = 4000;
 
-// c: book-check's { hqIn, base, reviewJs, settled, penOn, ring, posts, hush, shot, noErrorsIn }
+// c: book-check's { hqIn, base, reviewJs, settled, ring, posts, hush, shot, noErrorsIn }
 export function scrapStories(c) {
   return {
     "the pin flow on an iPad mini: a mark's post-it, Save, a scrap on the newest page, the book open or shut, editable; from an artifact too, its words said; Cancel":
-      browser => pinFlow({ ...c, browser }, IPAD),
+      browser => pinFlow({ ...c, browser }, IPAD_SCREEN),
     "the pin flow on a phone in portrait: a finger's mark, its post-it, Save, the book shut till its tab's tap, editable; from an artifact too; Cancel":
-      browser => pinFlow({ ...c, browser }, PHONE),
+      browser => pinFlow({ ...c, browser }, PHONE_SCREEN),
     "the pin flow on a desktop: a mouse's mark, its post-it, Save, a scrap on the newest page in the open book, editable; from an artifact too, its words said; Cancel":
-      browser => pinFlow({ ...c, browser }, DESKTOP),
+      browser => pinFlow({ ...c, browser }, DESKTOP_SCREEN),
   };
 }
 
-// Review mode asks for the mic at a mark in HQ's viewer too, whose frame keeps the microphone out (desk.js), and its
-// post-it asks for typing: WebKit tells the refusal as two errors, the first's message cut at its '//' (its stack whole)
-const MIC_REFUSED = /^(Permission policy 'Microphone' check failed|Not allowed to call getUserMedia)/;
 async function pinFlow(c, screen) {
-  const context = await c.hqIn(c.browser, screen.viewport, screen.more),
+  const context = await c.hqIn(c.browser, screen.viewport, { ...screen.more, notebooks: {} }),
     errors = [];
-  const voice = await previewServed(c, context);
+  await previewServed(c, context);
   const page = await context.newPage();
-  page.on('pageerror', e => MIC_REFUSED.test(e.stack) || errors.push(e.message));
+  page.on('pageerror', e => errors.push(e.message));
+  await pagesWatched(page); // (askLeftBehind, talkedInViewer)
   try {
     await page.goto(`${c.base}/?intro=0`);
     await page.waitForSelector('#loading.gone');
     await page.waitForSelector('review-mode .fab', { state: 'attached' }); // (away till summoned: job #20358)
     await c.settled(page, screen.starts);
-    const s = { ...c, page, screen, voice, play: context.notebook, named: what => `scrap-${screen.name}-${what}` };
+    const s = { ...c, page, screen, play: context.notebook, named: what => `scrap-${screen.name}-${what}` };
     // on HQ: the book as the device starts it (open on an iPad and a desktop, shut on a phone)
     const first = await savedOnHq(s, { spoken: screen.hand === 'pen' });
     await edited(s, first);
@@ -135,7 +134,7 @@ async function savedOnHq(s, { spoken, what = '' }) {
 async function markOnHq(s) {
   const { page, screen } = s,
     at = { x: Math.min(250, screen.viewport.width / 2), y: 300, rx: 80, ry: 45 };
-  if (screen.hand === 'pen') return s.penOn(page)(s.ring(at.x, at.y, at.rx, at.ry));
+  if (screen.hand === 'pen') return pressAlong(page, s.ring(at.x, at.y, at.rx, at.ry));
   if (!(await page.locator(ui('.fab')).isVisible())) {
     if (screen.hand === 'touch') {
       await page.locator('#book .bk-lip').click();
@@ -158,26 +157,7 @@ async function drawn(on, points, hand, offset = { x: 0, y: 0 }) {
     for (const [x, y] of points.slice(1)) await page.mouse.move(x + offset.x, y + offset.y);
     return page.mouse.up();
   }
-  await on.evaluate(
-    ([pts, pointerType]) => {
-      const target = (x, y) => {
-        const inner = document.querySelector('review-mode')?.shadowRoot?.elementFromPoint(x, y);
-        return inner ?? document.elementFromPoint(x, y) ?? document.body;
-      };
-      const at = (type, [x, y]) =>
-        target(x, y).dispatchEvent(
-          new PointerEvent(type, {
-            ...{ pointerId: 12, pointerType, isPrimary: true, clientX: x, clientY: y },
-            ...{ pressure: type === 'pointerup' ? 0 : 0.5, buttons: type === 'pointerup' ? 0 : 1 },
-            ...{ bubbles: true, composed: true, cancelable: true },
-          }),
-        );
-      at('pointerdown', pts[0]);
-      for (const p of pts.slice(1)) at('pointermove', p);
-      at('pointerup', pts.at(-1));
-    },
-    [points, hand === 'pen' ? 'pen' : 'touch'],
-  );
+  await pressAlong(on, points, { type: hand === 'pen' ? 'pen' : 'touch' });
 }
 // The post-it as the board sees it: at the foot of the screen, inside its width, its photo developed, its button Save.
 // on: the page or the preview's frame; screen: its size
@@ -209,8 +189,10 @@ async function inBook(s, scrap, shut, what = '') {
     await turned(s, page, s.screen.name === 'phone' ? 'spread' : 'open');
   }
   // (the swing and the turn to it: slow on a loaded worker)
-  const seen = await until(() => shownScrap(page, scrap), 30_000);
-  assert.ok(seen, `${s.screen.name}: the scrap on the page shown${shut ? ', the book opened by its tab' : ''}`);
+  const seen = await until(
+    () => shownScrap(page, scrap),
+    `${s.screen.name}: the scrap on the page shown${shut ? ', the book opened by its tab' : ''}`,
+  );
   const { photo, paper } = seen;
   assert.ok(
     photo.x + photo.w > paper.left && photo.x < paper.right && photo.y + photo.h > paper.top && photo.y < paper.bottom,
@@ -218,11 +200,14 @@ async function inBook(s, scrap, shut, what = '') {
   );
   assert.equal(seen.words, scrap.words, '...its words under it');
   // ...and clear of the islands over the paper's right edge, so a stroke on its photo starts on it, not on the tools
-  const clear = await until(async () => {
-    const now = await shownScrap(page, scrap);
-    return now && now.right <= now.tools && now;
-  }, 5000);
-  assert.ok(clear, `${s.screen.name}: the scrap left of the book's tools (${JSON.stringify(seen)})`);
+  await until(
+    async () => {
+      const now = await shownScrap(page, scrap);
+      return now && now.right <= now.tools;
+    },
+    `${s.screen.name}: the scrap left of the book's tools (${JSON.stringify(seen)})`,
+    5000,
+  );
   await s.shot(s.named(`book${what && `-${what}`}`), page);
 }
 // Its words typed again in the book: saved, over the scrap as it was read, said as they first were
@@ -253,7 +238,7 @@ async function drawnOn(s, scrap) {
     photo.y + photo.h / 2 + 6 * Math.sin(i),
   ]);
   // (a finger in the book moves its page and never inks, bookwrite.js: a phone draws there with a stylus)
-  await s.penOn(page)(line);
+  await pressAlong(page, line);
   const edit = await posted(s, from, '/api/notebooks/groups/edit', 'a line over the photo joins the scrap');
   assert.equal(edit.id, scrap.id, 'the same group');
   assert.equal(edit.ink?.length, inked + 1, 'its ink with the line');
@@ -287,9 +272,8 @@ async function cancelled(s) {
 }
 
 // ---- an artifact: a preview in HQ's viewer, review mode running in its frame
-// Returns the board's voice ({ pieces } heard so far: bookvoice.mjs)
-async function previewServed(c, context) {
-  const voice = await voiceServed(c, context);
+export async function previewServed(c, context) {
+  await voiceServed(c, context);
   await context.route(/\/api\/preview\/link$/, r => r.fulfill({ json: { url: r.request().postDataJSON().url } }));
   await context.route(`${PREVIEW}/**`, r => {
     const path = new URL(r.request().url()).pathname;
@@ -316,7 +300,6 @@ async function previewServed(c, context) {
     if (path.startsWith('/__review/')) return r.fulfill({ json: { show: false } });
     return r.fulfill({ contentType: 'text/html', body: PREVIEW_PAGE });
   });
-  return voice;
 }
 // A mark on the preview: its post-it in the frame, words said through HQ's microphone (the frame never asking for it)
 // or typed, Save to the preview's notes, the mark gone, and the scrap on the Notebook's newest page, the open book
@@ -331,6 +314,7 @@ async function fromArtifact(s, { spoken }) {
   const frame = page.frame({ url: /scrap\.preview\.test/ }),
     box = await page.locator('#viewer iframe').boundingBox(),
     loop = s.ring(110, 48, 100, 30); // (round the heading)
+  await askLeftBehind(page, frame);
   await landedHeard(page);
   // (an artifact's own pin first, the Pencil too: it draws without one on HQ's page alone)
   await page.locator('#viewer .bar .pin').dispatchEvent('click');
@@ -338,8 +322,7 @@ async function fromArtifact(s, { spoken }) {
   await drawn(frame, loop, screen.hand, box);
   const size = { width: Math.round(box.width), height: Math.round(box.height) },
     sheet = await postIt(s, frame, size);
-  s.voice.pieces = 0;
-  if (spoken) await talked(frame, { pieces: true });
+  if (spoken) await talkedInViewer(s, frame, sheet);
   else await sheet.locator('textarea').fill('Say when it ships');
   await s.shot(s.named('artifact-postit'), page);
   await sheet.locator('.send').dispatchEvent('click'); // (a tap: no navigation to wait for)
@@ -351,6 +334,8 @@ async function fromArtifact(s, { spoken }) {
   );
   if (spoken) assert.ok((await page.evaluate(() => window.micsAsked)) >= 1, 'HQ recorded them');
   assert.equal(await frame.evaluate(() => window.micsAsked), 0, 'the preview never asked for the microphone');
+  const allowed = await page.locator('#viewer iframe').getAttribute('allow');
+  assert.doesNotMatch(allowed, /microphone/, "desk.js's frame isn't allowed the microphone");
   assert.ok(sent.element?.ink?.length >= 1, 'with the mark as its ink');
   assert.match(sent.shot ?? '', /^data:image\/(jpeg|png);base64,/, 'and its photo');
   await nothingDrawn(frame, `${screen.name}: the artifact's note saved`, FLIGHT_MS);
@@ -360,7 +345,6 @@ async function fromArtifact(s, { spoken }) {
   if (shut) await page.click('#viewer [data-close]');
   await inBook(s, scrap, shut, 'artifact');
 }
-
 // ---- helpers
 const bookMode = page => page.evaluate(() => document.documentElement.dataset.book);
 // The book swung or slid to a mode after a tap, then laid out (a loaded worker's WebKit can take far past book-check's

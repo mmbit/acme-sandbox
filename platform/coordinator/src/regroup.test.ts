@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { harness, until } from './harness.ts';
+import type { Item } from './reviewinbox.ts';
 
 const h = await harness('regroup', {
   before: repo =>
@@ -22,6 +23,8 @@ const { db } = h;
 const projects = await import('./projects.ts');
 const pauses = await import('./pauses.ts');
 const regroup = await import('./regroup.ts');
+const made = await import('./made.ts');
+const reviewwork = await import('./reviewwork.ts');
 const plan = await import('./plan.ts');
 const forecast = await import('./forecast.ts');
 const messages = await import('./messages.ts');
@@ -168,6 +171,40 @@ test('a job in no open thread moves onto one', () => {
   assert.deepEqual(regroup.moveJob(loose, levels, 'bolt'), { thread: levels, jobs: [loose] });
 });
 
+test("a job moved out of HQ's one-task deliverable ends it, and so do expedite and a bound review; an owner's emptied one stays open", () => {
+  reset();
+  const [levels, sound] = [started('levels'), started('sound')];
+  const status = (id: string) => projects.findThread(id)?.status;
+  const moving = h.queue({ agent: 'wren' });
+  const wrapper = made.oneTaskThread('tools', { id: moving, title: 'Check the map' })!;
+  assert.deepEqual([threadOf(moving), status(wrapper)], [wrapper, 'open']);
+  assert.deepEqual(regroup.moveJob(moving, levels, 'bolt'), { thread: levels, jobs: [moving] });
+  assert.equal(status(wrapper), 'done', 'no task left to draw in it');
+
+  assert.deepEqual(regroup.moveJob(moving, sound, 'wren'), { thread: sound, jobs: [moving] });
+  assert.equal(status(levels), 'open', "its owner's, who may draw its next task");
+
+  const expedited = h.queue({ agent: 'kit' });
+  const own = made.oneTaskThread('tools', { id: expedited, title: 'Fix the claim' })!;
+  assert.deepEqual(regroup.takeOut(expedited, 'juno'), { taken: true, thread: own });
+  assert.equal(status(own), 'done');
+
+  // (a failed job's takeover in it: the failed one stays a row there, set aside by its replacement)
+  const failed = h.queue({ agent: 'kit' });
+  const taken = made.oneTaskThread('tools', { id: failed, title: 'Fix the gate' })!;
+  db.prepare("update jobs set status = 'failed' where id = ?").run(failed);
+  const takeover = h.queue({ agent: 'kit', insteadOf: failed, thread: taken });
+  assert.deepEqual(regroup.takeOut(takeover, 'juno'), { taken: true, thread: taken });
+  assert.equal(status(taken), 'done');
+
+  // (a review of its work bound to an owner's open deliverable: reviewwork.ts bind, as hq inbox accept --deliverable)
+  const reviewed = h.queue({ agent: 'wren' });
+  const bound = made.oneTaskThread('tools', { id: reviewed, title: 'Draw the map' })!;
+  const item = { pr: 1, proposal: 1, branch: `job/${reviewed}`, thread: bound, project: 'tools' } as Item;
+  assert.equal(reviewwork.bind(item, levels), undefined);
+  assert.deepEqual([threadOf(reviewed), status(bound), status(levels)], [levels, 'done', 'open']);
+});
+
 test('work moves out from under no open pause: a pause holds it until it lifts', async () => {
   reset();
   const [levels, sound, till] = [started('levels'), started('sound'), started('till', 'shop')];
@@ -255,7 +292,7 @@ for (const relation of ['destination', 'ancestor', 'existing'] as const) {
     assert.ok(!inbox.body[0].text.includes(invalid));
     assert.deepEqual(projects.needsOf(needing), before, 'the move leaves the decision to the owner');
     assert.equal(threadOf(work), next);
-    const removed = await h.hq(owner, 'plan', 'unneed', needing, old);
+    const removed = await h.hq(owner, 'plan', 'unneed', needing, old, 'Its work moved');
     assert.equal(removed.code, 0, removed.out);
     assert.deepEqual(projects.needsOf(needing), relation === 'existing' ? [next] : []);
   });
@@ -323,7 +360,8 @@ for (const choice of ['keep both', 're-point A', 're-point B', 're-point both', 
       for (const [, action, thread, target] of commands) {
         if (action === 'unneed' && !removals.includes(target)) continue;
         if (action === 'unneed') assert.ok(projects.needsOf(thread).includes(next), 'add before removing an old need');
-        const changed = action === 'need' ? plan.need(thread, target, 'moss') : plan.unneed(thread, target, 'moss');
+        const changed =
+          action === 'need' ? plan.need(thread, target, 'moss') : plan.unneed(thread, target, 'moss', 'Its work moved');
         if (typeof changed === 'string') {
           assert.equal(choice, 'addition refused', changed);
           refused = true;

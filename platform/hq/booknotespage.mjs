@@ -17,6 +17,11 @@ export const notesPageStories = c => ({
     scrapsLand(browser, c, c.PHONE, 'phone'),
   "a call's notes page that can't be opened: asked twice, a card says so, and the page a notebook has asks nothing":
     browser => notOpened(browser, c),
+  //
+  'a call-sized notes page: a dozen scraps and five promises as post-its, none over another (desktop)': browser =>
+    callSized(browser, c, c.DESKTOP, 'desktop'),
+  'a call-sized notes page: post-its, none over another (iPad mini landscape)': browser =>
+    callSized(browser, c, c.MINI, 'ipad'),
 });
 
 async function scrapsLand(browser, c, viewport, device) {
@@ -146,10 +151,132 @@ async function landed(page, c, { context, line, device, notes }) {
     }
   }
 }
-const mode = page => page.evaluate(() => document.documentElement.dataset.book);
+export const mode = page => page.evaluate(() => document.documentElement.dataset.book);
 const cover = page => page.evaluate(() => getComputedStyle(document.querySelector('#book .bk-edge')).transform);
 const where = page =>
   page
     .locator('#book')
     .getByRole('button', { name: /^The notebook's pages/ })
     .getAttribute('aria-label');
+
+// A call's page as a long call leaves it: a dozen scraps, each with its words, and five promises, put on it by the
+// store's own stacking (the play's, notebookplaygroups.js: notebookstack.js). Each scrap's words sit under its own
+// picture, a clear gap before the next; the promises are post-its; nothing lies over anything else, and the notes go
+// in two columns.
+const CAPTIONS = [
+  'Smaller',
+  'Move the basket next to the price, where the eye already is',
+  'Drop this banner',
+  'The teal here, as on the mugs',
+  'This headline wraps badly on the iPad: one line, a little smaller, and the subtitle under it in grey',
+  'Same gap as above',
+  'Bigger tap target',
+  'Make the footer slim again',
+  'Tooltips: the hover states the board reported, all of them',
+  'Send goes elsewhere, which makes room for the title on one line',
+  'This',
+  'Keep the zoom per page',
+];
+const PROMISES = [
+  'Promise for Juno: Send the board the new shop page',
+  'Promise for Juno: Fix the tooltips by tonight, and tell the board when they are live on HQ',
+  'Promise for Juno: Move the send button',
+  'Promise for Juno: Put the title on one line',
+  'Promise for you: try it on the iPad',
+];
+// My Notebook with the call's page alone, empty
+export const callSeed = T => ({
+  notebooks: [{ id: 1, kind: 'mine', name: 'My Notebook', created: T, updated: T }],
+  pages: [
+    {
+      id: 9101,
+      notebook: 1,
+      pos: 0,
+      kind: 'call',
+      label: 'Call with Lyra, 15:34',
+      created: T,
+      updated: T,
+      w: 1200,
+      h: 1600,
+    },
+  ],
+});
+async function callSized(browser, c, viewport, device) {
+  const context = await c.hqIn(browser, viewport, { notebooks: callSeed(new Date().toISOString()) });
+  const page = await context.newPage();
+  const errors = [];
+  page.on('pageerror', e => errors.push(e.message));
+  try {
+    await page.goto(`${c.base}/?intro=0&open=intercom`);
+    await page.waitForSelector('#loading.gone');
+    await fillCall(page, context.notebook, viewport);
+    if ((await mode(page)) !== 'open') {
+      await page.focus('#book .bk-lip');
+      await page.keyboard.press('Enter');
+      await c.settled(page, 'open');
+    }
+    await page.waitForFunction(() => document.querySelectorAll('[data-page="9101"] .bk-under').length === 12, null, {
+      timeout: 30_000,
+    });
+    await page.waitForFunction(() => document.querySelectorAll('.bk-typed[data-note]').length === 5);
+    const groups = context.notebook.route('/api/notebooks/pages/groups', { page: 9101 }).groups;
+    assert.equal(groups.filter(g => g.kind === 'note').length, 5, 'the promises, notes of their own kind');
+    noneOver(
+      groups.filter(g => g.kind === 'scrap').map(g => ({ ...g.box, g: g.id })),
+      await laidOut(page),
+    );
+    // (seen as the board reads it, zoomed out a little, the scraps' pictures drawn)
+    for (let i = 0; i < 2; i++)
+      await page.locator('#book').getByRole('button', { name: 'Zoom out' }).dispatchEvent('click');
+    await page.waitForTimeout(1500);
+    await c.shot(`book-notes-call-sized-${device}`, page);
+    c.noErrorsIn(errors);
+  } finally {
+    await context.close();
+  }
+}
+// Scraps cut from HQ's own page, each its own size and words, a promise after every third, as a call puts them on
+async function fillCall(page, play, viewport) {
+  const view = { x: 0, y: 0, w: viewport.width, h: viewport.height, dpr: 1 },
+    anchor = { v: 1, url: '/', el: null, view, ink: [] },
+    put = more => play.route('/api/notebooks/groups/scrap', {}, { anchor, said: 'typed', ...more });
+  for (const [i, words] of CAPTIONS.entries()) {
+    const clip = { x: 20 + i * 15, y: 40 + i * 10, width: 160 + ((i * 97) % 260), height: 70 + ((i * 53) % 190) };
+    put({
+      words,
+      owner: 'juno',
+      snip: `data:image/png;base64,${(await page.screenshot({ clip })).toString('base64')}`,
+    });
+    if (i % 3 === 2) put({ words: PROMISES[(i - 2) / 3], owner: 'juno' });
+  }
+  put({ words: PROMISES[4] });
+}
+// The scraps' words and the promises' post-its as the page lays them out, in page px
+const laidOut = page =>
+  page.evaluate(() => {
+    const box = (el, pad = 0) => ({
+      x: el.offsetLeft - pad,
+      y: el.offsetTop - pad,
+      w: el.offsetWidth + 2 * pad,
+      h: el.offsetHeight + 2 * pad,
+      g: Number(el.dataset.g),
+    });
+    return {
+      words: [...document.querySelectorAll('[data-page="9101"] .bk-under')].map(el => box(el)),
+      // (the post-it's paper reaches 6 px round its words: booktools.css)
+      notes: [...document.querySelectorAll('.bk-typed[data-note]')].map(el => box(el, 6)),
+    };
+  });
+// Nothing over anything else
+function noneOver(pictures, laid) {
+  const all = [
+    ...pictures.map(b => ['scrap', b]),
+    ...laid.words.map(b => ['words', b]),
+    ...laid.notes.map(b => ['promise', b]),
+  ];
+  for (const [i, [ka, a]] of all.entries())
+    for (const [kb, b] of all.slice(i + 1)) {
+      const over = a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+      assert.ok(!over, `a ${ka} (#${a.g}) and a ${kb} (#${b.g}) don't overlap: ${JSON.stringify([a, b])}`);
+    }
+}

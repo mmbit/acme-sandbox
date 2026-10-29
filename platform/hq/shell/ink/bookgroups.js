@@ -7,7 +7,7 @@
 // there in its seconds, then the agents' desk-phone cards about it (bookasks.js). A group deleted crumples away at
 // once, Undo a tap away in a toast and on the book's Undo; a scratch-out written over a group deletes it the same way.
 // The lasso's Group makes what's picked one group: split out of the groups it's part of, then joined. A sent page's
-// own groups have no clip: they're read-only. (clips only on groups: the board, 28 Oct)
+// own groups have no clip: they're read-only.
 // Which group a stroke joins, and what's saved, is booksave.js's; the maths bookgroupmath.js's. Its look: bookgroups.css.
 import { notebookRequest, word } from './bookscope.js';
 import { esc, stylesheet } from '../../util.js';
@@ -16,13 +16,15 @@ import { sfx } from '../audio.js';
 import { CSS as SLIP_CSS, slipHtml, wireSlips } from '/__review/slip.js';
 import { scribbled } from '/__review/gestures.js';
 import { keepFromScribble } from '/__review/penwords.js';
-import { boxOf, keyOf, scratched } from './bookgroupmath.js';
+import { indexesIn, scratched } from './bookgroupmath.js';
+import { boxOf, slipsUnder, underWidth } from './notebookstack.js';
 import { edit, keep } from './bookedit.js';
 import { readAgain, saved, shut, typed } from './booksave.js';
 import { deleteReply, joinGroups, moveGroup, reply, splitGroup } from './notebookdata.js';
 import { nameOf } from './bookhead.js';
 import { asksHtml, wireAsks } from './bookasks.js';
 import { mountShow } from './bookgroupshow.js';
+import { fitOf } from './bookscrapfit.js';
 
 // a reply can be taken back this long after it's written (notebooksend.ts SEND_MS)
 const REPLY_MS = 10_000;
@@ -91,13 +93,11 @@ function draw(gs, view) {
       if (!box) return '';
       const clip = open && things > 1 ? clipHtml(g, box) : '';
       const words = g.kind === 'scrap' ? wordsHtml(page, g, open) : '';
-      const under = slipsHtml(g.children ?? []) + asksHtml(g);
+      const under = slipsHtml(g.children ?? []) + asksHtml(g),
+        k = fitOf(page, g.id);
       return `${clip}${
         words || under
-          ? `<div class="bk-under" data-g="${g.id}" style="left:${box.x}px;top:${box.y + box.h + 10}px;--w:${Math.max(
-              280,
-              Math.min(420, box.w),
-            )}px">${words}${under}</div>`
+          ? `<div class="bk-under" data-g="${g.id}" style="left:${box.x}px;top:${box.y + box.h + 10 * k}px;--w:${underWidth(g.kind, box.w / k)}px;--fit:${k}">${words}${under}</div>`
           : ''
       }`;
     })
@@ -189,17 +189,11 @@ function partsNow(page, id) {
 
 // ---- the answers
 
-// A group's children slipped under it, its answers and replies: not an answer the store placed on the page or a
-// version, nor the replies to them, which the answers' layer draws written in (bookanswers.js.)
-function slipsHtml(children) {
-  const written = new Set(
-    children.filter(c => c.kind === 'answer' && (c.spot || c.style === 'version')).map(c => c.id),
-  );
-  return children
-    .filter(c => !written.has(c.id) && !(c.kind === 'reply' && written.has(c.answers)))
+// A group's children slipped under it, its answers and replies (notebookstack.js slipsUnder)
+const slipsHtml = children =>
+  slipsUnder(children)
     .map(c => (c.kind === 'reply' ? replyHtml(c) : slipHtml(c, {})))
     .join('');
-}
 
 const slipsOn = (gs, view) => ({
   tick: (id, ticked) => (gs.book.dev ? Promise.resolve() : notebookRequest('/api/book/slip/tick', { id, ticked })),
@@ -381,16 +375,4 @@ async function together(gs, view, picked) {
     toast(esc(e.message));
   }
   readAgain(book, page);
-}
-// Elements' indexes in their group as the store keeps it (each matched once, in order)
-function indexesIn(g, els) {
-  const picks = {};
-  for (const [kind, list] of Object.entries(els)) {
-    const left = g.base[kind].map((key, i) => ({ key, i }));
-    picks[kind] = list.flatMap(el => {
-      const at = left.findIndex(x => x.key === keyOf(el));
-      return at < 0 ? [] : left.splice(at, 1).map(x => x.i);
-    });
-  }
-  return picks;
 }

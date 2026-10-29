@@ -12,12 +12,13 @@ import { findProject, findThread, listThreads, needsOf, SLUG, slugRefusal, type 
 import { addNeed, newThread } from './newthread.ts';
 import { checkThreadName, noProject, placeOf, projectClash, taskClash, threadClash } from './names.ts';
 import { newId } from './regroup.ts';
-import { DESK, OPEN_JOBS, nameOf, type Named } from './jobs.ts';
+import { DESK, OPEN_JOBS, OPEN_PRS, nameOf, type Named } from './jobs.ts';
 // (who may change a plan: threadorder.ts, which the claim's refusals read too.)
 import { refusal, inNeedsOrder } from './threadorder.ts';
 import * as ledger from './ledger.ts';
 import { ownerChanged, untold } from './proposals.ts';
 import { oneLine } from './agreements.ts';
+import { SIDE_BY_SIDE } from '../../worker/hq/levels.ts';
 import { outlookOf } from './outlooks.ts';
 import type { Forecast } from './forecast.ts';
 import { levelsOf, splitMarks } from './levels.ts';
@@ -113,7 +114,11 @@ export function need(id: string, needs: string, agent: string) {
   if (typeof added === 'string') return added;
   return { ok: true as const };
 }
-export function unneed(id: string, needs: string, agent: string) {
+// hq plan unneed: the later step that puts a thread beside one it was chained after, with why, kept in the plan's changes
+// (newthread.ts chainWords).
+export function unneed(id: string, needs: string, agent: string, why: unknown) {
+  const reason = line(why);
+  if (!reason) return `say why ${id} can run beside ${needs}. ${SIDE_BY_SIDE}`;
   const own = ownThread(id, agent);
   if (typeof own === 'string') return own;
   const needed = findThread(needs);
@@ -121,7 +126,7 @@ export function unneed(id: string, needs: string, agent: string) {
   const [from, to] = [own.thread.id, needed.id];
   if (!db.prepare('delete from thread_needs where thread = ? and needs = ?').run(from, to).changes)
     return `${from} doesn't need ${to}`;
-  planChange({ project: own.project.id, thread: from, what: `no longer needs ${to}`, by: agent });
+  planChange({ project: own.project.id, thread: from, what: `no longer needs ${to}: ${reason}`, by: agent });
   return { ok: true as const };
 }
 // hq plan move: the task to `place` (1: next) among its thread's tasks still to start. They keep the places they had
@@ -287,7 +292,7 @@ export function setBusiness(id: string, given: unknown, agent: string) {
 }
 
 // hq plan <project>: its open threads, those another needs first, each with its "done when", window, needs, planned finish,
-// tasks in order and done count, its product's other projects and its levels' marks
+// tasks in order and done count, whether its pull request's review has ruled, its product's other projects and its levels' marks
 export function planOf(id: string, f: Forecast) {
   const project = findProject(id);
   if (!project) return undefined;
@@ -306,6 +311,10 @@ export function planOf(id: string, f: Forecast) {
   const doneCount = db.prepare(
     "select count(*) n from jobs where thread = ? and kind = 'work' and pr is null and status = 'done'",
   );
+  // the thread's open pull request once its review has ruled, and the round of its last ruling acted on (findings.ts
+  // finding_rulings): new work goes in the next deliverable (sorting.ts planning).
+  const ruled = db.prepare(`select p.number pr, c.round from prs p join jobs c on c.pr = p.number
+    join finding_rulings r on r.ruling = c.id where p.branch = ? and p.status in ${OPEN_PRS} order by c.id desc limit 1`);
   const { ahead, split } = levelsOf();
   return {
     ...project,
@@ -324,6 +333,7 @@ export function planOf(id: string, f: Forecast) {
           split,
         ),
         done: (doneCount.get(t.id) as { n: number }).n,
+        ruled: (t.branch && (ruled.get(t.branch) as { pr: number; round: number } | undefined)) || null,
       };
     }),
   };

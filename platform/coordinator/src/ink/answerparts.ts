@@ -5,7 +5,7 @@ import { pictureSize } from '../../../../shared/pictures/size.ts';
 import { ARTIFACT, LINK_MAX, SLIP_MAX, type More } from './bookslips.ts';
 import { type Contents } from './answerspot.ts';
 import { dataUrlPicture, GROWN_MAX, inkOf, isRefused, type Refused, type Stroke } from '../pagechecks.ts';
-import { boxOf } from '../notebookparts.ts';
+import { boxOf } from '../../../hq/shell/ink/notebookstack.js';
 
 // A patch kept with a version
 const PATCH_MAX = 1_000_000;
@@ -57,7 +57,8 @@ export function partsOfAnswer(
   };
 }
 
-// What sizes an answer for its spot, its ink no bigger than a page grows (so placing it stays a few steps)
+// What sizes an answer for its spot, its ink no bigger than a page grows and no further from the answer's top-left
+// (so placing it stays a few steps, and its picture a page's size: bookrender.ts)
 function contentsOf(
   text: string,
   picture: { clean: Buffer } | null,
@@ -65,8 +66,12 @@ function contentsOf(
   form: unknown[] | null,
 ): Contents | Refused {
   const inkBox = ink && boxOf({ ink, texts: [], pictures: [] });
-  if (inkBox && (inkBox.w > GROWN_MAX || inkBox.h > GROWN_MAX))
-    return [400, `an answer's ink fits on a page: at most ${GROWN_MAX} px a side`] as Refused;
+  const reach = inkBox && Math.max(inkBox.w, inkBox.h, inkBox.x + inkBox.w, inkBox.y + inkBox.h, -inkBox.x, -inkBox.y);
+  if (reach && reach > GROWN_MAX)
+    return [
+      400,
+      `an answer's ink fits on a page: at most ${GROWN_MAX} px a side, from the answer's top-left`,
+    ] as Refused;
   const size = picture && pictureSize(picture.clean);
   return { text, picture: size, ink: inkBox?.h ?? 0, questions: form?.length ?? 0 };
 }

@@ -8,9 +8,9 @@
 //   const h = await harness('inflight');               // before any other import of the coordinator's modules
 //   const job = await h.start({ agent: 'bolt' });      // made and claimed, as the worker claims it
 //   await h.finish(job, { status: 'done', pr: 12, branch: 'job/12', sha: 'abc' });
-import { test } from 'node:test';
+import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { createServer, request, type Server } from 'node:http';
@@ -276,7 +276,14 @@ export async function harness(
   };
   const feed = async () => (await stream()).filter(e => e.type !== 'statuses');
 
+  const declareKinds = (t: TestContext, kinds: string, settings = '  helper: the lent machine\n') => {
+    const file = `${repo}/company/org.yaml`;
+    const before = readFileSync(file, 'utf8');
+    writeFileSync(file, `${before}\nruns:\n${settings}  kinds:\n${kinds}`);
+    t.after(() => writeFileSync(file, before));
+  };
   return {
+    declareKinds,
     repo,
     dataDir,
     base,

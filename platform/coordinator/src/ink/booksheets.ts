@@ -117,6 +117,9 @@ export function deliverDue(now = Date.now()) {
       }
     });
 }
+// What hears a sheet go, with the job it went as (a call's notes page: its asks' items, callnotes.ts)
+const went: ((sheet: number, job: number) => void)[] = [];
+export const onDelivered = (hear: (sheet: number, job: number) => void) => void went.push(hear);
 function deliver(id: number, wrote: writing.Writing[]) {
   const s = db.prepare("select * from book_sheets where id = ? and status = 'sending'").get(id) as Sheet | undefined;
   if (!s) return;
@@ -138,6 +141,7 @@ function deliver(id: number, wrote: writing.Writing[]) {
     s.id,
   );
   stayBehind(s, late);
+  for (const hear of went) hear(s.id, job);
   db.prepare("update book_notes set status = 'sent' where sheet = ? and status = 'open'").run(s.id);
   publish({
     type: 'log',

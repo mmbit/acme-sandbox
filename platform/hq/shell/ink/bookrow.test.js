@@ -2,7 +2,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  DOTS,
   GROWN_MAX,
   ROOM_PX,
   TILE_PX,
@@ -116,13 +115,9 @@ test('the ink is drawn for the power of two at or above the zoom, in tiles the s
 test("the paper's dots ease out as the zoom shrinks them, and are gone before they'd be under a pixel", () => {
   assert.equal(dotsShown(1), 1);
   assert.equal(dotsShown(ZOOM_MAX), 1);
-  assert.equal(dotsShown(DOTS.whole), 1);
-  assert.equal(dotsShown(DOTS.gone), 0);
-  assert.equal(dotsShown(0.1), 0);
+  assert.ok(dotsShown(0.5) > 0 && dotsShown(0.5) < dotsShown(0.7) && dotsShown(0.7) < 1);
   // (2.8 px across at a zoom of 1: bookdesk.css)
-  assert.ok(2.8 * DOTS.gone >= 1);
-  const steps = Array.from({ length: 21 }, (_, i) => dotsShown(DOTS.gone + ((DOTS.whole - DOTS.gone) * i) / 20));
-  steps.slice(1).forEach((a, i) => assert.ok(a > steps[i] && a - steps[i] < 0.1));
+  assert.equal(dotsShown(1 / 2.8), 0);
 });
 
 test('only the tiles near what the paper shows are drawn, and none past the page', () => {

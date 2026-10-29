@@ -2,8 +2,7 @@
 // seeded as dev mode's (booknotebook.mjs open).
 import assert from 'node:assert/strict';
 import { open } from './booknotebook.mjs';
-
-const MINI = { width: 1133, height: 744 };
+import { MINI } from './bookkit.mjs';
 
 // c: book-check.mjs's hqIn, base, settled, shot, noErrorsIn, shots
 export function notebookRowStories(c) {

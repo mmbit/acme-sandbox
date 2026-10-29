@@ -10,11 +10,12 @@
 //   - Delete keeps it aside SWEEP_MS for Undo (restore).
 import { existsSync, rmSync } from 'node:fs';
 import { ours, pictureUrl } from './notebookpictures.ts';
-import { boxOf, emptyGroup, hasAny, joined, picks, shifted, type Parts } from './notebookparts.ts';
+import { emptyGroup, hasAny, joined, picks, shifted } from '../../hq/shell/ink/notebookparts.js';
+import { boxOf } from '../../hq/shell/ink/notebookstack.js';
 import { db, inOneStep, lacks } from './db.ts'; // (lacks)
 import { BOARD } from './ink/book.ts';
 import { inkOf, isRefused, textsOf, wordsOf, type Anchor, type Refused } from './pagechecks.ts';
-import { DIR, SWEEP_MS, scrapsOf } from './pagescraps.ts';
+import { DIR, SWEEP_MS, scrapsOf, type Scrap } from './pagescraps.ts';
 import { listedOnce } from './ink/bookslips.ts';
 import { answersOf, readOf, triesOf } from './ink/groupanswers.ts';
 import { changed, currentPage, pageRow, shut, type NotebookPage } from './notebook.ts';
@@ -35,12 +36,14 @@ db.exec(`create table if not exists notebook_groups (id integer primary key auto
 for (const column of ['asked integer', 'asked_spot text', 'expect integer', 'tried integer', 'reason integer'])
   if (lacks('notebook_groups', column.split(' ')[0])) db.exec(`alter table notebook_groups add column ${column}`);
 
+// A group's elements (notebookparts.js), in its page's px
+export type Parts = { ink: unknown[]; texts: unknown[]; pictures: Scrap[] };
 export type Group = {
   id: number;
   page: number;
   parent: number | null;
   answers: number | null;
-  kind: 'scrap' | 'drawing' | 'reply';
+  kind: 'scrap' | 'drawing' | 'note' | 'reply'; // (note: typed words stacked as a post-it, notebookscraps.ts)
   by: string;
   ink: string;
   texts: string;
@@ -74,28 +77,31 @@ export function listGroups(b: any, who = BOARD) {
     page: p.id,
     notebook: p.notebook,
     title: p.label,
+    handed: p.handed,
     groups: rows.filter(g => g.parent === null).map(g => groupOf(g, replies, listed)),
     ...triesOf(p, shown, listed), // (a try's versions page: what it tries.)
   };
 }
 
 // ---------------------------------------------------------------- writing
-// POST /api/notebooks/groups/create { page, ink?, texts?, pictures? }: a drawing on an open page
-export function createGroup(b: any, who = BOARD) {
+// POST /api/notebooks/groups/create { page, ink?, texts?, pictures? }: a drawing on an open page. by: who drew it, the
+// page's own person, or a call's agent on the board's (ink/callpage.ts) (by)
+export function createGroup(b: any, who = BOARD, by = who) {
   const p = openPage(Number(b?.page), who);
   if (isRefused(p)) return p;
   const parts = elementsOf(b, who, emptyGroup);
   if (isRefused(parts)) return parts;
   if (!hasAny(parts)) return [400, 'a group holds something: ink, words or a picture', 'noteEmpty'] as Refused;
-  const g = insertGroup(p, 'drawing', who, parts, {});
-  if (who === BOARD && parts.texts.length) judgeLater({ grp: g.id }); // (bookjudge.ts)
+  const g = insertGroup(p, 'drawing', by, parts, {});
+  if (by === BOARD && parts.texts.length) judgeLater({ grp: g.id }); // (bookjudge.ts)
   return shown(g);
 }
 // POST /api/notebooks/groups/edit { id, since, ink?, texts?, pictures?, words?, said? }: an open group's elements
 // changed (drawn on, moved on its page, its post-it typed again). since: its updated as the screen last read it; one
 // changed since on another screen is refused, to read again.
+// by: who changed it (a call's agent: ink/callpage.ts)
 export const CHANGED = 'this group changed on another screen: read it again';
-export function editGroup(b: any, who = BOARD) {
+export function editGroup(b: any, who = BOARD, by = who) {
   const g = openGroup(Number(b?.id), who);
   if (isRefused(g)) return g;
   if (b.since !== g.updated) return [409, CHANGED, 'noteChanged'] as Refused;
@@ -105,7 +111,7 @@ export function editGroup(b: any, who = BOARD) {
   if (isRefused(said)) return said;
   if (!hasAny(parts) && g.kind !== 'scrap') return [400, 'an empty group is deleted instead', 'noteDelete'] as Refused;
   write(g.id, parts, { words: said.words, said: said.said });
-  if (who === BOARD) judgeEdited(g, said.words, parts.texts); // (bookjudge.ts)
+  if (by === BOARD) judgeEdited(g, said.words, parts.texts); // (bookjudge.ts)
   return shown(row(g.id)!);
 }
 // POST /api/notebooks/groups/move { id, page, dx?, dy? }: an open group onto another open page of the same person's,
@@ -161,6 +167,10 @@ export function restoreGroup(b: any, who = BOARD) {
   changed(p.notebook, page);
   return shown(row(g.id)!);
 }
+// What hears groups joined: the group they joined into, and the ones joined away (a call page's asks follow theirs:
+// ink/callnotes.ts)
+const joinings: ((into: number, away: number[]) => void)[] = [];
+export const onJoined = (hear: (into: number, away: number[]) => void) => void joinings.push(hear);
 // POST /api/notebooks/groups/join { ids }: open groups of one page as one, the first's (lasso). One scrap at most: a
 // scrap's place and words are its own, and a group signed by someone else (an invited person's note) stays theirs.
 // The others are deleted, for Undo's split.
@@ -182,11 +192,20 @@ export function joinGroups(b: any, who = BOARD) {
   inOneStep(() => {
     write(into.id, parts, {});
     for (const g of rest) db.prepare('update notebook_groups set deleted = ? where id = ?').run(Date.now(), g.id);
+    for (const hear of joinings)
+      hear(
+        into.id,
+        rest.map(g => g.id),
+      );
   });
   const p = pageRow(into.page, who)!;
   changed(p.notebook, p.id);
   return { group: shown(row(into.id)!), joined: rest.map(g => g.id) };
 }
+// What hears a group split: the group, and the one lifted out of it (a call page's asks follow their own words:
+// ink/callnotes.ts)
+const splits: ((from: number, lifted: number) => void)[] = [];
+export const onSplit = (hear: (from: number, lifted: number) => void) => void splits.push(hear);
 // POST /api/notebooks/groups/split { id, ink?, texts?, pictures? }: the elements named (by their index in the group)
 // lifted out into a group of their own, a drawing (lasso, or Undo's of a join)
 export function splitGroup(b: any, who = BOARD) {
@@ -206,12 +225,12 @@ export function splitGroup(b: any, who = BOARD) {
     texts: parts.texts.filter((_, i) => !out.texts.includes(i)),
     pictures: parts.pictures.filter((_, i) => !out.pictures.includes(i)),
   };
-  if (!hasAny(out as never) || (!hasAny(left) && g.kind !== 'scrap'))
+  if (!hasAny(out) || (!hasAny(left) && g.kind !== 'scrap'))
     return [400, 'a split leaves something on each side'] as Refused;
   const p = pageRow(g.page, who)!;
   const lifted = inOneStep(() => {
     write(g.id, left, {});
-    return insertGroup(
+    const split = insertGroup(
       p,
       'drawing',
       g.by,
@@ -222,8 +241,10 @@ export function splitGroup(b: any, who = BOARD) {
       },
       {},
     );
+    for (const hear of splits) hear(g.id, split.id);
+    return split;
   });
-  return { group: shown(row(g.id)!), split: shown(lifted) };
+  return { group: shown(row(g.id)!), split: shown(row(lifted.id)!) };
 }
 
 // ---------------------------------------------------------------- shared
@@ -327,9 +348,12 @@ export const rootOf = (g: Group) => (g.parent === null ? g : row(g.parent)!);
 // or tries it
 export const groupOfNote = (note: number) =>
   db.prepare('select * from notebook_groups where note = ? and deleted is null').get(note) as Group | undefined;
-// The group an answer or a judged target is on: its own (grp), else the group its note went as
-export const groupOn = (x: { grp?: number | null; note?: number | null }) =>
-  x.grp != null ? row(x.grp) : x.note != null ? groupOfNote(x.note) : undefined;
+// The group an answer or a judged target is on, unless it's deleted (as groupOfNote: nor is a reply written under it):
+// its own (grp), else the group its note went as
+export const groupOn = (x: { grp?: number | null; note?: number | null }) => {
+  const g = x.grp != null ? row(x.grp) : x.note != null ? groupOfNote(x.note) : undefined;
+  return g?.deleted === null ? g : undefined;
+};
 // What HQ reads of a group: its elements, its box, its children (answers and replies, in the order they came), asks
 export const shown = (g: Group) =>
   groupOf(g, db.prepare('select * from notebook_groups where parent = ? and deleted is null').all(g.id) as Group[]);

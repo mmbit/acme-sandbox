@@ -5,13 +5,15 @@
    --their-bg, --meter-off, --meter-glow, --copy-bg, --tick-lit, --alarm, --alarm-ink, --alarm-fill.
    A new icon is drawn once per style (icons/<style>/<name>.svg, shell/icons.js), and new HQ work is checked in a smooth
    look as well as the brownstone (screens-check.mjs wire). */
-/* lit: what a card or a screen is for (send, approve, call someone, sign in, make the key, pin a note) */
+/* lit: what a card or a screen is for (send, approve, call someone, sign in, make the key, pin a note, Talk while it
+   waits for the board's tap) */
 .device .send,
 .req .btns button:is(.send:not(.later), .approve),
 .call-agent,
 .signin,
 .req .agekey .make,
-#viewer .bar .pin {
+#viewer .bar .pin,
+#viewer .bar .talk {
   background: var(--cy);
   color: var(--scr-ink);
   border: 1px solid var(--cy);
@@ -32,7 +34,7 @@
 .req .agekey .make.again,
 .req .agekey .secret .copy,
 .intercom .call .row button,
-#viewer .bar button:not(.pin, .glyph, .share),
+#viewer .bar button:not(.pin, .talk, .glyph, .share) /* (.talk) */,
 .req .photo .act,
 .gz-tabs button,
 #panel-close,
@@ -403,6 +405,13 @@ mark {
   box-shadow: 0 0 12px color-mix(in srgb, var(--alarm) 50%, transparent);
   transform: none;
 }
+/* HQ's Talk key listening for a page in the viewer: the look's alarm, its glow with the voice */
+#viewer .bar .talk[data-phase='live'] {
+  background: var(--alarm-fill);
+  color: var(--alarm-ink);
+  border-color: var(--alarm);
+  box-shadow: 0 0 0 calc(2px + var(--lvl, 0) * 10px) color-mix(in srgb, var(--alarm) 35%, transparent);
+}
 .on-air #dir-title {
   border-color: var(--alarm);
   background: color-mix(in srgb, var(--alarm) 8%, var(--field));
@@ -504,6 +513,7 @@ mark {
     .req .agekey .make,
     .intercom .chat .call,
     #viewer .bar .pin,
+    #viewer .bar .talk,
     #viewer .bar .share,
     .device header .past-btn,
     .pager .to-list,

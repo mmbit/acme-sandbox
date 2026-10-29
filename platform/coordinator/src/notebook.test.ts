@@ -5,8 +5,11 @@ import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import sharp from 'sharp';
 import { harness, type Running } from './harness.ts';
+import { STACK, footprint } from '../../hq/shell/ink/notebookstack.js';
 
 const h = await harness('notebook');
+// (after the harness, as every coordinator module: it reads the company as it loads)
+const { ANSWER, NARROWER } = await import('./ink/answerspot.ts');
 const { agent, db } = h;
 const { ORIGIN } = await import('./config.ts');
 const booknotes = await import('./ink/booknotes.ts');
@@ -230,8 +233,12 @@ test('a scrap lands on the current page, under what is there; its picture is ser
     two = (await scrap({ owner: 'kit' })).body;
   deaf();
   assert.deepEqual([one.page, two.page, one.kind, two.owner], [page, page, 'scrap', 'kit']);
-  assert.deepEqual([one.pictures[0].w, one.pictures[0].h], [360, 180], 'no wider than a column');
-  assert.ok(two.box.y >= one.box.y + one.box.h, 'stacked under');
+  // (a readable width, clear of the controls on the widest narrower paper the board reads on, as an answer's spot is;
+  // HQ fits it to a narrower one)
+  assert.deepEqual([one.pictures[0].w, one.pictures[0].h], [313, 157], 'no wider than a column');
+  assert.equal(STACK.w, NARROWER[0] - ANSWER.rail - STACK.x, 'left of the controls there');
+  // (its words under it, one line: 10 px below, 8 above and below them, a 20 px line; then the gap)
+  assert.ok(two.box.y >= one.box.y + one.box.h + 46 + 32, 'stacked under, its words and a gap between');
   assert.ok(heard.length && heard.every(e => e.text === 'notebook' && e.page === page), 'every screen reads it again');
   assert.doesNotMatch(JSON.stringify(heard), /basket/i, 'none of its words');
   const res = await fetch(h.base + one.pictures[0].url, { headers: { cookie: h.boardCookie } });
@@ -240,6 +247,36 @@ test('a scrap lands on the current page, under what is there; its picture is ser
   assert.equal((await scrap({ owner: 'nobody' })).status, 400);
   const drawn = await fetch(`${h.base}/api/book/picture?id=${page}`, { headers: { cookie: h.boardCookie } });
   assert.equal(drawn.status, 200, 'the page drawn whole, groups and all');
+});
+
+test("a page's picture is the page as the board sees it: each scrap's words under it, the last long note whole", async () => {
+  const nb = await myNotebook();
+  await noneOpen(nb);
+  const page = (await h.board('/api/notebooks/pages/create', { notebook: nb })).body.id;
+  const said = (n: number) => `Scrap ${n}: its words on a post-it under it, long enough to wrap onto a second line`;
+  const scraps = [];
+  for (let n = 1; n <= 8; n++) scraps.push((await scrap({ words: said(n) })).body);
+  // (typed notes as a call's agent leaves them, each long enough to wrap)
+  const note = 'A promise for the board: the export shows the page whole, nothing cut off at the bottom. '.repeat(3);
+  for (let n = 0; n < 5; n++) assert.equal((await scrap({ snip: null, words: note })).status, 200);
+  const res = await fetch(`${h.base}/api/book/picture?id=${page}`, { headers: { cookie: h.boardCookie } });
+  const { data, info } = await sharp(Buffer.from(await res.arrayBuffer()))
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  const box = db.prepare('select x, y, w from book_pages where id = ?').get(page) as {
+    x: number;
+    y: number;
+    w: number;
+  };
+  const k = info.width / box.w,
+    at = (x: number, y: number) => [...data.subarray((y * info.width + x) * info.channels).subarray(0, 3)];
+  for (const s of scraps) {
+    const [r, g, b] = at(Math.round((s.box.x - box.x + 4) * k), Math.round((s.box.y + s.box.h + 14 - box.y) * k));
+    assert.ok(r > 245 && g > 235 && b < 185, `scrap ${s.id}'s words on their yellow post-it (${[r, g, b]})`);
+  }
+  const inked = (y: number) => Array.from({ length: info.width }, (_, x) => at(x, y)[0] < 120).some(Boolean);
+  const last = Array.from({ length: info.height }, (_, y) => y).findLast(inked)!;
+  assert.ok(last < info.height - 20 * k, `the last note's last line whole, paper under it (${last} of ${info.height})`);
 });
 
 // Review mode's note with nothing to show, or a general one (the pin flow, bookreview.ts)
@@ -254,14 +291,20 @@ test("a scrap lands under the newest thing on its page, past what's in its way; 
   await draw(page, [stroke(600, 3000)]);
   const inWay = (await draw(page, [stroke(1550, 330)])).body.box,
     newest = (await draw(page, [stroke(1500, 200)])).body.box;
-  const first = (await scrap()).body.box,
+  const made = (await scrap()).body,
+    first = made.box,
     second = (await scrap()).body.box;
   assert.deepEqual(
     [first.x, first.y],
-    [Math.round(newest.x), Math.round(inWay.y + inWay.h + 32)],
+    [Math.round(newest.x), Math.round(inWay.y + inWay.h + STACK.gap)],
     'under the newest drawing and past the one in its way, not under the far one',
   );
-  assert.deepEqual([second.x, second.y], [first.x, first.y + first.h + 32], 'the next under it');
+  const under = footprint(made);
+  assert.deepEqual(
+    [second.x, second.y],
+    [first.x, Math.round(under.y + under.h + STACK.gap)],
+    'the next under it and its post-it words',
+  );
   assert.equal(menuOf(HQ, '/').notes, 5, "the board's open notes on the page");
 });
 
@@ -274,7 +317,7 @@ test('a scrap with no picture is its words typed on the current page, stacked, k
   const g = res.body;
   assert.deepEqual(
     [g.page, g.kind, g.pictures, g.texts.map((t: any) => t.text), g.owner, g.anchor.url],
-    [page, 'drawing', [], ['Same on every page'], 'kit', anchor().url],
+    [page, 'note', [], ['Same on every page'], 'kit', anchor().url],
   );
   assert.ok(g.box.y >= above.box.y + above.box.h, 'stacked under');
   // words past a typed box's 2,000 characters go on in boxes under it, together the words whole
@@ -386,6 +429,25 @@ test('send a page: undo in its seconds, then each group to its agent, a fresh pa
   await h.finish(job);
 });
 
+test("the board's Send of a notebook's last page leaves a fresh page under it; one with a page after it, none", async () => {
+  const nb = (await h.board('/api/notebooks')).body.shelf[0].id;
+  await noneOpen(nb);
+  const make = async () => (await h.board('/api/notebooks/pages/create', { notebook: nb })).body.id as number;
+  const first = await make(),
+    last = await make();
+  for (const page of [first, last]) await draw(page, [stroke(40, 40)]);
+
+  await h.board('/api/notebooks/pages/send', { id: first });
+  assert.equal(await current(nb), last, 'the page after it is the one under it: no fresh page');
+  await h.board('/api/notebooks/pages/undo', { id: first });
+
+  await h.board('/api/notebooks/pages/send', { id: last });
+  const fresh = await current(nb);
+  assert.notEqual(fresh, last, 'the last page sent: a fresh page under it, though another is open');
+  await h.board('/api/notebooks/pages/undo', { id: last });
+  assert.ok(!(await pages(nb)).pages.some((p: any) => p.id === fresh), 'undone: the blank fresh page gone with it');
+});
+
 test('pages: titled, reordered, archived; a notebook archived, My Notebook stays; nothing of another person', async () => {
   const nb = await myNotebook();
   const before = await pages(nb),
@@ -408,6 +470,23 @@ test('pages: titled, reordered, archived; a notebook archived, My Notebook stays
   assert.equal((await h.board('/api/notebooks/pages?notebook=999')).status, 404);
   assert.equal((await h.board('/api/notebooks/pages/groups?page=999')).status, 404);
   assert.ok(!existsSync(`${DIR}/nothing`));
+});
+
+test("a page's zoom kept by the book's shape, as the board left it, without changing the page", async () => {
+  const id = await current(await myNotebook()),
+    zoom = (body: Record<string, unknown>) => h.board('/api/notebooks/pages/zoom', { id, ...body }),
+    was = (await pages(await myNotebook())).pages.find((p: any) => p.id === id);
+  assert.deepEqual(was.zooms, {}, 'a page never zoomed opens at 100%');
+  await zoom({ shape: 'wide', zoom: 0.72 });
+  const kept = (await zoom({ shape: 'narrow', zoom: 1.25 })).body;
+  assert.deepEqual(kept.zooms, { wide: 0.72, narrow: 1.25 });
+  assert.equal((await zoom({ shape: 'wide', zoom: 1 })).body.zooms.wide, 1, 'back to 100% kept too');
+  assert.equal(kept.updated, was.updated, 'its picture and other screens read it as it was');
+  assert.equal((await zoom({ shape: 'huge', zoom: 1 })).status, 400);
+  assert.equal((await zoom({ shape: 'wide', zoom: 'big' })).status, 400);
+  assert.equal((await zoom({ shape: 'narrow', zoom: 0.02 })).body.zooms.narrow, 0.02, "a long page's least on a phone");
+  assert.equal((await zoom({ shape: 'wide', zoom: 5 })).status, 400, 'past the closest the book zooms in');
+  assert.equal((await h.board('/api/notebooks/pages/zoom', { id: 999, shape: 'wide', zoom: 1 })).status, 404);
 });
 
 test("two pages sent to one agent in their seconds go as two sheets, and an old book's note keeps to its own", async () => {

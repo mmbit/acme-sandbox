@@ -95,9 +95,11 @@ RENDER_MAX_BYTES = 2 ** 30   # renders.ts RENDER_MAX: the store holds none bigge
 # The most renders/ holds, for good (none is deleted): the company's own choice (company/infra.env's BACKUP_RENDERS_GB, a
 # whole number of GB; 3 unset). The room check alone keeps next month's database backups but not the repo's copies, so a
 # flood of renders (a job pushing films in a loop, each up to RENDER_MAX_BYTES) would take for good the room the repo's next
-# full copy needs. Any other value (or a line infra-env.sh skips): no render goes, and the status says why.
-RENDERS_SETTING = INFRA.get('BACKUP_RENDERS_GB') or '3'
-RENDERS_MAX_BYTES = int(RENDERS_SETTING) * 1e9 if re.fullmatch(r'[1-9][0-9]*', RENDERS_SETTING) else None
+# full copy needs. Any other value (or a line company.py skips): no render goes, and the status says why.
+def renders_max():   #.
+    """The renders' ceiling in bytes, or None when BACKUP_RENDERS_GB isn't a whole number of GB or its line was skipped."""
+    setting = INFRA.get('BACKUP_RENDERS_GB') or '3'
+    return int(setting) * 1e9 if re.fullmatch(r'[1-9][0-9]*', setting) and 'BACKUP_RENDERS_GB' not in SKIPPED else None
 RENDERS_STALE_SECONDS = 36 * 3600   # a render waiting this long to go off the server: the board hears
 # A product's data volume (products.py's product-<slug>-data, in Compose's project): only its backup/ folder goes in.
 PRODUCT_VOLUME = re.compile(r'infra_product-([a-z0-9][a-z0-9-]*)-data')
@@ -961,11 +963,12 @@ def renders_copy(r2, store_fd, work, recipient, listing, status, room, save):
     held = sum(size for k, (size, _) in listing.items() if k.startswith('renders/'))
     unverified = status.setdefault('renders_unverified', {})
     due, done, up, complete = [], set(), 0, False
+    cap = renders_max()   #.
     def fits(size):
-        if RENDERS_MAX_BYTES is None or 'BACKUP_RENDERS_GB' in SKIPPED:   #.
+        if cap is None:
             raise RenderCapacityError("not uploaded: company/infra.env's BACKUP_RENDERS_GB isn't a whole number of GB")
-        if held + up + size > RENDERS_MAX_BYTES:
-            raise RenderCapacityError(f"not uploaded: the renders would pass their {RENDERS_MAX_BYTES / 1e9:.0f} GB (BACKUP_RENDERS_GB)")
+        if held + up + size > cap:
+            raise RenderCapacityError(f"not uploaded: the renders would pass their {cap / 1e9:.0f} GB (BACKUP_RENDERS_GB)")
         if up + size > room:
             raise RenderCapacityError(f"not uploaded: the renders would take the bucket past {LIMIT} (with next month's database backups)")
     try:

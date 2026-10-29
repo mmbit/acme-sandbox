@@ -4,10 +4,10 @@
 // paper, held sideways too, the bar over the picture.
 import assert from 'node:assert/strict';
 import { group, ids, open } from './booknotebook.mjs';
-import { clipped, onPaper, tool, until } from './booknotebookscreen.mjs';
+import { clipped, onPaper, tool } from './booknotebookscreen.mjs';
+import { DESKTOP, until } from './bookkit.mjs';
 
-const DESKTOP = { width: 1440, height: 900 },
-  PHONE = { width: 390, height: 844 },
+const PHONE = { width: 390, height: 844 },
   // (held sideways the book opens beside HQ, its paper about 340 px high: the bar's rows go over the picture)
   PHONE_SIDEWAYS = { width: 844, height: 390 },
   // where the picture's middle is panned to there (on the screen), low on the paper left of the strip

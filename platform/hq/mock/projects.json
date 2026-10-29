@@ -11,6 +11,11 @@
    "owner": "wren"
   }
  ],
+ "groups": {
+  "unsorted": {
+   "name": "Juno's desk"
+  }
+ },
  "projects": [
   {
    "id": "shop",

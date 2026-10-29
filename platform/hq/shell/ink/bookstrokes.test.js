@@ -12,7 +12,8 @@ registerHooks({
       context,
     ),
 });
-const { SHAPE_P, cut, inside, radius, rub, shape } = await import('./bookstrokes.js');
+const { SHAPE_P, shape } = await import('./bookinkmath.js');
+const { cut, inside, radius, rub } = await import('./bookstrokes.js');
 
 const INK = { color: '#2a2352', size: 4 };
 const line = (pts, more = {}) => ({ ...INK, ...more, points: pts.map(([x, y], i) => [x, y, 0.5, i * 10]) });

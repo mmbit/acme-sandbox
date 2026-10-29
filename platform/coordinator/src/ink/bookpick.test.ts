@@ -71,11 +71,10 @@ async function tried() {
     })
   ).body;
   await say((await judged())!, 'try', 'wonders about a colour');
-  // (the judge's try queued the real run; this test's own run, claimed alone, stands in for it)
-  await until(() => !!(db.prepare('select tried from notebook_groups where id = ?').get(g.id) as any).tried);
-  h.cancelQueued();
-  const run = await h.start({ agent: 'juno' });
-  db.prepare('update notebook_groups set tried = ? where id = ?').run(run.id, g.id);
+  // (the judge's try queued the real run, kept on the group: claimed alone)
+  const tried = () => (db.prepare('select tried from notebook_groups where id = ?').get(g.id) as any).tried;
+  await until(() => !!tried());
+  const run = await h.claimJob(tried());
   const version = async (name: string, colour: string) =>
     (
       await agent('answer', run.token, {
@@ -191,7 +190,7 @@ test("a try on a call's note: its versions on their page, and a ring on one, a n
   const page = pageFor(call)!;
   const anchor = { v: 1, url: '/?open=shop', el: null, view: { w: 1180, h: 820, x: 0, y: 0, dpr: 2 }, ink: [] };
   const { note } = (await h.board('/api/book/note', { page: page.id, anchor, words: 'warmer?', said: 'typed' })).body;
-  await say((await judged())!, 'none', 'judged by hand below');
+  assert.equal(await judged(10), null, 'a call’s note is never judged: its try is started by hand below');
   const run = await h.claimJob(tryNow({ note: note.id }, { id: 1, why: 'wonders about a colour' })!);
   const { review } = db.prepare('select review from book_notes where id = ?').get(note.id) as any;
   const version = async (name: string, colour: string) =>

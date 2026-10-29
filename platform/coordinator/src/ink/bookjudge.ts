@@ -16,7 +16,7 @@ import { companyDay } from '../company.ts';
 import { answerOf, smallCall } from '../smallmodel.ts';
 import { isRefused } from '../pagechecks.ts';
 import { BOARD } from './book.ts';
-import { isVersion, seenOf, slipText, type Seen } from './bookseen.ts';
+import { answeredOf, seenOf, type Seen } from './bookseen.ts';
 
 // Each judging spends a little of a Claude seat's window, which the company's jobs live on: JUDGES_A_DAY bounds what a
 // page or a client gone wrong can take in a day, as handwriting's READS_A_DAY does. It's the judge's only limit: a day
@@ -47,14 +47,11 @@ const REPLIES = ['none', 'answer', 'try', 'pick'] as const;
 export type Reply = (typeof REPLIES)[number];
 export type Target = { grp?: number; note?: number; page?: number; text?: string };
 export type Verdict = { id: number; reply: Reply; why: string };
-// Where a verdict goes: answer and try, each given the target and the verdict, give the run they started or joined (null:
-// none, as on a call, where the call's agent answers itself)
+// Where a verdict goes, one route a reply but none, each given the target and the verdict: answer and try give the run
+// they started or joined (null: none, as on a call, where the call's agent answers itself)
+type Route<R> = (t: Target, v: { id: number; why: string }) => R;
 type Run = number | null | Promise<number | null>;
-export type Routes = {
-  answer: (t: Target, v: { id: number; why: string }) => Run;
-  try: (t: Target, v: { id: number; why: string }) => Run;
-  pick: (t: Target, v: { id: number; why: string }) => unknown;
-};
+export type Routes = Record<'answer' | 'try', Route<Run>> & { pick: Route<unknown> };
 const routes: Routes = {
   // (loaded when a verdict comes: they read the book, which reads this)
   answer: (t, v) => import('./bookanswer.ts').then(m => m.answerNow(t, v)),
@@ -150,15 +147,16 @@ export async function judge(t: Target, via?: Partial<Routes>): Promise<Verdict |
       console.error(`The book's judge: ${keyOf(t)} wasn't judged: ${said[1]}`);
       return unjudged(t, 'unread');
     }
-    const v = keep(t, said, seen);
-    if (v.reply !== 'none')
+    const v = keep(t, said, seen),
+      { reply } = v;
+    if (reply !== 'none')
       Promise.resolve()
-        .then(() => (via?.[v.reply as keyof Routes] ?? routes[v.reply as keyof Routes])(t, { id: v.id, why: v.why }))
+        .then(() => (via?.[reply] ?? routes[reply])(t, { id: v.id, why: v.why }))
         .then(job => {
-          if (v.reply !== 'pick' && typeof job === 'number')
+          if (reply !== 'pick' && typeof job === 'number')
             db.prepare('update ink_verdicts set job = ? where id = ?').run(job, v.id);
         })
-        .catch(err => console.error(`The book's judge: ${keyOf(t)}'s ${v.reply} didn't start:`, err));
+        .catch(err => console.error(`The book's judge: ${keyOf(t)}'s ${reply} didn't start:`, err));
     return v;
   } catch (err) {
     console.error(`The book's judge: ${keyOf(t)} wasn't judged:`, err);
@@ -213,19 +211,20 @@ export function markWiped(answerId: number) {
 }
 
 // ---------------------------------------------------------------- the call
+// The model asked for the verdict on a note as it was seen, and what it replies to
 function ask(seen: Seen) {
   const image = seen.picture && {
     type: 'image',
     source: { type: 'base64', media_type: seen.picture.type, data: seen.picture.data.toString('base64') },
   };
-  const repliesTo = slipText(seen.answers),
-    onVersion = isVersion(seen.answers);
+  const answered = answeredOf(seen.answers),
+    onVersion = !!answered?.isVersion;
   const about = [
     seen.words
       ? `Its words (${SAID[seen.said ?? ''] ?? 'typed'}): ${JSON.stringify(seen.words)}`
       : 'It has no words: only marks.',
     `Where: ${seen.where}.`,
-    repliesTo ? `It replies to an agent's answer: ${JSON.stringify(repliesTo)}` : '',
+    answered ? `It replies to an agent's answer: ${JSON.stringify(answered.text)}` : '',
     seen.picture ? 'The picture: the page around the note, its mark drawn on it.' : 'There is no picture of it.',
   ].filter(Boolean);
   return smallCall({

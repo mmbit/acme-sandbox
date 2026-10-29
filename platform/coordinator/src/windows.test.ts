@@ -42,7 +42,7 @@ const claimed = async (engine: string, n: number) => {
 
 beforeEach(async () => {
   db.exec(
-    'delete from jobs; delete from requests; delete from prs; delete from waits; delete from wakes; delete from seats; delete from runs; delete from predictions; delete from calls; delete from call_tokens; delete from call_items',
+    'delete from jobs; delete from requests; delete from prs; delete from waits; delete from wakes; delete from seats; delete from runs; delete from predictions; delete from calls; delete from call_tokens; delete from call_jobs; delete from call_items',
   );
   // (an earlier test's thread left open and empty plays as its owner's placeholder in the forecast)
   h.closedThreads();

@@ -6,11 +6,10 @@
 // in time, it's lost, or it couldn't run there. The command has the end of the helper's limit in LENT_UNTIL (seconds on
 // the helper's clock), for a check that stops itself in time to say how far it got. A run the helper stopped at the
 // limit is that check's result (limitIsResult), never one to run again here, where nothing would stop it.
-//
 import { execFile, execFileSync } from 'node:child_process';
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import { git } from './repo.ts';
 
@@ -59,6 +58,8 @@ export type LentCheck = {
   minutes: number;
   bring: string[];
   tools: string[];
+  exclude?: string[];
+  directories?: string[]; // runtime assets, unpacked beside the repo under their basename
   fallback?: false; // a comparison cannot move to another environment,
   inputs?: Record<string, string>; // nonsecret files beside the bundle,
   limitIsResult?: true;
@@ -226,7 +227,9 @@ async function bundleOf(root: string, check: LentCheck, dir: string) {
   }
   for (const [name, content] of Object.entries(check.inputs ?? {})) writeFileSync(join(dir, name), content);
   const packed = [BUNDLE, ...(check.tools.length ? ['tools'] : []), ...Object.keys(check.inputs ?? {})];
-  await execute('tar', ['-czf', join(dir, 'bundle.tar.gz'), '-C', dir, ...packed]);
+  const directories = (check.directories ?? []).flatMap(path => ['-C', dirname(path), basename(path)]);
+  const exclude = (check.exclude ?? []).map(pattern => `--exclude=${pattern}`);
+  await execute('tar', ['-czf', join(dir, 'bundle.tar.gz'), ...exclude, '-C', dir, ...packed, ...directories]);
   return join(dir, 'bundle.tar.gz');
 }
 

@@ -188,12 +188,13 @@ test('memory really low: each running job hears it once, the job that caused it 
   await room({ verdict: 'low', cause: { job: hog.id, tookMb: 3500, freeMb: 5120 } }, 1536);
   assert.deepEqual(await said(other, true), [], 'nothing as a session stops');
   const [low] = await said(other);
-  assert.match(low, /short of memory right now \(1\.5 GB free\)\. Don't start anything heavy/);
+  assert.match(low, /server is full right now \(memory short: 1\.5 GB free\)/);
+  assert.match(low, /Wait a few minutes before starting one/);
   assert.deepEqual(await said(other), [], 'once a spell');
   const [nudge] = await said(hog);
   assert.match(
     nudge,
-    /short of memory right now[^\n]*\n.*own use is what brought .* it took 3\.4 GB of the 5\.0 GB that was free/,
+    /server is full right now[^\n]*\n.*own use is what brought .* it took 3\.4 GB of the 5\.0 GB that was free/,
   );
 
   await room({ verdict: 'low', cause: { job: other.id, tookMb: 3000, freeMb: 5120 } }, 1400);
@@ -201,7 +202,7 @@ test('memory really low: each running job hears it once, the job that caused it 
   assert.deepEqual([await said(hog), await said(other)], [[], []], 'still the one spell, and no end yet');
   await room({ verdict: 'calm' }, 3500);
   for (const j of [hog, other]) {
-    assert.match((await said(j)).join(), /memory again \(3\.4 GB free\)/);
+    assert.match((await said(j)).join(), /pressure is clear again \(3\.4 GB free\)/);
     assert.deepEqual(await said(j), [], 'that it is back, once');
   }
 
@@ -248,4 +249,66 @@ test('a finish between room reports releases the stale occupant in a fresh plan 
   const sizes = new Map(input.jobs.map(job => [job.id, { agent_ms: 60_000 }]));
   const outcome = play(input, sizes).get(waiting)!;
   assert.equal(outcome.start, input.now);
+});
+
+test('server CPU pressure reaches every running job once, including reviews and late arrivals, then clears once', async t => {
+  h.declareKinds(
+    t,
+    `
+    pages:
+      checkout: true
+      browsers: true
+      about: browser checks
+    suites:
+      checkout: true
+      about: full test runs, gates with hq run --kind suites -- npm run gates
+`,
+  );
+  const machine = await h.board('/api/machines/add', { name: 'Skynet' });
+  assert.equal(machine.status, 200);
+  t.after(async () => {
+    await h.board('/api/machines/remove', { machine: machine.body.id });
+  });
+  const first = await h.start({ agent: 'bolt' });
+  const review = await h.start({ agent: 'quill', kind: 'review' });
+  assert.equal(h.job(review.id).kind, 'review');
+  const inbox = async (token: string) => {
+    const response = await h.agent('inbox', token, { stopping: false });
+    assert.equal(response.status, 200);
+    return (response.body as { memory?: number; text: string }[])
+      .filter(message => message.memory)
+      .map(message => message.text);
+  };
+  const report = (verdict: string, reasons: string[] = []) =>
+    h.worker('room', { free: 6000, memory: { verdict, reasons } });
+  await report('low', ['CPU pressure 75% over ten seconds']);
+  const warning = await inbox(first.token);
+  assert.equal(warning.length, 1);
+  assert.match(warning[0], /server is full/);
+  assert.match(warning[0], /CPU pressure 75%/);
+  assert.match(warning[0], /Skynet/);
+  assert.match(warning[0], /hq run --kind pages -- <command>/);
+  assert.match(warning[0], /hq run --kind suites -- <command>/);
+  assert.match(warning[0], /hq run --kind suites -- npm run gates/);
+  assert.match(warning[0], /everyone's work/);
+  const reviewWarning = await inbox(review.token);
+  assert.equal(reviewWarning.length, 1);
+  assert.match(reviewWarning[0], /CPU pressure 75%/);
+  assert.deepEqual(await inbox(review.token), []);
+  assert.deepEqual(await inbox(first.token), []);
+  const late = await h.start({ agent: 'juno' });
+  await report('between', ['memory recovering: 5.9 GB free']);
+  const lateWarning = await inbox(late.token);
+  assert.equal(lateWarning.length, 1, 'a running spell still reaches a job at its next step');
+  assert.match(lateWarning[0], /memory recovering: 5\.9 GB free/);
+  assert.deepEqual(await inbox(first.token), []);
+  await report('calm');
+  for (const job of [first, review, late]) {
+    assert.match((await inbox(job.token)).join(), /pressure is clear again/);
+    assert.deepEqual(await inbox(job.token), []);
+  }
+  await report('low', ['CPU pressure 80% over ten seconds']);
+  assert.equal((await inbox(first.token)).length, 1, 'a new spell warns again');
+  await report('calm');
+  await inbox(first.token);
 });

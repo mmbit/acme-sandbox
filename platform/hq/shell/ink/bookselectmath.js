@@ -73,11 +73,16 @@ export function topAt(at, { ink, scraps, texts }, boxOfText, near) {
   return k >= 0 ? { kind: 'scraps', item: scraps[k] } : null;
 }
 export const within = (b, [x, y]) => x >= b.x0 && x <= b.x1 && y >= b.y0 && y <= b.y1;
-// A thing on a page with the rest of its group ({ ink, scraps, texts }): everything on the page with its group's id
-// (el.g, booksave.js), or the thing alone when it has none yet (not saved) or the page has no groups
+// A thing on a page with the rest of its group ({ ink, scraps, texts }), or the thing alone when it has none yet (not
+// saved) or the page has no groups
 export function groupOf(page, { kind, item }) {
   const g = item.g;
   if (g === undefined || !page.groups?.has(g)) return { [kind]: [item] };
+  return membersOf(page, g);
+}
+// Everything on a page in group g ({ ink, scraps, texts }): its elements with the group's id (el.g, booksave.js). What
+// a press picks and what a live move carries whole (bookselectlift.js)
+export function membersOf(page, g) {
   const of = k => (page[k] ?? []).filter(x => x.g === g);
   return { ink: of('ink'), scraps: of('scraps'), texts: of('texts') };
 }

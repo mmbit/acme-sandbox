@@ -8,6 +8,7 @@ import { gitFlow } from './git.ts';
 import { agentEnv } from './safety.ts';
 import {
   bringUpToDate,
+  ownCommit,
   profilePaths,
   rebuildProfile,
   repairFrom,
@@ -119,6 +120,21 @@ test('a merge of main that conflicts is left in progress with its files named, a
   write(dir, { 'README.md': 'thread and main\n' });
   commit(dir);
   assert.equal(git('-C', dir, 'log', '-1', '--format=%P'), `${remoteRef('job/110')} ${main}`);
+});
+
+test("a later task's push holds a commit of its own only when it committed one: the branch's head and main's merge are not", async () => {
+  const first = await firstTask(250, { 'notes/three.md': 'three\n' });
+  const firstDir = `${work}/jobs/250`;
+  assert.equal(ownCommit(agent, firstDir, 'job/250', 'main', first), first, "the first task's commit on a new branch");
+  onMain({ 'more.md': 'landed meanwhile\n' });
+  const idle = task(251, 'job/250');
+  bringUpToDate(agent, idle, 'job/250', 'main');
+  const merged = (await agent.push(idle, 'job/250')).sha;
+  assert.equal(ownCommit(agent, idle, 'job/250', 'main', merged), undefined, 'only the merge of main: none of its own');
+  const working = task(252, 'job/250', { 'notes/four.md': 'four\n' });
+  commit(working);
+  const own = (await agent.push(working, 'job/250')).sha;
+  assert.equal(ownCommit(agent, working, 'job/250', 'main', own), own);
 });
 
 // A task's profile split as the worker makes it (worker.ts profileToMain): the commit of its lines pushed to

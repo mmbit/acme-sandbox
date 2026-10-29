@@ -476,7 +476,7 @@ test("Numbers counts the shop's paid baskets per day: with more than one thing, 
   await order('Eerst@example.com', [await line('pebblet'), await line('hello')]);
   assert.deepEqual(since(), { paid: 2, several: 1, returning: 1, known: 2 });
   // a line of the shop's own going with the one thing isn't a second thing
-  payments.ownLines.price = (_basket, _things, own) => own.map(() => 999);
+  payments.ownLines.prices.magnet = (_basket, _things, own) => own.map(() => 999);
   try {
     const thing = await line('pebblet');
     const basket = await basketOf([thing]);
@@ -485,6 +485,7 @@ test("Numbers counts the shop's paid baskets per day: with more than one thing, 
       basket,
       id =>
         payments.addOwnLine(id, {
+          kind: 'magnet',
           goes_with: thing.line,
           description: 'Fridge magnet',
           amount: 999,
@@ -497,7 +498,7 @@ test("Numbers counts the shop's paid baskets per day: with more than one thing, 
     await payPage(opened.json.url);
     assert.equal((await viewOf(basket)).status, 'paid');
   } finally {
-    delete payments.ownLines.price;
+    delete payments.ownLines.prices.magnet;
   }
   assert.deepEqual(since(), { paid: 3, several: 1, returning: 1, known: 3 });
   // a test order (the shop's test code) is never paid, and a basket its vouchers paid in full is a replacement

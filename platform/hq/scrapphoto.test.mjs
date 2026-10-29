@@ -24,21 +24,24 @@ test.after(async () => {
 test("a scrap's photo of Holo shows the deck, and the camera stays where it was", { skip: noChromium }, async () => {
   const { context, page, errors } = await openPage(browser, { viewport: { width: 800, height: 600 } });
   await page.goto(`${base}/?intro=0&renderer=holo`);
+  // (Holo booted in about 3 s on SwiftShader at a worker's load of 14, 29 Oct: the rest is room for a busier one)
   await page.waitForFunction(() => window.hq?.cam, null, { timeout: 60_000 });
   const shot = await page.evaluate(async () => {
     const { cam, tick } = window.hq,
-      stage = document.querySelector('#world');
+      canvas = document.querySelector('#world');
     window.hq.world.paused = true;
-    // the camera on its way somewhere: a frame drawn, then a step of the loop, as a task later finds them
+    // the camera on its way somewhere, as the screenshot's task finds it between a step of the loop and its frame: a
+    // frame drawn (the one to paint again), then a step, which leaves the camera's move to the next frame (scene.js
+    // draw): a photo painted as a whole frame would make it
     cam.goal = { yaw: cam.yaw + 1, pitch: cam.pitch, dist: cam.dist, at: [...cam.at] };
     window.hq.frame(1);
     tick(1 / 60, 1);
     await new Promise(r => setTimeout(r, 100));
     const where = () => JSON.stringify([cam.yaw, cam.pitch, cam.dist, cam.at, cam.shift]),
       before = where();
-    stage.dispatchEvent(new Event('snapshot:draw'));
+    canvas.dispatchEvent(new Event('snapshot:draw'));
     const photo = new Image();
-    photo.src = stage.toDataURL();
+    photo.src = canvas.toDataURL();
     await photo.decode();
     const copy = new OffscreenCanvas(photo.width, photo.height).getContext('2d');
     copy.drawImage(photo, 0, 0);

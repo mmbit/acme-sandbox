@@ -51,6 +51,22 @@ export function refuseNewLoops(before: DependencyGraph, after: DependencyGraph) 
   }
 }
 
+// Whether the graph has any loop: a write that leaves none made none (redraws.ts writePlan).
+export function hasLoop(graph: DependencyGraph) {
+  const done = new Set<string>(),
+    active = new Set<string>();
+  const visit = (id: string): boolean => {
+    if (active.has(id)) return true;
+    if (done.has(id)) return false;
+    active.add(id);
+    for (const prior of graph.get(id)?.needs ?? []) if (visit(prior)) return true;
+    active.delete(id);
+    done.add(id);
+    return false;
+  };
+  return [...graph.keys()].some(visit);
+}
+
 function pathTo(graph: DependencyGraph, from: string, to: string, visited: Set<string>): string[] | undefined {
   if (from === to) return [to];
   if (visited.has(from)) return;

@@ -1,7 +1,8 @@
 // Shared Ink controls for the real-coordinator guest browser journeys in bookguests.mjs.
 import assert from 'node:assert/strict';
 import { until } from '../../shared/browser/browser.mjs';
-import { pen, until as waitFor } from './booknotebookscreen.mjs';
+import { pen } from './booknotebookscreen.mjs';
+import { until as waitFor } from './bookkit.mjs';
 import { shell } from './shell/ink/notebookshellwords.js';
 
 // A control of the book by its English name, as the guest's page says it (notebookshellwords.js)
@@ -102,7 +103,8 @@ export async function selectionAndPrefs(page) {
   await bar.getByRole('button', { name: acts[4], exact: true }).click();
   await page.keyboard.press('Escape');
   const clip = book.getByRole('button', { name: await named(page, 'A group: its menu'), exact: true });
-  await clip.click({ position: { x: 10, y: 6 } }); // (its top: the note under the group's corner covers its foot)
+  // (in its middle, as the board taps it: the note at the group's corner lies under it.)
+  await clip.click();
   const menu = page.getByRole('menu');
   await menu.waitFor();
   assert.deepEqual(await menu.getByRole('menuitem').allInnerTexts(), [await named(page, 'Delete')]);
@@ -115,14 +117,14 @@ export async function selectionAndPrefs(page) {
   await page.keyboard.press('Escape');
 }
 
-// The new page after a send, untitled: its name in the bar and the pages menu, and the title form, in the guest's words
+// The new page after a send, untitled: its name in the bar and the pages menu, and the title field, in the guest's words
 export async function untitledPage(page) {
   const untitled = await named(page, 'Untitled page');
   await until(page, '#book .bk-where', new RegExp(RegExp.escape(untitled)));
   await page.locator('#book .bk-where').click();
   const field = page.getByRole('textbox', { name: await named(page, 'Page title'), exact: true });
   assert.equal(await field.getAttribute('placeholder'), untitled);
-  await page.getByRole('button', { name: await named(page, 'Save title'), exact: true }).waitFor();
+  await page.getByRole('menu', { name: await named(page, 'Pages'), exact: true }).waitFor();
   assert.ok((await page.locator('#book .bk-pages-menu').innerText()).includes(untitled));
   await field.press('Escape');
 }

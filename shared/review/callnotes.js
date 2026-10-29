@@ -2,16 +2,22 @@
 // platform/hq/shell/ink/calldraw.js; Ink's folder). While a call is on, a mark
 // goes on the call's page in the book, not on a sheet: the agent on the call is the one listening. No mic of its own:
 // the call hears the board, and what it hears while a mark is drawn is the note's words. The mark goes into the book as
-// every mark does (settle.js), and HQ's call sends it to the agent ('pencil:note', marks.js).
+// every mark does (settle.js), and HQ's call sends it to the agent ('pencil:note', marks.js). It's for the agent:
+// nothing of it goes into the notebook by itself (the agent makes a scrap of what it judges worth keeping), and its ink
+// stays drawn (r.held) until the agent's turn on it is done, then goes, so the board circles afresh on a clean screen
+// (the board, call 161.).
 // The agent's ink isn't the Pencil's: drive.js rings where it aims, over the page, and nothing of it goes in the book
 //   call:on    { call, agent, name, color, walk }  a call is on: its calls row, its agent, its name and its ink; walk:
 //                                                  a walk-through, whose page opens at once
 //   call:off   { done }                       it ended; done() once a mark still settling is in the book
 //   call:heard { text }                       words the call heard the board say
+//   call:had   { note }                       the agent's turn on that note is done (or the line couldn't take it):
+//                                             its ink goes
 import { reset } from './acts.js';
 import { say } from './dock.js';
 import { callPage } from './markpage.js';
 import { file } from './settle.js';
+import { paint } from './marks.js';
 
 // Words the call heard are kept this long for the mark being drawn (the line hears a phrase once it's finished)
 const HEARD_MS = 60_000;
@@ -19,7 +25,7 @@ const HEARD_MS = 60_000;
 const TOLD_MS = 8000;
 
 export function setupCall(r) {
-  Object.assign(r, { call: null, callHeard: [] });
+  Object.assign(r, { call: null, callHeard: [], held: [] });
   document.addEventListener('call:on', e => {
     r.call = e.detail;
     r.callHeard = [];
@@ -30,6 +36,10 @@ export function setupCall(r) {
   document.addEventListener('call:heard', e => {
     const now = performance.now();
     r.callHeard = [...r.callHeard.filter(h => now - h.at < HEARD_MS), { at: now, text: String(e.detail?.text ?? '') }];
+  });
+  document.addEventListener('call:had', e => {
+    r.held = r.held.filter(h => h.note !== e.detail?.note);
+    paint(r);
   });
 }
 
@@ -60,4 +70,6 @@ async function ended(r) {
   r.call = null;
   r.unheard = null;
   r.callHeard = [];
+  r.held = [];
+  paint(r);
 }

@@ -52,12 +52,12 @@ function closeIfDone(id: string, failedEnds = false) {
   if (!tasks.length || !tasks.every(settled)) return;
   close(thread);
 }
-const close = (thread: Thread) => {
+const close = (thread: Thread, what = 'deliverable done: its work settled') => {
   db.prepare("update threads set status = 'done', done = ?, branch = null where id = ?").run(
     new Date().toISOString(),
     thread.id,
   );
-  planChange({ project: thread.project, thread: thread.id, what: 'deliverable done: its work settled', by: 'hq' });
+  planChange({ project: thread.project, thread: thread.id, what, by: 'hq' });
 };
 
 // A job that ended done with nothing to merge (no pull request, and none to come from its thread's branch: jobs.ts
@@ -73,8 +73,26 @@ export function endedEmpty(id: string) {
   const thread = findThread(id);
   if (thread?.status !== 'open' || thread.branch || !oneTask(thread.id)) return;
   if (tasksOf(thread.id).length) return closeIfDone(thread.id, routineRun(thread.id));
-  if (!db.prepare(`select 1 from jobs where thread = ? and status in ${jobs.OPEN_JOBS}`).get(thread.id)) close(thread);
+  if (!openJob(thread.id)) close(thread);
 }
+const openJob = (thread: string) =>
+  db.prepare(`select 1 from jobs where thread = ? and status in ${jobs.OPEN_JOBS}`).get(thread);
+// A job's work taken out of HQ's one-task thread for it (regroup.ts: hq job move, hq expedite; reviewwork.ts bind) ends
+// that thread in the same step, as endedEmpty ends one whose work is all in: nobody draws a next task there, so open and
+// empty it would play as its owner's task still to draw (threadorder.ts placeholders). Which of `threads` are HQ's is
+// read before the move, since oneTask knows a thread only while its job is in it. An owner's thread a move empties stays
+// open (they draw its next task or close it). What `move` returns.
+export function leaving<T>(threads: (string | null)[], move: () => T): T {
+  const wrappers = threads.filter((id): id is string => !!id && oneTask(id));
+  const result = move();
+  for (const id of wrappers) {
+    const thread = findThread(id);
+    if (thread?.status === 'open' && !tasksOf(id).length && !openJob(id))
+      close(thread, 'deliverable done: its work moved out');
+  }
+  return result;
+}
+
 // Whether a thread is a routine's run: its job is one the schedule recorded (schedule.ts run)
 const routineRun = (thread: string) =>
   !!db.prepare('select 1 from schedule_runs r join jobs j on j.id = r.job where j.thread = ?').get(thread);

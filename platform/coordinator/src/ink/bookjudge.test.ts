@@ -186,6 +186,20 @@ test('an old-book note past the day says why once, however often it’s saved', 
   db.prepare('delete from ink_judges').run();
 });
 
+test('an old-book note wiped and brought back by Undo keeps its reason, which the next ask takes away', async () => {
+  dayUsed();
+  const page = (await h.board('/api/book/page/new', { kind: 'free', w: 800, h: 600 })).body;
+  const n = (await h.board('/api/book/note', { page: page.id, anchor, words: 'is it on', said: 'typed' })).body.note;
+  await until(() => reasonsOnNote(n.id).length === 1);
+  db.prepare('delete from ink_judges').run();
+  assert.equal((await h.board('/api/book/note/delete', { id: n.id })).status, 200);
+  assert.equal((await h.board('/api/book/note/restore', { id: n.id })).status, 200);
+  await h.board('/api/book/note/edit', { id: n.id, words: 'is it on yet', said: 'typed' });
+  await say((await judged())!, 'answer', 'asks whether it is live');
+  await until(() => started({ note: n.id }).asked !== null);
+  assert.deepEqual(reasonsOnNote(n.id), [], 'the next ask takes the reason’s place');
+});
+
 test('a failed call is tried again; an answer that is no verdict leaves the note unjudged', async () => {
   const g = (await scrap('swap')).body;
   const first = (await judged())!;

@@ -127,6 +127,10 @@ const born = (db.prepare("select name from sqlite_master where type = 'table' an
 // - stage (review.ts Stage): a review-loop job's role, apart from its title.
 // - step: the review loop's step beside the work's own title.
 // - token: the running job's agent token (sha256 only).
+// - sha: a commit the job holds on to. A review-loop job reads the pull request at this commit (review.ts roundJob). A
+//   thread task keeps the last commit one of its runs pushed (threadorder.ts pushed). The coordinator sets aside a failed
+//   or stopped task that holds such a commit once a pull request on its work branch merges, as that merge brings the
+//   task's work to main (jobs.ts failedAside).
 // - room_for: the ready work it last paused to make room for (jobs.ts makesRoom), which gets that room first.
 // - writes: the files a ruling may touch itself (JSON, review.ts touch-ups).
 // - stopping: who stopped it (hq stop) and why, kept when it ends stopped.
@@ -383,15 +387,17 @@ db.exec('create table if not exists previews_owed (pr integer primary key, files
 db.exec(`create table if not exists findings (id integer primary key, created text not null, pr integer not null, round integer not null,
   ruling integer not null, kind text not null, file text, line integer, issue text not null, by text not null, outcome text, right text, cross_project integer not null default 0)`);
 db.exec('create index if not exists findings_pr on findings (pr)');
-// The review follow-up bundle (a proposal) each finding went into (followups.ts).
+// The review follow-up bundle (a proposal) each finding went into, before follow-ups became their author's job.
 db.exec('create table if not exists review_followups (finding integer primary key, proposal integer not null)');
+// The follow-up job each finding went into (followups.ts)
+db.exec('create table if not exists review_followup_jobs (finding integer primary key, job integer not null)');
 // Accepted rulings retain their blocking IDs independently of later finding outcomes.
 db.exec('create table if not exists finding_rulings (ruling integer primary key, blocking text not null)');
 // The reviewer runs whose reports a ruling was given.
 db.exec('create table if not exists ruling_reports (ruling integer not null, report integer not null, primary key (ruling, report))');
 db.exec('create table if not exists review_refusals (job integer primary key, at integer not null, reason text not null)');
 redacted('review_refusals', 'reason');
-// The accepted rulings whose nonblocking findings went to the project's follow-ups, not the author (findings.ts record),
+// The accepted rulings whose nonblocking findings went to the follow-up job, not the fix round (findings.ts record),
 // and what each ruling from the upstream round on said went wrong before review, in its owner's proposal (followups.ts
 // upstream).
 db.exec('create table if not exists followup_rulings (ruling integer primary key)');
@@ -435,10 +441,13 @@ db.exec('create table if not exists request_holds (request integer not null, wor
 
 // A live call's agent token (call.ts): only its sha256, the agent it speaks as, until when, and its call. listed: the
 // open items the call's briefing numbered (call.ts context(), JSON ids), the only earlier items its replace may change
-// (server.ts), with a restart adding the rebuilt briefing's. queued: the jobs the call queued, the only ones its agent may add
-// to while it goes on (call.ts addToJob).
+// (server.ts), with a restart adding the rebuilt briefing's.
 db.exec(`create table if not exists call_tokens (hash text primary key, agent text not null, expires integer not null,
-  listed text not null default '[]', queued text not null default '[]', call integer)`);
+  listed text not null default '[]', call integer)`);
+// The jobs each call queued (hq job from its token: call.ts queuedOn), kept after it ends: the only ones its agent may add
+// to while it goes on (call.ts addToJob), and the only ones an ask the board takes off its page cancels (ink/callasks.ts
+// takenOff).
+db.exec('create table if not exists call_jobs (call integer not null, job integer not null, primary key (call, job))');
 // The call ledger (ledger.ts): what each call asked for, decided or explained, and what was promised on it, one item
 // each. `what` is the one plain line the board sees; `quote` (the words on the call, verbatim) and `lines` (the
 // transcript range) stay with the agents. An item is open until its job ends done, or it's linked to a request or a ref
@@ -918,3 +927,5 @@ once('2026-10-26-seat-window-observations', () => {
       select seat, '${quota}', at, at, ${usage}, ${reset} from seat_readings where ${usage} is not null`);
   }
 });
+// The queued jobs of calls deleted before their rows went with them (call.ts handOver, ledger.ts sweep).
+once('2026-10-29-call-jobs-of-gone-calls', 'delete from call_jobs where call not in (select id from calls)');

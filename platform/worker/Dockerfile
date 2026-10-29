@@ -35,7 +35,7 @@ RUN curl -fsSL -o /tmp/agy.tar.gz https://storage.googleapis.com/antigravity-pub
     && rm -f /tmp/agy.tar.gz /tmp/antigravity
 # infra's tests' own tools, from their GitHub releases, checked against their sha256: age and versitygw for
 # test_backup.py, Caddy for test_caddy.sh, and static jq for test_provision.py. The worker sends its copies along to a
-# lent machine's tests helper (shared/gates/tests.ts TOOLS: the same list).
+# lent machine's tests helper (shared/gates/bundle.ts TOOLS: the same list).
 RUN curl -fsSL -o /tmp/age.tar.gz https://github.com/FiloSottile/age/releases/download/v1.3.2/age-v1.3.2-linux-amd64.tar.gz \
     && curl -fsSL -o /tmp/vgw.tar.gz https://github.com/versity/versitygw/releases/download/v1.9.0/versitygw_v1.9.0_Linux_x86_64.tar.gz \
     && curl -fsSL -o /tmp/caddy.tar.gz https://github.com/caddyserver/caddy/releases/download/v2.11.7/caddy_2.11.7_linux_amd64.tar.gz \

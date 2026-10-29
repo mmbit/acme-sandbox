@@ -14,6 +14,7 @@ import { writeWhenSeen } from './bookanswerwrite.js';
 import { fitReplies, formHtml, replyHtml, wireForm, wireReply } from './bookanswerreply.js';
 import { loadGroups, sendForm, sendReply } from './bookanswersdata.js';
 import { versionsTab, drawVersions, paperOf } from './bookanswerversions.js';
+import { clearOf } from './bookui.js';
 import { scope, word } from './bookscope.js';
 import { words } from './notebookwords.js';
 
@@ -111,26 +112,19 @@ function draw(layer, groups) {
 // ---- an answer
 
 // Where an answer lies on this screen: the store's spot, or where that runs under the controls floating at the paper's
-// right edge (one column or two: bookui.js --bk-stack) as this screen shows the page at 100%, the first of its narrow
-// spots that doesn't (each placed below its group for a narrower paper: answerspot.ts), or its narrowest. Never moved or
-// narrowed here: only paper the store cleared.
+// right edge (one column or two: bookui.js --bk-controls-width) as this screen shows the page at 100%, the first of its
+// narrow spots that doesn't (each placed below its group for a narrower paper: answerspot.ts), or its narrowest. Never
+// moved or narrowed here: only paper the store cleared.
 function spotHere(g, spot, edge) {
   if (edge === null) return spot;
   let s = spot;
   while (s.narrow && g.box.x + s.dx + s.w > edge) s = s.narrow;
   return s;
 }
-// The x the answers keep left of on this screen (null: the paper has no size yet); again() draws them again as it sizes,
-// and as the controls' width settles (bookui.js bk:stack)
+// The x the answers keep left of on this screen (null: the paper has no size yet); again() draws them again as it sizes
 function edgeOf(layer, again) {
-  const paper = paperOf(layer, again),
-    book = layer.slot.closest('#book');
-  if (book && !layer.hearsStack) {
-    layer.hearsStack = true;
-    const heard = () => (layer.slot.isConnected ? layer.again() : book.removeEventListener('bk:stack', heard));
-    book.addEventListener('bk:stack', heard);
-  }
-  return paper && paper - (parseFloat(getComputedStyle(layer.slot).getPropertyValue('--bk-stack')) || 52) - 24;
+  const paper = paperOf(layer, again);
+  return paper && clearOf(layer.slot, paper);
 }
 const at = (g, spot) => `left:${g.box.x + spot.dx}px;top:${g.box.y + spot.dy}px;width:${spot.w}px`;
 

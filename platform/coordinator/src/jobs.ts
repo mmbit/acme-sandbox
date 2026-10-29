@@ -31,6 +31,7 @@ import {
   voiceOf,
   projects,
 } from './company.ts';
+import { deskName } from './wherework.ts';
 import { unshelvedProblem } from './library.ts';
 import { languageName } from './language.ts';
 import { stylePrompt } from './style.ts';
@@ -65,6 +66,7 @@ import { finished, cancelled, mine } from './ledger.ts';
 import { recordUsage } from './usage.ts';
 import { carryOver } from './carryover.ts';
 import { recordSeatReading } from './headroom.ts';
+import { seatReported } from './startholds.ts';
 import { checkSeatWarning } from './seatwarning.ts';
 import * as models from './models.ts';
 import * as engineOnly from './engineonly.ts';
@@ -83,6 +85,7 @@ import * as threadends from './threadends.ts';
 import { cardProblem } from '../../hq/shell/cardcheck.js';
 import * as asking from '../../hq/shell/questions.js'; // a card's questions as form fields, the guest checklist's engine
 import * as cardFiles from './cardfiles.ts'; // a card's files to download
+import { holdLoose } from './sorting.ts';
 
 type Job = {
   id: number;
@@ -403,12 +406,14 @@ export function hasReplacement(job: string) {
   return `exists (select 1 from job_replacement_links r cross join jobs next indexed by jobs_state on next.id = r.job
     where r.replaces = ${job} and next.status != 'cancelled')`;
 }
-// Whether the job (an SQL expression for a jobs row) failed and is set aside: another took its place (a replacement), or
-// its branch has an open pull request. Neither holds its
-// thread (threadorder.ts tasksOf, prerequisites' task order).
+// Whether the job (an SQL expression for a jobs row) failed and is set aside: another took its place (a replacement), its
+// branch has an open pull request, or it pushed work of its own (jobs.sha, threadorder.ts pushed) and its branch's pull
+// request merged, which brought that work to main. One that pushed nothing has no work in a merge, though its thread's
+// branch merged. None holds its thread (threadorder.ts tasksOf, prerequisites' task order).
 export function failedAside(j: string) {
   return `(${j}.status in ('failed', 'stopped') and (${hasReplacement(`${j}.id`)}
-    or exists (select 1 from prs p where p.branch = ${workBranch(j)} and p.status in ${OPEN_PRS})))`;
+    or exists (select 1 from prs p where p.branch = ${workBranch(j)}
+      and (p.status in ${OPEN_PRS} or (p.status = 'merged' and ${j}.sha is not null)))))`;
 }
 // The jobs standing for the jobs `roots` selects (an SQL select of ids, which may name the outer query's columns): those,
 // and each replacement of one of them that isn't cancelled. With `carried`, `roots` selects a column of that name before
@@ -450,12 +455,17 @@ export const loopJobs = (branch: string) =>
 // The job whose work a `job/<n>` branch holds, in SQL: null for any other branch
 export const jobOfBranch = (branch: string) =>
   `case when ${branch} glob 'job/[0-9]*' then cast(substr(${branch}, 5) as integer) end`;
+// The job that leads a branch's review loop, in SQL: that of a `job/<n>` branch, and job n for `profile/<n>`, its records
+// pull request (the worker's profile and archive lines), whose steps follow n's work into its thread (fromLoop).
+const leadOfBranch = (branch: string) =>
+  `case when ${branch} glob 'profile/[0-9]*' then cast(substr(${branch}, 9) as integer) else ${jobOfBranch(branch)} end`;
 // The ids of the jobs mergePending (db.ts) holds, by index and not by every job's row (seconds off a cold disk): the open
-// ones by their state, the done ones through their branch's open pull request.
+// ones by their state, the done ones through their branch's open pull request. The few open pull requests lead, so
+// stale statistics can't make the planner start from every done job.
 const MERGE_PENDING_IDS = `select id from jobs indexed by jobs_status where status in ${OPEN_JOBS}
-  union select j.id from prs p join jobs j on j.branch = p.branch
+  union select j.id from prs p indexed by prs_open cross join jobs j indexed by jobs_branch on j.branch = p.branch
     where p.status in ${OPEN_PRS} and j.status = 'done' and ${mergePending('j')}
-  union select j.id from prs p join jobs j on j.id = ${jobOfBranch('p.branch')} and j.branch is null
+  union select j.id from prs p indexed by prs_open cross join jobs j on j.id = ${jobOfBranch('p.branch')} and j.branch is null
     where p.status in ${OPEN_PRS} and p.branch = ${workBranch('j')} and j.status = 'done' and ${mergePending('j')}`;
 
 // The author of a review loop, by the job's loop branch, otherwise the job itself.
@@ -491,7 +501,7 @@ function fromLoop(column: 'thread' | 'code', j: { branch?: string; pr?: number }
         .prepare(
           `with n (branch, pr) as (values ($branch, $pr)), b (branch) as materialized (select ${loopBranch('n')} from n),
       w (id) as (select id from jobs indexed by jobs_branch, b where jobs.branch = b.branch
-        union select ${jobOfBranch('b.branch')} from b)
+        union select ${leadOfBranch('b.branch')} from b)
     select j.${column} from w cross join jobs j on j.id = w.id where +j.${column} is not null order by j.id desc limit 1`,
         )
         .get({ branch: j.branch ?? null, pr: j.pr ?? null }) as Record<typeof column, string> | undefined
@@ -842,15 +852,14 @@ function whyCantMeet(job: number, on: number, role: string) {
 // jobs of an open pause on its thread (pauses.ts). ordered adds task order, thread needs and redraw barriers.
 // includeFrom: false starts at the edges, so a root in its own prerequisites identifies a cycle.
 export function prerequisites(from: number[], { includeFrom = true, ordered = false } = {}) {
-  const unfinished = mergePending('j');
   return db
     .prepare(
       `${dependencyEdges()}, needs(id) as (
       select 'job/' || value from json_each($from) where $includeFrom
       union select e.needs from edges e join json_each($from) f on e.job = 'job/' || f.value where not $includeFrom
       union select e.needs from needs n join edges e on e.job = n.id)
-    select j.id, j.thread, j.kind, j.expedite from needs n join jobs j on n.id = 'job/' || j.id where ${unfinished}
-    order by j.id`,
+    select j.id, j.thread, j.kind, j.expedite from needs n join jobs j on j.id = ${jobOfBranch('n.id')}
+    where j.id in (select id from pending) order by j.id`,
     )
     .all({
       from: JSON.stringify(from),
@@ -866,24 +875,33 @@ export function needsGraph() {
   for (const { job, needs } of rows) graph.set(job, [...(graph.get(job) ?? []), needs]);
   return graph;
 }
+// The unfinished jobs are read once, by index (MERGE_PENDING_IDS), and every edge starts from them or from the open and
+// failed tasks. Tasks keep only the columns the edges read, never a row's brief and output.
+// A failed task only holds the open ones after it in its thread, so only the threads with unfinished work read their
+// failed tasks.
 function dependencyEdges() {
-  const unfinished = mergePending('j');
   return `with recursive ${redraws.relations()},
-    tasks as (select j.* from jobs j where j.kind = 'work' and j.pr is null and j.thread is not null
-      and j.status != 'cancelled' and not ${failedAside('j')}),
+    pending(id) as materialized (${MERGE_PENDING_IDS}),
+    open_threads(thread) as materialized (select distinct j.thread from pending x cross join jobs j indexed by jobs_listed
+      on j.id = x.id where j.thread is not null),
+    tasks as materialized (select j.id, j.thread, j.seq, j.status, j.branch from (select id from pending
+        union select f.id from open_threads t cross join jobs f indexed by jobs_thread_state
+          on f.thread = t.thread and f.status = 'failed') x
+      cross join jobs j indexed by jobs_listed on j.id = x.id where j.kind = 'work' and j.pr is null
+      and j.thread is not null and not ${failedAside('j')}),
     edges(job, needs) as (
-      select 'job/' || j.id, 'job/' || j.after from jobs j where j.after is not null and ${unfinished}
-      union select 'job/' || j.id, 'job/' || w.on_job from jobs j join waits w on w.job = j.id where ${unfinished}
+      select 'job/' || j.id, 'job/' || j.after from pending x cross join jobs j on j.id = x.id where j.after is not null
+      union select 'job/' || w.job, 'job/' || w.on_job from pending x cross join waits w on w.job = x.id
       union select 'job/' || j.id, 'job/' || u.job from jobs j join pauses p on ${pauseHolds('p')}
         and p.project = coalesce(substr(j.thread, 1, instr(j.thread, '/') - 1), '${DESK}') and (p.thread is null or p.thread = j.thread)
-        join pause_until u on u.pause = p.id where j.id in (${MERGE_PENDING_IDS}) and (j.thread is not null or not ${deskLets('j')})
+        join pause_until u on u.pause = p.id where j.id in (select id from pending) and (j.thread is not null or not ${deskLets('j')})
       union select 'job/' || j.id, 'job/' || prior.id from tasks j join tasks prior on prior.thread = j.thread
         and (coalesce(prior.seq, prior.id), prior.id) < (coalesce(j.seq, j.id), j.id)
         where $ordered and j.status in ('queued', 'running', 'blocked') and prior.status in ('queued', 'running', 'blocked', 'failed')
       union select 'job/' || j.id, 'thread/' || n.needs from tasks j join thread_needs n on n.thread = j.thread
-        join threads t on t.id = n.needs where $ordered and ${unfinished} and t.status = 'open'
+        join threads t on t.id = n.needs where $ordered and j.status != 'failed' and t.status = 'open'
       union select 'thread/' || t.id, 'job/' || j.id from threads t join tasks j on j.thread = t.id
-        where $ordered and t.status = 'open' and ${unfinished}
+        where $ordered and t.status = 'open' and j.status != 'failed'
       union select 'thread/' || n.thread, 'thread/' || n.needs from thread_needs n join threads t on t.id = n.needs
         where $ordered and t.status = 'open'
       union ${redraws.dependencies()}
@@ -895,10 +913,14 @@ export function addWait(job: number, on: number, by: string, why = '') {
   const refused =
     whyNotYours(job, by, null) ?? whyMadeByHq(job, by, why) ?? whyCantMeet(job, on, `#${job} can wait for`);
   if (refused) return refused;
-  return redraws.writePlan(() => {
-    holdForMerge(job, on, by, why);
-    return { ok: true };
-  });
+  // Repeatable: it only writes rows and publishes after its step, so writePlan may run it twice.
+  return redraws.writePlan(
+    () => {
+      holdForMerge(job, on, by, why);
+      return { ok: true };
+    },
+    { repeatable: true },
+  );
 }
 // Trusted plan operations also use these waits after their caller has authorized the plan change.
 export function holdForMerge(job: number, on: number, by: string, why = '') {
@@ -940,11 +962,15 @@ function whyMadeByHq(job: number, by?: string, why = '') {
 export function moveWait(job: number, from: number, to: number, by: string, why = '') {
   const refused = whyNotYours(job, by, from) ?? whyCantMeet(job, to, `can replace #${from}'s`);
   if (refused) return refused;
-  return redraws.writePlan(() => {
-    db.prepare('update or replace waits set on_job = ? where job = ? and on_job = ?').run(to, job, from);
-    publishWaitChange(job, by, `#${job} waits for #${to} now, in place of #${from}${why ? `: ${oneLine(why)}` : ''}`);
-    return { ok: true };
-  });
+  // Repeatable, as addWait's.
+  return redraws.writePlan(
+    () => {
+      db.prepare('update or replace waits set on_job = ? where job = ? and on_job = ?').run(to, job, from);
+      publishWaitChange(job, by, `#${job} waits for #${to} now, in place of #${from}${why ? `: ${oneLine(why)}` : ''}`);
+      return { ok: true };
+    },
+    { repeatable: true },
+  );
 }
 export function dropWait(job: number, from: number, by: string, why = '') {
   const refused = whyNotYours(job, by, from);
@@ -1156,9 +1182,9 @@ export const pausedOn = (job: number) =>
       target: string | null;
     }
   ).target;
-// What a pause holds, by name: the desk's (projects.yaml groups.unsorted's name) or a thread's or project's id
-export const pauseName = (target: string) =>
-  target === DESK ? (projects().groups.unsorted?.name ?? 'work in no deliverable') : target;
+// What a pause holds, by name: the desk's (wherework.ts deskName) or a thread's or
+// project's id
+export const pauseName = (target: string) => (target === DESK ? deskName() : target);
 const pausedWakes = (row: { kind: string; paused_with: string | null }) =>
   row.kind !== 'chat' && row.paused_with ? [`paused with ${pauseName(row.paused_with)}`] : [];
 
@@ -1435,6 +1461,7 @@ export function claim(
   requeueAbandoned();
   sweepTeam(); // the members of runs that ended without saying so
   wakes.check(); // the deploys, merges and times queued jobs wait for (hq job --when)
+  holdLoose(); // HQ's work made in no deliverable waits for the CEO to place it
   const cli =
     (db.prepare('select coalesce(cli, engine) cli from seats where id = ?').get(seat) as { cli: string } | undefined)
       ?.cli ?? engine;
@@ -1695,7 +1722,7 @@ function claimed(job: Job, token: string, moved: boolean, inThread: ReturnType<t
     // (a quick run's turn, in the fields every worker reads and its run records keep: a reload keeps the deadline)
     ...(quickRun && { quickReply: true, quickReplyUntil: quickRun.until }),
     // (the title as its prompts say it: with its focus, company.ts titleOf)
-    agentInfo: a && { ...a, role: titleOf(a) },
+    agentInfo: a && { ...a, role: titleOf(a), ...(quickRun && { effort: quickRun.effort }) },
     company,
     ...(job.kind === 'work' || isIntercom(job) ? { inFlight: inFlight(job), archiving: archiving(job.agent) } : {}),
     ...carryOver(job), // (resumes or closingReports)
@@ -2700,6 +2727,7 @@ export function setSeat(id: string, engine: string, state: string, until?: numbe
     w.credits === true ? 1 : null,
   );
   recordSeatReading(id, w);
+  seatReported(id);
   checkSeatWarning(id);
   tips.seatRead(id, share(w.week));
   // A ready seat with a reading is one the worker gives jobs to, so the jobs a limit holds, on any seat of its engine,

@@ -100,25 +100,25 @@ export const theme = () => optional('theme/hq.yaml');
 // is lifted into it as the file is read, each id not in it yet (an entry without an id, a name and an owner is left out),
 // and then leaves the file.
 // The file's settings: requireThread: a job queued by hand must name a thread when it has none to inherit (server.ts),
-// which a company turns on once its open work is in threads. A missing or empty file means none. YAML that cannot be
-// parsed throws.
+// and one HQ makes with none waits for the CEO to place it (sorting.ts holdLoose): a company turns it on once its open
+// work is in threads. A missing or empty file means none. YAML that cannot be parsed throws.
 // made: the project each kind of job HQ makes goes to, by its app (made.ts): errors, the error scan's triage (the app's
 // slug, care: the chat); checks, the hourly check and its repair, alarms, the CEO's (hq): those two carry a window, so a
-// company needs their project (a new one has the template's file: template/company/projects.yaml). The board's notes
-// become tasks in their projects as the CEO routes them (routing.ts).
+// company needs their project (a new one has the template's file: template/company/projects.yaml); carries, a commit's
+// checks (hq: carries.ts). The board's notes become tasks in their projects as the CEO routes them (routing.ts).
 // businesses: what the projects are grouped under, in the board's order, each an id, a name, maybe a cover (a file
 // under theme/hq/), maybe its owner (an agent id) and maybe the style its covers are drawn in (its own and its projects':
 // `pixel` shows them at whole pixels, any other word or none smooth.). A project
 // names its business. groups: the projects view's side groups beside the businesses (recurring: the routines'
 // projects, schedule.ts keepProjects; unsorted: the work outside the projects), each maybe with a cover and its style
 // the same way. Both as declared.
-// A group may carry its own name for the view: a company that names unsorted, the CEO's desk (the CEO's own work: its
-// call follow-ups and meeting work, projects.ts listProjectBoard), has it as a standing tile.
+// Unsorted is the CEO's desk (its own work: checks, call follow-ups, meeting work), named for the CEO unless named
+// here (wherework.ts deskName, with holdLoose and carries).
 // covers: each project's cover by its id, a file under theme/hq/ the same way (the projects are HQ's data, their pictures
 // the company's).
 export type Business = { id: string; name: string; cover?: string; owner?: string; style?: string };
 export type GroupKind = 'recurring' | 'unsorted' | 'meetings'; // (meetings: the meetings' seats.)
-export type MadeKind = 'errors' | 'checks' | 'alarms';
+export type MadeKind = 'errors' | 'checks' | 'alarms' | 'carries';
 export type Project = { id: string; name: string; owner: string; product?: string; business?: string };
 export type ProjectSettings = {
   list: Project[]; businesses: Business[];

@@ -2,10 +2,10 @@
 // project's owner and the CEO draw and change (the coordinator's plan.ts).
 import * as api from './api.ts';
 import { at, duration } from './estimate.ts';
-import { takeValues } from './flags.ts';
+import { takeNeeds, takeValues } from './flags.ts';
 import { companyLevels } from './files.ts';
-import { asHelp, rules, type Levels } from './levels.ts';
-import { print, stop, text } from './output.ts';
+import { asHelp, rules, SIDE_BY_SIDE, type Levels } from './levels.ts';
+import { present, print, stop, text } from './output.ts';
 
 type Task = {
   id: number;
@@ -28,6 +28,7 @@ type Thread = {
   to_do_ms: number;
   split: boolean;
   done: number;
+  ruled: { pr: number; round: number } | null;
 };
 // product: its product's name and other open projects, null for a project in none; ahead and split: the company's levels
 // (the coordinator's levels.ts), the marks on its tasks and threads.
@@ -56,7 +57,8 @@ ${companyLevels().lines.thread}`;
 const renameUsage = () => `usage: hq plan rename <deliverable> "name" ["done when"] [--slug <slug>]
 ${companyLevels().lines.thread}`;
 const USAGE = `usage: hq plan <project> [--json], hq plan deliverable <project> "name" "done when" [--needs <deliverable>]...
-[--slug <slug>], hq plan need | unneed <deliverable> <deliverable>, hq plan move <job> <place>, hq plan drop <job> "why",
+[--slug <slug>], hq plan need <deliverable> <deliverable>, hq plan unneed <deliverable> <deliverable> "why",
+hq plan move <job> <place>, hq plan drop <job> "why",
 hq plan done <deliverable>, hq plan rename <deliverable> "name" ["done when"] [--slug <slug>], or hq plan title <job> "title"`;
 
 // (help reads the company's levels when it's shown)
@@ -71,13 +73,18 @@ export const plan = {
    hq plan deliverable <project> "name" "done when" [--needs <deliverable>]... [--slug <slug>]
                                                      draw a new deliverable, owned by the project's owner: "done when" is
                                                      the goal, what goes live. It's read back in its product and
-                                                     project, beside the project's other open deliverables. Its tasks:
-                                                     hq job --deliverable <project>/<slug> --code WORD. hq plan thread,
-                                                     the old name, still works
+                                                     project, beside the project's other open deliverables. It starts
+                                                     after the deliverables it needs: those named, else the last one
+                                                     chained from the one under way it most likely continues (the
+                                                     drawing job's, else the project's newest), so draws in a row run
+                                                     as one chain. Its tasks: hq job --deliverable <project>/<slug>
+                                                     --code WORD. hq plan thread, the old name, still works
    hq plan need <deliverable> <deliverable>          the first deliverable starts once the second is done and merged (a
-   hq plan unneed <deliverable> <deliverable>        loop is refused, at any depth): how a feature's pieces that go
-                                                     live separately are chained, one merging at a time; unneed takes
-                                                     it back
+                                                     loop is refused, at any depth): how a feature's pieces that go
+                                                     live separately are chained, one merging at a time
+   hq plan unneed <deliverable> <deliverable> "why"  the first runs beside the second from now, for the reason given:
+                                                     only for work on other files, as work on the same files stays
+                                                     chained (side by side it collides and is merged by hand)
    hq plan move <job> <place>                        a task to its place among its deliverable's tasks still to start
                                                      (1: next)
    hq plan drop <job> "why"                          a task that never started leaves the plan (cancelled, why on its feed)
@@ -162,31 +169,27 @@ function threadLines(t: Thread, split: Plan['split']) {
     ...(taskLines.length ? taskLines : ['  no tasks to do yet']),
     ...(t.done ? [`  (${t.done} done)`] : []),
     ...splitLine,
+    ...(t.ruled ? [`  Its review has ruled (PR #${t.ruled.pr}, round ${t.ruled.round}): ${RULED(t.id)}`] : []),
   ];
 }
+const RULED = (thread: string) => `new work: hq plan deliverable with --needs ${text(thread)}.`;
 const SPLIT_TASK = 'split it into its steps (hq plan drop, then hq job --deliverable for each).';
 const SPLIT_THREAD = (thread: string) =>
   `a somewhat bigger deliverable is fine: only a later part that goes live on its own is drawn as a deliverable of its own (hq plan deliverable with --needs ${text(thread)}), its tasks moved there (hq job move).`;
 
 async function drawThread(given: string[]) {
-  const needs: string[] = [];
-  const rest = given.filter((arg, i) => {
-    if (given[i - 1] === '--needs') return false;
-    if (arg !== '--needs') return true;
-    if (!given[i + 1]) stop('No deliverable was drawn: --needs takes a deliverable');
-    needs.push(given[i + 1]);
-    return false;
-  });
+  const { needs, args: rest } = takeNeeds(given, 'No deliverable was drawn');
   const { values, args } = takeValues(rest, ['--slug'], 'No deliverable was drawn');
   const [project, name, goal, ...more] = args;
   if (!project || !name?.trim() || !goal?.trim() || more.length) stop(threadUsage());
   const answer = await api.change('plan/thread', { body: api.withSpeaker({ project, name, goal, needs, ...values }) });
-  const drawn = api.parseOrNull(answer.body) as Placed | null;
+  const drawn = api.parseOrNull(answer.body) as (Placed & { needs?: string[]; chain?: string }) | null;
   if (!api.isSuccess(answer.status) || !drawn?.id)
     stop(`No deliverable was drawn: ${api.errorIn(answer.body, 'no answer')}`);
   print(
-    `Deliverable drawn${needs.length ? `, needing ${needs.join(', ')}` : ''}:`,
+    `Deliverable drawn${drawn.needs?.length ? `, needing ${drawn.needs.map(text).join(', ')}` : ''}:`,
     ...placedLines(drawn),
+    ...(present(drawn.chain) ? [text(drawn.chain)] : []),
     `Its tasks: hq job --deliverable ${text(drawn.id)} <agent> "title" <brief> --code WORD`, // (--code)
   );
 }
@@ -219,13 +222,20 @@ function placedLines(t: Placed) {
   ];
 }
 
+// hq plan unneed takes why: it puts the two deliverables side by side.
 async function need(action: 'need' | 'unneed', args: string[]) {
-  const [thread, needs, ...rest] = args;
-  if (!thread || !needs || rest.length) stop(USAGE);
-  const answer = await api.change('plan/need', { body: api.withSpeaker({ thread, needs, drop: action === 'unneed' }) });
+  const [thread, needs, why, ...rest] = args;
+  const drop = action === 'unneed';
+  const whyRight = drop ? !!why?.trim() : why === undefined;
+  if (!thread || !needs || rest.length || !whyRight) stop(USAGE);
+  const answer = await api.change('plan/need', {
+    body: api.withSpeaker({ thread, needs, drop, ...(drop && { why }) }),
+  });
   if (!api.isSuccess(answer.status)) stop(`Nothing changed: ${api.errorIn(answer.body, 'no answer')}`);
   print(
-    action === 'need' ? `${thread} starts once ${needs} is done and merged.` : `${thread} no longer needs ${needs}.`,
+    drop
+      ? `${thread} no longer needs ${needs}: it can run beside it now. ${SIDE_BY_SIDE}`
+      : `${thread} starts once ${needs} is done and merged.`,
   );
 }
 

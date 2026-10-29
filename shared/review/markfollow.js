@@ -1,12 +1,13 @@
 // The mark being made following HQ's page (pencil.js): drawn again as the page scrolls or resizes under it, its lines on
-// what they were drawn on (marks.js openLines). Only that mark: nothing of a note in the book is ever drawn on the page
-// (rule zero, marks.js paint).
+// what they were drawn on (marks.js openLines). Only that mark, and a call's marks its agent hasn't had its turn on:
+// nothing else of a note in the book is ever drawn on the page (rule zero, marks.js paint).
 import * as marks from './marks.js';
 
 export function followPage(r) {
   let queued = false;
   const again = () => {
-    if (queued || (r.mode !== 'note' && !r.nextLines?.length)) return;
+    // (a call's held marks too)
+    if (queued || (r.mode !== 'note' && !r.nextLines?.length && !r.held?.length)) return;
     queued = true;
     requestAnimationFrame(() => {
       queued = false;

@@ -1,6 +1,6 @@
 // node --test src/ink/bookanswer.test.ts   (an agent's answers on the board's notebook: on a group not sent yet, the
-// dots while the quick run goes, a typed question judged and answered, a form answered, an ink reply, a tick and a
-// pick, the open list)
+// dots while the quick run goes, a typed question judged and answered, a form answered (not on a deleted group), an ink
+// reply, a tick and a pick, the open list)
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import sharp from 'sharp';
@@ -97,6 +97,19 @@ test('a quick run that ends without an answer says so where the answer would lie
   assert.deepEqual([after.waiting.reason, after.waiting.by], ["I couldn't answer that. Ask again.", run.agent]);
   const at = (s: any) => [s.dx, s.dy, s.w];
   assert.deepEqual(at(after.waiting.spot), at(spot), 'where the dots were');
+});
+
+test("a reply under an answer whose group is deleted, kept for Undo, is refused; after Undo it's taken", async () => {
+  const { page, g, run } = await asked('Is the sale on?');
+  await h.finish(run, { status: 'done', result: 'Until Sunday.' });
+  const [answer] = (await groupOn(page, g.id)).children;
+  const replies = () => (db.prepare('select id from notebook_groups where parent = ?').all(g.id) as any[]).length;
+  assert.equal((await h.board('/api/notebooks/groups/delete', { id: g.id })).status, 200);
+  const stale = await h.board('/api/notebooks/groups/reply', { answer: answer.id, words: 'And after?' });
+  assert.deepEqual([stale.status, replies()], [404, 0], "a stale tab's reply: refused, nothing written");
+  assert.equal((await h.board('/api/notebooks/groups/restore', { id: g.id })).status, 200);
+  const reply = await h.board('/api/notebooks/groups/reply', { answer: answer.id, words: 'And after?' });
+  assert.deepEqual([reply.status, reply.body.parent, replies()], [200, g.id, 1]);
 });
 
 test("answers never lie over the board's groups: one beside, the next one under it", async () => {
@@ -296,6 +309,27 @@ test('a form: answered by the board, kept, and gone to the agent as a reply; the
   assert.match(reply.prompt, /1\. Warmer or cooler\? → Warmer/);
 });
 
+test("a form on a group deleted, kept for Undo: off the open list, a stale tab's answers refused and nothing kept; after Undo it's back, answered and gone to the agent", async () => {
+  const { g, run } = await asked('Which size?');
+  const form = [{ title: 'Big or small?', options: ['Big', 'Small'] }];
+  const clipped = (await agent('answer', run.token, { grp: g.id, text: 'One thing first', form })).body.slip;
+  await h.finish(run, { status: 'done', result: 'I asked one thing.' });
+  const listed = async () => (await open()).forms.some((f: any) => f.id === clipped.id);
+  const kept = () => (db.prepare('select form_answer from book_slips where id = ?').get(clipped.id) as any).form_answer;
+  assert.equal((await h.board('/api/notebooks/groups/delete', { id: g.id })).status, 200);
+  assert.equal(await listed(), false, 'deleted: off the open list');
+  const stale = await h.board('/api/notebooks/answers/form', { id: clipped.id, answers: ['Big'] });
+  assert.deepEqual([stale.status, kept()], [404, null], "a stale tab's answers: refused, nothing kept");
+  assert.equal((await h.board('/api/notebooks/groups/restore', { id: g.id })).status, 200);
+  assert.equal(await listed(), true, 'undone: back on the list');
+  const answered = await h.board('/api/notebooks/answers/form', { id: clipped.id, answers: ['Big'] });
+  assert.deepEqual([answered.status, answered.body.answer.form_answer], [200, ['Big']]);
+  assert.ok(
+    repliesTo(run.agent).some(j => /Big or small\? → Big/.test(j.prompt)),
+    'the answers reach the agent',
+  );
+});
+
 test("an ink-only reply on a group's answer goes to who answered; an agent's question is open until replied to", async () => {
   const { page, g, run } = await asked('Is this live yet?');
   const question = (
@@ -413,6 +447,20 @@ test('hq answer: a group by g<id>, a form and ink from files, --asks; a bad form
   const refused = await agent('answer', run.token, { grp: g.id, ink: [giant] });
   assert.equal(refused.status, 400, "ink taller than a page can grow: refused, so it's never placed");
   assert.match(refused.body.error, /at most 20000 px a side/);
+  const far = {
+    ...stroke(0, 0),
+    points: [
+      [0, 100_000, 0.5, 0],
+      [1, 100_000, 0.5, 16],
+    ],
+  };
+  const offset = await agent('answer', run.token, { grp: g.id, ink: [far] });
+  assert.equal(
+    offset.status,
+    400,
+    "a small drawing far from the answer's top-left: refused, so its picture stays a page's",
+  );
+  assert.match(offset.body.error, /at most 20000 px a side, from the answer's top-left/);
   assert.equal((await h.hq(run, 'answer', `g${g.id}`, 'Now or later?', '--asks')).code, 0);
   assert.notEqual((await h.hq(run, 'answer', `g${g.id}`, '--bogus', 'x')).code, 0, 'an unknown flag: the usage');
   const styles = (await groupOn(page, g.id)).children.map((c: any) => c.style);
@@ -515,4 +563,37 @@ test('an answer the worker stopped at the end of its turn says so, and is not tr
   );
   assert.equal(unanswered.children.length, 0);
   assert.equal(await h.claim('claude', { kind: 'chat' }), null, 'not tried again');
+});
+
+test("the page's picture shows an answer where it lies, in its agent's ink, and grows down to it", async () => {
+  const { inkOf } = await import('../../../hq/shell/ink/agentink.js');
+  const { page, g, run } = await asked('Which colour for the header?');
+  const before = await fetch(`${h.base}/api/book/picture?id=${page}`, { headers: { cookie: h.boardCookie } });
+  const words = 'The indigo one: it reads on the paper and on HQ alike. '.repeat(6);
+  await h.finish(run, { status: 'done', result: words });
+  const { spot } = (await groupOn(page, g.id)).children[0];
+  const res = await fetch(`${h.base}/api/book/picture?id=${page}`, { headers: { cookie: h.boardCookie } });
+  const { data, info } = await sharp(Buffer.from(await res.arrayBuffer()))
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  const box = db.prepare('select x, y, w from book_pages where id = ?').get(page) as any,
+    k = info.width / box.w,
+    hex = inkOf(run.agent) as string,
+    [R, G, B] = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16));
+  let inked = 0;
+  for (let y = Math.round((g.box.y + spot.dy - box.y) * k); y < info.height; y++)
+    for (
+      let x = Math.round((g.box.x + spot.dx - box.x) * k);
+      x < Math.min(info.width, (g.box.x + spot.dx + spot.w - box.x) * k);
+      x++
+    ) {
+      const i = (y * info.width + x) * info.channels;
+      if (Math.abs(data[i] - R) + Math.abs(data[i + 1] - G) + Math.abs(data[i + 2] - B) < 60) inked++;
+    }
+  assert.ok(inked > 2000, `its words at its spot in ${hex} (${inked} px)`);
+  const was = (await sharp(Buffer.from(await before.arrayBuffer())).metadata()).height!;
+  assert.ok(
+    info.height >= Math.round((g.box.y + spot.dy - box.y) * k),
+    `the picture reaches it (${was} → ${info.height})`,
+  );
 });

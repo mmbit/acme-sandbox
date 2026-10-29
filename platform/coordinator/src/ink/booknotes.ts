@@ -55,6 +55,7 @@ export type Note = {
   review: number | null;
   asked: number | null;
   answers: number | null;
+  reason: number | null;
 };
 
 // The lines notes kept before rule zero, which HQ's pages drew again as marks and hairlines: gone, once (their snips have
@@ -72,8 +73,8 @@ once('2026-10-27-book-notes-inkless', forgetLines);
 // open sheet (to: another agent's, or null for the pages nobody owns' sheet). asking: whether it's judged (bookjudge.ts:
 // the board's own, in HQ), once the request has answered. { note, sheet }.
 // A call's page's notes go on the call's own sheet, never sent; the agent's ink is never a note (bookcalls.ts). The
-// board's note there is judged as anywhere, the call's agent answering it on the page as well as on the line (the
-// board on call #239: being on a call changes nothing about how the book works.)
+// board's note there isn't judged: it's for the call's agent, which decides what becomes of it (a scrap on the call's
+// notes page, or nothing), and no reply or try starts by itself (the board, call 161.).
 // (answers: the slip it's a reply under, replyTo's. by: who wrote it, the book's own person unless an invited guest's
 // note joins the board's sheet: 'guest:<grant>' (feedback.ts, a share's note). Only the board's own notes are judged: a
 // guest's waits for the board's plane like the rest.)
@@ -96,7 +97,7 @@ export function addNote(b: any, who = BOARD, asking = true, answers: number | nu
   const sheet = call ? sheetRow(call.sheet, who)! : openSheet(who, owner);
   if (count(sheet.id) >= MAX_NOTES) return [413, `a sheet holds ${MAX_NOTES} notes: send it first`] as Refused;
   const id = insertNote(sheet.id, page.id, by, anchor, said, snip, answers);
-  if (asking && by === BOARD) judgeLater({ note: id });
+  if (asking && by === BOARD && !call) judgeLater({ note: id });
   return { note: shown(note(id)!), sheet: sheetOf(sheet.id) };
 }
 export function insertNote(
@@ -131,7 +132,7 @@ function keepSnip(id: number, snip: { type: string; clean: Buffer }) {
   db.prepare('update book_notes set snip = ? where id = ?').run(file, id);
 }
 // POST /api/book/note/edit { id, words?, said?, was? }: an open note's words corrected (a word written over). New words
-// are judged again, a call's too (bookjudge.ts). was: the words they replace, refused when the note has
+// are judged again, never a call's (addNote; bookjudge.ts). was: the words they replace, refused when the note has
 // others by now (handwriting read late leaves the board's typed words.)
 export function editNote(b: any, who = BOARD) {
   const n = openNote(Number(b?.id), who);
@@ -146,8 +147,8 @@ export function editNote(b: any, who = BOARD) {
     new Date().toISOString(),
     n.id,
   );
-  // (a guest's note isn't judged, corrected or not, nor a call's agent's ink)
-  if (n.by === BOARD && said.words !== n.words) judgeLater({ note: n.id });
+  // (a guest's note isn't judged, corrected or not, nor a call's)
+  if (n.by === BOARD && said.words !== n.words && sheetRow(n.sheet, who)?.status !== 'call') judgeLater({ note: n.id });
   return { note: shown(note(n.id)!) };
 }
 // POST /api/book/note/move { id, to }: an open note onto another owner's sheet (to: an agent, or null for nobody),
@@ -194,7 +195,7 @@ export function wipeNote(id: number, who = BOARD) {
 // POST /api/book/note/restore { id }: Undo of a wipe, the note back as it was, the same note: its writer (an invited
 // guest's stays theirs), words, mark and snip. It goes last on its owner's open sheet (a call's note on its call's
 // page's), and asks nothing again. On a sheet that's sending it counts as made now, so it stays behind (booksheets.ts
-// deliver: only what was on the sheet at the plane's tap goes). { note, sheet }.
+// deliver: only what was on the sheet at the plane's tap goes), with the reason it showed. { note, sheet }.
 export function restoreNote(b: any, who = BOARD) {
   const w = db.prepare('select * from book_wiped where id = ? and who = ?').get(Number(b?.id), who) as
     { owner: string | null; sheet: number; note: string } | undefined;
@@ -206,10 +207,11 @@ export function restoreNote(b: any, who = BOARD) {
   inOneStep(() => {
     db.prepare(
       `insert into book_notes (id, sheet, page, n, by, anchor, words, said, snip, status, created, updated, review,
-      asked, answers) values (?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?)`,
+      asked, answers, reason) values (?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?)`,
     ).run(
       ...[n.id, sheet.id, n.page, count(sheet.id) + 1, n.by, n.anchor, n.words, n.said, n.snip],
       ...[sheet.status === 'sending' ? new Date().toISOString() : n.created, n.updated, n.review, n.asked, n.answers],
+      n.reason,
     );
     db.prepare('delete from book_wiped where id = ?').run(n.id);
   });

@@ -1,6 +1,6 @@
 // Holds and redirects the dependencies of work closed into its owner's inbox.
 // (its messages say deliverable, the board's word for a thread)
-import { db, inOneStep, planChange } from './db.ts';
+import { db, inOneStep, planChange, prepared } from './db.ts';
 import * as redraws from './redraws.ts';
 import * as pauses from './pauses.ts';
 import * as jobs from './jobs.ts';
@@ -152,14 +152,24 @@ export function dropRefusal(branch: string) {
 
 // An accepted redraw carries the original work's merge requirement, even when its replacement is in another thread.
 export function status(branch: string): string | null {
-  const resolved = db.prepare(redraws.query(`select state from (${redraws.states('$branch')})`)).get({ branch }) as
-    { state: string } | undefined;
-  return resolved?.state ?? null;
+  return statuses()(branch);
+}
+// Every branch's status at once, for a reading that asks for many (threadorder.ts reader): the redraws' states are read
+// whole either way, so once and not per branch.
+export function statuses(): (branch: string) => string | null {
+  const rows = db.prepare(redraws.query('select origin, state from redraw_states')).all() as {
+    origin: string;
+    state: string;
+  }[];
+  const resolved = new Map(rows.map(row => [row.origin, row.state]));
+  // (a branch no redraw resolves: its latest pull request's)
+  const latest = prepared('select status from prs where branch = ? order by number desc limit 1');
+  return branch => resolved.get(branch) ?? (latest.get(branch) as { status: string } | undefined)?.status ?? null;
 }
 
 export function originals(branch: string): string[] {
   const ancestors = db
-    .prepare(redraws.query(`select distinct origin from (${redraws.states()}) where branch = ?`))
+    .prepare(redraws.query('select distinct origin from redraw_states where branch = ?'))
     .all(branch) as {
     origin: string;
   }[];

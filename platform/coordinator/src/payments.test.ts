@@ -1263,7 +1263,7 @@ test("each order's steps in its stall's funnel: once in the basket, once in a ch
   const changed = await line('stepa', 'sta-steps-2');
   await call('/api/pay/basket/add', front(), { basket, line: changed.json.line, claim: changed.json.claim, replaces: a.json.line });
   await payments.changeBasket(FRONT_TEST, basket, id =>
-    payments.addOwnLine(id, { goes_with: changed.json.line, description: 'Fridge magnet', amount: 999, ships_in: 1, cutoff: 12 }) ?? undefined);
+    payments.addOwnLine(id, { kind: 'magnet', goes_with: changed.json.line, description: 'Fridge magnet', amount: 999, ships_in: 1, cutoff: 12 }) ?? undefined);
   assert.deepEqual(funnel('stepa'), [1, 0], "a line already in, a changed design taking its place, or the shop's own line: no new order");
   // a create whose answer got lost counts once its retry brings the session back
   loseCreate = true;
@@ -1322,13 +1322,13 @@ test('a ship date counts the making time in working days, from the next one afte
 
 test("the shop's own lines: the company's price, nothing off them, never a basket alone, and gone with their thing", async () => {
   shop();
-  payments.ownLines.price = (_basket, things, own) => own.map((_, i) => (things.length > 1 && i === 0 ? 0 : 999));
+  payments.ownLines.prices.magnet = (_basket, things, own) => own.map((_, i) => (things.length > 1 && i === 0 ? 0 : 999));
   const FRONT_TEST = { slug: 'front', mode: 'test' as const };
   try {
     const a = await line('pebblet', 'peb-own-1', { amount: 2495 }), b = await line('hello', 'hel-own-1', { amount: 2495 });
     const basket = await basketOf(a.json);
     const add = (goes_with: string) => payments.changeBasket(FRONT_TEST, basket, id =>
-      payments.addOwnLine(id, { goes_with, description: 'Fridge magnet', amount: 999, ships_in: 1, cutoff: 12 }) ?? undefined);
+      payments.addOwnLine(id, { kind: 'magnet', goes_with, description: 'Fridge magnet', amount: 999, ships_in: 1, cutoff: 12 }) ?? undefined);
     assert.equal(((await add(b.json.line)) as any)[2], 'own_thing', 'only next to a thing of this basket');
     const added = (await add(a.json.line)) as any;
     const own = added.lines.find((l: any) => l.goes_with);
@@ -1346,7 +1346,7 @@ test("the shop's own lines: the company's price, nothing off them, never a baske
     await call('/api/pay/basket/remove', front(), { basket, line: b.json.line });
     const lone = await basketOf(b.json);
     const own2 = (await payments.changeBasket(FRONT_TEST, lone, id =>
-      payments.addOwnLine(id, { goes_with: b.json.line, description: 'Fridge magnet', amount: 999, ships_in: 1, cutoff: 12 }) ?? undefined)) as any;
+      payments.addOwnLine(id, { kind: 'magnet', goes_with: b.json.line, description: 'Fridge magnet', amount: 999, ships_in: 1, cutoff: 12 }) ?? undefined)) as any;
     assert.equal(own2.total, 2495 + 999);
     const ownLine = own2.lines.find((l: any) => l.goes_with).line;
     await call('/api/pay/basket/remove', front(), { basket: lone, line: b.json.line });
@@ -1359,7 +1359,7 @@ test("the shop's own lines: the company's price, nothing off them, never a baske
     assert.deepEqual(s.items.map((i: any) => [i.name, i.amount]), [['Pebblet: pebblet poster', 2495], ['The shop: Fridge magnet', 999]]);
     assert.equal((await call(`/api/pay/line?id=${own.line}`, front())).json.amount, 999);
   } finally {
-    delete payments.ownLines.price;
+    delete payments.ownLines.prices.magnet;
   }
 });
 
@@ -1385,7 +1385,7 @@ test("a changed design takes its old line's place in the basket, with the shop's
   const a = await line('pebblet', 'peb-swap-1'), b = await line('hello', 'hel-swap-1', { amount: 2495 });
   const basket = await basketOf(a.json, b.json);
   const magnet = (await payments.changeBasket(FRONT_TEST, basket, id =>
-    payments.addOwnLine(id, { goes_with: a.json.line, description: 'Fridge magnet', amount: 0, ships_in: 1, cutoff: 12 }) ?? undefined)) as any;
+    payments.addOwnLine(id, { kind: 'magnet', goes_with: a.json.line, description: 'Fridge magnet', amount: 0, ships_in: 1, cutoff: 12 }) ?? undefined)) as any;
   const magnetLine = magnet.lines.find((l: any) => l.goes_with).line;
   const changed = await line('pebblet', 'peb-swap-2', { detail: 'For Mila', order_url: 'https://pebblet.preview.company.test/order/peb-swap-2' });
   const view = (await call('/api/pay/basket/add', front(), { basket, line: changed.json.line, claim: changed.json.claim, replaces: a.json.line })).json;

@@ -7,6 +7,7 @@ import { jobThread } from './newthread.ts';
 import { refusal } from './threadorder.ts';
 import { deskLets } from './jobs.ts';
 import { shedRefusal } from './pauses.ts';
+import { leaving } from './threadends.ts';
 import type { Item } from './reviewinbox.ts';
 
 export function authorized(item: Item, by: string) {
@@ -52,7 +53,11 @@ export function bind(item: Item, thread: string) {
     .all(item.branch) as { thread: string | null }[];
   const held = on.map(r => shedRefusal(r.thread, { project: target.project, thread: target.id })).find(Boolean);
   if (held) return held;
-  db.prepare("update jobs set thread = ? where coalesce(branch, 'job/' || id) = ?").run(target.id, item.branch);
+  // (HQ's one-task thread its jobs leave ends: threadends.ts leaving.)
+  leaving(
+    on.map(r => r.thread),
+    () => db.prepare("update jobs set thread = ? where coalesce(branch, 'job/' || id) = ?").run(target.id, item.branch),
+  );
   db.prepare('update threads set branch = ? where id = ?').run(item.branch, target.id);
   db.prepare('update review_inbox set thread = ?, project = ? where pr = ?').run(target.id, target.project, item.pr);
   db.prepare('update proposals set thread = ?, project = ? where id = ?').run(target.id, target.project, item.proposal);

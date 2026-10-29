@@ -12,7 +12,8 @@ import { SUITES } from '../../../shared/gates/suites.ts';
 import { harness } from '../../coordinator/src/harness.ts';
 import { alive, procStat } from './detached.ts';
 import { Reload } from './reload.ts';
-import { signal, type Block, type ProcessSnapshot } from './shares.ts';
+import type { Block, ProcessSnapshot } from './shares.ts';
+import { signal } from './stoprun.ts';
 
 const h = await harness('reload');
 // Use the same watchdog as the push runner, including when this file runs directly.

@@ -7,6 +7,7 @@ export type Job = {
   id: number;
   kind: string;
   agent: string;
+  engine: string;
   pr: number | null;
   round: number | null;
   created: number;

@@ -9,9 +9,13 @@
 //   - a scrap's words typed (bookgroups.js) are edited on their own, kept as typed until the store has them.
 // A sent page's own groups are read-only: nothing on it is saved. (groups)
 import { createGroup, deleteGroup, editGroup, loadGroups, restoreGroup } from './notebookdata.js';
-import { boxOf as boxOfParts, changesOf, emptyParts, keyOf, sortNew } from './bookgroupmath.js';
+import { changesOf, emptyParts, keyOf, sortNew } from './bookgroupmath.js';
+import { boxOf as boxOfParts } from './notebookstack.js';
+import { arrive } from './bookarrive.js';
+import { fitScraps, storedOf } from './bookscrapfit.js';
 import { grownTo } from './bookrow.js';
 import { nameOf } from './bookhead.js';
+import { arrived } from './bookedit.js';
 
 // a page is saved this long after its last stroke, so a burst of writing is one save
 const SAVE_MS = 600;
@@ -91,7 +95,8 @@ async function put(book, page) {
     now = new Map();
   for (const x of elementsOf(page)) {
     if (!now.has(x.el.g)) now.set(x.el.g, emptyParts());
-    now.get(x.el.g)[x.kind].push(x.el);
+    // (a scrap drawn to fit this screen at the store's scale: bookscrapfit.js.)
+    now.get(x.el.g)[x.kind].push(storedOf(page, x.el));
   }
   const { edits, deletes } = changesOf(base, now);
   for (const { id, parts } of edits) {
@@ -132,6 +137,8 @@ export async function readPage(book, page) {
   const read = await loadGroups(book.dev, page.id);
   named(book, page, read.title);
   fill(page, read.groups);
+  fitScraps(book, page);
+  page.handed = read.handed;
   return read;
 }
 // A page the store changed while it's open (another screen, an answer clipped on), read again once any save under way
@@ -145,11 +152,41 @@ export function readAgain(book, page) {
 async function readNow(book, page) {
   const read = await loadGroups(book.dev, page.id);
   named(book, page, read.title);
-  if (unchanged(page, read.groups)) return;
+  if (unchanged(page, read.groups)) return void (page.handed = read.handed);
   if (book.tools?.editing?.()) return changed(book, page);
-  fill(page, read.groups);
+  // (what came in a group new to the page, and wasn't on it before, arrives: not the board's own things regrouped)
+  const had = new Set([...page.groups.keys(), ...(page.gone?.keys() ?? [])]),
+    keys = new Set(elementsOf(page).map(x => keyOf(x.el)));
+  // (someone else's hand changed it since this screen read it, a call's agent's: what the read brings is one step for
+  // Undo, bookedit.js arrived)
+  const fillIn = () => {
+    fill(page, read.groups);
+    fitScraps(book, page);
+  };
+  if (read.handed > page.handed)
+    arrived(
+      book,
+      page,
+      { changed: p => changed(book, p), refresh: p => drawn(book, p), words: (id, w) => typed(book, page, id, w) },
+      fillIn,
+    );
+  else fillIn();
+  page.handed = read.handed;
   // (what's drawn and not yet in a group, and words typed, kept, are saved again)
   if (elementsOf(page).some(x => x.el.g === undefined) || page.typed?.size) changed(book, page);
+  drawn(book, page);
+  const view = book.views.find(v => v.page === page);
+  if (view)
+    arrive(
+      book,
+      view,
+      elementsOf(page)
+        .map(x => x.el)
+        .filter(el => !had.has(el.g) && !keys.has(keyOf(el))),
+    );
+}
+// A page's lists drawn again where it shows, after a read or a step put them back
+function drawn(book, page) {
   const view = book.views.find(v => v.page === page);
   if (!view) return;
   view.place();
@@ -177,6 +214,7 @@ function fill(page, groups) {
   const unsaved = elementsOf(page).filter(x => x.el.g === undefined);
   page.groups = new Map();
   page.gone ??= new Map();
+  page.fits = null; // (none drawn to fit yet: bookscrapfit.js.)
   const lists = { ink: [], texts: [], pictures: [] };
   for (const g of groups) {
     keep(page, g, g);

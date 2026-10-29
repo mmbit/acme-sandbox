@@ -1,6 +1,7 @@
 // node --test src/carries.test.ts   (the test company, which names no foundation keeper: its CEO, Juno, keeps it)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { harness } from './harness.ts';
 
 const h = await harness('carries');
@@ -148,4 +149,26 @@ test("a check without a verdict leaves its commit the keeper's to run; so does a
   for (const words of [sha(33), sha(32), report]) assert.ok(brief(first.id).includes(words), `the brief has ${words}`);
   assert.ok(!brief(first.id).includes('The gates pass'), 'only what needs the keeper reports');
   assert.ok(brief(second.id).includes(`--base ${sha(34)}^1`), 'with no finish, against its first parent');
+});
+
+// Where projects.yaml's made.carries names a project, each check job and the keeper's fix of one is a one-task
+// deliverable there, so the board follows it like any other work
+test("with made.carries, each check job and the keeper's fix are one-task deliverables in its project", async () => {
+  const file = `${h.repo}/company/projects.yaml`,
+    was = readFileSync(file, 'utf8');
+  writeFileSync(file, `${was.trimEnd()}\n  carries: { hq: office }\n`);
+  try {
+    const [check] = await moved(commit(35, 34), commit(34, 33));
+    assert.equal(h.jobs.threadOf(check), `office/job-${check}`);
+    await h.finish(await h.claimJob(check), {
+      status: 'done',
+      carry: { sha: sha(35), base: sha(34) },
+      gates: { passed: false, report: 'Prettier fails' },
+      tests: { passed: true, report: 'All pass' },
+    });
+    const fix = Math.max(...fixes().map(j => j.id));
+    assert.equal(h.jobs.threadOf(fix), `office/job-${fix}`);
+  } finally {
+    writeFileSync(file, was);
+  }
 });

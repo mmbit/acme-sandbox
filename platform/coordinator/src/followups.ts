@@ -1,77 +1,63 @@
-// The project's review follow-ups (the review-panel playbook, "Rounds"): what a pull request's reviews found that it
-// doesn't fix itself (refactoring, conventions, documentation, hardening that isn't security, and findings in code it
-// didn't change) go, when it ends, into one open proposal per project in its owner's inbox. The owner prioritises it in
-// the plan and assigns it, a thread of its own for refactoring or hardening; later pull requests' follow-ups join it
-// while it stays open. A finding in code of a review domain none of the pull request's files are in cuts across
-// projects: it goes to the CEO's bundle (no project), who passes it to the project it belongs to. What a ruling from
-// the upstream round on says went wrong before review reaches the owner the same way, in a proposal of its own.
+// A pull request's review follow-ups (the review-panel playbook, "Rounds"): what its reviews found that didn't hold its
+// merge (nonblocking findings, those its author left open, and findings in code it didn't change) go, once it merges,
+// into one job for its author, queued in the same deliverable, done after the work is live (board, call 163). A
+// follow-up's own pull request leaves none: its findings end there, so follow-ups never chain. What a ruling from the
+// upstream round on says went wrong before review reaches the project's owner in a proposal of its own.
 // (its messages say deliverable, the board's word for a thread)
 import { db, inOneStep } from './db.ts';
 import { findThread } from './projects.ts';
+import * as jobs from './jobs.ts';
 import * as panel from './panel.ts';
 import * as findings from './findings.ts';
 
-const TITLE = 'Review follow-ups: refactoring and hardening';
-
-// A pull request ended, merged or not (findings.followUpsOf): its follow-ups into their bundles
-export async function collect(pr: number, merged: boolean) {
-  const { branch } = db.prepare('select branch, files from prs where number = ?').get(pr) as {
+// A pull request merged (review.ts pullRequestMerged, before its thread lets go of its branch): its follow-ups into one
+// job for its author, titled after its work
+export function collect(pr: number, work: string) {
+  const { branch, author } = db.prepare('select branch, author from prs where number = ?').get(pr) as {
     branch: string;
-    files: string;
+    author: string;
   };
+  if (followsUp(branch)) return;
   const left = findings
-    .followUpsOf(pr, merged)
-    .filter(f => !db.prepare('select 1 from review_followups where finding = ?').get(f.id));
+    .followUpsOf(pr)
+    .filter(f => !db.prepare('select 1 from review_followup_jobs where finding = ?').get(f.id));
   if (!left.length) return;
-  const project = projectOf(branch);
-  const proposals = await import('./proposals.ts');
-  const agent = panel.attribution(pr);
-  for (const [to, list] of [
-    [project, left.filter(f => !f.cross_project)],
-    [null, left.filter(f => f.cross_project)],
-  ] as const) {
-    if (!list.length) continue;
-    const open = db
-      .prepare(
-        `select f.proposal from review_followups f join proposals p on p.id = f.proposal
-        where p.status = 'open' and p.project is ? order by f.proposal desc limit 1`,
-      )
-      .get(to) as { proposal: number } | undefined;
-    const joined = open ? [...linesOf(open.proposal), ...list.map(lineOf(pr))] : list.map(lineOf(pr));
-    // a bundle grown past a proposal's size starts the next one
-    const into = open && briefOf(joined).length <= proposals.BRIEF_MAX ? open.proposal : undefined;
-    const brief = briefOf(into ? joined : list.map(lineOf(pr)));
-    inOneStep(() => {
-      const id = proposals.bundle({ agent, title: TITLE, brief, project: to }, into);
-      const add = db.prepare('insert into review_followups (finding, proposal) values (?, ?)');
-      for (const f of list) add.run(f.id, id);
+  const drawn = panel.threadOfBranch(branch);
+  const thread = drawn && findThread(drawn)?.status === 'open' ? drawn : null;
+  inOneStep(() => {
+    const job = jobs.createJob({
+      agent: author,
+      title: `Review follow-ups: ${work}`,
+      prompt: briefOf(pr, left),
+      thread,
+      queuedBy: panel.attribution(pr),
     });
-  }
+    const add = db.prepare('insert into review_followup_jobs (finding, job) values (?, ?)');
+    for (const f of left) add.run(f.id, job.id);
+  });
 }
 
-// Each finding as its bundle lists it
-const lineOf = (pr: number) => (f: findings.FollowUp) =>
-  `- Finding #${f.id}, PR #${pr} (${f.kind === 'pre-existing' ? 'in code it did not change' : 'not fixed in it'}), ` +
-  `${f.file ?? '(no file)'}${f.line ? `:${f.line}` : ''}: ${f.issue}`;
-const linesOf = (proposal: number) => {
-  const rows = db
+// Whether a branch carries a follow-up job's work (collect)
+const followsUp = (branch: string) =>
+  !!db
     .prepare(
-      `select f.id, f.pr, f.kind, f.file, f.line, f.issue from findings f join review_followups r on r.finding = f.id
-      where r.proposal = ? order by f.id`,
+      `select 1 from review_followup_jobs u join jobs j on j.id = u.job where coalesce(j.branch, 'job/' || j.id) = ?`,
     )
-    .all(proposal) as (findings.FollowUp & { pr: number })[];
-  return rows.map(f => lineOf(f.pr)(f));
-};
-const briefOf = (lines: string[]) => `What reviews found that their pull requests didn't fix: refactoring, conventions,
-documentation, hardening that isn't security, and findings in code a change didn't touch. Pre-existing findings can
-concern customers or security: prioritise each finding by its actual impact.
+    .get(branch);
 
-It's yours to prioritise and assign: accept it as a deliverable of its own for refactoring or hardening
-(\`hq inbox accept <id> --for <agent> --code WORD --deliverable new:<project> "name" "done when"\`), with the findings worth
-fixing named in the deliverable's "done when"; or drop it with why. Findings in
-another project's code: propose them there (\`hq propose "title" <brief-file> --project <id>\`).
+const briefOf = (pr: number, list: findings.FollowUp[]) => `PR #${pr} merged and is live. Its reviews found these too,
+and none of them held the merge: small bugs, styling, tidiness, hypothetical cases, and findings in code it didn't
+change. Fix the ones worth fixing, each small, in one push; for the rest say in your report why not. If what went live
+has a caveat the board must know about (something it will meet and might mistake for done), tell it on the desk phone
+(\`hq ask\`). This push is reviewed like any work, and its own findings end with it: there's no follow-up of a follow-up.
 
-${lines.join('\n')}`;
+${list
+  .map(
+    f =>
+      `- Finding #${f.id} (${f.kind === 'pre-existing' ? 'in code it did not change' : 'not fixed in it'}), ` +
+      `${f.file ?? '(no file)'}${f.line ? `:${f.line}` : ''}: ${f.issue}`,
+  )
+  .join('\n')}`;
 
 // A ruling from the upstream round on said what went wrong before review (review.ts decide): the project's owner reads
 // it in one open proposal per pull request, which each later such ruling adds its line to

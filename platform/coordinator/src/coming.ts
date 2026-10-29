@@ -19,11 +19,12 @@ export const FOUNDATION = [
   '.prettierignore',
 ];
 const TITLE_CHARACTERS = 120;
-// A marked change, the way the foundation's route spells it (`company: job #<n>, not upstream yet`), maybe wrapped onto
-// the next comment line anywhere after `company:`. One the foundation declined and the company keeps says `kept here`,
-// and isn't coming.
+// A marked change, the way the foundation's route spells it (`company: job #<n>, not upstream yet`), or several jobs'
+// (`company: jobs #<n> and #<m>`, `jobs #<n>, #<m> and #<k>`), maybe wrapped onto the next comment line anywhere after
+// `company:`. One the foundation declined and the company keeps says `kept here`, and isn't coming.
 const GAP = String.raw`(?:\s|//|#\s|\*|<!--)*`;
-const MARKER = new RegExp(`company:${GAP}job${GAP}#([0-9]+)(,${GAP}kept${GAP}here)?`, 'g');
+const JOBS = String.raw`#[0-9]+(?:${GAP}(?:,${GAP}(?:and${GAP})?|and${GAP})#[0-9]+)*`;
+const MARKER = new RegExp(`company:${GAP}jobs?${GAP}(${JOBS})(,${GAP}kept${GAP}here)?`, 'g');
 const run = promisify(execFile);
 
 type Change = { job: number; pr?: number; files: string[]; title: string };
@@ -60,8 +61,10 @@ async function markedFiles(repo: string) {
   const byJob = new Map<number, Set<string>>();
   for (const file of await filesSaying(repo, 'company:')) {
     const text = await readFile(`${repo}/${file}`, 'utf8');
-    for (const [, job, kept] of text.matchAll(MARKER))
-      if (!kept) byJob.set(Number(job), (byJob.get(Number(job)) ?? new Set()).add(file));
+    for (const [, jobs, kept] of text.matchAll(MARKER))
+      if (!kept)
+        for (const [, job] of jobs.matchAll(/#([0-9]+)/g))
+          byJob.set(Number(job), (byJob.get(Number(job)) ?? new Set()).add(file));
   }
   return byJob;
 }

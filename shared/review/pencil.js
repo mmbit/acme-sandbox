@@ -3,8 +3,8 @@
 // scrolls and taps under the ink (the page never scrolls under the pen). A pen's tap stays the page's, and a pen in a
 // text field is Apple's handwriting-to-text. A mouse draws with the pin, as review mode always has.
 //   - A mark is the lines drawn while the pen keeps coming back: the words said once its mic button is tapped (on a
-//     call, the call hears them) go in its note. Rest the pen and it lifts into the book as a note, the page left
-//     clean: nothing of it stays drawn (settle.js, marks.js paint: rule zero).
+//     call, the call hears them) go in its note. Rest the pen and it lifts
+//     into the book as a note, the page left clean: nothing of it stays drawn (settle.js, marks.js paint: rule zero).
 //   - Hold the pen still on one spot and talk: a voice note there, its words landing as the pen lifts.
 //   - Scribble over the mark being made: it's let go. Ring something: the mark is on what's inside the ring.
 //   - A two-finger tap takes back the last thing, whatever it was (Cmd or Ctrl+Z too). Nothing asks "are you sure?".
@@ -59,7 +59,7 @@ function lifted(r, stroke) {
     return;
   }
   if (r.mode !== 'idle') return;
-  // the first line: a new mark, its note and the mic
+  // the first line: a new mark and its note (its mic waits for the post-it's button)
   r.strokes = [stroke];
   r.mark = { kind: 'circle' };
   aim(r);

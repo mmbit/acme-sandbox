@@ -87,6 +87,8 @@ type Kind = {
   // its runs keep their sockets (a test's local servers): only on a machine set up with its install command, where the
   // helpers' network reaches HQ and the package registries alone (manager.mjs), so it's for the lent machines only
   sockets: boolean;
+  checkout: boolean;
+  browsers: boolean;
 };
 
 const DIR = `${DATA_DIR}/runs`;
@@ -173,13 +175,15 @@ function kindProblem(name: string, entry: unknown) {
   if (!KIND_NAME.test(name)) return 'its name: a to z, 0 to 9 and -, starting with a letter, at most 24 characters';
   if (entry === null || entry === undefined) return '';
   if (!isMap(entry))
-    return 'its settings: a map (about, image, cpus, memoryGb, diskGb, gpus, lentOnly, serverAfterLent, holdUntilLent, helpers, sockets)';
+    return 'its settings: a map (about, image, cpus, memoryGb, diskGb, gpus, lentOnly, serverAfterLent, holdUntilLent, helpers, sockets, checkout, browsers)';
   if (entry.about !== undefined && typeof entry.about !== 'string') return 'about: a line of text';
   if (entry.image !== undefined && !(typeof entry.image === 'string' && IMAGE_NAME.test(entry.image)))
     return 'image: a plain Docker reference (a to z, 0 to 9 and . _ / : @ -)';
   if (entry.gpus !== undefined && typeof entry.gpus !== 'boolean') return 'gpus: true or false';
   if (entry.lentOnly !== undefined && typeof entry.lentOnly !== 'boolean') return 'lentOnly: true or false';
   if (entry.sockets !== undefined && typeof entry.sockets !== 'boolean') return 'sockets: true or false';
+  if (entry.checkout !== undefined && typeof entry.checkout !== 'boolean') return 'checkout: true or false';
+  if (entry.browsers !== undefined && typeof entry.browsers !== 'boolean') return 'browsers: true or false';
   if (entry.serverAfterLent !== undefined && typeof entry.serverAfterLent !== 'boolean')
     return 'serverAfterLent: true or false';
   if (entry.holdUntilLent !== undefined && !isDepartmentList(entry.holdUntilLent))
@@ -203,6 +207,8 @@ const kindOf = (name: string, entry: Record<string, unknown> | null): Kind => ({
   holdUntilLent: (entry?.holdUntilLent as string[] | undefined) ?? [],
   helpers: whole(entry?.helpers, 1),
   sockets: entry?.sockets === true,
+  checkout: entry?.checkout === true,
+  browsers: entry?.browsers === true,
 });
 
 const isDepartmentList = (given: unknown) => {
@@ -499,6 +505,8 @@ function helperState() {
     kinds: settings.kinds.map((kind, index) => ({
       name: kind.name,
       about: kind.about,
+      checkout: kind.checkout,
+      browsers: kind.browsers,
       image: kind.image,
       gpus: kind.gpus,
       lentOnly: kind.lentOnly,
@@ -934,6 +942,8 @@ export function offloadPlaces() {
     kinds: settings.kinds.map(kind => ({
       name: kind.name,
       about: kind.about,
+      checkout: kind.checkout,
+      browsers: kind.browsers,
       server: serverTakes(kind) && presence('server', kind.name).present,
     })),
   };

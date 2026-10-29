@@ -43,8 +43,15 @@ export function picturesLive(c) {
   for (const file of c.waiting.splice(0)) sharePicture(c, file);
 }
 // Pictures from elsewhere in HQ (a notebook page, a picture dropped on the call's window: calldrop.js), each a File or
-// a promise of one: shared as an attached one is, once the line has picked up
+// a promise of one: shared as an attached one is, once the line has picked up. files can be a promise of their list too
+// (a long notebook page's pieces, counted from its picture: bookshare.js), shared once it's had, and as one picture
+// that failed when it can't be
 export function showPictures(c, files) {
+  if (!Array.isArray(files))
+    return void files.then(
+      list => !c.over && showPictures(c, list),
+      err => !c.over && showPictures(c, [Promise.reject(err)]),
+    );
   if (c.call) files.forEach(file => sharePicture(c, file));
   else c.waiting.push(...files);
 }

@@ -8,7 +8,7 @@ const ids = JSON.parse(process.argv[2]) as { uid: number; gid: number };
 if (process.getuid!() === 0) process.setgroups!([]);
 process.setegid!(ids.gid);
 process.seteuid!(ids.uid);
-const tree = new DiskTree(process.argv.slice(3));
+const tree = new DiskTree(process.argv.slice(4), Number(process.argv[3]));
 process.on('message', async () => {
   try {
     process.send!({ bytes: await tree.measure() });

@@ -17,6 +17,9 @@ export const GROWN_MAX = 20_000;
 // past which the overview took over)
 export const ZOOM_MAX = 4,
   ZOOM_OUT = 0.5;
+// The zooms a page is kept at for a screen's shape (bookpagezoom.js; the store's notebook.ts zoomPage): ZOOM_MAX in, and
+// out as far as a page GROWN_MAX long shows whole on a screen 100 px tall
+export const ZOOM_KEPT = { least: 100 / GROWN_MAX, most: ZOOM_MAX };
 // a page grows to hold what's on it with this much paper to spare beyond it
 export const ROOM_PX = 40;
 // a page's dry ink is drawn in square tiles TILE_PX CSS px a side on screen (at the zoom they were drawn for), so no
@@ -116,11 +119,12 @@ export function scrapBoxOf(s) {
   return { x0: cx - r, y0: cy - r, x1: cx + r, y1: cy + r };
 }
 
-// How much of the paper's dots shows at a zoom of s: drawn to the zoom, they ease out as they shrink (0 at DOTS.gone,
-// whole from DOTS.whole) and are gone before they'd be under a pixel across (2.8 px at a zoom of 1: bookdesk.css)
-export const DOTS = { gone: 0.4, whole: 0.8 };
+// How much of the paper's dots shows at a zoom of s: drawn to the zoom, they ease out as they shrink (0 at
+// DOT_FADE.gone, whole from DOT_FADE.whole) and are gone before they'd be under a pixel across (2.8 px at a zoom of 1:
+// bookdesk.css)
+const DOT_FADE = { gone: 0.4, whole: 0.8 };
 export const dotsShown = s => {
-  const t = Math.min(1, Math.max(0, (s - DOTS.gone) / (DOTS.whole - DOTS.gone)));
+  const t = Math.min(1, Math.max(0, (s - DOT_FADE.gone) / (DOT_FADE.whole - DOT_FADE.gone)));
   return t * t * (3 - 2 * t);
 };
 

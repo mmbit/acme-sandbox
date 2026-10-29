@@ -12,6 +12,15 @@ the machine's GPUs. Each lent machine and our server run one helper per kind, ea
 image, and each takes only its own kind's runs. A machine may leave a kind out (a laptop with no graphics card runs no
 render helper). A new kind is a few lines of settings, never new code, and nobody at the machines.
 
+
+Kinds with `checkout: true` carry a git snapshot of the checkout, its comparison base and pinned dependencies with
+`hq run --kind <kind> -- <command>`. `hq run helper` lists a company's kinds and their checkout and browser support.
+`--bring <folder>` returns screenshots and reports even when the command fails. A kind with `browsers: true` receives
+the worker's Chromium and its libraries. Otherwise its image supplies the browsers. Setup lives in `shared/gates` in
+the checkout, so older jobs rebase on main first. Checkout checks use `sockets: true` for loopback page servers and
+package installation, stay on the lent machine, and return the command's exit code. Example commands are in
+`shared/browser/README.md`.
+
 ## The flow
 
 1. `hq run --kind <name> --paths <folders> --bring <paths> --minutes n -- <command>` packs the folders as the job's

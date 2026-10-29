@@ -12,6 +12,10 @@ import {
   angleFor,
   letGo,
   dissolveAt,
+  fadeAt,
+  LANDS,
+  LANDED,
+  NUDGE,
   dissolveStep,
   dissolveLook,
   easeInOut,
@@ -126,6 +130,10 @@ test('the dissolve: gone by the time the board lands, back in at the new room; e
   assert.equal(dissolveAt(UPRIGHT, false), 0);
   assert.equal(dissolveAt(0.1 * UPRIGHT, false), 1);
   assert.equal(dissolveAt(0, true), 0);
+  // (shutting, the same: gone 90% of the way up, back once it's shut.)
+  assert.equal(dissolveAt(0.9 * UPRIGHT, true), 1);
+  assert.equal(dissolveAt(UPRIGHT, false), 0);
+  assert.equal(dissolveAt(0.5 * UPRIGHT, true), dissolveAt(0.5 * UPRIGHT, false), 'halfway, the same both ways');
   let d = 1;
   const back = [];
   for (let i = 0; i < 30 && d > 0; i++) back.push((d = dissolveStep(d, 0, FRAME)));
@@ -134,6 +142,25 @@ test('the dissolve: gone by the time the board lands, back in at the new room; e
   assert.equal(dissolveStep(0.3, 0.6, FRAME), 0.6, 'as it lowers the dissolve follows at once');
   assert.deepEqual(dissolveLook(1), { blur: 10, opacity: 0 });
   assert.equal(dissolveLook(0.53).blur, 5.5, 'half-pixel steps');
+});
+
+// (the board, 28 Oct)
+test("the close's dissolve keeps the opening's time: the spring's quicker swing up waits for it", () => {
+  const opened = run({ a: UPRIGHT, w: NUDGE }, 'fall', { done: b => b.a < 0.1 * UPRIGHT }),
+    shut = run({ a: 0, w: 0 }, 'shut', { done: b => b.a >= UPRIGHT });
+  const gone = opened.length * FRAME;
+  assert.ok(shut.length * FRAME < gone, 'the spring shuts it sooner than the board falls');
+  assert.ok(fadeAt(0) === 0 && fadeAt(gone - 2 * FRAME) < 1, 'fading over the fall');
+  assert.equal(fadeAt(gone + FRAME), 1, 'gone as the open board is');
+  for (const s of [0.1, 0.2, 0.3]) assert.ok(fadeAt(s) <= fadeAt(s + FRAME), 'never back while it goes');
+  // (and gone as long: it gives HQ's page its room when the open board would land, lying still LANDED s: the board's
+  // call 160)
+  let still = 0;
+  const lands = run({ a: UPRIGHT, w: NUDGE }, 'fall', {
+    done: b => (still = resting(b) ? still + FRAME : 0) > LANDED,
+  });
+  assert.ok(Math.abs(LANDS - (lands.length + 1) * FRAME) <= FRAME, `lands at ${LANDS}, not ${lands.length * FRAME}`);
+  assert.ok(LANDS > gone + 0.1, 'the open board lands a while after the page is gone');
 });
 
 test('the catch-up eases in and out, from 0 to 1', () => {

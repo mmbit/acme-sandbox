@@ -5,19 +5,8 @@
 // taking every step back and Redo making them again. Each asserts what the board sees (pixels on the book's paper) and
 // what the store keeps (the page saved).
 import assert from 'node:assert/strict';
-import {
-  colourIn,
-  freePage,
-  line,
-  onDesk,
-  paperBox,
-  pasteGreen,
-  pen,
-  pick,
-  savedWhere,
-  GREEN,
-  MINI,
-} from './bookmouse.mjs';
+import { colourIn, freePage, line, onDesk, paperBox, pasteGreen, pick, savedWhere, GREEN } from './bookmouse.mjs';
+import { MINI, pressAlong } from './bookkit.mjs';
 
 const NIGHT = [42, 35, 82],
   PAPER = [255, 250, 240];
@@ -216,19 +205,19 @@ async function pencil(browser, c) {
 // With the Pencil: a line, erased through, and a shape. Returns the page as saved then.
 async function pencilInks(page, c, free, [x, y]) {
   await tap(page, 'Pen');
-  await pen(
+  await pressAlong(
     page,
     Array.from({ length: 30 }, (_, i) => [x + i * 10, y]),
   );
   await savedWhere(c, free.id, p => p.ink.length === 1);
   await tap(page, 'Eraser');
-  await pen(
+  await pressAlong(
     page,
     Array.from({ length: 12 }, (_, i) => [x + 150, y - 40 + i * 7]),
   );
   await savedWhere(c, free.id, p => p.ink.length === 2);
   await tap(page, /^Shapes/);
-  await pen(
+  await pressAlong(
     page,
     Array.from({ length: 12 }, (_, i) => [x + i * 12, y + 80 + i * 8]),
   );
@@ -244,14 +233,14 @@ async function pencilInks(page, c, free, [x, y]) {
 // the line carries it down, and Undo puts it back
 async function pencilSelects(page, c, free, shaped, [x, y]) {
   await tap(page, 'Select');
-  await pen(
+  await pressAlong(
     page,
     Array.from({ length: 14 }, (_, i) => [x - 30 + i * 26, y - 40 + i * 18]),
   );
   await page.waitForTimeout(250);
   assert.equal(await page.locator('#book .bk-sel-bar').isVisible(), true, 'the selection shows its bar');
   await c.shot('book-draw-ipad-selected', page);
-  await pen(
+  await pressAlong(
     page,
     Array.from({ length: 11 }, (_, i) => [x + 100, y + i * 5]),
   );

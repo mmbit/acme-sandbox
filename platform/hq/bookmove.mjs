@@ -6,11 +6,10 @@
 //     its clip with them, follows the pointer while it's held; let go, nothing jumps, and the store has every line
 //     moved by the same.
 import assert from 'node:assert/strict';
-import { onPaper, tool, until } from './booknotebookscreen.mjs';
+import { onPaper, pen, tool } from './booknotebookscreen.mjs';
 import { open } from './booknotebook.mjs';
+import { DESKTOP, MINI, pressAlong, until } from './bookkit.mjs';
 
-const MINI = { width: 1133, height: 744 },
-  DESKTOP = { width: 1440, height: 900 };
 // the seed's newest page, its wave (four lines) and its big scrap (mock/notebook.json)
 const NEWEST = 3,
   WAVE = 9,
@@ -57,7 +56,7 @@ async function drawsOnAScrap(page, play, pencil) {
       [s.x + s.w / 2, s.y + 30],
       [s.x + s.w - 30, s.y + 22],
     ]);
-  await (pencil ? stroke(page, points) : dragged(page, points));
+  await pen(page, points, pencil ? null : page.mouse);
   const now = await until(() => {
     const g = group(play, SCRAP);
     return g.ink.length > ink && g;
@@ -148,19 +147,6 @@ async function landed(page, play, { was, k, clip, clipHeld }) {
 
 // ---- the pointer
 
-// A mouse's drag through points on the screen
-async function dragged(page, points) {
-  await page.mouse.move(...points[0]);
-  await page.mouse.down();
-  for (const p of points.slice(1)) await page.mouse.move(...p, { steps: 6 });
-  await page.mouse.up();
-}
-// The Pencil's line through points on the screen
-async function stroke(page, points) {
-  const held = await press(page, points[0], true);
-  for (const p of points.slice(1)) await held.move(p);
-  await held.up();
-}
 // A press held at a point (the mouse's, or the Pencil's as Safari sends it), moved and let go step by step
 async function press(page, at, pencil) {
   if (!pencil) {
@@ -171,28 +157,8 @@ async function press(page, at, pencil) {
       up: () => page.mouse.up(),
     };
   }
-  let last = at;
-  const send = (kind, p) =>
-    page.evaluate(
-      ([kind, [x, y]]) =>
-        (document.elementFromPoint(x, y) ?? document.body).dispatchEvent(
-          new PointerEvent(kind, {
-            ...{ pointerId: 7, pointerType: 'pen', isPrimary: true, clientX: x, clientY: y },
-            ...{ pressure: kind === 'pointerup' ? 0 : 0.5, buttons: kind === 'pointerup' ? 0 : 1 },
-            ...{ bubbles: true, composed: true, cancelable: true },
-          }),
-        ),
-      [kind, p],
-    );
-  await send('pointerdown', at);
-  return {
-    move: async to => {
-      for (const t of [0.5, 1])
-        await send('pointermove', [last[0] + (to[0] - last[0]) * t, last[1] + (to[1] - last[1]) * t]);
-      last = to;
-    },
-    up: () => send('pointerup', last),
-  };
+  const held = await pressAlong(page, [at], { lift: false });
+  return { move: to => held.along([to]), up: held.up };
 }
 
 // ---- reading

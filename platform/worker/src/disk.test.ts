@@ -18,6 +18,8 @@ import {
   openSync,
   closeSync,
   readFileSync,
+  readdirSync,
+  readlinkSync,
   existsSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -25,7 +27,7 @@ import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { sampleWrites } from './diskwrites.ts';
 import { DiskShares } from './disk.ts';
-import { TREE_ENTRY_LIMIT } from './disktree.ts';
+import { DiskTree, treeEntryLimit } from './disktree.ts';
 import { warnDisk } from './diskwarnings.ts';
 import { processesFor, tally, overShare } from './shares.ts';
 import { Reload } from './reload.ts';
@@ -88,6 +90,82 @@ test('allocated use follows writes, truncation, links, directory moves and root 
   mkdirSync(roots[1]);
   writeFileSync(join(roots[1], 'new'), Buffer.alloc(8192));
   await settled(measure, () => allocated(roots), context.signal);
+});
+
+// A job's temporary folder (git.ts's bundle-*, under the push tests' TMPDIR) can go while the scan walks it: it is
+// gone, not replaced. Another folder at its name is a swap (git's refs, a test's fixture renamed into place): what
+// was walked is dropped and the next look walks what stands there. The walk
+// is caught inside the folder by its open descriptor.
+test('a folder deleted or swapped mid-walk is accounted as it stands, and the scan goes on', async context => {
+  const root = join(temporary(context), 'jobs', '1');
+  const walked = (folder: string) =>
+    readdirSync('/proc/self/fd').some(fd => {
+      try {
+        return readlinkSync(`/proc/self/fd/${fd}`) === folder;
+      } catch {
+        return false;
+      }
+    });
+  // (a tree already measured walks a new folder once its watch has told it: a look before that passes it by)
+  const during = async (tree: DiskTree, folder: string, change: () => void) => {
+    mkdirSync(folder, { recursive: true });
+    for (let i = 0; i < 2000; i++) writeFileSync(join(folder, String(i)), 'x');
+    for (let look = 0; look < 100; look++) {
+      const measuring = tree.measure();
+      const ended = measuring.then(
+        () => true,
+        () => true,
+      );
+      while (!walked(folder)) if (await Promise.race([ended, sleep(0)])) break;
+      if (!walked(folder)) {
+        await measuring;
+        continue;
+      }
+      change();
+      return measuring;
+    }
+    assert.fail('the walk was never caught inside the folder');
+  };
+  mkdirSync(root, { recursive: true });
+  writeFileSync(join(root, 'kept'), Buffer.alloc(16 * 1024));
+  const tree = new DiskTree([root]);
+  context.after(() => tree.close());
+  const right = () =>
+    settled(
+      () => tree.measure(),
+      () => allocated([root]),
+      context.signal,
+    );
+  // the first look walks the whole tree, the second only what its watches told it
+  for (const folder of ['bundle-1', 'bundle-2'].map(name => join(root, 'tmp', name))) {
+    await during(tree, folder, () => rmSync(folder, { recursive: true }));
+    await right();
+  }
+
+  // a fresh tree's walk and a measured one's, each with the folder swapped for one holding more, then its first
+  // folder back in the swapped one's place
+  for (const [i, swapping] of [new DiskTree([root]), tree].entries()) {
+    context.after(() => swapping.close());
+    const swapped = join(root, 'tmp', `bundle-${3 + i}`);
+    const away = join(root, 'tmp', `elsewhere-${i}`);
+    await during(swapping, swapped, () => {
+      renameSync(swapped, away);
+      mkdirSync(swapped);
+      writeFileSync(join(swapped, 'bigger'), Buffer.alloc(64 * 1024));
+    });
+    await settled(
+      () => swapping.measure(),
+      () => allocated([root]),
+      context.signal,
+    );
+    rmSync(swapped, { recursive: true });
+    renameSync(away, swapped);
+    await settled(
+      () => swapping.measure(),
+      () => allocated([root]),
+      context.signal,
+    );
+  }
 });
 
 // The worker's /work/jobs, homes and tests are root's and 0711 (worker.ts): a slot passes through, never lists. Its
@@ -551,11 +629,16 @@ test('a tree beyond the scanner bound reaches the three-strike stop through prod
     { job: job.id, ...ids },
     { job: other.id, uid: ids.uid + 1, gid: ids.gid },
   ];
+  // The tree is past the bound of a scanner with a small heap, not of a default one: the push's tests run in their job's
+  // own measured folders, whose live scanner would otherwise fail the tests' job too.
+  const probeOldSpaceMb = 64;
+  const limit = treeEntryLimit(probeOldSpaceMb);
+  assert.ok(limit < treeEntryLimit() / 4, `a small heap's bound (${limit} entries) is well within the default's`);
   // Paths over 3,584 characters cost more than eight 1 KiB entries each, so fewer files exhaust the same budget.
   const root = join(work, 'jobs', String(job.id), ...Array(15).fill('d'.repeat(240)));
   mkdirSync(root, { recursive: true });
-  for (let i = 0; i <= Math.ceil(TREE_ENTRY_LIMIT / 8); i++) closeSync(openSync(join(root, String(i)), 'w'));
-  const shares = new DiskShares(work);
+  for (let i = 0; i <= Math.ceil(limit / 8); i++) closeSync(openSync(join(root, String(i)), 'w'));
+  const shares = new DiskShares(work, probeOldSpaceMb);
   context.after(() => shares.close());
   const ask = async (body: Record<string, unknown>) => {
     const reply = await h.worker('blocked', body);

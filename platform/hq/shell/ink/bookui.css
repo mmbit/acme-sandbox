@@ -236,7 +236,7 @@
 }
 
 /* ---- the islands: small cards of controls floating over the paper's right edge, top to bottom (bookrail.js places
-   the stack); an island with nothing in it doesn't show */
+   the stack); an island with nothing in it, or nothing shown (Send on a page sent), doesn't show */
 .bk-islands {
   display: flex;
   flex-direction: column;
@@ -255,12 +255,14 @@
   box-shadow: var(--bk-lift);
   pointer-events: auto;
 }
-.bk-island:empty {
+.bk-island:empty,
+.bk-island:not(:has(> :not([hidden]))) {
   display: none;
 }
 /* the overview and the Shelf (data-far, bookpagesfar.js): nothing there to draw on, undo or share by its corner, so
    the tools, Undo and Redo and the page's dog-ear put away */
 #book[data-far] .bk-island[data-island='tools'],
+#book[data-far] .bk-strip > .bk-card,
 #book[data-far] .bk-undo,
 #book[data-far] .bk-redo,
 #book[data-far] .bk-dogear {

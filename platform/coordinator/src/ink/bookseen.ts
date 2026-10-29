@@ -21,15 +21,16 @@ type PageRow = { id: number; kind: string; owner: string | null; url: string | n
 const pageOf = (id: number) =>
   db.prepare('select id, kind, owner, url, call from book_pages where id = ?').get(id) as PageRow | undefined;
 const nameOf = (agent: string | null) => (agent ? (findAgent(agent)?.name ?? agent) : null);
-// (a version says which of its set it is, and its name)
-export const slipText = (id: number | null) => {
+// The answer a note replies to as the judge reads it, and whether it's a version (which says which of its set it is,
+// and its name); null for none
+export const answeredOf = (id: number | null) => {
   const s =
     id &&
     (db.prepare('select text, style, version, grp, note from book_slips where id = ?').get(id) as
       | { text: string; style: string | null; version: string | null; grp: number | null; note: number | null }
       | undefined);
   if (!s) return null;
-  if (s.style !== 'version') return s.text;
+  if (s.style !== 'version') return { text: s.text, isVersion: false };
   const set = (
     db
       .prepare(
@@ -37,10 +38,9 @@ export const slipText = (id: number | null) => {
       )
       .all(s.grp, s.note) as { id: number }[]
   ).map(x => x.id);
-  return `version ${set.indexOf(id as number) + 1} of ${set.length}, “${s.version ?? ''}”, one of a few the agent made for the board to choose from: ${s.text}`;
+  const text = `version ${set.indexOf(id as number) + 1} of ${set.length}, “${s.version ?? ''}”, one of a few the agent made for the board to choose from: ${s.text}`;
+  return { text, isVersion: true };
 };
-export const isVersion = (id: number | null) =>
-  !!id && !!db.prepare("select 1 from book_slips where id = ? and style = 'version'").get(id);
 
 // (picture false: only the words, to check they're still the ones judged)
 export async function seenOf(t: Target, picture = true): Promise<Seen | null> {

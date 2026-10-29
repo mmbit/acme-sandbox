@@ -14,8 +14,8 @@ export type ItemFlags = {
 
 // --item, --replaces and --call <number> (hq items), --lands <job> (hq job: the failed job whose saved work it lands),
 // --job <job> (hq item add on a live call: the work under way a promise is about),
-// --deadline <when> (hq item add, replace: the item's time; hq job refuses it), and --goal - (hq item add and replace:
-// why the board wants it, on stdin with the words).
+// --deadline <when> (hq item add, replace: the item's time; hq job refuses it), and --goal - (hq item add and replace,
+// and hq job on a call: why the board wants it, on stdin with the words). hq job's --goal.
 export function takeItemFlags(given: string[], command: 'job' | 'item') {
   const flags: ItemFlags = {};
   const args: string[] = [];
@@ -36,10 +36,10 @@ export function takeItemFlags(given: string[], command: 'job' | 'item') {
         stop("Nothing recorded: --deadline needs a time (2h, 90m, 2026-10-26 09:00 on the company's clock, 14:30 UTC)");
       flags.deadline = value;
       i++;
-    } else if (flag === '--goal' && command === 'item') {
+    } else if (flag === '--goal') {
       if (value !== '-') {
         stop(
-          'Nothing recorded: --goal takes -, the goal on stdin with the words as JSON {"goal": "...", "words": "..."}',
+          `${command === 'job' ? 'No job was queued' : 'Nothing recorded'}: --goal takes -, the goal on stdin with the words as JSON {"goal": "...", "words": "..."}`,
         );
       }
       flags.goal = value;
@@ -98,7 +98,7 @@ export function takeRepeated(given: string[], name: string, refused: string) {
   return { values, args };
 }
 
-export type NewThread = { project: string; name: string; goal: string };
+export type NewThread = { project: string; name: string; goal: string; needs?: string[] };
 
 type ThreadFlag = { thread?: string; newThread?: NewThread; args: string[] };
 
@@ -106,7 +106,8 @@ type ThreadFlag = { thread?: string; newThread?: NewThread; args: string[] };
 export const deliverableFlag = (given: string[]) => given.map(arg => (arg === '--thread' ? '--deliverable' : arg));
 
 // --deliverable <project>/<slug>, the open deliverable hq job's work goes in, or --deliverable new:<project> "name"
-// "done when", one it starts. Without either, the job stays in the deliverable of the job that queued it.
+// "done when" [--needs <deliverable>]..., one it starts. Without either, the job stays in the deliverable of the job that
+// queued it.
 export function takeThread(flags: string[]): ThreadFlag {
   const given = deliverableFlag(flags);
   const at = given.indexOf('--deliverable');
@@ -114,15 +115,17 @@ export function takeThread(flags: string[]): ThreadFlag {
   const [value = '', name = '', goal = ''] = given.slice(at + 1);
   const project = /^new:([^/\s]+)$/.exec(value)?.[1];
   const width = project ? 4 : 2;
-  const args = [...given.slice(0, at), ...given.slice(at + width)];
+  const { needs, args } = takeNeeds([...given.slice(0, at), ...given.slice(at + width)], 'No job was queued');
   if (args.includes('--deliverable')) stop('No job was queued: --deliverable comes once');
+  if (needs.length && !project)
+    stop('No job was queued: --needs goes with --deliverable new:, the deliverable it draws');
   if (project) {
     if (!name.trim() || !goal.trim()) {
       stop(
         `No job was queued: --deliverable new:${project} needs a "name" and a "done when". ${companyLevels().lines.thread}`,
       );
     }
-    return { newThread: { project, name, goal }, args };
+    return { newThread: { project, name, goal, ...(needs.length && { needs }) }, args };
   }
   if (!/^[^/\s]+\/[^/\s]+$/.test(value)) {
     stop(
@@ -130,4 +133,17 @@ export function takeThread(flags: string[]): ThreadFlag {
     );
   }
   return { thread: value, args };
+}
+
+// --needs <deliverable>, any number of times: the deliverables a new one waits for, done and merged, and the arguments left
+export function takeNeeds(given: string[], refused: string) {
+  const needs: string[] = [];
+  const args = given.filter((arg, i) => {
+    if (given[i - 1] === '--needs') return false;
+    if (arg !== '--needs') return true;
+    if (!given[i + 1]) stop(`${refused}: --needs takes a deliverable`);
+    needs.push(given[i + 1]);
+    return false;
+  });
+  return { needs, args };
 }

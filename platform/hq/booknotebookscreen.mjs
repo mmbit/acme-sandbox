@@ -1,6 +1,7 @@
 // The Notebook's page on screen for book-check's Notebook stories (booknotebook.mjs): the groups' clips, the page's place
-// and stamp, points on the paper, the tools, a turn, a line drawn, and a wait.
+// and stamp, points on the paper, the tools, a turn, and a line drawn.
 import assert from 'node:assert/strict';
+import { pressAlong, until } from './bookkit.mjs';
 
 // The groups' clips on the page shown, by group
 export const clipped = page =>
@@ -15,7 +16,8 @@ export const where = page => page.locator('#book .bk-where').textContent();
 export const stamp = page =>
   page.evaluate(() => {
     const shown = [...document.querySelectorAll('#book .bk-page')].find(p => !p.hidden);
-    return shown?.querySelector('[data-slot=stamp]')?.textContent ?? '';
+    // (the red stamp's words, its label)
+    return shown?.querySelector('[data-slot=stamp] svg')?.getAttribute('aria-label') ?? '';
   });
 // Points on the page shown (page px, the seed's pages at 0, 0) on the screen
 export const onPaper = (page, points) =>
@@ -53,35 +55,5 @@ export async function pen(page, points, mouse = null) {
     for (const p of points.slice(1)) await mouse.move(...p, { steps: 4 });
     return mouse.up();
   }
-  // (the whole line goes to where it touched down, as the page's pointer capture sends a real pen's: a line ending
-  // under the Undo island over the paper's right edge is still the page's. A made-up pointer can't be captured.)
-  await page.evaluate(pts => {
-    const under = document.elementFromPoint(...pts[0]) ?? document.body;
-    const at = (kind, [x, y], pressure) =>
-      under.dispatchEvent(
-        new PointerEvent(kind, {
-          ...{ pointerId: 7, pointerType: 'pen', isPrimary: true, clientX: x, clientY: y, pressure },
-          ...{ buttons: kind === 'pointerup' ? 0 : 1, bubbles: true, composed: true, cancelable: true },
-        }),
-      );
-    const steps = pts.flatMap((p, i) =>
-      i
-        ? [0.25, 0.5, 0.75, 1].map(t => [
-            pts[i - 1][0] + (p[0] - pts[i - 1][0]) * t,
-            pts[i - 1][1] + (p[1] - pts[i - 1][1]) * t,
-          ])
-        : [p],
-    );
-    at('pointerdown', steps[0], 0.4);
-    steps.slice(1).forEach(p => at('pointermove', p, 0.5));
-    at('pointerup', steps.at(-1), 0);
-  }, points);
-}
-// (long enough for a loaded worker, where the page's timers come seconds late: its 600 ms save took over 6 s)
-export async function until(read, what, ms = 30_000) {
-  for (const end = Date.now() + ms; Date.now() < end; await new Promise(r => setTimeout(r, 100))) {
-    const v = await read();
-    if (v) return v;
-  }
-  throw new Error(`not ${what}`);
+  await pressAlong(page, points);
 }

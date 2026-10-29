@@ -13,10 +13,13 @@
   pointer-events: auto;
 }
 
-/* the clip over the group's top-left corner, a tap target all round it */
+/* the clip over the group's top-left corner: over the typed notes too (booktools.css .bk-typed), so one at the corner
+   leaves the whole clip to a tap; its ring a tap target round its head, above the corner, never over what's in the
+   box. */
 #book .bk-clip {
   all: unset;
   position: absolute;
+  z-index: 3;
   pointer-events: auto;
   box-sizing: border-box;
   width: 20px;
@@ -31,7 +34,7 @@
 #book .bk-clip::after {
   content: '';
   position: absolute;
-  inset: -10px;
+  inset: -10px -10px 22px;
 }
 #book .bk-clip svg {
   width: 14px;
@@ -61,6 +64,9 @@
 /* under a group: a scrap's words, its answers and the board's replies */
 #book .bk-under {
   width: var(--w);
+  /* (a scrap drawn to fit the paper: bookscrapfit.js.) */
+  scale: var(--fit);
+  transform-origin: 0 0;
   font: 14px/1.45 var(--bk-font, system-ui, sans-serif);
   color: var(--bk-ink);
 }

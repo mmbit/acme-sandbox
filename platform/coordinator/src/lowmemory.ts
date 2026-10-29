@@ -1,7 +1,5 @@
-// The worker really short of memory (its lowmemory.ts judges each look): every running agent hears it once a spell, at
-// its next step (hq inbox --hook), so none starts anything heavy, and hears again when memory is back. The job that
-// brought it down hears that too, more firmly each spell it causes. Nothing is stopped, blocked or retried here: the
-// shares' block (blocks.ts) stays the only stop.
+// Server pressure reaches each running agent once a spell through its next-step inbox hook, followed by one all-clear.
+// A job that brings memory down hears its cause too. Nothing is stopped, blocked or retried here.
 import { db, inOneStep } from './db.ts';
 import { offloadPlaces } from './runs.ts';
 
@@ -22,15 +20,24 @@ type Spell = {
   cause_free_mb: number | null;
 };
 // The worker's last report: when, whether it said low, and the free memory it gave
-let latest: { at: number; low: boolean; freeMb: number } | undefined;
+let latest: { at: number; low: boolean; freeMb: number; reasons: string[] } | undefined;
 
 // The worker's verdict in its room report (room.ts): low opens a spell unless one is open, calm ends it, and anything
 // between leaves it as it is. A worker that sends none (an older one) changes nothing.
 export function report(memory: unknown, freeMb: number, now = Date.now()) {
-  const { verdict, cause } = (memory ?? {}) as { verdict?: unknown; cause?: Record<string, unknown> };
+  const { verdict, cause, reasons } = (memory ?? {}) as {
+    verdict?: unknown;
+    cause?: Record<string, unknown>;
+    reasons?: string[];
+  };
   if (verdict !== 'low' && verdict !== 'between' && verdict !== 'calm') return;
-  latest = { at: now, low: verdict === 'low', freeMb };
   const open = openSpell();
+  latest = {
+    at: now,
+    low: verdict === 'low' || (verdict === 'between' && !!open),
+    freeMb,
+    reasons: reasons ?? [`memory short: ${gb(freeMb)} GB free`],
+  };
   if (verdict === 'calm' && open)
     db.prepare('update memory_spells set ended = ? where id = ?').run(new Date(now).toISOString(), open.id);
   if (verdict !== 'low' || open) return;
@@ -46,12 +53,11 @@ export function report(memory: unknown, freeMb: number, now = Date.now()) {
 }
 const positive = (v: unknown) => typeof v === 'number' && Number.isFinite(v) && v > 0;
 
-// What a running work job's hook takes now, each said once: its own nudge for a spell it caused (whenever its next
+// What a running job's hook takes now, each said once: its own nudge for a spell it caused (whenever its next
 // step comes, the spell over or not), the spell while memory is low now, or that memory is back after one it heard.
 // Never as the session stops: it would keep a finished session going a turn for a line about work it won't start.
 export function take(job: number, stopping: boolean, now = Date.now()) {
-  if (stopping || !db.prepare("select 1 from jobs where id = ? and kind = 'work' and status = 'running'").get(job))
-    return [];
+  if (stopping || !db.prepare("select 1 from jobs where id = ? and status = 'running'").get(job)) return [];
   return inOneStep(() => {
     const caused = db
       .prepare(
@@ -62,10 +68,10 @@ export function take(job: number, stopping: boolean, now = Date.now()) {
       lowNow = !!open && !!latest?.low && now - latest.at <= STALE_MS;
     if (caused) {
       tell(caused, job, !!caused.ended);
-      const spell = lowNow && caused.id === open.id ? `${lowLine(latest!.freeMb)}\n` : '';
+      const spell = lowNow && caused.id === open.id ? `${lowLine(latest!.reasons)}\n` : '';
       return [{ memory: caused.id, text: `${spell}${nudgeLine(caused, job)}` }];
     }
-    if (lowNow && tell(open, job, false)) return [{ memory: open.id, text: lowLine(latest!.freeMb) }];
+    if (lowNow && tell(open, job, false)) return [{ memory: open.id, text: lowLine(latest!.reasons) }];
     if (open) return [];
     const heard = db
       .prepare('select spell from memory_told where job = ? and back = 0 order by spell desc limit 1')
@@ -83,11 +89,10 @@ const tell = (spell: Spell, job: number, back: boolean) =>
   db.prepare('insert or ignore into memory_told (spell, job, back) values (?, ?, ?)').run(spell.id, job, Number(back))
     .changes > 0;
 
-function lowLine(freeMb: number) {
+function lowLine(reasons: string[]) {
   return (
-    `HQ: the server is short of memory right now (${gb(freeMb)} GB free). Don't start anything heavy (a build, a ` +
-    `big test run, a render, a simulation): ${offload()}wait a few minutes and carry on. Light work goes on as ` +
-    'usual, and HQ says here when memory is back.'
+    `HQ: the server is full right now (${reasons.join('; ')}). Heavy checks here slow everyone's work. ` +
+    `${offload()}Light work can continue. HQ says here when server pressure is clear again.`
   );
 }
 
@@ -111,12 +116,19 @@ function nudgeLine(spell: Spell, job: number) {
 }
 
 const backLine = (freeMb: number | undefined) =>
-  `HQ: the server has memory again${freeMb ? ` (${gb(freeMb)} GB free)` : ''}: heavy work may start, one thing at a time.`;
+  `HQ: server pressure is clear again${freeMb ? ` (${gb(freeMb)} GB free)` : ''}. Heavy work may start, one thing at a time.`;
 
-// Where heavy work can go instead: the deployment's lent machines by name, or none
+// Names come from the deployment's lent machines, so the platform stays generic.
 function offload() {
-  const machines = offloadPlaces().machines.map(m => m.name);
-  return machines.length ? `run it on ${list(machines)} with hq run (hq run helper shows what each takes), or ` : '';
+  const places = offloadPlaces();
+  const machines = places.machines.map(machine => machine.name);
+  if (!machines.length) return 'Wait a few minutes before starting one. ';
+  const checkoutKinds = places.kinds.filter(kind => kind.checkout);
+  const commands = checkoutKinds.map(
+    kind => `hq run --kind ${kind.name} -- <command>${kind.about ? ` (${kind.about})` : ''}`,
+  );
+  if (!commands.length) return `Please send heavy work to ${list(machines)} with hq run. `;
+  return `Please run checks on ${list(machines)} with ${list(commands)}. `;
 }
 const gb = (mb: number) => (mb / 1024).toFixed(1);
 const list = (items: string[]) => new Intl.ListFormat('en-GB', { type: 'disjunction' }).format(items);

@@ -159,10 +159,10 @@ export function threadContext(branch: string) {
   if (!thread) return undefined;
   const tasks = db
     .prepare(
-      `select agent, title from jobs where kind = 'work' and (stage is null or stage = 'fix') and thread = ?
+      `select id, agent, title from jobs where kind = 'work' and (stage is null or stage = 'fix') and thread = ?
     and status != 'cancelled' order by coalesce(seq, id), id`,
     )
-    .all(thread.id) as { agent: string; title: string }[];
+    .all(thread.id) as { id: number; agent: string; title: string }[];
   return { ...thread, tasks };
 }
 

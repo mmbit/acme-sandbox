@@ -20,8 +20,8 @@ export function playwright() {
   }
 }
 
-// Chromium started for a node test. Where Playwright or its Chromium isn't installed (`hq run`'s tests helper has
-// neither) it's undefined, so the test can skip, saying so. Any other failure to start it fails the test.
+// Chromium started for a node test. An installation without Playwright or Chromium can skip, saying so.
+// The tests helper receives the worker's browsers in its bundle. Other launch failures fail the test.
 export async function launched(options) {
   let chromium;
   try {
@@ -48,6 +48,7 @@ export async function openPage(browser, options = {}) {
 export function errorsOf(page) {
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
+  page.on('crash', () => errors.push('Browser page crashed'));
   page.on('dialog', dialog => {
     errors.push(`a dialog opened: ${dialog.message()}`);
     dialog.dismiss();

@@ -28,6 +28,46 @@ assert.deepEqual(errors, []);
 
 `shared/demo/core.mjs` hands on the same `playwright()`.
 
+## Checks from an agent's checkout
+
+`hq run --kind render` runs ordinary browser commands on the lent helper, including Chromium and WebKit. It carries
+the whole checkout, including edits and new files, and the comparison base as `origin/main`. It installs the pinned
+gates, coordinator and browser packages. Page servers can listen on loopback inside the helper's existing closed
+network. The helper reaches package registries through its proxy, without access to the job's credentials or live HQ.
+This works from a subfolder too, with that folder as the command's working directory.
+
+From the repo root:
+
+```sh
+# One notebook story, with its screenshots returned. Add --webkit for the iPad browser.
+hq run --kind render --bring .data/book-shots -- node platform/hq/book-check.mjs --stories 'a page grows' --shots .data/book-shots
+
+# The whole notebook check, including WebKit.
+hq run --kind render --bring .data/book-shots -- node platform/hq/book-check.mjs --shots .data/book-shots
+
+# HQ pages in one look. Repeat with the other look only when the change needs it.
+hq run --kind render --bring .data/page-shots -- node platform/hq/screens-check.mjs brownstone --out .data/page-shots
+
+# Any ordinary page check or Playwright story uses the same command prefix.
+hq run --kind render -- node platform/hq/seatwarning-check.mjs
+
+# Full suites and gates use the existing tests kind. It includes the worker's Chromium.
+hq run --kind tests -- npm run tests -- --all
+hq run --kind tests -- npm run gates
+```
+
+`--bring` names paths inside the checkout, relative to the folder where `hq run` starts. Screenshots and reports
+return even when the command fails. The command's exit code remains its exit code. `--minutes` sets the helper run
+budget (60 by default), with exit 124 when it ends. A lost or unavailable helper leaves the check incomplete. These
+commands never retry the check on the busy server. An authored helper check is separate from the push's stored results.
+`--with` includes named ignored inputs. `--commit` checks that commit instead. Leave out `--paths` for these checkout
+checks. Explicit `--paths` keeps the original bare-folder run, without dependency setup, as the demo kit uses it.
+
+The worker reports CPU pressure, memory and room with its regular resource sample. Each running job hears one
+warning at its next tool step during an overload spell, and one recovery message after the spell it heard ends.
+`errorsOf(page)` records Chromium's real page-crash event in the job's temporary folder so the worker can combine it
+with measured pressure. A crash on an otherwise idle, roomy server alone does not declare overload.
+
 
 ## Heavy renders
 
@@ -61,3 +101,16 @@ fonts and system libraries. `onhelper.sh` installs only the pinned npm packages 
 The pictures use the same software browser rendering as the worker, without GPU access.
 
 Run `node --test shared/browser/render.test.ts` for concurrency, snapshot, artifact, failure and cleanup checks.
+
+## Push tests
+
+Browser test areas (`shared/gates/tests.ts`, `BROWSER_AREAS`) also receive the worker's `/ms-playwright` directory
+and Chromium's shared libraries. Add an area there when it gains a browser push test, including an entry point that
+imports another area's test. The bootstrap sets `PLAYWRIGHT_BROWSERS_PATH` and `LD_LIBRARY_PATH` to the bundled
+copies, for both the change and its base comparison. Playwright still installs from `shared/browser`'s lock through
+npm. No browser download or extra proxy destination is needed. The worker and tests helper must keep the same Debian
+base for these libraries. Playwright's root-only `deb.deps` and `rpm.deps` hints are excluded from the archive.
+HQ-load checks require Chromium and fail if it is missing.
+
+Checkout checks use the setup in `shared/gates`. Rebase an older checkout on main before using them.
+A check stopped at its `--minutes` limit brings no files back.

@@ -2,13 +2,11 @@
    of words typed on a page (booktexts.js). */
 
 /* ---- the colours: a card to the strip's left, on the paper, the colour in use ringed in ink */
-.bk-island[data-island='tools'] {
-  position: relative;
-}
 .bk-palette {
   position: absolute;
   right: calc(100% + 8px);
   top: 0;
+  pointer-events: auto;
   display: flex;
   gap: 2px;
   padding: 4px;
@@ -63,6 +61,16 @@
   border-radius: 6px;
   cursor: text;
   transition: box-shadow 0.12s;
+}
+/* words stacked as a note (booktexts.js): a post-it under them, as a scrap's words have (bookgroups.css
+   .bk-scrap-words). */
+.bk-typed[data-note]::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  inset: -6px;
+  background: #fff3a8;
+  box-shadow: 0 1px 3px rgba(42, 35, 82, 0.18);
 }
 .bk-typed-words {
   min-height: 1.4em;

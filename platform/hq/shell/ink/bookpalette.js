@@ -1,14 +1,14 @@
-// The book's tool palette: one island of tools (Select, the pen, the highlighter, the eraser, shapes, Type and the
-// hand) and, beside it, the tool's own card: its colours, its line's width, the eraser's size, a shape's kind and
+// The book's tool palette: one island of tools (the hand, Select, the pen, the highlighter, the eraser, shapes and
+// Type) and, beside it, the tool's own card: its colours, its line's width, the eraser's size, a shape's kind and
 // whether it's filled, the pen's smoothing. A tool pressed again, or the swatch under them, opens its card; the keys
 // a drawing app has do the same on a desktop. Every setting is remembered in this browser; the book opens on the hand,
-// so a finger's first touch moves the page (the board, call 159).
+// so a finger's first touch moves the page.
 //
 // st: booktools.js's state; this keeps st.mode and the settings on it, and calls st.changedTool(mode) when the tool
 // changes.
 import { store } from '../../util.js';
-import { button, island, setPressed, hide } from './bookui.js';
-import { SHAPES } from './bookstrokes.js';
+import { button, island, setPressed, hide, besideStrip } from './bookui.js';
+import { MARKERS, MARKER_ALPHA, SHAPES, WIDTHS } from './bookinkmath.js';
 import { word } from './bookscope.js';
 import { ERASER_PATHS } from '/__review/eraser.js';
 
@@ -19,17 +19,8 @@ export const PENS = [
   { name: 'Blue', color: '#2f6bdc' },
   { name: 'Green', color: '#1d9a5b' },
 ];
-export const MARKERS = [
-  { name: 'Yellow', color: '#ffd23f' },
-  { name: 'Pink', color: '#ff7eb3' },
-  { name: 'Green', color: '#7fe08a' },
-  { name: 'Blue', color: '#7cc8ff' },
-];
-// The widths a line comes in (page px; the middle one review mode's pen), the highlighter's alpha, and the eraser's
-// sizes (across, on screen: a fine one for a letter, a wide one for a line of them)
-const WIDTHS = { pen: [2.5, 5, 9], highlighter: [11, 18, 28] },
-  MARKER_ALPHA = 0.42,
-  ERASERS = [12, 28, 56];
+// The eraser's sizes (across, on screen: a fine one for a letter, a wide one for a line of them)
+const ERASERS = [12, 28, 56];
 // The pen's smoothing: how far each point goes towards the pointer (ink.js's follow): steady, or as the hand went
 const SMOOTH = { on: 0.42, off: 0.75 };
 
@@ -57,7 +48,7 @@ const ICONS = {
   filled: svg('<rect x="4" y="4" width="12" height="12" rx="2" fill="currentColor"/>'),
   smooth: svg('<path d="M3 13c2.5-6 4.5-6 7-1.5S15 15 17 7"/>'),
 };
-// The tools, top to bottom: the hand the book opens on first
+// The tools, top to bottom: the hand the book opens on first, on a touch screen too
 export const TOOLS = [
   { mode: 'hand', label: 'Move the page', key: 'H' },
   { mode: 'select', label: 'Select', key: 'V' },
@@ -220,7 +211,7 @@ const remember = st =>
     smooth: st.smooth,
   });
 
-// ---- the tool's card, to the island's left
+// ---- the tool's card, to the strip's left
 
 function card(st) {
   if (st.card) return closeCard(st);
@@ -230,10 +221,10 @@ function card(st) {
   el.className = 'bk-card bk-palette';
   el.setAttribute('role', 'menu');
   el.setAttribute('aria-label', word(st.mode === 'eraser' ? 'Eraser size' : 'Colour and width'));
-  st.options.after(el);
   st.options.setAttribute('aria-expanded', 'true');
   st.card = el;
   fillCard(st);
+  besideStrip(el, 'top');
   el.querySelector('[aria-pressed=true]')?.focus({ preventScroll: true });
   // (a press anywhere else, or Escape, closes it)
   st.away = e => {

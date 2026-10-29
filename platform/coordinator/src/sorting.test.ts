@@ -252,10 +252,11 @@ test("an ordinary proposal takes the accepter's title when given one", async () 
 // CEO's own may stay.
 test("HQ's work in no project is placed in its project's thread before it's sorted, but for the CEO's own", async () => {
   const file = `${h.repo}/company/projects.yaml`;
+  // (a job in no deliverable from before the company asked for them: one HQ makes now waits for its place, holdLoose)
+  const lone = await h.start({ agent: 'bolt' });
   writeFileSync(file, `requireThread: true\n${readFileSync(file, 'utf8')}`);
   try {
     const { ceo } = await import('./company.ts');
-    const lone = await h.start({ agent: 'bolt' });
     const job = (await say(lone, 'kit', 'The lift is slow.')).body.job as number;
     const item = held(job)!;
     assert.equal(item.project, null, "the CEO's to sort");
@@ -277,6 +278,39 @@ test("HQ's work in no project is placed in its project's thread before it's sort
     const own = answer.body.job as number;
     const mine = proposals.accept(held(own)!.id, ceo(), { title: 'Answer the intercom', code: 'REPLY' });
     assert.deepEqual(mine, { job: own, code: 'REPLY', thread: null, sorted: true });
+  } finally {
+    writeFileSync(file, 'projects:\n  - { id: game, name: The game, owner: wren }\n');
+  }
+});
+
+// Where the company asks for deliverables, HQ's work made in none waits for the CEO to place it before it can start;
+// the CEO's own, a pull request's loop step and an expedited job run as they are
+test("HQ's work made in no deliverable waits for the CEO to place it, but the CEO's own and a pull request's steps", async () => {
+  const file = `${h.repo}/company/projects.yaml`;
+  writeFileSync(file, `requireThread: true\n${readFileSync(file, 'utf8')}`);
+  try {
+    const { ceo } = await import('./company.ts');
+    const loose = h.queue({ agent: 'kit', title: 'Off-site backup missed: find out why' });
+    assert.equal(await claimable(loose), false, 'held before it can start');
+    const item = held(loose)!;
+    assert.equal(item.project, null, "the CEO's to place");
+    const lead = await h.start({ agent: ceo() });
+    assert.equal((await h.hq(lead, 'job', 'move', String(loose), 'game/world')).code, 0);
+    assert.deepEqual(proposals.accept(item.id, ceo(), { title: 'Find why the backup missed', code: 'MISSED' }), {
+      job: loose,
+      code: 'MISSED',
+      thread: 'game/world',
+      sorted: true,
+    });
+    assert.equal(await claimable(loose), true, 'placed and sorted, it starts');
+    for (const free of [
+      h.queue({ agent: ceo(), title: 'Follow up on your call with the board' }),
+      h.queue({ agent: 'kit', stage: 'fix', pr: 9, branch: 'job/77' }),
+      h.queue({ agent: 'moss', expedite: true }),
+    ]) {
+      await h.claim(h.job(free).engine);
+      assert.equal(held(free), undefined, `#${free} isn't held`);
+    }
   } finally {
     writeFileSync(file, 'projects:\n  - { id: game, name: The game, owner: wren }\n');
   }

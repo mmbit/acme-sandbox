@@ -59,8 +59,8 @@ export type Browser = {
   tab: (answer: (asked: Asked) => Promise<Answer>, listen?: Listener) => Promise<Tab>;
   close: () => Promise<void>;
   closed: Promise<void>;
-  // Settles once the browser's own process answers, whatever its tabs' pages are doing.
-  answered: () => Promise<void>;
+  // Settles once the browser's own process replies, whatever its tabs' pages are doing.
+  replied: () => Promise<void>;
   pid?: number;
 };
 
@@ -68,10 +68,13 @@ export type Browser = {
 export async function launch(abort?: AbortSignal): Promise<Browser> {
   const profile = mkdtempSync(join(tmpdir(), 'chromium-'));
   // only PATH, HOME and TMPDIR: the server's keys never reach the browser. TMPDIR is the profile too, as Chromium's
-  // lock socket otherwise goes in /tmp, read-only on a lent machine
+  // lock socket otherwise goes in /tmp, read-only on a lent machine. It's given relative to the profile, its working
+  // folder: a socket's path holds 107 bytes at most, and Chromium stops at once on a longer one, which a long temp
+  // folder makes (a push's tests).
   const chromium = spawn(chromiumPath(), [...SWITCHES, `--user-data-dir=${profile}`, 'about:blank'], {
+    cwd: profile,
     stdio: ['ignore', 'ignore', 'pipe', 'pipe', 'pipe'],
-    env: { PATH: process.env.PATH ?? '', HOME: profile, TMPDIR: profile },
+    env: { PATH: process.env.PATH ?? '', HOME: profile, TMPDIR: '.' },
   });
   const devtools = connect(chromium);
   const closed = new Promise<void>(resolve =>
@@ -101,8 +104,8 @@ export async function launch(abort?: AbortSignal): Promise<Browser> {
     await closed;
     clearTimeout(killed);
   };
-  const answered = async () => void (await devtools.send(undefined, 'Browser.getVersion'));
-  return { tab, close, closed, answered, pid: chromium.pid };
+  const replied = async () => void (await devtools.send(undefined, 'Browser.getVersion'));
+  return { tab, close, closed, replied, pid: chromium.pid };
 }
 
 // Browser.tab(): a new tab over this connection, in a window of its own: tabs sharing a window are hidden behind the

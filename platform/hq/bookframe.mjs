@@ -6,8 +6,8 @@
 // every control whole (a second column). Each asserts what the board sees: boxes, pixels, words. (the short window)
 import assert from 'node:assert/strict';
 import { shutBook } from './bookchrome.mjs';
+import { DESKTOP, MINI } from './bookkit.mjs';
 
-const DESKTOP = { width: 1440, height: 900 };
 // Laptops' windows under their browser's bars: a 768 px screen's, a 13-inch's with its bookmarks and Dock, and one
 // with its developer tools docked below, the one short enough for the stack's second column
 const SHORT = [
@@ -28,6 +28,8 @@ export function frameStories(c) {
       pairCard(browser, c),
     "a laptop-height window: every control in the book's islands whole, Undo and Redo at their foot among them":
       browser => shortWindow(browser, c),
+    "a hardcover: the black board round the pages at the head, the foot and the outer edge beside HQ's page; upright, the page fills the screen":
+      browser => hardcover(browser, c),
   };
 }
 
@@ -231,6 +233,37 @@ async function whole(page, when) {
 }
 
 // ---- helpers
+
+// The hardcover beside HQ's page on a desktop and an iPad mini on its side, for the look's reader to see (its colours
+// are never asserted: CODE_STYLE.md, Tests). Upright (a phone), the book opened lies over the screen, its paper the
+// whole width and down from the top, no cover round it.
+async function hardcover(browser, c) {
+  for (const [name, viewport] of [
+    ['desktop', DESKTOP],
+    ['mini', MINI],
+  ]) {
+    const { page, errors, done } = await onDesk(browser, c, {}, viewport);
+    try {
+      await c.shot(`book-hardcover-${name}`, page);
+      assert.deepEqual(errors, []);
+    } finally {
+      await done();
+    }
+  }
+  const phone = { width: 390, height: 844 };
+  const { page, errors, done } = await c.hq(browser, phone);
+  try {
+    await page.locator('#book .bk-lip').click();
+    await c.settled(page, 'spread');
+    const paper = await box(page, '#book section > div');
+    assert.ok(paper.x <= 0 && paper.x + paper.width >= phone.width, `upright, the paper ${JSON.stringify(paper)}`);
+    assert.ok(paper.y + paper.height >= phone.height - 1, `upright, the paper ends at ${paper.y + paper.height}`);
+    await c.shot('book-hardcover-phone', page);
+    assert.deepEqual(errors, []);
+  } finally {
+    await done();
+  }
+}
 
 // HQ on a desktop with a mouse (its window DESKTOP's size unless one is given), the book open
 async function onDesk(browser, c, options = {}, viewport = DESKTOP) {

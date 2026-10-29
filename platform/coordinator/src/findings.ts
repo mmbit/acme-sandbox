@@ -7,7 +7,7 @@ import { db, inOneStep } from './db.ts';
 export type ChangedLines = Record<string, [number, number][]>;
 type Place = { file?: unknown; line?: unknown };
 type Finding = Place & { also?: unknown; caused_by?: unknown; secret?: unknown };
-type Entry = Place & { issue?: unknown; by?: unknown; earlier?: unknown; cross_project?: unknown };
+type Entry = Place & { issue?: unknown; by?: unknown; earlier?: unknown };
 type Verdict = { blocking?: unknown; nonblocking?: unknown; pre_existing?: unknown; outcomes?: unknown };
 type Reviewer = { agent: string; engine: string };
 type Ruling = { id: number; pr: number; round: number };
@@ -83,7 +83,7 @@ export const CONSOLIDATOR_PLACES = `
 Pre-existing findings don't block. The round set apart each reviewer finding on lines this change doesn't add or alter
 (a report's "pre_existing", told from the diff): it isn't the author's, so it never goes in "blocking" or
 "nonblocking". Verify each like any other and list the ones you confirm in "pre_existing", with your own finds in code
-the change doesn't touch: the project's follow-ups take them, not this pull request. One that's on the change after all
+the change doesn't touch: the follow-up job takes them once it merges. One that's on the change after all
 (a path written another way, a line further off), or that the change makes worse (it now calls the broken code more,
 or breaks a caller or a document it should have updated), is the change's: weigh it as one. So is a secret in code,
 wherever it sits: set "secret": true. It blocks without "caused_by", and is a Security incident (the playbook's rules),
@@ -98,14 +98,12 @@ one entry only. Use "from": [] for your own new findings. A reviewer finding no 
 For example, a merged class reported by reviewer-a at indices 0 and 2 and reviewer-b at index 1 has
 "by": ["reviewer-a", "reviewer-b"], "from": [{"by": "reviewer-a", "finding": 0}, {"by": "reviewer-a", "finding": 2}, {"by": "reviewer-b", "finding": 1}].
 Set the ruling's "finding_sources": true even when all three entry lists are empty.
-This source list is the ruling's format. A reviewer's "from" still labels where its case comes from.
-Set "cross_project": true only for a follow-up belonging outside this pull request's project. The CEO routes those.
-Other follow-ups go to this project's owner. Judge ownership from the deliverable and department responsibilities.`;
+This source list is the ruling's format. A reviewer's "from" still labels where its case comes from.`;
 export const PRE_EXISTING_FIELD = `, "pre_existing": [{"file": "...", "line": 0, "issue": "...", "fix": "...", "by": ["reviewer id"], "from": [{"by": "reviewer id", "finding": 0}]}]`;
 
 // A merge check's blocking findings: findings like any ruling's, so they reach the author by number and the next round
-// judges them
-export const MERGE_BLOCKING = `[{"file": "...", "line": 0, "issue": "...", "fix": "..."}]`;
+// judges them, each with the fix task it goes in (review.ts untitled)
+export const MERGE_BLOCKING = `[{"file": "...", "line": 0, "issue": "...", "fix": "...", "task": "..."}]`;
 
 // The author, with a "changes" ruling
 export const AUTHOR_CLASSES = `Each finding is one mistake: fix it in every place it lists under "also", and wherever else your change makes it.
@@ -115,7 +113,7 @@ purpose (and why). The next check reads it. Findings under "pre_existing" aren't
 // A fix round's reviewers and consolidator (review.ts REVIEWED_REST)
 export const CLASS_AGAIN = `Another place of a mistake the verdict already names is no new finding: it's that finding, not fixed everywhere.`;
 
-// The kinds of finding that reach the author; the others (pre-existing, follow-up) go to the project's follow-ups
+// The kinds of finding that reach the author; the others (pre-existing, follow-up) go to the follow-up job (followups.ts)
 const SENT = "kind in ('blocking', 'nonblocking')";
 
 // The findings still open on a pull request: sent to its author, and not yet judged fixed, kept, or wrong. One the
@@ -163,6 +161,25 @@ behaviour is meant). One that still blocks, or another place of its mistake, goe
 number. It's the same finding, never a new one.`;
 }
 
+// What a consolidation run again is told of the open findings its round's refused answer recorded (review.ts again: a
+// "changes" refused after it was acted on, whose fix task couldn't be drawn): each by its number, to judge and repeat
+// as that finding. Nothing was fixed since.
+export function recordedNote(pr: number, round: number) {
+  const recorded = openForReview(pr).filter(f => f.round === round);
+  if (!recorded.length) return '';
+  const list = recorded.map(f => `#${f.id} (${f.kind}) ${f.file ?? ''}${f.line ? `:${f.line}` : ''}: ${f.issue}`);
+  return `
+
+## The findings an earlier answer recorded
+An earlier answer of this round was acted on before it was refused, and these of its findings were recorded, each with
+its number:
+${list.join('\n')}
+Nobody has fixed them since. Your JSON starts with ${OUTCOMES_FIELD}judging each: "not fixed" for one that still
+stands. Write each that stands in "blocking" or "nonblocking" with "earlier": its number. It's the same finding,
+never a new one.
+`;
+}
+
 // The final report of the author's job that answered a ruling's findings
 function authorReport(branch: string, ruling: number) {
   const row = db
@@ -177,8 +194,8 @@ function authorReport(branch: string, ruling: number) {
 // ---- what the ruling decided
 
 // A ruling acted on (review.ts decide has read its outcomes with misjudged): its outcomes judge the open findings, a
-// "changes" sends its blocking findings to the author, and its nonblocking ones on a first round. The project's
-// follow-ups (followups.ts) take any ruling's confirmed pre-existing findings, a merge's or a board ruling's nonblocking
+// "changes" sends its blocking findings to the author, and its nonblocking ones on a first round. The
+// follow-up job (followups.ts) takes any ruling's confirmed pre-existing findings, a merge's or a board ruling's nonblocking
 // ones (the board may merge it) and, from a later round on (`later`, reviewrounds.ts), every nonblocking one. One marked
 // "earlier" with the number of a finding sent before is that finding, not a new one, in whichever list: still open, it
 // goes to the follow-ups by that number once the pull request merges (followUpsOf). A restart may act on a ruling
@@ -209,9 +226,8 @@ function recordEntries(
 ) {
   if (db.prepare('select 1 from findings where ruling = ?').get(ruling.id)) return;
   const sent = sentBefore(ruling);
-  const insert =
-    db.prepare(`insert into findings (created, pr, round, ruling, kind, file, line, issue, by, cross_project)
-    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+  const insert = db.prepare(`insert into findings (created, pr, round, ruling, kind, file, line, issue, by)
+    values (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
   const followedUp = decision === 'merge' || decision === 'board' || (later && decision === 'changes');
   if (followedUp) db.prepare('insert or ignore into followup_rulings (ruling) values (?)').run(ruling.id);
   const lists: [string, unknown][] = [['pre-existing', verdict.pre_existing]];
@@ -244,31 +260,21 @@ function recordEntries(
         line,
         issue,
         JSON.stringify(reportersOf(entry, panel)),
-        Number(entry.cross_project === true),
       );
     }
 }
 
-// What a pull request that ended leaves for the project's follow-ups (followups.ts): its confirmed pre-existing findings
-// and, once it merged, the follow-ups and findings its author left open
-export type FollowUp = {
-  id: number;
-  kind: string;
-  file: string | null;
-  line: number | null;
-  issue: string;
-  cross_project: number;
-};
-export const followUpsOf = (pr: number, merged: boolean) =>
+// What a merged pull request leaves for its follow-up job (followups.ts): its confirmed pre-existing findings, its
+// follow-ups and the findings its author left open
+export type FollowUp = { id: number; kind: string; file: string | null; line: number | null; issue: string };
+export const followUpsOf = (pr: number) =>
   (
     db
-      .prepare(
-        'select id, kind, file, line, issue, outcome, right, cross_project from findings where pr = ? order by id',
-      )
+      .prepare('select id, kind, file, line, issue, outcome, right from findings where pr = ? order by id')
       .all(pr) as (FollowUp & Pick<Sent, 'outcome' | 'right'>)[]
   )
-    .filter(f => f.kind === 'pre-existing' || (merged && (f.kind === 'follow-up' || !settled(f.outcome, f.right))))
-    .map(({ id, kind, file, line, issue, cross_project }) => ({ id, kind, file, line, issue, cross_project }));
+    .filter(f => f.kind === 'pre-existing' || f.kind === 'follow-up' || !settled(f.outcome, f.right))
+    .map(({ id, kind, file, line, issue }) => ({ id, kind, file, line, issue }));
 
 // The accepted ruling's findings, with their stable IDs, for the project owner's inbox.
 export function sent(ruling: Ruling, verdict: Verdict) {

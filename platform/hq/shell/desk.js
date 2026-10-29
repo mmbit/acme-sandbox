@@ -21,6 +21,7 @@ import { toast, flyTo, visitMascot } from './hud.js';
 import { openLibraryDoc } from './news.js';   // (Team's Gazette and Library buttons gone)
 import { onDirective } from './events.js';
 import { record, canRecord, MAX_SECONDS, TRANSCRIBER } from './voice.js';
+import { dictate } from './dictate.js';
 import { pushState, enablePush, disablePush, testPush } from './push.js';
 import { makeAgeKey } from './agekey.js';
 import { names, brand, theme, runs } from './brand.js';
@@ -50,7 +51,7 @@ import { notes, openReviews, holdReviews } from './reviews.js';   // (the comput
 import { openAt } from './ink/book.js';   // (review mode's Open the book: bookAt.)
 import { mountPinSummon, tellPin } from './pinsummon.js';   // (the pin's summon)
 import { mountTips } from './booktips.js';   // (the tips book)
-import { frameMic, stopFrameMic } from './framemic.js';   // (review mode's mic for the viewer's page)
+import { frameMic, helloFrom, stopFrameMic } from './framemic.js';   // (review mode's mic for the viewer's page; helloFrom)
 import { tipHtml, cardAbout, wireTip, tipSettings, tipsSummary } from './tipcard.js';
 import { intakeCardHtml, wireCards, switchesLine } from './intake.js';
 import { ASKS } from './tips.js';
@@ -150,14 +151,17 @@ const PIN = icon('pin');
 // Review mode (shared/review/review.js) runs in the frame once HQ answers its hello; then the bar gets a pin too.
 // No microphone for the frame: Chrome keys a frame's microphone to the top page, so with HQ's allowed (the intercom,
 // calls) any preview's own code could record the board unasked. Dictation works in "Open in browser", where the
-// preview asks for itself.
+// preview asks for itself, and here by HQ's own Talk key in the bar, which only the board's tap starts (framemic.js:
 // A deck's "try the preview" button opens its preview here as well, with a way back to the deck.
 // Chrome shows no PDF in a sandboxed frame, so the preview hosts answer a PDF the frame loads as a download, which the
 // frame allows (infra/products.py, PDF_IN_FRAME): it saves, and the page stays.
 // Share makes a link for an outside person to leave notes on this preview, or only see it: shareBox.
 // The bar is one slim row, the page's room before all: Back and Close as quiet glyphs, the address as the link that
 // opens it in the browser, and what review mode does filled: Note. Review mode's notes go into the board's book, which
-// its menu opens beside the viewer (bookAt).
+// its menu opens beside the viewer (bookAt). Talk shows while a post-it there asks for the mic: HQ records for the page
+// only from a tap on it (framemic.js). The page picks when Talk shows, and when
+// Note does, so Talk's slot is kept from the start, empty until an ask, right of Note: neither moves it, and it never
+// comes under a tap meant for the address or Note.
 let viewing = null; // { url, back, review: the frame's origin while review mode runs there, heard: when it last said hello, link: the outside link } (heard)
 async function openViewer(url, back = null) {
   const v = $('#viewer');
@@ -166,6 +170,7 @@ async function openViewer(url, back = null) {
   v.innerHTML = `<div class="bar">${back ? '<button class="glyph" data-back aria-label="Back">‹</button>' : ''}
     <a class="where" target="_blank" rel="noopener" data-external="1" title="Open in the browser">${where(url)}</a>
     <button class="pin" hidden aria-label="Pin a note on this page">${PIN}<span>Note</span></button>
+    <button class="talk" hidden>${MIC}<span>Talk</span></button>
     <button class="share" aria-label="Share with an outside person">${SHARE}<span>Share</span></button>
     <button class="glyph" data-close aria-label="Close">×</button></div>
     <div class="sharebox" hidden></div>
@@ -173,11 +178,13 @@ async function openViewer(url, back = null) {
       sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-downloads"></iframe>`;
   if (v.hidden) { v.hidden = false; sfx.blip(); hush(true); cover(true, 'viewer'); coverPin(true); }   // (cover)
   const frame = v.querySelector('iframe'), out = v.querySelector('.bar .where');
-  v.querySelector('[data-close]').onclick = () => { stopFrameMic(); viewing = null; v.hidden = true; v.innerHTML = ''; hush(false); cover(false, 'viewer'); coverPin(false); };
+  v.querySelector('[data-close]').onclick = () => { stopFrameMic(); viewing = null; v.hidden = true; v.innerHTML = ''; delete v.dataset.ground; hush(false); cover(false, 'viewer'); coverPin(false); };
   v.querySelector('[data-back]')?.addEventListener('click', () => openViewer(back));
   v.querySelector('.pin').onclick = () => me.review && frame.contentWindow.postMessage({ hq: 'hq', pin: 1 }, me.review);
   frame.addEventListener('load', () => {
     frame.style.background = ''; // a backdrop lasts until the next page is there: backdropOf
+    stopFrameMic(); // (the page before's ask and recording, its goodbye or not: framemic.js.)
+    delete v.dataset.ground; // (the page before's colour: groundOf)
     askReview(me, frame);
   });
   v.querySelector('.bar .share').onclick = () => shareBox(me);
@@ -395,10 +402,11 @@ function fromViewer(e) {
   // under that key. Still a deck's, answered the way it listens.
   const old = d.hq === undefined && d.onlyonery === 'deck', tag = old ? 'deck' : d.hq;
   if (tag === 'review') {
-    if (d.hello) { me.review = e.origin; me.heard = performance.now(); e.source.postMessage({ hq: 'hq' }, e.origin); }   // (heard)
+    if (d.hello) { me.review = e.origin; me.heard = performance.now(); e.source.postMessage({ hq: 'hq' }, e.origin); helloFrom(d.doc); groundOf(d.ground, frame); }   // (heard; helloFrom)
     else if (d.bye && me.review === e.origin) { me.review = null; stopFrameMic(); }
-    // (its post-it's mic tapped: HQ records for it, the frame having no microphone: framemic.js.)
-    else if (typeof d.mic === 'string' && Number.isInteger(d.id)) frameMic(d, e.source, e.origin, voiceLang());
+    // (its post-it's mic tapped: HQ's own Talk key shows, the frame having no microphone, and only its tap records; the
+    // ask's line, e.ports, carries the rest: framemic.js.)
+    else if (d.mic === 'start' && Number.isInteger(d.doc) && e.ports[0]) frameMic(d.doc, e.ports[0], voiceLang(), $('#viewer .bar .talk'));
     // (from the viewer's page whatever its hello: a goodbye that came late, the page before's, mustn't lose the way to
     // the book, which only opens HQ's own.)
     else if (d.book) bookAt(d.book);
@@ -416,6 +424,14 @@ function fromViewer(e) {
       .then(css => { if (css && viewing === me) to.postMessage({ [old ? 'onlyonery' : 'hq']: 'hq-look', look: name, css }, e.origin); })
       .catch(() => { /* the deck keeps its own look */ });
   }
+}
+// The page's own background colour, as its review mode tells it (the frame's own where the page is clear), on the
+// viewer for the Notebook: under the book as it lifts off beside the page (book.js). A page that tells none leaves HQ's
+// dark backdrop there.
+function groundOf(colour, frame) {
+  const v = $('#viewer');
+  if (colour === null) v.dataset.ground = getComputedStyle(frame).backgroundColor;
+  else if (typeof colour === 'string' && CSS.supports('color', colour)) v.dataset.ground = colour;
 }
 // A page that fades into a colour as it leaves for the next one (the shop's door into a stall) asks for that colour, and
 // a picture on it, behind the frame: a tab keeps the old page on screen until the next one paints, a frame shows its own
@@ -635,7 +651,7 @@ function renderPhone() {
   if (asked) wireQuestions(el, r);
   if (pics) wireTray(el, pics);
   fields.forEach(f => f.onblur = () => { if (stale && !typing()) renderPhone(); });
-  if (canRecord && !login && !keys && !back && grant === null && !asking && !mail && !call) $('#answer-mic').onclick = () => dictate($('#answer'), $('#answer-mic'), $('#answer-msg'));
+  if (canRecord && !login && !keys && !back && grant === null && !asking && !mail && !call) $('#answer-mic').onclick = () => dictateInto($('#answer'), $('#answer-mic'), $('#answer-msg'));
   $('#call-about')?.addEventListener('click', () => callAgent(r.agent, who(r.agent), { request: r.id, walk: !!r.walk }));
   // The Share button (r.share, at the end of the button row above) and its tap.
   // The tap sends the Share part as the server has it now (the latest poll), not as it was when the card was drawn: the
@@ -1843,24 +1859,23 @@ function wireAge(el, r) {
 }
 
 // Dictation into a form field (the desk phone's answer): tap the mic to start, tap again to stop. Like the
-// intercom, the words stream in piece by piece while the board talks, after anything already typed there.
+// intercom, the words stream in piece by piece while the board talks, after anything already typed there (dictate.js:
 let dictation = null;
-function dictate(field, mic, msg) {
+function dictateInto(field, mic, msg) {
   if (dictation) { stopDictation(); return; }
-  const base = field.value.trim(), d = dictation = { field, mic, msg, base, parts: [], pending: [] };
-  const show = () => { field.value = [base, ...d.parts.filter(Boolean)].filter(Boolean).join(' '); };
-  d.rec = record({ lang: voiceLang(), onSegment: clip => { const i = d.parts.push('') - 1; d.pending.push(transcribe(clip, voiceLang()).then(text => { d.parts[i] = text; show(); }, () => { d.failed = true; })); } });
-  d.show = show; mic.closest('.row').classList.add('on-air'); msg.textContent = 'Listening… tap the mic to stop'; sfx.micOn();
+  const base = field.value.trim(), d = dictation = { field, mic, msg };
+  d.show = text => { field.value = [base, text].filter(Boolean).join(' '); };
+  d.rec = dictate({ lang: voiceLang(), onWords: d.show });
+  mic.closest('.row').classList.add('on-air'); msg.textContent = 'Listening… tap the mic to stop'; sfx.micOn();
   d.rec.ready.catch(err => { if (dictation !== d) return; dictation = null; mic.closest('.row').classList.remove('on-air'); tell(msg, err?.name === 'NotAllowedError' ? `The microphone is blocked for ${names.hq}.` : 'Could not start the microphone.'); });
 }
 async function stopDictation() {
   const d = dictation; if (!d || d.stopping) return;
   d.stopping = true; sfx.micOff(); d.msg.textContent = 'Transcribing…';
-  const clip = await d.rec.stop();
   d.mic.closest('.row').classList.remove('on-air');
-  await Promise.all(d.pending);
-  if ((!d.parts.length || d.failed) && clip) { try { d.parts = [await transcribe(clip, voiceLang())]; } catch { tell(d.msg, 'The transcriber isn’t available right now. Type it instead?'); dictation = null; return; } }
-  d.show(); d.msg.textContent = d.parts.some(Boolean) ? 'Check the words, then send.' : 'No words came through. Try again?';
+  let text;
+  try { ({ text } = await d.rec.stop()); } catch { tell(d.msg, 'The transcriber isn’t available right now. Type it instead?'); dictation = null; return; }
+  d.show(text); d.msg.textContent = text ? 'Check the words, then send.' : 'No words came through. Try again?';
   dictation = null; d.field.focus();
 }
 
@@ -2460,7 +2475,7 @@ async function callLog(el) {
     field.oninput = field.onfocus = paint; paint();
     d.ontoggle = () => { if (d.open) field.focus(); };
     field.onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (!add.disabled) add.click(); } };
-    d.querySelector('[data-mic]')?.addEventListener('click', e => dictate(field, e.currentTarget, msg));
+    d.querySelector('[data-mic]')?.addEventListener('click', e => dictateInto(field, e.currentTarget, msg));
     add.onclick = async () => {
       if (adding) return;
       paint(); if (add.disabled || dictation) return;

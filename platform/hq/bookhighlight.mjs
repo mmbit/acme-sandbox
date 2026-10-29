@@ -1,7 +1,7 @@
 // node platform/hq/book-check.mjs --stories highlighter [--webkit]   (desktop mouse and iPad mini Pencil)
 import assert from 'node:assert/strict';
-import { freePage, onDesk, paperBox, pick, savedWhere, until, DESKTOP, MINI } from './bookmouse.mjs';
-import { pen } from './bookmouse.mjs';
+import { freePage, onDesk, paperBox, pick, savedWhere } from './bookmouse.mjs';
+import { DESKTOP, MINI, pressAlong, until } from './bookkit.mjs';
 
 export function highlightStories(c) {
   return Object.fromEntries(
@@ -129,14 +129,14 @@ async function deletesMarks(page, c, free, draw) {
   await savedWhere(c, free.id, p => p.ink.length === 2);
   const paper = await paperBox(page);
   const painted = () => Promise.all([170, 250].map(x => inkInColumn(page, paper.x + x, paper.y + 150)));
-  await until(async () => (await painted()).every(Boolean), 5000, 'the pen line and its highlight painted');
+  await until(async () => (await painted()).every(Boolean), 'the pen line and its highlight painted');
   await pick(page, 'Pen');
   // (from its right: its clip is a button of its own)
   await draw(Array.from({ length: 12 }, (_, i) => [i % 2 ? 140 : 420, 175 + i * 10]));
   assert.deepEqual(await painted(), [0, 0], "the scratch-out takes the group's ink and highlight off at once");
   await savedWhere(c, free.id, p => p.ink.length === 0);
   await page.locator('#book').getByRole('button', { name: 'Undo' }).first().click();
-  await until(async () => (await painted()).every(Boolean), 5000, 'Undo paints them again');
+  await until(async () => (await painted()).every(Boolean), 'Undo paints them again');
   await savedWhere(c, free.id, p => p.ink.length === 2);
   await page.locator('#book .bk-clip').first().click();
   await page.locator('#book .bk-group-menu [data-act=delete]').click();
@@ -178,5 +178,5 @@ async function stroke(page, points, pencil) {
     const n = Math.max(1, Math.ceil(Math.hypot(point[0] - previous[0], point[1] - previous[1]) / 6));
     return Array.from({ length: n }, (_, j) => previous.map((v, k) => v + ((point[k] - v) * (j + 1)) / n));
   });
-  await pen(page, dense);
+  await pressAlong(page, dense);
 }

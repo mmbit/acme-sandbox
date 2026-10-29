@@ -111,15 +111,18 @@ async function wetRound(page, id) {
   );
 }
 
-// Every frame right of the tool strip floating over the paper's left, so a ring round one starts on the page
+// Every frame left of the tools floating at the paper's right, the islands' stack and the tool strip beside it, so a
+// ring round one starts on the page
 async function clearOfTools(page) {
-  const strip = await page.locator('#book .bk-strip .bk-island').boundingBox(),
-    lefts = await layer(page)
+  const tools = await page
+      .locator('#book .bk-islands .bk-island, #book .bk-strip .bk-island')
+      .evaluateAll(els => Math.min(...els.filter(el => el.offsetWidth).map(el => el.getBoundingClientRect().left))),
+    rights = await layer(page)
       .locator('.bk-version-paper')
-      .evaluateAll(els => els.map(el => el.getBoundingClientRect().left));
+      .evaluateAll(els => els.map(el => el.getBoundingClientRect().right));
   assert.ok(
-    lefts.every(x => x >= strip.x + strip.width),
-    `the versions clear of the tools: ${JSON.stringify([lefts, strip])}`,
+    rights.length && rights.every(x => x <= tools),
+    `the versions clear of the tools: ${JSON.stringify([rights, tools])}`,
   );
 }
 

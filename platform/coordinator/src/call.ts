@@ -154,12 +154,11 @@ export const callAgent = (token: string) => token ? db.prepare('select agent, ca
 
 // A job the call queued (hq job from its token): its agent may add to it until the call ends (addToJob).
 export const queuedOn = (call: number, job: number) =>
-  db.prepare("update call_tokens set queued = json_insert(queued, '$[#]', ?) where call = ?").run(job, call);
+  db.prepare('insert or ignore into call_jobs (call, job) values (?, ?)').run(call, job);
 // Whether the call queued that job (queuedOn), and why a work job the call names for `to` isn't theirs: a misheard
 // number names someone else's (a promise's job: server.ts promisedWork; reach checks it too).
 export function queuedHere(call: number | undefined, job: number) {
-  const queued = call ? (db.prepare('select queued from call_tokens where call = ?').get(call) as { queued: string } | undefined)?.queued : undefined;
-  return (JSON.parse(queued ?? '[]') as number[]).includes(job);
+  return !!call && !!db.prepare('select 1 from call_jobs where call = ? and job = ?').get(call, job);
 }
 export function notTheirs(to: string, id: number): [number, string] | undefined {
   const job = db.prepare("select agent, title, step, round from jobs where id = ? and kind = 'work'").get(id) as { agent: string; title: string; step: string | null; round: number | null } | undefined;
@@ -257,8 +256,7 @@ export function handOver(agent: string, lines: string[], request = 0, token = ''
   if (live) ledger.callEnded(live);
   const recorded = live ? ledger.items(live).length > 0 : false;
   if ((!lines?.length && !recorded) || !findAgent(agent)) {
-    // (its number can come back)
-    if (live) { db.prepare('delete from calls where id = ?').run(live); pictures.forgetCall(live); watchalong.forgetCall(live); }
+    if (live) ledger.forgetCall(live);
     return { ok: true };
   }
   const ts = new Date().toISOString();
@@ -286,7 +284,8 @@ export const calls = () => (db.prepare(`select c.id, c.ts, c.agent, c.request, c
 // where each one's line ends. The open items come before the parts that can grow (the company right now), so an
 // over-long briefing cuts those first (fit()).
 // `restarted`: the call this session takes over (context()), and what's on its list already. carried: the calls it
-// carries on from (carriedOn()), and `call` this one.
+// carries on from (carriedOn()), and `call` this one. On a call in HQ it says when to use which of the notes page's tools
+//, and that the board's scribbles are for the agent to judge.
 function prompt(lang: BoardLanguage, agent: string, req?: Req, restarted = 0, phone = false, carried: number[] = [], call = restarted) {
   const head = `${instructions(lang, agent, phone)}
 ## You
@@ -321,6 +320,7 @@ function instructions(lang: BoardLanguage, agent: string, phone: boolean) {
   // (and the pictures sentence: the voice line shows the agent what the board shares on HQ's call screen. A phone call
   // has no screen.)
   // a time told on the call goes on the promise, which its job carries, or the work under way it names (askwindow.ts).
+  // A job queued on a call in HQ carries its promise on the call's notes page (ledger.ts promiseOnPage).
   // The board's ask gets a time as it's queued, else it waits behind every window: the board's own, or the window of
   // the deliverable it serves (its thread's, or one that needs it); with neither, the agent judges a time itself (noted
   // with promise) or leaves it untimed, and never asks the board by when.
@@ -371,7 +371,7 @@ You manage the company's work on the call as you do off it, with the manage tool
 deliverables, windows, waits, the inbox, meetings, the desk phone's cards): when the board decides it, do it then and there
 and say what you did, never leave it to your follow-up.
 Hand work to a colleague with the job tool: a short
-title and the full brief, in their terms (it's all they get). Before queueing, use estimate to inspect past jobs' scopes
+title and the full brief, in their terms (it's all they get).${phone ? '' : " It goes on the call's notes page as a promise the job carries, so the board sees what reaches the team: a promise you noted already, give as its item."} Before queueing, use estimate to inspect past jobs' scopes
 and clean actual times. You know this task's context: judge its size between comparable jobs and give job your size,
 refs and why. With no comparable scope, give your reason and an empty refs list. ${DEFAULT_ESTIMATE_SCALE}
 That estimate is saved once at queue
@@ -424,6 +424,14 @@ write a brief for the board's own Claude Code; that's for quick fixes the board 
 The board's words reach you through speech recognition, which can turn background noise or other people talking
 into words: if what you hear seems garbled, unrelated or not addressed to you, say you didn't catch that.
 ${phone ? '' : `The board can also show you pictures on screen during the call: they come with its words, or on their own with a short note.
+The call's notes page is yours to work as the board does, and the board can undo anything you do there: each change it asks
+for goes on it with scrap, as a plain note (no picture) unless a crop of the board's note or another screen shows what it's
+about, never a crop of the page itself; mark_page rings, points at or highlights what you mean; change_page fixes a note of
+yours, moves or deletes what's there (read_page first for anything you didn't just make).
+The board scribbles on its screen to show you things ("move this here"): each scribble comes with its turn as a note, its
+picture the page around the ink. It's for you: nothing of it goes on the page by itself. From what the board says, make a
+scrap of what's worth keeping (from: 'note 3') and let the rest be: not everything has to become a scrap. Its ink goes
+from the board's screen once your turn is done, so it can circle afresh.
 `}${agent === ceo() && unstaffed() ? `The company has no team yet besides you. Hand out no work on this call: after it, your follow-up hires the
 team first and gives the work to the new people (company/playbooks/founding.md). Tell the board that's what happens next.
 ` : ''}

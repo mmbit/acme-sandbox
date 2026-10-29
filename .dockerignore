@@ -15,8 +15,8 @@
 # HQ's sign letters, which a company's print pages draw with
 !platform/hq/renderers/brownstone/iso.js
 !platform/hq/util.js
-# where a Notebook page's next scrap goes, one rule with the book's (platform/coordinator/src/notebookscraps.ts).
-!platform/hq/shell/ink/bookgroupbox.js
+# the book's shapes and highlighter, which a call's agent draws on its page with (platform/coordinator/src/ink/callpage.ts)
+!platform/hq/shell/ink/bookinkmath.js
 # the looks HQ ships, which the coordinator answers renderers/looks.json with
 !platform/hq/looks.mjs
 # and HQ's extra files, which it answers too
@@ -84,6 +84,20 @@
 !platform/hq/shell/ink/booksearchwords.js
 # an agent's ink, which an answer typed onto the book's page is written in (platform/coordinator/src/ink/booktyped.ts).
 !platform/hq/shell/ink/agentink.js
+# where a notebook's new things land: the stack, a group's box and the landing page, which HQ's book and its play share
+# (notebookstack.js)
+!platform/hq/shell/ink/notebookstack.js
+# the book's layout, the papers and controls an answer is placed for (platform/coordinator/src/ink/answerspot.ts).
+!platform/hq/shell/ink/booklayout.js
+# the zooms a page is kept at, which the store checks (platform/coordinator/src/notebook.ts zoomPage.)
+!platform/hq/shell/ink/bookrow.js
+# a note group's parts as one (joined, shifted, a lasso's picks, typed boxes), which the store and its play share
+# (notebookparts.js)
+!platform/hq/shell/ink/notebookparts.js
+# an answer's drawing as the book draws it, which the book's page picture draws with, and the pieces a long page goes
+# on a call in, which the call's sketch tool cuts it into (platform/coordinator/src/ink/bookrender.ts, bookreads.ts.
+!platform/hq/shell/ink/bookanswerart.js
+!platform/hq/shell/ink/booksharefiles.js
 !kits
 **/node_modules
 **/*.test.ts

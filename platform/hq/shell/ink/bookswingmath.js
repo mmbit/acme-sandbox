@@ -58,9 +58,12 @@ export function step({ a, w }, dt, mode, target = 0, p = SWING) {
   return { a, w, hit };
 }
 const spring = ({ k, damp }, dx, w) => k * dx - 2 * Math.sqrt(k) * damp * w;
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
 // Lying still on the desk: so near flat and so slow that it's landed (the fall's end is this held a few frames)
 export const resting = ({ a, w }) => a < 0.002 && Math.abs(w) < 0.05;
+// How long it lies still before it has landed (s)
+export const LANDED = 0.06;
 // Flat enough under a held finger to count as landed (the hold before a resize starts counting from here)
 export const flat = ({ a, w }) => a < 0.003 && Math.abs(w) < 0.2;
 
@@ -99,14 +102,40 @@ export function letGo(a, v) {
 // How hard a landing at speed s (rad/s) lands, 0 to 1: the nudge's depth and the thud's force
 export const force = s => Math.min(1, s / 6);
 
-// The page under the book dissolving (blurred and faded) as the board lowers, and back in, sharp, once it's laid out in
-// its new room: 0 clear to 1 gone. Laid out for the open book, it comes back as the board settles; for the shut one, as
-// it rises. Narrow (the book on top of the page), it never dissolves.
+// A tap's nudge off upright (rad/s): gravity alone would take its time to tip it
+export const NUDGE = -1.4;
+
+// The page under the book dissolving (blurred and faded) as the board swings away from where the page is laid out for,
+// and back in, sharp, once it's laid out in its new room: 0 clear to 1 gone. Laid out for the shut book, it's gone by
+// the time the board has come 90% of the way down; for the open one, 90% of the way up, the same both ways. Narrow (the
+// book on top of the page), it never dissolves.
 export function dissolveAt(a, laidOpen) {
-  let t = clamp((1 - a / UPRIGHT) / 0.9, 0, 1);
-  t = t * t * (3 - 2 * t);
-  return laidOpen ? 1 - t : t;
+  const t = clamp((laidOpen ? a / UPRIGHT : 1 - a / UPRIGHT) / 0.9, 0, 1);
+  return t * t * (3 - 2 * t);
 }
+// The dissolve s seconds into a tapped open (the board falling from upright under its nudge), and when that open lands
+// (s: lying still, as bookswing.js's landing counts it): a tapped close's pace too, the spring's swing up being quicker
+// than the fall, so HQ's page fades and blurs the same way, stays gone as long and comes back as late, whichever way
+// the book goes (bookswing.js). (the board, 28 Oct and its call 160)
+const FADE_FRAME = 1 / 60;
+// The fall played frame by frame: the dissolve at each frame (fade), and the second it lands (lands)
+function openingFade() {
+  const fade = [0];
+  let b = { a: UPRIGHT, w: NUDGE },
+    still = 0;
+  while (still <= LANDED) {
+    b = step(b, FADE_FRAME, 'fall');
+    still = resting(b) ? still + FADE_FRAME : 0;
+    fade.push(dissolveAt(b.a, false));
+  }
+  return { fade, lands: fade.length * FADE_FRAME };
+}
+const OPENING = openingFade();
+export const fadeAt = s => OPENING.fade[Math.min(OPENING.fade.length - 1, Math.max(0, Math.floor(s / FADE_FRAME)))];
+export const LANDS = OPENING.lands;
+// Landed or shut, HQ's page stays gone while it lays itself out in its new room: two frames, then whatever its own
+// transitions and animations do about it, at most this long (ms)
+export const SETTLE_MAX = 450;
 // The dissolve a frame later: on at once as the board lowers, easing back (over tau s, 70 ms unless said) as the page
 // comes back
 export function dissolveStep(now, target, dt, tau = 0.07) {
@@ -121,5 +150,3 @@ export const CATCH_UP = 160;
 export const easeInOut = t => (t < 0.5 ? 4 * t ** 3 : 1 - (-2 * t + 2) ** 3 / 2);
 // How long the open book stays put under a held finger after it lands before a drag resizes it (ms): its weight
 export const HOLD = 200;
-
-const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));

@@ -7,6 +7,7 @@
 // bookcall.mjs).
 import assert from 'node:assert/strict';
 import { savedScrap } from './bookscrap.mjs';
+import { pressAlong, ui } from './bookkit.mjs';
 
 const RING = { x: 248, y: 305, rx: 70, ry: 50 },
   ON_RING = [RING.x + RING.rx, RING.y];
@@ -17,7 +18,7 @@ const LIFT_MS = 900;
 // first lift took off. A lift still there this long after is one that never lands.)
 const LANDS_MS = 5000;
 
-// c: book-check's { browser, hqIn, base, MINI, settled, penOn, ring, inkAt, notes, org, posts, shot, noErrorsIn }, and
+// c: book-check's { browser, hqIn, base, MINI, settled, ring, inkAt, notes, org, posts, shot, noErrorsIn }, and
 // look ('&renderer=wire' for Wire)
 export async function inkStory(c) {
   const before = keptNotes(c),
@@ -145,7 +146,7 @@ async function saved(c, { page }) {
   await show(page, 'computer');
   await nothingDrawn(page, 'the computer open, notes kept from before on it');
   const from = c.posts.length;
-  await c.penOn(page)(c.ring(RING.x, RING.y, RING.rx, RING.ry));
+  await pressAlong(page, c.ring(RING.x, RING.y, RING.rx, RING.ry));
   assert.ok((await c.inkAt(page, ...ON_RING)) > 0, 'the ring shows while it’s made');
   await c.shot('book-ink-making', page);
   // (its post-it saved: a scrap in the Notebook, the page clean at once.)
@@ -158,8 +159,8 @@ async function saved(c, { page }) {
 // A ring's post-it cancelled: gone at once, and nothing goes into the book
 async function cancelled(c, { page }) {
   const posted = c.posts.length;
-  await c.penOn(page)(c.ring(RING.x, RING.y, RING.rx, RING.ry));
-  const sheet = page.locator('review-mode >> css=.sheet');
+  await pressAlong(page, c.ring(RING.x, RING.y, RING.rx, RING.ry));
+  const sheet = page.locator(ui('.sheet'));
   await sheet.waitFor({ state: 'visible', timeout: 15_000 });
   await sheet.locator('[data-cancel]').dispatchEvent('click');
   await nothingDrawn(page, 'cancelled', 0);

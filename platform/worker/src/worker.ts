@@ -42,13 +42,15 @@ import { applyList, carryOut, creditsNote, off, type Listed, type SeatAction } f
 import { SEAT_NAME } from './seatid.ts';
 import { moveSeats } from './seatmoves.ts';
 import { closing, type OwnedProject } from './closing.ts';
-import { bringUpToDate, profilePaths, rebuildProfile, repairFrom, restoreProfile, splitProfile, startRepair, threadBriefing, type InThread, type Pull } from './threads.ts';
+import { bringUpToDate, ownCommit, profilePaths, rebuildProfile, repairFrom, restoreProfile, splitProfile, startRepair, threadBriefing, type InThread, type Pull } from './threads.ts';
 import { DiskShares } from './disk.ts';
 import { warnDisk } from './diskwarnings.ts';
 import { Reload } from './reload.ts';
 import { cliProcesses, processesFor, overShare, tally, type JobUse, type ProcessSnapshot } from './shares.ts';
 import { enforceShares } from './sharepass.ts';
-import { memoryWatch, type MemoryCause, type MemoryVerdict } from './lowmemory.ts';
+import { type MemoryVerdict } from './lowmemory.ts';
+import { overloadWatch, type Pressure } from './overload.ts';
+import { callsAsTheyCome } from './smallturns.ts';
 import { fewAtOnce } from './turns.ts';
 import { handBack, noteHandBacks } from './handback.ts';
 import { hqReports, ResponseError } from './reports.ts';
@@ -187,7 +189,6 @@ type SlotJob = { job: Job; me: Me; uid: number; gid: number; launch?: Launched }
 // The room as the watch last saw it: since when it's been short, and the work HQ counts as waiting only for memory
 // and the memory verdict last sent (lowmemory.ts)
 type RoomWatch = { shortSince?: number; waiting: number; reportedAt: number; answeredAt: number; reporting: boolean; memory?: MemoryVerdict; meetingRoom?: string };
-type Memory = { verdict: MemoryVerdict; cause?: MemoryCause };
 
 async function watchShares() {
   const watch: RoomWatch = { waiting: 0, reportedAt: 0, answeredAt: 0, reporting: false };
@@ -195,7 +196,7 @@ async function watchShares() {
   const pending = new Set<string>();   // (the session groups asked for: overShare)
   const diskShares = new DiskShares(WORK);
   const hotSince = new Map<number, number>();   // each job (uid) past the cores, since when
-  const memoryOf = memoryWatch(LOW_MEMORY_MB, MEMORY_BACK_MB);
+  const pressureOf = overloadWatch(LOW_MEMORY_MB, MEMORY_BACK_MB);
   while (!shuttingDown) {
     await sleep(SHARES_MS);
     try {
@@ -211,8 +212,9 @@ async function watchShares() {
       const previous = before; before = procs; at = t;
       const short = !room(false);
       watch.shortSince = short ? watch.shortSince ?? t : undefined;
-      const memory = memoryOf(freeMb(false), new Map(jobs.map(j => [j.job.id, uses.get(j.uid)?.memoryMb ?? 0])));
-      if (!watch.reporting && (t - watch.reportedAt >= REPORT_MS || memory.verdict !== watch.memory)) void reportRoom(watch, jobs, uses, short, t, memory);
+      const pressure = pressureOf({ freeMb: freeMb(false), uses: new Map(jobs.map(j => [j.job.id, uses.get(j.uid)?.memoryMb ?? 0])),
+        room: room() });
+      if (!watch.reporting && (t - watch.reportedAt >= REPORT_MS || pressure.verdict !== watch.memory)) void reportRoom(watch, jobs, uses, short, t, pressure);
       const starved = watch.shortSince !== undefined && t - watch.shortSince >= STARVED_MS && t - watch.answeredAt <= ROOM_FRESH_MS && watch.waiting > 0;
       const cli = new Set(jobs.flatMap(j => j.launch ? [...cliProcesses(procs, j.launch)] : []));
       for (const uid of hotSince.keys()) if (!((uses.get(uid)?.cores ?? 0) > JOB_CORES)) hotSince.delete(uid);
@@ -271,16 +273,16 @@ function sampleCapacity(sampled: SlotJob[], uses: Map<number, JobUse>, intervalM
 
 // HQ hears the room and each job's share, and answers how much ready work only memory keeps from starting (room.ts):
 // what the claims of the engines with a free slot and a seat to start on would take (memoryClaims).
-async function reportRoom(watch: RoomWatch, jobs: SlotJob[], uses: Map<number, JobUse>, short: boolean, t: number, memory: Memory) {
+async function reportRoom(watch: RoomWatch, jobs: SlotJob[], uses: Map<number, JobUse>, short: boolean, t: number, pressure: Pressure) {
   watch.reportedAt = t;
   watch.reporting = true;
-  watch.memory = memory.verdict;   // (a failed report's verdict goes with the next minute's)
+  watch.memory = pressure.verdict;   // (a failed report's verdict goes with the next minute's)
   const shares = jobs.flatMap(j => {
     const use = uses.get(j.uid);
     return use ? [{ job: j.job.id, mb: Math.round(use.memoryMb), cores: use.cores }] : [];
   });
   try {
-    const answer = await hq.api('room', { short, since: watch.shortSince, free: Math.round(freeMb(false)), jobs: shares, claims: memoryClaims(), capacity: plannerCapacity(shares, t), memory, gathering: gatheringRoom() }, AbortSignal.timeout(ROOM_REQUEST_MS));
+    const answer = await hq.api('room', { short, since: watch.shortSince, free: Math.round(freeMb(false)), jobs: shares, claims: memoryClaims(), capacity: plannerCapacity(shares, t), memory: pressure, gathering: gatheringRoom() }, AbortSignal.timeout(ROOM_REQUEST_MS));
     const meeting = answer?.meeting;
     const meetingRoom = meeting ? `Meeting room: ${meeting.state}, ${meeting.held}/${meeting.seats} held, ready ${meeting.ready}` : '';
     if (meetingRoom !== watch.meetingRoom) { if (meetingRoom) log(meetingRoom); watch.meetingRoom = meetingRoom; }
@@ -477,6 +479,12 @@ async function mainMergeLoop() {
 
 // Removed as root: GNU rm never follows a symlink inside the folder, and every folder above p is root's.
 const remove = (p: string) => { if (lstatSync(p, { throwIfNoEntry: false })) execFileSync('rm', ['-rf', '--', p]); };
+// A job's tests checkout once its checks have ended. Their verdicts are in by then, so a removal that fails (a process
+// still writing in it: the run's end kills the slot's, runJob) never fails the job: the folder goes with the job's other
+// folders once it has ended (sweepEnded).
+const removeTested = (job: Job) => {
+  try { remove(`${TESTED}/${job.id}`); } catch (err) { log(`job #${job.id}: its tests checkout is left for the ended jobs' sweep:`, err); }
+};
 
 // --- Seats and logins -------------------------------------------------------------------------
 
@@ -596,7 +604,7 @@ const GIST_POLL_MS = 5_000;
 async function gistLoop() {
   while (!shuttingDown) {
     await sleep(GIST_POLL_MS);
-    try { await smallCall('gists', ['lines']); }
+    try { const call = await smallCall('gists', ['lines']); if (call) await call.answered; }
     catch (err) { log('meeting bubbles:', err); }
   }
 }
@@ -608,39 +616,46 @@ const NAMES_POLL_MS = 15_000, NAMES_PER_TURN = 3;
 async function namesLoop() {
   while (!shuttingDown) {
     await sleep(NAMES_POLL_MS);
-    try { for (let i = 0; i < NAMES_PER_TURN; i++) if (!await smallCall('names', ['names'])) break; }
+    try {
+      for (let i = 0; i < NAMES_PER_TURN; i++) {
+        const call = await smallCall('names', ['names']);
+        if (!call) break;
+        await call.answered;
+      }
+    }
     catch (err) { log('board names:', err); }
   }
 }
 
-// The board's handwriting read into type (the coordinator's handwriting.ts): the board waits for the words as it writes,
-// so the loop asks often.
-const READ_POLL_MS = 2_000;
-async function readLoop() {
-  while (!shuttingDown) {
-    await sleep(READ_POLL_MS);
-    try { await smallCall('reads', ['reading']); }
-    catch (err) { log('handwriting:', err); }
-  }
+// The board's handwriting read into type (the coordinator's handwriting.ts) and the book's judge (bookjudge.ts): the
+// board waits for the words as it writes, and for the answer a verdict starts, so the loop asks often and makes its calls
+// as they come, READS_AT_ONCE at most (smallturns.ts).
+const READ_POLL_MS = 1_000, READS_AT_ONCE = 3;
+function readLoop() {
+  return callsAsTheyCome({ claim: () => smallCall('reads', ['reading']), atOnce: READS_AT_ONCE, idleMs: READ_POLL_MS,
+    going: () => !shuttingDown, sleep, failed: err => log('handwriting:', err) });
 }
 
 // One call of the coordinator's small model (smallmodel.ts), claimed from HQ's `${kind}/claim` and answered to
 // `${kind}/answer` with the claim's own `keys`: on the healthiest ready Claude seat, one short call with no tools (the
 // prompt holds outside input) and the prompt on stdin: words, or a message's content (a picture with them) as the CLI's
 // stream-json. Its spend counts on the seat, and its rate-limit reading updates the seat's windows as a run's does.
-// Whether there was a call to make.
+// The call claimed, going until it's answered; false when there was none to make.
 async function smallCall(kind: 'gists' | 'names' | 'reads', keys: string[]) {
   wakeSeats();
   const seat = healthiest(SEATS.filter(s => cliOf(s) === 'claude' && s.signIn === 'login' && !off(s)), 'claude');
   if (!seat) return false;
   const next = await hq.api(`${kind}/claim`);
   if (!next?.prompt && !next?.content) return false;   // (nothing due: an empty claim)
+  return { answered: smallCallMade(kind, keys, seat, next) };
+}
+async function smallCallMade(kind: string, keys: string[], seat: Seat, next: Awaited<ReturnType<typeof hq.api>>) {
   const claimed = Object.fromEntries(keys.map(k => [k, next[k]]));
   // (the token read once there's a call to make: reads asks every few seconds.)
   const token = readAs(keeper, `${seatDir(seat.id)}/token`)?.trim();
   if (!token) {
     await hq.api(`${kind}/answer`, { ...claimed, error: `${seat.id} has no sign-in to call with` });
-    return true;
+    return;
   }
   // (thinking off: the CLI gives Haiku a 31,999-token thinking budget by default, which can outrun oneLine's 90 s
   // kill.)
@@ -657,7 +672,6 @@ async function smallCall(kind: 'gists' | 'names' | 'reads', keys: string[]) {
   const result = events.find(e => e.type === 'result');
   const error = result ? undefined : redact(unkey(plain(r.err), token)).trim().slice(-300) || `exit ${r.code}`;
   await hq.api(`${kind}/answer`, { ...claimed, ...(result ? { result } : { error }) });
-  return true;
 }
 
 const seatNote = (s: Seat) => (s.util !== undefined ? `${pct(s)} of the 5-hour window`
@@ -1308,11 +1322,12 @@ ${closing(job)}`;
 }
 
 // Quick replies read their own context, without the work job's housekeeping or shared CLI memory.
+// (no charter or profile read first: on 29 Oct Lyra's were a turn and some 7,000 tokens before each answer.)
 function quickBriefing(job: Job) {
   const a = job.agentInfo, c = company(job);
   return `You are ${a?.name ?? job.agent}, ${a?.role ?? 'agent'} at ${c.name}.
 This is one immediate reply to the board: the brief below says where it appears and how to give it.
-Read company/CHARTER.md and company/people/${job.agent}.md first. Use tools only when the answer needs them.
+Use tools only when the answer needs them: read no charter or profile for it unless the answer is in one.
 Do not run gates or update your profile. If you cannot answer, say why. Answer now.
 Current time: ${new Date().toISOString()}.${boardLanguage(c)}${boardClock(c, true)}
 
@@ -1435,7 +1450,7 @@ function heartbeatAnswered(job: Job, slot: string, reply: any, first: boolean) {
 function parkRun(seat: Seat, job: Job, me: Me) {
   try { keepSignIn(me, seat, jobDirs(WORK, job.id).home, job.id); }
   catch (err) { log(`job #${job.id}: ${cliOf(seat)} sign-in:`, err); }
-  remove(`${TESTED}/${job.id}`);
+  removeTested(job);
   handed.delete(job.id);
   handedFiles.delete(job.id);
   refreshes.end(runRefreshes(job.id));
@@ -2193,14 +2208,16 @@ async function runJobIn(seat: Seat, job: Job, slot: string, me: Me, spent: Spent
     try { await pushRun(g, dir, branch, job, to); }
     catch (err) { return { status: 'failed', session, branch, profile: to.profile, result: failure(result, `the push failed: ${String((err as Error).message ?? err)}`) }; }
     // (photo and document fields too: outcome.ts parkedRequest.)
-    if (parked !== undefined) return { status: 'parked', session, branch, profile: to.profile, request: parkedRequest(parked) };
-    if (up !== undefined) return { status: 'up', session, branch, profile: to.profile, up: upNote(up) };
+    // (its own pushed commit, kept for a later run that adds none: threads.ts ownCommit)
+    const sha = to.pushed && ownCommit(g, dir, branch, BASE, to.pushed.sha);
+    if (parked !== undefined) return { status: 'parked', session, branch, sha, profile: to.profile, request: parkedRequest(parked) };
+    if (up !== undefined) return { status: 'up', session, branch, sha, profile: to.profile, up: upNote(up) };
     // how it failed, in the CLI's own signals and never its words, for the server's log: a report may hold a
     // customer's details, which stay out of logs (an intercom turn failing on every resume, 2026-10-02)
     log(`job #${job.id}: failed, exit ${code}${how.error ? `, ${how.error}` : ''}${how.status ? `, HTTP ${how.status}` : ''}${how.events ? `, after ${how.events} events` : ', before any event'}${job.session ? ', resumed' : ''}`
       // one that died starting up (no reply yet): the CLI's own first error line, which holds no conversation
       + (how.events <= 1 ? `: ${preview(redact(plain(errors)).trim().split('\n')[0] ?? '', 200)}` : ''));
-    return { status: 'failed', session, branch, profile: to.profile, result: failure(result, `${how.cli} ${errors}`) };
+    return { status: 'failed', session, branch, sha, profile: to.profile, result: failure(result, `${how.cli} ${errors}`) };
   }
   return await land({ g, dir, branch, job, me, session, summary: last, result, spent, launches, failure, keep: checks => { if (!ownershipSignal()?.aborted) keepRecord(RUNS, { ...recordNow(), checks }); } });
 }
@@ -2245,7 +2262,8 @@ async function stopWork(g: ReturnType<typeof flow.forAgent>, dir: string, branch
   g.settle(dir, cloneIdentity(job));
   try { await pushRun(g, dir, branch, job, to); }
   catch (err) { return { status: 'failed', session, branch, profile: to.profile, result: failed(0)(result, `the push failed: ${String((err as Error).message ?? err)}`) }; }
-  return { status: 'stopped', session, branch, profile: to.profile, result: whole(redact(result), 100_000) };
+  // (its own pushed commit: threads.ts ownCommit)
+  return { status: 'stopped', session, branch, sha: to.pushed && ownCommit(g, dir, branch, BASE, to.pushed.sha), profile: to.profile, result: whole(redact(result), 100_000) };
 }
 
 // What went wrong, in the CLI's words, for a failed job's report (after the model's own last message).
@@ -2275,9 +2293,11 @@ type Landing = { summary: string; result: string };
 async function land(o: Landing & { g: ReturnType<typeof flow.forAgent>; dir: string; branch: string; job: Job; me: Me; session?: string; spent: Spent;
   launches: Launched[]; keep: (checks: Checks) => void; failure: (report: string, why: string) => string; again?: boolean }): Promise<Record<string, unknown>> {
   const { g, dir, branch, job, session, summary, result } = o, to: Pushed = {};
+  // (its own pushed commit, which a later landing run's push of the same head doesn't report: threads.ts ownCommit)
+  const own = () => to.pushed && ownCommit(g, dir, branch, BASE, to.pushed.sha);
   const snagged = (why: string) => {
     log(`job #${job.id}: ${why}, so it goes back in the queue to land`);
-    return { status: 'snagged', session, branch, profile: to.profile, result: o.failure(result, why), landing: { summary, result } };
+    return { status: 'snagged', session, branch, sha: own(), profile: to.profile, result: o.failure(result, why), landing: { summary, result } };
   };
   try { await pushRun(g, dir, branch, job, to, true); }
   catch (err) {
@@ -2289,7 +2309,7 @@ async function land(o: Landing & { g: ReturnType<typeof flow.forAgent>; dir: str
   // A thread's task opens the thread's pull request, under the thread's name.
   let thread: { pull?: Pull } | undefined;
   try { if (pushed && job.inThread) thread = await hq.report('thread-push', { job: job.id }); }
-  catch (err) { return { status: 'failed', session, branch, profile, result: o.failure(result, `the deliverable's pull request couldn't be named: ${String((err as Error).message ?? err)}`) }; }
+  catch (err) { return { status: 'failed', session, branch, sha: own(), profile, result: o.failure(result, `the deliverable's pull request couldn't be named: ${String((err as Error).message ?? err)}`) }; }
   const pr = pushed ? await openPullRequest(branch, await jobPullRequest(job, summary, thread?.pull)) : undefined;
   if (pr === 'unreached') return snagged("GitHub couldn't be reached to open its pull request");
   // Refused, the work stays on its branch, and the run fails with GitHub's reason: its sha makes the branch its thread's
@@ -2526,7 +2546,7 @@ async function pushChecks(job: Job, me: Me, dir: string, at: TestsCheckout,
     watch: (pid, check) => checking.set(pid, check), unwatch: pid => checking.delete(pid),
     said: (name, words) => log(`job #${job.id}: ${CHECKS[name]} ${words}`), signal: ownershipSignal(), reachable: hqAnswers,
     roomy: roomBack }));
-  remove(`${TESTED}/${job.id}`);
+  removeTested(job);
   return body;
 }
 

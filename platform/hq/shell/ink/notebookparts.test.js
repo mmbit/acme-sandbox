@@ -1,7 +1,8 @@
-// node --test src/notebookparts.test.ts   (a group's elements as one: pure, no server)
+// node --test platform/hq/shell/ink/notebookparts.test.js   (a group's elements as one: pure)
+// (a group's box is checked in notebookstack.test.js)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { boxOf, emptyGroup, hasAny, joined, picks, shifted } from './notebookparts.ts';
+import { emptyGroup, hasAny, joined, picks, shifted } from './notebookparts.js';
 
 const stroke = {
   color: '#000',
@@ -13,12 +14,6 @@ const stroke = {
 };
 const text = { x: 100, y: 0, w: 80, text: 'two\nlines' };
 const picture = { file: '1-g-00000000.png', x: -20, y: 30, w: 40, h: 10, tilt: 0 };
-
-test("a group's box holds its strokes' width, its words' lines and its pictures", () => {
-  assert.equal(boxOf(emptyGroup), null);
-  assert.deepEqual(boxOf({ ...emptyGroup, ink: [stroke] }), { x: 8, y: 18, w: 44, h: 44 });
-  assert.deepEqual(boxOf({ ink: [stroke], texts: [text], pictures: [picture] }), { x: -20, y: 0, w: 200, h: 62 });
-});
 
 test('shifted moves every element, its pressure and time kept; joined keeps both in order', () => {
   const moved = shifted({ ink: [stroke], texts: [text], pictures: [picture] }, 5, -5);

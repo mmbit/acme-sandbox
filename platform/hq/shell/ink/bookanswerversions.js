@@ -10,14 +10,15 @@ import { esc } from '../../util.js';
 import { inkOf } from './agentink.js';
 import { SQUIGGLE, inkBox, pathsOf } from './bookanswerart.js';
 import { frameUnder, framesLaid } from './bookversionframes.js';
+import { clearOf } from './bookui.js';
 
-// Where the versions start on their page, and the paper they wrap within at most. Clear of the tools
-// floating over the paper, so a version is never under them and a ring round one starts on the page: the strip at its
-// left (40 px in, 48 wide: bookstrip.css), the controls at its right edge (12 px in, 48 wide: bookui.js). Two frames
+// Where the versions start on their page, clear of the controls floating at its right (toolsBeside), the cover's
+// edge's grip on the paper's left (book.css .bk-edge::after), the pen's reach round the frames
+// (bookanswerversions.css), and the paper they wrap within at most. Clear of the tools and the edge, a version is never under them and a ring round one starts on the page. Two frames
 // across still fit the book beside HQ on an iPad mini (470 px).
 const TOP = 72,
-  LEFT = 96,
-  RIGHT = 72,
+  EDGE_GRIP = 10,
+  PEN_REACH = 28,
   WIDEST = 960,
   CAPTION = 96; // (under a frame: its name, and the strip to write a reply on)
 const ORDINALS = ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh', 'eighth', 'ninth', 'tenth'];
@@ -40,9 +41,10 @@ export function drawVersions(layer, { tried }, parts) {
     by = versions[0] ?? tried.waiting ?? { by: tried.owner ?? '', name: tried.owner_name ?? 'An agent' };
   const paper = paperOf(layer, () => drawVersions(layer, { tried }, parts));
   if (paper === null) return;
-  const width = Math.min(WIDEST, paper) - LEFT - RIGHT,
+  const { left, right } = toolsBeside(layer, paper),
+    width = Math.min(WIDEST, paper) - left - right,
     { frames, height } = framesLaid(1 + versions.length + empty, width, { caption: CAPTION });
-  const key = JSON.stringify([tried, width, parts.faced(by.by)]);
+  const key = JSON.stringify([tried, left, width, parts.faced(by.by)]);
   if (layer.drawn.get('versions')?.key === key) return;
   const old = layer.drawn.get('versions')?.el;
   // (never under the board's pen: drawn again once what it's writing has gone.)
@@ -50,7 +52,7 @@ export function drawVersions(layer, { tried }, parts) {
     return void (layer.later = () => drawVersions(layer, { tried }, parts));
   const el = document.createElement('section');
   el.className = 'bk-versions';
-  el.style.cssText = `left:${LEFT}px;top:${TOP}px;width:${width}px;--ink:${inkOf(by.by)}`;
+  el.style.cssText = `left:${left}px;top:${TOP}px;width:${width}px;--ink:${inkOf(by.by)}`;
   el.setAttribute('aria-label', `${by.name} tries: ${tried.words}`);
   const cells = [
     snipHtml(tried, frames[0]),
@@ -63,28 +65,46 @@ export function drawVersions(layer, { tried }, parts) {
   const mine = replies.filter(r => versions.some(v => v.id === r.answers));
   el.innerHTML = `<div class="bk-versions-frames" style="height:${height}px">${cells.join(
     '',
-  )}<svg class="bk-reply-ink" aria-hidden="true"><g class="bk-reply-sent" transform="translate(${-LEFT} ${-TOP})">${pathsOf(
+  )}<svg class="bk-reply-ink" aria-hidden="true"><g class="bk-reply-sent" transform="translate(${-left} ${-TOP})">${pathsOf(
     mine.flatMap(r => r.ink ?? []),
   )}</g><g class="bk-reply-wet"></g></svg></div>`;
   if (old) markNew(el, old);
-  wirePen(el.querySelector('.bk-versions-frames'), layer, versions, frames, parts);
+  wirePen(el.querySelector('.bk-versions-frames'), layer, { versions, frames, left }, parts);
   old?.remove();
   layer.slot.append(el);
   layer.drawn.set('versions', { key, el });
 }
 
 // The paper's width across at 100%, null before the book has sized it; again() lays the frames again whenever it sizes
-// it (bookpages.js's bk:paper on the world, as the book opens and when the screen turns).
+// it (bookpages.js's bk:paper on the world, as the book opens and when the screen turns) and whenever the controls'
+// width beside it settles (hearControlsWidth).
 export function paperOf(layer, again) {
   layer.again = again;
   const world = layer.slot.closest('.bk-world');
   if (world && !layer.hearsPaper) {
     layer.hearsPaper = true;
-    const heard = () => (layer.slot.isConnected ? layer.again() : world.removeEventListener('bk:paper', heard));
-    world.addEventListener('bk:paper', heard);
+    hearWhileShown(layer.slot, world, 'bk:paper', () => layer.again());
   }
+  hearControlsWidth(layer);
   return paperWidth(layer);
 }
+// The layer laid again (its latest again()) as the controls' width settles (bookui.js bk:controls-width), heard once
+// the page is in the book
+function hearControlsWidth(layer) {
+  const book = layer.slot.closest('#book');
+  if (!book || layer.hearsControlsWidth) return;
+  layer.hearsControlsWidth = true;
+  hearWhileShown(layer.slot, book, 'bk:controls-width', () => layer.again());
+}
+// heard() on each type event on target while el is on the page: the first after it's gone stops the listening
+function hearWhileShown(el, target, type, heard) {
+  const listener = () => (el.isConnected ? heard() : target.removeEventListener(type, listener));
+  target.addEventListener(type, listener);
+}
+// Where the frames start and end clear of the tools, as this screen shows the page at 100%: right of the cover's edge
+// with the pen's reach round them, and left of the controls with the tool strip beside them (bookui.js clearOf). The
+// tool in use, named beside the strip, steps aside on this page (bookanswerversions.css).
+const toolsBeside = (layer, paper) => ({ left: EDGE_GRIP + PEN_REACH, right: paper - clearOf(layer.slot, paper) });
 // One that wasn't there a moment ago lands in its empty frame; one picked a moment ago gets its stamp
 function markNew(el, old) {
   const was = new Map(
@@ -98,11 +118,11 @@ function markNew(el, old) {
 }
 // The board's pen on the frames: what it writes goes to the version it's on, with the box that version's picture
 // shows in (each frame as the board sees it: its picture, and the caption and strip under it); a read that came while
-// it wrote is drawn once that's gone.
-function wirePen(frameEl, layer, versions, frames, parts) {
+// it wrote is drawn once that's gone. (left: where the frames start on the page)
+function wirePen(frameEl, layer, { versions, frames, left }, parts) {
   const under = versions.map((v, i) => ({ v, box: frames[i + 1] }));
   parts.wirePen(frameEl, {
-    origin: () => ({ x: LEFT, y: TOP }),
+    origin: () => ({ x: left, y: TOP }),
     done: () => {
       const later = layer.later;
       layer.later = null;
@@ -112,13 +132,13 @@ function wirePen(frameEl, layer, versions, frames, parts) {
       const drawn = inkBox(ink),
         i = drawn
           ? frameUnder(
-              { x0: drawn.x0 - LEFT, y0: drawn.y0 - TOP, x1: drawn.x1 - LEFT, y1: drawn.y1 - TOP },
+              { x0: drawn.x0 - left, y0: drawn.y0 - TOP, x1: drawn.x1 - left, y1: drawn.y1 - TOP },
               under.map(({ box }) => ({ ...box, h: box.h + CAPTION })),
             )
           : -1;
       if (i < 0) return null;
       const { v, box } = under[i];
-      return { answer: v.id, frame: { x: LEFT + box.x, y: TOP + box.y, w: box.w, h: box.h } };
+      return { answer: v.id, frame: { x: left + box.x, y: TOP + box.y, w: box.w, h: box.h } };
     },
   });
 }

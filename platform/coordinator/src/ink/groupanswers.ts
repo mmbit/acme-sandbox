@@ -69,7 +69,7 @@ function triedNoteOf(id: number, listed: Listed) {
     (Note & { tried: number | null }) | undefined;
   if (!n) return null;
   const versions = slipsOf(n.id, listed).filter(s => s.style === 'version');
-  const replies = db
+  const replyNotes = db
     .prepare(`select * from book_notes where answers in (select value from json_each(?)) order by id`)
     .all(JSON.stringify(versions.map(v => v.id))) as Note[];
   const head = {
@@ -82,7 +82,7 @@ function triedNoteOf(id: number, listed: Listed) {
     said: n.said,
     waiting: waitingOf(n),
   };
-  const answered = replies.map(r => ({
+  const replies = replyNotes.map(r => ({
     id: r.id,
     by: r.by,
     answers: r.answers,
@@ -90,7 +90,7 @@ function triedNoteOf(id: number, listed: Listed) {
     words: r.words,
     created: r.created,
   }));
-  return readOf(head, sheetRow(n.sheet, null)?.owner ?? null, versions, answered);
+  return readOf(head, sheetRow(n.sheet, null)?.owner ?? null, versions, replies);
 }
 const triesPage = (group: number) =>
   (db.prepare('select id from book_pages where tries = ? order by id limit 1').get(group) as { id: number } | undefined)

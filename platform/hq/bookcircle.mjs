@@ -16,6 +16,7 @@ import assert from 'node:assert/strict';
 import { playLine } from './bookcall.mjs';
 import { nothingDrawn } from './bookink.mjs';
 import { savedScrap } from './bookscrap.mjs';
+import { pressAlong, ui } from './bookkit.mjs';
 
 const SETTLE_MS = 1500; // (callnotes.js)
 const RINGS = [
@@ -24,9 +25,7 @@ const RINGS = [
 ];
 const HELD = [250, 620]; // (where the pen's held still on a call: below the rings, clear of the call's bubble)
 
-const ui = s => `review-mode >> css=${s}`;
-
-// c: book-check's { hqIn, inLooks, base, MINI, settled, posts, pages, notes, snips, org, penOn, ring, inkAt, shot,
+// c: book-check's { hqIn, inLooks, base, MINI, settled, posts, pages, notes, snips, org, ring, inkAt, shot,
 // noErrorsIn }
 export function circleStories(c) {
   return {
@@ -48,7 +47,7 @@ async function offCallStory(c) {
   try {
     for (const [i, ring] of RINGS.entries()) {
       const from = c.posts.length;
-      await c.penOn(page)(c.ring(ring.x, ring.y, ring.rx, ring.ry));
+      await pressAlong(page, c.ring(ring.x, ring.y, ring.rx, ring.ry));
       const scrap = await savedScrap({ page, posts: c.posts }, from, `ring ${i + 1}`);
       assert.match(scrap.snip ?? '', /^data:image\/jpeg;base64,/, `ring ${i + 1}: in the Notebook with its photo`);
       assert.equal(noted(c).length, notes, `ring ${i + 1}: nothing on a sheet`);
@@ -57,7 +56,10 @@ async function offCallStory(c) {
     // a line just beside where the first ring was: a note of its own, nothing to join (nothing of the first is there)
     const [first] = RINGS,
       from = c.posts.length;
-    await c.penOn(page)(Array.from({ length: 12 }, (_, i) => [first.x + first.rx + 12 + i * 6, first.y + i * 2]));
+    await pressAlong(
+      page,
+      Array.from({ length: 12 }, (_, i) => [first.x + first.rx + 12 + i * 6, first.y + i * 2]),
+    );
     const beside = await savedScrap({ page, posts: c.posts }, from, 'the line beside');
     assert.equal(beside.anchor.ink.length, 1, 'the line alone is its ink');
     assert.ok(!c.posts.slice(from).some(p => p.path === '/api/notebooks/groups/edit'), 'no note changed by it');
@@ -78,7 +80,7 @@ async function ringCarried(c, page, ring) {
   const from = c.posts.length;
   const uploaded = () => c.posts.slice(from).some(p => p.path === '/api/notebooks/pictures'),
     note = () => c.posts.slice(from).some(p => p.path === '/api/book/note');
-  await c.penOn(page)(c.ring(ring.x, ring.y, ring.rx, ring.ry));
+  await pressAlong(page, c.ring(ring.x, ring.y, ring.rx, ring.ry));
   // (a press lifts it once its screenshot is in, before it rests: till then the finger is the page's. Slow on a loaded
   // worker)
   for (let i = 0; i < 40 && !uploaded() && !note(); i++) {
@@ -167,7 +169,7 @@ async function onCallStory(c) {
     });
     for (const [i, ring] of RINGS.entries()) {
       const from = noted(c).length;
-      await c.penOn(page)(c.ring(ring.x, ring.y, ring.rx, ring.ry), { lift: false });
+      await pressAlong(page, c.ring(ring.x, ring.y, ring.rx, ring.ry), { lift: false });
       line.send({ type: 'heard', text: `Ring ${i + 1} here` });
       await page.waitForTimeout(100);
       await page.evaluate(() => window.__lift());
@@ -195,7 +197,7 @@ async function heldStill(c, page, line) {
     false,
     'the pen held still on HQ’s page',
   );
-  await c.penOn(page)([HELD], { lift: false });
+  await pressAlong(page, [HELD], { lift: false });
   await page.waitForSelector(ui('.listen:not([hidden])'), { timeout: 3000 });
   line.send({ type: 'heard', text: 'Hold this one' });
   await page.waitForTimeout(300);
@@ -252,7 +254,7 @@ async function tapStory(c) {
     assert.equal(await page.evaluate(() => window.micsAsked), 0, 'nor to the microphone: a tap is heard by nobody');
     // a ring's line doesn't listen either: its post-it's mic does, once tapped (the board, call 154)
     await page.evaluate(() => document.querySelector('dialog').close());
-    await c.penOn(page)(c.ring(400, 640, 80, 45));
+    await pressAlong(page, c.ring(400, 640, 80, 45));
     await page.locator(ui('.sheet')).waitFor({ state: 'visible', timeout: 15_000 });
     await page.waitForTimeout(1000);
     assert.equal(await page.evaluate(() => window.micsAsked), 0, 'a ring records nothing by itself');
@@ -270,7 +272,7 @@ async function tapStory(c) {
 async function tap(c, page, selector) {
   const box = await page.locator(selector).boundingBox(),
     [x, y] = [box.x + box.width / 2, box.y + box.height / 2];
-  await c.penOn(page)([
+  await pressAlong(page, [
     [x, y],
     [x + 3, y + 2],
     [x + 6, y + 3],
