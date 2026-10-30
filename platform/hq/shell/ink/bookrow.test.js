@@ -1,63 +1,12 @@
 // node --test platform/hq/shell/ink/bookrow.test.js   (the book's page as plain numbers; no DOM)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  GROWN_MAX,
-  ROOM_PX,
-  TILE_PX,
-  ZOOM_MAX,
-  around,
-  clampPan,
-  clampScale,
-  dotsShown,
-  drawScale,
-  leastScale,
-  grownTo,
-  newPageSize,
-  pageAt,
-  placeIn,
-  showsBox,
-  shownBox,
-  spanOf,
-  tileSide,
-  tilesIn,
-  zoomAt,
-} from './bookrow.js';
+import { GROWN_MAX, ROOM_PX, ZOOM_MAX, dotsShown, grownTo, pageAt, placeIn, showsBox, shownBox } from './bookrow.js';
 
 const view = { w: 455, h: 700 };
 const page = { w: 455, h: 1050 };
 
 // (the page grows every way)
-test('every way, the page reaches half a paper past what it holds, so the paper never shows an end', () => {
-  const near = clampPan({ x: -99_999, y: -99_999 }, page, view, 1);
-  assert.deepEqual(near, { x: -view.w / 2, y: -view.h / 2 }, 'up and left of its origin too');
-  assert.deepEqual(clampPan({ x: 120, y: 300 }, page, view, 1), { x: 120, y: 300 });
-  const far = clampPan({ x: 99_999, y: 99_999 }, page, view, 1);
-  assert.equal(far.x, page.w + view.w / 2 - view.w);
-  assert.equal(far.y, page.h + view.h / 2 - view.h);
-  // zoomed in, the paper shows less of the page, so it pans further
-  const close = clampPan({ x: 99_999, y: 99_999 }, page, view, 2);
-  assert.equal(close.x, page.w + view.w / 4 - view.w / 2);
-  // a page grown up and left reaches as far past its own top-left
-  const grown = clampPan({ x: -99_999, y: -99_999 }, { x: -800, y: -300, w: 1255, h: 1350 }, view, 1);
-  assert.deepEqual(grown, { x: -800 - view.w / 2, y: -300 - view.h / 2 });
-});
-
-test('the zoom goes out to the whole page, and half size at least, and in to the most', () => {
-  assert.equal(leastScale(page, view), 0.5);
-  assert.equal(leastScale({ w: 1820, h: 700 }, view), 0.25);
-  assert.equal(leastScale({ x: -2000, y: 0, w: 2455, h: 700 }, view), view.w / 2455);
-  assert.equal(clampScale(0.1, { w: 910, h: 700 }, view), 0.5);
-  assert.equal(clampScale(9, page, view), ZOOM_MAX);
-});
-
-test('a zoom about a point keeps the page under it where it is', () => {
-  const pan = { x: 100, y: 200 },
-    at = { x: 150, y: 300 },
-    before = pageAt(pan, 1, at),
-    after = pageAt(zoomAt(pan, 1, 2.5, at), 2.5, at);
-  assert.ok(Math.abs(after.x - before.x) < 1e-9 && Math.abs(after.y - before.y) < 1e-9);
-});
 
 test("a point on the paper is the page's px with the pan and zoom undone", () => {
   assert.deepEqual(pageAt({ x: 40, y: 60 }, 2, { x: 100, y: 10 }), { x: 90, y: 65 });
@@ -94,22 +43,6 @@ test('a page grows to hold what goes on it, every way, with room to spare, and n
     x: page.w - GROWN_MAX,
     w: GROWN_MAX,
   });
-  // and two of one page's boxes are one that holds both
-  assert.deepEqual(spanOf({ x: -50, y: 0, w: 300, h: 900 }, page), { x: -50, y: 0, w: page.w + 50, h: page.h });
-});
-
-test("a new page is the paper's size in whole px the store takes", () => {
-  assert.deepEqual(newPageSize({ w: 455.4, h: 699.6 }), { w: 455, h: 700 });
-  assert.deepEqual(newPageSize({ w: 20, h: 9000 }), { w: 100, h: 4000 });
-});
-
-test('the ink is drawn for the power of two at or above the zoom, in tiles the same size on screen', () => {
-  assert.equal(drawScale(1), 1);
-  assert.equal(drawScale(1.2), 2);
-  assert.equal(drawScale(0.6), 1);
-  assert.equal(drawScale(0.4), 0.5);
-  assert.equal(drawScale(4), 4);
-  assert.equal(tileSide(2) * 2, TILE_PX);
 });
 
 test("the paper's dots ease out as the zoom shrinks them, and are gone before they'd be under a pixel", () => {
@@ -118,33 +51,6 @@ test("the paper's dots ease out as the zoom shrinks them, and are gone before th
   assert.ok(dotsShown(0.5) > 0 && dotsShown(0.5) < dotsShown(0.7) && dotsShown(0.7) < 1);
   // (2.8 px across at a zoom of 1: bookdesk.css)
   assert.equal(dotsShown(1 / 2.8), 0);
-});
-
-test('only the tiles near what the paper shows are drawn, and none past the page', () => {
-  const tall = { w: 455, h: 3000 };
-  assert.deepEqual(tilesIn(tall, { x0: 0, y0: 600, x1: 455, y1: 1300 }, 512), [
-    [0, 1],
-    [0, 2],
-  ]);
-  assert.deepEqual(tilesIn(tall, { x0: -900, y0: -900, x1: 100, y1: 100 }, 512), [[0, 0]]);
-  // (a page grown up and left: its tiles there too)
-  assert.deepEqual(tilesIn({ x: -600, y: -10, w: 1055, h: 500 }, { x0: -900, y0: -900, x1: 100, y1: 100 }, 512), [
-    [-2, -1],
-    [-1, -1],
-    [0, -1],
-    [-2, 0],
-    [-1, 0],
-    [0, 0],
-  ]);
-  assert.deepEqual(tilesIn({ w: 1100, h: 600 }, { x0: 0, y0: 0, x1: 99_999, y1: 99_999 }, 512), [
-    [0, 0],
-    [1, 0],
-    [2, 0],
-    [0, 1],
-    [1, 1],
-    [2, 1],
-  ]);
-  assert.deepEqual(around({ x0: 0, y0: 0, x1: 100, y1: 200 }, 0.5), { x0: -50, y0: -100, x1: 150, y1: 300 });
 });
 
 test('a remembered page opens where it was left, and a page gone or none remembered opens the last', () => {

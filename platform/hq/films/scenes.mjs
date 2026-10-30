@@ -165,13 +165,19 @@ export const FILMS = {
       '/api/book/page/new': { id: 1 },
       '/api/book/note': note => ({ note: { ...note, id: 1, n: 1, by: null, slips: [] } }),
     },
-    // (and the org, whose CEO the note is for: answered only once HQ is on its mock data, which an answer before ends)
-    start: hq => hq.page.route('**/api/org', r => r.fulfill({ json: { company: { ceo: 'ceo' }, departments: [] } })),
+    // (and the org, whose CEO the note is for: answered only once HQ is on its mock data, which an answer before ends;
+    // then Settings, where its Show me opens)
+    start: async hq => {
+      await hq.page.route('**/api/org', r => r.fulfill({ json: { company: { ceo: 'ceo' }, departments: [] } }));
+      await hq.eval(comp('settings'));
+    },
     clip: null,
     scale: 0.6,
     play: async hq => {
       await hq.wait(0.5);
-      await hq.tap('#book .bk-lip'); // (folded in the films: opened beside HQ, the book brings the pin, pinsummon.js)
+      await hq.tap('#tool [data-switch="sys:pin"]'); // (Pin on HQ, this device's: pinsetting.js.)
+      await hq.wait(0.8);
+      await hq.tap('#tool [data-close]');
       await hq.wait(1);
       await hq.tap(pin);
       await hq.wait(0.6);

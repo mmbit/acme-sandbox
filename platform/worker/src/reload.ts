@@ -22,7 +22,7 @@ export class Reload {
 
   async block(...[owner, block, procs, options]: Parameters<typeof blockRun>) {
     if (this.closed) {
-      options.stopped(
+      options.log(
         `job #${owner.job}: block of run ${block.root.pid} left to the next worker process, this one is reloading`,
       );
       return;

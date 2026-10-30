@@ -36,12 +36,7 @@ export const sketch = {
     if (answer.status === 404) stop(`Page #${id}: not found (deleted, or never made).`);
     if (!isSuccess(answer.status)) stop(`hq sketch: couldn't read page #${id} (HTTP ${httpCode(answer.status)}).`);
     const found: Sketch & { picture: { type: string; data: string } } = JSON.parse(answer.body);
-    // (a call's notes page is never sent)
-    const sent = !found.sent
-      ? ''
-      : found.kind === 'call'
-        ? ` Went in ${minute(found.sent)} and went to nobody: its call's follow-up hands out what's on it.`
-        : ` Last sent to the CEO ${minute(found.sent)}.`;
+    const sent = found.sent ? ` Last sent to the CEO ${minute(found.sent)}.` : '';
     const state = `${whose(found)}${found.archived ? 'Archived. ' : ''}Made ${minute(found.created)}, changed ${minute(found.updated)}.`;
     const on = found.url ? ` On ${oneLine(found.url)}.` : '';
     const page = `A ${found.w} × ${found.h} px ${found.kind ?? 'free'} page, ${plural(found.strokes, 'stroke')}${pictured(found, ', ')}.${on}`;
@@ -64,7 +59,7 @@ export const sketches = {
       '# hq sketch <id> saves one to look at',
       ...(listed.sketches.some(s => s.from) ? [`# from <name>: a person the board invited; ${OUTSIDE}`] : []),
       ...listed.sketches.map(s => {
-        const sent = s.sent ? `  ${s.kind === 'call' ? 'went in' : 'sent'} ${minute(s.sent)}` : '';
+        const sent = s.sent ? `  sent ${minute(s.sent)}` : '';
         // (pictures)
         // (from)
         const from = s.from ? `  from ${oneLine(s.from)}` : '';
@@ -83,21 +78,23 @@ const labelled = (s: Sketch) => (s.label ? ` “${oneLine(s.label)}”` : '');
 const pictured = (s: Sketch, gap: string) => (s.pictures ? `${gap}${plural(s.pictures, 'picture')}` : '');
 
 // (--artifact; a group's g<id>, --ink, --form, --asks, --version, --patch,
-// --expect)
-const FLAGS = ['--picture', '--link', '--artifact', '--ink', '--form', '--version', '--patch', '--expect'];
+// --expect; --source)
+const FLAGS = ['--picture', '--source', '--link', '--artifact', '--ink', '--form', '--version', '--patch', '--expect'];
 const USAGE =
-  'usage: hq answer <note|g<group>> ["<answer>"] [--picture <file>] [--link <https url>] [--artifact <id>] ' +
-  '[--ink <strokes.json>] [--form <questions.json>] [--asks] [--version "<two words>" --picture <file> --patch <file>] ' +
-  '[--expect <n>]';
+  'usage: hq answer <note|g<group>> ["<answer>"] [--picture <file> [--source "<where its numbers came from>"]] ' +
+  '[--link <https url>] [--artifact <id>] [--ink <strokes.json>] [--form <questions.json>] [--asks] ' +
+  '[--version "<two words>" --picture <file> --patch <file>] [--expect <n>]';
 export const answer = {
   help: `
    hq answer <note> "<answer>" [--picture <file>]   clip your answer onto a note the board sent you from its book (its
-       [--link <https url>] [--artifact <id>]        number in your brief), or onto a group of its notebook (g<group>,
-       [--ink <strokes.json>] [--form <q.json>]      as your brief names it): what you did, or the answer, in a sentence
-       [--asks] [--version "<two words>"             or two for the board; a picture (png or jpg, 2 MB at most) or a
-       --picture <file> --patch <file>]              running preview's link to show it; --artifact: something new that
-       [--expect <n>]                                runs (an app, a page), by its id in HQ's artifacts (an app's slug,
-                                                     a path for an artifact.yaml), shown once it's merged and running;
+       [--source "<where>"]                          number in your brief), or onto a group of its notebook (g<group>,
+       [--link <https url>] [--artifact <id>]        as your brief names it): what you did, or the answer, in a sentence
+       [--ink <strokes.json>] [--form <q.json>]      or two for the board; a picture (png or jpg, 2 MB at most) or a
+       [--asks] [--version "<two words>"             running preview's link to show it; --source: where a picture's
+       --picture <file> --patch <file>]              numbers came from, one line under it (a chart: shared/scrapchart);
+       [--expect <n>]                                --artifact: something new that runs (an app, a page), by its id in
+                                                     HQ's artifacts (an app's slug, a path for an artifact.yaml), shown
+                                                     once it's merged and running;
                                                      --ink: a drawing (ink.js strokes, px from its own top-left);
                                                      --form: questions for the board to fill in (as hq ask
                                                      --questions takes them), its answers come back to you as a reply;
@@ -129,7 +126,8 @@ export const answer = {
     if (file !== undefined && !bytes) stop(`hq answer: can't read ${file}`);
     const type = bytes && bytes[0] === 0x89 ? 'png' : 'jpeg';
     if (bytes) body.picture = `data:image/${type};base64,${bytes.toString('base64')}`;
-    for (const f of ['--link', '--artifact', '--version']) if (flags.has(f)) body[f.slice(2)] = flags.get(f);
+    for (const f of ['--source', '--link', '--artifact', '--version'])
+      if (flags.has(f)) body[f.slice(2)] = flags.get(f);
     for (const f of ['--ink', '--form']) if (flags.has(f)) body[f.slice(2)] = jsonOf(flags.get(f)!);
     if (flags.has('--patch')) {
       const patch = readBytes(flags.get('--patch')!);
@@ -155,3 +153,70 @@ function jsonOf(file: string) {
     return stop(`hq answer: ${file} isn't JSON`);
   }
 }
+
+// hq projectbook: the CEO makes a project's book on the board's shelf, where agents' design asks about the project land
+// (hq ask --book <project>: the coordinator's ink/askpages.ts).
+export const projectbook = {
+  help: `
+   hq projectbook <project> ["name"]                 the CEO's: the project's book on the board's shelf (named for the
+                                                     project unless named here), where agents' design asks about it
+                                                     land (hq ask --book <project>), its cover counting the asks
+                                                     waiting on the board. One per project: again, it renames it and
+                                                     brings it back from the archive`,
+
+  async run(args: string[]) {
+    const [project = '', name] = args;
+    if (!project || args.length > 2) stop('usage: hq projectbook <project> ["name"]');
+    const answer = await change('projectbook', { body: { project, ...(name !== undefined && { name }) } });
+    if (answer.status === 403) stop('Only the CEO makes a project’s book.');
+    if (!isSuccess(answer.status)) stop(`Nothing was made: ${errorIn(answer.body, `HTTP ${httpCode(answer.status)}`)}`);
+    const book = JSON.parse(answer.body);
+    print(
+      `${book.made ? 'Made' : 'Kept'} ${text(book.name)}, the book of ${text(book.project)}, on the board's shelf.` +
+        ' Design asks about it land on its Asks page: hq ask ... --book ' +
+        text(book.project),
+    );
+  },
+};
+
+// hq advice: Lyra's team writes a closed review round's Advice in its book, a page per change, and hands it back to the
+// board wrapped (the coordinator's notebookrounds.ts).
+export const advice = {
+  help: `
+   hq advice <book> --page "<title>"                 a scrap of Advice in a review round's book, once the board closed
+       [--picture <png>] "<words>"                   it (its Advice job names the book): on the Advice page of that
+   hq advice <book> --back                           title, made if there's none (a page per change, its title what it
+                                                     changes); the picture a line-drawn before and after side by side,
+                                                     the words what changes and why. --back: every page written, the
+                                                     book goes back to the board wrapped, to unwrap on its shelf`,
+
+  async run(args: string[]) {
+    const usage = 'usage: hq advice <book> --page "<title>" [--picture <png>] "<words>" | hq advice <book> --back';
+    const book = (args[0] ?? '').replace(/^#/, '');
+    if (!/^[0-9]+$/.test(book)) stop(usage);
+    const body: Record<string, unknown> = { notebook: Number(book) };
+    const rest = args.slice(1);
+    if (rest.length === 1 && rest[0] === '--back') body.back = true;
+    else {
+      for (let k = 0; k < rest.length; k++) {
+        if (rest[k] === '--page' && rest[k + 1] !== undefined) body.page = rest[++k];
+        else if (rest[k] === '--picture' && rest[k + 1] !== undefined) {
+          const file = rest[++k],
+            bytes = readBytes(file);
+          if (!bytes) stop(`hq advice: can't read ${file}`);
+          body.picture = `data:image/${bytes[0] === 0x89 ? 'png' : 'jpeg'};base64,${bytes.toString('base64')}`;
+        } else if (!rest[k].startsWith('--') && body.text === undefined) body.text = rest[k];
+        else stop(usage);
+      }
+      if (body.page === undefined) stop(usage);
+    }
+    const answer = await change('advice', { body });
+    if (!isSuccess(answer.status)) stop(`Nothing written: ${errorIn(answer.body, `HTTP ${httpCode(answer.status)}`)}`);
+    const done = JSON.parse(answer.body);
+    print(
+      body.back
+        ? `Handed back: the round's ${plural(done.pages, 'Advice page')} wait wrapped on the board's shelf to unwrap.`
+        : `Scrap of Advice on "${text(String(body.page))}" (page #${done.page}). When every page is written: hq advice ${book} --back`,
+    );
+  },
+};

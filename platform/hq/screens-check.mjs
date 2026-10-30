@@ -24,11 +24,9 @@ const VIEWS = {
   tablet: { viewport: { width: 1180, height: 820 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 },
   desktop: { viewport: { width: 1280, height: 800 } },
 };
-// (a sketch full screen goes back to the Sketchbook first)
 const close = page =>
   page.evaluate(() =>
     [
-      document.querySelector('dialog.sk-page[open] [data-back]'),
       document.querySelector(
         '#tool:not([hidden]) [data-close], #viewer:not([hidden]) [data-close], #panel:not([hidden]) #panel-close, .wire .big .close, #projects:not([hidden]) [data-leave]',
       ),
@@ -57,13 +55,7 @@ const SCREENS = {
   ...Object.fromEntries(
     ['numbers', 'artifacts', 'people', 'calls', 'notes', 'mail', 'seats', 'settings'].map(a => [a, app(a)]),
   ),
-  // the Sketchbook, and a sketch full screen
-  sketchbook: app('sketchbook'),
-  'sketchbook-page': async page => {
-    await app('sketchbook')(page);
-    await page.click('[data-open]');
-    await page.waitForSelector('dialog.sk-page[open]');
-  },
+  // (the Sketchbook app gone)
   // the photo studio's Approvals, and an approved photo big in its History
   studio: app('studio'),
   'studio-big': async page => {

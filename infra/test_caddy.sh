@@ -17,6 +17,8 @@ import http from 'node:http';
 for (const [name, port] of [['coordinator', +process.argv[2]], ['voice', +process.argv[3]], ['product', +process.argv[4]], ['care', +process.argv[5]], ['front', +process.argv[6]], ['preview', +process.argv[7]]])
   http.createServer((req, res) => {
     const path = new URL(req.url ?? '/', 'http://x').pathname;   // as platform/coordinator/src/server.ts routes
+    // the ask before an on-demand certificate: only a try's version's host
+    if (path === '/api/preview/try-host') { res.writeHead(/^try-\d+\./.test(new URL(req.url, 'http://x').searchParams.get('domain') ?? '') ? 200 : 404); return res.end(); }
     if (path === '/api/me') { res.writeHead(req.headers.cookie === 'hq=board' ? 200 : 401); return res.end(); }
     // (the board's viewer id, X-Viewer, with its 200)
     if (path === '/api/preview/check' && req.headers['x-forwarded-uri']) { const board = /(^|; )pv=board(;|$)/.test(req.headers.cookie ?? ''); res.writeHead(board ? 200 : 401, { 'x-login-returns': req.headers['x-forwarded-uri'], ...(board ? { 'x-viewer': 'vw_board' } : {}) }); return res.end(); }
@@ -70,12 +72,14 @@ if $py -c 'import yaml' 2>/dev/null; then
   mkdir -p "$r/theme/web" && printf ':root{}' > "$r/theme/web/spacing.css" && printf 'notes' > "$r/theme/web/README.md"
   printf 'secret' > "$r/company/secret.css"
   PUBLIC_HOST=hq.example.test HQ_DATA=$tmp/hq PRODUCT_ENV_DIR=$tmp/env $py "$r/infra/products.py" > /dev/null 2>&1
-  # (the phone's inside port, on a port of its own here)
+  # (the phone's inside port, on a port of its own here; the try versions' catch-all on the preview hosts, as HQ's own
+  # site is this port's catch-all.)
+  to=(-e "s#coordinator:8080#127.0.0.1:$((port + 1))#g" -e "s#product-care:8080#127.0.0.1:$((port + 4))#g" -e "s#product-front:8080#127.0.0.1:$((port + 5))#g"
+      -e "s#product-[a-z]+:8080#127.0.0.1:$((port + 3))#g" -e "s#preview-[a-z]+:8080#127.0.0.1:$((port + 6))#g" -e "s#root \* /repo#root * $r#")   # (preview-)
   sed -E -e "s#^http://:8081 \{#http://:$((port + 7)) {#" -e "s#product-care:8081#127.0.0.1:$((port + 4))#g" -e "s#product-desk:8081#127.0.0.1:$((port + 3))#g" \
-    -e "s#^([a-z][^\t{]*) \{#\1 {#" -e "/^http:/!{/^[a-z]/s#([a-z0-9.-]+)(,| \{)#http://\1:$port\2#g}" \
-    -e "s#coordinator:8080#127.0.0.1:$((port + 1))#g" -e "s#product-care:8080#127.0.0.1:$((port + 4))#g" -e "s#product-front:8080#127.0.0.1:$((port + 5))#g" \
-    -e "s#product-[a-z]+:8080#127.0.0.1:$((port + 3))#g" -e "s#preview-[a-z]+:8080#127.0.0.1:$((port + 6))#g" \
-    -e "s#root \* /repo#root * $r#" "$r/infra/generated/products.caddy" > "$tmp/gen/products.caddy"   # (preview-)
+    -e "s#^https:// \{#http://*.preview.example.test:$port {#" \
+    -e "s#^([a-z][^\t{]*) \{#\1 {#" -e "/^http:/!{/^[a-z*]/s#([*a-z0-9.-]+)(,| \{)#http://\1:$port\2#g}" -e "/^\ttls \{/,/^\t\}/d" \
+    "${to[@]}" "$r/infra/generated/products.caddy" > "$tmp/gen/products.caddy"
 fi
 PUBLIC_HOST=:$port "$caddy" run --config "$tmp/Caddyfile" --adapter caddyfile > "$tmp/caddy.log" 2>&1 &
 for _ in $(seq 50); do curl -s -o /dev/null "http://127.0.0.1:$port/" && break; sleep 0.1; done
@@ -327,11 +331,20 @@ if [ -f "$tmp/repo/infra/generated/products.caddy" ]; then
   done
   # the cycle decks: framed by HQ and the cycles pages only, on every answer, and told HQ's origin
   check 'cycles: /__hq-origin names HQ, outside the login' "$(at cycles.preview.example.test /__hq-origin)" 'https://hq.example.test 200'
+  # (every host that serves the kits names HQ.)
+  check "a product's preview: /__hq-origin names HQ, outside the login" "$(at sprig.preview.example.test /__hq-origin)" 'https://hq.example.test 200'
+  check 'a public site: /__hq-origin names HQ' "$(at shop.example /__hq-origin)" 'https://hq.example.test 200'
   for c in '' 'Cookie: pv=board'; do
     check "cycles: frame-ancestors on a page${c:+ (the board)}" \
       "$(at cycles.preview.example.test /2026-01-01/presentation/ ${c:+-H "$c"} -o /dev/null -D - | tr -d '\r' | grep -i '^content-security-policy:')" \
       "Content-Security-Policy: frame-ancestors 'self' https://hq.example.test"
   done
+  # a try's versions: any other preview host goes to the coordinator, behind the
+  # login, which serves a version's own files there; the login's way back outside it; a product's own host still wins
+  check "try host: behind the login" "$(at try-7.preview.example.test /)" ' 401'
+  check "try host: the board reaches the coordinator" "$(at try-7.preview.example.test /shell/main.js -H 'Cookie: pv=board')" 'coordinator /shell/main.js 200'
+  check "try host: the login's way back, outside it" "$(at try-7.preview.example.test '/__preview?c=x')" 'coordinator /__preview 200'
+  check "try host: a product's preview is still its own" "$(at plain.preview.example.test / -H 'Cookie: pv=board')" 'product plain.preview.example.test/ x-preview-door=1 200'
   # review mode on the cycles' pages too: the coordinator decides, outside the login
   check 'cycles: review mode goes to the coordinator' "$(at cycles.preview.example.test /__review/review.js)" 'coordinator /__review/review.js 200'
   check 'cycles: so do its notes' "$(at cycles.preview.example.test /__review/notes -X POST)" 'coordinator /__review/notes 200'
@@ -374,6 +387,26 @@ if [ -f "$tmp/repo/infra/generated/products.caddy" ]; then
   check "the public hosts: /phone/* never reaches the chat's service" \
     "$(get /phone/turn -X POST) | $(at shop.example /phone/turn -X POST) | $(at www.example.test /phone/start -X POST)" \
     'coordinator /phone/turn 200 | product shop.example/phone/turn 200 | front www.example.test/phone/start 200'
+
+  # Every host a site names has a certificate of its own, never one on demand, which the ask refuses it: the same sites on
+  # their own addresses over TLS, from a local CA. A try's version gets its own when first asked for, any other host
+  # none.
+  mkdir -p "$tmp/tls/gen" && https=$((port + 9))
+  sed -E -e "s#^http://:8081 \{#http://:$((port + 8)) {#" "${to[@]}" "$tmp/repo/infra/generated/products.caddy" > "$tmp/tls/gen/products.caddy"
+  sed -e "0,/^{/s##{\n\tadmin off\n\tlocal_certs\n\tskip_install_trust\n\thttp_port $((port + 10))\n\thttps_port $https#" -e "s#$tmp/gen#$tmp/tls/gen#" \
+    "$tmp/Caddyfile" > "$tmp/tls/Caddyfile"
+  XDG_DATA_HOME=$tmp/tls XDG_CONFIG_HOME=$tmp/tls PUBLIC_HOST=hq.example.test "$caddy" run --config "$tmp/tls/Caddyfile" --adapter caddyfile > "$tmp/tls/caddy.log" 2>&1 &
+  # (curl's exit: 0 the handshake went through, 35 it was refused)
+  shake() { curl -sk --noproxy '*' --max-time 5 -o /dev/null --resolve "$1:$https:127.0.0.1" "https://$1:$https/__hq-origin"; echo $?; }
+  named=$(grep -E '^[^#[:space:]].* \{$' "$tmp/repo/infra/generated/products.caddy" | grep -v '^http' | sed 's/ {$//; s/, /\n/g')
+  check 'tls: the hosts read from the generated sites' "$(grep -cx 'cycles\.preview\.example\.test\|front\.preview\.example\.test' <<< "$named")" 2
+  for h in hq.example.test $named; do
+    for _ in $(seq 50); do [ "$(shake "$h")" = 0 ] && break; sleep 0.1; done   # (issued as Caddy starts)
+    check "tls: $h has a certificate of its own" "$(shake "$h")" 0
+  done
+  check "tls: a try's version gets one on demand" "$(shake try-7.preview.example.test)" 0
+  check 'tls: any other host none' "$(shake nope.preview.example.test)" 35
+  [ $failures = 0 ] || grep '"level":"error"' "$tmp/tls/caddy.log" | head -5
 else
   echo "skipped the product sites: $py can't import yaml (set PYTHON to one that can)"
 fi

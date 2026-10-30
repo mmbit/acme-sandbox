@@ -1,15 +1,14 @@
 // book-check.mjs's stories of a note the board sends from review mode finding it in the Notebook (shell/ink/booknewest.js,
-// notebookstack.js; shared/review/menu.js), on the played Notebook seeded as dev mode's (mock/notebook.json):
+// notebookstack.js), on the played Notebook seeded as dev mode's (mock/notebook.json):
 //   - a desktop and an iPad mini: a scrap sent while the book is shut, on another notebook (a desktop) or turned to
-//     another page (an iPad mini), lands under the newest thing on My Notebook's current page (on a desktop its ink in
-//     the folded book's handle); the pull tab opens the book there, the scrap in view; turned away again, the pin
-//     menu's Open the Notebook turns back to it in the open book, its count the board's notes on that page, and on a
-//     desktop a preview's own tab opens HQ there;
-//   - a phone: the book folded onto HQ with the pin, the menu's Open the Notebook opens it at the scrap.
+//     another page (an iPad mini), lands under the newest thing on My journal's current page (on a desktop its ink in
+//     the folded book's handle); the pull tab opens the book there, the scrap in view; on a desktop, turned away again,
+//     HQ's book link in a tab of its own opens HQ there;
+//   - a phone: a scrap sent with the book folded, the pull tab opens the spread at it.
 import assert from 'node:assert/strict';
 import { open } from './booknotebook.mjs';
 import { where } from './booknotebookscreen.mjs';
-import { DESKTOP, MINI, ui, until } from './bookkit.mjs';
+import { DESKTOP, MINI, until } from './bookkit.mjs';
 
 const PHONE = { width: 390, height: 844 };
 // the seed's second page and its newest, the current page (mock/notebook.json)
@@ -20,12 +19,10 @@ const SECOND = 2,
 // c: book-check.mjs's hqIn, base, settled, shot, noErrorsIn, shots, org
 export function newestStories(c) {
   return {
-    "a note sent from review mode, on a desktop: it lands under the newest thing on the page, the book opens to it, and the pin menu's Open the Notebook turns to it":
+    "a note sent from review mode, on a desktop: it lands under the newest thing on the page, the book opens to it, and HQ's book link in a tab opens there":
       browser => beside(browser, c, DESKTOP, 'desktop'),
-    "a note sent from review mode, on an iPad mini: the book opens to it, and the pin menu's Open the Notebook turns to it":
-      browser => beside(browser, c, MINI, 'mini'),
-    "a note sent from review mode, on a phone: the pin menu's Open the Notebook opens the folded book at it": browser =>
-      onPhone(browser, c),
+    'a note sent from review mode, on an iPad mini: the book opens to it': browser => beside(browser, c, MINI, 'mini'),
+    'a note sent from review mode, on a phone: the folded book opens at it': browser => onPhone(browser, c),
   };
 }
 
@@ -41,7 +38,6 @@ async function beside(browser, c, viewport, name) {
   try {
     // (away from the current page: on a desktop in another notebook, as the board opens one from its shelf)
     const away = () => (touch ? turnBack(page, SECOND) : otherNotebook(page));
-    await menuReads(page, play, c);
     await away();
     await tap(page, '#book .bk-lip');
     await atRest(page, 'folded');
@@ -52,17 +48,13 @@ async function beside(browser, c, viewport, name) {
     await atRest(page, 'open');
     await inView(page, play, sent.id, 'the pull tab opens the book at the scrap');
     await c.shot(`newest-${name}-opened`, page);
-    // turned away in the open book, the pin's menu turns back to it
-    await away();
-    await openTheNotebook(page, play, c, `newest-${name}-menu`);
-    await inView(page, play, sent.id, "the menu's Open the Notebook turns the open book to the scrap");
     if (!touch) await inATab(page, play, c, sent.id, errors, away);
     c.noErrorsIn(errors);
   } finally {
     await done();
   }
 }
-// Left away from the current page, the menu's Open the Notebook in a preview's own tab: HQ opened at the scrap
+// Left away from the current page, HQ's book link in a tab of its own (main.js): HQ opened at the scrap
 async function inATab(page, play, c, id, errors, away) {
   await away();
   await page.waitForTimeout(500); // (the place the book remembers)
@@ -70,20 +62,17 @@ async function inATab(page, play, c, id, errors, away) {
   tab.on('pageerror', e => errors.push(e.message));
   await tab.goto(`${c.base}/?intro=0&open=book&owner=${c.org.company.ceo}`);
   await atRest(tab, 'open');
-  await inView(tab, play, id, "a tab's Open the Notebook opens HQ at the scrap");
+  await inView(tab, play, id, "a tab's book link opens HQ at the scrap");
 }
 
 async function onPhone(browser, c) {
   const { page, play, errors, done } = await open(browser, c, PHONE, { hasTouch: true, isMobile: true, folded: true });
   try {
-    await menuReads(page, play, c);
-    // the book's pin control folds the book onto HQ with the pin
-    await tap(page, '#book .bk-pin');
     await atRest(page, 'folded');
     const sent = await sendScrap(page, play);
-    await openTheNotebook(page, play, c, 'newest-phone-menu');
+    await tap(page, '#book .bk-lip');
     await atRest(page, 'spread');
-    await inView(page, play, sent.id, "the menu's Open the Notebook opens the folded book at the scrap");
+    await inView(page, play, sent.id, 'the pull tab opens the folded book at the scrap');
     await c.shot('newest-phone-opened', page);
     c.noErrorsIn(errors);
   } finally {
@@ -93,16 +82,6 @@ async function onPhone(browser, c) {
 
 // ---- review mode
 
-// Review mode's menu reads whose Notebook and how many of the board's notes are on its current page, as the
-// coordinator answers (ink/bookreview.ts menuOf), from the played store
-async function menuReads(page, play, c) {
-  const owner = c.org.company.ceo;
-  await page
-    .context()
-    .route(/\/__review\/mine(\?.*)?$/, r =>
-      r.fulfill({ json: { book: { owner, name: owner }, notes: boardsNotes(play) } }),
-    );
-}
 // A ring's note saved as review mode saves it: a scrap on the current page, which lands under its newest group
 async function sendScrap(page, play) {
   const before = groupsOn(play, NEWEST),
@@ -162,24 +141,6 @@ async function landed(page, { id, page: on }) {
     'the handle holds the landed note',
   );
 }
-// The pin's menu opened, its count the board's notes on the current page, and its Open the Notebook tapped
-async function openTheNotebook(page, play, c, look) {
-  await page.locator(ui('.more')).dispatchEvent('click');
-  await page.waitForSelector(ui('.menu:not([hidden])'));
-  const n = boardsNotes(play);
-  await until(
-    () =>
-      page
-        .locator(ui('.menu .cap'))
-        .textContent()
-        .then(t => t === `${n} on your Notebook’s newest page`),
-    'the menu counting the notes on the current page',
-  );
-  assert.equal(await page.locator(ui('.more .count')).textContent(), String(n), 'its badge the same');
-  await c.shot(look, page);
-  await page.locator(ui('[data-open-book]')).dispatchEvent('click');
-}
-
 // The pages' row turned back to page n, its arrow's own click in the page (tap)
 async function turnBack(page, n) {
   const at = () => where(page).then(w => Number(/(\d+) \/ \d+$/.exec(w)?.[1]));
@@ -209,8 +170,7 @@ const tap = (page, selector) => page.locator(selector).dispatchEvent('click');
 // ---- reading
 
 const groupsOn = (play, page) => play.route('/api/notebooks/pages/groups', { page }).groups;
-const boardsNotes = play => groupsOn(play, NEWEST).filter(g => g.by === 'board' && g.status === 'open').length;
-// The group whole in the paper's view on its page, shown (its groups' layer: a lone scrap has no clip), clear of the tool
+// The group whole in the paper's view on its page, shown (its groups' layer), clear of the tool
 // strip, the islands and the pages' row (the book slides there: wait on it, as frames come late on a loaded machine)
 async function inView(page, play, id, what) {
   const on = NEWEST,

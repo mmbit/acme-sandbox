@@ -171,6 +171,7 @@ test('windowed work whose slack is used pauses the running work with no window a
   assert.equal(await claim(), loose);
   assert.equal(await claim(), running.id, 'and the paused work after it, in its session');
   for (const id of [tight, loose, running.id]) await h.finish({ ...h.job(id) });
+  h.cancelJudges(); // (the deliverable's end woke its owner's judge)
 });
 
 test("a review and the board's call's follow-up are never paused, and memory short of room pauses another engine's run, whose room goes to the work it paused for", async () => {
@@ -228,6 +229,7 @@ test("a review and the board's call's follow-up are never paused, and memory sho
   const again = (await short('claude', 'ready-claude'))!;
   assert.equal(again?.id, tight);
   for (const j of [review, lane, back, again]) await h.finish(j);
+  h.cancelJudges(); // (the deliverable's end woke its owner's judge)
 });
 
 test("the CEO's follow-through check runs to its end once started: work due sooner pauses another run", async () => {
@@ -250,6 +252,7 @@ test("the CEO's follow-through check runs to its end once started: work due soon
   assert.equal(await yieldOf(check), 'waiting', 'the same run as plain work would have been the one');
   for (const j of [other, check]) await h.finish(j);
   assert.ok(cancelJob(tight, 'Test finished'));
+  h.cancelJudges(); // (the deliverable's end woke its owner's judge)
 });
 
 test('a seat at its run cap: with slots and memory to spare, a run on that seat makes room', async () => {
@@ -268,6 +271,7 @@ test('a seat at its run cap: with slots and memory to spare, a run on that seat 
   assert.deepEqual(await yields({ capped: ['ready-codex'] }), [undefined, 'waiting'], 'the later in the order yields');
   for (const j of [a, b]) await h.finish(j);
   assert.ok(cancelJob(tight, 'Test finished'));
+  h.cancelJudges(); // (the deliverable's end woke its owner's judge)
 });
 
 test('every slot taken and its seat at its cap: a run on that seat makes room, not the last run in the order', async () => {
@@ -291,6 +295,7 @@ test('every slot taken and its seat at its cap: a run on that seat makes room, n
   );
   for (const j of [a, b, newer]) await h.finish(j);
   assert.ok(cancelJob(tight, 'Test finished'));
+  h.cancelJudges(); // (the deliverable's end woke its owner's judge)
 });
 
 test("a call's follow-up is never held by a pause, nor what was queued on the call, nor a job a call's follow-up went to", async () => {

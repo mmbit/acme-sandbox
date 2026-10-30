@@ -6,7 +6,8 @@
 import { snapScale } from '/__review/snapshot.js';
 import { foley } from '../audio.js';
 import { pageOf, showGroup } from './bookgroupshow.js';
-import { nextScrap, scrapSize } from './notebookstack.js';
+import { scrapSize } from './notebookstack.js';
+import { TITLE_H, nextPlace } from './bookunits.js';
 
 // A snip as review mode cuts it (marks.js): the ink with this much room round it, at least this big
 const MARGIN = 24,
@@ -59,9 +60,9 @@ function landGroup(desk, pages, ask) {
   ask.land = underGroups(desk, pages, page, from);
   ask.aim = () => (id ? onPhoto(desk, pages, { id, page, from }) : null);
 }
-// Where the ink lands under a page's groups, where the store stacks its next scrap (a note written the old way is
-// carried there much the same, notebookcarry.ts), the snip's picture as the store sizes it (notebookstack.js scrapSize),
-// kept in the paper's visible part; on a page not shown, where it would go on the paper
+// Where the ink lands on a page: where the page lays its next unit, the store's next scrap (notebookscraps.ts), the
+// snip's picture as the store sizes it (notebookstack.js scrapSize), kept in the paper's visible part; on a page not
+// laid here, under its title on the paper
 function underGroups(desk, pages, page, from) {
   const onPage = page && pages.page()?.id === page ? desk.querySelector('.bk-world .bk-page:not([hidden])') : null,
     d = desk.getBoundingClientRect(),
@@ -69,7 +70,8 @@ function underGroups(desk, pages, page, from) {
     // (the snip's picture is cut at the screenshot's pixels per px.)
     px = snapScale(innerWidth, innerHeight),
     { w, h } = scrapSize(snip.w * px, snip.h * px);
-  const spot = nextScrap([...(pageOf(page)?.groups.values() ?? [])], h, pageOf(page)?.kind),
+  const laid = pageOf(page),
+    spot = (laid && nextPlace(laid, h)) ?? { x: 0, y: TITLE_H },
     origin = onPage?.getBoundingClientRect() ?? { left: d.left, top: d.top },
     k = onPage ? scaleOf(onPage) : 1;
   return within(inkIn({ x: origin.left + spot.x * k, y: origin.top + spot.y * k, w: w * k, h: h * k }, from), d);

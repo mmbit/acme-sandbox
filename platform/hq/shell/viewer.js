@@ -7,7 +7,7 @@ import { loadArtifacts } from './data.js';
 import { sfx } from './audio.js';
 import { DEVICES, GAP, HEAD, devicesFor, fit, chosen, bookChoice } from './viewerfit.js';
 import { shapeOf } from './ink/booklayout.js';
-import { openBook, foldBook } from './ink/book.js';
+import { openBook, foldBook, layOver } from './ink/book.js';
 import { pairLink, qrSvg } from './ink/pair.js';
 
 // A frame that scrolled leads for this long after its last scroll: the other's scrolls meanwhile are its own following
@@ -19,7 +19,8 @@ const QR = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h6v6H4zM14 
 const shape = () => shapeOf(innerWidth, innerHeight);
 const recalled = () => chosen(store.get(`viewer.${shape()}`, null), devicesFor(innerWidth), shape());
 
-// The stage in the viewer v, for the preview at url. Returns { close }: the viewer's Close or its next page.
+// The stage in the viewer v, for the preview at url. Returns { close, toStaging }: close for the viewer's Close or its
+// next page, toStaging to bring staging to the front where the two take turns (the bar's Note pins there).
 export function mountStage(v, url) {
   const me = {
     url,
@@ -50,6 +51,10 @@ export function mountStage(v, url) {
   tellBook(me);
   lay(me);
   return {
+    toStaging() {
+      me.tab = 'after';
+      lay(me);
+    },
     close() {
       me.closed = true;
       sized.disconnect();
@@ -60,11 +65,8 @@ export function mountStage(v, url) {
   };
 }
 
-// The book lies over the frames where the board picked Over, on a screen that offers the choice (book.js)
-const tellBook = me =>
-  document.dispatchEvent(
-    new CustomEvent('viewer:over', { detail: !me.closed && bookChoice(shape()) && me.picked.book === 'over' }),
-  );
+// The book lies over the frames where the board picked Over, on a screen that offers the choice (book.js's layOver.
+const tellBook = me => layOver(!me.closed && bookChoice(shape()) && me.picked.book === 'over');
 
 // The bar's choices: the device's size (where the screen offers more than its own), Over or Beside (on its side), and
 // the QR (a laptop's or a desktop's)
@@ -97,6 +99,8 @@ function choose(me, button) {
   if (button.dataset.device) me.picked = { ...me.picked, device: button.dataset.device };
   if (button.dataset.book) {
     me.picked = { ...me.picked, book: button.dataset.book };
+    // (Over told once the book's on its way shut, so HQ's page dissolves into its whole width with the swing rather
+    // than fading into it first. company: job #15360)
     if (me.picked.book === 'beside') openBook();
     else foldBook();
     tellBook(me);
@@ -128,14 +132,18 @@ async function addLive(me) {
   pane.querySelector('iframe').src = live;
   lay(me);
 }
-// The same page live: a product's public address with the preview's path, where the product is live; else null
+// The same page live: a product's public address with the preview's path, where the product is live; else null. The
+// path goes in as a path, so nothing in it can name another scheme or host.
 export async function liveOf(url) {
   const at = new URL(url),
     all = await loadArtifacts(world.dev),
     product = all.find(a => a.public.length && new URL(a.open).host === at.host);
   if (!product) return null;
-  const base = product.public[0].endsWith('/') ? product.public[0] : `${product.public[0]}/`;
-  return new URL(at.pathname.slice(1) + at.search + at.hash, base).href;
+  const live = new URL(product.public[0]);
+  live.pathname = live.pathname.replace(/\/?$/, '/') + at.pathname.slice(1);
+  live.search = at.search;
+  live.hash = at.hash;
+  return live.href;
 }
 
 // Laid out for the stage's size now: the frames' widths and scale, side by side or as tabs
@@ -216,11 +224,11 @@ async function showQr(me) {
   const card = me.qrCard;
   card.innerHTML ||= '<p>Making a code…</p>';
   try {
-    const pair = await pairLink(me.url);
+    const pairing = await pairLink(me.url);
     if (card.hidden || me.closed) return;
-    card.innerHTML = `${qrSvg(pair.link, 'Scan to open this on your phone or tablet')}
+    card.innerHTML = `${qrSvg(pairing.link, 'Scan to open this on your phone or tablet')}
       <div><b>Open on your phone or tablet</b><p>Scan with the camera. The notebook stays live on both.</p></div>`;
-    setTimeout(() => !card.hidden && !me.closed && showQr(me), Math.max(1000, pair.expires - Date.now()));
+    setTimeout(() => !card.hidden && !me.closed && showQr(me), Math.max(1000, pairing.expires - Date.now()));
   } catch (error) {
     card.textContent = error.message;
   }

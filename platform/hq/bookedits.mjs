@@ -219,7 +219,8 @@ async function scrapStruck(browser, c) {
     await page.goto(`${c.base}/?intro=0`);
     await page.waitForSelector('#book .bk-desk', { timeout: 30_000 });
     await c.settled(page, 'open');
-    const field = page.locator(`#book .bk-under[data-g="${scrap.id}"] textarea.bk-scrap-words`);
+    // (a scrap's words in its body: .bk-words.)
+    const field = page.locator(`#book .bk-words[data-g="${scrap.id}"] textarea.bk-scrap-words`);
     await field.waitFor();
     assert.equal(await field.getAttribute('data-pen'), '', 'the field kept from Scribble for the pen');
     await pressAlong(page, along(await scrapWordBox(page, 'teal')));
@@ -254,7 +255,8 @@ async function scrapTyped(browser, c) {
     c.notebook.route('/api/notebooks/pages/groups', { page: free.id }).groups.find(g => g.id === scrap.id);
   const { page, errors, done } = await onDesk(browser, c);
   try {
-    const field = page.locator(`#book .bk-under[data-g="${scrap.id}"] textarea.bk-scrap-words`);
+    // (a scrap's words in its body: .bk-words.)
+    const field = page.locator(`#book .bk-words[data-g="${scrap.id}"] textarea.bk-scrap-words`);
     await field.focus();
     await page.keyboard.press('Control+End');
     await page.keyboard.type(' soon ');
@@ -267,10 +269,12 @@ async function scrapTyped(browser, c) {
       size: 3,
       color: '#2f6bdc',
     };
-    // (two lines, so their group has a clip to show it's drawn: a scrap or a lone line has none)
-    const under = { ...line, points: line.points.map(([x, y, ...more]) => [x, y + 40, ...more]) };
+    // (two lines, one group: its unit shows it's drawn)
+    const under = { ...line, points: line.points.map(([x, y, ...more]) => [x, y + 40, ...more]) },
+      units = page.locator('#book .bk-page:not([hidden]) .bk-unit'),
+      before = await units.count();
     c.notebook.route('/api/notebooks/groups/create', {}, { page: free.id, ink: [line, under] });
-    await until(async () => (await page.locator('#book .bk-clip').count()) === 1, "the other screen's lines drawn");
+    await until(async () => (await units.count()) === before + 1, "the other screen's lines drawn");
     assert.equal(await field.inputValue(), `${WORDS} soon `, 'the space typed still under the caret');
     c.notebook.route(
       '/api/notebooks/groups/edit',

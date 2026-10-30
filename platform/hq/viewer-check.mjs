@@ -7,6 +7,7 @@ import { mkdir, readFile } from 'node:fs/promises';
 import { serve, mockFiles, ROOT } from './serve.mjs';
 import { playwright, openPage, until } from '../../shared/browser/browser.mjs';
 import { fulfilPart } from '../../shared/review/parts.mjs';
+import { bookAtRest } from './bookkit.mjs';
 
 const shots = process.argv.includes('--shots') ? process.argv[process.argv.indexOf('--shots') + 1] : null;
 if (shots) await mkdir(shots, { recursive: true });
@@ -82,29 +83,27 @@ const box = (page, sel) => page.locator(sel).first().boundingBox();
 const frameOf = async (page, side) => (await page.$(`#viewer .pane.${side} iframe`)).contentFrame();
 const visible = (page, side) =>
   page.$eval(`#viewer .pane.${side}`, el => !el.hidden && getComputedStyle(el).visibility !== 'hidden');
-// Nothing on the bar over anything else on it, and all of it inside the screen
+// Nothing on the bar over anything else on it, and all of it, the choices' buttons too, inside the screen
 async function barWhole(page, viewport) {
-  const boxes = await page.$$eval('#viewer .bar > *:not([hidden]), #viewer .bar .seg button', all =>
-    all
-      .map(el => ({ name: el.className || el.textContent, ...el.getBoundingClientRect().toJSON() }))
-      .filter(b => b.width),
-  );
-  for (const b of boxes) assert.ok(b.right <= viewport.width + 0.5 && b.left >= -0.5, `${b.name} off the screen`);
-  const top = boxes.filter(b => !/seg|choices/.test(b.name) && !b.name.startsWith('This') && b.name !== 'Over');
-  for (const a of top)
-    for (const b of top)
-      if (
-        a !== b &&
-        a.left < b.right - 1 &&
-        b.left < a.right - 1 &&
-        !a.name.includes('choices') &&
-        !b.name.includes('choices')
-      )
-        assert.fail(`on the bar, ${a.name} over ${b.name}`);
+  const boxesOf = sel =>
+    page.$$eval(sel, all =>
+      all
+        .map(el => ({ name: el.className || el.textContent, ...el.getBoundingClientRect().toJSON() }))
+        .filter(b => b.width),
+    );
+  const parts = await boxesOf('#viewer .bar > *:not([hidden])'),
+    choices = await boxesOf('#viewer .bar .choices button');
+  for (const b of [...parts, ...choices])
+    assert.ok(b.right <= viewport.width + 0.5 && b.left >= -0.5, `${b.name} off the screen`);
+  for (const a of parts)
+    for (const b of parts)
+      if (a !== b && a.left < b.right - 1 && b.left < a.right - 1) assert.fail(`on the bar, ${a.name} over ${b.name}`);
 }
 async function linkedScroll(page) {
   const after = await frameOf(page, 'after'),
     live = await frameOf(page, 'live');
+  // (both pages' scroll links listening: a cold WebKit can still be loading live's.)
+  for (const frame of [after, live]) await frame.waitForFunction(() => window.__scrollLink);
   await after.evaluate(() => scrollTo(0, 900));
   await page.waitForTimeout(400);
   assert.equal(await live.evaluate(() => scrollY), 900, 'live follows staging');
@@ -156,18 +155,69 @@ await story('a laptop: live beside staging, linked scroll, four device sizes, th
     await shot(page, 'laptop-desktop');
     // the notebook over: HQ's page keeps its whole width under the open book
     await page.click('#viewer [data-book=over]');
-    await page.waitForTimeout(900);
+    await bookAtRest(page, 'folded');
     assert.equal(await page.evaluate(() => Math.round(document.body.getBoundingClientRect().width)), LAPTOP.width);
-    // the book pulled out over the frames: HQ's page keeps its whole width, the bar keeps clear of the book
-    await page.evaluate(() => import('/shell/ink/book.js').then(m => m.openBook()));
-    await page.waitForTimeout(1200);
+    // (the book shut from beside it: HQ's page dissolved into its whole width, wholly back first)
+    await page.waitForFunction(() => {
+      const { filter, opacity } = getComputedStyle(document.body);
+      return filter === 'none' && opacity === '1';
+    });
+    // the book pulled out over the frames: HQ's page keeps its whole width, never fading or blurring as the book opens
+    // (that only hides a reflow Over hasn't: the board, 30 Oct.), the bar keeps
+    // clear of the book
+    await page.evaluate(() => {
+      window.__looks = new Set();
+      const look = () => {
+        if (!window.__looks) return;
+        const { filter, opacity } = getComputedStyle(document.body);
+        window.__looks.add(`${filter} ${opacity}`);
+        requestAnimationFrame(look);
+      };
+      look();
+      return import('/shell/ink/book.js').then(m => m.openBook());
+    });
+    await bookAtRest(page, 'open');
+    const looks = await page.evaluate(() => {
+      const seen = [...window.__looks];
+      window.__looks = null;
+      return seen;
+    });
+    assert.deepEqual(looks, ['none 1'], `HQ's page faded or blurred as the book opened over it: ${looks.join(', ')}`);
     assert.equal(await page.evaluate(() => Math.round(document.body.getBoundingClientRect().width)), LAPTOP.width);
     const close = await box(page, '#viewer [data-close]'),
       book = await box(page, '#book [role=separator]');
     assert.ok(close.x + close.width <= book.x, 'Close clear of the book over the frames');
     await shot(page, 'laptop-over');
-    await page.click('#viewer [data-book=beside]');
-    await page.waitForTimeout(900);
+    // Beside tapped while the book swings shut: it falls open again, and HQ's page takes its room beside it only while
+    // the swing's dissolve has it gone, never in sight
+    // (tapped two frames in: the swing steps at most 33 ms a frame, so it's still on its way up however slow the engine)
+    const midSwing = await page.evaluate(async () => {
+      window.__seen = [];
+      const look = () => {
+        window.__seen.push({
+          width: Math.round(document.body.getBoundingClientRect().width),
+          hidden: getComputedStyle(document.body).visibility === 'hidden',
+        });
+        requestAnimationFrame(look);
+      };
+      look();
+      (await import('/shell/ink/book.js')).foldBook();
+      await new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)));
+      const swinging = !!document.querySelector('#book.bk-swinging');
+      document.querySelector('#viewer [data-book=beside]').click();
+      return swinging;
+    });
+    assert.ok(midSwing, 'Beside tapped while the book swings shut');
+    await bookAtRest(page, 'open');
+    // (two frames more, for the frame HQ's page was laid out in its room to be seen)
+    await page.evaluate(() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done))));
+    const seen = await page.evaluate(() => window.__seen),
+      moved = seen.findIndex(f => f.width !== LAPTOP.width);
+    assert.ok(moved > 0, 'HQ took its room beside the book');
+    assert.ok(
+      seen[moved].hidden,
+      `HQ's page took its room in sight: ${JSON.stringify(seen.slice(moved - 3, moved + 1))}`,
+    );
     assert.ok((await page.evaluate(() => document.body.getBoundingClientRect().width)) < LAPTOP.width - 300);
     // kept for this screen
     await page.evaluate(() => document.querySelector('#viewer [data-close]').click());
@@ -202,13 +252,13 @@ await story(
       assert.equal(await page.$('#viewer .bar .qr'), null, 'no QR on a tablet');
       await page.click('#viewer [data-device=phone]');
       await page.evaluate(() => import('/shell/ink/book.js').then(m => m.foldBook()));
-      await page.waitForTimeout(900);
+      await bookAtRest(page, 'folded');
       assert.equal(await page.$eval('#viewer .stage', s => s.dataset.mode), 'columns');
       await barWhole(page, MINI);
       await shot(page, 'mini-over-phone');
       await page.click('#viewer [data-device=here]');
       await page.click('#viewer [data-book=beside]');
-      await page.waitForTimeout(1200);
+      await bookAtRest(page, 'open');
       assert.equal(await page.$eval('#viewer .stage', s => s.dataset.mode), 'tabs');
       assert.ok(await visible(page, 'after'));
       assert.ok(!(await visible(page, 'live')));
@@ -218,6 +268,8 @@ await story(
       assert.ok(await visible(page, 'live'));
       await barWhole(page, { width: await page.evaluate(() => document.body.getBoundingClientRect().width) });
       await shot(page, 'mini-beside-tabs');
+      await page.click('#viewer .bar .pin');
+      assert.ok(await visible(page, 'after'), 'Note on the Live tab brings staging, where it pins, to the front');
       assert.deepEqual(errors, []);
     } finally {
       await context.close();
@@ -234,8 +286,7 @@ await story('a phone on its side beside the open book: Over and Beside, the bar 
     await barWhole(page, { width: await page.evaluate(() => document.body.getBoundingClientRect().width) });
     await shot(page, 'phone-sideways-beside');
     await page.click('#viewer [data-book=over]');
-    await page.waitForTimeout(1200);
-    assert.equal(await page.evaluate(() => document.documentElement.dataset.book), 'folded', 'Over puts the book away');
+    await bookAtRest(page, 'folded'); // (Over puts the book away)
     assert.equal(await page.$eval('#viewer .stage', s => s.dataset.mode), 'columns', 'live and staging side by side');
     await shot(page, 'phone-sideways-over');
     assert.deepEqual(errors, []);

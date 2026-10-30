@@ -27,7 +27,7 @@ import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { sampleWrites } from './diskwrites.ts';
 import { DiskShares } from './disk.ts';
-import { DiskTree, treeEntryLimit } from './disktree.ts';
+import { DiskScan } from './diskscan.ts';
 import { warnDisk } from './diskwarnings.ts';
 import { processesFor, tally, overShare } from './shares.ts';
 import { Reload } from './reload.ts';
@@ -83,6 +83,8 @@ test('allocated use follows writes, truncation, links, directory moves and root 
   await settled(measure, () => allocated(roots), context.signal);
   renameSync(join(roots[2], 'node_modules'), join(roots[1], 'dependencies'));
   await settled(measure, () => allocated(roots), context.signal);
+  appendFileSync(join(roots[1], 'dependencies', 'package', 'index'), Buffer.alloc(24 * 1024));
+  await settled(measure, () => allocated(roots), context.signal);
   writeFileSync(join(roots[0], 'cache'), 'small');
   rmSync(join(roots[1], 'same'));
   await settled(measure, () => allocated(roots), context.signal);
@@ -98,16 +100,16 @@ test('allocated use follows writes, truncation, links, directory moves and root 
 // is caught inside the folder by its open descriptor.
 test('a folder deleted or swapped mid-walk is accounted as it stands, and the scan goes on', async context => {
   const root = join(temporary(context), 'jobs', '1');
-  const walked = (folder: string) =>
-    readdirSync('/proc/self/fd').some(fd => {
+  const walked = (tree: DiskScan, folder: string) =>
+    readdirSync(`/proc/${tree.pid}/fd`).some(fd => {
       try {
-        return readlinkSync(`/proc/self/fd/${fd}`) === folder;
+        return readlinkSync(`/proc/${tree.pid}/fd/${fd}`) === folder;
       } catch {
         return false;
       }
     });
   // (a tree already measured walks a new folder once its watch has told it: a look before that passes it by)
-  const during = async (tree: DiskTree, folder: string, change: () => void) => {
+  const during = async (tree: DiskScan, folder: string, change: () => void) => {
     mkdirSync(folder, { recursive: true });
     for (let i = 0; i < 2000; i++) writeFileSync(join(folder, String(i)), 'x');
     for (let look = 0; look < 100; look++) {
@@ -116,8 +118,8 @@ test('a folder deleted or swapped mid-walk is accounted as it stands, and the sc
         () => true,
         () => true,
       );
-      while (!walked(folder)) if (await Promise.race([ended, sleep(0)])) break;
-      if (!walked(folder)) {
+      while (!walked(tree, folder)) if (await Promise.race([ended, sleep(0)])) break;
+      if (!walked(tree, folder)) {
         await measuring;
         continue;
       }
@@ -128,7 +130,7 @@ test('a folder deleted or swapped mid-walk is accounted as it stands, and the sc
   };
   mkdirSync(root, { recursive: true });
   writeFileSync(join(root, 'kept'), Buffer.alloc(16 * 1024));
-  const tree = new DiskTree([root]);
+  const tree = new DiskScan([root], ids);
   context.after(() => tree.close());
   const right = () =>
     settled(
@@ -144,7 +146,7 @@ test('a folder deleted or swapped mid-walk is accounted as it stands, and the sc
 
   // a fresh tree's walk and a measured one's, each with the folder swapped for one holding more, then its first
   // folder back in the swapped one's place
-  for (const [i, swapping] of [new DiskTree([root]), tree].entries()) {
+  for (const [i, swapping] of [new DiskScan([root], ids), tree].entries()) {
     context.after(() => swapping.close());
     const swapped = join(root, 'tmp', `bundle-${3 + i}`);
     const away = join(root, 'tmp', `elsewhere-${i}`);
@@ -370,7 +372,7 @@ test('a job hears disk cleanup instructions before its continued writer is stopp
   await new Reload().block(owners[0], block, now, {
     ask,
     checking: new Map([[writer.pid!, { stopped: reasons }]]),
-    stopped: () => {},
+    log: () => {},
   });
   assert.equal((await closed)[1], 'SIGKILL');
   assert.equal(reasons.length, 1, 'push checks retain stop attribution');
@@ -452,7 +454,7 @@ test('closed command stderr cannot prevent a recorded session warning or continu
   const block = overShare(tally(now, before, 1000), new Set(), { ...limits, disk }).block!;
   assert.equal(block.root.pid, writer.pid);
   const closed = once(writer, 'close');
-  await new Reload().block(owners[0], block, now, { ask, checking: new Map(), stopped: () => {} });
+  await new Reload().block(owners[0], block, now, { ask, checking: new Map(), log: () => {} });
   assert.equal((await closed)[1], 'SIGKILL');
 });
 
@@ -594,7 +596,7 @@ test('a failed job scan stops only its own command and leaves a warned writer me
   await reloader.block(rootWorker ? owners[0] : { ...owners[0], ...ids }, failed, now, {
     ask,
     checking: new Map(),
-    stopped: () => {},
+    log: () => {},
   });
   assert.equal((await closed)[1], 'SIGKILL');
   assert.equal(commands[1].signalCode, null);
@@ -615,7 +617,7 @@ test('a failed job scan stops only its own command and leaves a warned writer me
   assert.equal(continued.uid, owners[1].uid);
   assert.equal(continued.accountingError, undefined);
   const writerClosed = once(commands[1], 'close');
-  await reloader.block(owners[1], continued, now, { ask, checking: new Map(), stopped: () => {} });
+  await reloader.block(owners[1], continued, now, { ask, checking: new Map(), log: () => {} });
   assert.equal((await writerClosed)[1], 'SIGKILL');
   const writerReceipt = h.db.prepare('select count from blocks where job = ?').get(jobs[1].id) as any;
   assert.equal(writerReceipt.count, 1, 'the other job still receives its measured overuse strike');
@@ -629,16 +631,13 @@ test('a tree beyond the scanner bound reaches the three-strike stop through prod
     { job: job.id, ...ids },
     { job: other.id, uid: ids.uid + 1, gid: ids.gid },
   ];
-  // The tree is past the bound of a scanner with a small heap, not of a default one: the push's tests run in their job's
+  // The tree is past the bound of a scanner with a small accounting budget, not of a default one: the push's tests run in their job's
   // own measured folders, whose live scanner would otherwise fail the tests' job too.
-  const probeOldSpaceMb = 64;
-  const limit = treeEntryLimit(probeOldSpaceMb);
-  assert.ok(limit < treeEntryLimit() / 4, `a small heap's bound (${limit} entries) is well within the default's`);
-  // Paths over 3,584 characters cost more than eight 1 KiB entries each, so fewer files exhaust the same budget.
-  const root = join(work, 'jobs', String(job.id), ...Array(15).fill('d'.repeat(240)));
+  const probeBudgetMb = 1;
+  const root = join(work, 'jobs', String(job.id));
   mkdirSync(root, { recursive: true });
-  for (let i = 0; i <= Math.ceil(limit / 8); i++) closeSync(openSync(join(root, String(i)), 'w'));
-  const shares = new DiskShares(work, probeOldSpaceMb);
+  for (let i = 0; i < 1000; i++) closeSync(openSync(join(root, String(i)), 'w'));
+  const shares = new DiskShares(work, probeBudgetMb);
   context.after(() => shares.close());
   const ask = async (body: Record<string, unknown>) => {
     const reply = await h.worker('blocked', body);
@@ -660,7 +659,7 @@ test('a tree beyond the scanner bound reaches the three-strike stop through prod
     assert.equal(block.used, null);
     assert.equal(block.accountingError?.reason, 'job-tree');
     const closed = once(command, 'close');
-    await new Reload().block(owners[0], block, procs, { ask, checking: new Map(), stopped: () => {} });
+    await new Reload().block(owners[0], block, procs, { ask, checking: new Map(), log: () => {} });
     assert.equal((await closed)[1], 'SIGKILL');
     const receipt = h.db.prepare('select used, count from blocks where job = ? order by id desc').get(job.id) as any;
     assert.equal(receipt.used, null);

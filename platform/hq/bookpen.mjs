@@ -50,7 +50,7 @@ async function taps(browser, c) {
     const green = await tapedIn(page, c, free);
     await pen.tap([paper.x + 300, paper.y + 660]);
     await savedWhere(c, free.id, p => p.ink.length === 2);
-    await tool(page, 'Highlighter');
+    await tool(page, 'Marker');
     await pen.tap(green);
     // the highlighter's tap on the box of words it would draw over edits it too
     await pen.tap(middleOf(await words.boundingBox()));
@@ -161,7 +161,7 @@ async function boxes(browser, c) {
   try {
     const paper = await paperBox(page),
       [x, y] = [paper.x + 120, paper.y + 200];
-    await tool(page, 'Type');
+    await tool(page, 'Text');
     await pen.tap([x, y]);
     await until(() => editing(page), 'a new box, the caret in it');
     await page.keyboard.type('onx');

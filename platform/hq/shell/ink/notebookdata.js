@@ -16,14 +16,16 @@ export async function ask(dev, path, query = null, body = undefined) {
   try {
     return pictured(copy(play.route(path, new URLSearchParams(query ?? {}), body)));
   } catch (e) {
-    throw refused(e.status ?? 0, e.message);
+    throw refused(e.status ?? 0, e.message, e.reason);
   }
 }
 
 // ---- the notebooks and their pages
 
-// { shelf, archive }, My Notebook first
+// { shelf, archive }, My journal first; each notebook with its cover (an address, or null) and news (its new answers)
 export const loadShelf = dev => ask(dev, '/api/notebooks');
+// A notebook's cover: a picture's data URL
+export const setCover = (dev, id, picture) => ask(dev, '/api/notebooks/cover', null, { id, picture });
 // { notebook, pages, archived } in the notebook's order (dev mode draws each page's picture: notebookpicture.js)
 export async function loadPages(dev, notebook) {
   const read = await ask(dev, '/api/notebooks/pages', { notebook });
@@ -41,9 +43,17 @@ export const orderPages = (dev, notebook, pages) => ask(dev, '/api/notebooks/pag
 export const archivePage = (dev, id, archived) => ask(dev, '/api/notebooks/pages/archive', null, { id, archived });
 export const titlePage = (dev, id, title) => ask(dev, '/api/notebooks/pages/title', null, { id, title });
 export const zoomPage = (dev, id, shape, zoom) => ask(dev, '/api/notebooks/pages/zoom', null, { id, shape, zoom });
-// A page sent with its 10 seconds to undo, or taken back in them: the page, sending, then sent
-export const sendPage = (dev, id) => ask(dev, '/api/notebooks/pages/send', null, { id });
+// A page sent: the board's at once (aside: the groups with asks still open, moved to a new page first), an invited
+// person's with its 10 seconds to undo, or taken back in them (their Undo): the page, sending, then sent. (aside:
+export const sendPage = (dev, id, aside = []) =>
+  ask(dev, '/api/notebooks/pages/send', null, { id, ...(aside.length && { aside }) });
 export const undoSend = (dev, id) => ask(dev, '/api/notebooks/pages/undo', null, { id });
+
+// A review round closed from the Shelf (anyway: though asks are still open, refused 409 without it), wrapped and away
+// to the CEO; one back unwrapped: its round, as the Shelf lists it (notebook.round).
+export const closeRound = (dev, id, anyway = false) =>
+  ask(dev, '/api/notebooks/round/close', null, { id, ...(anyway && { anyway: true }) });
+export const unwrapRound = (dev, id) => ask(dev, '/api/notebooks/round/unwrap', null, { id });
 
 // ---- a page's groups
 
@@ -54,14 +64,10 @@ export const createGroup = (dev, page, parts) => ask(dev, '/api/notebooks/groups
 // since: the group's updated as this screen read it; one changed since is refused (409)
 export const editGroup = (dev, id, since, parts) =>
   ask(dev, '/api/notebooks/groups/edit', null, { id, since, ...parts });
-export const moveGroup = (dev, id, page, dx = 0, dy = 0) =>
-  ask(dev, '/api/notebooks/groups/move', null, { id, page, dx, dy });
+// To the page's end, or right after unit after there ('start': its first).
+export const moveGroup = (dev, id, page, after) => ask(dev, '/api/notebooks/groups/move', null, { id, page, after });
 export const deleteGroup = (dev, id) => ask(dev, '/api/notebooks/groups/delete', null, { id });
 export const restoreGroup = (dev, id) => ask(dev, '/api/notebooks/groups/restore', null, { id });
-// → { group, joined }
-export const joinGroups = (dev, ids) => ask(dev, '/api/notebooks/groups/join', null, { ids });
-// picks: the indexes of the elements taken out, per kind ({ ink, texts, pictures }) → { group, split }
-export const splitGroup = (dev, id, picks) => ask(dev, '/api/notebooks/groups/split', null, { id, ...picks });
 // A reply under an agent's answer (a slip's id) → { id, parent }; taken back in its seconds
 export const reply = (dev, answer, words) => ask(dev, '/api/notebooks/groups/reply', null, { answer, words });
 export const deleteReply = (dev, id) => ask(dev, '/api/notebooks/replies/delete', null, { id });

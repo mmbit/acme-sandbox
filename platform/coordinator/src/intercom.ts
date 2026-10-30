@@ -75,7 +75,7 @@ export function boardToday(latest: number, most = 30) {
 
 function lineAsShown(line: Line, time: string, names = new Map<string, string>(), shown = pictures.ofLine(line.id)) {
   if (line.who === 'call') return `${time} (${line.text})`;
-  // (an invited person's: chat.ts fromGuest, marked as theirs in its words.)
+  // (an invited person's: chat.ts 'guest', marked as theirs in its words.)
   if (line.who === 'guest') return `${time} (${chat.withPictures(line.text, shown)})`;
   if (!names.has(line.who))
     names.set(line.who, line.who === 'board' ? 'Board' : String(findAgent(line.who)?.name ?? line.who));

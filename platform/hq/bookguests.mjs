@@ -49,7 +49,7 @@ export async function guestNotebookStories({ shots = null, webkit = true } = {})
     console.log('Guest browser: languages and refusals complete');
     for (const visitor of state.opened) assert.deepEqual(visitor.errors, []);
     console.log(
-      'PASS guest notebooks: two private guest pages, un-send, final undo, automatic archive and deck task; email-code and passkey sign-in, sent page and live agent answer; device sign-in shortcut',
+      'PASS guest notebooks: two private guest pages, un-send, undo until the board closes it, then the Advice job; email-code and passkey sign-in, sent page and live agent answer; device sign-in shortcut',
     );
   } catch (error) {
     for (const [index, visitor] of state.opened.entries()) {
@@ -161,17 +161,20 @@ async function completeRound(state, board, round, ada, bela) {
   console.log('Guest browser: both reviewer answers received');
   await sendPage(ada.page);
   await sendPage(bela.page);
+  // (every page handed in: nothing closes the round but the board, so a guest may still undo; no timer.)
   await bela.page.locator('#book .bk-undo').waitFor({ state: 'visible' });
-  const closing = (await state.h.board(`/api/notebooks/guests/list?notebook=${round.id}`)).body.notebooks[0];
-  assert.equal(closing.state, 'closing');
+  const handedIn = (await state.h.board(`/api/notebooks/guests/list?notebook=${round.id}`)).body.notebooks[0];
+  assert.equal(handedIn.state, 'open');
   await undoPage(bela.page);
   await until(bela.page, '[data-notebook-status]', /round open/);
   await sendPage(bela.page);
-  await until(bela.page, '[data-notebook-status]', /Round complete/, 20_000);
+  assert.equal((await state.h.board('/api/notebooks/round/close', { id: round.id })).body.state, 'away');
+  await bela.page.reload();
+  await until(bela.page, '[data-notebook-status]', /round is closed/, 20_000);
   const closed = (await state.h.board(`/api/notebooks/guests/list?notebook=${round.id}`)).body.notebooks[0];
-  assert.equal(closed.archived, true);
-  assert.ok(closed.deck, 'a completed round queues the deck task');
-  assert.equal(closed.pages.length, 2);
+  assert.deepEqual([closed.state, closed.pages.length], ['closed', 2]);
+  const advice = state.h.db.prepare('select deck from notebook_rounds where notebook = ?').get(round.id);
+  assert.ok(advice.deck, 'the board closing it queues the Advice job');
   await snapshot(state, 'round-closed-phone', bela.page);
   await reopenManager(board);
 }

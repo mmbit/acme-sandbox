@@ -1,0 +1,236 @@
+/* A book's chapters as its bookmarks (bookmarks.js), placed by the screen's orientation as the page block's edge is
+   (book.css): sideways, small tabs peek out between the pages of a thick white stack of page edges at the book's left;
+   upright, where the stack is off screen, they stand along the book's top, its paper trimmed to make room. The trim and
+   the stack are only for a book with bookmarks (.bk-marked on #book), on its page: never on the overview or the shelf
+   (data-far, bookpagesfar.js), which show none. The chapter shown is lit in the deck's lime, as a
+   chosen version is (bookversions.css). (the board's call 171.) */
+#book {
+  --bk-mk-paper: #f3ecdf;
+  --bk-mk-edge: #cdbd9f;
+  --bk-mk-lit: var(--bk-chosen, #d6ea3c);
+}
+#book[data-far] :is(.bk-marks, .bk-mk-guests) {
+  display: none;
+}
+#book .bk-marks {
+  position: absolute;
+  z-index: 8;
+  display: flex;
+  pointer-events: none;
+}
+#book .bk-marks button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid var(--bk-mk-edge);
+  background: var(--bk-mk-paper);
+  color: rgba(42, 35, 82, 0.66);
+  font: 600 14px/1 var(--bk-font);
+  cursor: pointer;
+  pointer-events: auto;
+  transition:
+    background-color 0.15s,
+    transform 0.12s;
+}
+#book .bk-marks button:active {
+  transform: scale(0.96);
+}
+#book .bk-marks button[aria-current='page'] {
+  border-color: #2a2352;
+  background: var(--bk-mk-lit);
+  color: #2a2352;
+  font-weight: 700;
+}
+/* (a chapter with no pages yet: there, dim) */
+#book .bk-marks button[data-empty] {
+  color: rgba(42, 35, 82, 0.38);
+}
+#book .bk-mk-count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  box-sizing: border-box;
+  border-radius: 9px;
+  background: var(--bk-red);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+/* Upright: along the top, standing on the paper's head from its left, clear of the dog-ear at its right; the paper,
+   the controls' lane and the page's left edge start under them */
+@media (orientation: portrait) {
+  #book.bk-marked:not([data-far]) {
+    --bk-mk-head: 40px;
+  }
+  #book.bk-marked:not([data-far]) :is(.bk-paper, .bk-rail, .bk-stack) {
+    top: calc(var(--bk-board) + var(--bk-mk-head));
+  }
+  #book .bk-marks {
+    top: var(--bk-board);
+    left: 12px;
+    right: 56px;
+    height: var(--bk-mk-head);
+    align-items: flex-end;
+    gap: 6px;
+  }
+  #book .bk-marks button {
+    flex: 0 1 auto;
+    min-width: 0;
+    height: 34px;
+    padding: 0 14px;
+    border-bottom: 0;
+    border-radius: 8px 8px 0 0;
+  }
+  /* the chapter shown joined to its page, a little taller */
+  #book .bk-marks button[aria-current='page'] {
+    height: 38px;
+  }
+}
+
+/* Sideways: a thicker stack of page edges at the book's left, white so no dark strip shows there, the tabs peeking out
+   of it one under another from its head, tucked in under its last few pages */
+@media (orientation: landscape) {
+  #book.bk-marked:not([data-far]) {
+    --bk-pages: 30px;
+  }
+  #book .bk-marks {
+    top: var(--bk-board);
+    bottom: var(--bk-board);
+    left: 0;
+    width: var(--bk-pages);
+    flex-direction: column;
+    gap: 10px;
+    padding-top: 14px;
+    box-sizing: border-box;
+    background: repeating-linear-gradient(90deg, #fffaf0 0 2px, #d9cbb0 2px 3px);
+  }
+  /* (the last pages over the tabs' ends, so they read as between the pages) */
+  #book .bk-marks::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 6px;
+    background: repeating-linear-gradient(90deg, #fffaf0 0 2px, #d9cbb0 2px 3px);
+  }
+  #book .bk-marks button {
+    flex-direction: column-reverse;
+    width: 25px;
+    min-height: 84px;
+    margin-left: 1px;
+    padding: 8px 0;
+    border-right: 0;
+    border-radius: 7px 0 0 7px;
+    box-shadow: -1px 1px 2px rgba(42, 35, 82, 0.14);
+    font-size: 13px;
+  }
+  #book .bk-marks button span {
+    writing-mode: vertical-rl;
+    rotate: 180deg;
+  }
+  /* (each a little further out than the one before, as tabs stuck in by hand) */
+  #book .bk-marks button:nth-child(2) {
+    margin-left: 0;
+  }
+  #book .bk-marks button:nth-child(3) {
+    margin-left: 2px;
+  }
+  #book .bk-marks button[aria-current='page'] {
+    width: 27px;
+    margin-left: 0;
+  }
+}
+
+/* a round's guests: a small sheet of paper beside the tabs */
+#book .bk-mk-guests {
+  position: absolute;
+  /* (over the controls while it's open: the rail's 8, book.css) */
+  z-index: 9;
+  top: calc(var(--bk-board) + 12px);
+  left: calc(var(--bk-pages) + 10px);
+  width: min(340px, calc(100% - 28px - var(--bk-pages)));
+  max-height: calc(100% - var(--bk-board) * 2 - 60px);
+  overflow-y: auto;
+  padding: 6px 12px;
+  border: 1px solid var(--bk-mk-edge);
+  border-radius: 8px;
+  background: var(--bk-paper);
+  box-shadow: 0 6px 18px rgba(42, 35, 82, 0.22);
+  color: var(--bk-ink, #2a2352);
+  font: 15px/1.3 var(--bk-font);
+}
+@media (orientation: portrait) {
+  #book .bk-mk-guests {
+    top: calc(var(--bk-board) + var(--bk-mk-head) + 6px);
+    left: 12px;
+  }
+}
+#book .bk-mk-guest {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 48px;
+  padding: 6px 0;
+  border: 0;
+  border-bottom: 1px solid rgba(42, 35, 82, 0.14);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+#book .bk-mk-guest:last-child {
+  border-bottom: 0;
+}
+#book .bk-mk-initial {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 1.5px solid currentColor;
+  border-radius: 50%;
+  font-size: 13px;
+  font-weight: 600;
+}
+#book .bk-mk-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#book .bk-mk-state {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  color: rgba(42, 35, 82, 0.62);
+  font-size: 12px;
+}
+#book .bk-mk-state svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+#book .bk-mk-state .bk-mk-fill {
+  fill: currentColor;
+  stroke: none;
+}
+#book .bk-mk-done {
+  color: var(--bk-ink, #2a2352);
+}
+#book .bk-mk-empty {
+  margin: 10px 0;
+  color: rgba(42, 35, 82, 0.62);
+}

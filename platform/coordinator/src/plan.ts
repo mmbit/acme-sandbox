@@ -303,9 +303,7 @@ export function planOf(id: string, f: Forecast) {
       .list.filter(p => p.business === business.id && p.id !== project.id)
       .map(p => ({ id: p.id, name: p.name })),
   };
-  const threads = db
-    .prepare("select * from threads where project = ? and status = 'open' order by created")
-    .all(id) as Thread[];
+  const threads = openThreads(id);
   const tasks = db.prepare(`select id, agent, title, step, round, status, started from jobs where thread = ?
     and kind = 'work' and pr is null and status in ${OPEN_JOBS} order by status = 'queued', coalesce(seq, id), id`);
   const doneCount = db.prepare(
@@ -338,6 +336,16 @@ export function planOf(id: string, f: Forecast) {
       };
     }),
   };
+}
+
+function openThreads(project: string) {
+  return db
+    .prepare(
+      `select t.id, t.project, t.name, t.goal, t.status, t.created, t.by, t.done, t.branch, t.judge, t.deadline_from,
+      w.deadline, w.aim, w.deadline_by from threads t join thread_windows w on w.id = t.id
+      where t.project = ? and t.status = 'open' order by t.created`,
+    )
+    .all(project) as Thread[];
 }
 
 // One line of what was given (nothing for none)

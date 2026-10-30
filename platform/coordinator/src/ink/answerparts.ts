@@ -1,18 +1,14 @@
-// What an agent's answer holds (hq answer: bookanswer.ts answer), checked: its words, style and the rest, and what sizes
-// it for its spot
+// What an agent's answer holds (hq answer: bookanswer.ts answer), checked: its words, style and the rest
 import * as asking from '../../../hq/shell/questions.js';
-import { pictureSize } from '../../../../shared/pictures/size.ts';
 import { ARTIFACT, LINK_MAX, SLIP_MAX, type More } from './bookslips.ts';
-import { type Contents } from './answerspot.ts';
 import { dataUrlPicture, GROWN_MAX, inkOf, isRefused, type Refused, type Stroke } from '../pagechecks.ts';
 import { boxOf } from '../../../hq/shell/ink/notebookstack.js';
 
-// A patch kept with a version
-const PATCH_MAX = 1_000_000;
+// A patch kept with a version, and a picture's source line (where a chart's numbers came from)
+const PATCH_MAX = 1_000_000,
+  SOURCE_MAX = 200;
 
-export function partsOfAnswer(
-  b: any,
-): { text: string; more: More; patch: string | null; contents: Contents } | Refused {
+export function partsOfAnswer(b: any): { text: string; more: More; patch: string | null } | Refused {
   const text = typeof b.text === 'string' ? b.text.trim() : '';
   if (text.length > SLIP_MAX) return [400, `an answer's text is at most ${SLIP_MAX} characters`];
   const link = b.link == null ? null : String(b.link);
@@ -36,15 +32,16 @@ export function partsOfAnswer(
   const patch = b.patch == null ? null : String(b.patch);
   if (patch !== null && (!version || patch.length > PATCH_MAX))
     return [400, `a patch (at most ${PATCH_MAX} bytes) goes with a version`];
+  const source = sourceOf(b.source, !!picture);
+  if (isRefused(source)) return source;
   const style = version ? 'version' : form ? 'form' : b.asks ? 'question' : ink ? 'drawing' : 'text';
   if (!text && !picture && !ink?.length && !version) return [400, 'an answer is text, a picture, ink or a version'];
   if ((style === 'form' || style === 'question') && !text) return [400, `a ${style} has words: what it asks`];
-  const contents = contentsOf(text, picture, ink, form as unknown[] | null);
-  if (isRefused(contents)) return contents;
+  const far = ink && inkTooFar(ink);
+  if (far) return far;
   return {
     text,
     patch,
-    contents,
     more: {
       picture,
       link,
@@ -53,25 +50,29 @@ export function partsOfAnswer(
       version,
       ink: ink && JSON.stringify(ink),
       form: form && JSON.stringify(form),
+      source,
     },
   };
 }
 
-// What sizes an answer for its spot, its ink no bigger than a page grows and no further from the answer's top-left
-// (so placing it stays a few steps, and its picture a page's size: bookrender.ts; the top-left)
-function contentsOf(
-  text: string,
-  picture: { clean: Buffer } | null,
-  ink: Stroke[] | null,
-  form: unknown[] | null,
-): Contents | Refused {
-  const inkBox = ink && boxOf({ ink, texts: [], pictures: [] });
+// Where a picture's numbers came from, as one line (null: none given)
+function sourceOf(given: unknown, pictured: boolean): string | null | Refused {
+  if (given == null) return null;
+  const source = String(given).replace(/\s+/g, ' ').trim();
+  if (!source || source.length > SOURCE_MAX)
+    return [400, `a source is one line of at most ${SOURCE_MAX} characters: where the numbers came from`];
+  return pictured ? source : [400, 'a source goes under a picture: where its numbers came from'];
+}
+
+// An answer's ink no bigger than a page grows and no further from the answer's top-left (its picture a page's size:
+// bookrender.ts), refused where it is
+function inkTooFar(ink: Stroke[]) {
+  const inkBox = boxOf({ ink, texts: [], pictures: [] });
   const reach = inkBox && Math.max(inkBox.w, inkBox.h, inkBox.x + inkBox.w, inkBox.y + inkBox.h, -inkBox.x, -inkBox.y);
   if (reach && reach > GROWN_MAX)
     return [
       400,
       `an answer's ink fits on a page: at most ${GROWN_MAX} px a side, from the answer's top-left`,
     ] as Refused;
-  const size = picture && pictureSize(picture.clean);
-  return { text, picture: size, ink: inkBox?.h ?? 0, questions: form?.length ?? 0 };
+  return null;
 }

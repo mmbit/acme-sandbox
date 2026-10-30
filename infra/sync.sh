@@ -95,6 +95,12 @@ git config credential.https://github.com.helper "$PWD/infra/git-credential.sh"
 # after the fetch, a merge that landed while it ran would count as deployed).
 fetched=${SYNC_FETCHED:-$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)}
 git fetch -q origin "$BRANCH" || exit 1
+# The CEO's revert requests (HQ's data folder, reverts/: platform/coordinator/src/reverts.ts), each made on main now, its
+# answer left beside it for HQ (infra/revert.py), and main fetched again with the reverts.
+if [ -n "$HQ_DATA" ] && [ -f infra/revert.py ] && compgen -G "$HQ_DATA/reverts/*.json" >/dev/null; then
+  python3 infra/revert.py --requests "$HQ_DATA/reverts" . || echo "revert.py failed: HQ's revert requests wait" >&2
+  git fetch -q origin "$BRANCH" || exit 1
+fi
 # A rerun (below) deploys the commit the first run fetched, not a newer one its script never saw.
 commit=${SYNC_RERUN:-$(git rev-parse FETCH_HEAD)}
 # A commit whose deploy didn't bring HQ up (infra/hq-up.sh, below) isn't tried again: HQ stays on the last good one until
@@ -326,18 +332,28 @@ log=$(mktemp)
   bring_up
 } > "$log" 2>&1
 deployed=$?
-# A deploy that didn't bring HQ up (infra/hq-up.sh: the coordinator crashed at its start, or answers nothing) goes back
-# to the last good deploy by itself, so a bad merge never keeps HQ down: that commit isn't tried again (above), and the
-# report says so. One that stopped before the coordinator changed (a build that failed, a call that started) finds HQ
-# up as it was, and is tried again at the next run, as before.
-up=0; COMPOSE="$compose" ./infra/hq-up.sh >> "$log" 2>&1 || up=1
+# A deploy that didn't bring HQ up (infra/hq-up.sh: the coordinator crashed at its start, answers nothing, or its page
+# doesn't assemble) goes back to the last good deploy by itself, so a bad merge never keeps HQ down: that commit isn't
+# tried again (above), and the report says so. One that stopped before the coordinator changed (a build that failed, a
+# call that started) finds HQ up as it was, and is tried again at the next run, as before.
+up=0; said=$(COMPOSE="$compose" ./infra/hq-up.sh 2>&1) || up=1; echo "$said" >> "$log"
 if [ "$up" != 0 ] && [ -n "$last" ] && [ "$last" != "$commit" ] && git cat-file -e "$last" 2>/dev/null; then
   echo "$commit" > "$failed"
   echo "HQ didn't come up on $commit: back to the last good deploy, $last" >> "$log"
   rolling_back=1
   { git reset -q --hard "$last" && . infra/infra-env.sh && stack_env "$last" && bring_up &&
       COMPOSE="$compose" ./infra/hq-up.sh; } >> "$log" 2>&1
-  echo "back on $last: exit $?" >> "$log"
+  back=$?
+  echo "back on $last: exit $back" >> "$log"
+  # Up again on the last good one, so the code since is what broke HQ: its commits are reverted on main (infra/revert.py,
+  # from the failed commit's checkout: the last good one may be older than it), or the next merge would bring them
+  # back. HQ hears of it with the deploy (deploys.py), and the CEO finds which broke it. A go-back that didn't bring HQ
+  # up either is the server's trouble, not the code's: nothing is reverted.
+  if [ "$back" = 0 ] && git show "$commit:infra/revert.py" > "$log.revert.py" 2>/dev/null; then
+    reverted=$(python3 "$log.revert.py" . "HQ didn't come up on ${commit:0:9}" --since "$last" "$commit" 2>&1)
+    echo "reverted on main: $reverted" >> "$log"
+  fi
+  rm -f "$log.revert.py"
   deployed=1
 elif [ "$deployed" = 0 ] && [ "$up" = 0 ]; then
   echo "$commit" > "$state" && echo "$approvals" > "$approved"
@@ -354,6 +370,7 @@ echo "pruned after the deploy: old images $(docker image prune $oldImages 2>&1 |
 # HQ's record of the deploy, for the jobs that wait for one (hq job --when): after the report, so a job it starts finds
 # this deploy's in hq report.
 [ -z "$HQ_DATA" ] || $compose ps -a --format '{{.Service}} {{.ID}}' 2>/dev/null |
-  python3 infra/deploys.py "$HQ_DATA/deploys" "$commit" "$fetched" "$deployed" "$before" $reloaded >/dev/null ||
+  DEPLOY_BROKE="${rolling_back:+$said}" DEPLOY_REVERTED="${reverted:-}" \
+    python3 infra/deploys.py "$HQ_DATA/deploys" "$commit" "$fetched" "$deployed" "$before" $reloaded >/dev/null ||
   echo "deploys.py failed: HQ hasn't heard of the deploy of $commit" >&2
 rm -f "$before"

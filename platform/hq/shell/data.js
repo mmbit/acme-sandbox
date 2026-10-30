@@ -478,8 +478,8 @@ export const loadNumbersApp = (dev, slug, days, mode) => dev
 // routes (platform/coordinator/src/care.ts)
 // A Care action: a refusal arrives in plain words ({ error }), and they become the Error's message (.status is the HTTP
 // status; 0: the coordinator can't be reached), so the board reads why, not a code. Without a body it's a GET (Find a case).
-// (act, refused and copy: the Sketchbook's too, sketchdata.js)
-// A Blob body goes as it is, with its own type (a sketch's picture).
+// (act and refused: the notebook's too, bookscope.js, pair.js and bookinvites.js)
+// A Blob body goes as it is, with its own type (a picture).
 export async function act(url, body) {
   const sent = body instanceof Blob ? { type: body.type, data: body } : { type: 'application/json', data: JSON.stringify(body) };
   const res = await fetch(url, body === undefined ? { credentials: 'same-origin', headers: { accept: 'application/json' } }
@@ -487,10 +487,11 @@ export async function act(url, body) {
   if (!res) throw refused(0, 'Could not reach the coordinator. Try again.');
   if (res.status === 401) return toLogin();
   const json = await res.json().catch(() => ({}));
-  if (!res.ok) throw refused(res.status, typeof json?.error === 'string' && json.error ? json.error : `That didn’t go through (error ${res.status}). Try again in a minute.`);
+  if (!res.ok) throw refused(res.status, typeof json?.error === 'string' && json.error ? json.error : `That didn’t go through (error ${res.status}). Try again in a minute.`, json?.reason);
   return json;
 }
-export const refused = (status, words) => Object.assign(new Error(words), { status });
+// (reason: the refusal's code, which a page reads to know which refusal it is.)
+export const refused = (status, words, reason) => Object.assign(new Error(words), { status, reason });
 export const copy = v => JSON.parse(JSON.stringify(v));
 // Dev mode plays the coordinator on mock/care*.json, in memory: the list, each card's full text by id, the sent cards and
 // every remedy (both paged by 2 here, so Older shows), with the same refusals as the server.

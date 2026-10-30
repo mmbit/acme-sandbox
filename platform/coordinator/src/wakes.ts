@@ -8,6 +8,8 @@ import { DATA_DIR } from './config.ts';
 import { db, prepared } from './db.ts';
 import { publish } from './events.ts';
 import * as windows from './windows.ts';
+import * as incidents from './incidents.ts';
+import * as reverts from './reverts.ts';
 
 // followed: a call followed up (or given up on), the coordinator's own (ledger.ts followUp), never --when's. ended: the
 // call a job was queued on has ended (server.ts), never --when's either.
@@ -137,6 +139,7 @@ const unmet = (job: number) =>
 // and one taken into the deploys table goes, said in the log: the table is what the wakes count.
 const readFiles = new Set<string>();
 export function readDeploys(dir = `${DATA_DIR}/deploys`) {
+  reverts.readAnswers(); // (the server's answers to the CEO's reverts come the same way, the other way round)
   let files: string[];
   try {
     files = readdirSync(dir).filter(f => f.endsWith('.json') && !readFiles.has(f));
@@ -145,32 +148,10 @@ export function readDeploys(dir = `${DATA_DIR}/deploys`) {
       console.error(`wakes: couldn't read the deploy records in ${dir}:`, err);
     return;
   }
-  const names = (v: unknown) =>
-    JSON.stringify(Array.isArray(v) ? v.filter(s => typeof s === 'string' && SERVICE.test(s)) : []);
-  const iso = (v: unknown) => {
-    const t = Date.parse(String(v));
-    return Number.isNaN(t) ? null : new Date(t).toISOString();
-  };
   for (const file of files) {
     readFiles.add(file);
     try {
-      const record = JSON.parse(readFileSync(`${dir}/${file}`, 'utf8'));
-      const fetched = iso(record.fetched),
-        finished = iso(record.finished);
-      if (typeof record.sha !== 'string' || !/^[0-9a-f]{7,40}$/.test(record.sha) || !fetched || !finished)
-        throw new Error('not a deploy record');
-      db.prepare(
-        `insert or ignore into deploys (file, sha, fetched, finished, ok, recreated, reloaded, services) values (?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).run(
-        file,
-        record.sha,
-        fetched,
-        finished,
-        record.ok === true ? 1 : 0,
-        names(record.recreated),
-        names(record.reloaded),
-        names(record.services),
-      );
+      takeIn(file, JSON.parse(readFileSync(`${dir}/${file}`, 'utf8')));
     } catch (err) {
       console.error(`wakes: the deploy record ${file} wasn't read:`, (err as Error).message);
       continue;
@@ -183,6 +164,38 @@ export function readDeploys(dir = `${DATA_DIR}/deploys`) {
       console.error(`wakes: deploy record ${file} taken in, its file kept:`, (err as Error).message);
     }
   }
+}
+
+// One record into the deploys table. A deploy that broke HQ calls the CEO to find what did (incidents.ts).
+function takeIn(file: string, record: Record<string, unknown>) {
+  const names = (v: unknown) =>
+    JSON.stringify(Array.isArray(v) ? v.filter(s => typeof s === 'string' && SERVICE.test(s)) : []);
+  const iso = (v: unknown) => {
+    const t = Date.parse(String(v));
+    return Number.isNaN(t) ? null : new Date(t).toISOString();
+  };
+  const text = (v: unknown, most: number) => (typeof v === 'string' ? v.slice(-most) : '');
+  const [fetched, finished] = [iso(record.fetched), iso(record.finished)];
+  const [broke, reverted] = [text(record.broke, 2000), text(record.reverted, 500)];
+  if (typeof record.sha !== 'string' || !/^[0-9a-f]{7,40}$/.test(record.sha) || !fetched || !finished)
+    throw new Error('not a deploy record');
+  const taken = db
+    .prepare(
+      `insert or ignore into deploys (file, sha, fetched, finished, ok, recreated, reloaded, services, broke, reverted) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      file,
+      record.sha,
+      fetched,
+      finished,
+      record.ok === true ? 1 : 0,
+      names(record.recreated),
+      names(record.reloaded),
+      names(record.services),
+      broke,
+      reverted,
+    );
+  if (taken.changes && broke) incidents.deployBroke({ sha: record.sha, broke, reverted });
 }
 
 // (exported for jobs.ts stillHolds)

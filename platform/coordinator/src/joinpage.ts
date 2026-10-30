@@ -202,6 +202,7 @@ export const ASSETS: Record<string, URL> = {
   'figure.js': new URL('./joinfigure.js', import.meta.url),
   'people.js': new URL('./joinpeople.js', import.meta.url),
   'callaudio.js': new URL('../../hq/shell/callaudio.js', import.meta.url),
+  'audiolevel.js': new URL('../../hq/shell/audiolevel.js', import.meta.url),
   'screenlock.js': new URL('../../hq/shell/screenlock.js', import.meta.url),
   'mic-worklet.js': new URL('../../hq/shell/mic-worklet.js', import.meta.url),
   // a walk-through's: the frame and the minimised call over it, HQ's own bubble, and the watch-along's recorder

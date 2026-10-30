@@ -3,6 +3,7 @@
 //   - answer: a question or a doubt a few words settle; the quick run writes them (bookanswer.ts answerNow).
 //   - try: a change to something the board can see, where a few versions to look at help it decide (booktry.ts tryNow).
 //   - pick: a reply on one of a try's versions that chooses it; that version is picked (bookpick.ts pickNow).
+//   - cross: a reply on one of a try's versions that rules it out (bookpick.ts crossNow).
 //   - none: everything else, most notes: it waits for its sheet as ever, and shows nothing.
 // It's guided, not ruled: the prompt says what each reply is for and shows real notes with their verdicts. Nothing here
 // looks at the words' shape. Each verdict is kept with its why (ink_verdicts), so a wrong call can be found: a reply the
@@ -43,7 +44,9 @@ once('2026-10-28-ink-verdicts-runs', () => {
 });
 
 // The replies a verdict can be, the one list the type, the routes and the model's schema are read from
-const REPLIES = ['none', 'answer', 'try', 'pick'] as const;
+const REPLIES = ['none', 'answer', 'try', 'pick', 'cross'] as const;
+// (only a note on a version can pick or cross it)
+const ON_VERSION: readonly Reply[] = ['pick', 'cross'];
 export type Reply = (typeof REPLIES)[number];
 export type Target = { grp?: number; note?: number; page?: number; text?: string };
 export type Verdict = { id: number; reply: Reply; why: string };
@@ -51,23 +54,24 @@ export type Verdict = { id: number; reply: Reply; why: string };
 // they started or joined (null: none, as on a call, where the call's agent answers itself)
 type Route<R> = (t: Target, v: { id: number; why: string }) => R;
 type Run = number | null | Promise<number | null>;
-export type Routes = Record<'answer' | 'try', Route<Run>> & { pick: Route<unknown> };
+export type Routes = Record<'answer' | 'try' | 'cross', Route<Run>> & { pick: Route<unknown> };
 const routes: Routes = {
   // (loaded when a verdict comes: they read the book, which reads this)
   answer: (t, v) => import('./bookanswer.ts').then(m => m.answerNow(t, v)),
   try: (t, v) => import('./booktry.ts').then(m => m.tryNow(t, v)),
   pick: t => import('./bookpick.ts').then(m => m.pickNow(t)),
+  cross: t => import('./bookpick.ts').then(m => m.crossNow(t)),
 };
 
-// The verdict asked of the model: pick is offered only for a note on a version, the one thing a pick can choose
+// The verdict asked of the model: pick and cross are offered only for a note on a version, the one thing they choose
 export const schemaOf = (onVersion: boolean) => ({
   type: 'object',
   properties: {
     reply: {
       type: 'string',
-      enum: REPLIES.filter(r => onVersion || r !== 'pick'),
+      enum: REPLIES.filter(r => onVersion || !ON_VERSION.includes(r)),
       description:
-        'answer: a few words settle it; try: a few versions to look at; pick: on a version, it chooses that one; none: no reply now',
+        'answer: a few words settle it; try: a few versions to look at; pick: on a version, it chooses that one; cross: on a version, it rules that one out; none: no reply now',
     },
     why: { type: 'string', maxLength: WHY_MAX, description: 'one short line: what the note asks for, so this reply' },
   },
@@ -87,7 +91,9 @@ side would help it decide: a colour, a size, a picture, a layout, words it isn't
 - pick: only for a note on one of an agent's versions (it replies to a version): the board chooses that version. A \
 ring drawn round it, a tick on it, an arrow at it with "deze", "this one" or "ja". \
 The picture shows the version's frame with the board's ink over it. A note on a version that asks for more ("this, but \
-softer") is a try, a doubt about it an answer, and a cross through it or "nee" none.
+softer") is a try, a doubt about it an answer.
+- cross: only for a note on one of an agent's versions: the board rules that version out. A cross or a line through \
+it, "nee", "no", "not this one".
 - none: everything else, and that's most notes: work that's clear as written (it's done when the sheet goes), a \
 reminder, a thought, a reaction, a tick, a scribble. None costs nothing and shows nothing.
 
@@ -117,7 +123,8 @@ Notes and their verdicts:
 - no words, a ring round the whole frame (written, on version 2 of 3, "Brick red") -> pick: rings one version to choose it.
 - "✔" (written, on version 1 of 3, "Sand and honey") -> pick: ticks the version it likes.
 - "this, but softer" (written, on version 3 of 3, "Late sun") -> try: wants one more round from that version.
-- a cross over the frame (written, on version 1 of 2, "Bold") -> none: rules that one out, nothing to choose yet.`;
+- a cross over the frame (written, on version 1 of 2, "Bold") -> cross: rules that one out.
+- "nee" (written, on version 2 of 3, "Sand and honey") -> cross: doesn't want that one.`;
 
 const SAID: Record<string, string> = {
   written: 'written by hand, read into type',

@@ -254,7 +254,7 @@ export function handOver(agent: string, lines: string[], request = 0, token = ''
   const said = lineTimes(lines, times);
   if (was?.status === 'ended' && was.lines === '[]' && lines?.length) { ledger.late(was.id, lines, said); return { ok: true }; }
   const live = was?.status === 'live' ? was.id : undefined;
-  // (its notes page stays in My Notebook as the board left it, or is deleted if nothing is on it.)
+  // (its notes page stays in My journal as the board left it, or is deleted if nothing is on it.)
   if (live) ledger.callEnded(live);
   const recorded = live ? ledger.items(live).length > 0 : false;
   if ((!lines?.length && !recorded) || !findAgent(agent)) {
@@ -287,7 +287,7 @@ export const calls = () => (db.prepare(`select c.id, c.ts, c.agent, c.request, c
 // over-long briefing cuts those first (fit()).
 // `restarted`: the call this session takes over (context()), and what's on its list already. carried: the calls it
 // carries on from (carriedOn()), and `call` this one. On a call in HQ it says when to use which of the notes page's tools
-//, and that the board's scribbles are for the agent to judge.
+// (a change about what the board shows comes with its crop by default), and that the board's scribbles are for the agent to judge.
 function prompt(lang: BoardLanguage, agent: string, req?: Req, restarted = 0, phone = false, carried: number[] = [], call = restarted) {
   const head = `${instructions(lang, agent, phone)}
 ## You
@@ -314,6 +314,7 @@ ${ledger.items(restarted).map(i => `- #${i.id}: ${i.what} (${i.kind} for ${i.own
 
 // Who they are on the call and how to talk: the call's rules, then AGENTS.md. A window puts work first, a pause only
 // waits on a condition.
+// (the notes page's try)
 // eslint-disable-next-line max-lines-per-function -- one template of words, the call's instructions: a data table in prose
 function instructions(lang: BoardLanguage, agent: string, phone: boolean) {
   const who = findAgent(agent)!, name = String(who.name ?? agent), role = titleOf(who);
@@ -426,9 +427,11 @@ The board's words reach you through speech recognition, which can turn backgroun
 into words: if what you hear seems garbled, unrelated or not addressed to you, say you didn't catch that.
 ${phone ? '' : `The board can also show you pictures on screen during the call: they come with its words, or on their own with a short note.
 The call's notes page is yours to work as the board does, and the board can undo anything you do there: each change it asks
-for goes on it with scrap, as a plain note (no picture) unless a crop of the board's note or another screen shows what it's
-about, never a crop of the page itself; mark_page rings, points at or highlights what you mean; change_page fixes a note of
-yours, moves or deletes what's there (read_page first for anything you didn't just make).
+for goes on it with scrap. By default a scrap carries a crop of what the change is about, cut from one of the board's
+notes or from the board's screen. Make it a plain note (no picture) only for a change about the notes page itself (which is
+never cropped) or when there's nothing to show; mark_page rings, points at or highlights what you mean; change_page fixes a note of
+yours, moves or deletes what's there (read_page first for anything you didn't just make). When the board asks to see a
+few versions of a change, put it on the page and start a try on it: its owner builds them, and they land under it.
 The board scribbles on its screen to show you things ("move this here"): each scribble comes with its turn as a note, its
 picture the page around the ink. It's for you: nothing of it goes on the page by itself. From what the board says, make a
 scrap of what's worth keeping (from: 'note 3') and let the rest be: not everything has to become a scrap. Its ink goes

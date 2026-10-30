@@ -29,6 +29,10 @@ export async function notebookRequest(url, body) {
   });
   const answer = await response.json();
   if (!response.ok)
-    throw refused(response.status, refusals[answer.reason]?.[document.documentElement.lang] ?? answer.error);
+    throw refused(
+      response.status,
+      refusals[answer.reason]?.[document.documentElement.lang] ?? answer.error,
+      answer.reason,
+    );
   return answer;
 }

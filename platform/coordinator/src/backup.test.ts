@@ -98,7 +98,7 @@ test('a bucket nearing the free tier is said once, and again only after a good n
   status({ ok_at: '2026-10-20T02:32:00+00:00', state: 'ok', warn });
   check(Date.parse('2026-10-20T03:00:00Z'));
   assert.equal(await said(), 2, 'cleared on a good night, then back: told again');
-  status({ ok_at: '2026-10-21T02:32:00+00:00', state: 'ok', warn: null, in_progress: true });   // tonight's figure leaves out the repo's copy
+  status({ ok_at: '2026-10-21T02:32:00+00:00', tried_at: '2026-10-21T02:32:00+00:00', state: 'ok', warn: null, in_progress: true });   // tonight's figure leaves out the repo's copy
   check(Date.parse('2026-10-21T02:40:00Z'));
   status({ ok_at: '2026-10-21T02:32:00+00:00', state: 'ok', warn });   // the repo's copy takes it past 8 GB again
   check(Date.parse('2026-10-21T03:00:00Z'));
@@ -121,6 +121,24 @@ test('the repo\'s copy stale: one job for Bolt per heads-up, none when it is onl
   assert.equal(jobs(/^Off-site backup: the repo/).length, 1);
   assert.match((await events()).at(-1)!, /heads-up: .*fetching from GitHub has failed since\. A job for Bolt is queued/);
   assert.match(await brief(/^Off-site backup: the repo/), /fetching from GitHub has failed since.*Invalid username or token/);
+});
+
+test('a night still making the repo\'s copy queues no job; one stopped mid-way does, from its time limit', async () => {
+  const stale = 'no copy of the repo since 2026-12-08 02:32 UTC', before = jobs(/^Off-site backup: the repo/).length;
+  const unfinished = (day: number) => ({ ok_at: `2026-12-${day}T02:32:00+00:00`, tried_at: `2026-12-${day}T02:32:00+00:00`, state: 'ok',
+    warn: stale, repo_warn: stale, repo_error: "the repo's copy didn't finish (the unit stopped mid-way?)", in_progress: true });
+  status(unfinished(10));   // the database's backup is in, the repo's copy under way
+  check(Date.parse('2026-12-10T02:35:00Z'));
+  assert.equal(jobs(/^Off-site backup: the repo/).length, before, 'nothing while the night runs');
+  status({ ok_at: '2026-12-10T02:32:00+00:00', tried_at: '2026-12-10T02:32:00+00:00', state: 'ok', warn: null, repo_warn: null });
+  check(Date.parse('2026-12-10T03:00:00Z'));   // the copy went in
+  assert.equal(jobs(/^Off-site backup: the repo/).length, before);
+  status(unfinished(11));   // the next night stops on its repo step, and its status stays
+  check(Date.parse('2026-12-11T04:00:00Z'));
+  assert.equal(jobs(/^Off-site backup: the repo/).length, before, 'still within the unit\'s two hours');
+  check(Date.parse('2026-12-11T04:33:00Z'));
+  assert.equal(jobs(/^Off-site backup: the repo/).length, before + 1);
+  assert.match(await brief(/^Off-site backup: the repo/), /since 2026-12-08.*didn't finish/);
 });
 
 test('invoices or agreements not copied off the server in time: the CEO hears once, and Bolt gets one job', async () => {

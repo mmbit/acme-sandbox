@@ -50,6 +50,7 @@ const sample = (minute: number, nodes: number, book: number, extra = {}) => ({
   canvases: 3,
   listeners: { resize: 2 + minute },
   frames: { shown: 100, slow: minute > 30 ? 20 : 1, worst: 80 },
+  held: { shown: 10, slow: minute > 30 ? 5 : 0, worst: minute > 30 ? 140 : 30 },
   longTasks: { count: 0, ms: 0, worst: 0 },
   state: 'brownstone book=open',
   ...extra,
@@ -102,6 +103,7 @@ test("a session reads as each count's change per hour, what grew most and lag th
   assert.deepEqual(read.counts.listeners, { first: 2, last: 62, most: 62, perHour: 60 });
   assert.deepEqual(read.grewMost.regions, [{ name: '#book', from: 200, to: 1400, change: 1200 }]);
   assert.deepEqual(read.slowFrames, { first: 1, last: 20 });
+  assert.deepEqual(read.held, { shown: 40, slow: 25, worst: 140 }, 'frames while a pointer was held, apart');
   assert.deepEqual(read.states, ['brownstone book=open']);
 });
 

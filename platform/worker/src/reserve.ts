@@ -10,18 +10,17 @@ export const FREE_MB = 1500,
 // The worker's reservations: each claim's start, and the slots holding a meeting's seat (the claim's `held`: the
 // coordinator's meetingseats.ts) with the seat each claims on. A hold keeps a seat's room until its seat starts or HQ
 // lets it go, so the slots that gather a meeting can all start it.
-export function reservations<Seat>(now = Date.now) {
+export function reservations<Seat>(now = Date.now, observed?: (starting: { until: number; mb: number }[]) => void) {
   const starts: number[] = [];
   const holding = new Map<string, Seat>();
-  const starting = (at = now()) => starts.filter(start => at - start < STARTING_MS).length;
+  const starting = (at = now()) => countStarts(starts, at, observed);
   const reservedMb = (n = starting()) => n * JOB_MB + holding.size * SEAT_MB;
   // What's free of the available MB, less the reservations when young (else the room as it stands)
   const freeMb = (availableMb: number, young = true) => availableMb - (young ? reservedMb() : 0);
   const claimMb = (availableMb: number, young = true) => Math.max(0, Math.floor(freeMb(availableMb, young) - FREE_MB));
   return {
     holding,
-    startupReservations: () =>
-      starts.filter(start => now() - start < STARTING_MS).map(start => ({ until: start + STARTING_MS, mb: JOB_MB })),
+    startupReservations: () => startupEntries(starts, now()),
     starting,
     reservedMb,
     freeMb,
@@ -58,3 +57,12 @@ export function reservations<Seat>(now = Date.now) {
     },
   };
 }
+
+function countStarts(starts: number[], at: number, observed?: (starting: { until: number; mb: number }[]) => void) {
+  const entries = startupEntries(starts, at);
+  observed?.(entries);
+  return entries.length;
+}
+
+const startupEntries = (starts: number[], at: number) =>
+  starts.filter(start => at - start < STARTING_MS).map(start => ({ until: start + STARTING_MS, mb: JOB_MB }));

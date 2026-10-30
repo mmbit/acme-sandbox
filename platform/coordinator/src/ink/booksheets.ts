@@ -18,7 +18,7 @@ import { linksOf, setLink, withLinks } from './booklinks.ts';
 import { outsideBrief, outsidersOn } from './bookguests.ts'; // (invited people's notes on the board's sheet)
 import { listedOnce } from './bookslips.ts';
 import * as writing from './bookwriting.ts';
-import { withPicks } from './bookpick.ts';
+import { picksWent, withPicks } from './bookpick.ts';
 
 // GET /api/book/sheets: the open sheets (and those in their seconds to undo), then the latest SENT_LISTED sent, each
 // with its notes and their slips (the artifacts their slips name listed once for them all)
@@ -120,9 +120,12 @@ export function deliverDue(now = Date.now()) {
 function deliver(id: number, wrote: writing.Writing[]) {
   const s = db.prepare("select * from book_sheets where id = ? and status = 'sending'").get(id) as Sheet | undefined;
   if (!s) return;
+  // (a notebook page's send has a sheet of its own, which nothing joins late: the board's goes at once, its send_at the
+  // moment it went.)
   const tapped = new Date(s.send_at! - SEND_MS).toISOString(),
-    late = notesOf(s.id).filter(n => n.created > tapped),
-    notes = notesOf(s.id).filter(n => n.created <= tapped);
+    onTime = (n: Note) => s.notebook_page !== null || n.created <= tapped,
+    late = notesOf(s.id).filter(n => !onTime(n)),
+    notes = notesOf(s.id).filter(onTime);
   if (!notes.length) writing.dropSpots(s.id);
   if (!notes.length && late.length) return void reopen(s);
   if (!notes.length) return void db.prepare('delete from book_sheets where id = ?').run(s.id);
@@ -130,6 +133,7 @@ function deliver(id: number, wrote: writing.Writing[]) {
     // (writing beside a note wiped while it was read has no note to go under: it stays on the page, unsent)
     beside = wrote.filter(w => notes.some(n => n.id === w.note));
   const job = jobFor(s, notes, kept, beside);
+  picksWent(notes); // (the versions not picked cleared: bookpick.ts.)
   for (const k of kept) feedback.fromBook(k.from, job);
   writing.went(s.id, beside);
   db.prepare("update book_sheets set status = 'sent', sent = ?, job = ?, send_at = null where id = ?").run(

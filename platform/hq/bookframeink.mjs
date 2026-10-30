@@ -8,7 +8,7 @@ import { fulfilPart } from '../../shared/review/parts.mjs';
 import { DESKTOP, chromiumPen, until } from './bookkit.mjs';
 
 const ARTIFACT = 'https://shop.preview.test';
-const CALL = { call: 5, agent: 'juno', name: 'Juno', color: '#7b5ea7', walk: false };
+const CALL = { call: 5, agent: 'juno', name: 'Juno', color: '#7b5ea7' };
 const loop = (cx, cy, rx, ry, n = 40) =>
   Array.from({ length: n + 1 }, (_, i) => [cx + rx * Math.cos((i / n) * 6.1), cy + ry * Math.sin((i / n) * 6.1)]);
 // The artifact's ink layer in a box (CSS px): how many pixels are drawn, and how many of them red

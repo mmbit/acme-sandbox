@@ -1,11 +1,8 @@
-/* The book's tools (booktools.js): the colour card beside the tools island, the cursors over the paper, and the boxes
+/* The book's tools (booktools.js): the tool's card over the rail, the cursors over the paper, and the boxes
    of words typed on a page (booktexts.js). */
 
-/* ---- the colours: a card to the strip's left, on the paper, the colour in use ringed in ink */
+/* ---- the colours: a card over the rail (bookstrip.css places it), the colour in use ringed in ink */
 .bk-palette {
-  position: absolute;
-  right: calc(100% + 8px);
-  top: 0;
   pointer-events: auto;
   display: flex;
   gap: 2px;
@@ -15,7 +12,7 @@
 @keyframes bk-palette-in {
   from {
     opacity: 0;
-    transform: translateX(-4px);
+    translate: 0 4px;
   }
 }
 .bk-palette .bk-btn[aria-pressed='true'],
@@ -31,25 +28,18 @@
     background: var(--bk-ink-soft);
   }
 }
-.bk-swatch svg,
 .bk-palette svg {
   width: 22px;
   height: 22px;
 }
 
-/* ---- cursors: the tool's own on the paper (its colour: --bk-tool-cursor), a hand where the paper pans */
+/* ---- cursors: the tool's own on the paper (its colour: --bk-tool-cursor) */
 #book .bk-desk[data-tool='pen'],
 #book .bk-desk[data-tool='highlighter'] {
   cursor: var(--bk-tool-cursor, crosshair), crosshair;
 }
 #book .bk-desk[data-tool='text'] {
   cursor: text;
-}
-#book .bk-desk[data-tool='hand'] {
-  cursor: grab;
-}
-#book .bk-desk[data-tool='hand']:active {
-  cursor: grabbing;
 }
 
 /* ---- words typed on a page: the page's own ink, set in the book's face (booktexts.js TEXT: 18 px, a line 1.4) */

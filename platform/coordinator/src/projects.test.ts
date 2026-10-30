@@ -113,12 +113,9 @@ test('a job with no open thread to inherit must name one, and the refusal says t
   const refused = await handOff(loose);
   assert.equal(refused.status, 409);
   assert.match(refused.body.error, /no open deliverable to inherit/);
-  // (drawing one comes first, the projects to draw it in, no deliverables to pick)
-  assert.match(
-    refused.body.error,
-    /--deliverable new:<project> "name" "done when" draws its own.*Projects: game \(wren\)/,
-  );
-  assert.doesNotMatch(refused.body.error, /Thread levels|It works/);
+  // (drawing one comes first, with the projects to draw it in, then joining one; no open deliverable to pick)
+  assert.match(refused.body.error, /--deliverable new:<project>.*--deliverable <project>\/<slug>.*game \(wren\)/);
+  assert.doesNotMatch(refused.body.error, new RegExp(`${levels}|Thread levels|It works`));
   assert.equal(
     (db.prepare("select count(*) n from jobs where title = 'Next step'").get() as { n: number }).n,
     0,
@@ -390,6 +387,13 @@ test('a routine no entry names stays open while its runs are, then ends; named a
     ['done', 'done'],
     'a run that ends with nothing to merge ends its thread, and so does one that fails with nothing in its place',
   );
+  // (a closed thread whose task failed says so on the board's tallies, so no list draws it done)
+  const closed = projects.listProjectBoard().projects.flatMap(p => p.done);
+  assert.deepEqual(
+    [round, failing].map(r => closed.find(d => d.id === r.thread)?.failed),
+    [0, 1],
+    'a closed thread counts the tasks that failed in it',
+  );
   schedule.tick(new Date('2026-10-16T10:02:00Z'));
   assert.deepEqual(
     ['round', 'books', 'sweep'].map(id => projects.findProject(id)),
@@ -604,6 +608,7 @@ test("GET /api/projects: the board's projects, their threads and jobs, and the o
   } finally {
     t.mock.timers.reset();
   }
+  h.cancelJudges(); // (the deliverables' ends woke their owner's judge)
   // (downtime work is a flag on the work, never a group of its own)
   const spare = jobs.createJob({ agent: 'bolt', title: 'Log scan', prompt: 'x', downtime: true }).id;
   const unsorted = jobs.createJob({ agent: 'bolt', title: 'Loose', prompt: 'x' }).id;
@@ -765,21 +770,18 @@ test('hq plan thread, hq job --thread, hq project say and hq plan done, end to e
   );
   const queued = await hq('job', 'moss', 'The boss', '--thread', 'game/boss-fight', '--check', '--new');
   assert.equal(queued.code, 0, queued.out);
-  // (the deliverable it joined, read back with its done when, and drawing
-  // one for work no open one makes comes first in the refusal, never a list of every open deliverable to pick from)
-  assert.match(
-    queued.out,
-    /In deliverable game\/boss-fight, Boss fight, done when You beat the boss\.\nIf this work doesn't deliver that, move it to the one it does: hq job move \d+ <project>\/<slug>\./,
-  );
+  // (the deliverable it joined, read back with its done when, and the way out: draw one, or move it to an open one)
+  assert.match(queued.out, /game\/boss-fight.*You beat the boss/);
+  assert.match(queued.out, /hq plan deliverable <project>.*hq job move \d+ <project>\/<slug>/);
   const id = Number(/Queued job #(\d+)/.exec(queued.out)![1]);
   assert.deepEqual([thread(id), h.job(id).check], ['game/boss-fight', 1]);
   const refused = await hq('job', 'moss', 'Loose work', '--new');
   assert.notEqual(refused.code, 0);
-  assert.match(
-    refused.out,
-    /No job was queued: name the deliverable this job serves.*--deliverable new:<project> "name" "done when" draws its own with the job.*A step of a feature whose deliverable you know joins it: --deliverable <project>\/<slug>.*Projects: .*game \(wren\)/s,
-  );
-  assert.doesNotMatch(refused.out, /Boss fight|You beat the boss/, 'no open deliverable offered to pick');
+  // (drawing one comes first in the refusal, with the projects to draw it in, then joining one, and no open
+  // deliverable to pick from)
+  assert.match(refused.out, /No job was queued/);
+  assert.match(refused.out, /--deliverable new:<project>.*--deliverable <project>\/<slug>.*game \(wren\)/s);
+  assert.doesNotMatch(refused.out, /game\/boss-fight|You beat the boss/, 'no open deliverable offered to pick');
   // the CEO's own work needs none: it's the desk's
   const ceo = await h.start({ agent: 'juno' });
   const own = await h.hq(ceo, 'job', 'juno', 'Sort the loose work', '--new');

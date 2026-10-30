@@ -1,6 +1,6 @@
 // The recorded judgment that chooses a round's independent reads from the actual diff.
 import { matchesGlob } from 'node:path';
-import { db, redacted } from './db.ts';
+import { db } from './db.ts';
 import { org, roles } from './company.ts';
 import { findAgent, OPEN_PRS } from './jobs.ts';
 import { withPicks } from './models.ts';
@@ -11,6 +11,7 @@ import * as engineOnly from './engineonly.ts';
 import * as visual from './visual.ts';
 import { TRUST_RULE } from './trust.ts';
 import * as lenses from './reviewlenses.ts';
+import * as light from './reviewlight.ts';
 
 export type Read = { agent: string; reason: string; files: string[]; domain: string; security: boolean };
 export type Selection = {
@@ -28,6 +29,7 @@ export function brief(pr: number, branch: string, files: string[], links: string
   const candidates = candidatesFor(pr);
   const seats = db.prepare('select engine, state, pace from seats').all();
   const context = panel.threadContext(branch);
+  const earlier = base && light.throwaway(pr) ? light.EARLIER : '';
   return `Choose who needs to review PR #${pr}, round ${roundOf(pr)}, and why. Do one triage read, not a review panel.
 Read company/playbooks/review-panel.md and the actual diff: git diff ${base ? `${base}..HEAD` : 'origin/main...HEAD'}.
 ${base ? 'Only the changes since that ruled commit and the open blocking findings are in scope. Exclude changes brought from main.' : 'Read the change against main.'}
@@ -38,6 +40,7 @@ A sole author cannot review or rule on their own work. Co-authors may review and
 General reviewers: ${JSON.stringify(panel.reviewers(pr))}. Eligible consolidators: ${JSON.stringify(panel.consolidators(pr))}.
 HQ assigns the ruling's consolidator. You may suggest an eligible candidate. HQ resolves an unavailable suggestion by seats.
 ${base ? `Eligible original finders: ${JSON.stringify(finders(pr, files).map(reader => reader.agent))}.` : ''}
+${earlier}
 Engine availability: ${JSON.stringify(seats)}. Mandatory engine constraints: ${JSON.stringify(engineOnly.rules())}. Availability never excuses a required independent security read.
 
 Judge what the code does, not its folder, filename, line count or a fixed seat table. What can hurt users, money,
@@ -108,6 +111,8 @@ function finderList(pr: number, files: string[]) {
 function finders(pr: number, files: string[]): Read[] {
   const eligible = eligibleFor(pr),
     chosen = new Map<string, Read>();
+  // A finder who read for security in an earlier round rechecks as one.
+  const security = selections(pr).flatMap(earlier => earlier.reviewers.filter(reader => reader.security));
   for (const finding of blockers(pr))
     for (const { agent } of finding.by) {
       if (!eligible(agent)) continue;
@@ -116,7 +121,7 @@ function finders(pr: number, files: string[]): Read[] {
         reason: `Recheck blocking findings`,
         files: [...files],
         domain: 'finding',
-        security: false,
+        security: security.some(reader => reader.agent === agent),
       };
       if (finding.file && !read.files.includes(finding.file)) read.files.push(finding.file);
       chosen.set(agent, read);
@@ -124,6 +129,8 @@ function finders(pr: number, files: string[]): Read[] {
   return [...chosen.values()];
 }
 
+// A triage's report as its round's selection. Throwaway work's light read keeps only its security readers, the consolidator
+// covering the rest.
 export function read(job: number, output?: string): Selection | string {
   const row = db.prepare('select pr, output, judges from jobs where id = ?').get(job) as {
     pr: number;
@@ -153,12 +160,13 @@ export function read(job: number, output?: string): Selection | string {
   const files = JSON.parse(row.judges) as string[];
   const reviewers = readersOf(row.pr, report, eligible, files);
   if (typeof reviewers === 'string') return reviewers;
-  const assigned = constrained(row.pr, reviewers);
-  const covered = new Set(assigned.flatMap(reader => reader.files));
-  if (assigned.length && files.some(file => !covered.has(file))) return 'reviewers must cover every assigned file';
+  const throwaway = report.throwaway === true;
+  const assigned = constrained(row.pr, throwaway ? reviewers.filter(reader => reader.security) : reviewers);
+  const covered = throwaway || files.every(file => assigned.some(reader => reader.files.includes(file)));
+  if (assigned.length && !covered) return 'reviewers must cover every assigned file';
   const omission = omissionProblem(row.pr, report, assigned, files, suggested);
   if (omission) return omission;
-  const looker = lookerOf(report.looker ?? null, reviewers, assigned, suggested);
+  const looker = lookerOf(report.looker ?? null, reviewers, assigned, throwaway ? consolidator : suggested);
   if (looker === undefined) return 'the looker must be a reader of files that show';
   const foundation = foundationOf(report.foundation ?? null, reviewers, assigned);
   if (foundation === undefined) return 'the foundation question goes to one of the readers';
@@ -169,7 +177,7 @@ export function read(job: number, output?: string): Selection | string {
     reviewers: assigned,
     looker,
     foundation,
-    throwaway: report.throwaway === true,
+    throwaway,
     exceptions: report.exceptions ?? [],
   };
 }
@@ -243,9 +251,10 @@ function omissionProblem(pr: number, report: any, assigned: Read[], files: strin
   const excepted = (agent: string) =>
     Array.isArray(report.exceptions) &&
     report.exceptions.some((exception: any) => exception?.agent === agent && words(exception.reason));
-  if (finders(pr, files).some(reader => !chosen.has(reader.agent) && !excepted(reader.agent)))
-    return 'omitted finder needs a reason';
-  const readability = readabilityReader(pr);
+  // Throwaway work keeps only its security finders and no readability read.
+  const kept = finders(pr, files).filter(reader => report.throwaway !== true || reader.security);
+  if (kept.some(reader => !chosen.has(reader.agent) && !excepted(reader.agent))) return 'omitted finder needs a reason';
+  const readability = report.throwaway !== true && readabilityReader(pr);
   if (readability && !chosen.has(readability) && !excepted(readability))
     return 'omitted readability reader needs a reason';
 }
@@ -300,30 +309,11 @@ function constrained(pr: number, readers: Read[]): Read[] {
     files: seat.files,
     domain: seat.domains.join(', '),
     reason: readers.find(reader => reader.agent === seat.agent)?.reason ?? 'Read work restricted to this engine',
-    security: readers.find(reader => reader.agent === seat.agent)?.security ?? false,
+    security: seat.security,
   }));
 }
 
 const words = (value: unknown): value is string => typeof value === 'string' && !!value.trim();
-
-// What a triage was briefed with beyond its round's facts (its links and the note after the brief), so a retry is briefed
-// again on who may review and rule now, never on a copy of the old brief (review.ts retriage).
-db.exec('create table if not exists triage_briefs (job integer primary key, links text not null, note text not null)');
-redacted('triage_briefs', 'note');
-
-export function keep(job: number, links: string[], note: string) {
-  db.prepare('insert or replace into triage_briefs (job, links, note) values (?, ?, ?)').run(
-    job,
-    JSON.stringify(links),
-    note,
-  );
-}
-
-export function kept(job: number) {
-  const row = db.prepare('select links, note from triage_briefs where job = ?').get(job) as
-    { links: string; note: string } | undefined;
-  return row && { links: JSON.parse(row.links) as string[], note: row.note };
-}
 
 export function record(
   job: { id: number; pr: number; round: number; sha: string | null },
@@ -357,6 +347,14 @@ export function selected(pr: number, round: number, sha: string | null): Selecti
     .prepare('select selection from review_triage where pr = ? and round = ? and sha is ? order by job desc limit 1')
     .get(pr, round, sha) as { selection: string } | undefined;
   return row && JSON.parse(row.selection);
+}
+
+// Every round's recorded selection of a pull request, the latest first
+export function selections(pr: number): Selection[] {
+  const rows = db.prepare('select selection from review_triage where pr = ? order by job desc').all(pr) as {
+    selection: string;
+  }[];
+  return rows.map(row => JSON.parse(row.selection));
 }
 
 export const recorded = (job: number) => !!db.prepare('select 1 from review_triage where job = ?').get(job);

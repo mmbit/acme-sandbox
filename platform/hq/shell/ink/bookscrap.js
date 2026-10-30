@@ -16,7 +16,7 @@ export const tiltOf = rand => Math.round((rand * 2 - 1) * TILT * 10) / 10;
 
 // A picture of nw × nh px taped on a page (its box: bookrow.js), centred on `at` ([x, y] on the page) or the middle of the
 // band of it the paper shows (view: { x0, y0, x1, y1 } on the page), kept on the page. i: its place among several
-// taped at once. Returns the scrap's place { x, y, w, h, tilt } (its box, white border included, as sketchscraps.js
+// taped at once. Returns the scrap's place { x, y, w, h, tilt } (its box, white border included, as bookscrapdraw.js
 // draws it).
 export function placeScrap({ nw, nh }, page, { at = null, view, i = 0, rand = Math.random() }) {
   const viewH = Math.max(1, view.y1 - view.y0),

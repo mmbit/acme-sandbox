@@ -14,11 +14,6 @@ export async function act(action: string, b: any, name: string, stillSignedIn = 
   const page = actionPage(action, b),
     member = guests.pageMember(page, name);
   if (!member) return 404;
-  if (
-    action === 'join' &&
-    (!Array.isArray(b.ids) || !b.ids.every((id: unknown) => groups.row(Number(id))?.page === page))
-  )
-    return 404;
   if (action === 'move' && guests.pageMember(Number(b.page), name)?.notebook !== member.notebook) return 404;
   const round = rounds.roundOf(member.notebook);
   const answering = ['reply', 'replies/delete', 'answers/form', 'answers/tick'].includes(action);
@@ -36,7 +31,7 @@ export async function act(action: string, b: any, name: string, stillSignedIn = 
     delete: groups.deleteGroup,
     restore: groups.restoreGroup,
     move: groups.moveGroup,
-    join: groups.joinGroups,
+    resize: groups.resizeGroup,
     split: groups.splitGroup,
     'pages/title': notebook.titlePage,
     'replies/delete': sending.deleteReply,
@@ -50,7 +45,6 @@ export async function act(action: string, b: any, name: string, stillSignedIn = 
 function actionPage(action: string, b: any) {
   if (action === 'create') return Number(b?.page);
   if (['send', 'undo', 'pages/title'].includes(action)) return Number(b?.id);
-  if (action === 'join') return groups.row(Number(b?.ids?.[0]))?.page ?? 0;
   if (['reply', 'answers/form', 'answers/tick'].includes(action)) {
     const group = db
       .prepare(

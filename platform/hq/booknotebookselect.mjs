@@ -1,17 +1,15 @@
 // book-check.mjs's story of a lone thing on a Notebook page (shell/ink/bookselectclip.js, bookgroups.js lone) on the
-// played Notebook seeded as dev mode's (booknotebook.mjs open): a lone picture has no clip, so Select's bar has its
-// clip's Move to page… and Delete. On a phone, every button of that bar on the
+// played Notebook seeded as dev mode's (booknotebook.mjs open): a lone picture is a scrap of its own, and Select's bar
+// has its Move to page… and Delete. On a phone, every button of that bar on the
 // paper, held sideways too, the bar over the picture.
 import assert from 'node:assert/strict';
 import { group, ids, open } from './booknotebook.mjs';
-import { clipped, onPaper, tool } from './booknotebookscreen.mjs';
+import { onPaper, tool } from './booknotebookscreen.mjs';
 import { DESKTOP, until } from './bookkit.mjs';
 
 const PHONE = { width: 390, height: 844 },
   // (held sideways the book opens beside HQ, its paper about 340 px high: the bar's rows go over the picture)
-  PHONE_SIDEWAYS = { width: 844, height: 390 },
-  // where the picture's middle is panned to there (on the screen), low on the paper left of the strip
-  LOW = [590, 215];
+  PHONE_SIDEWAYS = { width: 844, height: 390 };
 // the seed's second and newest pages, and the lone picture on the newest (mock/notebook.json), its middle
 const SECOND = 2,
   NEWEST = 3,
@@ -39,7 +37,6 @@ async function loneFromBar(browser, c) {
   };
   try {
     // picked with Select, its bar moves it to another page, and Undo brings it back
-    assert.ok(!(await clipped(page)).includes(SHOT), 'a lone picture has no clip');
     await pick();
     await bar('Move to page…').click();
     await page.locator(`#book .bk-group-menu [data-page="${SECOND}"]`).click();
@@ -59,7 +56,7 @@ async function loneFromBar(browser, c) {
     await page.mouse.move(...(await onPaper(page, [MIDDLE]))[0]);
     await page.keyboard.press('Escape');
     await page.keyboard.press('Control+a');
-    await bar('Group').waitFor();
+    await bar('Delete').waitFor();
     assert.ok(!(await bar('Move to page…').isVisible()), 'without Move to page…');
     c.noErrorsIn(errors);
   } finally {
@@ -71,23 +68,9 @@ async function barOnPhone(browser, c, screen = PHONE) {
   const upright = screen.height > screen.width;
   const { page, errors, done } = await open(browser, c, screen, { hasTouch: true, isMobile: true, folded: upright });
   try {
-    // (sideways, the picture panned with the hand up and left, low on the paper clear of its controls: no room for the
-    // bar under it)
-    if (!upright) {
-      await tool(page, 'Move the page');
-      const [x, y] = (await onPaper(page, [MIDDLE]))[0];
-      for (let i = 0; i < 3; i++) {
-        await page.mouse.move(640, 240);
-        await page.mouse.down();
-        await page.mouse.move(640 + (LOW[0] - x) / 3, 240 + (LOW[1] - y) / 3, { steps: 8 });
-        await page.waitForTimeout(200);
-        await page.mouse.up();
-      }
-    }
     await tool(page, 'Select');
     await page.touchscreen.tap(...(await onPaper(page, [MIDDLE]))[0]);
     await page.locator('#book .bk-sel-bar').getByRole('button', { name: 'Move to page…', exact: true }).waitFor();
-    if (!upright) assert.equal(await page.locator('#book .bk-sel-bar').getAttribute('data-side'), 'over', 'over it');
     // (on the paper, and none under the pages' row or another control)
     const out = await page.evaluate(() => {
       const bar = document.querySelector('#book .bk-sel-bar'),

@@ -4,7 +4,6 @@ import assert from 'node:assert/strict';
 import { harness } from './harness.ts';
 
 const h = await harness('walkthroughs');
-const bookcalls = await import('./ink/bookcalls.ts'); // (its 5-minute sweep)
 
 const page = (call: number) =>
   h.board('/api/book/page/new', { kind: 'call', call, w: 1024, h: 768 }).then(r => r.body as { id: number });
@@ -40,7 +39,7 @@ test('a card offers a walk-through only when its maker says so, and a call rung 
   }
 });
 
-test("the sweep throws away a walk-through's page nobody wrote on once its call has ended, and keeps the rest", async () => {
+test("a walk-through keeps one page: the Pencil's and the notes page are one, in My journal, whoever asks first", async () => {
   const job = await h.start({ agent: 'kit', title: 'The ribbon step' });
   const card = await h.ask(job, {
     kind: 'notice',
@@ -54,37 +53,25 @@ test("the sweep throws away a walk-through's page nobody wrote on once its call 
       call: number;
       token: string;
     };
-  const [empty, written, live] = [await walkThrough(), await walkThrough(), await walkThrough()];
-  const plain = await h.liveCall('kit');
-  const [p1, p2, p3, p4] = [
-    await page(empty.call),
-    await page(written.call),
-    await page(live.call),
-    await page(plain.call),
-  ];
-  // the board's note keeps a page (the agent's rings are never in the book)
-  const anchor = {
-    v: 1,
-    url: 'https://hq.example.com/',
-    el: null,
-    view: { w: 800, h: 600, x: 0, y: 0, dpr: 2 },
-    ink: [],
-  };
-  assert.equal((await h.board('/api/book/note', { page: p2.id, anchor, words: 'Bigger?', said: 'typed' })).status, 200);
-  // the pages are old, so only the hang-up's own minute can hold one back
-  h.db
-    .prepare('update book_pages set created = ? where id in (?, ?, ?, ?)')
-    .run(new Date(Date.now() - 3_600_000).toISOString(), p1.id, p2.id, p3.id, p4.id);
-  for (const c of [empty, written, plain])
+  const pages = (call: number) =>
+    h.db.prepare('select id, notebook from book_pages where call = ?').all(call) as { id: number; notebook: number }[];
+  const notes = async (call: number) => (await h.board('/api/notebooks/call', { call })).body.page.id as number;
+  // (HQ asks for both as the call is picked up: the Pencil's page, and the call's notes page)
+  for (const pencilFirst of [true, false]) {
+    const c = await walkThrough();
+    const first = pencilFirst ? (await page(c.call)).id : await notes(c.call);
+    // (the first ask, whichever it is, makes the call's notes page: never a page outside My journal beside it)
+    assert.deepEqual(
+      pages(c.call).map(p => [p.id, !!p.notebook]),
+      [[first, true]],
+    );
+    const second = pencilFirst ? await notes(c.call) : (await page(c.call)).id;
+    assert.equal(first, second, 'the same page');
+    const [only] = pages(c.call);
+    assert.deepEqual([pages(c.call).length, only.id, !!only.notebook], [1, first, true], 'one page, in My journal');
+    // hung up with nothing on it, it goes; nothing of the call is left
     await h.voice('call-end', { agent: 'kit', lines: ['Board: Thanks, bye.'], request: card, token: c.token });
-
-  // just ended: HQ's own hang-up may still be filing the last mark
-  bookcalls.sweep();
-  assert.ok(await kept(p1), 'not within a minute of the hang-up');
-  bookcalls.sweep(Date.now() + 120_000);
-  assert.deepEqual(
-    await Promise.all([p1, p2, p3, p4].map(kept)),
-    [false, true, true, true],
-    "the empty walk-through page goes; a written one, a live call's and a plain call's stay",
-  );
+    assert.equal(await kept({ id: first }), false);
+    assert.deepEqual(pages(c.call), []);
+  }
 });

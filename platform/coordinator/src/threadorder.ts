@@ -164,17 +164,20 @@ function pushingOn(branch: string) {
   ).get(branch) as { id: number } | undefined;
   return job?.id ?? null;
 }
-// Each thread whose work is still needed, with its last task still to merge
+// Each thread whose work is still needed, with its last task still to merge. One whose work is all pushed and whose pull
+// request is stuck holds no start: what needs it runs beside it, and merges after it only when they share files
+// (mergeorder.ts).
 function needsOpen(thread: string, status: (branch: string) => string | null) {
   return needsOf(thread).flatMap(n => {
     const needed = findThread(n);
     if (!needed || needed.status === 'done') return [];
     const last = db
       .prepare(
-        `select j.id from jobs j where j.thread = ? and j.kind = 'work' and j.pr is null and ${mergePending('j')}
-        order by coalesce(j.seq, j.id) desc, j.id desc limit 1`,
+        `select j.id, j.status, j.branch from jobs j where j.thread = ? and j.kind = 'work' and j.pr is null
+        and ${mergePending('j')} order by coalesce(j.seq, j.id) desc, j.id desc limit 1`,
       )
-      .get(needed.id) as { id: number } | undefined;
+      .get(needed.id) as Pick<Task, 'id' | 'status' | 'branch'> | undefined;
+    if (last && stuckAside(needed.id, last, status)) return [];
     if (!last) {
       const tasks = prepared(
         "select id, status, branch from jobs where thread = ? and kind = 'work' and pr is null",
@@ -187,6 +190,18 @@ function needsOpen(thread: string, status: (branch: string) => string | null) {
     return [{ thread: needed.id, task: last?.id ?? null }];
   });
 }
+// The thread's last task pushed, its pull request stuck (redraws resolved, as for a settled thread above), and none of
+// its tasks still to run
+const stuckAside = (
+  thread: string,
+  last: Pick<Task, 'id' | 'status' | 'branch'>,
+  status: (branch: string) => string | null,
+) =>
+  last.status === 'done' &&
+  status(jobs.workBranchOf(last)) === 'stuck' &&
+  !prepared(
+    "select 1 from jobs where thread = ? and kind = 'work' and pr is null and status in ('queued', 'running', 'blocked')",
+  ).get(thread);
 
 // ---- the queue (backlog.ts): the edges, the branch its review is on
 

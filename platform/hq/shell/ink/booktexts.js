@@ -13,6 +13,8 @@ import { boxesOf } from './bookwords.js';
 import { word } from './bookscope.js';
 import { landing } from './bookgroupmath.js';
 import { arrive } from './bookarrive.js';
+import { footOf, strokeUnit } from './bookunits.js';
+import { UNIT_W } from './scrapunit.js';
 
 // The words' size and line in page px (bookrender.ts TEXT), and the room round them inside the box, for the caret
 export const TEXT = { size: 18, line: 1.4 };
@@ -20,6 +22,8 @@ const PAD = 4;
 // a new box wraps at this width, or less where the paper shown ends sooner, never less than NARROW
 const WIDE = 360,
   NARROW = 160;
+// typed words keep this far in from their scrap's sides (page px)
+const UNIT_PAD = 12;
 // a press on a box draws once it has moved this far (screen px): less is a click, which edits it (a Pencil's: once it
 // has gone past a tap, tap.js wandered)
 const DRAG_PX = 3;
@@ -178,6 +182,10 @@ function commit(tx, el, ed) {
   Object.assign(t, { text, color: ed.color });
   const texts = page.texts;
   if (ed.fresh) {
+    const { g, edge } = inUnit(page, t.x, t.y);
+    // (under what's in its scrap already: never over another box)
+    Object.assign(t, { g, w: Math.min(t.w, edge - t.x), y: Math.max(t.y, footOf(page, g)) });
+    setBox(el, t);
     texts.push(t);
     page.blank = false;
     return step(tx, el.view, () => texts.splice(texts.indexOf(t), 1));
@@ -260,8 +268,13 @@ export const READ = 560;
 function put(tx, { view, x, y }, words, right, centre) {
   const page = view.page,
     color = tx.hooks.color(),
-    room = Math.max(NARROW, Math.min(READ, centre ? 2 * (right - x) : right - x));
-  const texts = boxesOf(words).map(text => ({ x, y, w: room, text, color }));
+    // (into the scrap the writing started on, or a new one, wrapped inside it: bookunits.js. job #14672)
+    { g, left, edge } = inUnit(page, x, y);
+  x = Math.max(left, Math.min(centre ? x - (edge - left) / 2 : x, edge - NARROW));
+  right = edge;
+  centre = false;
+  const room = Math.max(NARROW, Math.min(READ, right - x));
+  const texts = boxesOf(words).map(text => ({ x, y, w: room, text, color, g }));
   if (!texts.length) return texts;
   tx.editing?.words.blur();
   const boxes = texts.map(t => boxFor(tx, view, t)),
@@ -273,7 +286,11 @@ function put(tx, { view, x, y }, words, right, centre) {
     return Math.max(line, el.words.offsetHeight);
   });
   const tall = heights.reduce((sum, h) => sum + h, 0) + line * (texts.length - 1);
-  let top = centre ? y - tall / 2 : y - line / 2;
+  // (under what's in its scrap already, a line apart: never over another box. job #14672)
+  let top = Math.max(
+    centre ? y - tall / 2 : y - line / 2,
+    footOf(page, g) + (page.texts.some(t => t.g === g) ? line / 2 : 0),
+  );
   texts.forEach((t, i) => {
     Object.assign(t, { x: round(centre ? x - w / 2 : x - 2), y: round(top) });
     setBox(boxes[i], t);
@@ -292,6 +309,12 @@ function put(tx, { view, x, y }, words, right, centre) {
   tx.book.steps.push({ page, undo: () => shown(before), redo: () => shown(after) });
   arrive(tx.book, view, texts);
   return texts;
+}
+// The scrap a box written at x, y goes to (the one there, else a new one) and the room across it for words (page px)
+function inUnit(page, x, y) {
+  const g = strokeUnit(page, x, y),
+    o = page.origins?.get(g) ?? { x: 0 };
+  return { g, left: o.x + UNIT_PAD, edge: o.x + UNIT_W - UNIT_PAD };
 }
 // The widest line of the words in a box's face (page px)
 function widest(words, texts) {

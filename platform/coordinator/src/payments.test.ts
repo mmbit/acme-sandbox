@@ -28,6 +28,7 @@ let chargesEnabled = false;   // the live account, as Stripe has it: activated o
 let printerBusy = false;   // Print API answering 429
 let addedMethod = '';   // a method Stripe switched on after EXCLUDABLE was read: the next session offers it too
 let droppedMethod = '';   // a method Stripe took out of the next session, the shop's setting naming it
+let adaptiveDefault = false;   // the next session opened as if HQ hadn't asked for Adaptive Pricing: the dashboard's default, on
 let feeLookup: 'unsettled' | 'refused' | 'held' | null = null;   // a charge whose balance transaction isn't in yet, a key that may not read it, or a lookup Stripe sits on
 const heldFees: (() => void)[] = [];   // the held lookups: each answers when called
 const scripted = new Map<string, string[]>();
@@ -56,7 +57,9 @@ const stripe = createServer(async (q, s) => {
   if (feeLookup === 'held' && q.url!.startsWith('/v1/payment_intents/')) await new Promise<void>(r => heldFees.push(r));
   if (feeLookup === 'refused' && q.url!.startsWith('/v1/payment_intents/')) { s.writeHead(403); return s.end(JSON.stringify({ error: { message: 'The provided key does not have the required permissions' } })); }
   try {
-    const out = payments.imitation(q.method!, q.url!, new URLSearchParams(body), q.headers['idempotency-key'] as string | undefined);
+    const asked = new URLSearchParams(body);
+    if (adaptiveDefault && q.url === '/v1/checkout/sessions') asked.delete('adaptive_pricing[enabled]');
+    const out = payments.imitation(q.method!, q.url!, asked, q.headers['idempotency-key'] as string | undefined);
     if (feeLookup === 'unsettled' && q.url!.startsWith('/v1/payment_intents/')) out.latest_charge.balance_transaction = null;
     if (loseCreate && q.url === '/v1/checkout/sessions') { loseCreate = false; lostId = out.id; return s.destroy(); } // made, answer lost
     if (addedMethod && q.url === '/v1/checkout/sessions') out.payment_method_types.push(addedMethod);
@@ -162,6 +165,8 @@ test('with a test key: real HTTP to Stripe, the key only in the Authorization he
   const c = await call('/api/pay/checkout', as('pebblet'), order({ reference: 'bud-http-1' }));
   assert.equal(c.status, 200, c.text);
   assert.ok(seen.some(x => x.path === '/v1/checkout/sessions'));
+  const asked = new URLSearchParams(seen.filter(x => x.path === '/v1/checkout/sessions').at(-1)!.body);
+  assert.equal(asked.get('adaptive_pricing[enabled]'), 'false', "the shop's own currency, not a local one with fewer methods");
   assert.ok(seen.every(x => x.auth === 'Bearer rk_test_abc123'));
   assert.ok(!c.text.includes('rk_test'), 'the key never goes back to the product');
   await call(`${new URL(c.json.url).pathname}/pay`, { origin: 'https://hq.company.test' }, '');
@@ -182,6 +187,17 @@ test('with a test key: real HTTP to Stripe, the key only in the Authorization he
   assert.equal(testSecrets().STRIPE_RESTRICTED_KEY, undefined);
   writeFileSync(`${DATA}/secrets/STRIPE_TEST_RESTRICTED_KEY`, 'rk_test_abc123');
   assert.equal(testSecrets().STRIPE_RESTRICTED_KEY, 'rk_test_abc123');
+});
+
+test('a session Stripe opened with Adaptive Pricing on (a local currency, cards only) is closed, not handed out again', async () => {
+  writeFileSync(`${DATA}/secrets/STRIPE_TEST_RESTRICTED_KEY`, 'rk_test_abc123');
+  adaptiveDefault = true;
+  const old = await call('/api/pay/checkout', as('pebblet'), order({ reference: 'bud-once-2' })).finally(() => { adaptiveDefault = false; });
+  assert.equal(stripeSession(old.json.id).adaptive_pricing.enabled, true);
+  const fresh = await call('/api/pay/checkout', as('pebblet'), order({ reference: 'bud-once-2' }));
+  assert.notEqual(fresh.json.id, old.json.id);
+  assert.equal(stripeSession(old.json.id).status, 'expired');
+  assert.equal((await call('/api/pay/checkout', as('pebblet'), order({ reference: 'bud-once-2' }))).json.id, fresh.json.id, 'opened with it off: handed out again');
 });
 
 // A session's fee lookup runs on the side of its answer: a read after that lookup is answered, either the one that

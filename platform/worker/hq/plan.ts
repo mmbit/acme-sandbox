@@ -1,6 +1,7 @@
 // A project's plan (hq plan): its deliverables, the deliverables each needs and their tasks in order, which the
 // project's owner and the CEO draw and change (the coordinator's plan.ts).
 import * as api from './api.ts';
+import { changeLines } from './deadlines.ts';
 import { at, duration } from './estimate.ts';
 import { takeNeeds, takeValues } from './flags.ts';
 import { companyLevels } from './files.ts';
@@ -237,6 +238,8 @@ async function need(action: 'need' | 'unneed', args: string[]) {
       ? `${thread} no longer needs ${needs}: it can run beside it now. ${SIDE_BY_SIDE}`
       : `${thread} starts once ${needs} is done and merged.`,
   );
+  const moved = api.parseOrNull(answer.body);
+  if (moved?.moves) print(...changeLines(moved));
 }
 
 // move, drop, done and title: the change, or why not

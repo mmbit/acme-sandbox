@@ -5,13 +5,14 @@ from pathlib import Path
 HQ_TOOLS = [sys.executable, str(Path(__file__).with_name('hq_tools.py'))]
 # (when: eta)
 # (git, report; ask_to_see, draw; drive, open_work; the pins' removal)
-# (scrap and title_page: the call's notes page, callnotes.py; change_page, mark_page and read_page: the agent working it.)
+# (scrap and title_page: the call's notes page, callnotes.py; change_page, mark_page, read_page and try: the agent working
+# it.) (try)
 # (name_voice: voices.py)
 # (save_voice, forget_voice: voices.py's saved voices)
 CALL_TOOLS = ['add', 'ask_to_see', 'call', 'change_page', 'draw', 'drive', 'estimate', 'eta', 'expedite',
               'forget_voice', 'git', 'hang_up', 'history', 'intercom', 'job', 'manage', 'mark_page', 'name_voice',
               'open_work', 'promise', 'reach', 'read_page', 'replace', 'report', 'save_voice', 'scrap', 'screen',
-              'search', 'sketch', 'title_page', 'waiting', 'when']
+              'search', 'sketch', 'title_page', 'try', 'waiting', 'when']
 PARTNER_TOOLS = ['hang_up', 'no_transcript', 'note', 'screen']
 # Off limits to Read, Grep and Glob, where a set has them
 FENCED = ('/proc', '/seat', '/data', '/dev', '/sys', '/etc', '/models', '/tmp')

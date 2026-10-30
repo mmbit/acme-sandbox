@@ -56,7 +56,7 @@ async function inks(browser, c) {
   try {
     const paper = await paperBox(page);
     // Blue from the colour card, a line in it (the card's name)
-    await tool(page, 'Colour and width').click();
+    await tool(page, 'Pen').click();
     await page.getByRole('menuitemradio', { name: 'Blue' }).click();
     // (the card stays open over the paper beside the strip for a width too: Escape closes it.)
     await page.keyboard.press('Escape');
@@ -65,7 +65,7 @@ async function inks(browser, c) {
     assert.equal(blue.ink[0].color, '#2f6bdc', 'the line is blue');
     assert.ok((await colourIn(page, BLUE)).n > 300, 'a blue line on the paper');
     // the highlighter across it: wide, see-through, yellow, the blue line still showing through
-    await pick(page, 'Highlighter');
+    await pick(page, 'Marker');
     await line(page, paper.x + 100, paper.y + 300, 280);
     await page.mouse.move(paper.x + 60, paper.y + 600);
     const lit = await savedWhere(c, free.id, p => p.ink.length === 2);
@@ -99,7 +99,7 @@ async function typed(browser, c) {
   try {
     const paper = await paperBox(page);
     // the text tool: a press on the paper, the caret there, typed, and Escape keeps it
-    await pick(page, 'Type');
+    await pick(page, 'Text');
     await page.mouse.click(paper.x + 160, paper.y + 260);
     await page.keyboard.type('Order the teal mugs');
     await page.keyboard.press('Enter');
@@ -156,7 +156,7 @@ export const pasteGreen = page =>
     dt.items.add(new File([png], 'shot.png', { type: 'image/png' }));
     document.body.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
   });
-// A new page in My Notebook, blank, its newest (where the book opens), on book-check's played Notebook; in c.pages, its
+// A new page in My journal, blank, its newest (where the book opens), on book-check's played Notebook; in c.pages, its
 // mirror: what's put on it before HQ opens goes on as a group, and what's saved on it shows there (book-check.mjs).
 // (the Notebook)
 export function freePage(c) {

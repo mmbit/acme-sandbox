@@ -1,5 +1,5 @@
 // The book opens on what the board just pinned: a note from review mode (an annotation on an artifact, a ring on HQ)
-// lands on My Notebook's current page, and the book opened next, however it opens and whichever notebook it shows,
+// lands on My journal's current page, and the book opened next, however it opens and whichever notebook it shows,
 // slides to the newest one it hasn't shown yet. Review mode's Open the Notebook asks for the current page and its
 // newest note whether shown or not. A place asked for (a card's Open in the book, a landed note's tap) wins.
 import { lastShown, showGroup } from './bookgroupshow.js';
@@ -35,8 +35,8 @@ export function openNewest() {
   aim = 'newest';
   on.open();
 }
-// My Notebook's current page's newest note from review mode (one with an anchor), slid into view when the book hasn't
-// shown it yet, My Notebook opened at that page when the book shows another. always: shown whatever it has shown, and
+// My journal's current page's newest note from review mode (one with an anchor), slid into view when the book hasn't
+// shown it yet, My journal opened at that page when the book shows another. always: shown whatever it has shown, and
 // with no note there the current page at its top.
 export async function showNewest(pages, always = false) {
   const { notebook, page, groups } = await mine(pages);
@@ -45,7 +45,7 @@ export async function showNewest(pages, always = false) {
   if (!always && !(id > lastShown())) return;
   return id ? showGroup(pages, { page, id }) : pages.find({ page, notebook });
 }
-// My Notebook's current page and its groups as the store has them, whichever notebook the book shows: the shelf's first,
+// My journal's current page and its groups as the store has them, whichever notebook the book shows: the shelf's first,
 // where review mode's notes land (notebook.ts mine()). There's always one: reading a notebook's pages makes it when none
 // is open (notebook.ts listPages)
 async function mine(pages) {

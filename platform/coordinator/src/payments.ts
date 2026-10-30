@@ -488,7 +488,8 @@ async function openSession(c: Caller, a: Ask) {
   // One order, one payment: an open session for the same order and amount is handed out again (a double click, a
   // second tab), one for another amount (or another language or email) is closed first, and an order that's already
   // paid can't be paid again. One opened while the shop named other methods (before a settings change) is closed too:
-  // its metadata keeps a hash of what it left out. A territory's sale takes cards and Link so the payment can be held.
+  // its metadata keeps a hash of what it left out. So is one Stripe says had Adaptive Pricing on: it may show a local
+  // currency with cards only. A territory's sale takes cards and Link so the payment can be held.
   const named = territory ? ['card'] : methods(c.slug), excluded = EXCLUDABLE.filter(m => !named.includes(m));
   const policy = createHash('sha256').update(JSON.stringify(excluded)).digest('hex').slice(0, 12);
   const rows = db.prepare("select * from payments where product = ? and mode = ? and reference = ? and status in ('open', 'paid', 'complete')")
@@ -506,7 +507,9 @@ async function openSession(c: Caller, a: Ask) {
     if (sessionState(s) === 'processing') return [409, 'the payment for this order is still being processed', 'payment_processing'];
     if (s.status !== 'open') continue;
     const asked = (s.locale ?? 'auto') === locale && String(s.customer_email ?? '').toLowerCase() === String(email ?? '').toLowerCase();
-    if (row.amount === amount && asked && s.metadata?.methods === policy && (row.shape ?? null) === shape && (row.territory ?? null) === territory && s.url) return { id: s.id, url: s.url, expires_at: s.expires_at };
+    // Adaptive Pricing off, or Stripe may offer another currency
+    const ownCurrency = s.adaptive_pricing?.enabled === false;
+    if (row.amount === amount && asked && ownCurrency && s.metadata?.methods === policy && (row.shape ?? null) === shape && (row.territory ?? null) === territory && s.url) return { id: s.id, url: s.url, expires_at: s.expires_at };
     view(row, await stripe(c.mode, 'POST', `/v1/checkout/sessions/${row.id}/expire`));
   }
   if (!countCheckout(c)) return [429, 'too many checkouts this hour'];
@@ -529,10 +532,12 @@ async function openSession(c: Caller, a: Ask) {
   db.prepare('insert or ignore into checkout_creates (key, product, mode, reference, amount, attempt, minute) values (?, ?, ?, ?, ?, ?, ?)')
     .run(key, c.slug, c.mode, reference, amount, attempt, minute);
   // (named: what the shop named, readable in the status report beside what Stripe offered)
+  // Adaptive Pricing off: left to the dashboard's default, Stripe showed an en-GB
+  // browser in NL a pound price with a conversion fee first, and with it cards only, none of the other methods named.
   const s = await stripe(c.mode, 'POST', '/v1/checkout/sessions', {
     mode: 'payment', success_url: a.success, cancel_url: a.cancel, client_reference_id: reference, metadata: { ...meta, methods: policy, named: named.join(' ') },
     line_items: a.items.map(item => ({ quantity: 1, price_data: { currency, unit_amount: item.amount, product_data: { name: item.name } } })),
-    locale, customer_email: email ?? undefined, payment_intent_data: { metadata: meta, ...(territory ? { capture_method: 'manual' } : {}) },
+    locale, customer_email: email ?? undefined, adaptive_pricing: { enabled: false }, payment_intent_data: { metadata: meta, ...(territory ? { capture_method: 'manual' } : {}) },
     expires_at: minute * 60 + SESSION_LIFE_S, excluded_payment_method_types: excluded, ...(territory ? { billing_address_collection: 'required' } : {}),
   }, key);
   reportOfferedMethods(c.slug, reference, named, s);
@@ -2357,6 +2362,8 @@ export function imitation(method: string, path: string, p: URLSearchParams, idem
       success_url: p.get('success_url'), cancel_url: p.get('cancel_url'), expires_at: expires, payment_intent: null,
       name: items[0].name, items, url: `${ORIGIN}/pay/imitation/${id}`,
       payment_method_types: DASHBOARD.filter(m => !excluded.includes(m)), locale: p.get('locale'), customer_email: p.get('customer_email'),
+      // the dashboard's default is on, as the account's
+      adaptive_pricing: { enabled: p.get('adaptive_pricing[enabled]') !== 'false' },
       capture: p.get('payment_intent_data[capture_method]') ?? 'automatic', billing: p.get('billing_address_collection') ?? 'auto' };
     fake.sessions.set(out);
   } else if (m) {

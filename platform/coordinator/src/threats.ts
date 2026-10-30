@@ -55,7 +55,10 @@ type OpenThread = { id: string; name: string; project: string; deadline_by: stri
 // The open threads with open work, each with its outlook.
 function openThreads(f: Forecast) {
   const rows = db
-    .prepare("select id, name, project, deadline_by from threads where status = 'open' order by project, created")
+    .prepare(
+      `select t.id, t.name, t.project, w.deadline_by from threads t join thread_windows w on w.id = t.id
+      where t.status = 'open' order by t.project, t.created`,
+    )
     .all() as Omit<OpenThread, 'outlook'>[];
   return rows.flatMap(t => {
     const outlook = f.threads.get(t.id);

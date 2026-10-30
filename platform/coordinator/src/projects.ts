@@ -29,6 +29,8 @@ export type Thread = {
   deadline: number | null;
   aim: number | null;
   deadline_by: string | null;
+  // Release follow-ups read their source deliverable’s window until given their own.
+  deadline_from: string | null;
   // its branch once its first task starts (plan.ts).
   branch: string | null;
   // the job HQ queued its owner to judge it once its work merged (threadjudge.ts).
@@ -44,11 +46,12 @@ export const slugRefusal = (slug: string | undefined) =>
 export const findProject = (id: string): Project | undefined => projects().list.find(p => p.id === id);
 // A thread moved to another project (regroup.ts) keeps answering to its old id, which queued briefs name.
 db.exec('create table if not exists thread_aliases (old text primary key, id text not null)');
-export function findThread(id: string) {
-  const row = prepared(
-    'select * from threads where id = coalesce((select id from thread_aliases where old = $id), $id)',
-  ).get({ id });
-  return row as Thread | undefined;
+export function findThread(id: string): Thread | undefined {
+  return prepared(
+    `select t.id, t.project, t.name, t.goal, t.status, t.created, t.by, t.done, t.branch, t.judge, t.deadline_from,
+      w.deadline, w.aim, w.deadline_by from threads t join thread_windows w on w.id = t.id
+      where t.id = coalesce((select id from thread_aliases where old = $id), $id)`,
+  ).get({ id }) as Thread | undefined;
 }
 export const isOpen = (id: string) => findThread(id)?.status === 'open';
 // A thread or proposal belongs to its project's owner, including a done project's. With no project, it belongs to
@@ -257,8 +260,8 @@ export function placeOn(job: number, id: string): Thread | string {
 export const untimedRefusal = () =>
   `a window goes on the deliverable of its work, and this job would be in none: name the deliverable it serves, ${threadChoices()}`;
 
-// (deliverables, the board's word for threads.) Drawing one for the work comes first, with the projects to draw it in:
-// a list of every open deliverable invited picking the nearest, and work landed on ones it didn't serve (board, call
+// (deliverables, the board's word for threads.) Drawing one for the work comes first, with the projects to draw it in,
+// and no open deliverable is listed: a list makes the nearest the easiest pick, whatever the work serves (board, call
 // 172). Joining one stays as easy for the agent who knows which it serves.
 const threadChoices = () => {
   const open = projects().list;

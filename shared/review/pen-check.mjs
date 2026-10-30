@@ -2,8 +2,9 @@
 // The pen in review mode, held like an iPad mini (touch, 744 × 1133): a pen's tap stays the page's, a pen drawn across
 // the page starts a note right there, its lines stay open and keep coming until the note goes, a resting palm draws
 // nothing once a pen has, the strip's inks and undo, and the note carries the lines (pressure and time) and a screenshot
-// with them on it, and the post-it shows one Send and Cancel. The pin drags from its menu's handle too, and a tap on
-// the handle still opens the menu. The mic button (never the mark) starts the mic, and the words come in live from a stand-in voice line
+// with them on it, and the post-it shows one Send and Cancel. A pen's first touch puts the pin away for the tab's
+// session (the page loaded again starts without it); in a tab of its own the pin drags with a mouse and a finger, and a
+// tap on it still starts a note. The mic button (never the mark) starts the mic, and the words come in live from a stand-in voice line
 // as they're said, the clip taking over where the line can't be reached. Then the same on HQ itself in each of its looks, for the eye. Then
 // an invited reviewer's (review mode as the coordinator serves it on a share's session) gets the same pen: pressure,
 // open lines, inks, undo (the strip's and Cmd+Z), the note carrying its lines, and live words, with no language asked
@@ -13,6 +14,8 @@ import assert from 'node:assert/strict';
 import { readFile, mkdir } from 'node:fs/promises';
 import { playwright, errorsOf, until } from '../browser/browser.mjs';
 import { serve, ROOT } from '../../platform/hq/serve.mjs';
+import { pinOn } from '../../platform/hq/bookkit.mjs';
+import { lookNames } from '../../platform/hq/looks.mjs';
 import { fulfilPart } from './parts.mjs';
 
 const shots = process.argv.includes('--shots') ? process.argv[process.argv.indexOf('--shots') + 1] : null;
@@ -69,19 +72,30 @@ async function device(tool) {
   });
   await context.routeWebSocket(/\/__review\/dictate(\?.*)?$/, coordinator);
   await context.route(`${PRODUCT}/**`, r => product(r, tool));
+  await newTab(context);
+  return context;
+}
+// A tab of its own on the product's page (its own session, so its pin shows till a pen touches it), the tab before
+// closed.
+async function newTab(context) {
+  if (page) {
+    assert.deepEqual(errors, []);
+    await page.close();
+  }
   page = await context.newPage();
   errors = errorsOf(page);
   cdp = await context.newCDPSession(page);
   await page.goto(`${PRODUCT}/`);
-  await page.waitForFunction(
+  await reviewMode();
+  h1 = await page.locator('h1').boundingBox();
+  buy = await page.locator('#buy').boundingBox();
+}
+const reviewMode = () =>
+  page.waitForFunction(
     () => document.querySelector('review-mode')?.shadowRoot.querySelectorAll('.strip .pot').length === 5,
     null,
     { timeout: 10_000 },
   );
-  h1 = await page.locator('h1').boundingBox();
-  buy = await page.locator('#buy').boundingBox();
-  return context;
-}
 function coordinator(ws) {
   dictations.push(ws.url());
   if (line === 'down') return ws.close({ code: 1011 });
@@ -111,7 +125,6 @@ function product(r, tool) {
   const path = new URL(r.request().url()).pathname;
   if (fulfilPart(r, path, tool)) return;
   if (path === '/__review/coach') return r.fulfill({ json: { show: false } });
-  if (path === '/__review/mine') return r.fulfill({ json: { notes: posted.length } });
   if (path === '/__review/notes') {
     posted.push(r.request().postDataJSON());
     return r.fulfill({ json: { ok: true, id: posted.length } });
@@ -191,8 +204,25 @@ const red = ([r, g, b, a]) => a > 200 && r > 200 && g < 140 && b < 140,
 
 // ---- the board's iPad
 const context = await device(reviewJs);
+await penAway();
 await penNote({ board: true });
 await writingArea();
+
+// ---- a pen's first touch puts the preview's pin away: the pen marks by itself there, so the pin stays away for the
+// tab's session, the page loaded again too
+async function penAway() {
+  const away = () =>
+    ui(() => document.querySelector('review-mode').shadowRoot.querySelector('.dock').classList.contains('away'));
+  assert.equal(await away(), false, 'a preview shows its pin');
+  await pen([
+    [20, 20],
+    [21, 20],
+  ]);
+  assert.equal(await away(), true, "a pen's first touch puts it away");
+  await page.reload();
+  await reviewMode();
+  assert.equal(await away(), true, '...for the tab: loaded again, the page starts without it');
+}
 
 // ---- a note drawn with the pen, sent (board: the board's; else an invited reviewer's, told once what goes with a
 // note).
@@ -216,7 +246,7 @@ async function penNote({ board }) {
   if (!board)
     assert.match(
       await page.locator(inUi('.msg')).innerText(),
-      /picture of the screen go to the crew/,
+      /note and screenshot go on your Notebook page/,
       'an invited reviewer hears what goes with a note',
     );
   assert.ok(red(await inkAt(h1.x + 360, h1.y + h1.height / 2)), 'the line is on screen where it was drawn');
@@ -338,7 +368,8 @@ async function penTools() {
     'true',
     'the eraser is in hand',
   );
-  await pen(across(h1.x + 160, h1.y + 90, h1.x + 160, h1.y + 260));
+  // (from just above the cross-out: the ring's lowest point, h1.height / 2 + 50 down, stays out of its reach;
+  await pen(across(h1.x + 160, h1.y + 110, h1.x + 160, h1.y + 260));
   assert.equal((await inkAt(h1.x + 160, h1.y + 240))[3], 0, 'the eraser passed across it, the Night line goes');
   assert.equal((await inkAt(h1.x + 160, h1.y + 120))[3], 0, 'and the red cross-out it passed');
   assert.ok(red(await inkAt(h1.x + 360, h1.y + h1.height / 2)), 'and the ring it missed stays');
@@ -398,40 +429,40 @@ async function writingArea() {
   await page.locator(inUi('[data-cancel]')).tap();
 }
 
-// ---- the pin drags from its menu's handle, with a mouse and a finger, and a tap on the handle still opens the menu
+// ---- the pin drags with a mouse and a finger, and a tap on it still starts a note: in a tab of its own, as a pen has
+// put this one's away
+await newTab(context);
 const dockAt = () =>
   page.evaluate(() => {
     const r = document.querySelector('review-mode').shadowRoot.querySelector('.fab').getBoundingClientRect();
     return [Math.round(r.x), Math.round(r.y)];
   });
-const more = await page.locator(inUi('.more')).boundingBox(),
-  [fx, fy] = await dockAt();
-await page.mouse.move(more.x + 18, more.y + 18);
+const [fx, fy] = await dockAt();
+await page.mouse.move(fx + 18, fy + 18);
 await page.mouse.down();
-await page.mouse.move(more.x - 100, more.y - 300, { steps: 8 });
+await page.mouse.move(fx - 100, fy - 300, { steps: 8 });
 await page.mouse.up();
 await page.waitForTimeout(500); // (it rests where it's let go)
 const [mx, my] = await dockAt();
 assert.ok(
   Math.abs(mx - (fx - 118)) < 4 && Math.abs(my - (fy - 318)) < 4,
-  `the pin moved with its handle, from where it was held (${fx},${fy} → ${mx},${my})`,
+  `the pin moved with the mouse, from where it was held (${fx},${fy} → ${mx},${my})`,
 );
-assert.equal(await page.locator(inUi('.menu')).isVisible(), false, 'a drag opens no menu');
-const touch = await page.locator(inUi('.more')).boundingBox();
-await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: touch.x + 18, y: touch.y + 18 }] });
+assert.deepEqual(await state(), { veil: false, sheet: false, marked: false }, 'a drag starts no note');
+await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: mx + 18, y: my + 18 }] });
 for (let i = 1; i <= 8; i++)
   await cdp.send('Input.dispatchTouchEvent', {
     type: 'touchMove',
-    touchPoints: [{ x: touch.x + 18, y: touch.y + 18 + i * 25 }],
+    touchPoints: [{ x: mx + 18, y: my + 18 + i * 25 }],
   });
 await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
 await page.waitForTimeout(1200);
 const [, ty] = await dockAt();
 assert.ok(Math.abs(ty - (my + 200)) < 4, `a finger drags it too (${my} → ${ty})`);
-await page.locator(inUi('.more')).tap();
-assert.equal(await page.locator(inUi('.menu')).isVisible(), true, 'a tap on the handle opens the menu');
-
-await page.locator(inUi('.more')).tap(); // (shut)
+// (it bobs: never still for Playwright's tap)
+await page.locator(inUi('.fab')).tap({ force: true });
+await page.waitForFunction(() => !document.querySelector('review-mode').shadowRoot.querySelector('.veil').hidden);
+await page.keyboard.press('Escape');
 await dictated();
 
 // ---- the mark starts no mic: its button does, and the words come in as they're said (the board, call 154)
@@ -519,7 +550,9 @@ assert.equal(await page.locator(inUi('textarea')).inputValue(), '', "a cancelled
 line = 'up';
 assert.deepEqual(errors, []);
 
-// ---- a mouse: the pin starts it, a drag draws (Shift a rectangle), and a click as the first mark still pins
+// ---- a mouse: the pin starts it, a drag draws (Shift a rectangle), and a click as the first mark still pins (in a tab
+// of its own: the pen put this one's pin away)
+await newTab(context);
 await page.setViewportSize({ width: 1280, height: 800 });
 await page.locator(inUi('.fab')).click({ force: true });
 await page.mouse.move(100, 160);
@@ -584,14 +617,18 @@ if (shots) {
   await context.route(`${base}/__review/**`, r => {
     const path = new URL(r.request().url()).pathname;
     if (fulfilPart(r, path, reviewJs)) return;
-    if (path === '/__review/mine') return r.fulfill({ json: { notes: 0 } });
     return r.fulfill({ json: { show: false } });
   });
   await hqPage.setViewportSize({ width: 744, height: 1133 });
-  for (const look of ['brownstone', 'wire', 'holo']) {
+  for (const look of lookNames()) {
     await hqPage.goto(`${base}/?intro=0&renderer=${look}`);
     await until(hqPage, '#loading.gone');
+    // away as HQ loads: the book's pin control summons it, folding the upright iPad's spread onto HQ (pinsummon.js;
+    await hqPage.click('#book .bk-lip');
+    await hqPage.waitForFunction(() => document.documentElement.dataset.book === 'spread');
+    await hqPage.click('#book .bk-pin');
     await hqPage.waitForSelector('review-mode .fab');
+    await pinOn(hqPage); // (HQ's pin, off till its Settings turn it on.)
     await hqPage.waitForFunction(
       () => document.querySelector('review-mode').shadowRoot.querySelectorAll('.strip .pot').length === 5,
     );
@@ -654,5 +691,5 @@ assert.deepEqual(errors, []);
 await browser.close();
 server.close();
 console.log(
-  `pen-check: a pen's tap is the page's, a pen line starts a note where it's drawn, open lines until it goes, a palm draws nothing, inks and undo, the lines (pressure, time) and a screenshot with them on the note, the pin dragged by its handle (mouse and finger) and the handle's tap opening the menu, the mic started by its button, never the mark, live words and the clip when the line is down, a mouse's lines, rectangle, Cmd+Z, inks, eraser and pin; the Pencil's taps on the strip, its eraser and Undo, the post-it's writing area clear for the handwriting with no keyboard for the pen, and the home page named${shots ? `, HQ in each look` : ''}, and the same pen for an invited reviewer (no language of ours)${shots ? ` (screenshots in ${shots})` : ''}`,
+  `pen-check: a pen's tap is the page's, a pen line starts a note where it's drawn, open lines until it goes, a palm draws nothing, inks and undo, the lines (pressure, time) and a screenshot with them on the note, a pen's first touch putting the pin away for the tab, the pin dragged (mouse and finger) and its tap starting a note, the mic started by its button, never the mark, live words and the clip when the line is down, a mouse's lines, rectangle, Cmd+Z, inks, eraser and pin; the Pencil's taps on the strip, its eraser and Undo, the post-it's writing area clear for the handwriting with no keyboard for the pen, and the home page named${shots ? `, HQ in each look` : ''}, and the same pen for an invited reviewer (no language of ours)${shots ? ` (screenshots in ${shots})` : ''}`,
 );

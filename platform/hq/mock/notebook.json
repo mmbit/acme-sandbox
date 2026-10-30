@@ -3,7 +3,7 @@
     {
       "id": 1,
       "kind": "mine",
-      "name": "My Notebook",
+      "name": "My journal",
       "archived": false,
       "created": "2026-10-26T09:12:00.000Z",
       "updated": "2026-10-27T10:20:00.000Z"
@@ -15,6 +15,80 @@
       "archived": false,
       "created": "2026-10-27T08:40:00.000Z",
       "updated": "2026-10-27T08:40:00.000Z"
+    },
+    {
+      "id": 20,
+      "kind": "round",
+      "name": "Shop round",
+      "archived": false,
+      "created": "2026-10-26T09:00:00.000Z",
+      "updated": "2026-10-29T09:00:00.000Z",
+      "round": {
+        "state": "open",
+        "guests": [
+          { "name": "Esmee", "page": null, "notes": 2, "done": true },
+          { "name": "Daan", "page": null, "notes": 2, "done": true },
+          { "name": "Noor", "page": null, "notes": 2, "done": false }
+        ],
+        "asksOpen": 2,
+        "with": "Juno",
+        "closed": null,
+        "back": null
+      }
+    },
+    {
+      "id": 21,
+      "kind": "round",
+      "name": "Menu round",
+      "archived": false,
+      "created": "2026-10-26T09:00:00.000Z",
+      "updated": "2026-10-29T09:00:00.000Z",
+      "round": {
+        "state": "away",
+        "guests": [
+          { "name": "Esmee", "page": null, "notes": 2, "done": true },
+          { "name": "Daan", "page": null, "notes": 2, "done": true }
+        ],
+        "asksOpen": 0,
+        "with": "Juno",
+        "closed": "2026-10-29T15:00:00.000Z",
+        "back": null
+      }
+    },
+    {
+      "id": 22,
+      "kind": "round",
+      "name": "Logo round",
+      "archived": false,
+      "created": "2026-10-26T09:00:00.000Z",
+      "updated": "2026-10-29T09:00:00.000Z",
+      "round": {
+        "state": "back",
+        "guests": [
+          { "name": "Noor", "page": null, "notes": 2, "done": true },
+          { "name": "Daan", "page": null, "notes": 2, "done": true }
+        ],
+        "asksOpen": 0,
+        "with": "Juno",
+        "closed": "2026-10-28T15:00:00.000Z",
+        "back": "2026-10-30T08:00:00.000Z"
+      }
+    },
+    {
+      "id": 23,
+      "kind": "round",
+      "name": "Signage round",
+      "archived": false,
+      "created": "2026-10-26T09:00:00.000Z",
+      "updated": "2026-10-29T09:00:00.000Z",
+      "round": {
+        "state": "done",
+        "guests": [{ "name": "Esmee", "page": null, "notes": 2, "done": true }],
+        "asksOpen": 0,
+        "with": "Juno",
+        "closed": "2026-10-26T15:00:00.000Z",
+        "back": "2026-10-27T09:00:00.000Z"
+      }
     }
   ],
   "pages": [
@@ -66,6 +140,146 @@
       "y": 0,
       "w": 1200,
       "h": 1600
+    },
+    {
+      "id": 900,
+      "notebook": 20,
+      "pos": 0,
+      "label": "Esmee",
+      "created": "2026-10-26T09:00:00.000Z",
+      "updated": "2026-10-26T09:00:00.000Z",
+      "x": 0,
+      "y": 0,
+      "w": 1200,
+      "h": 1600,
+      "chapter": "guests",
+      "guest": "Esmee"
+    },
+    {
+      "id": 901,
+      "notebook": 20,
+      "pos": 1,
+      "label": "Daan",
+      "created": "2026-10-26T09:00:00.000Z",
+      "updated": "2026-10-26T09:00:00.000Z",
+      "x": 0,
+      "y": 0,
+      "w": 1200,
+      "h": 1600,
+      "chapter": "guests",
+      "guest": "Daan"
+    },
+    {
+      "id": 902,
+      "notebook": 20,
+      "pos": 2,
+      "label": "Noor",
+      "created": "2026-10-26T09:00:00.000Z",
+      "updated": "2026-10-26T09:00:00.000Z",
+      "x": 0,
+      "y": 0,
+      "w": 1200,
+      "h": 1600,
+      "chapter": "guests",
+      "guest": "Noor"
+    },
+    {
+      "id": 903,
+      "notebook": 21,
+      "pos": 0,
+      "label": "Esmee",
+      "created": "2026-10-26T09:00:00.000Z",
+      "updated": "2026-10-26T09:00:00.000Z",
+      "x": 0,
+      "y": 0,
+      "w": 1200,
+      "h": 1600,
+      "chapter": "guests",
+      "guest": "Esmee"
+    },
+    {
+      "id": 904,
+      "notebook": 21,
+      "pos": 1,
+      "label": "Daan",
+      "created": "2026-10-26T09:00:00.000Z",
+      "updated": "2026-10-26T09:00:00.000Z",
+      "x": 0,
+      "y": 0,
+      "w": 1200,
+      "h": 1600,
+      "chapter": "guests",
+      "guest": "Daan"
+    },
+    {
+      "id": 905,
+      "notebook": 22,
+      "pos": 0,
+      "label": "Noor",
+      "created": "2026-10-26T09:00:00.000Z",
+      "updated": "2026-10-26T09:00:00.000Z",
+      "x": 0,
+      "y": 0,
+      "w": 1200,
+      "h": 1600,
+      "chapter": "guests",
+      "guest": "Noor"
+    },
+    {
+      "id": 906,
+      "notebook": 22,
+      "pos": 1,
+      "label": "Daan",
+      "created": "2026-10-26T09:00:00.000Z",
+      "updated": "2026-10-26T09:00:00.000Z",
+      "x": 0,
+      "y": 0,
+      "w": 1200,
+      "h": 1600,
+      "chapter": "guests",
+      "guest": "Daan"
+    },
+    {
+      "id": 907,
+      "notebook": 22,
+      "pos": 2,
+      "label": "Advice",
+      "created": "2026-10-26T09:00:00.000Z",
+      "updated": "2026-10-26T09:00:00.000Z",
+      "x": 0,
+      "y": 0,
+      "w": 1200,
+      "h": 1600,
+      "chapter": "advice",
+      "kind": "advice"
+    },
+    {
+      "id": 908,
+      "notebook": 23,
+      "pos": 0,
+      "label": "Esmee",
+      "created": "2026-10-26T09:00:00.000Z",
+      "updated": "2026-10-26T09:00:00.000Z",
+      "x": 0,
+      "y": 0,
+      "w": 1200,
+      "h": 1600,
+      "chapter": "guests",
+      "guest": "Esmee"
+    },
+    {
+      "id": 909,
+      "notebook": 23,
+      "pos": 1,
+      "label": "Advice",
+      "created": "2026-10-26T09:00:00.000Z",
+      "updated": "2026-10-26T09:00:00.000Z",
+      "x": 0,
+      "y": 0,
+      "w": 1200,
+      "h": 1600,
+      "chapter": "advice",
+      "kind": "advice"
     }
   ],
   "groups": [

@@ -4,7 +4,7 @@
 //
 // book (bookpages.js): { desk, world, views, cur, size, pan, scale, drawn }. The paper's px are CSS px from the desk's
 // top-left; the page's are its own (bookrow.js).
-import { clampPan, clampScale, dotsShown, drawScale, leastScale, pageAt, shownBox, zoomAt } from './bookrow.js';
+import { dotsShown, drawScale, pageAt, shownBox } from './bookrow.js';
 
 // the paper's dot grid, one dot every DOT_PX of the page (bookdesk.css)
 const DOT_PX = 22;
@@ -21,10 +21,13 @@ export const viewOf = book => book.views[book.cur] ?? null;
 export function setView(book, { pan = book.pan, scale = book.scale } = {}) {
   const v = viewOf(book);
   if (!v || !book.size.w) return;
-  scale = clampScale(scale, v.page, book.size);
+  // (a page of units has no zoom of its own: drawn at its masonry's scale, scrolled down only (the paper ends above
+  // the tools: bookgroups.css).)
+  scale = v.page.scale ?? 1;
   const zoomed = scale !== book.scale;
   book.scale = scale;
-  book.pan = clampPan(pan, v.page, book.size, scale);
+  const room = book.size.h / scale;
+  book.pan = { x: 0, y: Math.max(0, Math.min(pan.y, (v.page.h ?? 0) - room)) };
   draw(book);
   if (zoomed) {
     clearTimeout(book.rest);
@@ -50,7 +53,6 @@ export function draw(book) {
 // changed is painted as it shows (bookpage.js). Back, it's on the hand, so a finger's first touch moves the page and
 // never scribbles on it.
 export function away(book, on) {
-  if (book.away && !on) book.tools?.use('hand');
   book.away = on;
   for (const v of book.views) v.hold(on);
 }
@@ -106,23 +108,3 @@ export const halt = book => {
   cancelAnimationFrame(book.slide);
   book.slide = 0;
 };
-
-// The zoom changed by a factor, keeping a point on the paper (CSS px from its top-left; its middle when none) where it
-// is, sliding there (the controls and keys) or at once (a wheel). Returns false when it would go past the page's least
-// zoom: the overview's to take (bookzoom.js). (least: was the page's width)
-export function zoomBy(book, k, { at: point = null, slide = true } = {}) {
-  const v = viewOf(book);
-  if (!v) return true;
-  const least = leastScale(v.page, book.size),
-    from = book.scale;
-  if (k < 1 && from <= least + 1e-6) return false;
-  const scale = clampScale(from * k, v.page, book.size),
-    mid = point ?? { x: book.size.w / 2, y: book.size.h / 2 },
-    pan = zoomAt(book.pan, from, scale, mid);
-  // (the board's zoom, kept on the page)
-  if (slide) slideTo(book, { pan, scale }, () => book.remember({ zoomed: true }));
-  else setView(book, { pan, scale });
-  return true;
-}
-// The zoom at 100% about the paper's middle
-export const actualSize = book => zoomBy(book, 1 / book.scale);

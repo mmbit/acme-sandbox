@@ -29,7 +29,7 @@ const anchor = {
     },
   ],
 };
-// A scrap with its words on My Notebook's current page
+// A scrap with its words on My journal's current page
 const scrap = async (words: string, said: string, owner: string | null = null) =>
   (await h.board('/api/notebooks/groups/scrap', { anchor, words, said, snip: SNIP, owner })).body;
 const find = async (q: string) => (await h.board(`/api/book/search?q=${encodeURIComponent(q)}`)).body;

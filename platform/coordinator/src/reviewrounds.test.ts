@@ -247,7 +247,7 @@ test('each round gets the briefing of its stage, and what the reviews leave goes
   });
   for (const r of await claim(m, 'review')) await end(r);
   const [quill] = await claim(m, 'consolidate');
-  assert.match(quill.prompt, /merges ends there: it is a follow-up job's own/);
+  assert.match(quill.prompt, /merges ends there: no follow-up job comes after it/);
   assert.doesNotMatch(quill.prompt, /goes into one follow-up job/);
   await end(quill, json({ blocking: [], nonblocking: [at(5, 'a magic number')], decision: 'merge', summary: 'ok' }));
   await until(() => findingsOf(m).length === 1, "the follow-up's own finding recorded");

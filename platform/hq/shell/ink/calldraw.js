@@ -18,15 +18,14 @@
 //     once the pen rests, so the turn has what was drawn while the board spoke (server.py PEN_REST_SECONDS).
 //   - Hung up, a call the board drew on leaves its page in the board's day: kept, or thrown away with one tap (one with
 //     a notes page, below, or a page a notebook has since, needs neither: it goes in by itself).
-//   - A walk-through (a card's Walk me through it) opens its page as it's picked up; hung up, the page stays only if the
-//     board wrote on it, and goes by itself if not (walkthroughs.ts sweeps one HQ couldn't).
+//   - A walk-through (a card's Walk me through it) has the call's notes page as any call does, one page a call.
 //   - The call's notes page (the coordinator's ink/callnotes.ts) is open from pickup: the book turns to it if it's open,
 //     with a page brought by its folded corner on it first (bookshare.js), and the agent's scraps land there one by
 //     one (asked twice at pickup, and a card says so if it couldn't be opened). The first to land opens the book there,
 //     beside HQ's page, on a screen wider than it is tall (booklayout.js initial). On one taller than it is wide (an
 //     upright phone or iPad, half a split screen) it stays shut. Hung up, the
-//     page goes in as it is and stays in My Notebook, and nothing on it goes to anyone (its call's follow-up hands it
-//     out), so the book offers no Send on it while the call's on (call:page). (opens)
+//     page goes in as it is and stays in My journal, and nothing on it goes to anyone (its call's follow-up hands it
+//     out), so the book offers no Send on it (bookcontrols.js). (opens)
 import { esc } from '../../util.js';
 import { minimise, share, shown } from '../callscreen.js';
 import { aimed } from '../calldrive.js';
@@ -77,7 +76,7 @@ export function startDrawing(c) {
     removeEventListener('pointerdown', onPen, true);
     for (const type of pen) removeEventListener(type, penMoved, true);
   };
-  event('call:on', { call: c.call, agent: c.agent, name: c.name, color: c.color, walk: c.walk });
+  event('call:on', { call: c.call, agent: c.agent, name: c.name, color: c.color });
 }
 // The call's notes page: the agent's first note on it while the book is shut opens it there, where it lies beside HQ's
 // page; once a call, so a book the board shuts stays shut. The page's own news, made or titled, isn't a note. → its
@@ -107,7 +106,6 @@ async function notesPage(c) {
     c.notesPage = { id: page.id, notebook };
     if (c.over) return;
     event('book:paged', { page: page.id });
-    event('call:page', { page: page.id }); // (no Send on it while it's on.)
   } catch (err) {
     console.error('[hq] the call’s notes page wasn’t opened:', err);
     if (!c.over) notesCard(c);
@@ -189,26 +187,16 @@ export async function stopDrawing(c) {
     setTimeout(done, FILED_WAIT_MS);
   });
   c.drawing();
-  // (a call's notes page goes in by itself, sent and left in My Notebook: the store's, callnotes.ts)
-  if (c.notesPage || !(c.walk || c.page)) return;
+  // (a call's notes page goes in by itself, sent and left in My journal: the store's, callnotes.ts)
+  if (c.notesPage || !c.page) return;
   pageEnded(c);
 }
-// The call's page as the call ends, when it wasn't opened as the notes page: let be if My Notebook has it since (made
-// the notes page by the agent's first scrap, or carried there: the store's); a walk-through's kept, with
-// the card, if the board wrote on it (a note of its own, the book's ink or a picture), else thrown away; any other's,
-// the card. Left as it is if the book can't say: the sweep takes an empty one.
+// The call's page as the call ends, when it wasn't opened as the notes page: let be if My journal has it since (made
+// the notes page by the agent's first scrap, or carried there: the store's), else the card. Left as it is if the book
+// can't say: the sweep takes an empty one.
 async function pageEnded(c) {
   try {
-    const page = await callPage(c);
-    if (page.notebook) return;
-    if (!c.walk) return pageCard(c);
-    const notes = await fetch(`/api/book/notes?page=${page.id}`, { credentials: 'same-origin' });
-    if (!notes.ok) throw new Error(`its notes: ${notes.status}`);
-    const written = page.strokes || page.pictures || (await notes.json()).notes.some(n => n.by !== c.agent);
-    if (written) return pageCard(c);
-    const gone = await post('/api/book/page/delete', { id: page.id });
-    if (!gone.ok) throw new Error(`the book answered ${gone.status}`);
-    event('book:paged');
+    if (!(await callPage(c)).notebook) pageCard(c);
   } catch (err) {
     console.error('[hq] the call’s page wasn’t looked at:', err);
   }

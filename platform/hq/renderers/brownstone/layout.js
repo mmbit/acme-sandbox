@@ -289,17 +289,25 @@ export const partitionDepth = room => (room.wing !== 'y' ? room.y1 : room.x1) - 
 
 // The stretches of a room's back wall, [a0, a1] in tiles from its start, that what stands in front of it past its back
 // row hides, as what stands d out shows d nearer the start: the next room's glass partition at its far end, and at the
-// park end the fire escape's iron where it crosses the notice's rows (NOTICE_Z). In turn: with the partition's whole
+// park end the fire escape's iron where it crosses the notice's rows (NOTICE.z). In turn: with the partition's whole
 // pane, then (for a wall too short to clear it) with only its front post, the pane's tint over the rest. Every wall at
 // the escape's end clears its iron (plan) (out of rooms.js, where backWall hangs the notice, for its test)
 export function wallHidden(room, L) {
   const X = room.wing !== 'y', len = X ? room.x1 - room.x0 : room.y1 - room.y0, end = X ? room.x1 : room.y1;
   const next = room.lv.rooms.find(r => r.wing === room.wing && (X ? r.x0 : r.y0) === end), post = next && len - partitionDepth(next);
-  const escape = room.level > 0 && room.level < L.nUp && (L.street !== 'x') === X && end === (X ? L.X1 : L.Y1) && escapeCrossing(room.level, L.nUp - 1, ...NOTICE_Z).map((s, k) => len + s + (k ? 1 : -1) / 16);
+  const escape = room.level > 0 && room.level < L.nUp && (L.street !== 'x') === X && end === (X ? L.X1 : L.Y1) && escapeCrossing(room.level, L.nUp - 1, ...NOTICE.z).map((s, k) => len + s + (k ? 1 : -1) / 16);
   const postOnly = next && [post - 1 / 16, post + 0.07 + 1 / 16];
   return [[next && [post - 1 / 16, len], escape], [postOnly, escape]].map(h => h.filter(Boolean));
 }
-const NOTICE_Z = [19, 28]; // the rows of an empty room's notice, px over its floor (rooms.js backWall's band, WALL.vacant's card)
+// an empty room's notice (rooms.js WALL.vacant): w px wide, its card's rows z px over the floor, under the room's bunting
+// or bulb string (wallString's lowest row is 27 px up); and the px a back wall's art keeps clear from its start and short of
+// its end (backWall)
+export const NOTICE = { w: 21, z: [16, 25] }, ART_MARGIN = [2, 4];
+// flat px x to x + iw of a back wall (F_: rooms.js frame) as [a0, a1], in tiles from the room's start; and whether what
+// stands at a, d out from the wall, reaching reach along it either side, covers any of its stretches spans: it covers the
+// wall d nearer the start (backWall, plantFits)
+export const wallSpan = (F_, x, iw) => (F_.X ? [x / 16, (x + iw) / 16] : [F_.len - (x + iw) / 16, F_.len - x / 16]);
+export const covers = (spans, a, d, reach) => spans.some(([a0, a1]) => a - d + reach > a0 && a - d - reach < a1);
 // the flat x nearest x where iw px of a back wall (F_: rooms.js frame), from x0 to x1, cross none of its hidden stretches (wallHidden), or null
 export function clearOf(hidden, F_, x, iw, x0, x1) {
   const spans = hidden.map(([a0, a1]) => F_.X ? [a0 * 16, a1 * 16] : [(F_.len - a1) * 16, (F_.len - a0) * 16]);

@@ -6,6 +6,8 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:f
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { capacityCapture, capacitySample } from './capacity.ts';
+import { memoryFixture } from './memory.fixture.ts';
+import { memoryMeter, QUIET_MS } from './memory.ts';
 import { procStat } from './detached.ts';
 import type { JobUse, ProcessSnapshot } from './shares.ts';
 
@@ -41,7 +43,7 @@ const look = {
 };
 
 test('a claimed job with no readable processes stays present with unknown memory', () => {
-  const sample = capacitySample(look, readKernel);
+  const sample = capacitySample(look, readKernel, memoryMeter(readKernel));
   assert.equal(sample.jobs.length, 1);
   assert.equal(sample.jobs[0].accountedMb, null);
   assert.equal(sample.jobs[0].rssMb, null);
@@ -60,7 +62,7 @@ test('partial PSS and summed RSS stay distinct, and metadata cannot bring custom
   const fallback: ProcessSnapshot = { ...proc, pid: process.pid + 1, memoryMb: 30, rssMb: 30, memoryMeasure: 'rss' };
   const uses = new Map([[1502, { uid: 1502, memoryMb: 40, cores: 0.2, processes: [proc, fallback] }]]);
   const privateOccupant = { ...occupant, prompt: 'private-content' };
-  const sample = capacitySample({ ...look, uses, occupants: [privateOccupant] }, readKernel);
+  const sample = capacitySample({ ...look, uses, occupants: [privateOccupant] }, readKernel, memoryMeter(readKernel));
   assert.equal(sample.jobs[0].pssMb, 10);
   assert.equal(sample.jobs[0].pssProcesses, 1);
   assert.equal(sample.jobs[0].processes, 2);
@@ -76,10 +78,37 @@ const readKernel = (name: string) => readFileSync(`/sys/fs/cgroup/${name}`, 'utf
 test('a missing or malformed required kernel measurement prevents a capacity sample', () => {
   for (const field of ['memory.current', 'memory.swap.current']) {
     for (const invalid of ['', 'not-a-number']) {
-      assert.throws(() => capacitySample(look, name => (name === field ? invalid : readKernel(name))));
+      const read = (name: string) => (name === field ? invalid : readKernel(name));
+      assert.throws(() => capacitySample(look, read, memoryMeter(read)));
     }
   }
-  assert.throws(() => capacitySample(look, name => (name === 'memory.stat' ? 'anon 1024' : readKernel(name))));
+  const read = (name: string) => (name === 'memory.stat' ? 'anon 1024' : readKernel(name));
+  assert.throws(() => capacitySample(look, read, memoryMeter(read)));
+});
+
+test('capacity reports the same reclaim-aware availability that admission uses', t => {
+  const { reading, memory, read, measure } = memoryFixture(t);
+  reading(8e9, 7.28e9, 5.45e9, 9.7e9);
+  const measured = capacitySample({ ...look, host: { ...look.host, availableBytes: 9.7e9 } }, read, measure);
+  assert.equal(measured.availableBytes / 2 ** 20, memory.availableMb());
+  assert.equal(measured.heldBytes, 1.83e9);
+  assert.equal(measured.reclaimableFileBytes, 5.45e9);
+});
+
+test('pressure first read by capacity also holds admission until the shared quiet window ends', t => {
+  const { reading, memory, read, measure, write, advance } = memoryFixture(t);
+  reading(8e9, 7.28e9, 5.45e9, 9.7e9);
+  const sample = () => capacitySample({ ...look, host: { ...look.host, availableBytes: 9.7e9 } }, read, measure);
+  assert.equal(sample().underPressure, false);
+  assert.equal(memory.room(), true);
+  write('memory.events', 'oom 3\noom_kill 1');
+  assert.equal(sample().underPressure, true);
+  assert.equal(memory.room(), false);
+  assert.equal(memory.claimMb(), 0);
+  assert.equal(sample().underPressure, true);
+  advance(QUIET_MS);
+  assert.equal(memory.room(), true);
+  assert.equal(sample().underPressure, false);
 });
 
 test('a bounded trial writes readable samples and its completion log beside them', t => {

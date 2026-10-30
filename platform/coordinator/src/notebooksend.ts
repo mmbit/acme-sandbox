@@ -1,8 +1,9 @@
 // A notebook page sent in: each of its groups goes to its agent as a note, the way the book's sheets go (booksheets.ts
 // delivers them): the groups cut from one agent's work or on a page it owns as one task for them, the rest through the
-// CEO's routing check, which decides who takes each. SEND_MS to undo, then it's theirs; the page stays, read-only,
-// marked sent, and a fresh page takes new groups. A reply written under an answer goes at once, with the same seconds to
-// undo. Each send's sheets are its own (book_sheets.notebook_page), never an owner's batch on the old book's pages.
+// CEO's routing check, which decides who takes each. The board's send goes at once (it tore the page out onto Submit:
+// the deliberate act); an invited person's waits SEND_MS to undo. The page stays, read-only, marked sent. A reply
+// written under an answer goes in SEND_MS, with those seconds to undo. Each send's sheets are its own
+// (book_sheets.notebook_page), never an owner's batch on the old book's pages. (the board's at once, no fresh page:
 import { rmSync } from 'node:fs';
 import { db, inOneStep } from './db.ts';
 import { BOARD } from './ink/book.ts';
@@ -12,6 +13,7 @@ import { DIR } from './pagescraps.ts';
 import { SEND_MS, insertNote, note, sheetRow, type Note } from './ink/booknotes.ts';
 import { deliverDue } from './ink/booksheets.ts';
 import { changed, gone, mine, newPage, openPageOf, pageOf, pageRow, shut, type NotebookPage } from './notebook.ts';
+import { posAfter } from './notebookorder.ts';
 import { groupOn, insertGroup, partsOf, putAside, rootOf, row, type Group } from './notebookgroups.ts';
 import { boxOf } from '../../hq/shell/ink/notebookstack.js';
 import { judgeLater } from './ink/bookjudge.ts';
@@ -21,13 +23,15 @@ import { inkOf, isRefused, wordsOf, type Anchor, type Refused } from './pagechec
 // Room round a group's picture, in page px
 const PAD = 24;
 
-// POST /api/notebooks/pages/send { id }: the page's groups go in SEND_MS, unless it's undone first. The board's Send
-// leaves the book on the page under the one sent: a fresh one there when it was the notebook's last (the board's call
-// 161; under). A call's notes page is never sent: it goes in as the call ends, and its follow-up hands out what's on it
-// (ink/callnotes.ts ended).
+// POST /api/notebooks/pages/send { id, aside? }: the board's page torn out onto Submit, its groups gone at once; the page
+// stays where it is in the book, and no page is made after it. aside: the groups with asks still open on them (the
+// book's own list), moved to a new page at the notebook's end first, to answer there. A call's notes page is never
+// sent: it goes in as the call ends, and its follow-up hands out what's on it (ink/callnotes.ts ended).
 const RESEND = 'the page changed while it was being sent: send it again';
 export const sendShown = (b: any) => sendPage(b, BOARD, undefined, true);
-export async function sendPage(b: any, who = BOARD, stillOpen?: () => boolean, under = false) {
+// now: at once (the board's); else in SEND_MS, a fresh page made when no other is open (an invited person's hand-in,
+// which notebookrounds.ts hands to them or drops)
+export async function sendPage(b: any, who = BOARD, stillOpen?: () => boolean, now = false) {
   const p = pageRow(Number(b?.id), who);
   if (!p) return 404;
   if (shut(p)) return [409, 'this page has been sent', 'pageSent'] as Refused;
@@ -37,50 +41,57 @@ export async function sendPage(b: any, who = BOARD, stillOpen?: () => boolean, u
       "a call's notes page goes in as the call ends, and its follow-up hands out what's on it",
       'callPage',
     ] as Refused;
-  const sendable = () =>
-    db
-      .prepare(
-        "select * from notebook_groups where page = ? and parent is null and deleted is null and status = 'open' order by id",
-      )
-      .all(p.id) as Group[];
+  const aside = new Set(Array.isArray(b?.aside) ? b.aside.map(Number) : []);
+  const open = () =>
+      db
+        .prepare(
+          "select * from notebook_groups where page = ? and parent is null and deleted is null and status = 'open' order by id",
+        )
+        .all(p.id) as Group[],
+    sendable = () => open().filter(g => !aside.has(g.id));
   const groups = sendable();
   if (!groups.length) return [409, 'nothing on this page to send', 'pageEmpty'] as Refused;
   // (a tried group goes with the version the board picked beside it.)
   const snips = await Promise.all(groups.map(async g => (await sentSnip(g)) ?? snipOf(g)));
   // (a group changed, gone or added while its pictures were drawn: sent as the board sees it now, so read again)
-  const now = pageRow(p.id, who),
+  const again = pageRow(p.id, who),
     after = sendable();
   if (
-    !now ||
-    shut(now) ||
+    !again ||
+    shut(again) ||
     after.length !== groups.length ||
     after.some((g, i) => g.id !== groups[i].id || g.updated !== groups[i].updated)
   )
     return [409, RESEND, 'pageChanged'] as Refused;
   if (stillOpen && !stillOpen()) return [403, 'this invitation has closed', 'invitationEnded'] as Refused;
   inOneStep(() => {
-    db.prepare('update book_pages set send_at = ? where id = ?').run(asNotes(who, groups, snips), p.id);
-    // (a fresh page only when no other is open, or under the board's Send of the last page)
-    const fresh = openPageOf(p.notebook) === null || (under && lastPage(p)) ? newPage(p.notebook) : null;
+    setAside(
+      p,
+      open().filter(g => aside.has(g.id)),
+    );
+    db.prepare('update book_pages set send_at = ? where id = ?').run(asNotes(who, groups, snips, now), p.id);
+    const fresh = !now && openPageOf(p.notebook) === null ? newPage(p.notebook) : null;
     db.prepare('update book_pages set fresh = ? where id = ?').run(fresh, p.id);
     changed(p.notebook, p.id);
   });
-  deliverLater();
+  deliverLater(now ? 0 : SEND_MS);
   return pageOf(pageRow(p.id, who)!);
 }
-// Whether no page of its notebook's comes after it in the book (archived ones aren't in it)
-const lastPage = (p: NotebookPage) =>
-  !db
-    .prepare(
-      `select 1 from book_pages where notebook = ?1 and archived = 0
-        and (coalesce(pos, -1) > ?2 or (coalesce(pos, -1) = ?2 and id > ?3))`,
-    )
-    .get(p.notebook, p.pos ?? -1, p.id);
+// The groups with open asks moved, with what hangs under them, to a new page at the notebook's end, in their order
+function setAside(p: NotebookPage, groups: Group[]) {
+  if (!groups.length) return;
+  const to = newPage(p.notebook);
+  for (const g of groups) {
+    db.prepare('update notebook_groups set page = ? where id = ? or parent = ?').run(to, g.id, g.id);
+    db.prepare('update notebook_groups set pos = ? where id = ?').run(posAfter(to), g.id);
+  }
+  changed(p.notebook, to);
+}
 // Groups as notes on a sheet of this send's for each owner, their seconds started: when they go (inside inOneStep). A
 // call about a card for keys keeps every group on its pages for its own agent, whoever a group names, however the page
 // was made (memory.ts keysAgent, as bookreads.ts callRead keeps it for reads); elsewhere a group nobody owns is its
 // page's owner's, as an old book's note is (booknotes.ts addNote).
-function asNotes(who: string, groups: Group[], snips: ({ type: string; clean: Buffer } | null)[]) {
+function asNotes(who: string, groups: Group[], snips: ({ type: string; clean: Buffer } | null)[], now = false) {
   const sheets = new Map<string | null, number>();
   groups.forEach((g, i) => {
     const page = pageRow(g.page, null)!;
@@ -91,14 +102,14 @@ function asNotes(who: string, groups: Group[], snips: ({ type: string; clean: Bu
     db.prepare("update notebook_groups set status = 'sent', note = ? where id = ?").run(id, g.id);
   });
   // (its seconds start once its notes are on it: a sheet goes with what was on it at the tap, booksheets.ts deliver)
-  const at = Date.now() + SEND_MS;
+  const at = Date.now() + (now ? 0 : SEND_MS);
   for (const sheet of sheets.values())
     db.prepare("update book_sheets set status = 'sending', send_at = ? where id = ?").run(at, sheet);
   return at;
 }
 
 // ---------------------------------------------------------------- invited people's notes, sent for the board
-// An invited person's note on a share waits in the board's My Notebook, an open
+// An invited person's note on a share waits in the board's My journal, an open
 // scrap, until the board sends its page. hq guestnotes: the CEO lists those waiting (never their words) and, on the
 // board's word, sends one owner's as the board's Send would, the board's own notes beside them left on the page.
 const guestsWaiting = (who: string, owner?: string | null) =>
@@ -157,8 +168,8 @@ export async function sendGuestNotes(b: any, who = BOARD) {
   deliverLater();
   return { owner, notes: groups.length };
 }
-// POST /api/notebooks/pages/undo { id }: a send taken back within its seconds; the page is open again, and the fresh
-// page the send made goes while it's blank and untitled
+// An invited person's send taken back within its seconds (their Undo: notebookrounds.ts takeBack); the page is open
+// again, and the fresh page the send made goes while it's blank and untitled
 export function undoSend(b: any, who = BOARD) {
   const p = pageRow(Number(b?.id), who);
   if (!p) return 404;
@@ -258,7 +269,7 @@ export function deleteReply(b: any, who = BOARD) {
 }
 
 // ---------------------------------------------------------------- shared
-const deliverLater = () => setTimeout(deliverDue, SEND_MS + 50).unref();
+const deliverLater = (ms = SEND_MS) => setTimeout(deliverDue, ms + 50).unref();
 // A sheet of the book's for one send's groups of one owner (null: the routing check's), from this notebook page: its
 // own, never the owner's batch
 const newSheet = (who: string, owner: string | null, page: number) =>

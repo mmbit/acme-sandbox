@@ -1,12 +1,12 @@
 // A notebook group's answers as HQ reads them with the group (notebookgroups.ts groupOf): the slips on the notes it and
 // its replies went as, the answers made on it before or after its page was sent, each once; the answer still coming on
-// it or a reply of its (the writing placeholder); its try's versions page (booktry.ts), or null; the agents'
-// desk-phone cards on those notes (bookasks.ts); and a versions page's group, read in the same shape (readOf), which HQ
-// draws a versions page (bookanswerversions.js) from.
+// it or a reply of its (the writing placeholder); its try (booktry.ts), whose versions are among its answers and drawn
+// under it (bookversions.js), or null; and the agents' desk-phone cards on those notes (bookasks.ts).
 import { db } from '../db.ts';
-import { findAgent } from '../jobs.ts';
-import { answersOnGroups, comingOf, slipsOf, waitingOf, type Listed } from './bookslips.ts';
-import { asksOn } from './bookasks.ts';
+import { findAgent, jobAgent } from '../jobs.ts';
+import { ceo } from '../company.ts';
+import { answersOnGroups, comingOf, going, slipsOf, waitingOf, type Listed } from './bookslips.ts';
+import { asksBy, asksOn } from './bookasks.ts';
 import type { Group } from '../notebookgroups.ts';
 
 // What HQ reads of a group with its answers: its own parts (head), its owner and the
@@ -41,19 +41,31 @@ export function answersOf(g: Group, replies: Group[], listed: Listed) {
     answers: [...onNotes, ...onGroups],
     // (an answer coming on the note or a reply before why an ended ask brought none)
     waiting: asking.map(comingOf).find(w => w) ?? asking.map(waitingOf).find(w => w) ?? null,
-    tries_page: top ? triesPage(g.id) : null,
-    asks: notes.flatMap(asksOn),
+    try: top ? tryOf(g, [...onNotes, ...onGroups]) : null,
+    // (and the card it is, an agent's design ask on an Asks page: askpages.ts)
+    asks: [...(g.request && top ? asksBy(g.request) : []), ...notes.flatMap(asksOn)],
   };
 }
-// A versions page's read (booktry.ts): the group it tries, as tried; nothing for any other page
-export function triesOf(p: { tries: number | null }, show: (g: Group) => unknown) {
-  return p.tries ? { tries: p.tries, tried: triedOf(p.tries, show) } : {};
+// A group's try (booktry.ts), as its versions block shows it under the group: coming while its run is queued or going
+// (a frame of pencil dots for each version said and not made yet), made once it ended with versions, and empty once it
+// ended with none, saying why in plain words. So a try never shows a count of versions that don't exist. null: never
+// tried.
+type Tried = Group & { tried?: number | null };
+export function tryOf(g: Tried, answers: { style: string }[]) {
+  if (!g.tried) return null;
+  const job = db.prepare('select status, result from jobs where id = ?').get(g.tried) as
+    { status: string; result: string | null } | undefined;
+  const by = jobAgent(g.tried) ?? g.owner ?? ceo(),
+    name = findAgent(by)?.name ?? by;
+  const made = answers.filter(a => a.style === 'version').length;
+  const state = going(g.tried) ? 'coming' : made ? 'made' : 'empty';
+  return { state, expect: g.expect, by, name, reason: state === 'empty' ? endedEmpty(name, job) : null };
 }
-// A versions page's group, as HQ reads it (show), or null once it's deleted
-function triedOf(id: number, show: (g: Group) => unknown) {
-  const g = db.prepare('select * from notebook_groups where id = ?').get(id) as Group | undefined;
-  return g && g.deleted === null ? show(g) : null;
+// Why a try that ended has no version, as the board reads it in the versions' place: the run's own last line when it
+// ended well (the brief asks it to say why it made none)
+function endedEmpty(name: string, job?: { status: string; result: string | null }) {
+  if (job?.status === 'stopped') return `${name}'s try was stopped before it made a version.`;
+  const said = job?.status === 'done' && job.result?.trim().split('\n').at(-1)?.trim();
+  if (said) return `${name} made no version: ${said}`;
+  return `${name}'s try ended without a version. Write on the scrap to ask again.`;
 }
-const triesPage = (group: number) =>
-  (db.prepare('select id from book_pages where tries = ? order by id limit 1').get(group) as { id: number } | undefined)
-    ?.id ?? null;

@@ -1,8 +1,8 @@
 // The book's layout on each shape of screen: how wide HQ's page, the cover's edge and the book are, open, folded or
 // spread over HQ, where a drag of the cover's edge or a pull of the tab leaves it, and what's remembered of it per shape.
 // Plain maths (book.js draws it), so node tests it: booklayout.test.js.
-// (a hardcover: its spine at the screen's right edge, its cover's outer edge the one that resizes it, its pull tab the one
-// that opens and closes it.)
+// (a hardcover: its spine just past the screen's right edge, its cover's outer edge the one that resizes it, its pull tab
+// the one that opens and closes it.)
 
 // The cover's outer edge: the black board showing past the pages on HQ's side, the width of a finger's grip less what it
 // overhangs (book.css). Dragged, it resizes the open book. Its controls float as small islands over its paper
@@ -22,8 +22,9 @@ export const BOOK = { min: 320, max: 520 };
 const NARROW = 560;
 // From a laptop's width up, a screen is remembered apart from a tablet's landscape.
 const WIDE = 1280;
-// The table kept round the book (book.css --bk-gap, less on a screen SMALL px wide or less) and the page block's edge
-// showing past the paper on its right (--bk-pages)
+// The table kept round the book at its head, foot and (the spread's) outer edge, never at the spine past the screen's
+// right edge (book.css --bk-gap, less on a screen SMALL px wide or less), and the page block's edge showing past the
+// paper on its left (--bk-pages)
 const GAP = 24,
   SMALL_GAP = 16,
   SMALL = 600,
@@ -76,8 +77,8 @@ export function layout(w, h, state) {
   return { shape, mode: 'open', page: openPage, edge: EDGE, book, room: Math.min(w, EDGE + book) };
 }
 
-// The paper's width at a screen size and state, open or spread: the book less the table right of it and its pages'
-// edges, and on the spread the table at its left too (book.js). The coordinator places answers on it (answerspot.ts).
+// The paper's width at a screen size and state, open or spread: the book less its pages' edges, and on the spread the
+// table at its left (book.js); the paper runs on to the screen's right edge.
 export function paperWidth(w, h, state) {
   // (upright, no table round the book and no page block's edge, and the spread's paper fills the screen, its cover's
   // edge past the screen's left: book.css, book.js)
@@ -85,7 +86,7 @@ export function paperWidth(w, h, state) {
     upright = h >= w,
     gap = upright ? 0 : w <= SMALL ? SMALL_GAP : GAP;
   if (l.mode === 'spread' && upright) return w;
-  return l.book - (l.mode === 'spread' ? 2 : 1) * gap - (upright ? 0 : PAGES);
+  return l.book - (l.mode === 'spread' ? gap : 0) - (upright ? 0 : PAGES);
 }
 
 // The book's open width: the one the board gave it, within what this screen allows, or the default.

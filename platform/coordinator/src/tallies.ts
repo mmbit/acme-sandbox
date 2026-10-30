@@ -1,9 +1,9 @@
 // What the board's projects view counts (projects.ts): a done thread's jobs, a thread's lines changed, and a project's
 // jobs done since its sentence.
 import { db, prepared } from './db.ts';
-import { workBranch } from './jobs.ts';
+import { failedAside, workBranch } from './jobs.ts';
 
-type Counts = { jobs: number; done: number; last: string | null };
+type Counts = { jobs: number; done: number; failed: number; last: string | null };
 type Lines = { added: number; removed: number };
 
 // Every thread's tallies at once, through the thread's index, which holds each job's state, end
@@ -12,17 +12,19 @@ export function tallies() {
   const counts = new Map(
     (
       prepared(
-        `select j.thread, count(*) jobs, sum(j.status = 'done') done, max(j.finished) last from jobs j
+        `select j.thread, count(*) jobs, sum(j.status = 'done') done,
+        sum(j.kind = 'work' and j.pr is null and j.status = 'failed' and not ${failedAside('j')}) failed, max(j.finished) last from jobs j
         indexed by jobs_thread_state where j.thread is not null group by j.thread`,
       ).all() as (Counts & { thread: string })[]
     ).map(({ thread, ...counted }) => [thread, counted]),
   );
   const lines = linesByThread();
   const linesOf = (id: string): Lines | null => lines.get(id) ?? null;
-  // A done thread's jobs, how many of them are done, and its lines. finished: when it was complete, its close (the
+  // A done thread's jobs, how many of them are done, how many tasks failed with nothing in their place (a closed thread
+  // that holds one ended failed, never done: the shell reads it), and its lines. finished: when it was complete, its close (the
   // thread's done) or its last job's end, whichever came later, for the latest done ones.
   const tally = (th: { id: string; done: string | null }) => {
-    const { last, ...counted } = counts.get(th.id) ?? { jobs: 0, done: 0, last: null };
+    const { last, ...counted } = counts.get(th.id) ?? { jobs: 0, done: 0, failed: 0, last: null };
     const finished = last !== null && (th.done === null || last > th.done) ? last : th.done;
     return { ...counted, finished, lines: linesOf(th.id) };
   };

@@ -33,7 +33,12 @@ watch:                          # optional: HQ's watch on the live app (the coor
 ```
 
 - A slug is lower-case letters, digits and dashes; a folder starting with `_` is skipped (a template), and HQ's own
-  labels (`hq`, `www`, `mail`, `preview`, `cycles`, HQ's host name) are reserved.
+  labels (`hq`, `www`, `mail`, `preview`, `cycles`, HQ's host name) are reserved, and so is any slug starting `try-`:
+  `try-<n>.preview.<zone>` is a try's version's staging preview, behind the board's preview login, which the coordinator
+  serves from the version's own files (HQ's screens in dev mode, a deck) and removes with its branch. One site, the
+  catch-all, takes every host no other site names, its certificate fetched on the first visit once the coordinator says
+  it's a version that's there (the Caddyfile's `on_demand_tls`). Never a `*.preview.<zone>` site: Caddy gets no
+  certificate of its own for a host a wildcard site covers.
 - `domain:` must be a plain host outside `<zone>` that no other manifest names; anything else is ignored.
   Point its DNS record at the server before setting `domain:` on a public product, or before the product's first
   `site:` or `live:` Approve. Its shelf and old address send page loads there from the next deploy.
@@ -113,7 +118,8 @@ watch:                          # optional: HQ's watch on the live app (the coor
   page's own access on that host for an hour. Elsewhere the link stays as it is. No product opens a path on its preview
   for this.
 - The browser's kits, the sound kit at `/shared/demo/foley.js`, the word check at `/shared/wordcheck/wordcheck.js`,
-  the hand-off above and the button that asks once more (`askAgain`, `/shared/ask/ask.js`), on all its hosts (behind the login on the preview), served by Caddy from the
+  the hand-off above, the button that asks once more (`askAgain`, `/shared/ask/ask.js`) and a page's end of the link with
+  HQ's notebook (`/shared/notebook/notebook.js`), on all its hosts (behind the login on the preview), served by Caddy from the
   server's checkout, and on the cycles host too. Each is at its path in the repo, so an app imports it by its relative
   path (`'../../../../shared/demo/foley.js'` from `app/public/`): the same import works in Node from the repo and in the
   browser. No app keeps a copy, and a kit change is live in every app at the next deploy. A run from the repo has no

@@ -195,9 +195,7 @@ export async function product(req: IncomingMessage, res: ServerResponse) {
     // vary: cookie, so no cache ever hands the board's copy to someone else (and no-store on top)
     // HQ's origin goes in, so the tool also runs inside HQ's preview viewer (a frame), and only there
     const on = reviewerOn(req);
-    // and the guest pages' colours for its menus
-    const tool = on && (await readFile(`${REPO_DIR}/shared/review/review.js`, 'utf8')).replace('{{HQ_ORIGIN}}', ORIGIN)
-      .replace('{{LOOK}}', () => inJsString(guests.palette(':host')));
+    const tool = on && (await readFile(`${REPO_DIR}/shared/review/review.js`, 'utf8')).replace('{{HQ_ORIGIN}}', ORIGIN);
     const js = !tool ? '/* review mode: off */\n' : on.share ? inBook(tool.replace('{{OUTSIDE}}', companyInJs), on.share) : tool;
     // the watch-along's answer to HQ's frame, on or off
     const framed = await framedAnswer();
@@ -226,12 +224,6 @@ export async function product(req: IncomingMessage, res: ServerResponse) {
     return reply(res, 200, await readFile(`${REPO_DIR}/shared/watchalong/strokes.js`), 'text/javascript; charset=utf-8');
   if (path === '/__review/vendor/rrweb-record.js' && req.method === 'GET')
     return reply(res, 200, await readFile(watchalong.RECORDER), 'text/javascript; charset=utf-8');
-  // for the board, whose sheet in its book a note on this page (?page=) joins and how many are on it
-  if (path === '/__review/mine' && req.method === 'GET') {
-    const on = reviewerOn(req), query = new URL(req.url ?? '/', 'http://x').searchParams;
-    if (!on || on.share) return json(res, 404, { error: 'not found' });
-    return json(res, 200, (await import('./ink/bookreview.ts')).menuOf(on.slug, localPath(query.get('page'), on.host, on.base), query.get('owner')));   // (owner)
-  }
   if (path === '/__review/profile' && req.method === 'POST') return profiled(req, res);
   if (req.method !== 'POST' || !['/__review/notes', '/__review/voice', '/__review/thanked', '/__review/coach'].includes(path)) return json(res, 404, { error: 'not found' });
   const p = reviewerOn(req);

@@ -45,15 +45,17 @@ export function sourceOf(queuer: { id: number; call?: boolean }, handsOutItem: b
 // nothing timed waits on it.
 export function servedWindow(thread: string | null) {
   if (!thread) return null;
-  const served = db
-    .prepare(
-      `with recursive serving(id) as (select $thread union select n.thread from thread_needs n join serving s on n.needs = s.id
+  return (
+    (db
+      .prepare(
+        `with recursive serving(id) as (select $thread union select n.thread from thread_needs n join serving s on n.needs = s.id
       join threads o on o.id = n.thread and o.status = 'open')
-    select t.id thread, t.deadline from threads t join serving s on s.id = t.id
-    where t.status = 'open' and t.deadline is not null order by t.deadline, t.id limit 1`,
-    )
-    .get({ thread }) as { thread: string; deadline: number } | undefined;
-  return served ?? null;
+    select t.id thread, w.deadline from threads t join serving s on s.id = t.id
+      join thread_windows w on w.id = t.id where t.status = 'open' and w.deadline is not null
+      order by w.deadline, t.id limit 1`,
+      )
+      .get({ thread }) as { thread: string; deadline: number } | undefined) ?? null
+  );
 }
 
 // The window --by puts on the job's thread: never later than one it has (a deliverable's agreed time isn't loosened by

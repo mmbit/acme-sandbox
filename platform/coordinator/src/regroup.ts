@@ -59,6 +59,7 @@ export function newId(from: string, to: string, project: string) {
     // the threads it needs and those that need it (plan.ts).
     db.prepare('update thread_needs set thread = ? where thread = ?').run(to, from);
     db.prepare('update thread_needs set needs = ? where needs = ?').run(to, from);
+    db.prepare('update threads set deadline_from = ? where deadline_from = ?').run(to, from);
     db.prepare('update pauses set project = ?, thread = ? where thread = ?').run(project, to, from);
     db.prepare('update call_items set ref = ? where ref = ?').run(`pause ${to}`, `pause ${from}`);
     db.prepare('delete from thread_aliases where old = ?').run(to);

@@ -161,10 +161,13 @@ test('stalls make one queued job, of any cause, on spare room; a started job hol
   const { proposal } = h.db.prepare('select proposal from sorts where job = ?').get(requests.id) as {
     proposal: number;
   };
-  assert.equal(
-    (proposals.accept(proposal, ceo(), { title: 'Make HQ quick', code: 'HQFAST' }) as { job: number }).job,
-    requests.id,
-  );
+  const accepted = proposals.accept(proposal, ceo(), {
+    size: '30m',
+    why: 'Test scope judgment without a comparable completed job',
+    title: 'Make HQ quick',
+    code: 'HQFAST',
+  }) as { job: number };
+  assert.equal(accepted.job, requests.id);
   const running = await h.claim(h.job(requests.id).engine, { util: 0.1 });
   assert.equal(running?.id, requests.id, 'sorted, it is claimed on a seat with spare room');
   stalled({ name: 'POST /api/agent/window', ms: 3_300 }, 3_300, now + 180_000);

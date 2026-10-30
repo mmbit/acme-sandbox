@@ -54,6 +54,9 @@ has its own note (`pixel-art.md`).
 - **Check a picture where it will be seen:** screenshot the slide at phone width, not the bare PNG.
 - **Keep each picture small.** `convert in.png -dither None -colors 256 PNG8:out.png` makes a Playwright PNG several
   times smaller, and most pictures land well under 200 KB.
+- **A chart says where its numbers came from**, in one line under it: the tool or table and the time it covers. For a
+  chart answering a note in a notebook, `node shared/scrapchart/draw.mjs` draws a line or bar chart in the line look and
+  refuses one with no source (`shared/scrapchart/README.md`).
 
 ## Colour and contrast
 

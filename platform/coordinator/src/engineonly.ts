@@ -64,6 +64,8 @@ export function judgedOn(seats: Seat[], engineOf: (agent: string) => string | un
       seat.files = seat.files.filter(file => !theirs.includes(file));
       judge.files = [...new Set([...judge.files, ...theirs])];
       judge.domains = [...new Set([...judge.domains, ...seat.domains])];
+      // The seat that takes a security reader's files reads for security too.
+      if (seat.security) judge.security = true;
     }
   return judged;
 }
@@ -72,7 +74,7 @@ function judgeOn(engine: string, judged: Seat[], engineOf: (agent: string) => st
   if (seated) return seated;
   const agent = reviewers.find(reviewer => engineOf(reviewer) === engine);
   if (!agent) return undefined;
-  const seat = { agent, files: [], domains: [], slice: false };
+  const seat: Seat = { agent, files: [], domains: [], slice: false, security: false };
   judged.push(seat);
   return seat;
 }

@@ -16,6 +16,7 @@ import {
   LANDS,
   LANDED,
   NUDGE,
+  reopened,
   dissolveStep,
   dissolveLook,
   easeInOut,
@@ -90,6 +91,15 @@ test('shut: the spring swings it up and it stops dead at upright, never past it,
   );
 });
 
+test('opened again mid-shut, from anywhere on the way up or at upright, it lands no later than a tap would', () => {
+  const lands = body => run(body, 'fall', { done: resting }).length * FRAME,
+    tap = lands({ a: UPRIGHT, w: NUDGE });
+  for (const s of [0.05, 0.15, 0.3, 0.6, 2]) {
+    const up = run({ a: 0, w: 0 }, 'shut', { s }).at(-1);
+    assert.ok(lands(reopened(up)) <= tap + FRAME, `${s} s into the close: ${lands(reopened(up)).toFixed(2)} s`);
+  }
+});
+
 test('a long frame (a stalled tab) is stepped as at most 33 ms: no leap through the desk', () => {
   const b = step({ a: 0.2, w: -8 }, 1, 'fall');
   assert.ok(b.a >= 0 && b.a < 0.2);
@@ -124,6 +134,14 @@ test('let go: a flick right shuts it; mostly upright and not going left shuts it
   assert.deepEqual(letGo(0.8, 0), { open: true, push: 0 });
   assert.equal(letGo(1.2, -0.5).open, true);
   assert.equal(letGo(1.2, -0.5).push, -1.25);
+});
+
+test('let go after a lift from open: a third of the way to the spine shuts it; less settles it back', () => {
+  // (flat, the outer edge's reach is cos(a) of the board's: a third gone at acos(2/3))
+  assert.equal(letGo(0.9, 0, true).open, false);
+  assert.equal(letGo(0.75, 0, true).open, true);
+  assert.equal(letGo(0.9, 0).open, true, 'from shut, the same angle still falls open');
+  assert.equal(letGo(0.9, -0.5, true).open, true, 'drawn back left, it settles back');
 });
 
 test('the dissolve: gone by the time the board lands, back in at the new room; easing back, never jumping', () => {

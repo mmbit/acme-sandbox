@@ -1,9 +1,9 @@
 // book-check.mjs's stories of the board's controls (shell/ink/bookstrip.js, bookinput.js, bookpan.js, booktools.js,
-// bookprefs.js): on a desktop with a mouse, the strip naming its tool (where it sits, and the wheel: bookwheel.mjs),
-// Shift's drag moving the page, Ctrl's drag selecting and giving the tool back, a press held still a voice note whose
+// bookprefs.js): on a desktop with a mouse, the pen in use as the book opens (the rail: bookbar.mjs; the wheel: bookwheel.mjs),
+// Ctrl's drag selecting and giving the tool back, a press held still a voice note whose
 // words land where it was held, the cog's preferences kept on this device and its hold time obeyed; on a touch screen
 // (Chromium's own touch and pen events, trusted), one finger drawing and two moving the page with no stray line, a
-// slide along the strip picking a tool, drifting off it sideways too, a double tap held a voice note, the radial menu
+// slide along the rail picking a tool, drifting above it too, a double tap held a voice note, the radial menu
 // on a long press, and a finger that pans once the pen's been used where the preferences say so. Each asserts what the
 // board sees and what the store keeps.
 import assert from 'node:assert/strict';
@@ -18,12 +18,12 @@ export const HEARD = 'order the blue mugs';
 // c: book-check.mjs's played store and helpers
 export function stripStories(c) {
   return {
-    'controls with a mouse: the strip names its tool, Shift pans, Ctrl selects': browser => mouse(browser, c),
+    'controls with a mouse: the pen in use, Ctrl selects': browser => mouse(browser, c),
     'controls with a mouse: held still, a voice note lands its words where it was held; Undo takes them back':
       browser => voiceByMouse(browser, c),
     "controls with a mouse: the cog's preferences stick on this device, and the hold waits as long as they say":
       browser => preferences(browser, c),
-    'controls on a touch screen: one finger draws, two move the page, a slide along the strip picks a tool': browser =>
+    'controls on a touch screen: one finger draws, two move the page, a slide along the rail picks a tool': browser =>
       fingers(browser, c),
     'controls with the Pencil: a double tap held is a voice note, the radial menu on a long press, a finger pans once the pen is in use':
       browser => pencil(browser, c),
@@ -37,19 +37,13 @@ async function mouse(browser, c) {
   const { page, errors, done } = await desk(browser, c);
   try {
     const paper = await paperBox(page);
-    assert.equal(await now(page), 'Pen', 'the tool in use named');
+    assert.equal(await pressed(page), 'Pen', 'the pen in use');
     const mid = [paper.x + paper.width / 2, paper.y + paper.height / 2];
-    // a blue line, then Shift's drag moves it on the screen, drawing nothing
+    // a blue line (the page scrolls down only, so Shift no longer pans it: job #14672)
     await page.keyboard.press('3');
     await stroke(page, [mid[0] - 80, mid[1]], [mid[0] + 80, mid[1]]);
     await savedWhere(c, free.id, p => p.ink.length === 1);
     assert.ok((await colourIn(page, BLUE)).n > 100, 'the blue line shows');
-    const before = await placed(page);
-    await page.keyboard.down('Shift');
-    await stroke(page, [mid[0] - 100, mid[1] - 150], [mid[0] - 50, mid[1] - 120]);
-    await page.keyboard.up('Shift');
-    const after = await placed(page);
-    assert.deepEqual([after[0] - before[0], after[1] - before[1]], [50, 30], "Shift's drag moved the page with it");
     const line = await colourIn(page, BLUE);
     // Ctrl's drag: a select box round the line, the pen back once it's let go, nothing drawn
     await page.keyboard.down('Control');
@@ -58,7 +52,7 @@ async function mouse(browser, c) {
     await page.locator('#book .bk-sel-bar').waitFor({ timeout: 2000 });
     assert.equal(await pressed(page), 'Pen', 'the pen back after the Ctrl drag');
     await page.waitForTimeout(QUIET_MS);
-    assert.equal(stored(c, free).ink.length, 1, 'Shift and Ctrl drew nothing');
+    assert.equal(stored(c, free).ink.length, 1, 'Ctrl drew nothing');
     await c.shot('book-strip-desktop', page);
     assert.deepEqual(errors, []);
   } finally {
@@ -132,13 +126,12 @@ async function fingers(browser, c) {
   try {
     const paper = await paperBox(page),
       mid = [paper.x + paper.width / 2, paper.y + paper.height / 2];
-    // a slide along the strip: each tool's name as it passes, the one it lifts on picked
+    // a slide along the rail: each tool's name as it passes, the one it lifts on picked, no hold
     const b = name => page.locator('#book .bk-strip').getByRole('button', { name, exact: true }).boundingBox();
     const [select, eraser] = [await b('Select'), await b('Eraser')];
     await touch.down([[select.x + select.width / 2, select.y + select.height / 2]]);
-    await page.waitForTimeout(300);
-    // (drifting off the strip sideways onto the paper: the tool level with the finger)
-    await touch.move([[eraser.x - 60, eraser.y + eraser.height / 2]], 8);
+    // (drifting above the rail onto the paper: the tool level with the finger)
+    await touch.move([[eraser.x + eraser.width / 2, eraser.y - 30]], 8);
     await until(async () => (await page.locator('#bk-tip').textContent()).startsWith('Eraser'), "the eraser's name");
     await c.shot('book-strip-slide', page);
     await touch.up();
@@ -150,7 +143,7 @@ async function fingers(browser, c) {
     await savedWhere(c, free.id, p => p.ink.length === 1);
     assert.ok((await colourIn(page, BLUE)).n > 100, 'the blue line shows');
     const before = await placed(page);
-    // two fingers move the page, drawing nothing
+    // two fingers drawing nothing
     await touch.stroke(
       [
         [mid[0] - 60, mid[1] + 120],
@@ -161,42 +154,15 @@ async function fingers(browser, c) {
         [mid[0] + 60 + 90, mid[1] + 160],
       ],
     );
+    // (the page scrolls down only, never sideways: a page this short stays put. job #14672)
     const after = await placed(page);
-    assert.ok(
-      Math.abs(after[0] - before[0] - 90) < 6,
-      `two fingers moved the page: ${JSON.stringify([before, after])}`,
-    );
+    assert.equal(after[0], before[0], `two fingers never move the page sideways: ${JSON.stringify([before, after])}`);
     await page.waitForTimeout(QUIET_MS);
     assert.equal(stored(c, free).ink.length, 1, 'no stray line from two fingers');
-    await shortStrip(page, touch, b);
     assert.deepEqual(errors, []);
   } finally {
     await done();
   }
-}
-
-// A phone on its side, too short for the whole strip: a quick drag along it scrolls it, picking nothing, to the cog at
-// its foot; a press held still slides as ever.
-async function shortStrip(page, touch, b) {
-  await page.setViewportSize({ width: 844, height: 390 });
-  const island = page.locator('#book .bk-strip .bk-island');
-  await until(() => island.evaluate(el => el.hasAttribute('data-scrolls')), 'the strip scrolling on a short screen');
-  const was = await pressed(page),
-    eraser = await b('Eraser');
-  await touch.down([middleOf(eraser)]);
-  await touch.move([[eraser.x + eraser.width / 2, eraser.y - 180]], 8);
-  await touch.up();
-  await until(() => island.evaluate(el => el.scrollTop > 0), 'the strip scrolled by a drag');
-  assert.equal(await pressed(page), was, 'a drag along a scrolling strip picks nothing');
-  const cog = await b('Preferences on this device');
-  assert.ok(cog && cog.y + cog.height <= 390, `the cog brought onto the screen: ${JSON.stringify(cog)}`);
-  const shapes = page.locator('#book .bk-strip').getByRole('button', { name: /^Shapes/ });
-  const [from, to] = [await b('Type'), await shapes.boundingBox()];
-  await touch.down([middleOf(from)]);
-  await page.waitForTimeout(300);
-  await touch.move([middleOf(to)], 8);
-  await touch.up();
-  await until(async () => /^Shapes/.test(await pressed(page)), 'Shapes picked by a slide on the scrolling strip');
 }
 
 async function pencil(browser, c) {
@@ -223,14 +189,11 @@ async function pencil(browser, c) {
     const ring = [paper.x + paper.width / 2, paper.y + paper.height / 2 + 40];
     await pen.down(ring);
     await page.locator('#book .bk-radial [role=menuitemradio]').first().waitFor({ timeout: 2000 });
-    const lit = await page
-      .locator('#book .bk-radial')
-      .getByRole('menuitemradio', { name: 'Highlighter' })
-      .boundingBox();
+    const lit = await page.locator('#book .bk-radial').getByRole('menuitemradio', { name: 'Marker' }).boundingBox();
     await pen.move([lit.x + lit.width / 2, lit.y + lit.height / 2]);
     await c.shot('book-radial', page);
     await pen.up([lit.x + lit.width / 2, lit.y + lit.height / 2]);
-    await until(async () => (await pressed(page)) === 'Highlighter', 'the highlighter picked from the ring');
+    await until(async () => (await pressed(page)) === 'Marker', 'the highlighter picked from the ring');
     assert.equal(await page.locator('#book .bk-radial').count(), 0, 'the ring gone');
     // "touch always pans" on, and the pen used: a finger moves the page and draws nothing
     const ink = stored(c, free).ink.length;
@@ -255,7 +218,7 @@ export async function desk(browser, c, opts) {
   return opened;
 }
 // The iPad mini as a touch screen with a pen, in Chromium (its own touch and pen events, trusted); more: the context's
-// own options (exported for bookhand.mjs)
+// own options
 export async function mini(browser, c, more = {}) {
   // (at 1x, so a screenshot's px are the screen's: colourIn)
   const context = await c.hqIn(browser, MINI, { hasTouch: true, deviceScaleFactor: 1, ...more });
@@ -286,7 +249,10 @@ export function record({ onSegment } = {}) {
   );
   // (and allowed already)
   await page.route('**/__review/micallowed.js', r =>
-    r.fulfill({ contentType: 'text/javascript', body: 'export const micAllowed = () => true, gotStream = () => {};' }),
+    r.fulfill({
+      contentType: 'text/javascript',
+      body: 'export const micAllowed = () => true, micBlocked = () => false, gotStream = () => {};',
+    }),
   );
   await page.route('**/api/voice**', r => r.fulfill({ json: { text: HEARD } }));
   await page.addInitScript(() => {
@@ -327,14 +293,12 @@ async function stroke(page, [x0, y0], [x1, y1]) {
   for (let i = 1; i <= 16; i++) await page.mouse.move(x0 + ((x1 - x0) * i) / 16, y0 + ((y1 - y0) * i) / 16);
   await page.mouse.up();
 }
-// Where the page is on the paper: its top-left's shift on the screen (bookview.js draws it there), and the tool named
-// (both exported for bookhand.mjs)
+// Where the page is on the paper: its top-left's shift on the screen (bookview.js draws it there)
 export const placed = page =>
   page.evaluate(() => {
     const m = new DOMMatrix(getComputedStyle(document.querySelector('#book .bk-world')).transform);
     return [Math.round(m.e), Math.round(m.f)];
   });
-export const now = page => page.locator('#book .bk-now').textContent();
 export const pressed = page =>
   page.evaluate(
     () => document.querySelector('#book .bk-strip [aria-pressed=true]')?.getAttribute('aria-label') ?? null,

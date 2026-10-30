@@ -169,7 +169,10 @@ async function outcomeOf(call: Call, sent: number, check: LentCheck, said: (why:
 
 // The run asked of the helper: its id, or HQ's words when it refused it
 async function sendRun(root: string, check: LentCheck): Promise<number | string> {
-  const dir = mkdtempSync(join(tmpdir(), 'lent-bundle-'));
+  // The worker can reclaim this staging directory after killing its owner, including a SIGKILL.
+  const stat = readFileSync('/proc/self/stat', 'utf8');
+  const start = stat.slice(stat.lastIndexOf(')') + 2).split(' ')[19];
+  const dir = mkdtempSync(join(tmpdir(), `lent-bundle-${process.pid}-${start}-`));
   const command =
     `export LENT_UNTIL=$(($(date +%s) + ${Math.round(check.minutes * 60)})) && ` +
     `git init -q repo && git -C repo fetch -q ../${BUNDLE} refs/tests/change:refs/heads/change && cd repo && ` +
@@ -229,8 +232,10 @@ async function bundleOf(root: string, check: LentCheck, dir: string) {
   const packed = [BUNDLE, ...(check.tools.length ? ['tools'] : []), ...Object.keys(check.inputs ?? {})];
   const directories = (check.directories ?? []).flatMap(path => ['-C', dirname(path), basename(path)]);
   const exclude = (check.exclude ?? []).map(pattern => `--exclude=${pattern}`);
-  await execute('tar', ['-czf', join(dir, 'bundle.tar.gz'), ...exclude, '-C', dir, ...packed, ...directories]);
-  return join(dir, 'bundle.tar.gz');
+  const archive = join(dir, 'bundle.tar.gz');
+  // Git objects are already compressed. Fast gzip keeps runtime assets compact without repeating expensive compression
+  await execute('tar', ['-I', 'gzip -1', '-cf', archive, ...exclude, '-C', dir, ...packed, ...directories]);
+  return archive;
 }
 
 // The files a run brought back, by name

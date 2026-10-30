@@ -16,7 +16,14 @@ const EXTRAS = { ...BOARD_EXTRAS, ...OPEN_EXTRAS, ...REVIEW_PARTS };
 
 // read: a path from the repo's root → its bytes (the working tree's, or a commit's); files: bytes that stand in for a path
 export async function serve(read = p => readFile(join(ROOT, p)), port = 0, files = {}) {
-  const server = createServer(async (req, res) => {
+  const server = createServer(answer(read, files));
+  await new Promise(r => server.listen(port, '127.0.0.1', r)); // (this machine's alone.)
+  return server;
+}
+// ...its answer to a request, which the coordinator gives a try's version on its own host too (ink/trypreview.ts); root:
+// the checkout its listings (looks, films) come from
+export function answer(read, files = {}, root = ROOT) {
+  return async (req, res) => {
     // An address that doesn't parse (`//`, a broken escape like `/a%`) gets a 400, so it doesn't stop the server.
     const asked = addressOf(req.url);
     if (asked === null) return res.writeHead(400).end();
@@ -27,20 +34,18 @@ export async function serve(read = p => readFile(join(ROOT, p)), port = 0, files
     // as the board gets them on HQ's host.)
     const extra = extraFile(EXTRAS, `/${path}`) ?? (/^__review\/[a-z]+\.js$/.test(path) ? `shared/review/${path.slice('__review/'.length)}` : undefined);
     // (and the looks HQ ships, read from their folders, and the company's tip films.)
-    const listed = path === 'renderers/looks.json' ? looks() : path === 'films/films.json' ? filmFiles(join(ROOT, 'theme/hq')) : null;
+    const listed = path === 'renderers/looks.json' ? looks(join(root, 'platform/hq')) : path === 'films/films.json' ? filmFiles(join(root, 'theme/hq')) : null;
     const body = path.includes('..') ? null : files[path] ?? (listed ? JSON.stringify(listed) : await (kit ? read(`kits/${kit[1]}/hq/${kit[2]}`) : extra ? read(extra)
       : read(`theme/hq/${path}`).catch(() => read(`platform/hq/${path}`))).catch(() => null));
     res.writeHead(body ? 200 : 404, { 'content-type': typeOf(path) ?? 'application/octet-stream' }).end(body);
-  });
-  await new Promise(r => server.listen(port, '127.0.0.1', r)); // (this machine's alone.)
-  return server;
+  };
 }
 
 // The brand dev mode serves (the company's mock/brand.json, else the foundation's), worn in the company's theme
 // (theme/hq.yaml) when the repo has one: HQ as the company wears it, for the checks and tools that show it so
-export async function mockBrand() {
+export async function mockBrand(root = ROOT) {
   const { parse } = await import('../coordinator/node_modules/yaml/dist/index.js'); // (only the tools that wear it need it)
-  const read = p => readFile(join(ROOT, p), 'utf8');
+  const read = p => readFile(join(root, p), 'utf8');
   const brand = JSON.parse(await read('theme/hq/mock/brand.json').catch(() => read('platform/hq/mock/brand.json')));
   const theme = await read('theme/hq.yaml').then(parse, () => null);
   if (theme) brand.theme = { ...brand.theme, ...theme };
@@ -49,12 +54,12 @@ export async function mockBrand() {
 
 // The files the checks serve over dev mode's: the brand as mockBrand() gives it, and the platform's mock data wherever
 // the company's own list is empty, so every screen has something on it
-export async function mockFiles() {
-  const files = { 'mock/brand.json': JSON.stringify(await mockBrand()) };
-  for (const name of (await readdir(join(ROOT, 'theme/hq/mock')).catch(() => [])).filter(n => n.endsWith('.json'))) {
-    const own = JSON.parse(await readFile(join(ROOT, 'theme/hq/mock', name), 'utf8'));
+export async function mockFiles(root = ROOT) {
+  const files = { 'mock/brand.json': JSON.stringify(await mockBrand(root)) };
+  for (const name of (await readdir(join(root, 'theme/hq/mock')).catch(() => [])).filter(n => n.endsWith('.json'))) {
+    const own = JSON.parse(await readFile(join(root, 'theme/hq/mock', name), 'utf8'));
     if (Array.isArray(own) && !own.length)
-      files[`mock/${name}`] = await readFile(join(ROOT, 'platform/hq/mock', name)).catch(() => '[]');
+      files[`mock/${name}`] = await readFile(join(root, 'platform/hq/mock', name)).catch(() => '[]');
   }
   return files;
 }

@@ -12,7 +12,8 @@
 import { stylesheet } from '../../util.js';
 import { sfx } from '../audio.js';
 import { grownTo } from './bookrow.js';
-import { boundsOf, gestureOf, groupOf, picked, topAt, union, within } from './bookselectmath.js';
+import { boundsOf, gestureOf, groupOf, membersOf, picked, topAt, union, within } from './bookselectmath.js';
+import { unitAt } from './bookunits.js';
 import { mountClip } from './bookselectclip.js';
 import { drag } from './bookselectlift.js';
 import { followPress } from './bookpress.js';
@@ -89,7 +90,11 @@ function press(sel, e) {
   }
   if (hit && !sel[hit.kind].includes(hit.item)) choose(sel, at.view, things);
   if (hit || onFrame(sel, p)) return drag(sel, e, { corner: -1 });
-  return lasso(sel, e, at);
+  // (a press on a scrap's bare paper, its room or round its words, picks the scrap whole: it's one thing.)
+  const unit = unitAt(page, ...p);
+  if (unit === undefined || !page.groups?.has(unit)) return lasso(sel, e, at);
+  choose(sel, at.view, membersOf(page, unit));
+  return true;
 }
 // A press on the selection's handles or its bar (with another tool, a press inside the frame draws: only Select moves)
 function holds(sel, e) {

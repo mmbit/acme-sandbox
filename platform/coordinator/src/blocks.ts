@@ -107,8 +107,18 @@ export function blocked(b: Record<string, unknown>) {
     return recordBlock(event, job, agent, measure, used, share, accountingFailureReason);
   });
   if (typeof receipt === 'number') return receipt;
-  const command = (redact(String(b.command ?? '')) ?? '').slice(0, COMMAND_MAX);
-  return { text: `HQ's worker stopped this command (${command}): ${redact(receipt.report)}`, count: receipt.count };
+  return blockReply(b, receipt);
+}
+
+function blockReply(body: Record<string, unknown>, receipt: Pick<Receipt, 'report' | 'count'>) {
+  const command = (redact(String(body.command ?? '')) ?? '').slice(0, COMMAND_MAX);
+  // The cause stays in this command's response, never in the receipt or feed.
+  const failure = body.accountingError as AccountingFailure | undefined;
+  const cause = failure?.message ? `\nAccounting cause (${failure.reason}): ${redact(failure.message)}` : '';
+  return {
+    text: `HQ's worker stopped this command (${command}): ${redact(receipt.report)}${cause}`,
+    count: receipt.count,
+  };
 }
 
 function recordBlock(

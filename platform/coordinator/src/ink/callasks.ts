@@ -1,15 +1,15 @@
 // A call's notes page's asks (callnotes.ts): each scrap and promise the agent puts on it is an item on the call's list,
-// tied to its group as the agent wrote it, for the call's follow-up to hand out. Asks follow the groups the board joins
-// and lifts apart, and one it deletes is dropped.
+// tied to its group as the agent wrote it, for the call's follow-up to hand out. Asks follow what the board lifts
+// apart, and one it deletes is dropped.
 import { db } from '../db.ts';
 import { drop, reworded } from '../ledger.ts';
-import { onJoined, onSplit, partsOf, type Group } from '../notebookgroups.ts';
+import { onSplit, partsOf, type Group } from '../notebookgroups.ts';
 
-// Each ask on the page (a scrap or a promise, its group) and its item on the call's list. A group the board joins others
-// into holds their asks too, and one it lifts an ask's own lines or picture out into takes that ask. wrote: what the
-// agent wrote for it ({ texts, pictures, words }: the typed lines, each by its own id and words, the picture files, the
-// post-it's words); owner: its group's owner then. A line keeps its id through the board's edits, joins and splits, so
-// an ask follows its own lines however the board retypes them
+// Each ask on the page (a scrap or a promise, its group) and its item on the call's list. A group the board lifts an
+// ask's own lines or picture out into takes that ask. wrote: what the agent
+// wrote for it ({ texts, pictures, words }: the typed lines, each by its own id and words, the picture files, the
+// post-it's words); owner: its group's owner then. A line keeps its id through the board's edits and splits, so an ask
+// follows its own lines however the board retypes them
 db.exec(`create table if not exists call_asks (grp integer not null, item integer not null, wrote text not null,
   owner text, primary key (grp, item))`);
 type Ask = { grp: number; item: number; wrote: string; owner: string | null };
@@ -42,7 +42,7 @@ export function rewrote(grp: number, what: string) {
   for (const { item } of asksOf(grp)) reworded(item, what);
 }
 // Whether a group is one note of the agent's, every line of it that one's (its ask's or its mark's): not one the board
-// joined others into or typed in, whose lines a change of words would take off the page (callpage.ts newWords)
+// typed in, whose lines a change of words would take off the page (callpage.ts newWords)
 export function oneNote(grp: number) {
   const mark = db.prepare('select wrote from call_marks where grp = ?').get(grp) as { wrote: string } | undefined;
   const wrote = [...asksOf(grp).map(a => a.wrote), ...(mark ? [mark.wrote] : [])];
@@ -78,12 +78,6 @@ export function takenOff(call: number) {
     .all({ call }) as { item: number }[];
   for (const { item } of off) drop(item, "taken off the call's page", null);
 }
-// (the asks of groups the board joins go with the group they joined into)
-onJoined((into, away) =>
-  db
-    .prepare('update call_asks set grp = ? where grp in (select value from json_each(?))')
-    .run(into, JSON.stringify(away)),
-);
 // (an ask goes with its own typed lines, by their ids however the board retyped them, or its picture when the board
 // lifts them out of a group, and each side is its asks' owner's)
 onSplit((from, lifted) => {

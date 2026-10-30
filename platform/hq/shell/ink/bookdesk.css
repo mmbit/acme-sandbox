@@ -76,51 +76,40 @@
   position: absolute;
   pointer-events: none;
 }
-/* The send stamp sits at the page's head, clear of the tools over the paper's left: a red rubber stamp, a little
-   crooked, its ink sunk into the paper as on the overview's tiles (bookshelf.css .bk-stamp), still wet and faint while
-   it sends. Titles stay in the bottom bar. (the stamp) */
+/* The send stamp at the page's head, at its right, under the title's line and over the first day's date, where
+   nothing is written (bookunits.js TITLE_H, masonry.js MARGIN): SENT and the time, ink on the accent as the deck draws
+   it, a little crooked, its ink sunk into the paper, still wet and faint while it sends. (the deck's stamp) */
 #book .bk-send-stamp {
   position: absolute;
-  left: 104px;
-  top: 18px;
+  right: 28px;
+  top: 52px;
   pointer-events: none;
 }
 #book .bk-sent {
   display: block;
-  width: 132px;
-  color: var(--bk-stamp, #c2362f);
-  opacity: 0.86;
+  opacity: 0.94;
   mix-blend-mode: multiply;
   transition: opacity 0.6s ease-out;
 }
 #book .bk-sent svg {
   display: block;
-  width: 100%;
-  height: auto;
-  rotate: -7deg;
+  /* (its own size, over HQ's icons' 18 px: 38 px high, as wide as its words) */
+  width: auto;
+  height: 38px;
+  rotate: -5deg;
 }
 #book .bk-sent.bk-stamp-wet {
   opacity: 0.4;
 }
 #book .bk-sent rect {
-  fill: none;
-  stroke: currentColor;
-}
-#book .bk-sent rect:first-child {
-  stroke-width: 3.2;
-}
-#book .bk-sent rect + rect {
-  stroke-width: 1.3;
+  fill: #d6ea3c;
+  stroke: var(--bk-ink);
+  stroke-width: 3;
 }
 #book .bk-sent text {
-  fill: currentColor;
-  font: 800 23px/1 var(--bk-font);
-  letter-spacing: 0.16em;
-}
-#book .bk-sent .bk-stamp-when {
-  font-size: 9.5px;
-  font-weight: 700;
-  letter-spacing: 0.12em;
+  fill: var(--bk-ink);
+  font: 800 22px/1 var(--bk-font);
+  letter-spacing: 0.06em;
 }
 /* a refusal from the store, said on the page where it shows */
 #book .bk-refusal {
@@ -141,15 +130,8 @@
   display: none;
 }
 
-/* ---- the controls (bookcontrols.js): the overview, the page's name and where it is, the day's pages, the zoom's % */
-/* (the zoom's %: a quiet chip at the row's right end, only while it's off 100%.) */
-#book .bk-btn.bk-pct {
-  min-width: 0;
-  padding: 0 10px;
-  font-size: 12px;
-  box-shadow: none;
-  font-variant-numeric: tabular-nums;
-}
+/* ---- the page bar (bookcontrols.js; placed in the lane at the foot, bookstrip.css): the page's name and where it is,
+   "Shop launch · 2 / 3", the name cut short before its place is */
 #book .bk-btn.bk-where {
   display: inline-flex;
   flex: 0 1 auto;
@@ -170,6 +152,10 @@
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+#book .bk-where small {
+  flex: none;
+  margin-left: -4px;
 }
 /* (the page's title written in place of its name, booktitle.js: the name's word on a ruled line, in the name's box
    and wider as what's written needs, an error quietly over it.) */
@@ -255,12 +241,8 @@
   color: var(--bk-ink);
   opacity: 0.75;
 }
-/* (a narrow book, an iPad mini's on its side and narrower: the page's name has the room, its place in the notebook is
-   in the notebook's pages; one slim row, Send in the stack) */
+/* (a narrow book, an iPad mini's on its side and narrower) */
 @container bk-rail (max-width: 600px) {
-  #book .bk-where small {
-    display: none;
-  }
   /* (clear of the tool rail beside the row on a phone) */
   #book .bk-title-error {
     max-width: 180px;
@@ -273,21 +255,6 @@
   #book .bk-title {
     order: -1;
     flex: 1 0 100%;
-    max-width: none;
-  }
-}
-/* (an iPad mini's on its side, beside HQ's page: the row between the paper's left edge and the stack leaves the page's
-   name about 200 px, so it has the row's own line above the buttons, as a title being written does, and a call page's
-   longest title is whole in it. A phone's row stays one slim line. (the board, call 161.) */
-@container bk-rail (460px < width <= 600px) {
-  #book .bk-island[data-island='pages'] {
-    flex-wrap: wrap;
-    justify-content: center;
-  }
-  #book .bk-btn.bk-where {
-    order: -1;
-    flex: 1 0 100%;
-    justify-content: center;
     max-width: none;
   }
 }

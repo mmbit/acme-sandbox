@@ -2,8 +2,9 @@
 // question, so nothing else asks for it. On HQ's page a circle or the pen held still asks nothing, and in the book a
 // line, a lifted finger or a double tap held asks nothing either: that hold's slip says to tap a mic first. Each ask is
 // refused, as the board might. Once a tap has allowed it, every recorder on HQ's page may use it, even where the browser
-// can't say so. A page in HQ's viewer that posts review mode's ask, by itself or from its own button's tap, only brings
-// up Talk on HQ's bar: HQ records for it only at the board's tap on Talk, and the page hears nothing back before.
+// can't say so. A page in HQ's viewer that posts review mode's offer, by itself or from its own button's tap, only
+// brings up HQ's mic key where it says: HQ records for it only at the board's tap on that key, never one in its first
+// half second there, and the page hears nothing back before.
 // (its helpers from bookkit.mjs)
 import assert from 'node:assert/strict';
 import { QUIET_MS, touchOf } from './bookstrip.mjs';
@@ -22,7 +23,7 @@ export function micStories(c) {
       browser => inBook({ ...c, browser }),
     'the microphone allowed by the post-it’s mic, the browser not saying: a press held in the book listens': browser =>
       across({ ...c, browser }),
-    'a page in HQ’s viewer asking for the microphone from its own button’s tap: Talk shows, HQ records nothing and answers only the ask’s end':
+    'a page in HQ’s viewer offering its mic from its own button’s tap: HQ’s key shows, records nothing, takes no tap as it moves, and answers only the offer’s end':
       browser => pagePosted({ ...c, browser }),
   };
 }
@@ -124,11 +125,11 @@ async function across(c) {
   }
 }
 
-// The page in HQ's viewer posts review mode's ask for the microphone from its own button, with HQ's microphone allowed,
-// and the board taps that button: the tap activates HQ's window too, and still HQ records nothing and tells the page
-// nothing but its ask's end, its Talk waiting on the bar for a tap of its own. Talk the page flickers never comes under
-// the board's tap on the address or Note either (flickered). The ask comes as review mode's does, with the page's number
-// and a line of its own (HQ's framemic.js).
+// The page in HQ's viewer posts review mode's offer of its mic from its own button, with HQ's microphone allowed, and
+// the board taps that button: the tap activates HQ's window too, and still HQ records nothing and tells the page nothing
+// but its offer's end, its key waiting for a tap of its own. The page moving the key under the board's tap gets that tap
+// taken by nothing (moved). The offer comes as review mode's does, with the page's number and a line of its own (HQ's
+// framemic.js).
 async function pagePosted(c) {
   const { page, errors, done, context } = await unallowed(c, MINI, {}, () => {
     Object.defineProperty(Permissions.prototype, 'query', {
@@ -150,21 +151,19 @@ async function pagePosted(c) {
     const frame = page.frame({ url: /scrap\.preview\.test/ });
     await buyAsks(frame, c.base);
     await frame.locator('#buy').click();
-    await page.locator('#viewer .bar .talk:not([hidden])').waitFor({ timeout: 15_000 });
+    const key = page.locator('#viewer > .framemic');
+    await key.waitFor({ timeout: 15_000 });
     await page.waitForTimeout(2500);
-    assert.equal(
-      await page.locator('#viewer .bar .talk[data-phase=live]').count(),
-      0,
-      'Talk waits for the board’s tap',
-    );
+    assert.equal(await key.getAttribute('data-phase'), 'ready', 'the key waits for the board’s tap');
     await frame.evaluate(() => window.line.postMessage({ mic: 'stop' }));
-    await page.locator('#viewer .bar .talk').waitFor({ state: 'hidden', timeout: 15_000 });
-    await flickered(page, frame, c.base, context);
+    await moved(page, frame, key);
+    await frame.evaluate(() => window.line.postMessage({ mic: 'cancel' }));
+    await key.waitFor({ state: 'detached', timeout: 15_000 });
     assert.equal(await page.evaluate(() => window.micsAsked), 0, 'HQ never started its microphone');
     const back = await frame.evaluate(() => window.heardBack);
     assert.ok(
       back.length && back.every(m => m.dropped || m.done === null),
-      `the page heard only its ask’s end: ${JSON.stringify(back)}`,
+      `the page heard only its offer’s end: ${JSON.stringify(back)}`,
     );
     c.noErrorsIn(errors.filter(e => !/Refused|getUserMedia|Microphone/.test(e)));
   } finally {
@@ -172,7 +171,7 @@ async function pagePosted(c) {
   }
 }
 
-// The page's own Buy button, posting review mode's ask with a line of its own (window.ask, window.line its end), and
+// The page's own Buy button, posting review mode's offer with a line of its own (window.ask, window.line its end), and
 // everything said back to the page, on that line or its window, kept in window.heardBack
 const buyAsks = (frame, hq) =>
   frame.evaluate(hq => {
@@ -183,7 +182,7 @@ const buyAsks = (frame, hq) =>
       const { port1, port2 } = new MessageChannel();
       port1.onmessage = heard;
       window.line = port1;
-      parent.postMessage({ hq: 'review', mic: 'start', doc: 7 }, hq, [port2]);
+      parent.postMessage({ hq: 'review', mic: 'offer', doc: 7, at: { x: 20, y: 20, w: 52, h: 52 } }, hq, [port2]);
     };
     const buy = document.createElement('button');
     buy.id = 'buy';
@@ -192,28 +191,13 @@ const buyAsks = (frame, hq) =>
     document.body.prepend(buy);
   }, hq);
 
-// The page flickers Talk (asks and takes it back), with Note gone and back (goodbye and hello) in turn, and each time Talk
-// shows the board taps where the address ended before Talk's first ask, or where it ends with Note gone: the address or
-// Note gets the tap, never Talk
-async function flickered(page, frame, hq, context) {
-  context.on('page', tab => tab.close()); // (the address's taps open the page in the browser)
-  const talk = page.locator('#viewer .bar .talk'),
-    tell = d => frame.evaluate(([hq, d]) => parent.postMessage({ hq: 'review', ...d }, hq), [hq, d]),
-    where = await page.locator('#viewer .bar .where').boundingBox(),
-    slot = await talk.boundingBox(),
-    spots = [
-      [where.x + where.width - 3, where.y + where.height / 2],
-      [slot.x - 3, slot.y + slot.height / 2],
-    ];
-  for (let i = 0; i < 4; i++) {
-    await tell(i % 2 ? { hello: 1, doc: 7 } : { bye: 1, doc: 7 });
-    await frame.evaluate(() => window.ask());
-    await talk.waitFor({ state: 'visible', timeout: 15_000 });
-    await page.mouse.click(...spots[Math.floor(i / 2)]);
-    await frame.evaluate(() => window.line.postMessage({ mic: 'cancel' }));
-    await talk.waitFor({ state: 'hidden', timeout: 15_000 });
-  }
-  assert.deepEqual(await talk.boundingBox(), slot, 'Talk keeps its slot');
+// The page moves HQ's key to where the board is about to tap: the tap, at once, is taken by nothing
+async function moved(page, frame, key) {
+  const was = await key.boundingBox();
+  await frame.evaluate(() => window.line.postMessage({ mic: 'at', at: { x: 160, y: 120, w: 52, h: 52 } }));
+  await page.waitForFunction(x => document.querySelector('#viewer > .framemic').getBoundingClientRect().x !== x, was.x);
+  await key.click();
+  assert.equal(await key.getAttribute('data-phase'), 'ready', 'a tap as the key moves under it isn’t taken');
 }
 
 // The pen's presses at a point, dispatched in the page as the browser would hand them over

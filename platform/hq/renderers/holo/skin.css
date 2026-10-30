@@ -27,6 +27,8 @@ body {
   -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
 .brand, .tools button, .tools a.desk, #zoom button, #status > span, .toast { background: rgba(6, 26, 36, .62); }
 #tool, #call-layer { background: rgba(0, 8, 12, .6); }
+/* the viewer's QR card */
+#viewer .qrcard { -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
 /* a minimised call: a pane of glass with the face's screen lit inside and its keys drawn in line */
 .callbubble { -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); background: rgba(6, 26, 36, .7); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow-lg); transition: box-shadow .2s, scale .2s cubic-bezier(.2, 1.4, .4, 1); }
 .callbubble.held { box-shadow: 0 0 40px rgba(90, 220, 255, .4), inset 0 0 28px rgba(90, 220, 255, .1); }

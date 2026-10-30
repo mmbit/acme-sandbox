@@ -286,7 +286,7 @@ class HqTools(unittest.TestCase):
             self.assertFalse(Path(d, 'hq.log').exists())
         self.assertEqual([t['name'] for t in json.loads(r.stdout)['result']['tools']], ['job', 'promise', 'replace', 'expedite', 'add', 'reach', 'search', 'history', 'call', 'intercom', 'eta', 'estimate', 'when', 'report', 'git', 'manage', 'waiting', 'hang_up', 'screen', 'sketch',
                                                                                 'ask_to_see', 'draw', 'open_work', 'drive', 'scrap', 'title_page',
-                                                                                'read_page', 'mark_page', 'change_page',
+                                                                                'read_page', 'mark_page', 'change_page', 'try',
                                                                                 'name_voice',
                                                                                 'save_voice', 'forget_voice'])
         self.assertTrue(out[1]['result']['isError'])

@@ -2,7 +2,7 @@
 // (a group's box is checked in notebookstack.test.js)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { changesOf, emptyParts, gap, keyOf, NEAR, scratched, sortNew } from './bookgroupmath.js';
+import { changesOf, emptyParts, keyOf, scratched } from './bookgroupmath.js';
 
 const line = (x0, y0, x1, y1) => ({
   size: 2,
@@ -10,52 +10,6 @@ const line = (x0, y0, x1, y1) => ({
     [x0, y0],
     [x1, y1],
   ],
-});
-const ink = el => ({ kind: 'ink', el });
-
-test('two boxes are as far apart as the gap between their edges', () => {
-  assert.equal(gap({ x: 0, y: 0, w: 10, h: 10 }, { x: 13, y: 14, w: 5, h: 5 }), 5);
-});
-
-test('a line starting inside a group joins it, however long ago it was drawn', () => {
-  const groups = [{ id: 7, box: { x: 100, y: 100, w: 200, h: 50 } }];
-  const { sorted, recent } = sortNew([ink(line(305, 120, 600, 400))], groups, null, 0);
-  assert.deepEqual(
-    sorted.map(s => s.id),
-    [7],
-  );
-  assert.equal(recent.id, 7);
-});
-
-test('the words of a line of writing stay one group; one written later, far off, starts another', () => {
-  const groups = [{ id: 1, box: { x: 0, y: 0, w: 100, h: 30 } }];
-  const last = { id: 1, at: 1000, box: groups[0].box };
-  // soon and near: the group drawn last
-  let { sorted } = sortNew([ink(line(140, 10, 180, 20))], groups, last, 1000 + NEAR.ms - 1);
-  assert.deepEqual(
-    sorted.map(s => s.id),
-    [1],
-  );
-  // near but too late: a new group
-  ({ sorted } = sortNew([ink(line(140, 10, 180, 20))], groups, last, 1000 + NEAR.ms + 1));
-  assert.deepEqual(
-    sorted.map(s => s.id),
-    [null],
-  );
-  // two new lines near each other, far from every group: one new group; a third far off: another
-  ({ sorted } = sortNew(
-    [ink(line(500, 500, 540, 510)), ink(line(560, 500, 600, 510)), ink(line(500, 900, 540, 910))],
-    groups,
-    null,
-    0,
-  ));
-  assert.deepEqual(
-    sorted.map(s => [s.id, s.items.length]),
-    [
-      [null, 2],
-      [null, 1],
-    ],
-  );
 });
 
 test('a scratch-out deletes the group it covers most of, at least half', () => {

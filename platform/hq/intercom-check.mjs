@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+// The intercom opens on a loader until its history is in, the empty-chat hint only once it came back empty, and a first
+// load that fails says so under the input.
+//
 // Pictures on the intercom: the board attaches or pastes pictures for its next line, each goes up at once as a JPEG
 // (redrawn: no camera metadata), Send carries their numbers with the words (or alone) and waits for one still on its
 // way, a refused one leaves the tray with the reason, and the chat shows them on the line, a tap opening one big. Send
@@ -22,8 +25,8 @@ const server = await serve(), base = `http://localhost:${server.address().port}`
 // a 64×40 PNG of two colours, made by the browser below: the fake /api serves it as every picture
 let png = null;
 const uploads = [], lines = [];
-let nextId = 41, slow = 0, refuse = 0, held = null, heldWaiting = null, heldUpload = null, heldForget = null, waitingDown = false, forgetDown = false, waitingAsked = 0;
-// held: a line waits for it; heldWaiting: the waiting list; heldUpload: an upload's answer (refused, or once it's waiting);
+let nextId = 41, slow = 0, refuse = 0, heldChat = null, chatDown = false, held = null, heldWaiting = null, heldUpload = null, heldForget = null, waitingDown = false, forgetDown = false, waitingAsked = 0;
+// heldChat: the conversation's history; held: a line waits for it; heldWaiting: the waiting list; heldUpload: an upload's answer (refused, or once it's waiting);
 // heldForget: a removal's answer
 const messages = [], waiting = new Set(), forgotten = [];
 
@@ -33,7 +36,10 @@ await context.route(`${base}/api/**`, async r => {
   const url = new URL(r.request().url()), path = url.pathname;
   if (path === '/api/org') return r.fulfill({ response: await r.fetch({ url: `${base}/mock/org.json` }) });
   if (path === '/api/gazette') return r.fulfill({ json: [] });
-  if (path === '/api/chat' && r.request().method() === 'GET') return r.fulfill({ json: { messages, thinking: false } });
+  if (path === '/api/chat' && r.request().method() === 'GET') {
+    await heldChat;
+    return chatDown ? r.fulfill({ status: 502, body: '' }) : r.fulfill({ json: { messages, thinking: false } });
+  }
   if (path === '/api/chat') {
     const b = r.request().postDataJSON();
     await held;
@@ -71,7 +77,15 @@ await context.route(`${base}/api/**`, async r => {
   return r.fulfill({ status: 404, body: '' });
 });
 const hq = `${base}/?intro=0${process.env.LOOK ? `&renderer=${process.env.LOOK}` : ''}&open=intercom`;
+// opening: a loader until the history is in, never the empty-chat hint; the hint once it came back empty
+let history;
+heldChat = new Promise(res => { history = res; });
 await page.goto(hq);
+await page.waitForSelector('#chat[aria-busy="true"] .typing');
+assert.equal(await page.$('#chat .hint'), null, 'no empty-chat hint while the history loads');
+history(); heldChat = null;
+await page.waitForSelector('#chat:not([aria-busy]) .hint');
+assert.equal(await page.$('#chat .typing'), null, 'the loader goes');
 await page.waitForSelector('#dir-attach');
 png = Buffer.from(await page.evaluate(async () => {
   const c = Object.assign(document.createElement('canvas'), { width: 64, height: 40 }), g = c.getContext('2d');
@@ -396,6 +410,18 @@ await page.$eval('#chat .me:last-child a', a => a.addEventListener('click', e =>
 await page.click('#chat .me:last-child a');
 assert.equal(await page.$('#chat .copied'), null);
 
+// a first load that fails says so under the input while the loader stays, never the hint, and the next poll brings the
+// conversation in and lets the alert go
+chatDown = true;
+await page.goto(hq);
+await page.waitForSelector('#dir-msg [role=alert]');
+assert.match(await page.textContent('#dir-msg .words'), /^Could not load the conversation/);
+assert.ok(await page.$('#chat[aria-busy="true"] .typing'), 'the loader stays');
+assert.equal(await page.$('#chat .hint'), null);
+chatDown = false;
+await page.waitForSelector('#chat:not([aria-busy]) .me', { timeout: 10e3 });
+assert.equal(await msg(), '', 'the alert goes');
+
 assert.deepEqual(errors, []);
 await browser.close(); server.close();
-console.log('intercom-check: pictures attach and paste, go up as JPEGs, ride with the line (or alone), wait for an upload, show in the chat; removed ones are let go of, later ones wait, waiting ones come back, a vanished one leaves the tray at Send; a bare address is a link');
+console.log('intercom-check: a loader until the history is in, the hint only for an empty one, a failed load says so; pictures attach and paste, go up as JPEGs, ride with the line (or alone), wait for an upload, show in the chat; removed ones are let go of, later ones wait, waiting ones come back, a vanished one leaves the tray at Send; a bare address is a link');

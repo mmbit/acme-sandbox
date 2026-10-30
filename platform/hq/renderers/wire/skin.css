@@ -342,9 +342,8 @@ body.touring #card {
 #viewer .bar :is(.glyph, .where, .share) {
   color: var(--k-ground);
 }
-/* the preview bar's pin, Talk key and send: ground and panel against its ink (talk) */
+/* the preview bar's pin and send: ground and panel against its ink */
 #viewer .bar .pin,
-#viewer .bar .talk,
 #viewer .bar button.send {
   border: 0;
   background: var(--k-ground);

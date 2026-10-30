@@ -4037,6 +4037,12 @@ class BoardCallNotes(Juno):
         if path in ('page', 'mark', 'change'):
             self.asked.append((method, path, body))
             return {'ok': '#5 yours note: “Smaller price”\n#6 yours drawing' if path == 'page' else 'Done.'}
+        if path == 'try':
+            self.asked.append((method, path, body))
+            if body['id'] == 9:
+                raise HTTPError('http://hq/api/voice/try', 404, 'Not Found', {},
+                                io.BytesIO(b'{"error": "no #9 on the call\'s page (read it with page)"}'))
+            return {'ok': 'Started: Wren makes a few versions of it.'}
         if path in ('scrap', 'title'):
             self.asked.append((method, path, body))
             if body.get('from') == 'note 9':
@@ -4116,7 +4122,7 @@ class BoardCallNotes(Juno):
                      {'mark': 'arrow', 'points': [[0, 0], [120, 80]]}):
             self.assertEqual(await page.mark_tool({'mark_page': mark}), {'ok': 'Done.'})
             self.assertEqual(self.asked[-1], ('POST', 'mark', {'call': 7, **mark}))
-        for change in ({'id': 5, 'words': 'Make the price  smaller'}, {'id': 5, 'to': {'x': 40, 'y': 400}}, {'id': 6, 'delete': True}):
+        for change in ({'id': 5, 'words': 'Make the price  smaller'}, {'id': 5, 'after': 6}, {'id': 6, 'delete': True}):
             self.assertEqual(await page.change_tool({'change_page': change}), {'ok': 'Done.'})
         self.assertEqual(self.asked[-3][2], {'call': 7, 'id': 5, 'words': 'Make the price smaller'})
         asked = len(self.asked)
@@ -4126,6 +4132,22 @@ class BoardCallNotes(Juno):
             self.assertEqual(await page.change_tool({'change_page': wrong}), {'error': server.CHANGE_WORDS['shape']})
         self.call.ended = True
         self.assertEqual(await page.page_tool({'read_page': {}}), {'error': server.PAGE_WORDS['gone']})
+        self.assertEqual(len(self.asked), asked)
+
+    async def test_the_board_asks_for_versions_and_the_agent_starts_a_try_on_its_scrap(self):
+        """try: the scrap's owner makes versions in a try run (the store's booktry.ts), and the agent hears it started;
+        one not on the call's page is the store's refusal, in its words."""
+        page = self.call.page
+        got = await page.try_tool({'try': {'id': 5, 'why': 'Show me a few  versions of this'}})
+        self.assertEqual(got, {'ok': 'Started: Wren makes a few versions of it.'})
+        self.assertEqual(self.asked[-1], ('POST', 'try', {'call': 7, 'id': 5, 'why': 'Show me a few versions of this'}))
+        self.assertEqual(await page.try_tool({'try': {'id': 9, 'why': 'x'}}),
+                         {'error': "no #9 on the call's page (read it with page)"})
+        asked = len(self.asked)
+        for wrong in ({'id': 5}, {'id': 'five', 'why': 'x'}, {'id': 5, 'why': ' '}, {'id': 5, 'why': 'x', 'owner': 'wren'}):
+            self.assertEqual(await page.try_tool({'try': wrong}), {'error': server.TRY_WORDS['shape']})
+        self.call.ended = True
+        self.assertEqual(await page.try_tool({'try': {'id': 5, 'why': 'x'}}), {'error': server.TRY_WORDS['gone']})
         self.assertEqual(len(self.asked), asked)
 
     def test_the_call_engine_reads_nothing_of_the_page(self):

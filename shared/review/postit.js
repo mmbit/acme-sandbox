@@ -9,7 +9,7 @@ import { box } from './anchor.js';
 import { expose, photo, snapshot } from './snapshot.js';
 import { addFrame, picturesNow, unpicture } from './pictures.js';
 import { stopMic } from './dictation.js';
-import { paint, redrawInk, refresh, reset } from './acts.js';
+import { redrawInk, reset } from './acts.js';
 import { nextMark, toBook } from './settle.js';
 import { lift } from './lift.js';
 import { openLines, paint as paintInk } from './marks.js';
@@ -174,7 +174,7 @@ export function develop(r) {
   if (placement) Object.assign(c.style, placement);
 }
 // A general note: the same sheet, pinned to nothing and without a photo, saved with the page it's written on
-export function general(r) {
+function general(r) {
   r.mode = 'note';
   r.shot = null;
   r.mark = { kind: 'general', element: { kind: 'general' }, view: viewNow(), page: location.href };
@@ -266,7 +266,7 @@ async function pinIt(r) {
   r.msg.textContent = 'Sending…';
   return pinned(r, note, url, added);
 }
-// A saved note becomes a scrap on the writer's Notebook page. The post-it flies off and the menu counts it.
+// A saved note becomes a scrap on the writer's Notebook page, and the post-it flies off.
 // said: how its words came. Each step after a wait is this note's
 // only while its mark is still the one open: a post-it cancelled meanwhile, and another begun, is left alone
 async function pinned(r, note, url, added) {
@@ -292,7 +292,6 @@ async function pinned(r, note, url, added) {
             ? 'The link has ended. Thank you for your notes!'
             : 'The review key has expired: open this page from HQ again.',
       );
-    r.state.notes += 1;
     // (the board's, inside HQ's viewer: a scrap on its Notebook's newest page, which HQ's book turns to or keeps for
     // the pull tab's tap.)
     if (r.framed && !r.outside) res.json().then(a => r.toHq({ scrap: { id: a.id, page: a.page } }));
@@ -300,14 +299,8 @@ async function pinned(r, note, url, added) {
       r.text.value = '';
       r.sheet.classList.add('away');
     }
-    // Pinned: the menu's button boings and counts it (refresh). Nothing over the page being reviewed.
-    setTimeout(() => {
-      if (r.mark === mark) reset(r);
-      paint(r);
-      refresh(r);
-      r.more.classList.add('boing');
-      setTimeout(() => r.more.classList.remove('boing'), 700);
-    }, 450);
+    // Pinned: nothing over the page being reviewed
+    setTimeout(() => r.mark === mark && reset(r), 450);
   } catch (err) {
     if (r.mark !== mark) return;
     r.mode = 'note';

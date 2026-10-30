@@ -10,7 +10,15 @@ export type Snapshot = {
   planningSizes?: [number, Size][];
   // Active pauses' release jobs. Their merge endpoints and prerequisites must not wait on pacing.
   pauseUntil?: number[];
-  windows?: Record<string, { deadline: number | null; aim: number | null }>;
+  windows?: Record<
+    string,
+    {
+      deadline: number | null;
+      aim: number | null;
+      // The thread whose window this one reads.
+      deadline_from?: string;
+    }
+  >;
   room?: number;
   memory?: Memory;
   seatMix?: Record<string, Record<string, import('./workmix.ts').MixRate>>;

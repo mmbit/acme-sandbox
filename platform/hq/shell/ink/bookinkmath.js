@@ -16,6 +16,8 @@ export const MARKERS = [
 ];
 export const WIDTHS = { pen: [2.5, 5, 9], highlighter: [11, 18, 28] },
   MARKER_ALPHA = 0.42;
+// A stroke's line, as thin and as thick as the store keeps it: a page with one past it is refused (pagechecks.ts).
+export const LINE = { min: 0.5, max: 200 };
 
 export const SHAPES = ['ellipse', 'rect', 'line', 'arrow'];
 export const SHAPE_P = 0.58;

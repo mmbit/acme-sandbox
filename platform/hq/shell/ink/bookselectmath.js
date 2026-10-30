@@ -3,17 +3,16 @@
 // a corner. No DOM, so node tests it (bookselectmath.test.js).
 //
 // Everything is in its page's px. A stroke is ink.js's { color, size, alpha, fill, points: [[x, y, p, t]] }, a picture
-// sketchscraps.js's { x, y, w, h, tilt }, a box of typed words booktexts.js's { x, y, w, text, color }, whose box on the
+// bookscrapdraw.js's { x, y, w, h, tilt }, a box of typed words booktexts.js's { x, y, w, text, color }, whose box on the
 // page (its words' own extent) is measured by the caller: boxOfText(t) → { x0, y0, x1, y1 }.
 import { boxOf } from './bookrow.js';
 import { scrapAt } from './bookscrap.js';
+import { LINE } from './bookinkmath.js';
 
 // a drag that strays from the line between its ends by less than this share of that line (or its slop) is a box
 const STRAIGHT = 0.18;
 // a box is at least this small a selection on its smaller side, in screen px
 const MIN_SIDE_PX = 12;
-// a stroke's line, as thin and as thick as the store keeps it (pagechecks.ts SIZE: a page with one past it is refused)
-const LINE = { min: 0.5, max: 200 };
 
 // Whether a point [x, y] is inside a polygon (a list of points, closed back to its first)
 export function inside(poly, [x, y]) {

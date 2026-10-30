@@ -1,11 +1,11 @@
 // What the answers on the book's pages read and send, from the store's routes, or in dev mode (with no store) from
 // mock/notebook-groups.json and mock/notebook-open.json, kept in memory.
-//   GET /api/notebooks/pages/groups?page= → { page, groups: [group], tries?, tried? }: each group { id, box: { x, y, w,
-//     h }, words, texts, ink, pictures, tries_page, waiting: null | { by, name, spot, style: 'text' | 'versions',
-//     count? }, children }, a child an answer { kind: 'answer', id, by, name, style: 'text' | 'drawing' | 'form' |
-//     'question' | 'version', text, picture, ink, form, form_answer, version, spot: { dx, dy, w, h, narrow? } | null,
-//     ticked, picked, created } or a reply { kind: 'reply', answers, ink, box }. A versions page has tries (the group
-//     tried) and tried (that group, as above).
+//   GET /api/notebooks/pages/groups?page= → { page, groups: [group] }: each group { id, box: { x, y, w, h }, words,
+//     texts, ink, pictures, waiting: null | { by, name, spot, style: 'text' }, try: null | { state: 'coming' | 'made' |
+//     'empty', expect, by, name, reason }, children }, a child an answer { kind: 'answer', id, by, name, style: 'text' |
+//     'drawing' | 'form' | 'question' | 'version', text, picture, link, ink, form, form_answer, version, branch,
+//     spot: { dx, dy, w, h, narrow? } | null, ticked, picked, crossed, cleared, created } or a reply { kind: 'reply',
+//     answers, ink, box, frame? }.
 //   GET /api/notebooks/open → { forms: [item], questions: [item] }, an item { id, group, page, notebook, day, by, name,
 //     text, created }.
 //   POST /api/notebooks/groups/reply { answer, ink, frame? } (frame: where a version's picture shows, page px), POST /api/notebooks/answers/form { id, answers }.
@@ -45,10 +45,10 @@ async function mockGroups(page) {
   return pages[page] ? copy(pages[page]) : null;
 }
 const mockOpen = async () => copy((await state()).open);
-// Every answer child with this id, on any page (a versions page holds its group's copy too)
+// Every answer child with this id, on any page
 async function answersOf(id) {
   const { groups } = await state(),
-    all = Object.values(groups).flatMap(p => [...p.groups, ...(p.tried ? [p.tried] : [])]);
+    all = Object.values(groups).flatMap(p => p.groups);
   return all.flatMap(g => g.children.filter(c => c.kind === 'answer' && c.id === id).map(a => ({ g, a })));
 }
 async function mockReply(answer, ink) {

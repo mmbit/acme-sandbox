@@ -1,6 +1,8 @@
 // GitHub, played: the pull requests the coordinator merges, reads and closes, each open until something happens to it.
 // A test sets how GitHub answers (`pr(n)`'s fields, or `refuse` for the next merge) and reads what happened to the pull
-// request (its state, the title it was merged under), never which calls were made. Anything else goes to the real fetch.
+// request (its state, the title it was merged under), never which calls were made. Branches the coordinator makes
+// (github.ts branchFrom) are `branches`: each name's files as its one commit left them, gone once deleted. Anything else
+// goes to the real fetch.
 export type PullRequest = {
   state: 'open' | 'closed';
   added?: string; // what its diff adds (github.ts pullRequestDiff)
@@ -24,9 +26,12 @@ export function playGithub() {
   // the next merges' answers, in turn (a status and GitHub's message): a race with main, a moved branch...
   const refuse: { status: number; message: string }[] = [];
   // a hook before GitHub answers: a test holds an answer back (a slow or silent GitHub) by returning a promise
+  const branches = new Map<string, { path: string; text: string | null }[]>();
+  const made = new Map<string, unknown>();
   const gh = {
     pr,
     pulls,
+    branches,
     refuse,
     wait: undefined as undefined | ((method: string, n: number, signal?: AbortSignal | null) => Promise<void> | void),
   };
@@ -37,6 +42,8 @@ export function playGithub() {
     if (!u.startsWith('https://api.github.com/')) return real(url, init);
     const method = init.method ?? 'GET',
       n = Number(u.match(/\/pulls\/(\d+)/)?.[1]);
+    const git = u.match(/\/git\/(commits|trees|refs)(?:\/(.+))?$/);
+    if (git) return played(method, git[1], git[2], init.body ? JSON.parse(String(init.body)) : undefined);
     const compared = u.match(/\/compare\/[^/]+\.\.\.h(\d+)$/);
     await gh.wait?.(method, compared ? Number(compared[1]) : n, init.signal);
     if (compared) return json({ ahead_by: pr(Number(compared[1])).aheadBy });
@@ -71,5 +78,22 @@ export function playGithub() {
     Object.assign(p, { state: 'closed', merged: true, title: commit_title, mergedSha: sha });
     return json({ merged: true, sha: p.mergeCommit });
   }) as typeof fetch;
+  // A branch made as one commit: its base commit read, a tree and a commit made, its ref made, moved or deleted
+  function played(method: string, kind: string, rest: string | undefined, body: any) {
+    if (kind === 'commits' && method === 'GET') return json({ sha: rest, tree: { sha: `tree-of-${rest}` } });
+    if (kind === 'trees' || kind === 'commits') {
+      const sha = `${kind}-${made.size + 1}`;
+      made.set(sha, kind === 'trees' ? body.tree : made.get(body.tree));
+      return json({ sha });
+    }
+    const name = method === 'POST' ? String(body.ref).replace('refs/heads/', '') : String(rest).replace('heads/', '');
+    const files = (method === 'DELETE' ? undefined : made.get(body.sha)) as { path: string; content?: string }[];
+    const kept = () => files.map(f => ({ path: f.path, text: f.content ?? null }));
+    if (method === 'POST' && branches.has(name)) return json({ message: 'Reference already exists' }, 422);
+    if (method !== 'POST' && !branches.has(name)) return json({ message: 'Reference does not exist' }, 422);
+    if (method === 'DELETE') return (void branches.delete(name), new Response(null, { status: 204 }));
+    branches.set(name, kept());
+    return json({ ref: `refs/heads/${name}`, object: { sha: body.sha } });
+  }
   return gh;
 }

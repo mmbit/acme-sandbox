@@ -161,7 +161,21 @@ test('disk scans traverse private shared parents without listing them and tolera
     assert.equal(use.accountingError, undefined);
     assert.ok(use.used! >= 4096);
     assert.ok(use.used! < 65536);
-    if (ids.uid !== 0) assert.equal(await measure(), use.used);
+    const tests = join(work, 'tests', '1');
+    chmodSync(join(work, 'tests'), 0o700);
+    mkdirSync(tests);
+    writeFileSync(join(tests, 'later'), Buffer.alloc(8192));
+    if (ids.uid === 0) {
+      chownSync(tests, slot.uid, slot.gid);
+      chownSync(join(tests, 'later'), slot.uid, slot.gid);
+    }
+    chmodSync(join(work, 'tests'), permissions);
+    const created = (await shares.measure([{ job: 1, ...slot }], { freeBytes: 2 ** 30, reserveBytes: 0 })).get(
+      slot.uid,
+    )!;
+    assert.equal(created.accountingError, undefined);
+    assert.ok(created.used! >= use.used! + 8192, 'a later tests tree is measured too');
+    if (ids.uid !== 0) assert.equal(await measure(), created.used);
   } finally {
     chmodSync(work, 0o700);
     for (const folder of ['jobs', 'homes', 'tests']) chmodSync(join(work, folder), 0o700);

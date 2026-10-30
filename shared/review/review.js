@@ -17,22 +17,14 @@
   // Their notes become scraps on their review page, drawn in their own colour (INK, #rrggbb).
   const THEIRS = '{{INK}}',
     INK = outside && /^#[0-9a-f]{6}$/i.test(THEIRS) ? THEIRS : null;
-  // The menus' colours are the guest pages': the coordinator writes in the company's
-  // (guests.ts palette); served as the file is, the guest pages' neutral ones
-  const LOOK = '{{LOOK}}',
-    NEUTRAL =
-      ':host { --accent: #3a63c8; --bg: #f4f5f8; --card: #fff; --ink: #1b2130; --muted: #5d6577; --line: #e3e6ec; --on: #fff; ' +
-      '--soft: color-mix(in srgb, var(--accent) 9%, var(--card)); --shadow: 0 1px 2px rgb(20 28 45 / .06), 0 6px 20px rgb(20 28 45 / .07); --btn-r: 99px }';
   if (window.__reviewMode || (framed && window.parent !== window.top)) return;
   window.__reviewMode = true;
   // its notes go next to the script: /<slug>/__review/ for a shelf on the front's preview door (infra/products.py)
   const ROUTE = new URL('.', document.currentScript?.src || new URL('/__review/review.js', location.href));
-  // A page that loads the tool itself (its script tag carries data-summoned: HQ, for the board's notes on HQ) hears its
-  // menu's Open the book as a 'review:book' event (detail: whose sheet). A
-  // 'review:cover' event (detail true, then false) hides the tool while the page frames another page with its own pin.
-  // A 'review:pin' event gets the pin itself in its detail.
-  // Such a page summons the pin and puts it away ('review:summon', detail true or false: on HQ, the board's opening the
-  // book or the book's pin control; the Pencil writes either way); the pin starts away there.
+  // A page that loads the tool itself (its script tag carries data-summoned: HQ, for the board's notes on HQ) summons
+  // the pin and puts it away ('review:summon', detail true or false: on HQ, the board's Settings › Pin on HQ; the Pencil
+  // writes either way); the pin starts away there. A 'review:cover' event (detail true, then false) hides the tool while
+  // the page frames another page with its own pin. A 'review:pin' event gets the pin itself in its detail.
   // HQ's viewer tells its page whether a call is on (call): then the pin is away there too, and the Pencil inks in red
   // only ('review:call', detail true or false: pencil.js), for the call's agent (the board, call 161.). Its marks then go to HQ for the call's agent ({ callMark }), never the notebook
   // (callframe.js.).
@@ -67,7 +59,6 @@
     OUTSIDE,
     outside,
     INK,
-    LOOK: LOOK.startsWith('{{') ? NEUTRAL : LOOK,
     ROUTE,
     summoned,
     book,

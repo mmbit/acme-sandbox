@@ -103,6 +103,7 @@ def check(what, ok):
 product('pebblet', status='live', domain='pebblet.company.test', partner_env='live', needs={'secrets': ['printapi', 'stripe', 'anthropiceval']})
 product('hello', status='preview', partner_env='live', needs={'secrets': ['printapi', 'stripe', 'github']})
 product('hq', status='live')
+product('try-3', status='preview')   # a try's version's host, never a product's
 product('sneaky', status='live', domain='x.test {\n\trespond 200\n}', needs={'secrets': ['stripe']})
 product('freebie', status='live', partner_env='live', needs={'secrets': ['printapi']})
 product('halfway', status='live', partner_env='test', needs={'secrets': ['printapi', 'stripe']})
@@ -140,6 +141,11 @@ check('unknown tools are ignored', not any(k.startswith('GITHUB') for k in envfi
 check("every product container gets HQ's origin for its preview framing policy",
       all(svc['environment'].get('HQ_ORIGIN') == 'https://hq.company.test' for n, svc in compose['services'].items() if n.startswith(('product-', 'preview-'))))
 check('reserved slug hq is skipped', 'product-hq' not in compose['services'])
+check("a slug starting try- is skipped: the try hosts are a try's versions'", 'product-try-3' not in compose['services']
+      and 'try-3.preview.company.test' not in caddy)
+t = site(caddy, '\nhttps://')
+check("a try's versions: the catch-all, its certificate on demand, behind the login, to the coordinator",
+      'on_demand' in t and 'uri /api/preview/check' in t and 'reverse_proxy coordinator:8080' in t and 'handle /__preview {' in t)
 check('previews keep their shop open (test partners)', b['environment']['SHOP'] == 'open' and 'sprout.shop' not in caddy)
 check('front not approved: a preview, no www, no bare domain', compose['services']['product-front']['environment']['STATUS'] == 'preview'
       and 'www.company.test' not in caddy and apex_site(caddy) is None and 'front.company.test' not in caddy.replace('front.preview.', ''))

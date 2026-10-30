@@ -6,7 +6,8 @@ the change in the agent's words and the board's why. The coordinator's Ink store
 page (ink/callnotes.ts), where the board sees it land as it's made, and on the call's list; the call's follow-up hands
 it out; a plain note is a scrap with no crop, its words alone on a post-it. The agent works the page as
 the board does too: reads it (read_page), draws on it (mark_page) and changes, moves or deletes what's on it
-(change_page), each a step the board's Undo takes back. title names the page's topic, after the call's date and time,
+(change_page), each a step the board's Undo takes back, and has versions of something on it made for the board to pick
+from (try). title names the page's topic, after the call's date and time,
 and the agent is reminded every few turns until it has. Only on the board's own HQ call.
 The call engine's halves (drawing.py, driving.py, the screen tool) know nothing of the page: this reads them, never the
 other way round."""
@@ -78,22 +79,32 @@ PAGE_WORDS = {
     'gone': SCRAP_WORDS['gone'],
     'failed': "The page couldn't be read just now",
 }
-MARK_WORDS = {
-    'shape': (f"mark_page takes mark (one of {', '.join(MARKS)}) and where: around (a number on the page, as read_page "
-              "gives it) or box ({x, y, width, height} in the page's px) for a rect, ellipse or highlight; points "
-              "([[x, y], ...] in the page's px) for a line or arrow (from and to), a pen line or a highlight along them; "
-              "filled (true) for a rect or ellipse"),
+MARK_WORDS = {  # (scrap px)
+    'shape': (f"mark_page takes mark (one of {', '.join(MARKS)}), around (the scrap it goes on, a number as read_page "
+              "gives it; without it the mark is a drawing of its own), box ({x, y, width, height} in the scrap's px) "
+              "for a rect, ellipse or highlight not round its contents; points ([[x, y], ...] in the scrap's px) for a "
+              "line or arrow (from and to), a pen line or a highlight along them; filled (true) for a rect or ellipse"),
     'none': SCRAP_WORDS['none'],
     'gone': SCRAP_WORDS['gone'],
     'failed': "The mark couldn't be made just now",
 }
-CHANGE_WORDS = {
+CHANGE_WORDS = {  # (after)
     'shape': (f"change_page takes id (a number on the page, as read_page gives it) and one of words (your own note's or "
-              f"scrap's new words, at most {CHANGE_MOST} characters), to ({{x, y}}: its new top left in the page's px) "
+              f"scrap's new words, at most {CHANGE_MOST} characters), after (the number of the scrap it goes right after) "
               "and delete (true)"),
     'none': SCRAP_WORDS['none'],
     'gone': SCRAP_WORDS['gone'],
     'failed': "The page couldn't be changed just now",
+}
+
+# The board asks to see a few versions of something on the page: its owner makes them in a try run (the coordinator's
+# booktry.ts), and each lands under it
+TRY_WORDS = {
+    'shape': (f"try takes id (a number on the page, as read_page or the scrap tool gives it) and why (the board's ask, "
+              f"in one plain line of at most {CHANGE_MOST} characters)"),
+    'none': SCRAP_WORDS['none'],
+    'gone': SCRAP_WORDS['gone'],
+    'failed': "The try couldn't be started just now",
 }
 
 
@@ -122,8 +133,8 @@ def mark_asked(a):
 
 
 def change_asked(a):
-    """One change the agent asks for on the page ({id, words | to | delete}), cleaned, or None if it isn't one."""
-    if not isinstance(a, dict) or set(a) - {'id', 'words', 'to', 'delete'} or not isinstance(a.get('id'), int):
+    """One change the agent asks for on the page ({id, words | after | delete}), cleaned, or None if it isn't one."""
+    if not isinstance(a, dict) or set(a) - {'id', 'words', 'after', 'delete'} or not isinstance(a.get('id'), int):
         return None
     how = set(a) - {'id'}
     if len(how) != 1:
@@ -131,11 +142,19 @@ def change_asked(a):
     if 'words' in a:
         words = one_line(a['words']) if isinstance(a['words'], str) else ''
         return {'id': a['id'], 'words': words} if 0 < len(words) <= CHANGE_MOST else None
-    if 'to' in a:
-        to = a['to']
-        ok = isinstance(to, dict) and set(to) == {'x', 'y'} and all(number(v) for v in to.values())
-        return {'id': a['id'], 'to': to} if ok else None
+    if 'after' in a:
+        after = a['after']
+        ok = isinstance(after, int) and not isinstance(after, bool) and after > 0
+        return {'id': a['id'], 'after': after} if ok else None
     return {'id': a['id'], 'delete': True} if a['delete'] is True else None
+
+
+def try_asked(a):
+    """Versions the agent asks for ({id, why}), cleaned, or None if it isn't that."""
+    if not isinstance(a, dict) or set(a) != {'id', 'why'} or not isinstance(a['id'], int) or a['id'] < 1:
+        return None
+    why = one_line(a['why']) if isinstance(a['why'], str) else ''
+    return {'id': a['id'], 'why': why} if 0 < len(why) <= CHANGE_MOST else None
 
 
 def title_asked(title):
@@ -214,6 +233,14 @@ class CallNotes:
         if not (change := change_asked(asked.get('change_page'))):
             return {'error': CHANGE_WORDS['shape']}
         return await self.ask('change', change, CHANGE_WORDS)
+
+    async def try_tool(self, asked):
+        """The agent's try tool: versions of something on the call's notes page, made for the board to pick from."""
+        if refusal := self.refused(TRY_WORDS):
+            return {'error': refusal}
+        if not (versions := try_asked(asked.get('try'))):
+            return {'error': TRY_WORDS['shape']}
+        return await self.ask('try', versions, TRY_WORDS)
 
     async def title_tool(self, asked):
         """The agent's title_page tool: the call's notes page named in a few words."""

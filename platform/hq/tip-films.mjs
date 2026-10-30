@@ -140,7 +140,6 @@ async function open(scene) {
     const name = new URL(r.request().url()).pathname.slice('/__review/'.length);
     if (name.endsWith('.js'))
       return r.fulfill({ contentType: 'text/javascript', body: await readFile(at('shared/review', name)) });
-    if (name === 'mine') return r.fulfill({ json: { notes: 0, list: [], sent: false, more: false } });
     return r.fulfill({ json: name === 'coach' ? { show: false } : [] });
   });
   const line = { ws: null, send: ev => line.ws.send(JSON.stringify(ev)) };

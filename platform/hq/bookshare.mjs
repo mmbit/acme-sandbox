@@ -1,8 +1,8 @@
 // book-check.mjs's stories of a page shared by its corner and of the paper's feel (shell/ink/bookdogear.js, bookshare.js,
 // bookpaper.js), on a desktop in Chromium with the played store. The corner drawn away with a mouse and with a finger
-// shows PDF, PNG and Juno, the page in hand torn out at the spine while the book's stays whole: let go on PNG the page's
-// picture downloads, named for its title and day, and no share sheet opens; on PDF a one-page PDF; on Juno a call starts with the page's picture in front of Juno; let go
-// anywhere else nothing goes. With the call on, the page carried onto the call's window, a picture file dropped there,
+// shows Submit, PDF and PNG, the page in hand torn out at the spine while the book's stays whole: let go on PNG the
+// page's picture downloads, named for its title and day, and no share sheet opens; on PDF a one-page PDF; let go
+// anywhere else nothing goes (Submit: booksend.mjs). With a call on, the page carried onto the call's window, a picture file dropped there,
 // and a paste once the board pressed in it all go to Juno, the window lit as they come, and the book takes none; a
 // picture taped on the page, picked with Select and carried onto the window or its bubble, goes too, and stays taped
 // where it was. (the call's window; the taped picture, held still) Tapped, the corner opens the same three as a menu, its keys going round it and Escape
@@ -19,7 +19,7 @@ const HELD_STILL_MS = 650;
 // c: book-check.mjs's { hqIn, base, store, pages, shot, settled, noErrorsIn, SNIP }
 export function shareStories(c) {
   return {
-    "a page's corner drawn onto PNG, PDF and Juno with a mouse and a finger; tapped, the same as a menu; onto the call":
+    "a page's corner drawn onto PNG and PDF with a mouse and a finger; tapped, the same as a menu; onto a call's window":
       browser => shareStory(browser, c),
     'things deleted crumple over the paper, gone at once underneath, never in the way': browser =>
       crumpleStory(browser, c),
@@ -37,8 +37,7 @@ async function shareStory(browser, c) {
   const s = await opened(browser, c);
   const { page } = s;
   try {
-    const corner = page.locator('#book .bk-dogear');
-    await corner.waitFor({ timeout: 5000 });
+    await (await cornerOf(page)).waitFor({ timeout: 10_000 });
     await c.shot('share-corner', page);
     // PNG with a finger: the page's picture downloads, named for it
     const png = await downloaded(page, () => dragTo(page, 'touch', 'png'));
@@ -65,11 +64,7 @@ async function shareStory(browser, c) {
     assert.equal(await page.evaluate(() => window.__downloads.length), 0, 'nothing downloaded');
     assert.equal(await page.locator('#book > .bk-held').count(), 0, 'the page back in its corner');
     assert.equal(await page.locator('#book .bk-share').isHidden(), true, 'the targets gone');
-    await menuOfCorner(c, page, corner);
-    // Juno: the call starts with the page's picture in front of Juno
-    await dragTo(page, 'mouse', 'call');
-    await until(() => s.line.hello, 'a call started');
-    assert.equal(s.line.hello.agent, 'juno');
+    await menuOfCorner(c, page);
     await ontoTheCall(c, s);
     await tapedOntoTheCall(c, s, free);
     c.noErrorsIn(s.errors);
@@ -79,25 +74,39 @@ async function shareStory(browser, c) {
   }
 }
 
+// A call with the CEO (Juno), from the intercom: the corner's own call target gone.
+async function callTheCeo(s) {
+  const ceo = await s.page.evaluate(async () => {
+    const at = p => import(new URL(p, location.href).href);
+    (await at('shell/desk.js')).openIntercom();
+    return (await at('world/world.js')).company.ceo;
+  });
+  await s.page.click('#call');
+  await until(() => s.line.hello, 'a call started');
+  assert.equal(s.line.hello.agent, ceo, 'a call with the CEO');
+}
 // Tapped, the corner opens the same three as a menu, its keys going round it, Escape putting it away on the corner
-async function menuOfCorner(c, page, corner) {
-  await corner.click();
-  const menu = page.getByRole('menu', { name: 'Share this page' });
-  await menu.waitFor({ timeout: 2000 });
-  assert.deepEqual(await menu.getByRole('menuitem').allInnerTexts(), ['PDF', 'PNG', 'Juno']);
+async function menuOfCorner(c, page) {
+  await (await cornerOf(page)).click();
+  const menu = page.getByRole('menu', { name: 'Where this page goes' });
+  await menu.waitFor({ timeout: 10_000 });
+  assert.deepEqual(await menu.getByRole('menuitem').evaluateAll(items => items.map(i => i.dataset.share)), [
+    'submit',
+    'pdf',
+    'png',
+  ]);
   await c.shot('share-menu', page);
   await page.keyboard.press('ArrowRight');
-  assert.equal(await page.evaluate(() => document.activeElement.dataset.share), 'png');
+  assert.equal(await page.evaluate(() => document.activeElement.dataset.share), 'pdf');
   await page.keyboard.press('Escape');
   assert.equal(await menu.isHidden(), true, 'Escape puts the menu away');
   assert.equal(await page.evaluate(() => document.activeElement.className), 'bk-dogear', 'back on the corner');
 }
 
-// With the call on, the page's picture shown on it first: the page carried onto its window, a picture file dropped
-// there, a paste once the board pressed in it and the page carried onto its bubble once minimised each go to Juno, lit
-// while they're over it; the book takes none
+// With the call on: the page carried onto its window, a picture file dropped there, a paste once the board pressed in
+// it and the page carried onto its bubble once minimised each go to Juno, lit while they're over it; the book takes none
 async function ontoTheCall(c, s) {
-  await shownOnCall(s, 1, 'the page’s picture');
+  await callTheCeo(s);
   const { page } = s,
     device = page.locator('#call-layer .device');
   let taped = 0;
@@ -107,7 +116,7 @@ async function ontoTheCall(c, s) {
     assert.equal(await device.getAttribute('data-drop'), '', 'the call’s window lit under the page');
     await c.shot('share-onto-call', page);
   });
-  await shownOnCall(s, 2, 'the page carried onto the call’s window');
+  await shownOnCall(s, 1, 'the page carried onto the call’s window');
   // (a picture file, as the desktop's drag and the clipboard carry one)
   await page.evaluate(snip => {
     window.__carrying = () => {
@@ -121,21 +130,21 @@ async function ontoTheCall(c, s) {
     for (const type of ['dragenter', 'dragover', 'drop'])
       at.dispatchEvent(new DragEvent(type, { dataTransfer: data, bubbles: true, cancelable: true }));
   }, c.SNIP.split(',')[1]);
-  await shownOnCall(s, 3, 'a picture file dropped on the call’s window');
+  await shownOnCall(s, 2, 'a picture file dropped on the call’s window');
   await device.locator('.lines').click();
   await page.evaluate(() =>
     document.body.dispatchEvent(
       new ClipboardEvent('paste', { clipboardData: window.__carrying(), bubbles: true, cancelable: true }),
     ),
   );
-  await shownOnCall(s, 4, 'a paste after a press in the call’s window');
+  await shownOnCall(s, 3, 'a paste after a press in the call’s window');
   // minimised, its bubble takes the page
   const bubble = await minimised(page);
   await dragTo(page, 'mouse', '.callbubble .cb-face', async () => {
     assert.equal(await bubble.getAttribute('data-drop'), '', 'the bubble lit under the page');
     await c.shot('share-onto-bubble', page);
   });
-  await shownOnCall(s, 5, 'the page carried onto the call’s bubble');
+  await shownOnCall(s, 4, 'the page carried onto the call’s bubble');
   await page.waitForTimeout(800);
   assert.equal(taped, 0, 'the book took none of them');
 }
@@ -150,10 +159,10 @@ async function tapedOntoTheCall(c, s, free) {
   const frame = page.locator('#book .bk-sel');
   await frame.waitFor({ timeout: 3000 });
   await carryTaped(page, frame, '#call-layer .device', () => c.shot('taped-onto-call', page));
-  await shownOnCall(s, 6, 'the taped picture carried onto the call’s window');
+  await shownOnCall(s, 5, 'the taped picture carried onto the call’s window');
   await minimised(page);
   await carryTaped(page, frame, '.callbubble');
-  await shownOnCall(s, 7, 'the taped picture carried onto the call’s bubble');
+  await shownOnCall(s, 6, 'the taped picture carried onto the call’s bubble');
   await page.waitForTimeout(800);
   assert.deepEqual(
     free.scraps.map(({ x, y, w, h }) => ({ x, y, w, h })),
@@ -192,9 +201,9 @@ async function minimised(page) {
   }
   return bubble;
 }
-// The line shown its n-th picture of the call (the played store numbers them from 1)
+// The line shown its n-th picture of the call (counted: the ids the line gives them aren't the story's.)
 export async function shownOnCall(s, n, what) {
-  await until(() => s.line.said.some(e => e.type === 'picture' && e.id === n), `${what} went to the call`, 15_000);
+  await until(() => s.line.said.filter(e => e.type === 'picture').length >= n, `${what} went to the call`, 15_000);
 }
 
 async function crumpleStory(browser, c) {
@@ -276,11 +285,11 @@ export async function opened(browser, c, picture = c.SNIP) {
   return { page, errors, line, uploads, done: () => context.close() };
 }
 
-// The corner drawn away and let go on a target ('pdf' | 'png' | 'call', or the call's window by its selector), or off
+// The corner drawn away and let go on a target ('submit' | 'pdf' | 'png', or the call's window by its selector), or off
 // them all (null): with the mouse, or as a finger (pointer events of that type). held: done while the page is in hand
 // over its target.
 export async function dragTo(page, how, kind, held = async () => {}) {
-  const corner = await page.locator('#book .bk-dogear').boundingBox(),
+  const corner = await (await cornerOf(page)).boundingBox(),
     from = [corner.x + corner.width - 8, corner.y + 8],
     peeled = [from[0] - 40, from[1] + 30];
   if (how === 'mouse') {
@@ -288,10 +297,10 @@ export async function dragTo(page, how, kind, held = async () => {}) {
     await page.mouse.down();
     await page.mouse.move(...peeled, { steps: 6 });
   } else await pointer(page, how, [from, ...steps(from, peeled, 6)], false);
-  await page.locator('#book .bk-share[data-mode=carrying]').waitFor({ timeout: 3000 });
+  await page.locator('#book .bk-share[data-mode=carrying]').waitFor({ timeout: 10_000 });
   assert.equal(await page.locator('#book > .bk-held').count(), 1, 'the page in hand');
   // (a target's kind, or a selector: the call's window)
-  const shareKind = ['pdf', 'png', 'call'].includes(kind),
+  const shareKind = ['submit', 'pdf', 'png'].includes(kind),
     target = kind && (await page.locator(shareKind ? `#book .bk-share [data-share=${kind}]` : kind).boundingBox()),
     to = target ? [target.x + target.width / 2, target.y + target.height / 2] : [peeled[0] - 300, peeled[1] + 400];
   if (how === 'mouse') {
@@ -299,7 +308,18 @@ export async function dragTo(page, how, kind, held = async () => {}) {
     if (shareKind) assert.equal(await page.locator('#book .bk-share [data-over]').getAttribute('data-share'), kind);
     await held();
     await page.mouse.up();
-  } else await pointer(page, how, steps(peeled, to, 10), true);
+  } else {
+    await pointer(page, how, steps(peeled, to, 10), false);
+    await held();
+    await pointer(page, how, [to], true);
+  }
+}
+// The page's corner, once nothing's turning: a turn's picture of the page has one too, gone as it ends
+export async function cornerOf(page) {
+  await page.waitForFunction(() => document.querySelectorAll('#book .bk-dogear').length === 1, null, {
+    timeout: 10_000,
+  });
+  return page.locator('#book .bk-dogear');
 }
 // The page in hand torn down its spine's edge (its outline jagged there, its fibres under it), while the page in the
 // book has no tear of its own
@@ -310,7 +330,8 @@ const tornInHand = page =>
     return (
       teeth > 20 &&
       clip(document.querySelector('#book > .bk-held .bk-held-fibres')) !== 'none' &&
-      [...document.querySelectorAll('#book .bk-desk, #book .bk-desk *')].every(el => clip(el) === 'none')
+      // (but a unit's own turned corner, bookgroups.css.)
+      [...document.querySelectorAll('#book .bk-desk, #book .bk-desk *:not(.bk-unit)')].every(el => clip(el) === 'none')
     );
   });
 // The file act() downloads (its link's press, played: opened()): its name, its bytes and their first 1200 as text

@@ -49,17 +49,15 @@ async function homeWith(computer, width = 420, kits = {}) {
   return grids[0];
 }
 
-const all = await homeWith(undefined);   // (one grid now)
-// without the setting, the foundation's groups: work to look at (the Sketchbook's too), talking, the business (Care and
+const all = await homeWith(undefined);   // (one grid now; the Sketchbook app gone)
+// without the setting, the foundation's groups: work to look at, talking, the business (Care and
 // Photos name it), the team and the machine (the projects view is the HUD's key, not an app here.)
-assert.deepEqual(all, ['notes', 'artifacts', 'sketchbook', 'calls', 'mail', 'onair', 'numbers', 'care', 'studio', 'people', 'seats', 'settings'],
+assert.deepEqual(all, ['notes', 'artifacts', 'calls', 'mail', 'onair', 'numbers', 'care', 'studio', 'people', 'seats', 'settings'],
   'related apps side by side, Reviews beside Artifacts');
 // a company's own app at the end of the group it names, and one that names none in a group of its own before the team's
 const kitApp = group => `export const app = { name: 'Kit', what: '', icon: 'app-mail'${group ? `, group: '${group}'` : ''} };\nexport function draw() {}\n`;
 assert.deepEqual(await homeWith(undefined, 420, { chat: kitApp('talk'), misc: kitApp() }),
-  ['notes', 'artifacts', 'sketchbook', 'calls', 'mail', 'onair', 'chat', 'numbers', 'care', 'studio', 'misc', 'people', 'seats', 'settings'], 'a company app in its group');
-// a company that turns the Sketchbook off: not on its computer
-assert.deepEqual(await homeWith({ sketchbook: false }), all.filter(a => a !== 'sketchbook'), 'the Sketchbook off');
+  ['notes', 'artifacts', 'calls', 'mail', 'onair', 'chat', 'numbers', 'care', 'studio', 'misc', 'people', 'seats', 'settings'], 'a company app in its group');
 // An app naming an unknown group still shows after the groups, with or without the setting.
 assert.deepEqual(await homeWith(undefined, 420, { odd: kitApp('games') }), [...all.slice(0, -1), 'odd', 'settings'], 'an app in an unknown group');
 assert.deepEqual(await homeWith({ apps: [['mail']] }, 420, { odd: kitApp('games') }),

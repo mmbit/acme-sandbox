@@ -146,3 +146,49 @@ export async function closePullRequest(pr: number) {
   });
   return { ok: res.ok, why: res.ok ? '' : `${res.status}` };
 }
+
+// ---------------------------------------------------------------- branches made here
+// A branch made on GitHub as one commit over `base`: `files` maps a path to its new text, or to null where the commit
+// removes it (mode: an executable's 100755). A branch already there is moved to the new commit. Its commit, or why not.
+export async function branchFrom(
+  name: string,
+  base: string,
+  files: { path: string; text: string | null; mode: string }[],
+  message: string,
+): Promise<{ ok: true; sha: string } | { ok: false; why: string }> {
+  if (!GITHUB_TOKEN || !REPO) return { ok: false, why: 'no GitHub token configured' };
+  const commit = await gh('GET', `git/commits/${base}`);
+  if (!commit.ok) return commit;
+  const tree = await gh('POST', 'git/trees', {
+    base_tree: (commit.body.tree as { sha: string }).sha,
+    tree: files.map(f => ({
+      path: f.path,
+      mode: f.mode,
+      type: 'blob',
+      ...(f.text === null ? { sha: null } : { content: f.text }),
+    })),
+  });
+  if (!tree.ok) return tree;
+  const made = await gh('POST', 'git/commits', { message, tree: tree.body.sha, parents: [base] });
+  if (!made.ok) return made;
+  const sha = String(made.body.sha);
+  const ref = await gh('POST', 'git/refs', { ref: `refs/heads/${name}`, sha });
+  const moved = !ref.ok && ref.status === 422 ? await gh('PATCH', `git/refs/heads/${name}`, { sha, force: true }) : ref;
+  return moved.ok ? { ok: true, sha } : moved;
+}
+// A branch removed from GitHub (one already gone counts as removed)
+export async function deleteBranch(name: string) {
+  if (!GITHUB_TOKEN || !REPO) return { ok: false, why: 'no GitHub token configured' };
+  const res = await gh('DELETE', `git/refs/heads/${name}`);
+  return res.ok || res.status === 404 || res.status === 422 ? { ok: true, why: '' } : res;
+}
+async function gh(method: string, path: string, body?: unknown) {
+  const res = await fetch(`https://api.github.com/repos/${REPO}/${path}`, {
+    method,
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    headers: { authorization: `Bearer ${GITHUB_TOKEN}`, accept: 'application/vnd.github+json' },
+    signal: timeout(),
+  });
+  if (res.ok) return { ok: true as const, body: (await res.json().catch(() => ({}))) as Record<string, unknown> };
+  return { ok: false as const, status: res.status, why: `${res.status} ${await res.text()}` };
+}

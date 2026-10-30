@@ -1,5 +1,6 @@
-// The book's rail: Undo and Redo on their island over the paper's right edge (islands floating over the paper:
-// bookui.js). (the faces, their planes and the invited people's books gone with the sheets, pages now sent whole:
+// The book's controls put over its paper (bookui.js islands(): the stack at the right edge, and the lane at the foot
+// with the tool rail over the page bar), and Undo and Redo at the rail's right end, after the tools (bookpalette.js
+// puts them first).
 import { button, island, islands, MOD } from './bookui.js';
 import { word } from './bookscope.js';
 
@@ -11,12 +12,11 @@ const ICONS = {
 
 // node: the rail's element. on: { undo, redo }, the book's (book.js.: the lip is bookhandle.js's)
 export function mountRail(node, on) {
-  // (the controls float as small islands over the paper's right edge, one style for all: bookui.js.)
   node.append(islands());
-  const book = island('book'),
+  const rail = island('tools'),
     undo = button({ icon: ICONS.undo, label: word('Undo'), keys: `${MOD}+Z`, onClick: on.undo }),
     redo = button({ icon: ICONS.redo, label: word('Redo'), keys: `${MOD}+Shift+Z`, onClick: on.redo });
   undo.classList.add('bk-undo');
   redo.classList.add('bk-redo');
-  book.append(undo, redo);
+  rail.append(undo, redo);
 }

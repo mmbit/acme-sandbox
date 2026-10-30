@@ -1,5 +1,4 @@
-// An agent's answer written in by a small pen: how fast its letters come (a versions page's frames:
-// bookversionframes.js). No DOM, so node tests it.
+// An agent's answer written in by a small pen: how fast its letters come. No DOM, so node tests it.
 
 // A letter this often, as a quick hand writes; a long answer speeds up so it's whole within WHOLE_MS, never slower
 export const LETTER_MS = 22,

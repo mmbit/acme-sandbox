@@ -159,7 +159,7 @@ const answerable = (card: number) => {
   return !!r && takesPictures(r);
 };
 const count = (sql: string, ...values: number[]) => (db.prepare(sql).get(...values) as { n: number }).n;
-// What the bytes are, whatever the header says: a JPEG or a PNG, stripped, or null. (sketches.ts too)
+// What the bytes are, whatever the header says: a JPEG or a PNG, stripped, or null. (the book's uploads too)
 export function picture(raw: Buffer) {
   if (raw[0] === 0xff && raw[1] === 0xd8) {
     const clean = stripJpeg(raw);
@@ -185,13 +185,7 @@ export function waiting(v: unknown, card = 0) {
     }),
   };
 }
-// A picture from bytes the coordinator holds already (a sketch the board sends: sketches.ts, whose picture was read as
-// one when it was saved), stripped and kept as an upload is, waiting for its line.
-export function keep(raw: Buffer) {
-  const p = picture(raw);
-  if (!p) throw new Error('not a picture: a sketch keeps only pictures it has read');
-  return { id: store(p, null, null), type: p.type };
-}
+// (keep and lineOf, the old Sketchbook's Send's, are gone)
 export const attach = (ids: number[], line: number) => {
   for (const id of ids) db.prepare('update pictures set chat = ? where id = ?').run(line, id);
 };
@@ -200,7 +194,7 @@ export const answered = (ids: number[]) => {
   for (const id of ids) db.prepare('update pictures set answered = 1 where id = ?').run(id);
 };
 // What an agent reads next to a line or a call: the pictures and how to look at them, or ''.
-// (theirs: the line is an invited person's, not the board's, chat.ts fromGuest)
+// (theirs: the line is an invited person's, not the board's, chat.ts 'guest')
 export function mention(ids: number[], theirs = false) {
   if (!ids.length) return '';
   const list = ids.map(id => `#${id}`).join(ids.length === 2 ? ' and ' : ', ');
@@ -211,8 +205,6 @@ export function mention(ids: number[], theirs = false) {
     `\`hq picture ${ids.join(' ')}\`, then read the file${one ? '' : 's'} to look at ${one ? 'it' : 'them'}.)`
   );
 }
-// The intercom line a picture went with, or null (sketches.ts).
-export const lineOf = (id: number) => row(id)?.chat ?? null;
 export const ofLine = (line: number) =>
   (db.prepare('select id from pictures where chat = ? order by id').all(line) as { id: number }[]).map(p => p.id);
 // Every line's pictures at once, for a read of many lines (intercom.ts)

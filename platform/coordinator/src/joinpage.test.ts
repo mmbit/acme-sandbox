@@ -99,6 +99,7 @@ test("the assets are the page's scripts, the call's audio and microphone worklet
     'figure.js',
     'people.js',
     'callaudio.js',
+    'audiolevel.js',
     'screenlock.js',
     'mic-worklet.js',
     'walk.js',

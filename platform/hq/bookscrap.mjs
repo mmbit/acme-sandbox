@@ -15,7 +15,7 @@ import { nothingDrawn } from './bookink.mjs';
 import { groupsOf, newestPage, shownScrap } from './bookplayed.mjs';
 import { talked, voiceServed } from './bookvoice.mjs';
 import { talkedInViewer, askLeftBehind, pagesWatched } from './booktalk.mjs';
-import { DESKTOP, MINI, pressAlong, ui, until } from './bookkit.mjs';
+import { DESKTOP, MINI, pinOn, pressAlong, ui, until } from './bookkit.mjs';
 
 // ---- the stories
 const IPAD_SCREEN = { name: 'ipad', viewport: MINI, more: {}, starts: 'open', hand: 'pen' },
@@ -124,20 +124,13 @@ async function savedOnHq(s, { spoken, what = '' }) {
   assert.ok(!s.posts.slice(from).some(p => p.path === '/api/book/note'), 'nothing on a sheet');
   return scrap;
 }
-// A mark on HQ's page as the device makes it: the Pencil anywhere; a mouse or a finger with the pin (on a phone the
-// book's pin control folds it onto HQ with the pin)
+// A mark on HQ's page as the device makes it: the Pencil anywhere; a mouse or a finger with the pin, turned on as
+// Settings' Pin on HQ does
 async function markOnHq(s) {
   const { page, screen } = s,
     at = { x: Math.min(250, screen.viewport.width / 2), y: 300, rx: 80, ry: 45 };
   if (screen.hand === 'pen') return pressAlong(page, s.ring(at.x, at.y, at.rx, at.ry));
-  if (!(await page.locator(ui('.fab')).isVisible())) {
-    if (screen.hand === 'touch') {
-      await page.locator('#book .bk-lip').click();
-      await turned(s, page, 'spread');
-    }
-    await page.locator('#book .bk-pin').dispatchEvent('click'); // (a tap: Playwright's click waits on navigations)
-    if (screen.hand === 'touch') await turned(s, page, 'folded');
-  }
+  if (!(await page.locator(ui('.fab')).isVisible())) await pinOn(page);
   await page.locator(ui('.fab')).dispatchEvent('click'); // (it bobs: never still for Playwright's click)
   await page.waitForSelector(ui('.veil:not([hidden])'));
   await drawn(page, s.ring(at.x, at.y, at.rx, at.ry), screen.hand);
@@ -209,7 +202,8 @@ async function inBook(s, scrap, shut, what = '') {
 async function edited(s, scrap) {
   const { page } = s,
     from = s.posts.length,
-    words = page.locator(`#book .bk-under[data-g="${scrap.id}"] textarea.bk-scrap-words`);
+    // (a scrap's words in its body: .bk-words.)
+    words = page.locator(`#book .bk-words[data-g="${scrap.id}"] textarea.bk-scrap-words`);
   // (a finger's tap first on a touch screen: till one its words are the pen's to strike, penwords.js)
   if (s.screen.hand !== 'mouse') await words.tap();
   await words.fill('Shorter, and in the house font');
@@ -273,7 +267,7 @@ export async function previewServed(c, context) {
   await context.route(`${PREVIEW}/**`, r => {
     const path = new URL(r.request().url()).pathname;
     if (fulfilPart(r, path, c.reviewJs)) return;
-    // the board's note: the coordinator makes it a scrap on My Notebook's current page (bookreview.ts)
+    // the board's note: the coordinator makes it a scrap on My journal's current page (bookreview.ts)
     if (path === '/__review/notes' && r.request().method() === 'POST') {
       const body = r.request().postDataJSON();
       c.posts.push({ path, body });
@@ -291,7 +285,6 @@ export async function previewServed(c, context) {
         );
       return r.fulfill({ json: { ok: true, id: g.id, page: g.page, owner: 'juno', name: 'Juno' } });
     }
-    if (path === '/__review/mine') return r.fulfill({ json: { notes: 0 } });
     if (path.startsWith('/__review/')) return r.fulfill({ json: { show: false } });
     return r.fulfill({ contentType: 'text/html', body: PREVIEW_PAGE });
   });
@@ -303,7 +296,7 @@ async function fromArtifact(s, { spoken }) {
   const { page, screen } = s,
     from = s.posts.length,
     shut = (await bookMode(page)) === 'folded';
-  s.hush(true);
+  s.hush(!spoken); // (HQ records the frame's words over the voice line too: framemic.js)
   await page.evaluate(url => import('/shell/desk.js').then(desk => desk.openLink(url)), `${PREVIEW}/basket`);
   await page.waitForSelector('#viewer .bar .pin:not([hidden])'); // (review mode said hello)
   const frame = page.frame({ url: /scrap\.preview\.test/ }),

@@ -1,14 +1,14 @@
 // The old book carried into a person's new notebook, once, as it's made (notebook.ts mine): nothing they wrote is
-// lost. Each page with something on it becomes a notebook page in the order it was made: its ink in drawings (strokes
-// near each other, as lines of writing join: bookwriting.ts), each typed box and picture a drawing of its own, and each
-// note a scrap beside what was drawn, its snip its picture, its answers its children.
+// lost. Each page with something on it becomes a notebook page in the order it was made, of scrap units: its ink in
+// drawings (strokes near each other, as lines of writing join: bookwriting.ts), each typed box and picture a drawing of
+// its own, in the order they read on it, and then each note a scrap, its snip its picture, its answers its children.
 //   - A note still waiting on an open sheet becomes an open scrap, off its sheet (it goes when its page is sent), a
 //     reply waiting there too; one sent, or going, is a sent scrap with its answers, and a reply sent under an answer
 //     stays a reply.
 //   - A page whose every scrap went is sent; one from before today with nothing open goes to the notebook's archive.
 //   - Pages made after (by a screen that hadn't the Notebook yet) are carried the next time the notebook's read, and so
 //     is a note written the old way since (review mode's on a preview or HQ, till the pin flow writes scraps) onto a page
-//     already carried: an open scrap on the current page, under what's there, as a new scrap lands.
+//     already carried: an open scrap, the current page's last, as a new scrap lands.
 //     (the late notes)
 import { copyFileSync, existsSync, readFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
@@ -19,11 +19,10 @@ import { renumber, sheetRow, type Note } from './ink/booknotes.ts';
 import { unlink } from './ink/booklinks.ts';
 import { linesOf } from './ink/bookwriting.ts';
 import { DIR, type Scrap } from './pagescraps.ts';
+import { inReadingOrder, lastPos } from './notebookorder.ts';
 import { boxOf } from '../../hq/shell/ink/notebookstack.js';
+import { UNIT_W, roomFor, unitOf } from '../../hq/shell/ink/scrapunit.js';
 import { pictureSize } from '../../../shared/pictures/size.ts';
-
-// Where carried notes stand: a column this far right of what was drawn, this wide, this far apart
-const COLUMN = { gap: 48, w: 360, apart: 32 };
 
 // end: the place after the notebook's last page (notebook.ts endOf). current(): the notebook's current page, made if
 // there's none (notebook.ts currentPage). Returns the page late notes went on, or null.
@@ -36,8 +35,7 @@ export function carryInto(notebook: number, who: string, end: number, current: (
   const late = lateNotes(who);
   if (!late.length) return null;
   const p = db.prepare(`select ${COLUMNS} from book_pages where id = ?`).get(current()) as Page;
-  let y = footOf(p.id);
-  for (const n of late) y += carryNote(p, n, y, p.x + COLUMN.apart).h + COLUMN.apart;
+  for (const n of late) carryNote(p, n);
   return p.id;
 }
 // Whether a person has something still to carry: an old page (one made by a screen that hadn't the Notebook yet), or a
@@ -55,19 +53,6 @@ const lateNotes = (who: string) =>
       order by n.id`,
     )
     .all(who) as Note[];
-// The foot of what's on a page, where the next carried note goes
-function footOf(page: number) {
-  const feet = (
-    db.prepare('select ink, texts, pictures from notebook_groups where page = ? and deleted is null').all(page) as {
-      ink: string;
-      texts: string;
-      pictures: string;
-    }[]
-  )
-    .map(g => boxOf({ ink: JSON.parse(g.ink), texts: JSON.parse(g.texts), pictures: JSON.parse(g.pictures) }))
-    .flatMap(b => (b ? [b.y + b.h] : []));
-  return feet.length ? Math.round(Math.max(...feet) + COLUMN.apart) : COLUMN.apart;
-}
 function carryPage(p: Page, notebook: number, pos: number, today: string) {
   const lastSent = carryParts(p, db.prepare('select * from book_notes where page = ? order by id').all(p.id) as Note[]);
   const open = db.prepare("select 1 from notebook_groups where page = ? and status = 'open'").get(p.id);
@@ -86,30 +71,27 @@ export function carryParts(p: Page, notes: Note[]) {
     strokes = JSON.parse(ink) as unknown[],
     typed = JSON.parse(texts) as unknown[],
     scraps = JSON.parse(p.scraps) as Scrap[];
-  for (const line of linesOf(strokes as never)) add(p, 'drawing', { ink: line });
-  for (const t of typed) add(p, 'drawing', { texts: [t] });
-  for (const c of scraps) add(p, 'drawing', { pictures: [{ ...c, file: copied(p.id, c.file) }] });
-  let lastSent = 0,
-    y = p.y;
-  for (const n of notes) {
-    const carried = carryNote(p, n, y);
-    lastSent = Math.max(lastSent, carried.sent);
-    y += carried.h + COLUMN.apart;
-  }
+  const drawn = [
+    ...linesOf(strokes as never).map(line => ({ ink: line })),
+    ...typed.map(t => ({ texts: [t] })),
+    ...scraps.map(c => ({ pictures: [{ ...c, file: copied(p.id, c.file) }] })),
+  ].map((parts, id) => ({ id, parts, box: boxOf(parts) }));
+  for (const { parts } of inReadingOrder(drawn)) add(p, 'drawing', parts);
+  let lastSent = 0;
+  for (const n of notes) lastSent = Math.max(lastSent, carryNote(p, n));
   db.prepare(
     "update book_pages set ink = '[]', strokes = 0, scraps = '[]', texts = '[]', picture = null where id = ?",
   ).run(p.id);
   return lastSent;
 }
-// A note as a scrap of the page, at y in the page's column: its send's time if it was sent (else 0), and its height
-// (x: where its picture goes across; beside what was drawn on its old page, by default)
-function carryNote(p: Page, n: Note, y: number, x = p.x + p.w + COLUMN.gap) {
+// A note as a scrap of the page, its last: its send's time if it was sent, else 0
+function carryNote(p: Page, n: Note) {
   const sheet = sheetRow(n.sheet, null)!,
     waiting = n.status === 'open' && sheet.status === 'open';
   const size = n.snip && existsSync(`${DIR}/${n.snip}`) ? pictureSize(readFileSync(`${DIR}/${n.snip}`)) : null;
-  const w = size ? Math.min(COLUMN.w, size.width) : 0,
+  const w = size ? Math.min(UNIT_W, size.width) : 0,
     h = size ? Math.round((size.height * w) / size.width) : 0;
-  const pictures: Scrap[] = size ? [{ file: copied(p.id, n.snip!), x, y, w, h, tilt: 0 }] : [];
+  const pictures: Scrap[] = size ? [{ file: copied(p.id, n.snip!), x: 0, y: 0, w, h, tilt: 0 }] : [];
   const answered = waiting || n.answers === null ? undefined : repliedUnder(n.answers);
   add(
     p,
@@ -131,9 +113,9 @@ function carryNote(p: Page, n: Note, y: number, x = p.x + p.w + COLUMN.gap) {
     db.prepare('delete from book_notes where id = ?').run(n.id);
     unlink(n.id);
     renumber(n.sheet);
-    return { sent: 0, h };
+    return 0;
   }
-  return { sent: sheet.sent ? Date.parse(sheet.sent) : Date.parse(n.created), h };
+  return sheet.sent ? Date.parse(sheet.sent) : Date.parse(n.created);
 }
 // The carried group a reply's answer is on
 const repliedUnder = (slip: number) =>
@@ -155,15 +137,20 @@ type Carried = {
   parent: number | null;
   answers: number | null;
 };
-function add(p: Page, kind: string, parts: { ink?: unknown[]; texts?: unknown[]; pictures?: Scrap[] }, more?: Carried) {
+// A carried group: a unit, its page's last, unless it's a reply
+function add(p: Page, kind: string, given: { ink?: unknown[]; texts?: unknown[]; pictures?: Scrap[] }, more?: Carried) {
+  const by = more?.by ?? p.who,
+    parent = more?.parent ?? null;
+  const unit = parent === null ? unitOf({ ink: [], texts: [], pictures: [], ...given }, roomFor(by, p.who)) : null,
+    parts = unit?.parts ?? { ink: [], texts: [], pictures: [], ...given };
   db.prepare(
     `insert into notebook_groups (page, parent, answers, kind, by, ink, texts, pictures, anchor, words, said, owner, status,
-    note, created, updated) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    note, created, updated, pos, h) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
-    ...[p.id, more?.parent ?? null, more?.answers ?? null, kind, more?.by ?? p.who],
-    ...[JSON.stringify(parts.ink ?? []), JSON.stringify(parts.texts ?? []), JSON.stringify(parts.pictures ?? [])],
+    ...[p.id, parent, more?.answers ?? null, kind, by],
+    ...[JSON.stringify(parts.ink), JSON.stringify(parts.texts), JSON.stringify(parts.pictures)],
     ...[more?.anchor ?? null, more?.words ?? '', more?.said ?? null, more?.owner ?? null, more?.status ?? 'open'],
-    ...[more?.note ?? null, p.created, p.updated],
+    ...[more?.note ?? null, p.created, p.updated, unit ? lastPos(p.id) + 1 : null, unit?.h ?? null],
   );
 }
 // A copy of an old picture as one of the notebook's: the old page's sweep never takes it

@@ -1,0 +1,202 @@
+/* A review round's book on My shelf (bookshelfround.js, bookshelfbooks.js): its Close asked first while asks are open,
+   a small paper popover over its book; away and back, the book in its brown paper envelope standing on the shelf,
+   what's happening over it in hand, a label on it (to the CEO; lime once the Advice is in), wrapped and unwrapped.
+   (out of bookshelf.css: job #14679) */
+#book .bk-round-ask {
+  position: absolute;
+  left: -8px;
+  right: -8px;
+  top: 30%;
+  z-index: 4;
+  padding: 10px 10px 8px;
+  border: 1.5px solid var(--bk-night);
+  border-radius: 10px;
+  background: linear-gradient(180deg, #fbf5e7, #f3ead6);
+  box-shadow: 0 12px 22px -10px rgba(10, 8, 20, 0.55);
+  color: var(--bk-night);
+  animation: bk-told-in 0.16s ease-out;
+}
+#book .bk-round-ask p {
+  margin: 0 0 8px;
+  font-size: 14px;
+  line-height: 1.3;
+}
+#book .bk-round-ask span {
+  display: flex;
+  gap: 6px;
+}
+#book .bk-round-ask button {
+  all: unset;
+  flex: 1;
+  min-height: 38px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 700;
+  text-align: center;
+  cursor: pointer;
+}
+#book .bk-round-ask button:focus-visible {
+  outline: 2px solid var(--bk-night);
+  outline-offset: 2px;
+}
+#book .bk-round-ask [data-round='anyway'] {
+  background: var(--bk-night);
+  color: var(--bk-paper);
+}
+#book .bk-round-ask [data-round='keep'] {
+  box-shadow: inset 0 0 0 1.5px var(--bk-night);
+}
+
+/* ---- away and back */
+#book .bk-round .bk-tile-open:has(.bk-envelope) {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding-bottom: 7px;
+}
+#book .bk-env-note {
+  max-width: 100%;
+  font: 700 clamp(16px, 8.6cqi, 21px) / 1.15 var(--bk-hand);
+  text-align: center;
+  text-wrap: balance;
+  color: var(--bk-night);
+}
+#book .bk-envelope {
+  position: relative;
+  display: block;
+  width: 78%;
+  aspect-ratio: 1 / 1.36;
+  filter: drop-shadow(0 10px 12px rgba(10, 8, 20, 0.28));
+}
+#book .bk-env-art {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+#book .bk-env-pull {
+  cursor: grab;
+}
+#book .bk-env-label {
+  position: absolute;
+  left: 7%;
+  right: 7%;
+  bottom: 5%;
+  padding: 5px 6px;
+  border: 1.5px solid #2a2420;
+  border-radius: 3px;
+  background: #fbf5e7;
+  color: #2a2420;
+  font-size: clamp(11px, 5.6cqi, 14px);
+  font-weight: 700;
+  line-height: 1.15;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+#book .bk-env-label[data-back] {
+  border-width: 2px;
+  background: #d4e83a;
+}
+#book .bk-env-sheet,
+#book .bk-env-flap,
+#book .bk-env-flap-in {
+  transform-box: view-box;
+}
+/* (the flap's inside, seen only while it stands open) */
+#book .bk-env-flap-in {
+  transform: scaleY(0);
+  transform-origin: 50px 22px;
+}
+#book .bk-env-sheet {
+  transform: translateY(14px);
+}
+#book .bk-env-flap {
+  transform-origin: 50px 22px;
+}
+#book .bk-env-string {
+  stroke-dasharray: 100;
+  stroke-dashoffset: 0;
+}
+/* wrapped: the cover drops in, the flap folds down over it, the string winds round */
+#book .bk-round[data-playing='wrap'] .bk-envelope {
+  animation: bk-env-in 0.5s ease-out both;
+}
+#book .bk-round[data-playing='wrap'] .bk-env-sheet {
+  animation: bk-sheet-in 0.55s 0.1s cubic-bezier(0.5, 0, 0.6, 1) both;
+}
+#book .bk-round[data-playing='wrap'] .bk-env-flap-in {
+  animation: bk-flap-down 0.2s 0.55s ease-in both;
+}
+#book .bk-round[data-playing='wrap'] .bk-env-flap {
+  animation: bk-flap-shut 0.2s 0.75s ease-out both;
+}
+#book .bk-round[data-playing='wrap'] .bk-env-string {
+  animation: bk-string-wind 0.45s 0.9s ease-out both;
+}
+/* unwrapped: the string unwinds, the flap opens, the Advice rises out */
+#book .bk-round[data-playing='unwrap'] .bk-env-string {
+  animation: bk-string-wind 0.55s ease-in reverse both;
+}
+#book .bk-round[data-playing='unwrap'] .bk-env-flap {
+  animation: bk-flap-shut 0.22s 0.55s ease-in reverse both;
+}
+#book .bk-round[data-playing='unwrap'] .bk-env-flap-in {
+  animation: bk-flap-down 0.22s 0.77s ease-out reverse both;
+}
+#book .bk-round[data-playing='unwrap'] .bk-env-sheet {
+  animation: bk-sheet-out 0.6s 0.95s ease-out both;
+}
+#book .bk-round[data-playing] .bk-env-label {
+  transition: opacity 0.3s;
+}
+#book .bk-round[data-playing='unwrap'] .bk-env-label {
+  opacity: 0;
+}
+@keyframes bk-env-in {
+  from {
+    opacity: 0;
+    transform: translateY(18%) scale(0.94);
+  }
+}
+@keyframes bk-sheet-in {
+  from {
+    transform: translateY(-46px);
+  }
+}
+@keyframes bk-sheet-out {
+  to {
+    transform: translateY(-40px);
+  }
+}
+@keyframes bk-flap-down {
+  from {
+    transform: scaleY(-1);
+  }
+  to {
+    transform: scaleY(0);
+  }
+}
+@keyframes bk-flap-shut {
+  from {
+    transform: scaleY(0);
+  }
+  to {
+    transform: scaleY(1);
+  }
+}
+@keyframes bk-string-wind {
+  from {
+    stroke-dashoffset: 100;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #book .bk-round-ask,
+  #book .bk-round[data-playing] * {
+    animation: none !important;
+  }
+}

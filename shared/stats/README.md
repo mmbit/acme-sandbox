@@ -25,6 +25,7 @@ rollFigures(tile.querySelectorAll('.figure'), { onDone: () => play('land') });
   and keeps it clear of the graph's edges (an inset with `overflow: visible`): a line at 0 then reads as a line, not
   as the graph's border.
 - `compact(n)`: 940, 1.2k, 12k.
+- `escape(text)`: words safe in an SVG's or a page's text and in a double-quoted attribute.
 
 The timings and sizes are exported (`GROW_MS`, `GROW_STAGGER_MS`, `COUNT_MS`, `BAR_SHARE`, `BAR_MIN_PX`,
 `DOT_RADIUS_PX`), so a design system can state them.

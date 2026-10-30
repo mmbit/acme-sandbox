@@ -5,6 +5,7 @@
 // snip small for a moment, and its tap then opens the book on that note; else the tap opens the book where it was.
 // (the dot for an answer gone with the sheets it read)
 import { tip } from './bookui.js';
+import * as link from './notebooklink.js';
 
 // How long a landed snip shows on the handle
 const SNIP_MS = 2600;
@@ -18,7 +19,15 @@ let nudged = -Infinity; // (when the handle last nudged for one: a scrap's ink a
 export function mountHandle(node, on) {
   handle = node;
   tip(handle, () => handle.getAttribute('aria-label'));
-  handle.addEventListener('click', () => (!on.shut() ? on.fold() : landed ? on.openOn(landed) : on.open()));
+  // (a tap: a hand that pulls and lets go at once, so an artifact hears where the notebook ends up.)
+  handle.addEventListener('click', () => {
+    const opening = on.shut();
+    link.emit('pull');
+    link.emit('letgo', { open: opening });
+    if (!opening) on.fold();
+    else if (landed) on.openOn(landed);
+    else on.open();
+  });
   document.addEventListener('book:landed', e => land(e.detail));
   // (opened, the book is where the note landed or the board's moved on: the tap's note is spent)
   document.addEventListener('book:layout', e => {

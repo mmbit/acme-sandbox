@@ -305,7 +305,8 @@ test("the board's release follow-up inherits its deliverable's deadline and aim 
   assert.notEqual(own, deliverable, 'release work has its own thread');
   assert.equal(follow.body.followOn, deliverable);
   assert.equal(follow.body.deadline, new Date(deadline).toISOString());
-  assert.deepEqual([thread(own).deadline, thread(own).aim], [deadline, aim]);
+  const followWindow = projects.findThread(own)!;
+  assert.deepEqual([followWindow.deadline, followWindow.aim], [deadline, aim]);
   assert.equal(follow.body.askedCeo ?? follow.body.untimed, undefined);
   assert.equal(toCeo().length, 0);
   const snapshot = backlog.orderingSnapshot(Date.now());

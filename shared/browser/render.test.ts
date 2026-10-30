@@ -90,8 +90,8 @@ test('a helper render gets the dirty snapshot and chosen base, returns binary fi
   const output = join(dir, 'pictures with spaces');
   const env = await playedHq(
     [
-      ['waiting', 'attic'],
-      ['done', 'attic'],
+      { state: 'waiting', machine: 'attic' },
+      { state: 'done', machine: 'attic' },
     ],
     {
       HELPER_ENV: JSON.stringify({ RENDER_EXIT: '7' }),

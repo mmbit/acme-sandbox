@@ -2,14 +2,14 @@
 // the store's own routes, and a scrap as the book shows it on screen.
 import { landingPage } from './shell/ink/notebookstack.js';
 
-// My Notebook's groups, every page's, the newest made last
+// My journal's groups, every page's, the newest made last
 export function groupsOf(play) {
   const { pages, archived } = play.route('/api/notebooks/pages', { notebook: mineOf(play) });
   return [...pages, ...archived]
     .flatMap(p => play.route('/api/notebooks/pages/groups', { page: p.id }).groups)
     .sort((a, b) => a.id - b.id);
 }
-// My Notebook's page where the board's notes land: the store's current page (notebookstack.js)
+// My journal's page where the board's notes land: the store's current page (notebookstack.js)
 export const newestPage = play =>
   landingPage(play.route('/api/notebooks/pages', { notebook: mineOf(play) }).pages, p => p.sending || !!p.sent);
 const mineOf = play => play.route('/api/notebooks').shelf.find(n => n.kind === 'mine').id;

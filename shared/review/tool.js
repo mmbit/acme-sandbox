@@ -2,12 +2,11 @@
 // styles, the state they share (r), and what puts a note away. Each part is a module beside this one, served with the
 // same gate as review.js (feedback.ts). No part imports this: what one asks of the parts above it comes from acts.js,
 // handed in here as it loads, so the imports form no circle.
-import { REDUCED_MOTION_CSS, baseCss } from './base.js';
+import { BASE_CSS, REDUCED_MOTION_CSS } from './base.js';
 import { hand } from './acts.js';
 import { startTrail } from './trail.js';
 import { followPopups, makeHost } from './layer.js';
 import * as dock from './dock.js';
-import * as menu from './menu.js';
 import * as surface from './surface.js';
 import * as postit from './postit.js';
 import * as pictures from './pictures.js';
@@ -20,15 +19,12 @@ import { setupCallFrame } from './callframe.js';
 hand({
   reset,
   toggle,
-  shut: menu.shut,
-  paint: menu.paint,
-  refresh: menu.refresh,
   redrawInk: surface.redrawInk,
   stopMic: dictation.stopMic, // (stopMic, words)
   words: dictation.words,
 });
 
-// r: the config review.js hands over ({ HQ, framed, OUTSIDE, outside, INK, LOOK, ROUTE, summoned, book, toHq, covered,
+// r: the config review.js hands over ({ HQ, framed, OUTSIDE, outside, INK, ROUTE, summoned, book, toHq, covered,
 // away, calling }), the elements and the state the parts share. mode: idle | pick (marking) | note (the post-it open) | sending
 export function start(config) {
   const r = {
@@ -43,9 +39,8 @@ export function start(config) {
   };
   startTrail(r);
   const css = [
-    baseCss(r.LOOK),
+    BASE_CSS,
     dock.CSS,
-    menu.CSS,
     surface.CSS,
     postit.CSS,
     pictures.CSS,
@@ -53,11 +48,10 @@ export function start(config) {
     pencil.CSS,
     REDUCED_MOTION_CSS,
   ].join('');
-  makeHost(r, css, `<div class="ui">${surface.HTML}${pencil.HTML}${postit.HTML}${dock.html(menu.HTML)}</div>`);
+  makeHost(r, css, `<div class="ui">${surface.HTML}${pencil.HTML}${postit.HTML}${dock.HTML}</div>`);
   elements(r);
   followPopups(r);
   dock.setupDock(r);
-  menu.setupMenu(r);
   keys(r);
   surface.setupSurface(r);
   postit.setupPostit(r);
@@ -67,7 +61,7 @@ export function start(config) {
     pencil.setupPencil(r);
     setupCall(r);
   } else if (r.framed && !r.outside) setupCallFrame(r); // (HQ's viewer on a call)
-  return { toggle: () => toggle(r), refresh: () => menu.refresh(r) };
+  return { toggle: () => toggle(r) };
 }
 
 function elements(r) {
@@ -90,8 +84,6 @@ function elements(r) {
     msg: $('.msg'),
     mic: $('.mic'),
     pinIt: $('.send'),
-    more: $('.more'),
-    menu: $('.menu'),
   });
   r.ask = r.text.placeholder;
 }
@@ -99,7 +91,6 @@ function elements(r) {
 // the pin: a note starts, or the marking stops
 export function toggle(r) {
   dock.uncoach(r);
-  menu.shut(r);
   if (r.mode === 'idle') surface.pick(r);
   else if (r.mode === 'pick') reset(r);
 }
@@ -115,7 +106,6 @@ export function reset(r) {
   r.sheet.classList.remove('away', 'bare');
   r.text.placeholder = r.ask;
   r.fab.classList.remove('on');
-  r.more.hidden = false;
   r.dock.hidden = false;
   dock.settle(r);
   r.root.querySelectorAll('.drop').forEach(d => d.remove());
@@ -131,14 +121,13 @@ export function reset(r) {
 }
 
 function keys(r) {
-  // Escape puts away the menu and the note
+  // Escape puts away the note
   addEventListener(
     'keydown',
     e => {
       if (e.key !== 'Escape' || r.covered) return;
       // what it puts away is review mode's own: the page's popup under it stays open
-      if (!r.menu.hidden || r.mode !== 'idle') e.preventDefault();
-      menu.shut(r);
+      if (r.mode !== 'idle') e.preventDefault();
       if (r.mode !== 'idle' && r.mode !== 'sending') reset(r);
     },
     true,

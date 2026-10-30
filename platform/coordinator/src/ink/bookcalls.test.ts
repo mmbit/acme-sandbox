@@ -118,17 +118,13 @@ test("a call's page: the board's notes numbered on it, never on a sheet to send,
   assert.equal((await h.voice(`note?id=${framed.id}&call=${call}`)).body.url, shown);
   assert.equal((await h.voice(`note?id=${one.note.id}&call=${call + 1}`)).status, 404, 'another call');
 
-  // the call ends: the line reads no more, the page stays with the call's summary on top once it's written
-  await h.voice('call-end', { agent: 'juno', lines: ['Board: This feels high.'], token });
-  assert.equal((await h.voice(`note?id=${one.note.id}&call=${call}`)).status, 404, 'the call has ended');
-  db.prepare('update calls set reply = ? where id = ?').run('Prices: shipping shown in, from Monday.', call);
-  const listed = (await h.board('/api/book')).body.pages.find((p: any) => p.id === page.id);
-  assert.equal(listed.summary, 'Prices: shipping shown in, from Monday.');
-
-  // thrown away in one tap: its notes, their snips and its sheet go with it
+  // the call ends: the line reads no more, and the page (its notes page), with
+  // only the board's notes for the agent on it, goes with its notes, their snips and its sheet
   const snip = readdirSync(DIR).find(f => f.startsWith(`n${one.note.id}-`));
   assert.ok(snip, 'the snip was kept');
-  assert.equal((await h.board('/api/book/page/delete', { id: page.id })).status, 200);
+  await h.voice('call-end', { agent: 'juno', lines: ['Board: This feels high.'], token });
+  assert.equal((await h.voice(`note?id=${one.note.id}&call=${call}`)).status, 404, 'the call has ended');
+  assert.equal((await h.board(`/api/book/page?id=${page.id}`)).status, 404);
   assert.ok(!existsSync(`${DIR}/${snip}`));
   assert.equal((db.prepare('select count(*) n from book_notes where page = ?').get(page.id) as { n: number }).n, 0);
   assert.ok(!db.prepare('select 1 from book_sheets where id = ?').get(one.sheet.id));
@@ -139,12 +135,12 @@ test("a call's page: the board's notes numbered on it, never on a sheet to send,
   );
 });
 
-test("a call's page is given to an agent on its own, as a free page is: its seconds to undo, undone", async () => {
+test("a call's page is never given to an agent on its own: it goes to nobody, its follow-up hands out what's on it", async () => {
   const { call } = await h.liveCall('juno');
   const page = (await h.board('/api/book/page/new', { kind: 'call', call, w: 1024, h: 768 })).body;
-  const sending = (await h.board('/api/book/page/send', { id: page.id, to: 'kit' })).body;
-  assert.deepEqual([sending.owner, sending.status, sending.page], ['kit', 'sending', page.id]);
-  assert.deepEqual((await h.board('/api/book/undo', { id: sending.id })).body, { id: sending.id, status: 'undone' });
+  assert.equal((await h.board('/api/book/page/send', { id: page.id, to: 'kit' })).status, 409);
+  const { open } = (await h.board('/api/book/sheets')).body;
+  assert.ok(!open.some((s: { page: number | null }) => s.page === page.id), 'no sheet takes it to kit');
 });
 
 // The agent's rings that older calls kept as notes on their pages: gone once, the board's

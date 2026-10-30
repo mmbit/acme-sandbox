@@ -1,45 +1,149 @@
-// book-check.mjs's story of a page's Send (shell/ink/bookpagesend.js), on the played Notebook seeded as dev mode's
-// (My Notebook's three pages, the first sent), on the iPad mini upright (touch) and a desktop: the page sent folds into
-// a paper plane and the book is left on the page under it, the next, with no page made and none other turned to; its
-// Undo brings it back; the last page sent leaves a fresh page under it. A sent page wears the red stamp with its day and
-// time, clear of the tools, still wet while it sends; and there's no Send on a call's own page while the call is on.
+// book-check.mjs's story of a page torn to Submit (shell/ink/bookdogear.js, bookpagesend.js), on the played Notebook
+// seeded as dev mode's (My journal's three pages, the first sent), on a phone, the iPad mini upright and on its side,
+// and a desktop: the dog-ear drawn away, a torn copy carried over Submit, PDF and PNG in the rail's place, never over the
+// tools; let go on Submit, it folds into a paper plane and flies off, and the page stays shown, stamped SENT and the time
+// within about two seconds, locked (the tools gone, "Sent, locked" in their place), no page made, none turned to. With
+// asks still open on it a card asks first: Answer them first sends nothing, Send now moves them to a new page and sends
+// the rest.
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { clipped, turnTo, where } from './booknotebookscreen.mjs';
+import { cornerOf, dragTo } from './bookshare.mjs';
 import { DESKTOP, MINI, until } from './bookkit.mjs';
 
 const SEED = JSON.parse(await readFile(new URL('./mock/notebook.json', import.meta.url), 'utf8'));
-const UPRIGHT = { width: MINI.height, height: MINI.width };
-// the seed's pages in My Notebook (mock/notebook.json)
-const SENT = 1,
-  SECOND = 2,
-  NEWEST = 3;
+// the seed's open page with groups in My journal (mock/notebook.json), and a group on it
+const SECOND = 2,
+  NEWEST = 3,
+  ASKING = 6;
+const SIZES = [
+  { name: 'phone', viewport: { width: 390, height: 844 }, touch: true, folded: true, isMobile: true },
+  { name: 'mini-upright', viewport: { width: MINI.height, height: MINI.width }, touch: true, folded: true },
+  { name: 'mini-side', viewport: MINI, touch: true },
+  { name: 'desktop', viewport: DESKTOP, touch: false },
+];
+// the stamp pressed this soon after the copy is let go, at most, in the page's own time (a loaded worker's timers come
+// late: some room)
+const STAMP_MS = 2600;
 
 // c: book-check.mjs's hqIn, base, settled, shot, noErrorsIn
 export function sendStories(c) {
   return {
-    'Send: a paper plane, the book left on the page under it (a fresh one after the last), the sent page stamped, none on the call page':
-      browser => sends(browser, c),
+    'Tear to Submit: the copy carried over Submit, PDF and PNG; a plane flies, the page stays, stamped and locked, no page made':
+      async browser => {
+        for (const size of SIZES) await torn(browser, c, size);
+      },
+    'Tear to Submit with asks still open: a card asks first; Answer them first sends nothing, Send now moves them on':
+      browser => withAsks(browser, c),
   };
 }
 
-async function sends(browser, c) {
-  for (const [viewport, touch] of [
-    [UPRIGHT, true],
-    [DESKTOP, false],
-  ]) {
-    const size = `${viewport.width}x${viewport.height}`,
-      { page, play, errors, done } = await open(browser, c, viewport, touch);
-    const press = name => {
-      const button = page.locator('#book').getByRole('button', { name, exact: true });
-      return touch ? button.tap() : button.click();
-    };
+// The second page torn out for the pictures (the copy carried, the plane held mid-flight), the third timed with none
+// (a shot holds up the page's own timers)
+async function torn(browser, c, size) {
+  const { page, play, errors, done } = await open(browser, c, size);
+  try {
+    const count = pagesOf(play).length;
+    await carried(c, page, size);
+    await turnTo(page, NEWEST);
+    const at = await where(page);
+    await watch(page);
+    await dragTo(page, size.touch ? 'touch' : 'mouse', 'submit');
+    await until(async () => /^Sent \d\d:\d\d$/.test((await stampOf(page)).label), `stamped (${size.name})`);
+    const seen = await page.evaluate(() => window.__sent),
+      late = Math.round(seen.stamped - seen.dropped);
+    assert.ok(late > 0 && late < STAMP_MS, `stamped within about two seconds (${size.name}): ${late} ms`);
+    assert.ok(pageOf(play, NEWEST).sent, `sent at once (${size.name})`);
+    await until(async () => !(await page.locator('#book .bk-fx-plane').count()), `the plane gone (${size.name})`);
+    assert.deepEqual([seen.planes, seen.turns], [1, []], `one plane, turned to nothing (${size.name})`);
+    assert.equal(await where(page), at, `the page stays shown (${size.name})`);
+    assert.equal(pagesOf(play).length, count, `no page made (${size.name})`);
+    await locked(c, page, size);
+    c.noErrorsIn(errors);
+  } finally {
+    await done();
+  }
+}
+// The copy carried over the targets in the rail's place, over the page bar, and let go on Submit: a plane
+async function carried(c, page, size) {
+  await watch(page, true);
+  await dragTo(page, size.touch ? 'touch' : 'mouse', 'submit', async () => {
+    const m = await lane(page);
+    assert.match(m.submit, /^\w ?Submit → \w+$/, `Submit names the CEO (${size.name}): ${m.submit}`);
+    assert.deepEqual(m.kinds, ['submit', 'pdf', 'png'], `Submit, PDF and PNG (${size.name})`);
+    assert.ok(m.toolsHidden, `the tools make way for them (${size.name})`);
+    assert.ok(m.row.bottom <= m.bar.top + 1, `over the page bar (${size.name}): ${JSON.stringify(m)}`);
+    assert.ok(m.row.left >= m.paper.left && m.row.right <= m.paper.right, `on the paper (${size.name})`);
+    await c.shot(`tear-carried-${size.name}`, page);
+  });
+  await page.waitForFunction(() => window.__sent.held, null, { timeout: 10_000 });
+  await c.shot(`tear-plane-${size.name}`, page);
+  await page.evaluate(() => window.__sent.held.forEach(a => a.play()));
+}
+// The page sent: locked (the tools gone, "Sent, locked" in their place), the stamp in view over nothing written; no
+// Send key, and the corner's menu without Submit
+async function locked(c, page, size) {
+  // (the stamp pressed all the way down)
+  await page.evaluate(() =>
+    Promise.all(
+      document
+        .querySelectorAll('#book [data-slot=stamp]')
+        .values()
+        .flatMap(n => n.getAnimations().map(a => a.finished)),
+    ),
+  );
+  const s = await stampOf(page);
+  assert.ok(s.locked && s.toolsHidden, `locked: the tools gone, "Sent, locked" in their place (${size.name})`);
+  assert.ok(inside(s.box, s.paper), `the stamp on the paper in view (${size.name}): ${JSON.stringify(s.box)}`);
+  // (as the deck draws it, big enough to read at a glance)
+  assert.ok(s.box.height >= 28, `the stamp read at a glance (${size.name}): ${JSON.stringify(s.box)}`);
+  assert.ok(!s.over.some(b => overlaps(s.box, b)), `the stamp over nothing written (${size.name})`);
+  await c.shot(`tear-stamped-${size.name}`, page);
+  assert.equal(await page.locator('#book .bk-send').count(), 0, `no Send key (${size.name})`);
+  await (await cornerOf(page)).click();
+  const menu = page.getByRole('menu', { name: 'Where this page goes' });
+  await menu.waitFor({ timeout: 10_000 });
+  const kinds = await menu
+    .getByRole('menuitem')
+    .evaluateAll(items => items.filter(i => !i.hidden).map(i => i.dataset.share));
+  assert.deepEqual(kinds, ['pdf', 'png'], `only PDF and PNG (${size.name})`);
+  await page.keyboard.press('Escape');
+}
+
+// Asks still open on the page: a card from Submit asks first. Answer them first: nothing sent, the copy back in the
+// corner. Send now (from the corner's menu): the open ask moved to a new page, the rest sent.
+async function withAsks(browser, c) {
+  const seed = structuredClone(SEED);
+  Object.assign(
+    seed.groups.find(g => g.id === ASKING),
+    { note: 99 },
+  );
+  seed.asks.push({ ...seed.asks[0], id: 2, note: 99, agent: 'juno', name: 'Juno', title: 'Logo left or centred?' });
+  for (const size of [SIZES[0], SIZES.at(-1)]) {
+    const { page, play, errors, done } = await open(browser, c, size, seed);
     try {
-      await onTheCall(page, size);
-      await underIt(page, play, press, size);
-      await c.shot(`book-send-under-${size}`, page);
-      await stamped(page, size);
-      await c.shot(`book-send-stamp-${size}`, page);
+      const count = pagesOf(play).length;
+      await dragTo(page, size.touch ? 'touch' : 'mouse', 'submit');
+      const card = page.getByRole('dialog', { name: 'Asks still open' });
+      await card.waitFor({ timeout: 3000 });
+      assert.match(await card.innerText(), /1 ask is still open\s+Juno’s ask waits on you/);
+      // (shown all the way in)
+      await card.evaluate(el => Promise.all(el.getAnimations().map(a => a.finished)));
+      await c.shot(`tear-asks-open-${size.name}`, page);
+      await card.getByRole('button', { name: 'Answer it first' }).click();
+      await until(async () => !(await page.locator('#book > .bk-held').count()), `the copy back (${size.name})`);
+      assert.ok(!pageOf(play, SECOND).sent, `nothing sent (${size.name})`);
+      await (await cornerOf(page)).click();
+      await page.getByRole('menuitem', { name: /Submit/ }).click();
+      await card.getByRole('button', { name: 'Send now, move it to a new page' }).click();
+      await until(() => pageOf(play, SECOND).sent, `sent (${size.name})`);
+      const moved = play.route('/api/notebooks/pages/groups', { page: pagesOf(play).at(-1).id }).groups;
+      assert.equal(pagesOf(play).length, count + 1, `a new page for the ask (${size.name})`);
+      assert.deepEqual(
+        moved.map(g => [g.id, g.status]),
+        [[ASKING, 'open']],
+        `the open ask on it, to answer there (${size.name})`,
+      );
       c.noErrorsIn(errors);
     } finally {
       await done();
@@ -47,96 +151,74 @@ async function sends(browser, c) {
   }
 }
 
-// No Send on the call's own page while the call is on (calldraw.js's call:page), and back once it's off
-async function onTheCall(page, size) {
-  const send = page.locator('#book').getByRole('button', { name: 'Send', exact: true });
-  await until(() => send.isVisible(), `Send on an open page (${size})`);
-  await page.evaluate(id => document.dispatchEvent(new CustomEvent('call:page', { detail: { page: id } })), NEWEST);
-  await until(async () => !(await send.isVisible()), `no Send on the call's page while it's on (${size})`);
-  await turnTo(page, SECOND);
-  assert.ok(await send.isVisible(), `Send on another page during the call (${size})`);
-  await turnTo(page, NEWEST);
-  assert.ok(!(await send.isVisible()), `none again on the call's page (${size})`);
-  await page.evaluate(() => document.dispatchEvent(new CustomEvent('call:off', { detail: { done: () => {} } })));
-  await until(() => send.isVisible(), `Send back on it once the call's off (${size})`);
-}
-
-// The second page sent: a plane flies, the book shows the third (no page made, none other turned to), and Undo brings
-// the second back; the third, the last, sent: a fresh page under it
-async function underIt(page, play, press, size) {
-  const count = () => pagesOf(play).length,
-    before = count();
-  await turnTo(page, SECOND);
-  await watch(page);
-  await press('Send');
-  await until(() => pageOf(play, SECOND).sending, `the second page sending (${size})`);
-  await until(async () => (await where(page)).endsWith(`${NEWEST} / ${before}`), `the page under it shown (${size})`);
-  const seen = await page.evaluate(() => window.__sent);
-  assert.ok(seen.planes >= 1, `the page flew off as a paper plane (${size})`);
-  assert.deepEqual(seen.turns, [NEWEST], `turned to nothing but the page under it (${size})`);
-  assert.equal(count(), before, `no page made while there's one under it (${size})`);
-  // (headless WebKit plays it at a frame or so a second: late, but it ends)
-  await until(async () => !(await page.locator('#book .bk-fx-plane').count()), `the plane gone (${size})`, 15_000);
-
-  await page.locator('#toasts .toast', { hasText: 'Sent' }).locator('.cover').dispatchEvent('click');
-  await until(() => !pageOf(play, SECOND).sending, `the send taken back (${size})`);
-  await until(async () => (await where(page)).endsWith(`${SECOND} / ${before}`), `the page back (${size})`);
-
-  await turnTo(page, NEWEST);
-  await watch(page);
-  await press('Send');
-  await until(() => count() === before + 1, `a fresh page made under the last (${size})`);
-  await until(async () => (await where(page)).endsWith(`${before + 1} / ${before + 1}`), `the fresh page (${size})`);
-  assert.deepEqual((await page.evaluate(() => window.__sent)).turns, [pagesOf(play).at(-1).id], `only it (${size})`);
-}
-
-// The sent pages wear the red stamp at their head, clear of the tool strip: the first with its day and time, the last
-// sent still wet
-async function stamped(page, size) {
-  await turnTo(page, NEWEST);
-  const wet = await stampOf(page);
-  assert.equal(wet.label, 'Sent', `the page sending stamped Sent (${size})`);
-  assert.ok(wet.wet, `its ink still wet (${size})`);
-  await turnTo(page, SENT);
-  const dry = await stampOf(page);
-  assert.match(dry.label, /^Sent \w+ \d\d:\d\d$/, `the sent page stamped with its day and time (${size})`);
-  assert.ok(!dry.wet, `dry (${size})`);
-  assert.equal(dry.colour, 'rgb(194, 54, 47)', `in the overview stamp's red (${size})`);
-  assert.ok(dry.box.width >= 100 && dry.box.height >= 40, `big enough to see (${size}): ${JSON.stringify(dry.box)}`);
-  assert.ok(inside(dry.box, dry.desk), `on the paper in view (${size})`);
-  assert.ok(!dry.strip.some(b => overlaps(dry.box, b)), `clear of the tools (${size})`);
-}
-
 // ---- the page
 
-// HQ at a size on the played Notebook, the book open on its newest page (upright, the iPad's starts folded: opened by
-// its lip, as booknotebook.mjs's open, with a click, which a loaded worker never leaves half pulled)
-async function open(browser, c, viewport, touch) {
-  const context = await c.hqIn(browser, viewport, { notebooks: structuredClone(SEED), hasTouch: touch }),
+// HQ at a size on the played Notebook, the book open on the seed's second page (folded ones opened by the lip, as
+// booknotebook.mjs's open)
+async function open(browser, c, { viewport, touch, folded, isMobile }, seed = structuredClone(SEED)) {
+  const context = await c.hqIn(browser, viewport, { notebooks: seed, hasTouch: touch, ...(isMobile && { isMobile }) }),
     page = await context.newPage(),
     errors = [];
   page.on('pageerror', e => errors.push(e.message));
   await page.goto(`${c.base}/?intro=0`);
   await page.waitForSelector('#book .bk-desk', { state: 'attached', timeout: 30_000 });
-  if (touch) {
+  if (folded) {
     await c.settled(page, 'folded');
     await page.locator('#book .bk-lip').evaluate(lip => lip.click());
   }
-  await c.settled(page, touch ? 'spread' : 'open');
+  await c.settled(page, folded ? 'spread' : 'open');
   await until(async () => (await clipped(page)).length, 'the groups drawn');
+  await turnTo(page, SECOND);
   return { page, play: context.notebook, errors, done: () => context.close() };
 }
-
-// What the book does from here: planes flying, pages turned to (book:turn)
-const watch = page =>
-  page.evaluate(() => {
-    const seen = (window.__sent = { planes: 0, turns: [] });
+// What the book does from here: planes flying (hold: the plane held mid-flight, its animations kept in held), pages turned to (book:turn),
+// when the copy was let go and the stamp pressed (the page's own time)
+const watch = (page, hold = false) =>
+  page.evaluate(hold => {
+    const seen = (window.__sent = { planes: 0, turns: [], dropped: 0, stamped: 0, held: null });
     document.addEventListener('book:turn', e => seen.turns.push(e.detail.page));
+    addEventListener(
+      'pointerup',
+      () => {
+        seen.dropped = performance.now();
+        if (hold)
+          setTimeout(() => {
+            seen.held = document.querySelector('#book .bk-fx-plane')?.getAnimations({ subtree: true }) ?? [];
+            // (at the same point of its flight however late the page's timers came: a dart in the air, on its way up)
+            seen.held.forEach(a => {
+              a.pause();
+              a.currentTime = 720;
+            });
+          }, 550);
+      },
+      { capture: true, once: true },
+    );
     new MutationObserver(changes => {
-      for (const n of changes.flatMap(m => [...m.addedNodes])) if (n.classList?.contains('bk-fx-plane')) seen.planes++;
+      for (const n of changes.flatMap(m => [...m.addedNodes])) {
+        if (n.classList?.contains('bk-fx-plane')) seen.planes++;
+        // (the shown page's stamp once the copy is let go: another's is drawn again as the pages are read)
+        if (seen.dropped && n.parentElement?.matches('.bk-page:not([hidden]) [data-slot=stamp]'))
+          seen.stamped ||= performance.now();
+      }
     }).observe(document.getElementById('book'), { childList: true, subtree: true });
+  }, hold);
+// The lane while the copy is carried: the targets' row and what shows on it, the page bar, the paper, the tools
+const lane = page =>
+  page.evaluate(() => {
+    const box = r => ({ left: r.left, top: r.top, right: r.right, bottom: r.bottom }),
+      row = document.querySelector('#book .bk-share'),
+      shown = [...row.querySelectorAll('[data-share]')].filter(b => !b.hidden);
+    return {
+      kinds: shown.map(b => b.dataset.share),
+      submit: shown[0].innerText.replace(/\s+/g, ' ').trim(),
+      row: box(row.getBoundingClientRect()),
+      bar: box(document.querySelector('#book [data-island=pages]').getBoundingClientRect()),
+      paper: box(document.querySelector('#book .bk-desk').getBoundingClientRect()),
+      toolsHidden: getComputedStyle(document.querySelector('#book .bk-strip')).visibility === 'hidden',
+    };
   });
-// The shown page's stamp: its words, wet or dry, its colour and box; the paper's and the tool strip's boxes
+// The shown page's stamp: its words and box, the paper's, what's written on the page (its title and units), and whether
+// it's locked
 const stampOf = page =>
   page.evaluate(() => {
     const shown = [...document.querySelectorAll('#book .bk-page')].find(p => !p.hidden),
@@ -144,11 +226,16 @@ const stampOf = page =>
       box = r => ({ left: r.left, top: r.top, right: r.right, bottom: r.bottom, width: r.width, height: r.height });
     return {
       label: node.querySelector('svg')?.getAttribute('aria-label') ?? '',
-      wet: node.classList.contains('bk-stamp-wet'),
-      colour: getComputedStyle(node).color,
       box: box(node.getBoundingClientRect()),
-      desk: box(document.querySelector('#book .bk-desk').getBoundingClientRect()),
-      strip: [...document.querySelectorAll('#book .bk-strip .bk-island')].map(el => box(el.getBoundingClientRect())),
+      paper: box(document.querySelector('#book .bk-desk').getBoundingClientRect()),
+      // (the title by its words' own box: its line runs the page's width)
+      over: [...shown.querySelectorAll('.bk-unit, .bk-page-title, .bk-day')].map(el => {
+        const words = document.createRange();
+        words.selectNodeContents(el);
+        return box(el.matches('.bk-unit') ? el.getBoundingClientRect() : words.getBoundingClientRect());
+      }),
+      locked: !!document.querySelector('#book .bk-locked')?.checkVisibility(),
+      toolsHidden: !document.querySelector('#book .bk-strip')?.checkVisibility(),
     };
   });
 const inside = (a, b) => a.left >= b.left && a.right <= b.right && a.top >= b.top && a.bottom <= b.bottom;

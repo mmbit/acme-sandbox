@@ -80,6 +80,21 @@ export const titleCase = s => String(s).replace(/(^|[-_ ])(\w)/g, (_, p, c) => (
 export const cap = s => s[0].toUpperCase() + s.slice(1);
 // a text box as tall as its text
 export function grow(t) { t.style.height = 'auto'; t.style.height = `${t.scrollHeight + 4}px`; }
+// then() in the frame after one of els resizes, never in the observer's own call: a size changed inside the call, by
+// what then() writes or what it calls, is a loop the browser reports (WebKit's "ResizeObserver loop completed with
+// undelivered notifications") when the element was watched at a depth already delivered. The frame the resize happens
+// in still shows what was there before.
+export function resizedNextFrame(els, then) {
+  let frame = 0;
+  const watch = new ResizeObserver(
+    () =>
+      (frame ||= requestAnimationFrame(() => {
+        frame = 0;
+        then();
+      })),
+  );
+  for (const el of els) watch.observe(el);
+}
 export const store = {
   get(k, d) { try { const v = localStorage.getItem('hq.' + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
   set(k, v) { try { localStorage.setItem('hq.' + k, JSON.stringify(v)); } catch { /* private mode */ } },

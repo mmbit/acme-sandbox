@@ -35,7 +35,7 @@ export function syncReviewNotebook(share: shares.Share) {
     }
     for (const person of shares.people(share.id)) syncReviewer(linked.notebook, person, share);
     const round = rounds.roundOf(linked.notebook)!;
-    if (shares.isOpen(share) && shares.people(share.id).some(shares.onIt) && round.closed && !round.deck) {
+    if (shares.isOpen(share) && shares.people(share.id).some(shares.onIt) && round.closed && !round.advice) {
       db.prepare('update notebook_rounds set closed = null where notebook = ?').run(linked.notebook);
       db.prepare('update notebooks set archived = 0 where id = ?').run(linked.notebook);
     }

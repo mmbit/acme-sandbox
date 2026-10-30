@@ -9,6 +9,8 @@ python3 infra/deploys.py <folder> <commit> <fetched> <exit status> <containers b
   containers before: a file of `<service> <container id>` lines from before the deploy; the ones after come on stdin
   (both `docker compose ps -a --format '{{.Service}} {{.ID}}'`). A service whose id changed, or that's new, was recreated.
   reloaded: services restarted in place (the worker's process on new code)
+DEPLOY_BROKE: what infra/hq-up.sh said of a deploy that broke HQ (sync.sh went back to the last good one), and
+DEPLOY_REVERTED: what infra/revert.py said then (the revert's commit on main, or why there's none), for the CEO
 
 """
 import json, os, sys, tempfile
@@ -34,6 +36,8 @@ def record(folder, sha, fetched, status, before, after, reloaded=(), now=None):
         'recreated': sorted(s for s, cid in after.items() if before.get(s) != cid),
         'reloaded': sorted(set(reloaded)),
         'services': sorted(after),
+        'broke': os.environ.get('DEPLOY_BROKE', '')[-2000:],
+        'reverted': os.environ.get('DEPLOY_REVERTED', '')[-500:],
     }
     os.makedirs(folder, mode=0o755, exist_ok=True)
     data = os.stat(os.path.dirname(os.path.abspath(folder)))

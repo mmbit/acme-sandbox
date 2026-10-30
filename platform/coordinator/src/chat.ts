@@ -1,10 +1,12 @@
 // The board's conversation with the CEO over the intercom. It's one long-lived job whose session is resumed for
 // each message, so the CEO remembers the conversation. The CEO's final message of each turn is the reply. What the board
-// says while the CEO is still answering waits, and goes in the next turn. Every line is shown and kept as it is: a key's
-// value is redacted where it's stored (db.ts).
+// says while the CEO is still answering reaches that turn at its next step (take(), through the inbox hook, also on a
+// session about to stop), so one reply answers both. A line the turn never took (it ended with no further step) waits and
+// goes in the next turn. Every line is shown and kept as it is: a key's value is redacted where it's stored (db.ts).
 // (its messages say deliverable, the board's word for a thread)
-import { ONE_DEADLINE } from '../../worker/hq/levels.ts';
+import { ONE_DEADLINE, PAUSE_FOR, WINDOW_FIRST } from '../../worker/hq/levels.ts';
 import { db, once, setting, remember, redactedJson } from './db.ts';
+import { WAITING, ANSWERED, WITH_CEO, NEXT_TURN, OFFERED } from './chatstates.ts';
 import { redactJson } from './secrets.ts'; // (and redactedJson: the intake's cards.)
 import { publish } from './events.ts';
 import { createJob, findAgent, preview, holdsCustomerData, handedCustomerData, holdsKeys, handedKeys, callSeat, workerQuiet } from './jobs.ts';   // (customer data; paused)
@@ -13,7 +15,6 @@ import { ceo, roles, unstaffed } from './company.ts';
 import * as pictures from './pictures.ts';
 import * as tips from './tips.ts';
 import { DEFAULT_ESTIMATE_SCALE } from '../../worker/src/estimating.ts';
-import { PAUSE_FOR, WINDOW_FIRST } from '../../worker/hq/levels.ts';
 import { isIntercom, quickRunEnded } from './quickruns.ts';
 
 // A calls row named c carries keys if it or any call it resumed concerns a credential card.
@@ -25,14 +26,12 @@ export function keysCondition() {
     select 1 from up join calls uc on uc.id = up.id join requests ur on ur.id = uc.request where ur.kind = 'credential' or ur.secrets is not null)`;
 }
 
-// sent: 0 = waiting for the CEO, 2 = with the CEO (in a turn that hasn't answered yet), 1 = answered. A line only counts as
-// heard once the CEO's turn ends done: a failed turn's lines go to the CEO again. 3 = goes with the next turn but starts none:
-// the notes of a call the CEO's follow-up job already handled (callNotes()).
+// sent: the states in chatstates.ts. A line only counts as heard once the CEO's turn ends done.
 // (the chat table and its other columns are in db.ts)
 // Old lines have no session id. Restrict later CEO replies conservatively, and all existing sessions that may remember
 // them. A pending carrier without a call id cannot prove its notes are safe. New sessions hear only the masked recap.
 once('2026-10-17-keys-chat-sessions', () => {
-  db.exec("update chat set about_keys = 1 where who = 'call' and call is null and sent in (0, 2, 3)");
+  db.exec(`update chat set about_keys = 1 where who = 'call' and call is null and sent in (${WAITING}, ${WITH_CEO}, ${NEXT_TURN})`);
   const keyed = db.prepare(`select c.id, c.agent, j.result from calls c left join jobs j on j.id = c.job and j.kind = 'work' where ${keysCondition()}`)
     .all() as { id: number; agent: string; result: string | null }[];
   const mark = db.prepare("update chat set about_keys = 1 where (who = 'call' and call = ?) or (who = ? and text = ?)");
@@ -42,7 +41,7 @@ once('2026-10-17-keys-chat-sessions', () => {
     update jobs set about_keys = 1 where kind = 'chat' and exists (select 1 from chat where about_keys = 1)`);
 });
 
-// The lines the CEO hears: the board's, those from outside the chat (call), and an invited person's (guest: fromGuest).
+// The lines the CEO hears: the board's, those from outside the chat (call), and an invited person's (guest: kept from the old Sketchbook).
 const HEARD = "('board', 'call', 'guest')";
 
 // The CEO's lines are theirs by id (who), and shown by name
@@ -106,7 +105,7 @@ const current = () => db.prepare("select * from jobs where kind = 'chat' and id 
 export function ended(job: { id: number; title?: string }, status: string, result?: string, overtime = false) {
   if (!quickRunEnded(job.id, status, result, overtime)) answered(job, status, result);
 }
-// pictureIds: the board's pictures that go with the line; who: whose line, the board's or a call's (or an invited person's, fromGuest)
+// pictureIds: the board's pictures that go with the line; who: whose line, the board's or a call's (or an invited person's, 'guest')
 export function say(text: string, call?: string, callId?: number, pictureIds: number[] = [], who = call ? 'call' : 'board') {
   // A very long talk is fine (a two-hour call is about 100,000 characters); this only stops a runaway, and says so.
   text = text.trim();
@@ -122,10 +121,8 @@ export function say(text: string, call?: string, callId?: number, pictureIds: nu
   else if (job.status === 'blocked') deliver(job.id); // waiting on the desk phone: the CEO answers this meanwhile
   return history();
 }
-// A line from a person the board invited (sketches.ts: a sketch from their own Sketchbook), heard by the CEO as the board's
-// are: text, what the CEO hears, says whose it is and that it's outside text (charter rule 9); shown, what the intercom
-// shows the board (history).
-export const fromGuest = (text: string, shown: string, pictureIds: number[]) => say(text, shown, undefined, pictureIds, 'guest');
+// (an invited person's line, 'guest', came from the old Sketchbook's Send, gone: their lines kept are still read as
+// theirs, outside text.)
 // A line the board typed in HQ, with the pictures it attached (pictures.ts). A picture no longer waiting refuses the
 // line and names it, so HQ can take it out of the tray. The reason covers all that pictures.waiting counts: sent
 // already, removed, or gone after a day.
@@ -195,9 +192,10 @@ export function answered(job: { id: number; title?: string }, status: string, re
   const done = status === 'done', reply = (result ?? '').trim() || '(no reply)';
   // A call this turn followed up (a call about the intercom's own card, jobs.ts tell()): its reply is the call's notes in
   // HQ's Calls too (ledger.ts reply).
-  if (done) db.prepare("update calls set reply = ? where job = ? and processed_at is null and id in (select call from chat where who = 'call' and sent = 2)")
+  if (done) db.prepare(`update calls set reply = ? where job = ? and processed_at is null and id in (select call from chat where who = 'call' and sent = ${WITH_CEO})`)
     .run(reply, job.id);
-  const heard = db.prepare(`update chat set sent = ${done ? 1 : 0} where who in ${HEARD} and sent = 2`).run().changes; // (HEARD)
+  const heard = move(WITH_CEO, done ? ANSWERED : WAITING);
+  move(OFFERED, WAITING); // (offered, never confirmed: the next turn)
   const again = !done && heard > 0 && job.title !== AGAIN;
   if (done && job.title === AGAIN) db.prepare('update jobs set title = ? where id = ?').run(CHAT, job.id);
   // (only a turn's own reply counts: one that ended done.)
@@ -208,11 +206,11 @@ export function answered(job: { id: number; title?: string }, status: string, re
     : heard ? "Sorry, I can't answer right now. Nothing you said is lost: I'll hear all of it with your next message."
     : 'Sorry, something went wrong on my side there.';
   // (and its card.)
-  db.prepare('insert into chat (ts, who, text, sent, about_customer, about_keys, card) values (?, ?, ?, 1, ?, ?, ?)').run(new Date().toISOString(), ceo(), text,
+  db.prepare(`insert into chat (ts, who, text, sent, about_customer, about_keys, card) values (?, ?, ?, ${ANSWERED}, ?, ?, ?)`).run(new Date().toISOString(), ceo(), text,
     Number(holdsCustomerData(job.id)), Number(holdsKeys(job.id)), done && card ? JSON.stringify(card) : null);
   publish({ type: 'chat', agent: ceo(), to: 'board', text: preview(text, 160) });   // (a bubble; the intercom has it all)
   if (again) start(AGAIN, job.id);
-  else if (done && db.prepare(`select 1 from chat where who in ${HEARD} and sent = 0`).get()) deliver(job.id); // (HEARD)
+  else if (done && db.prepare(`select 1 from chat where who in ${HEARD} and sent = ${WAITING}`).get()) deliver(job.id); // (HEARD)
 }
 
 // A new chat job (a new session) hears every line the CEO hasn't answered yet, including any a job that was cancelled
@@ -222,13 +220,14 @@ export function answered(job: { id: number; title?: string }, status: string, re
 // had, or ones older than the CEO's latest reply: a turn that ends done hands on everything that came in meanwhile, so only
 // a failed turn leaves those waiting).
 function start(title: string, replaces?: number) {
-  const had = db.prepare(`update chat set sent = 0 where who in ${HEARD} and sent = 2`).run().changes > 0; // (HEARD)
-  const again = had || !!db.prepare(`select 1 from chat where who in ${HEARD} and sent = 0 and id < (select coalesce(max(id), 0) from chat where who = ?)`).get(ceo());
+  const had = move(WITH_CEO, WAITING) > 0;
+  move(OFFERED, WAITING);
+  const again = had || !!db.prepare(`select 1 from chat where who in ${HEARD} and sent = ${WAITING} and id < (select coalesce(max(id), 0) from chat where who = ?)`).get(ceo());
   // (word: its task code's, jobcodes.ts.)
   const id = createJob({ agent: ceo(), kind: 'chat', word: STANDING.chat, title, prompt: brief() + recap() }).id;
   if (replaces) {
     // (the new session follows the call up afresh: an earlier reply isn't its.)
-    db.prepare("update calls set job = ?, reply = null where job = ? and id in (select call from chat where who = 'call' and sent = 0)").run(id, replaces);
+    db.prepare(`update calls set job = ?, reply = null where job = ? and id in (select call from chat where who = 'call' and sent = ${WAITING})`).run(id, replaces);
     db.prepare("update requests set job = ? where job = ? and status = 'open'").run(id, replaces);
   }
   deliver(id, again); // (again)
@@ -237,7 +236,7 @@ function start(title: string, replaces?: number) {
 // A fresh session doesn't remember the conversation: its brief has the intercom's latest lines that were heard already
 // (the ones still to come are its first turn).
 function recap() {
-  const said = lines(30, 'sent = 1');
+  const said = lines(30, `sent = ${ANSWERED}`);
   return !said.length ? '' : `\n\nThis session is new. The conversation so far (its latest lines):\n\n${said.map(line).join('\n')}`;
 }
 // (a guest's)
@@ -271,15 +270,31 @@ export const parked = (job: { id: number; kind: string }) => isIntercom(job) && 
 // What reaches the CEO's intercom from outside the chat (a call about the CEO's desk phone request, the board's answer to
 // it) goes in as a line of the chat too, shown as one line ('shown'), so it's heard like everything the board types:
 // by the latest chat job, whatever state it's in, and a failed turn keeps it and a fresh session hears it again
-// (answered()). A running turn gets it as soon as it ends: the next turn if it ends done or parks, a fresh session if
+// (answered()). A running turn gets it at its next step (take()), else the next turn if it ends done or parks, a fresh session if
 // it fails. Returns the job that hears it. A call's line carries the call, so the call goes with it to a fresh session.
 export function hear(text: string, shown: string, call?: number) {
   say(text, shown, call);
   return current()!.id;
 }
-// A call's line was in a turn that ended done (answered(): a line that came in during the turn is only delivered
-// after it), so the intercom has heard the call (ledger.ts finished()).
-export const heard = (call: number) => !!db.prepare("select 1 from chat where call = ? and who = 'call' and sent = 1").get(call);
+// A call's line was in a turn that ended done (answered()), so the intercom has heard the call (ledger.ts finished()).
+export const heard = (call: number) => !!db.prepare(`select 1 from chat where call = ? and who = 'call' and sent = ${ANSWERED}`).get(call);
+
+type Line = { id: number; who: string; text: string; about_customer: number; about_keys: number; call: number | null };
+const lineText = (m: Line) => [m.text, pictures.mention(pictures.ofLine(m.id), m.who === 'guest')].filter(Boolean).join('\n\n');
+// Every HEARD line in state from becomes to; how many moved.
+const move = (from: number, to: number) => db.prepare(`update chat set sent = ? where who in ${HEARD} and sent = ?`).run(to, from).changes; // (HEARD)
+
+// The lines waiting in the given states, handed over to a job: it holds what they are about (customer data, keys), and they
+// move to to, up to the last of them. deliver() and take() hand over the same way.
+function handOver(job: number, states: number[], to: number) {
+  const lines = db.prepare(`select id, who, text, about_customer, about_keys, call from chat where who in ${HEARD} and sent in (${states.join(', ')}) order by id`)
+    .all() as Line[];
+  if (!lines.length) return lines;
+  if (lines.some(m => m.about_customer)) handedCustomerData(job);
+  if (lines.some(m => m.about_keys || (m.call && carriesKeys(m.call)))) handedKeys(job);
+  db.prepare(`update chat set sent = ? where who in ${HEARD} and sent in (${states.join(', ')}) and id <= ?`).run(to, lines.at(-1)!.id); // (HEARD)
+  return lines;
+}
 
 // Queue the chat job with what the board said since the CEO last heard from it (added to a turn that hasn't
 // started yet), and any call notes waiting to go along. A new turn starts its attempts from 0, so it too is tried again
@@ -287,13 +302,9 @@ export const heard = (call: number) => !!db.prepare("select 1 from chat where ca
 // (an invited person's lines too, HEARD, headed as not the board's when only theirs
 // wait, each picture of theirs as theirs)
 function deliver(id: number, again = false) {
-  const unsent = db.prepare(`select id, who, text, about_customer, about_keys, call from chat where who in ${HEARD} and sent in (0, 3) order by id`)
-    .all() as { id: number; who: string; text: string; about_customer: number; about_keys: number; call: number | null }[];
+  const unsent = handOver(id, [WAITING, NEXT_TURN], WITH_CEO);
   if (!unsent.length) return;
   const says = `${unsent.some(m => m.who !== 'guest') ? 'The board says' : GUEST_HEAD}${again ? AGAIN_SAYS : ''}:`;
-  if (unsent.some(m => m.about_customer)) handedCustomerData(id);
-  if (unsent.some(m => m.about_keys || (m.call && carriesKeys(m.call)))) handedKeys(id);
-  db.prepare(`update chat set sent = 2 where who in ${HEARD} and sent in (0, 3) and id <= ?`).run(unsent.at(-1)!.id); // (HEARD)
   const job = db.prepare('select status, note from jobs where id = ?').get(id) as { status: string; note: string | null };
   const adds = job.status === 'queued' && job.note, long = adds ? undefined : setting(LONG);
   if (long) remember(LONG, null);
@@ -302,7 +313,7 @@ function deliver(id: number, again = false) {
     : `${long ? `(From HQ, not the board: your last reply ran ${long} words. Keep to about 80, the answer first.)\n\n` : ''}${says}\n\n`;
   db.prepare("update jobs set status = 'queued', seat = null, not_before = 0, note = ?, attempts = iif(status = 'queued', attempts, 0) where id = ?")
     .run(before + unsent.map(m => {
-      const text = [m.text, pictures.mention(pictures.ofLine(m.id), m.who === 'guest')].filter(Boolean).join('\n\n');
+      const text = lineText(m);
       if (marked || m.who === 'guest') return text;
       marked = true;   // (the board's line joining a note headed as the intercom's says it's the board's)
       return `The board says:\n\n${text}`;
@@ -310,14 +321,33 @@ function deliver(id: number, again = false) {
 }
 const GUEST_HEAD = 'From the intercom, not the board';
 
+// The inbox hook's step one for the running intercom turn: what the board (or a call, or a guest) said since the turn
+// began, offered to its session at its next step, or as it is about to stop. Offered until the hook says it printed them
+// (ack()); a turn that ends without that leaves them for the next one (answered()).
+export function take(job: number) {
+  const turn = current();
+  if (!turn || turn.id !== job || turn.status !== 'running') return [];
+  return handOver(job, [WAITING], OFFERED).map(m => ({ chat: m.id, from: m.who, text: lineText(m) }));
+}
+// Step two: the hook printed these lines, so the turn has them: with the CEO, answered when the turn ends done. They go
+// into the turn's note too, as deliver() writes its lines, so a rerun in a new session hears them. 400: not a list.
+export function ack(job: number, ids: unknown) {
+  if (!Array.isArray(ids)) return 400;
+  if (current()?.id !== job) return;   // (the turn has ended: answered() put them back)
+  const taken = db.prepare(`select id, who, text, about_customer, about_keys, call from chat where who in ${HEARD} and sent = ? and id = ?`);
+  const lines = [...new Set(ids.map(Number))].flatMap(id => taken.all(OFFERED, id) as Line[]);
+  for (const m of lines) db.prepare('update chat set sent = ? where id = ?').run(WITH_CEO, m.id);
+  if (lines.length) db.prepare("update jobs set note = coalesce(note || char(10) || char(10), '') || ? where id = ?").run(lines.map(lineText).join('\n\n'), job);
+}
+
 // The CEO's calls have a follow-up job like everyone's (ledger.ts). The board reads its notes here, as the CEO's reply after
 // the call, and the next turn hears them (without one starting just for that), so the CEO's session knows what was done.
 export function callNotes(call: number, job: number, notes: string, mins: number) {
   const ts = new Date().toISOString();
   const about = Number(holdsCustomerData(job));   // a follow-up of a call about a customer card (ledger.ts)
   const keys = Number(carriesKeys(call));
-  db.prepare("insert into chat (ts, who, text, shown, sent, about_customer, about_keys, call) values (?, 'call', ?, ?, 3, ?, ?, ?)").run(ts, `We had a call (call #${call}). Your follow-up job #${job} went through it, recorded what I asked for and handed out the work; these are its notes, which I read here as your reply:\n\n${notes}`, `Call with ${ceoName()} · about ${mins} min`, about, keys, call);
-  db.prepare('insert into chat (ts, who, text, sent, about_customer, about_keys) values (?, ?, ?, 1, ?, ?)').run(ts, ceo(), notes, about, keys);
+  db.prepare(`insert into chat (ts, who, text, shown, sent, about_customer, about_keys, call) values (?, 'call', ?, ?, ${NEXT_TURN}, ?, ?, ?)`).run(ts, `We had a call (call #${call}). Your follow-up job #${job} went through it, recorded what I asked for and handed out the work; these are its notes, which I read here as your reply:\n\n${notes}`, `Call with ${ceoName()} · about ${mins} min`, about, keys, call);
+  db.prepare(`insert into chat (ts, who, text, sent, about_customer, about_keys) values (?, ?, ?, ${ANSWERED}, ?, ?)`).run(ts, ceo(), notes, about, keys);
   publish({ type: 'chat', agent: ceo(), to: 'board', text: preview(notes, 160) });
 }
 

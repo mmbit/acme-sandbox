@@ -1,23 +1,23 @@
 // book-check.mjs's stories of the Notebook's page (shell/ink/bookgroups.js, booksave.js, bookpagesend.js), on the played
-// Notebook seeded as dev mode's (mock/notebook.json: My Notebook's three pages, the first sent with an answer under its
+// Notebook seeded as dev mode's (mock/notebook.json: My journal's three pages, the first sent with an answer under its
 // scrap):
-//   - an iPad mini, the Pencil and a finger: every group of two or more things clipped, a lone one not; Delete
-//     crumpling it with Undo; a line a group of its own, the next near it joining it; a scratch-out deleting it; Send,
-//     its Undo, sent again, the fresh page turned to, the sent page stamped with no clips and nothing written on it
-//     kept. Recorded with --shots.
-//   - a desktop, a mouse: the lasso's Group making two groups one, and two words of a group a group of their own;
-//     Move to page… and Undo; a group made on another screen drawn here as the store tells of it; a line added to a
+//   - an iPad mini, the Pencil and a finger: every group a scrap unit; Delete (Select's bar)
+//     crumpling it with Undo; a line a group of its own, the next near it joining it; a scratch-out deleting it; torn
+//     to Submit, sent at once and stamped where it is, no page made, nothing written on it kept. Recorded with
+//     --shots.
+//   - a desktop, a mouse: Move to page… and Undo; a group made on another screen drawn here as the store tells of it; a line added to a
 //     group another screen changed meanwhile, refused (409), kept and saved anew once the page is read again; a save
-//     the store refuses (503) said, Send sending nothing while it still refuses, and the page saved and sent once it's
-//     back.
+//     the store refuses (503) said, Submit sending nothing while it still refuses, and the page saved and sent once
+//     it's back.
 //   - a phone: the book a whole page, the sent page's scrap with its words, its answer under it (and an agent's card
 //     under another group), a reply written under the answer, kept while another answer comes, and taken back with
 //     its Undo; a new answer under it
 //     within seconds of the store's event, with a picture of what was made and its link, and ticked.
 import assert from 'node:assert/strict';
 import { readFile, rename } from 'node:fs/promises';
-import { clipped, held, onPaper, pen, stamp, tool, turnTo, where } from './booknotebookscreen.mjs';
-import { DESKTOP, MINI, until } from './bookkit.mjs';
+import { clipped, fromBar, onPaper, pen, stamp, turnTo, where } from './booknotebookscreen.mjs';
+import { DESKTOP, MINI, crumpled, until } from './bookkit.mjs';
+import { dragTo } from './bookshare.mjs';
 
 const SEED = JSON.parse(await readFile(new URL('./mock/notebook.json', import.meta.url), 'utf8'));
 const PHONE = { width: 390, height: 844 };
@@ -25,17 +25,15 @@ const PHONE = { width: 390, height: 844 };
 const SENT = 1,
   SECOND = 2,
   NEWEST = 3;
-const STAR = 7,
-  SPIRAL = 8,
-  WAVE = 9,
+const WAVE = 9,
   ROWS = 10;
 
 // c: book-check.mjs's hqIn, base, settled, shot, noErrorsIn, shots (the stills' folder, or null)
 export function notebookStories(c) {
   return {
-    'the Notebook on an iPad mini: groups clipped, lone things not, Delete and Undo, a line its own group, a scratch-out, Send and its Undo, the sent page stamped':
+    "the Notebook on an iPad mini: each group a unit, Delete from Select's bar and Undo, a line its own group, a scratch-out, torn to Submit, the sent page stamped and kept":
       browser => onMini(browser, c),
-    "the Notebook on a desktop: the lasso's Group joining and splitting, Move to page… and Undo, another screen's group drawn, a refused edit kept, a failed save tried again by Send":
+    "the Notebook on a desktop: Move to page… and Undo, another screen's group drawn, a refused edit kept, a failed save tried again by Submit":
       browser => onDesktop(browser, c),
     'the Notebook on a phone: the sent page whole, its answer under its scrap, a reply written (kept as another answer comes) and taken back, a new answer there within seconds, ticked':
       browser => onPhone(browser, c),
@@ -47,11 +45,17 @@ export function notebookStories(c) {
 async function onMini(browser, c) {
   const { page, play, errors, done } = await open(browser, c, MINI, { hasTouch: true, record: 'notebook-ipad-mini' });
   try {
-    assert.deepEqual(await clipped(page), held(groupsOn(play, NEWEST)), 'a clip on each group of two or more');
+    assert.deepEqual(
+      await clipped(page),
+      groupsOn(play, NEWEST)
+        .map(g => g.id)
+        .sort((a, b) => a - b),
+      'each group a unit on the page',
+    );
     await c.shot('notebook-mini-open', page);
     await deleteAndUndo(page, play, c);
     await linesAndScratch(page, play, c);
-    await sendAndUndo(page, play, c);
+    await torn(page, play, c);
     c.noErrorsIn(errors);
   } finally {
     await done();
@@ -59,18 +63,21 @@ async function onMini(browser, c) {
 }
 
 async function deleteAndUndo(page, play, c) {
-  // Delete from a clip's menu: gone at once, gone from the store, back with Undo
-  await page.locator(`#book .bk-clip[data-g="${WAVE}"]`).tap();
-  await page.locator('#book .bk-group-menu').waitFor();
+  // Delete from Select's bar: gone at once, gone from the store, back with Undo
+  const dropped = crumpled(page);
+  dropped.catch(() => {}); // a failure below shows first; awaiting it later still throws
+  await fromBar(page, WAVE, 'Delete', 'tap');
   await c.shot('notebook-mini-menu', page);
-  await page.locator('#book .bk-group-menu [data-act=delete]').tap();
-  assert.ok(!(await clipped(page)).includes(WAVE), 'the clip goes with its group at once');
+  await until(async () => !(await clipped(page)).includes(WAVE), 'the unit goes with its group at once', 2000);
+  const { picture, down, aside, shown } = await dropped;
+  assert.ok(picture && down > 40 && aside < 2, `crumpled and dropped straight down (${down} down, ${aside} aside)`);
+  assert.ok(shown > 0.4, `still shown as it drops (${shown})`);
   await page.locator('#toasts .toast', { hasText: 'Deleted' }).waitFor();
   await until(() => !ids(play, NEWEST).includes(WAVE), 'the group deleted in the store');
   await c.shot('notebook-mini-deleted', page);
   await page.locator('#book').getByRole('button', { name: 'Undo' }).first().tap();
   await until(() => ids(play, NEWEST).includes(WAVE), 'Undo restores it in the store');
-  await until(async () => (await clipped(page)).includes(WAVE), 'and its clip is back');
+  await until(async () => (await clipped(page)).includes(WAVE), 'and its unit is back');
 }
 
 async function linesAndScratch(page, play, c) {
@@ -105,24 +112,17 @@ async function linesAndScratch(page, play, c) {
   assert.deepEqual(ids(play, NEWEST), before, 'and leaves no ink of its own');
 }
 
-async function sendAndUndo(page, play, c) {
-  // Send: ten seconds to undo, taken back from its toast at once (its few seconds on screen can pass while a loaded
-  // worker turns the page, and a toast sliding in there never holds still for a tap: its own click); sent again, the
-  // fresh page turned to, and gone
-  await page.locator('#book').getByRole('button', { name: 'Send' }).tap();
-  await until(() => pageOf(play, NEWEST).sending, 'the page sending');
-  await page.locator('#toasts .toast', { hasText: 'Sent' }).locator('.cover').dispatchEvent('click');
-  await until(() => !pageOf(play, NEWEST).sending, 'the send taken back');
-  await turnTo(page, NEWEST);
-  await page.locator('#book').getByRole('button', { name: 'Send' }).tap();
-  await until(() => pagesOf(play).find(p => p.id > NEWEST && !p.sending), 'a fresh page made');
-  const n = pagesOf(play).length;
-  await until(async () => (await where(page)).endsWith(`${n} / ${n}`), 'the fresh page, the last, turned to');
+// Torn to Submit with a finger: sent at once, the page stays shown and stamped, no page made; nothing written on it is
+// kept
+async function torn(page, play, c) {
+  const n = pagesOf(play).length,
+    at = await where(page);
+  await dragTo(page, 'touch', 'submit');
+  await until(() => pageOf(play, NEWEST).sent, 'sent at once');
+  await until(async () => /^Sent /.test(await stamp(page)), 'the page stamped where it is');
+  assert.equal(await where(page), at, 'the page stays shown');
+  assert.equal(pagesOf(play).length, n, 'no page made');
   await c.shot('notebook-mini-sending', page);
-  await until(() => pageOf(play, NEWEST).sent, 'sent once its ten seconds are over', 14_000);
-  await turnTo(page, NEWEST);
-  await until(async () => /^Sent /.test(await stamp(page)), 'the sent page stamped');
-  assert.deepEqual(await clipped(page), [], "a sent page's groups have no clip");
   const kept = ids(play, NEWEST);
   await pen(
     page,
@@ -139,7 +139,6 @@ async function sendAndUndo(page, play, c) {
 async function onDesktop(browser, c) {
   const { page, play, errors, done } = await open(browser, c, DESKTOP, { hasTouch: false, deviceScaleFactor: 1 });
   try {
-    await joinAndSplit(page, play, c);
     await moveAndUndo(page, play);
     await otherScreen(page, play);
     await refusedEdit(page, play, c);
@@ -150,47 +149,16 @@ async function onDesktop(browser, c) {
   }
 }
 
-async function lasso(page, from, to) {
-  const [a, b] = await onPaper(page, [from, to]);
-  await page.mouse.move(...a);
-  await page.mouse.down();
-  await page.mouse.move(b[0], b[1], { steps: 12 });
-  await page.mouse.up();
-  await page.locator('#book .bk-sel-bar button', { hasText: 'Group' }).click();
-}
-
-async function joinAndSplit(page, play, c) {
-  // the lasso round the star and the spiral, then Group: one group of both
-  const before = ids(play, NEWEST);
-  await tool(page, 'Select');
-  await lasso(page, [40, 80], [420, 260]);
-  await until(() => ids(play, NEWEST).filter(id => [STAR, SPIRAL].includes(id)).length < 2, 'the two joined');
-  const joined = ids(play, NEWEST).find(id => group(play, id).ink.length === 2);
-  assert.ok(joined, 'one group holds the star and the spiral');
-  await until(async () => (await clipped(page)).includes(joined), "the joined group's clip");
-  await c.shot('notebook-desktop-grouped', page);
-  await page.keyboard.press('Escape');
-  // the lasso round two words of the rows' first line, then Group: split out of the rows as a group of their own
-  await lasso(page, [128, 452], [300, 482]);
-  await until(() => group(play, ROWS).ink.length === 6, 'the two words split out of the rows');
-  const split = ids(play, NEWEST).find(id => !before.includes(id) && id !== joined);
-  assert.equal(group(play, split)?.ink.length, 2, 'into a group of their own');
-  await until(async () => (await clipped(page)).includes(split), "the split group's clip");
-  await page.keyboard.press('Escape');
-}
-
 async function moveAndUndo(page, play) {
-  // Move to page…: the wave onto the page before, its clip gone here; Undo brings it back
-  await tool(page, 'Pen');
-  await page.locator(`#book .bk-clip[data-g="${WAVE}"]`).click();
-  await page.locator('#book .bk-group-menu [data-act=move]').click();
-  await page.locator(`#book .bk-group-menu [data-page="${SECOND}"]`).click();
+  // Move to page… on Select's bar: the wave onto the page before, its unit gone here; Undo brings it back
+  await fromBar(page, WAVE, 'Move to page…');
+  await page.locator(`#book [role=menu] [data-page="${SECOND}"]`).click();
   await until(() => group(play, WAVE)?.page === SECOND, 'the group moved in the store');
   await until(async () => !(await clipped(page)).includes(WAVE), 'and off this page');
   await page.mouse.move(DESKTOP.width - 200, DESKTOP.height / 2);
   await page.keyboard.press('Control+z');
   await until(() => group(play, WAVE)?.page === NEWEST, 'Undo moves it back');
-  await until(async () => (await clipped(page)).includes(WAVE), 'its clip back here');
+  await until(async () => (await clipped(page)).includes(WAVE), 'its unit back here');
 }
 
 async function otherScreen(page, play) {
@@ -248,8 +216,8 @@ async function refusedEdit(page, play, c) {
   await c.shot('notebook-desktop-synced', page);
 }
 
-// A line drawn while the store refuses: its save fails, said on the page, and Send, trying it again, sends nothing
-// while the store still refuses (the store's older groups would go in its place); once the store answers, Send saves
+// A line drawn while the store refuses: its save fails, said on the page, and Submit, trying it again, sends nothing
+// while the store still refuses (the store's older groups would go in its place); once the store answers, Submit saves
 // the line and sends the page.
 async function failedSave(page, play) {
   const down = r => r.fulfill({ status: 503, json: { error: 'The store is busy' } });
@@ -264,13 +232,12 @@ async function failedSave(page, play) {
     page.mouse,
   );
   await page.locator('#book .bk-refusal:not([hidden])').first().waitFor();
-  const send = page.locator('#book').getByRole('button', { name: 'Send' });
-  await send.click();
+  await dragTo(page, 'mouse', 'submit');
   await page.waitForTimeout(1500);
-  assert.ok(!pageOf(play, NEWEST).sending, 'a page whose save failed again is not sent');
+  assert.ok(!pageOf(play, NEWEST).sent, 'a page whose save failed again is not sent');
   await page.unroute('**/api/notebooks/groups/*', down);
-  await send.click();
-  await until(() => pageOf(play, NEWEST).sending, 'the page sent once the store answers');
+  await dragTo(page, 'mouse', 'submit');
+  await until(() => pageOf(play, NEWEST).sent, 'the page sent once the store answers');
   assert.ok(
     groupsOn(play, NEWEST).some(g => g.ink.some(s => near(s.points[0], [150, 610]))),
     'with the line its failed save held',

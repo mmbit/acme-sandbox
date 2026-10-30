@@ -4,10 +4,9 @@
 // a rectangle. A pen drawn across the page starts all this by itself (a pen's tap stays the page's), and once a pen has
 // drawn on a note only the pen draws: a palm resting on the screen doesn't, and a finger still scrolls and taps
 // everything else.
-import { ACCENT, PIN, button, keep, kept } from './base.js';
+import { ACCENT, PEN, PIN, button, keep, kept } from './base.js';
 import * as inkjs from './ink.js';
 import { uncoach } from './dock.js';
-import { shut } from './acts.js';
 import { compose, develop } from './postit.js';
 import { aim, boxOfLines } from './mark.js';
 import { unpicture } from './pictures.js';
@@ -60,7 +59,7 @@ export const CSS = `
       @keyframes land { from { transform: translateY(-40px) scale(1.4); opacity: 0 } }`;
 
 // (the ink and the outline sit outside the veil)
-export const HTML = `<div class="veil" hidden><div class="bar"><div class="hint"><i>${PIN}</i><span>Tap anything <small>or draw on it</small></span></div>
+export const HTML = `<div class="veil" hidden><div class="bar"><div class="hint"><i>${PEN}</i><span>Tap anything <small>or draw on it</small></span></div>
         <div class="strip" role="toolbar" aria-label="Inks"><span class="sep"></span><button class="undo" aria-label="Undo the last line" title="Undo" disabled>${UNDO}</button></div></div></div>
       <canvas class="halo" data-watchalong-hide></canvas>
       <canvas class="ink" data-watchalong-hide></canvas><canvas class="wet" data-watchalong-hide></canvas><div class="hl" hidden></div>`;
@@ -91,7 +90,6 @@ export function pick(r) {
   r.veil.classList.toggle('call', !!r.calling);
   r.undoButton.disabled = true;
   r.fab.classList.add('on');
-  r.more.hidden = true;
   paintInk(r, []);
   r.hl.hidden = true;
 }
@@ -242,7 +240,6 @@ function penOnPage(r) {
       penDown = null;
       if (r.mode !== 'idle') return;
       uncoach(r);
-      shut(r);
       pick(r);
       if (r.penOn.start(down)) {
         e.stopPropagation();

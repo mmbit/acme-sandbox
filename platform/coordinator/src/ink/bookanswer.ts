@@ -3,8 +3,8 @@
 // run (chat.ts), and while it goes the group shows the owner's face and pencil dots at the spot the answer will take.
 // What an answer holds is its style: 'text' (words, a picture or a preview's link), 'drawing' (ink), 'form' (questions,
 // questions.js's, the board fills in), 'question' (the agent asks the board), 'version' (a try run's frame of the thing
-// changed, with its patch: booktry.ts). It lies where the paper is free (answerspot.ts), never over the board's groups,
-// and keeps that spot. The board ticks it (a version: picks it), writes a reply under it (notebooksend.ts replyTo) or
+// changed, with its patch: booktry.ts). It slips under the scrap it's on. The
+// board ticks it (a version: picks it), writes a reply under it (notebooksend.ts replyTo) or
 // answers its form; the open list is the forms and questions still waiting on the board.
 //   - Every change is a 'book' event with text 'notebook' and the page (notebook.ts changed).
 import { randomBytes } from 'node:crypto';
@@ -20,10 +20,9 @@ import { BOARD } from './book.ts';
 import { note, shown, type Note } from './booknotes.ts';
 import { keep } from './booksheets.ts';
 import { SLIP_MAX, addSlip, slipOf, slipRow, type More, type Slip } from './bookslips.ts';
-import { type Contents, type Spot } from './answerspot.ts';
-import { placeFor, QUICK_WORDS } from './answerplace.ts';
 import { onCall, rootOn, tryHolds } from './booktry.ts';
 import { pick } from './bookpick.ts';
+import { branchVersion, overMain } from './trybranch.ts';
 import { partsOfAnswer } from './answerparts.ts';
 import { isRefused, type Refused } from '../pagechecks.ts';
 import { DIR } from '../pagescraps.ts';
@@ -50,14 +49,9 @@ export function answerNow(t: Target, verdict: { id: number; why: string }) {
   forgetReason(t);
   if (root.kind === 'group') {
     const { target: g, root: top, page: p } = root;
-    const spot = placeFor(top, { text: QUICK_WORDS }, null, null);
     const job = quickRun(root.owner, 'A note in the board’s notebook', groupBrief(g, top, p.id, verdict.why), PURPOSE);
     movedOn(top);
-    db.prepare('update notebook_groups set asked = ?, asked_spot = ? where id = ?').run(
-      job,
-      JSON.stringify(spot),
-      g.id,
-    );
+    db.prepare('update notebook_groups set asked = ? where id = ?').run(job, g.id);
     changed(p.notebook, p.id);
     return job;
   }
@@ -149,21 +143,14 @@ function reasonAt(t: Target) {
 // A text answer on a group or a note (a call's agent's too, booktry.ts): the slip's id
 export const clipText = (t: Target, by: string, text: string, job: number | null = null) =>
   clip(t, by, job, text, { style: 'text' }).id;
-// An answer on a target: its spot decided once (a group's, beside it on free paper; a version's lies on its versions
-// page, none), and the page told. a: what it holds, for its height (its words alone, if not given)
-function clip(t: Target, by: string, job: number | null, text: string, more: More, a?: Contents) {
+// An answer on a target, and the page told (a version lies on its versions page)
+function clip(t: Target, by: string, job: number | null, text: string, more: More) {
   forgetReason(t);
   const g = groupOn(t);
   const top = g && rootOf(g);
-  let spot: Spot | null = null;
-  if (top && more.style !== 'version') {
-    const asked = job !== null && g!.asked === job && g!.asked_spot ? (JSON.parse(g!.asked_spot) as Spot) : null;
-    spot = placeFor(top, a ?? { text }, asked, job);
-  }
   const slip = addSlip(t.grp !== undefined ? (g?.note ?? null) : t.note!, by, job, text, {
     ...more,
     grp: more.style === 'version' && top ? top.id : (g?.id ?? null),
-    spot: spot && JSON.stringify(spot),
   });
   landedIn(top);
   return slip;
@@ -198,7 +185,7 @@ const landedIn = (top: Group | undefined) => {
 const movedOn = (top: Group) =>
   db
     .prepare(
-      `update notebook_groups set asked = null, asked_spot = null where (id = ? or parent = ?)
+      `update notebook_groups set asked = null where (id = ? or parent = ?)
       and asked not in (select id from jobs where status in ('queued', 'running'))
       and asked not in (select job from book_slips where job is not null)`,
     )
@@ -228,9 +215,12 @@ export function answer(b: any, me: Reader) {
   }
   const parts = partsOfAnswer(b);
   if (isRefused(parts)) return parts;
-  return inOneStep(() => {
+  // (a version's patch must make its branch: trybranch.ts.)
+  const version = parts.patch === null ? null : overMain(parts.patch);
+  if (typeof version === 'string') return [400, version] as Refused;
+  const clipped = inOneStep(() => {
     const t = target.group ? { grp: target.group.id } : { note: target.note!.id };
-    const slip = clip(t, me.agent, me.id || null, parts.text, parts.more, parts.contents);
+    const slip = clip(t, me.agent, me.id || null, parts.text, parts.more);
     if (parts.patch) {
       const file = `patch${slip.id}-${randomBytes(4).toString('hex')}.diff`;
       keepFile(`${DIR}/${file}`, Buffer.from(parts.patch));
@@ -239,6 +229,12 @@ export function answer(b: any, me: Reader) {
     if (target.held) feedback.answeredInBook(target.note!.review!, parts.text || `(${parts.more.style})`);
     return { slip: slipOf(db.prepare('select * from book_slips where id = ?').get(slip.id) as Slip) };
   });
+  // (its own branch, made on GitHub after its answer)
+  if (version)
+    void branchVersion(clipped.slip.id, version).catch(err =>
+      console.error(`Version ${clipped.slip.id}: no branch:`, err),
+    );
+  return clipped;
 }
 // Whose the answer is: a group's quick run's or try run's (not a deleted group's), a note's holder's or its quick run's
 function targetOf(b: any, me: Reader): { group?: Group; note?: Note; held?: boolean } | Refused {

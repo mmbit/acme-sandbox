@@ -32,7 +32,13 @@ test.beforeEach(clear);
 // A message's job waits for its sort (sorting.ts): the CEO names it, as its sender's job is in no project, and it may start
 function sort(job: number, title: string, code: string) {
   const { proposal } = db.prepare('select proposal from sorts where job = ?').get(job) as { proposal: number };
-  assert.deepEqual(proposals.accept(proposal, ceo(), { title, code }), { job, code, thread: null, sorted: true });
+  const accepted = proposals.accept(proposal, ceo(), {
+    size: '30m',
+    why: 'Test scope judgment without a comparable completed job',
+    title,
+    code,
+  });
+  assert.deepEqual(accepted, { job, code, thread: null, sorted: true });
 }
 
 // A running job for `agent` on `engine`: the Claude engine is the only one that takes messages mid-run.

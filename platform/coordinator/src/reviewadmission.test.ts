@@ -1,5 +1,5 @@
 // node --test src/reviewadmission.test.ts   (uses a throwaway DATA_DIR)
-import { test } from 'node:test';
+import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { memoryReport } from './memory.fixture.ts';
 import { harness } from './harness.ts';
@@ -7,6 +7,8 @@ import { harness } from './harness.ts';
 const h = await harness('review-admission');
 const seat = 'capacity-codex';
 const claim = () => h.claim('codex', { seat, util: 0 });
+// (the judge a deadline's deliverable wakes as its last task ends with nothing to merge isn't these tests': threadorder.test.ts)
+afterEach(() => h.cancelJudges());
 
 test('ready reviews get one occupied Codex place while work keeps the other and resumes its session', async () => {
   await h.capacity({ codex: 2 });
@@ -226,6 +228,7 @@ for (const engine of ['codex', 'claude'])
       const next = (await h.claim(engine, { seat: bound, util: 0 }))!;
       assert.equal(next.id, waiting);
       await h.finish(next);
+      h.cancelJudges(); // (the deliverable's end woke its owner's judge)
       const resumed = (await h.claim(engine, { seat: bound, util: 0 }))!;
       assert.equal(resumed.id, active.id);
       assert.equal(resumed.session, 'kept-review');
@@ -255,6 +258,7 @@ for (const kind of ['review', 'consolidate'])
       const next = (await h.claim('claude', { seat: bound, ...(measured ? { room: 1300 } : {}), util: 0 }))!;
       assert.equal(next.id, waiting, 'the windowed run takes the next sufficient room on the free seat');
       await h.finish(next);
+      h.cancelJudges(); // (the deliverable's end woke its owner's judge)
       const last = (await h.claim('claude', { seat: bound, room: 900, util: 0 }))!;
       assert.equal(last.id, lower);
       await h.finish(last);
@@ -337,6 +341,7 @@ for (const expedited of [false, true])
         await h.finish(last);
         await h.finish((await claim())!);
       }
+      h.cancelJudges(); // (the deliverable's end woke its owner's judge)
       await h.capacity({ codex: 2 });
     });
 
@@ -378,6 +383,7 @@ test('an idle seat preserves deadline room from the first yield request through 
   const started = (await h.claim('claude', { seat: idle, util: 0, room: 800 }))!;
   assert.equal(started.id, urgent);
   await h.finish(started);
+  h.cancelJudges(); // (the deliverable's end woke its owner's judge)
   const resumed = (await h.claim('claude', { seat: busy, util: 0 }))!;
   assert.equal(resumed.id, lower.id);
   assert.equal(resumed.session, 'saved-lower');

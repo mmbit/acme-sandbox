@@ -189,7 +189,9 @@ class FirewallNamedForItsServer(FakeHetzner):
 class ResizeStopsOnAnUnknownOutcome(FakeHetzner):
     """resize.sh with the board's types cx43 cpx42 cpx41: a copy of it, with its own server-type and server-disk."""
 
-    def run_resize(self, servers, disk='keep', failing=(), ends={}):
+    def run_resize(self, servers, disk='keep', failing=(), ends={}, cap='MAX_EUR=35\n'):
+        with open(self.env['INFRA_ENV'], 'a') as f:
+            f.write(cap)
         infra = os.path.join(self.tmp.name, 'infra')
         os.makedirs(infra, exist_ok=True)
         for name in ['resize.sh', 'hetzner.sh', 'infra-env.sh']:
@@ -221,6 +223,19 @@ class ResizeStopsOnAnUnknownOutcome(FakeHetzner):
         self.assertEqual(state['calls'], ['shutdown', 'change_type cx43'])
         self.assertIn('::error::Could not grow the disk of testco-1: no reply about action 2', run.stderr)
         self.assertNotIn("didn't grow", run.stdout)
+
+    def test_every_type_over_the_cap_is_skipped(self):
+        run, state = self.run_resize([server(1, 'testco-1', [])], cap='MAX_EUR=19.5\n')
+        self.assertEqual(state['calls'], [])
+        self.assertIn('cx43: not offered here or over the cap (20.0000)', run.stdout)
+
+    def test_no_cap_in_company_infra_env_changes_nothing(self):
+        for cap in ('', 'MAX_EUR=lots\n'):
+            with self.subTest(cap=cap):
+                run, state = self.run_resize([server(1, 'testco-1', [])], cap=cap)
+                self.assertEqual(run.returncode, 1, run.stdout + run.stderr)
+                self.assertEqual(state['lookups'] + len(state['calls']), 0)
+                self.assertIn('::error::company/infra.env has no MAX_EUR', run.stderr)
 
 
 if __name__ == '__main__':

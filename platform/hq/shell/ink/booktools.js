@@ -1,11 +1,11 @@
 // The book's tools for a mouse and a pen: what a press on the paper does with the tool in use (bookpalette.js: the pen,
-// the highlighter, the eraser, shapes, Select, typed words and the hand). Only Select moves things (bookselect.js): with
+// the marker, the eraser, shapes, Select and typed words). Only Select moves things (bookselect.js): with
 // any other tool a picture taped in is paper like the page, and the pen draws on it. (the sheets' post-its gone; the
 // pictures' own grab-to-move gone, one way to move things: job #13071) The eraser and shapes start anywhere on the page.
 // (eraser, shapes, Select: job #19243)
 //
-// bookpages.js mounts them and asks, on a press on the paper: hand mode (mode()) pans; press(e) true: taken here;
-// otherwise the pen draws with ink().
+// bookpages.js mounts them and asks, on a press on the paper: press(e) true: taken here; otherwise the pen draws with
+// ink().
 import { stylesheet } from '../../util.js';
 import { controlsLeft } from './bookui.js';
 import { mountTexts } from './booktexts.js';
@@ -44,7 +44,7 @@ export function mountTools(book, paper, hooks) {
   // (a tool put down lets its selection go)
   st.changedTool = () => st.select.settle();
   mountPalette(st);
-  // (the strip, and a press held: a voice note or the radial menu, and whether a finger draws.)
+  // (the rail, and a press held: a voice note or the radial menu, and whether a finger draws.)
   st.strip = mountStrip(st, setMode);
   mountInput(book);
   // (pages read before the tools were here: their words now)
@@ -64,7 +64,7 @@ function toolsOf(st) {
     added: view => st.texts.added(view),
     // Words set on a page in a box of their own (pasted, dropped, a voice note heard): booktexts.js put.
     put: (...a) => st.texts.put(...a),
-    // One tool on or back through the strip (Ctrl and the wheel: bookpan.js).
+    // One tool on or back along the rail (Ctrl and the wheel: bookpan.js).
     cycle: by => st.strip.cycle(by),
     // A tool picked (the radial menu), and the dot a first tap drew at a point on its page taken off (bookinput.js)
     use: mode => setMode(st, mode),

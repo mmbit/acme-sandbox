@@ -31,7 +31,6 @@
         "anchor": null,
         "owner": null,
         "owner_name": null,
-        "tries_page": null,
         "waiting": null,
         "children": [
           {
@@ -55,11 +54,14 @@
             "spot": {
               "dx": 8,
               "dy": 44,
-              "w": 330
+              "w": 330,
+              "h": 110
             },
             "ticked": null,
             "picked": null,
-            "created": "2026-10-27T23:38:11.273Z"
+            "created": "2026-10-27T23:38:11.273Z",
+            "crossed": null,
+            "cleared": null
           },
           {
             "kind": "reply",
@@ -123,7 +125,8 @@
           }
         ],
         "created": "2026-10-27T21:30:11.273Z",
-        "updated": "2026-10-27T21:30:11.273Z"
+        "updated": "2026-10-27T21:30:11.273Z",
+        "try": null
       },
       {
         "id": 62,
@@ -357,7 +360,6 @@
         "anchor": null,
         "owner": null,
         "owner_name": null,
-        "tries_page": null,
         "waiting": null,
         "children": [
           {
@@ -701,15 +703,19 @@
             "spot": {
               "dx": 8,
               "dy": 130,
-              "w": 330
+              "w": 330,
+              "h": 220
             },
             "ticked": null,
             "picked": null,
-            "created": "2026-10-27T23:28:11.273Z"
+            "created": "2026-10-27T23:28:11.273Z",
+            "crossed": null,
+            "cleared": null
           }
         ],
         "created": "2026-10-27T21:31:11.273Z",
-        "updated": "2026-10-27T21:31:11.273Z"
+        "updated": "2026-10-27T21:31:11.273Z",
+        "try": null
       },
       {
         "id": 63,
@@ -740,7 +746,6 @@
         "anchor": null,
         "owner": null,
         "owner_name": null,
-        "tries_page": null,
         "waiting": null,
         "children": [
           {
@@ -773,130 +778,19 @@
             "spot": {
               "dx": 8,
               "dy": 40,
-              "w": 330
+              "w": 330,
+              "h": 200
             },
             "ticked": null,
             "picked": null,
-            "created": "2026-10-27T23:18:11.273Z"
+            "created": "2026-10-27T23:18:11.273Z",
+            "crossed": null,
+            "cleared": null
           }
         ],
         "created": "2026-10-27T21:32:11.273Z",
-        "updated": "2026-10-27T21:32:11.273Z"
-      },
-      {
-        "id": 64,
-        "page": 6,
-        "kind": "drawing",
-        "by": "board",
-        "ink": [],
-        "texts": [
-          {
-            "x": 32,
-            "y": 1080,
-            "w": 190,
-            "text": "the header, warmer?",
-            "color": "#2a2352"
-          }
-        ],
-        "pictures": [],
-        "words": "the header, warmer?",
-        "said": null,
-        "status": "open",
-        "note": null,
-        "box": {
-          "x": 32,
-          "y": 1080,
-          "w": 190,
-          "h": 24
-        },
-        "anchor": null,
-        "owner": null,
-        "owner_name": null,
-        "tries_page": 7,
-        "waiting": {
-          "by": "lyra",
-          "name": "Lyra",
-          "spot": null,
-          "style": "versions",
-          "count": 3
-        },
-        "children": [
-          {
-            "kind": "answer",
-            "id": 641,
-            "note": null,
-            "grp": null,
-            "by": "lyra",
-            "name": "Lyra",
-            "face": null,
-            "style": "question",
-            "text": "Warmer in colour, or warmer in its words? I’m trying colour first.",
-            "picture": null,
-            "link": null,
-            "preview": null,
-            "ink": null,
-            "form": null,
-            "form_answer": null,
-            "version": null,
-            "patch": false,
-            "spot": {
-              "dx": 8,
-              "dy": 42,
-              "w": 320
-            },
-            "ticked": null,
-            "picked": null,
-            "created": "2026-10-27T23:08:11.273Z"
-          },
-          {
-            "kind": "answer",
-            "id": 642,
-            "note": null,
-            "grp": null,
-            "by": "lyra",
-            "name": "Lyra",
-            "face": null,
-            "style": "version",
-            "text": null,
-            "picture": "mock/notebook-version-1.svg",
-            "link": null,
-            "preview": null,
-            "ink": null,
-            "form": null,
-            "form_answer": null,
-            "version": "terracotta",
-            "patch": true,
-            "spot": null,
-            "ticked": null,
-            "picked": null,
-            "created": "2026-10-27T23:07:11.273Z"
-          },
-          {
-            "kind": "answer",
-            "id": 643,
-            "note": null,
-            "grp": null,
-            "by": "lyra",
-            "name": "Lyra",
-            "face": null,
-            "style": "version",
-            "text": null,
-            "picture": "mock/notebook-version-2.svg",
-            "link": null,
-            "preview": null,
-            "ink": null,
-            "form": null,
-            "form_answer": null,
-            "version": "honey",
-            "patch": true,
-            "spot": null,
-            "ticked": null,
-            "picked": null,
-            "created": "2026-10-27T23:06:11.273Z"
-          }
-        ],
-        "created": "2026-10-27T21:33:11.273Z",
-        "updated": "2026-10-27T21:33:11.273Z"
+        "updated": "2026-10-27T21:32:11.273Z",
+        "try": null
       },
       {
         "id": 65,
@@ -907,7 +801,7 @@
         "texts": [
           {
             "x": 32,
-            "y": 1300,
+            "y": 1080,
             "w": 300,
             "text": "is the shop live yet?",
             "color": "#2a2352"
@@ -920,27 +814,28 @@
         "note": null,
         "box": {
           "x": 32,
-          "y": 1300,
+          "y": 1080,
           "w": 300,
           "h": 24
         },
         "anchor": null,
         "owner": null,
         "owner_name": null,
-        "tries_page": null,
         "waiting": {
           "by": "kit",
           "name": "Kit",
           "spot": {
             "dx": 8,
             "dy": 40,
-            "w": 300
+            "w": 300,
+            "h": 30
           },
           "style": "text"
         },
         "children": [],
         "created": "2026-10-27T21:34:11.273Z",
-        "updated": "2026-10-27T21:34:11.273Z"
+        "updated": "2026-10-27T21:34:11.273Z",
+        "try": null
       },
       {
         "id": 66,
@@ -951,7 +846,7 @@
         "texts": [
           {
             "x": 32,
-            "y": 1400,
+            "y": 1180,
             "w": 340,
             "text": "how does pricing look on a phone?",
             "color": "#2a2352"
@@ -964,14 +859,13 @@
         "note": null,
         "box": {
           "x": 32,
-          "y": 1400,
+          "y": 1180,
           "w": 340,
           "h": 24
         },
         "anchor": null,
         "owner": null,
         "owner_name": null,
-        "tries_page": null,
         "waiting": null,
         "children": [
           {
@@ -995,136 +889,231 @@
             "spot": {
               "dx": 8,
               "dy": 40,
-              "w": 300
+              "w": 300,
+              "h": 110
             },
             "ticked": null,
             "picked": null,
-            "created": "2026-10-27T22:48:11.273Z"
+            "created": "2026-10-27T22:48:11.273Z",
+            "crossed": null,
+            "cleared": null
           }
         ],
         "created": "2026-10-27T21:35:11.273Z",
-        "updated": "2026-10-27T21:35:11.273Z"
+        "updated": "2026-10-27T21:35:11.273Z",
+        "try": null
+      },
+      {
+        "id": 64,
+        "page": 6,
+        "kind": "drawing",
+        "by": "board",
+        "ink": [],
+        "texts": [
+          {
+            "x": 32,
+            "y": 1320,
+            "w": 190,
+            "text": "the header, warmer?",
+            "color": "#2a2352"
+          }
+        ],
+        "pictures": [],
+        "words": "the header, warmer?",
+        "said": null,
+        "status": "open",
+        "note": null,
+        "box": {
+          "x": 32,
+          "y": 1320,
+          "w": 190,
+          "h": 24
+        },
+        "anchor": null,
+        "owner": null,
+        "owner_name": null,
+        "waiting": null,
+        "children": [
+          {
+            "kind": "answer",
+            "id": 641,
+            "note": null,
+            "grp": null,
+            "by": "lyra",
+            "name": "Lyra",
+            "face": null,
+            "style": "question",
+            "text": "Warmer in colour, or warmer in its words? I’m trying colour first.",
+            "picture": null,
+            "link": null,
+            "preview": null,
+            "ink": null,
+            "form": null,
+            "form_answer": null,
+            "version": null,
+            "patch": false,
+            "spot": {
+              "dx": 8,
+              "dy": 42,
+              "w": 320,
+              "h": 110
+            },
+            "ticked": null,
+            "picked": null,
+            "created": "2026-10-27T23:08:11.273Z",
+            "crossed": null,
+            "cleared": null
+          },
+          {
+            "kind": "answer",
+            "id": 642,
+            "note": null,
+            "grp": null,
+            "by": "lyra",
+            "name": "Lyra",
+            "face": null,
+            "style": "version",
+            "text": "A warm terracotta header over a cream page",
+            "picture": "mock/notebook-version-1.svg",
+            "link": "https://header-terracotta.preview.example.com/",
+            "ink": null,
+            "form": null,
+            "form_answer": null,
+            "version": "Terracotta",
+            "patch": true,
+            "spot": null,
+            "ticked": null,
+            "picked": null,
+            "created": "2026-10-27T23:07:11.273Z",
+            "branch": "try/64-terracotta",
+            "crossed": null,
+            "cleared": null
+          },
+          {
+            "kind": "answer",
+            "id": 643,
+            "note": null,
+            "grp": null,
+            "by": "lyra",
+            "name": "Lyra",
+            "face": null,
+            "style": "version",
+            "text": "Honey yellow, the buttons a shade darker",
+            "picture": "mock/notebook-version-2.svg",
+            "link": "https://header-honey.preview.example.com/",
+            "ink": null,
+            "form": null,
+            "form_answer": null,
+            "version": "Honey",
+            "patch": true,
+            "spot": null,
+            "ticked": null,
+            "picked": "2026-10-27T23:20:00.000Z",
+            "created": "2026-10-27T23:06:11.273Z",
+            "branch": "try/64-honey",
+            "crossed": null,
+            "cleared": null
+          },
+          {
+            "kind": "answer",
+            "id": 644,
+            "note": null,
+            "grp": null,
+            "by": "lyra",
+            "name": "Lyra",
+            "face": null,
+            "style": "version",
+            "text": "Soft sage with dark green type, the calmest",
+            "picture": "mock/notebook-version-3.svg",
+            "link": "https://header-sage.preview.example.com/",
+            "ink": null,
+            "form": null,
+            "form_answer": null,
+            "version": "Sage green",
+            "patch": true,
+            "spot": null,
+            "ticked": null,
+            "picked": null,
+            "created": "2026-10-27T23:05:11.273Z",
+            "branch": "try/64-sage",
+            "crossed": null,
+            "cleared": null
+          },
+          {
+            "kind": "reply",
+            "id": 6401,
+            "answers": 643,
+            "ink": [
+              {
+                "color": "#2a2352",
+                "size": 3,
+                "points": [
+                  [64.3, -16.7, 0.5, 0],
+                  [83.0, -20.1, 0.5, 12],
+                  [102.6, -21.0, 0.5, 24],
+                  [122.1, -19.4, 0.5, 36],
+                  [140.5, -15.4, 0.5, 48],
+                  [157.1, -9.1, 0.5, 60],
+                  [171.6, -0.6, 0.5, 72],
+                  [184.0, 9.9, 0.5, 84],
+                  [194.5, 22.0, 0.5, 96],
+                  [203.4, 35.5, 0.5, 108],
+                  [210.7, 50.0, 0.5, 120],
+                  [216.0, 65.2, 0.5, 132],
+                  [218.6, 80.6, 0.5, 144],
+                  [218.0, 95.8, 0.5, 156],
+                  [213.6, 110.6, 0.5, 168],
+                  [205.2, 124.4, 0.5, 180],
+                  [193.3, 136.9, 0.5, 192],
+                  [178.5, 147.9, 0.5, 204],
+                  [161.7, 156.9, 0.5, 216],
+                  [143.9, 163.9, 0.5, 228],
+                  [125.7, 168.5, 0.5, 240],
+                  [107.5, 170.8, 0.5, 252],
+                  [89.3, 170.6, 0.5, 264],
+                  [71.1, 167.9, 0.5, 276],
+                  [52.9, 162.8, 0.5, 288],
+                  [35.2, 155.5, 0.5, 300],
+                  [18.8, 146.1, 0.5, 312],
+                  [4.4, 134.8, 0.5, 324],
+                  [-7.0, 122.0, 0.5, 336],
+                  [-14.7, 108.0, 0.5, 348],
+                  [-18.4, 93.2, 0.5, 360],
+                  [-18.4, 77.8, 0.5, 372],
+                  [-15.2, 62.5, 0.5, 384],
+                  [-9.5, 47.4, 0.5, 396],
+                  [-2.0, 33.0, 0.5, 408],
+                  [7.2, 19.7, 0.5, 420],
+                  [18.1, 7.9, 0.5, 432],
+                  [30.8, -2.2, 0.5, 444],
+                  [45.7, -10.4, 0.5, 456],
+                  [62.6, -16.3, 0.5, 468],
+                  [81.3, -19.9, 0.5, 480],
+                  [100.8, -21.0, 0.5, 492],
+                  [120.4, -19.7, 0.5, 504],
+                  [138.9, -15.9, 0.5, 516]
+                ]
+              }
+            ],
+            "frame": {
+              "x": 0,
+              "y": 0,
+              "w": 200,
+              "h": 150
+            },
+            "created": "2026-10-27T23:19:00.000Z"
+          }
+        ],
+        "created": "2026-10-27T21:33:11.273Z",
+        "updated": "2026-10-27T21:33:11.273Z",
+        "try": {
+          "state": "made",
+          "expect": 3,
+          "by": "lyra",
+          "name": "Lyra",
+          "reason": null
+        }
       }
     ]
-  },
-  "7": {
-    "page": 7,
-    "groups": [],
-    "tries": 64,
-    "tried": {
-      "id": 64,
-      "page": 6,
-      "kind": "drawing",
-      "by": "board",
-      "ink": [],
-      "texts": [
-        {
-          "x": 32,
-          "y": 1080,
-          "w": 190,
-          "text": "the header, warmer?",
-          "color": "#2a2352"
-        }
-      ],
-      "pictures": [],
-      "words": "the header, warmer?",
-      "said": null,
-      "status": "open",
-      "note": null,
-      "box": {
-        "x": 32,
-        "y": 1080,
-        "w": 190,
-        "h": 24
-      },
-      "anchor": null,
-      "owner": null,
-      "owner_name": null,
-      "tries_page": 7,
-      "waiting": {
-        "by": "lyra",
-        "name": "Lyra",
-        "spot": null,
-        "style": "versions",
-        "count": 3
-      },
-      "children": [
-        {
-          "kind": "answer",
-          "id": 641,
-          "note": null,
-          "grp": null,
-          "by": "lyra",
-          "name": "Lyra",
-          "face": null,
-          "style": "question",
-          "text": "Warmer in colour, or warmer in its words? I’m trying colour first.",
-          "picture": null,
-          "link": null,
-          "preview": null,
-          "ink": null,
-          "form": null,
-          "form_answer": null,
-          "version": null,
-          "patch": false,
-          "spot": {
-            "dx": 8,
-            "dy": 42,
-            "w": 320
-          },
-          "ticked": null,
-          "picked": null,
-          "created": "2026-10-27T23:08:11.273Z"
-        },
-        {
-          "kind": "answer",
-          "id": 642,
-          "note": null,
-          "grp": null,
-          "by": "lyra",
-          "name": "Lyra",
-          "face": null,
-          "style": "version",
-          "text": null,
-          "picture": "mock/notebook-version-1.svg",
-          "link": null,
-          "preview": null,
-          "ink": null,
-          "form": null,
-          "form_answer": null,
-          "version": "terracotta",
-          "patch": true,
-          "spot": null,
-          "ticked": null,
-          "picked": null,
-          "created": "2026-10-27T23:07:11.273Z"
-        },
-        {
-          "kind": "answer",
-          "id": 643,
-          "note": null,
-          "grp": null,
-          "by": "lyra",
-          "name": "Lyra",
-          "face": null,
-          "style": "version",
-          "text": null,
-          "picture": "mock/notebook-version-2.svg",
-          "link": null,
-          "preview": null,
-          "ink": null,
-          "form": null,
-          "form_answer": null,
-          "version": "honey",
-          "patch": true,
-          "spot": null,
-          "ticked": null,
-          "picked": null,
-          "created": "2026-10-27T23:06:11.273Z"
-        }
-      ],
-      "created": "2026-10-27T21:33:11.273Z",
-      "updated": "2026-10-27T21:33:11.273Z"
-    }
   }
 }

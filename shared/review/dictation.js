@@ -3,10 +3,11 @@
 // (/__review/dictate, which the coordinator hands to the voice line's recogniser), and each phrase's words come back
 // while the board talks, into the note. The clip is recorded too: where that line can't be reached (or drops), the whole
 // clip is transcribed by the coordinator's speech-to-text (POST /__review/voice). In HQ's viewer the page's frame has no
-// microphone, so HQ records for it once the board taps HQ's own Talk key (hqmic.js).
+// microphone, so HQ records for it, the same way, at the board's tap on HQ's own mic key laid over this one (hqmic.js).
 import { ACCENT } from './base.js';
 import { gotStream } from './micallowed.js';
-import { askHq, endHq } from './hqmic.js';
+import { liveLine } from './liveline.js';
+import { askHq, endHq, setupHqMic } from './hqmic.js';
 
 export const CSS = `
       .mic { position: relative; width: 52px; height: 52px; border-radius: 50%; background: #2b2230; color: #fff; display: grid; place-items: center; flex: none; }
@@ -91,78 +92,12 @@ function breathing(r, rec, source) {
   };
   tick();
 }
-// The live line: its words replace what it said before in the note, after the words that were there already.
-// rec.live: open while it carries the words, 'failed' once it can't (the clip then does)
+// The live line: its words replace what it said before in the note, after the words that were there already
 function live(r, rec, source) {
-  const url = new URL('dictate', r.ROUTE);
-  url.protocol = url.protocol === 'http:' ? 'ws:' : 'wss:';
-  let ws;
-  try {
-    ws = new WebSocket(url);
-  } catch {
-    rec.live = 'failed';
-    return;
-  }
-  ws.binaryType = 'arraybuffer';
-  rec.live = ws;
-  rec.done = new Promise(resolve => (rec.finished = resolve));
-  rec.closed = new Promise(resolve => ws.addEventListener('close', resolve));
-  streaming(rec, ws, source);
-  ws.onmessage = e => {
-    let m;
-    try {
-      m = JSON.parse(e.data);
-    } catch {
-      return;
-    }
-    const wanted = r.rec === rec || (rec.ending && !rec.cancelled);
-    if (m.type === 'heard' && typeof m.text === 'string' && wanted) words(r, rec, m.text);
-    // (done unasked: the line's five minutes are up, so the mic stops there)
-    if (m.type === 'done') {
-      rec.liveDone = true;
-      rec.finished(true);
-      ws.close();
-      if (r.rec === rec) stopMic(r);
-    }
-  };
-  // (closed before its words were all in: the clip has them)
-  ws.onclose = () => {
-    rec.untap();
-    if (rec.live === ws && !rec.liveDone) rec.live = 'failed';
-    rec.finished(false);
-  };
-  ws.onerror = () => (rec.live = 'failed');
-}
-// the audio as it's heard, down to 16 kHz PCM, over the line
-function streaming(rec, ws, source) {
-  const tap = rec.ctx.createScriptProcessor(4096, 1, 1),
-    mute = rec.ctx.createGain(),
-    rate = rec.ctx.sampleRate;
-  mute.gain.value = 0;
-  source.connect(tap).connect(mute).connect(rec.ctx.destination);
-  let at = 0; // where the next 16 kHz sample falls in the incoming audio
-  tap.onaudioprocess = e => {
-    if (ws.readyState !== WebSocket.OPEN) return;
-    const x = e.inputBuffer.getChannelData(0),
-      step = rate / 16000,
-      out = new Int16Array(Math.ceil((x.length - at) / step));
-    let n = 0;
-    for (; at < x.length - 1 && n < out.length; at += step, n++) {
-      const i = Math.floor(at),
-        v = x[i] + (x[i + 1] - x[i]) * (at - i);
-      out[n] = Math.max(-1, Math.min(1, v)) * 0x7fff;
-    }
-    at -= x.length;
-    ws.send(out.subarray(0, n));
-  };
-  rec.untap = () => {
-    tap.onaudioprocess = null;
-    try {
-      source.disconnect(tap);
-    } catch {
-      /* gone */
-    }
-  };
+  rec.line = liveLine(r.ROUTE, rec.ctx, source, {
+    heard: text => (r.rec === rec || (rec.ending && !rec.cancelled)) && words(r, rec, text),
+    over: () => r.rec === rec && stopMic(r),
+  });
 }
 // The heard words past the ones the note held when the reviewer last typed (a look's words revised since: past the
 // ones both share, a word the recogniser only recased or repunctuated still the same one), after the reviewer's own,
@@ -199,8 +134,8 @@ export function stopMic(r, cancel) {
 // A cancelled recording: no word of it goes in, and the line's last phrase isn't waited for
 function dropped(rec) {
   rec.cancelled = true;
-  rec.finished?.(null); // (HQ's recording, askHq, isn't waited for either)
-  if (rec.live && rec.live !== 'failed') rec.live.close();
+  rec.finished?.(null); // (HQ's recording, hqmic.js, isn't waited for either)
+  rec.line?.close();
 }
 async function endMic(r, rec) {
   if (rec.hq) return endHq(r, rec);
@@ -221,9 +156,9 @@ async function endMic(r, rec) {
     rec.mr.stop();
   });
   rec.stream?.getTracks().forEach(t => t.stop());
-  const liveOk = await lastPhrase(rec);
+  rec.ending = true; // (its last words still come in)
+  const liveOk = !!rec.line && !rec.cancelled && (await rec.line.end());
   rec.ending = false;
-  rec.untap?.();
   rec.ctx?.close?.();
   if (rec.cancelled) return;
   if (liveOk) {
@@ -238,24 +173,6 @@ async function endMic(r, rec) {
     return;
   }
   await transcribed(r, rec, clip, m);
-}
-// the live line's last phrase: it says done once the words are in (or a few seconds pass); whether it brought them
-async function lastPhrase(rec) {
-  let liveOk = !!rec.liveDone && !rec.cancelled;
-  if (!liveOk && rec.live && rec.live !== 'failed' && !rec.cancelled) {
-    rec.ending = true; // (its last words still come in)
-    // (a line still connecting is asked once it opens: a mark settles within seconds of its first line.)
-    const ws = rec.live,
-      end = () => ws.send(JSON.stringify({ type: 'end' }));
-    if (ws.readyState === WebSocket.OPEN) end();
-    else if (ws.readyState === WebSocket.CONNECTING) ws.addEventListener('open', end, { once: true });
-    liveOk = await Promise.race([rec.done, new Promise(res => setTimeout(() => res(false), 6000))]);
-  }
-  // (closed before the clip goes: the coordinator takes one at a time)
-  if (rec.live && rec.live !== 'failed') rec.live.close();
-  if (rec.closed && !liveOk && !rec.cancelled)
-    await Promise.race([rec.closed, new Promise(res => setTimeout(res, 2000))]);
-  return liveOk;
 }
 // the whole clip, transcribed next to the script
 async function transcribed(r, rec, clip, m) {
@@ -300,4 +217,5 @@ export function setupDictation(r) {
     r.mic.title = 'This browser can’t record here';
   }
   r.mic.onclick = () => (r.rec ? stopMic(r) : startMic(r));
+  if (r.framed) setupHqMic(r);
 }

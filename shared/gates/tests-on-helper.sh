@@ -20,6 +20,10 @@ if [ -d "$PWD/../ms-playwright" ]; then
       done
     done
   done
+  for shell in "$PLAYWRIGHT_BROWSERS_PATH"/chromium_headless_shell-*/chrome-headless-shell-linux64/chrome-headless-shell; do
+    export BROWSER_HEADLESS_SHELL="$shell"
+    break
+  done
   export LD_LIBRARY_PATH="$libraries${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 fi
 script="$1"

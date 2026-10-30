@@ -105,13 +105,6 @@ function move(clip, from) {
   letGo(sel);
   return true;
 }
-// What's picked as one group on its page (a Notebook page's: bookgroups.js)
-function group(clip) {
-  const { sel } = clip;
-  if (!current(sel)) return false;
-  sel.book.groups?.group(sel.view, { ink: sel.ink, scraps: sel.scraps, texts: sel.texts });
-  return true;
-}
 // What's picked copied a step down and right, picked in its place
 function duplicate(clip) {
   const { sel } = clip;
@@ -313,7 +306,6 @@ function barOf(clip) {
     [word('Duplicate'), `${MOD}+D`, () => duplicate(clip)],
     [word('Delete'), 'Delete', () => remove(clip)],
     [word('Move to page…'), '', b => move(clip, b)],
-    [word('Group'), word('What’s picked as one group'), () => group(clip)],
   ];
   for (const [text, keys, act] of acts)
     bar.append(

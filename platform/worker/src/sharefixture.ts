@@ -77,7 +77,7 @@ async function stopCommand(
   const owner = fixture.jobs.find(job => job.uid === block.uid)!;
   await reload.block({ job: 1, ...owner }, block, procs, {
     checking: new Map(commands.map(command => [command.child.pid!, { stopped: command.stopped }])),
-    stopped: () => {},
+    log: () => {},
     ask: async body => {
       receipts.push(body);
       return { text: 'Resource share exceeded' };

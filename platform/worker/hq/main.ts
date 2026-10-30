@@ -24,12 +24,13 @@ import { StopError, print, stop } from './output.ts';
 import { phone } from './phone.ts';
 import { plan } from './plan.ts';
 import { picture } from './pictures.ts';
-import { answer, sketch, sketches } from './book.ts';
+import { advice, answer, projectbook, sketch, sketches } from './book.ts';
 import { preview } from './preview.ts';
 import * as proposals from './proposals.ts';
 import { decision } from './pauses.ts';
 import * as projects from './projects.ts';
 import { report } from './report.ts';
+import { room } from './room.ts';
 import { profile } from './profile.ts';
 import * as runs from './runs.ts';
 import { tooling } from './tooling.ts';
@@ -54,6 +55,7 @@ const COMMANDS: Record<string, Command> = {
   meeting,
   cancel: jobs.cancel,
   stop: jobs.stopJob,
+  revert: jobs.revert,
   up: jobs.up,
   expedite: jobs.expedite,
   waits: jobs.waits,
@@ -80,6 +82,8 @@ const COMMANDS: Record<string, Command> = {
   sketches,
   sketch,
   answer,
+  projectbook,
+  advice,
   studio,
   'seat-warning': seatWarning,
   wait: cards.wait,
@@ -109,6 +113,7 @@ const COMMANDS: Record<string, Command> = {
   call: memory.call,
   intercom: memory.intercom,
   report,
+  room,
   profile,
   estimate,
   overseer,
@@ -150,7 +155,8 @@ function printHelp() {
   print(`# ${HELP_HEAD}`, ...platform.map(line => `#${line}`), `# ${HELP_FOOT}`, ...kits.kitHelp());
 }
 
-// A stop says why on stderr (when it has words). A call that failed without an answer exits silently with its code.
+// A stop says why on stderr (when it has words). A call that failed without an answer exits with its code and says
+// what failed on stderr.
 // Anything else is a fault in hq, which may come after HQ made a change: 70 (sysexits' EX_SOFTWARE), never 1, which
 // says nothing changed (a refusal, a wrong command).
 function exitFor(error: unknown) {
@@ -158,7 +164,10 @@ function exitFor(error: unknown) {
     if (error.message) process.stderr.write(`${error.message}\n`);
     return error.exitCode;
   }
-  if (error instanceof ApiError) return error.exitCode;
+  if (error instanceof ApiError) {
+    process.stderr.write(`hq: ${error.message}${error.reason ? `: ${error.reason}` : ''}\n`);
+    return error.exitCode;
+  }
   console.error(error);
   return 70;
 }

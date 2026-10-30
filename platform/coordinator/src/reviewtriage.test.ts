@@ -270,7 +270,26 @@ test('the looker follows visual files moved by engine constraints, and each read
   assert.ok(brief('tally').includes('node preview.mjs'));
 });
 
-test("triage's throwaway judgment sets the low bar for its readers and the ruling, alone or after a panel", async () => {
+test("files an engine rule moves from a security reader keep their security read on the rule's engine", async () => {
+  const pr = 137,
+    room = 'platform/hq/renderers/brownstone/rooms.js',
+    readme = 'README.md',
+    record = `qa/previews/review-${pr}.md`;
+  await push(pr, sha(), { files: [room, readme, record] }, { engine: 'claude' });
+  await finish(pr, 'triage', selection([{ ...reader('nib'), files: [room, readme, record], security: true }]));
+  await until(() => readers(pr).length === 2, 'the joined reader');
+  const rows = (await h.board('/api/jobs')).body.filter((job: any) => job.pr === pr && job.kind === 'review');
+  const reads = rows[0].triage.selection.reviewers as { agent: string; files: string[]; security: boolean }[];
+  assert.deepEqual(
+    reads.find(read => read.agent === 'nib'),
+    { ...reader('nib'), files: [readme, record], security: true },
+  );
+  const joined = reads.find(read => read.agent !== 'nib')!;
+  assert.deepEqual([joined.files, joined.security], [[room], true]);
+});
+
+// The light review of throwaway work, here and in the next two tests.
+test('throwaway work gets one light read: the consolidator alone, unless triage names a security read', async () => {
   const prompt = (pr: number, stage: string) =>
     (
       db.prepare("select prompt from jobs where pr = ? and stage = ? and status = 'queued'").get(pr, stage) as {
@@ -281,22 +300,74 @@ test("triage's throwaway judgment sets the low bar for its readers and the rulin
     text.includes('The bar: triage judged this throwaway work') &&
     !text.includes("can't live with") &&
     !text.includes('breaks the code style');
-  for (const [pr, reviewers, throwaway] of [
-    [131, [reader('rook')], true],
-    [132, [], true],
-    [133, [reader('rook')], undefined],
+  const security = { ...reader('rook'), security: true };
+  for (const [pr, reviewers, throwaway, read] of [
+    [131, [reader('rook')], true, []],
+    [132, [], true, []],
+    [133, [reader('rook')], undefined, ['rook']],
+    [134, [security], true, ['rook']],
   ] as const) {
     await push(pr);
     await finish(pr, 'triage', { ...selection([...reviewers]), ...(throwaway && { throwaway }) });
-    if (reviewers.length) {
+    if (read.length) {
       await until(() => readers(pr).length === 1, 'selected reviewer');
       assert.equal(lowBar(prompt(pr, 'review')), !!throwaway, `PR ${pr}'s reader`);
       await finish(pr, 'review', { findings: [] });
     }
     await until(() => pending(pr).some(job => job.stage === 'ruling'), 'ruling');
+    assert.deepEqual(readers(pr), [], `PR ${pr}: no reader is left queued`);
+    assert.deepEqual(
+      (db.prepare("select agent from jobs where pr = ? and kind = 'review'").all(pr) as { agent: string }[]).map(
+        job => job.agent,
+      ),
+      [...read],
+      `PR ${pr}'s readers`,
+    );
     assert.equal(lowBar(prompt(pr, 'ruling')), !!throwaway, `PR ${pr}'s ruling`);
+    if (throwaway) assert.match(prompt(pr, 'ruling'), /merges ends there: no follow-up job comes after it/);
     cancelOpenWork();
   }
+});
+
+test('what the light review of throwaway work leaves ends with its merge: no follow-up job', async () => {
+  const pr = 135;
+  await push(pr);
+  await finish(pr, 'triage', { ...selection([]), throwaway: true });
+  await until(() => pending(pr).some(job => job.stage === 'ruling'), 'solo ruling');
+  await finish(pr, 'ruling', {
+    decision: 'merge',
+    major_visual: false,
+    blocking: [],
+    nonblocking: [{ file: files[0], line: 3, issue: 'The cover could say more' }],
+  });
+  await until(() => db.prepare("select 1 from prs where number = ? and status = 'merged'").get(pr), 'merged');
+  assert.equal(
+    db
+      .prepare("select 1 from jobs where kind = 'work' and title like 'Review follow-ups:%' and prompt like ?")
+      .get(`%PR #${pr} merged%`),
+    undefined,
+  );
+});
+
+test('a throwaway re-review keeps the security reader whose blocker is still open', async () => {
+  const pr = 136;
+  const head = await push(pr);
+  await finish(pr, 'triage', { ...selection([{ ...reader('rook'), security: true }, reader('nib')]), throwaway: true });
+  await until(() => readers(pr).length === 1, 'security reader');
+  assert.deepEqual(readers(pr), ['rook'], 'only the security read reads throwaway work');
+  await finish(pr, 'review', { findings: [{ file: files[0], line: 5, issue: 'The fetch sends the token' }] });
+  await until(() => pending(pr).some(job => job.stage === 'ruling'), 'ruling');
+  const ruling = await finish(pr, 'ruling', {
+    decision: 'changes',
+    major_visual: false,
+    blocking: [{ file: files[0], line: 5, issue: 'The fetch sends the token', task: 'Keep the token', by: ['rook'] }],
+  });
+  await until(() => db.prepare('select 1 from findings where ruling = ?').get(ruling.id), 'recorded blocker');
+  cancelOpenWork();
+  await push(pr, sha(), { pushedSince: { sha: head, files } });
+  await finish(pr, 'triage', { ...selection(), throwaway: true });
+  await until(() => readers(pr).length === 1, 'finder recheck');
+  assert.deepEqual(readers(pr), ['rook']);
 });
 
 test('triage keeps its chosen looker or no looker and refuses a looker outside the panel', async () => {

@@ -68,7 +68,6 @@ warning at its next tool step during an overload spell, and one recovery message
 `errorsOf(page)` records Chromium's real page-crash event in the job's temporary folder so the worker can combine it
 with measured pressure. A crash on an otherwise idle, roomy server alone does not declare overload.
 
-
 ## Heavy renders
 
 HQ's `harness.mjs` sends room previews and pixel comparisons to a lent helper whenever one is present. The helper's run
@@ -104,11 +103,14 @@ Run `node --test shared/browser/render.test.ts` for concurrency, snapshot, artif
 
 ## Push tests
 
-Browser test areas (`shared/gates/tests.ts`, `BROWSER_AREAS`) also receive the worker's `/ms-playwright` directory
-and Chromium's shared libraries. Add an area there when it gains a browser push test, including an entry point that
-imports another area's test. The bootstrap sets `PLAYWRIGHT_BROWSERS_PATH` and `LD_LIBRARY_PATH` to the bundled
-copies, for both the change and its base comparison. Playwright still installs from `shared/browser`'s lock through
-npm. No browser download or extra proxy destination is needed. The worker and tests helper must keep the same Debian
+
+Browser test areas (`shared/gates/tests.ts`, `BROWSER_AREAS`) receive the worker's Chromium headless shell, its
+runtime resources and shared libraries. Full Chromium and unused browser assets stay out of push-test bundles.
+Add an area there when it gains a browser push test, including an entry point that imports another area's test. The bootstrap sets `PLAYWRIGHT_BROWSERS_PATH` and `LD_LIBRARY_PATH` to the bundled
+copies, for both the change and its base comparison. `BROWSER_HEADLESS_SHELL` selects the bundled
+shell for `launched()`, unless its caller supplies an executable, a channel or headed mode. Authored browser
+commands on a kind with `browsers: true` retain the full installed browser set. Playwright still installs from
+`shared/browser`'s lock through npm. No browser download or extra proxy destination is needed. The worker and tests helper must keep the same Debian
 base for these libraries. Playwright's root-only `deb.deps` and `rpm.deps` hints are excluded from the archive.
 HQ-load checks require Chromium and fail if it is missing.
 

@@ -92,10 +92,13 @@ export function angleFor(d, b, p = SWING) {
   return (lo + hi) / 2;
 }
 
-// The pull tab let go mid-lift at angle a, moving at v px per ms (+ right): it shuts on a flick right, or when it's let
-// go mostly upright and not moving left; else it falls open, a flick left throwing it down faster (push, rad/s).
-export function letGo(a, v) {
-  if (v > 0.6 || (a > 1.05 && v > -0.3)) return { open: false, push: 0 };
+// The pull tab (or the page's left edge) let go mid-lift at angle a, moving at v px per ms (+ right): it shuts on a
+// flick right, or when it's let go mostly upright and not moving left; else it falls open, a flick left throwing it
+// down faster (push, rad/s). Lifted from open (fromOpen), it shuts once its outer edge has come a third of the way to
+// the spine; else it settles back.
+export const SHUTS_FROM_OPEN = Math.acos(2 / 3);
+export function letGo(a, v, fromOpen = false) {
+  if (v > 0.6 || (a > (fromOpen ? SHUTS_FROM_OPEN : 1.05) && v > -0.3)) return { open: false, push: 0 };
   return { open: true, push: v < -0.3 ? v * 2.5 : 0 };
 }
 
@@ -104,6 +107,10 @@ export const force = s => Math.min(1, s / 6);
 
 // A tap's nudge off upright (rad/s): gravity alone would take its time to tip it
 export const NUDGE = -1.4;
+// Opened again while it swings shut: it falls from where it is, going down at least as fast as a tap's nudge, the
+// close's speed up gone. (Kept, it carried the board to upright, which stops it dead, where gravity has no pull: it
+// stood there balanced for seconds.)
+export const reopened = ({ a, w }) => ({ a, w: Math.min(w, NUDGE) });
 
 // The page under the book dissolving (blurred and faded) as the board swings away from where the page is laid out for,
 // and back in, sharp, once it's laid out in its new room: 0 clear to 1 gone. Laid out for the shut book, it's gone by

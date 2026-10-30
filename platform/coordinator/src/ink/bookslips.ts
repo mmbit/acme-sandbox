@@ -25,15 +25,19 @@ import { whyMissed } from '../quickruns.ts';
 
 export const SLIP_MAX = 4000,
   LINK_MAX = 500;
-// (job: the run that answered. ticked: when the board ticked it. artifact: the id of what it made that runs, as
-// artifacts.ts lists it; now, now_at: the note's place cut again from the live page, its file and when.): an answer on a notebook group (grp, sent or not: note null while it isn't), its
+// An answer on a notebook group (grp, sent or not: note null while it isn't). job: the run that answered. ticked: when
+// the board ticked it. artifact: the id of what it made that runs, as artifacts.ts lists it. now, now_at: the note's
+// place cut again from the live page, its file and when. Its
 // style ('text' | 'drawing' | 'form' | 'question' | 'version'), a version's two-word name and kept patch file, its ink
 // (JSON ink.js strokes from its own top-left), a form (JSON questions.js questions) and the board's answers to it, its
 // spot (JSON {dx, dy, w, h} from its group's box, answerspot.ts) and when the board picked it (a version). bookanswer.ts.
+// source: where a picture's numbers came from (a chart). A version's branch (trybranch.ts branchVersion), when the board
+// crossed it out, and when its branch and preview were cleared (bookpick.ts).
+// base: the commit its branch was made on, which its preview serves with its patch (trypreview.ts.). branch_failed: why GitHub refused its branch (trybranch.ts.)
 const SLIPS = `create table if not exists book_slips (id integer primary key autoincrement, note integer, by text not null,
   job integer, text text not null, picture text, link text, created text not null, ticked text, artifact text, now text,
   now_at text, grp integer, style text, version text, patch text, ink text, form text, form_answer text, spot text,
-  picked text)`;
+  picked text, source text, branch text, crossed text, cleared text, base text, branch_failed text)`;
 db.exec(`${SLIPS}; create index if not exists book_slips_note on book_slips (note)`);
 once('2026-10-26-book-slips-previews', () => {
   for (const column of ['artifact', 'now', 'now_at'])
@@ -53,8 +57,12 @@ once('2026-10-28-book-slips-answers', () => {
   for (const column of ['form_answer', 'spot', 'picked'])
     if (lacks('book_slips', column)) db.exec(`alter table book_slips add column ${column} text`);
 });
+once('2026-10-30-book-slips-versions', () => {
+  for (const column of ['source', 'branch', 'crossed', 'cleared', 'base', 'branch_failed'])
+    if (lacks('book_slips', column)) db.exec(`alter table book_slips add column ${column} text`);
+});
 db.exec('create index if not exists book_slips_grp on book_slips (grp)');
-redacted('book_slips', 'text', 'link', 'version');
+redacted('book_slips', 'text', 'link', 'version', 'source');
 redactedJson('book_slips', 'form', 'form_answer');
 
 export type Slip = {
@@ -79,6 +87,12 @@ export type Slip = {
   form_answer: string | null;
   spot: string | null;
   picked: string | null;
+  source: string | null;
+  branch: string | null;
+  crossed: string | null;
+  cleared: string | null;
+  base: string | null;
+  branch_failed: string | null;
 };
 // An artifact's id as artifacts.ts makes them: an app's slug, top/path for an artifact.yaml, a company artifact's open
 // (an address, hence the colon).
@@ -91,13 +105,13 @@ export const ARTIFACT = /^[A-Za-z0-9._/:-]{1,200}$/;
 // answer on a group, its ink, form, versions and who may answer)
 // (more: an answer's picture, link and artifact, and the rest of an answer's,
 // bookanswer.ts: its group, style, version, patch file, ink, form and spot as stored, JSON as JSON text)
-type Stored = 'grp' | 'style' | 'version' | 'patch' | 'ink' | 'form' | 'spot';
+type Stored = 'grp' | 'style' | 'version' | 'patch' | 'ink' | 'form' | 'spot' | 'source';
 export type More = {
   picture?: { type: string; clean: Buffer } | null;
   link?: string | null;
   artifact?: string | null;
 } & Partial<Record<Stored, string | number | null>>;
-const STORED: Stored[] = ['grp', 'style', 'version', 'patch', 'ink', 'form', 'spot'];
+const STORED: Stored[] = ['grp', 'style', 'version', 'patch', 'ink', 'form', 'spot', 'source'];
 export function addSlip(noteId: number | null, by: string, job: number | null, text: string, more: More = {}) {
   const id = Number(
     db
@@ -214,6 +228,11 @@ export const slipOf = (s: Slip, listed = listedOnce()) => ({
   patch: !!s.patch,
   spot: s.spot ? JSON.parse(s.spot) : null,
   picked: s.picked,
+  source: s.source,
+  branch: s.branch,
+  crossed: s.crossed,
+  cleared: s.cleared,
+  branch_failed: s.branch_failed,
 });
 // The artifact a slip names, as HQ shows it: its running preview (open) and cover (picture, HQ's address), or pending
 // while it isn't listed yet (the work that answered is still in review, or not running).
@@ -225,7 +244,7 @@ function previewOf(id: string, listed: artifacts.Artifact[]) {
 // ---------------------------------------------------------------- a notebook group's answers
 // The answers on groups by their grp (sent or not), and a group's answer still
 // coming: its quick run's (notebook_groups.asked, bookanswer.ts) at the spot it will take, while it goes and hasn't
-// answered, and why none came once it has ended without one (until the thread moves on: bookanswer.ts movedOn); a try's (tried, booktry.ts) while it goes, its versions' count once the run says (expect).
+// answered, and why none came once it has ended without one (until the thread moves on: bookanswer.ts movedOn).
 export const answersOnGroups = (ids: number[], listed = listedOnce()) =>
   ids.length
     ? (
@@ -240,7 +259,7 @@ const byOf = (job: number) => {
   const by = jobAgent(job) ?? ceo();
   return { by, name: findAgent(by)?.name ?? by };
 };
-type Asking = { asked?: number | null; asked_spot?: string | null; tried?: number | null; expect?: number | null };
+type Asking = { asked?: number | null; asked_spot?: string | null };
 // The face a group shows for an answer not on it yet: the one coming, else why its ended ask brought none (quickruns.ts
 // whyMissed)
 export function waitingOf(g: Asking) {
@@ -249,13 +268,11 @@ export function waitingOf(g: Asking) {
   const asked = unanswered(g);
   return asked && whyMissed(asked) ? askedFace(g, asked) : null;
 }
-// An answer on its way: the group's quick run while it goes and hasn't answered, then its try while it goes
+// An answer on its way: the group's quick run while it goes and hasn't answered (a try's versions coming are its try's:
+// groupanswers.ts tryOf.)
 export function comingOf(g: Asking) {
   const asked = unanswered(g);
-  if (asked && going(asked)) return askedFace(g, asked);
-  if (g.tried && going(g.tried))
-    return { ...byOf(g.tried), spot: null, style: 'versions' as const, ...(g.expect ? { count: g.expect } : {}) };
-  return null;
+  return asked && going(asked) ? askedFace(g, asked) : null;
 }
 // The group's ask, unless its run has clipped its answer
 const unanswered = (g: Asking) =>

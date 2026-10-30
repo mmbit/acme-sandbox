@@ -76,9 +76,8 @@ export async function pageOf(r, owner) {
 // (the day the cache holds a page for: a page left open past midnight makes the next day's)
 const dayNow = () => new Date().toDateString();
 
-// A call's page in today's book (callnotes.js): made at the call's first mark, the board's or its agent's, so a call
-// nobody drew on leaves none. Asked once a call, so two first marks make one page. A walk-through's is made as it's
-// picked up, kept only if the board writes on it (HQ's calldraw.js).
+// A call's page in today's book (callnotes.js): the call's notes page, which the store gives for the call's first mark,
+// the board's or its agent's. Asked once a call, so two first marks make one page. (a walk-through's page is that one too)
 export function callPage(r) {
   const call = r.call.call;
   if (r.bookPage?.call === call) return r.bookPage;
@@ -89,7 +88,7 @@ export function callPage(r) {
         const day = await get('');
         let page = day.pages.find(p => p.kind === 'call' && p.call === call);
         if (!page) {
-          const label = `${r.call.walk ? 'Walk-through' : 'Call'} with ${r.call.name}`;
+          const label = `Call with ${r.call.name}`;
           page = await send('/page/new', { kind: 'call', call, label, ...size() });
           // (the book beside HQ turns to it.)
           document.dispatchEvent(new CustomEvent('book:paged', { detail: { page: page.id } }));

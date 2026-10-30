@@ -4,7 +4,7 @@
 // over them on a tablet and on two short phones (where the film must give up height for them). Show me closes the
 // phone, dims HQ around each real control in turn and files the tip once the last is pressed. A tip about the phone
 // itself keeps the phone open on the card it's about. In the first look, every tip's Show me finds each of its real
-// controls, HQ's pin in review mode's layer too, and the logo's press asks for the look's tip. With a folder, it saves a
+// controls, the pin's switch in Settings and HQ's pin in review mode's layer too, and the logo's press asks for the look's tip. With a folder, it saves a
 // tip and a Show me per look.
 // Every tip with a film in the company's theme/hq/films (tip-films.mjs) has one in each look, 5 to 8 seconds and small
 // enough for a phone, and the card plays the one for the look it's shown in (Playwright's Chromium plays no H.264: the check hands it
@@ -18,8 +18,11 @@ import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { lookNames } from './looks.mjs';
+import { notebookPlay } from './shell/ink/notebookplay.js';
+import { notebookRoute } from './notebookroute.mjs';
 import { filmFiles } from './films/listing.mjs';
 import { TIPS, tipOf, filmName } from './shell/tips.js';
+import { pinOn } from './bookkit.mjs';
 
 const { chromium } = playwright();
 const server = await serve(),
@@ -65,9 +68,6 @@ const writing = {
   host: 'lanterns.preview.example.com',
   people: ['Ada', 'Bo', 'Cas'].map(name => ({ name, address: `${name[0].toLowerCase()}…@example.com` })),
 };
-// the board's notebook, where review mode's newest note is looked for (booknewest.js): one blank page.
-const notebook = { id: 1, kind: 'mine', name: 'My Notebook' },
-  blankPage = { id: 1, notebook: notebook.id };
 const tipCard = (id, key, details = {}) => ({
   id,
   created: minutesAgo(0),
@@ -139,7 +139,10 @@ async function checkLook(look) {
       : []),
   ];
   const ended = [],
-    events = [];
+    events = [],
+    // the board's notebook, where review mode's newest note is looked for (booknewest.js): the store played, one blank
+    // page (notebookroute.mjs.)
+    notebook = notebookPlay();
   const { context, page, errors } = await openPage(browser, {
     viewport: TABLET,
     deviceScaleFactor: 1.5,
@@ -168,9 +171,7 @@ async function checkLook(look) {
     if (path === '/api/review/recent') return r.fulfill({ json: [] });
     if (path === '/api/book/sheets') return r.fulfill({ json: { sent: [] } }); // (Reviews › Sent, empty)
     if (path === '/api/review/notes') return r.fulfill({ json: [] });
-    if (path === '/api/notebooks') return r.fulfill({ json: { shelf: [notebook] } });
-    if (path === '/api/notebooks/pages') return r.fulfill({ json: { notebook: notebook.id, pages: [blankPage] } });
-    if (path === '/api/notebooks/pages/groups') return r.fulfill({ json: { groups: [] } });
+    if (path.startsWith('/api/notebooks')) return notebookRoute(r, notebook);
     if (path === '/api/book') return r.fulfill({ json: { day: null, today: null, days: [], pages: [] } }); // (the board's book, empty)
     const mocked = await r.fetch({ url: `${base}/mock${path.slice(4)}.json` });
     if (mocked.ok()) return r.fulfill({ response: mocked });
@@ -397,10 +398,10 @@ async function checkEvery(page, ended, events, list) {
   }
 }
 
-// The pin's Show me with the pin already out (the book open beside HQ): only the pin's step, its key left alone, so the
-// pin it rings is there
+// The pin's Show me with the pin already out (turned on for this device): only the pin's step, its switch left alone,
+// so the pin it rings is there
 async function checkPinOut(page, ended, setList) {
-  if ((await page.getAttribute('html', 'data-book')) === 'folded') await page.click('#book .bk-lip');
+  await pinOn(page);
   const out = () => {
     const ask = new CustomEvent('review:pin', { detail: {} });
     dispatchEvent(ask);

@@ -11,7 +11,8 @@
      The company may set them (theme/hq.yaml styles). A look draws them its own way. The brownstone's hard shadows go
      half of it down and half across, so a button's is 3 px each way. */
   --depth-tile: 10px; --depth-hover: 7px; --depth-button: 6px; --depth-pressed: 2px;
-  --shadow-press: var(--px-pressed) var(--px-pressed) 0 var(--ink); --shadow-sm: 2px 2px 0 var(--ink); --shadow: var(--px-button) var(--px-button) 0 var(--ink);
+  --shadow-press: var(--px-pressed) var(--px-pressed) 0 var(--ink); --px-sm: 2px; --shadow-sm: var(--px-sm) var(--px-sm) 0 var(--ink); --shadow: var(--px-button) var(--px-button) 0 var(--ink);
+  /* (--px-sm, the small shadow's lip) */
   --shadow-lg: var(--px-tile) var(--px-tile) 0 var(--ink); --shadow-xl: 6px 6px 0 var(--ink); --shadow-hover: var(--px-hover) var(--px-hover) 0 var(--ink);
   --px-tile: round(down, calc(var(--depth-tile) / 2), 1px); --px-hover: round(down, calc(var(--depth-hover) / 2), 1px);
   --px-button: round(down, calc(var(--depth-button) / 2), 1px); --px-pressed: round(down, calc(var(--depth-pressed) / 2), 1px);
@@ -24,9 +25,9 @@
   --hover-button: translate(calc(var(--px-button) - var(--px-button-hover)), calc(var(--px-button) - var(--px-button-hover)));
   --shadow-hover-button: var(--px-button-hover) var(--px-button-hover) 0 var(--ink);
   /* (and --ease, --ease-in: the pixel art moves in steps, a skin may ease) */
-  /* the space a key keeps from the box beside it, counted from its lip; the company may set it (theme/hq.yaml styles)
- */
-  --gap: 18px;
+  /* the space a key keeps from the box beside it, counted from its lip, and the intercom header's keys keep from its
+     top; the company may set it (theme/hq.yaml styles) */
+  --gap: 13px;
   --on-accent: var(--ink); /* text on the brand's accent fills (a gold button) and on the pastel chips */
   /* (and --sand, --rule, --inset, --tint-gold, --tint-green, --tint-red: the light fills, each with its own default) */
   --deep: var(--ink); --on-deep: var(--paper); /* dark fills (tabs, tags, the voice bar) and the text on them */
@@ -320,17 +321,19 @@ body.touring #zoom, body.touring #status, body.touring #hint { display: none; }
 #viewer .bar .pin { background: #ff5a5f; color: #fff; box-shadow: inset 0 -3px 0 #c23c44; }
 #viewer .bar .pin svg { width: 16px; height: 16px; fill: currentColor; }
 #viewer .bar button:active { transform: translateY(1px); }
-/* HQ's own Talk key, which a review-mode page's mic brings up: only its tap records, red and breathing with the voice
-   while it does (framemic.js). Its slot is kept while it's hidden, so a page's
-   ask never moves what's under the board's finger (desk.js openViewer). */
-#viewer .bar .talk { background: var(--on-deep); color: var(--deep); animation: talk-asked 1s ease-in-out infinite alternate; }
-#viewer .bar .talk[hidden] { display: flex; visibility: hidden; animation: none; }
-#viewer .bar .talk svg { width: 16px; height: 16px; fill: currentColor; }
-#viewer .bar .talk[data-phase=live] { background: var(--red); color: #fff; animation: none;
-  box-shadow: 0 0 0 calc(2px + var(--lvl, 0) * 10px) color-mix(in srgb, var(--red) 35%, transparent); transition: box-shadow .1s; }
-#viewer .bar .talk[data-phase=busy] { opacity: .6; animation: none; }
-@keyframes talk-asked { to { box-shadow: 0 0 0 5px color-mix(in srgb, var(--on-deep) 30%, transparent); } }
-@media (prefers-reduced-motion: reduce) { #viewer .bar .talk { animation: none; } }
+/* HQ's own mic key over the post-it's mic of a page in the viewer, looking as that one does (shared/review/dictation.js
+   .mic): only its tap records, at once, red and breathing with the voice while it does (framemic.js, which places it). */
+#viewer > .framemic { position: fixed; z-index: 2; display: grid; place-items: center; padding: 0; border: 0; border-radius: 50%;
+  background: #2b2230; color: #fff; touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+#viewer > .framemic[hidden] { display: none; }
+#viewer > .framemic svg { width: 46%; height: 46%; position: relative; }
+#viewer > .framemic::before { content: ""; position: absolute; inset: 0; border-radius: 50%; background: #ff5a5f; opacity: .45;
+  transform: scale(var(--lvl, 0)); transition: transform .08s; }
+#viewer > .framemic[data-phase=live] { background: #ff5a5f; }
+#viewer > .framemic[data-phase=live]::before { transform: scale(calc(1 + var(--lvl, 0))); }
+#viewer > .framemic[data-phase=busy] { background: conic-gradient(#ff5a5f, #2b2230); animation: framemic-busy 1s linear infinite; }
+@keyframes framemic-busy { to { transform: rotate(1turn) } }
+@media (prefers-reduced-motion: reduce) { #viewer > .framemic[data-phase=busy] { animation: none; } }
 /* The stage: staging, and the same page live beside it on the left, each in its column at the picked device's size, or
    taking turns as tabs where both don't fit (shell/viewer.js). This device alone fills the stage edge to edge. A device's
    page keeps its own width, drawn smaller where its column is narrower (--scale). */
@@ -372,8 +375,7 @@ body.touring #zoom, body.touring #status, body.touring #hint { display: none; }
 #viewer .bar .qr svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.6; }
 #viewer .bar .qr[aria-expanded=true] { background: color-mix(in srgb, var(--on-deep) 16%, transparent); }
 #viewer .qrcard { position: absolute; z-index: 1; top: calc(var(--sat) + 44px); right: calc(var(--sar) + 8px); width: min(400px, calc(100% - 16px)); display: flex; gap: 16px; align-items: center;
-  padding: 16px; border-radius: var(--r-lg, 14px); background: var(--paper); color: var(--ink); border: var(--bw-lg) solid var(--line); box-shadow: var(--shadow-xl); font-size: 15px;
-  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
+  padding: 16px; border-radius: var(--r-lg, 14px); background: var(--paper); color: var(--ink); border: var(--bw-lg) solid var(--line); box-shadow: var(--shadow-xl); font-size: 15px; }
 #viewer .qrcard[hidden] { display: none; }
 #viewer .qrcard .pair-qr { flex: none; width: 160px; height: 160px; }
 #viewer .qrcard p { margin: 6px 0 0; line-height: 1.35; }
@@ -1200,11 +1202,12 @@ body.keys .rows.settings li > button.danger-row b { color: color-mix(in srgb, #e
 @keyframes ring { from { transform: rotate(-16deg); } to { transform: rotate(16deg); } }
 body.keys .push-now { padding: 3px 10px 4px; border-radius: 999px; font-size: 12.5px; font-weight: 650; background: color-mix(in srgb, var(--key-ink) 8%, transparent); color: var(--key-ink); }
 .intercom header b { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-/* its size and close keys the gap above the box under them, from the bottom of their lip, and ending where it ends. A
-   look says how far its keys' lip reaches down (--key-reach) and where the box ends (--key-end): the brownstone's
-   shadows go across as far as down */
-.intercom header { --key-reach: var(--px-button); --key-end: calc(10px + var(--px-button));
-  padding: 8px var(--key-end) calc(var(--gap) + var(--key-reach)) 14px; }
+/* The size and close keys sit as far below the header's top as the bottom of their lip sits above the box under them,
+   and their lip ends where the box ends. A look sets how far its keys' lip reaches down (--key-reach) and how far in
+   from the header's edge the keys' face ends (--key-end). The brownstone's lip reaches across as far as down, so its
+   keys' face ends that much inside the box's 10 px margin. */
+.intercom header { --key-reach: var(--px-sm); --key-end: calc(10px + var(--key-reach));
+  padding: var(--gap) var(--key-end) calc(var(--gap) + var(--key-reach)) 14px; }
 /* larger, from the corner's toggle: wider, the whole height, the chat taking what's left */
 .device.intercom.big { width: min(880px, 100%); height: var(--tool-h); }
 .intercom header .grow svg { width: 15px; height: 15px; }   /* (2.5 px a pixel: the close ×'s line.) */
@@ -1424,15 +1427,15 @@ body.keys :is(.device header .past-btn, .device .send, .device .x, .pager button
   background: var(--key-bg); color: var(--key-ink); border: 1.5px solid var(--key-edge); border-radius: var(--key-r); box-shadow: var(--key-lip);
   text-shadow: none;
   transition: transform .12s var(--ease, ease-out), box-shadow .12s var(--ease, ease-out); } /* (transition) */
-/* (one key lit in a row: a card's other answers, .later, stay plain keys, and Approve wears the knop as every one to press
-   does.) */
+/* (one key lit in a row: a card's other answers, .later, stay plain keys, and Approve wears the accent as every one to
+   press does) */
 body.keys.keys :is(.device .send:not(.later), .invite button, .cta, .app-line, .pic-keys [aria-pressed=true], .past-btn[aria-pressed=true]) {
   background: var(--key-on-bg); color: var(--key-on-ink); box-shadow: var(--key-on-lip); --hover-lip: var(--key-on-hover-lip); } /* (--hover-lip) */
 /* (a toggle that's on stays down on its lip, so it reads as pressed. The one to press stands up.) */
 body.keys.keys .past-btn[aria-pressed=true] { transform: var(--key-down); box-shadow: var(--key-on-down-lip); --hover-button: var(--key-down); --hover-lip: var(--key-on-down-lip); } /* (--hover-button, --hover-lip) */
 /* One of several that's picked (a tab, a segment, a card's option) and Later while its days are open latch down in their
-   own face, their words bold, as the design system's tabs and choices do (kits/design/fields.css): the knop lights only
-   the key to press. */
+   own face, their words bold, as the design system's tabs and choices do (kits/design/fields.css): the accent lights
+   only the key to press. */
 body.keys.keys :is(.req .opts .on, .req .questions .chip.on, .later-btn[aria-expanded=true],
   :is(.gz-tabs button, .seg button, .looks button, .look-settings button, .oversight button, .pills button, .jb-tabs button):is([aria-pressed=true], [aria-selected=true], [aria-checked=true])) {
   transform: var(--key-down); box-shadow: var(--key-down-lip); font-weight: 750; }

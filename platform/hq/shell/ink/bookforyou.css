@@ -1,0 +1,97 @@
+/* What's still the board's to answer (bookforyou.js): the counter over the page's name in the pages' row, a red dot
+   and "2 open" beside its arrows, and the red edge marked "for you" round a group with an open ask, the ring a step
+   reaches pulsing once. The edge and the ring are in the page's px: they pan and zoom with it.
+ */
+#book .bk-for-you-count {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  translate: -50% 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 2px 2px 4px;
+  border-radius: 999px;
+  background: var(--bk-paper, #fffaf0);
+  box-shadow: var(--bk-lift);
+  color: var(--bk-ink);
+  font: 600 14px/1 var(--bk-font);
+  white-space: nowrap;
+}
+#book .bk-for-you-count[hidden] {
+  display: none;
+}
+#book .bk-for-you-count .bk-open:not(:empty) {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 10px 0 8px;
+  border-right: 1px solid var(--bk-edge);
+}
+#book .bk-for-you-count .bk-open:not(:empty)::before {
+  content: '';
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--bk-red);
+}
+#book .bk-for-you-count .bk-btn {
+  border-radius: 999px;
+}
+
+/* the edge round a group waiting on the board, a little off what it holds, its tag at the top right */
+#book .bk-groups > .bk-for-you,
+#book .bk-groups > .bk-reached {
+  pointer-events: none;
+}
+#book .bk-for-you::before {
+  content: '';
+  position: absolute;
+  inset: -10px;
+  border: 2px solid var(--bk-red);
+  border-radius: 8px;
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--bk-red) 18%, transparent);
+}
+/* (the edge lies under a neighbour's card that overlaps it, but its tag reads over the card: under typed words and
+   paperclips still, booktools.css and bookgroups.css) */
+#book .bk-for-you b {
+  position: absolute;
+  z-index: 1;
+  top: -20px;
+  right: -4px;
+  padding: 3px 9px 4px;
+  border-radius: 999px;
+  /* (the book's red, deepened so white words on it read) */
+  background: color-mix(in srgb, var(--bk-red) 72%, #000);
+  color: #fff;
+  font: 700 12px/1 var(--bk-font);
+}
+
+/* the group a step reached: a ring that swells once and fades, red when it waits on the board */
+#book .bk-reached {
+  --bk-ring: var(--bk-ink);
+  margin: -10px;
+  padding: 10px;
+  box-sizing: content-box;
+  border-radius: 8px;
+  opacity: 0;
+  animation: bk-reached 0.9s ease-out;
+}
+#book .bk-reached[data-open] {
+  --bk-ring: var(--bk-red);
+}
+@keyframes bk-reached {
+  0% {
+    opacity: 1;
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--bk-ring) 45%, transparent);
+  }
+  100% {
+    opacity: 0;
+    box-shadow: 0 0 0 18px color-mix(in srgb, var(--bk-ring) 0%, transparent);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  #book .bk-reached {
+    animation-duration: 0.01s;
+  }
+}

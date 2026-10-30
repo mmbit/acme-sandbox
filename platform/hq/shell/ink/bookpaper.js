@@ -46,8 +46,15 @@ export function crumple(rect, picture) {
   const ball = sheet.animate(
     [
       { clipPath: outline(0), transform: 'none', easing: 'cubic-bezier(.3,.6,.5,1)' },
-      { clipPath: outline(0.6), transform: `scale(${(1 + k) / 2}) rotate(${turn * 6}deg)`, offset: 0.25 },
-      { clipPath: outline(1), transform: `scale(${k}) rotate(${turn * -10}deg)`, offset: 0.5, easing: 'ease-in' },
+      // (opacity stays 1 to the ball)
+      { clipPath: outline(0.6), transform: `scale(${(1 + k) / 2}) rotate(${turn * 6}deg)`, opacity: 1, offset: 0.25 },
+      {
+        clipPath: outline(1),
+        transform: `scale(${k}) rotate(${turn * -10}deg)`,
+        opacity: 1,
+        offset: 0.5,
+        easing: 'ease-in',
+      },
       {
         clipPath: outline(1),
         transform: `translateY(${DROP_PX}px) scale(${k * 0.9}) rotate(${turn * 40}deg)`,

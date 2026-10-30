@@ -1,14 +1,9 @@
-// Where a notebook's new things land, one rule for the coordinator's store (notebook.ts, notebookscraps.ts), HQ's book
-// (booklanding.js, bookgroupmath.js) and the store's play in memory (notebookplay.js): the page new groups land on, a
-// group's box, and where a page's next scrap goes. Pure: rows and numbers in, no DB, no DOM.
+// Where a notebook's new things land and how big, one rule for the coordinator's store (notebook.ts, notebookscraps.ts),
+// HQ's book (booklanding.js, bookgroupmath.js) and the store's play in memory (notebookplay.js): the page new groups land
+// on, a group's box and a scrap's picture's size. Pure: rows and numbers in, no DB, no DOM.
 
-// A scrap goes this far from the left (as far in as an answer: 12 px past a phone's pull tab) and this far down from
-// the origin on an empty page, this far from what's next to it, at most this wide, in page px: a readable width, left
-// of the controls at the right edge of the book beside HQ's page on an iPad mini held sideways (473 px of paper), so
-// left of them on the widest narrower paper the board reads on wherever that's the iPad's or wider (coordinator's
-// ink/answerspot.ts NARROWER[0], from the company's screens, less ANSWER.rail and x: notebook.test.ts holds it there.). Where a screen's paper is narrower, HQ draws a scrap fitted to it
-// (bookscrapfit.js).
-export const STACK = { x: 24, gap: 48, w: 313, top: 80 };
+// A scrap's picture at most this wide, in its unit's px: a little inside the unit (scrapunit.js UNIT_W)
+export const STACK = { w: 313 };
 // A scrap's picture at most this tall (half again its width), scaled down to it, but never below this share of the
 // scale its width allows, so a tall crop's words stay readable rather than towering down the page (the board, call 162)
 const TALL = { h: 470, readable: 0.6 };
@@ -25,9 +20,6 @@ export function scrapSize(width, height) {
     k = Math.max(Math.min(wide, TALL.h / height), wide * TALL.readable);
   return { w: Math.round(width * k), h: Math.round(height * k) };
 }
-// a call's notes page lays its notes in this many columns across it
-/** @type {Record<string, number>} */
-const COLUMNS = { call: 2 };
 // a typed box's line, and how wide a letter of it is at most, about (booktexts.js TEXT: 18 px, in the book's face or a
 // wider stand-in)
 const LINE_PX = 24,
@@ -35,10 +27,11 @@ const LINE_PX = 24,
 
 // The page new groups land on, of a notebook's pages ({ id, created, archived, tries }): the newest neither sending or
 // sent (sent(page), as the caller's pages tell it: a row's send_at, a summary's sending and sent), archived nor a try's
-// versions page (ink/booktry.ts); undefined for none, when the store makes one
+// versions page (ink/booktry.ts) nor an Asks page, the agents' (ink/askpages.ts); undefined for none, when the store
+// makes one
 export function landingPage(pages, sent) {
   return pages
-    .filter(p => !p.archived && !sent(p) && p.tries == null)
+    .filter(p => !p.archived && !sent(p) && p.tries == null && p.kind !== 'asks')
     .sort((a, b) => b.created.localeCompare(a.created) || b.id - a.id)[0];
 }
 
@@ -61,54 +54,11 @@ export function typedHigh({ w, text }) {
   return LINE_PX * wrappedLines(text, w, LETTER_PX);
 }
 
-// The next scrap, h tall, goes where the board last added something: under the page's newest group (the highest id),
-// at its left edge, and on down past any group in its way. An empty page has it near its origin. On a call's page
-// (kind 'call') the notes go in columns instead: each under the shortest column, the leftmost of equals.
-// groups: { id, kind?, words?, box: { x, y, w, h } | null }, a scrap's words its post-it under its picture
-/** @param {{ id: number, kind?: string, words?: string, box: any }[]} groups @param {string | null} [kind] */
-export function nextScrap(groups, h = 0, kind = null) {
-  const boxes = groups.filter(g => g.box).map(g => ({ id: g.id, box: footprint(g) }));
-  const spot = kind && COLUMNS[kind] ? shortest(boxes, COLUMNS[kind], h) : under(boxes, h);
-  if (!spot) return { x: STACK.x, y: STACK.top, w: STACK.w };
-  // (each pass moves it past at least one group, so at most one pass a group)
-  for (let i = 0; i < boxes.length; i++) {
-    const inWay = boxes.map(g => g.box).filter(b => inWayOf(spot, b));
-    if (!inWay.length) break;
-    spot.y = Math.max(...inWay.map(b => b.y + b.h)) + STACK.gap;
-  }
-  return { x: Math.round(spot.x), y: Math.round(spot.y), w: STACK.w };
-}
-// under the newest group (null: an empty page)
-function under(boxes, h) {
-  if (!boxes.length) return null;
-  const newest = boxes.reduce((a, b) => (b.id > a.id ? b : a)).box;
-  return { x: newest.x, y: newest.y + newest.h + STACK.gap, w: STACK.w, h };
-}
-// at the foot of the shortest of n columns from the page's origin
-function shortest(boxes, n, h) {
-  const feet = Array.from({ length: n }, (_, i) => {
-    const x = STACK.x + i * (STACK.w + STACK.gap),
-      inColumn = boxes.map(g => g.box).filter(b => b.x < x + STACK.w && x < b.x + b.w);
-    return { x, y: inColumn.length ? Math.max(...inColumn.map(b => b.y + b.h)) + STACK.gap : STACK.top };
-  });
-  const foot = feet.reduce((a, b) => (b.y < a.y ? b : a));
-  return { ...foot, w: STACK.w, h };
-}
-// A group's box with what hangs under it: a scrap's post-it words, as wide and about as tall as they're set
-export function footprint({ box, kind, words }) {
-  if (kind !== 'scrap' || !words?.trim()) return box;
-  const w = wordsWidth(box.w),
-    lines = wrappedLines(words, w - 2 * CAPTION.pad.x, CAPTION.letter);
-  return { ...box, w: Math.max(box.w, w), h: box.h + CAPTION.top + lines * CAPTION.line + 2 * CAPTION.pad.y };
-}
 // How many lines words take, wrapped at width px of letters letter px wide
 const wrappedLines = (text, width, letter) => {
   const perLine = Math.max(1, Math.floor(width / letter));
   return text.split('\n').reduce((n, l) => n + Math.max(1, Math.ceil([...l].length / perLine)), 0);
 };
-// whether box b is over the spot, or closer under it than the gap
-const inWayOf = (spot, b) =>
-  spot.x < b.x + b.w && b.x < spot.x + spot.w && spot.y < b.y + b.h && b.y < spot.y + spot.h + STACK.gap;
 // The width of a scrap's words under it, w wide (bookgroups.js)
 /** @param {number} w */
 export const wordsWidth = w => Math.max(STACK.w, Math.min(CAPTION.most, w));

@@ -39,7 +39,7 @@ const LOOKS = {
 const runs = (arg('--look').length ? arg('--look') : Object.keys(LOOKS)).flatMap(look =>
   (arg('--size').length ? arg('--size') : Object.keys(SIZES)).map(size => [look, size]),
 );
-// Each look's accents, the colours a key to press wears (brownstone's gold and green, Holodeck's cyan, Slate's knop)
+// Each look's accents, the colours a key to press wears (brownstone's gold and green, Holodeck's cyan, Slate's accent)
 const ACCENTS = { brownstone: ['--gold', '--green'], holo: ['--cy'], wire: ['--key-on-bg', '--green'] };
 const SLACK = 3; // (px a measure may be off by: rounding, a border)
 
@@ -77,7 +77,7 @@ const CARDS = {
       title: 'Let Wren buy the domain?',
       body: 'It costs 12 a year.',
       approves: true,
-      grants: 'Buys knop.example',
+      grants: 'Buys testco.example.com',
     }),
   ],
   // (two, for the pager's arrows)

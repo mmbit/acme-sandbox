@@ -6,13 +6,14 @@ import { publish, KEYS } from './events.ts';
 import * as secrets from './secrets.ts';
 import { markMerged } from './work.ts';
 import * as threadends from './threadends.ts';
-import { createJob, createRequest, findAgent, inProcess, failedNote, holdsCustomerData, replacementOf, stillHolds, OPEN_PRS } from './jobs.ts';   // (failedNote) (holdsCustomerData) (stillHolds)
+import { createJob, createRequest, findAgent, inProcess, failedNote, holdsCustomerData, isOpenJob, replacementOf, stillHolds, OPEN_PRS } from './jobs.ts';   // (failedNote) (holdsCustomerData) (stillHolds)
 import { mergePullRequest, closePullRequest, pullRequestState, landed, pullRequestDiff } from './github.ts';
 import * as ledger from './ledger.ts';
 import * as pauses from './pauses.ts';
 import * as pausewake from './pausewake.ts';
 import { unreadable, missing, ceo, roles, names, infra } from './company.ts';   // (names, infra)
 import * as reviewtriage from './reviewtriage.ts';
+import * as triagebriefs from './triagebriefs.ts';
 import { FOUNDATION_QUESTION } from './reviewlenses.ts';
 import * as reviewrefusals from './reviewrefusals.ts';
 import { TRUST_RULE, FINDING, FINDING_NOTES, CONSOLIDATOR_TRUST, BLOCKING, DISMISSED_FIELD, AUTHOR_TRUST, TASK_NOTE, weighed } from './trust.ts'; // (TASK_NOTE)
@@ -43,7 +44,7 @@ import * as rulingjobs from './rulingjobs.ts';
 // follow-ups wait for that review's ruling (reviewedAfter).
 const pullRequestMerged = (pr: number, reviewFollows = false) => {
   markMerged(pr);
-  clearIdleCheck(pr);
+  settledAside(pr);
   visualapproval.closed(pr);
   if (!reviewFollows) followUp(pr);
   threadends.merged(pr);
@@ -200,7 +201,8 @@ function cleared(push: Push, pushed: reviewpushes.Push) {
       hold(pr, `round ${prev.round} waits for unassigned blocking findings ${undrawn.map(id => `#${id}`).join(', ')} in findings:${pr}, ${ownerOf(item)}'s to draw`);
       return;
     }
-    if (reviewinbox.tasks(pr, prev.round).some(task => task.status !== 'done' && task.status !== 'cancelled')) return;
+    // (only a task still open holds it, its own push to come: one that ended, done or not, pushes nothing more)
+    if (reviewinbox.tasks(pr, prev.round).some(isOpenJob)) return;
   }
   if (documentsSentBack(push, frontmatter, knowledge) || madeRightFirst(push, files, owed)) return;
   const failing = failingChecks(gates, tests);
@@ -555,7 +557,7 @@ function queueTriage(pr: number, branch: string, sha: string, round: number, fil
   const made = roundJob({ pr, round, sha, judges: files, stage: 'triage', step: 'Choosing the reviewers',
     ...(retry && { insteadOf: retry.id, queuedBy: retry.queued_by ?? undefined, customers: holdsCustomerData(retry.id) }),
     prompt: reviewtriage.brief(pr, branch, files, links, fixesFrom) + note + boardWords(branch, 'triage') });
-  reviewtriage.keep(made.id, links, note);
+  triagebriefs.keep(made.id, links, note);
   return made;
 }
 
@@ -564,7 +566,7 @@ function queueTriage(pr: number, branch: string, sha: string, round: number, fil
 // as background.
 function retriage(j: Run, refused = '') {
   const { links, fixes_from } = db.prepare('select links, fixes_from from prs where number = ?').get(j.pr) as Pr;
-  const kept = reviewtriage.kept(j.id) ?? {
+  const kept = triagebriefs.kept(j.id) ?? {
     links: JSON.parse(links) as string[],
     note: `\n\nThe brief this triage first ran with follows, as background: where its staff, reviewers or eligible consolidators differ from the ones above, the ones above stand.\n\n${j.prompt}`,
   };
@@ -1135,7 +1137,7 @@ async function merge(pr: Pr, title: string, voided = () => false): Promise<Merge
 function waitingForMerge(pr: Pr) {
   const before = mergePredecessor(pr);
   if (!before) return false;
-  hold(pr.number, `waiting for earlier ruled PR #${before} to merge its shared files`);
+  hold(pr.number, `waiting for PR #${before} to merge its shared files first`);
   return true;
 }
 function mergePredecessor(pr: Pick<Pr, 'number' | 'branch' | 'files'>) {
@@ -1282,7 +1284,8 @@ async function mergeAlone(pr: Pr, title: string, refused: (m: Merged) => void, v
   finally { deciding.delete(pr.number); }
 }
 
-// Expedite (the board, call 118): a structural HQ fix the CEO flagged (jobs.expedite) merges as soon as a push passes its
+// Expedite (the board, calls 118 and 164): a structural HQ fix, or work the board needs now, that the CEO flagged
+// (jobs.expedite) merges as soon as a push passes its
 // gates and tests, with no panel, triage or queue before it; then the round reviews what merged (review), and what
 // blocks becomes its author's next job (reviewedAfter).
 export const expedites = (branch: string) =>
@@ -1355,7 +1358,7 @@ async function expeditePr(n: number) {
 // call) is its author's next job, on a new branch from main, as the code is already live.
 function reviewedAfter(pr: Pr, job: { id: number; pr: number; round: number }, decision: string | undefined, name: string, out: string, summary?: string) {
   db.prepare("update prs set status = 'merged' where number = ?").run(pr.number);
-  clearIdleCheck(pr.number);
+  settledAside(pr.number);
   // (its follow-ups waited for this ruling: a pass leaves them to the follow-up job, anything else to the job that fixes
   // it)
   if (decision === 'merge') {
@@ -1521,9 +1524,11 @@ const hold = (pr: number, why: string | null) => db.prepare('update prs set why 
 // pull request that carried its branch, and GitHub then marks it merged too.
 // Each sweep first brings back a ruled round's fix that ended short of its push (reviveFixes).
 const HANDOFF_MS = 10 * 60_000;
+// A job on pull request p: one of its own, or its author's work on its branch.
+const JOB_ON_PR = `(j.pr = p.number or j.kind = 'work' and j.branch = p.branch)`;
+const OPEN_JOB = `j.status in ('queued', 'running', 'blocked')`;
 const NO_JOB_SINCE = `not exists (
-  select 1 from jobs j where (j.pr = p.number or j.kind = 'work' and j.branch = p.branch)
-    and (j.status in ('queued', 'running', 'blocked') or coalesce(j.finished, j.created) >= ?))`;
+  select 1 from jobs j where ${JOB_ON_PR} and (${OPEN_JOB} or coalesce(j.finished, j.created) >= ?))`;
 // The start of revive's hold while GitHub can't tell: what a later answer clears
 const unanswered = (round: number) => `round ${round} never reached the panel, and GitHub `;
 export async function reviveRounds() {
@@ -1643,10 +1648,35 @@ export async function settleStuck() {
     if (deciding.has(pr.number)) continue;
     deciding.add(pr.number);
     try {
-      await reconcile(pr, 'it was stuck');
+      if ((await reconcile(pr, 'it was stuck')) === 'open') stuckToAuthor(pr);
     } catch (err) { console.error(`Could not ask GitHub about stuck PR #${pr.number}:`, err); }
     finally { deciding.delete(pr.number); }
   }
+}
+
+// A stuck pull request nothing is queued to move goes to its author at once, so it never sits silently: once for each
+// state it's stuck in (its round, commit and why), so a job that couldn't move it isn't given again for the same. Once
+// it's merged or closed, that job is taken back if it hasn't started (settledAside).
+const stuckKey = (pr: number) => `review.stuck.${pr}`;
+const givenFor = (pr: number) => JSON.parse(setting(stuckKey(pr)) ?? '{}') as { state?: string; job?: number };
+function stuckToAuthor(pr: Pr) {
+  const state = JSON.stringify([pr.round, pr.sha, pr.why]);
+  if (givenFor(pr.number).state === state) return;
+  if (db.prepare(`select 1 from prs p where p.number = ? and exists (select 1 from jobs j where ${JOB_ON_PR} and ${OPEN_JOB})`)
+    .get(pr.number)) return;
+  const job = fixJob(pr, 'Moving it on', `Your pull request #${pr.number} (branch ${pr.branch}) is stuck in review, and nothing is queued ` +
+    `to move it: ${pr.why ?? 'HQ recorded no reason'}. Answer or fix what's open: fix what that names on the branch and ` +
+    `push (your push gets its review), or, where only the platform holds it, \`hq review ${pr.number}\` sends it back ` +
+    `to the panel once the cause is gone.${pr.verdict ? `\n\nIts last ruling:\n${pr.verdict}` : ''}`);
+  remember(stuckKey(pr.number), JSON.stringify({ state, job }));
+}
+// A pull request merged or closed, by any path: the sweeps' settings on it go, and the stuck sweep's job for its author
+// with them.
+function settledAside(pr: number) {
+  const { job } = givenFor(pr);
+  if (job) ledger.cancelJob(job, `PR #${pr} is merged or closed`);
+  remember(stuckKey(pr), null);
+  remember(idleCheckKey(pr), null);
 }
 
 // Ask GitHub about open pull requests with no active job and no job activity for an hour, whatever their round.
@@ -1656,7 +1686,6 @@ export async function settleStuck() {
 // so here, and its saved time is cleared with its status.
 const IDLE_MS = 60 * 60_000;
 const idleCheckKey = (pr: number) => `review.idle.${pr}`;
-const clearIdleCheck = (pr: number) => remember(idleCheckKey(pr), null);
 const IDLE_OPEN = `p.status = 'open' and ${NO_JOB_SINCE}`;
 export async function settleIdle() {
   const now = Date.now();
@@ -1706,7 +1735,7 @@ function openJobOn(branch: string) {
 // what: its step, under its work's title; or its own title (a changes ruling's fix round.)
 function fixJob(pr: Pr, what: string | { title: string }, prompt: string, why = '', round?: number) {
   // one author session per branch at a time
-  if (db.prepare("select 1 from jobs where kind = 'work' and branch = ? and status in ('queued', 'running', 'blocked')").get(pr.branch)) return;
+  if (openJobOn(pr.branch)) return;
   // (a change people see: its previews again before the push.)
   const { files } = db.prepare('select files from prs where number = ?').get(pr.number) as Pick<Pr, 'files'>;
   const looks = visual.authorStep(visual.visualFor(JSON.parse(files)), pr.branch);
@@ -1718,18 +1747,19 @@ function fixJob(pr: Pr, what: string | { title: string }, prompt: string, why = 
   return job.id;
 }
 
+// An author's job on a pull request: a fix, or the board's notes.
+const authorFix = (job: { stage?: string | null }) => job.stage === 'fix' || job.stage === 'feedback';
+
 // An author's job on a pull request (a fix, the board's notes) that failed left it with nobody on it: actOnRulings() saw
 // the ruling acted on, and `hq review` saw nothing stuck (a fix job that couldn't even clone left one open for hours).
 // Like a review, it runs once more a few minutes later (jobs.ts finish() calls this); when that one fails too, the pull
 // request is stuck, and `hq review` gives the job to its current author again.
 // A run of it that was stopped or cancelled counts as one of the two (endedShort).
 export function fixFailed(job: { id: number; pr: number | null; branch: string | null; stage?: string | null; note?: string | null }) {
-  if (job.stage !== 'fix' && job.stage !== 'feedback') return;
+  if (!authorFix(job)) return;
   const owned = reviewinbox.context(job.id);
   const pr = db.prepare('select * from prs where number = ?').get(job.pr ?? owned?.pr ?? null) as Pr | undefined;
   if (!pr || !['open', 'stuck'].includes(pr.status) || job.branch !== pr.branch) return;
-  // the message it started with (finish() clears it) stays on it for whatever runs it again: its retry, or hq review's
-  db.prepare('update jobs set note = ? where id = ?').run(job.note ?? null, job.id);
   // a job from before the current round: a push since started a newer one, whose own jobs carry it (as in reviewFinished())
   if (job.id <= pr.since) return;
   // another job on the branch pushes for it
@@ -1738,6 +1768,10 @@ export function fixFailed(job: { id: number; pr: number | null; branch: string |
   if (endedShort(pr, job) > 1) return stuck(pr.number, `${agent}'s job on it ended without a push twice, and the last one failed to run. \`hq review ${pr.number}\` gives it to them again once the seats work`);
   publish({ type: 'log', agent, text: `PR #${pr.number}: ${agent}'s job on it failed to run; it runs again as job #${again(run(job.id), RETRY_MS, agent)}` });
 }
+
+// The message an author's fix started with stays on a run that ended short of its push (jobs.ts recordEnd), for
+// whatever runs it again: fixFailed's retry, reviveFixes' or hq review's.
+export const keepsFixNote = (job: { stage?: string | null }, status: string) => ENDED_SHORT.includes(status) && authorFix(job);
 
 // How many runs of a fix ended short of their push since the pull request's round started, this one's included: a drawn
 // task's on the same findings, or an author's fix job's of the same stage on the branch. It runs again once by itself.
@@ -1908,7 +1942,7 @@ closely as any new code.${tail}`;
 export async function withdrawn(pr: number) {
   const c = await closePullRequest(pr);
   db.prepare("update prs set status = 'closed' where number = ?").run(pr);
-  clearIdleCheck(pr);
+  settledAside(pr);
   visualapproval.closed(pr);
   publish({ type: 'log', agent: panel.attribution(pr), text: c.ok ? `Closed PR #${pr}: its author's fix left nothing of it for main` : `PR #${pr} is closed here (its author's fix left nothing of it for main), but GitHub refused to close it (${c.why}): close it there by hand` });
 }
@@ -1924,7 +1958,7 @@ async function close(pr: number, why: string) {
   const row = db.prepare('select * from prs where number = ?').get(pr) as Pr;
   if (!done) reviewclosure.hold(row.branch, pr);
   db.prepare("update prs set status = 'closed', why = ? where number = ?").run(why, pr);
-  clearIdleCheck(pr);
+  settledAside(pr);
   visualapproval.closed(pr);
   publish({ type: 'log', agent: panel.attribution(pr), text: c.ok ? `Closed PR #${pr}: ${why}` : `PR #${pr} is closed here (${why}), but GitHub refused to close it (${c.why}): close it there by hand` });
   unmerged(pr, row.branch);
@@ -2364,7 +2398,7 @@ export async function resume(n: number, by: string): Promise<{ ok: true; jobs: n
   // (startReview's redo); after a ruling, the push is the next round.
   const fix = db.prepare("select * from jobs where kind = 'work' and branch = ? order by id desc limit 1").get(pr.branch) as (Run & { status: string }) | undefined;
   // A fix that reviveFixes ran again and that ended short twice is given back the same way.
-  if (fix && ENDED_SHORT.includes(fix.status) && (fix.pr === n || reviewinbox.context(fix.id)?.pr === n) && fix.id > pr.since && (fix.stage === 'fix' || fix.stage === 'feedback')) {
+  if (fix && ENDED_SHORT.includes(fix.status) && (fix.pr === n || reviewinbox.context(fix.id)?.pr === n) && fix.id > pr.since && authorFix(fix)) {
     const replacement = replacementOf(fix.id);
     if (replacement) return `job #${replacement} has taken over #${fix.id}'s work already: continue that job`;
     if (pr.round === 0 || ruled(n, pr.round, pr.sha)) db.prepare("update prs set status = 'open', why = null where number = ?").run(n);   // (why)

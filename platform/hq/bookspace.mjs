@@ -34,7 +34,7 @@ async function upAndLeft(browser, c) {
     // two fingers drag the page right and down: the paper shows what's up and left of its origin (one finger draws)
     await pan(fingers, mid, [180, 140]);
     near(await originAt(page), from, [180, 140], 'two fingers pan up and left of the origin');
-    await tool(page, 'Colour and width').tap();
+    await tool(page, 'Pen').tap();
     await page.getByRole('menuitemradio', { name: 'Blue' }).tap();
     // (the card stays open over the paper beside the strip for a width too: Escape closes it.)
     await page.keyboard.press('Escape');
@@ -109,7 +109,7 @@ async function noFreeze(browser, c) {
     // two fingers down whose lifts never come (a pinch the browser lost), and the Pencil's line Scribble took
     await liftsNeverCame(page, [x, y]);
     // a text box opened with the Pencil, then the page turned with it still open, and back
-    await pick(page, 'Type', 'tap');
+    await pick(page, 'Text', 'tap');
     await pen([[x - 100, y + 120]]);
     await page.keyboard.type('half a thought');
     await page.locator('#book').getByRole('button', { name: 'New page', exact: true }).tap();

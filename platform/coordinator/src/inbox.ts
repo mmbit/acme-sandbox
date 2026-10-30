@@ -72,15 +72,15 @@ once(
 const WINDOWED = `from (
     select proposal, thread from review_inbox
     union select s.proposal, j.thread from sorts s join jobs j on j.id = s.job
-  ) r join proposals p on p.id = r.proposal join threads t on t.id = r.thread
-  where p.status = 'open' and t.status = 'open' and t.deadline is not null`;
+  ) r join proposals p on p.id = r.proposal join threads t on t.id = r.thread join thread_windows w on w.id = t.id
+  where p.status = 'open' and t.status = 'open' and w.deadline is not null`;
 export const windowed = (proposal: number) => !!db.prepare(`select 1 ${WINDOWED} and r.proposal = ?`).get(proposal);
 export const heldWindows = () =>
   new Map(
     (
       db
         .prepare(
-          `select p.heard_by job, min(t.deadline) deadline ${WINDOWED} and p.heard_by is not null
+          `select p.heard_by job, min(w.deadline) deadline ${WINDOWED} and p.heard_by is not null
         group by p.heard_by`,
         )
         .all() as { job: number; deadline: number }[]

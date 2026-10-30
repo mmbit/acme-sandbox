@@ -14,12 +14,13 @@
 // download, a card with steps, and finished work (a walk-through offered, work brought back).
 import { db } from '../db.ts';
 import { ceo } from '../company.ts';
-import { findAgent, jobAgent } from '../jobs.ts';
+import { endRequest, findAgent, jobAgent } from '../jobs.ts';
 import { productsOf } from '../owed.ts';
 import * as cardFiles from '../cardfiles.ts';
 import { BOARD } from './book.ts';
 import { parseCard } from '../../../hq/shell/card.js';
 import { SHOWN } from '../shown.ts';
+import type { Refused } from '../pagechecks.ts';
 
 // A page's address as hq ask --page names it: a path on HQ, or a preview's whole https address (as review mode's notes
 // on a preview have them)
@@ -43,6 +44,7 @@ type Row = {
   zips: string | null;
   questions: string | null;
   walk: number;
+  address: string | null;
   note: number | null;
   page: string | null;
 };
@@ -90,8 +92,25 @@ export const asksOn = (note: number) =>
       )
       .all(note, new Date().toISOString()) as Row[]
   )
-    .filter(r => !deskOnly(r))
+    .filter(r => !deskOnly(filed(r)))
     .map(askOf);
+// The card an agent's design ask is (its group's request: askpages.ts), as the book shows it under its scrap: none once
+// withdrawn
+export const asksBy = (request: number) =>
+  (
+    db
+      .prepare(`select * from requests where id = ? and (status = 'answered' or (status = 'open' and ${SHOWN}))`)
+      .all(request, new Date().toISOString()) as Row[]
+  ).map(askOf);
+export const askShown = (request: number) => asksBy(request).length > 0;
+// The board deleted an agent's design ask from its book. An open card leaves the desk phone with it, as HQ ends a card,
+// so the book and the desk phone never disagree about it. An answered card stays as the board answered it.
+export function askDeleted(request: number) {
+  const { status } = db.prepare('select status from requests where id = ?').get(request) as { status: string };
+  if (status === 'open') endRequest(request, 'the board deleted it from its book');
+}
+// Undo of that delete, once its card is gone: the scrap stays gone with it
+export const ASK_GONE: Refused = [409, 'this ask left the desk phone with its card when it was deleted', 'askGone'];
 // A card as the book shows it: its text for card.js to read, its questions for questions.js
 function askOf(r: Row) {
   return {
@@ -108,17 +127,39 @@ function askOf(r: Row) {
     answered: r.status === 'answered' ? r.answered : null,
   };
 }
-const deskOnly = (r: Row) =>
-  Boolean(r.secrets || r.approves || r.seat || r.photos || r.documents || r.zips || r.walk) ||
-  ['credential', 'login'].includes(r.kind) ||
-  stepsIn(r.body) ||
-  cardFiles.of(r.id).length > 0 ||
-  productsOf(r.id).some(p => p.back);
-// Steps the board takes elsewhere: the card's Steps: checklist, or a web task done with Claude (card.js parseCard)
-function stepsIn(body: string) {
-  const c = parseCard(body);
-  return c.steps.length > 0 || c.claude;
+// What on a card keeps it off the book, as the agent would name it, or null: hq ask --book refuses such a card
+// (askpages.ts), and the book shows no filed one under its note
+export function deskOnly(c: DeskCard) {
+  if (c.secrets || c.seat || ['credential', 'login'].includes(c.kind)) return 'A card for keys or a login';
+  if (c.approves || c.kind === 'approval') return 'An approval (money, a launch, going public)';
+  if (c.uploads) return 'A card asking for uploads';
+  if (c.files) return 'A card with files to download';
+  if (c.walk || c.back) return 'Finished work (a walk-through, or work brought back)';
+  if (c.address) return 'An address card';
+  // (steps the board takes elsewhere: the card's Steps: checklist, or a web task done with Claude)
+  const parsed = parseCard(c.body);
+  if (parsed.steps.length > 0 || parsed.claude) return 'A card with steps the board takes in another system';
+  return null;
 }
+// A card's fields deskOnly reads: hq ask's as it's filed, or a filed card's row (filed)
+export type DeskCard = {
+  kind: string;
+  body: string;
+  secrets: unknown;
+  seat: unknown;
+  approves: unknown;
+  address: unknown;
+  walk: unknown;
+  uploads: boolean;
+  files: boolean;
+  back: boolean;
+};
+const filed = (r: Row): DeskCard => ({
+  ...r,
+  uploads: Boolean(r.photos || r.documents || r.zips),
+  files: cardFiles.of(r.id).length > 0,
+  back: productsOf(r.id).some(p => p.back),
+});
 
 // ---------------------------------------------------------------- the desk phone's read
 // GET /api/requests' card with its place: the note (its snip, its number on its sheet, its owner, its words, its page's

@@ -24,7 +24,11 @@ test('processor pressure warns even with free memory, holds its band, and clears
   assert.equal(look().verdict, 'calm');
   pressure(50);
   assert.match(look().reasons.join(), /CPU pressure 50%/);
-  assert.equal(look().verdict, 'low');
+  const busy = look();
+  assert.equal(busy.verdict, 'low');
+  assert.equal(busy.inputs.memoryVerdict, 'calm');
+  assert.equal(busy.inputs.calm?.freeMb, 5000);
+  assert.equal(busy.inputs.cpuBusy, true);
   pressure(40);
   assert.equal(look().verdict, 'low');
   pressure(30);
@@ -41,6 +45,8 @@ test('the worker room and low memory share the alert without changing a job memo
   const tight = look({ freeMb: 1500, uses: new Map([[7, 3800]]) });
   assert.equal(tight.verdict, 'low');
   assert.equal(tight.cause?.job, 7);
+  assert.deepEqual(tight.inputs.calm, { freeMb: 5000, uses: { 7: 300 } });
+  assert.deepEqual(tight.inputs.uses, { 7: 3800 });
   const recovering = look({ freeMb: 2500 });
   assert.equal(recovering.verdict, 'between');
   assert.match(recovering.reasons.join(), /memory recovering: 2\.4 GB free/);

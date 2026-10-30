@@ -33,10 +33,23 @@ const end = async (id: number, status = 'done') => finish(await run(id), { statu
 const proposals = await import('./proposals.ts');
 const { ceo } = await import('./company.ts');
 function sort(id: number, title: string, code: string) {
-  const { proposal } = db.prepare(`select s.proposal from sorts s join proposals p on p.id = s.proposal
-    where s.job = ? and p.status = 'open'`).get(id) as { proposal: number };
-  assert.equal(proposals.drop(proposal, { agent: ceo(), job: 0 }, 'not needed'), 'it brings a product back to the board, so it runs: give it its title (hq inbox accept)');
-  assert.equal((proposals.accept(proposal, ceo(), { title, code }) as { job: number }).job, id);
+  const { proposal } = db
+    .prepare(
+      `select s.proposal from sorts s join proposals p on p.id = s.proposal
+    where s.job = ? and p.status = 'open'`,
+    )
+    .get(id) as { proposal: number };
+  assert.equal(
+    proposals.drop(proposal, { agent: ceo(), job: 0 }, 'not needed'),
+    'it brings a product back to the board, so it runs: give it its title (hq inbox accept)',
+  );
+  const accepted = proposals.accept(proposal, ceo(), {
+    size: '30m',
+    why: 'Test scope judgment without a comparable completed job',
+    title,
+    code,
+  }) as { job: number };
+  assert.equal(accepted.job, id);
   assert.equal(job(id).title, title);
 }
 // What's owed, as hq owed shows it (from a job of Penny's, who has nothing to do with it)

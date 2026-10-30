@@ -37,7 +37,6 @@ await context.addInitScript(() => {
 await context.route(`${base}/__review/**`, r => {
   const path = new URL(r.request().url()).pathname;
   if (fulfilPart(r, path, reviewJs)) return;
-  if (path === '/__review/mine') return r.fulfill({ json: { notes: 0 } });
   return r.fulfill({ json: { show: false } });
 });
 await context.route(`${base}/api/book`, r =>
@@ -70,7 +69,7 @@ await page.evaluate(() => {
     ms.forEach(m => m.addedNodes.forEach(n => n.localName === 'review-lift' && window.__lifted++)),
   ).observe(document.documentElement, { childList: true, subtree: true });
   document.dispatchEvent(
-    new CustomEvent('call:on', { detail: { call: 5, agent: 'juno', name: 'Juno', color: '#7b5ea7', walk: false } }),
+    new CustomEvent('call:on', { detail: { call: 5, agent: 'juno', name: 'Juno', color: '#7b5ea7' } }),
   );
 });
 

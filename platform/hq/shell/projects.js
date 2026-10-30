@@ -16,6 +16,7 @@ import * as levels from './levels.js';
 import { sortable, sortGesture } from './sorting.js';
 import { keepCovers, coversIn } from './covers.js'; // (coversIn)
 import { morph } from './morph.js';
+import { shownProject } from './ink/bookproject.js';
 
 const $ = s => document.querySelector(s);
 const REFRESH_MS = 20000;
@@ -132,6 +133,7 @@ export async function closeProjects() {
 export const toggleProjects = from => (projectsOpen() && !shutting() ? closeProjects() : openProjects({ from }));
 const shutting = () => $('#projects').classList.contains('pj-shut');
 function switched(on) {
+  if (!on) shownProject(null);
   $('#projects').hidden = !on;
   cover(on, 'projects'); // (the deck dimmed under it draws nothing while it's out: Holo's costs a slow device's frames)
   $('#projects').classList.remove('pj-shut');
@@ -353,6 +355,7 @@ function paint(motion = '') {
   if (view.project && !everyProject().some(p => p.id === view.project)) view.project = view.thread = null;
   const l = here();
   if (view.thread && l.at !== 'thread') view.thread = null;
+  shownProject(view.project);
   const kept = {
     board: el.querySelector('.pj-board')?.scrollTop ?? 0,
     steps: stepsKept(el),

@@ -2,7 +2,7 @@
 // on its paper (files, or an <img>, a link or words dragged from another tab or app), pasted from the Paste bubble a
 // finger held still on a page brings, or carried in from HQ's page (a ring the Pencil drew, lifted by a finger:
 // shared/review/carry.js, heard as 'book:tape' events). bookbrought.js reads what came. A picture lands a touch askew in
-// a white border with a strip of tape (sketchscraps.js drawScrap, as bookpage.js draws a page's scraps); one at an
+// a white border with a strip of tape (bookscrapdraw.js drawScrap, as bookpage.js draws a page's scraps); one at an
 // address on another site comes through the coordinator (bookfetch.ts). Words land in a box at a readable width
 // (booktexts.js put), a link as its picture when it is one, else as its words. Files of another kind are refused,
 // saying so. Each landing is one step Undo takes back.
@@ -17,7 +17,7 @@ import { sfx } from '../audio.js';
 import { keepPicture } from './notebookdata.js';
 import { changed, said, shut } from './booksave.js';
 import { grownTo, pageBox, scrapBoxOf } from './bookrow.js';
-import { shrink } from './sketchscraps.js';
+import { shrink } from './bookscrapdraw.js';
 import { placeScrap } from './bookscrap.js';
 import { arrive } from './bookarrive.js';
 import { READ } from './booktexts.js';
@@ -271,7 +271,7 @@ async function pageFor(tape, { at, today }) {
   return { v: (await tape.pages.current(book)).v, at: false };
 }
 
-// A picture file onto the book: drawn smaller (sketchscraps.js shrink, at most 2,000 px a side), kept by the store on
+// A picture file onto the book: drawn smaller (bookscrapdraw.js shrink, at most 2,000 px a side), kept by the store on
 // its page, placed, drawn, saved, and a step Undo takes back. at: [x, y] on screen. i: its place among several.
 // today: carried, so the notebook's current page.
 async function tapeIn(tape, file, { at = null, i = 0, today = false }) {

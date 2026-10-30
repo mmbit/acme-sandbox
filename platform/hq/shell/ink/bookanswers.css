@@ -1,7 +1,6 @@
 /* The agents' answers on a notebook page (bookanswers*.js): written on the paper in the agent's ink, in a hand, with a
    hand-drawn bulb and the agent's face; a light ruled strip under each for the board's reply; a drawing, a picture
-   taped in, a form; an answer still coming as a face and pencil dots; a note's versions as frames on a page of their
-   own. The hand is a setting (--bk-hand): an OFL face shipped here, then the system's own hands.
+   taped in, a form; an answer still coming as a face and pencil dots (a note's versions: bookversions.css). The hand is a setting (--bk-hand): an OFL face shipped here, then the system's own hands.
  */
 
 @font-face {
@@ -174,6 +173,12 @@
   display: block;
   width: 100%;
   height: auto;
+}
+/* where a picture's numbers came from: a quiet line under it */
+#book .bk-answer-source {
+  margin-top: 4px;
+  font: 11px/1.3 var(--bk-font);
+  color: var(--bk-graphite);
 }
 #book .bk-answer-picture::before {
   content: '';

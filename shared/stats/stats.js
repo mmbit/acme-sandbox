@@ -18,7 +18,8 @@ export const COUNT_MS = 900;
 // The dot a line ends on, now
 export const DOT_RADIUS_PX = 4;
 
-const escape = text =>
+// Words safe in SVG or HTML text and a double-quoted attribute
+export const escape = text =>
   String(text).replace(/[&<>"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[char]);
 
 // bars(values, { width, height, tips, stubs, scale }): a bar per value, the last (now) with class now, one not counted
