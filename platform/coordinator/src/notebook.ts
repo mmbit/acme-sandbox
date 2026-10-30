@@ -18,16 +18,26 @@ import { DIR } from './pagescraps.ts';
 import { rmSync } from 'node:fs';
 import { titleLater } from './notebooktitles.ts';
 import { landingPage } from '../../hq/shell/ink/notebookstack.js';
+import { chapterOf as chapterIn, inChapters } from '../../hq/shell/ink/notebookchapters.js';
 import { SCREEN_SHAPES } from '../../hq/shell/ink/booklayout.js';
 import { ZOOM_KEPT } from '../../hq/shell/ink/bookrow.js';
+import { shownCard } from './shown.ts';
+import { MY_JOURNAL, seenNotebook, shelfColumns, shelfOf } from './notebookshelf.ts';
+import { roundSummary } from './notebookrounds.ts';
 
 // kind: 'mine' (a person's own, where pins and their notes go, and a call's notes page: ink/callnotes.ts), 'round' (a
-// guest review round) or 'invited' (one the board made for someone it invited). name: what the shelf shows.
+// guest review round's book: notebookrounds.ts), 'invited' (one the board made for someone it invited) or 'project' (a project's book, the CEO
+// makes: its design asks land on its Asks page, ink/askpages.ts). name: what the shelf shows. project: a project
+// book's project. (project) cover: the picture the board gave its cover, a file
+// in DIR; seen: when the board last read it, its answers since are new (notebookshelf.ts.)
 db.exec(`create table if not exists notebooks (id integer primary key autoincrement, who text not null, kind text not null,
-  name text not null default '', archived integer not null default 0, created text not null, updated text not null);
+  name text not null default '', archived integer not null default 0, created text not null, updated text not null,
+  project text, cover text, seen text);
   create index if not exists notebooks_who on notebooks (who)`);
-// (tries: the group a versions page is for, ink/booktry.ts; tries_note, an old book's note's, is a page outside the
-// notebooks, booktry.ts's.)
+if (lacks('notebooks', 'project')) db.exec('alter table notebooks add column project text');
+shelfColumns();
+// (tries, tries_note: the group or old book's note a versions page was for, before a try's versions came under their
+// note: such a page is listed no more.)
 for (const column of [
   'notebook integer',
   'pos real',
@@ -39,11 +49,12 @@ for (const column of [
   "title_seen text not null default ''",
   "zooms text not null default '{}'",
   'handed integer not null default 0',
+  'followed integer',
 ])
   if (lacks('book_pages', column.split(' ')[0])) db.exec(`alter table book_pages add column ${column}`);
 db.exec('create index if not exists book_pages_notebook on book_pages (notebook, pos)');
 
-export const KINDS = ['mine', 'round', 'invited'] as const;
+export const KINDS = ['mine', 'round', 'invited', 'project'] as const;
 export type Notebook = {
   id: number;
   who: string;
@@ -52,6 +63,9 @@ export type Notebook = {
   archived: number;
   created: string;
   updated: string;
+  project: string | null;
+  cover: string | null;
+  seen: string | null;
 };
 // Who set the title. An empty value means nobody has named the page.
 export type TitleBy = '' | 'board' | 'agent' | 'model';
@@ -70,13 +84,15 @@ export type NotebookPage = Page & {
   // How many changes someone else's hand has made on it (byHand): a screen's read that finds more takes what it brings
   // as a step of its own
   handed: number;
+  // A call's notes page: when its call's follow-up handed out what's on it, its Sent stamp (ink/callnotes.ts followed)
+  followed: number | null;
 };
-const PAGE_COLUMNS = `${COLUMNS}, notebook, pos, send_at, fresh, tries, title_by, title_seen, zooms, handed`;
+const PAGE_COLUMNS = `${COLUMNS}, notebook, pos, send_at, fresh, tries, title_by, title_seen, zooms, handed, followed`;
 // The size a new page starts at: it grows every way as it's drawn on
 const NEW_PAGE = { w: 1200, h: 1600 };
 
 // ---------------------------------------------------------------- the shelf
-// GET /api/notebooks: the shelf (My Notebook first) and the archive
+// GET /api/notebooks: the shelf (My journal first) and the archive
 export function listNotebooks(who = BOARD) {
   mine(who);
   const all = db
@@ -87,12 +103,12 @@ export function listNotebooks(who = BOARD) {
     archive: all.filter(n => n.archived).map(notebookOf),
   };
 }
-// POST /api/notebooks/archive { id, archived }: a notebook onto the archive or back on the shelf (My Notebook stays)
+// POST /api/notebooks/archive { id, archived }: a notebook onto the archive or back on the shelf (My journal stays)
 export function archiveNotebook(b: any, who = BOARD) {
   const n = notebookRow(Number(b?.id), who);
   if (!n) return 404;
   if (typeof b.archived !== 'boolean') return [400, 'archived is true or false'] as Refused;
-  if (n.kind === 'mine') return [409, 'My Notebook stays on the shelf'] as Refused;
+  if (n.kind === 'mine') return [409, `${MY_JOURNAL} stays on the shelf`] as Refused;
   db.prepare('update notebooks set archived = ?, updated = ? where id = ?').run(
     Number(b.archived),
     new Date().toISOString(),
@@ -115,7 +131,7 @@ export function mine(who = BOARD) {
 // A person's own notebook's id, made if there's none, their old book not carried in (a call's notes page takes it so:
 // ink/callnotes.ts.)
 export function ownNotebook(who: string) {
-  return findOwnNotebook(who) ?? makeNotebook(who, 'mine', 'My Notebook');
+  return findOwnNotebook(who) ?? makeNotebook(who, 'mine', MY_JOURNAL);
 }
 // A person's own notebook's id, or undefined before it's made
 export const findOwnNotebook = (who: string) =>
@@ -130,15 +146,16 @@ export function makeNotebook(who: string, kind: Notebook['kind'], name: string) 
 }
 
 // ---------------------------------------------------------------- a notebook's pages
-// GET /api/notebooks/pages?notebook=: its pages in their order (the current one made if there's none), then those
-// archived
+// GET /api/notebooks/pages?notebook=: its pages in their order (one made in a notebook with none), then those archived.
+// A page sent stays where it is, the last too: no page is made after it (the board's call 170); new groups make the current page as they land (currentPage).
 export function listPages(b: any, who = BOARD) {
   const n = notebookRow(Number(b?.notebook), who);
   if (!n) return 404;
   if (n.kind === 'mine') mine(who);
-  currentPage(n.id);
+  if (!pagesOf(n.id).some(p => !p.archived)) currentPage(n.id);
   const pages = pagesOf(n.id);
   for (const p of pages) titleLater(p.id);
+  seenNotebook(n.id);
   return {
     notebook: notebookOf(n),
     pages: pages.filter(p => !p.archived).map(pageOf),
@@ -208,8 +225,8 @@ export function currentPage(notebook: number) {
 // The current page if the notebook has one (review mode's count reads it: ink/bookreview.ts)
 export function openPageOf(notebook: number) {
   const pages = db
-    .prepare('select id, created, archived, send_at, tries from book_pages where notebook = ?')
-    .all(notebook) as Pick<NotebookPage, 'id' | 'created' | 'archived' | 'send_at' | 'tries'>[];
+    .prepare('select id, kind, created, archived, send_at, tries from book_pages where notebook = ?')
+    .all(notebook) as Pick<NotebookPage, 'id' | 'kind' | 'created' | 'archived' | 'send_at' | 'tries'>[];
   return landingPage(pages, (p: (typeof pages)[number]) => p.send_at !== null)?.id ?? null;
 }
 export function newPage(notebook: number) {
@@ -281,10 +298,15 @@ export const pageRow = (id: number, who: string | null) =>
         )
         .get(id, who)
     : undefined) as NotebookPage | undefined;
-const pagesOf = (notebook: number) =>
-  db
-    .prepare(`select ${PAGE_COLUMNS} from book_pages where notebook = ? order by pos, id`)
-    .all(notebook) as NotebookPage[];
+// In their chapters' order. (a try's versions page from before they came under
+// their note is no page any more)
+const pagesOf = (notebook: number): NotebookPage[] =>
+  inChapters(
+    kindOf(notebook),
+    db.prepare(`select ${PAGE_COLUMNS} from book_pages where notebook = ? and tries is null`).all(notebook),
+  );
+const kindOf = (notebook: number | null) =>
+  (db.prepare('select kind from notebooks where id = ?').get(notebook) as { kind: string } | undefined)?.kind;
 // Whether a page's own content is read-only: it's sending or sent
 export const shut = (p: NotebookPage) => p.send_at !== null;
 // Whether a page sent has gone: its seconds are up, or a sheet of its has been delivered already
@@ -301,17 +323,46 @@ const notebookOf = (n: Notebook) => ({
   id: n.id,
   name: n.name,
   kind: n.kind,
+  project: n.project,
   archived: !!n.archived,
   created: n.created,
   updated: n.updated,
   pages: (
     db.prepare('select count(*) n from book_pages where notebook = ? and archived = 0').get(n.id) as { n: number }
   ).n,
+  asks: asksCount(n.id),
+  ...shelfOf(n), // (its cover and its new answers)
+  // (a round's state, guests and open asks for its cover.)
+  ...(n.kind === 'round' && { round: roundSummary(n.id) }),
 });
+// A page's chapter, its bookmark (notebookchapters.js): in a round's book a guest's page (with whose), its Asks or its
+// Advice; in every other its Sketch, Asks or Calls
+function chapterOf(p: NotebookPage) {
+  const chapter = chapterIn(p.kind, kindOf(p.notebook));
+  if (chapter !== 'guests') return { chapter };
+  const g = db.prepare('select guest from notebook_guests where page = ?').get(p.id) as { guest: string } | undefined;
+  return { chapter, guest: g?.guest ?? null };
+}
+// The design asks in a notebook (ink/askpages.ts), as its cover on the shelf counts them: open, the cards still waiting
+// on the board (red), of all (grey once none waits). One whose card was withdrawn isn't counted, as it isn't shown.
+export const asksCount = (notebook: number) => {
+  const c = db
+    .prepare(
+      `select count(*) total, coalesce(sum(r.status = 'open'), 0) open from notebook_groups g
+      join book_pages p on p.id = g.page join requests r on r.id = g.request
+      where p.notebook = $notebook and g.deleted is null
+        and (r.status = 'answered' or r.status = 'open' and ${shownCard('r', '$now')})`,
+    )
+    .get({ notebook, now: new Date().toISOString() }) as { total: number; open: number };
+  return { open: c.open, all: c.total };
+};
 // What the shelf and a notebook's page grid read of a page. sending: in its seconds to undo; sent: when it went.
 // picture: the page drawn whole, groups and all (bookpicture.ts).
+// A call's notes page is never sending: it's sent once its call's follow-up has handed out what's on it (ink/callnotes.ts.
 export function pageOf(p: NotebookPage) {
-  const went = gone(p),
+  const call = p.kind === 'call',
+    went = !call && gone(p),
+    sent = call ? p.followed : went ? p.send_at : null,
     { n } = db
       .prepare('select count(*) n from notebook_groups where page = ? and parent is null and deleted is null')
       .get(p.id) as { n: number };
@@ -323,8 +374,9 @@ export function pageOf(p: NotebookPage) {
     zooms: JSON.parse(p.zooms),
     day: p.day,
     archived: !!p.archived,
-    sending: p.send_at !== null && !went,
-    sent: went ? new Date(p.send_at!).toISOString() : null,
+    sending: !call && p.send_at !== null && !went,
+    sent: sent === null ? null : new Date(sent).toISOString(),
+    ...(call && shut(p) && { readonly: true }), // (ended, with its follow-up or sent)
     created: p.created,
     updated: p.updated,
     x: p.x,
@@ -333,6 +385,6 @@ export function pageOf(p: NotebookPage) {
     h: p.h,
     groups: n,
     picture: `/api/book/picture?id=${p.id}&v=${encodeURIComponent(p.updated)}`,
-    tries: p.tries, // a try's versions page: the group it's for (ink/booktry.ts).
+    ...chapterOf(p),
   };
 }

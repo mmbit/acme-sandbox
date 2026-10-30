@@ -1,9 +1,10 @@
 // Engines with ready seats and waiting work that have stopped starting jobs: HQ's feed says so once a spell, and the CEO's
-// summary (summary.ts) lists each while it lasts.
+// summary (summary.ts) lists each while it lasts. One that began shortly after a deploy is an incident (incidents.ts).
 import { db, remember, setting } from './db.ts';
 import { publish } from './events.ts';
 import { readyOn, type ReadySeat } from './jobs.ts';
 import { cap, ceo, companyFormats } from './company.ts';
+import * as incidents from './incidents.ts';
 
 export const STALLED_FOR_MS = 15 * 60_000;
 type Spell = { since: number; told?: number; line?: string };
@@ -40,7 +41,15 @@ export function stallSweep(t = Date.now()) {
     const line =
       `${cap(engine)} has started nothing for ${Math.round((t - spell.since) / 60_000)} min (since ${companyFormats().time(spell.since, 'en')}): ` +
       `${readySeats.map(s => s.id).join(', ')} ready, ${waiting} job${waiting === 1 ? '' : 's'} ready for it, none running.`;
-    if (!spell.told) publish({ type: 'log', agent: ceo(), text: line });
+    if (!spell.told) {
+      publish({ type: 'log', agent: ceo(), text: line });
+      // (after a deploy, the CEO judges whether it's the cause: incidents.ts)
+      incidents.stalled(
+        `engine:${engine}`,
+        `${cap(engine)} has started no job though its seats are ready and work waits`,
+        spell.since,
+      );
+    }
     remember(key(engine), JSON.stringify({ since: spell.since, told: spell.told ?? t, line }));
   }
 }

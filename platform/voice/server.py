@@ -35,7 +35,7 @@ from urllib.request import Request, urlopen
 from aloud import DAYS, aloud, number, respelt
 from drawing import ASK_WORDS, INK_SECONDS, INK_WORDS, Drawing, note_said, notes_lost, one_line
 from driving import DRIVE_WORDS, OPEN_WORDS, Driving
-from callnotes import CHANGE_WORDS, MARK_WORDS, PAGE_WORDS, SCRAP_WORDS, TITLE_WORDS_SAID, CallNotes
+from callnotes import CHANGE_WORDS, MARK_WORDS, PAGE_WORDS, SCRAP_WORDS, TITLE_WORDS_SAID, TRY_WORDS, CallNotes
 from echo import Echo
 from endpoint import Endpoint
 from guard import PARTNER, TOOLS, agent_env, hq_tools_work, sign_in_pipe, take_token
@@ -436,10 +436,10 @@ async def serve_screens(path):
 
 # Each tool's ask on the line's socket, by the key it carries (the screen tool's has none of these), and the tool's words
 # (ask_to_see and draw; open_work and drive)
-# (scrap and title_page: the call's notes page; read_page, mark_page and change_page: the agent working it)
+# (scrap and title_page: the call's notes page; read_page, mark_page, change_page and try: the agent working it. try:
 ASKED_WORDS = {'sketch': SKETCH_WORDS, 'ask_to_see': ASK_WORDS, 'draw': INK_WORDS, 'open_work': OPEN_WORDS, 'drive': DRIVE_WORDS,
                'scrap': SCRAP_WORDS, 'title_page': TITLE_WORDS_SAID, 'read_page': PAGE_WORDS, 'mark_page': MARK_WORDS,
-               'change_page': CHANGE_WORDS, 'name_voice': VOICE_WORDS}
+               'change_page': CHANGE_WORDS, 'try': TRY_WORDS, 'name_voice': VOICE_WORDS}
 ASKED_WORDS |= {'save_voice': ENROL_WORDS, 'forget_voice': FORGET_WORDS}
 
 
@@ -454,7 +454,7 @@ async def screen_asked(reader, writer):
                          'drive': call.driving.drive_tool, 'scrap': call.page.scrap_tool,
                          'title_page': call.page.title_tool, 'read_page': call.page.page_tool,
                          'mark_page': call.page.mark_tool, 'change_page': call.page.change_tool,
-                         'name_voice': call.voice_tool,
+                         'try': call.page.try_tool, 'name_voice': call.voice_tool,
                          'save_voice': call.enrol_tool, 'forget_voice': call.forget_tool}[kind]
         answer = await tool(asked) if tool else {'error': ASKED_WORDS.get(kind, SCREEN_WORDS)['gone']}
     except Exception as err:  # (the coordinator failed, or a request of another shape: the agent hears so)

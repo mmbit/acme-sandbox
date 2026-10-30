@@ -428,7 +428,8 @@ if (slugs.length) {
   // 7. dragged to the left, the pin stays exactly where it's let go, and there
   // on the next page
   await page.goto(`https://${a}.preview.${ZONE}/`); await page.waitForTimeout(1200);
-  const r = await ui(page.mainFrame(), root => { const b = root.querySelector('.fab').getBoundingClientRect(); return { x: b.left + 30, y: b.top + 30 }; });
+  // (held at the pin's middle, whatever its size)
+  const r = await ui(page.mainFrame(), root => { const b = root.querySelector('.fab').getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2 }; });
   const cdp = await ctx.newCDPSession(page), touch = (type, x, y) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: type === 'touchEnd' ? [] : [{ x, y }] });
   await touch('touchStart', r.x, r.y); for (let i = 1; i <= 10; i++) await touch('touchMove', r.x - i * 25, r.y - i * 20);
   report('drop', a, await dropped(page.mainFrame(), () => touch('touchEnd')));
@@ -437,7 +438,7 @@ if (slugs.length) {
   report('drag', a, { ok: left < 100, why: left < 100 ? 'dragged left, it stays left after a reload' : `still at x ${Math.round(left)} after the drag` });
   // 8. dragged high up, then the phone turns sideways (or a reload in a shorter frame): the pin stays on screen,
   // and turned back upright it's where the board left it
-  const fab = () => ui(page.mainFrame(), root => { const b = root.querySelector('.fab').getBoundingClientRect(); return { top: b.top, bottom: b.bottom, x: b.left + 30, y: b.top + 30, h: innerHeight }; });
+  const fab = () => ui(page.mainFrame(), root => { const b = root.querySelector('.fab').getBoundingClientRect(); return { top: b.top, bottom: b.bottom, x: b.left + b.width / 2, y: b.top + b.height / 2, h: innerHeight }; });
   const upright = page.viewportSize(), onScreen = p => p.top >= 0 && p.bottom <= p.h;
   const s = await fab();
   await touch('touchStart', s.x, s.y); for (let i = 1; i <= 10; i++) await touch('touchMove', s.x, s.y + (100 - s.y) * i / 10); await touch('touchEnd');

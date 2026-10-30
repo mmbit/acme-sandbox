@@ -58,9 +58,9 @@ function atWork(holds: Holds) {
   const runs = db
     .prepare(
       redraws.query(`select j.id, j.agent, j.title, j.step, j.round, j.kind, j.seat, j.started, j.expedite, j.call,
-        j.answers, j.pr, j.thread, t.name thread_name, p.name project, t.deadline, ${pauseLets('j')} lets,
+        j.answers, j.pr, j.thread, t.name thread_name, p.name project, w.deadline, ${pauseLets('j')} lets,
         ${FOLLOW_THROUGH('j')} follow_through from jobs j left join threads t on t.id = j.thread
-        left join projects p on p.id = t.project where j.status = 'running' order by j.started, j.id`),
+        left join thread_windows w on w.id = t.id left join projects p on p.id = t.project where j.status = 'running' order by j.started, j.id`),
     )
     .all() as Run[];
   const working = new Set(people.map((a: any) => a.id as string));

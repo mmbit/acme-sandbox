@@ -4,9 +4,8 @@
 // nobody is ever rung out of the blue.
 //   - The call is a walk-through (calls.walk) only when HQ says so and its card offers one, and its agent's briefing
 //     says what's asked of it: open the work on the board's screen, drive it and ring things as it talks.
-//   - It opens a call's page in the board's day as it's picked up (HQ makes it, as the Pencil makes any call's page),
-//     kept only if the board writes on it: HQ throws away one still empty as the call ends, and the book's sweep one HQ
-//     couldn't, a tab closed mid-call (bookcalls.ts sweep, which asks endedBefore).
+//   - Its page is the call's notes page, as any call's (ink/callnotes.ts): one page a call, gone at the end if nothing's
+//     on it.
 import { db } from './db.ts';
 
 const offered = (request: number) =>
@@ -27,10 +26,3 @@ something, scroll a screen, point at something) and ring what matters with draw.
 why, at their pace; they can draw alongside you or take over at any point, and whatever they write on this call's page
 in their book is kept for you to act on afterwards.
 `;
-
-// A walk-through that ended before `before` (call.ts handOver's end)
-export function endedBefore(call: number, before: string) {
-  const c = db.prepare('select walk, status, ts from calls where id = ?').get(call) as
-    { walk: number; status: string; ts: string } | undefined;
-  return !!c?.walk && c.status !== 'live' && c.ts < before;
-}

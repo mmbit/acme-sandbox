@@ -1,4 +1,4 @@
-// node --test src/ink/booktry.test.ts   (a try: its versions page, its run, a later note reaching it)
+// node --test src/ink/booktry.test.ts   (a try: its run, its versions under the note, a later note reaching it)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import sharp from 'sharp';
@@ -25,30 +25,30 @@ const scrap = async (words: string) =>
   (await h.board('/api/notebooks/groups/scrap', { anchor, words, said: 'typed', snip: SNIP, owner: 'kit' })).body;
 const pagesOf = async (notebook: number) =>
   (await h.board(`/api/notebooks/pages?notebook=${notebook}`)).body.pages as any[];
+const tryOn = async (g: { id: number; page: number }) =>
+  (await h.board(`/api/notebooks/pages/groups?page=${g.page}`)).body.groups.find((x: any) => x.id === g.id).try;
 const VERDICT = { id: 1, why: 'it asks to see the basket made bigger' };
 
-test('a try makes its versions page after the note’s, and starts an expedited try run for the owner', async () => {
+test('a try starts an expedited try run for the owner, its versions coming under the note on its own page', async () => {
   const g = await scrap('What if the basket were much bigger?');
   const notebook = (db.prepare('select notebook from book_pages where id = ?').get(g.page) as any).notebook;
-  // (a page after it, so the versions page goes between them)
-  const after = (await h.board('/api/notebooks/pages/create', { notebook })).body.id as number;
+  const before = (await pagesOf(notebook)).map(p => p.id);
   const job = tryNow({ grp: g.id }, VERDICT)!;
   const row = db.prepare('select * from jobs where id = ?').get(job) as any;
   assert.deepEqual([row.kind, row.agent, row.expedite, row.thread, row.status], ['try', 'kit', 1, null, 'queued']);
   assert.match(row.prompt, new RegExp(`hq answer g${g.id} --expect`));
   assert.match(row.prompt, /--version "<two words>" --picture <png> --patch <file>/);
   assert.match(row.prompt, /1180 × 820/);
-  const order = await pagesOf(notebook);
-  const at = order.findIndex(p => p.id === g.page);
-  assert.equal(order[at + 1].tries, g.id);
-  assert.equal(order[at + 1].title, 'Kit tries: What if the basket were much bigger?');
-  assert.equal(order[at + 2].id, after);
-  assert.equal(order[at].tries, null);
-  // (the groups route: the versions page names its group, the group its versions page)
-  const versions = (await h.board(`/api/notebooks/pages/groups?page=${order[at + 1].id}`)).body;
-  assert.deepEqual([versions.tries, versions.tried.id], [g.id, g.id]);
-  const page = (await h.board(`/api/notebooks/pages/groups?page=${g.page}`)).body;
-  assert.equal(page.groups.find((x: any) => x.id === g.id).tries_page, order[at + 1].id);
+  assert.match(row.prompt, /Its versions land under the note/);
+  // no page of its own: nothing jumps to another page
+  assert.deepEqual(
+    (await pagesOf(notebook)).map(p => p.id),
+    before,
+  );
+  assert.deepEqual(await tryOn(g), { state: 'coming', expect: null, by: 'kit', name: 'Kit', reason: null });
+  // (the count it says comes with it, never a count of versions not there: frames still to come)
+  db.prepare('update notebook_groups set expect = 3 where id = ?').run(g.id); // (hq answer --expect 3)
+  assert.equal((await tryOn(g)).expect, 3);
   assert.equal(tryHolds(g.id, job), true);
   assert.equal(tryHolds(g.id, job + 1), false);
   assert.equal(onCall({ grp: g.id }), null);
@@ -91,29 +91,44 @@ test('a note on a version while its try runs goes to that run, not a second', as
   const m = db.prepare('select * from messages where job = ?').get(job) as any;
   assert.equal(m.recipient, 'kit');
   assert.match(m.text, /This, but softer/);
-  // the versions page is still the one: one per note
-  const pages = db.prepare('select count(*) n from book_pages where tries = ?').get(g.id) as any;
-  assert.equal(pages.n, 1);
-  // (a run that ended: the next note on it is a try again, on the same versions page)
+  // (a run that ended: the next note on it is a try again)
   db.prepare("update jobs set status = 'done' where id = ?").run(job);
   const again = tryNow({ grp: reply }, VERDICT)!;
   assert.notEqual(again, job);
   // (its brief: the note, and what the board wrote on which version, the next ones starting from it)
   const brief = (db.prepare('select prompt from jobs where id = ?').get(again) as any).prompt;
   assert.match(brief, /The note: “Try the header darker\?”/);
-  assert.match(
-    brief,
-    /wrote on the version “Late sun” \(the header in a late-afternoon brown; its frame is on page \d+\)/,
-  );
+  assert.match(brief, /wrote on the version “Late sun” \(the header in a late-afternoon brown\)/);
   assert.match(brief, /“This, but softer”\. The next versions start from that one/);
   assert.match(brief, /```diff\ndiff --git a\/header b\/header\n\+#3a2f2a\n```/);
   assert.equal((db.prepare('select tried from notebook_groups where id = ?').get(g.id) as any).tried, again);
-  assert.equal((db.prepare('select count(*) n from book_pages where tries = ?').get(g.id) as any).n, 1);
 });
 
-test('new groups never land on a versions page', async () => {
+test('a try that ends with no version says so under the note, never "0 versions"', async () => {
   const g = await scrap('Bolder buttons?');
-  tryNow({ grp: g.id }, VERDICT);
+  const job = tryNow({ grp: g.id }, VERDICT)!;
+  db.prepare('update notebook_groups set expect = 2 where id = ?').run(g.id);
+  db.prepare("update jobs set status = 'done', result = ? where id = ?").run(
+    'Looked at it.\nThe buttons are bold already: a bolder weight breaks the grid.',
+    job,
+  );
+  assert.deepEqual(await tryOn(g), {
+    state: 'empty',
+    expect: 2,
+    by: 'kit',
+    name: 'Kit',
+    reason: 'Kit made no version: The buttons are bold already: a bolder weight breaks the grid.',
+  });
+  db.prepare("update jobs set status = 'failed' where id = ?").run(job);
+  assert.equal((await tryOn(g)).reason, "Kit's try ended without a version. Write on the scrap to ask again.");
+  db.prepare("update jobs set status = 'stopped' where id = ?").run(job);
+  assert.equal((await tryOn(g)).reason, "Kit's try was stopped before it made a version.");
+  // one version made, and it's made: no reason
+  db.prepare(
+    `insert into book_slips (note, by, job, text, created, grp, style, version) values (null, 'kit', ?, 'bolder', ?, ?, 'version', 'Heavy')`,
+  ).run(job, new Date().toISOString(), g.id);
+  assert.deepEqual([(await tryOn(g)).state, (await tryOn(g)).reason], ['made', null]);
+  // and new groups land on its page, as on any
   const next = await scrap('And the footer');
   assert.equal(next.page, g.page);
 });

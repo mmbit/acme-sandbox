@@ -13,6 +13,15 @@ import type { Memory } from './eta.ts';
 import * as lowmemory from './lowmemory.ts';
 import * as meetingroom from './meetingroom.ts';
 import { roomReported } from './startholds.ts';
+import { reportWorkerRecords } from './roomretention.ts';
+import type { WorkerRecords } from '../../worker/src/roomrecords.ts';
+
+export const inspectRoom = (now = Date.now()) => ({
+  report: lastReport ?? null,
+  reportStale: lastReport ? now - lastReport.at > STALE_MS : null,
+  capacity: capacity ?? null,
+  capacityStale: capacity ? now - capacity.at > STALE_MS : null,
+});
 
 export const STARVED_MS = 5 * 60_000;
 const STALE_MS = 3 * 60_000; // a report older than this says nothing: the worker is restarting, or gone
@@ -101,9 +110,11 @@ export function reportRoom(
     capacity?: unknown;
     memory?: unknown;
     gathering?: unknown;
+    records?: WorkerRecords;
   },
   now = Date.now(),
 ) {
+  reportWorkerRecords(workerReport.records, now);
   recordCapacity(workerReport.capacity, now);
   const jobs = (Array.isArray(workerReport.jobs) ? workerReport.jobs : [])
     .slice(0, 64)

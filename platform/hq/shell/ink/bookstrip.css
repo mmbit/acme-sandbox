@@ -1,84 +1,166 @@
-/* The tool strip down the page's right, beside the islands' stack (bookstrip.js): its island, the tool in use named
-   beside it, a slide along it, and the cog's preferences. It stands left of the stack (--bk-islands), and its width
-   counts in the controls', --bk-controls-width (bookui.js), for what keeps clear of them. */
-#book .bk-strip {
+/* The lane at the paper's foot (bookui.js), every control the book has: the tool rail (bookstrip.js) and the book's
+   own islands beside it (Send, Tips), on a line of their own where the paper's too narrow for both, centred
+   over the page bar (bookcontrols.js), each a row that fits the paper's width, never scrolling. The page's scroll area
+   ends above the lane (--bk-foot, its height, bookui.js), so nothing ever sits over what's written. The cards of the rail (a tool's, the preferences) open
+   over it, on the paper. (the board, call 170.) */
+#book .bk-lane {
   position: absolute;
-  top: calc(12px + var(--sat, 0px));
-  right: calc(12px + var(--bk-islands, 52px) + 8px);
-  bottom: max(12px, env(safe-area-inset-bottom));
+  left: 0;
+  right: 0;
+  bottom: 0;
   display: flex;
   flex-direction: column;
-  justify-content: center;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 8px 0;
+  pointer-events: none;
+}
+/* the rail and the book's islands: one line, the rail centred and the islands at its right end, where the paper's
+   wide enough; else wrapping onto two lines, the islands under the rail */
+#book .bk-lane-line {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  pointer-events: none;
+}
+#book .bk-lane-line > .bk-strip {
+  grid-column: 2;
+}
+#book .bk-lane-line > .bk-islands {
+  grid-column: 3;
+  justify-self: end;
+}
+@container bk-rail (max-width: 600px) {
+  #book .bk-lane-line {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+}
+#book .bk-rail .bk-lane .bk-islands {
+  position: static;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+#book .bk-rail .bk-lane .bk-island[data-island='book'] {
+  margin-top: 0;
+}
+#book .bk-lane .bk-islands .bk-island {
+  padding: 4px;
+  border-radius: 16px;
+}
+
+/* ---- the rail: one row of tools, a pill of the book's paper */
+#book .bk-strip {
+  position: relative;
+  display: flex;
+  max-width: 100%;
   pointer-events: none;
 }
 #book .bk-strip .bk-island {
-  flex-shrink: 0;
-  /* (a finger or a pen slides along it: never the page's scroll) */
+  flex-direction: row;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-radius: 16px;
+  /* (a finger or a pen slides along it: nothing here scrolls, so no hold) */
   touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
-/* a screen too short for the whole strip (a phone on its side): the island scrolls along its length, a drag scrolling
-   it and a press held sliding (bookstrip.js decides) */
-#book .bk-strip .bk-island[data-scrolls] {
-  max-height: 100%;
-  overflow: hidden auto;
-  overscroll-behavior: contain;
-  scrollbar-width: none;
-  touch-action: pan-y;
+#book .bk-lane-line .bk-btn {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
 }
-
-/* the tool in use, named on the paper beside it: quiet, never in the way of a press */
-#book .bk-now {
+#book .bk-lane-line .bk-btn svg {
+  width: 22px;
+  height: 22px;
+}
+#book .bk-lane-line .bk-btn::after {
+  inset: 0;
+}
+#book .bk-strip .bk-island hr {
+  align-self: stretch;
+  margin: 8px 2px;
+  border: 0;
+  border-left: 1px solid var(--bk-edge);
+}
+/* the pen and the marker: one tool split in two, a pill round both with a line between, lit while either is in use,
+   the half in use inked */
+#book .bk-pair {
+  display: flex;
+  border-radius: 12px;
+  box-shadow: inset 0 0 0 1.5px var(--bk-edge);
+  background: linear-gradient(var(--bk-edge), var(--bk-edge)) no-repeat center / 1px 50%;
+}
+#book .bk-pair:has([aria-pressed='true']) {
+  background-color: var(--bk-ink-soft);
+}
+/* (each half's colour as a dot at its foot: bookpalette.js --bk-dot; ringed in paper on the half in use) */
+#book .bk-pair .bk-btn svg {
+  translate: 0 -3px;
+}
+#book .bk-pair .bk-btn::before {
+  content: '';
   position: absolute;
-  right: calc(100% + 8px);
-  transform: translateY(-50%);
-  padding: 3px 8px;
-  border-radius: 6px;
-  background: rgba(255, 250, 240, 0.86);
-  box-shadow: 0 0 0 1px var(--bk-edge);
-  color: var(--bk-ink);
-  font: 600 12px/1.25 var(--bk-font, system-ui, sans-serif);
-  white-space: nowrap;
+  left: calc(50% - 3px);
+  bottom: 4px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--bk-dot, transparent);
   pointer-events: none;
-  transition:
-    top 0.14s ease-out,
-    opacity 0.12s;
 }
-#book .bk-now[hidden],
-#book .bk-now:empty {
-  display: none;
+#book .bk-pair .bk-btn[aria-pressed='true']::before {
+  box-shadow: 0 0 0 1.5px var(--bk-paper, #fffaf0);
 }
-/* (a moment after the pick, gone slowly: bookstrip.js) */
-#book .bk-now.bk-faded {
-  opacity: 0;
-  transition:
-    top 0.14s ease-out,
-    opacity 0.6s ease;
-}
-/* (a tooltip, a card or a slide says it already; and the overview, where nothing's drawn, has its tiles there.) */
-#book:has(> .bk-tip:not([hidden])) .bk-now,
-#book:has(.bk-far:not([hidden])) .bk-now,
-#book .bk-strip:has(.bk-card) .bk-now,
-#book .bk-strip:has([data-sliding]) .bk-now {
-  opacity: 0;
-}
-
-/* a slide along the strip: the tool under the finger or the pen inked lightly */
+/* a slide along the rail: the tool under the finger or the pen inked lightly */
 #book .bk-strip .bk-btn[data-sliding]:not([aria-pressed='true']) {
-  background: var(--bk-ink-wash);
+  background-color: var(--bk-ink-wash);
   color: var(--bk-ink);
 }
+#book .bk-strip .bk-island[data-sliding] .bk-btn:active {
+  transform: none;
+}
 
-/* ---- the cog's preferences: a card on the paper beside the strip (bookui.js besideStrip sets its top), scrolling on a
-   screen shorter than it */
-#book .bk-prefs {
+/* ---- the page bar: right at the paper's foot, its buttons clear of a phone's rounded corners and home bar, as wide
+   as it needs and no wider, its name cut short only where it can't fit */
+#book .bk-rail .bk-island[data-island='pages'] {
+  position: static;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  gap: 2px;
+  padding: 4px 8px max(4px, env(safe-area-inset-bottom));
+  border-radius: 14px 14px 0 0;
+  box-shadow:
+    0 0 0 1px var(--bk-edge),
+    0 -6px 16px -8px rgba(29, 26, 47, 0.24);
+  transform: none;
+}
+#book .bk-rail .bk-island[data-island='pages'] hr {
+  margin: 8px 2px;
+}
+
+/* ---- a card over the rail: a tool's colours and widths (bookpalette.js), this device's preferences (bookprefs.js) */
+#book .bk-strip > .bk-card {
   position: absolute;
-  right: calc(100% + 8px);
-  top: 0;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
   width: max-content;
-  max-width: min(320px, 70vw);
-  max-height: 100%;
+  max-width: calc(100vw - 16px);
+  max-height: 60vh;
   overflow-y: auto;
   pointer-events: auto;
+}
+#book .bk-prefs {
+  max-width: min(320px, calc(100vw - 16px));
   padding: 10px 14px 12px;
   display: flex;
   flex-direction: column;
@@ -121,18 +203,53 @@
     min-height: 44px;
   }
 }
-/* a narrow book (a phone's): the pages' row has the foot to itself, and the strip stands above it, as the stack does
-   (book.css) */
+
+/* ---- a narrow book (a phone's): the rail slimmer, every tool still 40 px or more to the touch */
 @container bk-rail (max-width: 460px) {
-  #book .bk-strip {
-    bottom: calc(max(12px, env(safe-area-inset-bottom)) + 64px);
+  #book .bk-lane {
+    gap: 6px;
+    padding-top: 6px;
+  }
+  #book .bk-strip .bk-island {
+    gap: 1px;
+    padding: 3px 4px;
+    border-radius: 14px;
+  }
+  #book .bk-lane-line {
+    gap: 6px;
+  }
+  #book .bk-lane-line .bk-btn {
+    width: 42px;
+    height: 42px;
+  }
+  #book .bk-rail .bk-island[data-island='pages'] .bk-btn:not(.bk-where) {
+    width: 40px;
+    height: 40px;
+  }
+  #book .bk-rail .bk-island[data-island='pages'] {
+    padding-inline: 4px;
+  }
+}
+/* (the narrowest book, an iPad mini's beside HQ at its least: the rail's eight tools share the paper's width, 36 to
+   40 px each, still 40 px tall) */
+@container bk-rail (max-width: 370px) {
+  #book .bk-lane {
+    padding-inline: 4px;
+  }
+  #book .bk-strip .bk-island {
+    gap: 0;
+    padding-inline: 2px;
+  }
+  #book .bk-strip .bk-btn {
+    width: clamp(36px, calc((100cqw - 20px) / 8), 40px);
+    height: 40px;
+  }
+  #book .bk-strip .bk-island hr {
+    margin-inline: 0;
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  #book .bk-now,
-  #book .bk-now.bk-faded,
   #book .bk-prefs {
-    transition: none;
     animation: none;
   }
 }

@@ -16,12 +16,11 @@ export class DiskShares {
   private jobs = new Map<number, { tree: DiskScan; ids: string; warned: boolean; bytes?: number }>();
 
   private work: string;
-  private probeOldSpaceMb?: number;
-  // probeOldSpaceMb: each job's scanner's heap. A test's smaller one makes its scanner's bound (disktree.ts
-  // treeEntryLimit) a tree the job's own live scanner takes in its stride.
-  constructor(work: string, probeOldSpaceMb?: number) {
+  private probeBudgetMb?: number;
+  // A test can lower the logical tree budget without exhausting its own job's scanner.
+  constructor(work: string, probeBudgetMb?: number) {
     this.work = work;
-    this.probeOldSpaceMb = probeOldSpaceMb;
+    this.probeBudgetMb = probeBudgetMb;
   }
 
   async measure(jobs: Owner[], budget: { freeBytes: number; reserveBytes: number }) {
@@ -74,7 +73,7 @@ export class DiskShares {
       const tree = new DiskScan(
         ['jobs', 'homes', 'tests'].map(folder => join(this.work, folder, String(job))),
         owner,
-        this.probeOldSpaceMb,
+        this.probeBudgetMb,
       );
       state = { tree, ids, warned: false };
       this.jobs.set(job, state);

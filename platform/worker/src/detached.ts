@@ -48,7 +48,7 @@ export const alive = (pid: number, start: string) => {
   return s?.start === start && s.state !== 'Z';
 };
 
-export type Launched = { pid: number; start: string; out: string; err: string };
+export type Launched = { pid: number; start: string; out: string; err: string; tmpdir?: string };
 const marker = (runs: string, l: Launched) => `${runs}/pid-${l.pid}-${l.start}`;
 
 // stdin (the prompt) and the sign-in's fd 3 stay pipes: the CLI reads both to their end as it starts. One that can't
@@ -64,7 +64,13 @@ export function launch(runs: string, name: string, cmd: string, args: string[], 
   } finally {
     for (const fd of fds) closeSync(fd);
   }
-  const l: Launched = { pid: child.pid ?? 0, start: (child.pid && procStat(child.pid)?.start) || '', out, err };
+  const l: Launched = {
+    pid: child.pid ?? 0,
+    start: (child.pid && procStat(child.pid)?.start) || '',
+    out,
+    err,
+    ...(o.env?.TMPDIR !== undefined ? { tmpdir: o.env.TMPDIR } : {}),
+  };
   if (l.start) {
     writeFileSync(marker(runs, l), '', { mode: 0o600 });
     // its end, noted here too: a worker process that dies before it has reported the run leaves it for the next

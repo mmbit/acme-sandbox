@@ -12,7 +12,7 @@ import type { Refused } from './pagechecks.ts';
 export const DIR = `${DATA_DIR}/book`;
 // A scrap lies anywhere a page grows to, either side of its heading, and may hang off it a little (SCRAP_XY),
 // and be up to three times the page's longer side (SCRAP_SIDE: HQ's
-// own resize, sketchscraps.js). MAX_SCRAPS on a page: HQ holds
+// own resize). MAX_SCRAPS on a page: HQ holds
 // each decoded, up to 16 MB at 2,000 px, twice while it draws the page: 40 stays inside what Safari lets an iPad's tab
 // hold. MAX_SCRAP_FILES a page, placed or not: disk, at most pictures.MAX_BYTES each and kept SWEEP_MS once nothing
 // names them (undo can place one again), about 210 MB a page a day. WAITING_MAX not placed yet (book.ts fromReview):
@@ -36,7 +36,7 @@ export const full = (id: number) => scrapFiles(id).length >= MAX_SCRAP_FILES;
 // (base: the routes' addresses, HQ's or a person's on the guest desk)
 export const scrapUrl = (id: number, file: string, base: string) =>
   `${base}/scrap?id=${id}&file=${encodeURIComponent(file)}`;
-// A picture HQ makes is PICTURE_SIDE px on its long side at most (sketchscraps.js shrink, review mode's picture): one
+// A picture HQ makes is PICTURE_SIDE px on its long side at most (bookscrapdraw.js shrink, review mode's picture): one
 // that says it's bigger in its header is refused before it's kept, as every drawing of its page would decode it whole
 const PICTURE_SIDE = 2000;
 export function tooBig(clean: Buffer): Refused | null {

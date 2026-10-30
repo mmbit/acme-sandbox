@@ -13,10 +13,13 @@ type CallOptions = { body?: unknown; bytes?: Buffer; headers?: Record<string, st
 
 export class ApiError extends Error {
   exitCode: number;
+  // HQ's own words for a refusal, when its answer gave them
+  reason: string;
 
-  constructor(message: string, exitCode: number) {
+  constructor(message: string, exitCode: number, reason = '') {
     super(message);
     this.exitCode = exitCode;
+    this.reason = reason;
   }
 
   // HQ couldn't be reached at all, so nothing was sent
@@ -181,12 +184,13 @@ export async function orNoAnswer(pending: Promise<Answer>): Promise<Answer> {
 // The status in three digits: no answer at all is 000.
 export const httpCode = (status: number) => String(status).padStart(3, '0');
 
-// A failed call gets the command's own line and exit 1.
-export async function orStop<T>(pending: Promise<T>, message: string): Promise<T> {
+// A failed call gets the command's own line and exit 1 (said: after HQ's own reason, when it gave one).
+export async function orStop<T>(pending: Promise<T>, message: string, said = false): Promise<T> {
   try {
     return await pending;
   } catch (error) {
-    if (error instanceof ApiError) stop(message);
+    if (error instanceof ApiError)
+      stop(said && error.reason ? `Nothing was filed: ${error.reason}. ${message}` : message);
     throw error;
   }
 }
@@ -223,7 +227,7 @@ export const uri = (value: string) =>
   encodeURIComponent(value).replace(/[!'()*]/g, c => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
 
 function succeeded(answer: Answer) {
-  if (answer.status >= 400) throw new ApiError(`HTTP ${answer.status}`, 22);
+  if (answer.status >= 400) throw new ApiError(`HTTP ${answer.status}`, 22, errorIn(answer.body));
   return answer.body;
 }
 

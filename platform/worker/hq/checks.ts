@@ -23,7 +23,7 @@ export async function checkOnHelper(root: string, spec: Spec, tree: string, incl
     minutes: spec.minutes,
     bring: [],
     binary: ['check-files.tar.gz'],
-    ...helperBundle({ tools: true, browsers: includeBrowsers }),
+    ...helperBundle({ tools: true, browsers: includeBrowsers ? 'all' : 'none' }),
     inputs: {
       'check-request.json': JSON.stringify(spec),
       'check-command.ts': readFileSync(new URL('./checkcommand.ts', import.meta.url), 'utf8'),

@@ -1,8 +1,9 @@
 // Content-free worker measurements, using the same process look as the share protections.
-import { appendFileSync, chmodSync, closeSync, mkdirSync, openSync, readFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, closeSync, mkdirSync, openSync } from 'node:fs';
 import { join } from 'node:path';
 import type { JobUse } from './shares.ts';
 import type { SeatState } from './worker.ts';
+import { decimal, readCgroup, workerMemory } from './memory.ts';
 
 type Occupant = { job: number; slot: string; uid: number; seat: string; engine: string; kind: string; cliPid?: number };
 type Look = {
@@ -25,26 +26,19 @@ type Look = {
   host: { availableBytes: number; swapInPages: number; swapOutPages: number };
 };
 
-export function capacitySample(look: Look, read = readCgroup) {
-  const memoryCurrentBytes = decimal(read('memory.current'));
-  const inactiveFileBytes = Number(read('memory.stat').match(/^inactive_file (\d+)$/m)![1]);
+export function capacitySample(look: Look, read = readCgroup, measure = workerMemory) {
   return {
     at: look.at,
     intervalMs: look.intervalMs,
     host: look.host,
-    memoryCurrentBytes,
-    inactiveFileBytes,
-    chargeLessInactiveFileBytes: memoryCurrentBytes - inactiveFileBytes,
-    memoryMaxBytes: read('memory.max'),
+    ...measure(look.host.availableBytes),
     swapCurrentBytes: decimal(read('memory.swap.current')),
     swapMaxBytes: read('memory.swap.max'),
-    memoryEvents: read('memory.events'),
     swapEvents: read('memory.swap.events'),
     cpuMax: read('cpu.max'),
     cpuset: read('cpuset.cpus.effective'),
     cpuStat: read('cpu.stat'),
     cpuPressure: read('cpu.pressure'),
-    memoryPressure: read('memory.pressure'),
     ioPressure: read('io.pressure'),
     starting: look.starting,
     held: look.held,
@@ -115,9 +109,6 @@ function captureFiles(folder: string) {
     note: (line: string) => appendFileSync(journal, `${new Date().toISOString()} worker ${process.pid}: ${line}\n`),
   };
 }
-
-const readCgroup = (name: string) => readFileSync(`/sys/fs/cgroup/${name}`, 'utf8').trim();
-const decimal = (text: string) => Number(text.match(/^\d+$/)![0]);
 
 function occupancy(occupant: Occupant, use: JobUse | undefined) {
   const processes = use?.processes ?? [];

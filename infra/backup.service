@@ -9,4 +9,5 @@ UMask=0077
 PrivateTmp=yes
 Nice=10
 IOSchedulingClass=idle
+# platform/coordinator/src/backup.ts's RUN_LIMIT mirrors this limit: change both together
 TimeoutStartSec=2h

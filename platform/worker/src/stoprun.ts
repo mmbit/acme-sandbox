@@ -1,8 +1,8 @@
-// A blocked run's stop (shares.ts picks it, the worker's blocks.ts stops it): frozen whole, told why in its own output,
-// then ended.
+// Freeze a blocked run, relay HQ's report and end its processes before reclaiming staging.
 import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { WRAPPERS, procStat, processesOfUids } from './detached.ts';
+import { removeBundles } from './bundles.ts';
 import { redact } from './safety.ts';
 import type { ProcessSnapshot } from './shares.ts';
 import type { Ids } from './slots.ts';
@@ -28,20 +28,32 @@ export async function stopRun(
   ids: Required<Ids>,
   root: { pid: number },
   ask: () => Promise<{ text: string }>,
-  said: (words: string) => void,
+  log: (words: string) => void,
+  tmpdir?: string,
 ) {
   const frozen: { pid: number; start: string }[] = [...run];
+  const failures: unknown[] = [];
   try {
     const left = await freeze(frozen, ids.uid);
     if (left)
-      said(
+      log(
         `run ${root.pid} not wholly frozen after ${FREEZE_MS} ms (${left.rounds} rounds): ` +
           `${pidWords(left.stopping)} still stopping, ${pidWords(left.forking)} still forking`,
       );
     await tellRun(ids, root, (await ask()).text);
+  } catch (error) {
+    failures.push(error);
   } finally {
     signal(frozen, 'SIGKILL');
   }
+  if (tmpdir)
+    try {
+      await removeBundles(ids, tmpdir, frozen);
+    } catch (error) {
+      failures.push(error);
+    }
+  if (failures.length === 1) throw failures[0];
+  if (failures.length > 1) throw new AggregateError(failures, 'Run stop and bundle cleanup failed');
 }
 
 // The run frozen as it is now, not as the look saw it: a disk stop comes after the look's scan, seconds on, and a test

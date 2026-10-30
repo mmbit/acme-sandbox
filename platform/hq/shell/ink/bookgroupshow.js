@@ -7,7 +7,6 @@ import { island, controlsLeft } from './bookui.js';
 import { readAgain } from './booksave.js';
 import { loadGroups } from './notebookdata.js';
 import { store } from '../../util.js';
-import { fitOf } from './bookscrapfit.js';
 
 // room left of a scrap shown when the paper must pan to it (page px), and on screen between it and the islands (px)
 const ROOM = 24,
@@ -29,32 +28,33 @@ export async function showGroup(pages, { page, id }) {
   if (v?.page.id !== page) return;
   await v.reading;
   if (!v.page.groups?.has(id)) await readAgain(book, v.page);
-  const r = reach(v, id);
-  if (!r || book.views[book.cur] !== v) return;
+  if (book.views[book.cur] !== v || !bringIntoSight(v, id)) return;
   if (id > lastShown()) store.set(SHOWN, id);
-  slideTo(book, inSight(r), () => book.remember());
+}
+// A group on a page shown slid into sight, then() once it's there: false when it isn't drawn on it (also bookforyou.js's.
+export function bringIntoSight(v, id, then = () => {}) {
+  const r = reachOf(v, id);
+  if (!r) return false;
+  slideTo(book, inSight(r), () => {
+    book.remember();
+    then();
+  });
+  return true;
 }
 // A scrap's page turned to: read into the book first when it's new; its own notebook (the store's: a scrap can go to
-// one other than My Notebook, notebookscraps.ts) opened at it when the book shows another
+// one other than My journal, notebookscraps.ts) opened at it when the book shows another
 async function turnTo(pages, page) {
   if (book.views.some(v => v.page.id === page)) return pages.made(page);
   const { notebook } = await loadGroups(pages.dev, page);
   return notebook === book.notebook ? pages.made(page) : pages.find({ page, notebook });
 }
-// A group's box with its words and answers under it (bookgroups.js draws them there), in the page's px: a scrap's as
-// drawn to fit this screen (bookscrapfit.js, about its top-left)
-function reach(v, id) {
-  const stored = v.page.groups.get(id)?.box,
-    k = fitOf(v.page, id),
-    box = stored && { ...stored, w: stored.w * k, h: stored.h * k },
+// A unit's place with its answers under it (bookunits.js places both), in the page's px. (job #14672; also
+// bookforyou.js's.)
+export function reachOf(v, id) {
+  const p = v.page.places?.find(q => q.id === id),
     under = v.el.querySelector(`:scope > .bk-groups > .bk-under[data-g="${id}"]`);
-  if (!box || !under) return box ?? null;
-  return {
-    x: box.x,
-    y: box.y,
-    w: Math.max(box.w, under.offsetLeft + under.offsetWidth * k - box.x),
-    h: under.offsetTop + under.offsetHeight * k - box.y,
-  };
+  if (!p) return null;
+  return { x: p.x, y: p.y, w: p.w, h: under ? under.offsetTop + under.offsetHeight - p.y : p.h };
 }
 // Where the paper shows a group: zoomed out (never in) till it fits the paper clear of the islands with a little room,
 // and panned only as far as it must to show it there, its top a quarter down (less, if its foot would be hidden)
@@ -68,16 +68,18 @@ function inSight(r) {
   return { pan: { x: across, y: down }, scale: s };
 }
 // The paper clear of the islands floating over it (bookui.js), the controls at its right (the stack and the tool strip
-// beside it) and the pages' row at its foot, with a little room: in px of the paper on screen from its top left, as its
-// share of the paper so a book still swinging open measures the same
+// beside it) and the pages' row at its foot with the asks' counter over it (bookforyou.js), with a little room: in px
+// of the paper on screen from its top left, as its share of the paper so a book still swinging open measures the same
 function clearBand() {
   const desk = book.desk.getBoundingClientRect(),
     across = x => book.size.w * Math.min(1, Math.max(0, (x - desk.left) / desk.width)),
     down = y => book.size.h * Math.min(1, Math.max(0, (y - desk.top) / desk.height)),
     controls = controlsLeft(),
-    foot = island('pages');
+    foot = island('pages'),
+    count = foot?.querySelector('.bk-for-you-count:not([hidden])'),
+    top = (count ?? foot)?.getBoundingClientRect().top;
   return {
     right: controls === null ? book.size.w : across(controls) - RAIL_GAP,
-    bottom: foot?.offsetWidth ? down(foot.getBoundingClientRect().top) - RAIL_GAP : book.size.h,
+    bottom: foot?.offsetWidth ? down(top) - RAIL_GAP : book.size.h,
   };
 }

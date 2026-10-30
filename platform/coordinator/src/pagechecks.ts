@@ -4,6 +4,7 @@ import * as pictures from './pictures.ts';
 import { MAX_SCRAPS } from './pagescraps.ts';
 import { noKeys } from '../../../shared/review/anchor.js';
 import { TEXT_MAX } from '../../hq/shell/ink/notebookparts.js';
+import { LINE } from '../../hq/shell/ink/bookinkmath.js';
 
 // The ink a page holds. The page draws all of it again at every undo, redo and
 // stroke the eraser takes, and the coordinator once more for its picture (bookrender.ts): ink.js
@@ -18,7 +19,6 @@ export const MAX_POINTS = 120_000;
 export const PAGE = { min: 100, max: 4000 };
 // (GROWN_MAX exported for the answers the store types onto a page: booktyped.ts.)
 export const GROWN_MAX = 20_000;
-const SIZE = { min: 0.5, max: 200 };
 // (exported for a try's versions page title: ink/booktry.ts.)
 export const LABEL_MAX = 80;
 // Words typed on a page (the book's text tool): at most TEXTS_MAX boxes a page, each at most TEXT_MAX characters.
@@ -112,7 +112,7 @@ export function textsOf(v: unknown): Typed[] | Refused | undefined {
 }
 function strokeOf(s: any) {
   if (!s || typeof s !== 'object' || typeof s.color !== 'string' || !/^#[0-9a-f]{6}$/i.test(s.color)) return null;
-  if (typeof s.size !== 'number' || !(s.size >= SIZE.min && s.size <= SIZE.max)) return null;
+  if (typeof s.size !== 'number' || !(s.size >= LINE.min && s.size <= LINE.max)) return null;
   if (s.alpha !== undefined && !(typeof s.alpha === 'number' && s.alpha >= 0 && s.alpha <= 1)) return null;
   const point = (p: unknown) => Array.isArray(p) && p.length === 4 && p.every(Number.isFinite);
   if (!Array.isArray(s.points) || !s.points.length || !s.points.every(point)) return null;

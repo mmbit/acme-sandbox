@@ -81,9 +81,8 @@ function measuredSource(snapshot: Snapshot) {
 // Missing prices cannot establish a hypothetical allowance.
 export function oneMoreSeat(snapshot: Snapshot, engine: string): Snapshot | null {
   const rate = snapshot.rates[engine];
-  const runs = snapshot.seatRuns?.[engine];
   const slots = snapshot.slots[engine];
-  if (!rate || runs === undefined || slots === undefined) return null;
+  if (!rate || slots === undefined) return null;
   const perSeat = typeof rate.week === 'object' ? rate.week : null;
   const weekOf = (seat: string) => (perSeat ? perSeat[seat] : typeof rate.week === 'number' ? rate.week : null);
   const measured = (seat: string) => typeof rate.five[seat] === 'number' && typeof weekOf(seat) === 'number';

@@ -8,6 +8,7 @@ import { join } from 'node:path';
 
 // where Playwright's images keep their browsers: a run on a lent machine keeps none of its image's environment
 const BROWSERS = '/ms-playwright';
+const HEADLESS_SHELL = process.env.BROWSER_HEADLESS_SHELL;
 
 // Playwright (chromium, webkit, devices): the repo's own copy if it has one, else the global one npm installed.
 export function playwright() {
@@ -20,8 +21,9 @@ export function playwright() {
   }
 }
 
-// Chromium started for a node test. An installation without Playwright or Chromium can skip, saying so.
-// The tests helper receives the worker's browsers in its bundle. Other launch failures fail the test.
+// Returns a launched Chromium browser, or undefined if Playwright or the selected executable is missing.
+// Helper bootstraps may select a bundled headless shell. Callers decide whether absence skips or fails their check.
+// Other launch failures propagate.
 export async function launched(options) {
   let chromium;
   try {
@@ -30,7 +32,12 @@ export async function launched(options) {
     if (error.code === 'MODULE_NOT_FOUND') return undefined;
     throw error;
   }
-  return existsSync(chromium.executablePath()) ? chromium.launch(options) : undefined;
+  // Playwright runs its headless shell unless a channel or a headed launch asks for full Chromium.
+  const runsShell = !options?.channel && options?.headless !== false;
+  const executablePath = options?.executablePath ?? (runsShell ? HEADLESS_SHELL : undefined);
+  return existsSync(executablePath ?? chromium.executablePath())
+    ? chromium.launch({ ...options, executablePath })
+    : undefined;
 }
 
 // A page in a context of its own (options as newContext's), with service workers blocked and Google Fonts answered

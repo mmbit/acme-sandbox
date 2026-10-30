@@ -46,11 +46,11 @@ async function showCode(card) {
   card.hidden = false;
   card.innerHTML = '<p>Making a one-time sign-in code…</p>';
   try {
-    const code = await pairLink();
+    const pairing = await pairLink();
     card.innerHTML = `<b class="pair-head">Sign in another device</b>
-      ${qrSvg(code.link, 'Scan to sign in')}
+      ${qrSvg(pairing.link, 'Scan to sign in')}
       <p class="pair-words">Scan this code, or open <a href="/pair">${location.host}/pair</a> and enter <b class="pair-digits"></b>. Good once, for a minute. Your Notebook syncs after sign-in.</p>`;
-    card.querySelector('.pair-digits').textContent = code.code;
+    card.querySelector('.pair-digits').textContent = pairing.code;
     const close = button({
       text: 'Close',
       onClick: () => {
@@ -63,7 +63,7 @@ async function showCode(card) {
         if (!card.isConnected) return;
         card.querySelector('.pair-digits')?.replaceChildren(document.createTextNode('Expired'));
       },
-      Math.max(0, code.expires - Date.now()),
+      Math.max(0, pairing.expires - Date.now()),
     );
   } catch (error) {
     card.textContent = error.message;

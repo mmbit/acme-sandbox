@@ -2,7 +2,6 @@
 // drawn at the narrow spot placed for the paper each book shows where it hasn't the room, and a note the board wrote
 // later on one of its spots.
 import assert from 'node:assert/strict';
-import { freePage } from './bookmouse.mjs';
 import { notebookOn, onScreen, pagePx } from './bookanswersplay.mjs';
 import { inPaper, inStory, written } from './bookanswers.mjs';
 import { BOOK, paperWidth } from './shell/ink/booklayout.js';
@@ -27,18 +26,16 @@ import {
 // moved the spots it covers down clear of it (answerplace.ts spotsClear, as downAgain places them): no screen draws the
 // answer over that note, the book spread wide over a desktop (its wide spot) nor a narrower one.
 export async function besideOnNarrower(browser, c, later = null) {
-  const p = freePage(c),
-    nb = notebookOn(c, p),
+  const nb = notebookOn(c),
     note = nb.typed(4400, 'Can the header say what this page is for, in a line?', 40, 60),
     next = nb.typed(4401, 'and the footer', 40, 260),
     text = 'Yes: “Your week at a glance”, under the logo.';
   note.texts[0].w = 520;
-  note.box = { x: 40, y: 60, w: 520, h: 80 };
   let spot = answerSpot(note.box, { text }, [note.box, next.box], { x: 0, w: 1200 });
   assert.equal(spot.dx, note.box.w + ANSWER.gap, "beside the note on a wide page's paper");
   nb.groups.push(note, next);
   if (later) spot = writtenOn(nb, note.box, spot, later);
-  note.children = [nb.answer(4410, 'text', text, spot)];
+  nb.seed.slips.push(nb.answer(note, 4410, 'text', text, spot));
   // (each screen's spot: its wide one, or the narrow one placed for the widest of NARROWER's papers that fits its own)
   const spots = spotChain(spot),
     on = (viewport, state) =>
@@ -51,27 +48,23 @@ export async function besideOnNarrower(browser, c, later = null) {
       ...(later === 'wide' ? [['desktop-spread', c.DESKTOP, { hasTouch: false, deviceScaleFactor: 1 }, spot]] : []),
     ];
   assert.equal(spots.length, 1 + NARROWER.length, 'a narrow spot for each narrower paper');
-  try {
-    for (const [size, viewport, options, shown] of screens)
-      await inStory(browser, c, { viewport, nb, made: [], options }, async page => {
-        if (shown === spot) await kept(page, c, 'wide', { mode: 'spread', book: null }, 'spread');
-        if (size === 'mini-upright-least') await kept(page, c, 'portrait', least, 'open');
-        await written(page, 4410);
-        const at = await pagePx(page, '.bk-answer[data-answer="4410"]');
-        for (const g of nb.groups) assert.ok(!overlapping(at, g.box), `${size}: the answer clear of note ${g.id}`);
-        assert.deepEqual(
-          [Math.round(at.x - note.box.x), Math.round(at.y - note.box.y), Math.round(at.w)],
-          [shown.dx, shown.dy, shown.w],
-          `${size}: at its ${shown === spot ? 'wide' : 'narrow'} spot for ${JSON.stringify(
-            await onScreen(page, '.bk-answer[data-answer="4410"]').then(o => o.paper),
-          )}`,
-        );
-        await inPaper(page, 4410);
-        await c.shot(`answers-beside-${later ? `later-${later}-` : ''}${size}`, page);
-      });
-  } finally {
-    c.pages.splice(c.pages.indexOf(p), 1);
-  }
+  for (const [size, viewport, options, shown] of screens)
+    await inStory(browser, c, { viewport, nb, options }, async page => {
+      if (shown === spot) await kept(page, c, 'wide', { mode: 'spread', book: null }, 'spread');
+      if (size === 'mini-upright-least') await kept(page, c, 'portrait', least, 'open');
+      await written(page, 4410);
+      const at = await pagePx(page, '.bk-answer[data-answer="4410"]');
+      for (const g of nb.groups) assert.ok(!overlapping(at, g.box), `${size}: the answer clear of note ${g.id}`);
+      assert.deepEqual(
+        [Math.round(at.x - note.box.x), Math.round(at.y - note.box.y), Math.round(at.w)],
+        [shown.dx, shown.dy, shown.w],
+        `${size}: at its ${shown === spot ? 'wide' : 'narrow'} spot for ${JSON.stringify(
+          await onScreen(page, '.bk-answer[data-answer="4410"]').then(o => o.paper),
+        )}`,
+      );
+      await inPaper(page, 4410);
+      await c.shot(`answers-beside-${later ? `later-${later}-` : ''}${size}`, page);
+    });
 }
 const upright = { width: 744, height: 1133 },
   open = { mode: 'open', book: null },

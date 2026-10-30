@@ -151,7 +151,7 @@ export const reviewers = (pr: number) => {
   return roles().reviewers.filter(agent => !excluded.has(agent));
 };
 
-export type Seat = { agent: string; files: string[]; domains: string[]; slice: boolean };
+export type Seat = { agent: string; files: string[]; domains: string[]; slice: boolean; security: boolean };
 
 export function threadContext(branch: string) {
   const thread = db.prepare('select id, goal from threads where id = ?').get(threadOfBranch(branch)) as

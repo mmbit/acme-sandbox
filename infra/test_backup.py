@@ -569,6 +569,11 @@ try:
     check(manifest['tables'].get('a" union select 424242 order by 1 desc --') == 0 and manifest['tables'].get('a') == 1 and 'search' not in manifest['tables'],
           'a table name with SQL in it is counted as a name, not run; virtual tables are skipped')
     r.close()
+    # The writer's rows only serve the concurrent-write proof above. Every later night copies and compresses the database again, so it goes back to its seeded jobs.
+    live.execute('delete from jobs where id > ?', (before,))
+    live.commit()
+    live.execute('vacuum')
+    live.close()
     same = lambda a, b: open(a, 'rb').read() == open(b, 'rb').read()
     check(same(f'{scratch}/hq/data/secrets/BACKUP_R2_SECRET_ACCESS_KEY', f'{hq}/secrets/BACKUP_R2_SECRET_ACCESS_KEY'), "the board's keys restored")
     check(all(same(f'{scratch}/{dest}', src) for src, dest in [

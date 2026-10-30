@@ -25,10 +25,6 @@ export const DOTS = `<svg class="bk-answer-dots" viewBox="0 0 34 10" aria-hidden
   <path d="M27.7 5.1c-.1-1.6 2.5-1.8 2.6-.2.1 1.6-2.4 1.9-2.6.2z"/>
 </svg>`;
 
-// A pencil's scribble while a version is still being made
-export const SQUIGGLE =
-  '<svg class="bk-version-squiggle" viewBox="0 0 120 24" aria-hidden="true"><path d="M4 14c10-12 20-12 28 0s20 12 28 0 20-12 28 0 20 12 28 0"/></svg>';
-
 // A stroke's line through its points, smoothed as a pen moves (points: [[x, y, …], …]), in the stroke's own px
 export function lineOf(points) {
   if (!points.length) return '';

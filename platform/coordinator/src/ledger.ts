@@ -19,7 +19,7 @@ import { send, MAX } from './messages.ts';
 import * as windows from './windows.ts';
 import { placeOn } from './projects.ts';
 import * as wakes from './wakes.ts';
-import { endedEmpty } from './threadends.ts';
+import { runEnded } from './threadends.ts';
 import { callAccess, customerCall } from './memory.ts';
 
 export type Item = { id: number; call: number; kind: string; owner: string; what: string; quote: string; lines: string | null;
@@ -38,8 +38,8 @@ export const oneLine = (s: unknown, max: number) => { const t = String(s ?? '').
 // A call's notes page (ink/callnotes.ts) hears what's recorded on the call and its end: it hooks itself in, so the
 // ledger loads no Ink. Its asks go to nobody by themselves: the call's follow-up reads the page (page: its number) and
 // hands them out with the rest of the call. open: the call has its page open, to
-// write on.
-type CallPage = { noted: (call: number, item: { id: number; kind: string; owner: string; what: string }) => void; ended: (call: number) => void; page: (call: number) => number | undefined; open: (call: number) => boolean };
+// write on. followed: the call is followed up, its page handed out.
+type CallPage = { noted: (call: number, item: { id: number; kind: string; owner: string; what: string }) => void; ended: (call: number) => void; followed: (call: number) => void; page: (call: number) => number | undefined; open: (call: number) => boolean };
 let callPage: CallPage | undefined;
 export const onCallPage = (page: CallPage) => { callPage = page; };
 export function callEnded(call: number) {
@@ -522,8 +522,8 @@ export function cancelRefusal(id: number, by: string) {
 // The line on its agent's feed for a job that was cancelled, naming the jobs it releases. (Also for a job parked on a
 // request that was closed: jobs.ts endParked.) a job queued after it that has
 // further waits (db.ts waits) still holds for them, and the waits on this one go to whoever answers for them
-// (jobs.ts strandedWaits). HQ's one-task thread it was in (a routine's run) ends, once the rest of it is in
-// (threadends.ts endedEmpty.).
+// (jobs.ts strandedWaits). HQ's one-task thread it was in (a routine's run) ends, once the rest of it is in, and an
+// owner's thread it leaves with nothing open or still to merge wakes its judge (threadends.ts runEnded.).
 export function cancelled(id: number, why: string) {
   const job = db.prepare('select id, agent, title, step, round, thread from jobs where id = ?').get(id) as Named & { id: number; agent: string; thread: string | null };
   const after = (db.prepare("select id from jobs where after = ? and status = 'queued'").all(id) as { id: number }[])
@@ -536,7 +536,7 @@ export function cancelled(id: number, why: string) {
     ...recovery.map(s => `${s.owner} moves or drops the waits on it of ${s.waiting.map(w => `#${w}`).join(', ')} (job #${s.job})`),
   ].filter(Boolean);
   publish({ type: 'log', agent: job.agent, text: `Cancelled #${id}: ${why}${parts.length ? ` (${parts.join('; ')})` : ''}` });
-  if (job.thread) endedEmpty(job.thread);
+  if (job.thread) runEnded(job.thread);
 }
 
 // hq job --item <item>: the job carries the item and its call, and the words on the call in full (the spec). One job at
@@ -609,6 +609,8 @@ export function finished(job: { id: number; kind: string }, status: string) {
       continue;
     }
     db.prepare('update calls set processed_at = ? where id = ?').run(iso(), c.id);
+    // (its notes page handed out: stamped Sent.)
+    try { callPage?.followed(c.id); } catch (err) { console.error(`Call #${c.id}'s notes page:`, err); }
     // A correction on it that the follow-up didn't go through, or whose running jobs weren't told yet: they hear it now.
     tell(job.id, end => end.call === c.id);
     if (c.agent === ceo() && job.kind === 'work') {
@@ -832,7 +834,7 @@ const callAt = (c: Call) => companyFormats().time(Date.parse(c.ts), 'en');
 // after its token's 3 hours lost its line without a hand-over: it ends as it is (a follow-up for what was recorded during it).
 export function sweep(now = Date.now()) {
   for (const c of db.prepare("select * from calls where status = 'live' and ts < ?").all(new Date(now - LIVE_MS).toISOString()) as Call[]) try {
-    // (its notes page stays in My Notebook as the board left it, or is deleted if nothing is on it)
+    // (its notes page stays in My journal as the board left it, or is deleted if nothing is on it)
     callEnded(c.id);
     if (!count(c.id)) { forgetCall(c.id); continue; }
     db.prepare("update calls set status = 'ended' where id = ?").run(c.id);

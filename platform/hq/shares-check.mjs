@@ -2,9 +2,8 @@
 // Outside notes end to end, on phones: the board opens Share in the viewer and invites two people (the days choice shows
 // before the first invite only); the box lists both with Send link and Remove, and says their notes go on its sheet for
 // the owner in its book. Each, in a fresh browser (no preview key), signs in with the code from their email, opens the
-// preview, pins a note (the second also a general note, from the pin's menu): each goes on the board's open sheet for
-// the owner as it's pinned, signed, and the pin's menu says where they go, every line of it on one line. They reach
-// nothing else. Reviews' Shared folds the share to one line (people, until when) that opens to its people (whether each
+// preview, pins a note: each goes on the board's open sheet for the owner as it's pinned, signed. They reach nothing
+// else. Reviews' Shared folds the share to one line (people, until when) that opens to its people (whether each
 // opened it, not their notes), and Invite and Remove work there too. The board's End now closes it: Reviews lists the
 // ended share, the links are shut, and a link says so.
 // Then a deck shared view only: its box offers the people shared with lately (Recent), a tap invites one again, and a
@@ -25,7 +24,6 @@ import { createServer, request } from 'node:http';
 import { createServer as createHttps } from 'node:https';
 import { tmpdir } from 'node:os';
 import { playwright, openPage, until } from '../../shared/browser/browser.mjs';
-import { wrappedMenuLines } from '../../shared/review/lines.mjs';
 
 const shots = process.argv.includes('--shots') ? process.argv[process.argv.indexOf('--shots') + 1] : null;
 if (shots) await mkdir(shots, { recursive: true });
@@ -267,32 +265,6 @@ async function pinNote(page, note, name, first = false) {
   await page.waitForSelector(tool('.sheet'), { state: 'hidden', timeout: 20_000 });
   assert.deepEqual(await booked(note), { owner: 'bolt', words: note, guest: name }, `${name}'s note, on Bolt's sheet`);
 }
-// A general note from the pin's menu: the same sheet, without a photo or an element
-async function generalNote(page, words, name) {
-  await page.click(tool('.more'));
-  await page.click(tool('[data-general]'));
-  await page.waitForSelector(tool('.sheet:not([hidden])'));
-  assert.equal(await page.textContent(tool('.who h2')), 'A general note');
-  assert.ok(await page.isHidden(tool('.polaroid')), 'no photo with a general note');
-  await page.fill(tool('textarea'), words);
-  await page.click(tool('.send'));
-  await page.waitForSelector(tool('.sheet'), { state: 'hidden', timeout: 20_000 });
-  assert.deepEqual(
-    await booked(words),
-    { owner: 'bolt', words, guest: name },
-    `${name}'s general note, on Bolt's sheet`,
-  );
-}
-// The pin's menu as it shows now
-const items = page => page.$$eval(tool('.menu .items button:not([hidden])'), b => b.map(x => x.firstChild.textContent));
-// An outsider's menu: a general note, and where their notes go, every line on one line
-async function outsiderMenu(page, name) {
-  await page.click(tool('.more'));
-  assert.deepEqual(await items(page), ['General note'], `${name}'s menu`);
-  assert.equal(await page.textContent(tool('.more .count')), '', 'no count of theirs');
-  assert.deepEqual(await page.evaluate(wrappedMenuLines), [], `${name}'s menu, every line on one line`);
-  await page.click(tool('.more'));
-}
 
 try {
   // ---- the board: the preview in HQ's viewer, Share; nobody on it yet, open for 1 day
@@ -371,11 +343,9 @@ try {
   }
   assert.notEqual(links.Sam, links.Kim);
 
-  // ---- Sam: a note, on Bolt's sheet as he pins it; his menu says where it went
+  // ---- Sam: a note, on Bolt's sheet as he pins it
   const sam = await reviewer(links.Sam, 'Sam', 'sam@example.org', 'The headline is lovely, but where do I start?');
   await shot(sam, 'note');
-  await outsiderMenu(sam, 'Sam');
-  await shot(sam, 'sam-menu');
   // nothing else: another preview host and HQ send Sam to the board's login
   await sam.goto('https://cycles.preview.company.test/');
   assert.equal(new URL(sam.url()).pathname, '/login');
@@ -419,11 +389,8 @@ try {
   );
   assert.ok(db.prepare("select removed from review_share_people where guest = 'Lee'").get().removed);
 
-  // ---- Kim: a note and a general note, each on Bolt's sheet, signed hers
+  // ---- Kim: a note on Bolt's sheet, signed hers
   const kim = await reviewer(links.Kim, 'Kim', 'kim@example.org', 'Could the card come in green?');
-  await generalNote(kim, 'The pages say thanks in two different ways', 'Kim');
-  await shot(kim, 'kim-general-note');
-  await outsiderMenu(kim, 'Kim');
 
   // ---- the board's End now (two taps) closes it: the ended share, under Shared, with who was on it
   await hq.click(`${SEC} [data-end]`);
@@ -635,17 +602,12 @@ try {
   await tess.click('a:has-text("Open The shop")');
   await tess.waitForURL('https://front.preview.company.test/');
   await tess.waitForSelector(tool('.fab'));
-  // ---- in the tool itself: Tess pins a note and writes a general note, each on Bolt's sheet as she writes it, and her
-  // menu says where they go, on a desktop too
+  // ---- in the tool itself: Tess pins a note, on Bolt's sheet as she writes it, on a desktop
   await pinNote(tess, 'The headline could be warmer', 'Tess');
-  await generalNote(tess, 'The privacy pages differ from app to app', 'Tess');
-  await outsiderMenu(tess, 'Tess');
-  await tess.click(tool('.more'));
-  await shot(tess, 'menu-tester-desktop');
-  await tess.click(tool('.more'));
+  await shot(tess, 'note-tester-desktop');
   assert.deepEqual(pageErrors.flat(), []);
   console.log(
-    'shares-check: two invited from the viewer on a phone, each signs in and pins a note (the second a general note too, from the pin’s menu), each on the board’s sheet for the owner as it’s pinned, signed, the menu saying where they go; Invite and Remove in Reviews; the board’s End now closes it, the ended share listed and the links shut; a deck shared view only opens its demo on the product host, without review mode; the shop shared to try out, its vouchers’ amount changed after the invite, gives the tester a greeting and four steps on her door (one bold part, the company’s own last) and a quieter aside on her notes, her voucher up to it in the first with a copy button, then opens with the pin, and her notes go on the board’s sheet too',
+    'shares-check: two invited from the viewer on a phone, each signs in and pins a note, each on the board’s sheet for the owner as it’s pinned, signed; Invite and Remove in Reviews; the board’s End now closes it, the ended share listed and the links shut; a deck shared view only opens its demo on the product host, without review mode; the shop shared to try out, its vouchers’ amount changed after the invite, gives the tester a greeting and four steps on her door (one bold part, the company’s own last) and a quieter aside on her notes, her voucher up to it in the first with a copy button, then opens with the pin, and her notes go on the board’s sheet too',
   );
 } catch (err) {
   console.error(err);

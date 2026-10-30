@@ -309,6 +309,42 @@ test("an exhausted consolidator roster still closes work, reopens call items, ho
   });
 });
 
+test('a stuck pull request nothing is queued on goes to its author at once, once for each state it is stuck in', async () => {
+  const n = 9210;
+  h.storedPr(n, h.ended({ agent: 'bolt' }), 'stuck', FILES, { sha: newSha(), round: 1, verdict: '{"decision": "changes"}' });
+  const stuckFor = (why: string) => db.prepare('update prs set why = ? where number = ?').run(why, n);
+  const authorJobs = () => queued(n).filter(j => j.kind === 'work');
+  const drop = (id: number) => db.prepare("update jobs set status = 'cancelled' where id = ?").run(id);
+  stuckFor('its fix task can\'t be drawn: name the task for what it fixes');
+  await review.settleStuck();
+  const [job] = authorJobs();
+  assert.deepEqual([authorJobs().length, job?.agent, job?.stage], [1, 'bolt', 'fix']);
+  const { prompt } = db.prepare('select prompt from jobs where id = ?').get(job.id) as { prompt: string };
+  assert.match(prompt, /stuck in review, and nothing is queued to move it: its fix task can't be drawn/);
+  assert.match(prompt, /hq review 9210/);
+  assert.match(prompt, /Its last ruling:\n\{"decision": "changes"\}/);
+  await review.settleStuck();
+  assert.equal(authorJobs().length, 1, 'its job on it is what moves it: nothing more');
+  drop(job.id);
+  await review.settleStuck();
+  assert.equal(authorJobs().length, 0, 'stuck the same way again: its author had their go at it');
+  stuckFor('the platform could not run its tests');
+  await review.settleStuck();
+  assert.equal(authorJobs().length, 1, 'stuck for another reason: its author hears of it again');
+  drop(authorJobs()[0].id);
+});
+
+test('a stuck pull request closed here takes back its author job and leaves no stuck setting', async () => {
+  const n = 9211;
+  h.storedPr(n, h.ended({ agent: 'bolt' }), 'stuck', FILES, { sha: newSha(), round: 1 });
+  await review.settleStuck();
+  const [job] = queued(n).filter(j => j.kind === 'work');
+  assert.ok(job, 'its author has the job to move it');
+  await review.withdrawn(n);
+  assert.equal((db.prepare('select status from jobs where id = ?').get(job.id) as { status: string }).status, 'cancelled');
+  assert.equal(db.prepare('select value from settings where key = ?').get(`review.stuck.${n}`), undefined);
+});
+
 test('withdrawal and a GitHub close before any ruling finish with an exhausted roster', async () => {
   const author = h.ended({ agent: 'bolt' });
   const withdrawn = 9199,
@@ -3584,6 +3620,7 @@ test("a ruled round whose fix task was stopped before its push runs that task ag
         const [ruler] = await claim(n, j => j.kind === 'consolidate');
         await end(ruler, { output: JSON.stringify({ major_visual: false, decision: 'changes', blocking: [{ file, line: 1, issue: 'The fee is missing', task: 'Add the fee' }] }) });
         const [task] = inbox.tasks(n, 1);
+        await h.answer(await h.park(await h.claimJob(task.id), { title: 'Which voucher?' }), 'Count the voucher once too');
         await end(await h.claimJob(task.id), stopped(n));
         assert.equal(inbox.unassigned(n, 1).length, 1, 'a stopped task no longer holds its findings for the draw');
         await review.reviveRounds();
@@ -3599,6 +3636,7 @@ test("a ruled round whose fix task was stopped before its push runs that task ag
         const rerun = await h.claimJob(again.id);
         assert.equal(rerun.branch, `review/${n}`, 'it starts from what the stopped run pushed');
         assert.match(rerun.note ?? '', new RegExp(`#${task.id}\\b`));
+        assert.match(rerun.note ?? '', /Count the voucher once too/, 'it hears the message the stopped run started with');
         assert.deepEqual(prs(n), { round: 1, status: 'open' });
 
         await end(rerun, second(n));
@@ -3613,6 +3651,41 @@ test("a ruled round whose fix task was stopped before its push runs that task ag
         assert.deepEqual(prs(n), { round: 2, status: 'open' }, 'its push starts the next round');
       });
     }
+  });
+});
+
+test("a round whose fix task ended short twice moves on at its author's next push, even one that changed nothing", async () => {
+  const inbox = await import('./reviewinbox.ts');
+  const n = 8107, file = 'platform/coordinator/src/total.ts';
+  const thread = h.dueThread({ deadline: Date.now() + 86_400_000 });
+  const work = await h.start({ agent: 'bolt', branch: `review/${n}`, thread });
+  await withConsolidators(async () => {
+    await submit(n, { files: [file] }, work);
+    const ruled = heads.get(n);
+    for (const run of await claim(n, j => j.kind === 'review')) await end(run);
+    const [ruler] = await claim(n, j => j.kind === 'consolidate');
+    await end(ruler, { output: JSON.stringify({ major_visual: false, decision: 'changes', blocking: [], nonblocking: [{ file, line: 1, issue: 'The name says too little', task: 'Rename the total' }] }) });
+    // (no blocker: its owner draws the task)
+    const owner = await h.start({ agent: 'juno', title: 'Draw fixes' });
+    const [note] = inbox.get(n)!.findings;
+    const drawn = await h.agent('proposals/accept', owner.token, { id: `findings:${n}`, for: 'bolt', findings: String(note.id) });
+    assert.equal(drawn.status, 200, JSON.stringify(drawn.body));
+    await h.finish(owner);
+    const [task] = inbox.tasks(n, 1);
+    await end(await h.claimJob(task.id), stopped(n));
+    longAgo(n);
+    await review.reviveRounds();
+    const [again] = inbox.tasks(n, 1);
+    await end(await h.claimJob(again.id), failed(n));
+    longAgo(n);
+    await review.reviveRounds();
+    assert.deepEqual(prs(n), { round: 1, status: 'stuck' });
+
+    await review.settleStuck();
+    const [moving] = queued(n).filter(j => j.kind === 'work');
+    assert.equal(moving?.step, 'Moving it on', 'the stuck sweep gives it to its author');
+    await submit(n, { files: [file], sha: ruled }, await h.claimJob(moving.id));
+    assert.deepEqual(prs(n), { round: 2, status: 'open' }, 'its push starts the next round: the failed task holds nothing');
   });
 });
 

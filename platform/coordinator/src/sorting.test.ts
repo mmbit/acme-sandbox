@@ -9,6 +9,7 @@ const h = await harness('sorting', {
   before: repo =>
     writeFileSync(`${repo}/company/projects.yaml`, 'projects:\n  - { id: game, name: The game, owner: wren }\n'),
 });
+const scope = { size: '30m', why: 'Test scope judgment without a comparable completed job' };
 const { db } = h;
 const proposals = await import('./proposals.ts');
 const projects = await import('./projects.ts');
@@ -51,7 +52,7 @@ for (const owner of ['juno', 'wren']) {
     proposals.sweep();
     assert.equal(h.jobs.listJobs().filter(j => j.agent === owner && j.status === 'queued').length, 1);
     const code = owner === 'juno' ? 'SEATCEO' : 'SEATOWN';
-    assert.deepEqual(proposals.accept(item.id, owner, { title: 'Draw the seat answer', code }), {
+    assert.deepEqual(proposals.accept(item.id, owner, { ...scope, title: 'Draw the seat answer', code }), {
       job: made.body.job,
       code,
       thread,
@@ -110,7 +111,7 @@ test('an urgent HQ notice redacts unsaved credentials before storage and deliver
   await h.finish(session);
 });
 
-test("a message no session took waits for its sort by its thread's project owner, who names it and lets it start", async () => {
+test('a held message becomes sized work when its project owner accepts it and the CEO can resize it', async () => {
   const bolt = await h.start({ agent: 'bolt', thread: 'game/world' });
   const r = await say(bolt, 'kit', 'The second level needs a door.\nAnd the first one a key.');
   assert.equal(r.body.state, 'job');
@@ -130,14 +131,46 @@ test("a message no session took waits for its sort by its thread's project owner
   proposals.sweep();
   assert.equal(h.jobs.listJobs().filter(j => j.agent === 'wren' && j.status === 'queued').length, 1, 'told once');
   // a template keeps no title: the owner writes one
-  assert.match(String(proposals.accept(item.id, 'wren', {})), /--title/);
-  assert.match(String(proposals.accept(item.id, 'bolt', { title: 'Put doors in' })), /wren's to decide/);
-  const sorted = proposals.accept(item.id, 'wren', {
+  assert.match(String(proposals.accept(item.id, 'wren', { ...scope })), /--title/);
+  assert.match(String(proposals.accept(item.id, 'bolt', { ...scope, title: 'Put doors in' })), /wren's to decide/);
+  assert.equal(h.jobs.openJobs({}).find(j => j.id === job)!.queued_by, null);
+  assert.equal(h.job(job).pr, null);
+  const owner = await h.start({ agent: 'wren' });
+  const comparison = h.pastJob({
+    title: 'Give the first level its door',
+    run: { started: Date.now() - 3_600_000, ended: Date.now() - 2_400_000 },
+    merged: Date.now() - 1_800_000,
+  });
+  const ask = {
+    id: item.id,
     title: 'Give the second level its door and the first its key',
     code: 'DOORS',
-  });
-  assert.deepEqual(sorted, { job, code: 'DOORS', thread: 'game/world', sorted: true });
-  assert.equal(h.job(job).title, 'Give the second level its door and the first its key');
+    size: '40m',
+    refs: [comparison],
+    why: 'Two door interactions rather than the first level alone',
+  };
+  for (const change of [{ size: undefined }, { size: '0m' }, { refs: [999999] }, { why: '' }]) {
+    const refused = await h.agent('proposals/accept', owner.token, { ...ask, ...change });
+    assert.equal(refused.status, 400, JSON.stringify(refused.body));
+    assert.equal(h.jobs.openJobs({}).find(j => j.id === job)!.queued_by, null);
+    assert.equal(held(job)!.id, item.id);
+  }
+  const sorted = await h.agent('proposals/accept', owner.token, ask);
+  assert.equal(sorted.status, 200, JSON.stringify(sorted.body));
+  assert.deepEqual(sorted.body, { job, code: 'DOORS', thread: 'game/world', sorted: true });
+  assert.equal(h.job(job).title, ask.title);
+  assert.equal(h.jobs.openJobs({}).find(j => j.id === job)!.queued_by, 'wren');
+  const { orderingSnapshot } = await import('./backlog.ts');
+  assert.equal(orderingSnapshot(Date.now()).jobs.find(j => j.id === job)!.origin, 'work');
+  const initial = (await h.agent(`estimate?q=%23${job}`, owner.token)).body;
+  assert.equal(initial.estimate.agent_minutes, 40);
+  assert.equal(initial.sizes[0].by, 'wren');
+  assert.deepEqual(initial.sizes[0].refs, ask.refs);
+  assert.equal(initial.sizes[0].why, ask.why);
+  const ceo = await h.start({ agent: 'juno' });
+  const revised = await h.agent('sizes', ceo.token, { job, time: '55m', why: 'The doors also need keys' });
+  assert.equal(revised.status, 200, JSON.stringify(revised.body));
+  assert.equal((await h.agent(`estimate?q=%23${job}`, ceo.token)).body.estimate.agent_minutes, 55);
   assert.equal(await claimable(job), true);
 });
 
@@ -168,7 +201,7 @@ test("a message from a job on a windowed thread no pause holds gets its sort and
     assert.equal(h.jobs.pausedOn(sorter), 'game', "with its project paused, the project's pause holds it");
     pauses.resume({ project: 'game' }, ceo());
     assert.equal(await claimable(sorter), true);
-    proposals.accept(held(job)!.id, 'wren', { title: 'Judge the bigger scope', code: 'SCOPE' });
+    proposals.accept(held(job)!.id, 'wren', { ...scope, title: 'Judge the bigger scope', code: 'SCOPE' });
     play = orderingSnapshot(Date.now()).jobs;
     assert.equal(play.find(j => j.id === job)!.dependencies, undefined);
     await h.finish(bolt); // (the task before it in its thread)
@@ -182,8 +215,12 @@ test('a later message joining a sorted job that has not started holds it for its
   const bolt = await h.start({ agent: 'bolt', thread: 'game/world' });
   const job = (await say(bolt, 'kit', 'Draw the door.')).body.job as number;
   const first = held(job)!;
-  proposals.accept(first.id, 'wren', { title: 'Draw the door', code: 'DOOR' });
+  proposals.accept(first.id, 'wren', { ...scope, title: 'Draw the door', code: 'DOOR' });
   assert.equal(held(job), undefined);
+  const sizes = await import('./sizes.ts');
+  const revised = sizes.setSize(job, '55m', 'The door also needs its frame', 'juno');
+  assert.ok(!Array.isArray(revised));
+  const saved = sizes.history(job);
   const again = await say(bolt, 'kit', 'And a window beside it.');
   assert.equal(again.body.job, job);
   const second = held(job)!;
@@ -191,7 +228,20 @@ test('a later message joining a sorted job that has not started holds it for its
   assert.match(second.brief, /And a window beside it/);
   await h.finish(bolt); // (the thread's task before it ends first)
   assert.equal(await claimable(job), false);
-  proposals.accept(second.id, 'wren', { title: 'Draw the door and the window beside it' });
+  const title = 'Draw the door and the window beside it';
+  assert.match(String(proposals.accept(second.id, 'wren', { ...scope, title })), /hq estimate set/);
+  assert.equal(held(job)!.id, second.id);
+  assert.deepEqual(sizes.history(job), saved);
+  assert.deepEqual(proposals.accept(second.id, 'wren', { title }), {
+    job,
+    code: 'DOOR',
+    thread: 'game/world',
+    sorted: true,
+  });
+  assert.equal(sizes.latestOf(job)!.agent_ms, 55 * 60_000);
+  assert.deepEqual(sizes.history(job), saved);
+  const predictions = await import('./predictions.ts');
+  assert.equal(predictions.latest(job)!.agent_ms, 55 * 60_000);
   assert.equal(h.job(job).code, 'DOOR', 'it keeps the code it was given');
   assert.equal(await claimable(job), true);
 });
@@ -260,12 +310,12 @@ test("HQ's work in no project is placed in its project's thread before it's sort
     const job = (await say(lone, 'kit', 'The lift is slow.')).body.job as number;
     const item = held(job)!;
     assert.equal(item.project, null, "the CEO's to sort");
-    const refused = String(proposals.accept(item.id, ceo(), { title: 'Make the lift quick', code: 'LIFT' }));
+    const refused = String(proposals.accept(item.id, ceo(), { ...scope, title: 'Make the lift quick', code: 'LIFT' }));
     assert.match(refused, /belongs to the project its work is for.*hq job move/s);
     assert.equal(await claimable(job), false);
     const lead = await h.start({ agent: ceo() });
     assert.equal((await h.hq(lead, 'job', 'move', String(job), 'game/world')).code, 0);
-    const sorted = proposals.accept(item.id, ceo(), { title: 'Make the lift quick', code: 'LIFT' });
+    const sorted = proposals.accept(item.id, ceo(), { ...scope, title: 'Make the lift quick', code: 'LIFT' });
     assert.deepEqual(sorted, { job, code: 'LIFT', thread: 'game/world', sorted: true });
     // A needed answer creates independent CEO work to sort.
     const answer = await h.agent('message', lone.token, {
@@ -276,7 +326,7 @@ test("HQ's work in no project is placed in its project's thread before it's sort
     assert.equal(answer.status, 200);
     assert.equal(answer.body.state, 'job');
     const own = answer.body.job as number;
-    const mine = proposals.accept(held(own)!.id, ceo(), { title: 'Answer the intercom', code: 'REPLY' });
+    const mine = proposals.accept(held(own)!.id, ceo(), { ...scope, title: 'Answer the intercom', code: 'REPLY' });
     assert.deepEqual(mine, { job: own, code: 'REPLY', thread: null, sorted: true });
   } finally {
     writeFileSync(file, 'projects:\n  - { id: game, name: The game, owner: wren }\n');
@@ -296,12 +346,15 @@ test("HQ's work made in no deliverable waits for the CEO to place it, but the CE
     assert.equal(item.project, null, "the CEO's to place");
     const lead = await h.start({ agent: ceo() });
     assert.equal((await h.hq(lead, 'job', 'move', String(loose), 'game/world')).code, 0);
-    assert.deepEqual(proposals.accept(item.id, ceo(), { title: 'Find why the backup missed', code: 'MISSED' }), {
-      job: loose,
-      code: 'MISSED',
-      thread: 'game/world',
-      sorted: true,
-    });
+    assert.deepEqual(
+      proposals.accept(item.id, ceo(), { ...scope, title: 'Find why the backup missed', code: 'MISSED' }),
+      {
+        job: loose,
+        code: 'MISSED',
+        thread: 'game/world',
+        sorted: true,
+      },
+    );
     assert.equal(await claimable(loose), true, 'placed and sorted, it starts');
     for (const free of [
       h.queue({ agent: ceo(), title: 'Follow up on your call with the board' }),

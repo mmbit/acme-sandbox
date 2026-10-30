@@ -16,7 +16,7 @@ export const MAX_BYTES = 25 * 1024 * 1024;
 const WAIT_MS = 10_000;
 // a site's redirects followed (a CDN's are one or two): more is a loop
 const HOPS = 5;
-// rasters only, which HQ draws again (sketchscraps.js shrink): an SVG is a page that could run scripts on HQ's origin.
+// rasters only, which HQ draws again (bookscrapdraw.js shrink): an SVG is a page that could run scripts on HQ's origin.
 // A site may call a picture anything binary; the bytes say what it is.
 const SAID = /^(image\/|application\/octet-stream$|binary\/octet-stream$)/;
 const FORMATS = new Set(['jpeg', 'png', 'gif', 'webp', 'avif']);

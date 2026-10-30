@@ -5,14 +5,20 @@
 //   - seed: { notebooks, pages, groups, slips, asks, names } as the store keeps them, a group's ink, texts, pictures and
 //     anchor as values, not JSON; asks: the agents' desk-phone cards about a note, as bookasks.ts's asksOn lists them,
 //     each with its note (asks). names: an agent's name by id, for a scrap's
-//     owner_name. A page's send_at is in ms (a seeded sent page's: some time gone). No seed: My Notebook with one blank
-//     page.
-//   - now(): the time in ms (a story's clock). sendMs: a send's time to undo (notebooksend.ts's SEND_MS).
+//     owner_name. A page's send_at is in ms (a seeded sent page's: some time gone). slips: the agents' answers, as
+//     slipOf lists them (on a group: grp), their spots and forms as values. A group's asking and tried: where its
+//     answer's run and its try are (notebookplayanswers.js). No seed: My journal with one blank page.
+//   - now(): the time in ms (a story's clock). sendMs: a reply's time to undo (notebooksend.ts's SEND_MS).
 //   - A page's picture is null here: in dev mode the browser draws it (notebookpicture.js).
 import { inkOf, labelOf, pictureOf, refuse, wordsOf } from './notebookplaychecks.js';
 import { boxOf, landingPage } from './notebookstack.js';
+import { chapterOf, inChapters } from './notebookchapters.js';
 import { BOARD, GROUP_ROUTES, groupOf, insertGroup, keepPicture, pictureUrl, putAside } from './notebookplaygroups.js';
+import { seededGroup, unitsOn } from './notebookplaygroups.js';
 import { search } from './notebookplaysearch.js';
+import { closeRound, unwrapRound } from './notebookplayrounds.js';
+import { setCover, shelfOf } from './notebookplayshelf.js';
+import { ANSWER_ROUTES, groupOn, ran, slipRow } from './notebookplayanswers.js';
 import { SCREEN_SHAPES } from './booklayout.js';
 import { ZOOM_KEPT } from './bookrow.js';
 
@@ -20,9 +26,7 @@ import { ZOOM_KEPT } from './bookrow.js';
 const NEW_PAGE = { w: 1200, h: 1600 };
 const MAX_BYTES = 3.5 * 1024 * 1024;
 // What a seeded page or group is unless it says otherwise
-const PAGE = { kind: 'free', label: '', archived: false, send_at: null, fresh: null, x: 0, y: 0 };
-const GROUP = { parent: null, answers: null, by: BOARD, ink: [], texts: [], pictures: [], anchor: null, words: '' };
-Object.assign(GROUP, { said: null, owner: null, status: 'open', note: null, deleted: null });
+const PAGE = { kind: 'free', label: '', archived: false, send_at: null, x: 0, y: 0 };
 
 export function notebookPlay({ seed, now = () => Date.now(), sendMs = 10_000 } = {}) {
   const s = store(seed, now, sendMs);
@@ -31,23 +35,22 @@ export function notebookPlay({ seed, now = () => Date.now(), sendMs = 10_000 } =
     // a picture's POST, { bytes: ArrayBuffer or Uint8Array, type }; none: a GET). A JSON-safe copy (a picture's GET:
     // { bytes, type }); a refusal throws an Error with .status and the coordinator's words.
     route: (path, query = {}, body = undefined) => routed(s, path, query, body),
-    // An agent's answer on a sent group's note (group: its id): a slip as bookslips.ts's slipsOf lists it ({ by, text,
-    // name?, picture?, link?, preview? }), its id and note filled in. → the slip
+    // An agent's answer on a group, sent or not (group: its id): a slip as bookslips.ts's slipOf lists it ({ by, text,
+    // name?, style?, picture?, link?, preview?, ink?, form?, spot?, version? … }), its id, grp and note filled in; the
+    // answer coming on the group ends. → the slip
     answer(group, slip) {
       const g = s.group(Number(group));
-      if (!g?.note) throw new Error(`group ${group} hasn't been sent: only a sent group's note is answered`);
-      const answered = {
-        ...{ picture: null, link: null, preview: null, now: null, now_at: null, ticked: null, text: '' },
-        ...slip,
-        id: s.next('slip'),
-        note: g.note,
-        name: slip.name ?? s.names[slip.by] ?? slip.by,
-        created: s.stamp(),
-      };
+      if (!g) throw new Error(`no group ${group} to answer`);
+      const answered = slipRow(s, { ...slip, id: s.next('slip'), grp: g.id, note: g.note, created: s.stamp() });
       s.slips.push(answered);
+      g.asking = null;
       s.changed(s.page(g.page).notebook, g.page);
       return JSON.parse(JSON.stringify(answered));
     },
+    // The owner's quick run on a group going, its answer coming ({ by, spot, reason? }: bookslips.ts comingOf; null:
+    // none), and a group's try run ({ by, expect, going, said? }: groupanswers.ts tryOf), as the group's read shows them
+    asking: (group, face) => ran(s, group, { asking: face }),
+    trying: (group, tried) => ran(s, group, { tried }),
     // An agent's desk-phone card about a sent group's note (group: its id), as bookasks.ts's asksOn lists it ({ agent,
     // kind, title, body, questions? }), its id, note and name filled in. → the card.
     ask: (group, card) => askAbout(s, group, card),
@@ -77,8 +80,8 @@ function store(seed, now, sendMs) {
     sendMs,
     notebooks: (seed?.notebooks ?? []).map(n => ({ who: BOARD, archived: false, ...n })),
     pages: (seed?.pages ?? []).map(p => ({ ...PAGE, ...p })),
-    groups: (seed?.groups ?? []).map(g => ({ ...GROUP, ...g })),
-    slips: [...(seed?.slips ?? [])],
+    groups: (seed?.groups ?? []).map(seededGroup),
+    slips: [],
     asks: [...(seed?.asks ?? [])],
     names: { ...seed?.names },
     // a note's time to go (ms), by its id: one seeded is long gone
@@ -99,12 +102,13 @@ function store(seed, now, sendMs) {
     shut: p => p.send_at !== null,
     gone: p => p.send_at !== null && p.send_at <= s.now(),
     noteGone: id => (s.notes.get(id) ?? 0) <= s.now(),
-    mine: () => s.notebooks.find(n => n.kind === 'mine') ?? s.notebook(makeNotebook(s, 'mine', 'My Notebook')),
+    mine: () => s.notebooks.find(n => n.kind === 'mine') ?? s.notebook(makeNotebook(s, 'mine', 'My journal')),
     currentPage: id => currentPage(s, id),
     newPage: id => newPage(s, id),
     changed: (notebook, page) => changed(s, notebook, page),
     ours: file => s.files.has(file),
   };
+  s.slips = (seed?.slips ?? []).map(x => slipRow(s, x));
   for (const kind of ['notebooks', 'pages', 'groups', 'slips', 'asks'])
     for (const row of s[kind]) at[kind.slice(0, -1)] = Math.max(at[kind.slice(0, -1)], row.id);
   for (const g of s.groups) {
@@ -114,6 +118,7 @@ function store(seed, now, sendMs) {
   if (!s.notebooks.some(n => n.kind === 'mine')) s.mine();
   return s;
 }
+// A seeded group as the store keeps it: a unit with no order of its own goes by its id, as tall as its parts reach
 function makeNotebook(s, kind, name) {
   const id = s.next('notebook'),
     now = s.stamp();
@@ -131,7 +136,7 @@ function newPage(s, notebook) {
   const id = s.next('page'),
     now = s.stamp(),
     pos = Math.max(-1, ...s.pages.filter(p => p.notebook === notebook).map(p => p.pos)) + 1;
-  s.pages.push({ id, notebook, pos, send_at: null, fresh: null, kind: 'free', label: '', archived: false });
+  s.pages.push({ id, notebook, pos, send_at: null, kind: 'free', label: '', archived: false });
   Object.assign(s.page(id), { created: now, updated: now, x: 0, y: 0, ...NEW_PAGE });
   changed(s, notebook, id);
   return id;
@@ -187,14 +192,17 @@ const ROUTES = {
   'POST /api/notebooks/pages/archive': (s, b) => pageChanged(s, b, p => (p.archived = archived(b.archived))),
   'POST /api/notebooks/pages/title': (s, b) => pageChanged(s, b, p => (p.label = labelOf(b?.title))),
   'POST /api/notebooks/pages/zoom': zoomPage,
-  'POST /api/notebooks/pages/send': (s, b) => pageOf(s, sendPage(s, pageRow(s, b?.id))),
-  'POST /api/notebooks/pages/undo': (s, b) => pageOf(s, undoSend(s, pageRow(s, b?.id))),
+  'POST /api/notebooks/pages/send': (s, b) => pageOf(s, sendPage(s, pageRow(s, b?.id), b?.aside)),
   'GET /api/notebooks/pages/groups': listGroups,
   ...GROUP_ROUTES,
+  ...ANSWER_ROUTES,
   'POST /api/notebooks/groups/reply': replyTo,
   'POST /api/notebooks/replies/delete': deleteReply,
   'POST /api/notebooks/pictures': uploadPicture,
   'GET /api/notebooks/pictures': (s, q) => (s.files.get(q.file) ? { ...s.files.get(q.file) } : refuse(404)),
+  'POST /api/notebooks/round/close': closeRound,
+  'POST /api/notebooks/round/unwrap': unwrapRound,
+  'POST /api/notebooks/cover': setCover,
   'GET /api/book/search': search,
   'POST /api/requests/answer': answerAsk,
 };
@@ -236,13 +244,14 @@ function listNotebooks(s) {
 function archiveNotebook(s, b) {
   const n = notebookRow(s, b?.id),
     to = archived(b.archived);
-  if (n.kind === 'mine') refuse(409, 'My Notebook stays on the shelf');
+  if (n.kind === 'mine') refuse(409, 'My journal stays on the shelf');
   Object.assign(n, { archived: to, updated: s.stamp() });
   return notebookOf(s, n);
 }
 function listPages(s, b) {
   const n = notebookRow(s, b?.notebook);
-  s.currentPage(n.id);
+  // (one made in a notebook with none: a page sent stays the last, notebook.ts listPages)
+  if (!pagesOf(s, n.id).some(p => !p.archived)) s.currentPage(n.id);
   const pages = pagesOf(s, n.id);
   return {
     notebook: notebookOf(s, n),
@@ -285,49 +294,38 @@ function listGroups(s, q) {
     notebook: p.notebook,
     title: p.label,
     handed: p.handed ?? 0,
-    groups: on.filter(g => g.parent === null).map(g => groupOf(s, g, replies)),
+    groups: unitsOn(s, p.id).map(g => groupOf(s, g, replies)),
   };
 }
-// Each open group of a page goes as its own note, in sendMs; a fresh page takes new groups at once
-function sendPage(s, p) {
+// The board's page torn out onto Submit: each open group goes as its own note at once, the page stays and no page is
+// made after it; aside, the groups with asks still open, moved to a new page at the notebook's end first (notebooksend.ts.
+function sendPage(s, p, aside = []) {
   if (s.shut(p)) refuse(409, 'this page has been sent');
-  const groups = s.groups.filter(
-    g => g.page === p.id && g.parent === null && g.deleted === null && g.status === 'open',
-  );
+  const open = s.groups.filter(g => g.page === p.id && g.parent === null && g.deleted === null && g.status === 'open'),
+    apart = open.filter(g => aside.map(Number).includes(g.id)),
+    groups = open.filter(g => !apart.includes(g));
   if (!groups.length) refuse(409, 'nothing on this page to send');
-  const at = s.now() + s.sendMs;
+  if (apart.length) {
+    const to = s.newPage(p.notebook);
+    apart.forEach((g, pos) => {
+      for (const x of s.groups) if (x.id === g.id || x.parent === g.id) x.page = to;
+      g.pos = pos;
+    });
+  }
+  const at = s.now();
   for (const g of groups) {
     g.note = s.next('note');
     g.status = 'sent';
     s.notes.set(g.note, at);
   }
   p.send_at = at;
-  // (a fresh page only when no other is open, or under the last page, notebooksend.ts)
-  const kept = pagesOf(s, p.notebook).filter(o => !o.archived);
-  p.fresh = openPageOf(s, p.notebook) !== null && kept.at(-1) !== p ? null : s.newPage(p.notebook);
-  s.changed(p.notebook, p.id);
-  return p;
-}
-// A send taken back in its time: the page open again, the fresh page gone while it's blank and untitled
-function undoSend(s, p) {
-  if (p.send_at === null) refuse(409, "this page hasn't been sent");
-  if (s.gone(p)) refuse(409, 'too late to undo: the page has gone');
-  for (const g of s.groups.filter(x => x.page === p.id && x.parent === null && x.note !== null)) {
-    if (s.noteGone(g.note)) continue;
-    s.notes.delete(g.note);
-    Object.assign(g, { status: 'open', note: null });
-  }
-  const fresh = s.page(p.fresh);
-  if (fresh && fresh.send_at === null && fresh.label === '' && !s.groups.some(g => g.page === fresh.id))
-    s.pages.splice(s.pages.indexOf(fresh), 1);
-  Object.assign(p, { send_at: null, fresh: null });
   s.changed(p.notebook, p.id);
   return p;
 }
 // The board's reply under an agent's answer (a slip): a reply group under the answered group, going in sendMs
 function replyTo(s, b) {
   const slip = s.slips.find(x => x.id === Number(b?.answer));
-  const answered = slip && s.groups.find(g => g.note === slip.note);
+  const answered = slip && groupOn(s, slip);
   const p = answered && s.page(answered.page);
   if (!p) refuse(404);
   const said = wordsOf(b.words, b.said ?? 'written'),
@@ -372,18 +370,26 @@ function uploadPicture(s, b, q) {
 const id = v => (Number.isInteger(Number(v)) && Number(v) > 0 ? Number(v) : 0);
 const notebookRow = (s, v) => s.notebook(id(v)) ?? refuse(404);
 const pageRow = (s, v) => s.page(id(v)) ?? refuse(404);
-const pagesOf = (s, notebook) =>
-  s.pages.filter(p => p.notebook === notebook).sort((a, b) => a.pos - b.pos || a.id - b.id);
+const pagesOf = (s, n) =>
+  inChapters(
+    s.notebook(n)?.kind,
+    s.pages.filter(p => p.notebook === n),
+  );
 const archived = v => (typeof v === 'boolean' ? v : refuse(400, 'archived is true or false'));
 const notebookOf = (s, n) => ({
   ...{ id: n.id, name: n.name, kind: n.kind, archived: !!n.archived, created: n.created, updated: n.updated },
   pages: s.pages.filter(p => p.notebook === n.id && !p.archived).length,
+  ...shelfOf(n),
+  ...(n.round && { round: copy(n.round) }),
+  asks: { open: 0, all: 0, ...n.asks }, // (a seeded notebook's, as notebook.ts asksCount counts them)
 });
-// What the shelf and a notebook's page grid read of a page. sending: in its time to undo; sent: when it went.
+// What the shelf and a notebook's page grid read of a page. sending: in its time to undo; sent: when it went (followed)
 const pageOf = (s, p) => ({
   ...{ id: p.id, notebook: p.notebook, kind: p.kind, title: p.label, archived: !!p.archived, zooms: { ...p.zooms } },
-  sending: p.send_at !== null && !s.gone(p),
-  sent: s.gone(p) ? new Date(p.send_at).toISOString() : null,
+  ...{ chapter: chapterOf(p.kind, s.notebook(p.notebook)?.kind), ...(p.guest && { guest: p.guest }) },
+  ...(p.kind === 'call'
+    ? { sending: false, sent: p.followed ? new Date(p.followed).toISOString() : null, readonly: s.shut(p) }
+    : { sending: p.send_at !== null && !s.gone(p), sent: s.gone(p) ? new Date(p.send_at).toISOString() : null }),
   ...{ created: p.created, updated: p.updated, day: p.created.slice(0, 10), x: p.x, y: p.y, w: p.w, h: p.h },
   groups: s.groups.filter(g => g.page === p.id && g.parent === null && g.deleted === null).length,
   picture: null,

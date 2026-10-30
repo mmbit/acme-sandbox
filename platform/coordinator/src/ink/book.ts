@@ -13,8 +13,7 @@
 //   - Any job reads every page (hq sketches, hq sketch <id>), and a board call's agent one by number or label words
 //     (bookreads.ts): the board shares its book with the whole team, a call's pages too (but a call about a card for
 //     keys: its own). An invited person's are theirs, outside text.
-//   - The Sketchbook's screens and an invited person's room read and write their sketches, the free pages,
-//     through sketchbook.ts.
+//   (HQ's Sketchbook app, which drew on the free pages, is gone)
 import { existsSync, mkdirSync, rmSync, utimesSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { db, lacks, once } from '../db.ts';
@@ -47,7 +46,7 @@ mkdirSync(DIR, { recursive: true, mode: 0o700 });
 // (autoincrement: a page's number in a line, a job or a call never comes to mean another one once it's deleted)
 // day: the company's day it was made. owner: a sheet's page's agent. url: its HQ page. call: a call's page's.
 // picture: its drawn picture's file in DIR, null until it's drawn again after a change. sent: a sketch's last send
-// (sketchbook.ts). waiting: review mode's pictures on it, not placed yet ([{ file }]). opened: when HQ last read it whole.
+// (the old Sketchbook's). waiting: review mode's pictures on it, not placed yet ([{ file }]). opened: when HQ last read it whole.
 // texts: the words typed on it ([{ x, y, w, text, color }], pagechecks.ts textsOf.)
 // x, y: its top-left, 0,0 (its heading) until it grows up or left, w × h its size from there
 db.exec(`create table if not exists book_pages (id integer primary key autoincrement, who text not null default 'board',
@@ -67,7 +66,8 @@ once('2026-10-27-book-page-corner', () => {
 });
 
 export const KINDS = ['sheet', 'free', 'call', 'guest'] as const;
-type Kind = (typeof KINDS)[number];
+// (an Asks page, askpages.ts; a round's Advice page, notebookrounds.ts.)
+type Kind = (typeof KINDS)[number] | 'asks' | 'advice';
 export type Page = {
   id: number;
   who: string;
@@ -109,13 +109,13 @@ export function listPages(q: { day?: string }, who = BOARD) {
   return { day: asked, today, days, pages: pages.map(p => summary(p)) };
 }
 // GET /api/book/page?id=: one page with its strokes and scraps, to draw on again, and the pictures waiting to be
-// placed on it (the book's tray). base: the routes' addresses, HQ's or a person's on the guest desk (sketchbook.ts).
-export function getPage(id: number, who = BOARD, base = BASE) {
+// placed on it (the book's tray).
+export function getPage(id: number, who = BOARD) {
   const p = row(id, who);
   if (!p) return 404;
   const { ink, texts } = drawnOf(p.id);
   db.prepare('update book_pages set opened = ? where id = ?').run(new Date().toISOString(), p.id);
-  const url = (file: string) => scrapUrl(p.id, file, base);
+  const url = (file: string) => scrapUrl(p.id, file, BASE);
   return {
     ...summary(p),
     ink: JSON.parse(ink),
@@ -132,7 +132,7 @@ export function createPage(b: any, who = BOARD) {
   if (isRefused(w)) return w;
   if (isRefused(h)) return h;
   if (isRefused(label)) return label;
-  const kind = b?.kind as Kind;
+  const kind = b?.kind as (typeof KINDS)[number];
   if (!KINDS.includes(kind)) return [400, `a page's kind is ${KINDS.join(', ')}`] as Refused;
   const owned = kind === 'sheet' || kind === 'guest';
   if (owned && !(typeof b.owner === 'string' && findAgent(b.owner)))
@@ -262,14 +262,8 @@ export function deletePage(id: number, who = BOARD) {
 }
 
 // POST /api/book/scrap?id=<page>: one picture as the body (pictures.ts upload's way), one of the page's scraps once a
-// save places it: { file, url }. (base as getPage's; open: whether a person's book is still theirs past the await)
-export async function uploadScrap(
-  req: IncomingMessage,
-  res: ServerResponse,
-  who = BOARD,
-  base = BASE,
-  open: () => Refused | null = () => null,
-) {
+// save places it: { file, url }.
+export async function uploadScrap(req: IncomingMessage, res: ServerResponse, who = BOARD) {
   const id = Number(new URL(req.url ?? '/', 'http://x').searchParams.get('id'));
   if (!row(id, who)) return refuse(req, res, 404, 'no such page');
   if (who !== BOARD && bookFull(who)) return refuse(req, res, 413, BOOK_FULL);
@@ -286,12 +280,10 @@ export async function uploadScrap(
   const big = tooBig(p.clean);
   if (big) return reply(res, big[0], { error: big[1] }, true);
   // Again, past the await: the page may have been deleted, or filled from another tab, while the body came in
-  const shut = open();
-  if (shut) return reply(res, shut[0], { error: shut[1] }, true);
   if (!row(id, who)) return reply(res, 404, { error: 'no such page' }, true);
   if (full(id)) return reply(res, 429, { error: TOO_MANY_UPLOADS }, true);
   const file = keepScrap(id, p);
-  return reply(res, 200, { file, url: scrapUrl(id, file, base) });
+  return reply(res, 200, { file, url: scrapUrl(id, file, BASE) });
 }
 // GET /api/book/scrap?id=<page>&file=<file>
 export function serveScrap(req: IncomingMessage, res: ServerResponse, who: string | null = BOARD) {
@@ -390,7 +382,7 @@ const wentOn = (page: number) =>
       "select 1 from book_notes n join book_sheets s on s.id = n.sheet where n.page = ? and s.status = 'sent' limit 1",
     )
     .get(page);
-// (notebook: the one that has the page, if any: My Notebook, once it's the call's notes page.)
+// (notebook: the one that has the page, if any: My journal, once it's the call's notes page.)
 function callOf(page: number, call: number | null) {
   const found = db.prepare('select reply, agent, ts from calls where id = ?').get(call) as
     { reply: string | null; agent: string; ts: string } | undefined;

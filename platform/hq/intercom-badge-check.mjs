@@ -9,6 +9,8 @@ import { mkdirSync } from 'node:fs';
 import { serve } from './serve.mjs';
 import { playwright, openPage, until } from '../../shared/browser/browser.mjs';
 import { lookNames } from './looks.mjs';
+import { notebookPlay } from './shell/ink/notebookplay.js';
+import { notebookRoute } from './notebookroute.mjs';
 
 const shots = process.argv.includes('--shots') ? process.argv[process.argv.indexOf('--shots') + 1] : null;
 if (shots) mkdirSync(shots, { recursive: true });
@@ -31,14 +33,16 @@ for (const look of lookNames())
       { id: 1, ts, who: 'board', text: 'How is the badge coming along?' },
       { id: 2, ts, who: ceo, text: 'Nearly there.' },
     ];
-    const marks = { intercom: 2 };
+    const marks = { intercom: 2 },
+      notebook = notebookPlay();
     const { context, page, errors } = await openPage(browser, {
       viewport: { width, height },
       deviceScaleFactor: shots ? 2 : 1,
     });
     page.setDefaultTimeout(90_000); // (the stage draws behind it: slow on a busy machine's software GL)
     await context.route(`${base}/api/**`, async r => {
-      const path = new URL(r.request().url()).pathname,
+      const url = new URL(r.request().url()),
+        path = url.pathname,
         get = r.request().method() === 'GET';
       if (path === '/api/org') return r.fulfill({ response: await r.fetch({ url: `${base}/mock/org.json` }) });
       if (path === '/api/chat' && get) return r.fulfill({ json: { messages, thinking: false } });
@@ -50,6 +54,9 @@ for (const look of lookNames())
       }
       if (path === '/api/requests' || path === '/api/review/products' || path === '/api/gazette')
         return r.fulfill({ json: [] });
+      // (the book's store, played as dev mode plays it, notebookroute.mjs: the tablet shows the book open, which reads
+      // its newest note at once, booknewest.js.)
+      if (path.startsWith('/api/notebooks')) return notebookRoute(r, notebook);
       return r.fulfill({ status: 404, body: '' });
     });
     const badge = () => page.$eval('#intercom-count', b => (b.hidden ? 0 : Number(b.dataset.n)));
@@ -90,7 +97,7 @@ for (const look of lookNames())
 
     // opening the intercom shows the reply: seen, here and on the coordinator
     await page.click('#btn-intercom');
-    await page.waitForSelector('#chat li.ceo');
+    await page.waitForSelector('#chat:not([aria-busy]) li.ceo.prose');
     await page.waitForFunction(() => document.querySelector('#intercom-count').hidden);
     assert.equal(marks.intercom, 3, `${where}: the coordinator keeps it as seen`);
 

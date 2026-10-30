@@ -22,7 +22,7 @@ const { BOARD_CALL } = await import('../jobs.ts');
 const booknotes = await import('./booknotes.ts');
 const booksheets = await import('./booksheets.ts');
 const { onPublish } = await import('../events.ts');
-const sketchbook = await import('./sketchbook.ts');
+const { foldSketches } = await import('./sketchmigration.ts');
 const DIR = `${h.dataDir}/book`;
 
 const STROKE = {
@@ -126,7 +126,7 @@ test('a page is made today, saved with its ink and scraps, and drawn here as a p
     pixel(drawn, 20, 40).every(c => c < 80),
     'the ink',
   );
-  const kept = readdirSync(DIR).filter(f => new RegExp(`^${page.id}-x-[0-9a-f]{8}\\.png$`).test(f));
+  const kept = readdirSync(DIR).filter(f => new RegExp(`^${page.id}-u-[0-9a-f]{8}\\.png$`).test(f));
   assert.equal(kept.length, 1, 'one kept, however many read it at once, until the next change');
   assert.equal(statSync(`${DIR}/${kept[0]}`).mode & 0o777, 0o600);
   // a picture kept from an older drawing (no mark in its name) is drawn again once, the old file gone
@@ -136,7 +136,7 @@ test('a page is made today, saved with its ink and scraps, and drawn here as a p
   await picture(saved.body.picture);
   const pictures = readdirSync(DIR).filter(f => f.startsWith(`${page.id}-`) && !f.includes('-s-'));
   assert.deepEqual(
-    pictures.map(f => /^\d+-x-[0-9a-f]{8}\.png$/.test(f)),
+    pictures.map(f => /^\d+-u-[0-9a-f]{8}\.png$/.test(f)),
     [true],
     'drawn again, the old one gone',
   );
@@ -600,7 +600,7 @@ test('old sketches fold in as free pages under their numbers, ink, scraps and wa
     JSON.stringify([{ file: '901-s-0000000b.png' }]),
   );
   db.prepare("update sqlite_sequence set seq = 950 where name = 'sketches'").run(); // (sketches up to 950 were made)
-  assert.equal(sketchbook.foldSketches(), 1);
+  assert.equal(foldSketches(), 1);
   assert.ok(!existsSync(old), 'its folder moved into the book');
   assert.ok(!db.prepare("select 1 from sqlite_master where name = 'sketches'").get());
   const page = (await h.board('/api/book/page?id=901')).body;
@@ -616,7 +616,7 @@ test('old sketches fold in as free pages under their numbers, ink, scraps and wa
     "review mode's picture still waits",
   );
   assert.equal(readFileSync(`${DIR}/901-s-0000000a.png`).length, placed.length);
-  assert.equal(sketchbook.foldSketches(), 0, 'once');
+  assert.equal(foldSketches(), 0, 'once');
   assert.equal((await newPage({ kind: 'free' })).id, 951, "a deleted sketch's number is not made again");
 
   const job = await h.start({ agent: 'juno' });
@@ -768,10 +768,7 @@ test('a free page is sent to an agent on its own: a one-off sheet in its ten sec
   const batch = (await addNote({ page: kitsPage.id, words: 'Prices with shipping in' })).body.sheet;
   const page = await newPage({ kind: 'free', label: 'Gift card' });
   await h.board('/api/book/page/save', { id: page.id, ink: [STROKE], scraps: [] });
-  assert.equal(
-    (await h.board('/api/book/page/send', { id: kitsPage.id, to: 'kit' })).body.error,
-    "a free page or a call's is sent on its own; a sheet goes from its face",
-  );
+  assert.equal((await h.board('/api/book/page/send', { id: kitsPage.id, to: 'kit' })).status, 400);
   assert.equal((await h.board('/api/book/page/send', { id: page.id, to: 'nobody' })).body.error, 'to is an agent');
   const sending = (await h.board('/api/book/page/send', { id: page.id, to: 'kit' })).body;
   assert.deepEqual([sending.owner, sending.status, sending.page], ['kit', 'sending', page.id]);

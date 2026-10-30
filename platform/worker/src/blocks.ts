@@ -1,15 +1,16 @@
 // Stops a run past its share and attributes it to its push check before asking HQ for the report.
 import { workerAccountingFailure } from './accounting.ts';
 import { randomUUID } from 'node:crypto';
-import { procStat, type CheckRun } from './detached.ts';
+import { procStat, type CheckRun, type Launched } from './detached.ts';
 import { ResponseError } from './reports.ts';
 import type { Block, ProcessSnapshot } from './shares.ts';
 import { commandOf, stopRun } from './stoprun.ts';
 
 type BlockOptions = {
+  launches?: Launched[];
   ask: (body: Record<string, unknown>, signal?: AbortSignal) => Promise<{ text: string }>;
   checking: Map<number, CheckRun>;
-  stopped: (text: string) => void;
+  log: (text: string) => void;
 };
 
 export async function blockRun(
@@ -25,8 +26,10 @@ export async function blockRun(
   const reason =
     block.accountingError?.message ??
     `the worker blocked its run ${block.root.pid} (the job's ${used}, past a job's share of ${share})`;
-  const parent = new Map(procs.map(p => [p.pid, p.ppid]));
-  for (let pid: number | undefined = block.root.pid; pid !== undefined; pid = parent.get(pid)) {
+  const processes = new Map(procs.map(p => [p.pid, p]));
+  let launched: Launched | undefined;
+  for (let pid: number | undefined = block.root.pid; pid !== undefined; pid = processes.get(pid)?.ppid) {
+    launched ??= options.launches?.find(launch => launch.pid === pid && launch.start === processes.get(pid)?.start);
     const check = options.checking.get(pid);
     if (!check) continue;
     check.stopped.push(reason);
@@ -44,16 +47,12 @@ export async function blockRun(
     accountingError: block.accountingError,
   };
   // A run not frozen whole, said in the worker's log.
-  const said = (words: string) => options.stopped(`job #${owner.job}: ${words}`);
+  const log = (words: string) => options.log(`job #${owner.job}: ${words}`);
   try {
-    await stopRun(live, owner, block.root, () => options.ask(body), said);
-  } catch (err) {
-    if (err instanceof ResponseError) throw err;
-    throw new Error(`Job #${owner.job}: HQ's block report outcome is unknown. HQ may have recorded it.`, {
-      cause: err,
-    });
+    const ask = () => askBlockReport(owner.job, body, options.ask);
+    await stopRun(live, owner, block.root, ask, log, launched?.tmpdir);
   } finally {
-    options.stopped(
+    options.log(
       block.accountingError
         ? `job #${owner.job}: ${block.accountingError.message}`
         : `job #${owner.job}: blocked its run ${block.root.pid} (${live.length} processes), ${used} past ${share}`,
@@ -71,3 +70,12 @@ const shareWords = (measure: Block['measure'], n: number | null) =>
         : measure === 'cores'
           ? `${Math.round(n * 10) / 10} cores`
           : `${n} processes`;
+
+async function askBlockReport(job: number, body: Record<string, unknown>, ask: BlockOptions['ask']) {
+  try {
+    return await ask(body);
+  } catch (err) {
+    if (err instanceof ResponseError) throw err;
+    throw new Error(`Job #${job}: HQ's block report outcome is unknown. HQ may have recorded it.`, { cause: err });
+  }
+}

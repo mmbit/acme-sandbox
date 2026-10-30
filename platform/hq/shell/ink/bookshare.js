@@ -1,11 +1,11 @@
-// Where a page goes by its folded corner (bookdogear.js): three targets over the paper, PDF, PNG and a call, the page
-// dimmed under them. They show as drop targets while the page is carried, or as a small menu (the corner pressed with a
-// key, or tapped). PDF and PNG download the page's picture, for the board to keep or share from its downloads
-//; the call, named for the agent, rings the CEO with the page's picture, or with
-// a call on shows it in that one. Its look: bookshare.css. (dimmed, named)
+// Where a page goes by its folded corner (bookdogear.js): three targets in the rail's place over the page bar, Submit to
+// the CEO (bookpagesend.js), PDF and PNG. They show as drop targets while the page is carried, or as a small menu (the
+// corner pressed with a key, or tapped). PDF and PNG download the page's picture, for the board to keep or share from
+// its downloads. A page that can't be sent (sent already, or a call's notes page) has only PDF and PNG. Its look:
+// bookshare.css. (Submit in the rail's place, the call's target gone)
 import * as world from '../../world/world.js';
+import { esc } from '../../util.js';
 import { callAgent, ceoName } from '../desk.js';
-import { callName } from '../call.js';
 import { titleOf } from './bookhead.js';
 import { pagePicture } from './bookpaperdraw.js';
 import { saved } from './booksave.js';
@@ -17,24 +17,19 @@ const JPEG_QUALITY = 0.92;
 // and a picture can be 2400 wide.
 const STRIP_PX = 4000;
 
-// The three targets on el (the pages' box), hidden. act(kind, box) a target taken ('pdf' | 'png' | 'call', its box on
-// the screen); closed() the menu put away with a key. Returns { carrying(), menu(), under(x, y), over(kind), hide(),
-// shown() }.
-export function mountTargets(el, { act, closed }) {
+// The three targets in lane (the line of the rail and the book's islands, bookui.js), hidden. act(kind, box) a target
+// taken ('submit' | 'pdf' | 'png', its box on the screen); closed() the menu put away with a key. Returns
+// { carrying(sendable), menu(sendable), under(x, y), over(item), take(item), hide(), shown() }.
+export function mountTargets(lane, { act, closed }) {
   const row = document.createElement('div');
   row.className = 'bk-share';
   row.setAttribute('role', 'menu');
-  row.setAttribute('aria-label', 'Share this page');
+  row.setAttribute('aria-label', 'Where this page goes');
   row.hidden = true;
-  // (the page dimmed under the targets, so they read)
-  const dim = Object.assign(document.createElement('div'), { className: 'bk-share-dim', hidden: true });
-  row.innerHTML = TARGETS.map(
-    ({ kind, icon }) =>
-      `<button role="menuitem" data-share="${kind}" tabindex="-1">${icon}<span class="bk-share-word"></span></button>`,
-  ).join('');
-  el.append(dim, row);
+  row.innerHTML = KINDS.map(kind => `<button role="menuitem" data-share="${kind}" tabindex="-1"></button>`).join('');
+  lane.append(row);
   const items = [...row.children],
-    targets = { row, dim, items, act, closed };
+    targets = { lane, row, items, act, closed };
   row.addEventListener('click', e => {
     const item = e.target.closest('[data-share]');
     if (item && row.dataset.mode === 'menu') take(targets, item);
@@ -42,10 +37,10 @@ export function mountTargets(el, { act, closed }) {
   row.addEventListener('keydown', e => keyed(targets, e));
   row.addEventListener('focusout', e => !row.contains(e.relatedTarget) && row.dataset.mode === 'menu' && hide(targets));
   return {
-    carrying: () => show(targets, 'carrying'),
-    menu: () => {
-      show(targets, 'menu');
-      items[0].focus();
+    carrying: sendable => show(targets, 'carrying', sendable),
+    menu: sendable => {
+      show(targets, 'menu', sendable);
+      items.find(i => !i.hidden).focus();
     },
     under: (x, y) => (row.hidden ? null : (document.elementFromPoint(x, y)?.closest('.bk-share [data-share]') ?? null)),
     over: item => items.forEach(i => i.toggleAttribute('data-over', i === item)),
@@ -54,37 +49,28 @@ export function mountTargets(el, { act, closed }) {
     shown: () => !row.hidden,
   };
 }
-// The targets as they read, the call's name read each time they show: whom the call on is with, else the CEO
-const TARGETS = [
-  { kind: 'pdf', word: () => 'PDF', icon: icon('M7 3h7l4 4v14H7z M14 3v4h4 M9.5 12h6 M9.5 15h6 M9.5 18h4') },
-  {
-    kind: 'png',
-    word: () => 'PNG',
-    icon: icon('M4 5.5h16v13H4z M4.5 16l5-5 4 4 2.5-2.5 4 4 M15 8.6a1.3 1.3 0 1 0 .01 0'),
-  },
-  {
-    kind: 'call',
-    word: () => callName() ?? ceoName(),
-    icon: icon(
-      'M6.2 3.8 9 3.4l1.6 4.2-2 1.4c.9 2.3 2.7 4.2 5 5.2l1.4-2 4.2 1.5-.3 2.9c-.2 1-1 1.6-2 1.6C10.6 18 5.6 13 5 6.1c0-1 .3-2 1.2-2.3z',
-    ),
-  },
-];
-// A small line drawing, as if inked with the book's pen
-function icon(d) {
-  return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${d}"/></svg>`;
+const KINDS = ['submit', 'pdf', 'png'];
+// Submit names the CEO, its initial on a disc, read each time it shows
+function words(kind) {
+  if (kind !== 'submit') return esc(kind.toUpperCase());
+  const ceo = ceoName();
+  return `<i class="bk-share-face" aria-hidden="true">${esc(ceo.charAt(0).toUpperCase())}</i>Submit → ${esc(ceo)}`;
 }
 
-function show({ row, dim, items }, mode) {
-  items.forEach((item, i) => {
-    item.querySelector('.bk-share-word').textContent = TARGETS[i].word();
+// (the rail and the islands make way for them: bookshare.css)
+function show({ lane, row, items }, mode, sendable) {
+  items.forEach(item => {
+    item.innerHTML = words(item.dataset.share);
+    item.hidden = item.dataset.share === 'submit' && !sendable;
     item.removeAttribute('data-over');
   });
   row.dataset.mode = mode;
-  row.hidden = dim.hidden = false;
+  row.hidden = false;
+  lane.toggleAttribute('data-targets', true);
 }
-function hide({ row, dim, items }) {
-  row.hidden = dim.hidden = true;
+function hide({ lane, row, items }) {
+  row.hidden = true;
+  lane.removeAttribute('data-targets');
   items.forEach(i => i.removeAttribute('data-over'));
 }
 function take(targets, item) {
@@ -94,7 +80,8 @@ function take(targets, item) {
 }
 // The menu's keys: the arrows go round it, Escape puts it away, back on the corner
 function keyed(targets, e) {
-  const { row, items } = targets,
+  const { row } = targets,
+    items = targets.items.filter(i => !i.hidden),
     at = items.indexOf(document.activeElement),
     step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
   if (row.dataset.mode !== 'menu') return;
@@ -176,9 +163,9 @@ export async function downloaded(file) {
   setTimeout(() => URL.revokeObjectURL(link.href), 60_000);
 }
 
-// The page on a call: its picture (picture, a promise of its PNG: filesOf's) shown in the call on, or a call with the CEO
-// started with it (call.js), a long one's in readable pieces. A page the store doesn't have yet (a blank one, or its
-// first save still going) can't go: that's said, and no call starts without it.
+// The page carried onto the call's window, with a call on (calldrop.js): its picture (a promise of its PNG: filesOf's)
+// shown in that call (call.js), a long one's in readable pieces. A page the store doesn't have yet (a blank one, or its
+// first save still going) can't go: that's said.
 export async function callAbout(page, picture) {
   if (!page.id)
     throw new Error('The page isn’t saved yet, so it can’t go on a call: write on it, or try again in a moment.');

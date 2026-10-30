@@ -1,40 +1,36 @@
-// book-check.mjs's pin story (shared/review/dock.js, menu.js, postit.js; shell/desk.js, pinsummon.js), held like an
-// iPad mini in landscape, on book-check's played store, and its summon on a desktop the board's size and on a phone.
-// On HQ the pin is away as HQ loads, whatever the book's state, until the board summons it: beside the book by opening
-// it, or with the pin among the book's controls; folded, or that control again, it goes (nothing left to tap where it
-// was). On a phone the control folds the book and leaves HQ with the pin on it, and the book opened again puts it away.
-// An artifact's own page shows its pin at once. A ring's post-it saved, its note is a scrap in My Notebook whose owner
+// book-check.mjs's pin story (shared/review/dock.js, postit.js; shell/desk.js, pinsetting.js), held like an iPad mini in
+// landscape, on book-check's played store, and its setting on a desktop the board's size and on a phone. On HQ the pin
+// is away as HQ loads, the book open or folded, and opening or folding the book never brings it: Settings' Pin on HQ
+// does, for this device, and turned off puts it away (nothing left to tap where it was); after a reload it is still on.
+// An artifact's own page shows its pin at once. A ring's post-it saved, its note is a scrap in My journal whose owner
 // is one truth: a ring on HQ's own page (nothing there names an owner, as on the desk phone's card in the board's
-// picture) is Juno's, a ring on something an agent owns theirs; the menu offers the Notebook (the pin flow). Carried and let go, the pin stays exactly where
-// it's dropped, the same button while it's held (pincheck.mjs). (the summon)
+// picture) is Juno's, a ring on something an agent owns theirs. Carried and let go, the pin stays exactly where it's
+// dropped, the same button while it's held (pincheck.mjs). (the setting)
 import assert from 'node:assert/strict';
 import { carried } from '../../shared/review/pincheck.mjs';
 import { shutBook } from './bookchrome.mjs';
 import { fulfilPart } from '../../shared/review/parts.mjs';
 import { savedScrap } from './bookscrap.mjs';
-import { DESKTOP, pressAlong, ui } from './bookkit.mjs';
+import { DESKTOP, pinOn, pressAlong } from './bookkit.mjs';
 import { frameInkStory } from './bookframeink.mjs';
 
 // c: book-check's { browser, hqIn, base, MINI, settled, shot, posts, pages, org, ring, noErrorsIn }, and look
 // ('&renderer=wire' for Wire)
 export async function pinStory(c) {
   const context = await c.hqIn(c.browser, c.MINI);
-  // (review mode's menu reads whose sheet from the coordinator: the stand-in answers for the owner the menu asks for,
-  // the page's own being the CEO's, as feedback.test.ts holds the real one to)
-  await context.route(/\/__review\/mine(\?.*)?$/, r => {
-    const owner = new URL(r.request().url()).searchParams.get('owner') ?? c.org.company.ceo;
-    r.fulfill({ json: { book: { owner, name: nameOf(c, owner) }, notes: 1 } });
-  });
   const page = await context.newPage(),
     errors = [];
   page.on('pageerror', e => errors.push(e.message));
   try {
-    await page.goto(`${c.base}/?intro=0${c.look}`);
-    await page.waitForSelector('#loading.gone');
-    await page.waitForSelector('review-mode .fab', { state: 'attached' });
-    await c.settled(page, 'open');
+    const load = async () => {
+      await page.goto(`${c.base}/?intro=0${c.look}`);
+      await page.waitForSelector('#loading.gone');
+      await page.waitForSelector('review-mode .fab', { state: 'attached' });
+      await c.settled(page, 'open');
+    };
+    await load();
     assert.equal(await page.evaluate(() => document.body.classList.contains('brownstone')), !c.look, 'the look');
-    await summoned(c, page);
+    await switched(c, page, load);
     const ceo = nameOf(c, c.org.company.ceo);
     await noted(c, page, { ring: [300, 300], owner: c.org.company.ceo, name: ceo, look: 'pin-ceo' });
     // something an agent owns on HQ's page, as a deliverable's tile names it
@@ -66,26 +62,36 @@ const pinSeen = page =>
     return { shows: fab.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }), tapped: at?.localName };
   });
 
-// Loaded with the book open, no pin; folded, none; opened by the board, it comes, quickly; the book's pin control puts
-// it away and brings it back
-async function summoned(c, page) {
+// Loaded with the book open, no pin; folded, none, and opened again still none; Settings' Pin on HQ brings it,
+// quickly, and turned off puts it away; turned on, it is still there after a reload (this device's)
+async function switched(c, page, load) {
   await showing(page, false, 'HQ loads with the book open and no pin');
   await c.shot('pin-loaded', page);
   await shutBook(page);
   await c.settled(page, 'folded');
-  assert.equal((await pinSeen(page)).shows, false, 'folded, no pin');
+  await showing(page, false, 'folded, no pin');
   await page.click('#book .bk-lip');
   await c.settled(page, 'open');
-  await showing(page, true, 'the book opened, the pin comes');
+  await showing(page, false, 'the book opened, still no pin');
+  await pinSetting(page, true);
+  await showing(page, true, "Settings' Pin on HQ brings it");
   await c.shot('pin-open', page);
-  await page.click(PIN_CONTROL);
-  await showing(page, false, "the book's pin control puts it away");
-  await page.click(PIN_CONTROL);
-  await showing(page, true, "the book's pin control brings it back");
+  await pinSetting(page, false);
+  await showing(page, false, '...and turned off puts it away');
+  await pinSetting(page, true);
+  await load();
+  await showing(page, true, 'reloaded, the pin is still on');
 }
 
-// The book's pin control, in its island (pinsummon.js)
-const PIN_CONTROL = '#book .bk-pin';
+// Settings › This device › Pin on HQ switched on or off as the board taps it, and Settings closed again
+async function pinSetting(page, on) {
+  await page.evaluate(() => import('/shell/desk.js').then(m => m.openComputer('settings')));
+  const pin = page.locator(PIN_SWITCH);
+  if ((await pin.getAttribute('aria-checked')) !== String(on)) await pin.click();
+  await page.waitForSelector(`${PIN_SWITCH}[aria-checked="${on}"]`);
+  await page.click('#tool [data-close]');
+}
+const PIN_SWITCH = '#tool [data-switch="sys:pin"]';
 // The pin shown or away, within its pop or its shrink (0.35 and 0.2 s; headless frames under load come late): and a tap
 // where it was is the page's once it's gone
 async function showing(page, shows, what) {
@@ -96,11 +102,9 @@ async function showing(page, shows, what) {
   assert.deepEqual(as(seen), [shows, shows], what);
 }
 
-// On a desktop the board's size (a mouse, the book open beside HQ as it starts): no pin at load; the control brings it,
-// folding puts it away, and opening the book brings it again, a resize during its slide too. On a phone (the book
-// folded, opening as the spread over HQ): no pin at load nor in the open book; the control folds the book onto HQ with
-// the pin, opening the book puts it away, and folded again HQ has none. An artifact's own page: its pin at once. Each
-// from a fresh load.
+// On a desktop the board's size (a mouse, the book open beside HQ as it starts) and on a phone (the book folded,
+// opening as the spread over HQ): no pin at load, nor with the book opened or folded; Settings' Pin on HQ brings it and
+// puts it away. An artifact's own page: its pin at once. Each from a fresh load.
 // c: book-check's { browser, hqIn, base, settled, shot, noErrorsIn, reviewJs }
 export async function pinScreensStory(c) {
   // (a call's first, each from its own load: a step failing below never hides them.)
@@ -109,23 +113,17 @@ export async function pinScreensStory(c) {
   await onScreen(c, DESKTOP_SCREEN, async page => {
     await c.settled(page, 'open');
     await showing(page, false, 'a desktop: HQ loads with the book open and no pin');
-    await page.click(PIN_CONTROL);
-    await showing(page, true, "a desktop: the book's pin control summons it");
     await shutBook(page);
     await c.settled(page, 'folded');
-    await showing(page, false, 'a desktop: folded, the pin goes');
+    await showing(page, false, 'a desktop: folded, no pin');
     await page.click('#book .bk-lip');
     await c.settled(page, 'open');
-    await showing(page, true, 'a desktop: opening the book summons it');
+    await showing(page, false, 'a desktop: the book opened, still no pin');
+    await pinSetting(page, true);
+    await showing(page, true, "a desktop: Settings' Pin on HQ brings it");
     await c.shot('pin-desktop', page);
-    // the window resized while the book slides open (a dragged window): still the board's opening
-    await shutBook(page);
-    await c.settled(page, 'folded');
-    await page.click('#book .bk-lip');
-    assert.ok(await page.evaluate(() => document.querySelector('#book .bk-edge').getAnimations().length), 'sliding');
-    await page.setViewportSize({ width: 1400, height: 900 });
-    await c.settled(page, 'open');
-    await showing(page, true, 'a desktop: resized as the book slides open, the pin still comes');
+    await pinSetting(page, false);
+    await showing(page, false, 'a desktop: turned off, it goes');
   });
   await onScreen(c, PHONE_SCREEN, async page => {
     await c.settled(page, 'folded');
@@ -133,46 +131,19 @@ export async function pinScreensStory(c) {
     await page.click('#book .bk-lip');
     await c.settled(page, 'spread');
     await c.shot('pin-phone-book', page);
-    await page.click(PIN_CONTROL);
-    await c.settled(page, 'folded');
-    await showing(page, true, "a phone: the book's pin control leaves HQ with the pin");
-    await c.shot('pin-phone', page);
-    await page.click('#book .bk-lip');
-    await c.settled(page, 'spread');
     await shutBook(page);
     await c.settled(page, 'folded');
-    await showing(page, false, 'a phone: the book opened again put it away');
+    await showing(page, false, 'a phone: the book opened and folded, still no pin');
+    await pinSetting(page, true);
+    await showing(page, true, "a phone: Settings' Pin on HQ brings it");
+    await c.shot('pin-phone', page);
+    await pinSetting(page, false);
+    await showing(page, false, 'a phone: turned off, it goes');
   });
-  await uprightPin(c);
   await artifactPin(c);
 }
 const DESKTOP_SCREEN = { viewport: DESKTOP, more: { deviceScaleFactor: 1, hasTouch: false } },
-  PHONE_SCREEN = { viewport: { width: 390, height: 844 }, more: {} },
-  UPRIGHT_IPAD = { viewport: { width: 744, height: 1133 }, more: {} };
-// On an upright iPad the book opens as the spread; its cover's edge drawn right, it lies beside HQ: there the control
-// summons the pin and puts it away, the book left open.
-async function uprightPin(c) {
-  await onScreen(c, UPRIGHT_IPAD, async page => {
-    await c.settled(page, 'folded');
-    await page.click('#book .bk-lip');
-    await c.settled(page, 'spread');
-    // (the cover's edge drawn right, below its pull tab)
-    const edge = await page.locator('#book [role=separator]').boundingBox(),
-      [x, y] = [edge.x + edge.width / 2, (UPRIGHT_IPAD.viewport.height * 2) / 3];
-    await page.mouse.move(x, y);
-    await page.mouse.down();
-    await page.mouse.move(x + 400, y, { steps: 14 });
-    await page.waitForTimeout(200); // (held: let go where it is, not a flick)
-    await page.mouse.up();
-    await c.settled(page, 'open');
-    await page.click(PIN_CONTROL);
-    await showing(page, true, "an upright iPad, the book drawn beside HQ: the book's pin control summons it");
-    const book = () => [document.documentElement.dataset.book, document.querySelector('#book.bk-swinging') != null];
-    assert.deepEqual(await page.evaluate(book), ['open', false], '...the book left open, not folding');
-    await page.click(PIN_CONTROL);
-    await showing(page, false, "an upright iPad: the book's pin control puts it away");
-  });
-}
+  PHONE_SCREEN = { viewport: { width: 390, height: 844 }, more: {} };
 async function onScreen(c, { viewport, more }, story) {
   const context = await c.hqIn(c.browser, viewport, more),
     page = await context.newPage(),
@@ -213,7 +184,7 @@ async function artifactPin(c) {
   }
 }
 
-// On a call no pin and no Note: HQ's pin and the book's control go, an artifact opened in the viewer during it shows no
+// On a call no pin and no Note: HQ's pin goes, an artifact opened in the viewer during it shows no
 // pin and the bar no Note, as one already open hears of a call; hung up, all are back (the board, call 161.)
 async function callPin(c) {
   const context = await c.hqIn(c.browser, DESKTOP_SCREEN.viewport, DESKTOP_SCREEN.more);
@@ -229,13 +200,12 @@ async function callPin(c) {
     await page.waitForSelector('#loading.gone');
     await page.waitForSelector('review-mode .fab', { state: 'attached' });
     await c.settled(page, 'open');
-    await page.click(PIN_CONTROL);
-    await showing(page, true, "before the call: the book's pin control summons it");
+    await pinOn(page);
+    await showing(page, true, 'before the call: the pin on');
     const call = on => calling(page, on),
       note = () => page.locator('#viewer .bar .pin').isVisible();
     await call(true);
     await showing(page, false, 'on a call: no pin on HQ');
-    assert.equal(await page.locator(PIN_CONTROL).isVisible(), false, "...nor the book's pin control");
     await page.evaluate(url => import('/shell/desk.js').then(m => m.openLink(url)), `${ARTIFACT}/basket`);
     await page.waitForFunction(() => document.querySelector('#viewer iframe')?.src.includes('/basket'));
     const frame = await (await page.$('#viewer iframe')).contentFrame();
@@ -255,7 +225,6 @@ async function callPin(c) {
     assert.equal(await note(), true, '...and the Note');
     await page.click('#viewer [data-close]');
     await showing(page, true, "the viewer closed: HQ's pin as the board left it");
-    assert.equal(await page.locator(PIN_CONTROL).isVisible(), true, "...and the book's pin control");
     c.noErrorsIn(errors);
   } finally {
     await context.close();
@@ -265,10 +234,10 @@ async function callPin(c) {
 const calling = (page, on) =>
   page.evaluate(
     ([on, call]) => document.dispatchEvent(new CustomEvent(on ? 'call:on' : 'call:off', { detail: on ? call : {} })),
-    [on, { call: 5, agent: 'juno', name: 'Juno', color: '#7b5ea7', walk: false }],
+    [on, { call: 5, agent: 'juno', name: 'Juno', color: '#7b5ea7' }],
   );
 
-// A ring with the pen, its post-it saved: the scrap that owner's, and the menu offering the Notebook it went to
+// A ring with the pen, its post-it saved: the scrap that owner's
 async function noted(c, page, { ring, owner, name, look }) {
   const from = c.posts.length;
   await pressAlong(page, c.ring(ring[0], ring[1], 70, 40));
@@ -277,18 +246,4 @@ async function noted(c, page, { ring, owner, name, look }) {
   assert.equal(sent.owner ?? c.org.company.ceo, owner, `the scrap is ${name}'s`);
   assert.ok(!c.posts.slice(from).some(p => p.path === '/api/book/note'), '...on no sheet');
   await page.waitForTimeout(800); // (its lift into the book)
-  // the menu, as the board opens it
-  await page.locator(ui('.more')).dispatchEvent('click');
-  await page.waitForSelector(ui('.menu:not([hidden])'));
-  await page.waitForFunction(
-    () =>
-      document
-        .querySelector('review-mode')
-        .shadowRoot.querySelector('[data-open-book]')
-        .textContent.includes('Open the Notebook'),
-    null,
-    { timeout: 5000 },
-  );
-  await c.shot(`${look}-menu`, page);
-  await page.keyboard.press('Escape');
 }

@@ -5,7 +5,7 @@
 // (bookselectmath.js), one step for Undo, and the canvas goes once the tiles under it show them. Carried onto a call's
 // window instead, its pictures go to the call (calldrop.js) and everything stays where it was on the page.
 import { draw } from '/__review/ink.js';
-import { drawScrap } from './sketchscraps.js';
+import { drawScrap } from './bookscrapdraw.js';
 import { sfx } from '../audio.js';
 import { grownTo } from './bookrow.js';
 import {

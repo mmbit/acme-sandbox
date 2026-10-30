@@ -49,18 +49,11 @@ const OUTCOMES_FILE = 'tests-outcomes.json';
 const COMPARISON_INPUT = 'base-comparison.json';
 const COMPARISON_OUTPUT = 'base-outcomes.json';
 // Browser test areas include the HQ-load entry points that import the coordinator's check.
-const BROWSER_AREAS = new Set([
-  'platform/coordinator',
-  'platform/hq',
-  'shared/review',
-  'shared/browser',
-  'shared/chromium',
-  'shared/watchalong',
-]);
+const BROWSER_AREAS = new Set(['platform/coordinator', 'platform/hq', 'shared/review', 'shared/browser']);
 const bundleFor = (runs: Run[]) =>
   helperBundle({
     tools: runs.some(run => run.kind !== 'node'),
-    browsers: runs.some(run => BROWSER_AREAS.has(run.area)),
+    browsers: runs.some(run => BROWSER_AREAS.has(run.area)) ? 'shell' : 'none',
   });
 
 type Failure = { key: string; file: string; text: string };
@@ -376,7 +369,8 @@ async function failingAtBase(base: string, failing: Run[], outcomes: FailureTarg
   });
 }
 
-// Base misses use the same helper environment as the push. A lost or different helper supplies no comparison.
+// Base misses must use the push's helper environment. They wait while that helper is present and busy because no
+// other environment can supply the comparison. A lost, absent or different helper leaves it incomplete.
 async function failingOnHelper(
   base: string,
   failing: Run[],

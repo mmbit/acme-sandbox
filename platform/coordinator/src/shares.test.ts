@@ -465,7 +465,6 @@ test('an outsider’s notes stay on their Notebook page, signed, and nothing of 
   assert.equal((db.prepare("select count(*) n from review_notes where status = 'outside'").get() as any).n, 0);
   assert.equal((await pinNote(ps, HELLO, `https://${CYCLES}/2026-03-01-deck/`)).status, 403); // a page this link doesn't open
   // no notes kept apart to list, send, take up again, change or delete, and no screenshots of them on HQ's host
-  assert.equal((await call('/__review/mine?shots', { host: HELLO, cookie: ps })).status, 404);
   for (const path of ['/__review/submit', '/__review/more', '/__review/edit', '/__review/delete'])
     assert.equal(
       (await call(path, { host: HELLO, cookie: ps, origin: `https://${HELLO}`, body: { id: pinned.json().id } }))

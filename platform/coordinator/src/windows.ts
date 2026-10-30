@@ -97,10 +97,22 @@ function inReview(thread: string) {
 
 // The saved windows still ordering work. The queue supplies done tasks whose PRs remain open.
 export function current(reviewing: (string | null)[] = []) {
+  // Ancestors without open work keep the inheritance chain available to a trial.
   const threads = db
-    .prepare("select id, deadline, aim from threads where status = 'open' or id in (select value from json_each(?))")
-    .all(JSON.stringify(reviewing)) as { id: string; deadline: number | null; aim: number | null }[];
-  return Object.fromEntries(threads.map(({ id, deadline, aim }) => [id, { deadline, aim }]));
+    .prepare(
+      `with recursive included(id) as (
+        select id from threads where status = 'open' or id in (select value from json_each(?))
+        union select t.deadline_from from threads t join included i on i.id = t.id where t.deadline_from is not null
+      ) select t.id, w.deadline, w.aim, t.deadline_from from included i
+        join threads t on t.id = i.id join thread_windows w on w.id = t.id`,
+    )
+    .all(JSON.stringify(reviewing)) as Pick<Thread, 'id' | 'deadline' | 'aim' | 'deadline_from'>[];
+  return Object.fromEntries(
+    threads.map(({ id, deadline, aim, deadline_from }) => [
+      id,
+      { deadline, aim, ...(deadline_from && { deadline_from }) },
+    ]),
+  );
 }
 
 // A thread's window as hq window gives it: its deadline, and its aim when given. Without one the thread's aim stays while
@@ -116,7 +128,7 @@ export function windowOf(thread: Thread, deadline: number, aim?: number): Window
 // null takes it off. A call's item with its time comes here, both times at the item's, when the call's follow-up hands
 // it out or links it to work (ledger.ts): a time already past shows as late at once (hq window's own is ahead: parse).
 export function set(thread: Thread, window: Window | null, by: string) {
-  db.prepare('update threads set deadline = ?, aim = ?, deadline_by = ? where id = ?').run(
+  db.prepare('update threads set deadline = ?, aim = ?, deadline_by = ?, deadline_from = null where id = ?').run(
     window?.deadline ?? null,
     window?.aim ?? null,
     window ? by : null,
@@ -126,14 +138,27 @@ export function set(thread: Thread, window: Window | null, by: string) {
   return { thread: thread.id, deadline: iso(window?.deadline), aim: iso(window?.aim) };
 }
 
+// The thread whose window a release follow-up reads until given its own.
+export function inherit(thread: string, deadline_from: string) {
+  db.prepare('update threads set deadline_from = ? where id = ?').run(deadline_from, thread);
+}
+
 // The queue with a thread's window set as given (null: taken off), changed where the snapshot keeps it, its windows and
 // its jobs' due (backlog.ts queuedJob), rather than read again: what hq window plays (moves.ts change).
 export function withWindow<S extends OrderingSnapshot>(queue: S, thread: string, window: Window | null): S {
   const deadline = window?.deadline ?? null;
+  const aim = window?.aim ?? null;
+  const entries = Object.entries(queue.windows ?? {});
+  const changed = [thread];
+  for (const id of changed)
+    changed.push(...entries.filter(([, window]) => window.deadline_from === id).map(([follower]) => follower));
+  const windows = { ...queue.windows };
+  // The trial thread now has its own window. Followers keep their source.
+  for (const id of changed) windows[id] = id === thread ? { deadline, aim } : { ...windows[id], deadline, aim };
   return {
     ...queue,
-    windows: { ...queue.windows, [thread]: { deadline, aim: window?.aim ?? null } },
-    jobs: queue.jobs.map(j => (j.thread === thread ? { ...j, due: deadline } : j)),
+    windows,
+    jobs: queue.jobs.map(j => (j.thread && changed.includes(j.thread) ? { ...j, due: deadline } : j)),
   };
 }
 

@@ -1,6 +1,5 @@
 // book-check.mjs's board talking to a post-it's mic: on HQ's page over the stand-in voice line, and from an artifact, a
-// preview in HQ's viewer, through HQ's recording for its frame (shell/framemic.js: pieces cut at the pauses, each
-// transcribed by /api/voice). The preview never gets the microphone (the board, call 154): every page's and frame's asks
+// preview in HQ's viewer, through HQ's recording for its frame over the same line (shell/framemic.js). The preview never gets the microphone (the board, call 154): every page's and frame's asks
 // for it are counted, window.micsAsked.
 import assert from 'node:assert/strict';
 import { ui, until } from './bookkit.mjs';
@@ -11,7 +10,8 @@ export const SAID = PIECES.join(' ');
 let hushed = false,
   // the pieces /api/voice has transcribed in this recording
   piecesHeard = 0;
-// /api/voice's asks counted, their answers kept waiting while held is set (booktalk.mjs's askLeftBehind). A gate on
+// /api/voice's asks counted, their answers (and the voice line's last words) kept waiting while held is set
+// (booktalk.mjs's askLeftBehind). A gate on
 // voiceServed's one route, not a page route of its own: one removed while HQ's uploads still come lets Playwright send
 // them on to the network, and its handler then hands them to this route, which answers them a second time (Route is
 // already handled).
@@ -30,8 +30,16 @@ export function voiceLine(ws) {
       return;
     }
     if (JSON.parse(m).type !== 'end') return;
-    ws.send(JSON.stringify({ type: 'heard', text: hushed ? '' : SAID, partial: false }));
-    ws.send(JSON.stringify({ type: 'done' }));
+    // (its last words kept waiting while transcriber.held is set: booktalk.mjs's askLeftBehind; the line may be gone by
+    // then)
+    Promise.resolve(transcriber.held).then(() => {
+      try {
+        ws.send(JSON.stringify({ type: 'heard', text: hushed ? '' : SAID, partial: false }));
+        ws.send(JSON.stringify({ type: 'done' }));
+      } catch {
+        /* closed */
+      }
+    });
   });
 }
 export const hush = on => (hushed = on);

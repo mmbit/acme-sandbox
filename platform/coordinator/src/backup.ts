@@ -22,6 +22,7 @@ const fixer = () => roles().process, fixerName = () => findAgent(fixer())?.name 
 
 export const KEYS = ['BACKUP_R2_ENDPOINT', 'BACKUP_R2_ACCESS_KEY_ID', 'BACKUP_R2_SECRET_ACCESS_KEY', 'BACKUP_AGE_RECIPIENT'];
 const HOUR = 3600e3, DAY = 24 * HOUR, LATE = 26 * HOUR; // it runs around 02:30 UTC: a missed night shows by about 05:00
+const RUN_LIMIT = 2 * HOUR; // backup.service's TimeoutStartSec: a night still in_progress past it was stopped mid-way
 type Status = { ok_at?: string; tried_at?: string; state?: string; error?: string | null; warn?: string | null;
   repo_warn?: string | null; repo_error?: string | null; records_warn?: string | null; records_error?: string | null; in_progress?: boolean;
   config_error?: boolean | null }; // (config_error)
@@ -76,6 +77,15 @@ export function check(now = Date.now()) {
     if (back) publish({ type: 'log', agent: fixer(), text: back });
     alarms.end('backup', back ? { title: 'Off-site backups are back', prompt: back } : undefined, now);
   }
+  // A running night still has its repo's, records' and renders' copies to come, so their heads-ups and jobs wait for it to
+  // end. A night the unit stopped keeps in_progress until the next run, so once the unit's time limit has passed it's
+  // judged as it stands
+  const running = s.in_progress && now - Date.parse(s.tried_at ?? '') < RUN_LIMIT;
+  if (!running) headsUps(s, now);
+}
+
+// The night's heads-ups and their jobs: the repo's copy, the records and the bucket
+function headsUps(s: Status, now: number) {
   // the repo's copy stale: its heads-up's text only changes with a new streak, so one job each. Not when the copy is just
   // too big for the free tier's room (that one is the board's, on its backup card)
   const repoJob = !!s.repo_warn && s.state === 'ok' && !(s.repo_error ?? '').startsWith('not uploaded:') && setting('backup.repo_job') !== s.repo_warn;
@@ -99,7 +109,7 @@ export function check(now = Date.now()) {
     tell('backup.warn', STANDING.backupWarn, 'An off-site backup heads-up', `Off-site backup heads-up: ${line(s.warn)}.${queued.length ? ` A job for ${fixerName()} is queued to find out ${queued.join(', and ')}.` : ''}`);
   }
   // a good night without one clears it, so the same heads-up coming back later is told again (a failed night says nothing
-  // about it, and neither does a night still on its repo step: that status leaves out the repo's copy to come)
+  // about it, and neither does a night the unit stopped mid-way: its status leaves out the copies it never made)
   else if (!s.warn && s.state === 'ok' && !s.in_progress && setting('backup.warn')) {
     remember('backup.warn', null);
     alarms.end('backup.warn', undefined, now);

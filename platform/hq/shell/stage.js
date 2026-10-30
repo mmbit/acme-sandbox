@@ -10,6 +10,7 @@ import { panelOpen } from './panel.js';
 import { brand, theme } from './brand.js';
 import { wearIcons } from './icons.js';
 import { pageWidth, onPageResize } from './page.js';
+import * as notebook from './ink/notebooklink.js';
 
 // Every renderer HQ ships, as the server reads their folders (looks.mjs): [{ name, dressed }]. theme/hq.yaml picks the
 // company's, a viewer may pick another. A dressed look dresses the shell to match: its UI (renderers/<name>/skin.css
@@ -30,6 +31,10 @@ export const pause = on => { paused = on; };
 // world's events start plays out and ends on time, and only its drawing waits. (by, the projects view)
 const covers = new Set();
 export const cover = (on, by) => { covers[on ? 'add' : 'delete'](by); };
+// A hand pulling the notebook out or in pauses the scene, its update and its drawing, till it lets go, however the
+// notebook ends up
+notebook.on('pull', () => cover(true, 'notebook'));
+notebook.on('letgo', () => cover(false, 'notebook'));
 let now = 0, timers = new Set(); // timers: the timeouts for the scene on stage (its shell.later), dropped with it
 const timer = set => (fn, ms) => { const id = setTimeout(() => { set.delete(id); fn(); }, ms); set.add(id); };
 // the shell's own timeout for the scene on stage now: a swap drops it too
@@ -111,9 +116,11 @@ async function wornSounds(own, kit) {
   return { ...look, sfx: { ...look.sfx, ...Object.fromEntries(worn) } };
 }
 // The look a viewer picks in Settings, on stage now and kept on this device for their next visit; null: the company's
-// (theme.renderer), whichever that is then.
+// (theme.renderer), whichever that is then. Picking the company's own look keeps no pick, so a later change of the
+// company's default reaches that person too.
 export async function pick(name) {
-  if ((name ?? theme.renderer) === look || await mount(name ?? theme.renderer)) store.set('renderer', name);
+  const shown = name ?? theme.renderer;
+  if (shown === look || await mount(shown)) store.set('renderer', shown === theme.renderer ? null : shown);
 }
 // A renderer's name for people (its info.name)
 export const lookName = name => import(`../renderers/${name}/scene.js`).then(m => m.info.name, () => cap(name));

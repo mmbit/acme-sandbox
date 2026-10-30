@@ -12,7 +12,6 @@ import { harness } from './harness.ts';
 const h = await harness('blocks');
 const { reportRoom } = await import('./room.ts');
 const machines = await import('./machines.ts');
-const overseer = await import('./overseer.ts');
 const { ESCALATE_MS, CARD_MS } = await import('./jam.ts');
 const M = 60_000;
 const stopping = (id: number) =>
@@ -106,7 +105,7 @@ test('a lent machine that is away: hq run waits for it, and the agent goes on wi
   machines.removeMachine(id);
 });
 
-test("a jam the shares can't free goes to the Overseer at once, then to the board as a card whose Approve stops the jobs", async context => {
+test("a jam the shares can't free goes to the CEO at once, then, while their job hasn't started, to the board as a card whose Approve stops the jobs", async context => {
   const T0 = Date.now();
   context.mock.method(Date, 'now', () => T0);
   const hog = await h.start({ agent: 'bolt' });
@@ -126,25 +125,24 @@ test("a jam the shares can't free goes to the Overseer at once, then to the boar
       },
       at,
     );
-  const notes = () =>
-    h.db.prepare('select job, text, released from overseer_notes where job = 0').all() as {
-      job: number;
-      text: string;
-      released: number | null;
+  const incidents = () =>
+    h.db.prepare("select agent, prompt, expedite from jobs where incident = 1 and status = 'queued'").all() as {
+      agent: string;
+      prompt: string;
+      expedite: number;
     }[];
   const cards = () => h.db.prepare("select * from requests where kind = 'jam'").all() as any[];
 
   short(T0 + ESCALATE_MS - M);
-  assert.equal(notes().length, 0, 'starved, but the worker blocks the heaviest run first');
+  assert.equal(incidents().length, 0, 'starved, but the worker blocks the heaviest run first');
   short(T0 + ESCALATE_MS);
-  const [note] = notes();
-  assert.ok(note.released, 'let out at once, behind no run');
-  assert.match(note.text, /^HQ's own alarm: the worker has been short of memory for 10 min \(400 MB free\)/);
-  assert.match(note.text, new RegExp(`- job #${hog.id} \\(bolt, work\\): 3\\.0 GB`));
-  assert.match(overseer.releasedSince(), /\(from HQ\)\n\nHQ's own alarm/, "the Overseer's read shows it as HQ's");
+  const [incident] = incidents();
+  assert.deepEqual([incident.agent, incident.expedite], ['juno', 1], "the CEO's, first in line");
+  assert.match(incident.prompt, /^HQ's own alarm: the worker has been short of memory for 10 min \(400 MB free\)/);
+  assert.match(incident.prompt, new RegExp(`- job #${hog.id} \\(bolt, work\\): 3\\.0 GB`));
   short(T0 + ESCALATE_MS + 5 * M);
-  assert.equal(notes().length, 1, 'one note a spell');
-  assert.equal(cards().length, 0, 'the Overseer has its time first');
+  assert.equal(incidents().length, 1, 'one incident a spell');
+  assert.equal(cards().length, 0, 'the CEO has their time first');
 
   short(T0 + ESCALATE_MS + CARD_MS);
   const [card] = cards();
@@ -166,6 +164,33 @@ test("a jam the shares can't free goes to the Overseer at once, then to the boar
   assert.equal(stopping(waiting), null);
   const { answer } = h.db.prepare('select answer from requests where id = ?').get(card.id) as { answer: string };
   assert.match(answer, /^Approved\. Bolt's ".*" is stopping\. Bolt's ".*" is stopping\./);
+});
+
+test('a jam whose incident the CEO took up brings the board no card', async context => {
+  const T0 = Date.now() + 100 * M;
+  context.mock.method(Date, 'now', () => T0);
+  const hog = await h.start({ agent: 'bolt' });
+  const waiting = h.queue({ agent: 'bolt' });
+  const short = (at: number) =>
+    reportRoom(
+      {
+        short: true,
+        since: T0,
+        free: 400,
+        jobs: [{ job: hog.id, mb: 3100, cores: 3 }],
+        claims: [{ seat: 'seat', engine: h.job(waiting).engine }],
+      },
+      at,
+    );
+  const cards = () => (h.db.prepare("select count(*) n from requests where kind = 'jam'").get() as { n: number }).n;
+  const before = cards();
+  short(T0 + ESCALATE_MS);
+  const { id } = h.db
+    .prepare("select id from jobs where incident = 1 and status = 'queued' order by id desc limit 1")
+    .get() as { id: number };
+  await h.claimJob(id);
+  short(T0 + ESCALATE_MS + CARD_MS);
+  assert.equal(cards(), before, 'the CEO is on it');
 });
 
 test("the jam card's Approve puts a review back in the queue, and says of a job that ended it wasn't stopped", async context => {
@@ -333,11 +358,32 @@ test('disk warnings keep the grace free of strikes and zero-room stops keep comm
 test('an unavailable disk counter stop reports the accounting error and preserves its receipt', async () => {
   const job = await h.start({ agent: 'bolt' });
   const event = randomUUID();
-  const body = { event, measure: 'disk', used: 65536, share: 0, accountingError: { reason: 'process-counters' } };
+  const secrets = await import('./secrets.ts');
+  secrets.registerKeys({ ACCOUNTING_TEST_VALUE: /^.+$/ });
+  assert.deepEqual(
+    secrets.saveSecrets(['ACCOUNTING_TEST_VALUE'], { ACCOUNTING_TEST_VALUE: 'private-accounting-fixture' }),
+    { saved: ['ACCOUNTING_TEST_VALUE'], refused: {} },
+  );
+  const cause = 'Cannot read write counters: private-accounting-fixture';
+  const body = {
+    event,
+    measure: 'disk',
+    used: 65536,
+    share: 0,
+    accountingError: { reason: 'process-counters', message: cause },
+  };
   const first = await blocked(job.id, body);
   assert.equal(first.status, 200);
   assert.match(first.body.text, /Disk accounting is unavailable/);
   assert.match(first.body.text, /Restore readable process counters/);
+  assert.match(
+    first.body.text,
+    /Accounting cause \(process-counters\): Cannot read write counters: \[ACCOUNTING_TEST_VALUE\]/,
+  );
+  assert.ok(!first.body.text.includes('private-accounting-fixture'));
+  const stored = JSON.stringify(h.db.prepare('select * from blocks where job = ?').all(job.id));
+  assert.ok(!stored.includes('Cannot read write counters'));
+  assert.ok(!JSON.stringify(await h.feed()).includes('Cannot read write counters'));
   assert.deepEqual((await blocked(job.id, body)).body, first.body);
   assert.equal(first.body.count, 1);
   assert.equal((await blocked(job.id, { ...body, accountingError: undefined })).status, 409);

@@ -1,8 +1,8 @@
 // book-check.mjs's stories of the book's chrome on an iPad mini (shell/ink/bookui.js, bookcontrols.js, bookzoom.js,
 // booksearch.js, bookhead.js, bookpages.js; Ink's folder): the column holds the
 // faces, the tools, Undo and Redo and the book's own controls, and nothing else; nothing of the book sits under Safari's blurred strip at the
-// top; the page arrows clear the column at any width; the overview opens from the foot, with Search in it, the phone
-// with the book's controls and nothing to draw with, only its own button left in the foot, a page that went stamped and
+// top; the page arrows clear the column at any width; the overview opens from the foot, with Search in it and
+// nothing to draw with, only its own button left in the foot, a page that went stamped and
 // the Shelf a tap away, its Search saying what it searches there; and the pages keep one
 // name each from the moment they show, a call's saying who it was with and when, with no blank page the board didn't
 // make. Each asserts what the board sees: the buttons' names, boxes, the controls' words.
@@ -12,12 +12,10 @@ import { DESKTOP, MINI } from './bookkit.mjs';
 
 // a home-screen app's blurred strip at the top (style.css's standalone --sat: 48 px under the status bar)
 const SAT_PX = 72;
-// what the column may hold: the tools, then Undo and Redo with the book's own controls
-// (no faces: the sheets went with pages sent whole.)
-const TOOLS = ['Select', 'Pen', 'Highlighter', 'Eraser', /^Shapes/, 'Type', 'Move the page', 'Colour and width'],
-  // (and the strip's zoom and cog, bookstrip.js, the pin among the book's controls, pinsummon.js, and Tips under it,
-  // booktips.js)
-  CONTROLS = ['Undo', 'Redo', 'Zoom out', 'Zoom in', 'Preferences on this device', 'Pin a note on HQ', 'Tips'];
+// the tool rail at the foot, left to right: the tools, then Undo and Redo (bookstrip.js, the board's call 170)
+const RAIL = ['Select', 'Pen', 'Marker', 'Eraser', /^Shapes/, 'Text', 'Undo', 'Redo'],
+  // what the column over the paper's right edge may hold
+  CONTROLS = ['Send', 'Tips', 'Invite'];
 
 // c: book-check.mjs's helpers: { base, hqIn(browser, viewport), settled(page, mode), shot, settle }
 export function chromeStories(c) {
@@ -47,14 +45,17 @@ export async function shutBook(page) {
 async function column(browser, c) {
   const { page, errors, done } = await onMini(browser, c);
   try {
-    const names = await columnNames(page);
-    const allowed = name => CONTROLS.includes(name) || TOOLS.some(t => (t.test ? t.test(name) : t === name));
+    const names = await columnNames(page),
+      rail = await page
+        .locator('#book [data-island=tools] button')
+        .evaluateAll(all => all.filter(b => b.getBoundingClientRect().width).map(b => b.getAttribute('aria-label')));
     assert.deepEqual(
-      names.filter(name => !allowed(name)),
+      names.filter(name => !CONTROLS.includes(name)),
       [],
-      `the column holds only tools and the book's controls: ${names.join(', ')}`,
+      `the column holds only the book's own controls: ${names.join(', ')}`,
     );
-    assert.ok(names.includes('Select') && names.includes('Undo') && names.includes('Redo'), names.join(', '));
+    assert.equal(rail.length, RAIL.length, `the rail: ${rail.join(', ')}`);
+    rail.forEach((name, i) => assert.ok(RAIL[i].test?.(name) ?? RAIL[i] === name, `the rail: ${rail.join(', ')}`));
     await clearOfTheStrip(page, 'open');
     await c.shot('chrome-column', page);
     await footClear(page, 'at its open width');
@@ -78,13 +79,8 @@ async function column(browser, c) {
 async function overview(browser, c) {
   const { page, errors, done } = await onMini(browser, c);
   try {
-    const foot = page.locator('#book nav [role=toolbar][aria-orientation=horizontal]'),
+    const foot = page.locator('#book nav [data-island=pages]'),
       over = foot.getByRole('button', { name: /^The overview/ });
-    assert.equal(
-      await foot.getByRole('button').first().getAttribute('aria-label'),
-      await over.getAttribute('aria-label'),
-      'the overview at the foot’s left end',
-    );
     await over.click();
     await page.waitForTimeout(c.settle);
     const far = page.getByRole('list', { name: 'The overview' });
@@ -105,10 +101,10 @@ async function overview(browser, c) {
       .evaluateAll(all => all.map(f => f.getAttribute('aria-label')));
     assert.ok(pages.includes('Cover ideas, sent'), `a page that went is stamped: ${pages}`);
     assert.equal(await far.locator('.bk-stamp').count(), pages.filter(w => w.endsWith(', sent')).length);
-    // the Shelf: My Notebook first
+    // the Shelf: My journal first
     await far.getByRole('button', { name: /^The Shelf/ }).click();
     await page.waitForTimeout(c.settle);
-    assert.match(await far.locator('.bk-book .bk-tile-open').first().getAttribute('aria-label'), /^My Notebook, /);
+    assert.match(await far.locator('.bk-book .bk-tile-open').first().getAttribute('aria-label'), /^My journal, /);
     await nothingToDraw(page, 'on the Shelf');
     await c.shot('chrome-shelf', page);
     await far.getByRole('searchbox', { name: 'Search your notebooks' }).fill('warmer');
@@ -157,7 +153,7 @@ async function shelfZoom(browser, c, viewport, reduced = false) {
     await page.waitForTimeout(c.settle);
     const tile = await mine.boundingBox();
     await shelfArchive(page, far, c, label, viewport);
-    const inward = await shelfTransition(page, far.getByRole('button', { name: /^My Notebook,/ }));
+    const inward = await shelfTransition(page, far.getByRole('button', { name: /^My journal,/ }));
     zoomedRound(tile, { inward, outward, reduced });
     await page.waitForTimeout(c.settle);
     assert.ok(await far.locator('.bk-tile[data-id="1"]').isVisible(), 'the notebook opens to its pages');
@@ -174,17 +170,17 @@ async function shelfZoom(browser, c, viewport, reduced = false) {
   }
 }
 
-// The tile's box archives the notebook, which then appears on the Archive tab.
+// The book's own menu archives the notebook, which then appears in the Archive.
 async function shelfArchive(page, far, c, label, viewport) {
-  const archive = far.getByRole('button', { name: 'Archive: Call with Ansel', exact: true });
   if (viewport.width >= 500) await far.locator('.bk-book[data-book="2"]').hover();
+  await far.getByRole('button', { name: 'More: Call with Ansel', exact: true }).click();
   await c.shot(`shelf-${label}`, page);
-  await archive.click();
+  await far.getByRole('menuitem', { name: 'Archive', exact: true }).click();
   await page.waitForTimeout(c.settle);
-  await far.getByRole('tab', { name: /^Archive/ }).click();
+  await far.getByRole('button', { name: /^Archive/ }).click();
   await page.waitForTimeout(c.settle);
   assert.ok(await far.getByRole('button', { name: /^Call with Ansel,/ }).isVisible());
-  await far.getByRole('tab', { name: /^Shelf/ }).click();
+  await far.getByRole('button', { name: 'My shelf', exact: true }).click();
   await page.waitForTimeout(c.settle);
 }
 
@@ -237,12 +233,12 @@ function zoomedRound(tile, { inward, outward, reduced }) {
 }
 const inside = (pt, box) => pt.x >= box.x && pt.x <= box.x + box.width && pt.y >= box.y && pt.y <= box.y + box.height;
 
-// (My Notebook: a page sent yesterday with its title, and today's untitled one)
+// (My journal: a page sent yesterday with its title, and today's untitled one)
 export function namedNotebook() {
   const day = 86_400_000,
     at = ms => new Date(ms).toISOString();
   return {
-    notebooks: [{ id: 1, kind: 'mine', name: 'My Notebook', created: at(Date.now() - day), updated: at(Date.now()) }],
+    notebooks: [{ id: 1, kind: 'mine', name: 'My journal', created: at(Date.now() - day), updated: at(Date.now()) }],
     pages: [
       {
         id: 1,
@@ -305,29 +301,20 @@ async function onMini(browser, c) {
   }, SAT_PX);
   await page.goto(`${c.base}/?intro=0`);
   // (the newest page's groups drawn.)
-  await page.waitForSelector('#book .bk-clip', { state: 'attached', timeout: 30_000 });
+  await page.waitForSelector('#book .bk-unit', { state: 'attached', timeout: 30_000 });
   await c.settled(page, 'open');
   return { page, errors, done: () => context.close() };
 }
 export const button = (page, name, exact = false) => page.locator('#book').getByRole('button', { name, exact });
-// The names of the buttons in the column's islands that show
-// The overview or the Shelf: the pin with the book's controls, and no tools, Undo, Redo or dog-ear, with nothing to
-// draw on
+// The names of the buttons in the book's own islands (in the lane at the foot) that show
+// The overview or the Shelf: no tools, Undo, Redo or dog-ear, with nothing to draw on
 async function nothingToDraw(page, where) {
-  const names = await columnNames(page);
-  assert.ok(names.includes('Pin a note on HQ'), `the pin with the controls ${where}: ${names}`);
-  const inHead = page.locator('#book .bk-far-head').getByRole('button', { name: 'Pin a note on HQ' });
-  assert.equal(await inHead.count(), 0, `no pin in Search ${where}`);
-  assert.deepEqual(
-    names.filter(name => TOOLS.some(t => (t.test ? t.test(name) : t === name)) || /^(Undo|Redo)$/.test(name)),
-    [],
-    `no tools, Undo or Redo ${where}`,
-  );
+  assert.ok(!(await page.locator('#book [data-island=tools]').isVisible()), `no tools, Undo or Redo ${where}`);
   assert.ok(!(await page.locator('#book .bk-dogear').isVisible()), `no dog-ear ${where}`);
 }
 const columnNames = page =>
   page
-    .locator('#book [role=toolbar][aria-orientation=vertical] button')
+    .locator('#book .bk-islands button')
     .evaluateAll(all => all.filter(b => b.getBoundingClientRect().width).map(b => b.getAttribute('aria-label')));
 // Every visible control, field and send stamp starts below the strip
 async function clearOfTheStrip(page, when) {
@@ -352,9 +339,9 @@ async function footClear(page, when) {
       }))
       .filter(({ r }) => r.width),
   );
-  const foot = boxes.find(b => b.across).r;
-  for (const { r } of boxes.filter(b => !b.across)) {
-    const apart = foot.right <= r.left || r.right <= foot.left || foot.bottom <= r.top || r.bottom <= foot.top;
-    assert.ok(apart, `${when}: the foot ${JSON.stringify(foot)} over the column's ${JSON.stringify(r)}`);
-  }
+  for (const { r: foot } of boxes.filter(b => b.across))
+    for (const { r } of boxes.filter(b => !b.across)) {
+      const apart = foot.right <= r.left || r.right <= foot.left || foot.bottom <= r.top || r.bottom <= foot.top;
+      assert.ok(apart, `${when}: the foot ${JSON.stringify(foot)} over the column's ${JSON.stringify(r)}`);
+    }
 }

@@ -14,6 +14,7 @@ export const profile = {
    hq profile off [<where>]                          stop it there, or everywhere
    hq profile [<where>] [--since <time>]             each page's session since --since (UTC, ISO; the last day by
                                                      default): its counts' change per hour, what grew most, slow frames
+                                                     overall and while a finger or mouse button was held down
    hq profile --session <id>                         one session's samples, a JSON line each`,
 
   async run(given: string[]) {
@@ -76,6 +77,7 @@ type Session = {
   slowFrames: { first: number | null; last: number | null };
   longTasks: { count: number; worst: number };
   worstFrame: number;
+  held: { shown: number; slow: number | null; worst: number };
   states: string[];
 };
 
@@ -105,6 +107,9 @@ function linesOf(s: Session) {
     `  grew most: elements in ${grew(s.grewMost.regions)}; listeners ${grew(s.grewMost.listeners)}`,
     `  slow frames ${s.slowFrames.first ?? '-'}% in the first quarter, ${s.slowFrames.last ?? '-'}% in the last; worst frame ${s.worstFrame} ms; ` +
       `${s.longTasks.count} long tasks (worst ${s.longTasks.worst} ms)`,
+    s.held.shown
+      ? `  held down (a finger, pen or mouse button): ${s.held.shown} frames, slow frames ${s.held.slow}%, worst frame ${s.held.worst} ms`
+      : '  held down: no frames',
     `  states: ${s.states.join(' | ') || '-'}`,
   ];
 }

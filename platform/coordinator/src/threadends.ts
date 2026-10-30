@@ -75,6 +75,17 @@ export function endedEmpty(id: string) {
   if (tasksOf(thread.id).length) return closeIfDone(thread.id, routineRun(thread.id));
   if (!openJob(thread.id)) close(thread);
 }
+// A task's run that ended with nothing to merge (done with no pull request, failed or stopped: jobs.ts handOn), or a task
+// cancelled before it ran (ledger.ts cancelled), ends HQ's one-task thread as endedEmpty does, and leaves an owner's
+// thread with nothing in it open or still to merge ready to judge, as a merge does (settled): a live check that changed nothing, a follow-up that ran on past its thread's merge,
+// a failure nothing replaces or a task its owner called off is its last word, and only its owner closes the thread or
+// draws its next task. Never a judge's own thread (settled), nor while the thread's branch holds pushed work: that goes
+// to review first, and its merge wakes the owner.
+export function runEnded(id: string) {
+  if (oneTask(id)) return endedEmpty(id);
+  const thread = findThread(id);
+  if (thread?.status === 'open' && !thread.branch && !threadjudge.judges(id)) threadjudge.wake(id);
+}
 const openJob = (thread: string) =>
   db.prepare(`select 1 from jobs where thread = ? and status in ${jobs.OPEN_JOBS}`).get(thread);
 // A job's work taken out of HQ's one-task thread for it (regroup.ts: hq job move, hq expedite; reviewwork.ts bind) ends

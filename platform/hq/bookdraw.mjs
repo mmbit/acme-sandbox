@@ -256,10 +256,11 @@ const starts = (p, dy = 0) => p.ink.map(s => `${Math.round(s.points[0][0])},${Ma
 
 // ---- helpers
 
-// A choice on the tool's card: the card opened from the tool's swatch if it isn't open (keep: it's open)
+// A choice on the tool's card: the card opened by pressing the tool in use again if it isn't open (keep: it's open)
 async function card(page, name, { keep = false } = {}) {
   if (!keep || !(await page.locator('#book .bk-palette').isVisible()))
-    if (!(await page.locator('#book .bk-palette').isVisible())) await page.locator('#book .bk-swatch').click();
+    if (!(await page.locator('#book .bk-palette').isVisible()))
+      await page.locator('#book [data-island=tools] [aria-pressed=true]').click();
   await page.locator('#book .bk-palette').getByRole('menuitemradio', { name, exact: true }).click();
 }
 // A pass straight down, dy long, with the mouse

@@ -46,6 +46,8 @@ export const REVIEW_PARTS = {
   '/__review/tap.js': 'shared/review/tap.js',
   // (whether the microphone is allowed, which HQ's voice.js shares with review mode)
   '/__review/micallowed.js': 'shared/review/micallowed.js',
+  // (the live line, which HQ's own recorder for its viewer's page shares)
+  '/__review/liveline.js': 'shared/review/liveline.js',
 };
 
 // The file in the repo an address names in one of the tables above, or undefined

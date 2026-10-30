@@ -27,7 +27,7 @@ const booksheets = await import('./ink/booksheets.ts');
 const notebook = await import('./notebook.ts');
 const { sendPage } = await import('./notebooksend.ts');
 const { DIR: BOOK_DIR } = await import('./pagescraps.ts');
-// The board's notes on previews are groups on the newest page of My Notebook (bookreview.ts, the pin flow): a scrap, its picture the snip, or with no snip a drawing of its words typed. A guest's
+// The board's notes on previews are groups on the newest page of My journal (bookreview.ts, the pin flow): a scrap, its picture the snip, or with no snip a drawing of its words typed. A guest's
 // still go on the board's sheet in the book.
 const groups = () => db.prepare('select * from notebook_groups order by id').all() as any[];
 const group = (id: number) => db.prepare('select * from notebook_groups where id = ?').get(id) as any;
@@ -37,7 +37,7 @@ const snipFile = (g: any) => `${BOOK_DIR}/${JSON.parse(g.pictures)[0].file}`;
 const bookNotes = () => db.prepare('select * from book_notes order by id').all() as any[];
 const openSheet = (owner: string) => db.prepare("select * from book_sheets where who = 'board' and owner = ? and status = 'open'").get(owner) as any;
 const clearBook = () => db.exec('delete from book_notes; delete from book_sheets; delete from notebook_groups');
-// The board sends My Notebook's newest page and its ten seconds pass: the job an owner's notes from it went to, its
+// The board sends My journal's newest page and its ten seconds pass: the job an owner's notes from it went to, its
 // brief, and those notes as the sent notes that job reads (hq note), in the page's order. A page sent already (its
 // notes to more than one owner) is read again for the next owner.
 const ship = async (owner: string) => {
@@ -95,11 +95,8 @@ test('the script is the real tool only for the board, on an existing product pre
   const real = readFileSync(new URL('../../../shared/review/review.js', import.meta.url), 'utf8');
   const on = await call('/__review/review.js');
   assert.ok(real.includes("const HQ = '{{HQ_ORIGIN}}'"));
-  // HQ's origin filled in, for its preview viewer, and the guest pages' colours for its menus
-  assert.ok(real.includes("const LOOK = '{{LOOK}}'"));
-  const look = JSON.stringify(guests.palette(':host')).slice(1, -1).replace(/'/g, "\\'");
-  assert.match(look, /^:host\{--accent:/);
-  const tool = real.replace('{{HQ_ORIGIN}}', 'https://hq.company.test').replace('{{LOOK}}', () => look);
+  // HQ's origin filled in, for its preview viewer
+  const tool = real.replace('{{HQ_ORIGIN}}', 'https://hq.company.test');
   assert.equal(on.text, tool + framedAnswer());   // the watch-along's answer after it
   assert.equal(on.headers['cache-control'], 'no-store');
   assert.equal(on.headers.vary, 'cookie');
@@ -206,10 +203,9 @@ test("a cycle folder's notes go to the agent who made it, from git", async () =>
   commitFile('products/_cycles/2026-02-03-other/a.md', 'x', 'a', { by: { name: 'Teasel', email: 'teasel@agents.company.test' } });
   assert.equal(owed.ownerOf('cycles/2026-02-03-other').agent, 'juno');   // nobody on a desk made it
   const host = 'cycles.preview.company.test', origin = `https://${host}`, page = `${origin}/2026-02-02-deck/presentation/#7`;
-  // review mode's menu says whose a note there is, and the note is theirs
-  assert.deepEqual((await call(`/__review/mine?page=${encodeURIComponent(page)}`, { host })).json().book, { owner: 'moss', name: 'Moss' });
+  // a note there is theirs, by name
   const r = await call('/__review/notes', { method: 'POST', host, origin, body: note({ page }) });
-  assert.equal(r.json().owner, 'moss');
+  assert.deepEqual([r.json().owner, r.json().name], ['moss', 'Moss']);
   assert.equal(group(r.json().id).owner, 'moss');
   assert.equal(owed.ownerOf('hello').agent, 'bolt');   // a product keeps its product.yaml owner
 });
@@ -260,7 +256,7 @@ test('notes need the key, this host as Origin, JSON and a sane size', async () =
   for (const p of ['/__review/notes', '/__review/shot?id=1', '/__review/../api/review/notes']) assert.equal((await call(p)).status, 404);
 });
 
-// (the pin flow, a scrap on My Notebook's newest page where a sheet's note was)
+// (the pin flow, a scrap on My journal's newest page where a sheet's note was)
 test("the board's note on a preview is a scrap on its Notebook's newest page, and reaches no agent before that page is sent", async () => {
   clearBook();
   const jobs = () => (db.prepare('select count(*) n from jobs').get() as any).n, jobsBefore = jobs();
@@ -268,7 +264,7 @@ test("the board's note on a preview is a scrap on its Notebook's newest page, an
   assert.equal(r.status, 200);
   const { id, owner, page } = r.json() as { id: number; owner: string; page: number };
   assert.equal(owner, 'bolt');   // products/hello/product.yaml
-  assert.equal(page, notebook.currentPage(notebook.mine('board').id), "My Notebook's newest page");
+  assert.equal(page, notebook.currentPage(notebook.mine('board').id), "My journal's newest page");
   const g = group(id);
   assert.deepEqual([g.kind, g.status, g.by, g.words, g.said, g.owner, g.page], ['scrap', 'open', 'board', 'The button is too pale', 'typed', 'bolt', page]);
   assert.deepEqual(JSON.parse(g.anchor), { v: 1, url: `${ORIGIN}/shop?x=1#top`, el: BUTTON, view: VIEW, ink: [] });
@@ -474,21 +470,13 @@ test('a general note is pinned to nothing: no element, spot or snip, and it read
   assert.doesNotMatch(prompt, /xyzzy|plugh|Pinned to|Drawn on|Where:/);
 });
 
-// (how many are on My Notebook's newest page, where the board's notes go)
-test("review mode's menu for the board: whose a note there is and how many are on its Notebook's newest page; nothing of the board's to change there", async () => {
+// the board corrects and wipes its notes in the book: the page can't
+test("review mode leaves nothing of the board's to change on the page", async () => {
   clearBook();
   const first = (await call('/__review/notes', { method: 'POST', body: note() })).json().id;
-  await call('/__review/notes', { method: 'POST', body: note({ note: 'Same everywhere', element: GENERAL_MARK }) });
-  const mine = await call(`/__review/mine?page=${encodeURIComponent(`${ORIGIN}/shop`)}`);
-  assert.equal(mine.status, 200);
-  assert.deepEqual(mine.json(), { book: { owner: 'bolt', name: 'Bolt' }, notes: 2 });
-  assert.equal((await call('/__review/mine', { key: null })).status, 404, 'only with the key');
-  // the board corrects and wipes its notes in the book: the page can't
   assert.equal((await call('/__review/edit', { method: 'POST', body: { id: first, note: 'A warmer red, please' } })).status, 404);
   assert.equal((await call('/__review/delete', { method: 'POST', body: { id: first } })).status, 404);
   assert.equal(group(first).words, 'The button is too pale');
-  await ship('bolt');
-  assert.equal((await call('/__review/mine')).json().notes, 0, 'a sent page counts no more: a fresh one is the newest');
 });
 
 test("a note's lines (the pen's strokes) are checked against the caps and kept only in its snip, never on its anchor", async () => {
@@ -565,12 +553,6 @@ test("on HQ itself the board's sign-in opens review mode: its notes go on the CE
     assert.equal(r.json().owner, 'juno');   // the fixture's CEO
     assert.equal(JSON.parse(group(r.json().id).anchor).url, `${HQ_ORIGIN}/?open=computer`);
   }
-  // the menu names the sheet they're on, and once a note went to someone's sheet on HQ, that one (?owner=: the Pencil's
-  // last); an id that's nobody on a desk names the page's own
-  const menu = async (q = '') => (await call(`/__review/mine?page=${encodeURIComponent(`${HQ_ORIGIN}/`)}${q}`, board)).json();
-  assert.deepEqual(await menu(), { book: { owner: 'juno', name: 'Juno' }, notes: 2 });
-  assert.deepEqual((await menu('&owner=bolt')).book, { owner: 'bolt', name: 'Bolt' });
-  assert.deepEqual((await menu('&owner=nobody')).book, { owner: 'juno', name: 'Juno' });
   // (a sheet of the CEO's goes to their routing check, one job for what's waiting to be routed: booksheets.ts jobFor)
   const { job, prompt } = await ship('juno');
   assert.equal((db.prepare('select agent from jobs where id = ?').get(job) as any).agent, 'juno');

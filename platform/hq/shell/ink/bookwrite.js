@@ -1,8 +1,9 @@
 // Writing in the book: whether a press writes (the Pencil and a mouse on a page whose ink is read, unless the press
 // pans or a tool takes it), and a stroke lifted onto its page, one step for Undo and Redo. (moved here from bookpages.js, and Redo: job #19243)
 import { INKS } from '/__review/ink.js';
-import { at, setView } from './bookview.js';
-import { boxOf, grownTo, pageBox, spanOf } from './bookrow.js';
+import { at } from './bookview.js';
+import { boxOf } from './bookrow.js';
+import { strokeUnit } from './bookunits.js';
 import { changed, shut } from './booksave.js';
 import { scrapAt } from './bookscrap.js';
 import { isTap, wandered } from '/__review/tap.js';
@@ -97,49 +98,38 @@ export function dried(book, stroke, hooks) {
     // A line across words strikes them out or slices them open instead of adding ink.
     if (book.amend?.claim(stroke, book.pointer)) return book.ink.clear();
   }
-  // (a page written on keeps its size, whatever the paper does next, and grows to hold what's written on it)
+  // (into the unit it starts on, else a new unit of its own: bookunits.js.)
   page.blank = false;
-  // (it grows any way, its top-left too.)
-  const box = pageBox(page),
-    was = { x: box.x0, y: box.y0, w: page.w, h: page.h },
-    grown = grownTo(page, boxOf(line)),
-    grew = grown.w > was.w || grown.h > was.h;
-  if (grew) {
-    Object.assign(page, grown);
-    v.place();
-  }
+  line.g = strokeUnit(page, ...line.points[0]);
   page.ink.push(line);
-  v.addInk(line);
   book.ink.clear();
-  const grewFrom = grew ? was : null;
   book.steps.push({
     page,
     stroke: line,
-    undo: () => unstroke(book, hooks, page, line, grewFrom),
-    redo: () => restroke(book, hooks, page, line, grown),
+    undo: () => unstroke(book, hooks, page, line),
+    redo: () => restroke(book, hooks, page, line),
   });
-  if (grew) setView(book);
+  // (the unit grows to hold it, and the page is laid again round it)
+  hooks.lay();
+  v.addInk(line);
   changed(book, page);
 }
 // A stroke undone: it goes, and the growth it made; its page comes into view if it's out of it
-function unstroke(book, hooks, page, stroke, grewFrom) {
+function unstroke(book, hooks, page, stroke) {
   page.ink.splice(page.ink.lastIndexOf(stroke), 1);
-  if (grewFrom) Object.assign(page, grewFrom);
-  inkChanged(book, hooks, page, boxOf(stroke));
+  inkChanged(book, hooks, page, stroke);
 }
 // (and made again)
-function restroke(book, hooks, page, stroke, grown) {
+function restroke(book, hooks, page, stroke) {
   page.ink.push(stroke);
-  Object.assign(page, spanOf(page, grown));
-  inkChanged(book, hooks, page, boxOf(stroke));
+  inkChanged(book, hooks, page, stroke);
 }
-function inkChanged(book, hooks, page, box) {
+function inkChanged(book, hooks, page, stroke) {
   const i = book.views.findIndex(v => v.page === page);
   if (i >= 0) {
-    book.views[i].place();
-    book.views[i].redraw(box);
     hooks.lay();
-    hooks.inView(i, box);
+    book.views[i].redraw(boxOf(stroke));
+    hooks.inView(i, boxOf(stroke));
   }
   changed(book, page);
 }

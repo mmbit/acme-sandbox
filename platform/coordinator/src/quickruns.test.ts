@@ -1,9 +1,21 @@
 // node --test src/quickruns.test.ts   (uses a throwaway DATA_DIR)
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { harness } from './harness.ts';
 
-const h = await harness('quickruns');
+const h = await harness('quickruns', {
+  before: repo => {
+    const file = `${repo}/company/models.yaml`,
+      org = `${repo}/company/org.yaml`;
+    writeFileSync(
+      file,
+      readFileSync(file, 'utf8').replace('effort: high }', 'effort: high, autocompact: 400000 }') +
+        'chat:\n  autocompact: 100000\n',
+    );
+    writeFileSync(org, readFileSync(org, 'utf8').replace('{ id: dex,', '{ id: dex, autocompact: 250000,'));
+  },
+});
 const { db } = h;
 const { onQuickRun, quickRun, QUICK_RUN_MS, QUICK_EFFORT } = await import('./quickruns.ts');
 afterEach(() => h.cancelQueued());
@@ -37,5 +49,17 @@ test("a quick run thinks at the quick effort, not its agent's, and the agent's w
   assert.equal(quick.agentInfo.effort, QUICK_EFFORT);
   const work = await h.claimJob(h.queue({ agent: 'bolt' }));
   assert.notEqual(work.agentInfo.effort, QUICK_EFFORT, `its work runs at ${work.agentInfo.effort}`);
+  await h.finish(quick, { result: 'Yes.' });
+});
+
+test("the intercom's turns compact at the chat size, its agent's own size wins, and work keeps the company's", async () => {
+  const chat = await h.start({ agent: 'bolt', kind: 'chat' });
+  assert.equal(chat.agentInfo.autocompact, 100000);
+  const own = await h.start({ agent: 'dex', kind: 'chat' });
+  assert.equal(own.agentInfo.autocompact, 250000);
+  const quick = await h.claimJob(quickRun('bolt', 'A question', 'Is this live yet?', PURPOSE));
+  assert.equal(quick.agentInfo.autocompact, 400000);
+  const work = await h.start({ agent: 'bolt', title: 'Work', kind: 'work' });
+  assert.equal(work.agentInfo.autocompact, 400000);
   await h.finish(quick, { result: 'Yes.' });
 });

@@ -23,9 +23,12 @@
 !platform/hq/extras.mjs
 # and the company's tip films, which it answers films/films.json with
 !platform/hq/films/listing.mjs
+# and HQ in dev mode, which it serves a try's version with (platform/coordinator/src/ink/trypreview.ts.)
+!platform/hq/serve.mjs
 # the join page's browser files from HQ and the watch-along, which the coordinator serves at /join/assets/ (joinpage.ts
 # ASSETS).
 !platform/hq/shell/callaudio.js
+!platform/hq/shell/audiolevel.js
 !platform/hq/shell/screenlock.js
 !platform/hq/shell/mic-worklet.js
 !platform/hq/shell/callbubble.js
@@ -101,6 +104,13 @@
 # a note group's parts as one (joined, shifted, a lasso's picks, typed boxes), which the store and its play share
 # (notebookparts.js)
 !platform/hq/shell/ink/notebookparts.js
+# a scrap unit and a page's masonry of them, which the store keeps and draws pages by and its play shares
+# (scrapunit.js, masonry.js.)
+!platform/hq/shell/ink/scrapunit.js
+!platform/hq/shell/ink/masonry.js
+# a page's chapter by its kind, its bookmark, which the store orders a book's pages by and its play shares
+# (notebookchapters.js.)
+!platform/hq/shell/ink/notebookchapters.js
 # an answer's drawing as the book draws it, which the book's page picture draws with, and the pieces a long page goes
 # on a call in, which the call's sketch tool cuts it into (platform/coordinator/src/ink/bookrender.ts, bookreads.ts.
 !platform/hq/shell/ink/bookanswerart.js

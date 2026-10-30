@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import { freePage, onDesk, paperBox, pick, savedWhere } from './bookmouse.mjs';
 import { DESKTOP, MINI, pressAlong, until } from './bookkit.mjs';
+import { fromBar } from './booknotebookscreen.mjs';
 
 export function highlightStories(c) {
   return Object.fromEntries(
@@ -57,19 +58,19 @@ async function addsMarks(page, c, free, draw) {
     [350, 180],
   ]);
   const original = await savedWhere(c, free.id, p => p.ink.length === 1);
-  await pick(page, 'Highlighter');
+  await pick(page, 'Marker');
   const zigzag = Array.from({ length: 12 }, (_, i) => [i % 2 ? 140 : 400, 165 + i * 3]);
   await draw(zigzag);
   const marked = await savedWhere(c, free.id, p => p.ink.length === 2);
   assert.deepEqual(marked.ink[0], original.ink[0], 'highlighting back and forth keeps the group intact');
-  await pick(page, 'Type');
+  await pick(page, 'Text');
   const paper = await paperBox(page);
   await page.mouse.click(paper.x + 120, paper.y + 300);
   await page.keyboard.type('Keep these words');
   await page.keyboard.press('Escape');
   const typed = await savedWhere(c, free.id, p => p.texts.length === 1);
   const words = await page.locator('#book .bk-typed-words').boundingBox();
-  await pick(page, 'Highlighter');
+  await pick(page, 'Marker');
   await draw([
     [words.x - paper.x + 3, words.y - paper.y + 12],
     [words.x - paper.x + words.width + 10, words.y - paper.y + 12],
@@ -84,18 +85,15 @@ async function erasesMarks(page, c, free, draw) {
     [250, 180],
     [250, 280],
   ]);
-  await pick(page, 'Highlighter');
+  await pick(page, 'Marker');
   await draw([
     [250, 230],
     [420, 230],
     [140, 230],
   ]);
   await savedWhere(c, free.id, p => p.ink.length === 2);
-  assert.equal(
-    c.notebook.route('/api/notebooks/pages/groups', { page: free.id }).groups.length,
-    1,
-    'pen and marker share a group',
-  );
+  const { groups } = c.notebook.route('/api/notebooks/pages/groups', { page: free.id });
+  assert.equal(groups.length, 1, 'pen and marker share a group');
   await draw(Array.from({ length: 12 }, (_, i) => [i % 2 ? 140 : 420, 175 + i * 10]));
   await page.waitForTimeout(1000);
   const paper = await paperBox(page);
@@ -108,7 +106,8 @@ async function erasesMarks(page, c, free, draw) {
       [x, 310],
     ]);
     assert.equal(await inkInColumn(page, paper.x + x, paper.y + 150), 0, 'all ink at the eraser is gone');
-    erasedAt.push(x);
+    // (the store keeps a unit's ink in its own px: the eraser's column there.)
+    erasedAt.push(await inUnit(page, groups[0].id, paper.x + x));
     await savedWhere(c, free.id, p => p.ink.length > 0 && erasedAt.every(x => offColumn(p.ink, x)));
   }
 }
@@ -120,7 +119,7 @@ async function deletesMarks(page, c, free, draw) {
     [250, 180],
     [250, 280],
   ]);
-  await pick(page, 'Highlighter');
+  await pick(page, 'Marker');
   await draw([
     [250, 230],
     [420, 230],
@@ -138,11 +137,21 @@ async function deletesMarks(page, c, free, draw) {
   await page.locator('#book').getByRole('button', { name: 'Undo' }).first().click();
   await until(async () => (await painted()).every(Boolean), 'Undo paints them again');
   await savedWhere(c, free.id, p => p.ink.length === 2);
-  await page.locator('#book .bk-clip').first().click();
-  await page.locator('#book .bk-group-menu [data-act=delete]').click();
-  assert.deepEqual(await painted(), [0, 0], "the menu's Delete takes them off at once too");
+  await fromBar(page, null, 'Delete');
+  assert.deepEqual(await painted(), [0, 0], "Select's bar's Delete takes them off at once too");
 }
 
+// A column of the screen in a unit's own px, as the store keeps its ink (bookunits.js).
+const inUnit = (page, unit, x) =>
+  page.evaluate(
+    ([unit, x]) => {
+      const shown = [...document.querySelectorAll('#book .bk-page')].find(p => !p.hidden),
+        r = shown.getBoundingClientRect(),
+        card = shown.querySelector(`.bk-unit[data-unit="${unit}"]`);
+      return (x - r.left) / (r.width / shown.offsetWidth) - parseFloat(card.style.left);
+    },
+    [unit, x],
+  );
 const offColumn = (ink, x) =>
   ink.every(stroke => stroke.points.every(point => point[0] < x) || stroke.points.every(point => point[0] > x));
 

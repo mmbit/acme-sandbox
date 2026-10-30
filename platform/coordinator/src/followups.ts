@@ -1,7 +1,8 @@
 // A pull request's review follow-ups (the review-panel playbook, "Rounds"): what its reviews found that didn't hold its
 // merge (nonblocking findings, those its author left open, and findings in code it didn't change) go, once it merges,
 // into one job for its author, queued in the same deliverable, done after the work is live. A
-// follow-up's own pull request leaves none: its findings end there, so follow-ups never chain. What a ruling from the
+// follow-up's own pull request leaves none: its findings end there, so follow-ups never chain. Work triage judged throwaway
+// leaves none either: its one light review is all it gets. What a ruling from the
 // upstream round on says went wrong before review reaches the project's owner in a proposal of its own.
 // (its messages say deliverable, the board's word for a thread)
 import { db, inOneStep } from './db.ts';
@@ -9,6 +10,7 @@ import { findThread } from './projects.ts';
 import * as jobs from './jobs.ts';
 import * as panel from './panel.ts';
 import * as findings from './findings.ts';
+import * as light from './reviewlight.ts';
 
 // A pull request merged (review.ts pullRequestMerged, before its thread lets go of its branch): its follow-ups into one
 // job for its author, titled after its work
@@ -17,7 +19,7 @@ export function collect(pr: number, work: string) {
     branch: string;
     author: string;
   };
-  if (isFollowUp(branch)) return;
+  if (isFollowUp(branch) || light.throwaway(pr)) return;
   const left = leftOf(pr);
   if (!left.length) return;
   const drawn = panel.threadOfBranch(branch);

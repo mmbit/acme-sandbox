@@ -1,33 +1,52 @@
 // A slot-owned scanner keeps command-controlled paths away from worker filesystem privileges.
 import { AccountingError, type AccountingFailure } from './accounting.ts';
-import { fork, type ChildProcess } from 'node:child_process';
-import { PROBE_OLD_SPACE_MB } from './disktree.ts';
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { createInterface } from 'node:readline';
+import { fileURLToPath } from 'node:url';
+// Keep the supported 2 GiB logical tree ceiling independently of scanner RSS.
+const PROBE_BUDGET_MB = 2048;
 
 export class DiskScan {
-  private child: ChildProcess;
+  private child: ChildProcessWithoutNullStreams;
   private pending?: { resolve: (bytes: number) => void; reject: (failure: Error) => void };
+  private measuring?: Promise<number>;
   private failure?: Error;
   private closed = false;
+  private lastStderrLine = '';
 
-  constructor(roots: string[], ids: { uid: number; gid: number }, oldSpaceMb = PROBE_OLD_SPACE_MB) {
-    this.child = fork(new URL('./diskprobe.ts', import.meta.url), [JSON.stringify(ids), String(oldSpaceMb), ...roots], {
-      env: { PATH: '/usr/bin:/bin' },
-      // One probe runs for each job its whole life. Its tree is ~30 MB of heap for a job's checkout, but V8's default
-      // young generation (sized for a 2 GB heap) kept ~40 MB more resident in each, memory the worker's admission
-      // counts against every start (diskscan.test.ts).
-      // Its old space is set too: the tree's bound is a share of it (disktree.ts).
-      execArgv: ['--max-semi-space-size=1', `--max-old-space-size=${oldSpaceMb}`],
-      stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+  constructor(roots: string[], ids: { uid: number; gid: number }, budgetMb = PROBE_BUDGET_MB) {
+    this.child = spawn(
+      'python3',
+      [
+        '-I',
+        '-u',
+        fileURLToPath(new URL('./diskprobe.py', import.meta.url)),
+        JSON.stringify(ids),
+        String(budgetMb),
+        ...roots,
+      ],
+      { env: { PATH: '/usr/bin:/bin' }, stdio: ['pipe', 'pipe', 'pipe'] },
+    );
+    const errors = createInterface({ input: this.child.stderr });
+    errors.on('line', line => {
+      this.lastStderrLine = line;
     });
-    this.child.on('message', (reading: { bytes: number; error?: AccountingFailure }) => {
+    const replies = createInterface({ input: this.child.stdout });
+    replies.on('line', line => {
       if (this.closed) return;
-      const pending = this.pending;
+      const reading = JSON.parse(line) as { bytes: number; error?: AccountingFailure };
+      const pending = this.pending!;
       this.pending = undefined;
-      if (reading.error) pending!.reject(new AccountingError(reading.error.reason, reading.error.message));
-      else pending!.resolve(reading.bytes);
+      this.measuring = undefined;
+      if (reading.error) pending.reject(new AccountingError(reading.error.reason, reading.error.message));
+      else pending.resolve(reading.bytes);
     });
+    this.child.stdin.on('error', failure => this.fail(failure));
     this.child.on('error', failure => this.fail(failure));
-    this.child.on('exit', (code, signal) => this.fail(new Error(`Disk scanner exited: ${signal ?? code}`)));
+    this.child.on('close', (code, signal) => {
+      const cause = this.lastStderrLine ? `: ${this.lastStderrLine}` : '';
+      this.fail(new Error(`Disk scanner exited: ${signal ?? code}${cause}`));
+    });
   }
 
   get pid() {
@@ -36,12 +55,14 @@ export class DiskScan {
 
   measure(): Promise<number> {
     if (this.failure) return Promise.reject(this.failure);
-    return new Promise((resolve, reject) => {
+    if (this.measuring) return this.measuring;
+    this.measuring = new Promise((resolve, reject) => {
       this.pending = { resolve, reject };
-      this.child.send('measure', failure => {
+      this.child.stdin.write('measure\n', failure => {
         if (failure) this.fail(failure);
       });
     });
+    return this.measuring;
   }
 
   close() {
@@ -54,5 +75,6 @@ export class DiskScan {
     this.failure = failure;
     this.pending?.reject(failure);
     this.pending = undefined;
+    this.measuring = undefined;
   }
 }

@@ -4,8 +4,9 @@
 // goes into the author's follow-up job, done after the work is live (followups.ts). What blocks is narrow on internal
 // work (it breaks HQ, loops without end, loses data). What's shipped to users keeps its release bar.
 // From the upstream round on, the pull request shows its project owner that something before review went wrong. No
-// round closes anything. Work triage judged throwaway blocks only on what blocks every round, and reports nothing else.
-// A follow-up job's own pull request leaves no follow-up job: what doesn't block on it ends with it.
+// round closes anything. Work triage judged throwaway gets one light review: it blocks only on what blocks every round,
+// reports nothing else, and leaves no follow-up job, as a follow-up job's own pull request leaves none: what doesn't
+// block on either ends with it.
 // (its messages say deliverable, the board's word for a thread)
 import { reviewSettings } from './reviewsettings.ts';
 
@@ -44,8 +45,7 @@ deliverable and done after the work is live.`,
     ruling: 'Put those in "nonblocking".',
   },
   ended: {
-    line: `What's left when this pull request merges ends there: it is a follow-up job's own, and no follow-up job comes
-after one.`,
+    line: `What's left when this pull request merges ends there: no follow-up job comes after it.`,
     reviewer: 'Report only what blocks.',
     ruling: 'Leave those out.',
   },
@@ -59,8 +59,10 @@ read or change, history in comments, general code copied into an app instead of 
 worth doing: the author fixes or answers each this round, so with any, decide "changes". From the next round on none
 holds the merge.`,
 };
-const THROWAWAY_REST = `Triage judged this throwaway work, which runs once or twice and goes to the archive: refactoring,
-conventions, readability, documentation and hardening that isn't security are no findings on it, blocking or not.`;
+const THROWAWAY_REST = `Triage judged this throwaway work, which runs once or twice and goes to the archive, so this is its one
+light review: whether it does what its task and the board asked, not its technology. Only what blocks on every round
+holds its merge, and with none of that the ruling decides "merge". Refactoring, conventions, readability,
+documentation, polish and hardening that isn't security are no findings on it, blocking or not.`;
 
 export type Briefing = {
   // the reviewers' section, after the change's bar
@@ -75,14 +77,15 @@ export type Briefing = {
   field: string;
 };
 
-// What a round's briefing knows of the work: triage judged it throwaway, or it's a follow-up job's (followups.ts isFollowUp)
+// What a round's briefing knows of the work: triage judged it throwaway, or it's a follow-up job's (followups.ts isFollowUp).
+// Neither leaves a follow-up job (followups.ts collect).
 export type Work = { throwaway?: boolean; followUp?: boolean };
 
 // Round `round`'s briefing at `stage`, for `work`
 export function briefing(stage: Stage, round: number, { throwaway = false, followUp = false }: Work = {}): Briefing {
   const { rounds, shipped } = reviewSettings();
   const always = everyRound(shipped);
-  const left = followUp ? LEFT.ended : LEFT.later;
+  const left = followUp || throwaway ? LEFT.ended : LEFT.later;
   const first: Briefing = {
     reviewer: `
 ## Round ${round}: the first look

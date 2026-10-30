@@ -20,7 +20,7 @@ const CARD_USAGE = `[KEY,KEY | live:<slug> | site:<slug>] [--address] [--photo "
 export const ask = {
   help: `
    hq ask <kind> <urgency> "title" <body-file> ${CARD_USAGE} [--when deployed:<job>]... [--walk]
-                                                     [--note <n> | --page <address>]
+                                                     [--note <n> | --page <address> | --book <project | journal | n>]
                                                      ask the board now; prints the request id (session stays alive).
                                                      Every card has a topic, a word or two the board's list of open
                                                      cards groups it under (e.g. billing, hosting): an open card's
@@ -131,8 +131,20 @@ export const ask = {
                                                      there.
                                                      About a page with no note on it: --page <address>
                                                      (a path on HQ, or a preview's https address): the book clips it
-                                                     on your sheet page of the day, under your ring`,
-  // (--walk; --note, --page; Ink Studio's desk-only cards)
+                                                     on your sheet page of the day, under your ring
+                                                     A design ask (a choice, a sketch, a question about how something
+                                                     looks or works): --book <project>, and the card is also a scrap on
+                                                     the Asks page of that project's book on the board's shelf (--book
+                                                     journal: My journal, for HQ or work with no project yet; a project
+                                                     with no book yet: My journal too; --book <n>: a guest's book,
+                                                     one guest's or an open review round's, by its number, its
+                                                     Share part what the board forwards to the guest). One answer,
+                                                     in the book or on the desk phone, closes both; hq close takes
+                                                     the scrap too, and the board deleting the scrap the card. Keys,
+                                                     logins, approvals (money, launches), uploads, files, steps in
+                                                     another system and finished work are refused with --book: they
+                                                     go on the desk phone alone`,
+  // (--walk; --note, --page; Ink Studio's desk-only cards; --book)
   // (topics:, zips, --visible-from; --address; --questions; notice; --when)
   // (a pick-many, --file)
   // (Before and after; pictures in pairs on any card)
@@ -143,16 +155,26 @@ export const ask = {
     const { visibleFrom, questions, when } = card.request;
     await checkCard(card.bodyPath, card.back, { visibleFrom, questions, when });
     const refusal =
-      "The coordinator didn't take the request. A --topic is 1 to 40 characters. Photo, document and zip fields need 1 to 8 different labels of 1 to 80 characters, and can't go with keys or an approval; --documents-to names one of the company's own addresses, not one for the board alone; an approval grants live:<slug> or site:<slug> only (several slugs comma-separated); --product and --back name products (products/<slug>), never on a card for keys; --address goes on a credential card asking for four of a company tool's own keys; --decides names an awaited CEO decision or your review-assigned visual decision; a notice asks nothing (no keys, approval, fields or --decides); --note names a note of the board's sent to you, by its number in your brief, --page a path on HQ or a preview's https address, never both."; // (--note, --page)
-    const filed = await api.orStop(api.postJson('request', api.withSpeaker(card.request)), refusal);
+      "The coordinator didn't take the request. A --topic is 1 to 40 characters. Photo, document and zip fields need 1 to 8 different labels of 1 to 80 characters, and can't go with keys or an approval; --documents-to names one of the company's own addresses, not one for the board alone; an approval grants live:<slug> or site:<slug> only (several slugs comma-separated); --product and --back name products (products/<slug>), never on a card for keys; --address goes on a credential card asking for four of a company tool's own keys; --decides names an awaited CEO decision or your review-assigned visual decision; a notice asks nothing (no keys, approval, fields or --decides); --note names a note of the board's sent to you, by its number in your brief, --page a path on HQ or a preview's https address, --book a project, journal or a guest's book's number (a design ask: no keys, approval, uploads, files or steps), one of them at most."; // (--note, --page, --book)
+    const filed = await api.orStop(api.postJson('request', api.withSpeaker(card.request)), refusal, true);
     const id = text(filed.id);
     if (filed.held)
       return print(
         `Request #${id} is held off the board's desk phone until ${text(filed.held)} is merged and deployed; then it shows as a new card.`,
         `Queue the step that needs the answer: hq job --after request:${id} <agent> "title" <brief>, and finish this job.`,
       );
+    const book = filed.book
+      ? [
+          `It's also a scrap on the Asks page of ${text(filed.book.name)} in the board's book${
+            filed.book.fell
+              ? ` (${text(card.request.book)} has no book yet: the CEO makes one with hq projectbook)`
+              : ''
+          }: an answer in either place closes both.`,
+        ]
+      : [];
     print(
       `Request #${id} is on the board's desk phone. Run: hq wait ${id}`,
+      ...book,
       `If only a later step needs the answer, queue that step instead: hq job --after request:${id} <agent> "title" <brief>`,
     );
   },
@@ -180,9 +202,9 @@ export const request = {
       stop(
         "Nothing was filed: --walk offers a walk-through of finished work, which a parked job hasn't got. Ask with hq ask --walk once the work's done.",
       );
-    if (card.request.note !== undefined || card.request.page !== undefined)
+    if (card.request.note !== undefined || card.request.page !== undefined || card.request.book !== undefined)
       stop(
-        'Nothing was filed: --note and --page go with hq ask (the book shows the card while your job goes on). Ask with hq ask, queue the step that needs the answer with hq job --after request:<id>, and finish this job.',
+        'Nothing was filed: --note, --page and --book go with hq ask (the book shows the card while your job goes on). Ask with hq ask, queue the step that needs the answer with hq job --after request:<id>, and finish this job.',
       );
     if (card.request.when)
       stop(
@@ -268,6 +290,7 @@ async function readCard(given: string[], command: string): Promise<Card> {
     ...(flags.walk && { walk: true }),
     ...(flags.note !== '' && { note: Number(flags.note) }), // (note, page)
     ...(flags.page !== '' && { page: flags.page }),
+    ...(flags.book !== '' && { book: flags.book }),
   };
   return { bodyPath, back: flags.back, request };
 }
@@ -325,6 +348,7 @@ type CardFlags = {
   walk: boolean;
   note: string; // (note, page)
   page: string;
+  book: string; // (a design ask's book: a project, journal, or a guest's book's number)
 };
 
 // (--product-shot: a photo field marked as a product photo)
@@ -354,6 +378,7 @@ const NEEDS = new Map([
   ['--when', 'work going live (deployed:<job>)'],
   ['--note', "a note's number (from your brief)"], // (--note, --page)
   ['--page', "a page's address (a path on HQ, or a preview's https address)"],
+  ['--book', "a project, journal, or a guest's book by its number"],
 ]);
 
 // The flags that take no value: an address card, and a walk-through offered
@@ -381,6 +406,7 @@ const noFlags = (): CardFlags => ({
   walk: false,
   note: '',
   page: '',
+  book: '',
 });
 
 // --topic, --approves <grant>, --photo / --optional-photo / --product-shot / --optional-product-shot "label",
@@ -415,6 +441,7 @@ function takeCardFlags(given: string[]) {
     else if (flag === '--file') flags.files.push(value);
     else if (flag === '--note') flags.note = value;
     else if (flag === '--page') flags.page = value;
+    else if (flag === '--book') flags.book = value;
     else flags.documentsTo = value;
   }
   checkDocuments(flags);

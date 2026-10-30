@@ -20,7 +20,12 @@ export function follow(node, { start = () => {}, move, end }) {
       if (trail.length > 6) trail.shift();
       if (!dragging && Math.abs(dx) < TAP_PX) return;
       if (!dragging) {
-        node.setPointerCapture?.(e.pointerId);
+        // (a pointer the browser no longer has, or never had, can't be captured: the drag goes on on the window's.
+        try {
+          node.setPointerCapture?.(e.pointerId);
+        } catch {
+          // the window's moves carry the drag on
+        }
         start(dx);
       }
       dragging = true;

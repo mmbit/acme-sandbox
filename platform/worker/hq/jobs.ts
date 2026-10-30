@@ -120,7 +120,8 @@ ${asHelp(ONE_DEADLINE)}
                                                      --notes: the CEO, routing the board's sent notes (hq route): the
                                                      task takes on those notes, at the end of its brief.
                                                      --expedite (the CEO only): a structural fix to HQ itself, when a fault
-                                                     could also stall its own fix. It starts first, ahead of the plan,
+                                                     could also stall its own fix, or work the board needs in its hands
+                                                     now (the board's word). It starts first, ahead of the plan,
                                                      pacing and pauses, in no deliverable; once a push passes its gates and
                                                      tests it merges and deploys, and its review comes after (hq expedite)
    hq job move <job id> <project>/<slug>             move work still going on into another deliverable, its pull
@@ -263,13 +264,14 @@ function readArguments(args: string[]) {
 }
 
 // The deliverable a queued job is in. One it joined is read back with its done when, so its queuer reads what the work
-// is filed under (board, call 172).
+// is filed under (board, call 172), and the way out offers drawing one first, as hq job's refusal does, so the
+// nearest open one isn't the easiest pick.
 function printFiled(id: string, queued: Record<string, unknown>) {
   if (!present(queued.thread)) return;
-  if (!present(queued.doneWhen)) return print(`In deliverable ${text(queued.thread)}.`);
+  if (!present(queued.threadGoal)) return print(`In deliverable ${text(queued.thread)}.`);
   print(
-    `In deliverable ${text(queued.thread)}, ${text(queued.threadName)}, done when ${text(queued.doneWhen)}.`,
-    `If this work doesn't deliver that, move it to the one it does: hq job move ${id} <project>/<slug>.`,
+    `In deliverable ${text(queued.thread)}, ${text(queued.threadName)}, done when ${text(queued.threadGoal)}.`,
+    `If this work doesn't deliver that, move it to the one it does: draw it (hq plan deliverable <project> "name" "done when": the project's owner or the CEO; anyone else proposes the work, hq propose --project <project>) or name an open one, then hq job move ${id} <project>/<slug>.`,
   );
 }
 
@@ -370,14 +372,16 @@ async function moveJob(given: string[]) {
 
 export const expedite = {
   help: `
-   hq expedite <job id>                              (the CEO only) a structural fix to HQ itself goes first: a queued or
+   hq expedite <job id>                              (the CEO only) a structural fix to HQ itself, or work the board needs
+                                                     in its hands now (the board's word), goes first: a queued or
                                                      running job starts ahead of everything (once what it waits for is
                                                      met) and merges on its gates and tests; one that has pushed, its
                                                      pull request still in review, merges now if its last push passed
                                                      them. Its review follows on what merged, and anything blocking is
                                                      its author's next job. A deliverable's task
                                                      that hasn't started leaves its deliverable as its own job; one that ran
-                                                     stays (queue the fix with hq job --expedite). Never ordinary work`,
+                                                     stays (queue the fix with hq job --expedite). Never work that can
+                                                     wait for its review`,
 
   // (a refusal opens "Nothing expedited", as the call's expedite tool reads it: hq_tools.py.)
   async run([id, ...rest]: string[]) {
@@ -427,6 +431,38 @@ export const stopJob = {
 // hq up: a job on the lighter model its queuer chose hands itself up to its agent's own model. The note waits in the
 // job's folder, as hq request's card does, and the worker hands it on as the run ends (the coordinator's jobs.ts handUp).
 // HQ_LIGHTER, the agent's own model's name, is set only on such a run.
+export const revert = {
+  help: `
+   hq revert <commit>... "why"                       the CEO only: these commits reverted on main, by the server within a
+                                                     minute, and deployed: a merge commit on main's first-parent line
+                                                     reverts its pull request whole. Their work stays on their branches,
+                                                     to come back once fixed (a branch that reverts the revert)
+   hq revert                                         the reverts asked, newest first, with the server's answers`,
+
+  async run(args: string[]) {
+    if (!args.length) return listReverts();
+    const why = args.at(-1)!,
+      commits = args.slice(0, -1);
+    if (!commits.length || !commits.every(c => /^[0-9a-f]{7,40}$/.test(c)) || !why.trim())
+      stop('usage: hq revert <commit>... "why"');
+    const answer = await api.change('revert', { body: { commits, why } });
+    const asked = api.parseOrNull(answer.body);
+    if (!asked?.id) stop(`Not asked: ${api.errorIn(answer.body, 'no answer')}`);
+    print(`Asked: the server reverts ${commits.join(', ')} on main within a minute. hq revert says how it went.`);
+  },
+};
+
+async function listReverts() {
+  const { reverts } = (await api.orStop(api.getJson('revert'), "Couldn't list the reverts.")) as {
+    reverts: { commits: string[]; why: string; at: string; ok?: boolean; said?: string }[];
+  };
+  if (!reverts.length) return print('No reverts asked yet.');
+  for (const r of reverts)
+    print(
+      `${minute(r.at)} ${r.commits.join(', ')}: ${r.why} (${r.said === undefined ? 'waiting for the server' : r.ok ? `reverted in ${r.said}` : `not reverted: ${r.said}`})`,
+    );
+}
+
 export const up = {
   help: `
    hq up "note" | -                                  on a job running on a lighter model (hq job --model) that turns out

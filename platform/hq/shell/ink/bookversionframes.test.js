@@ -1,43 +1,7 @@
-// node --test platform/hq/shell/ink/bookversionframes.test.js   (a versions page's frames, and the one a mark is on)
-// (out of bookanswerpace.test.js)
+// node --test platform/hq/shell/ink/bookversionframes.test.js   (the frame a mark on a try's versions is on)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { frameUnder, framesLaid } from './bookversionframes.js';
-
-test('frames sit side by side and wrap down within the width', () => {
-  const { frames, height } = framesLaid(4, 700, { frame: 200, gap: 20, ratio: 0.5, caption: 40 });
-  assert.deepEqual(
-    frames.map(f => [f.x, f.y]),
-    [
-      [0, 0],
-      [220, 0],
-      [440, 0],
-      [0, 160],
-    ],
-  );
-  assert.equal(height, 160 * 2 - 20);
-});
-
-test('on narrow paper two frames across while each can be least wide, else one as wide as the paper', () => {
-  const two = framesLaid(3, 407, { frame: 210, least: 140, gap: 22, ratio: 0.5, caption: 40 });
-  assert.deepEqual(
-    two.frames.map(f => [f.x, f.y, f.w]),
-    [
-      [0, 0, 192],
-      [214, 0, 192],
-      [0, 96 + 40 + 22, 192],
-    ],
-  );
-  const { frames } = framesLaid(2, 150, { frame: 200, ratio: 0.5 });
-  assert.deepEqual(
-    frames.map(f => [f.x, f.y, f.w, f.h]),
-    [
-      [0, 0, 150, 75],
-      [0, 75 + 46 + 22, 150, 75],
-    ],
-  );
-  assert.equal(framesLaid(0, 500).height, 0);
-});
+import { frameUnder } from './bookversionframes.js';
 
 test('a mark is on the frame it covers most, else the nearest', () => {
   const frames = [

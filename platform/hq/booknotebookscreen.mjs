@@ -1,14 +1,32 @@
-// The Notebook's page on screen for book-check's Notebook stories (booknotebook.mjs): the groups' clips, the page's place
+// The Notebook's page on screen for book-check's Notebook stories (booknotebook.mjs): the groups' units, the page's place
 // and stamp, points on the paper, the tools, a turn, and a line drawn.
 import assert from 'node:assert/strict';
 import { pressAlong, until } from './bookkit.mjs';
 
-// The groups' clips on the page shown, by group
+// The groups drawn on the page shown, each top-level group a scrap unit (bookunits.js), by group
 export const clipped = page =>
   page.evaluate(() => {
     const shown = [...document.querySelectorAll('#book .bk-page')].filter(p => !p.hidden);
-    return shown.flatMap(p => [...p.querySelectorAll('.bk-clip')].map(c => Number(c.dataset.g))).sort((a, b) => a - b);
+    return shown
+      .flatMap(p => [...p.querySelectorAll('.bk-unit')].map(u => Number(u.dataset.unit)))
+      .sort((a, b) => a - b);
   });
+// A group's unit (g: its id; null: the page's first) picked with Select (the rail's), by a click or a tap (how), and the button named on Select's bar
+// pressed the same way: its Delete, its Move to page…
+export async function fromBar(page, g, name, how = 'click') {
+  await page.locator('#book [data-island=tools] [data-mode=select]')[how]();
+  // (the middle of what shows of the unit: a tall one runs past the desk's foot on a short screen, where a press isn't the paper's)
+  const unit = page.locator(`#book .bk-page:not([hidden]) .bk-unit${g == null ? '' : `[data-unit="${g}"]`}`).first(),
+    [b, desk] = await Promise.all([unit.boundingBox(), page.locator('#book .bk-desk').boundingBox()]),
+    [x0, x1] = [Math.max(b.x, desk.x), Math.min(b.x + b.width, desk.x + desk.width)],
+    [y0, y1] = [Math.max(b.y, desk.y), Math.min(b.y + b.height, desk.y + desk.height)],
+    press = [(x0 + x1) / 2, (y0 + y1) / 2];
+  if (how === 'tap') await page.touchscreen.tap(...press);
+  else await page.mouse.click(...press);
+  const bar = page.locator('#book .bk-sel-bar');
+  await bar.waitFor({ timeout: 5000 });
+  await bar.getByRole('button', { name, exact: true })[how]();
+}
 // The groups of two or more things, which have a clip, by group
 export const held = groups =>
   groups.filter(g => (g.ink?.length ?? 0) + (g.texts?.length ?? 0) + (g.pictures?.length ?? 0) > 1).map(g => g.id);
@@ -19,14 +37,21 @@ export const stamp = page =>
     // (the red stamp's words, its label)
     return shown?.querySelector('[data-slot=stamp] svg')?.getAttribute('aria-label') ?? '';
   });
-// Points on the page shown (page px, the seed's pages at 0, 0) on the screen
-export const onPaper = (page, points) =>
-  page.evaluate(points => {
-    const shown = [...document.querySelectorAll('#book .bk-page')].find(p => !p.hidden);
-    const r = shown.getBoundingClientRect(),
-      k = r.width / shown.offsetWidth;
-    return points.map(([x, y]) => [r.left + x * k, r.top + y * k]);
-  }, points);
+// Points on the page shown (page px, the seed's pages at 0, 0) on the screen. With a unit's id: points in that unit's
+// own px, as the store keeps its things, moved to where the masonry put it (bookunits.js): a unit the page doesn't show
+// fails.
+export const onPaper = (page, points, unit = null) =>
+  page.evaluate(
+    ([points, unit]) => {
+      const shown = [...document.querySelectorAll('#book .bk-page')].find(p => !p.hidden);
+      const r = shown.getBoundingClientRect(),
+        k = r.width / shown.offsetWidth,
+        card = unit === null ? null : shown.querySelector(`.bk-unit[data-unit="${unit}"]`),
+        [ox, oy] = unit === null ? [0, 0] : [parseFloat(card.style.left), parseFloat(card.style.top)];
+      return points.map(([x, y]) => [r.left + (x + ox) * k, r.top + (y + oy) * k]);
+    },
+    [points, unit],
+  );
 export const tool = (page, name) => page.locator('#book').getByRole('button', { name, exact: true }).click();
 // The page at a place in the notebook (1: its first; the seed's pages' ids are theirs), turned to with the foot row's
 // arrows

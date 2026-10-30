@@ -110,7 +110,8 @@ export const samplesOf = (session: string) =>
   ).map(s => JSON.parse(s.sample));
 
 // What one session says: each count's first, last and highest value and its change per hour, the regions and
-// listener types that grew most, and the slow frames in its first and last quarter (lag that builds up)
+// listener types that grew most, the slow frames in its first and last quarter (lag that builds up), and the frames
+// while a pointer was held down. Those show a drag's lag, which the counts of all a sample's frames dilute
 const COUNTS = [
   'heap',
   'nodes',
@@ -148,12 +149,17 @@ function summaryOf(row: Session, samples: any[]) {
     samples: samples.length,
     counts,
     grewMost: { regions: grown(samples, s => s.regions), listeners: grown(samples, s => s.listeners) },
-    slowFrames: { first: slowShare(samples.slice(0, quarter)), last: slowShare(samples.slice(-quarter)) },
-    longTasks: {
-      count: sum(samples, s => s.longTasks?.count),
-      worst: Math.max(0, ...samples.map(s => s.longTasks?.worst ?? 0)),
+    slowFrames: {
+      first: slowShare(samples.slice(0, quarter), allFrames),
+      last: slowShare(samples.slice(-quarter), allFrames),
     },
-    worstFrame: Math.max(0, ...samples.map(s => s.frames?.worst ?? 0)),
+    longTasks: { count: sum(samples, s => s.longTasks?.count), worst: worst(samples, s => s.longTasks) },
+    worstFrame: worst(samples, allFrames),
+    held: {
+      shown: sum(samples, s => s.held?.shown),
+      slow: slowShare(samples, heldFrames),
+      worst: worst(samples, heldFrames),
+    },
     states: [...new Set(samples.map(s => s.state))].slice(0, STATES),
   };
 }
@@ -188,10 +194,16 @@ function grown(samples: any[], countsOf: (s: any) => Record<string, number> | un
     .slice(0, 5)
     .map(([name, change]) => ({ name, from: first[name] ?? 0, to: last[name], change }));
 }
-const slowShare = (samples: any[]) => {
-  const shown = sum(samples, s => s.frames?.shown);
-  return shown ? round((100 * sum(samples, s => s.frames?.slow)) / shown) : null;
+// A sample's frame counts (shown, slow, worst), of every frame or of those while a pointer was held
+type Frames = { shown: number; slow: number; worst: number } | undefined;
+const allFrames = (s: any): Frames => s.frames;
+const heldFrames = (s: any): Frames => s.held;
+const slowShare = (samples: any[], framesOf: (s: any) => Frames) => {
+  const shown = sum(samples, s => framesOf(s)?.shown);
+  return shown ? round((100 * sum(samples, s => framesOf(s)?.slow)) / shown) : null;
 };
+const worst = (samples: any[], measureOf: (s: any) => { worst: number } | undefined) =>
+  Math.max(0, ...samples.map(s => measureOf(s)?.worst ?? 0));
 const total = (counts: Record<string, number> | undefined) =>
   counts ? Object.values(counts).reduce((s, n) => s + n, 0) : undefined;
 const sum = (samples: any[], f: (s: any) => number | undefined) => samples.reduce((s, x) => s + (f(x) ?? 0), 0);

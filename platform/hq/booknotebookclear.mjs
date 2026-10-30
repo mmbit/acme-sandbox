@@ -1,8 +1,7 @@
-// book-check.mjs's story of where scraps land (the coordinator's notebookscraps.ts, played: shell/ink/notebookstack.js)
+// book-check.mjs's story of where scraps land (the coordinator's notebookscraps.ts, played: shell/ink/notebookplay.js)
 // on the narrowest papers the board reads on, a phone's and an upright iPad mini's book at its least: saved one under
-// another, each scrap's picture and words as drawn (fitted to the paper there: shell/ink/bookscrapfit.js) lie inside the
-// paper and under none of the controls, each below the words above it; and on a desktop's at the store's readable
-// width, as the store has them.
+// another, each scrap's picture and words as drawn lie inside the paper and under none of the controls, each below the
+// words above it; and on a desktop's at the store's readable width, as the store has them.
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { onPaper } from './booknotebookscreen.mjs';

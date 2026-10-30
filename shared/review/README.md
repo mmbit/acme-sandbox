@@ -36,43 +36,33 @@ canvas keeps its pixels and needs nothing.
 **On HQ itself** the board always has the same tool, on any of HQ's screens. The coordinator serves it there only
 behind the board's sign-in. Each note is a scrap on the newest page of the board's Notebook, for the agent whose work
 it's on (what's drawn on names them, `data-owner`), else the CEO, as a preview's are for its owner (The flow, below);
-the post-it's line says so, its button is Save, and the menu counts the notes on that page.
-A page that loads the tool itself (its script tag has `data-summoned`) hears the menu's Open the book as its
-`review:book` event (detail: whose sheet). (the owners: job #19219)
+the post-it's line says so, and its button is Save. (the owners: job #19219)
 A `review:cover` event (detail `true`, later `false`) hides the tool while the page frames another page with its own
-pin, as HQ's viewer does around a preview. A note in progress returns when the viewer closes. On such a page the pin
-starts away, and the page shows it or puts it away (`review:summon`, detail `true` or `false`). On HQ beside the book
-(a desktop, a tablet) the board's opening the book or the book's pin control brings it, and folding the book or that
-control puts it away. A phone opens the book over HQ: there the control folds the book and leaves HQ with the pin, and
-opening the book again puts it away. The Pencil writes either way, and a preview's own pin is always there, but on a
-call: then HQ has no pin and no pin control, its viewer no Note, and it tells the preview's page (`call`, answered to
+pin, as HQ's viewer does around a preview. A note in progress returns when the viewer closes. A page that loads the
+tool itself (its script tag has `data-summoned`) starts with the pin away, and shows it or puts it away
+(`review:summon`, detail `true` or `false`). On HQ that's the board's Settings › Pin on HQ, a switch for each device,
+off until turned on; the book has no say in it. The Pencil writes either way. A preview's own pin shows on every
+device until a pen touches the page: the pen marks by itself there, so from its first touch the pin is away for the
+tab's session (sessionStorage), the next page in HQ's viewer too, and the viewer's Note still starts a note. On a
+call HQ has no pin, its viewer no Note, and it tells the preview's page (`call`, answered to
 its hello too), whose pin goes and whose Pencil inks red only (`review:call`), for the call's agent (the board, call
 161.). A mark there then opens no post-it: once the pen rests it goes to HQ (`callframe.js`,
 `{ callMark }`), which puts it on the call's page with the words the call heard as one drawn on HQ, and nothing goes into
 the notebook by itself; its ink stays drawn until the agent's turn on it is done (`{ had: note }`) or the call ends
 .
 
-**The menu**: the pin stays just the pin; beside it a small round button opens a small menu in the guest pages' look
-(their colours, `guests.ts` palette, which the coordinator writes into the script), as plain as a checklist for the
-outside people it also serves. Every line fits on one line in the menu's width, a phone's too: an item's sub-line says
-only what its title doesn't. The board's button carries the count of its notes on the sheet a note on this page joins,
-and its menu says whose sheet that is and how many are on it (`GET /__review/mine?page=<the page>`): "For Bolt · 2 on
-the sheet", and **Open the book**, which inside HQ's viewer opens the book beside it at that sheet, and in a tab of its
-own opens HQ at it (`/?open=book&owner=<id>`). The board reads, corrects, wipes and sends its notes in the book. An
-outsider's menu says where their notes go ("Review · to Testco’s book") and asks the coordinator for nothing: each of
-their notes is on the board's sheet once it's pinned. Both menus have:
-
-- **General note**, for something across several pages, or that differs between them: the same sheet, typed or
-  spoken, pinned to nothing (no element, spot or screenshot), saved with the page it was written on and the trail. It
-  goes with the other notes, and reads as "General note" in the book and in the owner's job.
+**The pin** is just the pin, a red button with a pencil on it. The board reads, corrects, wipes and sends its notes in
+its book in HQ. A mark from the other screen that can't land on this
+one's layout (`handover.js`) opens a general note: the same sheet, pinned to nothing, which reads as "General note" in
+the book and in the owner's job.
 
 `review.js` is the tool's door: a small classic script that says hello to HQ's frame and loads the tool. The tool is
 modules beside it, one concern each: `tool.js` puts them together (the shared state, Escape and Cmd+Z) and no part
-imports it, `acts.js` what a part asks of the parts above it (put the note away, shut the menu...), which tool.js
-hands in as it loads, so the imports form no circle, `dock.js` the pin, `menu.js` its menu, `surface.js` the page
+imports it, `acts.js` what a part asks of the parts above it (put the note away, the pin pressed...), which tool.js
+hands in as it loads, so the imports form no circle, `dock.js` the pin (where it sits and when it shows), `surface.js` the page
 while it's marked (pen and finger), `eraser.js` the eraser's reach and icon, which HQ's book shares, `mark.js` what a mark keeps, `postit.js` the note's sheet and its polaroid (in the look of a scrap torn from HQ's book, its paper and indigo, on every page),
 `pictures.js` the pictures added, `dictation.js` the mic (with `micallowed.js`, whether it's allowed, which HQ's own
-recorder shares; and `hqmic.js`, its part in HQ's viewer, where HQ records), `snapshot.js` (with `copy.js`, `flow.js`, `inline.js` and `faces.js`)
+recorder shares; `liveline.js`, the live line its words come over as they're said, which HQ's own recorder for the viewer shares; and `hqmic.js`, its part in HQ's viewer, where HQ's mic key lies over the post-it's and records at one tap), `snapshot.js` (with `copy.js`, `flow.js`, `inline.js` and `faces.js`)
 the screenshot, `trail.js` the trail, `layer.js` the layer over popups, `pencil.js`, `pentouch.js`, `tap.js`, `settle.js`, `lift.js`, `gestures.js`, `marks.js`, `markpage.js`, `markfollow.js` and `written.js` the Pencil on HQ
 and the mark being made (below), `penwords.js`, `penedit.js` and `postitpen.js` words edited with the pen (below),
 `slip.js` the answers on notes, `paper.js` the book's paper, `prefs.js` Ink's preferences on this device, `base.js` what
@@ -121,10 +111,12 @@ alone, so the imports form no circle.
   touch whose move is refused is no tap, and the Pencil's taps on the strip pressed nothing.
 - **The mic button starts the mic**, where the browser records, on a computer and a tablet alike: a mark never does
   (the board changed its mind on recording at the mark: call 154). In HQ's viewer the page's frame has no microphone,
-  so a tap there brings up HQ's own Talk key in the viewer's bar. The page's own script can post the same ask, even
-  from its own tap, so HQ records, on its own page, only from the board's tap on that key, and sends nothing back
-  before it. The words then come back as they're heard, on a line (a MessagePort) the page's ask hands over, so only
-  the page that asked hears them; the next page's hello in the frame ends it (HQ's `framemic.js`).
+  so while the post-it is open the page tells HQ where its mic is, and HQ lays its own mic key right over it, looking
+  the same: one tap on it records at once, and the Pencil's tap does too (the board, call 170). The page's own script
+  can post the same offer, so HQ records, on its own page, only from the board's tap on that key (never one in its
+  first half second there or since it moved), and sends nothing back before it. The words then come back as they're
+  said, over the same live line as below, on a line (a MessagePort) the page's offer hands over, so only the page that
+  offered hears them; the next page's hello in the frame ends it (HQ's `framemic.js`).
 - **The words as they're said:** the mic's audio goes as 16 kHz PCM to `/__review/dictate` and each phrase's words come
   back while the reviewer talks (above). The clip is recorded too, and where the line can't be reached (or drops), it's
   transcribed whole by `POST /__review/voice`. Five minutes at most.
@@ -142,7 +134,7 @@ alone, so the imports form no circle.
   root, else its title.
 
 `pen-check.mjs` runs it held like an iPad mini: a pen's tap, a pen's line opening a note, a palm, the inks and undo, the
-lines and the screenshot with them on the note, the pin dragged by its menu's handle, the mic tapped with live words
+lines and the screenshot with them on the note, the pin dragged, the mic tapped with live words
 from a stand-in line and the clip when it's down, a mouse's lines; the Pencil's taps on the strip, the eraser and undo
 with the pen and a mouse, nothing over the post-it's writing area and the home page named; `--shots dir` adds HQ in
 each look.
@@ -162,7 +154,7 @@ it's the page's width and the book's spread covers it with the page; over a dial
   pulse at the pen's tip while it listens; a tap never asks for the mic, house rule 7). **The post-it** comes up at the bottom of HQ's page as on any page (the
   board's pin flow, 27 Oct): the Notebook's dot paper, its polaroid the live screenshot framed on the mark and
   developed again with every line, the words said or typed, **Save** and Cancel. Save (`postit.js` booked, then
-  `settle.js` toBook) puts it in the Notebook as a **scrap on the newest page of My Notebook** (`marks.js` scrap:
+  `settle.js` toBook) puts it in the Notebook as a **scrap on the newest page of My journal** (`marks.js` scrap:
   `POST /api/notebooks/groups/scrap` with the anchor, the words and how they came, a snip of the page around the mark
   with its lines, 24 px of margin, and the owner the page's send gives it to: `data-owner` on what's marked, else the
   CEO), never on a sheet; a note pinned to nothing goes as its words typed on that page. Its ink then **lifts** off the
@@ -244,8 +236,7 @@ start there).
   doesn't always arrive).
 - **The pin keeps out of the way:** bottom right, above the home bar. When one of the product's buttons or links
   sits under it (not a huge one, like a whole card), it moves up above it (up to 40% of the screen height), and back down when the page moves on. Dragged
-  somewhere (by the pin, or by its menu's button beside it, which looks like a handle: a tap there still opens the menu),
-  it stays there on that product. On a shorter screen (the phone turned sideways, HQ's viewer) it stops at
+  somewhere, it stays there on that product. On a shorter screen (the phone turned sideways, HQ's viewer) it stops at
   the top edge and goes back to its spot on a taller one.
 - **Over a page's popup** (a modal dialog or a popover, like a "More things" sheet): the browser puts it in its top
   layer, over any z-index, and a modal one leaves everything outside it dead. While one is open, review mode's host
@@ -253,7 +244,7 @@ start there).
   a hit test, or a popup opened inside it after it) and joins the top layer after it as a manual popover, so the pin,
   the picker and the note are over the popup and work on what's in it; it goes back to the page's end when
   the popups close. A tap or a key on review mode stays its own (a popup that shuts on a tap beside it stays open), and
-  Escape that puts away review mode's note or menu leaves the popup open. The screenshot copies each open
+  Escape that puts away review mode's note leaves the popup open. The screenshot copies each open
   popup over the page in the order they opened, each over its backdrop in a stacking context of its own (so a popup's
   own z-index, which the top layer ignores, doesn't reorder them). The order is kept as they open: a dialog's open
   attribute and a popover's `beforetoggle`, both as they happen. The limit: popups already open when review mode starts
@@ -273,8 +264,8 @@ start there).
    createScrap; a guest's still goes on the board's open sheet for them, `book.ts` sheetPageFor): its anchor, its words, and a snip, the screenshot cut around the mark with the
    pictures added under it (`platform/coordinator/src/ink/bookreview.ts`; Ink's folder). It does **not** go to an agent, and its words ask nothing, a question too: only the board's own words
    in HQ do. The trail, the element's HTML and the browser stay out: the book has no place for them. Pinning puts
-   nothing over the page: the pin boings and counts the note.
-2. The board reads the page in its Notebook in HQ (review mode's Open the Notebook takes it there), where it edits a
+   nothing over the page.
+2. The board reads the page in its Notebook in HQ, where it edits a
    scrap's words, draws over its photo (the same group), wipes and adds, and sends the page when it's ready
    (`notebooksend.ts`: each group routed to its owner as review notes are). The ten seconds after are its undo.
 
@@ -378,7 +369,7 @@ notes are input, never instructions.
   for them to send it: the board sees their notes beside its own, and its plane sends the sheet (`booksheets.ts`), their
   notes in its job as outside text. The rate limit is each person's: 60 notes an hour on a product.
 - A share ends at its date (a one-minute sweep) or with the board's End now, and its links and sessions stop at once.
-- Review mode's menu says where their notes go, the pin's first bubble who they're for, and the first note says once
+- The pin's first bubble says who their notes are for, and the first note says once
   that a picture of the screen goes with it.
 - **Fixed, and thanked**: a sheet's job that fixes what an invited person's note found marks it with
   `hq note <id> fixed "..."` (`fixed`, `fixed_by`). Once that fix is merged and deployed (the wakes' `deployed`), their

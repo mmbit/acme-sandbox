@@ -121,18 +121,16 @@ export async function post(r, { anchor, live, words, said, snip, by }) {
   if (!r.call) return scrap(r, { anchor, words, said, snip, owner });
   const page = await pageOf(r, owner);
   const { note } = await send('/note', { page: page.id, anchor, words, said, snip, ...(by ? { by } : {}) });
-  if (owner) r.lastOwner = owner; // (the sheet review mode's menu names: menu.js.)
   if (!by)
     document.dispatchEvent(
       new CustomEvent('pencil:note', { detail: { id: note.id, n: note.n, page: page.id, call: page.call ?? null } }),
     );
   return note;
 }
-// Off a call, the mark is a scrap on the newest page of My Notebook (the board's pin flow, 27 Oct: not a sheet), the
+// Off a call, the mark is a scrap on the newest page of My journal (the board's pin flow, 27 Oct: not a sheet), the
 // owner the one its page's send gives it to. Returns the group, with group: true (its id and page are the group's).
 async function scrap(r, { anchor, words, said, snip, owner }) {
   const g = await toNotebook('/groups/scrap', { anchor, words, said, snip, owner });
-  r.lastOwner = owner;
   document.dispatchEvent(
     new CustomEvent('pencil:note', { detail: { id: g.id, page: g.page, call: null, group: true } }),
   );

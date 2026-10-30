@@ -42,6 +42,7 @@ import {
   reviewFinished,
   boardDecided,
   fixFailed,
+  keepsFixNote,
   touchedUp,
   archiving,
   withdrawn,
@@ -83,6 +84,7 @@ import * as meetingseats from './meetingseats.ts';
 import * as meetingroom from './meetingroom.ts';
 import * as threadorder from './threadorder.ts';
 import * as threadends from './threadends.ts';
+import * as threadjudge from './threadjudge.ts';
 import { cardProblem } from '../../hq/shell/cardcheck.js';
 import * as asking from '../../hq/shell/questions.js'; // a card's questions as form fields, the guest checklist's engine
 import * as cardFiles from './cardfiles.ts'; // a card's files to download
@@ -256,9 +258,10 @@ type NewJob = {
   insteadOf?: number | number[];
   only?: string; // the work only one engine does it's declared to do (engineonly.ts).
   judges?: string[]; // the files a review judges (review.ts toPanel).
-  expedite?: boolean; // the CEO's structural HQ fix: first in line, merged on its checks
+  expedite?: boolean; // the CEO's structural HQ fix, or work the board needs now: first in line, merged on its checks
   carry?: string; // a commit main took outside a pull request HQ merged, which the job only checks (carries.ts)
   light?: boolean; // its model is a lighter one its queuer chose (hq job --model)
+  incident?: boolean; // HQ's call to the CEO about something broken, on the worker's incident slot too (incidents.ts)
 };
 
 //
@@ -331,7 +334,7 @@ function insertJob(
   // customers: a tool put a customer's own details in its prompt (handedCustomerData, below)
   const { lastInsertRowid } = db
     .prepare(
-      'insert into jobs (created, agent, title, prompt, engine, kind, pr, round, branch, after, sha, queued_by, customers, call, item, downtime, model, effort, stage, step, writes, for_seat, cli, thread, is_check, instead_of, code, engine_only, judges, expedite, carry, light) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'insert into jobs (created, agent, title, prompt, engine, kind, pr, round, branch, after, sha, queued_by, customers, call, item, downtime, model, effort, stage, step, writes, for_seat, cli, thread, is_check, instead_of, code, engine_only, judges, expedite, carry, light, incident) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
     )
     .run(
       new Date().toISOString(),
@@ -366,22 +369,25 @@ function insertJob(
       j.expedite ? 1 : 0,
       j.carry ?? null,
       j.light && !only ? 1 : 0, // (not where work only one engine does sets its model)
+      j.incident ? 1 : 0,
     );
   return Number(lastInsertRowid);
 }
 
-// A work job in a thread is a task added to its project's plan (plan.ts), by whoever queued it, else by HQ.
+// A work job in a thread is a task added to its project's plan (plan.ts), by whoever queued it, else by HQ, and takes
+// the thread out of a judge that hasn't started (threadjudge.ts release).
 function taskAdded(id: number, j: { title: string; queuedBy?: string; plannedBy?: string }) {
   const t = db
     .prepare('select t.id, t.project from jobs j join threads t on t.id = j.thread where j.id = ?')
     .get(id) as { id: string; project: string } | undefined;
-  if (t)
-    planChange({
-      project: t.project,
-      thread: t.id,
-      what: `task #${id} added: ${j.title}`,
-      by: j.plannedBy ?? j.queuedBy ?? 'hq',
-    });
+  if (!t) return;
+  planChange({
+    project: t.project,
+    thread: t.id,
+    what: `task #${id} added: ${j.title}`,
+    by: j.plannedBy ?? j.queuedBy ?? 'hq',
+  });
+  threadjudge.release(t.id);
 }
 
 // ---- replacements
@@ -1562,7 +1568,7 @@ function claimable(
       j.status = 'running' yielding
     from jobs j where (j.status = 'queued' or j.status = 'running' and j.id in (select value from json_each($yielding)))
     and j.not_before <= $now
-    and ($kind is null and (kind != 'chat' or j.engine != 'claude') or kind = $kind)
+    and ($kind is null and (kind != 'chat' or j.engine != 'claude') or kind = $kind or $kind = 'incident' and j.incident = 1)
     and (${seatTakes('$seat', '$cli')}
       or ${FALLS_BACK} and j.agent in (select value from json_each($fallbacks))
       and iif(j.for_seat is null, j.engine || ':' || coalesce(j.cli, j.engine) not in (select value from json_each($readyRunners)),
@@ -1836,11 +1842,18 @@ export function seatsOut(job: number, t = now()) {
 // board's pick (else a scheduled entry's lighter model or effort, schedule.ts, or its agent's) where the job is on the
 // pick's own. A job that began or was made on another (a pick changed, a fallback cleared after it moved) gets its
 // engine's, as a model of another engine is refused there. Work only one engine does runs on its rule's model, whatever
-// the pick or fallback (engineonly.ts.) A quick run thinks at QUICK_EFFORT (quickruns.ts).
+// the pick or fallback (engineonly.ts.) A quick run thinks at QUICK_EFFORT (quickruns.ts). The intercom, one session
+// resumed for every board line, compacts at models.yaml's `chat.autocompact` unless its agent has a size of its own.
 function modelOf(job: Job, found: NonNullable<ReturnType<typeof findAgent>>) {
   const picked = pickedModel(job, found),
-    rule = engineOnly.byId(job.engine_only);
-  return { ...picked, ...(rule && { model: rule.model }), ...(isQuickRun(job) && { effort: QUICK_EFFORT }) };
+    rule = engineOnly.byId(job.engine_only),
+    chatSize = readModels().chat?.autocompact;
+  return {
+    ...picked,
+    ...(rule && { model: rule.model }),
+    ...(isQuickRun(job) && { effort: QUICK_EFFORT }),
+    ...(isIntercom(job) && chatSize != null && found.ownAutocompact == null && { autocompact: chatSize }),
+  };
 }
 function pickedModel(job: Job, found: NonNullable<ReturnType<typeof findAgent>>) {
   const runner = models.runner(job),
@@ -1889,6 +1902,7 @@ export const ended = (ids: number[]) =>
 
 // The agent with its department, charter, its voice on calls (voiceOf), and the model, effort and auto-compact window it
 // runs on (company/models.yaml, overridable per agent in org.yaml). (voice)
+// (ownAutocompact, for modelOf's intercom size)
 export function findAgent(id: string) {
   const files = readModels();
   for (const d of org().departments ?? [])
@@ -1904,6 +1918,7 @@ export function findAgent(id: string) {
           model: a.model ?? m.model ?? null,
           effort: a.effort ?? m.effort ?? null,
           autocompact: a.autocompact ?? m.autocompact ?? null,
+          ownAutocompact: a.autocompact,
         };
       }
 }
@@ -2565,11 +2580,12 @@ function fileParkedCard(job: Job, request: NonNullable<RunEnd['request']>, body:
   });
 }
 
-// A run that ended. A stopped run keeps who stopped it and why.
+// A run that ended. A stopped run keeps who stopped it and why, and an author's fix that ended short of its push the
+// message it started with (review.ts keepsFixNote).
 function recordEnd(job: Job, r: RunEnd) {
   db.prepare(
-    "update jobs set status = ?, seat = null, result = ?, finished = ?, note = null, stopping = case when ? = 'stopped' then stopping end, landing = null where id = ?",
-  ).run(r.status, r.result ?? null, new Date().toISOString(), r.status, job.id);
+    "update jobs set status = ?, seat = null, result = ?, finished = ?, note = case when ? then note end, stopping = case when ? = 'stopped' then stopping end, landing = null where id = ?",
+  ).run(r.status, r.result ?? null, new Date().toISOString(), Number(keepsFixNote(job, r.status)), r.status, job.id);
   settle(job, 'idle');
   // (the feed shows the opening; the whole report stays on the job, for the projects view and the call notes)
   publish({
@@ -2589,10 +2605,11 @@ function handOn(job: Job, r: RunEnd) {
       job,
       r.status === 'stopped' ? 'stopped' : r.status === 'failed' ? 'failed' : 'ended done with no pull request',
     );
-  // (one that pushed nothing, or failed, ends its thread, once all of it is in: threadends.ts endedEmpty.)
-  const ended = r.status === 'failed' || (r.status === 'done' && !r.sha);
+  // (one that pushed nothing, failed or stopped ends its thread, or wakes its owner to judge it, once all of it is in:
+  // threadends.ts runEnded.)
+  const ended = r.status === 'failed' || r.status === 'stopped' || (r.status === 'done' && !r.sha);
   if ((job.kind === 'work' || job.kind === 'meeting') && ended && !r.pr && !later && job.thread)
-    threadends.endedEmpty(job.thread);
+    threadends.runEnded(job.thread);
   // Hand-offs to the review panel: a finished pull request gets reviewed; finished reviews move on.
   if ((job.kind === 'work' || job.kind === 'chat') && r.status === 'done' && r.pr)
     startReview(

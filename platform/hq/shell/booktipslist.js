@@ -37,13 +37,14 @@ export const TIPS = [
   {
     part: 'Writing',
     title: 'Tap the pin to draw without a Pencil',
-    words: 'With a mouse or a finger, tap the pin among the book’s controls, then draw on HQ the same way.',
-    from: 'platform/hq/shell/pinsummon.js',
+    words: 'With a mouse or a finger, turn on Settings › Pin on HQ, then tap the pin and draw on HQ the same way.',
+    // (the pin a pen on HQ's page, as review mode draws it.)
+    from: 'platform/hq/shell/pinsetting.js',
     scene: draw.scene(
       draw.hqPage(),
       draw.bookEdge(),
-      `<g class="tb-pin" transform="translate(222 52) rotate(45)"><path d="M-3-9h6l-.8 5.5L5-1v2H-5v-2l2.8-2.5z"/><path d="M0 1v8"/></g>`,
-      draw.tap(222, 54, 0.15),
+      `<g class="tb-pin" transform="translate(140 122)"><path d="M-7 7l1.5-5 8-8 3.5 3.5-8 8z"/><path d="M-5.5 2l3.5 3.5"/></g>`,
+      draw.tap(140, 122, 0.15),
       draw.during(0.22, 1, '<circle class="tb-pinned" cx="146" cy="128" r="8"/>'),
       draw.written('M40 98c20-8 50-8 70 0', 0.42, 0.66, { by: draw.mouse }),
     ),
@@ -201,8 +202,8 @@ export const TIPS = [
     part: 'Answers',
     title: 'Circle a version to choose it',
     words:
-      'When an agent tries a few versions, circle or tick the one you like on its versions page: it’s stamped THIS ONE and the agent is told which.',
-    from: 'platform/hq/shell/ink/bookversionframes.js',
+      'When an agent tries a few versions, they show under your note. Circle the one you like: it’s stamped CHOSEN, and once you submit the page it’s built and the rest are cleared.',
+    from: 'platform/hq/shell/ink/bookversions.js',
     scene: draw.scene(
       draw.bookPage(),
       ...[0, 1, 2].map(i => `<rect class="tb-photo" x="${34 + i * 60}" y="40" width="52" height="40" rx="2"/>`),
@@ -212,14 +213,15 @@ export const TIPS = [
   },
   {
     part: 'Controls',
-    title: 'Drag a page’s corner to share it',
+    // (Submit, the call's target gone)
+    title: 'Tear a page out by its corner to submit it',
     words:
-      'Drag the turned-down corner of a page onto PDF or PNG to keep or send it, or onto the agent’s name to call them with the page (on a call, it shows there). Tap the corner for the same choices.',
-    from: 'platform/hq/shell/ink/bookdogear.js, platform/hq/shell/ink/bookshare.js',
+      'Drag the turned-down corner of a page onto Submit: it flies off as a paper plane, and the page is stamped Sent and locked. Onto PDF or PNG to keep or share it. Tap the corner for the same choices.',
+    from: 'platform/hq/shell/ink/bookdogear.js, platform/hq/shell/ink/bookshare.js, platform/hq/shell/ink/bookpagesend.js',
     scene: draw.scene(
-      target(26, 'PDF'),
-      target(62, 'PNG'),
-      target(98, 'Call'),
+      target(26, 'Submit'),
+      target(62, 'PDF'),
+      target(98, 'PNG'),
       draw.during(0.5, 1, '<rect class="tb-picked" x="192" y="58" width="48" height="34" rx="7"/>'),
       draw.during(
         0,

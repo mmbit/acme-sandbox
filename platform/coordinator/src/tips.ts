@@ -94,8 +94,12 @@ function waitingRun(before: string) {
 }
 const boardAsked = (since: string) => !!db.prepare("select 1 from chat where who = 'board' and ts > ?").get(since);
 const lateThread = (now: number) =>
-  db.prepare("select name from threads where status = 'open' and deadline <= ? order by deadline limit 1").get(now) as
-    { name: string } | undefined;
+  db
+    .prepare(
+      `select t.name from threads t join thread_windows w on w.id = t.id
+    where t.status = 'open' and w.deadline <= ? order by w.deadline limit 1`,
+    )
+    .get(now) as { name: string } | undefined;
 
 // The events only HQ's page sees, as they happen there. The logo pressed brings the look's tip. An urgent card on a
 // device without notifications brings theirs, whatever the company's other devices have (push.js urgentCards).

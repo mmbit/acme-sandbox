@@ -1,5 +1,5 @@
 // book-check.mjs's story of a call's notes page (shell/ink/calldraw.js; the store's ink/callnotes.ts), its voice line played and the store's events as the feed hands them to the book: the call
-// picked up with the book shut makes the call's notes page in My Notebook and leaves the book shut, and the agent's
+// picked up with the book shut makes the call's notes page in My journal and leaves the book shut, and the agent's
 // notes land on it one by one. On a screen wider than it is tall the first opens the book there, beside HQ's page, and
 // the next lands with it open; shut by the board, it stays shut as the last lands. On one taller than it is wide (an
 // upright phone or iPad) it stays shut (shell/ink/booklayout.js initial.). Hung
@@ -26,7 +26,7 @@ export const notesPageStories = c => ({
 });
 
 async function scrapsLand(browser, c, viewport, device) {
-  // (a store of its own, My Notebook made at its first read: the call's page starts empty, whichever story ran before)
+  // (a store of its own, My journal made at its first read: the call's page starts empty, whichever story ran before)
   const context = await c.hqIn(browser, viewport, { notebooks: {} });
   const line = await playLine(context);
   const page = await context.newPage(),
@@ -65,7 +65,7 @@ async function scrapsLand(browser, c, viewport, device) {
   }
 }
 // The network drops the notes page's ask twice. The board's mark makes the call's page, which the agent's first scrap
-// makes the notes page in My Notebook (the store's pageFor): hung up, HQ neither asks about it nor throws it away.
+// makes the notes page in My journal (the store's pageFor): hung up, HQ neither asks about it nor throws it away.
 async function notOpened(browser, c) {
   const context = await c.hqIn(browser, c.DESKTOP);
   const line = await playLine(context);
@@ -78,7 +78,7 @@ async function notOpened(browser, c) {
     asked.push(r.request().postDataJSON());
     return r.abort('failed');
   });
-  // (today's book as the store lists it at hang-up: the call's page, in My Notebook)
+  // (today's book as the store lists it at hang-up: the call's page, in My journal)
   const mark = { id: 9001, day: '2026-10-26', kind: 'call', call: 9, notebook: 1, strokes: 0, pictures: 0 };
   await page.route(`${c.base}/api/book`, r => {
     listed.push(Date.now());
@@ -185,9 +185,9 @@ const PROMISES = [
   'Promise for Juno: Put the title on one line',
   'Promise for you: try it on the iPad',
 ];
-// My Notebook with the call's page alone, empty
+// My journal with the call's page alone, empty
 export const callSeed = T => ({
-  notebooks: [{ id: 1, kind: 'mine', name: 'My Notebook', created: T, updated: T }],
+  notebooks: [{ id: 1, kind: 'mine', name: 'My journal', created: T, updated: T }],
   pages: [
     {
       id: 9101,
@@ -226,9 +226,7 @@ async function callSized(browser, c, viewport, device) {
       groups.filter(g => g.kind === 'scrap').map(g => ({ ...g.box, g: g.id })),
       await laidOut(page),
     );
-    // (seen as the board reads it, zoomed out a little, the scraps' pictures drawn)
-    for (let i = 0; i < 2; i++)
-      await page.locator('#book').getByRole('button', { name: 'Zoom out' }).dispatchEvent('click');
+    // (seen as the board reads it, the scraps' pictures drawn)
     await page.waitForTimeout(1500);
     await c.shot(`book-notes-call-sized-${device}`, page);
     c.noErrorsIn(errors);

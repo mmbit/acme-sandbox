@@ -28,7 +28,7 @@ export function moved(list, from, to) {
   return out;
 }
 
-// The Shelf in its order: My Notebook first, then the newest first (by its last change), the name breaking a tie
+// The Shelf in its order: My journal first, then the newest first (by its last change), the name breaking a tie
 export const shelfOrder = notebooks =>
   [...notebooks].sort(
     (a, b) =>

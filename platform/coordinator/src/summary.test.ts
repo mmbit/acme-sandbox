@@ -458,6 +458,8 @@ test("a finished replacement keeps its failed predecessor's answered card in the
     lands: work.id,
   });
   assert.equal(queued.status, 200, JSON.stringify(queued.body));
+  // (the failure woke juno to judge the deliverable, and landing it cancelled that judge: threadorder.test.ts)
+  assert.equal(db.prepare('select judge from threads where id = ?').get(thread)?.judge, null);
   const replacement = (await h.claim(h.job(queued.body.id).engine))!;
   assert.equal(replacement.id, queued.body.id);
   await h.finish(replacement);

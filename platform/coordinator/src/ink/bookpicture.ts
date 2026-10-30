@@ -5,13 +5,15 @@ import { existsSync, rmSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { db } from '../db.ts';
 import { keepFile } from '../uploads.ts';
-import { render } from './bookrender.ts';
+import { render, underHigh, type Drawn, type Said } from './bookrender.ts';
 import { DIR, notFound, serveFile } from '../pagescraps.ts';
 import { BOARD, drawnOf, row, type Page } from './book.ts';
-import { drawnGroups, shown, type Group } from '../notebookgroups.ts';
-import { slipsUnder, underAt } from '../../../hq/shell/ink/notebookstack.js';
-import { inkOf } from '../../../hq/shell/ink/agentink.js';
-import type { Answer, Said, Under } from './bookrender.ts';
+import { partsOf, shown, type Group } from '../notebookgroups.ts';
+import { CAPTION, slipsUnder, underAt } from '../../../hq/shell/ink/notebookstack.js';
+import { shifted } from '../../../hq/shell/ink/notebookparts.js';
+import { UNIT_W } from '../../../hq/shell/ink/scrapunit.js';
+import type { Stroke, Typed } from '../pagechecks.ts';
+import { layout, widthFor } from '../../../hq/shell/ink/masonry.js';
 
 // GET /api/book/picture?id=: the page as a picture, drawn here (an image or nothing, never kept in a cache)
 export async function servePicture(req: IncomingMessage, res: ServerResponse, who: string | null = BOARD) {
@@ -22,31 +24,15 @@ export async function servePicture(req: IncomingMessage, res: ServerResponse, wh
 }
 // How the pictures kept are drawn, in their files' names: a page's picture drawn another way is drawn again when next
 // read. Change it with what render() draws.
-const DRAWING = 'x';
+const DRAWING = 'u';
 
 // The page's picture's file in DIR: the one kept since its last change, or drawn now and kept. null: the page was
 // deleted while it was drawn.
 export async function pictureOf(p: Page): Promise<string | null> {
   const current = p.picture?.startsWith(`${p.id}-${DRAWING}-`);
   if (current && existsSync(`${DIR}/${p.picture}`)) return p.picture;
-  const { ink, texts } = drawnOf(p.id);
-  // (a notebook page's groups drawn over what the page has of its own, what's under them and its answers as wide as
-  // they're set)
-  const { x, y, h } = p,
-    groups = drawnGroups(p.id),
-    { under, answers } = answersOn(p.id);
-  const drawn = {
-    x,
-    y,
-    w: Math.max(p.x + p.w, ...[...under, ...answers].map(o => o.x + o.w)) - x,
-    h,
-    ink: [...JSON.parse(ink), ...groups.ink],
-    scraps: [...JSON.parse(p.scraps), ...groups.pictures],
-    texts: [...JSON.parse(texts), ...groups.texts],
-    under,
-    answers,
-  };
-  const png = await render(drawn, DIR);
+  const page = db.prepare('select notebook from book_pages where id = ?').get(p.id) as { notebook: number | null };
+  const png = await render(page.notebook === null ? bookPage(p) : await unitsPage(p.id), DIR);
   const name = `${p.id}-${DRAWING}-${randomBytes(4).toString('hex')}.png`;
   keepFile(`${DIR}/${name}`, png);
   // (a change while it was drawn, or another draw of the same page kept first: this one goes, and the page's picture
@@ -63,34 +49,51 @@ export async function pictureOf(p: Page): Promise<string | null> {
   return name;
 }
 
-// What the book draws of a page's groups past their parts:
-// under each a scrap's words and the answers and replies slipped under it (notebookstack.js slipsUnder), and the answers the store
-// placed at their spots (bookanswers.js), in the page's px. A version is its own page's; a reply to an answer at its
-// spot is its ink, a group's part.
-function answersOn(page: number) {
+// A page of the book's own, from before the notebook: its ink, typed words and scraps where they lie
+function bookPage(p: Page): Drawn {
+  const { ink, texts } = drawnOf(p.id);
+  return {
+    ...{ x: p.x, y: p.y, w: p.w, h: p.h },
+    ink: JSON.parse(ink),
+    scraps: JSON.parse(p.scraps),
+    texts: JSON.parse(texts),
+  };
+}
+// A notebook page as its units in their order, laid out as the page lays them, each unit's parts at its place and
+// what's under it right below its height: a scrap's words and the answers and replies slipped under it
+// (notebookstack.js slipsUnder), each unit as tall in the layout as it and what's under it stand. A reply's ink is its
+// own group's, drawn by HQ, not on the picture.
+async function unitsPage(page: number): Promise<Drawn> {
   const tops = db
-    .prepare('select * from notebook_groups where page = ? and parent is null and deleted is null order by id')
+    .prepare('select * from notebook_groups where page = ? and parent is null and deleted is null order by pos, id')
     .all(page) as Group[];
-  const under: Under[] = [],
-    answers: Answer[] = [];
+  const units = [];
   for (const g of tops) {
-    const { box, children } = shown(g);
-    if (!box) continue;
-    const slips: Said[] = slipsUnder(children).map(c =>
-      c.kind === 'reply'
-        ? { name: null, text: c.words || (c.ink.length ? 'Written reply' : '') }
-        : { name: c.name, text: c.text, ...slipPicture(c.id) },
-    );
-    const words = g.kind === 'scrap' ? g.words : '';
-    if (words || slips.length) under.push({ ...underAt(box, g.kind), text: words, slips });
-    for (const c of children)
-      if (c.kind === 'answer' && c.spot && c.style !== 'version')
-        answers.push({
-          ...{ x: box.x + c.spot.dx, y: box.y + c.spot.dy, w: c.spot.w },
-          ...{ name: c.name, color: inkOf(c.by), text: c.text, ink: c.ink ?? [], ...slipPicture(c.id) },
-        });
+    const parts = partsOf(g),
+      h = g.h!,
+      slips: Said[] = slipsUnder(shown(g).children)
+        .map(c =>
+          c.kind === 'reply'
+            ? { name: null, text: c.words || (c.ink.length ? 'Written reply' : '') }
+            : { name: c.name, text: c.text, ...slipPicture(c.id) },
+        )
+        .filter(said => said.text?.trim()); // (an answer still being written has nothing to show yet)
+    const text = g.kind === 'scrap' ? g.words : '',
+      under = text || slips.length ? { ...underAt({ x: 0, y: 0, w: UNIT_W, h }, g.kind), text, slips } : null;
+    const below = under ? CAPTION.top + (await underHigh(under, DIR)) : 0;
+    units.push({ id: g.id, h: h + below, parts, under });
   }
-  return { under, answers };
+  // (two columns wide: the picture agents read of a page, at scale 1)
+  const w = widthFor(2),
+    { places, height } = layout(units, w),
+    on = units.map((u, i) => ({ ...u, parts: shifted(u.parts, places[i].x, places[i].y), at: places[i] }));
+  return {
+    ...{ x: 0, y: 0, w, h: height },
+    ink: on.flatMap(u => u.parts.ink) as Stroke[],
+    scraps: on.flatMap(u => u.parts.pictures),
+    texts: on.flatMap(u => u.parts.texts) as Typed[],
+    under: on.flatMap(u => (u.under ? [{ ...u.under, x: u.under.x + u.at.x, y: u.under.y + u.at.y }] : [])),
+  };
 }
 // An answer's picture's file
 function slipPicture(slip: number) {

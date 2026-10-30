@@ -1,13 +1,13 @@
-// The played Notebook for book-check's answers stories (bookanswers.mjs): a
-// page's groups and their children, the open list and HQ's feed routed over book-check's store; HQ opened on it; an
-// element of the answers' layer measured in its page's px; a stroke as Safari hands a pen's over; the four symbols; a
-// note tried in versions.
-import { freePage } from './bookmouse.mjs';
+// The Notebook for book-check's answers stories (bookanswers.mjs): a story's own seed of the store, a page with the
+// board's groups and the agents' answers on them, played by HQ's one stand-in (notebookroute.mjs on a notebookPlay(),
+// hqIn's notebooks) and changed mid-story through that play; HQ opened on it; an element of the answers' layer measured
+// in its page's px; a stroke as Safari hands a pen's over; the four symbols; a note tried in versions.
 import { answerSpot } from '../coordinator/src/ink/answerspot.ts';
+import { boxOf } from './shell/ink/notebookstack.js';
 
-// How long a story waits on what the feed brings (a face, an answer, a reply drawn) or the pen writes in: HQ reads its
-// page again only once the feed's event reaches it, and on a loaded machine under the 3D scene that read comes seconds
-// late, not missing. A bound for something broken, never a pace: a story waits on the state itself.
+// How long a story waits on what the store brings (a face, an answer, a reply drawn) or the pen writes in: HQ reads
+// its page again only once the store's event reaches it, and on a loaded machine under the 3D scene that read comes
+// seconds late, not missing. A bound for something broken, never a pace: a story waits on the state itself.
 export const FEED_MS = 20_000;
 // The paper a desktop's book spread wide shows, as the store places answers for it (answerspot.ts)
 const WIDE = { x: 0, w: 1200 };
@@ -21,90 +21,50 @@ export const placed = (nb, g, a) =>
     WIDE,
   );
 
-// ---- the played Notebook: a page's groups and their children, the open list, and HQ's feed
-export function notebookOn(c, page) {
+// ---- the story's Notebook: My journal with one page (p, numbered clear of the old book's; page: its own columns, a
+// call's kind and label), the board's typed groups on it and the agents' answers, as the store keeps them
+// (notebookplay.js's seed)
+export function notebookOn(c, page = {}) {
   const ceo = c.org.company.ceo,
     name = c.org.agents?.[ceo]?.name ?? ceo,
-    groups = [],
-    feed = [],
-    open = { forms: [], questions: [] };
+    at = Date.now(),
+    T = new Date(at).toISOString();
+  const p = { id: 9500, notebook: 1, pos: 0, created: T, updated: T, w: 1200, h: 1600, ...page };
+  const seed = {
+    notebooks: [{ id: 1, kind: 'mine', name: 'My journal', created: T, updated: T }],
+    pages: [p],
+    groups: [],
+    slips: [],
+    names: { [ceo]: name },
+  };
+  // (a group's box as the store reads it from its parts: notebookstack.js boxOf. Seeded as a unit already, h its
+  // parts' foot, so the store keeps them where the story wrote them: the answers layer reads that box in its page's px)
   const typed = (id, words, x, y) => ({
-    id,
-    page: page.id,
-    kind: 'drawing',
-    by: 'board',
-    ink: [],
-    texts: [{ x, y, w: 260, color: '#2b2230', text: words }],
-    pictures: [],
-    words,
-    said: 'typed',
-    status: 'open',
-    note: null,
-    box: { x, y, w: 260, h: 40 },
-    created: new Date().toISOString(),
-    updated: new Date().toISOString(),
-    anchor: null,
-    owner: null,
-    owner_name: null,
-    children: [],
+    ...{ id, page: p.id, kind: 'drawing', ink: [], texts: [{ x, y, w: 260, color: '#2b2230', text: words }] },
+    ...{ words, said: 'typed', created: T, updated: T },
+    get box() {
+      return boxOf({ ink: this.ink, texts: this.texts, pictures: [] });
+    },
+    get h() {
+      return Math.ceil(this.box.y + this.box.h);
+    },
   });
-  const answer = (id, style, text, spot, more = {}) => ({
-    kind: 'answer',
-    id,
+  // An agent's answer on group g: for the seed with its id, or for play.answer mid-story without (the store's)
+  let made = 0;
+  const answer = (g, id, style, text, spot, more = {}) => ({
+    ...(id && { id, grp: g.id }),
     by: ceo,
-    name,
     style,
     text,
-    picture: null,
-    ink: null,
-    form: null,
-    form_answer: null,
-    version: null,
     spot,
-    ticked: null,
-    picked: null,
-    created: new Date().toISOString(),
+    created: new Date(at + ++made).toISOString(),
     ...more,
   });
-  const tell = () => feed.push({ type: 'book', agent: ceo, text: 'notebook', page: page.id });
-  return { ceo, name, groups, feed, open, typed, answer, tell };
+  return { p, ceo, name, seed, groups: seed.groups, typed, answer };
 }
-// The story's notebook routed in the browser: the feed, the page's groups and the answers' routes (more: a story's own)
-export async function routed(context, c, nb, more = {}) {
-  await context.route(`${c.base}/api/events`, r =>
-    r.fulfill({
-      contentType: 'text/event-stream',
-      body: `retry: 150\n\n${nb.feed
-        .splice(0)
-        .map(e => `data: ${JSON.stringify(e)}\n\n`)
-        .join('')}`,
-    }),
-  );
-  await context.route(/\/api\/notebooks/, r => {
-    const url = new URL(r.request().url()),
-      body = r.request().method() === 'POST' ? r.request().postDataJSON() : null;
-    if (body) c.posts.push({ path: url.pathname, body });
-    // (a story's own answer to a route first: a reply's stand-in judge.)
-    const own = more[url.pathname];
-    if (own) return r.fulfill({ json: own(url, body) });
-    if (url.pathname === '/api/notebooks/pages/groups') {
-      const id = +url.searchParams.get('page'),
-        tried = nb.groups.find(g => g.tries_page === id);
-      // (a versions page: the group it tries, and its versions among that group's children)
-      if (tried) return r.fulfill({ json: { page: id, groups: [], tries: tried.id, tried } });
-      return r.fulfill({ json: { page: id, groups: nb.groups.filter(g => g.page === id) } });
-    }
-    if (url.pathname === '/api/notebooks/open') return r.fulfill({ json: nb.open });
-    if (url.pathname === '/api/notebooks/groups/reply')
-      return r.fulfill({ json: { id: 9000 + c.posts.length, parent: 0 } });
-    if (url.pathname === '/api/notebooks/answers/form') return r.fulfill({ json: { ok: true } });
-    return r.fallback();
-  });
-}
-// HQ on the played store at a size, the book open on its last page (the one the story made)
-export async function opened(browser, c, viewport, nb, options = {}, more = {}) {
-  const context = await c.hqIn(browser, viewport, options);
-  await routed(context, c, nb, more);
+// HQ on the story's Notebook at a size, the book open on its page; play: the store it's opened on
+export async function opened(browser, c, viewport, nb, options = {}) {
+  const context = await c.hqIn(browser, viewport, { ...options, notebooks: nb.seed });
   const page = await context.newPage(),
     errors = [];
   page.on('pageerror', e => errors.push(e.message));
@@ -123,8 +83,11 @@ export async function opened(browser, c, viewport, nb, options = {}, more = {}) 
     );
   }
   await page.waitForSelector('#book .bk-answers', { state: 'attached', timeout: 60_000 });
-  return { page, errors, done: () => context.close() };
+  return { page, errors, play: context.notebook, done: () => context.close() };
 }
+// Group g's children (its answers and the board's replies) as the store reads them now
+export const childrenOf = (play, g) =>
+  play.route('/api/notebooks/pages/groups', { page: g.page }).groups.find(x => x.id === g.id).children;
 export const layer = page => page.locator('#book .bk-answers');
 // An element of the answers' layer in its page's px (its page's layer sits at the page's origin, scaled with it)
 export const pagePx = (page, selector) =>
@@ -215,38 +178,19 @@ export const SYMBOLS = {
 // (a version's frame: an 8 × 6 picture, as the try run shoots them)
 const RED =
   'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAgAAAAGCAIAAABxZ0isAAAAEUlEQVR4nGN4ZmODFTEMpAQAW3NBof5buBkAAAAASUVORK5CYII=';
-// A board's note tried in versions: its page (p), its versions page made after it (tries, the one the book opens on),
-// the played Notebook on them, the note, a version made, and the store's routes listing the pages (bookanswers.mjs and
-// bookpicks.mjs, out of bookanswers.mjs)
-export function triedNote(c) {
-  const p = freePage(c),
-    tries = freePage(c),
-    nb = notebookOn(c, p),
+// A board's note tried in versions: the played Notebook, the note (its try going, three versions said) and a version
+// made on it (A, B, C… as they come: its screenshot and its staging preview's address), for the seed with its id, or
+// for play.answer mid-story without (bookanswers.mjs and bookpicks.mjs). page: its page's own columns (notebookOn).
+export function triedNote(c, page = {}) {
+  const nb = notebookOn(c, page),
     warmer = nb.typed(4400, 'warmer?', 60, 60);
-  Object.assign(tries, { label: `${nb.name} tries: warmer?`, tries: warmer.id });
-  warmer.tries_page = tries.id;
-  const version = (id, name, picture = RED) =>
-    nb.answer(id, 'version', `${name}, as it would look`, null, { version: name, picture });
-  nb.groups.push(warmer);
-  // (made a minute apart in order, the versions page last: the book lands on the newest.)
-  const tile = (x, i) => ({
-    id: x.id,
-    title: x.label || 'Free page',
-    tries: x.tries ?? null,
-    sent: null,
-    sending: false,
-    archived: false,
-    groups: 0,
-    created: new Date(Date.UTC(2026, 0, 1, 9, i)).toISOString(),
-  });
-  const listed = () => ({
-    notebook: { id: 1, name: 'My Notebook', kind: 'mine', archived: false },
-    pages: c.pages.map(tile),
-    archived: [],
-  });
-  const more = {
-    '/api/notebooks': () => ({ shelf: [listed().notebook], archive: [] }),
-    '/api/notebooks/pages': listed,
+  warmer.tried = { by: nb.ceo, expect: 3, going: true };
+  const version = (id, name, picture = RED) => {
+    const slug = name.toLowerCase().replace(/\W+/g, '-');
+    return nb.answer(warmer, id, 'version', `${name}, as it would look`, null, {
+      ...{ version: name, picture, link: `https://try-${slug}.preview.example.com/`, branch: `try/${slug}` },
+    });
   };
-  return { p, tries, nb, warmer, version, more };
+  nb.groups.push(warmer);
+  return { nb, warmer, version };
 }

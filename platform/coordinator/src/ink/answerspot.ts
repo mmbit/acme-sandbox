@@ -6,9 +6,8 @@
 // spot that runs past a narrower paper the board reads on (NARROWER: the book beside HQ's page, a phone's, the book at
 // its least) keeps a narrow spot too, placed there the same way, and that one its own for the next narrower paper it
 // runs past, which HQ draws where the spot doesn't fit the paper (bookanswers.js): no screen moves an answer onto paper
-// not cleared for it, nor under the controls. Whenever the board's groups come to cover a spot, any of its spots
-// (written, edited, moved onto the page or brought back by Undo), that spot moves down clear again (downAgain, from
-// answerplace.ts spotsClear). Pure, so it's tested alone (answerspot.test.ts); bookanswer.ts gives it the page.
+// not cleared for it, nor under the controls. Pure, so it's tested alone (answerspot.test.ts). Only book-check's answer
+// stories read it (hq/bookanswers*.mjs): the store places no answer, one slips under its scrap.
 
 // (HQ's layout, the papers and controls an answer is placed for)
 import { BOOK, CONTROLS, paperWidth } from '../../../hq/shell/ink/booklayout.js';
@@ -19,10 +18,12 @@ export type Box = { x: number; y: number; w: number; h: number };
 // picture by its real size); narrow: where it lies on the next narrower paper this spot runs past (NARROWER)
 export type Spot = { dx: number; dy: number; w: number; h: number; narrow?: Spot };
 
-// What an answer holds, for its height: its words, a picture's size, its ink's height, a form's questions
+// What an answer holds, for its height: its words, a picture's size and whether a source line goes under it, its ink's
+// height, a form's questions (source)
 export type Contents = {
   text?: string;
   picture?: { width: number; height: number } | null;
+  source?: boolean;
   ink?: number | null;
   questions?: number;
 };
@@ -40,6 +41,7 @@ export const ANSWER = {
   head: 40,
   reply: 48,
   question: 56,
+  source: 20,
   rail: CONTROLS.width + CONTROLS.clear,
   inset: 12,
 } as const;
@@ -66,8 +68,15 @@ export function answerHeight(a: Contents, w: number = ANSWER.w) {
   const chars = Math.max(1, Math.floor((ANSWER.chars * w) / ANSWER.w));
   const lines = (a.text ?? '').split('\n').reduce((sum, l) => sum + Math.max(1, Math.ceil(l.length / chars)), 0);
   const picture = a.picture ? Math.round((a.picture.height * w) / Math.max(1, a.picture.width)) : 0;
+  const source = a.source ? ANSWER.source : 0;
   return (
-    ANSWER.head + lines * ANSWER.line + picture + (a.ink ?? 0) + (a.questions ?? 0) * ANSWER.question + ANSWER.reply
+    ANSWER.head +
+    lines * ANSWER.line +
+    picture +
+    source +
+    (a.ink ?? 0) +
+    (a.questions ?? 0) * ANSWER.question +
+    ANSWER.reply
   );
 }
 

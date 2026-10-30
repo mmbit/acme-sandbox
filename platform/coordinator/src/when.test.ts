@@ -472,3 +472,14 @@ test('a 5x added seat exhausts its measured weekly allowance and waits for its o
   assert.equal(largeThread.after.standing, 'holds');
   assert.equal(smallThread.after.standing, 'misses');
 });
+
+test('--by replays an uncapped Claude seat when the existing seat has exhausted its allowance', async () => {
+  await h.worker('room', { capacity: { slots: { claude: 1, codex: 1 }, seatRuns: { codex: 1 }, room: 16 } });
+  await reading('claude-a', 'claude', 0.99);
+  const by = T0 + 100 * MIN;
+  const quoted = (await ask({ q: 'paint the harbour map', size: '10m', by: utc(by) })).body.by;
+  assert.equal(quoted.makes, false);
+  assert.ok(quoted.seat?.makes, JSON.stringify(quoted));
+  assert.ok(quoted.seat.finish <= by);
+  assert.deepEqual(quoted.seat.gives, []);
+});

@@ -170,7 +170,7 @@ const note = (ps: string, words: string, hold?: Promise<unknown>, shot?: string)
     },
     hold,
   );
-// An invited person's notes in the board's My Notebook (scraps, theirs by their grant: by, once it's taken back)
+// An invited person's notes in the board's My journal (scraps, theirs by their grant: by, once it's taken back)
 const theirs = (name: string, by = sketchPeople.whoOf(sketchPeople.grantOf(name)!)) =>
   db
     .prepare(
@@ -462,13 +462,10 @@ test('the shared notebook aliases edit only the member’s page and never expose
   const edited = await guest(ps, '/groups/edit', {
     id: first.json().id,
     since: first.json().updated,
-    texts: typed(session.page, 'Ada’s edited words').texts,
+    texts: [...typed(session.page, 'Ada’s edited words').texts, ...typed(session.page, 'Ada’s second words').texts],
   });
   assert.equal(edited.status, 200, edited.text);
-  const second = await guest(ps, '/groups/create', typed(session.page, 'Ada’s second words'));
-  const joined = await guest(ps, '/groups/join', { ids: [first.json().id, second.json().id] });
-  assert.equal(joined.status, 200, joined.text);
-  const split = await guest(ps, '/groups/split', { id: joined.json().group.id, texts: [1] });
+  const split = await guest(ps, '/groups/split', { id: first.json().id, texts: [1] });
   assert.equal(split.status, 200, split.text);
   assert.equal((await guest(ps, '/pages/title', { id: session.page, title: 'Ada’s review' })).status, 200);
   for (const page of [foreign.page, boardPage]) {
@@ -484,7 +481,6 @@ test('the shared notebook aliases edit only the member’s page and never expose
       404,
     );
     assert.equal((await guest(ps, '/groups/split', { id: group.id, texts: [0] })).status, 404);
-    assert.equal((await guest(ps, '/groups/join', { ids: [first.json().id, group.id] })).status, 404);
     assert.equal((await guest(ps, '/groups/move', { id: group.id, page: session.page })).status, 404);
     assert.equal((await guest(ps, '/groups/move', { id: first.json().id, page: group.page })).status, 404);
   }
@@ -493,7 +489,6 @@ test('the shared notebook aliases edit only the member’s page and never expose
     ['groups/edit', { id: ownGroup.id, since: ownGroup.updated, words: 'Board intrusion' }],
     ['groups/delete', { id: ownGroup.id }],
     ['groups/move', { id: ownGroup.id, page: boardPage }],
-    ['groups/join', { ids: [ownGroup.id, boardGroup.id] }],
     ['groups/split', { id: ownGroup.id, texts: [0] }],
     ['pages/title', { id: session.page, title: 'Board intrusion' }],
     ['pages/send', { id: session.page }],

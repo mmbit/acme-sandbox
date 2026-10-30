@@ -14,7 +14,9 @@ The Sketchbook is one part of Ink, and in code it is the book: one per person, a
 - `booknotes.ts` keeps the sheets and their notes, `booklinks.ts` the links between notes, `booksheets.ts` sends a
   sheet, `booksend.ts` a free page on its own, `bookwriting.ts` the board's writing beside the notes.
 - `bookslips.ts` clips the agents' answers onto their notes, and `booktyped.ts` answers a question typed on a page.
-- `bookasks.ts` puts the desk phone's cards about a note or a page in the book too.
+- `bookasks.ts` puts the desk phone's cards about a note or a page in the book too. `askpages.ts` takes
+  `hq ask --book <project | journal | round>`: the card as the agent's scrap on that book's Asks page, and the
+  project books the CEO makes with `hq projectbook`.
 - `bookreview.ts` brings review mode's notes on a preview into the book, `bookguests.ts` an invited person's.
 - `bookcalls.ts` is a call's page, `booksearch.ts` the book's Search.
 - Answers to any note: `bookjudge.ts` is the one judge of every note the board
@@ -24,20 +26,29 @@ The Sketchbook is one part of Ink, and in code it is the book: one per person, a
   answers: the owner's quick run, `hq answer` (words, a drawing, a
   picture, a form, a question, versions; `answerparts.ts` checks what one holds), forms answered, ticks and the open list; `answerspot.ts` places an answer in
   free paper by its group, never over the board's own. `groupanswers.ts` is what a group's children carry.
-  `booktry.ts` starts a try run (versions of what a note asks to see, on a page of their own).
-- Circle a version to pick it: `bookpick.ts`. A ring or a tick on a version goes
+  `booktry.ts` starts a try run (versions of what a note asks to see, the real thing, drawn under the note as each
+  lands: `groupanswers.ts` tryOf says coming, made, or empty with why, so no count of versions that don't exist).
+  `trybranch.ts` makes each version a branch of its own on GitHub (`try/v<slip>`: the deployed main and its patch).
+ `trypreview.ts` serves each version's staging preview at
+  `try-<slip>.preview.<zone>`, from the branch's commit with the patch laid over, and answers Caddy's
+  `/api/preview/try-host`.
+- Circle a version to pick it: `bookpick.ts`. A circle, a tick or a cross on a version goes
   as a reply on it, drawn over the version's frame in its picture; the judge's verdict 'pick' (offered only on a
-  version) or the board's tick on it picks it (one per try),
-  the try run and a call hear which, and the note the tried group goes as carries the frame and the patch.
+  version) or the board's tick on it picks it (one per try), its 'cross' rules it out. The try run and a call hear
+  which, and the note the tried group goes as carries the frame, and its job builds from the version's branch (its
+  patch where it has none). Once that page has gone, the other versions are cleared: their branches removed. Every
+  version crossed out clears them all, and the owner's quick run asks the board what's missing.
 - `callnotes.ts` is a call's notes page in the Notebook: the agent's scraps (one per change, each its own crop), its
-  promises and title, sent as the call ends and left among My Notebook's pages; read like any page. It's the call's
+  promises and title, sent as the call ends and left among My journal's pages; read like any page. It's the call's
   one route for its asks: each scrap and promise is an item on the call's list, linked to the job it went as. `callasks.ts` keeps those asks following the page as the board leaves it: joined,
   lifted apart, deleted or changed.
 - `bookfetch.ts` fetches a picture on the web dragged or pasted into the book.
-- `sketchbook.ts` keeps HQ's Sketchbook app. `sketchpeople.ts` keeps invited people's identity, colour and quota.
-  Guests use the Notebook room, with no separate Sketchbook environment.
+- `sketchpeople.ts` keeps invited people's identity, colour and quota. Guests use the Notebook room, with no separate
+  Sketchbook environment. `sketchmigration.ts` carries old drawings in: the Sketchbook's sketches from before the book,
+  folded in once at start, and an operator's copy of a legacy guest drawing onto a Notebook page. (HQ's Sketchbook app
+  and its `/api/sketches/…` routes are gone: the book is the one notebook.)
 
-The routes keep their addresses (`/api/book/…`, `/api/sketches/…`): they are the Sketchbook's.
+The routes keep their addresses (`/api/book/…`): they are the Sketchbook's.
 
 ## Guest rounds and invited notebooks
 
@@ -67,7 +78,6 @@ mail domains are excluded. The notebook's `invites` field gives the permitted do
 
 `../notebookrounds.ts` sends each guest page through the normal notebook note routing. While a round remains open,
 a guest can un-send and revise their page. Dispatched revisions and their answers stay attached to the group. The
-last hand-in starts a ten-second close with undo for that guest. A completed round moves to the archive and queues
-one deck task for the CEO. The task receives all notebook groups, child answers and replies at closure, plus page
-numbers for `hq sketch` to read the original visual. Removing the final pending guest lets remaining hand-ins close
-the round. A round with no eligible guests closes and archives without a deck.
+board closes a round from the Shelf (asking first while asks in it are open), and it goes to the CEO wrapped: one job
+writes its Advice with `hq advice`, from every group, answer and reply at closure, with page numbers for `hq sketch`
+to read the original visual. `hq advice <book> --back` wraps it back, and the board's unwrap opens the book at Advice.

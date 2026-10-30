@@ -13,7 +13,7 @@ import { BOARD, sheetPageFor } from './book.ts';
 import { addNote } from './booknotes.ts';
 import { WORDS_MAX, isRefused } from '../pagechecks.ts';
 import { createScrap, createPageScrap } from '../notebookscraps.ts';
-import { findOwnNotebook, openPageOf, pageRow } from '../notebook.ts';
+import { pageRow } from '../notebook.ts';
 
 // The words' most: the book's, the cut's mark ("… (cut here)") included
 const WORDS_CUT = WORDS_MAX - 20;
@@ -72,7 +72,7 @@ export async function toBook(
   const { v, el, view, ink, video } = element,
     anchor = { v, url: element.url, el, view, ink, video };
   const said = b.said === 'spoken' ? 'spoken' : 'typed';
-  // The board uses My Notebook. The authenticated review share selects its guest's page.
+  // The board uses My journal. The authenticated review share selects its guest's page.
   const note = { anchor, words, said, snip, owner, name };
   if (by === BOARD) return scrapped(slug, page, note);
   const target = guestPage && pageRow(guestPage, by);
@@ -85,7 +85,7 @@ export async function toBook(
 function scrapped(slug: string, page: string, b: Scrapped): feedback.Refusal | Scrap {
   // (its lines only in its snip, never on its anchor: rule zero, the board's, 2026-10-27)
   const anchor = { ...(b.anchor as object), ink: [] };
-  // (no notebook asked for: My Notebook, made when there's none, so never createScrap's 404)
+  // (no notebook asked for: My journal, made when there's none, so never createScrap's 404)
   const g = createScrap({ anchor, words: b.words, said: b.said, snip: b.snip, owner: b.owner }) as Exclude<
     ReturnType<typeof createScrap>,
     number
@@ -101,15 +101,6 @@ function scrapped(slug: string, page: string, b: Scrapped): feedback.Refusal | S
 type Scrapped = { anchor: any; words: string; said: string; snip: string | null; owner: string; name: string };
 type Scrap = { ok: true; id: number; page: number; owner: string; name: string };
 
-// For review mode's menu on a page (GET /__review/mine, the board's): whose sheet a note there joins, and how many
-// notes are on it now. On HQ, where each thing on the page names its own owner (the Pencil's markpage.js), the menu
-// names the sheet the board's last note there went to (last: an agent id, ?owner=), else the page's own: the same
-// owner the sheet goes to, never another's (the board, 2026-10-26).
-export function menuOf(slug: string, page: string, last: string | null = null) {
-  const { owner, name } = slug === feedback.HQ && last && findAgent(last) ? named(last) : ownerOf(slug, page);
-  return { book: { owner, name }, notes: onNewestPage() };
-}
-
 // Whose sheet a note on a page goes on: an agent on a desk, or the CEO, who passes it on. HQ's page as a whole is
 // nobody's, so the CEO's, as the Pencil's notes on it are (shared/review/markpage.js ownerOf)
 function ownerOf(slug: string, page: string) {
@@ -118,20 +109,6 @@ function ownerOf(slug: string, page: string) {
   return named(findAgent(agent) ? agent : ceo());
 }
 const named = (owner: string) => ({ owner, name: findAgent(owner)?.name ?? owner });
-// The board's notes on My Notebook's current page, where its notes go now and the book opens (notebook.ts openPageOf):
-// what it wrote or cut there and hasn't sent. None before it has one.
-function onNewestPage() {
-  const mine = findOwnNotebook(BOARD);
-  const page = mine && openPageOf(mine);
-  if (!page) return 0;
-  const { n } = db
-    .prepare(
-      `select count(*) n from notebook_groups where page = ? and by = ? and parent is null and deleted is null
-       and status = 'open'`,
-    )
-    .get(page, BOARD) as { n: number };
-  return n;
-}
 // Whether a writer has had PER_HOUR notes on this product (its pages' addresses start with origin) in the last hour
 function overHour(by: string, origin: string) {
   const hourAgo = new Date(Date.now() - 36e5).toISOString();

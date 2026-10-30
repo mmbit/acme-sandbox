@@ -65,7 +65,8 @@ test('the operator copies a chosen guest drawing and pictures once, keeping the 
   assert.equal(copied.pictures.length, 1);
   assert.match(copied.pictures[0].file, new RegExp(`^${target.page}-g-`));
   assert.deepEqual(readFileSync(`${DIR}/${copied.pictures[0].file}`), PNG);
-  assert.ok(copied.box!.y > shown[0].box!.y + shown[0].box!.h);
+  assert.equal(shown.at(-1)!.id, copied.id, "the page's last unit, after its existing work");
+  assert.deepEqual([copied.box!.x, copied.box!.y], [0, 0], 'from its own top-left');
   assert.deepEqual(JSON.parse(book.drawnOf(source).ink), [stroke]);
   assert.ok(existsSync(`${DIR}/${file}`));
   assert.equal(migrateSketch(source, target.page).copied, false);

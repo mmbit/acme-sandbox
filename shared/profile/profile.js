@@ -139,22 +139,43 @@
     return nextFrame(callback);
   };
 
-  // ---- smoothness: the gaps between frames while the page shows, and long tasks where the browser tells them
+  // ---- smoothness: the gaps between frames while the page shows, and long tasks where the browser tells them.
+  // `held` counts the same for the frames while a finger, pen or mouse button is down (a drag, a stroke, a slider),
+  // which a sample's 20 s otherwise mix with everything else: a frame counts as held when a pointer was down at any
+  // time in its gap, so a tap inside one long frame counts too
   const frames = { shown: 0, slow: 0, worst: 0 };
+  const held = { shown: 0, slow: 0, worst: 0 };
+  const pointersDown = new Set();
+  let pressedSinceFrame = false;
   let lastFrame = 0;
+  const count = (counts, gap) => {
+    counts.shown++;
+    if (gap > SLOW_FRAME_MS) counts.slow++;
+    counts.worst = Math.max(counts.worst, gap);
+  };
   const frame = t => {
     if (lastFrame && !document.hidden) {
-      const gap = t - lastFrame;
-      frames.shown++;
-      if (gap > SLOW_FRAME_MS) frames.slow++;
-      frames.worst = Math.max(frames.worst, gap);
+      count(frames, t - lastFrame);
+      if (pressedSinceFrame || pointersDown.size) count(held, t - lastFrame);
     }
+    pressedSinceFrame = false;
     lastFrame = t;
     nextFrame(frame);
   };
   nextFrame(frame);
+  const press = e => {
+    pointersDown.add(e.pointerId);
+    pressedSinceFrame = true;
+  };
+  addEventListener.call(window, 'pointerdown', press, true);
+  for (const type of ['pointerup', 'pointercancel'])
+    addEventListener.call(window, type, e => pointersDown.delete(e.pointerId), true);
+  // (a pointer let go while the page was hidden or another window had it sends no pointerup here, so losing focus and
+  // the page's visibility changing both forget every pointer down)
+  addEventListener.call(window, 'blur', () => pointersDown.clear());
   addEventListener.call(document, 'visibilitychange', () => {
     lastFrame = 0;
+    pointersDown.clear();
     mark();
   });
   const longTasks = { count: 0, ms: 0, worst: 0 };
@@ -205,10 +226,11 @@
       intervals: intervals.size,
       ...asked,
       frames: { ...frames, worst: Math.round(frames.worst) },
+      held: { ...held, worst: Math.round(held.worst) },
       longTasks: { ...longTasks, ms: Math.round(longTasks.ms), worst: Math.round(longTasks.worst) },
     };
     Object.assign(asked, { timeouts: 0, animationFrames: 0 });
-    Object.assign(frames, { shown: 0, slow: 0, worst: 0 });
+    for (const counts of [frames, held]) Object.assign(counts, { shown: 0, slow: 0, worst: 0 });
     Object.assign(longTasks, { count: 0, ms: 0, worst: 0 });
     return taken;
   }

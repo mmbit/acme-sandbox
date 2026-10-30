@@ -3,6 +3,7 @@
 
 
 """
+from unittest import mock
 import json, os, subprocess, sys, tempfile, unittest
 from datetime import datetime, timezone
 
@@ -32,6 +33,12 @@ class Record(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             _, rec = deploys.record(folder, 'abc1234', 'x', 1, BEFORE, BEFORE)
             self.assertEqual((rec['ok'], rec['recreated']), (False, []))
+
+    def test_one_that_broke_hq_says_what_hq_up_and_the_revert_said(self):
+        with tempfile.TemporaryDirectory() as folder, mock.patch.dict(
+                os.environ, {'DEPLOY_BROKE': 'HQ: wire: page error', 'DEPLOY_REVERTED': 'c0ffee'}):
+            _, rec = deploys.record(folder, 'abc1234', 'x', 1, BEFORE, BEFORE)
+            self.assertEqual((rec['broke'], rec['reverted']), ('HQ: wire: page error', 'c0ffee'))
 
     def test_leaves_no_partial_file(self):
         with tempfile.TemporaryDirectory() as data:

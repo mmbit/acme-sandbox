@@ -14,15 +14,33 @@ const EXCLUDE = ['*/deb.deps', '*/rpm.deps'];
 
 const BROWSERS = process.env.TESTS_BROWSERS_PATH ?? '/ms-playwright';
 
-export function helperBundle({ tools, browsers }: { tools: boolean; browsers: boolean }) {
-  const runtime = browsers ? browserBundle() : { directories: [], libraries: [] };
-  return { tools: [...(tools ? TOOLS : []), ...runtime.libraries], directories: runtime.directories, exclude: EXCLUDE };
+type BrowserAssets = 'none' | 'shell' | 'all';
+
+export function helperBundle({ tools, browsers }: { tools: boolean; browsers: BrowserAssets }) {
+  const runtime = browsers === 'none' ? { directories: [], libraries: [], exclude: [] } : browserBundle(browsers);
+  return {
+    tools: [...(tools ? TOOLS : []), ...runtime.libraries],
+    directories: runtime.directories,
+    exclude: [...EXCLUDE, ...runtime.exclude],
+  };
 }
 
-function browserBundle() {
-  const headless = readdirSync(BROWSERS).find(name => name.startsWith('chromium_headless_shell-'))!;
+// Authored browser commands keep all installed assets. Push tests consume only the headless shell.
+function browserBundle(browsers: 'shell' | 'all') {
+  const assets = readdirSync(BROWSERS);
+  const headless = assets.find(name => name.startsWith('chromium_headless_shell-'))!;
   const binary = join(BROWSERS, headless, 'chrome-headless-shell-linux64/chrome-headless-shell');
+  const binaries = [binary];
+  if (browsers === 'all') {
+    const chromium = assets.find(name => name.startsWith('chromium-'))!;
+    binaries.push(join(BROWSERS, chromium, 'chrome-linux64/chrome'));
+  }
+  const libraries = [...new Set(binaries.flatMap(librariesOf))];
+  const exclude = browsers === 'shell' ? assets.filter(name => name !== headless).map(name => `*/${name}`) : [];
+  return { directories: [BROWSERS], libraries, exclude };
+}
+
+function librariesOf(binary: string) {
   const dependencies = execFileSync('ldd', [binary], { encoding: 'utf8' });
-  const libraries = [...dependencies.matchAll(/=> (\/\S+)/g)].map(match => match[1]);
-  return { directories: [BROWSERS], libraries };
+  return [...dependencies.matchAll(/=> (\/\S+)/g)].map(match => match[1]);
 }

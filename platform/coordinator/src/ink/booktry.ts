@@ -3,19 +3,17 @@
 //   - The try run is a jobs.ts job of kind 'try': it starts at once on a free work slot (never the chat slot), ahead of
 //     the plan as the board's own word (expedite), in no thread, and commits nothing and opens no pull request (the
 //     worker throws its clone away, as a meeting seat's): what it makes lives in the book.
-//   - Its versions are answers on the note's root group (hq answer g<group> --version, bookanswer.ts), and they get a
-//     page of their own right after the group's page in its notebook (book_pages.tries: the group), headed "<Agent>
-//     tries: <words>". An old book's note (on a sheet's page; a call's is never judged) has one in the old book,
-//     outside the notebooks (tries_note: the note).
+//   - Its versions are answers on the note's root group (hq answer g<group> --version, bookanswer.ts), drawn under the
+//     note on its own page as each lands (groupanswers.ts tryOf: coming, made, or empty with why), each with a branch of
+//     its own made from its patch (trybranch.ts).
 //   - One run per note at a time: a note written on the group or one of its versions while its try still runs goes to
 //     that run (a message its hook hands the session at its next step; one not started yet takes it in its brief).
 //   - On a live call's page the run's the same, and onCall tells the quick run's caller to leave a note there to the
 //     call's agent, who is with the board.
 import { readFileSync } from 'node:fs';
 import { db, lacks } from '../db.ts';
-import { brand, ceo, companyDay } from '../company.ts';
-import { createJob, findAgent } from '../jobs.ts';
-import { keysAgent } from '../memory.ts';
+import { brand, ceo } from '../company.ts';
+import { createJob } from '../jobs.ts';
 import * as feedback from '../feedback.ts';
 import { forRun } from '../messages.ts';
 import { changed, pageRow, type NotebookPage } from '../notebook.ts';
@@ -23,12 +21,12 @@ import { groupOn, rootOf, type Group } from '../notebookgroups.ts';
 import { row as bookPage, type Page } from './book.ts';
 import { note as noteRow, sheetRow, type Note } from './booknotes.ts';
 import { keep } from './booksheets.ts';
-import { LABEL_MAX, type Anchor } from '../pagechecks.ts';
+import type { Anchor } from '../pagechecks.ts';
 import { DIR } from '../pagescraps.ts';
 import { quotedPatch } from './bookpick.ts';
 
 // book_notes.tried: the try run started for an old book's note, the latest (notebook_groups.tried, a group's, is
-// notebookgroups.ts's; book_pages.tries and tries_note, a versions page's, notebook.ts's)
+// notebookgroups.ts's)
 if (lacks('book_notes', 'tried')) db.exec('alter table book_notes add column tried integer');
 
 export type Target = { grp?: number; note?: number };
@@ -111,9 +109,7 @@ export function onCall(t: Target): number | null {
   const call = o && callOf(o.page.id);
   return call && db.prepare("select 1 from calls where id = ? and status = 'live'").get(call) ? call : null;
 }
-// The call a page is the notes page of (in the book or My Notebook), live or ended, or null. A try's versions page
-// keeps its call only for reading (bookreads.ts callRead), so a note there gets a quick run like any other note: its
-// page's owner's, the call's agent's on a call about a card for keys (versionsPage)
+// The call a page is the notes page of (in the book or My journal), live or ended, or null
 const callOf = (page: number) => {
   const p = bookPage(page, null);
   return p?.kind === 'call' ? p.call : null;
@@ -130,13 +126,12 @@ export function tryNow(t: Target, verdict: { id: number; why: string }) {
     toRun(going, o);
     return going.id;
   }
-  const page = versionsPage(o);
   const kept = o.kind === 'note' ? keep(o.root, null) : null;
   const job = createJob({
     agent: o.owner,
     kind: 'try',
     title: `Versions for the board's note: ${oneLine(o.words) || 'a drawing'}`.slice(0, 140),
-    prompt: tryBrief(o, page, verdict, kept?.id ?? null),
+    prompt: tryBrief(o, verdict, kept?.id ?? null),
     queuedBy: 'hq',
     expedite: true,
     thread: null,
@@ -146,6 +141,8 @@ export function tryNow(t: Target, verdict: { id: number; why: string }) {
     job,
     o.root.id,
   );
+  // (its versions' frames come under the note at once)
+  if (o.kind === 'group') changed(o.page.notebook, o.page.id);
   return job;
 }
 
@@ -164,64 +161,24 @@ const versionName = (slip: number) => {
   return s?.version ? `“${s.version}”` : `#${slip}`;
 };
 
-// The versions page: right after the group's page in its notebook (between it and the next), made once per note; an old
-// book's note's has no notebook and no order but its day's, so it goes last in the day. It takes its group's page's call, so a call about a card for keys keeps it for its own agent as it
-// keeps its notes page (bookreads.ts callRead). There the call's agent owns it too, so a note on it is that agent's to
-// answer, try and be sent (booknotes.ts addNote's sheet), never the CEO's as a page nobody owns
-function versionsPage(o: On) {
-  const column = o.kind === 'group' ? 'tries' : 'tries_note';
-  const found = db.prepare(`select id from book_pages where ${column} = ?`).get(o.root.id) as
-    { id: number } | undefined;
-  if (found) return found.id;
-  const p = db.prepare('select who, notebook, pos, call from book_pages where id = ?').get(o.page.id) as {
-    who: string;
-    notebook: number | null;
-    pos: number | null;
-    call: number | null;
-  };
-  const owner = p.call === null ? null : keysAgent(p.call);
-  const next =
-    p.notebook === null
-      ? null
-      : (
-          db
-            .prepare('select min(pos) pos from book_pages where notebook = ? and pos > ?')
-            .get(p.notebook, p.pos ?? 0) as { pos: number | null }
-        ).pos;
-  const pos = p.notebook === null ? null : next === null ? (p.pos ?? 0) + 1 : ((p.pos ?? 0) + next) / 2;
-  const now = new Date().toISOString(),
-    name = findAgent(o.owner)?.name ?? o.owner;
-  const whole = `${name} tries: ${oneLine(o.words) || 'a drawing'}`;
-  const title = whole.length > LABEL_MAX ? `${whole.slice(0, LABEL_MAX - 1)}…` : whole;
-  const id = Number(
-    db
-      .prepare(
-        `insert into book_pages (who, day, kind, owner, label, created, updated, w, h, notebook, pos, call, ${column})
-          values (?, ?, 'free', ?, ?, ?, ?, 1200, 1600, ?, ?, ?, ?)`,
-      )
-      .run(p.who, companyDay(Date.now()), owner, title, now, now, p.notebook, pos, p.call, o.root.id).lastInsertRowid,
-  );
-  if (p.notebook !== null) changed(p.notebook, id);
-  return id;
-}
 const oneLine = (s: string) => s.replace(/\s+/g, ' ').trim();
 
 // A later note the try is for: the board wrote on the note again, or on one of its versions, and the next versions
 // start from that one
-function replied({ words, version }: NonNullable<Reply>, page: number) {
+function replied({ words, version }: NonNullable<Reply>) {
   const said = `“${oneLine(words) || '(ink only: see it on the page)'}”`;
   if (!version)
     return `\nThe board wrote on it again: ${said}. That's what these versions answer, on top of the note.\n`;
   const patch = version.patch ? ` Its patch (start from it):\n${quotedPatch(version.patch)}` : '';
-  return `\nThe board wrote on the version “${version.name}” (${version.text}; its frame is on page ${page}): \
-${said}. The next versions start from that one and take what the board wrote into them.${patch}\n`;
+  return `\nThe board wrote on the version “${version.name}” (${version.text}): ${said}. The next versions start from \
+that one and take what the board wrote into them.${patch}\n`;
 }
 
 // ---------------------------------------------------------------- the try run's brief
 // The board's screens, when the note has no view of its own: the company's (brand.yaml screens), else a desktop's
 const screens = () => brand().screens ?? 'a desktop browser at 1440 × 900';
 // The try run's brief: the note, where to see it, and how its versions go back
-function tryBrief(o: On, page: number, verdict: { why: string }, review: number | null) {
+function tryBrief(o: On, verdict: { why: string }, review: number | null) {
   const target = o.kind === 'group' ? `g${o.root.id}` : String(review);
   const view = o.anchor?.view;
   const screen = view ? `${Math.round(view.w)} × ${Math.round(view.h)} CSS px at ${view.dpr}x` : screens();
@@ -233,9 +190,9 @@ function tryBrief(o: On, page: number, verdict: { why: string }, review: number 
   return `The board wrote a note ${where}, in its book, and it asks to see it made: show it a few versions of the real \
 thing, now. Why it reads as a try: ${verdict.why}
 
-The note: “${oneLine(o.words) || '(ink only)'}”. ${snip}. Its versions go on a page of their own, right after the \
-note's page (page ${page}), which the board sees filling in as you clip each one.
-${o.reply ? replied(o.reply, page) : ''}
+The note: “${oneLine(o.words) || '(ink only)'}”. ${snip}. Its versions land under the note, A, B, C, which the board \
+sees filling in as you clip each one: an empty frame with pencil dots for each one still to come.
+${o.reply ? replied(o.reply) : ''}
 How:
 - First say how many versions you'll make: \`hq answer ${target} --expect <n>\`. As many as are really different: \
 often three, sometimes one bold alternative, never padding to fill a row.
@@ -245,12 +202,15 @@ port; check it's listening first). For a product: its own preview. Something tha
 new card) is built from scratch in the product's own look, in the same frame.
 - Shoot it at the board's screen shape (${screen}), the note's place in frame, with Playwright.
 - Clip each one as soon as it's done, not all at the end: \`hq answer ${target} "<one line on what's different>" \
---version "<two words>" --picture <png> --patch <file>\` (the patch: \`git diff\` of the change, kept with the frame so \
-a pick's build starts from it).
+--version "<two words>" --picture <png> --patch <file>\` (the patch: \`git diff\` of the change against main, text \
+only). HQ makes each version a branch of its own from its patch, the one a pick is built from, and a staging preview \
+the board opens before it circles one: HQ's screens and the decks, never a product with a server of its own, whose \
+version is your picture alone.
 - Versions that each take building go to helpers (team members) in parallel, one version each; you lead and clip.
 - Never commit, push or open a pull request: your copy is thrown away when you end, and what you make lives in the \
-book. Queue no work: the board picks a version by ringing or ticking it (you hear which), and the pick goes with \
-its next send.
+book. Queue no work: the board picks a version by circling or ticking it (you hear which), and the pick is built \
+once it sends the page; the versions it didn't pick are cleared then.
 - Another note from the board on this one, while you're at it, reaches you as a message: take it in.
-- End with one line: how many versions and what they try.`;
+- End with one line: how many versions and what they try. If you made none, that line says why in plain words: the \
+board reads it under its note.`;
 }

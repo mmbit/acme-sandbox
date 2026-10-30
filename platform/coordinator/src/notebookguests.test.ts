@@ -1,4 +1,4 @@
-// node --test src/notebookguests.test.ts (real HTTP sessions, notebook storage, routing and deck task).
+// node --test src/notebookguests.test.ts (real HTTP sessions, notebook storage, routing and the round's Advice job).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { tmpdir } from 'node:os';
@@ -232,7 +232,7 @@ test('notebook room refusals identify their reason for every guest language', as
     ).body.notebooks[0].people.slice(1)) {
       guestbooks.revokeNotebook({ notebook: book.id, guest: person.name });
     }
-    rounds.settleRounds(Date.now() + SEND_MS + 100);
+    assert.equal((await h.board('/api/notebooks/round/close', { id: book.id, anyway: true })).status, 200);
     await refused('undo', { id: page }, 409, 'roundClosed');
     context.mock.timers.enable({ apis: ['Date'], now: Date.now() });
     context.mock.timers.tick(366 * 86400_000);
@@ -285,7 +285,7 @@ test('Reviews makes one round on the shelf, while view-only shares make none and
   assert.ok((await h.board('/api/notebooks')).body.archive.some((book: any) => book.id === round.id));
 });
 
-test('two guest pages stay private, reopen during a round, close with undo and queue one deck', async () => {
+test('two guest pages stay private and mark done or undo until the board closes; Lyra writes the Advice and it comes back to unwrap', async () => {
   const round = await create('round', ['Ada', 'Bela']);
   assert.equal(round.pages.length, 2);
   const ada = await signIn(round.people[0].link),
@@ -340,26 +340,70 @@ test('two guest pages stay private, reopen during a round, close with undo and q
   assert.equal((await ada(`${api}/send`, { id: first })).status, 200);
   await bela(`${api}/create`, note(second, 'Move the icon'));
   assert.equal((await bela(`${api}/send`, { id: second })).status, 200);
-  assert.equal((await ada(`${api}/undo`, { id: first })).status, 409);
+  // (every guest marked done: nothing closes but the board, and either may still undo)
+  rounds.reconcileRound(round.id);
+  assert.equal(rounds.roundOf(round.id)!.closed, null);
   assert.equal((await bela(`${api}/undo`, { id: second })).status, 200);
-  assert.equal(rounds.roundOf(round.id)!.closes, null);
   await bela(`${api}/send`, { id: second });
-  rounds.settleRounds(Date.now() + SEND_MS + 100);
+  const shelf = (await h.board('/api/notebooks')).body.shelf.find((n: any) => n.id === round.id);
+  assert.deepEqual(
+    [shelf.round.state, shelf.round.guests.map((g: any) => [g.name, g.done, g.notes])],
+    [
+      'open',
+      [
+        ['Ada', true, 1],
+        ['Bela', true, 1],
+      ],
+    ],
+  );
+  const pages = (await h.board(`/api/notebooks/pages?notebook=${round.id}`)).body.pages;
+  assert.deepEqual(
+    pages.map((p: any) => [p.chapter, p.guest, p.readonly]),
+    [
+      ['guests', 'Ada', true],
+      ['guests', 'Bela', true],
+    ],
+  );
+  // (the board's book reads a guest's page, as the watcher does, and never writes on it)
+  assert.equal((await h.board(`/api/notebooks/pages/groups?page=${first}`)).body.groups[0].id, drawn.body.id);
+  assert.equal((await h.board('/api/notebooks/round/unwrap', { id: round.id })).status, 409);
+  const sent = await h.board('/api/notebooks/round/close', { id: round.id });
+  assert.equal(sent.body.state, 'away');
+  assert.equal((await h.board('/api/notebooks/round/close', { id: round.id })).status, 409);
   const closed = (await h.board(`/api/notebooks/guests/list?notebook=${round.id}`)).body.notebooks[0];
-  assert.deepEqual([closed.state, closed.archived, closed.pages.length], ['closed', true, 2]);
-  assert.ok(closed.deck);
-  const deck = await h.claimJob(closed.deck);
-  assert.ok(deck.prompt.includes('I will make it clearer.'));
-  const read = await h.agent(`sketch?id=${first}`, deck.token);
+  assert.deepEqual([closed.state, closed.archived, closed.pages.length], ['closed', false, 2]);
+  assert.equal((await bela(`${api}/undo`, { id: second })).status, 409);
+  const advice = await h.claimJob(rounds.roundOf(round.id)!.advice!);
+  assert.ok(advice.prompt.includes('I will make it clearer.'));
+  assert.ok(advice.prompt.includes(`hq advice ${round.id}`));
+  const read = await h.agent(`sketch?id=${first}`, advice.token);
   assert.equal(read.status, 200);
   assert.equal(read.body.from, 'Ada');
   assert.ok(read.body.picture.data);
-  const saved = await h.hq({ ...deck, tmp: tmpdir() }, 'sketch', String(first));
+  const saved = await h.hq({ ...advice, tmp: tmpdir() }, 'sketch', String(first));
   assert.equal(saved.code, 0, saved.out);
-  await h.finish(deck);
-  rounds.settleRounds(Date.now() + SEND_MS + 100);
-  assert.equal((await h.board(`/api/notebooks/guests/list?notebook=${round.id}`)).body.notebooks[0].deck, closed.deck);
-  assert.equal((await bela(`${api}/undo`, { id: second })).status, 409);
+  // (nothing to hand back before a page is written)
+  assert.equal((await h.agent('advice', advice.token, { notebook: round.id, back: true })).status, 409);
+  const scrap = await h.hq(
+    { ...advice, tmp: tmpdir() },
+    'advice',
+    String(round.id),
+    '--page',
+    'Checkout: one step less',
+    'From four steps to two.',
+  );
+  assert.equal(scrap.code, 0, scrap.out);
+  const back = await h.hq({ ...advice, tmp: tmpdir() }, 'advice', String(round.id), '--back');
+  assert.equal(back.code, 0, back.out);
+  assert.equal((await h.agent('advice', advice.token, { notebook: round.id, page: 'Late', text: 'x' })).status, 409);
+  await h.finish(advice);
+  const wrapped = (await h.board('/api/notebooks')).body.shelf.find((n: any) => n.id === round.id);
+  assert.equal(wrapped.round.state, 'back');
+  assert.equal((await h.board('/api/notebooks/round/unwrap', { id: round.id })).body.state, 'done');
+  const chapters = (await h.board(`/api/notebooks/pages?notebook=${round.id}`)).body.pages;
+  const page = chapters.find((p: any) => p.chapter === 'advice');
+  assert.equal(page.title, 'Checkout: one step less');
+  assert.equal((await h.board(`/api/notebooks/pages/groups?page=${page.id}`)).body.groups.length, 1);
 });
 
 test('a permanent invite sends pages and reads answers while the board watches, until revoked', async () => {
@@ -370,8 +414,8 @@ test('a permanent invite sends pages and reads answers while the board watches, 
   assert.equal((await h.board(`/api/notebooks/pages?notebook=${book.id}`)).body.pages.length, 1);
   assert.equal((await h.board('/api/notebooks/pages/create', { notebook: book.id })).status, 403);
   const who = (await import('./notebookguests.ts')).whoOf((await import('./notebookguests.ts')).pageMember(page)!);
+  // (the book's save, the only one now.)
   assert.equal((await h.board('/api/book/page/save', { id: page, who, ink: [] })).status, 403);
-  assert.equal((await h.board('/api/sketches/save', { id: page, who, ink: [] })).status, 403);
   const created = (await cora(`${api}/create`, note(page, 'Could this be simpler?'))).body;
   assert.equal((await cora(`${api}/send`, { id: page })).status, 200);
   sheets.deliverDue(Date.now() + SEND_MS);
@@ -450,11 +494,11 @@ test('revoking an invite during page rendering prevents sending, and removing a 
   await jana(`${api}/create`, note(round.pages[0].id, 'Keep this note'));
   await jana(`${api}/send`, { id: round.pages[0].id });
   const revoked = await h.board('/api/notebooks/guests/revoke', { notebook: round.id, guest: 'Kira' });
-  assert.equal(revoked.body.notebook.state, 'closing');
-  rounds.settleRounds(Date.now() + SEND_MS + 100);
+  assert.equal(revoked.body.notebook.state, 'open');
+  assert.equal((await h.board('/api/notebooks/round/close', { id: round.id })).status, 200);
   const completed = (await h.board(`/api/notebooks/guests/list?notebook=${round.id}`)).body.notebooks[0];
   assert.equal(completed.state, 'closed');
-  assert.ok(completed.deck);
+  assert.equal(completed.round.state, 'away');
   assert.equal((await h.board(`/api/notebooks/guests/groups?page=${round.pages[1].id}`)).status, 200);
 });
 
@@ -495,13 +539,12 @@ for (const [state, name] of [
     if (state === 'closed') {
       assert.equal((await guest(`${api}/send`, { id: page })).status, 200);
       await assertOutsideSketchbook(guest, page, uploaded.json.file, png);
-      rounds.settleRounds(Date.now() + SEND_MS + 100);
+      assert.equal((await h.board('/api/notebooks/round/close', { id: notebook.id })).status, 200);
       assert.ok(rounds.roundOf(notebook.id)!.closed);
     }
     await assertOutsideSketchbook(guest, page, uploaded.json.file, png);
+    // (no Sketchbook's shelf to look on, its routes gone.)
     assert.ok((await guest('/guest/sketchbook/api/list')).status >= 400);
-    const shelf = (await h.board('/api/sketches')).body.guests.find((g: any) => g.name === name);
-    assert.deepEqual(shelf.sketches, []);
   });
 }
 

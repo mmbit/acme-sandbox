@@ -252,7 +252,8 @@ db.exec(`
     about_keys integer not null default 0, instead_of integer, told text, voided text, cli text, thread text,
     is_check integer not null default 0, seq real, suspending text, step text,
     code text, landing text, engine_only text, judges text, off_worker integer not null default 0,
-    expedite integer not null default 0, carry text, light integer not null default 0, up text);
+    expedite integer not null default 0, carry text, light integer not null default 0, up text,
+    incident integer not null default 0);
   create table if not exists seats (id text primary key, engine text not null, state text not null,
     until integer, note text, updated integer, util real, resets integer, week real, week_resets integer, pace integer,
     credits integer, cli text);
@@ -429,7 +430,8 @@ db.exec('create table if not exists request_waits (job integer not null, request
 db.exec(`create table if not exists wakes (job integer not null, kind text not null, arg text not null, since integer not null,
   met text, primary key (job, kind, arg))`);
 db.exec(`create table if not exists deploys (file text primary key, sha text not null, fetched text not null, finished text not null,
-  ok integer not null, recreated text not null default '[]', reloaded text not null default '[]', services text not null default '[]')`);
+  ok integer not null, recreated text not null default '[]', reloaded text not null default '[]', services text not null default '[]',
+  broke text not null default '', reverted text not null default '')`);
 db.exec('create index if not exists deploys_finished on deploys (finished)');
 // The Codex seat each share went to (a job, or a normal review round's Codex review its seat was out for), so the next
 // goes to the seat with fewer (jobs.ts codexShare).
@@ -595,9 +597,17 @@ db.exec(`create table if not exists seat_list (id text primary key, provider tex
 // (aim <= deadline, both ms), with who gave the board the time (deadline_by). branch: the thread's branch, once its first
 // task starts. Its owner is its project's (projects.ts ownerOf). judge: the job HQ queued its owner to judge it once its
 // work merged with nothing left open (threadjudge.ts).
+// Release follow-ups read the window of deadline_from until given their own.
 db.exec(`create table if not exists threads (id text primary key, project text not null, name text not null,
   goal text not null, status text not null default 'open', created text not null, by integer, done text, deadline integer,
-  deadline_by text, aim integer, branch text, judge integer)`);
+  deadline_by text, aim integer, branch text, judge integer, deadline_from text)`);
+// The resolved window, shared by every reader, including follow-ups through finished threads.
+db.exec(`create view if not exists thread_windows as
+  with recursive windows(id, deadline, aim, deadline_by) as (
+    select id, deadline, aim, deadline_by from threads where deadline_from is null
+    union all
+    select t.id, w.deadline, w.aim, w.deadline_by from threads t join windows w on w.id = t.deadline_from
+  ) select * from windows`);
 // A company's plans (plan.ts), here rather than in that module: company.ts reads the projects, and the claim will read
 // the needs and the order. projects: each a line of work with one owner, in the order made (by: the agent who made it,
 // or projects.yaml for one lifted from its old `projects:` list). done: when hq project done closed it. thread_needs: a
@@ -876,6 +886,7 @@ once('2026-10-26-pause-wakes', () =>
 );
 // A thread's last merge wakes its owner to judge it (threadjudge.ts)
 once('2026-10-26-threads-judge', () => lacks('threads', 'judge') && db.exec('alter table threads add column judge integer'));
+once('2026-10-30-deadline-from', () => lacks('threads', 'deadline_from') && db.exec('alter table threads add column deadline_from text'));
 db.exec('create index if not exists threads_judge on threads (judge) where judge is not null');
 once('2026-10-24-calls-customers', () => {
   if (lacks('calls', 'customers')) db.exec('alter table calls add column customers integer not null default 0');
@@ -940,3 +951,11 @@ once('2026-10-26-seat-window-observations', () => {
 });
 // The queued jobs of calls deleted before their rows went with them (call.ts handOver, ledger.ts sweep).
 once('2026-10-29-call-jobs-of-gone-calls', 'delete from call_jobs where call not in (select id from calls)');
+// An incident: HQ's call to the CEO about something broken (jobs.incident: incidents.ts), first in line on a slot of its
+// own; and what a deploy that broke HQ was told and did (deploys.broke: infra/hq-up.sh's words, deploys.reverted: the
+// revert on main infra/revert.py made, or why none).
+once('2026-10-30-incidents', () => {
+  if (lacks('jobs', 'incident')) db.exec('alter table jobs add column incident integer not null default 0');
+  if (lacks('deploys', 'broke')) db.exec("alter table deploys add column broke text not null default ''");
+  if (lacks('deploys', 'reverted')) db.exec("alter table deploys add column reverted text not null default ''");
+});

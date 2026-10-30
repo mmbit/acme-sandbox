@@ -1,7 +1,7 @@
 // node --test platform/hq/renderers/brownstone/arcade.test.js   (the arcade's wall art along its wall, no DOM)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { arcadeWall } from './layout.js';
+import { arcadeWall, NOTICE } from './layout.js';
 
 const KIND = [
     ['neon', 20],
@@ -36,5 +36,5 @@ test('the neon leads by name, wherever the kind lists it, and an arcade with no 
     arcadeWall(6, KIND.toReversed()).map(([name]) => name),
     ['neon', 'laptops'],
   );
-  assert.deepEqual(arcadeWall(4, [['vacant', 22], ...KIND]), []); // (an empty one: the back row is all its wall)
+  assert.deepEqual(arcadeWall(4, [['vacant', NOTICE.w], ...KIND]), []); // (an empty one: the back row is all its wall)
 });

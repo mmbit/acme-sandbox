@@ -848,7 +848,7 @@ export function look() {
     fonts: fonts.map((f: any) => `@font-face{font-family:'${family}';src:url(/guest/theme/${f.file}) format('woff2');font-weight:${f.weight};font-style:${f.style};font-display:swap}`).join('') };
 }
 type Legend = ReturnType<typeof legendOf>;
-// The page's colours, which review mode's menus take too, on a product page's :host (feedback.ts): the neutral ones, brand.yaml's guest colours over them, and the dark ones where the look has them
+// The page's colours: the neutral ones, brand.yaml's guest colours over them, and the dark ones where the look has them
 export const palette = (at = ':root', l: Look = look()) => `${at}{--accent:${l.accent};--bg:#f4f5f8;--card:#fff;--ink:#1b2130;--muted:#5d6577;--line:#e3e6ec;--soft:color-mix(in srgb,var(--accent) 9%,var(--card));--on:#fff;--warn:#fff4dc;--shadow:0 1px 2px rgb(20 28 45/.06),0 6px 20px rgb(20 28 45/.07);--link:var(--accent);--btn-r:99px}
 ${at}{${l.vars}}${l.dark ? `
 @media (prefers-color-scheme:dark){${at}{--bg:#111318;--card:#1b1e25;--ink:#e9ecf2;--muted:#a1a9b8;--line:#2c313b;--warn:#3a321f;--shadow:0 1px 2px rgb(0 0 0/.3),0 8px 24px rgb(0 0 0/.35);--link:color-mix(in srgb,var(--accent) 60%,#fff)}}
@@ -1155,8 +1155,8 @@ export function signedIn(req: IncomingMessage) {
   return g?.email && !g.revoked ? g : null;
 }
 
-// A room of a guest's own beyond their links (sketches.ts: their Sketchbook): /guest/<path>[/…], for their own session
-// only (signedIn), while it opens for them; their door's page has a button to it (label). serve gets the rest of the
+// A room of a guest's own beyond their links (notebookguestroom.ts: their notebooks): /guest/<path>[/…], for their own
+// session only (signedIn), while it opens for them; their door's page has a button to it (label). serve gets the rest of the
 // path after /guest/<path>. (server.ts refuses a POST to /guest/ from any other origin.).
 export type Room = {
   path: string;

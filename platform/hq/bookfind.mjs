@@ -73,7 +73,7 @@ async function searchable(browser, c, viewport, options = {}) {
   const page = await context.newPage(),
     errors = errorsOf(page);
   await page.goto(`${c.base}/?intro=0`);
-  // (the newest page's groups drawn: a lone line has no clip)
+  // (the newest page's groups drawn)
   await page.waitForSelector('#book .bk-groups[data-page]', { state: 'attached', timeout: 30_000 });
   return { page, errors, done: () => context.close() };
 }
@@ -91,7 +91,7 @@ function seeded() {
       points: [0, 1, 2, 3].map(i => [300 + i * 30, 300 + (i % 2) * 12, 0.5, i * 16]),
     };
   return {
-    notebooks: [{ id: 1, kind: 'mine', name: 'My Notebook', created: then, updated: at(now) }],
+    notebooks: [{ id: 1, kind: 'mine', name: 'My journal', created: then, updated: at(now) }],
     pages: [
       { id: 1, notebook: 1, pos: 0, label: 'Tear-off cards', send_at: yesterday.getTime() + 3_600_000, created: then },
       { id: 2, notebook: 1, pos: 1, created: at(new Date(now - 60_000)) },

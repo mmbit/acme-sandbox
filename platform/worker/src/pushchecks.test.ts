@@ -382,7 +382,7 @@ test('a push check keeps its worker stop reason even when HQ cannot confirm the 
               run = procs.filter(p => p.pid === root.pid || p.ppid === root.pid);
               await blockRun(owner, { uid: owner.uid, measure: 'memory', ...past, root, run, accountingError }, procs, {
                 checking,
-                stopped: text => stoppedLog.push(text),
+                log: text => stoppedLog.push(text),
                 ask: async body => {
                   assert.equal(typeof body.event, 'string', 'the blocked delivery has an identity');
                   assert.deepEqual(body.accountingError, accountingError);

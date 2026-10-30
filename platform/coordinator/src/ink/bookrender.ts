@@ -11,7 +11,7 @@ import { pathsOf } from '../../../hq/shell/ink/bookanswerart.js';
 import type { Stroke, Typed } from '../pagechecks.ts';
 import type { Scrap } from '../pagescraps.ts';
 
-// The paper as the book shows it (as sketchpen.js PAPER), and the tape across a scrap
+// The paper as the book shows it (as bookpaperdraw.js PAPER), and the tape across a scrap
 const PAPER = '#fffdf8',
   TAPE = 'rgb(246,236,200)',
   TAPE_ALPHA = 0.8;
@@ -151,10 +151,13 @@ async function posted(p: Under, k: number) {
     },
   );
 }
+// How tall what's under a group stands in page px as the picture sets it: the room the store's picture of a page
+// leaves it (bookpicture.ts).
+export const underHigh = async (u: Under, dir: string) => (await under({ ...u, y: 0 }, 1, dir)).at(-1)?.foot ?? 0;
 // What's under a group at its place on the picture: a scrap's words on their post-it, then its slips, each under the
 // one before
 async function under(u: Under, k: number, dir: string) {
-  const layers: Layer[] = [];
+  const layers: (Layer & { foot: number })[] = [];
   let foot = Math.round(u.y * k);
   for (const make of [
     ...(u.text ? [() => posted(u, k)] : []),

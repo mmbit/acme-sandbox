@@ -15,6 +15,20 @@ export async function until(read, what, ms = 30_000) {
   throw new Error(`not ${typeof what === 'function' ? what() : what}`);
 }
 
+// The book at rest in a mode, its swing over and laid out, and HQ's page shown again: lifted from shut, the book is
+// 'folded' all the while it swings, so its mode alone says nothing; landed or shut, the swing keeps HQ's page hidden a
+// few frames longer while it lays itself out (bookswing.js settleIn). However long the engine takes to draw the swing:
+// headless WebKit's frames come slowly under HQ's scene, a few a second while HQ's page blurs. (book-check's and
+// viewer-check's one wait for it.)
+export const bookAtRest = (page, mode) =>
+  page.waitForFunction(
+    m =>
+      document.documentElement.dataset.book === m &&
+      !document.querySelector('#book.bk-swinging') &&
+      getComputedStyle(document.body).visibility !== 'hidden',
+    mode,
+  );
+
 // Whether a box on the screen ({ x, y, width, height }) lies clear of every one of the book's islands
 export const islandsClearOf = (page, box) =>
   page.evaluate(
@@ -122,3 +136,45 @@ export function chromiumPen(cdp) {
 
 // A part of review mode's (CSS), inside its shadow root
 export const ui = s => `review-mode >> css=${s}`;
+// HQ's pin turned on or off for this device, as Settings › Pin on HQ does (pinsetting.js keeps it in localStorage
+// hq.pin and tells review mode): a story that isn't about the setting starts with the pin this way
+export const pinOn = (page, on = true) =>
+  page.evaluate(on => {
+    localStorage.setItem('hq.pin', JSON.stringify(on));
+    dispatchEvent(new CustomEvent('review:summon', { detail: on }));
+  }, on);
+
+// The next crumple (bookpaper.js) as it starts: whether it plays on a picture of what was deleted, and, with it held
+// and stepped through its length, how far its middle goes sideways and how far down (px).
+export const crumpled = page =>
+  page.evaluate(
+    () =>
+      new Promise(done =>
+        new MutationObserver((_, watching) => {
+          const scrap = document.querySelector('#book .bk-fx-scrap');
+          if (!scrap) return;
+          watching.disconnect();
+          const [ball] = scrap.getAnimations(),
+            middle = () => {
+              const r = scrap.getBoundingClientRect();
+              return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+            };
+          ball.pause();
+          const length = ball.effect.getComputedTiming().duration;
+          ball.currentTime = 0;
+          const start = middle();
+          let aside = 0,
+            down = 0,
+            shown = null; // (its opacity once it's well on its way down)
+          for (let t = 0; t <= length; t += length / 80) {
+            ball.currentTime = t;
+            const now = middle();
+            aside = Math.max(aside, Math.abs(now.x - start.x));
+            down = Math.max(down, now.y - start.y);
+            if (down > 40) shown ??= +getComputedStyle(scrap).opacity;
+          }
+          ball.play();
+          done({ picture: !!scrap.querySelector('canvas'), aside, down, shown });
+        }).observe(document.body, { childList: true, subtree: true }),
+      ),
+  );

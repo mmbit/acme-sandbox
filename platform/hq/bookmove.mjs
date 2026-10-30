@@ -65,17 +65,17 @@ async function drawsOnAScrap(page, play, pencil) {
   assert.equal(await page.locator('#book .bk-sel').count(), 0, 'nothing picked by the pen');
 }
 
-// A group slid into view clear of the tools, as the book shows a scrap ('book:scrap': on an iPad mini the islands and
-// the pages' row cover the seed's where the book was left), and points on it (page px) on the screen once the paper's
-// still and nothing's over them
+// A group slid into view, as the book shows a scrap ('book:scrap'), and points on it (its unit's px, as the store keeps
+// them) on the screen once the paper's still and nothing's over them
 async function inSight(page, id, at) {
   await page.evaluate(detail => document.dispatchEvent(new CustomEvent('book:scrap', { detail })), {
     id,
     page: NEWEST,
   });
+  await page.locator(`#book .bk-page:not([hidden]) .bk-unit[data-unit="${id}"]`).waitFor();
   let was = '';
   return until(async () => {
-    const points = await onPaper(page, at),
+    const points = await onPaper(page, at, id),
       still = JSON.stringify(points) === was;
     was = JSON.stringify(points);
     const bare = await page.evaluate(
@@ -83,7 +83,7 @@ async function inSight(page, id, at) {
       points,
     );
     return still && bare && points;
-  }, 'the scrap clear of the tools');
+  }, 'the scrap in view, nothing over it');
 }
 
 // ---- Select moves a group, live
@@ -94,7 +94,7 @@ async function movesAGroup(page, play, pencil, c, name) {
   // pressed on the wave's first line only
   const [from] = await inSight(page, WAVE, [was.ink[0].points[1].slice(0, 2)]),
     k = await scaleOf(page),
-    clip = () => rectOf(page, `#book .bk-clip[data-g="${WAVE}"]`),
+    clip = () => rectOf(page, `#book .bk-unit[data-unit="${WAVE}"]`),
     clipWas = await clip();
   const held = await press(page, from, pencil);
   try {

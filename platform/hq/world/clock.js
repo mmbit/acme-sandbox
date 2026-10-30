@@ -4,7 +4,7 @@
 import { clamp } from '../util.js';
 import { HOLIDAYS, holidaysOn } from '../../../shared/holidays/holidays.js';
 import { formats } from '../../../shared/format/format.js';
-import { clock, fromNow as fromNowAt } from '../../../shared/signs/signs.js';
+import { clock, fromNow as fromNowAt, lasted } from '../../../shared/signs/signs.js';
 
 let fixedHour = NaN, fixedDate = null, lapsing = null, day; // day: the date and holidays checkDay last saw
 let founded, celebrated; // the brand's calendar: its founding 'MM-DD' and the holidays it keeps
@@ -83,3 +83,6 @@ export function dayTime(ms, { weekday = true, separator = ', ', timeZoneName = f
 // when something's due, "25 min", "1½ h", "Thu", "Thu 29 Oct"
 export const clockWhen = ms => clock(ms, { timeZone: zone });
 export const fromNow = ms => fromNowAt(ms, { timeZone: zone });
+
+// how long ago a timestamp was, in the design system's time words (the one policy desk.js and care.js share)
+export const ago = ts => { const ms = Date.now() - new Date(ts); return !ts || isNaN(ms) ? '' : ms < 30000 ? 'just now' : `${lasted(ms)} ago`; };

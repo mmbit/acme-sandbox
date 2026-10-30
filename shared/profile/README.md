@@ -33,6 +33,10 @@ Every 20 s, sent to HQ each minute and once more when the page goes (`pagehide`)
   sample's 20 s, so a loop started twice shows as a rate that doubles.
 - `frames`: frames shown, frames slower than 60 ms (three or more dropped at 60 Hz) and the worst gap, while the page shows.
   `longTasks` where the browser reports them (Chromium).
+- `held`: the same three for the frames while a finger, pen or mouse button is down, from `pointerdown` to `pointerup`
+  or `pointercancel` (a frame counts when a pointer was down at any time in its gap). A drag's lag (the Notebook's pull
+  tab, a pen stroke, a slider) is a few seconds of a sample's 20, so `frames` alone dilutes it; `hq profile` prints it
+  on a line of its own.
 - `state`: the root's and body's classes and the root's `data-` attributes, which say which view was open.
 
 A page's session also says what came before it in the same tab: a reload or navigation (it closed with a `pagehide`)
@@ -53,3 +57,7 @@ its views, then at rest again, and prints a table of what each phase ended with.
 counts after a garbage collection (heap, every node including detached ones, every listener). Run it on the render
 helper (`hq run --kind render -- node platform/hq/profile-session.mjs`).
 
+`node platform/hq/profile-pull.mjs [--engine chromium|webkit]` does the same for the Notebook's pull-in: it drags the
+pull tab open and shut over and over, with the building drawing, paused or hidden in turns, and prints the frames under
+the finger and in the swing after, what the frames' script spent and, in Chromium, a trace's main thread and longest
+tasks.

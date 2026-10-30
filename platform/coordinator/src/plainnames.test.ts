@@ -124,8 +124,8 @@ test("a new task's board title comes from the model's route, its brief read, and
 });
 
 test("the model being down blocks nothing: the board reads the agent's words, why it failed stays on its row, and it's asked until it's named", async () => {
-  await nameAll();
   h.cancelQueued(); // (the thread's tasks left queued before would hold wren's job behind them)
+  await nameAll(); // (and the judges their ends woke)
   const queued = await h.agent('job', (await h.start({ agent: 'wren', title: 'Plan', thread: 'game/claims' })).token, {
     agent: 'kit',
     title: 'Profile the CPQ seat path',
@@ -390,6 +390,9 @@ test("a finished task's card says what it did in a few plain sentences, written 
   const customer = await h.start({ agent: 'ivy', title: 'Answer Sample Person', thread: 'game/tags', customers: true });
   await h.finish(customer, { result: 'Told Sample Person their parcel ships Monday' });
   const next = h.queue({ agent: 'ivy', title: 'Tag gift cards too', thread: 'game/tags' }); // (it keeps the thread open)
+  // (the judges its owner was woken with as each task ended with nothing to merge, each cancelled as the next task
+  // joined, aren't this test's: threadorder.test.ts)
+  h.db.prepare("delete from jobs where agent = 'wren' and status = 'cancelled'").run();
   assert.equal((await boardJob(run.id)).did, undefined, 'none until it is made, never the report');
 
   // (the names earlier tests left due go first, named their words as they are)
@@ -416,7 +419,8 @@ test("a finished task's card says what it did in a few plain sentences, written 
     "the naming model's name was over 400 characters",
   );
   assert.equal((await boardJob(run.id)).did, undefined);
-  assert.deepEqual(await claim(), {}, 'not asked again at once');
+  // (the name of the judge its thread's end woke may come first)
+  assert.deepEqual(await claimOf(`did:${run.id}`), {}, 'not asked again at once');
   mock.timers.tick(10 * MIN);
   const again = await claimOf(`did:${run.id}`);
   assert.deepEqual(refs(again), [`did:${run.id}`]);

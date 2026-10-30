@@ -16,7 +16,7 @@ import assert from 'node:assert/strict';
 import { playLine } from './bookcall.mjs';
 import { nothingDrawn } from './bookink.mjs';
 import { savedScrap } from './bookscrap.mjs';
-import { pressAlong, ui } from './bookkit.mjs';
+import { pinOn, pressAlong, ui } from './bookkit.mjs';
 
 const SETTLE_MS = 1500; // (callnotes.js)
 const RINGS = [
@@ -145,7 +145,7 @@ async function mouseStory(c) {
 async function mouseRing(c, page) {
   const mouse = { x: 250, y: 630, rx: 70, ry: 35 },
     from = c.posts.length;
-  await page.click('#book .bk-pin'); // (away till the board summons it: job #20358)
+  await pinOn(page); // (away till the board turns it on)
   await page.locator(ui('.fab')).dispatchEvent('click'); // (it bobs: never still for Playwright's click)
   await page.waitForSelector(ui('.veil:not([hidden])'));
   const loop = c.ring(mouse.x, mouse.y, mouse.rx, mouse.ry);

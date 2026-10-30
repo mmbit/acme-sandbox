@@ -33,6 +33,8 @@ import { readFileSync } from 'node:fs';
 import { serve } from './serve.mjs';
 import { playwright, openPage } from '../../shared/browser/browser.mjs';
 import { lookNames } from './looks.mjs';
+import { notebookPlay } from './shell/ink/notebookplay.js';
+import { notebookRoute } from './notebookroute.mjs';
 
 const { chromium, webkit } = playwright();
 const frames = JSON.parse(readFileSync(process.argv[2], 'utf8')); // [[seconds after the reply started, base64 PCM16, sentence]]
@@ -1178,7 +1180,8 @@ async function reachesNobody(context) {
 }
 
 async function callPage(viewport = { width: 420, height: 912 }) {
-  const opened = await openPage(browser, { viewport, permissions: ['microphone'] });
+  const opened = await openPage(browser, { viewport, permissions: ['microphone'] }),
+    notebook = notebookPlay();
   // (in the plain look, unless a step's address names one: dev mode's Holodeck, drawn in software here, holds the page
   // 0.3-0.5 s a frame, so the line's frames are scheduled late, the stream's reader drops chunks and the sign lights a
   // frame late, which a phone drawing it on its GPU never does.)
@@ -1190,11 +1193,9 @@ async function callPage(viewport = { width: 420, height: 912 }) {
     if (path === '/api/language') return r.fulfill({ json: { lang: 'en' } }); // (a call reads it before it dials)
     // (the call's notes page, asked for at pickup: refused, its card covers the call's keys.)
     if (path === '/api/notebooks/call') return r.fulfill({ json: { page: { id: 1 } } });
-    // (the book's shelf, one notebook with one empty page, as notebookdata.js reads them: a screen wide enough to show the
-    // book open reads its newest note at once.)
-    const at = '2026-10-29T09:00:00.000Z', blank = { id: 1, notebook: 1, kind: 'free', title: '', zooms: {}, archived: false, sending: false, sent: null, created: at, updated: at, x: 0, y: 0, w: 1200, h: 1600, groups: 0 };
-    const book = { '/api/notebooks': { shelf: [{ id: 1, kind: 'mine', name: 'My Notebook' }], archive: [] }, '/api/notebooks/pages': { notebook: { id: 1 }, pages: [blank], archived: [] }, '/api/notebooks/pages/groups': { page: 1, notebook: 1, groups: [] } }[path];
-    if (book) return r.fulfill({ json: book });
+    // (the book's store, played as dev mode plays it, notebookroute.mjs: a screen wide enough to show the book open
+    // reads its newest note at once.)
+    if (path.startsWith('/api/notebooks')) return notebookRoute(r, notebook);
     return r.fulfill({ status: 404, body: '' });
   });
   return opened;

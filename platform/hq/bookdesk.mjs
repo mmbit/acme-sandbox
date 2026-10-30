@@ -242,14 +242,14 @@ async function onPaper(page) {
   return { data: Buffer.from(b64, 'base64'), w, h };
 }
 // The ink on the paper: how many dark px, away from the islands at its right and foot, and the tool strip beside
-// them with the tool in use named beside it (bookstrip.js.)
+// them and the page bar (the lane at the foot: bookui.js.)
 export async function inkPixels(page) {
   const { data, w, h } = await onPaper(page),
     paper = await paperBox(page),
     k = w / paper.width,
-    // (the strip's and its name's boxes in the shot's px, with a few px round them for their shadows)
+    // (the rail's and the bar's boxes in the shot's px, with a few px round them for their shadows)
     strip = await page.evaluate(() =>
-      [...document.querySelectorAll('#book .bk-strip .bk-island, #book .bk-now')]
+      [...document.querySelectorAll('#book .bk-lane .bk-island')]
         .filter(el => el.offsetParent)
         .map(el => el.getBoundingClientRect())
         .map(r => ({ left: r.left, top: r.top, right: r.right, bottom: r.bottom })),

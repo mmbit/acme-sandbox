@@ -29,7 +29,7 @@ type Meta = {
   archived?: boolean;
   picture?: string;
 };
-type Entry = Meta & { name: string; about?: string; open?: string };
+type Entry = Meta & { name: string; about?: string; open?: string; scene?: string | string[] };
 export type Artifact = {
   id: string;
   name: string;
@@ -89,36 +89,143 @@ function fromApps(): Found[] {
   });
 }
 
-// ---------------------------------------------------------------- artifact.yaml
-function fromFiles(): Found[] {
-  const root = 'products/_cycles';
-  const cycles = existsSync(`${REPO_DIR}/${root}`) ? folders(root).map(cycle => `${root}/${cycle}`) : [];
-  const products = folders('products').map(slug => `products/${slug}`);
-  return [
-    ...cycles.flatMap(cycle => [cycle, ...below(cycle, DEPTH)]),
-    ...products.flatMap(product => below(product, DEPTH)),
-  ]
-    .filter(dir => existsSync(`${REPO_DIR}/${dir}/artifact.yaml`))
-    .map(dir => fromFile(dir, yamlAt(`${dir}/artifact.yaml`) as Entry));
-}
+// ---------------------------------------------------------------- what we build
+// Found from the build outputs our tools leave: a deck's deck.json, and a film's .render.json beside it (one film per
+// scene, not per render). An artifact.yaml in a folder with a deck overrides it (a better name, archived). One in a
+// scene's folder, or one with `scene:` naming it, stands for that film. One in any other folder is an artifact of its own.
+type Scanned = { dir: string; file: string; entry: Entry };
+type Render = { dir: string; file: string; scene: string };
 
-// In a cycle folder, no `open` means the folder's own page.
-function fromFile(dir: string, entry: Entry): Found {
+const fromFiles = (): Found[] => scan().map(({ dir, file, entry }) => fromFile(dir, file, entry));
+
+// An artifact's id: its folder under products/, and for a film its file
+const idOf = (dir: string, file: string) => [...dir.split('/').slice(1), ...(file ? [file] : [])].join('/');
+
+// In a cycle folder, no `open` means the folder's own page. A product's film opens from HQ (GET /api/artifacts/film): a
+// product's host serves its app, not its folder.
+function fromFile(dir: string, file: string, entry: Entry): Found {
   const [, top, ...rest] = dir.split('/'),
     cycle = top === '_cycles',
-    path = rest.join('/');
+    path = rest.join('/'),
+    id = idOf(dir, file);
   return {
-    id: `${top}/${path}`,
+    id,
     name: entry.name,
     about: entry.about ?? '',
-    open: cycle ? `https://${CYCLES}${PREVIEW}/${path}/${entry.open ?? ''}` : `https://${top}${PREVIEW}${entry.open}`,
+    open: cycle
+      ? `https://${CYCLES}${PREVIEW}/${path}/${entry.open ?? ''}`
+      : entry.kind === 'film' && file
+        ? `/api/artifacts/film?id=${encodeURIComponent(id)}`
+        : `https://${top}${PREVIEW}${entry.open ?? ''}`,
     icon: null,
-    picture: cycle ? cycleCover(dir, entry.picture) : cover(`products/${top}`, entry.picture, `${top}/${path}`),
+    picture: cycle ? cycleCover(dir, entry.picture) : cover(`products/${top}`, entry.picture, id),
     status: null,
     waiting: false,
     public: [],
     owner: null,
-    ...placed(entry, entry.kind!, cycle && rest.length === 1 ? `${CYCLES}/${rest[0]}` : null),
+    ...placed(entry, entry.kind!, cycle && rest.length === 1 && !file ? `${CYCLES}/${rest[0]}` : null),
+  };
+}
+
+function scan(): Scanned[] {
+  const root = 'products/_cycles';
+  const cycles = existsSync(`${REPO_DIR}/${root}`) ? folders(root).map(cycle => `${root}/${cycle}`) : [];
+  const products = folders('products').map(slug => `products/${slug}`);
+  const dirs = [
+    ...cycles.flatMap(cycle => [cycle, ...below(cycle, DEPTH)]),
+    ...products.flatMap(product => below(product, DEPTH)),
+  ];
+  const own = new Map(
+    dirs
+      .filter(dir => existsSync(`${REPO_DIR}/${dir}/artifact.yaml`))
+      .map(dir => [dir, yamlAt(`${dir}/artifact.yaml`) as Entry]),
+  );
+  const decks = new Map(dirs.filter(dir => existsSync(`${REPO_DIR}/${dir}/deck.json`)).map(dir => [dir, deckOf(dir)]));
+  const named = new Set([...own.values()].flatMap(entry => entry.scene ?? []));
+  const folderArtifacts: Scanned[] = dirs.flatMap(dir =>
+    decks.has(dir) || own.has(dir) ? [{ dir, file: '', entry: { ...decks.get(dir), ...own.get(dir) } as Entry }] : [],
+  );
+  // a deck's own folder holds its media, not films of ours
+  const loose = dirs.filter(dir => ![...decks.keys()].some(deck => dir.startsWith(`${deck}/`)));
+  const films = new Map<string, Render>();
+  for (const render of loose.flatMap(rendersIn)) {
+    const sceneDir = render.scene.slice(0, render.scene.lastIndexOf('/'));
+    if (named.has(render.scene) || existsSync(`${REPO_DIR}/${sceneDir}/artifact.yaml`)) continue;
+    const kept = films.get(render.scene);
+    if (!kept || plainer(render, kept) < 0) films.set(render.scene, render);
+  }
+  return [...folderArtifacts, ...[...films.values()].map(r => ({ dir: r.dir, file: r.file, entry: filmOf(r) }))];
+}
+// of a scene's renders (a second size, a clip) the plainest name stands for it
+const plainer = (a: Render, b: Render) =>
+  a.file.length - b.file.length || `${a.dir}/${a.file}`.localeCompare(`${b.dir}/${b.file}`);
+
+// A deck's defaults: its title, its cycle's day, its cover (a thumbnail or cover file, else its first slide's picture).
+function deckOf(dir: string): Entry {
+  const names = readdirSync(`${REPO_DIR}/${dir}`);
+  const deck = JSON.parse(readFileSync(`${REPO_DIR}/${dir}/deck.json`, 'utf8')) as {
+    title: string;
+    chapters?: { slides?: { media?: { image?: string } }[] }[];
+  };
+  const first = deck.chapters?.[0]?.slides?.[0]?.media?.image;
+  const picture =
+    ['thumbnail.jpg', 'cover.jpg', 'cover.png', 'thumbnail.png'].find(n => names.includes(n)) ??
+    (first && existsSync(`${REPO_DIR}/${dir}/${first}`) ? first : undefined);
+  return asArtifactYaml(dir, { name: deck.title, kind: 'deck', open: '', shown: dayOf(dir), picture });
+}
+
+// The renders in a folder: X.mp4 or X.webm with its X.render.json, made from a scene (not from another render). The scene
+// is the page its command renders; an adopted render's record names its blob in git's history, not a command, so its
+// scene is the scene.html beside it (the one its render.sh renders).
+function rendersIn(dir: string): Render[] {
+  const names = readdirSync(`${REPO_DIR}/${dir}`);
+  return names.flatMap(n => {
+    const file = n.slice(0, -'.render.json'.length);
+    if (!n.endsWith('.render.json') || !/\.(mp4|webm)$/.test(file) || !names.includes(file)) return [];
+    const { command } = JSON.parse(readFileSync(`${REPO_DIR}/${dir}/${n}`, 'utf8')) as { command?: string[] };
+    const scene = command ? command.find(arg => /\.html$/.test(arg)) : `${dir}/scene.html`;
+    return scene && existsSync(`${REPO_DIR}/${scene}`) ? [{ dir, file, scene }] : [];
+  });
+}
+
+// A film's defaults: its scene's title, placed (and archived) with the scene's product, with the still beside it (its
+// .jpg, or the poster.png of a concept ad) if there is one
+function filmOf({ dir, file, scene }: Render): Entry {
+  const title = readFileSync(`${REPO_DIR}/${scene}`, 'utf8')
+    .match(/<title>([^<]+)<\/title>/)?.[1]
+    .trim();
+  if (!title) throw new Error(`${scene} has no <title> to name its film`);
+  const product = scene.match(/^products\/([^/_][^/]*)\//)?.[1];
+  const place =
+    product && existsSync(`${REPO_DIR}/products/${product}/product.yaml`)
+      ? yamlAt(`products/${product}/product.yaml`)
+      : {};
+  const { project, business, archived } = place as Meta;
+  const names = readdirSync(`${REPO_DIR}/${dir}`);
+  const still = [file.replace(/\.\w+$/, '.jpg'), 'poster.png'].find(n => names.includes(n));
+  return asArtifactYaml(dir, {
+    name: title,
+    kind: 'film',
+    open: file,
+    shown: dayOf(dir),
+    picture: still,
+    project,
+    business,
+    archived,
+  });
+}
+const dayOf = (dir: string) => dir.match(/_cycles\/(\d{4}-\d\d-\d\d)-/)?.[1];
+
+// A found deck's or film's paths, the way its folder's artifact.yaml would write them: from a cycle folder its own,
+// from a product the product's root.
+function asArtifactYaml(dir: string, entry: Entry): Entry {
+  const [, top, ...rest] = dir.split('/');
+  if (top === '_cycles') return entry;
+  const from = (file: string) => `${rest.join('/')}/${file}`;
+  return {
+    ...entry,
+    open: `/${from(entry.open ?? '')}`,
+    picture: entry.picture && from(entry.picture),
   };
 }
 
@@ -164,22 +271,29 @@ export function pictureOf(id: string) {
   const entry = existsSync(`${REPO_DIR}/${COMPANY}`)
     ? (yamlAt(COMPANY) as { artifacts: Entry[] }).artifacts.find(e => e.open === id)
     : undefined;
-  const parts = id.split('/');
-  const found = entry
-    ? { dir: 'company', picture: entry.picture }
-    : parts.length <= DEPTH + 1 && parts.every(part => FOLDER.test(part))
-      ? fileOf(parts)
-      : null;
+  const [slug, ...below] = id.split('/');
+  let found: { dir: string; picture?: string } | null = null;
+  if (entry) found = { dir: 'company', picture: entry.picture };
+  else if (FOLDER.test(slug) && !below.length) found = fileOf(slug);
+  else if (FOLDER.test(slug)) {
+    found = { dir: `products/${slug}`, picture: scan().find(s => idOf(s.dir, s.file) === id)?.entry.picture };
+  }
   return found?.picture && safe(found.picture, /\.(png|jpe?g|webp)$/i)
     ? { dir: `${REPO_DIR}/${found.dir}`, file: `/${found.picture}` }
     : null;
 }
-// a product's own (product.yaml) or an artifact's in a product's folder (artifact.yaml)
-function fileOf(parts: string[]) {
-  const file = `products/${parts.join('/')}/${parts.length === 1 ? 'product' : 'artifact'}.yaml`;
+// a product's own (product.yaml)
+function fileOf(slug: string) {
+  const file = `products/${slug}/product.yaml`;
   return existsSync(`${REPO_DIR}/${file}`)
-    ? { dir: `products/${parts[0]}`, picture: (yamlAt(file) as Entry).picture }
+    ? { dir: `products/${slug}`, picture: (yamlAt(file) as Entry).picture }
     : null;
+}
+
+// The film file of the found film with this id (GET /api/artifacts/film): the folder and the file in it, or null.
+export function filmFile(id: string) {
+  const found = scan().find(s => s.file && idOf(s.dir, s.file) === id);
+  return found ? { dir: `${REPO_DIR}/${found.dir}`, file: `/${found.file}` } : null;
 }
 
 // ---------------------------------------------------------------- place and history

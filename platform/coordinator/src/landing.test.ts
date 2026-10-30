@@ -46,6 +46,7 @@ async function failedPush() {
     aim: new Date(late).toISOString(),
   });
   await h.finish(wire, { status: 'failed', result: `GitHub refused the push to job/${wire.id}` });
+  h.cancelJudges(); // (the deliverable's end woke its owner's judge)
   return { call, item, thread, failed: wire.id, followUp };
 }
 // A running job's hq job --lands, for chime unless the body says otherwise
@@ -236,7 +237,9 @@ for (const status of ['dropped', 'replaced']) {
 }
 
 test("hq job --lands keeps the failed job's paused project until it resumes", async () => {
-  const { failed } = await failedPush();
+  const { failed, thread: shop } = await failedPush();
+  // (the failure woke the shop key's owner to judge it, a job no pause holds: threadorder.test.ts)
+  db.prepare("update jobs set status = 'cancelled' where id = ?").run(projects.findThread(shop)!.judge);
   const thread = projects.createThread({ project: 'game', name: 'Levels', goal: 'Levels work' });
   assert.equal(typeof thread, 'object');
   if (typeof thread === 'string') throw new Error(thread);

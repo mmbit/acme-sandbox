@@ -1,4 +1,4 @@
-// The board's bindings on the page that are more than a tool's press (the strip, the wheel, Shift and Ctrl are
+// The board's bindings on the page that are more than a tool's press (the rail, the wheel, Shift and Ctrl are
 // bookstrip.js, bookpan.js and booktools.js): a press held still, which becomes a voice note (a mouse's, where a
 // microphone is connected; a double tap held, by a finger or a pen) or, where this device's preferences want it, the
 // radial menu (a pen's or a finger's long press); and whether a finger moves the page or draws. A voice note listens
@@ -23,8 +23,7 @@ const DOUBLE_MS = 350,
 // where a press is never a hold of the page's: a control, a field, words, an answer, the strip
 const NOT_PAPER =
   'button, input, textarea, select, a, label, [contenteditable], .bk-typed, .answer-slip, .bk-strip, .bk-card';
-// the tools a hold is theirs to keep: Select's press and the mouse's with the hand are their own (a finger's or a pen's
-// with the hand holds as with the pen: bookwrite.js)
+// the tools a hold is theirs to keep: Select's press is its own
 const HELD_TOOLS = ['pen', 'highlighter', 'eraser', 'shapes', 'text'];
 
 export function mountInput(book) {
@@ -39,9 +38,8 @@ export function mountInput(book) {
   addEventListener('pointercancel', e => !e.unmade && letGo(input, e), true);
   microphones(input);
   return (book.input = {
-    // A finger moves the page, rather than drawing, with the hand, and once a
-    // pen has been used here, where the preferences say so
-    fingerPans: () => book.tools?.mode?.() === 'hand' || (input.pen && prefs().penPans),
+    // A finger moves the page, rather than drawing, once a pen has been used here, where the preferences say so
+    fingerPans: () => input.pen && prefs().penPans,
     claims: e => !!e.target?.closest?.('.bk-strip') || !!kindOf(input, e),
   });
 }
@@ -56,7 +54,7 @@ function kindOf(input, e) {
     mouse = e.pointerType === 'mouse';
   if (!e.isPrimary || (mouse && (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey))) return null;
   const mode = book.tools?.mode?.();
-  if (!HELD_TOOLS.includes(mode) && !(mode === 'hand' && !mouse)) return null;
+  if (!HELD_TOOLS.includes(mode)) return null;
   if (e.target instanceof Element && e.target.closest(NOT_PAPER)) return null;
   const at = book.at(e.clientX, e.clientY);
   if (!at?.view.page.ink || scrapAt(at.view.page.scraps, [at.x, at.y]) >= 0) return null;

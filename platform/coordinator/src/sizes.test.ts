@@ -111,6 +111,23 @@ test('only the CEO changes a saved size and its reason stays in history', async 
   );
 });
 
+for (const withItem of [false, true]) {
+  test(`work queued on a live call ${withItem ? 'with an item' : 'without an item'} keeps its size and can be resized`, async () => {
+    const { token } = await h.liveCall('juno');
+    const item = withItem ? await promiseOn(token) : undefined;
+    const queued = await h.agent('job', token, { ...request, item, goal: 'Check the whole map' });
+    assert.equal(queued.status, 200, JSON.stringify(queued.body));
+    const job = queued.body.id;
+    assert.equal(h.jobs.openJobs({}).find(j => j.id === job)!.queued_by, 'juno');
+    assert.equal((await estimate(job)).estimate.agent_minutes, 60);
+    const revised = await h.agent('sizes', planner.token, { job, time: '40m', why: 'The scope is clearer' });
+    assert.equal(revised.status, 200, JSON.stringify(revised.body));
+    assert.equal((await estimate(job)).estimate.agent_minutes, 40);
+    await h.voice('call-end', { agent: 'juno', token, lines: ['Board: Check the whole map.'] });
+    assert.equal(h.job(job).status, 'queued');
+  });
+}
+
 test('comparisons expose scopes and recorded changes without choosing a new estimate', async () => {
   const found = await h.agent('estimate?q=harbour', planner.token);
   assert.equal(found.status, 200);
@@ -195,3 +212,15 @@ test('comparisons show measured changed lines and leave unread merges unknown', 
   assert.equal(line(harbour[2]).added, 600);
   assert.equal(line(harbour[1]).added, null);
 });
+
+async function promiseOn(token: string) {
+  const response = await h.agent('item', token, {
+    kind: 'promise',
+    owner: 'kit',
+    what: request.title,
+    goal: 'Check the whole map',
+    quote: 'Kit checks the map',
+  });
+  assert.equal(response.status, 200, JSON.stringify(response.body));
+  return response.body.id;
+}

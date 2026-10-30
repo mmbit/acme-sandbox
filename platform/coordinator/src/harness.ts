@@ -176,9 +176,22 @@ export async function harness(
       assert.equal((await worker('seat', { seat: `capacity-${engine}`, engine, state: 'ready', util: 0 })).status, 200);
     await reportCapacity();
   };
+  // Cancels the owners' queued judges (threadjudge.ts wake), so a test can claim the work behind them.
+  // The answer is their ids.
+  const cancelJudges = () => {
+    const judges = db
+      .prepare(
+        "select distinct j.id from threads t join jobs j on j.id = t.judge where j.status = 'queued' order by j.id",
+      )
+      .all() as { id: number }[];
+    for (const { id } of judges) cancelJob(id, 'Test finished');
+    return judges.map(j => j.id);
+  };
+  // Every queued job cancelled, and the owners' judges those ends wake
   const cancelQueued = () => {
     for (const job of jobs.listJobs() as { id: number; status: string }[])
       if (job.status === 'queued') cancelJob(job.id, 'Test finished');
+    cancelJudges();
   };
   let seats = 0,
     engines = 0;
@@ -309,6 +322,7 @@ export async function harness(
     queue,
     capacity,
     cancelQueued,
+    cancelJudges,
     claim,
     claimJob,
     start,

@@ -76,12 +76,12 @@ async function voiceAndRing(page, c, free, mid) {
   await safari(page, 'pen', 'pointerdown', ring);
   await page.locator('#book .bk-radial [role=menuitemradio]').first().waitFor({ timeout: 2000 });
   const lit = middleOf(
-    await page.locator('#book .bk-radial').getByRole('menuitemradio', { name: 'Highlighter' }).boundingBox(),
+    await page.locator('#book .bk-radial').getByRole('menuitemradio', { name: 'Marker' }).boundingBox(),
   );
   await safari(page, 'pen', 'pointermove', lit);
   await c.shot('book-radial-webkit', page);
   await safari(page, 'pen', 'pointerup', lit);
-  await until(async () => (await pressed(page)) === 'Highlighter', 'the highlighter picked from the ring');
+  await until(async () => (await pressed(page)) === 'Marker', 'the highlighter picked from the ring');
 }
 
 // ---- helpers

@@ -24,6 +24,14 @@ where it suffices.
 - **Settings**: the server's names and switches in `company/infra.env`; a product's needs in its `product.yaml`.
   `company/brand.yaml` `names: book` names the board's book on its tips book's cover; left out, the cover reads Tips.
   Its `screens` names the screens the board reads on, which a try's versions are shot at; left out, a desktop's.
+- **Seat plans**: optional `company/seatplans.yaml` maps worker seat names to confirmed Claude subscription sizes,
+  `5` or `20`. For example, `claude-main: 20` declares that seat's 20x plan. Omit seats whose size is unknown.
+  `hq when --extra-seat 5x` (or `20x`) and `hq projects [words] --extra-seat 5x` replay the live plan with one fresh
+  Claude subscription. The call tools' `extra_seat` field takes the same sizes. Without the file, or with no listed
+  subscription with positive measured usage in both windows, the replay reports unavailable. It also needs current
+  worker slots and room. An absent per-seat run cap means the added seat shares those worker resources.
+  Capacity comes from measured usage, with low confidence. Scaling between plan sizes is an assumption.
+  This setting only describes subscriptions for the replay. It neither adds a real seat nor changes the saved plan.
 - **Looks**: the company's HQ theme and renderer choice in `theme/hq.yaml`. Wire's colourways name the one thing lit
   `accent`, `side` and `onAccent`: a company's `theme/hq.yaml` still saying `knop` and `onKnop` renames them at the
   carry, or Wire falls back to its own Day and Night.
@@ -31,7 +39,13 @@ where it suffices.
   `notebook` is the Notebook's accent, the pull tab's colour, asked at onboarding (left out: HQ's ink, never a colour of
   the platform's own).
 - **Shows**: `company/shows.yaml`.
-- **Covers**: each artifact's `picture` (artifact.yaml, product.yaml or a company/artifacts.yaml entry), shot from the
+- **Artifacts**: found, not registered. A folder with a `deck.json` is a deck (its cover a `thumbnail.jpg`, `cover.jpg`,
+  `cover.png` or `thumbnail.png`, else its first slide's picture). A video with a `.render.json` beside it is a film,
+  one per scene it was rendered from (a record with no command, an adopted render, takes the `scene.html` beside it),
+  named by the scene's `<title>`, its cover the `.jpg` named like it or the folder's `poster.png`. An `artifact.yaml`
+  overrides what's found in its folder; with `scene:` it stands for that scene's film.
+- **Covers**: each artifact's `picture` (artifact.yaml, product.yaml or a company/artifacts.yaml entry; a found deck's or
+  film's is named above), shot from the
   company's own list by `node platform/hq/covers.mjs <list.json>`. The list is a JSON array kept in the company's
   folders, one entry per cover: its `picture` (a path from the repo's root) and what to shoot, a product's `preview`
   and `page`, a repo `page`, HQ's own `hq` address or a `url` with the `start` command that serves it, framed with
@@ -51,12 +65,20 @@ where it suffices.
   (`/api/book`) rather than Reviews, with no setting: one way for both companies. Knop doesn't use the first
   Sketchbook (the board moved the pencil work to Onlyonery on 24 October).
 
+- **Expedite is also for work the board needs in its hands now** (30 October): the board's rule of 29 October (Knop's
+  call 164: merge first, then run the review round) is in `hq expedite`, `hq job --expedite` and the call agent's
+  tools for both companies, beside structural HQ fixes. A task already running inside a deliverable still can't be
+  expedited: the deliverable merges as one pull request (`regroup.ts takeOut`).
+
 ## Open
 
 - The guest room's Sketchbook is gone, for every company: an invited person writes in the Notebook room
   (`/guest/notebooks/`), on their own page of a round from Reviews or a notebook the board invited them into, and
   brand.yaml `guest: { sketchbook }` is gone with it (a company that still sets it gets nothing from it). Before it
   carries, Onlyonery's agreement is asked through the Overseer.
+- HQ's Sketchbook app on the computer is gone for every company (Ink 1.1: one notebook, the book), with its
+  `/api/sketches/…` routes and brand.yaml `computer: { sketchbook }`; its old sketches still fold into the book at start
+  (`ink/sketchmigration.ts`). Before it carries, Onlyonery's agreement is asked through the Overseer (job #14679).
 - `platform/hq/shell/desk.js`: decks built before 4 October tag their messages `{ onlyonery: 'deck' }`, so the desk
   still answers to one company's name. Generic form: rebuild those decks, then drop the old tag.
 - Review mode's notes into the board's book: the board's notes on any product
@@ -100,7 +122,12 @@ where it suffices.
   job's own pull request leaves none (`platform/coordinator/src/reviewrounds.ts`, `followups.ts`). Before it carries,
   Onlyonery's agreement is asked through the Overseer. A switch comes only if Onlyonery asks for one.
 - A call's notes page goes to nobody, for every company, with no setting: as the call ends it goes in as the board
-  left it and stays in My Notebook, unstamped, and its Send is refused while the call is on. Each scrap and promise
-  on it is an item on the call's list, which the call's follow-up hands out with the transcript, so nothing on it is
-  queued twice (`platform/coordinator/src/ink/callnotes.ts` ended, `notebooksend.ts` sendPage). Before it carries,
-  Onlyonery's agreement is asked through the Overseer.
+  left it and stays in My journal, unstamped and with no Send (the old book's Send refuses it too). Each scrap and
+  promise on it is an item on the call's list, which the call's follow-up hands out with the transcript, so nothing on
+  it is queued twice (`platform/coordinator/src/ink/callnotes.ts` ended, `notebooksend.ts` and `ink/booksend.ts`
+  sendPage). Before it carries, Onlyonery's agreement is asked through the Overseer.
+- `infra/provision.sh` still renames a Hetzner firewall called `web`, the name a server's firewall had before
+  firewalls were named for their `SERVER_NAME` (also `harden.sh`'s header): a one-off for a server whose firewall is
+  still called `web` in the Hetzner console and guards it alone, which no new company's server has. Generic form:
+  none, it goes. The Overseer sees both companies' servers: once each one's firewall carries its `SERVER_NAME`, the
+  branch is dropped at a carry.

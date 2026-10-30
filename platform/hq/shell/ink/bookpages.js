@@ -9,13 +9,11 @@
 // bookpage.js; writing bookwrite.js; the maths bookrow.js; saving booksave.js; the store's routes notebookdata.js; the
 // mouse's tools booktools.js, asked in this order on a press on the paper: a pan (bookpan.js), then book.tools.press(e), then ink.
 import { pen } from '/__review/ink.js';
-import { store } from '../../util.js';
+import { resizedNextFrame, store } from '../../util.js';
 import { word } from './bookscope.js';
 import { createPage, loadPages, loadShelf } from './notebookdata.js';
 import { changed, readAgain, readPage, said, saveAll, shut } from './booksave.js';
-import { mountFit } from './bookscrapfit.js';
 import { pageView } from './bookpage.js';
-import { camOf, keepZoom, keptZoom } from './bookpagezoom.js';
 import { panning } from './bookpan.js';
 import { mountFar } from './bookpagesfar.js';
 import { landingPage } from './notebookstack.js';
@@ -24,8 +22,8 @@ import { mountGroups } from './bookgroups.js';
 import { sendShown, stamped } from './bookpagesend.js';
 import { mountControls } from './bookcontrols.js';
 import { turn } from './bookflip.js';
-import { actualSize, at, away, draw, halt, setView, shown, slideTo, viewOf, zoomBy } from './bookview.js';
-import { placeIn, scrapBoxOf, grownTo, showsBox } from './bookrow.js';
+import { at, away, draw, halt, setView, shown, slideTo, viewOf } from './bookview.js';
+import { placeIn, showsBox } from './bookrow.js';
 import { recordOf, summaryOf } from './bookrecords.js';
 import { stepList, undo, redo } from './bookedit.js';
 import { INK, drawable, dried, endLostLines } from './bookwrite.js';
@@ -45,7 +43,7 @@ export function mountPages(paper, { dev, shape, scope = null, calls = null }) {
     at: (x, y) => at(book, x, y),
     shown: () => shown(book),
     view: () => viewOf(book),
-    remember: ({ zoomed = false } = {}) => remember(book, zoomed),
+    remember: () => remember(book),
     far: () => book.zoom.level() !== 'page',
     zoomed: () => book.controls?.update(),
     undo: () => stepped(book, undo),
@@ -70,11 +68,11 @@ export function mountPages(paper, { dev, shape, scope = null, calls = null }) {
   // (the store changed a page: read again where it shows, the notebook's pages again when it's one not here)
   for (const type of ['book:notebook', 'book:changed'])
     document.addEventListener(type, e => storeChanged(book, e.detail?.page));
-  new ResizeObserver(() => resized(book)).observe(book.desk);
-  mountFit(book, paper.closest('#book')); // (scraps fitted to the paper)
+  resizedNextFrame([book.desk], () => resized(book));
   // (back in front, or a note written the old way here, which the store carries onto the current page: the pages again)
   document.addEventListener('visibilitychange', () => (document.hidden ? saveAll(book) : pagesAgain(book)));
   document.addEventListener('pencil:note', () => pagesAgain(book));
+  if (!scope) import('./bookproject.js').then(m => m.followProject(book, id => openNotebook(book, id))); // company: #14680
   const place = store.get(placeKey(book), null) ?? (scope ? { notebook: scope.notebook, page: scope.page } : null);
   book.opened = openNotebook(book, place?.notebook, place);
   return asked(book);
@@ -138,7 +136,7 @@ const bookOf = (paper, { dev, shape, scope, calls }) => ({
 
 // ---- a notebook's pages
 
-// A notebook's pages (My Notebook's when none's named, or the one named has gone), at a remembered place or its newest
+// A notebook's pages (My journal's when none's named, or the one named has gone), at a remembered place or its newest
 // open page; one refused says why, a tap trying it again
 async function openNotebook(book, id = null, place = null) {
   saveAll(book);
@@ -205,6 +203,7 @@ export const newestOf = pages => landingPage(pages, shut)?.id ?? pages.at(-1)?.i
 // A page as the book keeps it while it shows: its summary, and its groups' ink, pictures and typed words once read
 function viewFor(book, page) {
   const v = pageView(page, book.away);
+  Object.assign(v, { dev: book.dev, relay: () => lay(book) }); // (a unit's room dragged: bookunits.js)
   v.el.hidden = true;
   book.world.append(v.el);
   v.place();
@@ -251,7 +250,8 @@ function show1(book, i, place = null) {
   book.views.forEach((v, k) => (v.el.hidden = k !== i));
   const v = viewOf(book);
   if (!v) return;
-  setView(book, camOf(book, v.page, place));
+  // (at a place on it, or as it was left this visit, or at its top)
+  setView(book, place ? { pan: { x: 0, y: place.y ?? 0 } } : (book.cams.get(v.page) ?? { pan: { x: 0, y: 0 } }));
   if (!v.page.ink) read(book, v);
   remember(book);
   book.controls?.update();
@@ -264,11 +264,8 @@ async function turnTo(book, i, place = null) {
 }
 // The page laid again (its size, as it has grown) and drawn where it is
 function lay(book) {
-  for (const v of book.views) {
-    // (a picture taped past what the page held: the page grows to hold it)
-    for (const s of v.page.scraps) Object.assign(v.page, grownTo(v.page, scrapBoxOf(s)));
-    v.place();
-  }
+  // (its units laid as a masonry at the paper's width, bookunits.js; the tools' layer drawn again where units moved.
+  for (const v of book.views) if (v.place(book.size.w)) book.tools?.added?.(v);
   setView(book);
 }
 // A page's groups read, drawn and given to the tools
@@ -293,7 +290,7 @@ function goTo(book, place) {
   const ids = book.views.map(v => v.page.id),
     { i, at: on } =
       place && ids.includes(place.page) ? placeIn(ids, place) : { i: ids.indexOf(newest(book)), at: null };
-  show1(book, i, on && { x: on.x ?? 0, y: on.y ?? 0, s: keptZoom(book, book.views[i].page) ?? on.s ?? 1 });
+  show1(book, i, on && { x: 0, y: on.y ?? 0 });
 }
 // The paper's size taken, and a place waiting for it opened
 function resized(book) {
@@ -309,8 +306,8 @@ function resized(book) {
   goTo(book, place);
 }
 const placeKey = book => `book.place.${book.scope ? `guest.${book.scope.notebook}.` : ''}${book.shape()}`;
-// The view's place at rest, for this device; its zoom kept on the page only where the board zoomed (bookpagezoom.js)
-function remember(book, zoomed = false) {
+// The view's place at rest, for this device
+function remember(book) {
   const v = viewOf(book);
   if (!v) return;
   const { pan, scale } = book;
@@ -321,17 +318,16 @@ function remember(book, zoomed = false) {
     y: Math.round(pan.y),
     s: Math.round(scale * 1000) / 1000,
   });
-  if (zoomed) keepZoom(book, v.page);
   // (the page shown: book:turn on the document, for a second screen to follow.)
   document.dispatchEvent(new CustomEvent('book:turn', { detail: { page: v.page.id } }));
 }
 function shownPage(book) {
   const page = viewOf(book)?.page;
   if (!page?.id) return null;
-  const { id, notebook, day, kind, label, w, h } = page;
-  return { id, notebook, day, kind, label, w, h };
+  const { id, notebook, day, kind, label, w, h, chapter } = page;
+  return { id, notebook, day, kind, label, w, h, chapter };
 }
-// Undo or Redo (bookedit.js): what's being typed kept and a selection let go first, so the step meets the page as it is
+// Undo or Redo (bookedit.js), what's typed kept and a selection let go first: the step meets the page as it is
 const stepped = (book, act) => (book.tools?.settle(), act(book));
 
 // ---- what the other parts ask
@@ -357,13 +353,8 @@ const toolHooks = book => ({
   },
 });
 // What the controls (bookcontrols.js) do: zoom in or out (out of the page's whole width, or in from the overview, a
-// step of the overview), 100%, the overview, a page of the notebook, New page, and Send
+// step of the overview), 100%, the overview, a page of the notebook, New page, and an invited person's Send
 const controlsOf = book => ({
-  zoom: k => {
-    if (book.far()) return k > 1 ? book.zoom.in() : book.zoom.out();
-    if (!zoomBy(book, k)) book.zoom.out();
-  },
-  actual: () => (book.far() ? book.zoom.toggle() : actualSize(book)),
   overview: () => book.zoom.toggle(),
   level: () => book.zoom.level(),
   turnTo: i => turnTo(book, i),

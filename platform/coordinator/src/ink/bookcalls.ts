@@ -1,18 +1,15 @@
-// A call's page in the book (book.ts, kind 'call'): what the board drew on a call, numbered as a sheet's notes are. HQ
-// makes it at the call's first mark, or as a walk-through is picked up (walkthroughs.ts), so a plain call nobody drew on
-// leaves none.
+// A call's page in the book (book.ts, kind 'call'): what the board drew on a call, numbered as a sheet's notes are. A
+// live call's is its notes page (callnotes.ts openPageOf); an old-book one stays for a call that ended without one.
 //   - Its notes sit on a sheet of their own (status 'call'), which is never sent: the agent on the call heard each one
 //     as the Pencil lifted (the voice line fetches it here, forVoice, and counts its picture against the call's).
 //   - The agent's ink is never here: its rings only catch the board's eye on the call, over the page, and go with it
 //   - Kept until the board throws the page away in one tap (book.ts deletePage takes its notes with it), with the
 //     call's summary on top once the call's follow-up has written it (book.ts summary). One nobody wrote on goes by
-//     itself once its walk-through has ended or its call is gone: HQ throws it away as the call ends, and the sweep
-//     one HQ couldn't (sweep).
+//     itself once its call is gone (sweep).
 import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { db, once } from '../db.ts';
 import { DIR } from '../pagescraps.ts';
 import { deletePage, type Page } from './book.ts';
-import * as walks from '../walkthroughs.ts';
 import type { Refused } from '../pagechecks.ts';
 import { PREVIEW } from '../config.ts';
 
@@ -109,8 +106,7 @@ export function dropAgentInk() {
 }
 
 // The sweep (every 5 minutes, startSweep): a call's page nobody wrote on, once its call is gone (nothing was said on it:
-// call.ts handOver) or its walk-through ended a minute ago, HQ's throwing it away having failed or never come. Written
-// on: the book's own ink or pictures on it, or a note (the board's, by the page's owner, p.who). Never a call's notes
+// call.ts handOver). Written on: the book's own ink or pictures on it, or a note (the board's, by the page's owner, p.who). Never a call's notes
 // page, whose call sends and archives it (callnotes.ts).
 const SETTLED_MS = 60_000;
 export function sweep(now = Date.now()) {
@@ -122,7 +118,7 @@ export function sweep(now = Date.now()) {
           and not exists (select 1 from book_notes n where n.page = p.id and n.by = p.who)`,
     )
     .all(before) as { id: number; who: string; call: number | null }[];
-  for (const p of unwritten) if (!agentOf(p.call) || walks.endedBefore(p.call!, before)) deletePage(p.id, p.who);
+  for (const p of unwritten) if (!agentOf(p.call)) deletePage(p.id, p.who);
 }
 // (and, once on the first start with it, the agent's kept rings: dropAgentInk. Here, at the start, not as this file
 // loads: book.ts imports this file, so it loads before book.ts has run its migrations or defined deletePage's row.

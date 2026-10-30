@@ -10,12 +10,14 @@
 // The pull tab's gestures are here: pulled while shut (or mid-swing), it lifts the board, which follows the finger
 // with a slight lag; let go, gravity or the close takes it (letGo). Held on after it lands, the book stays put for
 // HOLD ms, then the same drag resizes it, the edge catching up with the finger once. Open, pulled left first, it
-// resizes as the cover's edge does (book.js's). A tap is the tab's click (bookhandle.js). With reduced motion, none of
-// this: book.js crossfades.
+// resizes as the cover's edge does (book.js's). A tap is the tab's click (bookhandle.js). The page's left edge (the
+// stack, book.css) swiped right lifts the open book the same way, to close it. With reduced motion, none of this:
+// book.js crossfades.
 import { store } from '../../util.js';
 import { foley } from '../audio.js';
 import { EDGE, BOOK } from './booklayout.js';
 import { follow } from './bookfollow.js';
+import * as link from './notebooklink.js';
 import {
   UPRIGHT,
   SWING,
@@ -33,6 +35,7 @@ import {
   SETTLE_MAX,
   LANDED,
   NUDGE,
+  reopened,
   dissolveStep,
   dissolveLook,
   easeInOut,
@@ -54,7 +57,9 @@ const still = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 let root, parts, host;
 let body = { a: UPRIGHT, w: 0 };
 let mode = null; // 'drag', 'fall', 'shut', or null at rest
-let geo = null; // the board laid out: { x: the cover's edge's left, width: the paper's, over: lying over HQ's page }
+// the board laid out: { x: the cover's edge's left, width: the paper's, spread: lying over HQ's page, the table round it
+// }
+let geo = null;
 let shift = 0; // how far a resize after the landing has moved the cover's edge from geo.x (px, - left)
 let laidOpen = false; // HQ's page laid out beside the open book (not the whole screen)
 let dis = 0; // HQ's page's dissolve, 0 clear to 1 gone
@@ -73,9 +78,13 @@ let shade,
   lipWidth = 22;
 
 // root: #book; parts: book.js's; host: book.js's side of it:
-// { board(): the open book's { x, width, over }, lay(at): the parts laid out there, widen(px): the leaf at least that
-//   wide, laidOpen(): HQ's page beside the open book now, landed(dx): open, the edge moved dx by a resize, shut(),
-//   edge: { start, move(dx), end(dx, v) } the cover's edge's drag, pulled(dx, v): a reduced-motion pull let go }
+// { board(): the open book's { x, width, spread }, lay(at): the parts laid out there, widen(px): the leaf at least that
+//   wide, laidOpen(): HQ's page beside the open book now, over(): the open book lies over HQ's page, which keeps its
+//   whole width (HQ's viewer's Over, asked each frame: it may change mid-swing.),
+//   landed(dx): open, the edge moved dx by a resize, shut(), edge: { start, move(dx), end(dx, v) } the cover's edge's
+//   drag, pulled(dx, v): a reduced-motion pull let go, → whether it ends open,
+//   moving(on): the book lifted to swing, or come to rest, so HQ's scene holds still under it rather than share the
+//   book's frames with a building it mostly hides }
 export function mountSwing(rootEl, partsOf, hostOf) {
   root = rootEl;
   parts = partsOf;
@@ -84,7 +93,8 @@ export function mountSwing(rootEl, partsOf, hostOf) {
   parts.leaf.append(shade);
   block = div('bk-block');
   parts.edge.append(block);
-  grip(parts.lip);
+  grip(parts.lip, { tab: true });
+  grip(parts.stack, { tab: false });
 }
 const div = (className, html = '') => Object.assign(document.createElement('div'), { className, innerHTML: html });
 
@@ -95,9 +105,13 @@ export const swinging = () => !!mode;
 // Open it: from shut, a tap's nudge off upright and gravity; mid-swing, it falls from where it is
 export function open(push = 0) {
   if (!mode) begin(UPRIGHT, NUDGE);
+  else if (mode === 'shut') body = reopened(body);
   mode = 'fall';
   settle = 0;
-  body = { ...body, w: body.w + push };
+  // (let go balanced upright and still, as a pull let go before a slow device drew a frame of it leaves it, gravity
+  // alone would never tip it: the tap's nudge does.)
+  const w = body.a > UPRIGHT - 0.01 && body.w > NUDGE ? NUDGE : body.w;
+  body = { ...body, w: w + push };
   run();
 }
 // Shut it: the spring swings it up from where it is
@@ -131,6 +145,7 @@ function begin(a, w) {
   frames = [];
   root.dataset.mode = 'swing';
   root.classList.add('bk-swinging');
+  host.moving(true);
   lipWidth = parts.lip.offsetWidth || lipWidth;
   // (drawn at its angle at once, not at the next frame: laid out, the parts lie flat where it opens, and WebKit can
   // paint that before any frame's callbacks run, the tab flashing where the book last lay open)
@@ -139,6 +154,7 @@ function begin(a, w) {
 // Back at rest: the swing's own drawing taken off (book.js's layout has the parts)
 function rest() {
   root.classList.remove('bk-swinging');
+  host.moving(false);
   for (const el of [parts.edge, parts.leaf, parts.lip]) el.style.transformOrigin = '';
   shade.style.opacity = 0;
   block.style.transform = '';
@@ -174,7 +190,7 @@ function frame(t) {
       if (body.a >= UPRIGHT) meet();
       // (upright, edge on and out of sight, it gives HQ's page its room back when an open would have landed, the page
       // gone as long)
-      if (body.a >= UPRIGHT && (!laidOpen || geo?.over || (dis >= 0.999 && shutFor >= LANDS))) closed();
+      if (body.a >= UPRIGHT && (!laidOpen || geo?.spread || (dis >= 0.999 && shutFor >= LANDS))) closed();
     }
   }
   if (mode) draw();
@@ -252,11 +268,11 @@ function draw() {
   }
   // (the tab follows the cover's outer edge, at the screen's edge once the board's slid off it, inside the book's edge
   // where the book lies over all of it, a margin in: book.js)
-  const tab = Math.max(innerWidth - Math.max(0, reachAt(a, b)), geo.over ? geo.x + lipWidth : 0);
+  const tab = Math.max(innerWidth - Math.max(0, reachAt(a, b)), geo.spread ? geo.x + lipWidth : 0);
   parts.lip.style.transform = `translate3d(${(tab - geo.x).toFixed(2)}px, 0, 0)`;
   // (lying over HQ's page, the table round it comes in over the page as the board lowers and goes as it lifts, in the
   // dissolve's time: booktable.js)
-  if (geo.over) parts.table.style.opacity = dissolveAt(a, false).toFixed(3);
+  if (geo.spread) parts.table.style.opacity = dissolveAt(a, false).toFixed(3);
   shade.style.opacity = (0.22 * Math.sin(a)).toFixed(3);
   block.style.transform = `scaleX(${Math.sin(a).toFixed(3)})`;
 }
@@ -270,10 +286,14 @@ function dissolve(dt) {
 }
 // What the dissolve heads for this frame
 function dissolveTarget() {
-  if (geo?.over) return 0;
+  // (HQ's page keeping its whole width, open or shut, never dissolves; laid out beside the book that will now land over
+  // it, it's gone by the time the board lands, as a shut has it.)
   if (settling) return dis;
+  const over = host.over();
+  if (geo?.spread || (over && !laidOpen)) return 0;
   // (swinging shut from HQ's page laid out beside it: gone at the opening's pace, never back from where a lift took it)
   if (mode === 'shut' && laidOpen) return Math.max(dis, fadeAt(shutFor));
+  if (over) return Math.max(dis, dissolveAt(body.a, false));
   return dissolveAt(body.a, laidOpen);
 }
 function look(d) {
@@ -328,28 +348,32 @@ function resize(dt) {
   host.widen(innerWidth - geo.x - shift - EDGE);
 }
 
-// The pull tab's press: a tap (its click, bookhandle.js), a lift, or (open, pulled left first) a resize. Held, it
-// lifts a little.
-function grip(lip) {
+// The pull tab's press (tab true): a tap (its click, bookhandle.js), a lift, or (open, pulled left first) a resize.
+// Held, it lifts a little. The page's left edge's (tab false): only a swipe
+// right of the book open at rest, a lift to close it; anything else there is nothing.
+function grip(node, { tab }) {
   let kind = null,
     reach0 = 0;
-  lip.addEventListener('pointerdown', e => {
-    if (!e.isPrimary || e.button > 0) return;
-    lip.classList.add('bk-gripped');
-    const up = u => u.pointerId === e.pointerId && lip.classList.remove('bk-gripped');
-    addEventListener('pointerup', up, { once: true });
-    addEventListener('pointercancel', up, { once: true });
-  });
-  follow(lip, {
+  if (tab)
+    node.addEventListener('pointerdown', e => {
+      if (!e.isPrimary || e.button > 0) return;
+      node.classList.add('bk-gripped');
+      const up = u => u.pointerId === e.pointerId && node.classList.remove('bk-gripped');
+      addEventListener('pointerup', up, { once: true });
+      addEventListener('pointercancel', up, { once: true });
+    });
+  follow(node, {
     start(dx) {
       const shutAtStart = !mode && document.documentElement.dataset.book === 'folded';
-      kind = still() ? 'still' : !mode && !shutAtStart && dx < 0 ? 'resize' : 'lift';
+      if (!tab && (mode || shutAtStart || dx < 0)) return void (kind = null);
+      kind = still() ? 'still' : tab && !mode && !shutAtStart && dx < 0 ? 'resize' : 'lift';
       if (kind === 'resize') host.edge.start();
+      else link.emit('pull');
       if (kind !== 'lift') return;
       if (!mode) begin(shutAtStart ? UPRIGHT : 0, 0);
       // (the finger keeps its hold on the tab: the tab's at the screen's edge while the board's past it)
       reach0 = Math.max(0, reachAt(body.a, board()));
-      hand = { d: reach0 - dx, canResize: shutAtStart, flatFor: 0, resize: null };
+      hand = { d: reach0 - dx, canResize: shutAtStart, flatFor: 0, resize: null, open: !shutAtStart && !mode };
       mode = 'drag';
       run();
     },
@@ -358,13 +382,19 @@ function grip(lip) {
       if (kind === 'lift' && hand) hand.d = Math.max(0, reach0 - dx);
     },
     end(dx, v) {
+      if (!kind) return;
       if (kind === 'resize') return host.edge.end(dx, v);
-      if (kind === 'still') return host.pulled(dx, v);
-      if (mode !== 'drag' || !hand) return;
-      const go = hand.resize ? { open: true, push: 0 } : letGo(body.a, v);
-      hand = null;
-      if (go.open) open(go.push);
-      else shut();
+      link.emit('letgo', { open: kind === 'still' ? host.pulled(dx, v) : release(v) });
     },
   });
+}
+// The lifted board let go: gravity or the close takes it. → whether it ends open
+function release(v) {
+  // (stopped under the hand, by a new window size: where book.js laid it out)
+  if (mode !== 'drag' || !hand) return document.documentElement.dataset.book !== 'folded';
+  const go = hand.resize ? { open: true, push: 0 } : letGo(body.a, v, hand.open);
+  hand = null;
+  if (go.open) open(go.push);
+  else shut();
+  return go.open;
 }

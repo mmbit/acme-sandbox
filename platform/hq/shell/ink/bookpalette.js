@@ -1,13 +1,13 @@
-// The book's tool palette: one island of tools (the hand, Select, the pen, the highlighter, the eraser, shapes and
-// Type) and, beside it, the tool's own card: its colours, its line's width, the eraser's size, a shape's kind and
-// whether it's filled, the pen's smoothing. A tool pressed again, or the swatch under them, opens its card; the keys
-// a drawing app has do the same on a desktop. Every setting is remembered in this browser; the book opens on the hand,
-// so a finger's first touch moves the page.
+// The book's tools on the rail (bookstrip.js): Select, the pen and the marker (one tool split in two, the half last
+// used remembered), the eraser, shapes and Text, and over the rail the tool's own card: its colours, its line's width,
+// the eraser's size, a shape's kind and whether it's filled, the pen's smoothing. The tool in use pressed again opens
+// its card; the keys a drawing app has do the same on a desktop. Every setting is remembered in this browser, and the
+// book opens on the pen or the marker, whichever was last in use.
 //
 // st: booktools.js's state; this keeps st.mode and the settings on it, and calls st.changedTool(mode) when the tool
 // changes.
 import { store } from '../../util.js';
-import { button, island, setPressed, hide, besideStrip } from './bookui.js';
+import { button, island, setPressed, hide, overRail } from './bookui.js';
 import { MARKERS, MARKER_ALPHA, SHAPES, WIDTHS } from './bookinkmath.js';
 import { word } from './bookscope.js';
 import { ERASER_PATHS } from '/__review/eraser.js';
@@ -24,7 +24,7 @@ const SMOOTH = { on: 0.42, off: 0.75 };
 const svg = body =>
   `<svg viewBox="0 0 20 20" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${body}</g></svg>`;
 const ICONS = {
-  // Select: a dashed box, its dashes meeting at the corners; Move the page: the four-way arrow
+  // Select: a dashed box, its dashes meeting at the corners
   select: svg('<path d="M4 4h12v12H4z" stroke-dasharray="2.6 3.4" stroke-dashoffset="1.3"/>'),
   pen: svg('<path d="M4.2 15.8l.9-3.6 8.6-8.6a2 2 0 0 1 2.8 2.8l-8.6 8.6z"/><path d="M12.3 5l2.7 2.7"/>'),
   highlighter: svg(
@@ -36,23 +36,20 @@ const ICONS = {
   line: svg('<path d="M4.5 15.5l11-11"/>'),
   arrow: svg('<path d="M4.5 15.5l11-11"/><path d="M9.2 4.5h6.3v6.3"/>'),
   text: svg('<path d="M4.5 5.5V4h11v1.5"/><path d="M10 4v12"/><path d="M7.5 16h5"/>'),
-  hand: svg(
-    '<path d="M10 2.8v14.4M2.8 10h14.4"/><path d="M7.8 5L10 2.8 12.2 5M7.8 15l2.2 2.2 2.2-2.2M5 7.8L2.8 10 5 12.2M15 7.8l2.2 2.2-2.2 2.2"/>',
-  ),
   outline: svg('<rect x="4" y="4" width="12" height="12" rx="2"/>'),
   filled: svg('<rect x="4" y="4" width="12" height="12" rx="2" fill="currentColor"/>'),
   smooth: svg('<path d="M3 13c2.5-6 4.5-6 7-1.5S15 15 17 7"/>'),
 };
-// The tools, top to bottom: the hand the book opens on first, on a touch screen too
+// The tools along the rail, left to right (the pen and the marker side by side, one button split in two)
 export const TOOLS = [
-  { mode: 'hand', label: 'Move the page', key: 'H' },
   { mode: 'select', label: 'Select', key: 'V' },
   { mode: 'pen', label: 'Pen', key: 'P' },
-  { mode: 'highlighter', label: 'Highlighter', key: 'M' },
+  { mode: 'highlighter', label: 'Marker', key: 'M' },
   { mode: 'eraser', label: 'Eraser', key: 'E' },
   { mode: 'shapes', label: 'Shapes', key: 'S' },
-  { mode: 'text', label: 'Type', key: 'T' },
+  { mode: 'text', label: 'Text', key: 'T' },
 ];
+const INKS = ['pen', 'highlighter'];
 const KINDS = {
   ellipse: { label: 'Ellipse', key: 'O' },
   rect: { label: 'Rectangle', key: 'R' },
@@ -72,8 +69,10 @@ const ringIcon = (d, most) =>
 export function mountPalette(st) {
   const kept = store.get('book.tools', {});
   const index = (n, list) => (Number.isInteger(n) && n >= 0 && n < list.length ? n : 1);
+  const ink = INKS.includes(kept.ink) ? kept.ink : 'pen';
   Object.assign(st, {
-    mode: 'hand',
+    mode: ink,
+    ink,
     pen: PENS.some(p => p.color === kept.pen) ? kept.pen : PENS[0].color,
     marker: MARKERS.some(p => p.color === kept.marker) ? kept.marker : MARKERS[0].color,
     widths: {
@@ -99,11 +98,16 @@ export function inkOf(st) {
 // The eraser's radius on screen
 export const eraserRadius = st => ERASERS[st.eraser] / 2;
 
-// ---- the island
+// ---- the rail's tools
 
+// The tools put first on the rail, before Undo and Redo (bookrail.js); the pen and the marker in a pair of their own
 function makeIsland(st) {
-  const el = island('tools');
-  for (const t of TOOLS) {
+  const el = island('tools'),
+    pair = document.createElement('div');
+  pair.className = 'bk-pair';
+  pair.setAttribute('role', 'group');
+  pair.setAttribute('aria-label', word('Pen and marker'));
+  const own = TOOLS.map(t => {
     const b = button({
       icon: ICONS[t.mode],
       label: word(t.label),
@@ -112,27 +116,22 @@ function makeIsland(st) {
       // (the tool in use pressed again opens its card)
       onClick: () => (st.mode === t.mode ? card(st) : setMode(st, t.mode)),
     });
+    b.dataset.mode = t.mode;
+    if (t.mode !== 'select') b.setAttribute('aria-haspopup', 'true');
     st.buttons[t.mode] = b;
-    el.append(b);
-  }
-  el.append(document.createElement('hr'));
-  const options = button({
-    icon: swatch(st.pen),
-    label: word('Colour and width'),
-    keys: '1–4  [ ]',
-    onClick: () => card(st),
+    if (!INKS.includes(t.mode)) return b;
+    pair.append(b);
+    return t.mode === 'pen' ? pair : null;
   });
-  options.classList.add('bk-swatch');
-  options.setAttribute('aria-haspopup', 'true');
-  options.setAttribute('aria-expanded', 'false');
-  st.options = options;
-  el.append(options);
+  el.prepend(...own.filter(Boolean), document.createElement('hr'));
 }
 
 // (keep: what's picked stays picked, a Ctrl-held Select's tool back: booktools.js.)
 export function setMode(st, mode, { keep = false } = {}) {
+  if (!TOOLS.some(t => t.mode === mode)) return;
   const was = st.mode;
   st.mode = mode;
+  if (INKS.includes(mode)) st.ink = mode;
   for (const [m, b] of Object.entries(st.buttons)) setPressed(b, m === mode);
   st.book.desk.dataset.tool = mode;
   if (st.card) closeCard(st);
@@ -142,7 +141,7 @@ export function setMode(st, mode, { keep = false } = {}) {
 }
 const inksOf = st => (st.mode === 'highlighter' ? MARKERS : PENS);
 const colourOf = st => (st.mode === 'highlighter' ? st.marker : st.pen);
-const coloured = st => !['select', 'eraser', 'hand'].includes(st.mode);
+const coloured = st => !['select', 'eraser'].includes(st.mode);
 const widthsOf = st => (st.mode === 'highlighter' ? 'highlighter' : 'pen');
 
 function setColour(st, color) {
@@ -169,17 +168,14 @@ function stepSize(st, by) {
   return true;
 }
 
-// The swatch and the shapes' button as the settings are, and the cursor in the tool's colour and size
+// The shapes' button as the settings are, the pen's and the marker's colours on their halves (a dot under the icon,
+// bookstrip.css), and the cursor in the tool's colour and size
 function show(st) {
-  const marker = st.mode === 'highlighter',
-    color = colourOf(st),
-    b = st.options;
   st.buttons.shapes.innerHTML = ICONS[st.shape];
   st.buttons.shapes.setAttribute('aria-label', word(`Shapes: ${KINDS[st.shape].label.toLowerCase()}`));
-  b.innerHTML = st.mode === 'eraser' ? ringIcon(ERASERS[st.eraser], ERASERS.at(-1)) : swatch(color, marker ? 0.75 : 1);
-  b.setAttribute('aria-label', word(st.mode === 'eraser' ? 'Eraser size' : 'Colour and width'));
-  b.disabled = st.mode === 'select' || st.mode === 'hand';
-  st.book.desk.style.setProperty('--bk-tool-cursor', cursorOf(st, color));
+  st.buttons.pen.style.setProperty('--bk-dot', st.pen);
+  st.buttons.highlighter.style.setProperty('--bk-dot', st.marker);
+  st.book.desk.style.setProperty('--bk-tool-cursor', cursorOf(st, colourOf(st)));
 }
 function cursorOf(st, color) {
   if (st.mode === 'eraser') {
@@ -197,6 +193,7 @@ function cursorOf(st, color) {
 }
 const remember = st =>
   store.set('book.tools', {
+    ink: st.ink,
     pen: st.pen,
     marker: st.marker,
     widths: st.widths,
@@ -206,24 +203,25 @@ const remember = st =>
     smooth: st.smooth,
   });
 
-// ---- the tool's card, to the strip's left
+// ---- the tool's card, over the rail
 
 function card(st) {
   if (st.card) return closeCard(st);
-  if (st.mode === 'select' || st.mode === 'hand') return;
+  if (st.mode === 'select') return;
   hide();
   const el = document.createElement('div');
   el.className = 'bk-card bk-palette';
   el.setAttribute('role', 'menu');
   el.setAttribute('aria-label', word(st.mode === 'eraser' ? 'Eraser size' : 'Colour and width'));
-  st.options.setAttribute('aria-expanded', 'true');
+  st.opener = st.buttons[st.mode];
+  st.opener.setAttribute('aria-expanded', 'true');
   st.card = el;
   fillCard(st);
-  besideStrip(el, 'top');
+  overRail(el);
   el.querySelector('[aria-pressed=true]')?.focus({ preventScroll: true });
   // (a press anywhere else, or Escape, closes it)
   st.away = e => {
-    const own = el.contains(e.target) || st.options.contains(e.target) || st.buttons[st.mode]?.contains(e.target);
+    const own = el.contains(e.target) || st.opener.contains(e.target);
     if (e.type === 'keydown' ? e.key === 'Escape' : !own) closeCard(st);
   };
   addEventListener('pointerdown', st.away, true);
@@ -317,7 +315,7 @@ function setFill(st, fill) {
 function closeCard(st) {
   st.card?.remove();
   st.card = null;
-  st.options.setAttribute('aria-expanded', 'false');
+  st.opener?.setAttribute('aria-expanded', 'false');
   removeEventListener('pointerdown', st.away, true);
   removeEventListener('keydown', st.away, true);
 }
@@ -325,7 +323,7 @@ function closeCard(st) {
 // ---- keys
 
 // The tools' keys while the book is open and has the pointer or the focus, never while a field has the keyboard: a
-// tool's letter (V, P, M, E, S, T, H; O, R, L and A a shape), 1–4 a colour, [ and ] the width or the eraser's size, F a
+// tool's letter (V, P, M, E, S, T; O, R, L and A a shape), 1–4 a colour, [ and ] the width or the eraser's size, F a
 // shape filled or not
 function keys(st) {
   document.addEventListener('keydown', e => {

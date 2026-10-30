@@ -17,6 +17,8 @@ const windows = await import('./windows.ts');
 const projects = await import('./projects.ts');
 const plan = await import('./plan.ts');
 const forecast = await import('./forecast.ts');
+const backlog = await import('./backlog.ts');
+const askwindow = await import('./askwindow.ts');
 const { inOneStep } = await import('./db.ts');
 const threats = await import('./threats.ts');
 const threadends = await import('./threadends.ts');
@@ -154,6 +156,36 @@ test('hq window: on a thread named by its id, a job on it or a pull request; set
   const done = await h.agent('window', kit.token, { thread: shop, deadline: '2h' });
   assert.equal(done.status, 409, 'an open thread');
   assert.match(done.body.error, new RegExp(`${shop} is done: a window goes on an open deliverable`));
+});
+
+test('a window trial reaches followers through a finished intermediate and agrees with saving', () => {
+  const [source, intermediate, follower] = [opened(), opened(), opened()];
+  const deadline = Date.now() + 6 * HOUR;
+  windows.set(projects.findThread(source)!, { deadline, aim: deadline - HOUR }, 'moss');
+  windows.inherit(intermediate, source);
+  windows.inherit(follower, intermediate);
+  assert.deepEqual(plan.done(intermediate, 'moss'), { ok: true });
+  const job = jobs.createJob({ agent: 'bolt', title: 'Check the release', prompt: 'x', thread: follower }).id;
+  const now = Date.now();
+  const snapshot = backlog.orderingSnapshot(now);
+  assert.equal(snapshot.jobs.find(j => j.id === job)!.due, deadline);
+  const shown = plan.planOf('shop', forecast.refresh(now))!.threads.find(t => t.id === follower)!;
+  assert.deepEqual([shown.deadline, shown.aim], [deadline, deadline - HOUR]);
+  assert.deepEqual({ ...askwindow.servedWindow(follower) }, { thread: follower, deadline });
+  assert.equal(projects.findThread(follower)!.deadline_by, 'moss');
+  for (const window of [{ deadline: deadline + HOUR, aim: deadline }, null]) {
+    const trial = windows.withWindow(snapshot, source, window);
+    const due = window?.deadline ?? null;
+    assert.equal(trial.jobs.find(j => j.id === job)!.due, due);
+    assert.equal(trial.windows![follower].deadline, due);
+    assert.equal(trial.windows![follower].aim, window?.aim ?? null);
+    assert.equal(projects.findThread(follower)!.deadline, deadline, 'the trial saves nothing');
+    windows.set(projects.findThread(source)!, window, 'moss');
+    const saved = backlog.orderingSnapshot(now);
+    assert.equal(saved.jobs.find(j => j.id === job)!.due, due, 'saving agrees with the trial');
+    assert.equal(projects.findThread(follower)!.deadline, due);
+    windows.set(projects.findThread(source)!, { deadline, aim: deadline - HOUR }, 'moss');
+  }
 });
 
 test("a call's item with its time sets its thread's window when it's handed out: deadline and aim at its time, from the call's agent", async () => {

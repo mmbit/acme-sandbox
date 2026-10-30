@@ -11,7 +11,7 @@ const CAUSE_SHARE = 1 / 3;
 // low look the job that caused it. The first look is calm's stand-in until a calm one comes.
 export function memoryWatch(lowMb: number, clearMb: number) {
   let calm: { freeMb: number; uses: Map<number, number> } | undefined;
-  return (freeMb: number, uses: Map<number, number>): { verdict: MemoryVerdict; cause?: MemoryCause } => {
+  const watch = (freeMb: number, uses: Map<number, number>): { verdict: MemoryVerdict; cause?: MemoryCause } => {
     if (!calm || freeMb >= clearMb) calm = { freeMb, uses };
     if (freeMb >= clearMb) return { verdict: 'calm' };
     if (freeMb >= lowMb) return { verdict: 'between' };
@@ -20,4 +20,7 @@ export function memoryWatch(lowMb: number, clearMb: number) {
     const cause = most && most.tookMb >= calm.freeMb * CAUSE_SHARE ? { ...most, freeMb: calm.freeMb } : undefined;
     return { verdict: 'low', ...(cause && { cause }) };
   };
+  return Object.assign(watch, {
+    inspect: () => (calm ? { freeMb: calm.freeMb, uses: Object.fromEntries(calm.uses) } : null),
+  });
 }

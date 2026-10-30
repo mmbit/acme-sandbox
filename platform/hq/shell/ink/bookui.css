@@ -235,8 +235,8 @@
   }
 }
 
-/* ---- the islands: small cards of controls floating over the paper's right edge, top to bottom (bookrail.js places
-   the stack); an island with nothing in it, or nothing shown (Send on a page sent), doesn't show */
+/* ---- the islands: small cards of controls in the lane at the paper's foot (bookui.js, bookstrip.css); an island with
+   nothing in it, or nothing shown (Send on a page sent), doesn't show */
 .bk-islands {
   display: flex;
   flex-direction: column;

@@ -39,11 +39,11 @@ test('a page moved forward and back in the list', () => {
   assert.deepEqual(moved(['a', 'b'], 5, 0), ['a', 'b'], 'nothing there: unchanged');
 });
 
-test('the Shelf: My Notebook first, then the newest first', () => {
+test('the Shelf: My journal first, then the newest first', () => {
   const shelf = shelfOrder([
     { id: 2, name: 'Round', kind: 'round', updated: '2026-10-26T09:00:00Z' },
     { id: 3, name: 'Review', kind: 'round', updated: '2026-10-27T09:00:00Z' },
-    { id: 1, name: 'My Notebook', kind: 'mine', updated: '2026-10-01T09:00:00Z' },
+    { id: 1, name: 'My journal', kind: 'mine', updated: '2026-10-01T09:00:00Z' },
     { id: 4, name: 'Anna', kind: 'invited', updated: '2026-10-26T09:00:00Z' },
   ]);
   assert.deepEqual(

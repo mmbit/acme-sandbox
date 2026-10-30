@@ -1,5 +1,6 @@
 /* The Notebook's own look (book.css lays it out): its pages bound in a black cover, the same on every HQ look. The
-   cover shows round the pages at their head, foot and outer edge (the binding on HQ's side); its one colour is the pull
+   cover shows round the pages at their head, foot and outer edge (the binding on HQ's side), never at the spine, which
+   is past the screen's right edge; its one colour is the pull
    tab's, the brand's accent (brand.yaml's colours.notebook, set at onboarding; --notebook on :root, main.js), never a
    colour of the platform's own. No cover title: the book opens straight onto its page (the page and the overview are
    bookdesk.css's). (the hardcover) */
@@ -51,12 +52,12 @@
   inset: 3px 0 3px 3px;
   border: 1px dashed rgba(255, 255, 255, 0.45);
   border-right: 0;
-  border-radius: 7px 0 0 7px;
+  border-radius: 5px 0 0 5px;
   pointer-events: none;
 }
 /* (lying over the whole screen, its outer edge at the screen's left: the tab hangs inward over the page) */
 #book[data-mode='spread'] .bk-lip {
-  border-radius: 0 10px 10px 0;
+  border-radius: 0 8px 8px 0;
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.25),
     3px 3px 10px rgba(0, 0, 0, 0.45);
@@ -65,6 +66,6 @@
   inset: 3px 3px 3px 0;
   border: 1px dashed rgba(255, 255, 255, 0.45);
   border-left: 0;
-  border-radius: 0 7px 7px 0;
+  border-radius: 0 5px 5px 0;
 }
 /* (the overview: bookdesk.css.) */

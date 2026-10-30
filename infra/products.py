@@ -107,6 +107,7 @@ KEY_KINDS = {'p256', 'random-32'}
 # our front door, once public: at its own domain or else www.<zone>. The zone's other hosts for it redirect there
 FRONT = 'front'
 RESERVED = {'hq', 'www', 'mail', 'preview', 'cycles', public_host.split('.', 1)[0]}  # HQ's own labels, never a product slug
+TRY = 'try-'   # ...nor the start of one: a try's versions' hosts (below.)
 # its session cookie's names (company/infra.env CARE_COOKIES, comma-separated): plain cookie names, or no deploy, since
 # they go into the patterns that keep them from a product
 CARE_COOKIES = tuple(c for c in INFRA.get('CARE_COOKIES', '').split(',') if c)
@@ -435,7 +436,7 @@ for path, p in manifests.items():
     if not os.path.exists(dockerfile(slug)):   # a care deployment's is the platform's
         print(f'skipping {slug}: no app/Dockerfile (a care plug-in folder needs engine: care)', file=sys.stderr)
         continue
-    if slug in RESERVED:
+    if slug in RESERVED or slug.startswith(TRY):
         print(f'skipping {slug}: a reserved name', file=sys.stderr)
         continue
     if not zone:
@@ -557,7 +558,8 @@ def proxy(name, look, door=False, prefix=None):
 # host's root. So a kit change is live in every app at the next deploy, with no copy in any app. no-cache: a browser
 # checks for a newer kit on every load (its ETag).
 KITS = ('/shared/demo/foley.js', '/shared/wordcheck/wordcheck.js',   # (wordcheck)
-        '/shared/handoff/handoff.js', '/shared/ask/ask.js')   # (ask)
+        '/shared/handoff/handoff.js', '/shared/ask/ask.js',   # (ask)
+        '/shared/notebook/notebook.js')
 # and whatever else the company serves the same way (company/infra.env
 # SERVED_FROM_REPO, comma-separated paths in the repo). A * stands for part of one name (Caddy's path.Match, after it
 # cleans the path), so an entry starts with /, its folders have none and its file name never ends with one: a * there
@@ -570,9 +572,12 @@ for entry in SERVED:
         sys.exit(f"company/infra.env: SERVED_FROM_REPO's {entry!r} isn't a path in the repo (/ then names, none starting "
                  "with a dot, a * only in the file name and never at its end); not deploying")
 def kit_route(login=''):
-    """The kits' routes on a host (login: the preview's), one each, sorted by Caddy as path routes."""
+    """The kits' routes on a host (login: the preview's), one each, sorted by Caddy as path routes, and /__hq-origin,
+    outside the login, which names HQ's origin, the only one a kit framed by HQ talks to (shared/deck/deck.js,
+    shared/notebook/notebook.js.)."""
     serve = indent(f'{login}header Cache-Control no-cache\nroot * /repo\nfile_server\n')
-    return ''.join(f'handle {kit} {{\n' + serve + '}\n' for kit in (*KITS, *SERVED))
+    return ''.join(f'handle {kit} {{\n' + serve + '}\n' for kit in (*KITS, *SERVED)) + HQ_ORIGIN
+HQ_ORIGIN = f'handle /__hq-origin {{\n\theader Content-Type "text/plain; charset=utf-8"\n\trespond "https://{public_host}"\n}}\n'
 
 def care_route(app, login='', shop=None):
     """The chat's route on a host of a product with `care: true` (app: the X-Care-App this host gets; login: the
@@ -889,10 +894,6 @@ if zone:   # (they wait for a domain too)
 \timport back_soon
 \theader Content-Security-Policy "frame-ancestors 'self' https://{public_host}"
 {indent(PDF_IN_FRAME)}{indent(PREVIEW_REVIEW)}{indent(kit_route(LOGIN))}\t# the kits' routes indented with the rest
-\thandle /__hq-origin {{
-\t\theader Content-Type "text/plain; charset=utf-8"
-\t\trespond "https://{public_host}"
-\t}}
 \t# its pages come from the coordinator, with review mode added
 \t@page path */ *.html
 \thandle @page {{
@@ -912,6 +913,17 @@ if zone:   # (they wait for a domain too)
 \t}}
 }}
 ''')
+
+# A try's versions (the coordinator's ink/trypreview.ts): each at try-<n>.preview.<zone>, behind the preview login,
+# served by the coordinator from the version's own files. Versions come and go between deploys, so the one site takes
+# every host no other site names and gets a host's certificate when it's first asked for, once the coordinator says it's
+# a version that's there (the Caddyfile's on_demand_tls ask); any other host gets none, as before. It's the catch-all,
+# never *.preview.<zone>: Caddy gets no certificate of its own for a host a wildcard site covers, so every named preview
+# host would wait on the ask, which refuses it (infra/test_caddy.sh shakes hands with each). /__preview, the login's way
+# back with the key, is outside it, as on a product's preview.
+if zone:
+    sites.append(site(['https://'], 'tls {\n\ton_demand\n}\nhandle /__preview {\n' + indent(TO_HQ) + '}\nhandle {\n'
+                      + indent('forward_auth coordinator:8080 {\n\turi /api/preview/check\n' + HOLD + '}\n' + TO_HQ) + '}\n'))
 
 # The care deployments. Each gets its own keys from the desk phone and the
 # credit; the chat's (chat_engine) every opted-in product's token and address too (JSON keyed like X-Care-App), each

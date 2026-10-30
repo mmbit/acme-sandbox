@@ -4,6 +4,7 @@
 //   Intercom  a directive for the CEO: one line (typed, or held-to-talk and transcribed), optional details
 //   Computer  a retro screen: everyone in the building (the directory), the inbox, the review notes waiting for
 //             the board, the AI seats, the latest jobs and this device's notifications
+import { lasted } from '../../../shared/signs/signs.js';
 import { esc, cap, grow, store as saved, roleHtml, stylesheet } from '../util.js';   // (stylesheet).
 // (endTip: a tip filed.)
 import { endTip, loadRequests, loadLater, snoozeRequest, loadArchive, archivePhoto, answerRequest, removeAddress, previewLink,
@@ -15,7 +16,7 @@ import { peopleHtml, wirePeople, refused, dot, sameName } from './people.js';
 import { sfx, hush } from './audio.js';
 import { callAgent, inCall, callInFront, minimiseCall } from './call.js';   // (a call, over whatever is open).
 import * as world from '../world/world.js';
-import { companyFormats, dayTime, timeOf } from '../world/clock.js';
+import { ago, companyFormats, dayTime, timeOf } from '../world/clock.js';
 import { scene, look, pick, lookName, looks, dressed, cover } from './stage.js';   // (cover; looks)
 import { toast, flyTo, visitMascot } from './hud.js';
 import { openLibraryDoc } from './news.js';   // (Team's Gazette and Library buttons gone)
@@ -48,9 +49,10 @@ import { copyBlocks } from './copy.js';   // (text to paste on a card, lists in 
 import { icon } from './icons.js';
 import { Tray, shrink } from './tray.js';
 import { notes, openReviews, holdReviews } from './reviews.js';   // (the computer's Reviews app)
-import { openAt } from './ink/book.js';
-import { mountStage } from './viewer.js';   // (the viewer's frames)   // (review mode's Open the book: bookAt.)
-import { mountPinSummon, tellPin } from './pinsummon.js';   // (the pin's summon)
+import { openAt } from './ink/book.js';   // (review mode's Open the book: bookAt.)
+import * as notebook from './ink/notebooklink.js';
+import { mountStage } from './viewer.js';   // (the viewer's frames)
+import { mountPin, pinOn, setPin, tellPin } from './pinsetting.js';   // (Settings › Pin on HQ.)
 import { mountTips } from './booktips.js';   // (the tips book)
 import { frameMic, helloFrom, stopFrameMic } from './framemic.js';   // (review mode's mic for the viewer's page; helloFrom)
 import { tipHtml, cardAbout, wireTip, tipSettings, tipsSummary } from './tipcard.js';
@@ -67,9 +69,8 @@ const $ = s => document.querySelector(s);
 // photo studio's (studio.js), when the company runs the studio.
 let own = [], ownDone = false;
 const kitApps = (Array.isArray(theme.apps) ? theme.apps : []).filter(n => typeof n === 'string' && /^[a-z0-9][a-z0-9-]*$/.test(n)).map(id => [id, `/kits/${id}/app.js`]);
-// The Sketchbook (sketchbook.js) is on every computer, unless the company's brand.yaml says computer: { sketchbook: false }
-const sketchbookOn = brand.computer?.sketchbook !== false;
-const platformApps = [...(sketchbookOn ? [['sketchbook', '/shell/ink/sketchbook.js']] : []), ...(runs.care ? [['care', '/shell/care.js']] : []), ...(runs.studio ? [['studio', '/shell/studio.js']] : [])]; // (Ink's folder)
+// (the Sketchbook app is gone: the notebook is the one book.)
+const platformApps = [...(runs.care ? [['care', '/shell/care.js']] : []), ...(runs.studio ? [['studio', '/shell/studio.js']] : [])];
 const ownLoaded = Promise.resolve().then(() => Promise.all([...platformApps, ...kitApps]
   .map(([id, url]) => import(url).then(mod => mod.app && mod.draw ? { id, mod } : null, e => { console.warn(`[hq] ${url}: its HQ app didn't load`, e); return null; }))))
   .then(list => { own = list.filter(Boolean); ownDone = true; if (own.length && open === 'computer' && tab === 'home') openComputer('home'); });
@@ -85,7 +86,7 @@ let open = null, idx = 0, tab = 'people', timer = null;
 const root = () => $('#tool');
 export { callAgent };
 // Shared with the projects view
-export const ago = ts => { const m = Math.round((Date.now() - new Date(ts)) / 60000); return isNaN(m) ? '' : m < 1 ? 'just now' : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`; };
+export { ago };
 export const who = id => world.agents.get(id)?.data.name || (id ? id[0].toUpperCase() + id.slice(1) : 'Someone');
 // someone's engine as its mark, where HQ knows it
 const markOf = id => { const engine = world.agents.get(id)?.data.engine; return engine ? engineMark(engine) : ''; };
@@ -121,6 +122,8 @@ export function initDesk() {
   document.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.matches?.('.job-title[data-job]')) jobLinked(e); }, true);
   addEventListener('keydown', e => { if (e.key !== 'Escape') return; if (callInFront()) minimiseCall(); else if (open) closeTool(); });   // (a call in front goes small)
   addEventListener('message', fromViewer);
+  // (the viewer's page hears the notebook's moves and may talk back to it.)
+  notebook.mountFrames(window, { frames: () => (viewing ? [stagingFrame().contentWindow] : []), trusts: origin => PREVIEW.test(`${origin}/`) });
   followCall();
   loadPin();
   // (a card answered in the book, or the book changed on the store: the cards read again, so one answered there leaves
@@ -154,19 +157,16 @@ const PIN = icon('pin');
 // Review mode (shared/review/review.js) runs in the frame once HQ answers its hello; then the bar gets a pin too.
 // No microphone for the frame: Chrome keys a frame's microphone to the top page, so with HQ's allowed (the intercom,
 // calls) any preview's own code could record the board unasked. Dictation works in "Open in browser", where the
-// preview asks for itself, and here by HQ's own Talk key in the bar, which only the board's tap starts (framemic.js:
+// preview asks for itself, and here by HQ's own mic key laid over the post-it's, which only the board's tap starts
+// (framemic.js).
 // A deck's "try the preview" button opens its preview here as well, with a way back to the deck.
 // Chrome shows no PDF in a sandboxed frame, so the preview hosts answer a PDF the frame loads as a download, which the
 // frame allows (infra/products.py, PDF_IN_FRAME): it saves, and the page stays.
 // Share makes a link for an outside person to leave notes on this preview, or only see it: shareBox.
 // The bar is one slim row, the page's room before all: Back and Close as quiet glyphs, the address as the link that
-// opens it in the browser, and what review mode does filled: Note. Review mode's notes go into the board's book, which
-// its menu opens beside the viewer (bookAt). Talk shows while a post-it there asks for the mic: HQ records for the page
-// only from a tap on it (framemic.js). The page picks when Talk shows, and when
-// Note does, so Talk's slot is kept from the start, empty until an ask, right of Note: neither moves it, and it never
-// comes under a tap meant for the address or Note.
+// opens it in the browser, and what review mode does filled: Note. Review mode's notes go into the board's book.
 let viewing = null; // { url, back, review: the frame's origin while review mode runs there, heard: when it last said hello, link: the outside link } (heard)
-let staged = null; // the stage's { close } (viewer.js)
+let staged = null; // the stage's { close, toStaging } (viewer.js.)
 // The frame of the page the viewer opened, the one review mode runs in (a live page may sit beside it: viewer.js)
 export const stagingFrame = () => $('#viewer .pane.after iframe');
 async function openViewer(url, back = null) {
@@ -176,7 +176,6 @@ async function openViewer(url, back = null) {
   v.innerHTML = `<div class="bar">${back ? '<button class="glyph" data-back aria-label="Back">‹</button>' : ''}
     <a class="where" target="_blank" rel="noopener" data-external="1" title="Open in the browser">${where(url)}</a>
     <button class="pin" hidden aria-label="Pin a note on this page">${PIN}<span>Note</span></button>
-    <button class="talk" hidden>${MIC}<span>Talk</span></button>
     <button class="share" aria-label="Share with an outside person">${SHARE}<span>Share</span></button>
     <button class="glyph" data-close aria-label="Close">×</button></div>
     <div class="sharebox" hidden></div>
@@ -189,7 +188,8 @@ async function openViewer(url, back = null) {
   const frame = stagingFrame(), out = v.querySelector('.bar .where');
   v.querySelector('[data-close]').onclick = () => { staged?.close(); staged = null; stopFrameMic(); viewing = null; v.hidden = true; v.innerHTML = ''; delete v.dataset.ground; hush(false); cover(false, 'viewer'); coverPin(false); };
   v.querySelector('[data-back]')?.addEventListener('click', () => openViewer(back));
-  v.querySelector('.pin').onclick = () => me.review && frame.contentWindow.postMessage({ hq: 'hq', pin: 1 }, me.review);
+  // (Note pins on staging, brought to the front where it takes turns with live.)
+  v.querySelector('.pin').onclick = () => { if (!me.review) return; staged?.toStaging(); frame.contentWindow.postMessage({ hq: 'hq', pin: 1 }, me.review); };
   frame.addEventListener('load', () => {
     frame.style.background = ''; // a backdrop lasts until the next page is there: backdropOf
     stopFrameMic(); // (the page before's ask and recording, its goodbye or not: framemic.js.)
@@ -238,7 +238,7 @@ function paintPin() {
   b.hidden = !viewing.review || calling;
 }
 // On a call the board scribbles in red for the call's agent: the bar has no Note, and the viewer's page no pin (told
-// now, and in every answer to its hello), as HQ's own has none (pinsummon.js). After the call they're back (the board,
+// now, and in every answer to its hello), as HQ's own has none (pinsetting.js). After the call they're back (the board,
 // call 161.).
 let calling = false;
 function followCall() {
@@ -256,24 +256,21 @@ function followCall() {
   });
 }
 // The review tool (shared/review) on HQ's own screens, for the board's notes on HQ itself, loaded once at start: the
-// coordinator serves the real one only behind the board's sign-in (feedback.ts). Its menu's Open the book opens the
-// book at the sheet its notes join.
+// coordinator serves the real one only behind the board's sign-in (feedback.ts).
 function loadPin() {
-  addEventListener('review:book', e => bookAt(e.detail));
   const script = Object.assign(document.createElement('script'), { src: '/__review/review.js' });
   script.dataset.summoned = '';
   script.dataset.book = '';   // the Pencil writes on HQ's pages, its notes in the board's book.
   script.onload = () => { coverPin(!!viewing); tellPin(); };
   document.head.append(script);
-  mountPinSummon();   // (away till the board summons it)
+  mountPin();   // (away till Settings turn it on)
   mountTips();   // (under it, the tips book)
 }
 // HQ's pin is for HQ's own screens: while the viewer is up, the preview in it has its own, so HQ's steps aside until it
 // closes and only one pin ever shows
 const coverPin = on => dispatchEvent(new CustomEvent('review:cover', { detail: on }));
-// The book open beside the page (and the viewer over it), asked for an owner's notes: review mode's Open the book, in
-// the viewer's frame or on HQ itself. The frame's page could ask too: it only opens the board's own book, which shows
-// what's there before anything goes. It opens at the current page, slid to the newest note pinned there, and turns
+// The book open beside the page (and the viewer over it), asked for an owner's notes (HQ's address, main.js, and a
+// card's On the page). It opens at the current page, slid to the newest note pinned there, and turns
 // there if it's open already. at: a place in the book to land on instead, { page, notebook, note } (a card's On the
 // page: book.js's openAt).
 export function bookAt(owner, at = null) {
@@ -285,7 +282,7 @@ export function bookAt(owner, at = null) {
 // invited to pin notes on this preview (a product's whole preview, the shop's, or a deck's or demo's own cycle folder),
 // each with where they stand, Send link and Remove, and Invite (peopleHtml); the first invite opens it for 1, 3 or 7 days.
 // They sign in with a code sent to the address the board gives (the guest desk's sign-in). Their notes never come here:
-// once everyone has sent theirs (and, on a tester invite, ordered), or it ends, they go to the owner, who brings the board one short presentation. It opens
+// they're on the round's pages in the board's book; the board closes it, and the CEO writes its Advice (notebookrounds.ts). It opens
 // at the page the viewer opened. Reviews lists the same (sharesHtml).
 // View only: a share of its own, chosen at the top of the box; the same links, the
 // pages without review mode and nothing asked of them. A deck's share also opens the demos its pages link to.
@@ -419,8 +416,8 @@ export function wireShare(el, s, o) {
     sfx.blip(); o.redraw(null, 'Ended: their links no longer open it.');
   };
 }
-// Messages from the page in the viewer, and only from it: review mode saying hello (or goodbye, or asking for the book
-// at a sheet: bookAt, or for the mic: framemic.js), a deck's button asking for a preview, a deck saying hello (it gets the look's
+// Messages from the page in the viewer, and only from it: review mode saying hello (or goodbye, or asking for the mic:
+// framemic.js), a deck's button asking for a preview, a deck saying hello (it gets the look's
 // slides.css), or a page asking for a backdrop (backdropOf). Anything else, or from anywhere else, is ignored.
 function fromViewer(e) {
   const frame = stagingFrame(), d = e.data, me = viewing;
@@ -431,12 +428,9 @@ function fromViewer(e) {
   if (tag === 'review') {
     if (d.hello) { me.review = e.origin; me.heard = performance.now(); e.source.postMessage({ hq: 'hq', call: calling }, e.origin); helloFrom(d.doc); groundOf(d.ground, frame); }   // (heard; helloFrom)
     else if (d.bye && me.review === e.origin) { me.review = null; stopFrameMic(); }
-    // (its post-it's mic tapped: HQ's own Talk key shows, the frame having no microphone, and only its tap records; the
-    // ask's line, e.ports, carries the rest: framemic.js.)
-    else if (d.mic === 'start' && Number.isInteger(d.doc) && e.ports[0]) frameMic(d.doc, e.ports[0], voiceLang(), $('#viewer .bar .talk'));
-    // (from the viewer's page whatever its hello: a goodbye that came late, the page before's, mustn't lose the way to
-    // the book, which only opens HQ's own.)
-    else if (d.book) bookAt(d.book);
+    // (its post-it open: HQ's own mic key over the post-it's, the frame having no microphone, and only its tap records;
+    // the offer's line, e.ports, carries the rest: framemic.js.)
+    else if (d.mic === 'offer' && Number.isInteger(d.doc) && e.ports[0]) frameMic(d.doc, e.ports[0], voiceLang(), frame, d.at);
     // (the board's note saved there as a scrap in its Notebook: the book lands it, booklanding.js.)
     else if (d.scrap && Number.isInteger(d.scrap.id) && Number.isInteger(d.scrap.page))
       document.dispatchEvent(new CustomEvent('book:scrap', { detail: { id: d.scrap.id, page: d.scrap.page } }));
@@ -1139,7 +1133,7 @@ function callHtml(c, open = false) {
 // A call that was held (callcard.ts): when, the agent's notes, then who said what, line by line as the voice line wrote
 // it ("<speaker>: …"). Once they objected, the notes only; 12 months on (or never handed over), neither.
 const held = c => c.status === 'done' && !!c.started;
-const heldWhen = c => held(c) && `${callTime(c.started)}, ${Math.max(1, Math.round((Date.parse(c.ended) - Date.parse(c.started)) / 60e3))} min`;
+const heldWhen = c => held(c) && `${callTime(c.started)}, ${lasted(Date.parse(c.ended) - Date.parse(c.started))}`;
 function heldHtml(c) {
   if (!held(c)) return '';
   if (!c.kept) return `<p class="hint">${c.deleted ? 'Its transcript and notes were deleted 12 months after the call.' : 'The voice line handed nothing over: there’s no transcript and no notes.'}</p>`;
@@ -1964,7 +1958,7 @@ export function openIntercom() {
   const ceo = esc(ceoName());
   if (!show('intercom', `<header><span class="grille" aria-hidden="true"></span><b>${esc(cap(names.intercom))} · ${cap(ceo)}</b><span class="onair" aria-hidden="true">ON AIR</span><button class="past-btn grow" id="dir-grow" aria-pressed="false" aria-label="Larger" title="Larger">${GROW}</button><button class="x" data-close aria-label="Close">×</button></header>
     <div class="screen">
-      <ol class="chat" id="chat" aria-live="polite"><li class="hint">Talk with ${ceo}: ask, discuss, decide. ${cap(ceo)} remembers the conversation and puts the team to work.</li></ol>
+      <ol class="chat" id="chat" aria-live="polite" aria-busy="true"><li class="ceo typing">Loading the conversation…</li></ol><!-- (until the history is in) -->
       <div class="tray" id="dir-pics" hidden></div>
       <label class="sr" for="dir-title">Say something to ${ceo}</label>
       <textarea id="dir-title" rows="1" placeholder="${canRecord ? 'Type, or hold the mic' : 'Say something'}" enterkeyhint="send"></textarea><!-- (one line on a phone in every look's font.) -->
@@ -2030,7 +2024,13 @@ export function openIntercom() {
   device.addEventListener('dragover', e => { if (!inCall() && e.dataTransfer?.types.includes('Files')) e.preventDefault(); });
   device.addEventListener('drop', e => { if (inCall() || !e.dataTransfer?.files.length) return; e.preventDefault(); intercomTray.add(e.dataTransfer.files); });
   $('#call')?.addEventListener('click', () => callAgent(world.company.ceo, ceoName(), { onIntercom: true }));
-  const poll = () => loadChat(world.dev).then(paintChat, () => {});
+  // (a first load that fails says so under the input while the loader stays, and the next poll tries again; a later one
+  // keeps what's shown)
+  let failed = false;
+  const poll = () => loadChat(world.dev).then(c => { if (failed) { failed = false; say(''); } paintChat(c); }, () => {
+    if (failed || !$('#chat')?.hasAttribute('aria-busy')) return;
+    failed = true; say('Could not load the conversation. Trying again…', true);
+  });
   poll(); timer = setInterval(poll, 3000);
   if (!canRecord) return;
   // press to start; a short press locks it on (tap-to-toggle), a long one stops on release
@@ -2061,7 +2061,7 @@ function startWith(words) {
 }
 const intercomTray = new Tray(0, () => $('#dir-pics'), say);   // the board's pictures for its next line (tray.js)
 // a line's pictures, small, in its bubble: a tap shows one big (wirePics)
-// A line from a person the board invited (a sketch from their own Sketchbook): theirs, not the board's, with its picture.
+// A line from a person the board invited (kept from the old Sketchbook's Send): theirs, not the board's, with its picture.
 const guestLine = (m, i) => `<li class="guest" data-m="${i}"><span>${esc(m.text)}</span>${linePictures(m)}</li>`;
 const linePictures = m => m.pictures?.length ? `<span class="pics">${m.pictures.map(id => `<button type="button" data-pic="${esc(pictureUrl(world.dev, id))}" data-label="Picture #${Number(id)}" aria-label="Show picture #${Number(id)} bigger"><img src="${esc(pictureUrl(world.dev, id))}" alt="" loading="lazy"></button>`).join('')}</span>` : '';
 
@@ -2080,6 +2080,8 @@ const pausedLine = (p, ceo) => p.why === 'restarting' ? `Paused: restarting. ${c
 let notesDue = 0;
 export const notesComing = () => { notesDue = Date.now(); };
 export const intercomOpen = () => open === 'intercom';
+// The intercom shows a loader until its history is in, and this only once it came back empty.
+const chatHint = ceo => `<li class="hint">Talk with ${ceo}: ask, discuss, decide. ${cap(ceo)} remembers the conversation and puts the team to work.</li>`;
 function paintChat(c) {
   const list = $('#chat'); if (!list || !c) return;
   chatLines = c.messages;
@@ -2090,8 +2092,8 @@ function paintChat(c) {
   const last = c.messages.at(-1)?.id ?? 0, fresh = list.dataset.last && +list.dataset.last !== last && c.messages.at(-1)?.who === world.company.ceo;
   const state = `${c.thinking} ${JSON.stringify(c.paused ?? null)}`;
   if (list.dataset.last === String(last) && list.dataset.thinking === state) return;
-  list.dataset.last = last; list.dataset.thinking = state;
-  const hint = c.messages.length ? '' : list.querySelector('.hint')?.outerHTML ?? '', ceo = esc(ceoName());
+  list.dataset.last = last; list.dataset.thinking = state; list.removeAttribute('aria-busy');
+  const ceo = esc(ceoName()), hint = c.messages.length ? '' : list.querySelector('.hint')?.outerHTML ?? chatHint(ceo);
   // (the board's own lines break where it typed them, an agent's wrapped ones join); a guest's. The CEO's line with its
   // intake card (intake.js).
   list.innerHTML = hint + c.messages.map((m, i) => m.who === 'call' ? `<li class="call" data-m="${i}">${PHONE}${withJobLinks(m.text)}</li>` : m.who === 'guest' ? guestLine(m, i) : `<li class="${m.who === 'board' ? 'me' : 'ceo'} prose" data-m="${i}">${prose(m.text, undefined, { breaks: m.who === 'board' })}${linePictures(m)}</li>${intakeCardHtml(c.messages, i)}`).join('')
@@ -2379,10 +2381,15 @@ function settings(el) {
   if (section === 'sys:look') { el.innerHTML = '<p class="acts looks"></p><section class="look-settings"></section>'; return lookSettings(el.firstChild, el.lastChild); }
   if (section) { el.innerHTML = `<section data-app-settings="${esc(section)}"></section>`; return own.find(k => k.id === section)?.mod.settings(el.firstChild, hq()); } // (a company app's box)
   const row = s => s.run ? `<li><button data-run="${s.id}"><b>${esc(s.name)}</b><span class="to">${s.mark ?? '›'}</span></button></li>`
-    : `<li><button data-section="${esc(s.id)}"><b>${esc(s.name)}</b><span class="to"><span data-now="${esc(s.id)}"></span> ›</span></button></li>`;
+    : s.set ? switchRow(s) : `<li><button data-section="${esc(s.id)}"><b>${esc(s.name)}</b><span class="to"><span data-now="${esc(s.id)}"></span> ›</span></button></li>`;
   const group = (caption, rows, i) => `<p class="cap${i ? ' more' : ''}"><i class="prompt">&gt; </i>${caption}</p><ul class="rows settings">${rows}</ul>`;
   el.innerHTML = [...new Set(all.map(s => s.caption))].map((caption, i) => group(caption, all.filter(s => s.caption === caption).map(row).join(''), i)).join('');
   el.querySelectorAll('[data-run]').forEach(b => b.onclick = () => all.find(s => s.id === b.dataset.run).run());
+  el.querySelectorAll('[data-switch]').forEach(b => b.onclick = () => {
+    const on = b.getAttribute('aria-checked') !== 'true';
+    sfx.toggle(on); b.setAttribute('aria-checked', String(on));
+    all.find(s => s.id === b.dataset.switch).set(on);
+  });
   el.querySelectorAll('[data-section]').forEach(b => b.onclick = () => { sfx.blip(); section = b.dataset.section; el.scrollTop = 0; settings(el); });
   // what each is set to now, on its row
   const now = (id, text) => { const s = el.querySelector(`[data-now="${id}"]`); if (s) s.textContent = text; };
@@ -2396,8 +2403,8 @@ function settings(el) {
 }
 // Settings' sections in its order, each under its caption: the compute, Seats (seats.js, with pages of its own: a seat,
 // Add a seat) and Machines (machines.js, the same way); the company, a company app's box (its settings()) and the
-// Overseer's key (oversight.js) and the board's Language (languages); this device, Notifications and Look; tools, Reload
-// HQ, which runs at once (run). HQ's search finds each by its name, a page in it by the page's name (pages: a seat, a
+// Overseer's key (oversight.js) and the board's Language (languages); this device, Notifications, Look and Pin on HQ, a
+// switch on its row (on, set); tools, Reload HQ, which runs at once (run). HQ's search finds each by its name, a page in it by the page's name (pages: a seat, a
 // machine) and a section by a choice on it (choices: a language, a look, the one set now first). The built-in ids start
 // "sys:", so a company app can't take one.
 export function settingsSections() {
@@ -2415,9 +2422,12 @@ export function settingsSections() {
     } },
     { caption: 'THIS DEVICE', id: 'sys:alerts', name: 'Notifications' },
     { caption: 'THIS DEVICE', id: 'sys:look', name: 'Look', choices: async () => Promise.all(chosen((await looks).map(l => l.name), look).map(lookName)) },
+    { caption: 'THIS DEVICE', id: 'sys:pin', name: `Pin on ${names.hq}`, on: pinOn, set: setPin },
     { caption: 'TOOLS', id: 'sys:reload', name: `Reload ${names.hq}`, mark: '↻', run: () => location.reload() },
   ];
 }
+// a section that's only a switch, on its row in the list
+const switchRow = s => `<li class="switch-row"><b id="${esc(s.id)}-label">${esc(s.name)}</b><span class="ctl"><button type="button" class="switch" role="switch" data-switch="${esc(s.id)}" aria-checked="${s.on()}" aria-labelledby="${esc(s.id)}-label"><i></i></button></span></li>`;
 export function settingsBack() {
   const el = $('#crt');
   if (tab !== 'settings' || !section || !el) return false;

@@ -152,7 +152,9 @@ run off schedule, there's no key for it. Downtime is a flag on the work (`downti
 never a group of its own. HQ's one-task wrappers end as their work merges, or once their job ends done with nothing to
 merge or is cancelled (`threadends.ts endedEmpty`), and a routine's run once its job fails with nothing in its place
 (the routine runs again at its next time); HQ's other one-task wrappers keep a failed job's deliverable for its takeover. An
-owner's deliverable is ended by its owner (`hq plan done`).
+owner's deliverable is ended by its owner (`hq plan done`): a task's run that ends with nothing to merge (done with no
+pull request, failed or stopped) ends HQ's wrapper as above, or wakes an owner's deliverable's judge (`threadends.ts
+runEnded`, below).
 
 A project's plan is data in HQ, never a pull request (`plan.ts`):
 its deliverables, the deliverables each **needs** (`thread_needs`: one starts once every deliverable it needs is done and merged, in
@@ -232,7 +234,10 @@ claim, the worker and the review panel (`threadorder.ts`). There is no setting f
 
 - **The order.** A task (a work job in a deliverable that isn't a pull request's fix or update) starts once the task before
   it in its deliverable (`jobs.seq`, else ids) is done: pushed, not merged. The deliverable's next task to
-  start also waits until every deliverable it needs is done and merged. A task before it that failed with nothing in its
+  start also waits until every deliverable it needs is done and merged, except one whose work is all pushed and whose pull
+  request is stuck: that one holds only its own files, so what needs it runs beside it and merges after it only where the
+  two share files (`threadorder.ts needsOpen`, `mergeorder.ts`), and the stuck one goes to its author at the stuck sweep
+  (`review.ts stuckToAuthor`, once for each state it's stuck in). A task before it that failed with nothing in its
   place holds it when it was drawn before that failure, counting on its work; one drawn since (a redo queued without
   `--lands`, the next step) is the owner's call, made knowing it failed, and goes on. A replacement (`--lands`) takes the failed task's place. A failed task whose branch has an open pull
   request (open, stuck or with the board) holds nothing, since the deliverable's later tasks still push there (`jobs.ts`
@@ -288,7 +293,12 @@ claim, the worker and the review panel (`threadorder.ts`). There is no setting f
   task starts a new one). A deliverable it leaves with nothing open or
   still to merge stays open, ready to judge (`threadjudge.ts`): HQ queues its owner a job with the deliverable's "done when"
   and each task's report (`threads.judge`; one that hasn't started takes the owner's next such deliverable in too), never
-  held by a pause. The owner closes it with `hq plan done` or draws its next task. `hq projects`, `hq deliverable` and the
+  held by a pause. So does an owner's deliverable whose last task ends with nothing to merge (done with no pull
+  request, failed or stopped, or is cancelled before it runs: `threadends.ts runEnded`), once nothing in it is open or still to merge, never a judge's
+  own. A task that joins a deliverable before its judge has started (a landing, a requeue, the owner's next task) takes
+  it out of that judge, whose brief is rewritten from the others it judges, or which is cancelled if it judges none
+  (`threadjudge.ts release`, from `jobs.ts createJob`); its end wakes a judge again.
+  The owner closes it with `hq plan done` or draws its next task. `hq projects`, `hq deliverable` and the
   CEO's summary say "ready to judge" until then, with the open deliverables that need it. HQ's one-task wrappers (a routine's
   run, a check, a note's job) and a judge's own deliverable close at their merge. The judge's brief carries each
   task's report as quoted data, and only a report its owner may read (`jobs.ts readsReport`): one holding a customer's

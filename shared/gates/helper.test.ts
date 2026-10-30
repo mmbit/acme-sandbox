@@ -34,6 +34,11 @@ test('browser test areas receive executable runtime assets and their shared libr
   const shell = 'chromium_headless_shell-fixture/chrome-headless-shell-linux64/chrome-headless-shell';
   mkdirSync(join(browsers, shell, '..'), { recursive: true });
   cpSync('/bin/true', join(browsers, shell));
+  for (const name of ['chromium-fixture', 'ffmpeg-fixture']) {
+    mkdirSync(join(browsers, name));
+    cpSync('/bin/true', join(browsers, name, 'unused'));
+  }
+  writeFileSync(join(browsers, shell, '..', 'runtime-resource'), 'needed by the shell');
   const env = { ...(await playedHq()), TESTS_BROWSERS_PATH: browsers };
   const bootstrap = {
     'shared/gates/tests-on-helper.sh':
@@ -47,6 +52,9 @@ test('the bundled runtime starts with its libraries', () => {
   const assets = process.env.BROWSER_ASSETS;
   const tools = process.env.BROWSER_LIBRARIES;
   assert.ok(existsSync(tools + '/libc.so.6'));
+  assert.ok(existsSync(assets + '/chromium_headless_shell-fixture/chrome-headless-shell-linux64/runtime-resource'));
+  assert.equal(existsSync(assets + '/chromium-fixture'), false);
+  assert.equal(existsSync(assets + '/ffmpeg-fixture'), false);
   execFileSync(assets + '/${shell}', { env: { LD_LIBRARY_PATH: tools } });
 });
 `;
@@ -57,16 +65,18 @@ test('the bundled runtime starts with its libraries', () => {
   assert.equal(browser.status, 0, browser.out);
   assert.match(browser.out, /1 passed/);
   assert.doesNotMatch(browser.out, /failing|flaky/);
-  const ordinary = clone(
-    {
-      ...bootstrap,
-      'kits/adds/sum.ts': sum('a + b'),
-      'kits/adds/sum.test.ts': nodeTest('sums', 'assert.equal(sum(1, 2), 3);'),
-    },
-    { 'kits/adds/notes.md': 'touched\n' },
-  ).run({ ...env, TESTS_BROWSERS_PATH: join(directory, 'absent') }, 'tests.ts', ['--helper']);
-  assert.equal(ordinary.status, 0, ordinary.out);
-  assert.match(ordinary.out, /1 passed/);
+  for (const area of ['kits/adds', 'shared/chromium', 'shared/watchalong']) {
+    const ordinary = clone(
+      {
+        ...bootstrap,
+        [area + '/sum.ts']: sum('a + b'),
+        [area + '/sum.test.ts']: nodeTest('sums', 'assert.equal(sum(1, 2), 3);'),
+      },
+      { [area + '/notes.md']: 'touched\n' },
+    ).run({ ...env, TESTS_BROWSERS_PATH: join(directory, 'absent') }, 'tests.ts', ['--helper']);
+    assert.equal(ordinary.status, 0, ordinary.out);
+    assert.match(ordinary.out, /1 passed/);
+  }
 });
 
 test('a missing required tool stops helper bundling instead of counting as a failure shared with main', async () => {
@@ -192,17 +202,67 @@ test('helper reporting rides out disconnects in a row; HQ unreached past the win
 });
 
 test('a base comparison waits past takeMinutes for the busy helper, classifies its outcomes there and still blocks a regression', async () => {
-  const env = await playedHq(undefined, {
-    HELPER_ENV: JSON.stringify({ TEST_ROOM: 'helper' }),
+  const { env, repo } = await helperFailureCase({
     HELPER_TAKE_MINUTES: '0.001',
     RUN_STATES: JSON.stringify([
-      [['done', 'attic']],
+      [{ state: 'done', machine: 'attic' }],
       [
-        ['waiting', 'attic'],
-        ['waiting', 'attic'],
-        ['done', 'attic'],
+        { state: 'waiting', machine: 'attic' },
+        { state: 'waiting', machine: 'attic' },
+        { state: 'done', machine: 'attic' },
       ],
     ]),
+  });
+  const existing = repo.run(env, 'tests.ts', ['--helper']);
+  assert.equal(existing.status, 0, existing.out);
+  assert.match(existing.out, /Failing on main too: .*helper-only failure/);
+  repo.change({ 'kits/adds/sum.ts': sum('a * b') });
+  const broken = repo.run(env, 'tests.ts', ['--helper']);
+  assert.equal(broken.status, 1, broken.out);
+  assert.match(broken.out, /1 failing, 1 failing on main too/);
+});
+
+test('an unavailable or different comparison helper leaves the check incomplete without local fallback', async () => {
+  for (const states of [
+    [{ state: 'lost', machine: 'elsewhere' }],
+    [{ state: 'done', machine: 'elsewhere' }],
+    [{ state: 'waiting', machine: 'attic', helperPresent: false }],
+  ]) {
+    const { env, repo } = await helperFailureCase({
+      HELPER_TAKE_MINUTES: '0.001',
+      RUN_STATES: JSON.stringify([[{ state: 'done', machine: 'attic' }], states]),
+    });
+    const ran = repo.run(env, 'tests.ts', ['--helper']);
+    assert.equal(ran.status, 2, ran.out);
+    assert.match(ran.out, /The tests could not run:/);
+    assert.doesNotMatch(ran.out, /Tests passed:|Tests failed:|They run here instead/);
+  }
+});
+
+test('a second helper upload survives an archive that outlasts the connection idle time', async () => {
+  const bin = mkdtempSync(join(tmpdir(), 'tests-archive-'));
+  const tar = execFileSync('which', ['tar'], { encoding: 'utf8' }).trim();
+  // Node's server closes idle connections after five seconds. The archive takes one second longer
+  writeFileSync(
+    join(bin, 'tar'),
+    `#!/bin/sh
+for argument in "$@"; do
+  if [ "\${argument##*/}" = 'bundle.tar.gz' ]; then sleep 6; fi
+done
+exec ${tar} "$@"
+`,
+    { mode: 0o755 },
+  );
+  const { env, repo } = await helperFailureCase({ KEEP_ALIVE: '1', PATH: `${bin}:${process.env.PATH}` });
+  const ran = repo.run(env, 'tests.ts', ['--helper']);
+  assert.equal(ran.status, 0, ran.out);
+  assert.match(ran.out, /Failing on main too:/);
+});
+
+async function helperFailureCase(settings: NodeJS.ProcessEnv = {}) {
+  const env = await playedHq(undefined, {
+    ...settings,
+    HELPER_ENV: JSON.stringify({ TEST_ROOM: 'helper' }),
   });
   const repo = clone(
     {
@@ -214,65 +274,8 @@ test('a base comparison waits past takeMinutes for the busy helper, classifies i
     },
     { 'kits/adds/notes.md': 'touched\n' },
   );
-  const existing = repo.run(env, 'tests.ts', ['--helper']);
-  assert.equal(existing.status, 0, existing.out);
-  assert.match(existing.out, /Failing on main too: .*helper-only failure/);
-  repo.change({ 'kits/adds/sum.ts': sum('a * b') });
-  const broken = repo.run(env, 'tests.ts', ['--helper']);
-  assert.equal(broken.status, 1, broken.out);
-  assert.match(broken.out, /1 failing, 1 failing on main too/);
-});
-
-test('an unavailable or different comparison helper leaves the check incomplete without local fallback', async () => {
-  for (const states of [[['lost', 'elsewhere']], [['done', 'elsewhere']], [['waiting', 'attic', false]]]) {
-    const env = await playedHq(undefined, {
-      HELPER_ENV: JSON.stringify({ TEST_ROOM: 'helper' }),
-      HELPER_TAKE_MINUTES: '0.001',
-      RUN_STATES: JSON.stringify([[['done', 'attic']], states]),
-    });
-    const repo = clone(
-      {
-        'shared/gates/tests-on-helper.sh': ON_HELPER,
-        'kits/adds/sum.ts': sum('a + b'),
-        'kits/adds/sum.test.ts': nodeTest('helper-only failure', "assert.notEqual(process.env.TEST_ROOM, 'helper');"),
-      },
-      { 'kits/adds/notes.md': 'touched\n' },
-    );
-    const ran = repo.run(env, 'tests.ts', ['--helper']);
-    assert.equal(ran.status, 2, ran.out);
-    assert.match(ran.out, /The tests could not run:/);
-    assert.doesNotMatch(ran.out, /Tests passed:|Tests failed:|They run here instead/);
-  }
-});
-
-test('a second helper upload survives an archive that outlasts the connection idle time', async () => {
-  const bin = mkdtempSync(join(tmpdir(), 'tests-archive-'));
-  const tar = execFileSync('which', ['tar'], { encoding: 'utf8' }).trim();
-  // Node's server closes idle connections after five seconds. The archive takes one second longer.
-  writeFileSync(
-    join(bin, 'tar'),
-    `#!/bin/sh
-if [ "$1" = '-czf' ] && [ "\${2##*/}" = 'bundle.tar.gz' ]; then sleep 6; fi
-exec ${tar} "$@"
-`,
-    { mode: 0o755 },
-  );
-  const env = {
-    ...(await playedHq(undefined, { KEEP_ALIVE: '1', HELPER_ENV: JSON.stringify({ TEST_ROOM: 'helper' }) })),
-    PATH: `${bin}:${process.env.PATH}`,
-  };
-  const repo = clone(
-    {
-      'shared/gates/tests-on-helper.sh': ON_HELPER,
-      'kits/adds/sum.ts': sum('a + b'),
-      'kits/adds/sum.test.ts': nodeTest('helper-only failure', "assert.notEqual(process.env.TEST_ROOM, 'helper');"),
-    },
-    { 'kits/adds/notes.md': 'touched\n' },
-  );
-  const ran = repo.run(env, 'tests.ts', ['--helper']);
-  assert.equal(ran.status, 0, ran.out);
-  assert.match(ran.out, /Failing on main too:/);
-});
+  return { env, repo };
+}
 
 test("tests too slow for the helper's limit fail as such, naming the files still running and what's known, and never run again here", async () => {
   const sleepy = (seconds: number) =>

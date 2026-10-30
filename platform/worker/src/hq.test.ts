@@ -86,7 +86,7 @@ const server = createServer((req, res) => {
     if (u.startsWith('/api/agent/picture?')) return res.end(JSON.stringify({ id: 14, type: 'image/png', from: 'the intercom', created: '2026-10-04T09:12:33.000Z', data: PNG }));
     // (hq sketch, hq sketches)
     if (u === '/api/agent/sketch?id=404') { res.statusCode = 404; return res.end('{"error":"not found"}'); }
-    if (u.startsWith('/api/agent/sketch?')) return res.end(JSON.stringify({ ...SKETCH, ...(u.endsWith('=14') ? { id: 14, from: 'Ines' } : {}), ...(u.endsWith('=13') ? { kind: 'sheet', url: '/?open=projects' } : {}), ...(u.endsWith('=15') ? { id: 15, kind: 'call' } : {}), picture: { type: 'image/png', data: PNG } }));   // (from)
+    if (u.startsWith('/api/agent/sketch?')) return res.end(JSON.stringify({ ...SKETCH, ...(u.endsWith('=14') ? { id: 14, from: 'Ines' } : {}), ...(u.endsWith('=13') ? { kind: 'sheet', url: '/?open=projects' } : {}), picture: { type: 'image/png', data: PNG } }));   // (from)
     // (hq answer.)
     if (u === '/api/agent/answer') {
       const { note, expect } = JSON.parse(b);
@@ -195,6 +195,15 @@ test('status goes to /api/agent/event with the job token, no agent field', async
   assert.equal(last().url, '/api/agent/event');
   assert.equal(last().auth, `Bearer ${TOKEN}`);
   assert.deepEqual(last().body, { type: 'status', state: 'working', text: 'testing' });
+});
+
+test('a read HQ refuses the connection to (a deploy restarting it) exits 7 and says on one line where it failed', async () => {
+  const down = { ...env, HQ_URL: 'http://127.0.0.1:1' };
+  const r = await new Promise<{ code: number; out: string; err: string }>(resolve =>
+    execFile('bash', [HQ, 'search', 'anything'], { env: down }, (e, out, err) => resolve({ code: (e as any)?.code ?? 0, out, err })));
+  assert.equal(r.code, 7);
+  assert.equal(r.out, '');
+  assert.match(r.err, /^hq: [^\n]*127\.0\.0\.1 port 1[^\n]*\n$/);
 });
 
 test('--as sends `as` (and leaves it out when it is the job\'s own agent)', async () => {
@@ -816,10 +825,6 @@ test('hq sketch saves a page\'s picture privately with what it is; hq sketches l
   const sheet = await hq('sketch', '13');
   assert.match(sheet, /A 1200 × 800 px sheet page, 34 strokes, 2 pictures\. On \/\?open=projects\./);
   rmSync(/→ (\S+)/.exec(sheet)![1]);
-  // a call's notes page went in and to nobody
-  const onCall = await hq('sketch', '15');
-  assert.match(onCall, /Went in 2026-10-24 10:05 UTC and went to nobody: its call's follow-up hands out what's on it\./);
-  rmSync(/→ (\S+)/.exec(onCall)![1]);
   await assert.rejects(hq('sketch', '404'));
   const list = await hq('sketches');   // (pictures)
   assert.equal(last().url, '/api/agent/sketches');

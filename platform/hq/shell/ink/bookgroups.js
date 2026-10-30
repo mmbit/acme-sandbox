@@ -1,42 +1,38 @@
-// The groups on a Notebook page as the board sees them (knowledge/notes/platform/notebook.md): a group of two or more
-// things has a paperclip at its box's top-left, holding them, tapped for a small menu (Delete, Move to page…); a lone
-// stroke, picture or scrap has none, and is picked with Select (bookselect.js), whose bar then has its Move to page… and
-// its Delete (lone). A scrap's post-it words under its
-// picture (typed in and edited with the pen while its page is open: bookamend.js); and under each group its answers
-// (review mode's slips: a tick, and words written under one go as a reply) with the board's replies, a reply's Undo
-// there in its seconds, then the agents' desk-phone cards about it (bookasks.js). A group deleted crumples away at
-// once, Undo a tap away in a toast and on the book's Undo; a scratch-out written over a group deletes it the same way.
-// The lasso's Group makes what's picked one group: split out of the groups it's part of, then joined. A sent page's
-// own groups have no clip: they're read-only.
-// Which group a stroke joins, and what's saved, is booksave.js's; the maths bookgroupmath.js's. Its look: bookgroups.css.
+// The groups on a Notebook page as the board sees them (knowledge/notes/platform/notebook.md), each a scrap unit the
+// page lays (bookunits.js): picked with Select (bookselect.js), whose bar has its Move to page… and its Delete. A
+// scrap's post-it words in its body under its picture (typed in and edited with the pen while its page is open:
+// bookamend.js); and under each unit its answers (review mode's slips: a tick, and words written under one go as a
+// reply) with the board's replies, a reply's Undo there in its seconds, then the agents' desk-phone cards about it
+// (bookasks.js), one still open edged red (bookforyou.js). A group deleted crumples away at once, Undo a tap away in a
+// toast and on the book's Undo; a scratch-out written over a group deletes it the same way. A sent page's own groups are read-only.
+// What's saved is booksave.js's; the maths bookgroupmath.js's. Its look: bookgroups.css.
 import { notebookRequest, word } from './bookscope.js';
 import { esc, stylesheet } from '../../util.js';
 import { toast } from '../toast.js';
 import { sfx } from '../audio.js';
+import { crumple } from './bookpaper.js';
+import { thingsPicture } from './bookpaperdraw.js';
+import { boundsOf, union } from './bookselectmath.js';
 import { CSS as SLIP_CSS, slipHtml, wireSlips } from '/__review/slip.js';
 import { scribbled } from '/__review/gestures.js';
 import { keepFromScribble } from '/__review/penwords.js';
-import { indexesIn, scratched } from './bookgroupmath.js';
-import { boxOf, slipsUnder, underWidth } from './notebookstack.js';
+import { scratched } from './bookgroupmath.js';
+import { boxOf, slipsUnder } from './notebookstack.js';
 import { edit, keep } from './bookedit.js';
 import { readAgain, saved, shut, typed } from './booksave.js';
-import { deleteReply, joinGroups, moveGroup, reply, splitGroup } from './notebookdata.js';
+import { deleteReply, moveGroup, reply } from './notebookdata.js';
 import { nameOf } from './bookhead.js';
 import { asksHtml, wireAsks } from './bookasks.js';
 import { mountShow } from './bookgroupshow.js';
-import { fitOf } from './bookscrapfit.js';
+import { markOpen } from './bookforyou.js';
 
 // a reply can be taken back this long after it's written (notebooksend.ts SEND_MS)
 const REPLY_MS = 10_000;
 const LISTS = { ink: 'ink', texts: 'texts', pictures: 'scraps' };
-// (a paperclip, as the answers' slips have)
-const CLIP =
-  '<svg viewBox="0 0 14 34" aria-hidden="true"><path d="M10 9v15a3.5 3.5 0 0 1-7 0V6a5 5 0 0 1 10 0v19"/></svg>';
-
 // book: bookpages.js's. hooks: { lay(), refresh(view), pages() (the notebook's open pages, [page]), turnTo(page) }.
-// Returns { added(view), drawn(page), scratch(view, line), group(view, picked), lone(view, picked) }: a view's layer
-// made, a page's groups drawn again (read or saved), a line written over a group that deletes it (true: not ink), the
-// lasso's Group, and what Select's bar does with one whole group picked.
+// Returns { added(view), drawn(page), scratch(view, line), lone(view, picked) }: a view's layer made, a page's groups
+// drawn again (read or saved), a line written over a group that deletes it (true: not ink), and what Select's bar does
+// with one whole group picked.
 export function mountGroups(book, hooks) {
   stylesheet('shell/ink/bookgroups.css');
   if (!document.querySelector('style[data-slips]')) {
@@ -53,7 +49,6 @@ export function mountGroups(book, hooks) {
       if (view) draw(gs, view);
     },
     scratch: (view, line) => scratchOut(gs, view, line),
-    group: (view, picked) => together(gs, view, picked),
     lone: (view, picked) => lone(gs, view, picked),
   };
 }
@@ -89,16 +84,14 @@ function draw(gs, view) {
   layer.innerHTML = [...(page.groups?.values() ?? [])]
     .map(g => {
       // (a group whose elements are all off the page, deleted and not yet saved, is drawn no more)
-      const { box, things } = partsNow(page, g.id);
+      const { box } = partsNow(page, g.id);
       if (!box) return '';
-      const clip = open && things > 1 ? clipHtml(g, box) : '';
+      // (a scrap's words part of its body, under its picture; its answers and replies under the unit: bookunits.js
+      // places both. A scrap is a unit, no clip: Select's bar has its menu. job #14672)
       const words = g.kind === 'scrap' ? wordsHtml(page, g, open) : '';
-      const under = slipsHtml(g.children ?? []) + asksHtml(g),
-        k = fitOf(page, g.id);
-      return `${clip}${
-        words || under
-          ? `<div class="bk-under" data-g="${g.id}" style="left:${box.x}px;top:${box.y + box.h + 10 * k}px;--w:${underWidth(g.kind, box.w / k)}px;--fit:${k}">${words}${under}</div>`
-          : ''
+      const under = slipsHtml(g.children ?? []) + asksHtml(g);
+      return `${words ? `<div class="bk-words" data-g="${g.id}">${words}</div>` : ''}${
+        under ? `<div class="bk-under" data-g="${g.id}">${under}</div>` : ''
       }`;
     })
     .join('');
@@ -109,17 +102,19 @@ function draw(gs, view) {
     answered: () => readAgain(gs.book, page),
   });
   wireWords(gs, page, layer);
-  for (const b of layer.querySelectorAll('.bk-clip'))
-    b.addEventListener('click', () => menu(gs, view, b, Number(b.dataset.g)));
   for (const b of layer.querySelectorAll('[data-unreply]'))
     b.addEventListener('click', () => unreply(gs, view, Number(b.dataset.unreply)));
-  // (the clips' and answers' touches are their own: never the page's pan or ink. A scrap's words kept from Scribble
+  // (the words' and answers' touches are their own: never the page's pan or ink. A scrap's words kept from Scribble
   // for the pen take its strokes on the page: bookamend.js)
-  for (const el of layer.querySelectorAll('.bk-clip, .bk-under'))
+  for (const el of layer.querySelectorAll('.bk-words, .bk-under'))
     for (const type of ['pointerdown', 'touchstart'])
       el.addEventListener(type, e => e.target.matches('[data-pen]') || e.stopPropagation());
   if (focused) layer.querySelector(`[data-slip="${focused}"] .slip-reply`)?.focus();
   if (caret) caretBack(layer, caret);
+  // (what hangs under each unit counted in its place, and moved to its foot: bookunits.js. job #14672)
+  view.relay?.();
+  markOpen(view, layer);
+  gs.book.controls?.update();
 }
 // A scrap's words being typed in, whose caret and words as typed the groups drawn again keep: { g, at, words } (null:
 // none). The words as typed go back while they're what's drawn but for the spaces at their ends, which the store
@@ -159,17 +154,6 @@ function wordsHtml(page, g, open) {
       )}</textarea></div>`
     : '';
 }
-// A group's clip at its box's top-left, its menu's button
-const clipHtml = (g, box) =>
-  `<button type="button" class="bk-clip" data-g="${g.id}" style="left:${box.x}px;top:${box.y}px" aria-label="${esc(
-    labelOf(g),
-  )}" aria-haspopup="menu">${CLIP}</button>`;
-const labelOf = g =>
-  g.kind !== 'scrap'
-    ? word('A group: its menu')
-    : g.owner_name
-      ? word('A scrap of {name}’s work: its menu', { name: g.owner_name })
-      : word('A scrap: its menu');
 // The board's reply under an answer, and its Undo while it's in its seconds
 function replyHtml(r) {
   const words = r.words || (r.ink?.length ? word('Written reply') : '');
@@ -178,13 +162,13 @@ function replyHtml(r) {
     fresh ? ` <button type="button" class="bk-unreply" data-unreply="${r.id}">${word('Undo')}</button>` : ''
   }</p>`;
 }
-// A group's elements as they are on the page now: their box, for where its clip and answers go (null: none), and how
-// many there are, whether it has a clip
+// A group's elements as they are on the page now: their box, for where its clip and answers go (null: none), how
+// many there are, whether it has a clip, and themselves by kind
 function partsNow(page, id) {
   const parts = { ink: [], texts: [], pictures: [] };
   for (const [kind, list] of Object.entries(LISTS))
     for (const el of page[list] ?? []) if (el.g === id) parts[kind].push(el);
-  return { box: boxOf(parts), things: parts.ink.length + parts.texts.length + parts.pictures.length };
+  return { box: boxOf(parts), things: parts.ink.length + parts.texts.length + parts.pictures.length, parts };
 }
 
 // ---- the answers
@@ -285,11 +269,11 @@ function lone(gs, view, picked) {
 // ---- delete, move, group
 
 // A group deleted: its elements off the page at once as one step (booksave.js deletes it in the store, and restores
-// it when Undo puts them back), the page drawn again without its ink and highlights, a crumpled ghost of it going, and
-// Undo in a toast
+// it when Undo puts them back), the page drawn again without its ink and highlights, a copy of it crumpled up and
+// dropped, and Undo in a toast
 function remove(gs, view, id) {
   const { book, hooks } = gs,
-    { box } = partsNow(view.page, id);
+    { box, parts } = partsNow(view.page, id);
   const ok = edit(book, view, hooks, page => {
     for (const list of Object.values(LISTS)) {
       const kept = page[list].filter(el => el.g !== id);
@@ -299,7 +283,7 @@ function remove(gs, view, id) {
   if (!ok) return;
   const step = book.steps.at(-1);
   hooks.refresh(view);
-  crumple(gs, view, box);
+  drop(gs, view, box, parts);
   sfx.tick();
   toast(word('<b>Deleted.</b> Tap to undo'), () => takeBack(book, step));
 }
@@ -309,15 +293,14 @@ function takeBack(book, step) {
   keep(book.steps, s => s !== step);
   step.undo();
 }
-// The group's ghost crumpled and gone (nothing waits on it)
-function crumple(gs, view, box) {
+// The group's things as they were, crumpled up and dropped (bookpaper.js; nothing waits on it)
+function drop(gs, view, box, { ink, texts, pictures }) {
   if (!box) return;
-  const ghost = document.createElement('div');
-  ghost.className = 'bk-crumple';
-  Object.assign(ghost.style, { left: `${box.x}px`, top: `${box.y}px`, width: `${box.w}px`, height: `${box.h}px` });
-  layerOf(gs, view).append(ghost);
-  ghost.addEventListener('animationend', () => ghost.remove());
-  setTimeout(() => ghost.remove(), 1000);
+  // (the group's box, and the pictures' turned corners if they go past it)
+  const drawn = boundsOf({ ink, scraps: pictures }, null),
+    own = { x0: box.x, y0: box.y, x1: box.x + box.w, y1: box.y + box.h },
+    extent = drawn ? union(own, drawn) : own;
+  crumple(...thingsPicture(view, { ink, texts, scraps: pictures }, extent, gs.book.scale));
 }
 // A line written over a group, scribbled back and forth (a scratch-out), deletes it: not kept as ink
 function scratchOut(gs, view, line) {
@@ -328,51 +311,28 @@ function scratchOut(gs, view, line) {
   remove(gs, view, hit.id);
   return true;
 }
-// A group onto another page of the notebook (its place on the page kept), both pages read again; Undo moves it back
+// A group onto another page of the notebook, its last unit there, both pages read again; Undo moves it back to its
+// place, right after the unit before it
 async function moveTo(gs, view, id, to) {
   const { book } = gs,
     from = view.page;
   if (!to) return;
-  const go = async (g, a, b) => {
+  const go = async (g, a, b, after) => {
     await saved(book, a);
-    await moveGroup(book.dev, g, b.id);
+    await moveGroup(book.dev, g, b.id, after);
     for (const p of [a, b]) readAgain(book, p);
   };
+  const place = unitBefore(from, id) ?? 'start';
   try {
     await go(id, from, to);
   } catch (e) {
     return toast(esc(e.message));
   }
-  book.steps.push({ page: from, undo: () => go(id, to, from), redo: () => go(id, from, to) });
+  book.steps.push({ page: from, undo: () => go(id, to, from, place), redo: () => go(id, from, to) });
   toast(word('<b>Moved to {name}.</b> Tap to go there', { name: esc(nameOf(to)) }), () => gs.hooks.turnTo(to));
 }
-// What the lasso picked ({ ink, scraps, texts }, the page's own elements) as one group: the groups wholly picked and
-// what's split out of the others, joined. (No Undo: lasso it again to change it.)
-async function together(gs, view, picked) {
-  const { book } = gs,
-    page = view.page;
-  if (shut(page)) return;
-  try {
-    // (saved first: what was just drawn has its group then)
-    await saved(book, page);
-    const of = new Map();
-    for (const [kind, list] of Object.entries(LISTS))
-      for (const el of picked[list] ?? []) {
-        if (!of.has(el.g)) of.set(el.g, { ink: [], texts: [], pictures: [] });
-        of.get(el.g)[kind].push(el);
-      }
-    const ids = [];
-    for (const [id, els] of of) {
-      const g = page.groups.get(id);
-      if (!g) continue;
-      const all = Object.values(LISTS).reduce((n, list) => n + page[list].filter(el => el.g === id).length, 0),
-        some = Object.values(els).reduce((n, l) => n + l.length, 0);
-      if (some === all) ids.push(id);
-      else ids.push((await splitGroup(book.dev, id, indexesIn(g, els))).split.id);
-    }
-    if (ids.length > 1) await joinGroups(book.dev, ids);
-  } catch (e) {
-    toast(esc(e.message));
-  }
-  readAgain(book, page);
+// The unit right before unit id in its page's order, its id (undefined: id is the first)
+function unitBefore(page, id) {
+  const { pos } = page.groups.get(id);
+  return [...page.groups.values()].filter(g => g.pos < pos).sort((a, b) => b.pos - a.pos)[0]?.id;
 }

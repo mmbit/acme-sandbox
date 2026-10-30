@@ -2,7 +2,7 @@
 // page as a picture to share (bookshare.js), or a few things on their own, the picture a crumple plays on
 // (bookpaper.js). The same order and look as the page's tiles (bookpage.js) and the store's picture (bookrender.ts).
 import { draw } from '/__review/ink.js';
-import { drawScrap } from './sketchscraps.js';
+import { drawScrap } from './bookscrapdraw.js';
 import { picture } from '../../util.js';
 import { pageBox } from './bookrow.js';
 import { TEXT } from './booktexts.js';

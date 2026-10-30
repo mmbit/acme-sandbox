@@ -279,8 +279,8 @@ async function bringBack(current: Run, root: string) {
   for (const download of [output, files]) {
     if (download.status !== 200) {
       const reason = download.status === 404 ? 'results unavailable or expired' : `HTTP ${download.status}`;
-      warn(`hq run #${current.id}: ${reason}`);
-      throw new api.ApiError(reason, 22);
+      // (the exit handler prints these words)
+      stop(`hq run #${current.id}: ${reason}`, 22);
     }
   }
   process.stdout.write(output.bytes);

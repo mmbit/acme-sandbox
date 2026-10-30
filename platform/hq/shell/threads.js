@@ -256,6 +256,10 @@ export function threadState(t) {
   for (const s of ['you', 'working', 'next', 'waits']) if (cards.some(j => stateOf(j) === s)) return s;
   return cards.some(j => stateOf(j) === 'ended') ? 'ended' : 'done';
 }
+// A closed thread's end (the coordinator's tallies.ts: failed counts its tasks that failed with nothing in their place):
+// failed when one did, else done. Its tile, its row and its project's line all read it here.
+export const endOf = t => (t.failed ? 'failed' : 'done');
+export const endWord = t => (endOf(t) === 'done' ? 'Done' : 'Failed');
 // A thread's line: the board's part first (never a time while it waits on the board), a pause with its reason, else
 // when it's done in the play, and by how much that misses its deadline.
 // (waits: it waits on something besides the board, paused or with no time while it waits on other work; finish: the

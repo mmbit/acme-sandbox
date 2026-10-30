@@ -150,7 +150,6 @@ export function revokeNotebook(b: any) {
 }
 
 export function listNotebooks(name?: string, only?: number) {
-  rounds.settleRounds();
   const members = name ? forGuest(name) : memberships();
   const ids = [...new Set(members.map(m => m.notebook))].filter(id => !only || id === only);
   return { notebooks: ids.map(id => describe(id, name)) };
@@ -161,26 +160,29 @@ function describe(id: number, name?: string) {
   const all = membersOf(id),
     members = name ? all.filter(m => m.guest.toLowerCase() === name.toLowerCase() && active(m)) : all;
   const round = rounds.roundOf(id);
-  const state = round?.closed ? 'closed' : round?.closes ? 'closing' : 'open';
-  const pages = members
-    .flatMap(m => pagesFor(m))
-    .map(p => ({
-      ...notebook.pageOf(p),
-      canSend: p.send_at === null && state === 'open' && !!members.find(m => active(m) && whoOf(m) === p.who),
-      canUndo:
-        p.send_at !== null &&
-        (round ? !round.closed && (!round.closes || round.last_page === p.id) : !notebook.gone(p)),
-      readonly: p.send_at !== null || state !== 'open' || !members.some(m => active(m) && whoOf(m) === p.who),
-    }));
+  const state = round?.closed ? 'closed' : 'open';
+  // (the board reads a round's own chapters after its guests' pages: its Asks and Advice.)
+  const own = name ? [] : chaptersOf(id),
+    unwrapped = !!round && rounds.stateOf(round) === 'done';
+  const pages = [
+    ...members
+      .flatMap(m => pagesFor(m))
+      .map(p => ({
+        ...notebook.pageOf(p),
+        canSend: p.send_at === null && state === 'open' && !!members.find(m => active(m) && whoOf(m) === p.who),
+        canUndo: p.send_at !== null && (round ? !round.closed : !notebook.gone(p)),
+        readonly: p.send_at !== null || state !== 'open' || !members.some(m => active(m) && whoOf(m) === p.who),
+      })),
+    ...own.map(p => ownPage(p, unwrapped)),
+  ];
   return {
     id,
     name: n.name,
     kind: n.kind,
     archived: !!n.archived,
     state,
-    closes: round?.closes ?? null,
     ends: members[0]?.ends ?? null,
-    deck: name ? undefined : (round?.deck ?? null),
+    round: name || !round ? undefined : rounds.roundSummary(id),
     pages,
     colleagues: !!(
       db.prepare('select allowed from notebook_colleagues where notebook = ?').get(id) as { allowed: number }
@@ -200,6 +202,21 @@ function describe(id: number, name?: string) {
   };
 }
 
+// The board writes on its Asks, and on its Advice once unwrapped, and submits an Advice page as its own
+const ownPage = (p: notebook.NotebookPage, unwrapped: boolean) => ({
+  ...notebook.pageOf(p),
+  canSend: p.send_at === null && p.kind === 'advice' && unwrapped,
+  canUndo: false,
+  readonly: p.send_at !== null || (p.kind === 'advice' && !unwrapped),
+});
+const chaptersOf = (id: number) =>
+  (
+    db
+      .prepare(
+        "select id from book_pages where notebook = ? and who = ? and kind in ('asks', 'advice') order by pos, id",
+      )
+      .all(id, BOARD) as { id: number }[]
+  ).map(p => notebook.pageRow(p.id, null)!);
 const pagesFor = (m: Membership) =>
   (
     db
@@ -252,8 +269,7 @@ function invitesFor(m: Membership) {
   };
   const domain = domainOf(guests.emailOf(m.guest)!);
   const round = rounds.roundOf(m.notebook);
-  if (!setting?.allowed || !domain || mailout.sharedDomain(domain) || !round || round.closes || round.closed)
-    return null;
+  if (!setting?.allowed || !domain || mailout.sharedDomain(domain) || !round || round.closed) return null;
   // The board allows at most three colleague invitations, as on guest checklist cards.
   const used = membersOf(m.notebook).filter(person => person.invited_by !== null).length;
   return { domain, left: Math.max(0, 3 - used) };

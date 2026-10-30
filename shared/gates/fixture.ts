@@ -64,9 +64,9 @@ export const sum = (body: string) => `export const sum = (a: number, b: number) 
 
 // HQ as --helper meets it (lent.ts), in a process of its own (a check's spawnSync blocks the test's): each run carried
 // out at once, in `env`, as a lent machine "attic" would, with the files it brings back. Each ask for a run's state
-// takes the next of `states` (the last stays), each a state and the machine that has the run then, until the check
-// stops it, answering that after PLAYED_STOP_MS. PLAYED_TIMED_OUT: each run stopped at its limit, as a helper's is
-// (exit code 124, with its output). The network fails as `env` says: REPORT_DISCONNECTS drops that many
+// takes the next of `states` (the last stays). RUN_STATES gives each submitted run a sequence of its own. A run the
+// check stops answers stopped from then on, after PLAYED_STOP_MS. PLAYED_TIMED_OUT: each run stopped at its limit,
+// as a helper's is (exit code 124, with its output). The network fails as `env` says: REPORT_DISCONNECTS drops that many
 // GETs unanswered, DROP_SUBMIT drops the first run's submission once HQ has it ('body': after its answer's headers;
 //.), and RESTARTING plays HQ restarting (RESTART_MS: down that long from the run's
 // first poll).
@@ -127,15 +127,15 @@ const answer = async (req, res) => {
   const run = runs[Number(req.url.split('/')[4]) - 1];
   if (req.url.endsWith('/files')) return res.end(readFileSync(join(run.tree, 'files.tar.gz')));
   if (req.url.endsWith('/output')) return res.end(run.output);
-  if (req.url.endsWith('/withdraw')) run.states = [['withdrawn', run.states[0][1]]];
+  if (req.url.endsWith('/withdraw')) run.states = [{ ...run.states[0], state: 'withdrawn' }];
   if (req.url.endsWith('/stop')) {
     await new Promise(resolve => setTimeout(resolve, Number(process.env.PLAYED_STOP_MS ?? 0)));
-    run.states = [['stopped', run.states[0][1]]];
+    run.states = [{ ...run.states[0], state: 'stopped' }];
   }
-  const [state, machine, present = true] = run.states.length > 1 ? run.states.shift() : run.states[0];
+  const { state, machine, helperPresent = true } = run.states.length > 1 ? run.states.shift() : run.states[0];
   const why = state === 'lost' ? machine + ' went quiet' : null;
   const timedOut = !!process.env.PLAYED_TIMED_OUT;
-  res.end(JSON.stringify({ state, exitCode: run.exitCode, timedOut, machine, why, helper: { takeMinutes: Number(process.env.HELPER_TAKE_MINUTES ?? 1), present } }));
+  res.end(JSON.stringify({ state, exitCode: run.exitCode, timedOut, machine, why, helper: { takeMinutes: Number(process.env.HELPER_TAKE_MINUTES ?? 1), present: helperPresent } }));
 };
 if (!process.env.RESTARTING) createServer(answer).listen(0, '127.0.0.1', function () { console.log(this.address().port); });
 // as a deploy does: down (connections refused) as the push sends its run, and again from the run's first poll, which
@@ -154,8 +154,10 @@ const down = ms => {
 };
 if (process.env.RESTARTING) restarting.listen(0, '127.0.0.1', () => { console.log(restarting.address().port); down(2000); });
 `;
+export type PlayedState = { state: string; machine: string; helperPresent?: boolean };
+
 export async function playedHq(
-  states: [string, string, boolean?][] = [['done', 'attic']],
+  states: PlayedState[] = [{ state: 'done', machine: 'attic' }],
   env: NodeJS.ProcessEnv = {},
 ) {
   const script = join(mkdtempSync(join(tmpdir(), 'tests-hq-')), 'hq.mjs');

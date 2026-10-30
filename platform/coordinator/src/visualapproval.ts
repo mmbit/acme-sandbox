@@ -151,12 +151,12 @@ function cardWindow(id: number) {
   if (typeof decision === 'string' || !decision.card_job) return;
   const source = db
     .prepare(
-      `select t.* from decision_merges m join prs p on p.number = m.pr
+      `select t.project, w.deadline, w.aim from decision_merges m join prs p on p.number = m.pr
     join jobs j on ${workBranch('j')} = p.branch and j.kind = 'work'
-    join threads t on t.id = j.thread where m.decision = ?
-    order by t.deadline is null, t.deadline, t.aim, t.id limit 1`,
+    join threads t on t.id = j.thread join thread_windows w on w.id = t.id where m.decision = ?
+    order by w.deadline is null, w.deadline, w.aim, t.id limit 1`,
     )
-    .get(id) as Thread | undefined;
+    .get(id) as Pick<Thread, 'project' | 'deadline' | 'aim'> | undefined;
   let thread = threadOf(decision.card_job);
   // Its pictures must merge before the held branch, so they need a separate branch and thread.
   if (!thread)

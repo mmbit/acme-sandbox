@@ -2,7 +2,18 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as world from '../../world/world.js';
-import { buildLayout, MAX_WING, roomAt, standBeside, wallHidden, clearOf } from './layout.js';
+import {
+  buildLayout,
+  MAX_WING,
+  roomAt,
+  standBeside,
+  wallHidden,
+  clearOf,
+  wallSpan,
+  covers,
+  NOTICE,
+  ART_MARGIN,
+} from './layout.js';
 import { inWell } from './iso.js';
 
 // departments: [id, headcount, room kind, room size]
@@ -173,8 +184,10 @@ test("an empty room's notice always hangs, clear of the fire escape at its wing'
         const X = r.wing !== 'y',
           len = X ? r.x1 - r.x0 : r.y1 - r.y0,
           atEscape = (L.street !== 'x') === X && (X ? r.x1 === L.X1 : r.y1 === L.Y1);
-        // backWall's notice: 22 px, from 2 px into the wall to 4 short of its end, in the first pass with a spot
-        const spots = wallHidden(r, L).map(h => clearOf(h, { X, len }, 8, 22, 2, len * 16 - 4));
+        // backWall's notice, inside the wall's margins, in the first pass with a spot
+        const spots = wallHidden(r, L).map(h =>
+          clearOf(h, { X, len }, 8, NOTICE.w, ART_MARGIN[0], len * 16 - ART_MARGIN[1]),
+        );
         assert.ok(
           spots.some(u => u !== null),
           `${r.id} has a spot for its notice`,
@@ -189,4 +202,18 @@ test("an empty room's notice always hangs, clear of the fire escape at its wing'
   for (const end of ['3@1', '4@1', '4@2', '4@2 top'])
     assert.ok(ends.includes(end), `a ${end} wall at the escape among ${ends}`);
   assert.ok(!ends.some(end => /^3@[2468]/.test(end)), `no three tiles at the escape on an even floor among ${ends}`);
+});
+
+test("a big plant's leaves keep off a window, which stands mirrored on the y wing, and off the next room's wall", () => {
+  // a window, 15 px from 16 px in: on the x wing from the room's start, on the y wing from its far end
+  assert.deepEqual(wallSpan({ X: true, len: 4 }, 16, 15), [1, 31 / 16]);
+  assert.deepEqual(wallSpan({ X: false, len: 4 }, 16, 15), [4 - 31 / 16, 3]);
+  // a plant 0.4 out covers the wall 0.4 nearer the start, its leaves 11 px either side (rooms.js PLANT_R + LEAVES)
+  const reach = 11 / 16,
+    window = [1.7, 2.7];
+  assert.ok(covers([window], 1.5, 0.4, reach), 'its leaves reach the window past it');
+  assert.ok(!covers([window], 1.4, 0.4, reach), 'a step nearer the start they stop short of it');
+  assert.ok(covers([window], 3.7, 0.4, reach), 'standing past the window, it covers it');
+  assert.ok(covers([[-Infinity, 0]], 1, 0.4, reach), "at the room's start they reach over the next room's wall");
+  assert.ok(!covers([[-Infinity, 0]], 1.1, 0.4, reach));
 });

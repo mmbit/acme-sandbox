@@ -2,15 +2,13 @@
 // Review mode's notes, the board's and an outside reviewer's. The board's note on a preview goes on its owner's sheet in
 // the book (bookreview.ts), nothing waiting in HQ: in HQ's viewer a pin puts nothing over the page and the bar stays one
 // slim row on a phone with no Send; the polaroid is framed on the pin; the note keeps the screen and the touch points.
-// The board's menu says whose sheet a note there joins ("For Bolt · 1 on the sheet"), every line on one line on a phone,
-// and its Open the book opens HQ's book at Bolt's sheet (on a phone its spread, over the viewer; after a late goodbye
-// too); in a tab of its own it opens HQ at that sheet; its general note goes pinned to nothing. Reviews' Sent (HQ's mock): each sheet sent as one
-// block, no ticks, Send or Discard. An outside reviewer's menu is a general note and where their notes go, asking
-// nothing of theirs back; Shift + drag draws a rectangle, a circle in every other way; pictures pasted, dropped and
-// taken off a note (scaled on the device), and a note cancelled while one is read goes nowhere. A note
+// In a tab of its own the same. Reviews' Sent (HQ's mock): each sheet sent as one block, no ticks, Send or Discard. An
+// outside reviewer's notes go as they're pinned, asking nothing of theirs back; Shift + drag draws a rectangle, a circle
+// in every other way; pictures pasted, dropped and taken off a note (scaled on the device), and a note cancelled while
+// one is read goes nowhere. A note
 // with pictures, put on its sheet and sent by the real coordinator, is one snip with the pictures under the screenshot,
-// which hq note saves. A shelf's note posts to the shelf's own path. HQ itself always has the same tool, its notes going
-// into the book; while the viewer shows a preview, only the preview's pin shows.
+// which hq note saves. A shelf's note posts to the shelf's own path. HQ itself has the same tool once its pin is on, its
+// notes going into the book; while the viewer shows a preview, only the preview's pin shows.
 // (the book, and the waiting step gone)
 //   node platform/hq/notes-check.mjs [--shots dir]
 // First HQ in dev mode, then with a fake /api and a product preview played by Playwright at
@@ -22,8 +20,7 @@ import { createServer } from 'node:http';
 import { serve, ROOT } from './serve.mjs';
 import { playwright, openPage, until } from '../../shared/browser/browser.mjs';
 import { fulfilPart } from '../../shared/review/parts.mjs';
-import { wrappedMenuLines } from '../../shared/review/lines.mjs';
-import { shutBook } from './bookchrome.mjs';
+import { pinOn } from './bookkit.mjs';
 
 const shots = process.argv.includes('--shots') ? process.argv[process.argv.indexOf('--shots') + 1] : null;
 if (shots) await mkdir(shots, { recursive: true });
@@ -174,19 +171,12 @@ await context.route(`${base}/api/**`, async r => {
   if (answer) return r.fulfill({ json: answer });
   return r.fulfill({ status: 404, body: '' });
 });
-// the preview, for the board: its notes go on Bolt's sheet; the menu reads whose sheet and how many (with the page it's
-// on); the page has nothing of the board's to change
-const askedMine = [];
+// the preview, for the board: its notes go on Bolt's sheet; the page has nothing of the board's to change
 await context.route(`${PRODUCT}/**`, r => {
-  const url = new URL(r.request().url()),
-    path = url.pathname;
+  const path = new URL(r.request().url()).pathname;
   if (fulfilPart(r, path, reviewJs)) return;
   if (path === '/__review/coach') return r.fulfill({ json: { show: false } });
   if (path === '/__review/notes') return r.fulfill({ json: bookNote(r.request().postDataJSON()) });
-  if (path === '/__review/mine') {
-    askedMine.push(url.searchParams.get('page'));
-    return r.fulfill({ json: { book: OWNER, notes: onSheet().length } });
-  }
   return r.fulfill({ contentType: 'text/html', body: PAGE });
 });
 await page.goto(`${base}/?intro=0`);
@@ -210,8 +200,7 @@ const showsMark = (img, mark, viewportWidth) =>
     },
     [mark, viewportWidth],
   );
-// counts: the board's menu counts it (an outsider's has no count)
-async function pinNote(where, text, startPin, mouse = page.mouse, counts = true) {
+async function pinNote(where, text, startPin, mouse = page.mouse) {
   await startPin();
   await where.waitForSelector('review-mode .veil:not([hidden])');
   const h1 = await where.locator('h1').boundingBox();
@@ -225,12 +214,13 @@ async function pinNote(where, text, startPin, mouse = page.mouse, counts = true)
   const polaroid = where.locator('review-mode .polaroid .img :is(img, canvas)');
   await polaroid.waitFor();
   assert.ok(await showsMark(polaroid, pinned, viewportWidth), 'the polaroid is framed on the pinned headline');
-  const count = () => document.querySelector('review-mode').shadowRoot.querySelector('.count').textContent;
-  const was = await where.evaluate(count);
+  // (a frame's requests are its page's)
+  const saved = (where.page?.() ?? where).waitForResponse(r => new URL(r.url()).pathname.endsWith('/__review/notes'), {
+    timeout: 20_000,
+  });
   await where.click('review-mode .send');
   await where.waitForSelector('review-mode .sheet', { state: 'hidden', timeout: 20_000 });
-  // pinned: the pin counts it
-  if (counts) await where.waitForFunction(`(${count})() !== ${JSON.stringify(was)}`, null, { timeout: 20_000 });
+  await saved;
 }
 // nothing of review mode's covers the page after a pin: only its pin (the dock) is there
 const overPage = where =>
@@ -253,67 +243,6 @@ const overPage = where =>
       )
       .map(el => el.className),
   );
-// the menu's items and their sub-lines, as shown
-const items = where =>
-  where.$$eval('review-mode .menu .items button:not([hidden])', bs => bs.map(b => b.firstChild.textContent));
-const subs = where =>
-  where.$$eval('review-mode .menu .items button:not([hidden]) small', s => s.map(x => x.textContent));
-// the book open beside HQ's page at Bolt's sheet: its page "For Bolt" on the book's paper, the note on it
-async function atBoltsSheet(on, words) {
-  // (once the book has slid open: its spread on a phone, over HQ's page and the viewer alike)
-  await on.waitForFunction(
-    () => document.documentElement.dataset.book && document.documentElement.dataset.book !== 'folded',
-    null,
-    { timeout: 10_000 },
-  );
-  const sheet = on.getByRole('region', { name: 'For Bolt' });
-  await sheet.waitFor({ timeout: 10_000 });
-  // its notes on the book's paper, the table done sliding there (where they are now is where they were a moment ago)
-  const place = () =>
-    on.evaluate(() => {
-      const paper = document.querySelector('#book section').getBoundingClientRect(),
-        notes = [...document.querySelectorAll('#book [aria-label="For Bolt"] .bs-note')];
-      const shown =
-        notes.length > 0 &&
-        notes.every(n => {
-          const r = n.getBoundingClientRect(),
-            img = n.querySelector('img');
-          return (
-            r.left >= paper.left - 1 &&
-            r.left < paper.right &&
-            r.top >= paper.top &&
-            r.top < paper.bottom &&
-            (!img || img.naturalWidth > 0)
-          );
-        });
-      return shown && notes.map(n => Math.round(n.getBoundingClientRect().left)).join();
-    });
-  for (let at = await place(), i = 0; ; i++) {
-    await on.waitForTimeout(250);
-    const now = await place();
-    if (now && now === at) break;
-    assert.ok(i < 40, "Bolt's sheet comes to rest on the book's paper");
-    at = now;
-  }
-  assert.doesNotMatch(
-    await on.evaluate(() => document.querySelector('#book').innerText),
-    /go through/,
-    'nothing refused',
-  );
-  for (const w of words)
-    assert.ok(
-      await sheet.locator('textarea').evaluateAll((fs, w) => fs.some(f => f.value === w), w),
-      `"${w}" on Bolt's sheet`,
-    );
-}
-
-// a flick of the spine puts the spread away (folded, on a phone.)
-async function foldAway(on) {
-  await shutBook(on);
-  await on.waitForSelector('html[data-book=folded]', { state: 'attached' });
-  await on.waitForTimeout(700); // (HQ laid out again after it)
-}
-
 // ---- the viewer: a note pinned in the frame goes on Bolt's sheet in the book, nothing over the page, no Send on the bar
 await page.evaluate(href => {
   const a = document.createElement('a');
@@ -349,83 +278,19 @@ const fits = await page.$eval('#viewer .bar', bar =>
 assert.ok(fits, 'the bar fits a phone');
 assert.ok(await page.$eval('#viewer .bar', b => b.getBoundingClientRect().height <= 40), 'the bar is one slim row');
 await shot('viewer-pinned', page);
-// the menu: whose sheet a note here joins and how many it holds, and the way there; every line on one line on a phone
-await frame.click('review-mode .more');
-await frame.waitForFunction(() =>
-  document.querySelector('review-mode').shadowRoot.querySelector('.menu .cap').textContent.startsWith('For '),
-);
-assert.equal(await frame.textContent('review-mode .menu .cap'), 'For Bolt · 1 on the sheet');
-assert.deepEqual(await items(frame), ['General note', 'Open the book'], 'no My notes or Send my notes for the board');
-assert.deepEqual(await subs(frame), ['About it all, not one spot', 'In your book, for Bolt']);
-assert.deepEqual(await frame.evaluate(wrappedMenuLines), [], 'no line of the menu wraps on a phone');
-assert.equal(askedMine.at(-1), `${PRODUCT}/`, 'the menu asks with the page it is on');
-await shot('menu-in-frame', page);
-// Open the book: HQ's book at Bolt's sheet (on a phone, its spread over the viewer)
-await frame.click('review-mode [data-open-book]');
-await atBoltsSheet(page, ['Make the headline warmer']);
-await shot('book-from-frame', page);
-assert.equal(await frame.isVisible('review-mode .menu'), false, 'the menu shuts');
-// a goodbye that came late (the page before's) leaves HQ thinking review mode is gone: Open the book still opens it
-await foldAway(page);
-await frame.evaluate(hq => parent.postMessage({ hq: 'review', bye: 1 }, hq), base);
-await page.waitForSelector('#viewer .bar .pin', { state: 'hidden' });
-await frame.click('review-mode .more');
-await frame.click('review-mode [data-open-book]');
-await atBoltsSheet(page, ['Make the headline warmer']);
-// (the page says hello again, as a new page would)
-await frame.evaluate(hq => parent.postMessage({ hq: 'review', hello: 1 }, hq), base);
-await page.waitForSelector('#viewer .bar .pin:not([hidden])');
-await foldAway(page);
 await page.click('#viewer [data-close]');
 
-// ---- a preview in a tab of its own: the pin puts nothing over the page; Open the book opens HQ at Bolt's sheet in a
-// new tab; the general note from the menu, pinned to nothing
+// ---- a preview in a tab of its own: the pin puts nothing over the page
 const own = await context.newPage();
 own.on('pageerror', e => errors.push(e.message));
 await own.goto(`${PRODUCT}/`);
 await pinNote(own, 'Seen in a browser tab', () => own.click('review-mode .fab', { force: true }), own.mouse);
 await own.waitForTimeout(600);
 assert.deepEqual(await overPage(own), [], 'nothing comes up over the page in a tab either');
-await own.click('review-mode .more');
-await own.waitForFunction(
-  () =>
-    document.querySelector('review-mode').shadowRoot.querySelector('.menu .cap').textContent ===
-    'For Bolt · 2 on the sheet',
-);
-assert.deepEqual(await items(own), ['General note', 'Open the book']);
-assert.equal(await own.textContent('review-mode .more .count'), '2', "the count is the notes on Bolt's sheet");
-await shot('menu', own);
-const [opened] = await Promise.all([context.waitForEvent('page'), own.click('review-mode [data-open-book]')]);
-opened.on('pageerror', e => errors.push(e.message));
-await opened.waitForURL(`${base}/?open=book&owner=bolt`);
-await until(opened, '#loading.gone');
-await atBoltsSheet(opened, ['Make the headline warmer', 'Seen in a browser tab']);
-await shot('book-from-tab', opened);
-await foldAway(opened); // (the book remembers how it was left, on every page of HQ)
-await opened.close();
-await own.click('review-mode .more');
-await own.click('review-mode [data-general]');
-await own.waitForSelector('review-mode .sheet:not([hidden])');
-assert.equal(await own.textContent('review-mode .who h2'), 'A general note');
-assert.ok(await own.isHidden('review-mode .polaroid'));
-await own.fill('review-mode textarea', 'The pages greet in two different ways');
-await shot('general-note', own);
-await own.click('review-mode .send');
-await own.waitForSelector('review-mode .sheet', { state: 'hidden', timeout: 20_000 });
-const boardGeneral = posted.find(b => b.note === 'The pages greet in two different ways');
-const { kind, el, ink: lines, area } = boardGeneral.element;
-assert.deepEqual(
-  [{ kind, el, lines, area }, boardGeneral.shot, boardGeneral.page],
-  [{ kind: 'general', el: null, lines: [], area: null }, null, `${PRODUCT}/`],
-);
-assert.deepEqual(booked.find(n => n.words === boardGeneral.note).anchor.el, null, 'on the sheet, pinned to nothing');
-await own.waitForFunction(
-  () => document.querySelector('review-mode').shadowRoot.querySelector('.more .count').textContent === '3',
-);
 await own.close();
 
 // ---- an outside reviewer on a share, in a browser of their own: each note goes as it's pinned (on the board's sheet,
-// the coordinator's), and their menu says so, asking the coordinator nothing of theirs back
+// the coordinator's), asking the coordinator nothing of theirs back
 const guest = await openPage(browser, { viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, hasTouch: true });
 await guest.context.addInitScript(() => {
   const a = Element.prototype.attachShadow;
@@ -455,30 +320,15 @@ await guest.context.route(`${PRODUCT}/**`, r => {
 const tab = guest.page,
   context2 = guest.context;
 await tab.goto(`${PRODUCT}/`);
-await pinNote(tab, 'Seen in a browser tab', () => tab.click('review-mode .fab', { force: true }), tab.mouse, false);
+await pinNote(tab, 'Seen in a browser tab', () => tab.click('review-mode .fab', { force: true }), tab.mouse);
 assert.ok(
   theirs.some(n => n.note === 'Seen in a browser tab'),
   'their note went as it was pinned',
 );
-await tab.click('review-mode .more');
-assert.deepEqual(await items(tab), ['General note'], "an outsider's menu: a general note");
-assert.equal(await tab.textContent('review-mode .more .count'), '', 'no count of theirs');
-assert.deepEqual(await tab.evaluate(wrappedMenuLines), [], 'no line of the menu wraps on a phone');
-await shot('menu-outsider', tab);
-await tab.click('review-mode [data-general]');
-await tab.waitForSelector('review-mode .sheet:not([hidden])');
-await tab.fill('review-mode textarea', 'The pages greet in two different ways');
-await tab.click('review-mode .send');
-await tab.waitForSelector('review-mode .sheet', { state: 'hidden', timeout: 20_000 });
 assert.equal(
-  theirs.find(n => n.note === 'The pages greet in two different ways')?.element.kind,
-  'general',
-  'their general note, pinned to nothing',
-);
-assert.equal(
-  booked.filter(n => /Seen in a browser tab|greet/.test(n.words)).length,
-  2,
-  "the board's own two, and none of theirs, in the board's played book",
+  booked.filter(n => n.words === 'Seen in a browser tab').length,
+  1,
+  "the board's own, and none of theirs, in the board's played book",
 );
 await tab.setViewportSize({ width: 1280, height: 800 });
 
@@ -801,10 +651,6 @@ await context.route(`${SHELF}/**`, r => {
   const path = new URL(r.request().url()).pathname;
   if (path.startsWith('/hello/') && fulfilPart(r, path, reviewJs)) return;
   if (path === '/hello/__review/coach') return r.fulfill({ json: { show: false } });
-  if (path === '/hello/__review/mine')
-    return r.fulfill({
-      json: { book: OWNER, notes: toShelf.filter(p => p.endsWith('/notes')).length },
-    });
   if (path.includes('/__review/') && r.request().method() === 'POST') {
     toShelf.push(path);
     return r.fulfill({ json: { ok: true, id: ++lastId } });
@@ -831,7 +677,6 @@ await context.route(`${base}/__review/**`, r => {
   const path = new URL(r.request().url()).pathname;
   if (fulfilPart(r, path, reviewJs)) return;
   if (path === '/__review/coach') return r.fulfill({ json: { show: false } });
-  if (path === '/__review/mine') return r.fulfill({ json: { notes: 0 } }); // (HQ's notes are the book's:)
   if (path === '/__review/notes') {
     onHq.push(path);
     return r.fulfill({ json: { ok: true, id: ++lastId } });
@@ -852,13 +697,10 @@ hq.on('pageerror', e => errors.push(e.message));
 await hq.goto(`${base}/?intro=0`);
 await until(hq, '#loading.gone');
 await hq.waitForSelector('review-mode .fab', { state: 'attached' }); // (signed in, HQ always has it)
-// away as HQ loads, the phone's pin comes with the book's pin control, which folds the book onto HQ (pinsummon.js)
-await hq.click('#book .bk-lip');
-await hq.waitForFunction(() => document.documentElement.dataset.book === 'spread');
-await hq.click('#book .bk-pin');
+// away as HQ loads, the pin comes with Settings' Pin on HQ (pinsetting.js)
+await pinOn(hq);
 await hq.waitForSelector('review-mode .fab');
-// (the book folded and the pin's pop done: a tap while it's still coming back misses it.)
-await hq.waitForSelector('html[data-book=folded]', { state: 'attached' });
+// (the pin's pop done: a tap while it's still coming misses it.)
 await hq.waitForFunction(() =>
   document
     .querySelector('review-mode')
@@ -890,16 +732,7 @@ assert.deepEqual(
   'it goes on its sheet in the book',
 );
 await shot('hq-pinned', hq);
-await hq.click('review-mode .more');
-assert.deepEqual(
-  await hq.$$eval('review-mode .menu .items button:not([hidden])', items => items.map(i => i.firstChild.textContent)),
-  ['General note'],
-  'its menu, its notes sent: a general note, and no switch to put the pin away',
-);
-await hq.click('review-mode [data-general]');
-const draft = 'The cards row is cut off on the right';
-await hq.fill('review-mode textarea', draft);
-// one pin at a time: a preview in the viewer shows only its own, and HQ's draft is back as it closes
+// one pin at a time: a preview in the viewer shows only its own, and HQ's is back as it closes
 const pinsShown = async () =>
   (
     await Promise.all(
@@ -923,38 +756,7 @@ await hq.evaluate(href => {
 await hq.waitForSelector('#viewer .bar .pin:not([hidden])', { timeout: 15_000 });
 await hq.frame({ url: `${PRODUCT}/` }).waitForSelector('review-mode .fab');
 assert.deepEqual(await pinsShown(), [PRODUCT], 'a framed preview shows exactly one pin, its own');
-// (and HQ's covered note takes no picture pasted or dropped on HQ's page, while a drop still doesn't open the file.)
-const missed = await hq.evaluate(async () => {
-  const c = Object.assign(document.createElement('canvas'), { width: 40, height: 30 });
-  const files = new DataTransfer();
-  files.items.add(new File([await new Promise(r => c.toBlob(r, 'image/png'))], 'covered.png', { type: 'image/png' }));
-  document.body.dispatchEvent(new ClipboardEvent('paste', { clipboardData: files, bubbles: true, cancelable: true }));
-  const over = new DragEvent('dragover', { dataTransfer: files, bubbles: true, cancelable: true }),
-    drop = new DragEvent('drop', { dataTransfer: files, bubbles: true, cancelable: true });
-  document.body.dispatchEvent(over);
-  document.body.dispatchEvent(drop);
-  const sheet = document.querySelector('review-mode').shadowRoot.querySelector('.sheet');
-  return {
-    effect: over.dataTransfer.dropEffect,
-    opened: !drop.defaultPrevented,
-    pictures: sheet.querySelectorAll('.pics li').length,
-    lit: sheet.classList.contains('taking'),
-  };
-});
-assert.deepEqual(
-  missed,
-  { effect: 'none', opened: false, pictures: 0, lit: false },
-  "HQ's covered note ignores a paste and a drop on HQ's page",
-);
-await hq.keyboard.press('Escape');
 await Promise.all([hq.waitForEvent('framedetached'), hq.click('#viewer [data-close]')]);
-assert.equal(
-  await hq.inputValue('review-mode textarea'),
-  draft,
-  "opening a preview and pressing Escape keeps HQ's draft",
-);
-await hq.waitForSelector('review-mode .sheet:not([hidden])');
-await hq.click('review-mode [data-cancel]');
 assert.deepEqual(await pinsShown(), [base], "HQ's own pin is back once the viewer closes");
 
 assert.deepEqual(errors, []);
@@ -963,5 +765,5 @@ await context.unrouteAll({ behavior: 'ignoreErrors' }); // (HQ still polling as 
 await browser.close();
 server.close();
 console.log(
-  `notes-check: Reviews' Sent (each sheet one block, no ticks, Send or Discard); the board's note pinned in HQ's viewer going on Bolt's sheet in the book, nothing over the page and no Send on the slim bar, the polaroid framed on the pin, the screen and touch points kept; the board's menu "For Bolt · 1 on the sheet" every line on one line on a phone, its Open the book opening HQ's book at Bolt's sheet over the viewer on a phone (after a late goodbye too) and, in a tab of its own, HQ at that sheet; the board's general note pinned to nothing; an outsider's menu (a general note, and where their notes go, asking nothing of theirs back), Shift's rectangle and the freehand circle; pictures pasted, dropped and taken off a note (scaled on the device), a note cancelled while one is read going nowhere; that note sent from the board's sheet by the real coordinator as one snip with its pictures, saved by hq note; a shelf's note on its own path; the pin always on HQ itself (its note on its sheet in the book), one pin over a framed preview (HQ's covered note taking nothing pasted or dropped)${shots ? ` (screenshots in ${shots})` : ''}`,
+  `notes-check: Reviews' Sent (each sheet one block, no ticks, Send or Discard); the board's note pinned in HQ's viewer going on Bolt's sheet in the book, nothing over the page and no Send on the slim bar, the polaroid framed on the pin, the screen and touch points kept, in a tab of its own too; an outsider's notes going as they're pinned, asking nothing of theirs back, Shift's rectangle and the freehand circle; pictures pasted, dropped and taken off a note (scaled on the device), a note cancelled while one is read going nowhere; that note sent from the board's sheet by the real coordinator as one snip with its pictures, saved by hq note; a shelf's note on its own path; HQ's own pin once it's on (its note on its sheet in the book), one pin over a framed preview${shots ? ` (screenshots in ${shots})` : ''}`,
 );

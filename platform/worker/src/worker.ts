@@ -30,7 +30,9 @@ import { capacityCapture, capacitySample } from './capacity.ts';
 import { pacedUntil, paceTo, windowUsed } from './pace.ts';
 import { checkDue, claimAnswered, codexLimits, codexLogLine, codexReading, codexTokens, drainOf, healthiest, keepsToPlan, limitsReading, readDue, reserveFor, heard, takeRead, takeReading, inTurn, lineSeat, reportedUntil, retryAt, sleepUntil, unpacedFirst, type Asked } from './downtime.ts';
 import { FREE_MB, JOB_MB, SEAT_MB, STARTING_MS } from './reserve.ts';
-import { admission, cgroup, hostAvailableBytes } from './admission.ts';
+import { type AdmissionInput, admission, hostAvailableBytes } from './admission.ts';
+import { roomRecords, type RecordIdentity } from './roomrecords.ts';
+import { cgroup } from './memory.ts';
 import { CHAT_SLOT, KEEPER, SLOT_IDS, WORK_SLOTS, askHome, jobDirs, killAll, makeDir, own, rootDir, sweep, type Ids } from './slots.ts';
 import { limitReset, observe, outcome, parkedRequest, preview, tail, verdict, whole } from './outcome.ts';   // (parkedRequest)
 import { detailOf, stepOf, shown, guard, memberReturned, memberOf, writtenTokens, type Shown } from './steps.ts';
@@ -61,6 +63,7 @@ import { inChecks, runChecks, testsOnce, type CheckOutcome, type CheckSpec, type
 import { testsCheckout as testsAt, type TestsCheckout } from './testscheckout.ts';
 import { answering, askAgainPrompt, cantAsk, lacksVerdict, see, seeSessionLogs, touchedFiles, verdictFromAnswer, verdictOf, written } from './verdict.ts';
 
+const retainedRecords = roomRecords();
 const HQ = process.env.HQ_URL ?? 'http://coordinator:8080';
 const { WORKER_TOKEN, REPO, GITHUB_TOKEN } = process.env;
 const transport = hqReports(HQ, WORKER_TOKEN);
@@ -211,11 +214,18 @@ async function watchShares() {
       }
       const intervalMs = t - at, uses = tally(procs, before, intervalMs);
       const previous = before; before = procs; at = t;
-      const short = !room(false);
-      watch.shortSince = short ? watch.shortSince ?? t : undefined;
-      const pressure = pressureOf({ freeMb: freeMb(false), uses: new Map(jobs.map(j => [j.job.id, uses.get(j.uid)?.memoryMb ?? 0])),
-        room: room() });
-      if (!watch.reporting && (t - watch.reportedAt >= REPORT_MS || pressure.verdict !== watch.memory)) void reportRoom(watch, jobs, uses, short, t, pressure);
+      const look = reserve.inspect(() => {
+        const short = !room(false);
+        watch.shortSince = short ? (watch.shortSince ?? t) : undefined;
+        const pressure = pressureOf({
+          freeMb: freeMb(false),
+          uses: new Map(jobs.map(j => [j.job.id, uses.get(j.uid)?.memoryMb ?? 0])),
+          room: room(),
+        });
+        return { short, pressure };
+      });
+      const { short, pressure } = look.value;
+      if (!watch.reporting && (t - watch.reportedAt >= REPORT_MS || pressure.verdict !== watch.memory)) void reportRoom(watch, jobs, uses, short, t, pressure, look.inputs);
       const starved = watch.shortSince !== undefined && t - watch.shortSince >= STARVED_MS && t - watch.answeredAt <= ROOM_FRESH_MS && watch.waiting > 0;
       const cli = new Set(jobs.flatMap(j => j.launch ? [...cliProcesses(procs, j.launch)] : []));
       for (const uid of hotSince.keys()) if (!((uses.get(uid)?.cores ?? 0) > JOB_CORES)) hotSince.delete(uid);
@@ -243,8 +253,9 @@ async function sampleDisk(shares: DiskShares, jobs: SlotJob[], uses: Map<number,
 async function blockShare(block: ReturnType<typeof overShare>['block'], jobs: SlotJob[], procs: ProcessSnapshot[]) {
   const owner = block && jobs.find(j => j.uid === block.uid);
   if (block && owner) await reload.block({ job: owner.job.id, uid: owner.uid, gid: owner.gid }, block, procs, {
+    launches: [owner.launch, ...[...checking.values()].map(check => check.launched)].filter(launch => launch !== undefined),
     ask: hq.blocked, checking,
-    stopped: text => { log(text); capacityTrial.note(text); },
+    log: text => { log(text); capacityTrial.note(text); },
   });
 }
 // (a worker that runs jobs as itself, in a local test, keeps no shares)
@@ -274,7 +285,7 @@ function sampleCapacity(sampled: SlotJob[], uses: Map<number, JobUse>, intervalM
 
 // HQ hears the room and each job's share, and answers how much ready work only memory keeps from starting (room.ts):
 // what the claims of the engines with a free slot and a seat to start on would take (memoryClaims).
-async function reportRoom(watch: RoomWatch, jobs: SlotJob[], uses: Map<number, JobUse>, short: boolean, t: number, pressure: Pressure) {
+async function reportRoom(watch: RoomWatch, jobs: SlotJob[], uses: Map<number, JobUse>, short: boolean, t: number, pressure: Pressure, inputs: AdmissionInput[]) {
   watch.reportedAt = t;
   watch.reporting = true;
   watch.memory = pressure.verdict;   // (a failed report's verdict goes with the next minute's)
@@ -283,7 +294,15 @@ async function reportRoom(watch: RoomWatch, jobs: SlotJob[], uses: Map<number, J
     return use ? [{ job: j.job.id, mb: Math.round(use.memoryMb), cores: use.cores }] : [];
   });
   try {
-    const answer = await hq.api('room', { short, since: watch.shortSince, free: Math.round(freeMb(false)), jobs: shares, claims: memoryClaims(), capacity: plannerCapacity(shares, t), memory: pressure, gathering: gatheringRoom() }, AbortSignal.timeout(ROOM_REQUEST_MS));
+    const report = reserve.inspect(() => ({ short, since: watch.shortSince, free: Math.round(freeMb(false)), jobs: shares, claims: memoryClaims(), capacity: plannerCapacity(shares, t), memory: pressure, gathering: gatheringRoom() }));
+    const watchInputs = inputs.map(input => ({ ...input, phase: 'watch' as const }));
+    const reportInputs = report.inputs.map(input => ({ ...input, phase: 'report' as const }));
+    retainedRecords.room({
+      report: { ...report.value, workerSessionId: SESSION },
+      pressure,
+      inputs: [...watchInputs, ...reportInputs],
+    });
+    const answer = await hq.api('room', { ...report.value, records: retainedRecords.latest() }, AbortSignal.timeout(ROOM_REQUEST_MS));
     const meeting = answer?.meeting;
     const meetingRoom = meeting ? `Meeting room: ${meeting.state}, ${meeting.held}/${meeting.seats} held, ready ${meeting.ready}` : '';
     if (meetingRoom !== watch.meetingRoom) { if (meetingRoom) log(meetingRoom); watch.meetingRoom = meetingRoom; }
@@ -2673,7 +2692,7 @@ async function loginLoop(seat: Seat) {
 // A slot's claim on a seat (the coordinator's claim): the seat's window used, and the week's pace: while the seat is
 // paced, only the board's word and work that must start before its weekly reset, unless it's the intercom's turn.
 const claimOn = (seat: Seat, engine: string, kind?: string) => ({ seat: seat.id, engine, kind, util: windowUsed(seat),
-  pacedUntil: kind === 'chat' ? undefined : pacedOf(seat) });
+  pacedUntil: kind === 'chat' || kind === 'incident' ? undefined : pacedOf(seat) });
 
 // A slot runs one job at a time, for whichever engine's seat it claims on (nextClaim). The intercom has a slot of its own
 // (kind 'chat') on the healthiest Claude seat, so the board's chat with the CEO never waits behind long jobs.
@@ -2688,30 +2707,27 @@ async function slotLoop(slot: string, kind?: string, adopted?: RunRecord) {
     const attempt: { job: Job | null } = { job: null };
     try {
       // (a slot holding a meeting's seat claims again on its seat and with its room, both kept for it: holding)
-      const held = heldOn(slot), next: NextClaim | undefined = held ? { engine: held.engine, seat: held } : nextClaim(kind);
+      const held = heldOn(slot);
+      const { next, admissionIdentity } = selectAdmission(slot, kind, held);
       if (!next) { await sleep(15_000); continue; }
-      const { engine, check, room } = next, checked = check ? next.seat.checked : undefined;
+      const { engine, check, room } = next, checked = check ? next.seat.checked : undefined, claimKind = next.kind ?? kind;
       seat = next.seat;
       const t = reserve.take(); // room taken before the claim, so idle slots can't all start at once
       // A Codex seat's window is only measured by a Codex run: while it's unknown, one claim at a time may start
       // downtime work to measure it (a Claude seat's is measured by recheckLoop). A run that found no reading keeps the
       // seat probing, so no more downtime work starts on it unmeasured until a reading arrives (any Codex run's) or a restart.
-      const claimed = claimOn(seat, engine, kind);
-      const probe = !kind && !held && !check && claimed.util === undefined && cliOf(seat) === 'codex' && seat.signIn === 'login' && !seat.probing;   // (a key seat has no window)
+      const claimed = claimOn(seat, engine, claimKind);
+      const probe = !claimKind && !held && !check && claimed.util === undefined && cliOf(seat) === 'codex' && seat.signIn === 'login' && !seat.probing;   // (a key seat has no window)
       if (probe) seat.probing = true;
       const picked = seat;   // (seat is reassigned, so the finally below keeps this one)
       lastClaimAt.set(picked.id, Date.now());
       await places.hold(picked, !!held, () => holding.has(slot), async () => {
         try {
-          reporting++;
-          // (slot: a meeting holds slots by name until every seat can start)
-          let answer;
-          try { answer = await hq.api('claim', { ...claimed, slot, probe: probe || undefined, room }); }
-          finally { reporting--; }
+          const answer = await claimAdmission(admissionIdentity, { ...claimed, slot, probe: probe || undefined, room });
           if (reserve.keepsHold(slot, picked, t, answer)) { await sleep(5_000); return; }
           const job = attempt.job = answer as Job | null;
-          if (!kind && room === undefined) turns.found(engine, !!job);
-          if (!kind && !held && !check && engine === 'claude') claimAnswered(pacedEmpty, picked, claimed.pacedUntil !== undefined, !!job);
+          if (!claimKind && room === undefined) turns.found(engine, !!job);
+          if (!claimKind && !held && !check && engine === 'claude') claimAnswered(pacedEmpty, picked, claimed.pacedUntil !== undefined, !!job);
           if (!job) { if (check) picked.checked = 0; reserve.giveBack(t); await sleep(kind === 'chat' ? CHAT_POLL_MS : 15_000); return; }
           reserve.started();
           log(`${slot} on ${picked.id}: job #${job.id} ${job.title}${check ? ` (held ${picked.state}: its check)` : ''}`);
@@ -2729,10 +2745,47 @@ async function slotLoop(slot: string, kind?: string, adopted?: RunRecord) {
     }
   }
 }
+async function claimAdmission(identity: RecordIdentity, claim: Record<string, unknown>) {
+  reporting++;
+  try {
+    const answer = await hq.api('claim', claim);
+    retainedRecords.answered(identity, answer);
+    return answer;
+  } catch (error) {
+    retainedRecords.answered(identity, null, true);
+    throw error;
+  } finally {
+    reporting--;
+  }
+}
+
+// Selection inputs leave this synchronous scope only through the latest immutable record.
+function selectAdmission(slot: string, kind: string | undefined, held: Seat | undefined) {
+  const selection = reserve.inspect((): NextClaim | undefined =>
+    held ? { engine: held.engine, seat: held } : nextClaim(kind),
+  );
+  const next = selection.value;
+  const admissionIdentity = retainedRecords.decision({
+    action: 'select claim',
+    outcome: next ? 'claim selected' : 'no claim',
+    slot,
+    job: null,
+    claim: next
+      ? { seat: next.seat.id, engine: next.engine, kind: next.kind ?? kind ?? null, room: next.room ?? null }
+      : null,
+    inputs: selection.inputs.map(input => ({ ...input, phase: 'selection' as const })),
+  });
+  return { next, admissionIdentity };
+}
+
 // What a free slot claims next, on which seat: of the engines with a seat to start on (or, room allowing, a held seat's
 // check: checkSeat), the one whose turn it is (turns). Short of room, only a claim with that room goes (shortClaim). The
-// intercom claims on the healthiest Claude seat, always.
-type NextClaim = { engine: string; seat: Seat; check?: boolean; room?: number };
+// intercom claims on the healthiest Claude seat, always; and a slot with nothing else to claim, one every INCIDENT_MS,
+// claims an incident (HQ's call to the CEO about something broken: the coordinator's incidents.ts) the same way, room
+// or none, so a jam never keeps the CEO from it.
+type NextClaim = { engine: string; seat: Seat; check?: boolean; room?: number; kind?: string };
+const INCIDENT_MS = 15_000;
+let incidentAskedAt = 0;
 function nextClaim(kind?: string): NextClaim | undefined {
   if (kind === 'chat') {
     const seat = pickSeat('claude', undefined, true);
@@ -2745,7 +2798,10 @@ function nextClaim(kind?: string): NextClaim | undefined {
   });
   const next = turns.next(ready, roomy, shortClaim);
   if (next?.check) next.seat.checked = Date.now();
-  return next;
+  if (next || Date.now() - incidentAskedAt < INCIDENT_MS) return next;
+  const seat = pickSeat('claude', undefined, true);
+  if (seat) incidentAskedAt = Date.now();
+  return seat && { engine: 'claude', seat, kind: 'incident' };
 }
 
 // On restart, hand running jobs back to the queue so they resume in the same session: written down here, sent by the

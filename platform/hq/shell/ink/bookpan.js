@@ -1,17 +1,14 @@
-// Moving about the page: panned in any direction by two fingers (one with the hand, or once a pen is in use where this
-// device's preferences say so: book.input.fingerPans()), the middle button, Shift or Space held with the mouse, the
-// hand tool or a trackpad's two fingers, gliding on after a flick; zoomed by two fingers' pinch, a trackpad's pinch or
-// a mouse's wheel, about the point between the fingers or under the pointer, out as far as the page's least zoom and
-// never on into the overview (its button and keys open that). Ctrl (or ⌘) held and the wheel steps through the tools.
+// Moving down the page (it scrolls down only and has no zoom of its own: bookunits.js.): by two fingers (one once a pen is in use where this device's preferences say so: book.input.fingerPans()), the
+// middle button or Space held with the mouse, a mouse's wheel or a trackpad's two fingers, gliding on after a flick. A
+// pinch only moves it. Ctrl (or ⌘) held and the wheel steps through the tools.
 //
 // The fingers down are only those the browser said are: a finger's lift, cancel or lost capture ends its part, a
 // first finger down (isPrimary) means no other is, and the window losing focus or the page hidden lets every gesture
 // go, so a lift the browser never sent can't leave the paper deaf.
 //
-// desk: the paper the page shows on. book (bookpages.js): its view (bookview.js) and book.tools (booktools.js: mode()
-// 'hand' pans). drawing(): whether the pen is on the page.
-import { setView, halt, viewOf } from './bookview.js';
-import { clampScale, zoomAt } from './bookrow.js';
+// desk: the paper the page shows on. book (bookpages.js): its view (bookview.js) and book.tools (booktools.js).
+// drawing(): whether the pen is on the page.
+import { setView, halt } from './bookview.js';
 
 // a flick's speed is measured over its last moments; slower than STILL px/ms it doesn't glide
 const FLICK_MS = 90,
@@ -24,9 +21,6 @@ const WHEEL_REST_MS = 160;
 const LINE_PX = 16;
 // a mouse wheel's notch, as Chrome and Safari tell it (wheelDeltaY); a trackpad's comes in other sizes
 const NOTCH = 120;
-// a wheel's zoom: this much a px of its turn, at most MOST of a step in one event (a mouse's notch is 100 px)
-const WHEEL_ZOOM = 0.0075,
-  MOST = 0.25;
 // a trackpad's two fingers with Ctrl held: a tool on or back each this many px
 const TOOL_PX = 100;
 
@@ -41,7 +35,6 @@ export function panning(desk, book, { drawing }) {
     touches: new Map(),
     glide: 0,
     wheelRest: 0,
-    wheelZoomed: false,
     space: false,
     ctrl: false,
     toolRun: 0,
@@ -79,16 +72,8 @@ export function panning(desk, book, { drawing }) {
 
 // ---- a press
 
-// Whether a mouse's press pans: the middle button, or the main one with Space or Shift held or the hand tool (Shift but
-// with Select and shapes, where it adds to what's picked and keeps a shape even: bookselect.js, bookshapes.js)
-const pans = (table, e) => {
-  const mode = table.book.tools?.mode?.();
-  return (
-    e.pointerType === 'mouse' &&
-    (e.button === 1 ||
-      (e.button === 0 && (table.space || mode === 'hand' || (e.shiftKey && !['select', 'shapes'].includes(mode)))))
-  );
-};
+// Whether a mouse's press pans: the middle button, or the main one with Space held
+const pans = (table, e) => e.pointerType === 'mouse' && (e.button === 1 || (e.button === 0 && table.space));
 // Whether a finger on its own moves the page: else it draws with the tool in use, and two fingers move it
 const fingerPans = table => !!table.book.input?.fingerPans?.();
 
@@ -222,29 +207,19 @@ function pinchFrom(table) {
 function pinched(table) {
   const p = table.pinch;
   if (table.touches.size < 2) return;
-  const { at, spread } = middleOf(table),
-    scale = within(table, (p.scale * spread) / p.spread);
-  // (the page's point first under the fingers' middle stays under it)
-  const pan = zoomAt(p.pan, p.scale, scale, p.at);
-  setView(table.book, { pan: { x: pan.x - (at.x - p.at.x) / scale, y: pan.y - (at.y - p.at.y) / scale }, scale });
+  // (the page follows the fingers' middle down or up)
+  const { at } = middleOf(table);
+  setView(table.book, { pan: { x: 0, y: p.pan.y - (at.y - p.at.y) / p.scale } });
 }
-// A zoom within the page's: a pinch or a wheel stops at the least, the page held still under it (no page shown yet:
-// setView takes nothing)
-const within = (table, scale) => {
-  const v = viewOf(table.book);
-  return v ? clampScale(scale, v.page, table.book.size) : scale;
-};
 function pinchEnd(table) {
   table.pinch = null;
-  table.book.remember({ zoomed: true });
+  table.book.remember();
 }
 
 // ---- a wheel, a trackpad, Safari's pinch
 
-// A mouse's wheel: the zoom, about the pointer, as a trackpad's pinch (a wheel with ctrlKey, but no Ctrl key down on the
-// keyboard: that tells them apart, never the sizes, Chromium's pinch coming in notches); the browser never zooms the book itself. Ctrl or ⌘ held and the wheel, or a trackpad's two
-// fingers: the next tool, or the one before, a notch (or TOOL_PX) each. A trackpad's two fingers alone: the page
-// follows them (Shift turns a wheel sideways).
+// A mouse's wheel or a trackpad's two fingers: the page down or up. Ctrl or ⌘ held and the wheel, or a trackpad's two
+// fingers: the next tool, or the one before, a notch (or TOOL_PX) each.
 function wheeled(table, e, drawing) {
   e.preventDefault();
   if (drawing()) return;
@@ -262,25 +237,15 @@ function wheeled(table, e, drawing) {
     }
     return rest(table);
   }
-  if (e.ctrlKey || (mouse && !e.shiftKey && !e.altKey)) {
-    const r = table.desk.getBoundingClientRect(),
-      at = { x: e.clientX - r.left, y: e.clientY - r.top },
-      by = Math.exp(Math.max(-MOST, Math.min(MOST, -e.deltaY * k * WHEEL_ZOOM))),
-      scale = within(table, book.scale * by);
-    setView(book, { pan: zoomAt(book.pan, book.scale, scale, at), scale });
-    table.wheelZoomed = true;
-    return rest(table);
-  }
-  const [dx, dy] = e.shiftKey && !e.deltaX ? [e.deltaY, 0] : [e.deltaX, e.deltaY];
-  setView(book, { pan: { x: book.pan.x + (dx * k) / book.scale, y: book.pan.y + (dy * k) / book.scale } });
+  // (a trackpad's pinch, a wheel with ctrlKey and no key down, does nothing: the page has no zoom)
+  if (!e.ctrlKey) setView(book, { pan: { x: 0, y: book.pan.y + (e.deltaY * k) / book.scale } });
   rest(table);
 }
 const rest = table =>
   (table.wheelRest = setTimeout(() => {
     table.wheel = null;
     table.toolRun = 0;
-    table.book.remember({ zoomed: table.wheelZoomed });
-    table.wheelZoomed = false;
+    table.book.remember();
   }, WHEEL_REST_MS));
 // Whether a run of wheel events is a mouse's wheel (which zooms) or a trackpad's two fingers (which pan): a mouse's
 // turns in notches (lines, in Firefox), a trackpad's in any size and sideways too. One that isn't a notch makes the
@@ -291,26 +256,9 @@ function wheelOf(table, e) {
   else table.wheel ??= 'mouse';
   return table.wheel;
 }
-// Safari's own pinch on a Mac's trackpad (on an iPad the fingers come as pointers, which pinch already)
+// Safari's own pinch on a Mac's trackpad: not the browser's zoom, and none of the page's
 function gestures(table) {
-  const { desk, book } = table;
-  let from = null;
-  desk.addEventListener('gesturestart', e => {
-    e.preventDefault();
-    if (table.touches.size) return;
-    const r = desk.getBoundingClientRect();
-    from = { scale: book.scale, pan: { ...book.pan }, at: { x: e.clientX - r.left, y: e.clientY - r.top } };
-  });
-  desk.addEventListener('gesturechange', e => {
-    e.preventDefault();
-    if (!from) return;
-    const scale = within(table, from.scale * e.scale);
-    setView(book, { pan: zoomAt(from.pan, from.scale, scale, from.at), scale });
-  });
-  desk.addEventListener('gestureend', () => {
-    if (from) book.remember({ zoomed: true });
-    from = null;
-  });
+  for (const type of ['gesturestart', 'gesturechange']) table.desk.addEventListener(type, e => e.preventDefault());
 }
 
 // ---- Ctrl held on the keyboard (a trackpad's pinch sets a wheel's ctrlKey with no key down: wheeled), as its keys

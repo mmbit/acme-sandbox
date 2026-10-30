@@ -34,6 +34,7 @@ const proposals = await import('./proposals.ts');
 const threadjudge = await import('./threadjudge.ts');
 const review = await import('./review.ts');
 const rounds = await import('./rounds.ts');
+const windows = await import('./windows.ts');
 
 beforeEach(async () => {
   h.cancelQueued();
@@ -360,6 +361,92 @@ test("a thread's first task waits for the threads it needs to merge; their merge
   assert.deepEqual(threadjudge.lines(Date.now()), []);
 });
 
+test('a stuck pull request holds only its own files: what needs it runs beside it, and merges after it where they share files', async () => {
+  const engine = thread('engine'),
+    art = thread('art'),
+    sound = thread('sound');
+  for (const t of [art, sound]) assert.deepEqual(plan.need(t, engine, 'wren'), { ok: true });
+  const built = task(engine);
+  const running = await claim();
+  assert.equal(running?.id, built);
+  const shared = 'platform/engine/core.ts';
+  await h.finish(running!, { pr: 9230, branch: running!.branch ?? `job/${built}`, files: [shared], sha: sha('e') });
+  const [drawn, sounded] = [task(art, 'moss'), task(sound, 'moss')];
+  assert.deepEqual(h.job(drawn).wakes, [`until ${engine} merges`], 'in review, it holds what needs it');
+  db.prepare("update prs set status = 'stuck', why = 'its ruling could not be acted on' where number = 9230").run();
+  assert.deepEqual([h.job(drawn).wakes, h.job(sounded).wakes], [[], []], 'stuck, it holds no start');
+  const runs = [await claim(), await claim()];
+  assert.deepEqual(runs.map(r => r?.id).sort(), [drawn, sounded].sort());
+  const ran = (id: number) => runs.find(r => r!.id === id)!;
+  await h.finish(ran(drawn), {
+    pr: 9231,
+    branch: ran(drawn).branch ?? `job/${drawn}`,
+    files: [shared, 'platform/art.ts'],
+    sha: sha('a'),
+  });
+  await h.finish(ran(sounded), {
+    pr: 9232,
+    branch: ran(sounded).branch ?? `job/${sounded}`,
+    files: ['platform/sound.ts'],
+    sha: sha('s'),
+  });
+  const mergeorder = await import('./mergeorder.ts');
+  const before = (n: number) =>
+    mergeorder.predecessor(
+      db.prepare('select number, branch, files from prs where number = ?').get(n) as never,
+      () => undefined,
+    );
+  assert.equal(before(9231), 9230, 'on the files it shares, it merges after the stuck one');
+  assert.equal(before(9232), undefined, 'on other files, it merges beside it');
+  db.prepare("update prs set status = 'closed' where number in (9230, 9231, 9232)").run();
+});
+
+test('a pull request waiting for the one its deliverable needs holds no other, so the merge order has no cycle', async () => {
+  const [a, b, c] = ['a', 'b', 'c'].map(slug => thread(slug));
+  assert.deepEqual(plan.need(a, b, 'wren'), { ok: true });
+  for (const t of [a, c]) db.prepare('update threads set deadline = ? where id = ?').run(Date.now() + 86_400_000, t);
+  const file = 'platform/engine/core.ts';
+  const [pa, pb, pc] = [a, b, c].map((t, i) => {
+    h.storedPr(9240 + i, task(t), 'open', [file]);
+    return 9240 + i;
+  });
+  // ruled A, C, B: each a pass that keeps its place
+  for (const [i, pr] of [pa, pc, pb].entries()) {
+    const id = h.jobs.createJob({ agent: 'idris', title: 'Rule it', prompt: 'Rule.', queuedBy: 'wren' }).id;
+    db.prepare(
+      "update jobs set kind = 'consolidate', status = 'done', pr = ?, round = 0, sha = ?, finished = ? where id = ?",
+    ).run(pr, sha('r'), new Date(Date.now() + i * 1000).toISOString(), id);
+  }
+  const mergeorder = await import('./mergeorder.ts');
+  const before = (n: number) =>
+    mergeorder.predecessor(
+      db.prepare('select number, branch, files from prs where number = ?').get(n) as never,
+      () => 'retain',
+    );
+  assert.deepEqual([before(pa), before(pb), before(pc)], [pb, pc, undefined], 'they merge C, B, A');
+  db.prepare(`update prs set status = 'closed' where number in (${pa}, ${pb}, ${pc})`).run();
+});
+
+test('hq plan need and unneed answer with what they move, played again at once', async () => {
+  const engine = thread('engine'),
+    art = thread('art');
+  assert.deepEqual(plan.need(art, engine, 'wren'), { ok: true });
+  task(engine);
+  task(art, 'moss');
+  const owner = await h.start({ agent: 'wren' });
+  const apart = await h.agent('plan/need', owner.token, { thread: art, needs: engine, drop: true, why: 'other files' });
+  assert.equal(apart.status, 200, JSON.stringify(apart.body));
+  assert.ok(Array.isArray(apart.body.moves) && Array.isArray(apart.body.deadlines), JSON.stringify(apart.body));
+  const out = await h.hq(owner, 'plan', 'need', art, engine);
+  assert.equal(out.code, 0, out.out);
+  assert.match(
+    out.out,
+    /starts once game\/engine is done and merged\.\n[^]*(It moves no other deliverable|Other deliverables it moves)/,
+  );
+  const refused = await h.agent('plan/need', owner.token, { thread: art, needs: engine });
+  assert.equal(refused.status, 400, 'a refusal plays nothing and says why');
+});
+
 test('a merge that leaves a failed task beside it wakes the owner at once, and what needs the thread waits for them', async () => {
   const engine = thread('engine'),
     art = thread('art');
@@ -396,7 +483,7 @@ test("an owner's threads merging one after the other wait in one judge, which no
   threadends.merged(9206);
   assert.equal(judgeRow(judgeOf(engine)!).prompt.match(/Thread sound/g)?.length, 1, 'once, woken again');
   const judge = judgeRow(judgeOf(engine)!);
-  assert.equal(judge.title, 'Judge 2 deliverables: their work merged');
+  assert.equal(judge.title, 'Judge 2 deliverables: their work is in');
   assert.match(judge.prompt, /Thread engine[\s\S]*Thread sound/);
   db.prepare("insert into pauses (project, thread, why, by, at) values ('game', null, 'held', 'wren', ?)").run(
     new Date().toISOString(),
@@ -414,6 +501,96 @@ test("HQ's one-task thread closes at its merge, with no judge woken", async () =
   assert.equal(projects.findThread(id)!.status, 'done');
   assert.equal(judgeOf(id), null);
   assert.deepEqual(threadjudge.lines(Date.now()), []);
+});
+
+// A deliverable whose last task ends with nothing to merge wakes its owner as a merge does (threadends.ts runEnded):
+// a live check that changed nothing, a follow-up that ran on past its thread's merge, and a task that stopped or failed
+test("a deliverable's last task ending done with no pull request wakes its owner, once nothing in it is open", async () => {
+  const engine = thread('engine');
+  const [look, check] = [task(engine), task(engine)];
+  await h.finish((await claim())!, { result: 'Looked: nothing to change' });
+  assert.equal(judgeOf(engine), null, 'not while a task in it is still to run');
+  const run = await claim();
+  assert.equal(run?.id, check);
+  await h.finish(run!, { result: 'Checked live: it works' });
+  const judge = judgeRow(judgeOf(engine)!);
+  assert.equal(judge.agent, 'wren');
+  assert.equal(judge.title, 'Judge Thread engine: its work is in');
+  assert.match(judge.prompt, new RegExp(`#${look} bolt: bolt's step\\. It ended done\\.\n  Its report: "Looked`));
+  assert.match(
+    judge.prompt,
+    new RegExp(`#${check} bolt: bolt's step\\. It ended done\\.\n  Its report: "Checked live`),
+  );
+  assert.equal(projects.findThread(engine)!.status, 'open', 'its owner closes it');
+});
+
+test("a follow-up that ran on past its deliverable's merge wakes the owner as it ends", async () => {
+  const engine = thread('engine');
+  const built = h.ended({ agent: 'bolt', thread: engine });
+  db.prepare('update threads set branch = ? where id = ?').run(`job/${built}`, engine);
+  const follow = task(engine);
+  const run = await claim();
+  assert.equal(run?.id, follow);
+  assert.equal(run!.branch, `job/${built}`, "it runs on the deliverable's branch");
+  h.storedPr(9208, built, 'merged');
+  threadends.merged(9208);
+  assert.equal(judgeOf(engine), null, 'not while its follow-up runs');
+  assert.equal(projects.findThread(engine)!.branch, null);
+  await h.finish(run!, { branch: `job/${built}`, result: 'Both already fixed' });
+  const judge = judgeRow(judgeOf(engine)!);
+  assert.match(judge.prompt, new RegExp(`#${built} bolt: .*It ended done, its pull request merged`));
+  assert.match(judge.prompt, new RegExp(`#${follow} bolt: .*It ended done.*\\n  Its report: "Both already fixed"`));
+});
+
+test('a task that stops or fails with nothing to replace it wakes its owner', async () => {
+  const [engine, sound] = [thread('engine'), thread('sound')];
+  task(engine);
+  await h.finish((await claim())!, { status: 'stopped', result: 'Stopped: overtaken' });
+  assert.match(judgeRow(judgeOf(engine)!).prompt, /It ended stopped/);
+  const fails = task(sound);
+  await h.finish((await claim())!, { status: 'failed', result: 'The check could not reach the page' });
+  const judge = judgeOf(sound)!;
+  assert.equal(judge, judgeOf(engine), "one judge takes the owner's quiet deliverables in");
+  assert.match(judgeRow(judge).prompt, new RegExp(`#${fails} bolt: .*It ended failed`));
+});
+
+test('a queued task cancelled after the rest of its deliverable ended wakes its owner', async () => {
+  const engine = thread('engine');
+  task(engine);
+  const [ran, next] = [await claim(), task(engine)];
+  await h.finish(ran!, { status: 'failed', result: 'The check could not reach the page' });
+  assert.equal(judgeOf(engine), null, 'not while its next task is queued');
+  assert.ok(ledger.cancelJob(next, 'not needed after all'));
+  assert.match(judgeRow(judgeOf(engine)!).prompt, new RegExp(`#${ran!.id} bolt: .*It ended failed`));
+});
+
+// A task joining a deliverable takes it out of a judge that hasn't started (threadjudge.ts release)
+test('a failed task landed before its woken judge starts takes its deliverable out of that judge', async () => {
+  const [engine, sound] = [thread('engine'), thread('sound')];
+  const failed = task(engine);
+  await h.finish((await claim())!, { status: 'failed', result: 'The push failed' });
+  const judge = judgeOf(engine)!;
+  task(sound);
+  await h.finish((await claim())!, { status: 'failed', result: 'The check could not reach the page' });
+  assert.equal(judgeOf(sound), judge);
+  const wren = await h.start({ agent: 'wren', title: 'The plan' });
+  const lands = { agent: 'bolt', title: 'Land the step', prompt: 'Land the saved work', lands: failed };
+  const landed = await h.agent('job', wren.token, lands);
+  assert.equal(landed.status, 200, JSON.stringify(landed.body));
+  assert.equal(h.job(landed.body.id).thread, engine);
+  assert.equal(judgeOf(engine), null, 'its judge lets it go');
+  const left = judgeRow(judge);
+  assert.equal(left.title, 'Judge Thread sound: its work is in');
+  assert.doesNotMatch(left.prompt, /Thread engine/, 'its brief judges only the other');
+  const again = await h.agent('job', wren.token, {
+    ...lands,
+    title: 'Check the page again',
+    lands: undefined,
+    thread: sound,
+  });
+  assert.equal(again.status, 200, JSON.stringify(again.body));
+  assert.equal(h.job(judge).status, 'cancelled', 'with nothing left to judge, it never runs');
+  assert.equal(judgeOf(sound), null);
 });
 
 // A task that ended with a report, its pull request merged into its thread's (customers: it holds a customer's details)
@@ -511,16 +688,41 @@ for (const status of ['queued', 'failed', 'open', 'closed']) {
   });
 }
 
-test('a thread whose work needed no change has no branch, and its owner closes it', async () => {
+test('a thread whose work needed no change has no branch, its owner is woken to judge it, and closes it', async () => {
   const t = thread('check');
   task(t);
   const running = await claim();
   assert.equal(running!.thread, t);
   await h.finish(running!, { status: 'done', result: 'Checked: nothing to change.' });
+  const judge = judgeRow(judgeOf(t)!);
+  assert.equal(judge.agent, 'wren', 'nothing to merge wakes its owner as a merge does');
+  assert.match(judge.prompt, new RegExp(`#${running!.id} bolt: .*It ended done\\.`));
+  assert.match(
+    threadjudge.lines(Date.now()).join('\n'),
+    new RegExp(`deliverable ${t} .*: ready to judge.*judge #${judge.id}`),
+  );
   const wren = await h.start({ agent: 'wren' });
   const done = await h.hq(wren, 'plan', 'done', t);
   assert.equal(done.code, 0, done.out);
   assert.equal(projects.findThread(t)!.status, 'done');
+});
+
+test("cancelling an owner's last task wakes its owner, while a pristine empty deliverable stays unready", () => {
+  const t = thread('cancelled');
+  assert.equal(threadjudge.wake(t), null);
+  assert.equal(threadjudge.readyOf(projects.findThread(t)!), null);
+  const [one, two] = [task(t), task(t)];
+  assert.ok(ledger.cancelJob(one, 'The first step is no longer needed'));
+  assert.equal(judgeOf(t), null, 'the second task is still open');
+  assert.ok(ledger.cancelJob(two, 'The second step is no longer needed'));
+  assert.deepEqual(threadorder.tasksOf(t), [], 'cancellations still take no place in task order');
+  const judge = judgeRow(judgeOf(t)!);
+  assert.equal(judge.agent, 'wren');
+  assert.equal(projects.findThread(t)!.status, 'open');
+  assert.deepEqual(threadjudge.readyOf(projects.findThread(t)!), {
+    since: Date.parse(h.job(two).finished),
+    judge: judge.id,
+  });
 });
 
 test('the play plays the order: a task after the one before it, a need after its merge, a placeholder for a bare thread', () => {
@@ -824,6 +1026,17 @@ test("a job waiting for its own thread's work deployed gets a thread of its own,
   assert.equal(next.body.followOn, undefined);
 
   assert.equal((await h.agent('window', wren.token, { thread: t, deadline: '6h', aim: '5h' })).status, 200);
+  const inheritedDeadline = () => backlog.orderingSnapshot(Date.now()).jobs.find(j => j.id === queued.body.id)!.due;
+  assert.equal(inheritedDeadline(), projects.findThread(t)!.deadline, 'a later window reaches the release follow-up');
+  assert.equal((await h.agent('window', wren.token, { thread: t, deadline: '8h' })).status, 200);
+  assert.equal(inheritedDeadline(), projects.findThread(t)!.deadline, 'pacing reads the changed deadline');
+  const snapshot = backlog.orderingSnapshot(Date.now());
+  const trial = windows.withWindow(snapshot, t, null);
+  assert.equal(trial.jobs.find(j => j.id === queued.body.id)!.due, null, 'a trial also removes the inherited window');
+  assert.equal(inheritedDeadline(), projects.findThread(t)!.deadline, 'a trial leaves the saved window intact');
+  assert.equal((await h.agent('window', wren.token, { thread: t, deadline: 'none' })).status, 200);
+  assert.equal(inheritedDeadline(), null, 'removing the source deadline removes the inherited one');
+  assert.equal((await h.agent('window', wren.token, { thread: t, deadline: '6h', aim: '5h' })).status, 200);
   const original = projects.findThread(t)!;
   const ctx = await h.voice('call-context?agent=juno&request=0');
   assert.equal(ctx.status, 200);
@@ -850,6 +1063,18 @@ test("a job waiting for its own thread's work deployed gets a thread of its own,
     [source.deadline, source.aim, source.deadline_by],
     [original.deadline, original.aim, original.deadline_by],
     'the follow-on item leaves the source thread window intact',
+  );
+  assert.equal((await h.agent('window', wren.token, { thread: t, deadline: 'none' })).status, 200);
+  const planned = backlog.orderingSnapshot(Date.now());
+  assert.equal(
+    planned.jobs.find(j => j.id === handed.body.id)!.due,
+    Date.parse(deadline),
+    'an explicit promise has its own deadline',
+  );
+  assert.equal(
+    planned.jobs.find(j => j.id === queued.body.id)!.due,
+    null,
+    'the inherited follow-up loses its deadline',
   );
 });
 
@@ -886,6 +1111,10 @@ for (const end of [
     await h.finish(later!, { status: end.status, branch: `job/${work}`, result: end.result });
     assert.deepEqual({ ...prOf(9702) }, { status: 'open', round: 1, files: JSON.stringify(['platform/x.ts']) });
     assert.equal(wakes.deployed(String(work)), null, 'the finished work waits only for its merge');
+    assert.equal(judgeOf(t), null, 'held work goes to review before its owner is woken');
+    h.storedPr(9702, work, 'merged');
+    threadends.merged(9702);
+    assert.equal(judgeRow(judgeOf(t)!).agent, 'wren', 'its merge wakes the owner');
   });
 
 test("a fix for a round's findings drawn as a thread task opens its round at once, even with the next task ready", async () => {

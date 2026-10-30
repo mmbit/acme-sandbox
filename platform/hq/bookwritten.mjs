@@ -151,7 +151,8 @@ async function refusedSaved(s) {
 // ---- the Pencil and what it leaves
 
 // The scrap's words in the book, on its page
-const inBook = (s, scrap) => s.page.locator(`#book .bk-under[data-g="${scrap.id}"] textarea.bk-scrap-words`);
+// (a scrap's words in its body: .bk-words.)
+const inBook = (s, scrap) => s.page.locator(`#book .bk-words[data-g="${scrap.id}"] textarea.bk-scrap-words`);
 // The scrap as the Notebook has it now
 const now = (s, scrap) => groupsOf(s.play).find(g => g.id === scrap.id);
 // The scrap's edits since from

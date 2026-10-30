@@ -51,6 +51,11 @@ export function report(memory: unknown, freeMb: number, now = Date.now()) {
     causeFreeMb === undefined ? null : Math.round(causeFreeMb),
   );
 }
+export const inspectMemory = (now = Date.now()) => ({
+  latest: latest ?? null,
+  stale: latest ? now - latest.at > STALE_MS : null,
+});
+
 const positive = (v: unknown) => typeof v === 'number' && Number.isFinite(v) && v > 0;
 
 // What a running job's hook takes now, each said once: its own nudge for a spell it caused (whenever its next

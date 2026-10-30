@@ -253,3 +253,67 @@ test("a file that doesn't parse, a project HQ doesn't have, or a thread, even a 
   }
   assert.equal((await board('/api/artifacts')).status, 200);
 });
+
+test('a deck folder with no artifact.yaml shows up, named from its deck.json and dated from its cycle', async () => {
+  file('products/_cycles/2026-10-29-ink-vision/presentation/deck.json', '{"title":"Ink 1.1 · the whole vision"}');
+  const deck = await one('Ink 1.1 · the whole vision');
+  assert.deepEqual([deck.kind, deck.shown], ['deck', '2026-10-29']);
+  assert.match(deck.open, /2026-10-29-ink-vision\/presentation\/$/);
+  rmSync(`${repo}/products/_cycles/2026-10-29-ink-vision`, { recursive: true });
+});
+
+test('a product film opens from HQ with its still as its cover, and its renders are one film per scene', async () => {
+  const chapter = 'products/tide/app/chapters/engine';
+  const render = (scene: string, extra: string[] = []) =>
+    JSON.stringify({ command: ['node', 'ad.mjs', scene, ...extra] });
+  file('products/tide/films/apart.html', '<title>Apart</title>');
+  file(`${chapter}/apart.mp4`, 'x');
+  file(`${chapter}/apart.jpg`, 'x');
+  file(`${chapter}/apart.mp4.render.json`, render('products/tide/films/apart.html'));
+  file(`${chapter}/apart-720.mp4`, 'x');
+  file(`${chapter}/apart-720.mp4.render.json`, render('products/tide/films/apart.html', ['--only', 'small']));
+  file(`${chapter}/copy.mp4`, 'x');
+  file(
+    `${chapter}/copy.mp4.render.json`,
+    JSON.stringify({ command: ['ffmpeg', '-i', `${chapter}/apart.mp4`, 'copy.mp4'] }),
+  );
+  // an adopted render's record has its blob, not a command, and HQ puts its file back beside it
+  file(`${chapter}/old.mp4`, 'x');
+  file(`${chapter}/old.mp4.render.json`, JSON.stringify({ blob: 'abc123', sha256: 'f00', bytes: 1 }));
+  const films = (await list()).filter((a: any) => a.name === 'Apart');
+  assert.equal(films.length, 1);
+  const video = await fetch(`${base}${films[0].open}`, { headers: { cookie: h.boardCookie } });
+  assert.deepEqual([video.status, await video.text()], [200, 'x'], "the film opens from HQ, not a product host's path");
+  assert.equal((await fetch(`${base}${films[0].open}`)).status, 401);
+  const got = await fetch(`${base}${films[0].picture}`, { headers: { cookie: h.boardCookie } });
+  assert.equal(got.status, 200);
+  rmSync(`${repo}/${chapter}`, { recursive: true });
+  rmSync(`${repo}/products/tide/films/apart.html`);
+});
+
+test('a found film of an archived product is archived with it', async () => {
+  file('products/stash/product.yaml', 'name: Stash\nstatus: preview\nowner: moss\narchived: true\n');
+  file('products/stash/ad/ad.html', '<title>Stash ad</title>');
+  file('products/stash/ad/ad.mp4', 'x');
+  file(
+    'products/stash/ad/ad.mp4.render.json',
+    JSON.stringify({ command: ['node', 'ad.mjs', 'products/stash/ad/ad.html'] }),
+  );
+  assert.equal((await one('Stash ad')).archived, true);
+  rmSync(`${repo}/products/stash`, { recursive: true });
+});
+
+test('an adopted render with a scene.html beside it is one film, covered by its poster', async () => {
+  const dir = 'products/_cycles/2026-10-03-pitches/concepts/moxel/ad';
+  const record = JSON.stringify({ blob: 'abc', sha256: 'f00', bytes: 1 });
+  file(`${dir}/scene.html`, '<title>Moxel, concept ad</title>');
+  file(`${dir}/poster.png`, 'x');
+  for (const n of ['moxel-ad', 'moxel-ad-720']) {
+    file(`${dir}/${n}.mp4`, 'x');
+    file(`${dir}/${n}.mp4.render.json`, record);
+  }
+  const films = (await list()).filter((a: any) => a.name === 'Moxel, concept ad');
+  assert.equal(films.length, 1);
+  assert.match(films[0].picture, /moxel\/ad\/poster\.png\?v=/);
+  rmSync(`${repo}/products/_cycles/2026-10-03-pitches/concepts`, { recursive: true });
+});

@@ -9,15 +9,20 @@ import { isRefused, wordsOf, type Anchor, type Refused } from '../pagechecks.ts'
 import { DIR } from '../pagescraps.ts';
 import { SEND_MS, insertNote, sheetOf, type Note, type Sheet } from './booknotes.ts';
 
-// POST /api/book/page/send { id, to }: a free page (or a call's) goes to an agent as it is, in SEND_MS unless it's undone first: a
+// POST /api/book/page/send { id, to }: a free page goes to an agent as it is, in SEND_MS unless it's undone first: a
 // one-off sheet for that agent (book_sheets.page) holding one note, the page's picture its snip and its label its
-// words. Never a batch: the agent's open sheet stays as it is. The sheet.
+// words. Never a batch: the agent's open sheet stays as it is. A call's page goes to nobody (callnotes.ts ended.). The sheet.
 export async function sendPage(b: any, who = BOARD) {
   const p = pageRow(Number(b?.id), who);
   if (!p) return 404;
-  // (a free page or a call's, given by its corner: a sheet goes from its face.)
-  if (p.kind !== 'free' && p.kind !== 'call')
-    return [400, "a free page or a call's is sent on its own; a sheet goes from its face"] as Refused;
+  if (p.kind === 'call')
+    return [
+      409,
+      "a call's notes page goes in as the call ends, and its follow-up hands out what's on it",
+      'callPage',
+    ] as Refused;
+  // (a free page, given by its corner: a sheet goes from its face.)
+  if (p.kind !== 'free') return [400, 'a free page is sent on its own; a sheet goes from its face'] as Refused;
   if (!(typeof b.to === 'string' && findAgent(b.to))) return [400, 'to is an agent'] as Refused;
   const file = await pictureOf(p);
   // (deleted while it was drawn)

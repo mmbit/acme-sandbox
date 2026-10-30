@@ -1,12 +1,12 @@
 // The overview's two screens, drawn on the book's paper (bookzoom.js steps between them and the page): a notebook's
 // pages as a grid, and the Shelf of every notebook with the Archive beside it.
 // - The pages: each a small picture of the page in the notebook's order, its title under it and a stamp on one that
-//   was sent; a tap opens it. New page at the end (in My Notebook). A page dragged to another place (held a moment
+//   was sent; a tap opens it. New page at the end (in My journal). A page dragged to another place (held a moment
 //   first with a finger, so a finger still scrolls) or moved with Alt and the arrows takes it; a page's small box
 //   archives it, Undo a tap away, and the notebook's archived pages show behind "Archived".
-// - The Shelf: every notebook as a small black hardcover with its name on a label, My Notebook first, the newest next;
-//   a tap opens its pages. The Archive tab: the archived notebooks, the same grid. A notebook's small box archives it
-//   or brings it back (never My Notebook).
+// - My shelf: every notebook a big book with its cover standing on a shelf board, as many to a row as fit, My journal
+//   first, the newest next (bookshelfbooks.js); a tap opens its pages. Its Archive: the archived notebooks, the same
+//   way. A book's own menu changes its cover (bookshelfcover.js), archives it or brings it back (never My journal).
 // Its head holds what's used from here: Search and the phone (bookui.js's overview island). What it reads and does is
 // notebookdata.js's; the grid's numbers bookshelfgrid.js's. Drawn at once from what it read last, read again behind.
 import { showGuestNotebooks } from './bookinvites.js';
@@ -23,19 +23,22 @@ import {
   orderPages,
 } from './notebookdata.js';
 import { gridOf, moved, shelfOrder } from './bookshelfgrid.js';
-import { ICONS, bookTile, pageTile } from './bookshelftiles.js';
+import { ICONS, pageTile } from './bookshelftiles.js';
+import { shelfRows } from './bookshelfbooks.js';
+import { mountCover } from './bookshelfcover.js';
 import { cancel, drags, flip } from './bookshelfdrag.js';
 import { stamp } from './bookpaper.js';
 import { mountOpen } from './bookshelfopen.js';
+import { mountRounds } from './bookshelfround.js';
+import { mountTold, told } from './bookshelftold.js';
 
-// the grids' cells: at least this wide, this far apart, at most this many across; a page's picture this tall to its
-// width, a cover this tall to its width (bookshelf.css's aspect-ratio)
+// the grids' cells: at least this wide, this far apart, at most this many across (a page's picture this tall to its
+// width: bookshelf.css's aspect-ratio); the Shelf's books the same, bookshelfbooks.css's --bk-book-gap apart (two to
+// a row on an iPad mini upright, as the deck has them)
 const PAGES = { least: 108, gap: 16, most: 8 },
-  BOOKS = { least: 100, gap: 22, most: 6 };
+  BOOKS = { least: 210, gap: 32, most: 6 };
 // the first read of a screen: how long a turn waits for it before it turns onto the screen still filling in
 const FIRST_MS = 200;
-// how long Undo stays offered
-const UNDO_MS = 6000;
 const HTML = `<div class="bk-far-head" role="presentation"><nav class="bk-far-nav"></nav></div>
   <div class="bk-far-body" role="presentation"></div>`;
 
@@ -49,12 +52,7 @@ const HTML = `<div class="bk-far-head" role="presentation"><nav class="bk-far-na
 export function mountScreens(far, { dev, current, page, saved, open, shelf, notebook, scope = null }) {
   far.innerHTML = HTML;
   const s = {
-    far,
-    scope,
-    dev,
-    current,
-    page,
-    saved,
+    ...{ far, scope, dev, current, page, saved },
     hooks: { open, shelf, notebook },
     head: far.querySelector('.bk-far-nav'),
     body: far.querySelector('.bk-far-body'),
@@ -71,12 +69,19 @@ export function mountScreens(far, { dev, current, page, saved, open, shelf, note
     went: new Map(), // each notebook's pages seen sent: a page seen to go since is stamped
     press: null, // a page pressed, maybe picked up
     undoing: null,
+    asking: null, // a round whose Close asks first, while asks are open: { id }
+    menu: null, // the book whose own menu is open (its id, as its tile has it)
+    cols: 1, // the Shelf's books to a row
+    playing: null, // a round's envelope moving: { id, kind: 'wrap' or 'unwrap' }
   };
   far.querySelector('.bk-far-head').prepend(island('overview'));
   mountTold(s);
   if (!scope) mountOpen(far.querySelector('.bk-far-head'), { open }); // (the open forms and questions)
   far.addEventListener('click', e => clicked(s, e));
   far.addEventListener('keydown', e => keyed(s, e));
+  // (a review round's Close and its envelope: bookshelfround.js; a book's cover: bookshelfcover.js)
+  const ui = { draw: () => draw(s), refresh: () => refresh(s), told: words => told(s, words) };
+  Object.assign(s, { rounded: mountRounds(s, ui), cover: mountCover(s, ui) });
   drags(s, (from, to) => reorder(s, from, to));
   // (the store's notebooks changed: read again while it shows)
   for (const name of ['book:changed', 'book:notebook']) document.addEventListener(name, () => s.level && refresh(s));
@@ -87,6 +92,7 @@ export function mountScreens(far, { dev, current, page, saved, open, shelf, note
     again: () => refresh(s),
     hide: () => {
       s.level = null;
+      s.menu = null;
       cancel(s);
       told(s, null);
     },
@@ -99,7 +105,9 @@ function watchGrid(s) {
   new ResizeObserver(() => {
     if (!s.level || far.clientWidth === width) return;
     width = far.clientWidth;
-    columns(s);
+    // (the Shelf's rows drawn again for a new count to a row)
+    if (s.level === 'shelf' && shelfCols(s) !== s.cols) draw(s);
+    else columns(s);
   }).observe(far);
 }
 
@@ -132,11 +140,10 @@ async function refresh(s) {
     if (n !== s.reading) return;
     s.lost = e.message;
   }
-  if (s.level && !s.press?.lifted) draw(s);
+  if (s.level && !s.press?.lifted && !s.playing) draw(s);
 }
 function draw(s) {
   const { far } = s;
-  far.dataset.tab = s.tab;
   far.setAttribute('role', 'list');
   // (the Shelf or the Archive: its tabs say which)
   far.setAttribute('aria-label', word('The overview'));
@@ -199,30 +206,34 @@ function stamped(s, read) {
       }
   });
 }
-// The Shelf, or the Archive: its tabs, and its notebooks as hardcovers
+// My shelf, or its Archive: its name in hand and its count, the way to the other, Invite; its books in rows, each on
+// its shelf board
 function drawShelf(s) {
   const read = s.read.shelf,
     archive = s.tab === 'archive',
-    tab = (name, words, n = '') =>
-      `<button type="button" role="tab" data-tab="${name}" aria-selected="${s.tab === name}">${words}${
-        n === '' ? '' : ` <small>${n}</small>`
-      }</button>`;
-  s.head.innerHTML = `<div class="bk-tabs" role="tablist" aria-label="Notebooks">${tab('shelf', 'Shelf')}${tab(
-    'archive',
-    'Archive',
-    read?.archive.length || '',
-  )}</div><button type="button" class="bk-far-go" data-invite>Invite</button>`;
+    books = read ? shelfOrder(archive ? read.archive : read.shelf) : [],
+    away = read?.archive.length;
+  s.head.innerHTML = `<h2 class="bk-shelf-title">${archive ? 'Archive' : 'My shelf'}</h2>${
+    read ? `<span class="bk-shelf-count">${books.length} ${books.length === 1 ? 'book' : 'books'}</span>` : ''
+  }<button type="button" class="bk-far-go" data-tab="${archive ? 'shelf' : 'archive'}">${
+    archive ? 'My shelf' : `Archive${away ? ` <small>${away}</small>` : ''}`
+  }</button><button type="button" class="bk-far-go" data-invite>Invite</button>`;
   if (!read) return void (s.body.innerHTML = '');
-  const books = shelfOrder(archive ? read.archive : read.shelf),
-    here = s.here;
+  s.cols = shelfCols(s);
   s.body.innerHTML = books.length
-    ? `<div class="bk-grid" data-grid="books" role="presentation">${books.map(n => bookTile(n, n.id === here)).join('')}</div>`
-    : `<p class="bk-far-none">${archive ? 'Nothing archived. A notebook archived from the Shelf waits here.' : 'No notebooks yet.'}</p>`;
+    ? `<div class="bk-shelf" role="presentation">${shelfRows(books, s.cols, n => ({
+        here: n.id === s.here,
+        menu: s.menu === String(n.id),
+        asking: s.asking?.id === n.id ? n.round.asksOpen : null,
+        playing: s.playing?.id === n.id ? s.playing.kind : null,
+      }))}</div>`
+    : `<p class="bk-far-none">${archive ? 'Nothing archived. A notebook archived from My shelf waits here.' : 'No notebooks yet.'}</p>`;
 }
+const shelfCols = s => gridOf(s.body.clientWidth, BOOKS).cols;
 // The grids' columns for the paper's width now: as many as fit (bookshelfgrid.js)
 function columns(s) {
   for (const grid of s.body.querySelectorAll('.bk-grid')) {
-    const { cols, w } = gridOf(grid.clientWidth, grid.dataset.grid === 'books' ? BOOKS : PAGES);
+    const { cols, w } = gridOf(grid.clientWidth, PAGES);
     grid.style.setProperty('--cols', cols);
     grid.style.setProperty('--cell', `${Math.floor(w)}px`);
   }
@@ -234,7 +245,7 @@ function clicked(s, e) {
   if (s.swallow) return;
   if (t.closest('[data-invite]')) return showGuestNotebooks();
   if (t.closest('[data-go=shelf]')) return s.hooks.shelf();
-  const tab = t.closest('[role=tab]');
+  const tab = t.closest('button[data-tab]');
   if (tab) return switchTab(s, tab.dataset.tab);
   if (t.closest('[data-archived]')) {
     s.archived = !s.archived;
@@ -244,11 +255,19 @@ function clicked(s, e) {
   if (t.closest('[data-new]')) return newPage(s);
   const act = t.closest('.bk-tile-act'),
     tile = t.closest('.bk-tile');
+  if (s.level === 'shelf' && menued(s, t)) return;
   if (!tile) return;
   if (tile.dataset.book) {
-    const n = [...s.read.shelf.shelf, ...s.read.shelf.archive].find(b => String(b.id) === tile.dataset.book);
-    if (act) return putAway(s, n, act.dataset.act === 'archive');
-    if (n.kind === 'round' || n.kind === 'invited') return showGuestNotebooks(n.id);
+    const n = [...s.read.shelf.shelf, ...s.read.shelf.archive].find(b => String(b.id) === tile.dataset.book),
+      shelf = t.closest('[data-shelf]')?.dataset.shelf;
+    if (shelf === 'cover') return s.cover(n);
+    if (shelf) return putAway(s, n, shelf === 'archive');
+    if (n.kind === 'round' && n.round) {
+      const round = t.closest('[data-round]')?.dataset.round;
+      if (round) return s.rounded(n, round);
+      if (n.round.state === 'away') return told(s, `With ${n.round.with}'s team: it comes back here with the Advice.`);
+    }
+    if (n.kind === 'invited') return showGuestNotebooks(n.id);
     return s.hooks.notebook(n.id);
   }
   const read = s.read.books.get(s.id),
@@ -256,6 +275,20 @@ function clicked(s, e) {
   if (act) return archive(s, p, act.dataset.act === 'archive');
   if (t.closest('.bk-tile-open')) s.hooks.open(p, s.id);
 }
+
+// A book's own menu: its button opens it (or shuts it again); a tap anywhere else shuts it, and does nothing more
+// unless it's one of its items. Whether the tap's done with.
+function menued(s, t) {
+  const more = t.closest('.bk-book-more'),
+    item = t.closest('.bk-book-menu [role=menuitem]');
+  if (!more && s.menu == null) return false;
+  const id = more?.closest('.bk-tile').dataset.book;
+  s.menu = id && id !== s.menu ? id : null;
+  draw(s);
+  s.body.querySelector('.bk-book-menu [role=menuitem]')?.focus();
+  return !item;
+}
+
 function switchTab(s, tab) {
   if (tab === s.tab) return;
   s.tab = tab;
@@ -333,33 +366,12 @@ async function reorder(s, from, to) {
     refresh(s);
   }
 }
-// Undo, and words, beside the overview on the paper, so it never scrolls away
-function mountTold(s) {
-  Object.assign(s.undo, {
-    className: 'bk-told',
-    hidden: true,
-    innerHTML: '<span></span><button type="button">Undo</button>',
-  });
-  s.undo.setAttribute('role', 'status');
-  s.far.after(s.undo);
-  s.undo.querySelector('button').addEventListener('click', () => {
-    const undo = s.undoing;
-    told(s, null);
-    undo?.();
-  });
-}
-// Words at the overview's foot for a moment, with Undo when there's something to undo (null: put away)
-function told(s, words, undo = null) {
-  clearTimeout(s.undoTimer);
-  s.undoing = undo;
-  s.undo.hidden = !words;
-  if (!words) return;
-  s.undo.querySelector('span').textContent = words;
-  s.undo.querySelector('button').hidden = !undo;
-  s.undoTimer = setTimeout(() => told(s, null), UNDO_MS);
-}
 // Alt with an arrow on a page's tile moves it a place back or on, the focus going with it
 function keyed(s, e) {
+  if (e.key === 'Escape' && s.menu != null) {
+    s.menu = null;
+    return draw(s);
+  }
   const step = { ArrowLeft: -1, ArrowUp: -1, ArrowRight: 1, ArrowDown: 1 }[e.key],
     tile = e.target.closest?.('.bk-tile[data-drag]');
   if (!e.altKey || !step || !tile) return;

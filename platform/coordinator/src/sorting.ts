@@ -9,7 +9,10 @@
 import { db, inOneStep, planChange } from './db.ts';
 import { publish } from './events.ts';
 import * as jobs from './jobs.ts';
-import { findThread, type JobThreadAsk } from './projects.ts';
+import * as sizes from './sizes.ts';
+import * as predictions from './predictions.ts';
+import { findThread } from './projects.ts';
+import type { Ask } from './acceptance.ts';
 import { whereWorkGoes } from './wherework.ts';
 import { ceo, projects } from './company.ts';
 import { taskClash } from './names.ts';
@@ -138,12 +141,12 @@ export function holdLoose() {
 
 // hq inbox accept on a held job: it keeps its brief, agent and thread (hq job move moves it first), gets the accepter's
 // title (and code, where it has none or one is given), and may start. The answer is the job, or why not.
-export function accept(
-  p: { id: number },
-  job: number,
-  by: string,
-  ask: JobThreadAsk & { for?: unknown; code?: unknown },
-) {
+export function accept(p: { id: number }, job: number, by: string, ask: Ask) {
+  const saved = sizes.latestOf(job);
+  if (saved && ask.size != null)
+    return `job #${job} already has a saved estimate: omit --size to accept it. Only the CEO changes it with hq estimate set`;
+  const size = saved ? undefined : sizes.readQueuedSize(ask);
+  if (typeof size === 'string') return size;
   const title = oneLine(String(ask.title ?? ''));
   if (!title || title.length > TITLE_MAX) return NEEDS_TITLE;
   if (ask.for != null) return "a held job stays its agent's: queue another's part with hq job";
@@ -167,7 +170,11 @@ export function accept(
   const clash = thread && !own && taskClash(title, findThread(thread)!);
   if (clash) return clash;
   return inOneStep(() => {
-    db.prepare('update jobs set title = ?, code = ? where id = ?').run(title, named.code, job);
+    const { prompt } = db
+      .prepare('update jobs set title = ?, code = ?, queued_by = ? where id = ? returning prompt')
+      .get(title, named.code, by, job) as { prompt: string };
+    if (size) sizes.recordQueued(job, by, prompt, size);
+    predictions.recordQueued(job);
     if (own) db.prepare('update threads set name = ? where id = ?').run(oneTaskName(title), thread);
     db.prepare("update wakes set met = ? where job = ? and kind = 'sorted'").run(`sorted by ${by}: ${title}`, job);
     db.prepare("update proposals set status = 'accepted', decided = ?, accepted = ? where id = ?").run(

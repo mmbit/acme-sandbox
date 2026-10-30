@@ -7,8 +7,7 @@
 // stays drawn (r.held) until the agent's turn on it is done, then goes, so the board circles afresh on a clean screen
 // (the board, call 161.).
 // The agent's ink isn't the Pencil's: drive.js rings where it aims, over the page, and nothing of it goes in the book
-//   call:on    { call, agent, name, color, walk }  a call is on: its calls row, its agent, its name and its ink; walk:
-//                                                  a walk-through, whose page opens at once
+//   call:on    { call, agent, name, color }  a call is on: its calls row, its agent, its name and its ink
 //   call:off   { done }                       it ended; done() once a mark still settling is in the book
 //   call:heard { text }                       words the call heard the board say
 //   call:had   { note }                       the agent's turn on that note is done (or the line couldn't take it):
@@ -19,7 +18,6 @@
 //                                             it went
 import { reset } from './acts.js';
 import { say } from './dock.js';
-import { callPage } from './markpage.js';
 import { file, heardSince } from './settle.js';
 import { paint, post } from './marks.js';
 
@@ -33,8 +31,7 @@ export function setupCall(r) {
   document.addEventListener('call:on', e => {
     r.call = e.detail;
     r.callHeard = [];
-    // (a walk-through opens its page as it starts.)
-    if (r.call.walk) callPage(r).catch(err => console.error("The Pencil: the walk-through's page", err));
+    // (a walk-through's page is the call's notes page, opened by HQ's call: no second one.)
   });
   document.addEventListener('call:off', e => ended(r).finally(() => e.detail?.done?.()));
   document.addEventListener('call:heard', e => {

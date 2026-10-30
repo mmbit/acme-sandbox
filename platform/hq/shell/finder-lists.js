@@ -22,10 +22,10 @@ import { libraryEntries } from './news.js';
 import { openAgent } from './panel.js';
 
 // The categories in the chips' order: id, chip name, prefix, its list. A company app's (its finds: template/kits/README.md)
-// go after HQ's apps.
+// go after HQ's apps.: a: is Artifacts (the products among them), hq: HQ's own apps
 export const BUILT_IN = [
-  { id: 'apps', name: 'Apps', prefix: 'a', list: apps },
-  { id: 'artifacts', name: 'Artifacts', prefix: 'ar', list: artifacts },
+  { id: 'apps', name: 'Apps', prefix: 'hq', list: apps },
+  { id: 'artifacts', name: 'Artifacts', prefix: 'a', list: artifacts },
   { id: 'work', name: 'Work', prefix: 'w', list: work },
   { id: 'cards', name: cap(names.phone), prefix: 'd', list: cards },
   { id: 'calls', name: 'Calls', prefix: 'c', list: calls },
@@ -166,7 +166,8 @@ async function settings() {
           title: s.name,
           codes: choices.value ?? [],
           sub: 'Settings',
-          open: () => (s.run ? s.run() : openComputer('settings', { section: s.id })),
+          // (a switch on its row: the list it's in.)
+          open: () => (s.run ? s.run() : openComputer('settings', s.set ? {} : { section: s.id })),
         },
         ...(pages.value ?? []).map(p => ({
           key: `${s.id}:${p.page}`,

@@ -13,7 +13,9 @@ const projects = await import('./projects.ts');
 
 beforeEach(() => {
   h.cancelQueued();
-  db.exec(`delete from runs; delete from jobs; delete from threads; delete from thread_needs; delete from plan_changes;
+  // Job IDs are reused, so their saved estimates and predictions leave with them.
+  db.exec(`delete from runs; delete from sizes; delete from predictions; delete from jobs; delete from threads;
+    delete from thread_needs; delete from plan_changes;
     delete from waits; delete from wakes; delete from proposals; delete from messages; delete from sorts`);
 });
 

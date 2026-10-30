@@ -35,7 +35,7 @@ type Asked = { url(): string; resourceType(): string };
 const browser = await launched();
 assert.ok(browser, 'HQ load checks require Playwright and Chromium');
 test.after(async () => {
-  await browser?.close();
+  await browser.close();
   // (HQ's event stream stays open, through the door and on the server)
   door.closeAllConnections();
   door.close();

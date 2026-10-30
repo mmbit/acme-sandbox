@@ -1,3 +1,11 @@
+# A try's versions' preview hosts get their certificates when first asked for (infra/products.py), and only those the
+# coordinator says are a version's
+{
+	on_demand_tls {
+		ask http://coordinator:8080/api/preview/try-host
+	}
+}
+
 # A deploy restarts containers (infra/sync.sh). Every way to one holds the request while it's away and tries it again
 # every quarter second, for up to 30 s, so a restart shows as a short wait, not a 502: one that couldn't connect is
 # tried again whatever its method, one cut off mid-answer only if it's a GET.

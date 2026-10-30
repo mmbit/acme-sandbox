@@ -136,7 +136,7 @@ async function shows(page, { id, page: on, picture }, what) {
       () => null,
       () =>
         page.evaluate(id => {
-          const el = document.querySelector(`#book .bk-clip[data-g="${id}"]`),
+          const el = document.querySelector(`#book .bk-unit[data-unit="${id}"]`),
             shown = document.querySelector('#book .bk-world .bk-page:not([hidden])')?.ariaLabel;
           return `the book shows "${shown}"; the scrap ${el ? `on "${el.closest('.bk-page')?.ariaLabel}"` : 'nowhere'}`;
         }, id),

@@ -1,15 +1,17 @@
 #!/bin/bash
 # Resizes the server to the first available type listed in infra/server-type (the board approves each
-# change: it costs money). Types that would cost more than MAX_EUR a month (gross) are skipped, so the hosting
-# cap in company/BUDGET.md holds. Shuts the server down cleanly, changes the type (keeping the disk as it is, so
-# a later downgrade stays possible) and starts it again: a few minutes offline. Running jobs pick up where they
+# change: it costs money). Types that would cost more than MAX_EUR a month (gross) are skipped, so the company's
+# hosting cap holds: MAX_EUR is company/infra.env's, and without it nothing changes. Shuts the server down cleanly, changes the type (keeping the disk as it is, so a later downgrade stays
+# possible) and starts it again: a few minutes offline. Running jobs pick up where they
 # left off. A disk kept smaller than its type includes grows to that size once infra/server-disk says "grow" (the
 # board approves it too: no smaller type fits afterwards); the type and its price stay. Needs: HCLOUD_TOKEN.
 set -euo pipefail
 # company/infra.env read as data (infra-env.sh), never sourced
 . "$(dirname "$0")/infra-env.sh"
 NAME=$SERVER
-TYPES=$(cat "$(dirname "$0")/server-type") DISK=$(cat "$(dirname "$0")/server-disk" 2>/dev/null || true) MAX_EUR=${MAX_EUR:-35}
+TYPES=$(cat "$(dirname "$0")/server-type") DISK=$(cat "$(dirname "$0")/server-disk" 2>/dev/null || true)
+[[ ${MAX_EUR:-} =~ ^[0-9]+([.][0-9]+)?$ ]] ||
+  { echo "::error::company/infra.env has no MAX_EUR, the hosting cap in euros a month, as a number: nothing changed" >&2; exit 1; }
 . "$(dirname "$0")/hetzner.sh"   # api, wait_for
 
 # shuts the server down cleanly (off by force after five minutes)

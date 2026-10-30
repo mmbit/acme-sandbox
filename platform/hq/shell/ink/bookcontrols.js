@@ -1,16 +1,17 @@
-// The controls for moving about the book, in the row at the paper's foot (bookui.js): the overview at its left end, the
-// page before and after, the page's name and where it is in the notebook, which opens the notebook's pages by name, and
-// New page. While the zoom is off 100% its % shows beside the page after, a tap back to 100%. Send, the page's own
-// action (the page shown sent whole, bookpagesend.js; none on a page sent, nor on a call's own page while it's on), is
-// its own island at the top of the stack over the paper's right edge, under the page's turned-down corner, so the row
-// stays one slim line with the page's name whole in it; on an iPad mini on its side, beside HQ's page, the name has a
-// line of its own above the buttons (bookdesk.css.).
-// Ctrl/⌘ with +, − and 0 zoom too, while the book has the pointer or the focus (never HQ's page's own zoom).
-import { button, island, setPressed, MOD, lineIcon } from './bookui.js';
+// The page bar at the paper's foot, under the tool rail (bookui.js's lane): the page before and after, the page's name
+// and where it is in the notebook ("Shop launch · 2 / 3", which opens the notebook's pages by name), then the overview,
+// New page and the cog for this device's preferences (bookprefs.js). It sits right at the screen's bottom, its buttons
+// clear of a phone's rounded corners, and its name is cut short only where it can't fit (bookdesk.css). The board's page
+// goes by its dog-ear onto Submit (bookdogear.js), and once sent it's locked: the rail gives way to a quiet "Sent,
+// locked". An invited person's page goes by its Send key (bookpagesend.js), an
+// island beside the rail; none on a page sent, nor on a call's notes page.
+import { button, island, setPressed, lineIcon } from './bookui.js';
+import { mountPrefs } from './bookprefs.js';
 import { esc } from '../../util.js';
 import { nameOf } from './bookhead.js';
 import { shut } from './booksave.js';
 import { editTitle } from './booktitle.js';
+import { mountForYou } from './bookforyou.js';
 
 const ICONS = {
   // (the notebook's pages laid out: four leaves in a grid, as far apart top to bottom as side to side.)
@@ -22,11 +23,16 @@ const ICONS = {
   page: lineIcon('<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4M12 11v6M9 14h6"/>'),
   // (a paper plane)
   send: lineIcon('<path d="M21 3L3 10.5l7 2.5 2.5 7z"/><path d="M21 3l-11 10"/>'),
+  // (a padlock, shut)
+  lock: lineIcon('<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>'),
+  cog: lineIcon(
+    '<circle cx="12" cy="12" r="3"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M5.5 18.5l1.7-1.7M16.8 7.2l1.7-1.7"/><circle cx="12" cy="12" r="6.4"/>',
+  ),
 };
 import { word } from './bookscope.js';
 
-// book (bookpages.js): { views, cur, scale }. act: what the controls do, bookpages.js's: zoom(k), actual(), overview(),
-// level(), turnTo(i), newPage(), send(). Returns { update() }: the controls say where the book is now.
+// book (bookpages.js): { views, cur }. act: what the controls do, bookpages.js's: overview(), level(), turnTo(i),
+// newPage(), send() (an invited person's). Returns { update() }: the controls say where the book is now.
 export function mountControls(book, act) {
   const pages = island('pages'),
     over = button({
@@ -35,58 +41,53 @@ export function mountControls(book, act) {
       onClick: () => act.overview(),
       pressed: false,
     }),
-    pct = button({ text: '100%', label: word('Back to 100%'), keys: `${MOD}0`, onClick: () => act.actual() });
-  pct.classList.add('bk-quiet', 'bk-pct');
-  const { before, after, name, add, send } = pageButtons(book, act),
+    cog = button({ icon: ICONS.cog, label: word('Preferences on this device') });
+  cog.classList.add('bk-cog');
+  mountPrefs(cog);
+  const { before, after, name, add } = pageButtons(book, act),
     rule = document.createElement('hr');
-  send.classList.add('bk-send');
-  // (the zoom's % with the page it's of, then New page)
-  pages.append(over, before, name, after, pct, rule, add);
-  island('send').append(send);
-  keys(book, act);
-
-  const controls = {
+  pages.append(before, after, name, rule, over, add, cog);
+  const send = book.scope ? sendKey(act) : null,
+    locked = book.scope ? null : lockLine();
+  // (the asks still open on the page, counted over its name: the board's own book only.)
+  const forYou = book.scope ? null : mountForYou(book, pages);
+  return {
     update() {
       const far = act.level() !== 'page',
         page = book.views[book.cur]?.page,
-        n = book.views.length,
-        percent = Math.round(book.scale * 100);
+        n = book.views.length;
       setPressed(over, far);
       // (the overview open: only its own button, pressed, to come back by)
       for (const el of [before, name, after, rule]) el.hidden = far;
       over.hidden = !!book.scope?.singlePage;
       add.hidden = far || !!book.scope?.singlePage;
-      send.hidden = far || !page || shut(page) || page.readonly || page.id === onCall;
-      pct.hidden = far || percent === 100;
-      pct.querySelector('span').textContent = `${percent}%`;
+      cog.hidden = far;
+      if (send) send.hidden = far || !page || shut(page) || page.kind === 'call';
+      locked?.(!far && !!page && shut(page) && (page.sent || page.sending ? 'Sent, locked' : 'Locked'));
       before.disabled = book.cur <= 0;
       after.disabled = book.cur >= n - 1;
       name.disabled = !page;
       // (the title being written goes when its page does, a save still out landing on its page alone)
       if (titling && (far || titling.page !== page)) titling.end(false);
+      forYou?.update(far);
       if (!page) return;
-      // (where it is in the notebook only when it has more than one page)
-      const many = n > 1;
-      name.innerHTML = `<span>${esc(nameOf(page))}</span>${many ? `<small>${book.cur + 1} / ${n}</small>` : ''}`;
-      name.setAttribute(
-        'aria-label',
-        word("The notebook's pages: {page}", { page: nameOf(page) }) +
-          (many ? word(', {at} of {n}', { at: book.cur + 1, n }) : ''),
-      );
+      // (where it is in its chapter, its bookmark's pages)
+      const mates = book.views.filter(v => v.page.chapter === page.chapter);
+      named(name, page, mates.findIndex(v => v.page === page) + 1, mates.length);
     },
   };
-  return followCall(controls);
 }
-// The call's own page while the call is on (calldraw.js's call:page), till it's off: no Send there, as it goes in by
-// itself as the call ends. → controls
-let onCall = null;
-function followCall(controls) {
-  document.addEventListener('call:page', e => ((onCall = e.detail.page), controls.update()));
-  document.addEventListener('call:off', () => ((onCall = null), controls.update()));
-  return controls;
+// The page's name in the row, and where it is in its chapter (at of n) only when that has more than one page
+function named(name, page, at, n) {
+  const many = n > 1;
+  name.innerHTML = `<span>${esc(nameOf(page))}</span>${many ? `<small>· ${at} / ${n}</small>` : ''}`;
+  name.setAttribute(
+    'aria-label',
+    word("The notebook's pages: {page}", { page: nameOf(page) }) + (many ? word(', {at} of {n}', { at, n }) : ''),
+  );
 }
 
-// The pages' buttons: the page before and after, the page's name (the notebook's pages), New page, and Send
+// The pages' buttons: the page before and after, the page's name (the notebook's pages), and New page
 function pageButtons(book, act) {
   const name = button({
     text: word('Page'),
@@ -105,12 +106,31 @@ function pageButtons(book, act) {
       keys: word('A blank page after the last, for the next part'),
       onClick: () => act.newPage(),
     }),
-    send: button({
-      icon: ICONS.send,
-      label: word('Send'),
-      keys: word('This page to the agents: 10 seconds to undo'),
-      onClick: () => act.send(),
-    }),
+  };
+}
+// An invited person's Send, its own island beside the rail
+function sendKey(act) {
+  const send = button({
+    icon: ICONS.send,
+    label: word('Send'),
+    keys: word('This page to the agents: 10 seconds to undo'),
+    onClick: () => act.send(),
+  });
+  send.classList.add('bk-send');
+  island('send').append(send);
+  return send;
+}
+// The board's page sent, or else read-only (a call's notes page till its follow-up hands it out): locked, its words in
+// the rail's place, the tools gone while they show (bookshare.css). Returns locked(words, or false).
+function lockLine() {
+  const line = island('tools').closest('.bk-lane-line'),
+    lock = document.createElement('p');
+  lock.className = 'bk-locked';
+  lock.innerHTML = `${ICONS.lock}<span></span>`;
+  line.append(lock);
+  return words => {
+    line.toggleAttribute('data-locked', !!words);
+    if (words) lock.lastChild.textContent = words;
   };
 }
 
@@ -174,19 +194,4 @@ function menuOf(book) {
         )}</button></li>`,
     )
     .join('')}</ul>`;
-}
-
-// Ctrl/⌘ with + (or =), − and 0: the book's zoom, when it has the pointer or the focus and nothing's being typed
-function keys(book, act) {
-  addEventListener('keydown', e => {
-    if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
-    const leaf = book.desk.closest('.bk-leaf') ?? book.desk,
-      typing = e.target instanceof Element && e.target.closest('input, textarea, select, [contenteditable]');
-    if (typing || !(leaf.matches(':hover') || leaf.contains(document.activeElement))) return;
-    const k = { '+': 1.25, '=': 1.25, '-': 0.8, _: 0.8, 0: 0 }[e.key];
-    if (k === undefined) return;
-    e.preventDefault();
-    if (k) act.zoom(k);
-    else act.actual();
-  });
 }

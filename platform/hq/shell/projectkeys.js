@@ -14,6 +14,8 @@ import { nameHtml, nameText } from './jobs.js';
 import { covered, withJobLinks } from './prose.js';
 import {
   stateOf,
+  endOf,
+  endWord,
   word,
   kindOf,
   doingOf,
@@ -94,7 +96,7 @@ export function doneThreadTile(t, opening) {
     opening?.id === t.id
       ? opening.words
       : t.jobs
-        ? `Done · ${t.done} of ${t.jobs} ${t.jobs === 1 ? 'job' : 'jobs'}`
+        ? `${endWord(t)} · ${t.done} of ${t.jobs} ${t.jobs === 1 ? 'job' : 'jobs'}`
         : 'Closed with no jobs';
   return tile({
     attrs: `data-thread="${esc(t.id)}" data-owner="${esc(t.owner ?? '')}"`,
@@ -279,10 +281,10 @@ function deliverables(p) {
         .slice()
         .sort((a, b) => b.finished.localeCompare(a.finished))
         .slice(0, 2)
-        // (done as the icon set's tick, named for a reader.)
+        // (done as the icon set's tick, named for a reader; one that failed says so, as its task's row does.)
         .map(
           t =>
-            `<li class="pj-was"><span>${nameHtml(t, 'name')}</span><small>${icon('tick', 'pj-done', 'Done')}</small></li>`,
+            `<li class="pj-was"><span>${nameHtml(t, 'name')}</span><small>${endOf(t) === 'done' ? icon('tick', 'pj-done', 'Done') : endWord(t)}</small></li>`,
         );
   return `<ul class="pj-next pj-deliverables">${[...routine, ...items].join('')}</ul>`;
 }

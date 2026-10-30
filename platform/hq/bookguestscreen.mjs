@@ -20,7 +20,7 @@ export async function readyNotebook(page) {
 export async function addNote(page, words) {
   await page
     .locator('#book')
-    .getByRole('button', { name: await named(page, 'Type'), exact: true })
+    .getByRole('button', { name: await named(page, 'Text'), exact: true })
     .click();
   const [x, y] = await pointOnPaper(page, 0.3, 0.3);
   await page.mouse.click(x, y);
@@ -98,9 +98,8 @@ export async function selectionAndPrefs(page) {
   await page.mouse.up();
   const bar = page.getByRole('toolbar', { name: await named(page, 'Selection'), exact: true });
   await bar.waitFor();
-  const acts = await Promise.all(['Cut', 'Copy', 'Duplicate', 'Delete', 'Group'].map(en => named(page, en)));
+  const acts = await Promise.all(['Cut', 'Copy', 'Duplicate', 'Delete'].map(en => named(page, en)));
   assert.deepEqual(await bar.locator('button:not([hidden])').allInnerTexts(), acts);
-  await bar.getByRole('button', { name: acts[4], exact: true }).click();
   await page.keyboard.press('Escape');
   const clip = book.getByRole('button', { name: await named(page, 'A group: its menu'), exact: true });
   // (in its middle, as the board taps it: the note at the group's corner lies under it.)

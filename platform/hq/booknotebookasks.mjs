@@ -12,7 +12,7 @@ import { open } from './booknotebook.mjs';
 import { where } from './booknotebookscreen.mjs';
 import { DESKTOP, MINI, until } from './bookkit.mjs';
 
-// the seed's sent page (the first of My Notebook's), the group the card's about, and the note that group went as
+// the seed's sent page (the first of My journal's), the group the card's about, and the note that group went as
 const SENT = 1,
   GROUP = 2,
   NOTE = 2;

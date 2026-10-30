@@ -2,9 +2,9 @@
 // px, drawing each group's answers where the store put them (spot, from the group's box: never over the board's own
 // groups), each with the hand-drawn bulb and its agent's face, its words written in by a small pen, a drawing drawn,
 // a picture taped in, a form to fill in, and a strip under it where the board writes its reply. An answer still
-// coming shows the agent's face and pencil dots where it will land. A note tried in versions gets a tab that turns to
-// their page, and that page shows them (bookanswerversions.js). Read again whenever the store's book or notebook
-// changes, and as a look is worn (stage.js stage:look): a page read before the scene placed the agents drew initials.
+// coming shows the agent's face and pencil dots where it will land. A note tried in versions has them under it, in one
+// block (bookversions.js). Read again whenever the store's book or notebook changes, and as a look is worn (stage.js
+// stage:look): a page read before the scene placed the agents drew initials.
 import { esc, stylesheet } from '../../util.js';
 import * as world from '../../world/world.js';
 import { inkOf } from './agentink.js';
@@ -13,12 +13,12 @@ import { BULB, DOTS, inkBox, pathsOf } from './bookanswerart.js';
 import { writeWhenSeen } from './bookanswerwrite.js';
 import { fitReplies, formHtml, replyHtml, wireForm, wireReply } from './bookanswerreply.js';
 import { loadGroups, sendForm, sendReply } from './bookanswersdata.js';
-import { versionsTab, drawVersions, paperOf } from './bookanswerversions.js';
+import { versionsEl } from './bookversions.js';
 import { clearOf } from './bookui.js';
 import { scope, word } from './bookscope.js';
 import { words } from './notebookwords.js';
 
-for (const name of ['bookanswers', 'bookanswerform', 'bookanswerversions']) stylesheet(`shell/ink/${name}.css`);
+for (const name of ['bookanswers', 'bookanswerform', 'bookversions']) stylesheet(`shell/ink/${name}.css`);
 
 // slot: the page's .bk-answers; page: its record (bookpages.js), whose id it reads by (none yet: nothing to read)
 export function mountAnswers(slot, page) {
@@ -43,36 +43,12 @@ async function read(layer) {
     return console.error('[hq] A page’s answers can’t be read:', e);
   }
   if (n !== layer.reading || !groups) return;
-  if (groups.tried) drawVersions(layer, groups, parts(layer));
-  else draw(layer, groups.groups);
+  draw(layer, groups.groups);
 }
 
-// What a versions page draws with from here: an answer's face, its reply strip, and the pen on its frames: what it
-// writes goes to the version to(ink) names ({ answer, frame }, null: none), read again once it's gone
-const parts = layer => ({
-  faceHtml,
-  faced,
-  replyHtml,
-  wirePen: (el, { origin, to, done }) =>
-    wireReply(el, {
-      origin,
-      done,
-      // (the Pencil and a mouse anywhere on the frames; a finger on a version's picture or strip, so it moves the page
-      // everywhere else)
-      takes: e =>
-        e.pointerType !== 'touch' ||
-        !!e.target.closest?.('.bk-version[data-answer] :is(.bk-version-paper, .bk-answer-reply)'),
-      send: ink => {
-        const on = to(ink);
-        if (!on) return Promise.reject(new Error('No version here yet'));
-        return sendReply(world.dev, on.answer, ink, on.frame).then(() => read(layer));
-      },
-      refused: words => el.setAttribute('data-refused', words),
-    }),
-});
-
-// Every group's answers, placeholders and versions tab, each kept as drawn while it's the same (a pen mid-word, a form
-// half filled in), drawn again when it changed, and as the paper sizes (the screen turns)
+// Every group's answers, placeholders and versions, each kept as drawn while it's the same (a pen mid-word, a form
+// half filled in), drawn again when it changed, and as the paper sizes (the screen turns). Versions the board's pen is
+// on are kept till it's done (layer.held), then read again.
 function draw(layer, groups) {
   const wanted = new Map(),
     edge = edgeOf(layer, () => draw(layer, groups));
@@ -92,17 +68,29 @@ function draw(layer, groups) {
         make: () => waitingEl(g, spot),
       });
     }
-    const tab = versionsTab(g);
-    if (tab) wanted.set(`t${g.id}`, { key: JSON.stringify([tab, g.box]), make: () => tabEl(layer, g, tab) });
-  }
-  for (const [id, old] of layer.drawn)
-    if (wanted.get(id)?.key !== old.key) {
-      old.el.remove();
-      layer.drawn.delete(id);
+    const tried = g.try ?? g.children.find(c => c.kind === 'answer' && c.style === 'version');
+    if (tried && edge !== null) {
+      const under = versionsAt(g, edge);
+      wanted.set(`v${g.id}`, {
+        key: JSON.stringify([g.try, g.words, g.children, under, faced(tried.by)]),
+        make: was => placedAt(versionsEl(g, versionParts(layer), was), under),
+      });
     }
+  }
+  const replaced = new Map();
+  for (const [id, old] of layer.drawn) {
+    if (wanted.get(id)?.key === old.key) continue;
+    if (old.el.querySelector('[data-inking]')) {
+      layer.held = true;
+      continue;
+    }
+    old.el.remove();
+    layer.drawn.delete(id);
+    replaced.set(id, old.el);
+  }
   for (const [id, { key, make }] of wanted) {
     if (layer.drawn.has(id)) continue;
-    const el = make();
+    const el = make(replaced.get(id));
     layer.slot.append(el);
     layer.drawn.set(id, { key, el });
     el.dispatchEvent(new Event('bk:placed'));
@@ -126,6 +114,28 @@ function edgeOf(layer, again) {
   const paper = paperOf(layer, again);
   return paper && clearOf(layer.slot, paper);
 }
+// The paper's width across at 100%, null before the book has sized it; again() lays the answers again whenever it
+// sizes it (bookpages.js's bk:paper on the world, as the book opens and when the screen turns) and whenever the
+// controls' width beside it settles (bookui.js bk:controls-width), each heard once the page is in the book
+function paperOf(layer, again) {
+  layer.again = again;
+  const world = layer.slot.closest('.bk-world'),
+    book = layer.slot.closest('#book');
+  if (world && !layer.hearsPaper) {
+    layer.hearsPaper = true;
+    hearWhileShown(layer.slot, world, 'bk:paper', () => layer.again());
+  }
+  if (book && !layer.hearsControlsWidth) {
+    layer.hearsControlsWidth = true;
+    hearWhileShown(layer.slot, book, 'bk:controls-width', () => layer.again());
+  }
+  return parseFloat(world?.style.getPropertyValue('--paper-w') ?? '') || null;
+}
+// heard() on each type event on target while el is on the page: the first after it's gone stops the listening
+function hearWhileShown(el, target, type, heard) {
+  const listener = () => (el.isConnected ? heard() : target.removeEventListener(type, listener));
+  target.addEventListener(type, listener);
+}
 const at = (g, spot) => `left:${g.box.x + spot.dx}px;top:${g.box.y + spot.dy}px;width:${spot.w}px`;
 
 function answerEl(layer, g, a, spot, replies) {
@@ -145,7 +155,7 @@ function answerEl(layer, g, a, spot, replies) {
   el.innerHTML = `<header class="bk-answer-head">${a.style === 'question' ? '' : BULB}${faceHtml(a)}<b class="bk-answer-name">${esc(
     a.style === 'question' ? word('{name} asks', { name }) : name,
   )}</b></header>${wordsHtml(a.text)}${a.ink?.length ? inkHtml(a.ink) : ''}${
-    a.picture ? `<figure class="bk-answer-picture"><img src="${esc(a.picture)}" alt="" draggable="false"></figure>` : ''
+    a.picture ? pictureHtml(a) : ''
   }${a.style === 'form' && a.form ? formHtml(a) : ''}${replyHtml(mine, word('Write your reply to {name} here', { name: a.name }))}`;
   const strip = el.querySelector('.bk-answer-reply'),
     origin = () => ({ x: el.offsetLeft + strip.offsetLeft, y: el.offsetTop + strip.offsetTop });
@@ -179,6 +189,13 @@ const inkHtml = ink =>
   `<svg class="bk-answer-ink" width="1" height="1" aria-hidden="true">${pathsOf(ink)}</svg><div class="bk-answer-room" data-foot="${Math.ceil(
     inkBox(ink)?.y1 ?? 0,
   )}"></div>`;
+// A picture taped in, and where its numbers came from under it (a.source)
+const pictureHtml = a =>
+  `<figure class="bk-answer-picture"><img src="${esc(a.picture)}" alt="" draggable="false">${
+    a.source
+      ? `<figcaption class="bk-answer-source">${esc(word('Source: {source}', { source: a.source }))}</figcaption>`
+      : ''
+  }</figure>`;
 function fitInk(el) {
   const room = el.querySelector('.bk-answer-room');
   if (room) room.style.height = `${Math.max(0, Number(room.dataset.foot) + 8 - room.offsetTop)}px`;
@@ -193,7 +210,7 @@ function wireStrip(layer, strip, a, origin) {
   });
 }
 
-// ---- an answer still coming, and the tab to a note's versions
+// ---- an answer still coming
 
 function waitingEl(g, spot) {
   const el = document.createElement('div');
@@ -209,18 +226,47 @@ function waitingEl(g, spot) {
   el.innerHTML = `${faceHtml(g.waiting)}${reason ? `<span>${esc(reason)}</span>` : DOTS}`;
   return el;
 }
-function tabEl(layer, g, tab) {
-  const el = document.createElement('button');
-  el.type = 'button';
-  el.className = 'bk-versions-tab';
-  el.dataset.g = g.id;
-  el.style.cssText = `left:${g.box.x + g.box.w + 12}px;top:${g.box.y - 2}px`;
-  el.textContent = `${tab.count} version${tab.count === 1 ? '' : 's'} →`;
-  el.disabled = !g.tries_page;
-  for (const type of ['pointerdown', 'touchstart']) el.addEventListener(type, e => e.stopPropagation());
-  // (the book turns to it as to a find: bookpages.js)
-  el.addEventListener('click', () =>
-    document.dispatchEvent(new CustomEvent('book:find', { detail: { day: layer.page.day, page: g.tries_page } })),
-  );
+
+// ---- a try's versions
+
+// Where a group's versions lie on this screen (bookversions.js): under the group and the answers placed under it, at
+// its left, or further left where that leaves the frames too little paper (never onto the cover's edge's grip), as
+// wide as the paper clear of the tools
+const VERSIONS = { gap: 16, left: 12, least: 220 };
+function versionsAt(g, edge) {
+  const spots = [
+    ...g.children.filter(c => c.kind === 'answer' && c.spot && c.style !== 'version').map(a => a.spot),
+    ...(g.waiting?.spot ? [g.waiting.spot] : []),
+  ].map(spot => spotHere(g, spot, edge));
+  const foot = Math.max(g.box.h, ...spots.map(s => s.dy + s.h)),
+    x = Math.max(VERSIONS.left, Math.min(g.box.x, edge - VERSIONS.least));
+  return { x, y: g.box.y + foot + VERSIONS.gap, w: edge - x };
+}
+function placedAt(el, at) {
+  Object.assign(el.style, { left: `${at.x}px`, top: `${at.y}px`, width: `${at.w}px` });
   return el;
 }
+// What the versions draw with from here: the page's layer their px are in, a face, and the board's pen on their frames:
+// what it writes goes to the version to(ink) names, and the page is read again once it's gone
+const versionParts = layer => ({
+  root: layer.slot,
+  faceHtml,
+  wirePen: (el, { origin, to }) =>
+    wireReply(el, {
+      origin,
+      // (the Pencil and a mouse anywhere on the frames; a finger on a version's picture, so it moves the page everywhere
+      // else)
+      takes: e => e.pointerType !== 'touch' || !!e.target.closest?.('.bk-version[data-answer] .bk-version-paper'),
+      send: ink => {
+        const on = to(ink);
+        if (!on) return Promise.reject(new Error('No version here yet'));
+        return sendReply(world.dev, on.answer, ink, on.frame).then(() => read(layer));
+      },
+      refused: words => el.setAttribute('data-refused', words),
+      done: () => {
+        if (!layer.held) return;
+        layer.held = false;
+        read(layer);
+      },
+    }),
+});

@@ -9,7 +9,12 @@ import { clone, playedHq, ON_HELPER, nodeTest, sum } from './fixture.ts';
 
 test('local and helper pushes reuse base outcomes only within the same environment, including local fallback', async () => {
   const { repo, run, marker } = await comparisonCase({
-    RUN_STATES: JSON.stringify([[['done', 'attic']], [['done', 'attic']], [['done', 'attic']], [['lost', 'attic']]]),
+    RUN_STATES: JSON.stringify([
+      [{ state: 'done', machine: 'attic' }],
+      [{ state: 'done', machine: 'attic' }],
+      [{ state: 'done', machine: 'attic' }],
+      [{ state: 'lost', machine: 'attic' }],
+    ]),
   });
   await run();
   assert.equal(readFileSync(marker, 'utf8'), 'base\n');
@@ -58,7 +63,7 @@ test('a new base runs its comparison and incomplete comparisons remain retryable
 });
 
 test('a parent ticket stays with its runner through suites with nested fixtures and local helper fallback', async () => {
-  const { repo, run } = await comparisonCase({ RUN_STATES: JSON.stringify([[['lost', 'attic']]]) });
+  const { repo, run } = await comparisonCase({ RUN_STATES: JSON.stringify([[{ state: 'lost', machine: 'attic' }]]) });
   const nested = `import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { tests, nodeTest, sum } from './fixture.ts';

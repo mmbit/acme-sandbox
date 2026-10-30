@@ -3,6 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { harness } from '../harness.ts';
+import { boxOf } from '../../../hq/shell/ink/notebookstack.js';
 
 const h = await harness('callpage');
 const { db } = h;
@@ -99,11 +100,15 @@ test('the agent reads the page, draws a rectangle round a note and a highlight, 
   assert.ok((await handed(page)) >= before + 3, "each mark counted as the agent's hand's");
   const on = await groups(page);
   const of = (id: number) => on.find(g => g.id === id);
-  const noteBox = of(note).box;
-  // (round the note with room; the highlight the highlighter's yellow, see-through, filled)
-  const ring = of(rect);
-  assert.deepEqual([ring.kind, ring.by, ring.ink.length], ['drawing', 'juno', 1]);
-  assert.ok(ring.box.x < noteBox.x && ring.box.x + ring.box.w > noteBox.x + noteBox.w, 'the ring goes round the note');
+  // (on the note itself, round its words; the highlight and the pen line drawings of their own; the highlight the
+  // highlighter's yellow, see-through, filled)
+  assert.equal(rect, note, 'the rectangle is on the note');
+  const words = boxOf({ texts: of(note).texts })!,
+    ring = boxOf({ ink: of(note).ink })!;
+  assert.equal(of(note).ink.length, 1);
+  assert.ok(ring.x <= words.x && ring.x + ring.w >= words.x + words.w, 'the rectangle goes round its words');
+  assert.ok(of(note).h >= ring.y + ring.h, 'the note is as tall as the rectangle');
+  assert.deepEqual([of(highlight).kind, of(highlight).by], ['drawing', 'juno']);
   assert.deepEqual(
     [of(highlight).ink[0].color, of(highlight).ink[0].alpha, of(highlight).ink[0].fill],
     ['#ffd23f', 0.42, true],
@@ -128,11 +133,24 @@ test('the agent changes its own scrap’s words and its item’s, moves and dele
   const [g] = await groups(page);
   assert.equal(g.texts.map((t: any) => t.text).join(''), 'Make the price much smaller');
   assert.equal(ledger.items(call)[0].what, 'Make the price much smaller', 'its item takes the new words');
-  said(await h.voice('change', { call, id: note, to: { x: 600, y: 400 } }));
-  assert.deepEqual([(await groups(page))[0].box.x, (await groups(page))[0].box.y], [600, 400]);
-  // (one the board joined another note into keeps both)
   const other = said(await h.voice('scrap', { call, words: 'Move Send elsewhere', goal: GOAL })).id as number;
-  said(await h.board('/api/notebooks/groups/join', { ids: [note, other] }));
+  said(await h.voice('change', { call, id: note, after: other }));
+  assert.deepEqual(
+    (await groups(page)).map(g => g.id),
+    [other, note],
+    'moved after the other',
+  );
+  // (one the board typed in keeps both its words and the board's)
+  const typedIn = (await groups(page)).find(g => g.id === note);
+  said(
+    await h.board('/api/notebooks/groups/edit', {
+      id: note,
+      since: typedIn.updated,
+      texts: [...typedIn.texts, { id: 'b0a2d0000000', x: 0, y: 200, w: 200, text: 'and the font', color: '#2b2230' }],
+    }),
+  );
+  // (the agent's mark on it after leaves the board's line the board's)
+  said(await h.voice('mark', { call, mark: 'ellipse', around: note }));
   assert.equal((await h.voice('change', { call, id: note, words: 'Make it small' })).status, 409);
   assert.deepEqual(
     ledger.items(call).map(i => i.what),
@@ -149,7 +167,10 @@ test('the agent changes its own scrap’s words and its item’s, moves and dele
   assert.equal((await h.voice('change', { call, id: board, words: 'Theirs' })).status, 409);
   said(await h.voice('change', { call, id: board, delete: true }));
   said(await h.voice('change', { call, id: note, delete: true }));
-  assert.deepEqual(await groups(page), []);
+  assert.deepEqual(
+    (await groups(page)).map(g => g.id),
+    [other],
+  );
   // (the board's Undo of a delete is the store's restore, the agent's deletes too)
   said(await h.board('/api/notebooks/groups/restore', { id: note }));
   assert.equal(groupRow(note).deleted, null);
@@ -186,4 +207,26 @@ test("at hang-up the agent's notes and marks stay on the page, the board's ink o
     rect.ink.length + 1,
     "the board's ink stays on the rectangle",
   );
+});
+
+test("the agent starts a try on a scrap: its owner's try run, once; a scrap on another call's page is refused", async () => {
+  const { call } = await callPage();
+  const note = said(await h.voice('scrap', { call, words: 'Make the basket bigger', goal: GOAL, owner: 'wren' }))
+    .id as number;
+  const why = 'Show me a few versions of a bigger basket';
+  const started = said(await h.voice('try', { call, id: note, why }));
+  assert.match(started.ok, /^Started: .+ makes a few versions of it, .+ land under it one by one/);
+  const run = db.prepare('select agent, kind, expedite, prompt from jobs where id = ?').get(started.job) as any;
+  assert.deepEqual([run.agent, run.kind, run.expedite], ['wren', 'try', 1]);
+  assert.ok(run.prompt.includes(why), "the board's words in the run's brief");
+  assert.equal((db.prepare('select tried from notebook_groups where id = ?').get(note) as any).tried, started.job);
+  const again = said(await h.voice('try', { call, id: note, why: 'And one in red' }));
+  assert.equal(again.job, started.job, 'one try at a time: the ask goes to the one going');
+  assert.match(again.ok, /still going/);
+  // (another call's page, and no words for why)
+  const other = await callPage();
+  const theirs = said(await h.voice('scrap', { call: other.call, words: 'Not this call’s', goal: GOAL })).id as number;
+  assert.equal((await h.voice('try', { call, id: theirs, why })).status, 404);
+  assert.equal((await h.voice('try', { call, id: note, why: ' ' })).status, 400);
+  h.cancelQueued();
 });

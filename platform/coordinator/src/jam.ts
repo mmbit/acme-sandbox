@@ -1,27 +1,28 @@
 // A jam the worker's shares can't free: the worker short of memory while work waits to start (room.ts's starved spell),
 // still ESCALATE_MS after it began, though the worker blocks the heaviest run past a job's share all along (blocks.ts).
-// It goes outside HQ at once, from here, never as a job queued behind the jam: first to the Overseer (a note HQ lets out
-// itself, overseer.ts fromHq) naming the jobs holding the most; and if it still lasts CARD_MS later, to the board, a card
-// on the desk phone whose Approve stops those jobs then and there (a tool's grant: approvals.ts). When the worker has
-// room again, a card still open leaves the desk phone. One note and one card a spell.
+// It goes to the CEO at once, as an incident (incidents.ts: a job the worker's incident slot starts whatever the room)
+// naming the jobs holding the most, and the deploys shortly before it if any; and if that job still hasn't started
+// CARD_MS later, to the board, a card on the desk phone whose Approve stops those jobs then and there (a tool's grant:
+// approvals.ts). When the worker has room again, a card still open leaves the desk phone. One incident and one card a
+// spell.
 import { db, remember, setting } from './db.ts';
 import { publish } from './events.ts';
 import { ceo, roles } from './company.ts';
 import * as approvals from './approvals.ts';
 import * as jobs from './jobs.ts';
-import * as overseer from './overseer.ts';
+import * as incidents from './incidents.ts';
 
 export const ESCALATE_MS = 10 * 60_000;
 export const CARD_MS = 15 * 60_000;
-const NAMED = 3; // the jobs a note and a card name, those holding the most
+const NAMED = 3; // the jobs an incident and a card name, those holding the most
 const KEY = 'jam';
 const GRANT = 'jam';
 
 type Held = { job: number; mb: number };
 export type Spell = { since: number; free: number; waiting: number; jobs: Held[] };
-// A spell's escalation: when it began (the room's since), the note and when, the card, and the jobs they named
-// (done: what Approve did with each, once the board approved)
-type Jam = { since: number; note?: number; noted?: number; card?: number; jobs: number[]; done?: string[] };
+// A spell's escalation: when it began (the room's since), the CEO's incident job and when, the card, and the jobs they
+// named (done: what Approve did with each, once the board approved)
+type Jam = { since: number; incident?: number; noted?: number; card?: number; jobs: number[]; done?: string[] };
 
 approvals.register(GRANT, { kind: GRANT, describe, decide });
 
@@ -35,12 +36,13 @@ export function watch(spell: Spell | undefined, now = Date.now()) {
   if (!spell || now - spell.since < ESCALATE_MS) return;
   jam ??= { since: spell.since, jobs: [] };
   const named = heaviest(spell.jobs);
-  if (!jam.note) {
+  if (!jam.noted) {
     jam.jobs = named.map(h => h.job);
-    jam.note = overseer.fromHq(noteText(spell, named, now));
+    jam.incident = incidents.stalled('jam', jammed(spell, named, now), spell.since, true);
     jam.noted = now;
-    publish({ type: 'log', agent: ceo(), text: `HQ told the Overseer the worker is jammed (its note #${jam.note}).` });
-  } else if (!jam.card && now - jam.noted! >= CARD_MS) {
+    if (jam.incident)
+      publish({ type: 'log', agent: ceo(), text: `HQ called the CEO: the worker is jammed (job #${jam.incident}).` });
+  } else if (!jam.card && now - jam.noted >= CARD_MS && unstarted(jam.incident)) {
     jam.jobs = named.map(h => h.job);
     const card = jobs.createRequest({
       kind: GRANT,
@@ -81,28 +83,29 @@ const row = (id: number) =>
   db.prepare('select agent, title, step, round, kind from jobs where id = ?').get(id) as
     { agent: string; title: string; step: string | null; round: number | null; kind: string } | undefined;
 
-function noteText(spell: Spell, named: Held[], now: number) {
+// (the incident's alarm, in its words: what the CEO judges from)
+function jammed(spell: Spell, named: Held[], now: number) {
   const lines = named.map(h => {
     const j = row(h.job)!;
     return `- job #${h.job} (${j.agent}, ${j.kind}): ${gb(h.mb)}, "${jobs.nameOf(j)}"`;
   });
-  const cardAt = new Date(now + CARD_MS).toISOString().slice(11, 16);
-  return [
-    `HQ's own alarm: the worker has been short of memory for ${mins(now - spell.since)} min (${spell.free} MB free), ` +
-      `and ${spell.waiting} job${spell.waiting === 1 ? '' : 's'} can't start. The worker blocks the heaviest run past ` +
-      "a job's share all along, and it hasn't freed the room. Holding the most:",
-    lines.join('\n') || '- (no job holds much: something outside the jobs holds the worker; action=status shows it)',
-    `Stop them if you can (company/migrations.sql: update jobs set stopping = '<why>' where id in (...) and status = ` +
-      `'running'), or find what else holds the worker. If it still lasts at ${cardAt} UTC, HQ puts a card on the ` +
-      "board's desk phone whose Approve stops them.",
-  ].join('\n\n');
+  return (
+    `the worker has been short of memory for ${mins(now - spell.since)} min (${spell.free} MB free), and ` +
+    `${spell.waiting} job${spell.waiting === 1 ? '' : 's'} can't start. The worker blocks the heaviest run past a ` +
+    `job's share all along, and it hasn't freed the room. Holding the most:\n` +
+    (lines.join('\n') || '- (no job holds much: something outside the jobs holds the worker, or the reading is wrong)')
+  );
 }
+
+// (no incident at all, as the CEO's couldn't be made, counts as one not started)
+const unstarted = (job?: number) =>
+  !job || !!db.prepare("select 1 from jobs where id = ? and status = 'queued'").get(job);
 
 function cardText(spell: Spell, named: Held[], now: number) {
   return (
     `No new work has started for ${mins(now - spell.since)} min: the worker is out of memory, and stopping the heaviest ` +
-    `work hasn't freed it. ${spell.waiting} job${spell.waiting === 1 ? '' : 's'} wait. The Overseer was told ` +
-    `${mins(CARD_MS)} min ago.\n\nApprove stops ${named.length === 1 ? 'the job' : 'the jobs'} holding the most, ` +
+    `work hasn't freed it. ${spell.waiting} job${spell.waiting === 1 ? '' : 's'} wait. The CEO was called ` +
+    `${mins(CARD_MS)} min ago, and couldn't start.\n\nApprove stops ${named.length === 1 ? 'the job' : 'the jobs'} holding the most, ` +
     'now. Not now leaves them running.\n\nRecommended: Approve.'
   );
 }

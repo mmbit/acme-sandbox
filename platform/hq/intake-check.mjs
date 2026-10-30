@@ -9,11 +9,13 @@ import assert from 'node:assert/strict';
 import { serve } from './serve.mjs';
 import { playwright, openPage, until } from '../../shared/browser/browser.mjs';
 import { ASKS } from './shell/tips.js';
+import { lookNames } from './looks.mjs';
+import { notebookPlay } from './shell/ink/notebookplay.js';
 
 const { chromium } = playwright();
 const server = await serve(),
   base = `http://localhost:${server.address().port}`;
-const LOOKS = ['wire', 'brownstone', 'holo'];
+const LOOKS = lookNames();
 const shots = process.argv[2];
 // The card as hq intake sets it (the coordinator's chat.ts card)
 const switches = {
@@ -61,6 +63,18 @@ const REPLIES = [
   { text: 'On it.' },
 ];
 
+// What the rest of HQ reads as it boots, answered quietly: the intercom is all this check looks at. The Notebook's
+// routes go to its store played in memory, as dev mode's (notebookplay.js), and the work piles are the mock's
+const BOOT = {
+  '/api/review/products': [],
+  '/api/requests/later': [],
+  '/api/notebooks/open': { forms: [], questions: [] },
+  '/api/pictures/waiting': { pictures: [] },
+  '/api/work/piles': (await (await fetch(`${base}/mock/work.json`)).json()).piles,
+  '/api/room': { line: null },
+  '/api/language': { lang: 'en' },
+};
+
 const browser = await chromium.launch();
 for (const look of LOOKS) await checkLook(look);
 await browser.close();
@@ -94,9 +108,11 @@ async function checkLook(look) {
       switches,
     ),
   );
-  const sent = [];
+  const sent = [],
+    notebook = notebookPlay();
   await context.route(`${base}/api/**`, async r => {
-    const path = new URL(r.request().url()).pathname;
+    const url = new URL(r.request().url()),
+      path = url.pathname;
     if (path === '/api/chat' && r.request().method() === 'POST') {
       sent.push(r.request().postDataJSON().text);
       messages.push(line('board', sent.at(-1)));
@@ -109,9 +125,10 @@ async function checkLook(look) {
     if (path === '/api/book') return r.fulfill({ json: { day: null, today: null, days: [], pages: [] } }); // (the board's book, empty)
     const mocked = await r.fetch({ url: `${base}/mock${path.slice(4)}.json` });
     if (mocked.ok()) return r.fulfill({ response: mocked });
-    if (path === '/api/seen') return r.fulfill({ json: {} });
-    if (['/api/gazette', '/api/mail', '/api/review/products', '/api/requests/later', '/api/requests'].includes(path))
-      return r.fulfill({ json: [] });
+    if (path in BOOT) return r.fulfill({ json: BOOT[path] });
+    if (path.startsWith('/api/notebooks'))
+      return r.fulfill({ json: notebook.route(path, url.searchParams, r.request().postDataJSON() ?? undefined) });
+    if (path === '/api/events') return r.fulfill({ body: 'retry: 600000\n\n', contentType: 'text/event-stream' }); // (no events)
     return r.fulfill({ status: 404, body: '' });
   });
   await page.goto(`${base}/?renderer=${look}&intro=0&hour=11&weather=clear`);

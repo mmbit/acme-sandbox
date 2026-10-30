@@ -8,7 +8,19 @@ import { nameHtml, nameText } from './jobs.js';
 import { face, pulse, waitOf } from './projectkeys.js';
 import { ROW_MARKS } from './tasks.js';
 import { waitsOf } from './threadtile.js';
-import { atWork, etaPlace, planned, taskHtml, threadEta, threadLit, threadNow, threadState, clock } from './threads.js';
+import {
+  atWork,
+  endOf,
+  endWord,
+  etaPlace,
+  planned,
+  taskHtml,
+  threadEta,
+  threadLit,
+  threadNow,
+  threadState,
+  clock,
+} from './threads.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 // The two lists, each a group of the view's (hud.js opens them, and the keys at the head of the projects and of each list)
@@ -96,6 +108,7 @@ function finishedThreads(projects, completed) {
 }
 // A finished thread's row: what it delivered (its done-when) and when it finished
 function finishedRow({ t, p, at }, opening) {
+  const ok = endOf(t) === 'done';
   const said =
     opening?.id === t.id
       ? opening.words
@@ -103,11 +116,11 @@ function finishedRow({ t, p, at }, opening) {
         ? nameText(t, 'goal')
         : `${t.done} of ${t.jobs} ${t.jobs === 1 ? 'job' : 'jobs'} done`;
   return row(t, p, {
-    look: 'pj-task done',
+    look: `pj-task ${ok ? 'done' : 'ended'}`,
     who: t.owner,
-    mark: 'done',
+    mark: endOf(t),
     says: esc(said),
-    when: `Done ${clock(at)}`,
+    when: `${endWord(t)} ${clock(at)}`,
   });
 }
 

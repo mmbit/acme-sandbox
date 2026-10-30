@@ -36,12 +36,6 @@ const pin = () => {
   dispatchEvent(ask);
   return ask.detail.pin ?? null;
 };
-// What brings the pin: the book's pin key, among its controls (pinsummon.js), or the book's handle while it's folded
-// (opened, the key is there, and beside HQ the opening brings the pin). Where the open book covers HQ (a phone's
-// spread) the pin is the key that leaves HQ with it.
-const book = () => document.documentElement.dataset.book;
-const pinWay = () => document.querySelector(book() === 'folded' ? '#book .bk-lip' : '#book .bk-pin');
-const pinOrKey = () => (book() === 'spread' ? document.querySelector('#book .bk-pin') : pin());
 
 // The tips in the company's names for its desk phone and intercom (brand.yaml's: the shell's brand.js names, the
 // coordinator's company.ts names), which every caller passes; TIPS, for the keys, has the foundation's
@@ -118,10 +112,12 @@ const tipsFor = ({ phone, intercom }) => [
     when: 'the first picture the board pastes on the intercom',
     title: 'Pin a note right on HQ',
     lines: () =>
-      'Instead of a screenshot, you can pin a note on the part of HQ it’s about, and it stays where you put it. The pin comes from the book’s controls.',
+      'Instead of a screenshot, you can pin a note on the part of HQ it’s about, and it stays where you put it. Settings › Pin on HQ puts the pin on this device.',
+    // (the pin turned on in Settings, pinsetting.js.)
+    opens: { app: 'settings' },
     steps: [
-      { at: pinWay, say: 'The pin comes from the book: press here', done: () => !!pin() },
-      { at: pinOrKey, say: 'Then press the pin, and tap where your note goes' },
+      { at: '#tool [data-switch="sys:pin"]', say: 'Pin on HQ: turn it on for this device', done: () => !!pin() },
+      { at: pin, say: 'Then press the pin, and tap where your note goes' },
     ],
   },
   {

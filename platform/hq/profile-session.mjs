@@ -4,10 +4,8 @@
 // so growth shows round on round. Chromium adds its own counts after a garbage collection (detached elements too).
 //   node platform/hq/profile-session.mjs [--engine chromium|webkit] [--look brownstone] [--rounds 10] [--rest 120]
 //     [--views book,phone]
-import { readFile } from 'node:fs/promises';
 import { parseArgs } from 'node:util';
-import { serve, ROOT } from './serve.mjs';
-import { playwright, openPage, until } from '../../shared/browser/browser.mjs';
+import { openProfiled, SAMPLE_MS } from './profile-browser.mjs';
 
 const { values: options } = parseArgs({
   options: {
@@ -18,8 +16,6 @@ const { values: options } = parseArgs({
     views: { type: 'string', default: '' }, // the views each round opens, by name (VIEWS), else all of them
   },
 });
-const SAMPLE_MS = 5000; // (the profiler's own is 20 s: a session here is minutes, not hours)
-const IPAD_MINI = { viewport: { width: 1133, height: 744 }, deviceScaleFactor: 2, hasTouch: true };
 // Each round's views, opened and closed as the board's taps do (desk.js, projects.js, ink/book.js, news.js)
 const VIEWS = {
   book: [
@@ -43,25 +39,8 @@ const VIEWS = {
 };
 
 const opened = options.views ? options.views.split(',').map(name => VIEWS[name]) : Object.values(VIEWS);
-// The profiler with its sample and send times set to ours (it reads them from window.__profileTimes)
-const profiler =
-  `window.__profileTimes = { sampleMs: ${SAMPLE_MS}, sendMs: ${SAMPLE_MS} };\n` +
-  (await readFile(`${ROOT}/shared/profile/profile.js`, 'utf8'));
-const server = await serve(),
-  base = `http://localhost:${server.address().port}`;
-const browser = await playwright()[options.engine].launch();
-const { context, page, errors } = await openPage(browser, IPAD_MINI);
-const samples = [];
-await context.route('**/__review/profile', route => {
-  samples.push(...JSON.parse(route.request().postData()).samples);
-  return route.fulfill({ json: { kept: 1 } });
-});
-await context.addInitScript(profiler);
-const cdp = options.engine === 'chromium' ? await context.newCDPSession(page) : null;
+const { page, errors, samples, cdp, close } = await openProfiled(options);
 await cdp?.send('Performance.enable');
-
-await page.goto(`${base}/?intro=0&renderer=${options.look}`);
-await until(page, '#loading.gone');
 const phases = [];
 await phase('loaded', 10);
 await phase('at rest', Number(options.rest));
@@ -75,8 +54,7 @@ for (let round = 1; round <= Number(options.rounds); round++) {
   if (round === 1 || round % 5 === 0) await phase(`round ${round}`, 6);
 }
 await phase('at rest again', Number(options.rest));
-await browser.close();
-server.close();
+await close();
 
 console.log(
   `HQ in ${options.look}, ${options.engine}, iPad mini landscape at 2x, ${options.views || 'every view'}: what each phase ended with`,

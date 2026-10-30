@@ -1,19 +1,17 @@
 // What the book keeps of a Notebook page: its groups (knowledge/notes/platform/notebook.md). The tools work on a page's
 // lists as they always have (page.ink, page.scraps: its pictures, page.texts), each element carrying its group's id
 // (el.g); soon after each change the page's change goes to the store, group by group:
-//   - an element with no group joins the open group its start lies inside, else the group drawn in last when it's near
-//     in time and space, else a new group with the new elements near it (bookgroupmath.js sortNew): create, or edit;
+//   - a page's groups are its scrap units (bookunits.js): an element goes to the unit it starts on, and one started
+//     between units makes a new unit, created right after the unit above it; what's saved is in its unit's own px;
 //   - a group whose elements changed is edited, with since (its updated as this screen read it): one changed on
 //     another screen meanwhile is refused, and the page is read again, what this screen added to it kept and saved anew;
 //   - a group left with nothing is deleted, kept aside by the store; Undo putting its elements back restores it;
 //   - a scrap's words typed (bookgroups.js) are edited on their own, kept as typed until the store has them.
 // A sent page's own groups are read-only: nothing on it is saved. (groups)
 import { createGroup, deleteGroup, editGroup, loadGroups, restoreGroup } from './notebookdata.js';
-import { changesOf, emptyParts, keyOf, sortNew } from './bookgroupmath.js';
-import { boxOf as boxOfParts } from './notebookstack.js';
+import { changesOf, emptyParts, keyOf } from './bookgroupmath.js';
 import { arrive } from './bookarrive.js';
-import { fitScraps, storedOf } from './bookscrapfit.js';
-import { grownTo } from './bookrow.js';
+import { localOf, madeUnit } from './bookunits.js';
 import { nameOf } from './bookhead.js';
 import { arrived } from './bookedit.js';
 
@@ -54,8 +52,8 @@ export const shut = page => !!(page.sending || page.sent || page.readonly);
 async function saveNow(book, page) {
   if (!page.groups || shut(page)) return;
   try {
-    await put(book, page);
-    said(book, page, '');
+    // (a restore the store refused says why)
+    said(book, page, await put(book, page));
   } catch (e) {
     page.failed = true;
     if (e.status !== 409) {
@@ -68,35 +66,19 @@ async function saveNow(book, page) {
 }
 async function put(book, page) {
   const { dev } = book,
-    els = elementsOf(page),
-    had = page.groups.size;
-  // (groups this screen deleted, their elements put back by Undo: restored first, then edited like any other)
-  for (const id of new Set(els.map(x => x.el.g)))
-    if (page.gone.has(id)) {
-      keep(page, await restoreGroup(dev, id));
-      page.gone.delete(id);
-    }
-  // (new elements, or ones carried in from a group not on this page: into groups)
-  const news = els.filter(x => !page.groups.has(x.el.g));
-  if (news.length) {
-    const opened = [...page.groups.values()].map(g => ({ id: g.id, box: boxNow(page, g.id) }));
-    const { sorted, recent } = sortNew(news, opened, page.last, Date.now());
-    for (const s of sorted) for (const x of s.items) x.el.g = s.id;
-    for (const s of sorted.filter(s => s.id === null)) {
-      const parts = partsOf(s.items),
-        made = await createGroup(dev, page.id, parts);
-      s.id = made.id;
-      for (const x of s.items) x.el.g = made.id;
-      keep(page, made, parts);
-    }
-    page.last = { id: recent.id, at: Date.now(), box: recent.box };
-  }
+    had = page.groups.size,
+    refused = await restoreGone(dev, page);
+  // (a refused restore's elements left the page's lists: drawn again)
+  if (refused) drawn(book, page);
+  const news = await makeUnits(dev, page, elementsOf(page));
   const base = new Map([...page.groups.values()].map(g => [g.id, g.base])),
     now = new Map();
   for (const x of elementsOf(page)) {
+    // (one not in a unit the store has yet waits for the next save)
+    if (!(x.el.g > 0)) continue;
     if (!now.has(x.el.g)) now.set(x.el.g, emptyParts());
-    // (a scrap drawn to fit this screen at the store's scale: bookscrapfit.js.)
-    now.get(x.el.g)[x.kind].push(storedOf(page, x.el));
+    // (in its unit's own px: bookunits.js)
+    now.get(x.el.g)[x.kind].push(localOf(page, x.kind, x.el));
   }
   const { edits, deletes } = changesOf(base, now);
   for (const { id, parts } of edits) {
@@ -115,8 +97,46 @@ async function put(book, page) {
   }
   await putWords(dev, page);
   if (news.length || edits.length || deletes.length || page.groups.size !== had) book.groups?.drawn(page);
+  return refused;
 }
 
+// Groups this screen deleted, their elements put back by Undo: restored first, then edited like any other. A restore
+// the store refuses (409) is final, a reply taken back or an ask whose card went with it: its elements leave the page
+// again and it's no longer this screen's to restore, and the save goes on without it. → the refusal's words, or ''.
+async function restoreGone(dev, page) {
+  let refused = '';
+  for (const id of new Set(elementsOf(page).map(x => x.el.g)))
+    if (page.gone.has(id)) {
+      try {
+        keep(page, await restoreGroup(dev, id));
+      } catch (e) {
+        if (e.status !== 409) throw e;
+        for (const list of Object.values(LISTS))
+          page[list]?.splice(0, page[list].length, ...page[list].filter(el => el.g !== id));
+        refused = e.message;
+      }
+      page.gone.delete(id);
+    }
+  return refused;
+}
+// The units drawn here, a stroke between units or below the last: made in the store right after the unit above them,
+// their elements in their own px (bookunits.js); the ones made.
+async function makeUnits(dev, page, els) {
+  const news = [...(page.pending ?? [])];
+  for (const unit of news) {
+    const items = els.filter(x => x.el.g === unit.id);
+    if (!items.length) {
+      page.pending = page.pending.filter(p => p !== unit);
+      continue;
+    }
+    const parts = partsOf(page, items),
+      after = unit.after === null || unit.after > 0 ? unit.after : undefined,
+      made = await createGroup(dev, page.id, after == null ? parts : { ...parts, after });
+    madeUnit(page, unit.id, made.id);
+    keep(page, made, parts);
+  }
+  return news;
+}
 // A scrap's words typed, as the store keeps them: trimmed, and said as its words first came, else typed. What's typed
 // is let go once the store has it (a space at its end under the caret stays in the field: bookgroups.js caretBack),
 // unless more was typed meanwhile.
@@ -137,7 +157,6 @@ export async function readPage(book, page) {
   const read = await loadGroups(book.dev, page.id);
   named(book, page, read.title);
   fill(page, read.groups);
-  fitScraps(book, page);
   page.handed = read.handed;
   return read;
 }
@@ -161,7 +180,6 @@ async function readNow(book, page) {
   // Undo, bookedit.js arrived)
   const fillIn = () => {
     fill(page, read.groups);
-    fitScraps(book, page);
   };
   if (read.handed > page.handed)
     arrived(
@@ -173,7 +191,7 @@ async function readNow(book, page) {
   else fillIn();
   page.handed = read.handed;
   // (what's drawn and not yet in a group, and words typed, kept, are saved again)
-  if (elementsOf(page).some(x => x.el.g === undefined) || page.typed?.size) changed(book, page);
+  if (elementsOf(page).some(x => !(x.el.g > 0)) || page.typed?.size) changed(book, page);
   drawn(book, page);
   const view = book.views.find(v => v.page === page);
   if (view)
@@ -210,16 +228,17 @@ const unchanged = (page, groups) =>
       had?.updated === g.updated && JSON.stringify([had.children, had.asks]) === JSON.stringify([g.children, g.asks])
     );
   });
+// (the store's elements in their units' own px, until the page lays them: bookunits.js. What's drawn here and not
+// yet in the store, in a unit drawn here, stays where it is.)
 function fill(page, groups) {
-  const unsaved = elementsOf(page).filter(x => x.el.g === undefined);
+  const unsaved = elementsOf(page).filter(x => !(x.el.g > 0));
   page.groups = new Map();
   page.gone ??= new Map();
-  page.fits = null; // (none drawn to fit yet: bookscrapfit.js.)
+  page.origins = new Map([...(page.origins ?? [])].filter(([id]) => id < 0));
   const lists = { ink: [], texts: [], pictures: [] };
   for (const g of groups) {
     keep(page, g, g);
     for (const kind of Object.keys(LISTS)) lists[kind].push(...g[kind].map(el => ({ ...el, g: g.id })));
-    if (g.box) Object.assign(page, grownTo(page, boxOf(g.box)));
   }
   for (const x of unsaved) lists[x.kind].push(x.el);
   for (const [kind, list] of Object.entries(LISTS)) {
@@ -247,22 +266,14 @@ function keep(page, g, sent = g) {
 // Every element on the page, { kind (the store's name), el }
 const elementsOf = page =>
   Object.entries(LISTS).flatMap(([kind, list]) => (page[list] ?? []).map(el => ({ kind, el })));
-// A group's elements as they are now on the page, for its box
-function boxNow(page, id) {
-  const parts = emptyParts();
-  for (const x of elementsOf(page)) if (x.el.g === id) parts[x.kind].push(x.el);
-  return boxOfParts(parts);
-}
 // What's sent of new elements: as the store keeps them
-const partsOf = items => {
+const partsOf = (page, items) => {
   const parts = emptyParts();
-  for (const x of items) parts[x.kind].push(x.el);
+  for (const x of items) parts[x.kind].push(localOf(page, x.kind, x.el));
   return stripped(parts);
 };
 const stripped = parts =>
   Object.fromEntries(Object.entries(parts).map(([k, list]) => [k, list.map(el => JSON.parse(keyOf(el)))]));
-// (the page grows to hold a group's box)
-const boxOf = b => ({ x0: b.x, y0: b.y, x1: b.x + b.w, y1: b.y + b.h });
 
 export function said(book, page, words) {
   page.error = words;

@@ -48,8 +48,11 @@ our own folders that any company would need is a nonblocking finding naming wher
 plug-in point nobody needs yet is no finding.
 `;
 
-// Whether the change is throwaway, judged from what it is (CODE_STYLE.md): its readers then hold it to the low bar
-const THROWAWAY = `Set "throwaway" when the change is work that runs once or twice and goes to the archive: a prototype, a
-demo reel, a concept film, a presentation. Its readers then look only at whether it misses the board's vision in an
-important way and at real breakage or safety, so one reader, or the consolidator alone, is usually enough. Code that
-customers use, that other code builds on, or that keeps running is never throwaway, whatever its folder.`;
+// Whether the change is throwaway, judged from what it is (CODE_STYLE.md): it then gets one light read, the consolidator's
+// alone (reviewlight.ts).
+const THROWAWAY = `Set "throwaway" when the change is work that runs once or twice and goes to the archive: a slide deck, an
+animation, a preview, a prototype, a demo reel, a concept film. Judge it by what the change is, never by the project or
+deliverable it's filed under: a deck for the foundation is still a deck. It then gets one light review on whether it
+does what its task and the board asked, not on its technology: the consolidator reads it alone, and no reader you
+name reads it, unless one is "security": true for a concrete risk. Code that customers use, that other code builds on,
+or that keeps running (the foundation, our kits, our public apps) is never throwaway, whatever its folder.`;

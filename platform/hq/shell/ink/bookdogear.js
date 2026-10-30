@@ -1,15 +1,18 @@
-// A page shared by its corner: every page the board sees has its top-right corner turned down, a dog-ear. Held and
-// drawn away (a finger, the Pencil or a mouse) the page comes off with it, a small copy held by its corner, and three
-// targets show over the paper: PDF, PNG and a call with the CEO (bookshare.js). Let go on one, the page folds into it
-// and goes (bookpaper.js); let go anywhere else, it goes back. Pressed with a key or tapped, the corner opens the same
-// three as a small menu. Carried, the copy is torn out at the spine, its edge jagged; the page itself stays whole. With
-// a call on, the call's window takes it too, as the call's target does (calldrop.js). Its look: bookshare.css. (sharing, was giving the page to a face; mounted by the book's pages, a sent page's
-// stamp bookpagesend.js's) The copy tears out with a soft tear of paper.
+// A page sent or shared by its corner: every page the board sees has its top-right corner turned down, a dog-ear. Held
+// and drawn away (a finger, the Pencil or a mouse) a copy of the page tears off with it, torn out at the spine, its edge
+// jagged, with a soft tear of paper; the page itself stays whole. The rail makes way for three targets over the page
+// bar (bookshare.js): Submit to the CEO, PDF and PNG. Let go on Submit, the page goes (bookpagesend.js); on PDF or PNG
+// the copy folds into it and the file downloads; anywhere else, it goes back. Pressed with a key or tapped, the corner
+// opens the same three as a small menu. With a call on, the call's window takes it too (calldrop.js). Its look:
+// bookshare.css. (Submit, the call's target gone)
 import { foley } from '../audio.js';
 import { picture } from './bookflip.js';
 import { fold, tear } from './bookpaper.js';
 import { said } from './booksave.js';
 import { callAbout, downloaded, filesOf, mountTargets } from './bookshare.js';
+import { askedFirst, openAsks, submit } from './bookpagesend.js';
+import { shut } from './booksave.js';
+import { islands } from './bookui.js';
 import { callWindowAt, lightCall } from '../calldrop.js';
 
 // how far a press moves before the page comes off (less: a tap, the menu), the copy's width held, and its corner
@@ -24,12 +27,12 @@ export function mountDogEar(book) {
     pages = book.paper.querySelector('.bk-pages');
   ear.className = 'bk-dogear';
   ear.hidden = true;
-  ear.setAttribute('aria-label', 'Share this page: drag its corner onto PDF, PNG or a call, or press for the choices');
+  ear.setAttribute('aria-label', 'Send this page: drag its corner onto Submit, PDF or PNG, or press for the choices');
   ear.setAttribute('aria-haspopup', 'menu');
   ear.innerHTML = '<i aria-hidden="true"></i>';
   pages.append(ear);
-  const corner = { book, ear, files: null };
-  corner.targets = mountTargets(pages, {
+  const corner = { book, ear, files: null, lane: islands().querySelector('.bk-lane-line') };
+  corner.targets = mountTargets(corner.lane, {
     act: (kind, box) => went(corner, kind, box, null),
     closed: () => ear.focus(),
   });
@@ -43,15 +46,16 @@ export function mountDogEar(book) {
   ear.addEventListener('click', e => e.detail === 0 && menu(corner)); // (a key's press)
 }
 
-// The page shown, or null (none yet)
+// The page shown, or null (none yet); whether a page can be sent (a call's notes page goes as its call ends)
 const shown = book => book.views[book.cur] ?? null;
+const sendable = page => !shut(page) && page.kind !== 'call';
 
 // The targets as a menu, the page's files started
 function menu(corner) {
   const v = shown(corner.book);
   if (!v) return;
   corner.files = filesOf(corner.book, v.page);
-  corner.targets.menu();
+  corner.targets.menu(sendable(v.page));
 }
 
 // A press on the corner: moved, the page comes off with it; let go without moving, the menu
@@ -114,7 +118,7 @@ function lift(corner, v, e) {
   foley('tear', { dur: 0.22 }, { vol: 0.07 });
   corner.ear.dataset.lifted = '';
   corner.files = filesOf(corner.book, v.page);
-  corner.targets.carrying();
+  corner.targets.carrying(sendable(v.page));
   if (!matchMedia('(prefers-reduced-motion: reduce)').matches) {
     const at = layer.getBoundingClientRect(),
       dx = shownBox.left + shownBox.width / 2 - (at.left + at.width / 2),
@@ -140,12 +144,13 @@ const aimedAt = (corner, e) => corner.targets.under(e.clientX, e.clientY) ?? cal
 const placeAt = (layer, e) =>
   Object.assign(layer.style, { left: `${e.clientX - layer.offsetWidth + 12}px`, top: `${e.clientY - 12}px` });
 
-// Let go: on a target, the page folds into it and goes; anywhere else, the copy flies back into the corner
+// Let go: on Submit, the page goes; on PDF or PNG, the copy folds into it; anywhere else, it flies back into the corner
 async function drop(corner, { layer, v }, target) {
   delete corner.ear.dataset.lifted;
-  corner.targets.hide();
   lightCall(false);
-  if (target) return went(corner, target.dataset.share ?? 'call', target.getBoundingClientRect(), layer, v);
+  const box = target?.getBoundingClientRect();
+  if (target?.dataset.share !== 'submit') corner.targets.hide();
+  if (target) return went(corner, target.dataset.share ?? 'call', box, layer, v);
   const home = corner.ear.getBoundingClientRect(),
     at = layer.getBoundingClientRect(),
     dx = home.right - at.right,
@@ -160,11 +165,19 @@ async function drop(corner, { layer, v }, target) {
   layer.remove();
 }
 
-// The page goes where it was let go (kind: 'pdf' | 'png' | 'call', box: the target's on the screen): the copy carried
-// (or, from the menu, a picture of the page) folds into it as it goes, and the share sheet or the call starts at once
-function went(corner, kind, box, layer, v = shown(corner.book)) {
+// The page goes where it was let go (kind: 'submit' | 'pdf' | 'png' | 'call', box: the target's on the screen; layer:
+// the copy carried, or null from the menu, a picture of the page going instead). Submit with asks still open on the page
+// asks first (the copy lying on it meanwhile), and Answer them first sends it back to the corner.
+async function went(corner, kind, box, layer, v = shown(corner.book)) {
   const { book } = corner;
-  if (!v) return;
+  if (!v) return layer?.remove();
+  if (kind === 'submit') {
+    const asks = openAsks(v.page),
+      go = !asks.length || (await askedFirst(corner.lane, box, asks));
+    corner.targets.hide();
+    if (!go) return layer ? drop(corner, { layer, v }, null) : corner.ear.focus();
+    return submit(book, v, layer, asks);
+  }
   if (layer) fold(layer.getBoundingClientRect(), layer, box);
   else fold(book.desk.getBoundingClientRect(), picture(book.desk), box);
   const files = corner.files;

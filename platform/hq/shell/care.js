@@ -27,7 +27,7 @@ import { loadCare, loadCareCount, loadCareCard, loadCareDone, loadCareRemedies, 
 import { sfx } from './audio.js';
 import { toast } from './hud.js';
 import * as world from '../world/world.js';
-import { companyFormats, dayTime, timeOf } from '../world/clock.js';
+import { ago, companyFormats, dayTime, timeOf } from '../world/clock.js';
 
 // What the computer is showing: the list, a card, or Care › Numbers ({ screen: 'numbers', app, mode }: app null is the
 // first app, mode null the app's own: live once it's launched, else preview)
@@ -204,7 +204,6 @@ const DONE = { sent: 'Sent', closed: 'Closed: no reply needed', answered: 'Answe
 const dayOf = s => companyFormats().day(s, 'en', { weekday: true, short: true });
 // (a moment on the company's clock)
 const when = ts => dayTime(ts, { weekday: false });
-const ago = ts => { const m = Math.round((Date.now() - new Date(ts)) / 60000); return !ts || isNaN(m) ? '' : m < 1 ? 'just now' : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`; };
 const kindOf = c => KIND[c.kind] ?? 'A customer';
 const toPartner = c => c.sendTo === 'partner';
 const dueBy = c => `${toPartner(c) && !c.claim?.sent ? 'send by' : 'reply by'} ${dayOf(c.replyBy)}`;

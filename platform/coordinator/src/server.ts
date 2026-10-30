@@ -23,6 +23,7 @@ import { db, companyOnce, scrubOnStart, optimize, inOneStep } from './db.ts'; //
 import * as jobs from './jobs.ts';
 import * as engineOnly from './engineonly.ts';
 import * as room from './room.ts';
+import * as roomrecords from './roomrecords.ts';
 import * as blocks from './blocks.ts';
 import * as seats from './seats.ts';
 import { stallSweep } from './stalls.ts';
@@ -106,25 +107,29 @@ import * as bookfetch from './ink/bookfetch.ts';   // (and one dragged in from t
 import { notFound } from './pagescraps.ts';   // (its files)
 import { bookFor, people as bookPeople } from './ink/sketchpeople.ts';   // (and invited people's)
 import * as booknotes from './ink/booknotes.ts';   // and its sheets and notes
+import * as askpages from './ink/askpages.ts';   // (a design ask, a scrap on its book's Asks page)
 import * as bookasks from './ink/bookasks.ts';   // and the desk-phone cards about its notes and pages
 import * as booksheets from './ink/booksheets.ts';   // and its sheets going out.
 import * as bookreads from './ink/bookreads.ts';   // and the agents' and calls' reads of its pages
 import * as bookslips from './ink/bookslips.ts';   // and the answers clipped onto its notes
 import * as bookcalls from './ink/bookcalls.ts';   // and calls' pages
-import { spotsOnStart } from './ink/answerplace.ts';
 import * as booksearch from './ink/booksearch.ts';   // and its Search.
 import './ink/bookreview.ts';   // and review mode's notes on previews, the ones that waited moved in at start
 import * as booktyped from './ink/booktyped.ts';   // and a question typed on its page, answered under it
-import * as sketchbook from './ink/sketchbook.ts';   // and the Sketchbook, its free pages
+import './ink/sketchmigration.ts';   // and the Sketchbook's old sketches, folded in at start
 import * as notebookguests from './notebookguests.ts';
 import * as notebookguestroom from './notebookguestroom.ts';
 import { syncOpenReviews } from './notebookreviews.ts';
+import * as notebookrounds from './notebookrounds.ts';
 import * as notebook from './notebook.ts';   // the Notebook: notebooks and their pages
 import * as notebookgroups from './notebookgroups.ts';   // and the groups on its pages
+import './notebookunits.ts';   // the groups from before scrap units carried into them, once
 import { createScrap } from './notebookscraps.ts';   // a scrap stacked on one
+import * as trypreview from './ink/trypreview.ts';
 import * as notebooksend from './notebooksend.ts';   // and a page sent in, a reply under an answer
 import * as bookanswer from './ink/bookanswer.ts';   // the agents' answers there, a call's agent's too
 import * as notebookpictures from './notebookpictures.ts';   // and a group's pictures
+import * as notebookshelf from './notebookshelf.ts'; // and a notebook's cover
 import * as callnotes from './ink/callnotes.ts';   // and a call's notes page
 import * as callpage from './ink/callpage.ts';   // the agent working it
 import * as pair from './pair.ts';   // two of the board's devices paired for a session
@@ -193,6 +198,8 @@ import * as careCredit from './care-credit.ts';
 import * as heldLines from './held-lines.ts';   // a product's paid lines held for a person
 import * as later from './later.ts';   // cards kept off the desk phone until a day
 import * as claimobservation from './claimobservation.ts';
+import * as pagecheck from './pagecheck.ts';
+import * as reverts from './reverts.ts';
 import * as latency from './latency.ts';   // how fast HQ answers (infra/report.sh)
 import * as reins from './reins.ts';   // each job's share of HQ's time
 import { stalled } from './stalljobs.ts';
@@ -260,7 +267,11 @@ class Refused {
 // One app's numbers (metrics.ts) with the support chat's line for the same days and mode, when it has one (Care › Numbers),
 // and what the company's parts add (kits.ts)
 const withChat = (r: any) => kits.numbers(r?.slug ? { ...r, chat: careNumbers.line(r.slug, r.mode, r.days) } : r);
-const refusal = (r: unknown) => typeof r === 'string' ? new Refused(400, r) : Array.isArray(r) ? new Refused(r[0], r[1], r[2]) : r;
+// A page of someone the board invited, in a notebook the board shares with them: the board reads it, never writes it
+const guestPage = (page: number) => notebookguests.managedPage(page) && !notebook.pageRow(page, book.BOARD);
+// (its third part: what more the caller needs, or a code that goes as reason, which the page reads to know which
+// refusal it is.)
+const refusal = (r: unknown) => typeof r === 'string' ? new Refused(400, r) : Array.isArray(r) ? new Refused(r[0], r[1], typeof r[2] === 'string' ? { reason: r[2] } : r[2]) : r;
 // A board's route on a book it names (who: its own, or an invited person's, sketchpeople.ts bookFor): then's answer, or
 // none's for a book that isn't one (404).
 const inBook = (who: unknown, then: (who: string) => unknown, none: () => unknown = () => 404) => {
@@ -469,14 +480,7 @@ const api: Record<string, BoardRoute> = {
   'GET /api/book/search': (q, s, b) => booksearch.searchBook(b.q),
   // the words in the board's ink, read by a small model (handwriting.ts.)
   'POST /api/book/read': async (q, s, b) => refusal(await handwriting.read(b)),
-  // the board's Sketchbook, on the book's free pages (sketchbook.ts; its save is a board row, for its size).
-  'GET /api/sketches': () => sketchbook.listSketches(),
-  'GET /api/sketches/ink': (q, s, b) => sketchbook.getSketch(Number(b.id)),
-  'POST /api/sketches/create': (q, s, b) => refusal(sketchbook.createSketch(b)),
-  'POST /api/sketches/label': (q, s, b) => refusal(sketchbook.labelSketch(b)),
-  'POST /api/sketches/archive': (q, s, b) => refusal(sketchbook.archiveSketch(b)),
-  'POST /api/sketches/delete': (q, s, b) => refusal(book.deletePage(Number(b.id))),
-  'POST /api/sketches/send': async (q, s, b) => refusal(await sketchbook.sendSketch(Number(b.id))),
+  // (HQ's Sketchbook app and its /api/sketches routes are gone)
   // the Notebook: the shelf, a notebook's pages, a page's groups, a page sent (notebook*.ts; a group's elements are board
   // rows, for their size.).
   'GET /api/notebooks/guests': (q, s, b) => notebookguests.listNotebooks(undefined, Number(b.notebook) || undefined),
@@ -487,20 +491,27 @@ const api: Record<string, BoardRoute> = {
   'GET /api/notebooks/guests/groups': (q, s, b) => refusal(notebookguestroom.listBoardGroups(b)),
   'GET /api/notebooks': () => notebook.listNotebooks(),
   'POST /api/notebooks/archive': (q, s, b) => refusal(notebook.archiveNotebook(b)),
+  // (a review round's book closed from the shelf, and unwrapped back from Lyra)
+  'POST /api/notebooks/round/close': (q, s, b) => refusal(notebookrounds.closeRound(b)),
+  'POST /api/notebooks/round/unwrap': (q, s, b) => refusal(notebookrounds.unwrapRound(b)),
   'GET /api/notebooks/pages': (q, s, b) => refusal(notebookguests.boardPages(b)),
   'POST /api/notebooks/pages/create': (q, s, b) => refusal(notebookguests.boardCreatePage(b)),
   'POST /api/notebooks/pages/order': (q, s, b) => refusal(notebook.orderPages(b)),
   'POST /api/notebooks/pages/archive': (q, s, b) => refusal(notebook.archivePage(b)),
   'POST /api/notebooks/pages/title': (q, s, b) => refusal(notebook.titlePage(b)),
   'POST /api/notebooks/pages/zoom': (q, s, b) => refusal(notebook.zoomPage(b)),
+  // (at once, never undone: the board's Undo of a send gone.)
   'POST /api/notebooks/pages/send': async (q, s, b) => refusal(await notebooksend.sendShown(b)),
-  'POST /api/notebooks/pages/undo': (q, s, b) => refusal(notebooksend.undoSend(b)),
-  'GET /api/notebooks/pages/groups': (q, s, b) => refusal(notebookgroups.listGroups(b)),
+  // (a guest's page in a round's book, read in the board's book)
+  'GET /api/notebooks/pages/groups': (q, s, b) => {
+    notebookshelf.seenPage(Number(b.page)); // (its answers seen)
+    return refusal(guestPage(Number(b.page)) ? notebookguestroom.listBoardGroups(b) : notebookgroups.listGroups(b));
+  },
   'POST /api/notebooks/groups/move': (q, s, b) => refusal(notebookgroups.moveGroup(b)),
   'POST /api/notebooks/groups/delete': (q, s, b) => refusal(notebookgroups.deleteGroup(b)),
   'POST /api/notebooks/replies/delete': (q, s, b) => refusal(notebooksend.deleteReply(b)),
   'POST /api/notebooks/groups/restore': (q, s, b) => refusal(notebookgroups.restoreGroup(b)),
-  'POST /api/notebooks/groups/join': (q, s, b) => refusal(notebookgroups.joinGroups(b)),
+  'POST /api/notebooks/groups/resize': (q, s, b) => refusal(notebookgroups.resizeGroup(b)),
   'POST /api/notebooks/groups/split': (q, s, b) => refusal(notebookgroups.splitGroup(b)),
   // the agents' answers: a form answered, an answer ticked (a version picked), and what waits on the board (bookanswer.ts;
   'POST /api/notebooks/answers/form': (q, s, b) => refusal(bookanswer.answerForm(b)),
@@ -603,7 +614,7 @@ const worker: Record<string, (b: any) => unknown> = {
   // (projects.ts withOwnedProject, the worker's closing.ts).
   // resize: a work job's size, for its briefing's line on re-sizing it (sizes.ts withSize).
   // (nothing to start in a slot that holds a meeting's seat: `held`, so the worker keeps its room.)
-  'POST /api/worker/claim': b => sizes.withSize(projects.withOwnedProject(review.withTold(jobs.claim(b.seat, b.engine, b.kind === 'chat' ? 'chat' : undefined, b.probe === true ? 0 : util(b.util), b.probe === true,
+  'POST /api/worker/claim': b => sizes.withSize(projects.withOwnedProject(review.withTold(jobs.claim(b.seat, b.engine, b.kind === 'chat' || b.kind === 'incident' ? b.kind : undefined, b.probe === true ? 0 : util(b.util), b.probe === true,
     typeof b.slot === 'string' ? b.slot : undefined, Number.isInteger(b.room) && b.room >= 0 ? b.room : undefined,
     Number.isInteger(b.pacedUntil) && b.pacedUntil > 0 ? b.pacedUntil : undefined)))) ?? meetingseats.holding(b.slot),
   // (never held, so the run keeps its lease: past its job's share of HQ's time, the beat's dear part waits, jobs.ts reined)
@@ -856,12 +867,16 @@ function jobNotes(b: any, me: Me) {
   const taken = routing.forTask(me, String(b.agent), [...new Set<number>(b.notes)]);
   return typeof taken === 'string' ? new Refused(409, taken) : taken;
 }
-// The thread a queued job is in. One it joined (named or inherited, not drawn for it) comes with its name and "done
-// when", which hq job repeats back so its queuer reads what the work is filed under (board, call 172).
-const shownThread = (job: number, joined: boolean) => {
-  const thread = jobs.threadOf(job), found = thread && joined ? projects.findThread(thread) : undefined;
-  return thread ? { thread, ...found && { threadName: found.name, doneWhen: found.goal } } : {};
-};
+// The thread a queued job is in. One it joined (named or inherited) comes with its name and goal (its "done when"),
+// which hq job repeats back so its queuer reads what the work is filed under (board, call 172). One drawn for it, by
+// --deliverable new: (drawn) or after the release (its own one-task thread), its queuer just wrote: it's named alone.
+function shownThread(job: number, drawn: { newThread: unknown; ownThread: string | null }) {
+  const thread = jobs.threadOf(job);
+  if (!thread) return {};
+  const joined = drawn.newThread == null && !drawn.ownThread;
+  const found = joined ? projects.findThread(thread) : undefined;
+  return found ? { thread, threadName: found.name, threadGoal: found.goal } : { thread };
+}
 // The queued job's deadline: its explicit time sets or tightens its deliverable's window, otherwise it inherits it.
 function jobDeadline(job: number, placement: Exclude<ReturnType<typeof jobPlacement>, Refused>, ownThread: string | null, by: string) {
   const { timed, window, byCall } = placement;
@@ -1066,8 +1081,8 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
     notes?.take(job.id);
     // (a thread of its own after the release: jobPlacement)
     const releaseThread = release ? projects.findThread(target!)! : undefined;
-    const inheritedWindow = releaseThread?.deadline != null ? { deadline: releaseThread.deadline, aim: releaseThread.aim ?? releaseThread.deadline } : undefined;
-    const ownThread = releaseThread && b.expedite !== true ? oneTaskThread(releaseThread.project, { id: job.id, title }, inheritedWindow) : null;
+    const ownThread = releaseThread && b.expedite !== true ? oneTaskThread(releaseThread.project, { id: job.id, title }) : null;
+    if (ownThread) windows.inherit(ownThread, releaseThread!.id);
     const followOn = ownThread ? { followOn: target } : {};
     if (card !== undefined) jobs.holdForCard(job.id, card);
     // Work queued on a call waits for the call's end, so what the board adds on it (add) goes into its brief and it
@@ -1082,7 +1097,7 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
     // (a job on a paused thread is queued, and told it's held: pauses.ts)
     const deadline = jobDeadline(job.id, placement, ownThread, byCall ? ledger.callAgent(carried!.call) : me.agent);
     const ask = untimed ? askedForTime(me, { id: job.id, agent: String(b.agent), title }, untimed, carried) : source ? servesOther(job.id) : {};
-    const due = { ...deadline, ...ask, ...untilEnd.length && { untilCall: me.callId }, ...shownThread(job.id, b.newThread == null && !ownThread), ...followOn, ...pauses.heldBy(job.id), ...moves.since(earlier), ...lighter && { lighter: lighter.name }, chain };  // (chain)
+    const due = { ...deadline, ...ask, ...untilEnd.length && { untilCall: me.callId }, ...shownThread(job.id, { newThread: b.newThread, ownThread }), ...followOn, ...pauses.heldBy(job.id), ...moves.since(earlier), ...lighter && { lighter: lighter.name }, chain };  // (chain)
     return b.item != null || noted ? { ...job, ...due, ...ledger.handedOut(carried!.item, job.id, me.call ? null : me.id) } : { ...job, ...due };
   }),
   // hq thread list, and hq project say: a project's threads and its owner's sentence (projects.ts), as the speaker (a
@@ -1102,7 +1117,9 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
     const agent = speaker(b.as, me);
     if (!agent) return 403;
     const [thread, needs] = [b.thread, b.needs].map(v => String(v ?? ''));
-    return refusal(b.drop === true ? plan.unneed(thread, needs, agent, b.why) : plan.need(thread, needs, agent));   // (why)
+    const earlier = moves.before();   // (the threads it moves: moves.ts)
+    const done = b.drop === true ? plan.unneed(thread, needs, agent, b.why) : plan.need(thread, needs, agent);   // (why)
+    return typeof done === 'string' ? refusal(done) : { ...done, ...moves.since(earlier) };
   },
   'POST /api/agent/plan/move': (b, me) => { const agent = speaker(b.as, me); return agent ? refusal(plan.move(Number(b.id), Number(b.place), agent)) : 403; },
   'POST /api/agent/plan/drop': (b, me) => { const agent = speaker(b.as, me); return agent ? refusal(plan.drop(Number(b.id), b.why, agent)) : 403; },
@@ -1252,6 +1269,11 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
     if (!why) return new Refused(400, 'say why: hq stop <job> "why"');
     return refusal(jobs.stopJob(Number(b.id), me.agent, why));
   },
+  // hq revert <commit>... "why": the CEO's, commits reverted on main by the server within a minute (reverts.ts); hq
+  // revert alone lists the requests and the server's answers.
+  'POST /api/agent/revert': (b, me) =>
+    refusal(reverts.request(Array.isArray(b.commits) ? b.commits.map(String) : [], String(b.why ?? ''), me.agent)),
+  'GET /api/agent/revert': () => ({ reverts: reverts.list() }),
   // hq cancel <job>: a queued job that never ran, the caller's own or one it queued, and for the CEO and Process any an
   // agent queued (not one the coordinator made: ledger.ts cancelJob).
   'POST /api/agent/cancel': (b, me) => {
@@ -1373,6 +1395,9 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
   'POST /api/agent/request': (b, me) => {
     const agent = speaker(b.as, me);
     if (!agent) return 403;
+    // (a design ask's book first: a card the book refuses says so, whatever else is wrong with it. askpages.ts)
+    const book = askpages.bookOf(b);
+    if (typeof book === 'string') return new Refused(400, book);
     if (plainCredential(b)) return new Refused(400, 'a credential request names the keys it asks for (their names after the brief file, comma-separated): the board types them into key fields, never an answer box');
     if (!agentRequest(b, me.agent)) return 400;
     const problem = cardIssue(b) ?? unshelvedProblem(String(b.body ?? '')) ?? laterProblem(b) ?? jobs.questionsProblem(b.questions) ?? unseenProblem(b, me);
@@ -1385,8 +1410,14 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
     const card = jobs.fileCard({ files, kind: String(b.kind), title: String(b.title), body: String(b.body ?? ''), urgency: str(b.urgency),
       agent, job: me.id, secrets: str(b.secrets), approves: str(b.approves), photos: b.photos, documents: b.documents, zips: b.zips, products: b.products, back: b.back, topic: b.topic, visibleFrom: b.visibleFrom,
       address: b.address, questions: b.questions, decides: b.decides, when: b.when, walk: b.walk, ...place });   // (topic, zips, visibleFrom, address, questions, decides, when; walk)
-    return refusal(card);   // (a card about a page stays on the desk phone)
+    if (!book || typeof card !== 'object') return refusal(card);   // (a card about a page stays on the desk phone)
+    const scrap = askpages.placeAsk(card.id, book.notebook, agent, String(b.title));
+    return { ...card, book: { ...scrap, name: book.name, fell: book.fell } };
   },
+  // hq advice <book> ...: a scrap of a closed round's Advice, or its hand back (notebookrounds.ts)
+  'POST /api/agent/advice': (b, me) => (me.call ? 403 : refusal(notebookrounds.writeAdvice(b, me.agent))),
+  // hq projectbook <project> ["name"]: the CEO makes a project's book on the board's shelf (askpages.ts)
+  'POST /api/agent/projectbook': (b, me) => (me.agent === ceo() && !me.call ? refusal(askpages.makeProjectBook(b)) : 403),
   'POST /api/agent/request-answer': (b, me) => refusal(jobs.requestAnswer(Number(b.id), me.id)),
   // (only cards agents file, and a team member's only from its own job: its name isn't unique. An email card: its drafter
   // withdraws the open draft, outbox.ts)
@@ -1409,6 +1440,10 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
   'GET /api/agent/phone/check': async () => ({ lines: await checkLine() }), // hq phone --check
   // hq jobs [agent]: what's in flight (open work jobs), everyone's or one agent's, but not the caller's own job.
   'GET /api/agent/jobs': (b, me) => jobs.openJobs({ agent: str(b.agent), except: me.id }),
+  'GET /api/agent/room/records': (b, me) => {
+    if (!jobs.inProcess(me.agent) || me.call) return 403;
+    return roomrecords.getRoomRecords(b.population, b.after) ?? new Refused(400, 'Use a documented room history and a nonnegative cursor. Deliveries use spell.job.');
+  },
   'GET /api/agent/room': () => room.getRoom(),   // (hq jobs: the same, naming the job by its number)
   // hq followthrough: the CEO's read of what the board agreed against the work under way; ok | acted "line": the
   // running check's verdict; requeue <job> "line": a failed job's agreed work back to its call's agent (followthrough.ts,
@@ -1558,11 +1593,12 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
     const r = !agent ? 403 : !assignable(to) ? 404 : messages.send({ agent, job: me.id }, to, String(b.text ?? ''), undefined, undefined, b.needsAnswer === true);
     return r === 409 ? new Refused(409, `a chain of messages may start ${messages.CHAIN} jobs, and this one has`) : r; },
   // (a meeting seat's lines, and the server's memory: lowmemory.ts)
-  'POST /api/agent/inbox': (b, me) => [...messages.take(me.id), ...meetingseats.take(me.id), ...lowmemory.take(me.id, b.stopping === true), ...diskwarnings.take(me.id, b.stopping === true)],
+  'POST /api/agent/inbox': (b, me) => [...messages.take(me.id), ...chat.take(me.id), ...meetingseats.take(me.id), ...lowmemory.take(me.id, b.stopping === true), ...diskwarnings.take(me.id, b.stopping === true)],
   // (and the meeting lines it printed, lines)
-  'POST /api/agent/inbox-ack': (b, me) => {
+  'POST /api/agent/inbox-ack': (b, me) => {   // (chat lines)
     if (b.disk !== undefined && diskwarnings.ack(me.id, b.disk) === 400) return 400;
     if (b.lines !== undefined) meetingseats.read(me.id, b.lines);
+    if (b.chat !== undefined && chat.ack(me.id, b.chat) === 400) return 400;
     return messages.ack(me.id, b.ids);
   },
   'GET /api/agent/sent': (b, me) => { const agent = speaker(b.as, me);
@@ -1746,6 +1782,8 @@ const voice: Record<string, (b: any) => unknown> = {
   'POST /api/voice/page': b => refusal(callpage.read(b)),
   'POST /api/voice/mark': b => refusal(callpage.mark(b)),
   'POST /api/voice/change': b => refusal(callpage.change(b)),
+  // (its versions to pick from)
+  'POST /api/voice/try': b => refusal(callpage.versions(b)),
   // (the voices the board's calls recognise by name, and what to tell a person before saving theirs: voiceprints.ts.)
   'GET /api/voice/voiceprints': () => voiceprints.listForVoice(),
   'POST /api/voice/voiceprint': b => refusal(voiceprints.saveVoiceprint(b)),
@@ -1763,6 +1801,9 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
   const url = new URL(req.url ?? '/', 'http://x'), path = url.pathname;
   latency.time(req, res, path);
   res.setHeader('x-content-type-options', 'nosniff');
+  // A try's version on its own preview host: its files alone, past the preview login's own two
+  const version = trypreview.versionAt(String(req.headers.host ?? ''));
+  if (version !== null && path !== '/api/preview/check' && path !== '/__preview') return trypreview.serveTry(req, res, version);
   res.setHeader('content-security-policy', PAGE_CSP[path] ?? (/^\/(knowledge|cycles)\//.test(path) ? 'sandbox'
     : path.startsWith('/pay/imitation/') ? checkoutCsp : HQ_CSP)); // the test checkout: its own inline style, and Pay redirects to the product
   return anyHost(req, res, url);
@@ -1866,11 +1907,19 @@ const hqFile = (dir: string, file: string): RouteHandler => ({ req, res }) => { 
 // What any host may ask, a product preview's too
 const anyHost = routes({
   'GET /health': ({ res }) => send(res, 200, { ok: true, commit: COMMIT, hq: hqFingerprint(), head: hqVersion.head }),
+  // HQ's page whole for the board, asked after each deploy from inside this container with the worker's token, which only
+  // the server's own containers have (infra/hq-up.sh, pagecheck.ts)
+  'GET /health/page': async ({ req, res }) =>
+    workerAuthed(req.headers.authorization)
+      ? send(res, 200, await pagecheck.check(req.socket.localPort!))
+      : send(res, 404, { error: 'not found' }),
   'GET /vendor/webauthn.js': async ({ res }) => send(res, 200, await readFile(WEBAUTHN), TYPES['.js']),
   'GET /login': ({ res }) => send(res, 200, loginPage(brand()), TYPES['.html']),
   'GET /enroll': ({ res }) => send(res, 200, enrollPage(brand()), TYPES['.html']),
   // Product previews: Caddy's forward_auth check and the key hand-off run without the board session.
   '* /api/preview/check': ({ req, res }) => preview.check(req, res),
+  // ...and whether a try host is a version's, before Caddy gets it a certificate
+  'GET /api/preview/try-host': ({ res, url }) => send(res, trypreview.tryHost(url.searchParams.get('domain') ?? ''), {}),
   '* /__preview': ({ req, res }) => preview.accept(req, res),
   // ...and a page's link for another device, from the page's own origin
   'POST /__preview/handoff': async ({ req, res, jsonBody }) => preview.handOn(req, res, await jsonBody()),
@@ -1948,12 +1997,11 @@ const board: RouteTable = {
   'POST /api/notebooks/groups/reply': boardJson(async (q, s, b) => refusal(await notebooksend.replyTo(b)), NOTE_MAX),
   'POST /api/notebooks/pictures': ({ req, res }) => notebookpictures.uploadPicture(req, res),
   'GET /api/notebooks/pictures': ({ req, res }) => notebookpictures.servePicture(req, res),
-  // a slip's current picture and the board's own free-page saves
+  // (a notebook's cover: a picture's data URL, as a scrap's snip.)
+  'POST /api/notebooks/cover': boardJson((q, s, b) => refusal(notebookshelf.setCover(b)), NOTE_MAX),
+  'GET /api/notebooks/cover': ({ req, res }) => notebookshelf.serveCover(req, res),
+  // a slip's current picture (the Sketchbook app's saves gone)
   'GET /api/book/slip/now': ({ req, res }) => bookslips.serveSlipPicture(req, res, undefined, 'now'),
-  'POST /api/sketches/save': boardJson((q, s, b) => notebookguests.managedPage(Number(b.id)) ? 403 : refusal(sketchbook.saveSketch(b)), SAVE_MAX),
-  'GET /api/sketches/picture': ({ req, res }) => servePicture(req, res, null),
-  'POST /api/sketches/scrap': ({ req, res }) => book.uploadScrap(req, res, book.BOARD, '/api/sketches'),
-  'GET /api/sketches/scrap': ({ req, res }) => book.serveScrap(req, res, null),
   'GET /api/guest/pictures': ({ req, res }) => guests.getPicture(req, res), // a guest reply's picture, on its card
   'GET /api/outbox/file': ({ req, res }) => outbox.getFile(req, res), // an email draft's attachment, on its card
   'GET /api/requests/file': ({ req, res }) => cardFiles.serve(req, res), // a card's file
@@ -1978,6 +2026,10 @@ const board: RouteTable = {
     // (its address names the file's time, so a browser keeps it without asking again: a list redrawn never blanks it)
     if (url.searchParams.has('v')) res.setHeader('cache-control', 'private, max-age=31536000, immutable');
     return sendFile(req, res, picture.dir, picture.file);
+  },
+  'GET /api/artifacts/film': ({ req, res, url }) => { // a found film, for HQ's Artifacts
+    const film = artifacts.filmFile(String(url.searchParams.get('id')));
+    return film ? sendFile(req, res, film.dir, film.file) : send(res, 404, 'not found', 'text/plain');
   },
   'GET /api/mail/file': ({ res, url }) => sendAttachment(res, mail.attachment(Number(url.searchParams.get('id')), Number(url.searchParams.get('n')))),
   'GET /knowledge/*': ({ req, res, url }) => sendFile(req, res, `${REPO_DIR}/knowledge`, url.pathname.slice('/knowledge'.length), false),
@@ -2191,7 +2243,6 @@ if (import.meta.main) server.listen(PORT, () => {  // tests import app without s
   ledger.startSweep(); // calls whose follow-up failed get another (3 at most), then an alert
   watchalong.startSweep(); // recordings past their days
   bookcalls.startSweep(); // call pages nobody wrote on, once their walk-through ended or call is gone
-  spotsOnStart(); // answers' spots kept from before the controls grew, placed again for them
   watchGazette(); // new posts: a toast in HQ, the unread count, a push
   onair.watchOnAir(); // new episodes: a push
   studio.watch(); // the photo studio's waiting photos, once its key is in.

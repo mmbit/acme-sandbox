@@ -125,7 +125,7 @@ for (const [measure, mode] of [
       // The next worker cannot report the ended run again, even from a snapshot taken before reload.
       await new Reload().block({ job: job.id, uid: process.getuid!(), gid: process.getgid!() }, block!, run, {
         checking: new Map(),
-        stopped: () => {},
+        log: () => {},
         ask: async body => (await h.worker('blocked', body)).body,
       });
       const strikes = h.db.prepare('select count(*) n from blocks where job = ?').get(job.id) as { n: number };

@@ -6,7 +6,7 @@ import { cpSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSyn
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
-import { ON_HELPER, playedHq } from './fixture.ts';
+import { ON_HELPER, playedHq, type PlayedState } from './fixture.ts';
 import { bundleFailure, NoRoom } from './lent.ts';
 
 const repo = join(import.meta.dirname, '..', '..');
@@ -507,7 +507,7 @@ test("a merge of main not yet committed counts as made: main's own files aren't 
 
 const onHelper = { 'shared/gates/tests-on-helper.sh': ON_HELPER };
 const typeError = { 'lib/a.ts': "export const a: number = 'one';\n" };
-const lent = async (states?: [string, string][], env: NodeJS.ProcessEnv = {}) => ({
+const lent = async (states?: PlayedState[], env: NodeJS.ProcessEnv = {}) => ({
   env: await playedHq(states, { GATES_HOME: repo, ...env }),
   args: ['--helper'],
 });
@@ -527,15 +527,15 @@ test("--helper sends a push's type-checked gates to a lent machine, whose verdic
 
 test("a run HQ handed back to this server's helper is taken once, as that helper finished it; a lost one isn't run here", async () => {
   const handedBack = await lent([
-    ['running', 'attic'],
-    ['waiting', 'attic'],
-    ['done', 'server'],
+    { state: 'running', machine: 'attic' },
+    { state: 'waiting', machine: 'attic' },
+    { state: 'done', machine: 'server' },
   ]);
   const back = gates(onHelper, typeError, handedBack);
   assert.equal(back.status, 1, back.out);
   assert.equal(back.out.match(/Gates failed/g)?.length, 1, back.out);
   assert.match(back.out, /\(on server\)$/m);
-  const lost = gates(onHelper, typeError, await lent([['lost', 'attic']]));
+  const lost = gates(onHelper, typeError, await lent([{ state: 'lost', machine: 'attic' }]));
   assert.equal(lost.status, 2, lost.out);
   assert.doesNotMatch(lost.out, /\(on attic\)|Type 'string'/);
 });
@@ -547,13 +547,13 @@ test("--helper stopped at the worker's time limit stops its run on HQ, however l
   };
   // as it waits for the helper's outcome
   const quickSend = { 'shared/gates/tests-on-helper.sh': 'echo started\n' };
-  const waiting = await lent([['running', 'attic']], { PLAYED_STOP_MS: '1500' });
+  const waiting = await lent([{ state: 'running', machine: 'attic' }], { PLAYED_STOP_MS: '1500' });
   const late = gates(quickSend, typeError, { ...waiting, stopAfterMs: 6000 });
   assert.equal(late.status, 2, late.out);
   assert.doesNotMatch(late.out, /\(on attic\)|Type 'string'/);
   assert.equal(await runOf(waiting.env), 'stopped'); // (what attic sends later, HQ refuses)
   // as it sends the run (HQ answers once the helper has run it)
-  const sending = await lent([['running', 'attic']]);
+  const sending = await lent([{ state: 'running', machine: 'attic' }]);
   const early = gates(onHelper, typeError, { ...sending, stopAfterMs: 1000 });
   assert.equal(early.status, 2, early.out);
   assert.equal(await runOf(sending.env), 'stopped');

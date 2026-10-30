@@ -2,7 +2,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { play } from './eta.ts';
+import { memoryReport } from './memory.fixture.ts';
 import type { QueuedJob, Snapshot } from './eta.ts';
+import type { ReviewStage } from './rounds.ts';
 
 const work = (id: number, fields: Partial<QueuedJob> = {}): QueuedJob => ({
   id,
@@ -48,6 +50,23 @@ const snapshot = (jobs: QueuedJob[]): Snapshot => ({
   rates: {},
   slots: { claude: 1, codex: 1 },
   deployLagMs: 0,
+});
+
+const stage = (
+  key: string,
+  kind: ReviewStage['kind'],
+  agent: string,
+  after: string[] = [],
+  fields: Partial<ReviewStage> = {},
+): ReviewStage => ({
+  key,
+  kind,
+  agent,
+  engine: 'claude',
+  usualMs: 60_000,
+  slowMs: 60_000,
+  after,
+  ...fields,
 });
 
 test('a visual merge waits for both the pictures review and the board, while those reviews can run', () => {
@@ -299,33 +318,9 @@ test('projected reviews, fixes and rulings carry a board item through paced seat
       count: 2,
       terminal: 'ruling',
       stages: [
-        {
-          key: 'review',
-          kind: 'review',
-          agent: 'reader',
-          engine: 'claude',
-          usualMs: minute,
-          slowMs: minute,
-          after: [],
-        },
-        {
-          key: 'fix',
-          kind: 'work',
-          agent: 'author',
-          engine: 'codex',
-          usualMs: minute,
-          slowMs: minute,
-          after: ['review'],
-        },
-        {
-          key: 'ruling',
-          kind: 'consolidate',
-          agent: 'ruler',
-          engine: 'claude',
-          usualMs: minute,
-          slowMs: minute,
-          after: ['fix'],
-        },
+        stage('review', 'review', 'reader'),
+        stage('fix', 'work', 'author', ['review'], { engine: 'codex' }),
+        stage('ruling', 'consolidate', 'ruler', ['fix']),
       ],
     },
   });
@@ -341,3 +336,62 @@ test('projected reviews, fixes and rulings carry a board item through paced seat
     assert.ok(play(ordinary, sizes, { pace }).get(1)!.merged! > input.now + 60 * minute);
   }
 });
+
+test('an overdue deliverable finishes its running round and queued followers before undated work when room returns', () => {
+  const minute = 60_000;
+  const { input, sizes } = overdueRound();
+  for (const pace of ['usual', 'slow'] as const) {
+    const played = play(input, sizes, { pace });
+    const merged = played.get(1)!.merged;
+    assert.ok(merged !== null, 'the remaining round has a merge time');
+    assert.ok(played.get(3)!.done !== null, 'the first follower finishes');
+    assert.ok(played.get(4)!.done !== null, 'the last follower finishes');
+    assert.ok(played.get(3)!.start! >= input.now + minute, 'the follower waits for the running review');
+    assert.ok(
+      played.get(5)!.start! >= Math.max(merged, played.get(4)!.done!),
+      'undated work follows the overdue chain',
+    );
+  }
+});
+
+test('an overdue round gets no merge time when the reported memory never covers its remaining runs', () => {
+  const { input, sizes } = overdueRound();
+  input.memory!.availableMb = 420;
+  for (const pace of ['usual', 'slow'] as const) {
+    const blocked = play(input, sizes, { pace });
+    assert.equal(blocked.get(1)!.merged, null, 'a report that never releases enough memory supplies no invented merge');
+    assert.equal(blocked.get(4)!.start, null, 'followers cannot start without room');
+  }
+});
+
+function overdueRound() {
+  const minute = 60_000;
+  const thread = 'project/overdue';
+  const owner = work(1, {
+    thread,
+    status: 'done',
+    finished: 0,
+    due: 0,
+    reviewPlan: {
+      panel: 'check',
+      count: 1,
+      terminal: 'ruling',
+      stages: [
+        stage('review', 'review', 'reader', [], { job: 2 }),
+        stage('ruling', 'consolidate', 'ruler', ['review'], { memoryMb: 700 }),
+      ],
+    },
+  });
+  const input = snapshot([
+    owner,
+    work(2, { thread, kind: 'review', status: 'running', seat: 'claude', due: 0, memoryMb: 700 }),
+    work(3, { thread, follows: 2, due: 0, memoryMb: 700 }),
+    work(4, { thread, follows: 3, due: 0, memoryMb: 700 }),
+    work(5, { due: null, memoryMb: 700 }),
+  ]);
+  input.now = 10 * minute;
+  input.windows = { [thread]: { deadline: 0, aim: 0 } };
+  input.memory = memoryReport({ at: input.now, availableMb: 1600, totalSlots: 1, runningMb: { 2: 700 } });
+  const sizes = new Map(input.jobs.map(job => [job.id, { agent_ms: minute }]));
+  return { input, sizes };
+}
