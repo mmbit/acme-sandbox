@@ -17,7 +17,7 @@
 import { esc } from '../util.js';
 import { minimise, share, shown } from './callscreen.js';
 import { cardOf } from './callcards.js'; // (the call engine's)
-import { PREVIEW, closeTool, openLink, viewerOrigin, viewerUrl } from './desk.js';
+import { PREVIEW, closeTool, openLink, stagingFrame, viewerOrigin, viewerUrl } from './desk.js';
 
 const $ = s => document.querySelector(s);
 // The preview in the viewer answering a drive, or not, within this (the line waits 5 s for HQ: driving.py)
@@ -100,7 +100,7 @@ async function opened(c, url) {
 }
 // ---- driving the preview in HQ's viewer: review mode there does it (review.js), and says how it went. The agent's
 // ring goes there too (calldraw.js)
-export const viewerFrame = () => (!$('#viewer')?.hidden && $('#viewer iframe')) || null;
+export const viewerFrame = () => (!$('#viewer')?.hidden && stagingFrame()) || null;
 let asks = 0;
 export function inFrame(d) {
   const frame = viewerFrame(),

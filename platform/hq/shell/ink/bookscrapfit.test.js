@@ -10,7 +10,6 @@ import { boxOf, STACK } from './notebookstack.js';
 globalThis.getComputedStyle = () => ({ getPropertyValue: name => (name === '--bk-controls-width' ? '52px' : '') });
 const bookOf = w => ({ desk: {}, size: { w, h: 800 } });
 
-// (as booksave.js compares a page with what it read: each element at the store's scale)
 // A page holding a scrap as the store stacks it, with a line drawn on it, and a note of the board's
 function pageOf() {
   const picture = { file: 'a.png', url: '/a.png', x: STACK.x, y: 80, w: STACK.w, h: 157, tilt: 0, g: 1 },
@@ -49,6 +48,7 @@ function pageOf() {
     ]),
   };
 }
+// (as booksave.js compares a page with what it read: each element at the store's scale)
 const changes = page =>
   changesOf(
     new Map([...page.groups.values()].map(g => [g.id, g.base])),
@@ -171,4 +171,24 @@ test('a scrap with changes not saved yet, or one that would be drawn under LEAST
   const far = pageOf();
   far.groups.get(1).box.x = 200;
   assert.equal(fitScraps(bookOf(342), far), false, 'room for 66 px only');
+});
+
+test('a scrap narrower than the stack ends left of the controls by its own width, or by its words when it has some', () => {
+  const edge = 342 - 52 - 24,
+    narrowed = (words, typed) => {
+      const page = pageOf(),
+        g = page.groups.get(1);
+      if (typed) page.typed = new Map([[1, typed]]);
+      page.scraps[0] = { ...page.scraps[0], w: 250, h: 125 };
+      Object.assign(g, { box: { ...g.box, w: 250, h: 125 }, words, pictures: [page.scraps[0]] });
+      g.base.pictures = [keyOf(page.scraps[0])];
+      fitScraps(bookOf(342), page);
+      return { s: page.scraps[0], k: fitOf(page, 1) };
+    };
+  const bare = narrowed(undefined);
+  assert.ok(Math.abs(bare.s.x + bare.s.w - edge) < 0.01, `its picture ending there (${bare.s.x + bare.s.w})`);
+  const worded = narrowed('A note under it');
+  assert.ok(Math.abs(STACK.x + STACK.w * worded.k - edge) < 0.01, 'its words, as wide as the stack, ending there');
+  const typing = narrowed(undefined, 'A note being typed');
+  assert.ok(Math.abs(STACK.x + STACK.w * typing.k - edge) < 0.01, 'its words being typed, not saved yet, ending there');
 });

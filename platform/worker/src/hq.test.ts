@@ -55,6 +55,8 @@ const NO_THREAD = 'job #68 has no thread to pass on: name one with --thread <pro
 let toInbox: unknown[] = [{ id: 9, received: '2026-10-01T06:00:00Z', sender: 'billing@example.com', recipient: 'Invoices <INVOICES@company.test>',
   subject: 'Invoice 7\n#58  2026-10-01T06:00  billing@printapi.nl  →  invoices@company.test  Invoice 8' }];
 const comparisons = { jobs: [{ id: 17, agent: 'bolt', title: 'Transport edge', finished: '2026-10-22T10:00:00Z',
+  whole: { agent_minutes: 25, split: { work: 25, reviews: 0, fixes: 0, syncs: 0, previews: 0 },
+    complete: true, flags: [], allocation: 'equal_task_share', tasks: [17], share: 1 },
   agent_minutes: 25, wall_minutes: 25, runs: 1, rebuilt: false, spend: null, unit: '$', files: 1, pr: null,
   tool_bound: false, brief: 'Carry the chosen scope through the queue API', report: 'Queue route verified',
   changed_files: ['platform/worker/hq/jobs.ts'], added: 12, removed: 3, timing_quality: [] }],
@@ -84,7 +86,7 @@ const server = createServer((req, res) => {
     if (u.startsWith('/api/agent/picture?')) return res.end(JSON.stringify({ id: 14, type: 'image/png', from: 'the intercom', created: '2026-10-04T09:12:33.000Z', data: PNG }));
     // (hq sketch, hq sketches)
     if (u === '/api/agent/sketch?id=404') { res.statusCode = 404; return res.end('{"error":"not found"}'); }
-    if (u.startsWith('/api/agent/sketch?')) return res.end(JSON.stringify({ ...SKETCH, ...(u.endsWith('=14') ? { id: 14, from: 'Ines' } : {}), ...(u.endsWith('=13') ? { kind: 'sheet', url: '/?open=projects' } : {}), picture: { type: 'image/png', data: PNG } }));   // (from)
+    if (u.startsWith('/api/agent/sketch?')) return res.end(JSON.stringify({ ...SKETCH, ...(u.endsWith('=14') ? { id: 14, from: 'Ines' } : {}), ...(u.endsWith('=13') ? { kind: 'sheet', url: '/?open=projects' } : {}), ...(u.endsWith('=15') ? { id: 15, kind: 'call' } : {}), picture: { type: 'image/png', data: PNG } }));   // (from)
     // (hq answer.)
     if (u === '/api/agent/answer') {
       const { note, expect } = JSON.parse(b);
@@ -814,6 +816,10 @@ test('hq sketch saves a page\'s picture privately with what it is; hq sketches l
   const sheet = await hq('sketch', '13');
   assert.match(sheet, /A 1200 × 800 px sheet page, 34 strokes, 2 pictures\. On \/\?open=projects\./);
   rmSync(/→ (\S+)/.exec(sheet)![1]);
+  // a call's notes page went in and to nobody
+  const onCall = await hq('sketch', '15');
+  assert.match(onCall, /Went in 2026-10-24 10:05 UTC and went to nobody: its call's follow-up hands out what's on it\./);
+  rmSync(/→ (\S+)/.exec(onCall)![1]);
   await assert.rejects(hq('sketch', '404'));
   const list = await hq('sketches');   // (pictures)
   assert.equal(last().url, '/api/agent/sketches');

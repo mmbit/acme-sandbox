@@ -133,22 +133,28 @@ test('a key pasted in double quotes is saved without them', async () => {
   assert.equal(readFileSync(`${h.dataDir}/secrets/TWILIO_AUTH_TOKEN`, 'utf8'), INNER);
 });
 
+// A card's questions as the board answers them and a call's transcript as the voice line hands it over, through their
+// routes, and an intercom reply's card through the columns' triggers (chat.ts redactJson keeps its pending one). Its own
+// key, not INNER: the key store as redact() read it before would not hold it, so the key is masked only if forget() made
+// redact() read the store again.
 test('a key saved in its quotes, said without them, leaves every JSON column it is masked in readable', async () => {
-  writeFileSync(`${h.dataDir}/secrets/TWILIO_AUTH_TOKEN`, QUOTED);   // (saved before the quotes came off)
-  secrets.forget([]);   // (redact() reads the key store again)
-  const card = { kind: 'switches', title: 'Keys', says: INNER, none: 'none', switches: [{ name: INNER, what: 'the line', on: true }] };
-  const masked = { kind: 'switches', title: 'Keys', says: '[TWILIO_AUTH_TOKEN]', none: 'none', switches: [{ name: '[TWILIO_AUTH_TOKEN]', what: 'the line', on: true }] };
-  const shapes: [string, unknown, unknown][] = [
-    ['calls.lines, a callout\'s transcript and notes', [INNER, `Board: it's ${QUOTED}`], ['[TWILIO_AUTH_TOKEN]', 'Board: it\'s "[TWILIO_AUTH_TOKEN]"']],
-    ['requests.questions', [{ title: 'The token', answer: INNER }], [{ title: 'The token', answer: '[TWILIO_AUTH_TOKEN]' }]],
-    ['chat.card', card, masked],
-    ["the pending card (the setting chat.card)", { job: 7, card }, { job: 7, card: masked }],
-  ];
-  for (const [column, shape, then] of shapes) assert.deepEqual(JSON.parse(secrets.redactJson(JSON.stringify(shape))), then, column);
-  // and through a guarded column's trigger, as the intercom writes a reply's card
-  const { db } = await import('./db.ts');
-  const id = Number(db.prepare("insert into chat (ts, who, text, card) values ('t', 'lyra', 'Here.', ?)").run(JSON.stringify(card)).lastInsertRowid);
-  assert.deepEqual(JSON.parse((db.prepare('select card from chat where id = ?').get(id) as { card: string }).card), masked);
+  const { db } = await import('./db.ts'), OWN = 'tw' + '3d'.repeat(12), MASK = '[TWILIO_AUTH_TOKEN]';
+  assert.equal(secrets.redact(INNER), '[TWILIO_AUTH_TOKEN]', 'the key store as redact() read it last');
+  writeFileSync(`${h.dataDir}/secrets/TWILIO_AUTH_TOKEN`, `"${OWN}"`);   // (saved before the quotes came off)
+  secrets.forget([]);
+  const card = await h.ask(wren, { title: 'The token', body: 'Which?', questions: [{ title: 'Which token?' }] });
+  assert.equal((await h.answer(card, '', { answers: [OWN] })).status, 200);
+  const { token } = (await h.voice('call-context', { agent: 'bolt', lang: 'en' })).body;
+  assert.equal((await h.voice('call-end', { agent: 'bolt', lines: [OWN, `Board: it's "${OWN}"`], token })).status, 200);
+  const switches = { kind: 'switches', title: 'Keys', says: OWN, none: 'none', switches: [{ name: OWN, what: 'the line', on: true }] };
+  const masked = { ...switches, says: MASK, switches: [{ ...switches.switches[0], name: MASK }] };
+  const chat = Number(db.prepare("insert into chat (ts, who, text, card) values ('t', 'lyra', 'Here.', ?)").run(JSON.stringify(switches)).lastInsertRowid);
+  const column = (sql: string, ...at: unknown[]) => JSON.parse(Object.values(db.prepare(sql).get(...(at as number[])) as object)[0] as string);
+  assert.deepEqual(column('select questions from requests where id = ?', card), [{ title: 'Which token?', answer: MASK }], "the card's questions");
+  assert.match((await h.agent('request-answer', wren.token, { id: card })).body.answer, /Which token\? → \[TWILIO_AUTH_TOKEN\]/, 'as its agent reads them');
+  assert.deepEqual(column("select lines from calls where agent = 'bolt' order by id desc limit 1"), [MASK, `Board: it's "${MASK}"`], "the call's transcript");
+  assert.deepEqual(column('select card from chat where id = ?', chat), masked, 'chat.card');
+  assert.deepEqual(JSON.parse(secrets.redactJson(JSON.stringify({ job: 7, card: switches }))), { job: 7, card: masked }, 'the pending card (the setting chat.card)');
 });
 
 test('a 12-character key ending in a quote of its own is masked whole, said plainly and inside JSON', async () => {
@@ -195,9 +201,10 @@ test('a key with a quote at one end leaves the JSON columns readable, written af
 
 // A column that holds only JSON is redacted string by string, written and read by its own module: a string there that
 // starts with a one-sided-quote key's bare form keeps its own quote, so its reader still parses it, and the key itself
-// is masked. (guest_items.options: guests.test.ts)
-test('a key with a quote at one end leaves review findings, triage selections, a snag\'s landing and note anchors readable where a string starts with the key without it', async () => {
+// is masked. (guest_items.options: guests.test.ts; a handed-over call's transcript and notes)
+test('a key with a quote at one end leaves review findings, triage selections, a snag\'s landing, note anchors and a handed-over call\'s transcript and notes readable where a string starts with the key without it', async () => {
   const reviewinbox = await import('./reviewinbox.ts'), reviewtriage = await import('./reviewtriage.ts');
+  const callouts = await import('./callouts.ts'), callcard = await import('./callcard.ts'), callline = await import('./callline.ts');
   const key = '"Ex4mpleKey75', said = 'Ex4mpleKey75 is in the settings', masked = '[PRINTAPI_LIVE_SIGNING]';
   await save(bolt, 'PRINTAPI_LIVE_SIGNING', key);
 
@@ -220,6 +227,15 @@ test('a key with a quote at one end leaves review findings, triage selections, a
   assert.equal((await board('/api/book/note', { page, anchor, words: 'This one', said: 'typed' })).status, 200);
   assert.deepEqual((await board(`/api/book/notes?page=${page}`)).body.notes.at(-1).anchor,
     { ...anchor, el: { ...anchor.el, selector: `input[value='${masked}']` } }, 'book_notes.anchor');
+
+  const filed = callouts.file('bolt', bolt.id, { link: true, who: 'Print API', about: 'a parcel', why: 'Ask why the parcel is late.',
+    card: 'Bolt asks the print shop about a late parcel.', lang: 'en' }) as { id: number; request: number };
+  callcard.approve({ id: filed.request });
+  callline.context({ agent: 'bolt', callout: filed.id });
+  assert.deepEqual(callline.handOver({ callout: filed.id, agent: 'bolt', lines: [said, `Juno: it is ${key}`], notes: [said] }), { ok: true });
+  const call = callouts.byId(filed.id)!;
+  assert.deepEqual(callouts.list(call.transcript), [said, `Juno: it is ${masked}`], 'callouts.transcript');
+  assert.deepEqual(callouts.list(call.notes), [said], 'callouts.notes');
 });
 
 // An answer's version name, form and the board's answers to it, and the judge's why and the words it judged: written

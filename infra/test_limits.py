@@ -4,7 +4,7 @@
 WORKER_LIMITS_LIVE=1 also checks kernel limits and restart in a disposable Linux VM with root,
 Docker's systemd cgroup driver, cgroup v2 and systemd. Never enable it on the company server.
 """
-import configparser  #.
+import configparser
 from contextlib import ExitStack
 import json
 import os

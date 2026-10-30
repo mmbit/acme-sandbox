@@ -1,4 +1,4 @@
-// node --test src/outlooks.test.ts   (throwaway DATA_DIR and the test company): each thread's live estimate from the
+// node --test src/outlooks.test.ts   (throwaway DATA_DIR and the test company): each thread's outlook from the
 // forecast (forecast.ts), its planned finish against its window and the slack that leaves, as the projects view, hq
 // projects and hq thread read them (outlooks.ts).
 //
@@ -118,7 +118,7 @@ test("each thread's window and slack: one that gives, one that misses, one witho
   assert.match(line(misses), /; planned finish .* UTC; MISSES its deadline .* UTC by \d.*; next #/);
   assert.match(
     line(none),
-    /^game\/none {2}The none \(wren\): ETA .* UTC, 30 min of agent time left;.* no window; next #/,
+    /^game\/none {2}The none \(wren\): ETA .* UTC, 30 min of agent time left;.* no deadline set; next #/,
   );
   const one = await h.hq(lead, 'thread', misses);
   assert.equal(one.code, 0, one.out);
@@ -127,12 +127,15 @@ test("each thread's window and slack: one that gives, one that misses, one witho
   assert.doesNotMatch(listed.out + one.out, /RED FLAG/);
   const onCall = await h.hq({ ...lead, call: true }, 'thread', misses);
   assert.match(onCall.out, new RegExp(`RED FLAG, not news for the board: ${misses} misses its deadline\\.`));
-  assert.match(onCall.out, /other work ahead of it.*paused[^]*whether to look further after the call\./);
+  assert.match(
+    onCall.out,
+    /other work ahead of it.*its window puts it first[^]*whether to look further after the call\./,
+  );
   // the eta tool's lookup, by words
   const found = await h.hq({ ...lead, call: true }, 'projects', 'the', 'game');
   assert.match(found.out, /RED FLAG, not news for the board: The misses misses its deadline\./);
   // the job tool's answer lists every agreed deadline: on a call, the one it misses comes with the same instruction,
-  // after the line that makes moving it back the agent's
+  // after the line that asks the agent to judge the late forecast
   const job = (call: boolean) =>
     h.hq({ ...lead, call }, 'job', 'bolt', 'Another step', '--thread', none, '--new', '--code', call ? 'CALL' : 'DESK');
   const queuedOff = await job(false);
@@ -143,7 +146,7 @@ test("each thread's window and slack: one that gives, one that misses, one witho
   assert.equal(queuedOn.code, 0, queuedOn.out);
   assert.match(
     queuedOn.out,
-    /\nAn agreed deadline its finish passes is yours to move back first; [^\n]*\n\nRED FLAG, not news for the board: The game's The misses misses its deadline\. [^]*don't raise it again\./,
+    /\nA planned finish past an agreed deadline is a slip to judge: find why and what would bring the finish back\. [^\n]*\n\nRED FLAG, not news for the board: The game's The misses misses its deadline\. [^]*don't raise it again\./,
   );
   // and hq window's, for the windows it leaves missing
   const window = await h.hq({ ...lead, call: true }, 'window', misses, '1m', '--try');
@@ -401,4 +404,41 @@ test("on a call, a thread names each card it waits on as the board's: through th
   assert.match(said.out, /- The levels: .*the board: "Approve the game plan"/, "the game's pause holds the levels too");
   assert.match(said.out, /- The art: .*the board: "Pick the art style" \(its answer expected about .*\)/);
   assert.match(said.out, /- The art: .*the board: "Approve the game plan"/);
+});
+
+test('missing deadlines show once for a deliverable, excluding served windows and loose tasks', async () => {
+  const none = thread('undated');
+  const serving = thread('serving');
+  const timed = thread('timed');
+  for (const id of [none, serving, timed]) queued(id);
+  windowed(timed, T + 3 * HOUR);
+  const plan = await import('./plan.ts');
+  assert.deepEqual(plan.need(timed, serving, 'juno'), { ok: true });
+  const made = await import('./made.ts');
+  const job = jobs.createJob({ agent: 'bolt', title: 'A loose task', prompt: 'x', queuedBy: 'wren' });
+  const loose = made.oneTaskThread('game', { id: job.id, title: 'A loose task' })!;
+  const board = await h.board('/api/projects');
+  const threads = board.body.projects.find((p: any) => p.id === 'game').threads;
+  for (const [id, undated] of [
+    [none, true],
+    [serving, false],
+    [timed, false],
+    [loose, false],
+  ])
+    assert.equal(threads.find((t: any) => t.id === id).outlook.undated, undated, String(id));
+  const threats = await import('./threats.ts');
+  const missing = threats.lines(forecast.refresh()).filter(line => line.includes('no deadline set'));
+  assert.equal(missing.length, 1);
+  assert.ok(missing[0].includes(none));
+  const lead = await h.start({ agent: 'juno' });
+  for (const command of [['projects'], ['plan', 'game'], ['thread', none]]) {
+    const shown = await h.hq(lead, ...command);
+    assert.equal(shown.code, 0, shown.out);
+    assert.equal(shown.out.match(/no deadline set/g)?.length, 1, shown.out);
+  }
+  for (const id of [serving, loose]) {
+    const shown = await h.hq(lead, 'thread', id);
+    assert.equal(shown.code, 0, shown.out);
+    assert.doesNotMatch(shown.out, /no deadline set/);
+  }
 });

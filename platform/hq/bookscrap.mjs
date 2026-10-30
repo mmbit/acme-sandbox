@@ -106,10 +106,7 @@ async function savedOnHq(s, { spoken, what = '' }) {
   if (spoken) await talked(page);
   else await sheet.locator('textarea').fill(`Tighten this line${what && `, ${what}`}`);
   await s.shot(s.named(`postit${what && `-${what}`}`), page);
-  await sheet.locator('.send').dispatchEvent('click'); // (a tap: no navigation to wait for)
-  // rule zero: nothing of the mark on the screen the moment it's saved (its ink lifted into the book)
-  await nothingDrawn(page, `${s.screen.name}: saved${what && ` (${what})`}`, FLIGHT_MS);
-  const sent = await posted(s, from, '/api/notebooks/groups/scrap', 'Save puts the note in the Notebook');
+  const sent = await savedScrap(s, from, `${s.screen.name}${what && ` (${what})`}`);
   assert.equal(sent.anchor?.v, 1, 'the scrap carries its anchor');
   assert.ok(sent.anchor.el?.selector, 'anchored on what was marked');
   assert.ok(sent.anchor.ink?.length >= 1, 'with the mark as its ink');
@@ -121,8 +118,6 @@ async function savedOnHq(s, { spoken, what = '' }) {
     assert.equal(sent.words, `Tighten this line${what && `, ${what}`}`, 'the words typed are its words');
     assert.equal(sent.said, 'typed');
   }
-  // (its fly-off: half a second, but a phone's HQ scene drawn without a GPU at 3x holds the page's timers up for long)
-  await page.waitForSelector(ui('.sheet'), { state: 'hidden', timeout: 30_000 });
   const scrap = groupsOf(s.play).at(-1);
   assert.equal(scrap.page, newestPage(s.play).id, 'the scrap is on the newest page');
   await inBook(s, scrap, shut, what);
@@ -163,8 +158,8 @@ async function drawn(on, points, hand, offset = { x: 0, y: 0 }) {
 // on: the page or the preview's frame; screen: its size
 async function postIt(s, on, screen) {
   const sheet = on.locator(ui('.sheet'));
-  await sheet.waitFor({ state: 'visible', timeout: 15_000 }); // (its photo first: slow on a loaded worker)
-  await on.waitForSelector(ui('.polaroid:not(.busy) .img :is(img, canvas)'), { timeout: 15_000 });
+  await sheet.waitFor({ state: 'visible' });
+  await on.waitForSelector(ui('.polaroid:not(.busy) .img :is(img, canvas)'));
   await sheet.evaluate(el => Promise.all(el.getAnimations().map(a => a.finished))); // (its pop: in a frame it can start late)
   const box = await sheet.evaluate(el => {
     const r = el.getBoundingClientRect();
@@ -310,7 +305,7 @@ async function fromArtifact(s, { spoken }) {
     shut = (await bookMode(page)) === 'folded';
   s.hush(true);
   await page.evaluate(url => import('/shell/desk.js').then(desk => desk.openLink(url)), `${PREVIEW}/basket`);
-  await page.waitForSelector('#viewer .bar .pin:not([hidden])', { timeout: 15_000 }); // (review mode said hello)
+  await page.waitForSelector('#viewer .bar .pin:not([hidden])'); // (review mode said hello)
   const frame = page.frame({ url: /scrap\.preview\.test/ }),
     box = await page.locator('#viewer iframe').boundingBox(),
     loop = s.ring(110, 48, 100, 30); // (round the heading)
@@ -350,7 +345,7 @@ const bookMode = page => page.evaluate(() => document.documentElement.dataset.bo
 // The book swung or slid to a mode after a tap, then laid out (a loaded worker's WebKit can take far past book-check's
 // settle for the swing alone: the story then read a book still swinging shut as open. job #12594)
 async function turned(c, page, mode) {
-  await page.waitForFunction(m => document.documentElement.dataset.book === m, mode, { timeout: 30_000 });
+  await page.waitForFunction(m => document.documentElement.dataset.book === m, mode);
   await c.settled(page, mode);
 }
 // (whether a mark's ink lands in the folded book's handle from here)
@@ -360,25 +355,20 @@ const landedHeard = page =>
     document.addEventListener('book:landed', () => (window.__landed = true), { once: true });
   });
 // The body of the first post to a path since from, waited for
-async function posted(s, from, path, what) {
-  for (let i = 0; i < 80 && !s.posts.slice(from).some(p => p.path === path); i++) await s.page.waitForTimeout(100);
-  const found = s.posts.slice(from).find(p => p.path === path);
-  assert.ok(found, what);
-  return found.body;
+async function posted({ posts }, from, path, what) {
+  return (await until(() => posts.slice(from).find(p => p.path === path), what)).body;
 }
 
-// ---- for the other stories: a mark on HQ, its post-it saved as the board does (shown, Save tapped), the mark gone
-// from the screen at once (rule zero); the body of the scrap it posted. on: { page, posts }; from: the posts before the
-// mark; what: where, for the asserts
+// ---- for these stories and the others: a mark on HQ, its post-it saved as the board does (shown, Save tapped), the
+// mark gone from the screen at once (rule zero); the body of the scrap it posted. on: { page, posts }; from: the posts
+// before the mark; what: where, for the asserts
 export async function savedScrap({ page, posts }, from, what) {
   const sheet = page.locator(ui('.sheet'));
-  await sheet.waitFor({ state: 'visible', timeout: 15_000 }); // (its photo first: slow on a loaded worker)
-  await sheet.locator('.send').dispatchEvent('click');
+  await sheet.waitFor({ state: 'visible' });
+  await sheet.locator('.send').dispatchEvent('click'); // (a tap: no navigation to wait for)
   await nothingDrawn(page, `${what}, saved`, FLIGHT_MS);
-  for (let i = 0; i < 100 && !scrapIn(posts, from); i++) await page.waitForTimeout(100);
-  assert.ok(scrapIn(posts, from), `${what}: Save puts it in the Notebook`);
+  const scrap = await posted({ posts }, from, '/api/notebooks/groups/scrap', `${what}: Save puts it in the Notebook`);
   // (its post-it flown off before the next mark: one drawn while it's still going joins the saving one's queue)
-  await sheet.waitFor({ state: 'hidden', timeout: 30_000 });
-  return scrapIn(posts, from).body;
+  await sheet.waitFor({ state: 'hidden' });
+  return scrap;
 }
-const scrapIn = (posts, from) => posts.slice(from).find(p => p.path === '/api/notebooks/groups/scrap');

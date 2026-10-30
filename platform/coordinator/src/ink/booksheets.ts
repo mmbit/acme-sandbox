@@ -117,9 +117,6 @@ export function deliverDue(now = Date.now()) {
       }
     });
 }
-// What hears a sheet go, with the job it went as (a call's notes page: its asks' items, callnotes.ts)
-const went: ((sheet: number, job: number) => void)[] = [];
-export const onDelivered = (hear: (sheet: number, job: number) => void) => void went.push(hear);
 function deliver(id: number, wrote: writing.Writing[]) {
   const s = db.prepare("select * from book_sheets where id = ? and status = 'sending'").get(id) as Sheet | undefined;
   if (!s) return;
@@ -141,7 +138,6 @@ function deliver(id: number, wrote: writing.Writing[]) {
     s.id,
   );
   stayBehind(s, late);
-  for (const hear of went) hear(s.id, job);
   db.prepare("update book_notes set status = 'sent' where sheet = ? and status = 'open'").run(s.id);
   publish({
     type: 'log',
@@ -238,7 +234,7 @@ export function keep(n: Note, job: number | null) {
 }
 // (outsiders: invited people some of the notes are from; previews: whether some were typed on a product's preview,
 // whose own code could have written one: routing.ts provenance; --artifact; "A question for the board about a note is a
-// card", hq ask --note)
+// card", hq ask --note; "The book is Ink Studio")
 const taskBrief = (
   texts: string[],
   outsiders: string[],
@@ -253,7 +249,10 @@ words for the board, a sentence or two; \`--picture <file>\` or \`--link <previe
 for something new that runs, an app or a page, by its id in HQ's artifacts). The board ticks it, or writes a reply under \
 it, which comes back to you as a new note.
 A question for the board about a note is a card, never an answer that ends in a question: \`hq ask ... --note <id>\` \
-clips it under the note in the book, and on its desk phone; one answer closes both.
+clips it under the note in the book, and on its desk phone; one answer closes both. The book is Ink Studio, the design \
+stage: a card for a key, steps the board takes elsewhere (a Steps: list; an account, a payment, an upload, a file) or \
+finished work to walk through (\`--walk\`) stays on the desk phone only, even with \`--note\`. An answer may still show \
+its preview or artifact (\`--link\`, \`--artifact\`) until the full-vision deck places the staging review.
 ${outsideBrief(outsiders)}${previews ? `\n${routing.provenance('Each note on a preview (a page off HQ)')}\n` : ''}
 ${texts.join('\n\n')}`;
 

@@ -12,23 +12,24 @@ import { firstMergeAfter, spanOf, type Group, type Job, type Merge } from './thr
 
 // Its parts each run in a turn of HQ's thread of their own, each ended by calibration.ts's report's `turn`, which names
 // a slow one (latency.ts turns).
+// (the turns say deliverables)
 export async function threadTimes(since: string, turn: Turn) {
   const lately = (db.prepare(MERGED).all(since) as MergeRow[]).map(mergeOf);
   const jobs = await jobsOn(lately, turn);
   const runs = runsOf(jobs.map(j => j.id));
-  await turn("the threads' runs");
+  await turn("the deliverables' runs");
   const after = afterJobs(jobs);
   const merges = mergesOn([...lately, ...after].map(x => x.branch));
   const groups = grouped(lately, jobs, merges);
   const tasks = groups.flatMap(g => g.tasks);
   const handed = handoffs(tasks, after, merges, runs);
-  await turn("the threads' groups and hand-offs");
+  await turn("the deliverables' groups and hand-offs");
   const times = {
     ...summed(groups, runs),
     handoffs: handed,
     ...waitingSplit(groups, runs, merges),
   };
-  await turn("the threads' sums and waits");
+  await turn("the deliverables' sums and waits");
   return times;
 }
 
@@ -52,7 +53,7 @@ async function jobsOn(lately: Merge[], turn: Turn) {
     jobs: Job[] = [];
   for (let i = 0; i < sorted.length; i += SLICE) {
     jobs.push(...jobsById(sorted.slice(i, i + SLICE)));
-    await turn(i ? "the threads' jobs, a slice" : "the threads' merges and their jobs' first slice");
+    await turn(i ? "the deliverables' jobs, a slice" : "the deliverables' merges and their jobs' first slice");
   }
   return jobs;
 }

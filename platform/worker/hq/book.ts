@@ -36,7 +36,12 @@ export const sketch = {
     if (answer.status === 404) stop(`Page #${id}: not found (deleted, or never made).`);
     if (!isSuccess(answer.status)) stop(`hq sketch: couldn't read page #${id} (HTTP ${httpCode(answer.status)}).`);
     const found: Sketch & { picture: { type: string; data: string } } = JSON.parse(answer.body);
-    const sent = found.sent ? ` Last sent to the CEO ${minute(found.sent)}.` : '';
+    // (a call's notes page is never sent)
+    const sent = !found.sent
+      ? ''
+      : found.kind === 'call'
+        ? ` Went in ${minute(found.sent)} and went to nobody: its call's follow-up hands out what's on it.`
+        : ` Last sent to the CEO ${minute(found.sent)}.`;
     const state = `${whose(found)}${found.archived ? 'Archived. ' : ''}Made ${minute(found.created)}, changed ${minute(found.updated)}.`;
     const on = found.url ? ` On ${oneLine(found.url)}.` : '';
     const page = `A ${found.w} × ${found.h} px ${found.kind ?? 'free'} page, ${plural(found.strokes, 'stroke')}${pictured(found, ', ')}.${on}`;
@@ -59,7 +64,7 @@ export const sketches = {
       '# hq sketch <id> saves one to look at',
       ...(listed.sketches.some(s => s.from) ? [`# from <name>: a person the board invited; ${OUTSIDE}`] : []),
       ...listed.sketches.map(s => {
-        const sent = s.sent ? `  sent ${minute(s.sent)}` : '';
+        const sent = s.sent ? `  ${s.kind === 'call' ? 'went in' : 'sent'} ${minute(s.sent)}` : '';
         // (pictures)
         // (from)
         const from = s.from ? `  from ${oneLine(s.from)}` : '';

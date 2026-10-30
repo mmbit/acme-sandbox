@@ -3,6 +3,7 @@
 // A fix round's row says what it fixes (fixesOf).
 import { db } from './db.ts';
 import * as findings from './findings.ts';
+import * as followups from './followups.ts';
 
 type Job = { id: number; kind: string; status: string; pr: number | null; stage?: string | null };
 type Shown = {
@@ -33,11 +34,12 @@ type Row = {
   kind: string;
   outcome: string | null;
   right: string | null;
-  proposal: number | null;
+  followed_up: number | null;
 };
 // A finding's fate: fixed (and the round that saw it so), kept on purpose, dropped (the ruling left it out, or the
-// author showed it wrong), moved to the follow-up job, left for them once the pull request ends, or still open
-export type Fate = { fate: 'fixed' | 'kept' | 'dropped' | 'follow-up' | 'later' | 'open'; round?: number };
+// author showed it wrong), moved to the follow-up job, waiting for it until the pull request merges, ended with a
+// follow-up job's own pull request, or still open.
+export type Fate = { fate: 'fixed' | 'kept' | 'dropped' | 'follow-up' | 'later' | 'ended' | 'open'; round?: number };
 export type Line = { issue: string; blocking: boolean } & Partial<Fate>;
 const RULINGS = "kind = 'consolidate' and stage in ('ruling', 'check', 'recheck', 'merge')";
 const VERDICTS = ['merge', 'changes', 'close', 'board', 'panel'];
@@ -231,7 +233,8 @@ const rulingLines = (job: Shown): Line[] =>
 function ruledEntries(ruling: Shown) {
   const v = parse(ruling.output),
     rows = rowsOf(ruling.pr),
-    judged = judgedRounds(ruling.pr);
+    judged = judgedRounds(ruling.pr),
+    prState = prOf(ruling.pr);
   const ofRuling = (kinds: string[]) => rows.filter(r => r.ruling === ruling.id && kinds.includes(r.kind));
   const lists = [
     { list: 'blocking', entries: entriesOf(v.blocking), stored: ofRuling(['blocking']) },
@@ -244,27 +247,35 @@ function ruledEntries(ruling: Shown) {
       const earlier =
         list === 'pre_existing' ? undefined : rows.find(r => r.ruling < ruling.id && r.id === Number(entry.earlier));
       const row = earlier ?? stored[next++];
-      return { entry, list, fate: row ? fateOf(row, judged) : ({ fate: 'dropped' } as Fate) };
+      return { entry, list, fate: row ? fateOf(row, judged, prState) : ({ fate: 'dropped' } as Fate) };
     });
   });
 }
 
+// Each finding of PR pr, with the proposal or follow-up job it went into.
 const rowsOf = (pr: number) =>
   db
     .prepare(
-      `select f.id, f.ruling, f.kind, f.outcome, f.right, coalesce(u.proposal, v.job) proposal from findings f
+      `select f.id, f.ruling, f.kind, f.outcome, f.right, coalesce(u.proposal, v.job) followed_up from findings f
       left join review_followups u on u.finding = f.id left join review_followup_jobs v on v.finding = f.id
       where f.pr = ? order by f.id`,
     )
     .all(pr) as Row[];
+// Whether a pull request is a follow-up job's own (followups.ts isFollowUp), so nothing waits for a follow-up job, and
+// whether it merged.
+type PrState = { followUp: boolean; merged: boolean };
+const prOf = (pr: number): PrState => ({
+  followUp: followups.isFollowUp(followups.branchOf(pr)),
+  merged: !!db.prepare("select 1 from prs where number = ? and status = 'merged'").get(pr),
+});
 
-function fateOf(row: Row, judged: Map<number, number>): Fate {
-  if (row.proposal !== null) return { fate: 'follow-up' };
-  if (row.kind === 'pre-existing' || row.kind === 'follow-up') return { fate: 'later' };
+function fateOf(row: Row, judged: Map<number, number>, pr: PrState): Fate {
+  if (row.followed_up !== null) return { fate: 'follow-up' };
+  if (row.kind === 'pre-existing' || row.kind === 'follow-up') return { fate: pr.followUp ? 'ended' : 'later' };
   if (row.outcome === 'fixed') return { fate: 'fixed', round: judged.get(row.id) };
   if (row.outcome === 'kept') return { fate: 'kept' };
   if (row.outcome === 'disputed' && row.right === 'author') return { fate: 'dropped' };
-  return { fate: 'open' };
+  return { fate: pr.followUp && pr.merged ? 'ended' : 'open' };
 }
 
 // The round whose ruling last judged each finding (its "outcomes")

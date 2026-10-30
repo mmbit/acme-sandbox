@@ -5,18 +5,17 @@
 //     worker throws its clone away, as a meeting seat's): what it makes lives in the book.
 //   - Its versions are answers on the note's root group (hq answer g<group> --version, bookanswer.ts), and they get a
 //     page of their own right after the group's page in its notebook (book_pages.tries: the group), headed "<Agent>
-//     tries: <words>". An old book's note (a call's page) has its versions page after its page (tries_note: the note),
-//     which reads the note's versions as HQ reads a group's (groupanswers.ts readOf), and a reply on one is a note
-//     there (notebooksend.ts replyTo).
+//     tries: <words>". An old book's note (on a sheet's page; a call's is never judged) has one in the old book,
+//     outside the notebooks (tries_note: the note).
 //   - One run per note at a time: a note written on the group or one of its versions while its try still runs goes to
 //     that run (a message its hook hands the session at its next step; one not started yet takes it in its brief).
-//   - On a call the run's the same; the call's agent writes text answers itself (answer_note: callanswer.ts), so onCall
-//     tells the quick run's caller to leave the note to it.
+//   - On a live call's page the run's the same, and onCall tells the quick run's caller to leave a note there to the
+//     call's agent, who is with the board.
 import { readFileSync } from 'node:fs';
 import { db, lacks } from '../db.ts';
 import { brand, ceo, companyDay } from '../company.ts';
 import { createJob, findAgent } from '../jobs.ts';
-import { keysCall } from '../memory.ts';
+import { keysAgent } from '../memory.ts';
 import * as feedback from '../feedback.ts';
 import { forRun } from '../messages.ts';
 import { changed, pageRow, type NotebookPage } from '../notebook.ts';
@@ -24,7 +23,6 @@ import { groupOn, rootOf, type Group } from '../notebookgroups.ts';
 import { row as bookPage, type Page } from './book.ts';
 import { note as noteRow, sheetRow, type Note } from './booknotes.ts';
 import { keep } from './booksheets.ts';
-import { heardOnCall } from './callanswer.ts';
 import { LABEL_MAX, type Anchor } from '../pagechecks.ts';
 import { DIR } from '../pagescraps.ts';
 import { quotedPatch } from './bookpick.ts';
@@ -39,7 +37,7 @@ const OPEN = "('queued', 'running')";
 
 // ---------------------------------------------------------------- what a try is on
 // The note a target stands for (root) and the page it's on: a group's root (the board's note itself, a reply's
-// parent), or an old book's note (a call's page: no group). Its owner answers it, in words (bookanswer.ts answerNow) or
+// parent), or an old book's note (a sheet's page: no group). Its owner answers it, in words (bookanswer.ts answerNow) or
 // in versions: the root's (a scrap's, a sheet's), else its page's, else the CEO. null: the group deleted, or the note
 // or its page gone.
 type Root = (
@@ -107,8 +105,7 @@ export function tryHolds(id: number, job: number, note = false) {
   return (o.root as { tried?: number | null }).tried === job;
 }
 
-// The live call whose page a target is on, or null: there the call's agent answers in words itself (answer_note), so
-// no quick run starts
+// The live call whose page a target is on, or null: there the call's agent is with the board, so no quick run starts
 export function onCall(t: Target): number | null {
   const o = on(t);
   const call = o && callOf(o.page.id);
@@ -149,7 +146,6 @@ export function tryNow(t: Target, verdict: { id: number; why: string }) {
     job,
     o.root.id,
   );
-  heardOnCall(t); // (on a call, its agent hears the try has started)
   return job;
 }
 
@@ -168,11 +164,10 @@ const versionName = (slip: number) => {
   return s?.version ? `“${s.version}”` : `#${slip}`;
 };
 
-// The versions page: right after the note's page in its notebook (between it and the next), made once per note; an old
-// book's page has no order but its day's, so it goes last in the day. It takes its note's page's call, so a call about a
-// card for keys keeps it for its own agent as it keeps its notes page (bookreads.ts callRead). There the call's agent
-// owns it too, so a note on it is that agent's to answer, try and be sent (booknotes.ts addNote's sheet), never the
-// CEO's as a page nobody owns
+// The versions page: right after the group's page in its notebook (between it and the next), made once per note; an old
+// book's note's has no notebook and no order but its day's, so it goes last in the day. It takes its group's page's call, so a call about a card for keys keeps it for its own agent as it
+// keeps its notes page (bookreads.ts callRead). There the call's agent owns it too, so a note on it is that agent's to
+// answer, try and be sent (booknotes.ts addNote's sheet), never the CEO's as a page nobody owns
 function versionsPage(o: On) {
   const column = o.kind === 'group' ? 'tries' : 'tries_note';
   const found = db.prepare(`select id from book_pages where ${column} = ?`).get(o.root.id) as
@@ -184,10 +179,7 @@ function versionsPage(o: On) {
     pos: number | null;
     call: number | null;
   };
-  const owner =
-    p.call !== null && keysCall(p.call)
-      ? (db.prepare('select agent from calls where id = ?').get(p.call) as { agent: string }).agent
-      : null;
+  const owner = p.call === null ? null : keysAgent(p.call);
   const next =
     p.notebook === null
       ? null

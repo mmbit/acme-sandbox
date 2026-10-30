@@ -67,35 +67,30 @@ export function narrowed(thread: string, by: windows.Window) {
 
 // Why the CEO's own queuing of an ask with no window is refused: the question it answers by queuing it again.
 export const untimedRefusal = (source: AskSource) =>
-  `this is the board's ask (${SOURCE_WORDS[source]}) and nothing timed waits on its deliverable, so it would wait behind ` +
-  "every window. Say its time: --by <when> (the board's, else hq when's), --by <project>/<slug> to take the window of " +
-  'the deliverable it serves, or --by none if the board gave it none and it serves nothing timed';
+  `this is the board's ask (${SOURCE_WORDS[source]}) and it is in no deliverable, so it would wait behind every window. ` +
+  "File it under the deliverable it serves, or give --by <when> (the board's, else hq when's), " +
+  '--by <project>/<slug> to take that window, or --by none if it has no time';
 
 // What the queuer hears when it isn't refused and the CEO isn't asked: on a live call, whose agent judges the time
 // itself or leaves it untimed, never asking the board by when, and on a
 // customer's call, whose details stay with its agent. A job in no thread goes on the one it serves first: a window is a
 // thread's (a live call's promise puts one it queued there: server.ts promisedWork).
-export const untimedLine = (job: number, onCall: boolean, inThread: boolean) =>
-  `It has no window: ${inThread ? 'nothing timed waits on its deliverable' : "it's in no deliverable"}. ` +
+export const untimedLine = (job: number, onCall: boolean) =>
+  "It has no window: it's in no deliverable. " +
   (onCall
     ? "Don't ask the board by when. If the board named a time or wants the work soon, or you judge a time sensible " +
       `(the when tool's), note that time with promise, its deadline and this job (${job})` +
-      `${inThread ? '' : ', with the open deliverable it serves'}: its deliverable takes the time at once. ` +
+      ', with the open deliverable it serves: its deliverable takes the time at once. ' +
       'Otherwise leave it untimed.'
-    : `Give it its time: ${inThread ? '' : `hq job move ${job} <project>/<slug> (the deliverable it serves), then `}` +
+    : `Give it its time: hq job move ${job} <project>/<slug> (the deliverable it serves), then ` +
       `hq window ${job} <when> (the board's, else hq when's).`);
 
 // Anyone else's ask with no window: the CEO is asked for its time, as a message (hq say's).
-export function askCeo(
-  from: messages.From,
-  job: { id: number; agent: string; title: string },
-  source: AskSource,
-  inThread: boolean,
-) {
+export function askCeo(from: messages.From, job: { id: number; agent: string; title: string }, source: AskSource) {
   return messages.send(
     from,
     ceo(),
     `Job #${job.id} for ${job.agent} ("${job.title}") is the board's ask (${SOURCE_WORDS[source]}). ` +
-      `${untimedLine(job.id, false, inThread)} Or leave it if it has none.`,
+      `${untimedLine(job.id, false)} Or leave it if it has none.`,
   );
 }

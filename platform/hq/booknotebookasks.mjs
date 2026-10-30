@@ -5,8 +5,8 @@
 //     card under the group, "Moss asks", its choices as chips; one tapped answers it through the desk phone's own route,
 //     the slip then reading answered with the pick, the page read again keeping it so, the desk phone with nothing
 //     waiting.
-//   - a desktop, a mouse: a card with a key field under the same group, its title and "Answer on the desk phone" only,
-//     nothing to tap or type; the card with choices beside it answered with a click.
+//   - a desktop, a mouse: the card with choices answered with a click. (A card for a key, an upload or built work never
+//     comes to the book: bookasks.test.ts.)
 import assert from 'node:assert/strict';
 import { open } from './booknotebook.mjs';
 import { where } from './booknotebookscreen.mjs';
@@ -24,8 +24,7 @@ export function notebookAskStories(c) {
   return {
     "an agent's card under its group on an iPad mini: on the desk phone with its note, Open in the book at the group's page, a chip there answering it":
       browser => onMini(browser, c),
-    "an agent's card with a key field under its group on a desktop: its title and Answer on the desk phone only, the other answered with a click":
-      browser => onDesktop(browser, c),
+    "an agent's card under its group on a desktop, answered with a click": browser => onDesktop(browser, c),
   };
 }
 
@@ -84,26 +83,17 @@ async function onDesktop(browser, c) {
   try {
     const [ask] = asksOf(play),
       desk = await deskPhone(page, play, c);
-    const keyed = play.ask(GROUP, {
-      ...{ agent: 'moss', kind: 'credential', title: 'The print shop’s key', body: 'The key for the print shop.' },
-      desk: true,
-    });
     await turnToSent(page);
-    const under = page.locator(`#book .bk-under[data-g="${GROUP}"]`),
-      key = under.locator(`.ask-slip[data-ask="${keyed.id}"]`);
-    await key.waitFor({ timeout: 4000 });
-    await key.scrollIntoViewIfNeeded();
-    assert.match(await key.innerText(), /Moss asks[\s\S]*The print shop’s key[\s\S]*Answer on the desk phone/);
-    assert.equal(await key.locator('button, textarea, input').count(), 0, 'nothing to tap or type for a key');
-    await c.shot('notebook-ask-key', page);
-    const slip = under.locator(`.ask-slip[data-ask="${ask.id}"]`);
+    const slip = page.locator(`#book .bk-under[data-g="${GROUP}"] .ask-slip[data-ask="${ask.id}"]`);
+    await slip.waitFor({ timeout: 4000 });
+    await slip.scrollIntoViewIfNeeded();
+    await c.shot('notebook-ask-desktop', page);
     await slip.getByRole('button', { name: 'The sun' }).click();
     await until(async () => (await slip.getAttribute('data-answered')) !== null, 'the slip answered');
     assert.deepEqual(
       desk.answered.map(b => [b.id, b.answer]),
       [[ask.id, 'The sun']],
     );
-    assert.match(await key.innerText(), /Answer on the desk phone/, 'the key card still waits for the desk phone');
     c.noErrorsIn(errors);
   } finally {
     await done();

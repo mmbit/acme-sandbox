@@ -136,12 +136,13 @@ test('each round gets the briefing of its stage, and what the reviews leave goes
   const [ruling] = await claim(n, 'consolidate');
   assert.match(ruling.prompt, /in the first look, so does code the next person can't live with/);
   assert.match(ruling.prompt, /Then make the safe\s+nonblocking fixes too/);
+  assert.match(ruling.prompt, /merges goes into one follow-up job for its author/);
   assert.doesNotMatch(ruling.prompt, /"upstream"/);
   await end(
     ruling,
     json({
-      blocking: [at(3, 'the score adds the bonus twice'), at(7, 'a name that says nothing')],
-      nonblocking: [at(30, 'a long function')],
+      blocking: [at(3, 'the score adds the bonus twice')],
+      nonblocking: [at(7, 'a name that says nothing'), at(30, 'a long function')],
       pre_existing: [
         at(9, 'the ship is drawn twice', 'kits/art/ship.ts'),
         at(2, 'an old loop', 'products/game/old.ts'),
@@ -151,10 +152,10 @@ test('each round gets the briefing of its stage, and what the reviews leave goes
     }),
   );
   const [bonus, name, long] = findingsOf(n).filter(f => f.kind !== 'pre-existing');
-  assert.deepEqual([bonus.kind, name.kind, long.kind], ['blocking', 'blocking', 'nonblocking']);
+  assert.deepEqual([bonus.kind, name.kind, long.kind], ['blocking', 'nonblocking', 'nonblocking']);
   assert.match(fixPrompt(n), /Fix or answer each nonblocking one too/);
 
-  // round 2, a later round: only blocking findings hold the merge; the rest is the follow-up job's
+  // round 2, a later round: only blocking findings hold the merge, and the rest goes to the follow-up job
   await push(n);
   const [check] = await claim(n);
   assert.equal(check.stage, 'ruling');
@@ -196,20 +197,20 @@ test('each round gets the briefing of its stage, and what the reviews leave goes
   // round 3 merges: its own nonblocking finding and the one the author left open go with the rest
   await push(n);
   const [last] = await claim(n);
-  await end(
-    last,
-    json({
-      outcomes: [
-        { finding: bonus.id, outcome: 'fixed' },
-        { finding: name.id, outcome: 'not fixed' },
-        { finding: long.id, outcome: 'not fixed' },
-      ],
-      blocking: [],
-      nonblocking: [at(20, 'a comment says what, not why'), { ...at(30, 'still one long function'), earlier: long.id }],
-      decision: 'merge',
-      summary: 'fixed',
-    }),
-  );
+  const mergeRuling = json({
+    outcomes: [
+      { finding: bonus.id, outcome: 'fixed' },
+      { finding: name.id, outcome: 'not fixed' },
+      { finding: long.id, outcome: 'not fixed' },
+    ],
+    blocking: [],
+    nonblocking: [at(20, 'a comment says what, not why'), { ...at(30, 'still one long function'), earlier: long.id }],
+    decision: 'merge',
+    summary: 'fixed',
+  });
+  const accepted = await h.agent('review-output', last.token, mergeRuling);
+  assert.equal(accepted.body.error, null, 'the merge retires its blocker and leaves only nonblocking findings');
+  await end(last, mergeRuling);
   // one job for the author, in the same deliverable, with every finding that didn't hold the merge
   await until(() => followUps().length === 1, 'the follow-up job queued');
   const [job] = followUps();
@@ -246,6 +247,8 @@ test('each round gets the briefing of its stage, and what the reviews leave goes
   });
   for (const r of await claim(m, 'review')) await end(r);
   const [quill] = await claim(m, 'consolidate');
+  assert.match(quill.prompt, /merges ends there: it is a follow-up job's own/);
+  assert.doesNotMatch(quill.prompt, /goes into one follow-up job/);
   await end(quill, json({ blocking: [], nonblocking: [at(5, 'a magic number')], decision: 'merge', summary: 'ok' }));
   await until(() => findingsOf(m).length === 1, "the follow-up's own finding recorded");
   await until(
@@ -253,6 +256,15 @@ test('each round gets the briefing of its stage, and what the reviews leave goes
     'merged',
   );
   assert.equal(followUps().length, 1);
+  const shown = (await h.board(`/api/projects/findings?job=${quill.id}`)).body.findings as {
+    issue: string;
+    fate?: string;
+  }[];
+  assert.deepEqual(
+    shown.map(f => f.fate),
+    ['ended'],
+    'the projects view shows it ended with the follow-up',
+  );
 });
 
 test("a first round near its thread's deadline is a later one, and the upstream round shows what went wrong before review", async t => {

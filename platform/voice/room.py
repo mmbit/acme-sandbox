@@ -167,7 +167,7 @@ class Room:
     """One call out's room: its people, its Call, the agent's voice waiting to be mixed, and the mixer's clock."""
     def __init__(self, callout, ticket, make_call, limits=RoomLimits()):
         self.callout, self.ticket, self.people = callout, ticket, {}
-        self.limits = limits  #.
+        self.limits = limits
         self.voice = collections.deque()  # the agent's audio still to play (float32 arrays) and the events between them
         self.ear = asyncio.Queue()        # what the agent hears, frame by frame, on its way to Call.hear
         self.mixed = 0                    # samples the mixer has given the agent to hear

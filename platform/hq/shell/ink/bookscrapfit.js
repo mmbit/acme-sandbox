@@ -1,12 +1,12 @@
 // A scrap drawn to fit the paper on this screen. The store keeps a scrap at a readable width (notebookstack.js STACK.w),
-// left of the controls on the papers the board reads on but the narrower ones (a phone's, the book at its least); where
-// a scrap runs under the controls at the paper's right edge on this screen (the stack and the tool strip beside it, as
-// answers keep left of them: bookui.js clearOf), HQ draws it scaled down about its top-left to end left of
-// them, its picture, the ink on it and its words alike, as Select's corner would (bookselectmath.js), never narrower
-// than LEAST. Only drawn so: the page's lists hold it as drawn (page.fits: each fitted group's change), and what's saved
-// of it is the store's scale (storedOf: an element as read, the one it was drawn from; one drawn, moved or resized
-// here, scaled back), so no screen's paper shrinks a scrap for another. Fitted when its page is read, and again as the
-// paper sizes and the controls' width settles.
+// left of the controls on the papers the board reads on, the narrower ones aside (a phone's, the book at its least).
+// Where a scrap runs under the controls at the paper's right edge here (the stack and the tool strip beside it, as
+// answers keep left of them: bookui.js clearOf), HQ draws it scaled down about its top-left to end left of them, as
+// Select's corner would (bookselectmath.js): its picture, the ink on it and its words alike, never narrower than LEAST.
+// The fit is only drawn. The page's lists hold the fitted copies, each with the element it was drawn from as its hidden
+// `fit`, and page.fits holds each fitted group's change. What's saved is at the store's scale (storedOf: one drawn,
+// moved or resized here is scaled back), so no screen's paper shrinks a scrap for another. A page's scraps fit again as
+// it's read, as the paper sizes and as the controls' width settles.
 import { movedScrap, movedStroke } from './bookselectmath.js';
 import { keyOf } from './bookgroupmath.js';
 import { clearOf } from './bookui.js';
@@ -30,9 +30,11 @@ export function mountFit(book, el) {
   book.world.addEventListener('bk:paper', again);
   el.addEventListener('bk:controls-width', again);
 }
-// Whether anything hangs under a scrap (bookgroups.js .bk-under, as wide as its words): its words, its slips or an
-// agent's asks; a scrap with none fits by its own width
-const hangs = g => !!(g.words || slipsUnder(g.children ?? []).length || g.asks?.length);
+// Whether anything hangs under a scrap (bookgroups.js .bk-under, as wide as its words): its words, saved or being typed
+// (page.typed, as bookgroups.js wordsHtml shows them), its slips or an agent's asks; a scrap with none fits by its own
+// width
+const hangs = (page, g) =>
+  !!(g.words || page.typed?.has(g.id) || slipsUnder(g.children ?? []).length || g.asks?.length);
 // A page's scraps drawn to fit the paper as this screen shows it at 100%, its groups as last read or saved
 // (page.groups); true when what's drawn changed. Before the paper has a size, as the store has them.
 export function fitScraps(book, page) {
@@ -45,8 +47,9 @@ export function fitScraps(book, page) {
   if (!book.size.w) return had;
   const edge = clearOf(book.desk, book.size.w);
   for (const g of page.groups.values()) {
+    // (typed boxes keep their size when scaled, so a scrap with one on it can't be fitted)
     if (g.kind !== 'scrap' || g.texts.length || !g.box || !asStored(page, g)) continue;
-    const wide = hangs(g) ? Math.max(g.box.w, wordsWidth(g.box.w)) : g.box.w,
+    const wide = hangs(page, g) ? Math.max(g.box.w, wordsWidth(g.box.w)) : g.box.w,
       k = (edge - g.box.x) / wide;
     if (k >= 1 || k * wide < LEAST) continue;
     const tr = { k, ax: g.box.x, ay: g.box.y, dx: 0, dy: 0 };

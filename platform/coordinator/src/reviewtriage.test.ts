@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { harness, until } from './harness.ts';
-import { leftoverJobs, retryNow } from './reviewfixture.ts';
+import { scenarioCleanup, retryNow } from './reviewfixture.ts';
 import * as reviewrefusals from './reviewrefusals.ts';
 
 const h = await harness('reviewtriage', {
@@ -45,8 +45,8 @@ const selection = (reviewers?: ReturnType<typeof reader>[]) => ({
   consolidator: 'quill',
   ...(reviewers && { reviewers }),
 });
-const cancelLeftovers = leftoverJobs(db);
-afterEach(cancelLeftovers);
+const cancelOpenWork = scenarioCleanup(db);
+afterEach(cancelOpenWork);
 
 async function push(
   pr: number,
@@ -83,7 +83,7 @@ async function blocked(pr: number, note = false, finder = 'rook', agent = 'bolt'
     nonblocking: note ? [{ file: files[0], line: 6, issue: 'A naming suggestion', by: ['rook'] }] : [],
   });
   await until(() => db.prepare('select 1 from findings where ruling = ?').get(ruling.id), 'recorded blocker');
-  cancelLeftovers();
+  cancelOpenWork();
   const finding = db.prepare('select id from findings where ruling = ?').get(ruling.id) as { id: number };
   return { head, finding: finding.id };
 }
@@ -201,7 +201,7 @@ test('the recorded triage decision chooses the readers, independent of paths or 
       rows[0].triage.selection.reviewers.map((read: any) => read.agent),
       agents,
     );
-    cancelLeftovers();
+    cancelOpenWork();
   }
 });
 
@@ -295,7 +295,7 @@ test("triage's throwaway judgment sets the low bar for its readers and the rulin
     }
     await until(() => pending(pr).some(job => job.stage === 'ruling'), 'ruling');
     assert.equal(lowBar(prompt(pr, 'ruling')), !!throwaway, `PR ${pr}'s ruling`);
-    cancelLeftovers();
+    cancelOpenWork();
   }
 });
 
@@ -324,7 +324,7 @@ test('triage keeps its chosen looker or no looker and refuses a looker outside t
       const rows = (await h.board('/api/jobs')).body.filter((job: any) => job.pr === pr && job.kind === 'review');
       assert.equal(rows[0].triage.selection.looker, looker);
     }
-    cancelLeftovers();
+    cancelOpenWork();
   }
 });
 
@@ -343,7 +343,7 @@ test('with no file under a preview check, triage chooses which reader looks, amo
       const rows = (await h.board('/api/jobs')).body.filter((job: any) => job.pr === pr && job.kind === 'review');
       assert.equal(rows[0].triage.selection.looker, 'rook');
     }
-    cancelLeftovers();
+    cancelOpenWork();
   }
 });
 
@@ -387,7 +387,7 @@ test('a visual HQ fix rechecks only its co-author finder unless triage explicitl
   assert.ok(run!.prompt.includes('caused_by'));
   await h.finish(run!, { output: JSON.stringify({ findings: [] }) });
 
-  cancelLeftovers();
+  cancelOpenWork();
   await push(93);
   await finish(
     93,
@@ -585,7 +585,7 @@ test('the triage chooses the eligible consolidator and its actual engine for the
     await finish(pr, 'triage', { ...selection([]), consolidator: agent });
     const ruling = pending(pr).find(job => job.stage === 'ruling')!;
     assert.deepEqual([ruling.agent, ruling.engine], [agent, engine]);
-    cancelLeftovers();
+    cancelOpenWork();
   }
 });
 
@@ -626,7 +626,7 @@ test('triage offers and accepts co-authors when all listed consolidators and the
       );
       assert.equal(h.github.pr(pr).state, 'open');
     }
-    cancelLeftovers();
+    cancelOpenWork();
   }
 });
 
@@ -672,7 +672,7 @@ test('a triage briefed before a change to who may rule runs again briefed and ru
       assert.equal(panel.consolidator(pr), 'tally');
     } finally {
       writeFileSync(file, before);
-      cancelLeftovers();
+      cancelOpenWork();
     }
   }
 });
@@ -839,7 +839,7 @@ test('a UI reader can look without a configured preview command, beside other co
     assert.ok(!pending(pr).some(job => job.stage === 'triage'));
     const rows = (await h.board('/api/jobs')).body.filter((job: any) => job.pr === pr && job.kind === 'review');
     assert.equal(rows[0].triage.selection.looker, 'rook');
-    cancelLeftovers();
+    cancelOpenWork();
   }
 });
 
@@ -878,7 +878,7 @@ test('a fix round passes the consolidator look to the reader holding the shown f
       .prepare("select prompt from jobs where pr = ? and agent = ? and status = 'queued'")
       .get(pr, looker) as { prompt: string };
     assert.ok(prompt.includes('node preview.mjs'), 'the reader receives the required previews');
-    cancelLeftovers();
+    cancelOpenWork();
   }
 });
 
@@ -942,7 +942,7 @@ test('a finder serving as consolidator needs no omission reason, with or without
     assert.ok(!pending(pr).some(job => job.stage === 'triage'));
     if (panel) await finish(pr, 'review', { findings: [] });
     assert.ok(pending(pr).some(job => job.stage === 'ruling' && job.agent === 'nib'));
-    cancelLeftovers();
+    cancelOpenWork();
   }
 });
 
@@ -1009,7 +1009,7 @@ test('a round counts queued runs ahead in the shared plan, and a paced seat take
   assert.equal(triager(171), 'nib', "Codex's three queued rounds have no window, so they wait behind it");
   await push(172);
   assert.equal(triager(172), 'quill', 'a round without a window waits behind all of them');
-  cancelLeftovers();
+  cancelOpenWork();
   await seatsFor({ 'claude-1': 'paced' }, async () => {
     for (const pr of [173, 174]) await push(pr);
     assert.deepEqual([173, 174].map(triager), ['nib', 'nib'], 'the paced seat takes no undated round');

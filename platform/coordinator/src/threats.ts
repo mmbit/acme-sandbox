@@ -12,6 +12,7 @@ import { getRoom, plannerCapacity } from './room.ts';
 import { ownerOf } from './projects.ts';
 import { findProject } from './projects.ts';
 import { clock } from './windows.ts';
+import { outlookOf } from './outlooks.ts';
 import { standing, undrawnWords, type Forecast, type ThreadOutlook } from './forecast.ts';
 import { ORIGIN } from './matching.ts';
 import { duration, waitWords } from '../../worker/hq/waits.ts';
@@ -43,7 +44,7 @@ export function lines(f: Forecast) {
     ...[...stalled(), ...[getRoom().line ?? []].flat(), ...roomLow(f.now), ...seatsNear(f)],
     ...[...tests(f.now), ...timedOut(f.now), ...pastSize(f)],
     ...[...stuckPrs(f.now), ...failed(f.now)],
-    ...[...heldByNeeds(open, f.now), ...inboxes(f.now), ...meetingAsks(f.now), ...sprawl(f.now)],
+    ...[...heldByNeeds(open, f.now), ...undated(open, f), ...inboxes(f.now), ...meetingAsks(f.now), ...sprawl(f.now)],
   ];
 }
 
@@ -62,6 +63,11 @@ function openThreads(f: Forecast) {
   });
 }
 
+// Missing deadlines show once per deliverable, never once per task.
+function undated(open: OpenThread[], f: Forecast) {
+  return open.filter(t => outlookOf(t.id, f)!.undated).map(t => `${threadName(t)}: no deadline set`);
+}
+
 // Threads whose planned finish is past their deadline, or with none in sight, the furthest past first: by how much,
 // who gave the time, and what holds them.
 function missed(open: OpenThread[], now: number) {
@@ -78,7 +84,7 @@ function missed(open: OpenThread[], now: number) {
         o.finish === null
           ? `no finish in sight for ${deadline}`
           : `finish ${clock(o.finish, now)}, ${span(-o.slack!)} past ${deadline}`;
-      return `${threadName(t)}: ${where}. Held by: ${causeOf(o, now)}. ${movedWords(threadMoved(t.id), now)}`;
+      return `${threadName(t)}: ${where}. Held by: ${causeOf(o, now)}. Judge the slip: why, and what to change to meet the deadline. ${movedWords(threadMoved(t.id), now)}`;
     });
 }
 

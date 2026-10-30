@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { harness, until } from './harness.ts';
 import { play } from './eta.ts';
-import { resetReviewInbox, completeTriage, leftoverJobs } from './reviewfixture.ts';
+import { resetReviewInbox, completeTriage, scenarioCleanup } from './reviewfixture.ts';
 
 const h = await harness('reviewplan');
 const { snapshot } = await import('./backlog.ts');
@@ -20,24 +20,24 @@ function forecast(pr: number, extra: number[] = []) {
 
 test('work before its first push budgets triage and a ruling before releasing dependents', async () => {
   await h.capacity({ claude: 1, codex: 1 });
-  const clear = leftoverJobs(h.db);
+  const cancelOpenWork = scenarioCleanup(h.db);
   const author = h.queue({ agent: 'bolt', engine: 'claude' });
   const after = h.queue({ agent: 'kit', engine: 'codex', after: author });
   const { input, seen } = forecast(0, [author, after]);
   assert.equal(seen.get(author)!.merged, input.now + 31 * MINUTE);
   assert.equal(seen.get(after)!.start, seen.get(author)!.merged);
-  clear();
+  cancelOpenWork();
   const finished = h.ended({ agent: 'bolt', engine: 'claude' });
   h.storedPr(990, finished, 'open', [], { round: 1 });
   h.queue({ agent: 'quill', engine: 'claude', kind: 'consolidate', pr: 990, round: 1, stage: 'ruling' });
   const ruled = forecast(990);
   assert.equal(ruled.seen.get(finished)!.merged, ruled.input.now + MINUTE);
-  clear();
+  cancelOpenWork();
 });
 
 test('unopened work uses triage round history instead of an old fixed panel', async () => {
   await h.capacity({ claude: 1, codex: 1 });
-  const clear = leftoverJobs(h.db);
+  const cancelOpenWork = scenarioCleanup(h.db);
   for (const [pr, reviewClass, round] of [
     [995, 'one', 5],
     [996, 'triage', 1],
@@ -50,12 +50,12 @@ test('unopened work uses triage round history instead of an old fixed panel', as
   const { input, seen } = forecast(0, [author, after]);
   assert.equal(seen.get(after)!.start, input.now + 31 * MINUTE);
   h.clearReviewHistory();
-  clear();
+  cancelOpenWork();
 });
 
 test('recorded reviewers occupy the panel capacity once before its ruling', async () => {
   await h.capacity({ claude: 1, codex: 1 });
-  const clear = leftoverJobs(h.db);
+  const cancelOpenWork = scenarioCleanup(h.db);
   for (const [pr, file, agents, minutes] of [
     [991, 'products/demo/play.js', ['rook'], 16],
     [992, 'infra/test.yaml', ['rook', 'tally', 'nib', 'flint'], 17],
@@ -72,7 +72,7 @@ test('recorded reviewers occupy the panel capacity once before its ruling', asyn
       input.seatRuns!.claude = input.seatRuns!.codex = 2;
       assert.equal(play(input, forecast(pr).sizes).get(author.id)!.merged, input.now + 16 * MINUTE);
     }
-    clear();
+    cancelOpenWork();
   }
 });
 
@@ -117,17 +117,20 @@ test('board-held and stuck PRs hold forecasts and live claims until resolution',
 
 test('re-land dependents wait for the remaining PR rounds and its actual resolution', async () => {
   await h.capacity({ claude: 1, codex: 1, 're-land': 1, 're-land-dependent': 1 });
+  const pr = 1991;
+  const author = h.ended({ agent: 'bolt' });
+  h.storedPr(pr, author, 'open', ['products/demo/play.js'], { round: 1, sha: 'a'.repeat(40) });
   const reLand = h.queue({
     agent: 'bolt',
     title: 'Bring the branch up to date',
     engine: 're-land',
     kind: 'work',
-    pr: 991,
-    branch: 'job/991',
+    pr,
+    branch: `job/${author}`,
     stage: 'fix',
   });
   const following = h.queue({ agent: 'bolt', engine: 're-land-dependent', after: reLand });
-  const { input, sizes } = forecast(991, [following]);
+  const { input, sizes } = forecast(pr, [following]);
   const played = play(input, sizes);
   assert.ok(played.get(reLand)!.merged! > played.get(reLand)!.done!);
   assert.equal(played.get(following)!.start, played.get(reLand)!.merged);
@@ -136,7 +139,7 @@ test('re-land dependents wait for the remaining PR rounds and its actual resolut
   assert.equal(running!.id, reLand);
   await h.finish(running!);
   assert.equal(await h.claim('re-land-dependent'), null);
-  h.mergedPr(991);
+  h.mergedPr(pr);
   assert.equal((await h.claim('re-land-dependent'))!.id, following);
 });
 
@@ -343,7 +346,7 @@ test('one ruling with several fix titles occupies one job in the play before its
   const projects = await import('./projects.ts');
   const inbox = await import('./reviewinbox.ts');
   const { reviewPlans } = await import('./reviewplan.ts');
-  const clear = leftoverJobs(h.db);
+  const cancelOpenWork = scenarioCleanup(h.db);
   const thread = h.dueThread();
   const author = h.ended({ agent: 'bolt', engine: 'claude', thread });
   const branch = `job/${author}`;
@@ -390,5 +393,5 @@ test('one ruling with several fix titles occupies one job in the play before its
   for (const finding of blocking) assert.ok(running.prompt.includes(`finding #${finding.id}`));
   assert.ok(running.prompt.includes(item.touchups!));
   await h.finish(running);
-  clear();
+  cancelOpenWork();
 });

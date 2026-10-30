@@ -5,7 +5,8 @@ import * as redraws from './redraws.ts';
 import * as pauses from './pauses.ts';
 import * as jobs from './jobs.ts';
 import * as reviewwork from './reviewwork.ts';
-import { BAD_TITLE, taskTitle, type Item } from './reviewinbox.ts';
+import { type Item } from './reviewinbox.ts';
+import { BAD_TITLE, taskTitle } from './tasktitles.ts';
 import { findThread, type JobThreadAsk } from './projects.ts';
 
 export function hold(branch: string, pr: number) {

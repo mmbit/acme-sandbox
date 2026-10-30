@@ -24,7 +24,10 @@ INK_SECONDS = 5
 # What the line says to the agent about the board's notes, in front of the board's words (the board's own turn, so in
 # its voice), and in a restarted session's recap
 NOTE_WORDS = {
-    'drawn': "(I drew note {n} on HQ's page {url}{saying}",
+    'drawn': "(I drew note {n} on {where}{saying}",
+    # (where: HQ's own page by its path, or the preview in HQ's viewer by its whole address.)
+    'hq': "HQ's page {url}",
+    'preview': 'the preview {url}',
     'saying': ', saying “{words}”',
     'picture': ': the picture is the page around it, my ink on it.)',
     'bare': '.)',
@@ -76,41 +79,20 @@ def one_line(text):
     return ' '.join(str(text or '').split())
 
 
-# What the line adds about a note the book's judge read (the coordinator's bookjudge.ts, with the note: bookcalls.ts
-# forVoice), and the line about what changed on one later (server.py Call.note_news).
-VERDICT_WORDS = {
-    'answer': " (The board's note asks for an answer: write it on the page with answer_note, and say it if it helps.)",
-    'try': (" (The board's note asks to see it made: a try run is making a few versions for real, on a page right after "
-            "this call's, which the sketch tool shows by the word 'tries'.{landed})"),
-    'landed': ' Landed so far: {names}.',
-    # (the version the board ringed or ticked on its page.)
-    'picked': " The board picked “{name}”: that's the one to build.",
-    'news': "(News on note {n}, on HQ's page {url}.)",
-}
-
-
-def verdict_said(note):
-    """The line on a note's verdict and the versions landed so far (its entry's note), or '' for none."""
-    reply = (note.get('verdict') or {}).get('reply')
-    if reply == 'answer':
-        return VERDICT_WORDS['answer']
-    picked = VERDICT_WORDS['picked'].format(name=note['picked']) if note.get('picked') else ''
-    if reply != 'try':
-        return f' ({picked[1:]})' if picked else ''
-    names = ', '.join(f'“{name}”' for name in note.get('versions') or [] if name)
-    return VERDICT_WORDS['try'].format(landed=(VERDICT_WORDS['landed'].format(names=names) if names else '') + picked)
-
-
 def note_said(entry):
     """A note's line for the agent (its entry with the call's pictures, server.py Call.note), in front of the board's
-    words: where the board drew it, what it said, and what its picture is (none: HQ had none, or no room for it), and
-    what the book's judge made of it; or, for news on a note it has (Call.note_news), that alone."""
+    words: where the board drew it, what it said, and what its picture is (none: HQ had none, or no room for it).
+"""
     note = entry['note']
-    if note.get('news'):
-        return VERDICT_WORDS['news'].format(n=note['n'], url=note['url']) + verdict_said(note)
     saying = NOTE_WORDS['saying'].format(words=note['words']) if note['words'] else ''
     end = 'full' if note.get('full') else 'picture' if entry['data'] else 'bare'
-    return NOTE_WORDS['drawn'].format(n=note['n'], url=note['url'], saying=saying) + NOTE_WORDS[end] + verdict_said(note)
+    return NOTE_WORDS['drawn'].format(n=note['n'], where=where_of(note), saying=saying) + NOTE_WORDS[end]
+
+
+def where_of(note):
+    """Where the board drew a note: HQ's page by its path, or a preview's page in HQ's viewer by its whole address."""
+    url = note['url']
+    return NOTE_WORDS['preview' if url.startswith('https://') else 'hq'].format(url=url)
 
 
 def notes_lost(numbers):

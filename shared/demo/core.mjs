@@ -20,6 +20,12 @@ export const ROOT = (() => { try { return execFileSync('git', ['rev-parse', '--s
 
 export { playwright };
 
+// The company's clock (an IANA name): org.yaml's company.timeZone, UTC when it names none; an unreadable org.yaml throws
+export async function companyTimeZone() {
+  const { parse } = await import('../../platform/coordinator/node_modules/yaml/dist/index.js');
+  return parse(readFileSync(resolve(ROOT, 'company/org.yaml'), 'utf8'))?.company?.timeZone ?? 'UTC';
+}
+
 // --key value / --flag / positionals. Numbers stay strings; callers convert.
 export function args(argv = process.argv.slice(2)) {
   const o = { _: [] };

@@ -64,6 +64,27 @@ test('words grown past the picture at its full size draw it smaller, still whole
   assert.ok(width! < 2000 && height! / width! > 10, `drawn smaller, the page's shape kept (${width} × ${height})`);
 });
 
+test('a page that fills the pixels with words set past its foot is drawn smaller, whole: its last line on paper', async () => {
+  const long = Array.from({ length: 6 }, () => WORDS).join(' ');
+  const page = {
+    ...{ w: 1200, h: 8400, ink: [], scraps: [] },
+    texts: [{ x: 24, y: 8380, w: 313, text: long, color: INK }],
+  };
+  const png = await render(page, '.');
+  const { width = 0, height = 0 } = await sharp(png).metadata();
+  assert.ok(width * height <= 40_000_000 && width < 2390, `within the pixels, smaller (${width} × ${height})`);
+  // the foot of the picture: its last line inked, paper under it to the bottom
+  const foot = await pixels(
+    await sharp(png)
+      .extract({ left: 0, top: height - 600, width: 800, height: 600 })
+      .toBuffer(),
+  );
+  const rowInked = (y: number) => Array.from({ length: 700 }, (_, x) => at(foot, 40 + x, y)[0] < 120).some(Boolean);
+  const last = Array.from({ length: 600 }, (_, y) => y).findLast(rowInked) ?? -1;
+  assert.ok(last > 600 - 80 && last < 600 - 30, `the last line drawn, near the foot (${last} of 600)`);
+  assert.deepEqual(at(foot, 100, 599), [255, 253, 248], 'paper under it');
+});
+
 test("an agent's answers and the board's replies are drawn: slipped under their group, and at their spots", async () => {
   const page = {
     ...{ w: 800, h: 300, ink: [], scraps: [] },

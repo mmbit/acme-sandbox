@@ -1,27 +1,17 @@
 // A notebook page sent in: each of its groups goes to its agent as a note, the way the book's sheets go (booksheets.ts
-// delivers them): the groups cut from one agent's work as one task for them, the rest through the CEO's routing check,
-// which decides who takes each. SEND_MS to undo, then it's theirs; the page stays, read-only, marked sent, and a fresh
-// page takes new groups. A reply written under an answer goes at once, with the same seconds to undo. Each send's sheets
-// are its own (book_sheets.notebook_page), never an owner's batch on the old book's pages.
+// delivers them): the groups cut from one agent's work or on a page it owns as one task for them, the rest through the
+// CEO's routing check, which decides who takes each. SEND_MS to undo, then it's theirs; the page stays, read-only,
+// marked sent, and a fresh page takes new groups. A reply written under an answer goes at once, with the same seconds to
+// undo. Each send's sheets are its own (book_sheets.notebook_page), never an owner's batch on the old book's pages.
 import { rmSync } from 'node:fs';
 import { db, inOneStep } from './db.ts';
 import { BOARD } from './ink/book.ts';
 import { render } from './ink/bookrender.ts';
+import { keysAgent } from './memory.ts';
 import { DIR } from './pagescraps.ts';
 import { SEND_MS, insertNote, note, sheetRow, type Note } from './ink/booknotes.ts';
 import { deliverDue } from './ink/booksheets.ts';
-import {
-  changed,
-  gone,
-  mine,
-  newPage,
-  openPageOf,
-  pageOf,
-  pageRow,
-  shut,
-  triesPageOfNote,
-  type NotebookPage,
-} from './notebook.ts';
+import { changed, gone, mine, newPage, openPageOf, pageOf, pageRow, shut, type NotebookPage } from './notebook.ts';
 import { groupOn, insertGroup, partsOf, putAside, rootOf, row, type Group } from './notebookgroups.ts';
 import { boxOf } from '../../hq/shell/ink/notebookstack.js';
 import { judgeLater } from './ink/bookjudge.ts';
@@ -33,13 +23,20 @@ const PAD = 24;
 
 // POST /api/notebooks/pages/send { id }: the page's groups go in SEND_MS, unless it's undone first. The board's Send
 // leaves the book on the page under the one sent: a fresh one there when it was the notebook's last (the board's call
-// 161; under). (RESEND: a call's page sent at hang-up is sent again on it.)
-export const RESEND = 'the page changed while it was being sent: send it again';
+// 161; under). A call's notes page is never sent: it goes in as the call ends, and its follow-up hands out what's on it
+// (ink/callnotes.ts ended).
+const RESEND = 'the page changed while it was being sent: send it again';
 export const sendShown = (b: any) => sendPage(b, BOARD, undefined, true);
 export async function sendPage(b: any, who = BOARD, stillOpen?: () => boolean, under = false) {
   const p = pageRow(Number(b?.id), who);
   if (!p) return 404;
   if (shut(p)) return [409, 'this page has been sent', 'pageSent'] as Refused;
+  if (p.kind === 'call')
+    return [
+      409,
+      "a call's notes page goes in as the call ends, and its follow-up hands out what's on it",
+      'callPage',
+    ] as Refused;
   const sendable = () =>
     db
       .prepare(
@@ -79,12 +76,17 @@ const lastPage = (p: NotebookPage) =>
         and (coalesce(pos, -1) > ?2 or (coalesce(pos, -1) = ?2 and id > ?3))`,
     )
     .get(p.notebook, p.pos ?? -1, p.id);
-// Groups as notes on a sheet of this send's for each owner, their seconds started: when they go (inside inOneStep)
+// Groups as notes on a sheet of this send's for each owner, their seconds started: when they go (inside inOneStep). A
+// call about a card for keys keeps every group on its pages for its own agent, whoever a group names, however the page
+// was made (memory.ts keysAgent, as bookreads.ts callRead keeps it for reads); elsewhere a group nobody owns is its
+// page's owner's, as an old book's note is (booknotes.ts addNote).
 function asNotes(who: string, groups: Group[], snips: ({ type: string; clean: Buffer } | null)[]) {
   const sheets = new Map<string | null, number>();
   groups.forEach((g, i) => {
-    const sheet = sheets.get(g.owner) ?? newSheet(who, g.owner, g.page);
-    sheets.set(g.owner, sheet);
+    const page = pageRow(g.page, null)!;
+    const owner = (page.call === null ? null : keysAgent(page.call)) ?? g.owner ?? page.owner;
+    const sheet = sheets.get(owner) ?? newSheet(who, owner, g.page);
+    sheets.set(owner, sheet);
     const id = insertNote(sheet, g.page, g.by, anchorOf(g), saidOf(g), snips[i], null);
     db.prepare("update notebook_groups set status = 'sent', note = ? where id = ?").run(id, g.id);
   });
@@ -172,14 +174,20 @@ export function undoSend(b: any, who = BOARD) {
       unsend(n);
       db.prepare("update notebook_groups set status = 'open', note = null where id = ?").run(g.id);
     }
-    db.prepare('update book_pages set send_at = null, fresh = null where id = ?').run(p.id);
-    db.prepare(
-      `delete from book_pages where id = ? and send_at is null and label = ''
-      and not exists (select 1 from notebook_groups g where g.page = book_pages.id)`,
-    ).run(p.fresh);
+    db.prepare('update book_pages set send_at = null where id = ?').run(p.id);
+    dropFresh(p);
     changed(p.notebook, p.id);
   });
   return pageOf(pageRow(p.id, who)!);
+}
+// The fresh page a send of p made, gone while it's blank and untitled: an undo's and a guest's hand-in in a round
+// (notebookrounds.ts).
+export function dropFresh(p: NotebookPage) {
+  db.prepare(
+    `delete from book_pages where id = ? and send_at is null and label = ''
+      and not exists (select 1 from notebook_groups g where g.page = book_pages.id)`,
+  ).run(p.fresh);
+  db.prepare('update book_pages set fresh = null where id = ?').run(p.id);
 }
 // POST /api/notebooks/groups/reply { answer, words?, said?, ink?, frame? }: the board's reply under an agent's answer (a
 // slip): a reply group under the answered group, gone to the agent who answered in SEND_MS (deleteReply takes it back).
@@ -189,24 +197,14 @@ export async function replyTo(b: any, who = BOARD, stillOpen?: () => boolean) {
   const slip = db.prepare('select id, note, grp, by from book_slips where id = ?').get(Number(b?.answer)) as
     { id: number; note: number | null; grp: number | null; by: string } | undefined;
   const answered = slip && groupOn(slip); // (not a deleted one's)
-  // (a version of an old book's note, a call's, has no group: the reply is a note on its versions page, under the
-  // note's anchor; a note wiped, its versions kept for Undo, takes none.)
-  const tried = !answered && slip?.note ? note(slip.note) : undefined;
-  const p = answered ? pageRow(answered.page, who) : tried ? triesPageOfNote(tried.id) : undefined;
-  if (!slip || !p || p.who !== who) return 404;
+  const p = answered && pageRow(answered.page, who);
+  if (!slip || !answered || !p || p.who !== who) return 404;
   const said = wordsOf(b.words, b.said ?? 'written');
   if (isRefused(said)) return said;
   const ink = b.ink === undefined ? [] : inkOf(b.ink);
   if (isRefused(ink)) return ink;
   if (!said.words && !ink.length) return [400, 'a reply has words or ink', 'replyEmpty'] as Refused;
   const closed = () => !!stillOpen && !stillOpen();
-  if (!answered) {
-    const snip = ink.length ? await replySnip(slip.id, frameOf(b.frame), ink) : null;
-    if (closed()) return [403, 'this invitation has closed', 'invitationEnded'] as Refused;
-    const still = note(tried!.id); // (wiped while its snip was drawn)
-    if (!still) return 404;
-    return replyOnNote(p, slip, JSON.parse(still.anchor) as Anchor, said, snip, who);
-  }
   const top = rootOf(answered);
   const parts = { ink, texts: [], pictures: [] };
   const snip = ink.length
@@ -241,21 +239,6 @@ export function replyNote(
   db.prepare("update book_sheets set status = 'sending', send_at = ? where id = ?").run(Date.now() + SEND_MS, sheet);
   deliverLater();
   return id;
-}
-// A reply on a version of an old book's note (a call's): a note on the versions page, under the note's own anchor, the
-// judge's to read as any reply (a ring picks it: bookpick.ts).
-function replyOnNote(
-  p: NotebookPage,
-  slip: { id: number; by: string },
-  anchor: Anchor,
-  said: { words: string; said: string | null },
-  snip: { type: string; clean: Buffer } | null,
-  who: string,
-) {
-  const id = replyNote(p.id, anchor, slip, said, snip, who);
-  changed(p.notebook, p.id);
-  if (who === BOARD) judgeLater({ note: id });
-  return { note: id };
 }
 // POST /api/notebooks/replies/delete { id }: a reply taken back in its seconds, its note and sheet gone, never sent;
 // kept aside as a deleted group is

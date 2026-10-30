@@ -8,7 +8,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
-import { args, playwright, encoder, probe } from './core.mjs';
+import { args, playwright, encoder, probe, companyTimeZone } from './core.mjs';
 import { noteRender } from './renders.mjs';
 import { keysOf, pricesFor } from './prices.mjs';
 // the frames on the page clock, with the finger or cursor drawn over the page (frames.mjs).
@@ -35,6 +35,8 @@ async function startServer() {
 }
 
 const T0 = new Date(flow.time ?? '2026-09-27T10:00:00');
+// The browser's clock: flow.timeZone, else the company's
+const timezoneId = flow.timeZone ?? (await companyTimeZone());
 
 async function recordOne(name) {
   const vp = typeof name === 'object' ? name : VIEWPORTS[name];
@@ -47,7 +49,7 @@ async function recordOne(name) {
   // flow.camera: a Y4M film the page's camera shows instead of a real one, already allowed
   const camera = flow.camera ? ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', `--use-file-for-fake-video-capture=${rel(flow.camera)}`] : [];
   const browser = await chromium.launch({ args: ['--font-render-hinting=none', '--hide-scrollbars', ...camera], env: { ...process.env, LANG: `${posix}.UTF-8`, LANGUAGE: posix } });
-  const ctx = await browser.newContext({ viewport: { width: vp.width, height: vp.height }, deviceScaleFactor: vp.scale, hasTouch: !!vp.touch, isMobile: !!vp.touch, locale, timezoneId: 'Europe/Amsterdam', permissions: flow.camera ? ['camera'] : [] });
+  const ctx = await browser.newContext({ viewport: { width: vp.width, height: vp.height }, deviceScaleFactor: vp.scale, hasTouch: !!vp.touch, isMobile: !!vp.touch, locale, timezoneId, permissions: flow.camera ? ['camera'] : [] });
   const page = await ctx.newPage();
   page.on('pageerror', (e) => console.error('page error:', e.message));
   await page.clock.install({ time: T0 });

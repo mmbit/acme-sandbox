@@ -99,16 +99,23 @@ ARG SMART_TURN=https://huggingface.co/pipecat-ai/smart-turn-v3/resolve/f766f81d3
 ARG SMART_TURN_SHA256=2bb026316b14a660486a75b1733cd3fbab8c2fd0314dc9af7be49f8cca967e4f
 RUN curl -fsSL -o smart-turn-v3.2-cpu.onnx "$SMART_TURN/smart-turn-v3.2-cpu.onnx" \
     && printf '%s  %s\n' "$SMART_TURN_SHA256" smart-turn-v3.2-cpu.onnx | sha256sum -c -
+# TitaNet-Large (NVIDIA's, CC-BY-4.0), sherpa-onnx's export: each piece's voiceprint on the board's calls, to tell the
+# people in its room apart (voices.py).
+ARG SPEAKER_MODELS=https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models
+ARG TITANET_SHA256=d51abcf31717ef28162f26acb9d44dd4127c3d44c9b8624f699f3425daca8e77
+RUN curl -fsSL -o nemo_en_titanet_large.onnx "$SPEAKER_MODELS/nemo_en_titanet_large.onnx" \
+    && printf '%s  %s\n' "$TITANET_SHA256" nemo_en_titanet_large.onnx | sha256sum -c -
 # turns.py too (server.py logs each call's numbers from it, then forgets the session), echo.py, aloud.py (numbers in
 # words, shared with On Air), room.py (a call out's room on the join page), endpoint.py and dictate.py (a note's live
 # dictation), reads.py (the call agent's report and git tools), drawing.py (the
 # board's notes, the agent's asks to see its screen and rings on its page), driving.py (the agent's walk-throughs of
 # finished work), answers.py (HQ's answers to both's rings and moves), callnotes.py (the agent's scraps and title on
-# the call's notes page). Every module server.py and hq_tools.py import goes here:
+# the call's notes page), voices.py (who is talking in the board's room). Every
+# module server.py and hq_tools.py import goes here:
 # platform/coordinator/src/image.test.ts fails on one left out.
 COPY voice/server.py voice/aloud.py voice/guard.py voice/hq_tools.py voice/turns.py voice/echo.py voice/room.py \
      voice/endpoint.py voice/dictate.py voice/reads.py voice/drawing.py voice/driving.py \
-     voice/answers.py voice/callnotes.py /app/
+     voice/answers.py voice/callnotes.py voice/voices.py /app/
 # (and the TypeScript it runs, beside it as in the repo)
 COPY worker/bin/hq /usr/local/bin/hq
 COPY worker/hq /usr/local/hq

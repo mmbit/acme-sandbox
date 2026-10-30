@@ -65,18 +65,19 @@ export async function callAgent(
   showPictures(c, pictures);
   startDrop(c);
   callSay('Starting the microphone…');
-  c.audio.keepAwake(); // (first, still in the tap: Safari grants the first lock only seconds after one)
-  // (it rings as the microphone starts, in the call's sound, which start() puts up first, in the tap.)
-  const started = c.audio.start();
+  c.audio.awake.keep(); // (first, still in the tap: Safari grants the first lock only seconds after one)
+  // (it rings in the call's sound, opened in the tap, while the microphone starts.)
+  c.audio.open();
   ring(c);
   try {
-    await started;
+    await c.audio.start();
   } catch {
     return endCall(`The microphone didn’t start. Check ${names.hq}’s microphone permission.`);
   }
   const l = await loadLanguage(world.dev).catch(() => null); // the board's language, which the line speaks and hears
   if (call !== c) return;
   if (!l) return endCall('The language can’t be read right now. Try again in a moment.');
+  // (until the line picks up and says it listens: FROM_LINE.state.)
   callSay('Dialling…');
   // never stuck: if nobody picks up, say so
   c.ring = setTimeout(() => {
@@ -116,10 +117,7 @@ function connect(c, hello) {
   ws.binaryType = 'arraybuffer';
   c.late = 0;
   c.heardAt = undefined; // (lagging: this connection's)
-  ws.onopen = () => {
-    if (!c.id) callSay('Ringing…');
-    ws.send(JSON.stringify(hello));
-  };
+  ws.onopen = () => ws.send(JSON.stringify(hello));
   ws.onmessage = m => {
     if (call !== c || c.ws !== ws) return;
     if (m.data instanceof ArrayBuffer) return ((c.heardAt = performance.now()), play(c, m.data));
@@ -174,7 +172,7 @@ const FROM_LINE = {
   state(c, ev) {
     callSay({ listening: 'Listening…', thinking: 'Thinking…', speaking: c.name }[ev.state] ?? '');
     c.bubble?.state(ev.state ?? '');
-    c.face?.state(ev.state ?? ''); // (the call screen's own little screen)
+    c.face.state(ev.state ?? ''); // (the call screen's own little screen.)
     if (ev.state === 'thinking') {
       // (a turn answered: the agent's reply starts its own line, as the board's next words do, and what it drew in its
       // last one goes)

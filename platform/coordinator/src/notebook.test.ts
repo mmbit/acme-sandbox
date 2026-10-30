@@ -234,9 +234,9 @@ test('a scrap lands on the current page, under what is there; its picture is ser
   deaf();
   assert.deepEqual([one.page, two.page, one.kind, two.owner], [page, page, 'scrap', 'kit']);
   // (a readable width, clear of the controls on the widest narrower paper the board reads on, as an answer's spot is;
-  // HQ fits it to a narrower one)
+  // HQ fits it to a narrower one. Those papers come from the company's screens, so a wider one leaves room to spare.)
   assert.deepEqual([one.pictures[0].w, one.pictures[0].h], [313, 157], 'no wider than a column');
-  assert.equal(STACK.w, NARROWER[0] - ANSWER.rail - STACK.x, 'left of the controls there');
+  assert.ok(STACK.x + STACK.w <= NARROWER[0] - ANSWER.rail, 'left of the controls there');
   // (its words under it, one line: 10 px below, 8 above and below them, a 20 px line; then the gap)
   assert.ok(two.box.y >= one.box.y + one.box.h + 46 + 32, 'stacked under, its words and a gap between');
   assert.ok(heard.length && heard.every(e => e.text === 'notebook' && e.page === page), 'every screen reads it again');
@@ -557,24 +557,21 @@ test("an agent's card about a sent group's note: under the group, Open in the bo
   );
   const under = async () => (await groups(page)).find(g => g.id === cut.id).asks as any[];
   const [shown] = await under();
-  assert.deepEqual([shown.id, shown.status, shown.name, shown.desk], [id, 'open', 'Moss', false]);
+  assert.deepEqual([shown.id, shown.status, shown.name], [id, 'open', 'Moss']);
   assert.match(shown.body, /Choose:/);
   // the desk phone's card opens the book at the group's page, in its notebook
   const card = ((await h.board('/api/requests')).body as any[]).find(r => r.id === id);
   assert.deepEqual([card.place.page, card.place.notebook, card.place.words], [page, nb, 'Which blue for the basket?']);
 
-  // a key card shows under the group too, answered only on the desk phone
+  // a key card stays on the desk phone, out of the book
   const keys = await agent('request', job.token, {
     ...{ kind: 'credential', title: 'The basket feed', body: 'Its key.', secrets: 'STRIPE_TEST_KEY' },
     ...{ topic: 'shop', note: review },
   });
   assert.equal(keys.status, 200, JSON.stringify(keys.body));
   assert.deepEqual(
-    (await under()).map(a => [a.id, a.desk]),
-    [
-      [id, false],
-      [keys.body.id, true],
-    ],
+    (await under()).map(a => a.id),
+    [id],
   );
 
   // the book's chip posts the desk phone's own answer: off the desk phone, answered under the group

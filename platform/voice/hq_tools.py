@@ -5,8 +5,10 @@ from concurrent.futures import ThreadPoolExecutor, wait
 import reads
 from drawing import ASK_WORDS, BESIDE_MOST, INK_WORDS, WHAT_MOST, ink_asked, what_asked
 from driving import BY, DRIVE_WORDS, OPEN_WORDS, move_asked, work_asked
-from callnotes import (CHANGE_MOST, CHANGE_WORDS, MARK_WORDS, MARKS, PAGE_WORDS, SCRAP_WORDS, TITLE_WORDS, TITLE_WORDS_SAID,
+from callnotes import (CHANGE_MOST, CHANGE_WORDS, MARK_WORDS, MARKS, PAGE_WORDS, SCRAP_WORDS, TITLE_MOST, TITLE_WORDS_SAID,
                        change_asked, mark_asked, scrap_asked, title_asked)
+from voices import NAME_LENGTH, VOICE_WORDS
+from voices import ENROL_WORDS, FORGET_WORDS
 
 # The CLI starts this with the seat's sign-in in its environment: hq gets only the call's own HQ_* (HQ_TIME_ZONE: the
 # board's clock for hq's times, guard.py agent_env). The call's Waits runs hq in it.
@@ -37,7 +39,9 @@ ALOUD = ('The numbers here are for your tools only. Never say one aloud (a job, 
          'pin): tell the board what the work is and whose it is.')
 COLLEAGUE = re.compile(r'[a-z0-9][a-z0-9-]{0,39}')
 DEADLINE = re.compile(r'^[0-9][0-9hmHM:TZ -]{0,24}$')  # (the coordinator reads it: windows.ts)
-THREAD = re.compile(r'^[a-z0-9][a-z0-9-]*/[a-z0-9][a-z0-9-]*$')  # (projects.ts)
+# (a deliverable, <project>/<slug>, in the tools' words.)
+DELIVERABLE = re.compile(r'^[a-z0-9][a-z0-9-]*/[a-z0-9][a-z0-9-]*$')  # (projects.ts)
+PROJECT = re.compile(r'^[a-z0-9][a-z0-9-]*$')  # (a project's id)
 CODE = re.compile(r'^[A-Za-z]{2,8}$')  # a task's code word (jobcodes.ts WORD)
 ID = {'type': 'string', 'pattern': '^[a-z0-9][a-z0-9-]*$', 'description': "the colleague's id, lowercase (e.g. ada)"}
 LINE = {'type': 'string', 'minLength': 1, 'maxLength': WHAT,
@@ -53,16 +57,19 @@ WHEN = {'type': 'string', 'pattern': DEADLINE.pattern, 'description': 'when you 
         'pace: 2h, 90m or 1h30m from now; the board\'s own time as it said it, with its date and no zone (2026-10-26 '
         "09:00, on the company's clock); a time with Z, or a time of day alone (14:30), is UTC. Give "
         'it whenever you tell the board a time, also for work already under way (a review, a running job): with job, '
-        "the promise is that work\'s, and its thread takes the time at once; the job tool\'s with its item takes it as "
+        "the promise is that work\'s, and its deliverable takes the time at once; the job tool\'s with its item takes it as "
         "it\'s queued"}
-SIZE = {'type': 'string', 'description': 'your scope estimate of agent time, from clean past jobs: 90m, 2h or 1h30m'}
+SIZE = {'type': 'string', 'description': 'your task work estimate of agent time, from clean past jobs: 90m, 2h or 1h30m'}
 TOOLS = [
-    {'name': 'job', 'description': "Put work on a colleague's list as a separate job. It doesn't reach them live: "
-     "nobody is on it until it runs, so tell the board it's queued, never that it's sent or that they're on it. The "
-     "title is what HQ shows; the brief is the whole hand-off, in the colleague's terms: they get nothing else. It's "
-     "queued only when this answers with a job number; if it answers 'Not confirmed', it may be, so don't send it "
-     'again. If the board then adds to it or changes it, use add with that number: never a second job beside it, and '
-     "never a promise to add it after the call. Its answer gives each agreed deadline's facts and the other threads it "
+    {'name': 'job', 'description': "Put work on a colleague's list as a separate job. "
+     "Queue it only once the board agrees the direction on this call. Until it does, say what you'd do and ask. A "
+     "job on a direction the board then turns down makes more mess and wastes tokens and the board's money. It "
+     "doesn't reach them live: nobody is on it until it runs, so tell the board it's queued, never that it's sent "
+     "or that they're on it. The title is what HQ shows; the brief is the whole hand-off, in the colleague's terms: "
+     "they get nothing else. It's queued only when this "
+     "answers with a job number; if it answers 'Not confirmed', it may be, so don't send it again. If the board then "
+     "adds to it or changes it, use add with that number: never a second job beside it, and never a promise to add "
+     "it after the call. Its answer gives each agreed deadline's facts and the other deliverables it "
      'moves: your briefing says what the board hears of them. First use estimate, compare the scopes, and give your own size, refs and why. HQ saves it once. Only the CEO changes it later. '
      "On the board's call in HQ the job goes on the call's notes page as a promise it carries, so the board sees what "
      "reaches the team: a promise you noted already, give as its item.",
@@ -77,18 +84,26 @@ TOOLS = [
                   '(HQ-COVERS) and refuses a word another task holds: then pick another'},
          'title': {'type': 'string', 'minLength': 1, 'maxLength': TITLE,
                    'description': f'one short line, at most {TITLE} characters, in plain words: the step alone, '
-                   "since HQ shows it inside its thread, so never the thread's or project's name in front"},
+                   "since HQ shows it inside its deliverable, so never the deliverable's or project's name in front"},
          'brief': {'type': 'string', 'minLength': 1, 'maxLength': BRIEF, 'description': 'everything they need: what to '
                    f'do, why, what the board said. At most {BRIEF:,} characters with the goal; more is two jobs'},
          'goal': GOALS,
          'item': {'type': 'integer', 'minimum': 1, 'description': 'if this job carries out a promise or a correction '
                   'noted on this call: the number promise or replace answered with (it is then done when the job '
                   'is). The recorded goal of that item wins over goal here'},
-         'thread': {'type': 'string', 'pattern': THREAD.pattern, 'description': 'the open thread the work serves '
-                    '(<project>/<slug>), needed with an item that has a time: the time goes on the thread. Without '
-                    'one, the job '
-                    "is refused with the open threads listed: pick the one the board's words are about and use job "
-                    'again with it'},
+         # (drawing one is as easy as joining one: the board, call 172)
+         'deliverable': {'type': 'string', 'pattern': DELIVERABLE.pattern, 'description': 'the open deliverable '
+                         'the work serves (<project>/<slug>), when you know the feature it is a step of: its answer '
+                         "repeats that deliverable's done when, so check it's what this work delivers. Needed (or "
+                         'new_deliverable) with an item that has a time: the time goes on the deliverable'},
+         'new_deliverable': {'type': 'object', 'required': ['project', 'name', 'done_when'], 'additionalProperties': False,
+                             'description': 'instead of deliverable: one drawn for this work, for work no open '
+                             "deliverable makes (the project's owner or the CEO draws one)",
+                             'properties': {'project': {'type': 'string', 'pattern': PROJECT.pattern,
+                                                        'description': 'the project its work is for, like shop'},
+                                            'name': {'type': 'string', 'minLength': 1},
+                                            'done_when': {'type': 'string', 'minLength': 1,
+                                                          'description': 'what this work delivers, in a line'}}},
          'after': {'type': 'integer', 'minimum': 1, 'description': 'a job that must merge before this one starts: '
                    "to queue it behind a deadline's work, when you judge that deadline worth protecting from it"},
          'now': {'type': 'boolean', 'description': 'Left out, the job waits until this call ends, so what the '
@@ -101,11 +116,10 @@ TOOLS = [
                       'on its checks, its review after. Never for ordinary work'}}}},
     {'name': 'promise', 'description': "Note a promise on this call's list the moment you make it: whenever you tell "
      "the board that you, or a colleague, will do something. Note it before you say it's done. It's on the call's list "
-     "straight away, even if the line drops, but it reaches nobody live. On the board's call in HQ it's written on the "
-     "call's notes page too, and the page takes it to its owner once the call ends (a promise a job you queued "
-     "carries, or one about work under way, stays there and goes no further); on any other call the follow-up hands "
-     'it out. Either way the board sees whether it happened. A change on a scrap is on the list already: no promise '
-     'for it.',
+     "straight away, even if the line drops, but it reaches nobody live: the call's follow-up hands it out (a promise "
+     "a job you queued carries, or one about work under way, has reached it already). On the board's call in HQ it's "
+     "written on the call's notes page too. Either way the board sees whether it happened. A change on a scrap is on "
+     'the list already: no promise for it.',
      'inputSchema': {'type': 'object', 'required': ['owner', 'what', 'goal'], 'additionalProperties': False,
                      'properties': {
          'owner': {**ID, 'description': "who sees it through: your own id, or a colleague's (lowercase, e.g. ada)"},
@@ -115,10 +129,11 @@ TOOLS = [
          # (askwindow.ts: the board's ask takes its window as it's queued, not after the call.)
          'job': {'type': 'integer', 'minimum': 1, 'description': "the owner's job already queued or running that the "
                  'promise is about (its number, from your briefing or the job tool), with deadline: the promise is '
-                 "that job's, done when it is, and its thread takes the time at once, so it goes ahead of work that "
+                 "that job's, done when it is, and its deliverable takes the time at once, so it goes ahead of work that "
                  'can wait while the call is still on'},
-         'thread': {'type': 'string', 'pattern': THREAD.pattern, 'description': 'with job, for a job you queued on this '
-                    'call in no thread: the open thread it serves (<project>/<slug>), which it goes on, with the time'}}}},
+         'deliverable': {'type': 'string', 'pattern': DELIVERABLE.pattern, 'description': 'with job, for a job you '
+                         'queued on this call in no deliverable: the open deliverable it serves (<project>/<slug>), '
+                         'which it goes on, with the time'}}}},
     {'name': 'replace', 'description': 'When the board changes something still open that your briefing lists with its '
      "number, or something you noted on this call, note the change now: it goes on this call's list in place of the "
      "earlier item, whose jobs that haven't started are cancelled. It reaches nobody live: a job already running runs "
@@ -143,8 +158,8 @@ TOOLS += [
     {'name': 'expedite', 'description': "The CEO's only: a structural fix to HQ itself goes first (hq expedite). A "
      'queued or running job starts ahead of everything, once what it waits for is met (the answer says what), and merges '
      'on its checks; one that has pushed, its pull request '
-     'still in review, merges now if its last push passed them. Its review follows on what merged. A thread\'s task '
-     'that hasn\'t started leaves its thread as its own job; a refusal says why and what to do instead.',
+     'still in review, merges now if its last push passed them. Its review follows on what merged. A deliverable\'s '
+     'task that hasn\'t started leaves its deliverable as its own job; a refusal says why and what to do instead.',
      'inputSchema': {'type': 'object', 'required': ['job'], 'additionalProperties': False, 'properties': {
          'job': {'type': 'integer', 'minimum': 1, 'description': 'the fix\'s job number'}}}},
     {'name': 'add', 'description': 'When the board adds to or changes a job you queued on this call, add it to that '
@@ -213,31 +228,33 @@ TOOLS += [
      'inputSchema': {'type': 'object', 'required': ['query'], 'additionalProperties': False, 'properties': {
          'query': {'type': 'string', 'minLength': 1, 'maxLength': 500,
                    'description': "a day, days, a day's hours, or words"}}}},
-    # (a thread past its window, or when past by, answers with what to check first: worker/hq deadlines.ts lateLines)
+    # (a deliverable past its window, or when past by, answers with what to check first: worker/hq deadlines.ts lateLines)
+    # (a window puts a deliverable first)
     {'name': 'eta', 'description': 'Where planned work stands now, before you tell the board when it will be done: for '
-     "a project or a thread by its name or a few words ('The checkout', 'the game's levels'), each open thread's "
-     'ETA, the agent time it has left, its window (the time agreed with the board) with its planned finish and the slack '
+     "a project or a deliverable by its name or a few words ('The checkout', 'the game's levels'), each open deliverable's "
+     'ETA (its calculated merge time), the agent time it has left, its deadline and aim, with its planned live finish and the slack '
      'that leaves or by how much it misses, what it waits on (a card as "the board: <its title>") and what goes on next, '
      'all by name, live from the plan HQ plays, in a second. With no query, what is going on right now, fresh each '
-     "time: everyone HQ counts at work (the board's number), each on its job or review with its seat, thread and "
+     "time: everyone HQ counts at work (the board's number), each on its job or review with its seat, deliverable and "
      'window and, while a hold is on, why it runs, then every open desk phone card with the work waiting on it. Use it '
      "whenever the board asks who's working, whether a hold leaks or what a card holds up: your briefing's list is from "
      'the start of the call. For new work, use when. With extra_seat (5x or 20x), replay the whole live plan '
-     'with a hypothetical added Claude Max seat at any time. Returns every project, thread and window before and '
-     'after, measured capacity, assumptions and confidence. Query is optional for that replay. A thread that misses its '
-     'window comes with what to check and do before you tell the board a time: do it. Nothing changes.',
+     'with a hypothetical added Claude Max seat at any time. Returns every project, deliverable and window before and '
+     'after, measured capacity, assumptions and confidence. Query is optional for that replay. A deliverable that misses its '
+     'window comes with what to check and do before you tell the board a time: do it. To put a deliverable first, give it '
+     'a window (manage): the scheduler makes room for it by itself, never a pause of other work. Nothing changes.',
      'inputSchema': {'type': 'object', 'additionalProperties': False, 'properties': {
          'query': {'type': 'string', 'minLength': 1, 'maxLength': 500,
-                   'description': "the project's or thread's name, or a few words; leave it out for what's going on "
+                   'description': "the project's or deliverable's name, or a few words; leave it out for what's going on "
                    'right now'},
          'extra_seat': {'type': 'string', 'enum': ['5x', '20x']}}}},
-    {'name': 'estimate', 'description': 'Find clean past jobs with briefs, reports, changed files and actual agent times. Compare their scope yourself before supplying size, refs and why to job, or size to when. Search ranking is only a candidate list, never an estimate.',
+    {'name': 'estimate', 'description': 'Find clean past jobs with briefs, reports, changed files and whole task agent times split into work, shared reviews and fixes. Size covers the work split only. The forecast adds review and fix rounds once per deliverable. Queue and other waits are excluded. Compare their scope yourself before supplying size, refs and why to job, or size to when. Search ranking is only a candidate list, never an estimate.',
      'inputSchema': {'type': 'object', 'required': ['query'], 'additionalProperties': False, 'properties': {
          'query': {'type': 'string', 'minLength': 1, 'maxLength': 500, 'description': 'the scope of work to compare'},
          'agent': ID}}},
     {'name': 'when', 'description': 'Before you tell the board when work will be done: use estimate to compare clean past jobs, '
-     'choose size yourself, then it plays that size into the plan as it stands, every seat and window counted, in a '
-     'few seconds: the earliest it can be done without making any window miss, and the window to set. With by (the '
+     'choose the task work estimate as size, then it plays that size into the plan as it stands, every seat and window counted, in a '
+     'few seconds: the earliest planned live finish without making any window miss, and a proposed window. With by (the '
      "board's time), whether it makes that time, and only if not, what would: windows giving or one more seat. "
      'Give the board the time it says, but a finish past by comes with what to check and do first: do it. '
      'With extra_seat (5x or 20x), omit what and its flags to replay the whole '
@@ -300,23 +317,29 @@ TOOLS += [
 # overseer, route, items and the estimate checks are the reads a job has, the call's too: the notes to the Overseer,
 # the notes routed to jobs, every call's open items (one line each), the timing checks
 MANAGE = {'cancel': None, 'stop': None, 'waits': None, 'window': None, 'review': None, 'job': {'move'}, 'plan': None,
-          'thread': None, 'project': None, 'decision': None, 'inbox': {'', '#', 'accept', 'drop', '--all'},
+          'deliverable': None, 'project': None, 'decision': None, 'inbox': {'', '#', 'accept', 'drop', '--all'},
           'meeting': {'', '#', 'ask', 'asks', 'set', 'join', 'drop'}, 'jobs': None, 'requests': None, 'close': None,
           'topic': None, 'summary': None, 'followthrough': {''}, 'seat-warning': None, 'owed': {'', 'close'},
           'overseer': {''}, 'route': {'log'}, 'items': {''}, 'estimate': {'set', '--audit', '--accuracy', '--calibration'}}
 TOOLS += [
+    # (a window puts work first, a pause only waits on a condition: worker/hq levels.ts WINDOW_FIRST and PAUSE_FOR say
+    # the same rule).
     {'name': 'manage', 'description': "Manage the company's work now, as you would with hq off the call, when the "
      'board decides it or it is yours to do: cancel a queued job that never ran (cancel <job> "why"), stop a running one '
-     '(stop), pause or resume a thread or project (thread pause <project>/<slug> "why" with --until <job>, --until-time '
-     '<time> or --by-hand: what wakes you to judge it, never lifts it; thread resume, project pause, project resume), move a job to another thread (job move <job> <project>/<slug>), drop, order or retitle a task '
-     '(plan drop <job> "why", plan move, plan title), draw, rename or close threads (plan thread, plan need, plan rename, '
-     'plan done, thread move), set or lift a window (window <project>/<slug> | <job> <time | none>), a job\'s waits '
-     '(waits), its size (estimate set), projects (project say, new, owner, rename, done), the inbox (inbox, inbox accept, '
+     '(stop), put work first with a window, the only way to (window <project>/<slug> | <job> <time>, or none to '
+     'lift it; the scheduler makes room for it and gives the seat back after, by itself), pause or resume a deliverable '
+     'or project only for work that must wait on a condition (something from the board, a decision it has to make, a '
+     'hold it asked for), never to put other work first (deliverable pause <project>/<slug> "why" with --until <job>, '
+     '--until-time <time> or --by-hand: what wakes you to judge it, never lifts it; deliverable resume, project pause, '
+     'project resume), move a job to another deliverable (job move <job> <project>/<slug>), drop, order or retitle a '
+     'task (plan drop <job> "why", plan move, plan title), draw, rename or close deliverables (plan deliverable, plan '
+     'need, plan rename, plan done, deliverable move), a job\'s waits (waits), its size (estimate set), projects '
+     '(project say, new, owner, rename, done), the inbox (inbox, inbox accept, '
      'inbox drop), meetings (meeting ask, asks, set, join, drop), the desk phone\'s cards (requests, close <card>, topic), '
      'a product\'s return to the board that its words close (owed, owed close <slug> "why"), a '
      'decision (decision, decision link), subscription warnings (seat-warning), a stuck pull request back to review '
      '(review), and reads (jobs, plan '
-     '<project>, thread list, summary, followthrough, items, overseer, route log, estimate --audit, --accuracy or '
+     '<project>, deliverable list, summary, followthrough, items, overseer, route log, estimate --audit, --accuracy or '
      '--calibration). HQ allows you what it allows you off the call. It acts at once: '
      "then tell the board what you did, in plain words: that's what your follow-up reads in the transcript. Never "
      "promise it for after the call when this can do it now.",
@@ -324,7 +347,7 @@ TOOLS += [
          'command': {'type': 'array', 'minItems': 1,
                      'items': {'type': 'string', 'minLength': 1},
                      'description': 'the hq command\'s words after hq, one per item, as on the command line without '
-                     'quotes: ["cancel", "123", "the board dropped it"], ["thread", "pause", "shop/launch-deck", '
+                     'quotes: ["cancel", "123", "the board dropped it"], ["deliverable", "pause", "shop/launch-deck", '
                      '"waits for the board\'s photos", "--by-hand"]'}}}},
 ]
 # Ending the call: the agent can hang up once the board has clearly said goodbye.
@@ -382,19 +405,6 @@ TOOLS += [
      'inputSchema': {'type': 'object', 'required': ['sketch'], 'additionalProperties': False, 'properties': {
          'sketch': {'type': 'string', 'minLength': 1, 'maxLength': 200,
                     'description': "its number, '12', or a few words of its label"}}}},
-]
-# A text answer on a note the board drew on this call (Ink answers): the call's agent writes it itself, having heard the
-# conversation (the coordinator's ink/callanswer.ts, hq answer-note).
-ANSWER_MOST = 4000  # (the coordinator's SLIP_MAX, bookslips.ts)
-TOOLS += [
-    {'name': 'answer_note', 'description': "Write your answer on one of the board's notes on this call's page, in its "
-     "book, beside the note, when the line says the note asks for an answer (or the board asks you to write it down). "
-     'Plain words, the answer first, about 60 words: the board reads it later too. Say it aloud as well if it helps the '
-     'conversation. A note that asks you to do work is a job, not an answer.',
-     'inputSchema': {'type': 'object', 'required': ['note', 'words'], 'additionalProperties': False, 'properties': {
-         'note': {'type': 'integer', 'minimum': 1, 'description': "the note's number on the call's page (note 2: 2)"},
-         'words': {'type': 'string', 'minLength': 1, 'maxLength': ANSWER_MOST,
-                   'description': f'your answer, as the board reads it, at most {ANSWER_MOST} characters'}}}},
 ]
 # The board drawing on its call: the agent asks to see the board's screen, and
 # rings something on the board's screen in its own ink, through the line too (drawing.py: HQ shows the ask and draws the
@@ -469,9 +479,9 @@ TOOLS += [
      "(from: 'note 3', its number as the line gave it; the region is a part of that note's picture), or from its shown "
      "screen at the moment it drew (from: '-20s', '17:03:12' or '#12' as the screen tool gives moments; the region a "
      "part of the whole screen then). Each lands on the page as you make it, where the board sees it pop in, and goes "
-     "on the call's list. The page is the call's route for what it asks of the team: it's sent when the call ends, "
-     "and each note and scrap reaches its owner once, as a review note. So never also queue a job or note a promise "
-     "for a change you've put on the page.",
+     "on the call's list. Nothing on the page goes to anyone by itself: the call's follow-up reads it with the whole "
+     "call and hands each change out. So never also queue a job or note a promise for a change you've put on the "
+     'page.',
      'inputSchema': {'type': 'object', 'required': ['words', 'goal'], 'additionalProperties': False,
                      'properties': {
          'from': {'type': 'string', 'description': "for a crop: 'note 3', or a moment of the shown screen: 'now', "
@@ -484,12 +494,13 @@ TOOLS += [
                    'description': 'the one change, in a short plain line ("Make the price smaller")'},
          'goal': GOALS,
          'owner': {'type': 'string', 'description': "the id of the agent whose work it is, if you know; left out, "
-                   'the routing check decides'}}}},
-    {'name': 'title_page', 'description': "Title the call's notes page in a few words, once it's clear what the call is "
-     'about ("Shop page: price and basket"), and again if that changes: a title, not a summary.',
+                   'the follow-up decides'}}}},
+    {'name': 'title_page', 'description': "Title the call's notes page with a short topic, once it's clear what the call "
+     'is about ("Shop page prices"), and again if that changes: a title, not a summary. The page keeps the call\'s date '
+     'and time in front of it ("28 Oct, 22:55, Shop page prices"), so give the topic alone.',
      'inputSchema': {'type': 'object', 'required': ['title'], 'additionalProperties': False, 'properties': {
-         'title': {'type': 'string', 'minLength': 1, 'maxLength': 120,
-                   'description': f'at most {TITLE_WORDS} words'}}}},
+         'title': {'type': 'string', 'minLength': 1, 'maxLength': TITLE_MOST,
+                   'description': f'the topic, at most {TITLE_MOST} characters: whole in the Notebook\'s bar'}}}},
 ]
 # The call's notes page worked as the board works it: read, drawn on, changed, moved and deleted, each a step the
 # board's Undo takes back (callnotes.py; the coordinator's ink/callpage.ts)
@@ -529,6 +540,32 @@ TOOLS += [
          'to': {'type': 'object', 'required': ['x', 'y'], 'additionalProperties': False,
                 'properties': {'x': PAGE_PX, 'y': PAGE_PX}, 'description': "its new top left, in the page's px"},
          'delete': {'type': 'boolean', 'enum': [True]}}}},
+]
+
+# Several people in the board's room, told apart by their voices (voices.py).
+TOOLS += [
+    {'name': 'name_voice', 'description': "Name a voice the line hears in the board's room ('Voice 2') once you know "
+     'who it is: they said their name, or the board introduced them. The transcript and your messages name it so from '
+     'then on.',
+     'inputSchema': {'type': 'object', 'required': ['voice', 'name'], 'additionalProperties': False, 'properties': {
+         'voice': {'type': 'string', 'description': "the voice as your messages name it now ('Voice 2')"},
+         'name': {'type': 'string', 'minLength': 1, 'maxLength': NAME_LENGTH, 'description': "their name ('Sam')"}}}},
+]
+# Saved voices: later calls recognise a person by their voice (voices.py, the coordinator's voiceprints.ts).
+TOOLS += [
+    {'name': 'save_voice', 'description': "Save the voice of someone in the board's room (or the board's own), so later "
+     'calls recognise them by name. Only when the board asks you to: never offer or suggest it yourself. Call it first '
+     'with their name alone: it answers what to tell them and ask. Then, once they have agreed and talked a little, '
+     'call it with their voice, their words agreeing and your question.',
+     'inputSchema': {'type': 'object', 'required': ['name'], 'additionalProperties': False, 'properties': {
+         'name': {'type': 'string', 'minLength': 1, 'maxLength': NAME_LENGTH, 'description': "their name ('Esme')"},
+         'voice': {'type': 'string', 'description': "their voice as your messages name it now ('Voice 2')"},
+         'consent': {'type': 'string', 'maxLength': 600, 'description': 'their own words agreeing, as you heard them'},
+         'asked': {'type': 'string', 'maxLength': 1500, 'description': 'your question asking them, as you said it'}}}},
+    {'name': 'forget_voice', 'description': 'Delete a saved voice, when its person asks you to forget it (or the '
+     'board does): later calls no longer recognise them.',
+     'inputSchema': {'type': 'object', 'required': ['name'], 'additionalProperties': False, 'properties': {
+         'name': {'type': 'string', 'minLength': 1, 'maxLength': NAME_LENGTH, 'description': 'the name it was saved under'}}}},
 ]
 # A call out to a partner. note and no_transcript run nothing: the voice line
 # reads them from the reply's stream (server.py, Call.noted and Call.object), keeps each note in order, and on
@@ -685,7 +722,7 @@ def when(waits, a):
     if not isinstance(what, str) or not what.strip() or what.startswith('-'):
         return False, 'when needs what the work is'
     if not isinstance(agent, str) or (agent and not re.fullmatch(r'[a-z][a-z0-9-]{0,31}', agent)):
-        return False, "agent is an agent's id, like juno"
+        return False, "agent is an agent's id, like ada"
     if not valid_size(size):
         return False, 'size is agent time: 90m, 2h or 1h30m'
     if not isinstance(by, str) or (by and not re.fullmatch(r'[0-9:TZ -]{4,20}', by)):
@@ -760,14 +797,6 @@ def hq(waits, name, a):
         return answered(run(waits, ['expedite', str(n)], ''), 'Nothing expedited', 'it may or may not be expedited', by='hq expedite')
     if name == 'hang_up':
         return True, HANG_UP_ANSWER
-    if name == 'answer_note':
-        n, words = a.get('note'), a.get('words')
-        if type(n) is not int or n < 1:
-            return False, "note is the note's number on the call's page, like 2"
-        if not isinstance(words, str) or not words.strip() or len(words) > ANSWER_MOST:
-            return False, f'words is your answer, at most {ANSWER_MOST} characters'
-        return answered(run(waits, ['answer-note', str(n), '-'], words), 'Nothing written', 'it may or may not be written',
-                        by='hq answer-note')
     if name == 'reach':
         return reach(waits, a)
     if name == 'manage':
@@ -785,14 +814,14 @@ def hq(waits, name, a):
     deadline = a.get('deadline')
     if refused := readable(deadline):
         return False, refused
-    work, thread = (a.get('job'), a.get('thread')) if name == 'promise' else (None, None)
+    work, deliverable = (a.get('job'), a.get('deliverable')) if name == 'promise' else (None, None)
     if work is not None and (type(work) is not int or work < 1 or not deadline):
         return False, 'job is a job number, like 123, and goes with deadline'
-    if thread is not None and (work is None or not (type(thread) is str and THREAD.fullmatch(thread))):
-        return False, 'thread goes with job, and is one of the open threads, like shop/launch-deck'
+    if deliverable is not None and (work is None or not (type(deliverable) is str and DELIVERABLE.fullmatch(deliverable))):
+        return False, 'deliverable goes with job, and is one of the open deliverables, like shop/launch-deck'
     # (the words, as the agent gave them, are the quote: the follow-up has the call's own around them)
     flags = ['--goal', '-', *(['--deadline', deadline] if deadline else []), *(['--job', str(work)] if work else []),
-             *(['--thread', thread] if thread else [])]
+             *(['--deliverable', deliverable] if deliverable else [])]
     args = ['item', 'add', 'promise', owner] if name == 'promise' else ['item', 'replace', str(item)]
     r = run(waits, [*args, what, '-', *flags], on_stdin(goal, what))
     return answered(r, 'Nothing recorded', 'it may or may not be on the list', UNNOTED)
@@ -816,9 +845,9 @@ def job(waits, a):
     code = a.get('code')
     if not (type(code) is str and CODE.fullmatch(code)):
         return False, 'code must be one word of 2 to 8 letters for what the task does, like COVERS'
-    thread = a.get('thread')
-    if thread is not None and not (type(thread) is str and THREAD.fullmatch(thread)):
-        return False, 'thread must be one from the open threads, like shop/launch-deck'
+    where = deliverable_words(a.get('deliverable'), a.get('new_deliverable'))
+    if type(where) is str:
+        return False, where
     if len(title) > TITLE:
         return False, (f'title too long ({len(title):,} > {TITLE:,}): keep it to one short line and put the rest in '
                        'the brief')
@@ -837,7 +866,7 @@ def job(waits, a):
         return False, 'refs must list the clean past job numbers, or [] when none fits'
     if not isinstance(why, str) or not why.strip():
         return False, 'why must explain the scope comparison, or why no past job fits'
-    flags = [*(['--item', str(item)] if item else []), *(['--thread', thread] if thread else []),
+    flags = [*(['--item', str(item)] if item else []), *(['--deliverable', *where] if where else []),
              *(['--now'] if now else []), *(['--expedite'] if a.get('expedite') is True else []), '--code', code, '--size', size, '--why', why,
              *(['--refs', ','.join(map(str, refs))] if refs else [])]
     # (the goal too: on the board's call in HQ a job with no item carries its promise on the call's notes page.
@@ -845,6 +874,29 @@ def job(waits, a):
             on_stdin(goal, brief))
     ok, text = answered(r, 'No job was queued', 'the job may or may not be queued', by='hq job')
     return ok, f"{text}\nNot started yet: it's on {agent}'s list, and nobody is on it until it runs." if ok else text
+
+
+def deliverable_words(deliverable, drawn):
+    """job's --deliverable words: the open one named, or one drawn for it (new_deliverable), or none; a refusal if
+    they won't do."""
+    if deliverable is not None and not (type(deliverable) is str and DELIVERABLE.fullmatch(deliverable)):
+        return 'deliverable must be one from the open deliverables, like shop/launch-deck'
+    if drawn is not None and deliverable is not None:
+        return 'give deliverable or new_deliverable, not both'
+    if drawn is None:
+        return [deliverable] if deliverable else []
+    return drawn_deliverable(drawn) or 'new_deliverable needs a project id (like shop), a name and a done when'
+
+
+def drawn_deliverable(drawn):
+    """new_deliverable as hq job's --deliverable new:<project> "name" "done when" words, or None if it won't do: a
+    project id, and a name and a done when that read as words, never as hq's flags."""
+    if type(drawn) is not dict or not (type(drawn.get('project')) is str and PROJECT.fullmatch(drawn['project'])):
+        return None
+    words = [str(drawn.get(k, '')).strip() for k in ('name', 'done_when')]
+    if not all(words) or any(w.startswith('-') for w in words):
+        return None
+    return [f"new:{drawn['project']}", *words]
 
 
 def valid_size(size):
@@ -896,6 +948,7 @@ def manage(waits, command):
     if any('\n' in w or '\r' in w for w in command):
         return False, 'each word is one line'
     name, sub = command[0], command[1] if len(command) > 1 else None
+    name = 'deliverable' if name == 'thread' else name  # (the old name, still taken: hq's main.ts ALIASES)
     if name not in MANAGE:
         return False, (f'hq {name} is not a management command on a call: {", ".join(sorted(MANAGE))}. Hand work on '
                        'with job, note a promise with promise')
@@ -969,8 +1022,8 @@ def screen(a):
 
 
 def sketch(a):
-    """(ok, content) of the sketch tool: the voice line's answer on its socket (a sketch's picture and its line), or
-    its refusal."""
+    """(ok, content) of the sketch tool: the voice line's answer on its socket (a sketch's pictures, a long one's pieces
+    down it, and its line), or its refusal."""
     asked = a.get('sketch')
     if not isinstance(asked, str) or not asked.strip() or len(asked) > 200:
         return False, [{'type': 'text', 'text': "sketch is its number, '12', or a few words of its label"}]
@@ -1063,6 +1116,34 @@ def title_page(a):
     return said(line_asked({'title_page': title}))
 
 
+def name_voice(a):
+    """(ok, content) of the name_voice tool: the voice line's answer on its socket."""
+    if not isinstance(a.get('voice'), str) or not isinstance(a.get('name'), str) or set(a) - {'voice', 'name'}:
+        return False, [{'type': 'text', 'text': VOICE_WORDS['shape']}]
+    if not SCREEN_SOCKET or not SCREEN_KEY:
+        return False, [{'type': 'text', 'text': VOICE_WORDS['none']}]
+    return said(line_asked({'name_voice': {'voice': a['voice'], 'name': a['name']}}))
+
+
+def save_voice(a):
+    """(ok, content) of the save_voice tool: the voice line's answer on its socket."""
+    if not isinstance(a.get('name'), str) or set(a) - {'name', 'voice', 'consent', 'asked'} or \
+            any(not isinstance(a[k], str) for k in ('voice', 'consent', 'asked') if k in a):
+        return False, [{'type': 'text', 'text': ENROL_WORDS['shape']}]
+    if not SCREEN_SOCKET or not SCREEN_KEY:
+        return False, [{'type': 'text', 'text': ENROL_WORDS['none']}]
+    return said(line_asked({'save_voice': a}))
+
+
+def forget_voice(a):
+    """(ok, content) of the forget_voice tool."""
+    if not isinstance(a.get('name'), str) or set(a) - {'name'}:
+        return False, [{'type': 'text', 'text': FORGET_WORDS['shape']}]
+    if not SCREEN_SOCKET or not SCREEN_KEY:
+        return False, [{'type': 'text', 'text': FORGET_WORDS['gone']}]
+    return said(line_asked({'forget_voice': {'name': a['name']}}))
+
+
 def said(got):
     """(ok, content) of the line's answer in words: what it did ({ok}), or its refusal ({error})."""
     return 'error' not in got, [{'type': 'text', 'text': str(got.get('error', got.get('ok')))}]
@@ -1115,7 +1196,8 @@ def outcome(future):
 # The board's tools that the voice line answers, in words or a picture, by name
 LINE_TOOLS = {'sketch': sketch, 'ask_to_see': ask_to_see, 'draw': draw, 'open_work': open_work, 'drive': drive,
               'scrap': scrap, 'title_page': title_page, 'read_page': read_page, 'mark_page': mark_page,
-              'change_page': change_page}
+              'change_page': change_page, 'name_voice': name_voice,
+              'save_voice': save_voice, 'forget_voice': forget_voice}
 
 
 def answer(msg, waits, offered=TOOLS):

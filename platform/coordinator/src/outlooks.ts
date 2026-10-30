@@ -12,6 +12,8 @@ import { DAY_MS, HORIZON_DAYS } from './simulation.ts';
 import { companyTime } from './company.ts';
 import { alike, scores, wordsOf } from './matching.ts';
 import { readyOf } from './threadjudge.ts';
+import { oneTask } from './made.ts';
+import { servedWindow } from './askwindow.ts';
 
 // A thread's outlook: its two numbers, its planned finish against its window and the slack that leaves, where it stands
 // (forecast.ts standing), what it waits on, the chain that sets its finish, and why it has none (stall), with the time
@@ -25,6 +27,7 @@ export function outlookOf(id: string, f: Forecast) {
     ...{ held: o.held, left_ms: o.left_ms, waits: o.waits, cards: o.cards, chain: o.chain, next: o.next, jobs: o.jobs },
     stall: o.eta === null ? stallOf(o, booked) : null,
     booked,
+    undated: o.deadline === null && !oneTask(id) && servedWindow(id) === null,
   };
 }
 

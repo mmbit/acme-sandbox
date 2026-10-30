@@ -1,7 +1,7 @@
 // A Notebook page sent whole (knowledge/notes/platform/notebook.md): Send at the top of the controls' stack, and its groups go in 10 seconds, each as a note to the agent whose work it was cut from
 // (or as the routing check decides). Till then Undo takes it back, from a toast or the book's Undo. The page sent is
 // stamped, folds into a paper plane and flies off, leaving the book on the page under it: the next, or the fresh page
-// the store made after the last (the board's call 161). A page sending or sent wears a red rubber stamp at its head,
+// the store made after the last. A page sending or sent wears a red rubber stamp at its head,
 // Sent and the day and time once it's gone, still wet till then, and its own groups are read-only (booksave.js); its
 // answers and replies still come and go. (the plane and the stamp)
 import { esc } from '../../util.js';
@@ -83,7 +83,8 @@ function went(book, page, answer) {
 export function stamped(book, page, fresh = false, el = book.views.find(x => x.page === page)?.el) {
   const node = el?.querySelector('[data-slot=stamp]');
   if (!node) return;
-  if (!page.sent && !page.sending) {
+  // (a call's notes page goes in and to nobody: no stamp.)
+  if ((!page.sent && !page.sending) || page.kind === 'call') {
     node.replaceChildren();
     return node.classList.remove('bk-stamped', 'bk-stamp-wet');
   }

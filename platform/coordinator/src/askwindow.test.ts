@@ -10,6 +10,10 @@ const { db } = h;
 const projects = await import('./projects.ts');
 const plan = await import('./plan.ts');
 const ordering = await import('./ordering.ts');
+const backlog = await import('./backlog.ts');
+const planner = await import('./planner.ts');
+const forecast = await import('./forecast.ts');
+const threats = await import('./threats.ts');
 
 const MINUTE = 60_000,
   HOUR = 60 * MINUTE;
@@ -50,16 +54,20 @@ beforeEach(() => {
   since = (db.prepare('select coalesce(max(id), 0) id from messages').get() as { id: number }).id;
 });
 
-test("the CEO's ask from the intercom takes its window as it's queued, or is refused until it says it has none", async () => {
+test("the CEO's asks join their deliverable without a task deadline, including when its deadline is unset", async () => {
   const token = await intercom();
   const ask = (more: Record<string, unknown>) =>
     h.agent('job', token, { agent: 'kit', title: 'The names fall back', prompt: 'x', ...more });
 
   const untimed = opened();
-  const refused = await ask({ thread: untimed });
-  assert.equal(refused.status, 409);
-  assert.match(refused.body.error, /the board's ask \(on the intercom\).*--by <when>.*--by none/s);
-  assert.equal((db.prepare("select count(*) n from jobs where title = 'The names fall back'").get() as any).n, 0);
+  const filed = await ask({ thread: untimed });
+  assert.equal(filed.status, 200, JSON.stringify(filed.body));
+  assert.equal(filed.body.askedCeo ?? filed.body.untimed, undefined);
+  assert.equal(thread(untimed).deadline, null);
+
+  const unfiled = await ask({});
+  assert.equal(unfiled.status, 409, 'unfiled board asks keep their existing flags');
+  assert.equal((await ask({ by: 'none' })).status, 200);
 
   const before = Date.now();
   const timed = await ask({ thread: untimed, by: '2h' });
@@ -85,19 +93,16 @@ test("the CEO's ask from the intercom takes its window as it's queued, or is ref
   const tight = h.dueThread({ deadline: Date.now() + HOUR });
   assert.equal((await ask({ thread: tight, by: '3h' })).status, 200);
   assert.ok(thread(tight).deadline! < Date.now() + HOUR, 'its own, earlier window stays');
-  assert.deepEqual(toCeo(), [], "the CEO's own ask is asked in its own run");
+  assert.deepEqual(toCeo(), [], 'filed asks need no task-level question');
 });
 
-test("on a live call its agent judges the time, never asking the board; another agent's follow-up handing out its item asks the CEO", async () => {
+test("call tasks use their deliverable's deadline and an unset deadline never asks the CEO task by task", async () => {
   const plain = opened();
   // (moss's call, the shop's owner: anyone else's follow-up adds no task to a shop thread)
   const call = await liveCall('moss');
   const queued = await h.agent('job', call, { agent: 'bolt', title: 'The phone logs', prompt: 'x', thread: plain });
   assert.equal(queued.status, 200, JSON.stringify(queued.body));
-  assert.match(
-    queued.body.untimed,
-    new RegExp(`Don't ask the board by when.*\\(${queued.body.id}\\): its deliverable.*untimed`),
-  );
+  assert.equal(queued.body.untimed ?? queued.body.askedCeo, undefined);
   const loose = await h.agent('job', call, { agent: 'bolt', title: 'The phone bill', prompt: 'x' });
   assert.equal(loose.status, 200, JSON.stringify(loose.body));
   assert.match(loose.body.untimed, /in no deliverable.*\(\d+\), with the open deliverable it serves/);
@@ -121,7 +126,7 @@ test("on a live call its agent judges the time, never asking the board; another 
   assert.ok(handed.body.deadline);
   assert.equal(handed.body.untimed, undefined);
 
-  // moss's follow-up hands out an item with no time: the CEO is asked
+  // A follow-up files an untimed item under the same deliverable.
   assert.equal(
     (await h.voice('call-end', { agent: 'moss', lines: ['Board: read the logs.'], request: 0, token: call })).status,
     200,
@@ -146,8 +151,8 @@ test("on a live call its agent judges the time, never asking the board; another 
     thread: plain,
   });
   assert.equal(out.status, 200, JSON.stringify(out.body));
-  assert.equal(out.body.askedCeo, 'juno');
-  assert.match(toCeo()[0].text, new RegExp(`Job #${out.body.id} for bolt .*board's ask \\(from a call\\)`));
+  assert.equal(out.body.askedCeo ?? out.body.untimed, undefined);
+  assert.deepEqual(toCeo(), []);
 
   // an agent's own work isn't an ask
   const handOn = await h.agent('job', run.token, {
@@ -158,7 +163,7 @@ test("on a live call its agent judges the time, never asking the board; another 
   });
   assert.equal(handOn.status, 200, JSON.stringify(handOn.body));
   assert.equal(handOn.body.untimed ?? handOn.body.askedCeo, undefined);
-  assert.equal(toCeo().length, 1);
+  assert.equal(toCeo().length, 0);
 });
 
 test("a promise on a live call about its owner's work under way is linked to it, and its thread takes the time at once", async () => {
@@ -249,4 +254,60 @@ test('work a timed thread with no task yet needs takes its window: the claim giv
   assert.equal(thread(serving).deadline, null, 'the claim orders it by the deliverable it serves: nothing is copied');
   const latest = ordering.current().timings.get(served.body.id)?.latestStart;
   assert.ok(latest != null && latest < thread(meeting).deadline!, 'its latest start comes before the meeting');
+});
+
+test('follow-ups inherit one changing deliverable deadline through the plan and pacing', async () => {
+  const deliverable = opened();
+  const owner = await h.start({ agent: 'moss', title: 'Make the shop', thread: deliverable });
+  const queued = await h.agent('job', owner.token, { agent: 'kit', title: 'Draw the sign', prompt: 'x' });
+  assert.equal(queued.status, 200, JSON.stringify(queued.body));
+  assert.equal(h.jobs.threadOf(queued.body.id), deliverable);
+  const ids = [owner.id, queued.body.id];
+  const missing = threats
+    .lines(forecast.refresh())
+    .filter(line => line.includes(deliverable) && line.includes('no deadline set'));
+  assert.equal(missing.length, 1, 'the gap shows once for the deliverable');
+  for (const duration of ['2h', '3h']) {
+    assert.equal((await h.agent('window', owner.token, { thread: deliverable, deadline: duration })).status, 200);
+    const due = thread(deliverable).deadline;
+    const snapshot = backlog.orderingSnapshot(Date.now());
+    for (const id of ids) assert.equal(snapshot.jobs.find(j => j.id === id)?.due, due);
+    const timing = ordering.current().timings.get(queued.body.id)!;
+    assert.ok(timing.latestStart != null && timing.latestStart < due!);
+    assert.equal(planner.pacedTakes(timing, due!), true, 'the inherited deadline passes pacing');
+    assert.equal(
+      threats.lines(forecast.refresh()).some(line => line.includes(deliverable) && line.includes('no deadline set')),
+      false,
+    );
+  }
+  const later = await h.agent('job', owner.token, { agent: 'kit', title: 'Hang the sign', prompt: 'x' });
+  assert.equal(later.status, 200, JSON.stringify(later.body));
+  assert.equal(later.body.deadline, new Date(thread(deliverable).deadline!).toISOString());
+});
+
+test("the board's release follow-up inherits its deliverable's deadline and aim on its own thread", async () => {
+  const token = await intercom();
+  const deliverable = opened();
+  const owner = await h.start({ agent: 'moss', title: 'Make the shop', thread: deliverable });
+  const deadline = Date.now() + 3 * HOUR;
+  const aim = deadline - HOUR;
+  const windows = await import('./windows.ts');
+  windows.set(projects.findThread(deliverable)!, { deadline, aim }, 'juno');
+  const follow = await h.agent('job', token, {
+    agent: 'kit',
+    title: 'Check the live shop',
+    prompt: 'Read the released work',
+    thread: deliverable,
+    when: [`deployed:${owner.id}`],
+  });
+  assert.equal(follow.status, 200, JSON.stringify(follow.body));
+  const own = h.jobs.threadOf(follow.body.id)!;
+  assert.notEqual(own, deliverable, 'release work has its own thread');
+  assert.equal(follow.body.followOn, deliverable);
+  assert.equal(follow.body.deadline, new Date(deadline).toISOString());
+  assert.deepEqual([thread(own).deadline, thread(own).aim], [deadline, aim]);
+  assert.equal(follow.body.askedCeo ?? follow.body.untimed, undefined);
+  assert.equal(toCeo().length, 0);
+  const snapshot = backlog.orderingSnapshot(Date.now());
+  assert.equal(snapshot.jobs.find(j => j.id === follow.body.id)?.due, deadline, 'pacing reads the inherited time');
 });

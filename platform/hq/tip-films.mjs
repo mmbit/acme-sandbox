@@ -12,13 +12,14 @@
 //   node platform/hq/tip-films.mjs stills           (only the stills, from the films there)
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { statSync } from 'node:fs';
 import { mockFiles, serve, ROOT } from './serve.mjs';
 import { lookNames } from './looks.mjs';
-import { TIPS } from './shell/tips.js';
+import { TIPS, filmName } from './shell/tips.js';
 import { FILMS, PREVIEW } from './films/scenes.mjs';
-import { playwright, encoder, probe } from '../../shared/demo/core.mjs';
+import { playwright, encoder, probe, companyTimeZone } from '../../shared/demo/core.mjs';
 import { frameClock, tapAt, keystrokes } from '../../shared/demo/frames.mjs';
 import { noteRender } from '../../shared/demo/renders.mjs';
 
@@ -27,6 +28,12 @@ const FPS = 24,
   SCALE = 1.25, // (the film's pixels per CSS pixel: a crop of the tool window comes out about 700 wide)
   T0 = new Date('2026-10-26T10:00:00Z');
 const at = (...p) => join(ROOT, ...p);
+// The film's clock is the one HQ shows: its mock org's time zone (the company's mock over the platform's), or with none
+// (HQ then keeps the device's) the company's own, org.yaml's
+const mockOrg = JSON.parse(
+  await readFile(at('theme/hq/mock/org.json'), 'utf8').catch(() => readFile(at('platform/hq/mock/org.json'), 'utf8')),
+);
+const timezoneId = mockOrg.company?.timeZone ?? (await companyTimeZone());
 
 const { chromium } = playwright();
 if (process.argv[2] === 'stills') {
@@ -58,7 +65,7 @@ try {
 
 async function film(tip, look) {
   const scene = FILMS[tip.key],
-    out = at('theme/hq/films', `${tip.key}-${look}.mp4`);
+    out = at('theme/hq/films', filmName(tip.key, look));
   const { context, page, line, errors } = await open(scene);
   const rec = recorder(page, line, `${tip.key} in ${look}`);
   await page.goto(`${base}/?renderer=${look}&intro=0&hour=11&weather=clear`);
@@ -68,8 +75,9 @@ async function film(tip, look) {
   await rec.settle(1.2);
   await rec.start(out, await cropOf(scene, rec.box), scene.scale ?? SCALE);
   await scene.play(rec.hq, look).catch(async e => {
-    await page.screenshot({ path: '/tmp/tip-film-failed.png' });
-    throw new Error(`${tip.key} in ${look}: ${e.message} (the screen as it stopped: /tmp/tip-film-failed.png)`);
+    const shot = join(tmpdir(), 'tip-film-failed.png');
+    await page.screenshot({ path: shot });
+    throw new Error(`${tip.key} in ${look}: ${e.message} (the screen as it stopped: ${shot})`);
   });
   await rec.end();
   await context.close();
@@ -84,8 +92,8 @@ async function film(tip, look) {
 
 // A film's still for the Library's manual: its frame at the scene's still, a phone screen's width at most.
 function still(tip, look) {
-  const film = at('theme/hq/films', `${tip.key}-${look}.mp4`),
-    out = film.replace(/\.mp4$/, '.jpg');
+  const film = at('theme/hq/films', filmName(tip.key, look)),
+    out = at('theme/hq/films', filmName(tip.key, look, 'jpg'));
   execFileSync('ffmpeg', [
     '-v',
     'error',
@@ -116,7 +124,7 @@ async function open(scene) {
     hasTouch: true,
     serviceWorkers: 'block',
     locale: 'en-GB',
-    timezoneId: 'Europe/Amsterdam',
+    timezoneId,
   });
   await context.addInitScript(() => {
     localStorage.setItem('hq.sound', 'false');

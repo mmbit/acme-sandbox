@@ -6,6 +6,8 @@
 // agreed, by hq window or by a call's item with its time when it's handed out (ledger.ts link, hq job --item), and goes
 // on the thread, never on one job. HQ tells nobody by itself: whether the board hears, and the new time it's given, is
 // the CEO's call.
+// Each task inherits the one deadline through its deliverable membership. The plan and pacing read it afresh,
+// so a deadline change applies to all its work without task-level copies.
 // (its messages say deliverable, the board's word for a thread)
 import { db } from './db.ts';
 import * as jobs from './jobs.ts';

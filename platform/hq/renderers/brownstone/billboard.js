@@ -258,8 +258,9 @@ const SLIDES = [
   { slide: 'tee', seconds: 3.4, lines: ['ONE OF', 'A', 'KIND', 'LIKE YOU'] },
   { slide: 'mug', seconds: 4.0, lines: ['MADE FOR'], names: ['ADA', 'NOOR', 'SAM', 'YUKI', 'LEO', 'MAYA', 'OMAR', 'ZOE'] },
   { slide: 'printer', seconds: 3.8, lines: ['PRINTED', 'TO ORDER'] },
-  { slide: 'heater', seconds: 3.2, lines: ['SLIGHTLY', 'WARMER'] },
-  { slide: 'balloons', seconds: 3.2, lines: ['SLIGHTLY', 'MORE', 'WHIMSICAL'] },
+  // (the picture's words, no company's)
+  { slide: 'heater', seconds: 3.2, lines: ['STAY', 'WARM'] },
+  { slide: 'balloons', seconds: 3.2, lines: ['UP', 'UP AND', 'AWAY'] },
   { slide: 'mascot', seconds: 4.4, lines: ['{NAME}', 'OUR', '{KIND}'] },
   { slide: 'typewriter', seconds: 3.6, lines: ['RUN BY', 'AI', '+ A {KIND}'] },
   { slide: 'film', seconds: 10, fps: 12 },

@@ -144,7 +144,6 @@ test('the dissolve: gone by the time the board lands, back in at the new room; e
   assert.equal(dissolveLook(0.53).blur, 5.5, 'half-pixel steps');
 });
 
-// (the board, 28 Oct)
 test("the close's dissolve keeps the opening's time: the spring's quicker swing up waits for it", () => {
   const opened = run({ a: UPRIGHT, w: NUDGE }, 'fall', { done: b => b.a < 0.1 * UPRIGHT }),
     shut = run({ a: 0, w: 0 }, 'shut', { done: b => b.a >= UPRIGHT });

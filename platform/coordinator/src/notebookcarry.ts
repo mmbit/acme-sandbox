@@ -25,17 +25,14 @@ import { pictureSize } from '../../../shared/pictures/size.ts';
 // Where carried notes stand: a column this far right of what was drawn, this wide, this far apart
 const COLUMN = { gap: 48, w: 360, apart: 32 };
 
-// current(): the notebook's current page, made if there's none (notebook.ts currentPage). Returns the page late notes
-// went on, or null.
-export function carryInto(notebook: number, who: string, current: () => number) {
+// end: the place after the notebook's last page (notebook.ts endOf). current(): the notebook's current page, made if
+// there's none (notebook.ts currentPage). Returns the page late notes went on, or null.
+export function carryInto(notebook: number, who: string, end: number, current: () => number) {
   const today = companyDay(Date.now()),
     pages = db
       .prepare(`select ${COLUMNS} from book_pages where who = ? and notebook is null order by id`)
       .all(who) as Page[];
-  const { last } = db.prepare('select max(pos) last from book_pages where notebook = ?').get(notebook) as {
-    last: number | null;
-  };
-  pages.forEach((p, i) => carryPage(p, notebook, (last ?? -1) + 1 + i, today));
+  pages.forEach((p, i) => carryPage(p, notebook, end + i, today));
   const late = lateNotes(who);
   if (!late.length) return null;
   const p = db.prepare(`select ${COLUMNS} from book_pages where id = ?`).get(current()) as Page;

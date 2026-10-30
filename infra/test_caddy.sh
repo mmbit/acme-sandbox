@@ -63,6 +63,8 @@ if $py -c 'import yaml' 2>/dev/null; then
   REPO_DIR="$r" DATA_DIR="$tmp/hq" node "$here/../platform/coordinator/src/clock.ts" || exit 1
   # the browser's kits in the checkout, which Caddy serves from /repo (the word check)
   mkdir -p "$r/shared/demo" "$r/shared/wordcheck" && printf 'export const kit = 1;' > "$r/shared/demo/foley.js"
+  # the frame's scroll link, a public site's answer to the template's review.js
+  mkdir -p "$r/shared/watchalong" && printf '/* scroll link */' > "$r/shared/watchalong/scrolllink.js"
   printf 'export const words = 1;' > "$r/shared/wordcheck/wordcheck.js"
   # what the company serves the same way (SERVED_FROM_REPO), next to its notes
   mkdir -p "$r/theme/web" && printf ':root{}' > "$r/theme/web/spacing.css" && printf 'notes' > "$r/theme/web/README.md"
@@ -165,7 +167,7 @@ if [ -f "$tmp/repo/infra/generated/products.caddy" ]; then
   for h in front.example.test example.test; do
     check "front: $h redirects to www, path and query kept" "$(at $h '/a/b?lang=nl' -o /dev/null -w '%{redirect_url} %{http_code}')" 'https://www.example.test/a/b?lang=nl 301'
   done
-  check 'front: no review mode on www (an empty script)' "$(at www.example.test /__review/review.js)" '/* review mode: off */ 200'
+  check 'front: no review mode on www (the scroll link alone)' "$(at www.example.test /__review/review.js)" '/* scroll link */ 200'
   check "front: the board's preview door keeps it" "$(at front.preview.example.test /__review/review.js)" 'coordinator /__review/review.js 200'
   # the front with care: true: the chat on the shop's own pages, as the shop. No orders, but the service's endpoint for
   # the shop's basket
@@ -188,7 +190,7 @@ if [ -f "$tmp/repo/infra/generated/products.caddy" ]; then
   # every shelf's chat is the shop's: one session across www
   check 'shelf: its chat, X-Care-App <slug>, X-Care-Shop the front, forged ones replaced' \
     "$(at www.example.test /stall/__care/api/health -H 'X-Care-App: sprig@preview' -H 'X-Care-Shop: shop')" 'care www.example.test/__care/api/health x-care-app=stall x-care-shop=front 200'
-  check 'shelf: no review mode' "$(at www.example.test /stall/__review/review.js)" '/* review mode: off */ 200'
+  check 'shelf: no review mode (the scroll link alone)' "$(at www.example.test /stall/__review/review.js)" '/* scroll link */ 200'
   check 'shelf: no review notes either' "$(at www.example.test /stall/__review/notes -X POST)" ' 404'
   # HQ's watch marks its requests with its mark for the app, which the app checks (shared/metrics): it goes along as sent
   check "HQ's watch: its mark reaches a shelf and a product's own domain" \

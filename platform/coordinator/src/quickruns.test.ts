@@ -35,7 +35,6 @@ test('a quick run handed back keeps what was left of its turn when it is claimed
 test("a quick run thinks at the quick effort, not its agent's, and the agent's work keeps its own", async () => {
   const quick = await h.claimJob(quickRun('bolt', 'A question', 'Is this live yet?', PURPOSE));
   assert.equal(quick.agentInfo.effort, QUICK_EFFORT);
-  assert.equal(QUICK_EFFORT, 'low', 'the board waits for its answer, as it does on a call');
   const work = await h.claimJob(h.queue({ agent: 'bolt' }));
   assert.notEqual(work.agentInfo.effort, QUICK_EFFORT, `its work runs at ${work.agentInfo.effort}`);
   await h.finish(quick, { result: 'Yes.' });

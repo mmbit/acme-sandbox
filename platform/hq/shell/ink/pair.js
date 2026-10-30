@@ -27,16 +27,28 @@ export function initPair() {
   island('overview').append(shortcut);
 }
 
+// A one-time sign-in code for another device ({ code, expires }) and the link its QR carries. view: a preview's
+// address the device opens in HQ's viewer once signed in (viewer.js), or none for HQ as it opens.
+export async function pairLink(view = null) {
+  const code = await act('/api/notebooks/pair', {});
+  return {
+    ...code,
+    link: `${location.origin}/pair#${new URLSearchParams({ code: code.code, ...(view && { view }) })}`,
+  };
+}
+export function qrSvg(link, label) {
+  const qr = qrCode(link, { level: 'M' }),
+    n = qr.size + 8;
+  return `<svg class="pair-qr" viewBox="0 0 ${n} ${n}" shape-rendering="crispEdges" role="img" aria-label="${label}"><rect width="${n}" height="${n}" fill="#fff"/><path fill="#000" d="${qrPath(qr)}"/></svg>`;
+}
+
 async function showCode(card) {
   card.hidden = false;
   card.innerHTML = '<p>Making a one-time sign-in code…</p>';
   try {
-    const code = await act('/api/notebooks/pair', {});
-    const link = `${location.origin}/pair#code=${code.code}`;
-    const qr = qrCode(link, { level: 'M' }),
-      n = qr.size + 8;
+    const code = await pairLink();
     card.innerHTML = `<b class="pair-head">Sign in another device</b>
-      <svg class="pair-qr" viewBox="0 0 ${n} ${n}" shape-rendering="crispEdges" role="img" aria-label="Scan to sign in"><rect width="${n}" height="${n}" fill="#fff"/><path d="${qrPath(qr)}"/></svg>
+      ${qrSvg(code.link, 'Scan to sign in')}
       <p class="pair-words">Scan this code, or open <a href="/pair">${location.host}/pair</a> and enter <b class="pair-digits"></b>. Good once, for a minute. Your Notebook syncs after sign-in.</p>`;
     card.querySelector('.pair-digits').textContent = code.code;
     const close = button({

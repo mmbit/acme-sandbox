@@ -1,7 +1,7 @@
 // book-check.mjs's stories of the tool strip and the wheel on a desktop (shell/ink/bookstrip.js, bookpan.js): the
 // strip beside Undo's at the paper's right edge, the tool's name fading a moment after it's picked, Ctrl and the wheel
 // stepping through the tools, and the wheel and a trackpad's pinch (a wheel with ctrlKey, but no key down) zooming
-// with the tool kept. (the board, 28 Oct)
+// with the tool kept.
 import assert from 'node:assert/strict';
 import { paperBox } from './bookmouse.mjs';
 import { desk, now, pressed } from './bookstrip.mjs';
@@ -57,7 +57,7 @@ async function wheel(browser, c) {
 }
 
 // A trackpad's pinch as Chromium hands it over, a wheel with ctrlKey and no key down: the zoom goes on. (Chromium's own
-// pinch, which comes as a wheel with no notch in it)
+// pinch, which comes in a mouse wheel's notches, so only the key tells them apart)
 async function pinched(page, at) {
   const pct = () => page.locator('#book .bk-pct').textContent(),
     was = await pct(),

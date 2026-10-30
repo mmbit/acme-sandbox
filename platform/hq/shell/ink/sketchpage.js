@@ -11,6 +11,7 @@ import { sheetPen, pictureOf } from './sketchpen.js';
 import { offerPaste, placeWaiting, wirePictures } from './sketchpaste.js';
 import { tray } from './sketchtools.js';
 import { merged, mergedScraps } from './pagemerge.js';
+import { names } from '../brand.js';
 
 const SAVE_AFTER_MS = 1200,
   RETRY_MS = 5000,
@@ -89,7 +90,7 @@ function pageHtml(s, to) {
       <button class="sk-step" data-redo aria-label="Redo" title="Redo">↷</button>
       <span class="sk-more"><button data-more aria-expanded="false" aria-label="More" title="More">⋯</button>
         <span class="sk-menu" hidden><button data-archive>${s.archived ? 'Move out of the archive' : 'Archive'}</button><button data-delete>Delete…</button></span></span>
-      <button class="sk-send" data-send title="Send it to ${ceo} on the intercom">${PLANE}<span>Send to ${ceo}</span></button>
+      <button class="sk-send" data-send title="Send it to ${ceo} on the ${esc(names.intercom)}">${PLANE}<span>Send to ${ceo}</span></button>
     </header>
     <div class="sk-desk"><div class="sk-sheet" data-no-ink><canvas class="dry"></canvas><canvas class="wet" data-watchalong-hide></canvas></div></div>
     <footer class="sk-tray" role="toolbar" aria-label="Pens"></footer>`;
@@ -334,7 +335,7 @@ async function send(page) {
     if (page.save.pending) throw new Error('it isn’t saved yet');
     await page.book.act('send', { id: page.sketch.id });
     fly(page);
-    page.book.toast(`Sent to ${esc(page.book.to)}${page.book.sent ? ' on the intercom' : ''}.`, () => {
+    page.book.toast(`Sent to ${esc(page.book.to)}${page.book.sent ? ` on the ${esc(names.intercom)}` : ''}.`, () => {
       shut(page, '');
       page.book.sent?.();
     });

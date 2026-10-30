@@ -213,6 +213,11 @@ export const refusals = {
     nl: 'Deze pagina is al verstuurd.',
     de: 'Diese Seite wurde bereits gesendet.',
   },
+  callPage: {
+    en: "A call's notes page goes in by itself as the call ends. The call's follow-up hands out what is on it.",
+    nl: 'De notitiepagina van een gesprek gaat vanzelf in als het gesprek eindigt. De opvolging van het gesprek deelt uit wat erop staat.',
+    de: 'Die Notizseite eines Gesprächs geht von selbst ein, wenn das Gespräch endet. Die Nachbereitung des Gesprächs verteilt, was darauf steht.',
+  },
   pageEmpty: {
     en: 'There is nothing on this page to send.',
     nl: 'Er staat niets op deze pagina om te versturen.',

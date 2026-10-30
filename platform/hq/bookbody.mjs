@@ -150,7 +150,7 @@ async function table(browser, c) {
     await page.mouse.down();
     await page.mouse.move(x + 160, y, { steps: 12 });
     await page.waitForTimeout(HOLD_MS);
-    // mid-drag, between HQ's page and the book, top to bottom: HQ's ground, one flat fill (the board's call 160:
+    // mid-drag, between HQ's page and the book, top to bottom: HQ's ground, one flat fill
     const tones = await lightsIn(page, { x: hq + 20, y: 0, width: 100, height: MINI.height });
     await c.shot('book-body-table', page);
     await page.mouse.up();
@@ -174,7 +174,7 @@ async function opening(browser, c) {
     assert.ok(coming.length >= 2, `the book coming in: ${JSON.stringify(frames.slice(0, 12))}`);
     assert.equal(await page.locator('#book .bk-cover').count(), 0, 'no cover: the book opens straight onto its page');
     // HQ keeps its whole width till the book has landed, takes its new room while it's gone, then fades back in, slowly
-    // enough to be seen (the board's call 148)
+    // enough to be seen
     assert.ok(landed >= 0 && narrowed >= landed, `HQ narrowed at frame ${narrowed}, the book landed at ${landed}`);
     assert.ok(frames[narrowed].shown < 0.05, `HQ narrowed while showing: ${JSON.stringify(frames[narrowed])}`);
     assert.ok(

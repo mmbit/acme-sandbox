@@ -118,57 +118,17 @@ test('new groups never land on a versions page', async () => {
   assert.equal(next.page, g.page);
 });
 
-test("on a call: the note's verdict goes to the line with it, its agent writes the answer, a try's start is news", async () => {
-  const { onPublish } = await import('../events.ts');
-  const { call, token } = await h.liveCall('juno');
-  const page = (await h.board('/api/book/page/new', { kind: 'call', call, w: 1024, h: 768 })).body;
-  const { note } = (
-    await h.board('/api/book/note', { page: page.id, anchor, words: 'Is the price right?', said: 'typed' })
-  ).body;
-  assert.equal(onCall({ note: note.id }), call);
-  db.prepare(
-    "insert into ink_verdicts (note, reply, why, words, created) values (?, 'answer', 'a question for the call', ?, ?)",
-  ).run(note.id, note.words, new Date().toISOString());
-  const heard = (await h.voice(`note?id=${note.id}&call=${call}`)).body;
-  assert.deepEqual([heard.verdict, heard.versions], [{ reply: 'answer', why: 'a question for the call' }, []]);
-  // the call's agent writes it (its answer_note tool), by the note's number on the call's page
-  const wrote = await h.agent('call-answer', token, { note: note.n, words: 'Yes: it matches the shop.' });
-  assert.equal(wrote.status, 200);
-  const slip = db.prepare('select * from book_slips where id = ?').get(wrote.body.slip) as any;
-  assert.deepEqual([slip.note, slip.by, slip.text, slip.style], [note.id, 'juno', 'Yes: it matches the shop.', 'text']);
-  assert.equal((await h.agent('call-answer', token, { note: 9, words: 'x' })).status, 404);
-  const job = (await h.start({ agent: 'kit' })) as any;
-  assert.equal((await h.agent('call-answer', job.token, { note: note.n, words: 'x' })).status, 403);
-  // a try on a call's note: its versions page after the call's, and the line hears of it through HQ
-  const events: any[] = [];
-  const off = onPublish(e => void (e.type === 'book' && e.call && events.push(e)));
-  const run = tryNow({ note: note.id }, VERDICT)!;
-  await new Promise(res => setTimeout(res, 50));
-  off?.();
-  assert.equal((db.prepare('select kind from jobs where id = ?').get(run) as any).kind, 'try');
-  const versions = db.prepare('select * from book_pages where tries_note = ?').get(note.id) as any;
-  assert.equal(versions.label, 'Juno tries: Is the price right?');
-  assert.deepEqual(
-    events.map(e => [e.call, e.note]),
-    [[call, note.id]],
-  );
-});
-
-test("a call's note wiped, its versions kept for Undo: a reply on one is refused", async () => {
+test("a note the board types on a live call's page gets no quick run: the call's agent is with the board", async () => {
   const { pageFor } = await import('./callnotes.ts');
+  const { answerNow } = await import('./bookanswer.ts');
   const { call } = await h.liveCall('juno');
   const page = pageFor(call)!;
-  const { note } = (await h.board('/api/book/note', { page: page.id, anchor, words: 'cooler?', said: 'typed' })).body;
-  const run = tryNow({ note: note.id }, VERDICT)!;
-  const slip = Number(
-    db
-      .prepare(
-        `insert into book_slips (note, by, job, text, created, style, version)
-          values (?, 'juno', ?, 'a cooler grey', ?, 'version', 'Slate')`,
-      )
-      .run(note.id, run, new Date().toISOString()).lastInsertRowid,
-  );
-  assert.equal((await h.board('/api/book/note/delete', { id: note.id })).status, 200);
-  assert.ok(db.prepare('select 1 from book_pages where tries_note = ?').get(note.id), 'its versions page kept');
-  assert.equal((await h.board('/api/notebooks/groups/reply', { answer: slip, words: 'This one' })).status, 404);
+  const typed = (
+    await h.board('/api/notebooks/groups/create', {
+      page: page.id,
+      texts: [{ x: 40, y: 80, w: 200, text: 'Is the price right?', color: '#2a2352' }],
+    })
+  ).body;
+  assert.equal(onCall({ grp: typed.id }), call);
+  assert.equal(answerNow({ grp: typed.id }, VERDICT), null);
 });

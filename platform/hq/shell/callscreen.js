@@ -20,9 +20,9 @@ const PICTURE = icon('picture');
 const MINIMISE = icon('minimise');
 const EYE = icon('eye');
 const HANG_UP = icon('hangup');
-// the screen's one share control, in the call's words: [its words, and the short ones a phone shows (style.css)]
-const SHOW = ['Show my screen', 'Share'],
-  STOP = ['Stop showing', 'Stop'],
+// the screen's one share control, in the call's words: its words, and the short ones a phone shows (style.css)
+const SHOW = { words: 'Show my screen', short: 'Share' },
+  STOP = { words: 'Stop showing', short: 'Stop' },
   UNSHOWN = 'Your screen couldn’t be shown. Try again.',
   // (the server opens the agent's view again with each batch the page sends: watchalong.ts addEvents)
   UNSEEN = name => `Your screen isn’t reaching ${name}. HQ keeps trying by itself.`;
@@ -39,15 +39,18 @@ export function openLayer(c) {
     <header><span class="grille" aria-hidden="true"></span><b>Call · ${esc(c.name)}</b><span class="onair" aria-hidden="true">ON AIR</span><button class="past-btn" id="call-min" aria-label="Minimise" title="Minimise: keep talking while you look around">${MINIMISE}</button></header>
     <div class="screen"><div class="call" id="call-screen">
       <div class="call-face" id="call-face"><span class="cf-picture" aria-hidden="true"><span class="cf-figure"></span></span><p class="state" id="call-state" aria-live="polite">Connecting…</p></div>
+      <!-- the call's notes over its transcript, one region that gives up height together -->
+      <div class="said">
       <p class="note" id="call-note" role="status" hidden></p>
       <p class="note" id="call-mic" role="status" hidden></p><!-- (the microphone hears nothing) -->
       <p class="note" id="call-net" role="status" hidden></p><!-- (the line hears the board late: lagging) -->
       <p class="note" id="call-unshown" role="status" hidden></p><!-- (Show my screen didn't start, or doesn't reach the agent) -->
       <ol class="lines" id="call-lines" aria-label="What you’ve both said" data-empty="What you and ${esc(c.name)} say shows here."></ol>
+      </div>
       <!-- pictures on a call: the strip and the attach button -->
       <ul class="pics" id="call-pics" aria-label="Pictures you showed" aria-live="polite" hidden></ul>
       <!-- the board interrupts by speaking: Show my screen has the bottom row's middle, Hang up its symbol on a phone -->
-      <div class="row"><button class="mic attach" id="call-attach" title="Show a picture" aria-label="Show a picture">${PICTURE}</button><input type="file" id="call-file" accept="image/*" multiple hidden><button id="call-screenshare" aria-pressed="false" disabled>${EYE}<span>${SHOW[0]}</span><span class="short">${SHOW[1]}</span></button><button class="hangup" id="call-end" aria-label="Hang up">${HANG_UP}<span>Hang up</span></button></div>
+      <div class="row"><button class="mic attach" id="call-attach" title="Show a picture" aria-label="Show a picture">${PICTURE}</button><input type="file" id="call-file" accept="image/*" multiple hidden><button id="call-screenshare" aria-pressed="false" disabled>${EYE}<span>${SHOW.words}</span><span class="short">${SHOW.short}</span></button><button class="hangup" id="call-end" aria-label="Hang up">${HANG_UP}<span>Hang up</span></button></div>
     </div></div>
   </div>`;
   document.querySelector('#call-layer')?.remove(); // (the last call's, still switching off: closeLayer)
@@ -69,8 +72,10 @@ export function openLayer(c) {
 export function closeLayer(c) {
   const layer = c.layer;
   if (!layer) return;
-  if (!c.small) cue('close');
-  if (c.small || !c.face.lit(false)) return layer.remove();
+  if (c.small) return layer.remove();
+  cue('close');
+  const switchingOff = c.face.lit(false);
+  if (!switchingOff) return layer.remove();
   layer.inert = true;
   layer.querySelector('.cf-picture').addEventListener('animationend', () => layer.remove(), { once: true });
   setTimeout(() => layer.remove(), SWITCH_OFF_MS); // (a page out of view runs no animation)
@@ -92,7 +97,7 @@ function callFace(c, el) {
     },
     state: state => (el.dataset.state = state),
     // (unlit: switched off once; never lit, it's simply dark. The switch plays only as it changes, so a return from the
-    // bubble, its picture shown again, doesn't replay it. Whether it switched.)
+    // bubble, its picture shown again, doesn't replay it. It returns whether the picture switched.)
     lit(on) {
       if (el.classList.contains('lit') === on) return false;
       el.classList.toggle('lit', on);
@@ -306,8 +311,10 @@ export function shareKey(c) {
   const on = shown(c);
   key.disabled = !c.call || !!c.watchStarting || c.over;
   key.setAttribute('aria-pressed', String(on));
-  const [words, short] = key.querySelectorAll('span');
-  [words.textContent, short.textContent] = on ? STOP : SHOW;
+  const [words, short] = key.querySelectorAll('span'),
+    says = on ? STOP : SHOW;
+  words.textContent = says.words;
+  short.textContent = says.short;
 }
 // The board asked to show its screen and it didn't start: said on the call screen until the next try
 function unshown(c, words) {

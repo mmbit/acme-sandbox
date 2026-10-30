@@ -199,7 +199,6 @@ const born = (db.prepare("select name from sqlite_master where type = 'table' an
 // database has no such tables yet: the creates give them their columns.
 const FOLDED: Record<string, string[]> = {
   calls: ['reply text', 'line_times text'],
-  findings: ['cross_project integer not null default 0'],
   jobs: [
     'peak_mb integer',
     'room_for integer',
@@ -385,9 +384,9 @@ db.exec('create table if not exists previews_owed (pr integer primary key, files
 // it, and the pre-existing ones the consolidator confirmed (findings.ts). `by`: the reviewers who reported it, with
 // their engines (JSON).
 db.exec(`create table if not exists findings (id integer primary key, created text not null, pr integer not null, round integer not null,
-  ruling integer not null, kind text not null, file text, line integer, issue text not null, by text not null, outcome text, right text, cross_project integer not null default 0)`);
+  ruling integer not null, kind text not null, file text, line integer, issue text not null, by text not null, outcome text, right text)`);
 db.exec('create index if not exists findings_pr on findings (pr)');
-// The review follow-up bundle (a proposal) each finding went into, before follow-ups became their author's job.
+// Findings that went into an owner's proposal: the projects view still shows their fate (reviewrows.ts)
 db.exec('create table if not exists review_followups (finding integer primary key, proposal integer not null)');
 // The follow-up job each finding went into (followups.ts)
 db.exec('create table if not exists review_followup_jobs (finding integer primary key, job integer not null)');
@@ -657,10 +656,10 @@ export function meetingProjects(meeting: number) {
 // settled) was met, to judge what's next, until a re-pause puts it on new conditions; pause_wakes keeps every job that
 // woke an owner, which no pause holds (jobs.ts pauseLets). resumed: when it
 // ended, by its CEO or owner (resumed_by) or, null, by the board's answer on its decision's card. pause_until.on_main: that job's commits reached main with its pull request
-// closed (review.ts close). Here rather than in that module: claim() reads them.
+// closed (review.ts close). by_job: the run that made it, which runs on under it (jobs.ts pauseSuspends). Here rather than in that module: claim() reads them.
 db.exec(`create table if not exists pauses (id integer primary key, project text not null, thread text, why text not null,
     by text not null, at text not null, item integer, resumed text, resumed_by text, decision integer, until_time text,
-    woken integer);
+    woken integer, by_job integer);
   create table if not exists pause_until (pause integer not null, job integer not null, on_main integer not null default 0,
     primary key (pause, job));
   create table if not exists pause_wakes (job integer primary key, pause integer not null)`);
@@ -773,7 +772,8 @@ once('2026-10-28-usage-opening', () => {
 once('2026-10-28-usage-last-turn', () => lacks('usage', 'last_turn') && db.exec('alter table usage add column last_turn text'));
 once('2026-10-27-prs-merged-as', () => lacks('prs', 'merged_as') && db.exec('alter table prs add column merged_as text'));
 db.exec('create index if not exists prs_merged_as on prs (merged_as) where merged_as is not null');
-once('2026-10-22-findings-routing', () => lacks('findings', 'cross_project') && db.exec('alter table findings add column cross_project integer not null default 0'));
+// A column nothing reads (findings.cross_project)
+once('2026-10-29-findings-unrouted', () => !lacks('findings', 'cross_project') && db.exec('alter table findings drop column cross_project'));
 once('2026-10-22-prs-review-since', () => lacks('prs', 'review_since') && db.exec('alter table prs add column review_since integer not null default 0'));
 // An expedited fix (jobs.expedite: the CEO's hq job --expedite) and the pull request it merged ahead of its review
 // (prs.expedited).
@@ -793,6 +793,12 @@ once('2026-10-27-decisions-settled', () => {
       and j.prompt like 'Review found a major visual change to something live. Decision #' || decisions.id || ' holds its merge.%')
     where exists (select 1 from decision_merges m where m.decision = decisions.id)`);
 });
+// Preview work remains attributable after its active merge hold is retired.
+db.exec(`create table if not exists card_merges (job integer not null, pr integer not null, primary key (job, pr))`);
+once('card-merge-history', () => db.exec(`insert or ignore into card_merges (job, pr)
+  select d.card_job, m.pr from decisions d join decision_merges m on m.decision = d.id
+  where d.card_job is not null`));
+
 // The card jobs from before card_jobs: each decision's latest
 once('2026-10-27-card-jobs', () =>
   db.exec('insert or ignore into card_jobs (job, decision) select card_job, id from decisions where card_job is not null'));
@@ -862,6 +868,8 @@ once('2026-10-25-pauses-wake', () => {
   if (lacks('pauses', 'woken')) db.exec('alter table pauses add column woken integer');
   if (lacks('pause_until', 'on_main')) db.exec('alter table pause_until add column on_main integer not null default 0');
 });
+// The run that made a pause, which runs on under it (jobs.ts pauseSuspends).
+once('2026-10-29-pauses-by-job', () => lacks('pauses', 'by_job') && db.exec('alter table pauses add column by_job integer'));
 // Every job a pause woke its owner with, kept past a re-pause
 once('2026-10-26-pause-wakes', () =>
   db.exec('insert or ignore into pause_wakes (job, pause) select woken, id from pauses where woken is not null'),
@@ -903,6 +911,9 @@ db.exec(`drop index if exists book_sheets_open;
   create unique index if not exists book_sheets_batch on book_sheets (who, coalesce(owner, ''))
     where status in ('open', 'sending') and page is null and notebook_page is null`);
 db.exec('drop table if exists call_pins');
+// A second device's links on the board's call went with the second device on 29 October 2026: group calls keep only
+// their speaker labels (the board, call #248).
+db.exec('drop table if exists call_devices');
 
 // A minute is the worker's reporting cadence. Two weekly windows keep observations on both sides of a reset.
 db.exec(`create table if not exists seat_readings (seat text not null, minute integer not null,

@@ -13,11 +13,15 @@
 //   call:heard { text }                       words the call heard the board say
 //   call:had   { note }                       the agent's turn on that note is done (or the line couldn't take it):
 //                                             its ink goes
+//   call:mark  { anchor, snip, ago, answer }  a mark the Pencil made on the page in HQ's viewer (its callframe.js,
+//                                             through HQ's desk.js): filed as this screen's own, with the words heard
+//                                             since its first line, ago ms back; answer({ note } or { failed }) says how
+//                                             it went
 import { reset } from './acts.js';
 import { say } from './dock.js';
 import { callPage } from './markpage.js';
-import { file } from './settle.js';
-import { paint } from './marks.js';
+import { file, heardSince } from './settle.js';
+import { paint, post } from './marks.js';
 
 // Words the call heard are kept this long for the mark being drawn (the line hears a phrase once it's finished)
 const HEARD_MS = 60_000;
@@ -41,6 +45,21 @@ export function setupCall(r) {
     r.held = r.held.filter(h => h.note !== e.detail?.note);
     paint(r);
   });
+  document.addEventListener('call:mark', e => framed(r, e.detail));
+}
+// A mark from the viewer's page, on the call's page as one drawn here would be (marks.js post tells the call of it):
+// its ink stays there, not here
+async function framed(r, { anchor, snip, ago, answer }) {
+  if (!r.call) return answer({ failed: 'The call had ended.' });
+  const since = performance.now() - ago,
+    words = heardSince(r, since);
+  try {
+    const note = await post(r, { anchor, words, said: words ? 'spoken' : null, snip });
+    answer({ note: note.id });
+  } catch (err) {
+    console.error("The Pencil: a mark from the viewer's page", err);
+    answer({ failed: err?.status ? `The book said no: ${err.message}.` : 'Could not reach the book.' });
+  }
 }
 
 // The call ended: a mark going in, then one still settling (one the book said no to, tried once more). One the book

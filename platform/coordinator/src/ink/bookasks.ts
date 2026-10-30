@@ -8,16 +8,17 @@
 //   - asksOn(): a note's cards, as the book reads them under the note's group.
 //   - card(): the desk phone's card with its place: the note's snip, number and words, and the Notebook page its group
 //     is on (Open in the book), or the page's address.
-// A card the book can't answer, for a named reason, shows there as its title and "Answer on the desk phone": keys
-// (charter rule 8: a key is typed only where HQ stores keys), photo, document and zip uploads (the desk phone's upload
-// paths), an approval (what Approve grants is the desk phone's to show), files to download, and work brought back
-// (review mode's answers).
+// The book is Ink Studio, the design stage: nothing in it is built yet (the board, call 167). So a card for a secret, a
+// step the board takes or built work stays on the desk phone only, its note's place shown there: keys and logins
+// (charter rule 8: a key is typed only where HQ stores keys), photo, document and zip uploads, an approval, files to
+// download, a card with steps, and finished work (a walk-through offered, work brought back).
 import { db } from '../db.ts';
 import { ceo } from '../company.ts';
 import { findAgent, jobAgent } from '../jobs.ts';
 import { productsOf } from '../owed.ts';
 import * as cardFiles from '../cardfiles.ts';
 import { BOARD } from './book.ts';
+import { parseCard } from '../../../hq/shell/card.js';
 import { SHOWN } from '../shown.ts';
 
 // A page's address as hq ask --page names it: a path on HQ, or a preview's whole https address (as review mode's notes
@@ -41,6 +42,7 @@ type Row = {
   documents: string | null;
   zips: string | null;
   questions: string | null;
+  walk: number;
   note: number | null;
   page: string | null;
 };
@@ -78,7 +80,8 @@ export function place(b: { note?: unknown; page?: unknown }, agent: string) {
     : `--note ${String(b.note)} is a note the board sent to someone else: ask about one of the notes sent to you`;
 }
 // ---------------------------------------------------------------- the book's read
-// The cards on a note: open ones the desk phone shows now (not held or for later), and answered ones, kept with it
+// The cards on a note the book shows: open ones the desk phone shows now (not held or for later), and answered ones,
+// kept with it; none for a secret, a step or built work (deskOnly)
 export const asksOn = (note: number) =>
   (
     db
@@ -86,9 +89,10 @@ export const asksOn = (note: number) =>
         `select * from requests where note = ? and (status = 'answered' or (status = 'open' and ${SHOWN})) order by id`,
       )
       .all(note, new Date().toISOString()) as Row[]
-  ).map(askOf);
-// A card as the book shows it: its text for card.js to read, its questions for questions.js, and whether only the desk
-// phone can answer it (desk)
+  )
+    .filter(r => !deskOnly(r))
+    .map(askOf);
+// A card as the book shows it: its text for card.js to read, its questions for questions.js
 function askOf(r: Row) {
   return {
     id: r.id,
@@ -102,14 +106,19 @@ function askOf(r: Row) {
     status: r.status,
     answer: r.status === 'answered' ? r.answer : null,
     answered: r.status === 'answered' ? r.answered : null,
-    desk: deskOnly(r),
   };
 }
 const deskOnly = (r: Row) =>
-  Boolean(r.secrets || r.approves || r.seat || r.photos || r.documents || r.zips) ||
+  Boolean(r.secrets || r.approves || r.seat || r.photos || r.documents || r.zips || r.walk) ||
   ['credential', 'login'].includes(r.kind) ||
+  stepsIn(r.body) ||
   cardFiles.of(r.id).length > 0 ||
   productsOf(r.id).some(p => p.back);
+// Steps the board takes elsewhere: the card's Steps: checklist, or a web task done with Claude (card.js parseCard)
+function stepsIn(body: string) {
+  const c = parseCard(body);
+  return c.steps.length > 0 || c.claude;
+}
 
 // ---------------------------------------------------------------- the desk phone's read
 // GET /api/requests' card with its place: the note (its snip, its number on its sheet, its owner, its words, its page's

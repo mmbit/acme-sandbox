@@ -285,8 +285,10 @@ class HqTools(unittest.TestCase):
             out = self.call(('say', {'agent': 'bolt', 'text': 'the logs, please'}), env=env)
             self.assertFalse(Path(d, 'hq.log').exists())
         self.assertEqual([t['name'] for t in json.loads(r.stdout)['result']['tools']], ['job', 'promise', 'replace', 'expedite', 'add', 'reach', 'search', 'history', 'call', 'intercom', 'eta', 'estimate', 'when', 'report', 'git', 'manage', 'waiting', 'hang_up', 'screen', 'sketch',
-                                                                                'answer_note', 'ask_to_see', 'draw', 'open_work', 'drive', 'scrap', 'title_page',
-                                                                                'read_page', 'mark_page', 'change_page'])
+                                                                                'ask_to_see', 'draw', 'open_work', 'drive', 'scrap', 'title_page',
+                                                                                'read_page', 'mark_page', 'change_page',
+                                                                                'name_voice',
+                                                                                'save_voice', 'forget_voice'])
         self.assertTrue(out[1]['result']['isError'])
 
     def test_a_partner_call_has_exactly_its_tools_and_note_and_no_transcript_run_nothing(self):
@@ -491,21 +493,41 @@ class HqTools(unittest.TestCase):
         self.assertIn('Queued job #1234 HQ-LOGS for bolt: Check the phone logs', words)
         self.assertIn("Not started yet: it's on bolt's list, and nobody is on it until it runs.", words)
 
-    def test_a_thread_goes_to_hq_job_as_given_and_a_time_never_does(self):
-        """ The coordinator puts the job on the thread named; the tool only keeps it one plain word. A job takes no time
-        of its own: a promise's time becomes its thread's window (windows.ts)."""
+    # (deliverable, the tools' word)
+    def test_a_deliverable_goes_to_hq_job_as_given_and_a_time_never_does(self):
+        """ The coordinator puts the job on the deliverable named; the tool only keeps it one plain word. A job takes no
+        time of its own: a promise's time becomes its deliverable's window (windows.ts)."""
         with tempfile.TemporaryDirectory() as d:
             url = coordinator(self)
             deck = {'goal': 'g', 'agent': 'bolt', 'code': 'DECK', **ESTIMATE, 'title': 'Deck', 'brief': 'Make it.'}
-            out = self.call(('job', {**deck, 'deadline': '1h30m', 'thread': 'shop/launch-deck'}),
-                            ('job', {**deck, 'thread': '--after 3'}), env=self.env(d, url))
+            out = self.call(('job', {**deck, 'deadline': '1h30m', 'deliverable': 'shop/launch-deck'}),
+                            ('job', {**deck, 'deliverable': '--after 3'}), env=self.env(d, url))
             log = Path(d, 'hq.log').read_text()
-        self.assertIn('ARG -\nARG --thread\nARG shop/launch-deck\n', log)
+        self.assertIn('ARG -\nARG --deliverable\nARG shop/launch-deck\n', log)
         self.assertNotIn('--deadline', log)
         self.assertEqual(Coordinator.seen[0][3]['thread'], 'shop/launch-deck')
         self.assertNotIn('deadline', Coordinator.seen[0][3])
         self.assertEqual(len(Coordinator.seen), 1)
         self.assertTrue(out[2]['result']['isError'])  # (refused, and nothing reached hq)
+
+    # (drawing one is as easy as joining one, board call 172)
+    def test_a_job_draws_its_own_deliverable_as_easily_as_it_joins_one(self):
+        """ new_deliverable goes to hq job as --deliverable new:<project> "name" "done when", so work no open
+        deliverable makes gets its own on the call rather than the nearest one."""
+        with tempfile.TemporaryDirectory() as d:
+            url = coordinator(self)
+            deck = {'goal': 'g', 'agent': 'bolt', 'code': 'DECK', **ESTIMATE, 'title': 'Deck', 'brief': 'Make it.'}
+            drawn = {'project': 'shop', 'name': 'Launch deck', 'done_when': 'The board has the launch deck'}
+            out = self.call(('job', {**deck, 'new_deliverable': drawn}),
+                            ('job', {**deck, 'new_deliverable': drawn, 'deliverable': 'shop/launch-deck'}),
+                            ('job', {**deck, 'new_deliverable': {**drawn, 'name': '--after 3'}}),
+                            ('job', {**deck, 'new_deliverable': {**drawn, 'project': 'shop/x'}}), env=self.env(d, url))
+            log = Path(d, 'hq.log').read_text()
+        self.assertIn('ARG -\nARG --deliverable\nARG new:shop\nARG Launch deck\nARG The board has the launch deck\n', log)
+        self.assertEqual(Coordinator.seen[0][3]['newThread'],
+                         {'project': 'shop', 'name': 'Launch deck', 'goal': 'The board has the launch deck'})
+        self.assertEqual(len(Coordinator.seen), 1)
+        self.assertEqual([out[n]['result']['isError'] for n in (2, 3, 4)], [True, True, True])  # (nothing reached hq)
 
     def test_a_job_waits_for_the_call_s_end_unless_it_starts_now(self):
         """The coordinator holds a call's job until the call ends (server.ts). The now option is the agent's choice to start
@@ -766,24 +788,24 @@ class HqTools(unittest.TestCase):
         self.assertNotIn('Jansen', log)
 
     def test_a_promise_about_work_under_way_names_its_job(self):
-        """A promise's job (the work under way it's about) goes to hq as --job with its time, whose thread takes it at
-        once (askwindow.ts), with --thread for one the call queued in none; without a time, or a thread without a job,
-        it goes nowhere."""
+        """A promise's job (the work under way it's about) goes to hq as --job with its time, whose deliverable takes it
+        at once (askwindow.ts), with --deliverable for one the call queued in none; without a time, or a deliverable
+        without a job, it goes nowhere."""
         with tempfile.TemporaryDirectory() as d:
             url = coordinator(self)
             out = self.call(('promise', {'goal': 'g', 'owner': 'wren', 'what': 'The fallback is live', 'deadline': '40m', 'job': 9222}),
                             ('promise', {'goal': 'g', 'owner': 'wren', 'what': 'x', 'job': 9222}),
-                            ('promise', {'goal': 'g', 'owner': 'wren', 'what': 'Names', 'deadline': '2h', 'job': 9223, 'thread': 'shop/names'}),
-                            ('promise', {'goal': 'g', 'owner': 'wren', 'what': 'x', 'deadline': '2h', 'thread': 'shop/names'}), env=self.env(d, url))
+                            ('promise', {'goal': 'g', 'owner': 'wren', 'what': 'Names', 'deadline': '2h', 'job': 9223, 'deliverable': 'shop/names'}),
+                            ('promise', {'goal': 'g', 'owner': 'wren', 'what': 'x', 'deadline': '2h', 'deliverable': 'shop/names'}), env=self.env(d, url))
             log = Path(d, 'hq.log').read_text()
         self.assertEqual([(s[3].get('deadline'), s[3].get('job'), s[3].get('thread')) for s in Coordinator.seen],
                          [('40m', 9222, None), ('2h', 9223, 'shop/names')])
         self.assertIn('ARG -\nARG --goal\nARG -\nARG --deadline\nARG 40m\nARG --job\nARG 9222\n', log)
-        self.assertIn('ARG --job\nARG 9223\nARG --thread\nARG shop/names\n', log)
+        self.assertIn('ARG --job\nARG 9223\nARG --deliverable\nARG shop/names\n', log)
         self.assertTrue(out[2]['result']['isError'])
         self.assertIn('goes with deadline', out[2]['result']['content'][0]['text'])
         self.assertTrue(out[4]['result']['isError'])
-        self.assertIn('thread goes with job', out[4]['result']['content'][0]['text'])
+        self.assertIn('deliverable goes with job', out[4]['result']['content'][0]['text'])
 
     def test_limits_are_refused_with_a_message_never_cut(self):
         with tempfile.TemporaryDirectory() as d:
@@ -1009,21 +1031,6 @@ class CallsList(unittest.TestCase):
         self.assertEqual(self.tools(token, 'kit', ('expedite', {'job': job})), [(True, 'Nothing expedited: only the CEO expedites a job: ask juno')])
         self.voice('call-end', {'agent': 'kit', 'lines': [], 'token': token})
 
-    def test_a_calls_agent_writes_its_answer_on_a_note_the_board_drew_on_the_call(self):
-        token, call = self.start('juno')
-        now = '2026-10-28T00:00:00.000Z'
-        self.db("insert into book_pages (day, kind, call, created, updated, w, h) values ('2026-10-28', 'call', ?, ?, ?, 800, 600)", call, now, now)
-        [(page,)] = self.db('select max(id) from book_pages')
-        self.db("insert into book_sheets (owner, status, created) values ('juno', 'call', ?)", now)
-        [(sheet,)] = self.db('select max(id) from book_sheets')
-        self.db("insert into book_notes (sheet, page, n, by, anchor, words, created, updated) values (?, ?, 1, 'board', ?, 'Is the price right?', ?, ?)",
-                sheet, page, json.dumps({'v': 1, 'url': '/', 'el': None, 'view': {'x': 0, 'y': 0, 'w': 800, 'h': 600, 'dpr': 1}, 'ink': []}), now, now)
-        out = self.tools(token, 'juno', ('answer_note', {'note': 1, 'words': 'Yes: it matches the shop.'}), ('answer_note', {'note': 9, 'words': 'x'}))
-        self.assertEqual(out[0], (False, "Your answer is written beside note 1 in the board's book."))
-        self.assertEqual(out[1], (True, "Nothing written: the board drew no note 9 on this call's page"))
-        self.assertEqual(self.db('select by, text, style from book_slips'), [('juno', 'Yes: it matches the shop.', 'text')])
-        self.voice('call-end', {'agent': 'juno', 'lines': [], 'token': token})
-
     def test_a_call_token_adds_to_no_other_call_and_reads_no_calls_items_nor_its_own_transcript(self):
         said = 'Board: the secret plan for the brand film.'
         other, theirs = self.start('moss')
@@ -1063,11 +1070,11 @@ class CallsList(unittest.TestCase):
         self.assertTrue(out[0][0], out)
         out = self.tools(token, 'juno', ('manage', {'command': ['cancel', str(drop), 'the board dropped it']}),
                          ('manage', {'command': ['cancel', str(kits), 'the board dropped this one too']}),
-                         ('manage', {'command': ['plan', 'thread', 'office', 'Launch', 'The launch is out', '--slug', 'launch']}),
+                         ('manage', {'command': ['plan', 'deliverable', 'office', 'Launch', 'The launch is out', '--slug', 'launch']}),
                          ('manage', {'command': ['job', 'move', str(keep), 'office/launch']}),
                          ('manage', {'command': ['window', 'office/launch', '18:00']}),
-                         ('manage', {'command': ['thread', 'pause', 'office/launch', 'waits for the board', '--by-hand']}),
-                         ('manage', {'command': ['thread', 'resume', 'office/launch']}),
+                         ('manage', {'command': ['deliverable', 'pause', 'office/launch', 'waits for the board', '--by-hand']}),
+                         ('manage', {'command': ['thread', 'resume', 'office/launch']}),  # (the old name, still taken)
                          ('manage', {'command': ['jobs', 'moss']}), ('manage', {'command': ['summary']}))
         self.assertEqual([e for e, _ in out], [False] * 9, out)
         self.assertEqual(out[0][1].splitlines()[0], f'Cancelled job #{drop}.')

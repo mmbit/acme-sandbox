@@ -1722,13 +1722,13 @@ test("a promise's time, noted on the call, becomes the deadline of the thread of
   assert.ok(Math.abs(item(link.body.id).due - (Date.now() + 3 * hour)) < 60_000, 'three hours from when it was said');
   assert.equal((await agent('item', c.token, { kind: 'promise', owner: 'bolt', goal: 'g', what: 'x', deadline: 'soon' })).status, 400);
   // the call's own job for a promise with a time: refused while it names no thread (its token has no job to inherit one
-  // from), with the open threads to pick from and nothing queued; with one, the time is that thread's window, from juno.
+  // from), with how to draw or join one and nothing queued; with one, the time is that thread's window, from juno.
   const onCall = h.dueThread();
   const count = (title: string) => (db.prepare('select count(*) n from jobs where title = ?').get(title) as any).n;
   const banner = (await agent('item', c.token, { kind: 'promise', owner: 'bolt', goal: 'g', what: 'The banner', deadline: '2h' })).body.id;
   const unnamed = await agent('job', c.token, { agent: 'bolt', title: 'The banner', prompt: 'Make it.', item: banner });
   assert.equal(unnamed.status, 409);
-  assert.match(unnamed.body.error, new RegExp(`this job would be in none: name the deliverable it serves.*\\n  ${onCall} `, 's'));
+  assert.match(unnamed.body.error, /this job would be in none: name the deliverable it serves, --deliverable new:<project> "name" "done when" draws its own/);
   assert.equal(count('The banner'), 0, 'nothing queued');
   const named = await agent('job', c.token, { agent: 'bolt', title: 'The banner', prompt: 'Make it.', item: banner, thread: onCall });
   assert.equal(named.status, 200, JSON.stringify(named.body));

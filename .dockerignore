@@ -23,6 +23,13 @@
 !platform/hq/extras.mjs
 # and the company's tip films, which it answers films/films.json with
 !platform/hq/films/listing.mjs
+# the join page's browser files from HQ and the watch-along, which the coordinator serves at /join/assets/ (joinpage.ts
+# ASSETS).
+!platform/hq/shell/callaudio.js
+!platform/hq/shell/screenlock.js
+!platform/hq/shell/mic-worklet.js
+!platform/hq/shell/callbubble.js
+!shared/watchalong/watchalong.js
 # the one HTML escaper, which the emails' look writes with (platform/coordinator/src/mailpage.ts)
 !shared/html/escape.ts
 # the route tables' engine (platform/coordinator/src/runs.ts).

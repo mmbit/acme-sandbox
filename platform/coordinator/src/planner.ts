@@ -1,4 +1,5 @@
 // Job precedence, latest starts and the order shared by the claim and the play.
+// Estimate, ETA and deadline and their relationships: eta.ts, the shared plan's entry point.
 import type { OrderingSnapshot, QueuedJob, Size } from './eta.ts';
 
 // A heartbeat's minute plus the worker's five-minute yield bound.

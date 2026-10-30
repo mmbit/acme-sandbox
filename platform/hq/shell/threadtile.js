@@ -10,6 +10,7 @@ import {
   atWork,
   boardPart,
   cardsOf,
+  cardsOnce,
   finished,
   inTimeOrder,
   planned,
@@ -86,9 +87,9 @@ export function waitsOf(t, p, threadOf) {
 }
 const wait = (glyph, words, lit = false) => ({ glyph, words, lit });
 // A thread's tasks as a strip, in the order its list runs them, a mark each in its row's state (tasks.js), and how
-// many are done
+// many are done; a pull request's step its tasks share marks one of them (threads.js cardsOnce)
 function strip(t) {
-  const all = inTimeOrder(cardsOf(t));
+  const all = inTimeOrder(cardsOnce(t));
   if (!all.length) return '';
   const done = all.filter(finished).length;
   return `<span class="pj-strip" aria-label="${done} of ${all.length} tasks done">${all.map(j => `<i class="${rowState(j.lead ?? j)}"></i>`).join('')}</span><small class="pj-strip-words">${done} of ${all.length} done</small>`;

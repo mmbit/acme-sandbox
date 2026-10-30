@@ -155,6 +155,7 @@ node shared/demo/record.mjs products/<slug>/demo/flow.json [--out x.mp4] [--view
 - `locale` is the browser's language for dates, times and numbers: `en-GB` by default (14/03/2026, 14:30), `nl-NL`
   for 14-03-2026. It sets the process's `LANG` too, because date and time fields ignore the page locale (recordings
   before job #757 show US formats, 03/14/2026 02:30 PM).
+- `timeZone` is the browser's clock (an IANA name): the company's, org.yaml's `company.timeZone`, by default.
 - `camera` is a Y4M film (relative to the flow file) the page's camera shows instead of a real one, with the camera
   already allowed: for an app that films its user, with a face drawn for it, never a real person's.
 

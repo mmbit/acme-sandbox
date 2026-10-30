@@ -105,18 +105,19 @@ export function ownerOf(who: string) {
   return g?.guest ?? null;
 }
 // The space an invited person's Sketchbook takes in all: its ink as stored, its pictures and its scraps' files.
-// Everything in the data volume goes off-site every night within R2's free 10 GB (backup.ts's heads-up when it nears
-// that); one person's book may take 1% of it, so a hundred people drawing until their books are full still leave the
-// backup most of its room. A save past it is refused (BOOK_FULL), and the page says to delete a sketch. The board's own
-// book has no such cap: it is the board's space.
+// Everything in the data volume goes off-site every night within the bucket's room (R2's free 10 GB at the least, more
+// where the company's BACKUP_BUCKET_GB allows; backup.ts's heads-up when it nears that); one person's book may take 1%
+// of the least room, so a hundred people drawing until their books are full still leave the backup most of its room.
+// A save past it is refused (BOOK_FULL), and the page says to delete a
+// sketch. The board's own book has no such cap: it is the board's space.
 export const GUEST_SPACE = 100 * 1024 * 1024;
 // (the Notebook, once the Sketchbook, here and in SENDS_FULL)
 export const BOOK_FULL = 'Your Notebook is full: delete a sketch you no longer need to keep drawing';
 // Each send keeps a copy of the sketch's picture for the intercom for good (pictures.ts), so the copies have a space of
 // their own: half a book again (about fifteen sends at the 3.5 MB picture cap, hundreds at a usual sketch's size), so a
-// person takes at most 1.5% of the backup's room. Deleting a sketch frees none of it, so it's apart from the book's:
-// once the sends fill it, Send is refused (SENDS_FULL) and drawing stays open. sketch and label: what each send was of,
-// so a sketch whose label changed since (part of the line the CEO hears) can go again.
+// person takes at most 1.5% of the backup's least room. Deleting a sketch frees none of it, so it's apart from the
+// book's: once the sends fill it, Send is refused (SENDS_FULL) and drawing stays open. sketch and label: what each send
+// was of, so a sketch whose label changed since (part of the line the CEO hears) can go again.
 db.exec(`create table if not exists sketch_sends (who text not null, picture integer not null, bytes integer not null,
   sketch integer, label text)`);
 once('sketch-sends-label', () => {

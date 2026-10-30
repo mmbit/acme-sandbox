@@ -413,7 +413,7 @@ test("a push that doesn't reach GitHub goes again after a pause; one GitHub refu
   assert.equal(tried(), 1);
 });
 
-test('pushes stop on HTTP or unpack refusals and recover from server or DNS failures', async t => {
+test('pushes stop on HTTP, unpack or ref refusals and recover from server or DNS failures or a bare (failed)', async t => {
   const { as, dropping, tried } = pushConnection(t);
   for (const [i, { says, refused }] of [
     { says: 'error: RPC failed; HTTP 401 curl 22 The requested URL returned error: 401', refused: true },
@@ -422,9 +422,14 @@ test('pushes stop on HTTP or unpack refusals and recover from server or DNS fail
     { says: 'remote: fatal: pack exceeds maximum allowed size\nerror: remote unpack failed: index-pack abnormal exit', refused: true },
     { says: 'error: RPC failed; HTTP 502 curl 22 The requested URL returned error: 502', refused: false },
     { says: 'fatal: Could not resolve host: github.com', refused: false },
+    // A bare (failed) is GitHub's transient error. A ref it rejects with a reason stays refused
+    { says: ' ! [remote rejected] 8376b5221008963ac2574dfc7ae324c693fc98fd -> job/106 (failed)\nerror: failed to push some refs', refused: false },
+    { says: ' ! [remote rejected] HEAD -> job/107 (pre-receive hook declined)\nerror: failed to push some refs', refused: true },
+    { says: ' ! [remote rejected] HEAD -> job/108 (protected branch hook declined)', refused: true },
+    { says: ' ! [remote rejected] HEAD -> job/109 (failed)\n ! [remote rejected] HEAD -> job/109 (stale info)', refused: true },
   ].entries()) {
     dropping(1, says);
-    const branch = `job/${83 + i}`, dir = newJob(83 + i, 'a.md', 'push\n');
+    const branch = `job/${100 + i}`, dir = newJob(100 + i, 'a.md', 'push\n');
     if (refused) {
       await assert.rejects(() => as.push(dir, branch), /GitHub refused/);
       assert.equal(tried(), 1);
@@ -668,9 +673,9 @@ function pushConnection(t: TestContext, onRetry?: () => void, pushPausesMs = [10
   const patient = gitFlow({ mirror: `${work}/mirror.git`, remote: github, base: 'main', clones, pushPausesMs,
     log: (...a) => { logged.push(a.join(' ')); onRetry?.(); } });
   const as = patient.forAgent({ uid: process.getuid!(), gid: process.getgid!(), env: agentEnv(process.env, { HOME: tmp }) });
-  const dropping = (drops: number, says = 'error: RPC failed; curl 92 HTTP/2 stream 5 was not closed cleanly\nsend-pack: unexpected disconnect') => {
+  const dropping = (drops: number, says = 'error: RPC failed; curl 92 HTTP/2 stream 5 was not closed cleanly\nsend-pack: unexpected disconnect\nfatal: the remote end hung up unexpectedly') => {
     writeFileSync(`${tmp}/drops`, `${drops}\n`);
-    writeFileSync(`${tmp}/says`, `${says}\nfatal: the remote end hung up unexpectedly\n`);
+    writeFileSync(`${tmp}/says`, `${says}\n`);
     rmSync(tries, { force: true });
     rmSync(`${tmp}/stall`, { force: true });
   };

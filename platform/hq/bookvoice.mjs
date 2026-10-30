@@ -11,6 +11,11 @@ export const SAID = PIECES.join(' ');
 let hushed = false,
   // the pieces /api/voice has transcribed in this recording
   piecesHeard = 0;
+// /api/voice's asks counted, their answers kept waiting while held is set (booktalk.mjs's askLeftBehind). A gate on
+// voiceServed's one route, not a page route of its own: one removed while HQ's uploads still come lets Playwright send
+// them on to the network, and its handler then hands them to this route, which answers them a second time (Route is
+// already handled).
+export const transcriber = { held: null, sent: 0 };
 
 // The stand-in voice line on HQ's page (book-check.mjs's /__review/dictate): the first piece comes as the microphone's
 // audio does, all the words when it ends (hush(true): the board says nothing)
@@ -66,9 +71,11 @@ export async function voiceServed(c, context) {
       },
     });
   });
-  await context.route(`${c.base}/api/voice**`, r => {
+  await context.route(`${c.base}/api/voice**`, async r => {
+    transcriber.sent++;
+    await transcriber.held;
     const piece = r.request().headers()['content-type'] === 'audio/wav';
-    r.fulfill({ json: { text: piece ? (PIECES[piecesHeard++] ?? '') : SAID } });
+    await r.fulfill({ json: { text: piece ? (PIECES[piecesHeard++] ?? '') : SAID } });
   });
 }
 
@@ -78,9 +85,9 @@ export async function voiceServed(c, context) {
 export async function talked(on, { pieces = false } = {}) {
   const sheet = on.locator(ui('.sheet')),
     mic = sheet.locator('.mic'),
-    heard = (re, what) => until(async () => re.test(await sheet.locator('textarea').inputValue()), what, 15_000);
+    heard = (re, what) => until(async () => re.test(await sheet.locator('textarea').inputValue()), what);
   piecesAfresh();
-  await sheet.waitFor({ state: 'visible', timeout: 15_000 });
+  await sheet.waitFor({ state: 'visible' });
   assert.equal(await mic.evaluate(b => b.classList.contains('on')), false, 'the mark started no recording');
   await mic.click();
   await heard(/^Make this$/, 'the words coming as they’re said, once the mic is tapped');

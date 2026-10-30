@@ -424,6 +424,7 @@ test("the CEO's summary names a thread whose planned finish is past its deadline
     line,
     new RegExp(`^deliverable ${due} \\(.*\\): finish .*, .* past its deadline .*, set by kit\\. Held by: `),
   );
+  assert.match(line, /Judge the slip: why, and what to change to meet the deadline/);
   windows.set(windows.threadOf({ thread: due }) as any, { deadline: T + 10 * HOUR, aim: T + 10 * HOUR }, 'juno');
   assert.deepEqual(
     threats.lines(forecast.refresh(T)).filter(l => l.includes(due)),

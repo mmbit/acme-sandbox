@@ -15,6 +15,8 @@ const { chromium } = playwright();
 const server = await serve(),
   base = `http://localhost:${server.address().port}`;
 const LOOKS = lookNames();
+// the sample company's names for its desk phone and intercom, the foundation's
+const NAMES = { phone: 'desk phone', intercom: 'intercom' };
 const TABLET = { width: 1180, height: 820 },
   PHONE = { width: 390, height: 820 },
   NARROW = { width: 1024, height: 768 },
@@ -78,7 +80,7 @@ async function checkLook(look) {
 
   // a tile's Show me runs its tip: the Library makes way and each step points at its real control
   await page.click('.manual [data-show="machines"]');
-  for (const at of tipOf('machines').steps.map(s => s.at)) {
+  for (const at of tipOf('machines', NAMES).steps.map(s => s.at)) {
     await page.waitForSelector('.showme-step:not([hidden])');
     await page.waitForTimeout(300);
     const [ring, control] = await page.evaluate(

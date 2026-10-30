@@ -46,7 +46,7 @@
 }
 .device .req.tip .film {
   flex: 0 1 auto;
-  min-height: 140px; /* FILM_MIN: still a film, where a short screen scrolls instead */
+  min-height: 80px; /* FILM_MIN: still a film (its top rows), where a shorter screen scrolls instead */
 }
 .device .req.tip .film video {
   flex: 0 1 auto;

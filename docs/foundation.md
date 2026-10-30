@@ -67,10 +67,16 @@ where it suffices.
 - Threads called deliverables wherever people read them: HQ's projects view
   (HQ's one-task threads shown as tasks), the `hq` commands (`hq deliverable`, `hq plan deliverable`, `--deliverable`,
   the old names kept as aliases), the worker's briefing, the drawing prompts and the naming guide, and the
-  coordinator's own messages (refusals, log and plan-change lines, the summary, the review and call prompts)
-, for every company; the schema, the API and the code keep "thread". Before it carries, Knop's agreement is asked through the Overseer.
-  If Knop's board keeps "thread", HQ's words come from `company/brand.yaml` `names` (shell/brand.js) and the prompts'
-  from a setting, rather than two words in the platform.
+  coordinator's own messages (refusals, log and plan-change lines, the summary, the review and call prompts), for
+  every company. Before it carries, Knop's agreement is asked through the Overseer. If Knop's board keeps "thread",
+  HQ's words come from `company/brand.yaml` `names` (shell/brand.js) and the prompts' from a setting, rather than two
+  words in the platform.
+  Knop's board kept "deliverable" and asked for it everywhere it reads (call 167): the call agent's tools now say
+  deliverable too (`job` and `promise` take a `deliverable` field, `manage` the `deliverable` command and the old
+  `thread` quietly), as do the meeting chair's example, the calibration's turn names and the call tools' README.
+  Still "thread" for now: the `threads` table and its columns, the `/api/agent/thread*` routes and the API's `thread`
+  field, and the coordinator's file and identifier names (`threadtime.ts`, `newthread.ts`, `threadOf`). The board left
+  that part to us, and no task holds it: Knop's DECISIONS.md, 29 October, has why.
 - Seat savings, for every company: (1) HQ's stall alarms (`platform/coordinator/src/stalljobs.ts`) file one stall job
   for the process role, not one per cause: every stall, of any cause, joins the queued one until it starts, it is
   downtime work (it waits for the seats' spare room), and its agent judges which causes are worth the work. (2) A
@@ -82,6 +88,19 @@ where it suffices.
 - Ink's customer-call marking is gone, for every company, with no setting. A call's notebook pages and their tries'
   versions pages read like any page, by every job. The tasks and try runs a call's notes make mark nothing. Only a call
   about a card for keys keeps its pages, versions pages included, for its own agent (`ink/bookreads.ts` callRead),
-  who also owns its versions pages, so the board's notes there are that agent's to answer. An invited guest's notes
+  who also owns them (`memory.ts` keysAgent), so the board's notes there are that agent's to answer, and what the
+  board sends from them goes to that agent (`notebooksend.ts`). An invited guest's notes
   are still outside text. Before it carries, Onlyonery's agreement is asked through the
   Overseer; a switch only if Onlyonery asks for one.
+- Review rounds and their follow-ups, for every company, with no switch: on the first round the author fixes or
+  answers every finding, and from the second only blocking findings hold the merge. Internal work blocks only on what
+  breaks HQ or the work it carries, loops without end or loses data (security and a missed ask block everywhere).
+  org.yaml's `review.shipped` says what keeps the release bar, where real bugs and what a customer meets block too. A
+  merged pull request's other findings go to its author as one follow-up job in its deliverable, and a follow-up
+  job's own pull request leaves none (`platform/coordinator/src/reviewrounds.ts`, `followups.ts`). Before it carries,
+  Onlyonery's agreement is asked through the Overseer. A switch comes only if Onlyonery asks for one.
+- A call's notes page goes to nobody, for every company, with no setting: as the call ends it goes in as the board
+  left it and stays in My Notebook, unstamped, and its Send is refused while the call is on. Each scrap and promise
+  on it is an item on the call's list, which the call's follow-up hands out with the transcript, so nothing on it is
+  queued twice (`platform/coordinator/src/ink/callnotes.ts` ended, `notebooksend.ts` sendPage). Before it carries,
+  Onlyonery's agreement is asked through the Overseer.

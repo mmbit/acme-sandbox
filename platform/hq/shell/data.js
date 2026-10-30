@@ -92,8 +92,9 @@ export async function answerRequest(dev, id, answer, secrets, approve = false, a
   mock.requests = (await mockList('requests')).filter(r => r.id !== id);
   return { ok: true };
 }
-// The feature tips (tips.ts): a tip's Got it, or its Show me done (shown), the Settings switch, and the logo pressed.
-// Dev mode takes a tip off the mock list as the server would.
+// The feature tips (tips.ts): a tip's Got it, or its Show me done (shown), the Settings switch, and asking for the tip
+// of an event only HQ's page sees (the logo pressed, an urgent card on a device without notifications). Dev mode takes
+// a tip off the mock list as the server would.
 export async function endTip(dev, id, shown = false) {
   if (!dev) return post('/api/tips/end', { id, shown });
   mock.requests = (await mockList('requests')).filter(r => r.id !== id);
@@ -101,7 +102,14 @@ export async function endTip(dev, id, shown = false) {
 }
 export const loadTips = dev => (dev ? Promise.resolve((mock.tips ??= { off: false })) : get('/api/tips'));
 export const saveTips = (dev, off) => (dev ? Promise.resolve((mock.tips = { off })) : post('/api/tips', { off }));
-export const tipEvent = (dev, key) => (dev ? Promise.resolve({ id: null }) : post('/api/tips/events', { key }));
+export const offerEventTip = (dev, key) => (dev ? Promise.resolve({ id: null }) : post('/api/tips/events', { key }));
+// Settings › Voices (voices.js): the voices calls recognise, names and dates only, and the board's delete.
+export const loadVoices = dev => (dev ? mockList('voices') : get('/api/voiceprints'));
+export async function deleteVoice(dev, id) {
+  if (!dev) return post('/api/voiceprints/delete', { id });
+  mock.voices = (await mockList('voices')).filter(v => v.id !== id);
+  return { ok: true };
+}
 // the board removes a saved delivery address; the saved ones left come back
 export async function removeAddress(dev, id) {
   if (!dev) return post('/api/addresses/remove', { id });

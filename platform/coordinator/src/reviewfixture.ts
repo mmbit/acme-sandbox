@@ -77,16 +77,22 @@ export function resetReviewInbox(db: DatabaseSync) {
   );
 }
 
-// A file's tests sharing one coordinator: from now on, what a test leaves queued or blocked ends cancelled, so later
-// claims take their own jobs. The jobs recorded before (a historical fixture's) stay.
-export function leftoverJobs(db: DatabaseSync) {
+// Finished scenarios leave no runnable work or open review for the next scenario to plan.
+// Preserve jobs and pull requests recorded before this fixture.
+export function scenarioCleanup(db: DatabaseSync) {
   const first = (db.prepare('select coalesce(max(id), 0) + 1 id from jobs').get() as { id: number }).id;
-  return () =>
-    db
-      .prepare(
-        "update jobs set status = 'cancelled', seat = null, finished = ?, note = null where id >= ? and status in ('queued', 'blocked')",
-      )
-      .run(new Date().toISOString(), first);
+  const preservedPullRequestNumbers = db
+    .prepare('select number from prs')
+    .all()
+    .map(pr => pr.number);
+  return () => {
+    db.prepare(
+      "update jobs set status = 'cancelled', seat = null, finished = ?, note = null where id >= ? and status in ('queued', 'blocked')",
+    ).run(new Date().toISOString(), first);
+    db.prepare(
+      "update prs set status = 'closed' where status in ('open', 'board', 'stuck') and number not in (select value from json_each(?))",
+    ).run(JSON.stringify(preservedPullRequestNumbers));
+  };
 }
 
 // A retry the coordinator recorded with its wait, made runnable now

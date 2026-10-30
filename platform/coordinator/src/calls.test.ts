@@ -251,11 +251,11 @@ test("the call agent's briefing: no number for work is said aloud, on screen, by
     assert.match(ctx.prompt, /Never say a number for work aloud \(a job, card, pull request, call, item or pin\), not even once: .* Say what the work is and whose it is\. The numbers in this\s+briefing and in your tools' answers are for your tools/s);
 });
 
-test("the call agent's briefing: shifts reach the board only when an agreed deadline moves or it asks", async () => {
+test("the call agent's briefing: shifts reach the board only when an agreed deadline will be missed or it asks", async () => {
   const { prompt } = await context('juno');
-  assert.match(prompt, /say nothing about shifts unless an agreed deadline moves or the\s+board asks/);
-  // a missed deadline is first the agent's to move back (board, call 139), then said plainly
-  assert.match(prompt, /When its finish lands past the deadline, look for what moves it back\s+first; when nothing does, the deadline moves: say so plainly/);
+  assert.match(prompt, /say nothing about shifts unless an agreed deadline will be missed or the\s+board asks/);
+  // A late forecast calls for judgment. It does not move the agreed deadline.
+  assert.match(prompt, /A planned finish past the deadline is a slip: look for what brings the finish back\.\s+When nothing does, say why the deadline cannot be met and what must change/);
   assert.match(prompt, /A time far past the board's is a problem to solve on the\s+call, never news to report/);
   // a tight or shrinking margin is for planning: the board hears of it only when it asks
   assert.match(prompt, /slack that keeps shrinking as work piles on, is yours to plan with: don't\s+mention it unless the board asks/);

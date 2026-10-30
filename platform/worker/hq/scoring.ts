@@ -110,7 +110,10 @@ export async function calibration(days: URLSearchParams) {
     `  Sizes given by agents and models, as given: ${given.count ? `${plural(given.count, 'job')}, ${spreadWords(given)}` : 'none.'}`,
     `    the same, as the play now counts them: ${corrected.count ? spreadWords(corrected) : 'none.'}`,
   );
-  print('', "ETAs against the landings: the prediction log's row standing that long before each landing.");
+  print(
+    '',
+    "Task merge projections against the landings: the prediction log's row standing that long before each landing.",
+  );
   for (const lead of c.eta) print(leadLine(lead));
   threads(c.threads);
 }

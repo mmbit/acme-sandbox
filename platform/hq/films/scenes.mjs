@@ -227,11 +227,13 @@ export const FILMS = {
       await hq.wait(2.4);
     },
   },
-  pausing: {
-    start: intercom('Paused. The shop’s redesign waits until Monday morning, then picks up where it stopped.'),
+  deadlines: {
+    start: intercom(
+      'Done. The shop’s redesign goes first now and lands Thursday, a day early. The rest waits its turn.',
+    ),
     clip: INTERCOM,
     scale: 1.6,
-    play: ask('Pause the shop’s redesign till Monday'),
+    play: ask('Have the shop’s redesign done by Friday'),
   },
   seats: {
     start: hq => hq.eval(comp('settings', { section: 'sys:seats' })),

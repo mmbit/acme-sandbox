@@ -59,7 +59,7 @@ import * as documents from './documents.ts';
 import * as zips from './zips.ts';
 import * as pictures from './pictures.ts'; // the board's pictures with a card's answer
 import { ended as chatEnded, hear, parked } from './chat.ts';
-import { isIntercom, quickRunStarted, quickRunTurn } from './quickruns.ts';
+import { isIntercom, isQuickRun, QUICK_EFFORT, quickRunStarted, quickRunTurn } from './quickruns.ts';
 import { jobEnded } from './messages.ts';
 import { oneLine } from './agreements.ts';
 import { finished, cancelled, mine } from './ledger.ts';
@@ -77,6 +77,7 @@ import * as later from './later.ts';
 import { shownCard } from './shown.ts';
 import * as decisions from './decisions.ts';
 import * as visualapproval from './visualapproval.ts';
+import * as voiceprints from './voiceprints.ts'; // a saved voice's yearly card, its own answer
 import * as wakes from './wakes.ts';
 import * as meetingseats from './meetingseats.ts';
 import * as meetingroom from './meetingroom.ts';
@@ -892,8 +893,7 @@ function dependencyEdges() {
     edges(job, needs) as (
       select 'job/' || j.id, 'job/' || j.after from pending x cross join jobs j on j.id = x.id where j.after is not null
       union select 'job/' || w.job, 'job/' || w.on_job from pending x cross join waits w on w.job = x.id
-      union select 'job/' || j.id, 'job/' || u.job from jobs j join pauses p on ${pauseHolds('p')}
-        and p.project = coalesce(substr(j.thread, 1, instr(j.thread, '/') - 1), '${DESK}') and (p.thread is null or p.thread = j.thread)
+      union select 'job/' || j.id, 'job/' || u.job from jobs j join pauses p on ${pauseHolds('p')} and ${pauseCovers('p', 'j.thread')}
         join pause_until u on u.pause = p.id where j.id in (select id from pending) and (j.thread is not null or not ${deskLets('j')})
       union select 'job/' || j.id, 'job/' || prior.id from tasks j join tasks prior on prior.thread = j.thread
         and (coalesce(prior.seq, prior.id), prior.id) < (coalesce(j.seq, j.id), j.id)
@@ -1155,13 +1155,19 @@ export function pauseHolds(p: string) {
   return `${p}.resumed is null and (${p}.decision is null
     or exists (select 1 from decisions d where d.id = ${p}.decision and d.answered is null and d.released is null))`;
 }
+// Whether pause `p` (its row's alias) is on thread `thread` (an SQL expression; null: the desk): the thread itself, or
+// its whole project. The one copy the claim, the plan's edges and the heartbeat's suspension read, so they hold the same
+// work.
+function pauseCovers(p: string, thread: string) {
+  return `${p}.project = coalesce(substr(${thread}, 1, instr(${thread}, '/') - 1), '${DESK}')
+    and (${p}.thread is null or ${p}.thread = ${thread})`;
+}
 // The open pause holding work on a thread (`thread`, an SQL expression; null: the desk), as what it pauses: the
 // thread's own id first, else its project's. Null for none.
 // Wrap statements using this expression in redraws.query().
 export function pausedWith(thread: string) {
-  return `(select coalesce(p.thread, p.project) from pauses p where ${pauseHolds('p')}
-    and p.project = coalesce(substr(${thread}, 1, instr(${thread}, '/') - 1), '${DESK}')
-    and (p.thread is null or p.thread = ${thread}) order by p.thread is null, p.id limit 1)`;
+  return `(select coalesce(p.thread, p.project) from pauses p where ${pauseHolds('p')} and ${pauseCovers('p', thread)}
+    order by p.thread is null, p.id limit 1)`;
 }
 // The open pause holding job `j` (its row's alias), as pausedWith: never what no pause holds (pauseLets)
 export function heldWith(j: string) {
@@ -1182,6 +1188,16 @@ export const pausedOn = (job: number) =>
       target: string | null;
     }
   ).target;
+// Whether a pause holds running work `job`, which then yields at its next step (heartbeat) and goes on in its session
+// once the pause lifts, as under the company's pause: a pause suspends what runs, not only what's queued (board, call
+// 169). Not the run that made it (pauses.by_job), which runs on to its end.
+export const pauseSuspends = (job: number) =>
+  !!db
+    .prepare(
+      redraws.query(`select 1 from jobs j join pauses p on ${pauseHolds('p')} and ${pauseCovers('p', 'j.thread')}
+      where j.id = $job and p.by_job is not $job and not ${pauseLets('j')} limit 1`),
+    )
+    .get({ job });
 // What a pause holds, by name: the desk's (wherework.ts deskName) or a thread's or
 // project's id
 export const pauseName = (target: string) => (target === DESK ? deskName() : target);
@@ -1722,7 +1738,7 @@ function claimed(job: Job, token: string, moved: boolean, inThread: ReturnType<t
     // (a quick run's turn, in the fields every worker reads and its run records keep: a reload keeps the deadline)
     ...(quickRun && { quickReply: true, quickReplyUntil: quickRun.until }),
     // (the title as its prompts say it: with its focus, company.ts titleOf)
-    agentInfo: a && { ...a, role: titleOf(a), ...(quickRun && { effort: quickRun.effort }) },
+    agentInfo: a && { ...a, role: titleOf(a) },
     company,
     ...(job.kind === 'work' || isIntercom(job) ? { inFlight: inFlight(job), archiving: archiving(job.agent) } : {}),
     ...carryOver(job), // (resumes or closingReports)
@@ -1820,11 +1836,11 @@ export function seatsOut(job: number, t = now()) {
 // board's pick (else a scheduled entry's lighter model or effort, schedule.ts, or its agent's) where the job is on the
 // pick's own. A job that began or was made on another (a pick changed, a fallback cleared after it moved) gets its
 // engine's, as a model of another engine is refused there. Work only one engine does runs on its rule's model, whatever
-// the pick or fallback (engineonly.ts.)
+// the pick or fallback (engineonly.ts.) A quick run thinks at QUICK_EFFORT (quickruns.ts).
 function modelOf(job: Job, found: NonNullable<ReturnType<typeof findAgent>>) {
   const picked = pickedModel(job, found),
     rule = engineOnly.byId(job.engine_only);
-  return rule ? { ...picked, model: rule.model } : picked;
+  return { ...picked, ...(rule && { model: rule.model }), ...(isQuickRun(job) && { effort: QUICK_EFFORT }) };
 }
 function pickedModel(job: Job, found: NonNullable<ReturnType<typeof findAgent>>) {
   const runner = models.runner(job),
@@ -2161,7 +2177,7 @@ function roomVictims(
 // immediately and preserve the session and clone, including a review's unfinished verdict.
 // A job someone stopped (hq stop) hears it here: `stop`, who and why, ends the run now.
 // Work yields back to the queue in its session (the board, 18 October): while the company is paused, unless the pause
-// lets it through, and to make room (makesRoom).
+// lets it through, while a pause of its deliverable or project holds it (pauseSuspends), and to make room (makesRoom).
 // reined: its job is past its share of HQ's time (reins.ts). The beat still keeps the run's lease and tells a stop, a
 // suspension, a pause and a room yield (makesRoom's replay of the claims is kept for every run's beat, not this job's
 // own); its downtime-window check, which places the job in the played plan, waits for a beat within the share:
@@ -2204,6 +2220,7 @@ export function heartbeat(
     !db.prepare(`select 1 from jobs j where j.id = $id and ${PAUSE_LETS}`).get({ id, paused: isPaused, allow, prs })
   )
     return { ok: true, yield: 'paused' };
+  if (pauseSuspends(id)) return { ok: true, yield: 'paused' };
   if (o.reined) return { ok: true, reined: true };
   const spare =
     o.util !== undefined &&
@@ -3183,7 +3200,7 @@ export function answerRequest(
   const withFiles = filesAnswered(req, answer);
   if (typeof withFiles === 'number') return withFiles;
   answerRecorded(req, withFiles, questions.asked, waitingPictures.ids);
-  answerHeard(req, withFiles, gotIt);
+  if (!voiceprints.settleYearlyCard(req.id)) answerHeard(req, withFiles, gotIt);
   return { ok: true };
 }
 // A card about a note, filed, answered on the desk phone or in the book, or taken off the desk phone unanswered: the

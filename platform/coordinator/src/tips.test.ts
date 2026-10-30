@@ -4,13 +4,21 @@
 // desk phone: after the cards that need an answer, never in their place, and off to Later and back like a card.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { harness } from './harness.ts';
 
-const h = await harness('tips');
+// (a company with its own names for the desk phone and the intercom)
+const h = await harness('tips', {
+  before: repo => {
+    const file = `${repo}/company/brand.yaml`;
+    writeFileSync(file, readFileSync(file, 'utf8').replace('names: {', 'names: { intercom: speaking tube,'));
+  },
+});
 const { db, board, worker } = h;
 const { ORIGIN } = await import('./config.ts');
 const jobs = await import('./jobs.ts');
 const later = await import('./later.ts');
+const tips = await import('./tips.ts');
 
 const offered = () =>
   (db.prepare('select key, details from tips order by key').all() as { key: string; details: string }[]).map(t => ({
@@ -70,6 +78,13 @@ test("a seat's reading past 80% of its week brings the seats' tip with the seat'
   );
 });
 
+test("a tip's card names the intercom as the company's brand does", () => {
+  const id = tips.offer('deadlines', { thread: 'The garden' });
+  const { body } = db.prepare('select body from requests where id = ?').get(id) as { body: string };
+  assert.match(body, /a deadline on the speaking tube:/);
+  db.prepare("delete from tips where key = 'deadlines'").run(); // (the rename's test below files its own)
+});
+
 test("HQ's page brings a tip once; an event that isn't one is refused", async () => {
   const first = await board('/api/tips/events', { key: 'look' });
   assert.equal(first.status, 200);
@@ -127,4 +142,29 @@ test('the tips come after the cards that need an answer, and never take one of t
     false,
   );
   assert.equal(full.at(-1)!.id, oldest.id, 'the oldest card keeps its place');
+});
+
+// The pausing tip became the deadlines tip: a card filed under it is moved once, at the start (run here again, the
+// module loaded afresh).
+test("a pausing tip's card filed before the deadlines tip gives the deadline advice, and is the deadlines tip's", async () => {
+  const { lastInsertRowid } = db
+    .prepare("insert into requests (created, kind, title, body, urgency, topic) values (?, 'tip', ?, ?, 'tip', 'Tips')")
+    .run(
+      new Date().toISOString(),
+      'Some work ran past its time',
+      'Deploys without buildx ran past the time it was due. You can have work paused to make room for what matters more, and started again when you like: ask on the intercom. Projects shows what’s running.',
+    );
+  const id = Number(lastInsertRowid);
+  db.prepare("insert into tips (key, request, at) values ('pausing', ?, ?)").run(id, new Date().toISOString());
+  db.prepare("delete from migrations where id = '2026-10-29-pausing-tip-is-deadlines'").run();
+  // @ts-expect-error the query makes a fresh copy of the module (a restart), a path TypeScript can't resolve
+  await import('./tips.ts?restart');
+  const { body } = db.prepare('select body from requests where id = ?').get(id) as { body: string };
+  assert.equal(
+    body,
+    'Deploys without buildx ran past the time it was due. Give what matters a deadline on the intercom: that work goes first, and the rest waits its turn. Projects shows when each piece lands.',
+  );
+  assert.equal((db.prepare('select key from tips where request = ?').get(id) as { key: string }).key, 'deadlines');
+  const tips = await import('./tips.ts');
+  assert.equal(tips.offer('deadlines', { thread: 'Another thread' }), null, 'no second card for the same tip');
 });

@@ -8,7 +8,7 @@ import './agenttime.ts';
 import { keysCondition } from './chat.ts';
 import { workBranch } from './jobs.ts';
 import { mean, wholeSeconds } from './arithmetic.ts';
-import { timingFlags, type TimingEvidence, type TimingFlag } from './timing.ts';
+import { REBUILT_RUN, INVALID_RUN, timingFlags, type TimingEvidence, type TimingFlag } from './timing.ts';
 
 // A work job's origin, how it was made: work an agent queued (or a pull request's re-land), the author's fixes for a
 // review or the board's notes, a pull request only brought up to date with main, or a job HQ made on its own (the
@@ -74,10 +74,10 @@ const past = (only = false) => {
     p.number pr, p.status pr_status, p.merged_at, coalesce(p.files, '[]') files, p.added, p.removed, j.thread, ${RUN_COLUMNS}, r.outcomes, r.invalid_runs, r.unknown_seats, j.customers,
     (j.about_keys or exists(select 1 from calls c where c.job = j.id and ${keysCondition()})) about_keys,
     j.id in (select job from job_replacement_links) is_replacement
-  from (select job, count(*) runs, sum(ended_as = 'rebuilt' or seat is null) rebuilt, min(started) first, max(ended) last,
+  from (select job, count(*) runs, sum(${REBUILT_RUN}) rebuilt, min(started) first, max(ended) last,
     sum((julianday(ended) - julianday(started)) * 86400000) agent_ms,
     group_concat(distinct coalesce(ended_as, 'unknown')) outcomes, sum(seat is null) unknown_seats,
-    sum(julianday(ended) is null or julianday(started) is null or julianday(ended) <= julianday(started)) invalid_runs
+    sum(${INVALID_RUN}) invalid_runs
     from runs ${of} group by job) r
   cross join jobs j indexed by jobs_history on j.id = r.job
   left join (select job, sum(cost) cost, sum(input + cache_write + cache_read + output) tokens from usage ${of} group by job) u

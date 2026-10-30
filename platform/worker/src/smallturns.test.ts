@@ -21,7 +21,7 @@ function queue(due: string[]) {
 const turn = () => new Promise(done => setImmediate(done));
 
 test("a call due behind one still going is made at once, not after the first one's answer", async () => {
-  // The board's handwriting being read, and the book's judge due behind it (29 Oct)
+  // The board's handwriting being read, and the book's judge due behind it
   const q = queue(['handwriting', 'judge']);
   let going = true;
   const loop = callsAsTheyCome({

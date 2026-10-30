@@ -224,7 +224,7 @@ const latestOfOrigin = (j: PastJob, before: PastJob[]) =>
 // ---- measures
 
 // How far predictions [predicted, actual] were off: the median factor either way, the share within twice or half, and
-// the sum of the predictions against the sum of what happened (a thread's estimate is a sum). hq estimate --calibration
+// the sum of the predictions against the sum of what happened (total task work). hq estimate --calibration
 // measures its groups with it too.
 export function spread(pairs: [number, number][]) {
   const by = pairs.map(([predicted, actual]) => Math.abs(factor(predicted, actual)));

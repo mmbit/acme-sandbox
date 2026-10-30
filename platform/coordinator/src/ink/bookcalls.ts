@@ -14,6 +14,7 @@ import { DIR } from '../pagescraps.ts';
 import { deletePage, type Page } from './book.ts';
 import * as walks from '../walkthroughs.ts';
 import type { Refused } from '../pagechecks.ts';
+import { PREVIEW } from '../config.ts';
 
 const agentOf = (call: number | null) =>
   (db.prepare('select agent from calls where id = ?').get(call) as { agent: string } | undefined)?.agent;
@@ -53,9 +54,7 @@ export function throwAway(page: number) {
 }
 
 // GET /api/voice/note?id=&call=: a note the board drew on a live call, for the call's agent: its number on the call's
-// page, its words, the HQ page it's on and its snip (the page around the mark, the ink on it), or null without one; and
-// what the judge made of it (verdict: { reply, why }, null while it's being judged or when it needs no reply) and the
-// versions its try clipped on so far, by name (newsOf)
+// page, its words, the HQ page it's on and its snip (the page around the mark, the ink on it), or null without one
 export function forVoice(id: number, call: number) {
   const n = db
     .prepare(
@@ -69,32 +68,13 @@ export function forVoice(id: number, call: number) {
     file && existsSync(file)
       ? { type: file.endsWith('.png') ? 'image/png' : 'image/jpeg', data: readFileSync(file).toString('base64') }
       : null;
-  return { n: n.n, words: n.words, url: pathOf(JSON.parse(n.anchor).url), picture, ...newsOf(id) };
+  return { n: n.n, words: n.words, url: pathOf(JSON.parse(n.anchor).url), picture };
 }
-// What the call's agent hears of a note with it: the judge's latest verdict (bookjudge.ts ink_verdicts; 'none' says
-// nothing) and the versions landed so far (bookanswer.ts), read here rather than imported: book.ts loads this file
-// before the tables those modules alter exist.
-function newsOf(note: number) {
-  const v = db
-    .prepare("select reply, why from ink_verdicts where note = ? and reply != 'none' order by id desc limit 1")
-    .get(note) as { reply: string; why: string } | undefined;
-  // (on the note, or on the group that went as it; and which the board picked.)
-  const versions = db
-    .prepare(
-      `select version, picked from book_slips where style = 'version'
-        and (note = ? or grp in (select id from notebook_groups where note = ?)) order by id`,
-    )
-    .all(note, note) as { version: string | null; picked: string | null }[];
-  return {
-    verdict: v ? { reply: v.reply, why: v.why } : null,
-    versions: versions.map(s => s.version ?? ''),
-    picked: versions.find(s => s.picked)?.version ?? null,
-  };
-}
-// (an anchor's address as HQ's own pages name it: its path and query)
+// (an anchor's address as HQ's own pages name it: its path and query; a preview's in HQ's viewer, its whole address, so
+// the agent knows it's not HQ's.)
 function pathOf(url: unknown) {
   const u = new URL(String(url), 'https://x');
-  return u.pathname + u.search;
+  return (u.host.endsWith(PREVIEW) ? u.origin : '') + u.pathname + u.search;
 }
 
 // The call's agent's rings that older calls kept as notes on their pages: gone, with a page they leave with nothing of

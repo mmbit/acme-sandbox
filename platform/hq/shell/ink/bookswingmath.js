@@ -116,7 +116,7 @@ export function dissolveAt(a, laidOpen) {
 // The dissolve s seconds into a tapped open (the board falling from upright under its nudge), and when that open lands
 // (s: lying still, as bookswing.js's landing counts it): a tapped close's pace too, the spring's swing up being quicker
 // than the fall, so HQ's page fades and blurs the same way, stays gone as long and comes back as late, whichever way
-// the book goes (bookswing.js). (the board, 28 Oct and its call 160)
+// the book goes (bookswing.js).
 const FADE_FRAME = 1 / 60;
 // The fall played frame by frame: the dissolve at each frame (fade), and the second it lands (lands)
 function openingFade() {

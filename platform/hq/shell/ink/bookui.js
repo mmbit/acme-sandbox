@@ -7,7 +7,7 @@ import { CONTROLS } from './booklayout.js';
 
 // The islands, top to bottom over the paper's right edge, the tool strip down it beside them (bookstrip.js), the pages'
 // row at its foot, and the overview's tools (in its head, bookzoom.js). Each part appends its controls to its own. (the
-// strip: the board's tools, by Undo's on every device, so the page keeps its width) (the faces gone with the sheets) (Send at the stack's top)
+// strip: the board's tools, by Undo's on every device, so the page keeps its width) (Send at the stack's top)
 const ISLANDS = ['send', 'book'],
   STRIP = 'tools',
   FOOT = 'pages',
@@ -73,12 +73,17 @@ export function islands() {
   strip.append(one(STRIP, false));
   controls.append(stack, strip, one(FOOT, true));
   one(OVERVIEW, true).classList.add('bk-far-tools');
-  // A screen too short for one column even with the faces at their least: a second (bk-two, book.css). The stack's
-  // width, one column or two, goes on the book as --bk-islands, for the strip beside it (bookstrip.css). The controls'
-  // width, the stack's and the strip's, goes on it as --bk-controls-width for what lies beside them: the pairing card,
-  // answers; and the width of the ones beside the pages' row as --bk-foot, which
-  // the row keeps clear of.
-  const fit = new ResizeObserver(() => {
+  watchFit(stack);
+  return controls;
+}
+// The controls fitted whenever one resizes. A screen too short for one column: a second (bk-two, book.css). The
+// stack's width, one column or two, goes on the book as --bk-islands, for the strip beside it (bookstrip.css). The
+// controls' width, the stack's and the strip's, goes on it as --bk-controls-width for what lies beside them: the
+// pairing card, answers; and the width of the ones beside the pages' row as --bk-foot, which the row keeps clear of.
+function watchFit(stack) {
+  let frame = 0;
+  const fit = () => {
+    frame = 0;
     const shown = shownIslands();
     if (!shown.length) return;
     const gaps = parseFloat(getComputedStyle(stack).rowGap) * (shown.length - 1);
@@ -97,9 +102,13 @@ export function islands() {
     if (book.style.getPropertyValue('--bk-controls-width') === width) return;
     book.style.setProperty('--bk-controls-width', width);
     book.dispatchEvent(new Event('bk:controls-width'));
-  });
-  for (const el of [stack, ...stack.children, made.get(STRIP), made.get(FOOT)]) fit.observe(el);
-  return controls;
+  };
+  // (fitted in the frame after a resize, never in the observer's own call: what fit sets sizes what it watches
+  // (--bk-foot the pages' row, bk-two the stack), and a size changed inside the call is a loop the browser reports
+  // (WebKit's "ResizeObserver loop completed with undelivered notifications"). The frame the resize happens in still
+  // shows the controls as they were, on first show the CSS's fallbacks.)
+  const resized = new ResizeObserver(() => (frame ||= requestAnimationFrame(fit)));
+  for (const el of [stack, ...stack.children, made.get(STRIP), made.get(FOOT)]) resized.observe(el);
 }
 // A card of the tool strip's (the colours, the preferences) on the paper beside it, level with the strip's island at
 // its top or its foot (end: 'top' | 'bottom') and inside the strip's height. It hangs on the strip, never in the
@@ -225,11 +234,9 @@ function open(el, label, keys) {
   }
   // left of it when there's room (the islands are at the paper's right), and of every control beside it there (the
   // stack's and the strip's: never over a tool), else right of it, else under it
-  let y = r.top + r.height / 2 - t.height / 2,
-    x =
-      (el.closest('.bk-islands, .bk-strip') ? Math.min(r.left, controlsLeft([y, y + t.height]) ?? r.left) : r.left) -
-      gap -
-      t.width,
+  let y = r.top + r.height / 2 - t.height / 2;
+  const controls = el.closest('.bk-islands, .bk-strip') ? controlsLeft([y, y + t.height]) : null;
+  let x = Math.min(r.left, controls ?? r.left) - gap - t.width,
     side = 'left';
   if (x < 4 || x + t.width > innerWidth - 4) {
     x = r.right + gap;

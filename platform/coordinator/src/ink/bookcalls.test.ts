@@ -7,7 +7,7 @@ import { harness } from '../harness.ts';
 
 const h = await harness('bookcalls');
 const { db } = h;
-const { ORIGIN } = await import('../config.ts');
+const { ORIGIN, PREVIEW } = await import('../config.ts');
 const DIR = `${h.dataDir}/book`;
 // No judge's call on these words comes for a while (any other's answered with none): a note on a call is its agent's
 // to act on
@@ -112,6 +112,10 @@ test("a call's page: the board's notes numbered on it, never on a sheet to send,
   assert.equal(read.body.picture.type, 'image/png');
   assert.equal((await sharp(Buffer.from(read.body.picture.data, 'base64')).metadata()).width, 20);
   assert.equal((await h.voice(`note?id=${own.note.id}&call=${call}`)).status, 404, "a sheet's note");
+  // (a mark on the preview in HQ's viewer: the line reads its whole address.)
+  const shown = `https://teacups${PREVIEW}/shop?size=2`;
+  const framed = (await note({ page: page.id, anchor: { ...anchor(), url: `${shown}#k=secret` } })).body.note;
+  assert.equal((await h.voice(`note?id=${framed.id}&call=${call}`)).body.url, shown);
   assert.equal((await h.voice(`note?id=${one.note.id}&call=${call + 1}`)).status, 404, 'another call');
 
   // the call ends: the line reads no more, the page stays with the call's summary on top once it's written

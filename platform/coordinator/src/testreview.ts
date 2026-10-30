@@ -4,9 +4,10 @@ import { readFileSync } from 'node:fs';
 
 const OFF = '/* review mode: off */\n';
 const FRAMED = readFileSync(new URL('../../../shared/watchalong/framed.js', import.meta.url), 'utf8');
+const SCROLL_LINK = readFileSync(new URL('../../../shared/watchalong/scrolllink.js', import.meta.url), 'utf8');
 
 // The watch-along's answer to HQ's frame, HQ at origin hq (the tests' PUBLIC_HOST by default)
-export const framedAnswer = (hq = 'https://hq.company.test') => FRAMED.replace('{{HQ_ORIGIN}}', hq);
+export const framedAnswer = (hq = 'https://hq.company.test') => FRAMED.replace('{{HQ_ORIGIN}}', hq) + SCROLL_LINK;
 
 // Review mode off: its marker, then only the watch-along's answer, nothing else
 export const reviewModeOff = (js: string, hq?: string) => js === OFF + framedAnswer(hq);

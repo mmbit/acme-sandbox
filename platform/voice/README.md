@@ -61,6 +61,32 @@ Oktober". Letters Pocket reads as a word of its own language are spelled as the 
 (`SPELLED` in server.py: "AI" was "een ei" in Dutch and "eine Key" in German; "aa-ie" and "Ka-I", never with dots;
 Piper says "AI" right). HQ's caption and the transcript keep the figures
 
+Several people in the board's room, one microphone (`voices.py`): on the
+board's HQ calls each piece the VAD cuts gets a voiceprint (TitaNet-Large through sherpa-onnx, beside its
+transcription: about 0.07 s a second of audio) and goes to the voice it sounds most like. The first voice heard is the
+board's; a piece of 1.5 s or more that is clearly unlike every voice so far (`NEW`) opens "Voice 2", and so on, no
+cap. Until a second voice is heard, nothing changes: the agent's messages and the transcript are as on any call. From
+then on each line starts with its speaker ("Board: ...", "Voice 2: ..."), and the agent hears once what that means
+(act on the board's word; name a voice with `name_voice` once it knows who it is, which also swaps two names when
+someone else spoke first). Short words ("yes") go to the closest voice, so a new voice's first words can land on the
+board's. Nothing is stored but a saved voice (below). At hang-up the log says how many voices
+and how unlike the others each opened (`call: ada voices: 2 (opened at 0.21)`), the numbers to tune `NEW` by. The
+phone and a call out's room have none (one caller; a microphone each).
+
+Saved voices: when the board asks, the agent enrols someone in the room (or
+the board itself) with `save_voice`: its first call, with the name alone, answers what the person must hear (HQ's
+words, `voiceprints.consent` in the company's brand.yaml: without them no voice is saved) and that only their own
+clear yes counts; after their yes and some free speech (`ENROL_SECONDS`, 6 s), its second (refused for a name the first
+wasn't made for) saves that voice's print in HQ (`voiceprints.ts`) with their
+words agreeing and the agent's question. The agent never offers it. Each later board call loads the saved prints
+(`Call.saved_voices`: a failed read ends the call's start) and names a voice by the one its pieces together are like
+enough (`MATCH`, 0.55) once it has heard three pieces and 4.5 s of it (`NAME_PIECES`, `NAME_SECONDS`), whoever spoke
+first; a voice like none stays "Voice n" (the first voice is taken for the board's only while no saved print says
+otherwise). At hang-up the prints it heard surely are refined (a pieces-weighted mean, `voiceprints-heard`), each
+only while the voice still sounds like it (`MATCH`).
+`forget_voice` deletes one ("forget my voice"), as the board's tap in Settings › Voices does. Prints never leave the
+server: not in a log, the browser, an agent's read or the off-site backup.
+
 Talking over the agent (`Call.hear`): the reply plays on while the line makes sure it's the board. It stops as soon
 as the words read as an interruption (`stray()`, English, Dutch and German): a word that means stop ("wait", "no",
 "nee", "wacht", and on a German call "nein", "Moment", "was"), a question of two words or more ("Is that all?", "En dan?"), or three words that aren't all filler or little words, in a look at the words so far (0.5 s in, then every
@@ -162,7 +188,9 @@ HQ's connection is down; an ask also while the screen is shown or another ask wa
 The call's notes page in the board's Notebook (`callnotes.py`): the agent's
 `scrap` puts one change on it, a plain note (its words on a post-it, no picture) or cut from one of the board's notes
 on the call (`from: 'note 3'`) or from its shown screen at a moment (`'-20s'`, `'#12'`), a region of that picture with
-the change in its words, and `title_page` names the page in a few words. The agent works the page as the board does
+the change in its words, and `title_page` names the page's topic in at most 21 characters, after the call's date and
+time the coordinator keeps in front; every third turn until it has, a line before the board's words reminds the agent
+to. The agent works the page as the board does
 too: `read_page` lists what's on it, `mark_page` draws a rectangle, ellipse, line, arrow, pen line or highlight, and
 `change_page` changes its own note's words, or moves or deletes anything there, each a step the board's Undo takes
 back. All go through the screen socket to the coordinator's Ink store
@@ -196,9 +224,9 @@ The call agent's tools (`hq_tools.py`), each of which puts something on a list a
   supplies `size`, `refs` and `why` to `job`. `when` also requires that chosen `size`. The queued estimate stays fixed
   until the CEO adjusts it after slippage.
   `after` (`hq job --after`) queues it behind another job, when the agent judges an agreed deadline worth protecting
-  from it. The job tool's answer gives each agreed deadline's facts (a thread's window: its finish, its slack, what
-  this job did to it and its slack 6 h and a day ago, `deadlines.ts`). It then names the other threads the job moves, for
-  the agent's planning. The briefing says the board hears of shifts only when an agreed deadline moves or when it
+  from it. The job tool's answer gives each agreed deadline's facts (a deliverable's window: its finish, its slack, what
+  this job did to it and its slack 6 h and a day ago, `deadlines.ts`). It then names the other deliverables the job moves, for
+  the agent's planning. The briefing says the board hears of shifts only when an agreed deadline will be missed or when it
   asks, a tight or shrinking margin being the agent's to plan with (`call.ts`). The `when` tool's answer gives the
   same facts for the work it adds to the plan.
 - `promise(owner, what)`: the promise on the call's own list the moment it's made, with the agent's words as the quote
@@ -233,13 +261,13 @@ The call agent's tools (`hq_tools.py`), each of which puts something on a list a
   `y`, `width`, `height` as fractions of the screen), or the moment list `since` a time. A picture comes with its
   moment's line.
 - `search`, `history`, `call` and `intercom`: read-only look-ups (below); they put nothing anywhere. <!-- intercom: -->
-- `eta(query)`: where planned work stands now. `hq projects <words>` finds the open threads a project's or thread's name
+- `eta(query)`: where planned work stands now. `hq projects <words>` finds the open deliverables a project's or deliverable's name
   or a few words name ("The checkout", "the levels") and answers each with its ETA, agent time left, window
   (planned finish, deadline, slack or by how much it misses), what it waits on and what goes on next, all by name: the
-  coordinator's `outlooks.ts findOutlooks` reads the forecast as last played (the same outlook `hq thread` and the projects view
-  show), so it answers in well under a second. A card a thread waits on reads "the board: <its title>". With no query
+  coordinator's `outlooks.ts findOutlooks` reads the forecast as last played (the same outlook `hq deliverable` and the projects view
+  show), so it answers in well under a second. A card a deliverable waits on reads "the board: <its title>". With no query
   it runs `hq now` (the coordinator's `goingon.ts`, the same words the briefing opens its company section with, fresh):
-  everyone HQ counts at work, each on its run with its seat, thread and window and, while a hold is on, why it runs;
+  everyone HQ counts at work, each on its run with its seat, deliverable and window and, while a hold is on, why it runs;
   then each open desk phone card with the work that waits on it. Read-only.
 - `estimate(query, agent?)`: clean past jobs, their actual agent time, briefs, reports and changed files. Search only
   finds candidates. The queuer judges scope from those candidates and supplies the estimate when queuing.
@@ -571,7 +599,7 @@ in full, or lines by words and meaning) and `eta` (where planned work stands), r
 coordinator's search, history, call, intercom, outlooks and now routes. Search and history show shared files and the work their access rules permit,
 intercom shows the board's chat, and call reads ended calls subject to the customer and key restrictions
 (`platform/coordinator/src/memory.ts`, `intercom.ts`; the Library note "Memory search"). Outlooks shows matching open
-threads across the company, with their plans, job titles, agent and thread names, and the titles of board cards they
+deliverables across the company, with their plans, job titles, agent and deliverable names, and the titles of board cards they
 wait on. A coordinator refusal reaches the tool as hq's refusal.
 If `hq_tools.py` can't start, calls still work without its tools, and the log says so at start and per call.
 The line is on its own Docker network (`voice`) with Caddy and the coordinator only, so a worker job can't open

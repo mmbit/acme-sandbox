@@ -4,6 +4,9 @@
 // puts it away. The spread (a phone's open book, an iPad's upright until its cover's edge is drawn right) covers HQ's
 // page: there the control folds the book and leaves HQ with the pin on it, and opening it as the spread again puts it
 // away. Review mode shows and hides it ('review:summon': dock.js) with its quick pop and shrink. (the board, 2026-10-27)
+// On a call there's no pin and no control: the board scribbles in red for the call's agent (calldraw.js's call:on and
+// call:off). What the book did meanwhile still counts, so the pin is as it left it once the call ends (the board, call
+// 161.).
 import { bookLayout, foldBook } from './ink/book.js';
 import { button, island, lineIcon, setPressed } from './ink/bookui.js';
 
@@ -13,6 +16,7 @@ const ICON = lineIcon(
 );
 
 let out = false,
+  calling = false,
   control,
   was = null; // (the book's mode at its last layout)
 
@@ -28,9 +32,17 @@ export function mountPinSummon() {
   island('book').append(control);
   was = document.documentElement.dataset.book ?? null; // (laid out before HQ's desk starts)
   document.addEventListener('book:layout', moved);
+  document.addEventListener('call:on', () => onCall(true));
+  document.addEventListener('call:off', () => onCall(false));
 }
 // What the pin is now, told again (review mode just loaded)
-export const tellPin = () => dispatchEvent(new CustomEvent('review:summon', { detail: out }));
+export const tellPin = () => dispatchEvent(new CustomEvent('review:summon', { detail: out && !calling }));
+
+function onCall(on) {
+  calling = on;
+  control.hidden = on;
+  tellPin();
+}
 
 function summon(on) {
   if (on === out) return;

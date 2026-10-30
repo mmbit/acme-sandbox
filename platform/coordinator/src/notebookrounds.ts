@@ -4,7 +4,7 @@ import { ceo } from './company.ts';
 import { createJob } from './jobs.ts';
 import { changed, pageOf, pageRow } from './notebook.ts';
 import { insertGroup, listGroups, type Group } from './notebookgroups.ts';
-import { sendPage, undoSend } from './notebooksend.ts';
+import { dropFresh, sendPage, undoSend } from './notebooksend.ts';
 import { SEND_MS } from './ink/booknotes.ts';
 import { deliverDue } from './ink/booksheets.ts';
 import { isRefused, type Refused } from './pagechecks.ts';
@@ -39,9 +39,7 @@ export async function handIn(page: number, who: string, stillOpen: () => boolean
     return sent;
   }
   inOneStep(() => {
-    const now = pageRow(page, who)!;
-    db.prepare('delete from book_pages where id = ?').run(now.fresh);
-    db.prepare('update book_pages set fresh = null where id = ?').run(page);
+    dropFresh(pageRow(page, who)!);
     updateClosing(p.notebook, page);
   });
   return pageOf(pageRow(page, who)!);

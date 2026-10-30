@@ -106,14 +106,19 @@ test('a hand-off stays in its thread, --thread sends it to another or starts one
   );
 });
 
-test('a job with no open thread to inherit must name one, and the refusal lists the open threads', async () => {
+test('a job with no open thread to inherit must name one, and the refusal says to draw its own first', async () => {
   reset();
   const levels = started('levels');
   const loose = await legacy({ agent: 'wren' });
   const refused = await handOff(loose);
   assert.equal(refused.status, 409);
   assert.match(refused.body.error, /no open deliverable to inherit/);
-  assert.match(refused.body.error, /game\/levels {2}Thread levels \(wren\), done when It works/);
+  // (drawing one comes first, the projects to draw it in, no deliverables to pick)
+  assert.match(
+    refused.body.error,
+    /--deliverable new:<project> "name" "done when" draws its own.*Projects: game \(wren\)/,
+  );
+  assert.doesNotMatch(refused.body.error, /Thread levels|It works/);
   assert.equal(
     (db.prepare("select count(*) n from jobs where title = 'Next step'").get() as { n: number }).n,
     0,
@@ -760,12 +765,21 @@ test('hq plan thread, hq job --thread, hq project say and hq plan done, end to e
   );
   const queued = await hq('job', 'moss', 'The boss', '--thread', 'game/boss-fight', '--check', '--new');
   assert.equal(queued.code, 0, queued.out);
-  assert.match(queued.out, /In deliverable game\/boss-fight\./);
+  // (the deliverable it joined, read back with its done when, and drawing
+  // one for work no open one makes comes first in the refusal, never a list of every open deliverable to pick from)
+  assert.match(
+    queued.out,
+    /In deliverable game\/boss-fight, Boss fight, done when You beat the boss\.\nIf this work doesn't deliver that, move it to the one it does: hq job move \d+ <project>\/<slug>\./,
+  );
   const id = Number(/Queued job #(\d+)/.exec(queued.out)![1]);
   assert.deepEqual([thread(id), h.job(id).check], ['game/boss-fight', 1]);
   const refused = await hq('job', 'moss', 'Loose work', '--new');
   assert.notEqual(refused.code, 0);
-  assert.match(refused.out, /No job was queued: name the deliverable .*game\/boss-fight {2}Boss fight/s);
+  assert.match(
+    refused.out,
+    /No job was queued: name the deliverable this job serves.*--deliverable new:<project> "name" "done when" draws its own with the job.*A step of a feature whose deliverable you know joins it: --deliverable <project>\/<slug>.*Projects: .*game \(wren\)/s,
+  );
+  assert.doesNotMatch(refused.out, /Boss fight|You beat the boss/, 'no open deliverable offered to pick');
   // the CEO's own work needs none: it's the desk's
   const ceo = await h.start({ agent: 'juno' });
   const own = await h.hq(ceo, 'job', 'juno', 'Sort the loose work', '--new');
@@ -783,7 +797,7 @@ test('hq plan thread, hq job --thread, hq project say and hq plan done, end to e
   assert.equal(loose.status, 409);
   assert.match(
     loose.body.error,
-    /belongs to the project its work is for.*holds only the CEO's own running of the company.*game\/boss-fight/s,
+    /belongs to the project its work is for.*holds only the CEO's own running of the company.*--deliverable new:<project>/s,
   );
   assert.equal(
     (db.prepare('select count(*) n from jobs where title = ?').get('A recurring check on the shop') as { n: number }).n,

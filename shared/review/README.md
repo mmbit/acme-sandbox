@@ -44,7 +44,13 @@ pin, as HQ's viewer does around a preview. A note in progress returns when the v
 starts away, and the page shows it or puts it away (`review:summon`, detail `true` or `false`). On HQ beside the book
 (a desktop, a tablet) the board's opening the book or the book's pin control brings it, and folding the book or that
 control puts it away. A phone opens the book over HQ: there the control folds the book and leaves HQ with the pin, and
-opening the book again puts it away. The Pencil writes either way, and a preview's own pin is always there.
+opening the book again puts it away. The Pencil writes either way, and a preview's own pin is always there, but on a
+call: then HQ has no pin and no pin control, its viewer no Note, and it tells the preview's page (`call`, answered to
+its hello too), whose pin goes and whose Pencil inks red only (`review:call`), for the call's agent (the board, call
+161.). A mark there then opens no post-it: once the pen rests it goes to HQ (`callframe.js`,
+`{ callMark }`), which puts it on the call's page with the words the call heard as one drawn on HQ, and nothing goes into
+the notebook by itself; its ink stays drawn until the agent's turn on it is done (`{ had: note }`) or the call ends
+.
 
 **The menu**: the pin stays just the pin; beside it a small round button opens a small menu in the guest pages' look
 (their colours, `guests.ts` palette, which the coordinator writes into the script), as plain as a checklist for the
@@ -108,8 +114,8 @@ alone, so the imports form no circle.
 - **Lines until the note goes:** the first mark opens the note (a tap as the first mark still pins what's under it); more
   lines can follow while it's open, open as drawn. The screenshot is the page at the first mark; every line is drawn on
   it, in the polaroid as it comes and in what goes with the note.
-- **The strip**, over the page while it's marked: five inks (red, black, blue, green and a see-through highlighter,
-  remembered on the device), the eraser (every line its pass touches goes, measured as HQ's book measures it:
+- **The strip**, over the page while it's marked: five inks (the notebook's pens, `ink.js` `PENS`, red first, and its
+  yellow see-through highlighter, remembered on the device), the eraser (every line its pass touches goes, measured as HQ's book measures it:
   `eraser.js`) and undo (Cmd or Ctrl+Z too), which takes back the last line or the last pass of the eraser. Undoing the first mark goes back to tapping or drawing, the words kept. The page
   refuses a pen's touch moves so it never scrolls under the pen, but never on review mode's own controls: on an iPad a
   touch whose move is refused is no tap, and the Pencil's taps on the strip pressed nothing.
@@ -301,8 +307,10 @@ with the rest.
   `cycles.preview.<zone>` while `products/_cycles` exists) and with
   the board's preview key (the `pv` cookie). On a preview host everyone else gets only the watch-along's answer to
   HQ's frame (`shared/watchalong/framed.js`, which follows the tool too: a page HQ frames on a walk-through call records
-  itself only when HQ asks) (`vary: cookie`, `no-store`). Every live host gets an
-  empty script from Caddy itself (`REVIEW_OFF`, `infra/products.py`), never reaching the coordinator. Customers never run it. The `pv` cookie never reaches the product.
+  itself only when HQ asks) and the scroll link (`shared/watchalong/scrolllink.js`: the page's scroll told to the
+  frame's parent and taken from it, for HQ's viewer's live page beside staging) (`vary: cookie`, `no-store`). Every
+  live host gets the scroll link alone from Caddy itself (`REVIEW_OFF`, `infra/products.py`), never reaching the
+  coordinator. Customers never run review mode. The `pv` cookie never reaches the product.
 - `POST /__review/notes` and `/__review/voice` need the same key and `Origin: https://<slug>.preview.<zone>`
   (other products share the site, so SameSite alone isn't enough).
 - A rate limit for each writer on each product: 60 notes an hour, refused (429) with why, which review mode shows. A note with a screenshot

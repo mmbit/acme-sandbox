@@ -1,18 +1,20 @@
 import { createHash } from 'node:crypto';
 import { ORIGIN, PUBLIC_HOST, ZONE } from './config.ts';
+import { publicOrigins } from './approvals.ts';
 
 // HQ's Content-Security-Policy. The inline <script> and <style> blocks of a page (the pages below: fixed text, no data
 // in them) are allowed by hash; HQ's own app has none. Style attributes stay allowed (HQ sets a few colours inline);
 // they can't run script, and img-src limits what they can load (blob: for the desk phone's photo previews, which HQ's
 // own script makes from the board's picked file). Fonts come from Google Fonts. Calls stream over a
 // WebSocket to the voice line on HQ's own host (named too: older Safari doesn't count wss: as 'self'), and the viewer
-// frames product previews, whose test checkout can step through HQ's own /pay/imitation/.
+// frames product previews, whose test checkout can step through HQ's own /pay/imitation/, and beside them the same page
+// live at the product's public address.
 export function csp(html = '') {
   const hashes = (tag: string) => [...html.matchAll(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`, 'g'))]
     .map(m => ` 'sha256-${createHash('sha256').update(m[1]).digest('base64')}'`).join('');
   return `default-src 'self'; script-src 'self'${hashes('script')}; style-src 'self' https://fonts.googleapis.com${hashes('style')}; ` +
     "style-src-attr 'unsafe-inline'; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; media-src 'self'; " +
-    `connect-src 'self' ${ORIGIN.replace(/^http/, 'ws')}; frame-src 'self'${ZONE ? ` https://*.preview.${ZONE}` : ''}; ` +
+    `connect-src 'self' ${ORIGIN.replace(/^http/, 'ws')}; frame-src 'self'${ZONE ? ` https://*.preview.${ZONE}` : ''}${publicOrigins().map(o => ` ${o}`).join('')}; ` +
     "object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'";
 }
 

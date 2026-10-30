@@ -289,7 +289,8 @@ con.executescript("""pragma journal_mode = wal;
   create table "a"" union select 424242 order by 1 desc --" (y);
   create virtual table search using fts5(body);
   create table memory (id integer primary key, doc text, body text, vec blob); create table memory_docs (doc text primary key, hash text);
-  create virtual table memory_fts using fts5(title, body); create virtual table memory_vocab using fts5vocab(memory_fts, 'row');""")
+  create virtual table memory_fts using fts5(title, body); create virtual table memory_vocab using fts5vocab(memory_fts, 'row');
+  create table voiceprints (id integer primary key, name text, print text); insert into voiceprints (name, print) values ('Esme', '[0.25]');""")
 # The search index (memory.ts), as big as the jobs: the copy leaves it out, the coordinator makes it again
 con.executemany('insert into memory (doc, body, vec) values (?, ?, ?)', [(f'job:{i}', 'chunk ' * 50, os.urandom(1536)) for i in range(5000)])
 con.executemany('insert into memory_fts (title, body) values (?, ?)', [(f'job {i}', 'chunk words ' * 30) for i in range(5000)])
@@ -451,7 +452,7 @@ try:
     writer.kill()
     writer.wait()
     after = sqlite3.connect(db).execute('select count(*) from jobs').fetchone()[0]
-    check(st['state'] == 'ok' and st['ok_key'].startswith('daily/'), f'the night: ok ({st.get("ok_key")}, {st.get("ok_bytes")} bytes, {st.get("ok_seconds")} s{", " + st["error"] if st.get("error") else ""})')  #.
+    check(st['state'] == 'ok' and st['ok_key'].startswith('daily/'), f'the night: ok ({st.get("ok_key")}, {st.get("ok_bytes")} bytes, {st.get("ok_seconds")} s{", " + st["error"] if st.get("error") else ""})')
     check(after > before + 100, f'the writer kept writing throughout ({before} → {after} jobs)')
     shared = json.load(open(f'{hq}/backup-status.json'))
     check(shared == status_file() and oct(os.stat(f'{hq}/backup-status.json').st_mode & 0o777) == '0o644', 'status left for the coordinator, readable')
@@ -562,6 +563,9 @@ try:
           and r.execute("select count(*) from sqlite_schema where name like 'memory%'").fetchone()[0] == 0
           and sqlite3.connect(db).execute('select count(*) from memory').fetchone()[0] == 5000,
           'the search index is left out of the copy (the live one keeps it), and nothing of it is left in the file')
+    check('voiceprints' not in manifest['tables'] and r.execute("select count(*) from sqlite_schema where name = 'voiceprints'").fetchone()[0] == 0
+          and sqlite3.connect(db).execute('select count(*) from voiceprints').fetchone()[0] == 1,
+          'voiceprints never leave the server (the live table keeps them)')
     check(manifest['tables'].get('a" union select 424242 order by 1 desc --') == 0 and manifest['tables'].get('a') == 1 and 'search' not in manifest['tables'],
           'a table name with SQL in it is counted as a name, not run; virtual tables are skipped')
     r.close()
@@ -997,7 +1001,7 @@ sys.exit(backup.main(['backup.py', 'run', *sys.argv[3:]]))
     os.remove(f'{store}/{WRONG}')
     os.remove(oversized)
     open(f'{store}/{hashlib.sha256(big := os.urandom(30_000)).hexdigest()}', 'wb').write(big)
-    renders_max = backup.renders_max   #.
+    renders_max = backup.renders_max
     backup.renders_max = lambda: sum(v[0] for v in now_held.values()) + len(big)
     try:
         time.sleep(1.1)
@@ -1107,7 +1111,7 @@ sys.exit(backup.main(['backup.py', 'run', *sys.argv[3:]]))
 
     # ---- the renders' ceiling: the company's BACKUP_RENDERS_GB (whole GB), 3 unset; any other value, or a line company.py
     # skips (never the default in its place), holds every render back and says why, while the night itself still goes
-    for value, gb in {'8': 8, '': 3, '0': None, '2.5': None, '8GB': None, '8 GB': None}.items():   #.
+    for value, gb in {'8': 8, '': 3, '0': None, '2.5': None, '8GB': None, '8 GB': None}.items():
         env_file = f'{tmp}/infra-renders-{len(value)}.env'
         open(env_file, 'w').write(f'SERVER_NAME=t\nSERVER=t-1\nBACKUP_BUCKET=t\nBACKUP_RENDERS_GB={value}\n')
         r = subprocess.run([sys.executable, '-c', 'import backup; print(backup.renders_max())'], cwd=here,
@@ -1116,7 +1120,7 @@ sys.exit(backup.main(['backup.py', 'run', *sys.argv[3:]]))
     waiting = os.urandom(10_000)
     open(f'{tmp}/work/{backup.RENDERS}/{(sha := hashlib.sha256(waiting).hexdigest())}', 'wb').write(waiting)
     waiting_key = backup.render_key(sha)
-    backup.SKIPPED.add('BACKUP_RENDERS_GB')   #.
+    backup.SKIPPED.add('BACKUP_RENDERS_GB')
     try:
         time.sleep(1.1)
         stn = backup.run(dict(opts))

@@ -1,7 +1,7 @@
 // What a change to the queue did (the coordinator's moves.ts), as hq job, hq cancel, hq estimate set and hq when say
 // it: each agreed deadline's facts first (the coordinator's deadlines.ts), then the other threads it moved, in one
 // line, as the agent's to plan with: "Other threads it moves, for your planning only: The shop's checkout by +1 h 40
-// min, to Sat 17 Oct, 23:10 UTC", or "It moves no other thread." A deadline its finish passes is the agent's to move
+// min, to Sat 17 Oct, 23:10 UTC", or "It moves no other thread." A finish past a deadline is the agent's to bring
 // back first, on a call with what to check (lateLines); a tight or shrinking margin is the agent's to plan with (its
 // briefing).
 import { at, duration } from './estimate.ts';
@@ -34,9 +34,10 @@ export function changeLines(
       : 'It moves no other deliverable.',
   ];
 }
-// (said once after the facts: the call's and the intercom's briefings say how to judge them)
+// Said once after the facts. A forecast changes the outlook, not the agreed deadline.
 const JUDGED =
-  'An agreed deadline its finish passes is yours to move back first; the board hears of it when nothing does or it ' +
+  'A planned finish past an agreed deadline is a slip to judge: find why and what would bring the finish back. ' +
+  'The board hears of it when nothing does or it ' +
   "asks. A tight or shrinking margin is yours to plan with, and other deliverables' shifts are not news for the board " +
   'unless it asks.';
 function movesWords(moves: Move[]) {
@@ -70,7 +71,7 @@ export function lateLines(late: string[]) {
     `RED FLAG, not news for the board: ${late.join('; ')}. Before you say a time, judge whether this one makes sense, and check the likely causes:`,
     '- the size: compare clean past jobs (estimate); work sized wrong plays wrong;',
     '- the plan: what it waits on, and whether that should hold it at all (a fault in the scheduler is worth naming);',
-    '- other work ahead of it, slowing it, that could be paused or wait;',
+    '- other work ahead of it, slowing it: its window puts it first, and the scheduler makes room by itself (never pause that work for it);',
     "- the window: none set, or one later than the board's time (manage's window), then play it again.",
     'If one moves it forward, do that now, on the call, and check again. If none does, tell the board plainly what you ' +
       "looked at and that the time can't be made, and ask whether that's acceptable or whether to look further after the call. " +

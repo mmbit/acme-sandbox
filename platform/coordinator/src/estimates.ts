@@ -14,6 +14,7 @@ import {
   type Work,
 } from './matching.ts';
 import { median } from './arithmetic.ts';
+import { taskTimes } from './tasktime.ts';
 import { seatHeadroom } from './headroom.ts';
 import * as predictions from './predictions.ts';
 import * as forecast from './forecast.ts';
@@ -50,12 +51,13 @@ export function estimate(ask: Ask) {
   const { q, agent, path, limit } = asked;
   const inFolder = (j: PastJob) => !path || (JSON.parse(j.files) as string[]).some(f => f.startsWith(path));
   const past = pastJobs();
+  const measureTask = taskTimes();
   const quality = audit(past);
   const pool = cleanPastJobs(past).filter(inFolder);
   const like = q.match(/^#(\d+)$/)?.[1];
   if (!q) {
     const latest = pool.filter(j => !agent || j.agent === agent).sort((a, b) => b.id - a.id);
-    return { jobs: latest.slice(0, limit).map(j => shown(j, pool)), quality, seats: seatHeadroom() };
+    return { jobs: latest.slice(0, limit).map(j => shown(j, pool, measureTask)), quality, seats: seatHeadroom() };
   }
   const job = like ? jobOf(Number(like)) : undefined;
   if (like && !job) return 404;
@@ -72,8 +74,8 @@ export function estimate(ask: Ask) {
   const compared = saved ? past.filter(j => !j.customers && !j.about_keys && saved.refs.includes(j.id)) : sized.picks;
   return {
     quality,
-    ...(own ? { job: shown(own, pool) } : {}),
-    jobs: compared.slice(0, limit).map(j => shown(j, pool)),
+    ...(own ? { job: shown(own, pool, measureTask) } : {}),
+    jobs: compared.slice(0, limit).map(j => shown(j, pool, measureTask)),
     ...(job?.open
       ? {
           estimate: {
@@ -140,7 +142,7 @@ const shownSize = (s: ReturnType<typeof predictions.sizeHistory>[number]) => ({
 
 // A job whose seat spend per agent hour is under a third of its engine's usual took its hours mostly waiting on tools
 // that use no tokens (renders, long test suites): its hours and its spend are judged apart.
-function shown(j: PastJob, pool: PastJob[]) {
+function shown(j: PastJob, pool: PastJob[], measureTask: ReturnType<typeof taskTimes>) {
   const scope = db.prepare('select prompt, result, customers from jobs where id = ?').get(j.id) as {
     prompt: string;
     result: string | null;
@@ -161,6 +163,7 @@ function shown(j: PastJob, pool: PastJob[]) {
     origin: j.origin,
     finished: j.finished,
     agent_minutes: minutes(j.agent_ms),
+    whole: measureTask(j),
     wall_minutes: j.wall_ms === null ? null : minutes(j.wall_ms),
     runs: j.runs,
     rebuilt: j.rebuilt > 0,

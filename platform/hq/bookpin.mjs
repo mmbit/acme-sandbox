@@ -13,6 +13,7 @@ import { shutBook } from './bookchrome.mjs';
 import { fulfilPart } from '../../shared/review/parts.mjs';
 import { savedScrap } from './bookscrap.mjs';
 import { DESKTOP, pressAlong, ui } from './bookkit.mjs';
+import { frameInkStory } from './bookframeink.mjs';
 
 // c: book-check's { browser, hqIn, base, MINI, settled, shot, posts, pages, org, ring, noErrorsIn }, and look
 // ('&renderer=wire' for Wire)
@@ -36,10 +37,10 @@ export async function pinStory(c) {
     await summoned(c, page);
     const ceo = nameOf(c, c.org.company.ceo);
     await noted(c, page, { ring: [300, 300], owner: c.org.company.ceo, name: ceo, look: 'pin-ceo' });
-    // something an agent owns on HQ's page, as a thread's tile names it
+    // something an agent owns on HQ's page, as a deliverable's tile names it
     const agent = c.org.departments.flatMap(d => d.agents).find(a => a.id !== c.org.company.ceo);
     await page.evaluate(id => {
-      const tile = Object.assign(document.createElement('button'), { textContent: 'A thread of theirs' });
+      const tile = Object.assign(document.createElement('button'), { textContent: 'A deliverable of theirs' });
       tile.dataset.owner = id;
       tile.style.cssText = 'position:fixed;left:120px;top:440px;width:200px;height:90px;z-index:5';
       document.body.append(tile);
@@ -102,6 +103,9 @@ async function showing(page, shows, what) {
 // from a fresh load.
 // c: book-check's { browser, hqIn, base, settled, shot, noErrorsIn, reviewJs }
 export async function pinScreensStory(c) {
+  // (a call's first, each from its own load: a step failing below never hides them.)
+  await callPin(c);
+  await frameInkStory(c);
   await onScreen(c, DESKTOP_SCREEN, async page => {
     await c.settled(page, 'open');
     await showing(page, false, 'a desktop: HQ loads with the book open and no pin');
@@ -186,18 +190,20 @@ async function onScreen(c, { viewport, more }, story) {
 }
 // An artifact's page with review mode, as the coordinator serves a preview: its pin shows from the start
 const ARTIFACT = 'https://hello.preview.test';
+const routeArtifact = (c, context) =>
+  context.route(`${ARTIFACT}/**`, r => {
+    const path = new URL(r.request().url()).pathname;
+    if (fulfilPart(r, path, c.reviewJs)) return;
+    if (path.startsWith('/__review/')) return r.fulfill({ json: { show: false } });
+    return r.fulfill({
+      contentType: 'text/html',
+      body: '<!doctype html><title>Basket</title><h1>Your basket</h1><script src="/__review/review.js"></script>',
+    });
+  });
 async function artifactPin(c) {
   const context = await c.hqIn(c.browser, DESKTOP_SCREEN.viewport, DESKTOP_SCREEN.more);
   try {
-    await context.route(`${ARTIFACT}/**`, r => {
-      const path = new URL(r.request().url()).pathname;
-      if (fulfilPart(r, path, c.reviewJs)) return;
-      if (path.startsWith('/__review/')) return r.fulfill({ json: { show: false } });
-      return r.fulfill({
-        contentType: 'text/html',
-        body: '<!doctype html><title>Basket</title><h1>Your basket</h1><script src="/__review/review.js"></script>',
-      });
-    });
+    await routeArtifact(c, context);
     const page = await context.newPage();
     await page.goto(`${ARTIFACT}/basket`);
     await page.waitForSelector('review-mode .fab', { state: 'attached' });
@@ -206,6 +212,61 @@ async function artifactPin(c) {
     await context.close();
   }
 }
+
+// On a call no pin and no Note: HQ's pin and the book's control go, an artifact opened in the viewer during it shows no
+// pin and the bar no Note, as one already open hears of a call; hung up, all are back (the board, call 161.)
+async function callPin(c) {
+  const context = await c.hqIn(c.browser, DESKTOP_SCREEN.viewport, DESKTOP_SCREEN.more);
+  try {
+    await routeArtifact(c, context);
+    await context.route(`${c.base}/api/preview/link`, r =>
+      r.fulfill({ json: { url: r.request().postDataJSON().url } }),
+    );
+    const page = await context.newPage(),
+      errors = [];
+    page.on('pageerror', e => errors.push(e.message));
+    await page.goto(`${c.base}/?intro=0`);
+    await page.waitForSelector('#loading.gone');
+    await page.waitForSelector('review-mode .fab', { state: 'attached' });
+    await c.settled(page, 'open');
+    await page.click(PIN_CONTROL);
+    await showing(page, true, "before the call: the book's pin control summons it");
+    const call = on => calling(page, on),
+      note = () => page.locator('#viewer .bar .pin').isVisible();
+    await call(true);
+    await showing(page, false, 'on a call: no pin on HQ');
+    assert.equal(await page.locator(PIN_CONTROL).isVisible(), false, "...nor the book's pin control");
+    await page.evaluate(url => import('/shell/desk.js').then(m => m.openLink(url)), `${ARTIFACT}/basket`);
+    await page.waitForFunction(() => document.querySelector('#viewer iframe')?.src.includes('/basket'));
+    const frame = await (await page.$('#viewer iframe')).contentFrame();
+    await frame.waitForSelector('review-mode .fab', { state: 'attached' });
+    await page.waitForTimeout(1500); // (its hello answered, and the bar's ask after a load: desk.js ASK_MS)
+    await showing(frame, false, 'on a call: an artifact opened shows no pin');
+    assert.equal(await note(), false, '...and the bar no Note');
+    await c.shot('pin-call-artifact', page);
+    await call(false);
+    await showing(frame, true, 'hung up: the artifact has its pin');
+    await page.waitForSelector('#viewer .bar .pin:not([hidden])');
+    await call(true);
+    await showing(frame, false, 'a call with the artifact open: its pin goes');
+    assert.equal(await note(), false, '...and the Note');
+    await call(false);
+    await showing(frame, true, 'hung up again: its pin is back');
+    assert.equal(await note(), true, '...and the Note');
+    await page.click('#viewer [data-close]');
+    await showing(page, true, "the viewer closed: HQ's pin as the board left it");
+    assert.equal(await page.locator(PIN_CONTROL).isVisible(), true, "...and the book's pin control");
+    c.noErrorsIn(errors);
+  } finally {
+    await context.close();
+  }
+}
+// A call on or off, as calldraw.js tells the page
+const calling = (page, on) =>
+  page.evaluate(
+    ([on, call]) => document.dispatchEvent(new CustomEvent(on ? 'call:on' : 'call:off', { detail: on ? call : {} })),
+    [on, { call: 5, agent: 'juno', name: 'Juno', color: '#7b5ea7', walk: false }],
+  );
 
 // A ring with the pen, its post-it saved: the scrap that owner's, and the menu offering the Notebook it went to
 async function noted(c, page, { ring, owner, name, look }) {

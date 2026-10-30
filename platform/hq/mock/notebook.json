@@ -2403,8 +2403,7 @@
       "page": null,
       "status": "open",
       "answer": null,
-      "answered": null,
-      "desk": false
+      "answered": null
     }
   ],
   "names": { "moss": "Moss" }

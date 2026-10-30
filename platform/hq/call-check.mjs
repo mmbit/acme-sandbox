@@ -21,8 +21,11 @@
 // A new call clears the last one's status, hanging up adds no line, and the ON AIR sign lights while the board or the
 // agent speaks, never for the line's tick. A line that doesn't go through shows as an error until the board types again.
 // It rings from the tap, while the microphone starts, until the line picks up, and the agent's handset clacks then, both
-// in the call's own sound. The agent's little screen is dark while it rings, and switches on at pickup and off at either
-// side's hang-up. On a 320 px phone its three keys share one row, in every look.
+// in the call's own sound, which its speaker plays while the microphone starts, and the call screen says it's dialling
+// until the line picks up. The agent's little screen is dark while it rings, and switches on at pickup and off at either
+// side's hang-up. On a 320 px phone its three keys share one row inside the screen, in every look, and on a phone on its side, in a short
+// laptop window or on a short phone, upright or on its side, under the note that the screen isn't reaching the agent they
+// all show without scrolling.
 // With an artifact open mid-call on the iPad mini, the agent's face stays drawn on its little screen and in the bubble.
 //   node platform/hq/call-check.mjs <frames.json>          (BROWSER=webkit for Safari's engine)
 import assert from 'node:assert/strict';
@@ -316,11 +319,7 @@ async function callScreen() {
     };
   });
   let line = null;
-  await context.routeWebSocket(/\/voice\/ws$/, ws => ws.onMessage(m => {
-    if (typeof m !== 'string' || !JSON.parse(m).agent) return; // (the microphone)
-    line = ws;
-    ws.send(JSON.stringify({ type: 'call', id: 'line', call: 9 })); ws.send(JSON.stringify({ type: 'state', state: 'listening' }));
-  }));
+  await pickUp(context, ws => { line = ws; });
   // (a second of a 300 Hz tone, as 20 ms frames of 16 kHz PCM)
   const tone = seconds => Array.from({ length: seconds * 50 }, (_, f) => Buffer.from(Int16Array.from({ length: 320 }, (_, i) => Math.sin(2 * Math.PI * 300 * (f * 320 + i) / 16000) * 8000).buffer));
   const lit = () => page.evaluate(() => document.querySelector('.intercom header').classList.contains('on-air') && getComputedStyle(document.querySelector('.intercom .onair')).backgroundColor);
@@ -428,6 +427,26 @@ async function ringing() {
     AudioParam.prototype.setValueAtTime = function (v, ...a) { if (v === 425) window.sounds.push(['ring', performance.now(), onCall(this)]); return set.call(this, v, ...a); };
     AudioParam.prototype.setTargetAtTime = function (v, t, k) { if (v === 0 && k === 0.005) window.sounds.push(['cut', performance.now(), onCall(this)]); return fade.call(this, v, t, k); };
     AudioBufferSourceNode.prototype.start = function (...a) { if (this.buffer?.numberOfChannels === 2 && this.buffer.duration < 0.5) window.sounds.push(['kit', performance.now(), calls.has(this.context)]); return start.apply(this, a); };
+    // (what the board hears of it: when the call's <audio> element plays and pauses, and when sound reaches the stream it
+    // plays, read from a clone of the stream's track: Chromium only, WebKit has no MediaStreamTrackProcessor for audio.
+    window.speaker = []; window.loud = window.MediaStreamTrackProcessor ? [] : null;
+    const play = HTMLMediaElement.prototype.play;
+    HTMLMediaElement.prototype.play = function () {
+      if (this.srcObject && !this.followed) {
+        this.followed = true;
+        for (const ev of ['playing', 'pause']) this.addEventListener(ev, () => window.speaker.push([ev, performance.now()]));
+        if (window.loud) (async () => {
+          const chunks = new MediaStreamTrackProcessor({ track: this.srcObject.getAudioTracks()[0].clone() }).readable.getReader();
+          for (let r; !(r = await chunks.read()).done;) {
+            const pcm = new Float32Array(r.value.numberOfFrames);
+            r.value.copyTo(pcm, { planeIndex: 0, format: 'f32-planar' });
+            if (pcm.some(v => Math.abs(v) > 0.001)) window.loud.push(performance.now());
+            r.value.close();
+          }
+        })();
+      }
+      return play.call(this);
+    };
     // (the first call's microphone takes 3 s to start, as a Bluetooth car kit's can.)
     window.micWait = 3000;
     const microphone = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
@@ -452,6 +471,8 @@ async function ringing() {
   while (!(rang = (await after(tapped)).find(([what]) => what === 'ring'))) await page.waitForTimeout(50);
   await page.waitForTimeout(tapped + rang[1] + 5500 - (await now()));
   const picked = await now(), [micAsked, micOn] = (await page.evaluate(() => [window.micAsked, window.micOn])).map(t => t - tapped);
+  const ringingSays = await page.textContent('#call-state');
+  const [speaker, loud] = await page.evaluate(() => [window.speaker, window.loud]);
   line.send(JSON.stringify({ type: 'call', id: 'line', call: 11 })); line.send(JSON.stringify({ type: 'state', state: 'listening' }));
   await page.waitForTimeout(5500);
   const before = (await after(tapped)).filter(([, at]) => at < picked - tapped), since = await after(picked);
@@ -485,6 +506,12 @@ async function ringing() {
   // (a loaded machine's timers run late, 5.6 s for 5 at a load of 12: never early.)
   assert.ok(rings.length === 2 && rings[1] - rings[0] > 4700 && rings[1] - rings[0] < 7000, `it doesn't ring every 5 s: ${JSON.stringify(before)}`);
   assert.ok(Math.abs(rings[0] - micAsked) < 300 && rings[0] < micOn, `it doesn't ring as the microphone starts (asked ${Math.round(micAsked)} ms, on ${Math.round(micOn)}): ${JSON.stringify(before)}`);
+  // (and is heard then: the call's speaker plays, unpaused, until the microphone is on, and the ring's sound reaches
+  // its stream before.)
+  const heard = speaker.map(([ev, at]) => [ev, Math.round(at - tapped)]), firstPause = heard.find(([ev]) => ev === 'pause');
+  assert.ok(heard[0]?.[0] === 'playing' && heard[0][1] < micOn && (!firstPause || firstPause[1] >= micOn), `the call's speaker doesn't play while the microphone starts (on at ${Math.round(micOn)} ms): ${JSON.stringify(heard)}`);
+  if (loud) assert.ok(loud.some(at => at - tapped >= rings[0] && at - tapped < micOn), `the ring doesn't reach the call's speaker before the microphone is on (${Math.round(micOn)} ms)`);
+  assert.equal(ringingSays, 'Dialling…', 'the call screen doesn\'t say it\'s dialling until the line picks up');
   // (the cut and the clack both answer the pickup, which a loaded machine delivers late: the cut is timed from the clack.
   const cut = since.find(([what]) => what === 'cut'), clack = since.find(([what, , onCall]) => what === 'kit' && onCall);
   assert.ok(clack && clack[1] < 1500, `no clack in the call's sound as the line picks up: ${JSON.stringify(since)}`);
@@ -509,9 +536,13 @@ async function switchedOnAndOff() {
   const { context, page, errors } = await callPage();
   let line = null;
   await context.routeWebSocket(/\/voice\/ws$/, ws => ws.onMessage(m => { if (typeof m === 'string' && /"agent"/.test(m)) line = ws; }));
-  // (whether its picture shows, and whether the layer takes taps)
-  const face = () => page.evaluate(() => [+getComputedStyle(document.querySelector('.cf-picture')).opacity > 0, document.querySelector('#call-layer').inert]);
-  const shows = on => page.waitForFunction(on => +getComputedStyle(document.querySelector('.cf-picture')).opacity > 0 === on, on);
+  // (read in the page: whether its picture shows, and [that, whether the layer is inert, taking no taps].)
+  await page.addInitScript(() => {
+    window.pictureShows = () => +getComputedStyle(document.querySelector('.cf-picture')).opacity > 0;
+    window.faceSeen = () => [window.pictureShows(), document.querySelector('#call-layer').inert];
+  });
+  const face = () => page.evaluate(() => window.faceSeen());
+  const shows = on => page.waitForFunction(on => window.pictureShows() === on, on);
   const tone = Array.from({ length: 40 }, () => Buffer.alloc(640));
   const seen = {};
   await page.goto(`${base}/?intro=0&open=intercom`);
@@ -544,11 +575,10 @@ async function switchedOnAndOff() {
   // (the board hangs up: read in the page as it does and as the switch-off ends, before the layer's own listener takes
   // it away, as Playwright's own steps can take longer than the switch-off under load)
   await page.evaluate(() => {
-    const layer = document.querySelector('#call-layer'),
-      seen = () => [+getComputedStyle(layer.querySelector('.cf-picture')).opacity > 0, layer.inert];
-    layer.addEventListener('animationend', () => (window.ended = seen()), { capture: true });
+    const layer = document.querySelector('#call-layer');
+    layer.addEventListener('animationend', () => (window.ended = window.faceSeen()), { capture: true });
     document.querySelector('#call-end').click();
-    window.hungUp = seen();
+    window.hungUp = window.faceSeen();
   });
   await page.waitForSelector('#call-layer', { state: 'detached' });
   [seen.hungUp, seen.ended] = await page.evaluate(() => [window.hungUp, window.ended]);
@@ -682,32 +712,70 @@ async function shareScreen() {
 }
 await shareScreen();
 
-// On a 320 px phone the call's three keys share one row in every look: the picture, Share and Hang up as its symbol, still
-// named Hang up; the transcript keeps its whole height.
+// On a 320 px phone the call's three keys share one row in every look, inside the screen: the picture, Share and Hang up
+// as its symbol, still named Hang up, each key's words on one line.
 async function keysOnOneRow() {
   for (const look of lookNames()) {
     const { context, page, errors } = await callPage({ width: 320, height: 640 });
-    await context.routeWebSocket(/\/voice\/ws$/, ws => ws.onMessage(m => {
-      if (typeof m !== 'string' || !JSON.parse(m).agent) return; // (the microphone)
-      ws.send(JSON.stringify({ type: 'call', id: 'line', call: 9 })); ws.send(JSON.stringify({ type: 'state', state: 'listening' }));
-    }));
+    await pickUp(context);
     await page.goto(`${base}/?intro=0&renderer=${look}&open=intercom`);
     await page.click('#call');
     await page.waitForFunction(() => !document.querySelector('#call-screenshare').disabled);
     await page.evaluate(() => document.fonts.ready);
-    const seen = await page.evaluate(() => ({
-      keys: [...document.querySelectorAll('#call-screen .row > button')].map(b => [b.getAttribute('aria-label') ?? b.innerText.trim(), b.getBoundingClientRect().top, b.offsetHeight]),
-      lines: document.querySelector('#call-lines').offsetHeight,
+    // (each key: its name, its top, whether it's inside the screen, its symbol shows, and how many lines each of its shown
+    // words takes)
+    const keys = await page.evaluate(() => [...document.querySelectorAll('#call-screen .row > button')].map(b => {
+      const r = b.getBoundingClientRect();
+      const lines = [...b.querySelectorAll('span')].filter(s => s.getClientRects().length).map(s => {
+        const words = document.createRange();
+        words.selectNodeContents(s);
+        return new Set([...words.getClientRects()].map(l => Math.round(l.top))).size;
+      });
+      const symbol = !!b.querySelector('svg')?.getClientRects().length;
+      return { name: b.getAttribute('aria-label') ?? b.innerText.trim(), top: r.top, inside: r.left >= 0 && r.right <= innerWidth, symbol, lines };
     }));
     await context.close();
     assert.deepEqual(errors, []);
-    assert.deepEqual(seen.keys.map(k => k[0]), ['Show a picture', 'Share', 'Hang up'], `${look}: ${JSON.stringify(seen)}`);
-    assert.ok(seen.keys.every(k => Math.abs(k[1] - seen.keys[0][1]) < 4 && k[2] < 60), `${look}: the call's keys don't share one row: ${JSON.stringify(seen)}`);
-    assert.ok(seen.lines >= 160, `${look}: the transcript gave up height: ${JSON.stringify(seen)}`);
+    assert.deepEqual(keys.map(k => k.name), ['Show a picture', 'Share', 'Hang up'], `${look}: ${JSON.stringify(keys)}`);
+    assert.ok(keys.every(k => Math.abs(k.top - keys[0].top) < 4 && k.inside), `${look}: the call's keys don't share one row: ${JSON.stringify(keys)}`);
+    assert.ok(keys.every(k => k.symbol), `${look}: a key's symbol is hidden: ${JSON.stringify(keys)}`);
+    assert.deepEqual(keys.map(k => k.lines), [[], [1], []], `${look}: a key's words wrap, or Hang up shows more than its symbol: ${JSON.stringify(keys)}`);
   }
   console.log('ok: on a 320 px phone the call\'s keys share one row in every look, Hang up as its symbol');
 }
 await keysOnOneRow();
+
+// On a phone on its side, in a short laptop window and on a short phone, upright or on its side, with the note that the
+// screen isn't reaching the agent above the transcript, the call's keys show without scrolling, in every look and in both
+// boxes: the little screen, the notes and the transcript give up height instead.
+async function keysInView() {
+  for (const [width, height, shared] of [[844, 390], [1280, 561], [375, 667, true], [844, 390, true], [667, 375, true]]) for (const size of ['small', 'large']) for (const look of lookNames()) {
+    const { context, page, errors } = await callPage({ width, height });
+    await context.addInitScript(size => localStorage.setItem('hq.intercomSize', JSON.stringify(size)), size);
+    if (shared) await reachesNobody(context);
+    await pickUp(context);
+    await page.goto(`${base}/?intro=0&renderer=${look}&open=intercom`);
+    await page.click('#call');
+    await page.waitForFunction(() => !document.querySelector('#call-screenshare').disabled);
+    if (shared) {
+      await page.click('#call-screenshare');
+      await page.waitForSelector('#call-unshown', { state: 'visible' });
+    }
+    await page.evaluate(() => document.fonts.ready);
+    const seen = await page.evaluate(() => {
+      const screen = document.querySelector('#call-layer .screen');
+      return {
+        screen: Math.round(screen.getBoundingClientRect().bottom), scrolls: screen.scrollHeight > screen.clientHeight,
+        keys: [...document.querySelectorAll('#call-screen .row > button')].map(b => Math.round(b.getBoundingClientRect().bottom)),
+      };
+    });
+    await context.close();
+    assert.deepEqual(errors, []);
+    assert.ok(!seen.scrolls && seen.keys.every(bottom => bottom <= seen.screen), `${look}, ${size} box at ${width}x${height}: a key is out of view: ${JSON.stringify(seen)}`);
+  }
+  console.log('ok: on a phone on its side, in a short laptop window and on a short phone under the share\'s note, upright or on its side, every call key shows without scrolling');
+}
+await keysInView();
 
 // Show on the agent's ask to see, with the call small: a start that fails keeps
 // the card, saying so, and the line hears nothing; Show again starts it, and only then does the line hear Show.
@@ -716,14 +784,7 @@ async function askFailed() {
   let starts = 0, line = null;
   const asked = [];
   await context.route(`${base}/api/watchalong/start`, r => ++starts === 1 ? r.fulfill({ status: 503, json: { error: 'down' } }) : r.fulfill({ json: { id: 1, events: null } }));
-  await context.routeWebSocket(/\/voice\/ws$/, ws => ws.onMessage(m => {
-    if (typeof m !== 'string') return;
-    const e = JSON.parse(m);
-    if (e.type === 'asked') asked.push(e.answer);
-    if (!e.agent) return;
-    line = ws;
-    ws.send(JSON.stringify({ type: 'call', id: 'line', call: 9 })); ws.send(JSON.stringify({ type: 'state', state: 'listening' }));
-  }));
+  await pickUp(context, ws => { line = ws; }, e => { if (e.type === 'asked') asked.push(e.answer); });
   const card = page.locator('#call-cards [data-card="ask"]');
   const eye = () => page.evaluate(() => { const e = document.querySelector('.callbubble .cb-eye'); return !!e && !e.hidden; });
   await page.goto(`${base}/?intro=0&open=intercom`);
@@ -758,11 +819,7 @@ async function transcriptAndBubble() {
     const { context, page, errors } = await callPage(viewport);
     await context.route(`${base}/api/watchalong/start`, r => r.fulfill({ json: { id: 1, events: null } }));
     let line = null;
-    await context.routeWebSocket(/\/voice\/ws$/, ws => ws.onMessage(m => {
-      if (typeof m !== 'string' || !JSON.parse(m).agent) return; // (the microphone)
-      line = ws;
-      ws.send(JSON.stringify({ type: 'call', id: 'line', call: 9 })); ws.send(JSON.stringify({ type: 'state', state: 'listening' }));
-    }));
+    await pickUp(context, ws => { line = ws; });
     await page.goto(`${base}/?intro=0&open=intercom`);
     await page.click('#call');
     while (!line) await page.waitForTimeout(50);
@@ -778,7 +835,7 @@ async function transcriptAndBubble() {
   });
   // the figure in the call's little screen: shown clear of the transcript, and where it's drawn in it over 0.4 s
   const figure = page => page.evaluate(async () => {
-    const fig = document.querySelector('#call-screen canvas'), box = document.querySelector('#call-lines');
+    const fig = document.querySelector('#call-face .cf-figure > :is(img, .cb-initial)'), box = document.querySelector('#call-lines'); // (the agent's picture, or the initial of one who has left.)
     const at = [];
     // (once its screen has switched on, which a loaded machine plays slowly: its bob goes on.)
     await Promise.all(document.querySelector('#call-face').getAnimations({ subtree: true }).filter(a => a.effect.getTiming().iterations !== Infinity).map(a => a.finished));
@@ -789,8 +846,11 @@ async function transcriptAndBubble() {
   });
   // the bubble as the board sees it: where it is, the figure in it or not, whether the figure moves over 0.4 s, its keys
   const bubble = page => page.evaluate(async () => {
-    const b = document.querySelector('.callbubble'), r = b.getBoundingClientRect(), shown = el => !!el && el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden';
-    const fig = b.querySelector('canvas, .cb-initial'), at = [];
+    const b = document.querySelector('.callbubble');
+    // (measured once it has grown in from the call's screen, which a loaded machine plays slowly.)
+    await Promise.all(b.getAnimations().map(a => a.finished));
+    const r = b.getBoundingClientRect(), shown = el => !!el && el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden';
+    const fig = b.querySelector('.cb-face > :is(img, .cb-initial)'), at = [];
     for (let i = 0; i < 10; i++) { at.push((fig.getBoundingClientRect().top - b.getBoundingClientRect().top).toFixed(1)); await new Promise(done => setTimeout(done, 40)); }
     return { w: r.width, h: r.height, x: r.left, y: r.top, topLeft: r.left + r.width / 2 < innerWidth / 2 && r.top + r.height / 2 < innerHeight / 2, figure: shown(fig),
       moves: new Set(at).size > 1,
@@ -904,11 +964,7 @@ async function departed() {
     const card = { id: 11, created: new Date().toISOString(), agent: 'zeno', kind: 'notice', title: 'Handing over', body: 'My last notes.', urgency: 'whenever' };
     await context.route(`${base}/api/requests`, r => r.fulfill({ json: [card] }));
     let line = null;
-    await context.routeWebSocket(/\/voice\/ws$/, ws => ws.onMessage(m => {
-      if (typeof m !== 'string' || !JSON.parse(m).agent) return; // (the microphone)
-      line = ws;
-      ws.send(JSON.stringify({ type: 'call', id: 'line', call: 9 })); ws.send(JSON.stringify({ type: 'state', state: 'listening' }));
-    }));
+    await pickUp(context, ws => { line = ws; });
     await page.goto(`${base}/?intro=0&open=phone&renderer=${renderer}`);
     await page.click('#call-about');
     for (let i = 0; !line && i < 100; i++) await page.waitForTimeout(50); // (a throw before it dials: no line)
@@ -932,13 +988,7 @@ async function unseenScreen() {
   const { context, page, errors } = await callPage();
   let line = null, agent = null, seen = false, posts = 0, hold = null, held = 0, quiet = false, asked = 0;
   const holding = () => { let release; const promise = new Promise(resolve => (release = resolve)); return { promise, release }; };
-  const RECORDER = new URL('../coordinator/node_modules/@rrweb/record/dist/record.js', import.meta.url);
-  await context.route(`${base}/shared/watchalong/**`, r => {
-    const name = new URL(r.request().url()).pathname.split('/').pop();
-    const file = name === 'rrweb-record.js' ? RECORDER : new URL(`../../shared/watchalong/${name}`, import.meta.url);
-    r.fulfill({ contentType: 'text/javascript', body: readFileSync(file) });
-  });
-  await context.route(`${base}/api/watchalong/start`, r => r.fulfill({ json: { id: 1, events: '/api/watchalong/events?id=1&key=k' } }));
+  await watchalong(context);
   await context.route(`${base}/api/watchalong/events?**`, async r => {
     posts++;
     if (hold) {
@@ -950,15 +1000,9 @@ async function unseenScreen() {
     if (quiet && empty) asked++;
     await r.fulfill({ json: quiet ? { ok: true, ...(empty && { seen: false }) } : { ok: true, seen } });
   });
-  await context.routeWebSocket(/\/voice\/ws$/, ws => ws.onMessage(m => {
-    // (answering pings as the line does: else the call's window counts up how late the line hears, a change each second
-    // in its recording, and the page is never quiet.)
-    if (typeof m === 'string' && JSON.parse(m).type === 'ping') return ws.send(JSON.stringify({ type: 'pong', late: 0 }));
-    if (typeof m !== 'string' || !JSON.parse(m).agent) return;
-    line = ws;
-    agent = JSON.parse(m).agent;
-    ws.send(JSON.stringify({ type: 'call', id: 'line', call: 9 })); ws.send(JSON.stringify({ type: 'state', state: 'listening' }));
-  }));
+  // (answering pings as the line does: else the call's window counts up how late the line hears, a change each second in
+  // its recording, and the page is never quiet.)
+  await pickUp(context, (ws, e) => { line = ws; agent = e.agent; }, (e, ws) => { if (e.type === 'ping') ws.send(JSON.stringify({ type: 'pong', late: 0 })); });
   const state = () => page.evaluate(() => {
     const eye = document.querySelector('.callbubble .cb-eye'), note = document.querySelector('#call-unshown');
     const clear = document.querySelector('#call-lines').getBoundingClientRect().top >= note.getBoundingClientRect().bottom;
@@ -1101,18 +1145,44 @@ async function phoneContext() {
     window.hide = on => { hidden = on; if (on) window.locks.forEach(l => l.release()); document.dispatchEvent(new Event('visibilitychange')); };
   });
   let line = null, bye = null;
-  await context.routeWebSocket(/\/voice\/ws$/, ws => ws.onMessage(m => {
-    if (typeof m !== 'string') return; // (the microphone)
-    const ev = JSON.parse(m);
-    if (ev.type === 'bye') bye = ev;
-    if (!ev.agent) return;
-    line = ws;
-    ws.send(JSON.stringify({ type: 'call', id: 'line', call: 9 })); ws.send(JSON.stringify({ type: 'state', state: 'listening' }));
-  }));
+  await pickUp(context, ws => { line = ws; }, e => { if (e.type === 'bye') bye = e; });
   return { context, page, errors, connected: () => line !== null, bye: () => bye };
 }
+// The voice line picking up each call the page dials, as call 9 and listening: `picked` gets its socket and the page's
+// hello, `heard` everything else the page says.
+async function pickUp(context, picked = () => {}, heard = () => {}) {
+  await context.routeWebSocket(/\/voice\/ws$/, ws => ws.onMessage(m => {
+    if (typeof m !== 'string') return; // (the microphone)
+    const e = JSON.parse(m);
+    if (!e.agent) return heard(e, ws);
+    picked(ws, e);
+    ws.send(JSON.stringify({ type: 'call', id: 'line', call: 9 })); ws.send(JSON.stringify({ type: 'state', state: 'listening' }));
+  }));
+}
+
+// The screen share's own scripts, from the repo, and a start that opens the agent's view. (out of unseenScreen)
+async function watchalong(context) {
+  const RECORDER = new URL('../coordinator/node_modules/@rrweb/record/dist/record.js', import.meta.url);
+  await context.route(`${base}/shared/watchalong/**`, r => {
+    const name = new URL(r.request().url()).pathname.split('/').pop();
+    const file = name === 'rrweb-record.js' ? RECORDER : new URL(`../../shared/watchalong/${name}`, import.meta.url);
+    r.fulfill({ contentType: 'text/javascript', body: readFileSync(file) });
+  });
+  await context.route(`${base}/api/watchalong/start`, r => r.fulfill({ json: { id: 1, events: '/api/watchalong/events?id=1&key=k' } }));
+}
+
+// A share whose every batch the server answers as unseen: the call screen says the screen isn't reaching the agent.
+async function reachesNobody(context) {
+  await watchalong(context);
+  await context.route(`${base}/api/watchalong/events?**`, r => r.fulfill({ json: { ok: true, seen: false } }));
+}
+
 async function callPage(viewport = { width: 420, height: 912 }) {
   const opened = await openPage(browser, { viewport, permissions: ['microphone'] });
+  // (in the plain look, unless a step's address names one: dev mode's Holodeck, drawn in software here, holds the page
+  // 0.3-0.5 s a frame, so the line's frames are scheduled late, the stream's reader drops chunks and the sign lights a
+  // frame late, which a phone drawing it on its GPU never does.)
+  await opened.context.addInitScript(() => localStorage.setItem('hq.renderer', '"wire"'));
   await opened.context.route(`${base}/api/**`, async r => {
     const path = new URL(r.request().url()).pathname;
     if (path === '/api/org') return r.fulfill({ response: await r.fetch({ url: `${base}/mock/org.json` }) });
@@ -1120,6 +1190,11 @@ async function callPage(viewport = { width: 420, height: 912 }) {
     if (path === '/api/language') return r.fulfill({ json: { lang: 'en' } }); // (a call reads it before it dials)
     // (the call's notes page, asked for at pickup: refused, its card covers the call's keys.)
     if (path === '/api/notebooks/call') return r.fulfill({ json: { page: { id: 1 } } });
+    // (the book's shelf, one notebook with one empty page, as notebookdata.js reads them: a screen wide enough to show the
+    // book open reads its newest note at once.)
+    const at = '2026-10-29T09:00:00.000Z', blank = { id: 1, notebook: 1, kind: 'free', title: '', zooms: {}, archived: false, sending: false, sent: null, created: at, updated: at, x: 0, y: 0, w: 1200, h: 1600, groups: 0 };
+    const book = { '/api/notebooks': { shelf: [{ id: 1, kind: 'mine', name: 'My Notebook' }], archive: [] }, '/api/notebooks/pages': { notebook: { id: 1 }, pages: [blank], archived: [] }, '/api/notebooks/pages/groups': { page: 1, notebook: 1, groups: [] } }[path];
+    if (book) return r.fulfill({ json: book });
     return r.fulfill({ status: 404, body: '' });
   });
   return opened;
@@ -1147,15 +1222,10 @@ await screenOff();
 async function lagging() {
   const { context: ctx, page, errors } = await callPage();
   let line = null, late = 0, answering = false, pings = 0, bye = null;
-  await ctx.routeWebSocket(/\/voice\/ws$/, ws => ws.onMessage(m => {
-    if (typeof m !== 'string') return; // (the microphone)
-    const e = JSON.parse(m);
+  await pickUp(ctx, ws => { line = ws; }, (e, ws) => {
     if (e.type === 'bye') bye = e;
     if (e.type === 'ping' && answering) { pings++; ws.send(JSON.stringify({ type: 'pong', late })); }
-    if (!e.agent) return;
-    line = ws;
-    ws.send(JSON.stringify({ type: 'call', id: 'line', call: 9 })); ws.send(JSON.stringify({ type: 'state', state: 'listening' }));
-  }));
+  });
   const seen = {};
   const note = () => page.evaluate(() => { const n = document.querySelector('#call-net'); return !n || n.hidden ? '' : n.textContent; });   // (none once the call's layer is gone)
   await page.goto(`${base}/?intro=0&open=intercom`);
@@ -1181,6 +1251,7 @@ async function lagging() {
   seen.stopped = await note();
   await page.click('#call-end');
   while (!bye) await page.waitForTimeout(50);
+  await page.waitForSelector('#call-layer', { state: 'detached' }); // (once its little screen has switched off.)
   seen.hungUp = await note();
   await ctx.close();
   assert.deepEqual(errors, []);
@@ -1191,8 +1262,12 @@ async function lagging() {
   assert.deepEqual([seen.after, seen.replying, seen.unanswered], ['', '', ''], `the sign stayed, came while the reply's audio came, or before 4 s without an answer: ${JSON.stringify(seen)}`);
   assert.match(seen.stopped, /^Weak connection: \S+ hears you about [4-6] s late\.$/, JSON.stringify(seen));
   assert.equal(seen.hungUp, '');
-  const spells = bye.timeline.filter(e => ['lagging', 'caught up'].includes(e[1])).map(e => e.slice(1));
-  assert.deepEqual(spells.map(([kind, ...at]) => [kind, ...at.map(Math.round)]), [['lagging'], ['caught up', 5], ['lagging'], ['caught up', 12], ['lagging']], JSON.stringify(bye.timeline));
+  // (each spell's worst in whole seconds, on its 'caught up'.)
+  const spells = bye.timeline.filter(e => ['lagging', 'caught up'].includes(e[1])).map(([, kind, ...at]) => [kind, ...at.map(Math.round)]);
+  assert.deepEqual(spells.map(([kind]) => kind), ['lagging', 'caught up', 'lagging', 'caught up', 'lagging'], JSON.stringify(bye.timeline));
+  // (the first spell's worst is the 5 s without an answer, give or take a ping)
+  assert.ok(spells[1][1] >= 4 && spells[1][1] <= 6, JSON.stringify(bye.timeline));
+  assert.equal(spells[3][1], 12, JSON.stringify(bye.timeline));
   console.log('ok: a line that hears the board late shows as a weak connection, until 3 s after it caught up:', JSON.stringify(seen));
 }
 await lagging();
@@ -1347,9 +1422,14 @@ else {
   assert.deepEqual([...sizes].sort(), [1280, 640], `frame sizes ${[...sizes]}`);
   const plane = (m, from) => Array.from(new Int16Array(m.buffer, m.byteOffset + from, 320));
   const heard = mic.flatMap(m => m.length === 1280 ? plane(m, 640) : new Array(320).fill(0));
-  const sent = frames.flatMap(([, pcm]) => { const b = Buffer.from(pcm, 'base64'); return Array.from(new Int16Array(b.buffer, b.byteOffset, b.length / 2)); });
+  const pcms = frames.map(([, pcm]) => { const b = Buffer.from(pcm, 'base64'); return new Int16Array(b.buffer, b.byteOffset, b.length / 2); });
+  const sent = pcms.flatMap(p => Array.from(p));
   // (the best lag of the reply in what came beside the microphone, and how alike they are there: 1 is the same)
-  const energy = x => x.reduce((a, v) => a + v * v, 0), n = Math.min(sent.length, 16000 * 4);
+  // (over the reply's first sentence, 4 s at most: it plays without a gap, while a tool step after it plays as a gap
+  // the frames sent don't have.)
+  let firstSentenceSamples = 0;
+  for (let i = 0; i < frames.length && frames[i][2] === frames[0][2]; i++) firstSentenceSamples += pcms[i].length;
+  const energy = x => x.reduce((a, v) => a + v * v, 0), n = Math.min(firstSentenceSamples, 16000 * 4);
   // (roughly where first: the reply's first 0.1 s of sound, wherever in the whole plane it's most alike)
   const opens = sent.findIndex(v => v !== 0), opening = sent.slice(opens, opens + 1600), own = energy(opening);
   let first = 0, near = 0, there = energy(heard.slice(0, opening.length));

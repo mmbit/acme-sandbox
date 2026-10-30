@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // The feature tips in every look HQ ships (looks.mjs), at a tablet's size with a stand-in /api: a tip card sits
-// after the card that needs an answer, adds nothing to the Phone key, and has Show me and Got it. Show me closes the
+// after the card that needs an answer, adds nothing to the Phone key, and has Show me and Got it, in view and with nothing
+// over them on a tablet and on two short phones (where the film must give up height for them). Show me closes the
 // phone, dims HQ around each real control in turn and files the tip once the last is pressed. A tip about the phone
 // itself keeps the phone open on the card it's about. In the first look, every tip's Show me finds each of its real
 // controls, HQ's pin in review mode's layer too, and the logo's press asks for the look's tip. With a folder, it saves a
@@ -18,14 +19,19 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { lookNames } from './looks.mjs';
 import { filmFiles } from './films/listing.mjs';
-import { TIPS, tipOf } from './shell/tips.js';
+import { TIPS, tipOf, filmName } from './shell/tips.js';
 
 const { chromium } = playwright();
 const server = await serve(),
   base = `http://localhost:${server.address().port}`;
 const LOOKS = lookNames();
+// the sample company's names for its desk phone and intercom, the foundation's
+const NAMES = { phone: 'desk phone', intercom: 'intercom' };
 const TABLET = { width: 1180, height: 820 },
-  PHONE = { width: 390, height: 844 };
+  PHONES = [
+    { width: 375, height: 667 },
+    { width: 360, height: 640 },
+  ]; // (short phones: the film must give up height for the keys)
 const minutesAgo = m => new Date(Date.now() - m * 60_000).toISOString();
 const decision = {
   id: 3,
@@ -59,14 +65,17 @@ const writing = {
   host: 'lanterns.preview.example.com',
   people: ['Ada', 'Bo', 'Cas'].map(name => ({ name, address: `${name[0].toLowerCase()}…@example.com` })),
 };
+// the board's notebook, where review mode's newest note is looked for (booknewest.js): one blank page.
+const notebook = { id: 1, kind: 'mine', name: 'My Notebook' },
+  blankPage = { id: 1, notebook: notebook.id };
 const tipCard = (id, key, details = {}) => ({
   id,
   created: minutesAgo(0),
   agent: null,
   kind: 'tip',
   tip: key,
-  title: tipOf(key).title,
-  body: tipOf(key).lines(details),
+  title: tipOf(key, NAMES).title,
+  body: tipOf(key, NAMES).lines(details),
   details,
   urgency: 'tip',
   topic: 'Tips',
@@ -74,8 +83,8 @@ const tipCard = (id, key, details = {}) => ({
 
 // every tip film the company has, in every look: its length, and its size against a phone's data
 const films = filmFiles(join(ROOT, 'theme/hq')),
-  filmOf = (tip, look) => join(ROOT, 'theme/hq/films', `${tip.key}-${look}.mp4`);
-for (const tip of TIPS.filter(t => LOOKS.some(look => films.includes(`${t.key}-${look}.mp4`))))
+  filmPath = (tip, look) => join(ROOT, 'theme/hq/films', filmName(tip.key, look));
+for (const tip of TIPS.filter(t => LOOKS.some(look => films.includes(filmName(t.key, look)))))
   for (const look of LOOKS) {
     const [seconds, bytes] = execFileSync('ffprobe', [
       '-v',
@@ -84,7 +93,7 @@ for (const tip of TIPS.filter(t => LOOKS.some(look => films.includes(`${t.key}-$
       'format=duration,size',
       '-of',
       'csv=p=0',
-      filmOf(tip, look),
+      filmPath(tip, look),
     ])
       .toString()
       .trim()
@@ -95,13 +104,13 @@ for (const tip of TIPS.filter(t => LOOKS.some(look => films.includes(`${t.key}-$
   }
 const webm = await mkdtemp(join(tmpdir(), 'tips-films-'));
 const playable = (tip, look) => {
-  const out = join(webm, `${tip.key}-${look}.webm`);
+  const out = join(webm, `${filmName(tip.key, look)}.webm`);
   execFileSync('ffmpeg', [
     '-v',
     'error',
     '-y',
     '-i',
-    filmOf(tip, look),
+    filmPath(tip, look),
     '-c:v',
     'libvpx-vp9',
     '-deadline',
@@ -136,7 +145,12 @@ async function checkLook(look) {
     deviceScaleFactor: 1.5,
     hasTouch: true,
   });
-  await context.addInitScript(() => localStorage.setItem('hq.sound', 'false'));
+  // HQ's pin kept in its corner, as the board can drag it there (shared/review dock.js): it never steps up clear of a
+  // card's keys, so only the desk phone's own room keeps them out from under it.
+  await context.addInitScript(() => {
+    localStorage.setItem('hq.sound', 'false');
+    localStorage.setItem('__hq_review_pin', JSON.stringify({ left: false, up: 0 }));
+  });
   await context.route(`${base}/api/**`, async r => {
     const path = new URL(r.request().url()).pathname;
     if (path === '/api/org') return r.fulfill({ json: await (await r.fetch({ url: `${base}/mock/org.json` })).json() });
@@ -154,6 +168,9 @@ async function checkLook(look) {
     if (path === '/api/review/recent') return r.fulfill({ json: [] });
     if (path === '/api/book/sheets') return r.fulfill({ json: { sent: [] } }); // (Reviews › Sent, empty)
     if (path === '/api/review/notes') return r.fulfill({ json: [] });
+    if (path === '/api/notebooks') return r.fulfill({ json: { shelf: [notebook] } });
+    if (path === '/api/notebooks/pages') return r.fulfill({ json: { notebook: notebook.id, pages: [blankPage] } });
+    if (path === '/api/notebooks/pages/groups') return r.fulfill({ json: { groups: [] } });
     if (path === '/api/book') return r.fulfill({ json: { day: null, today: null, days: [], pages: [] } }); // (the board's book, empty)
     const mocked = await r.fetch({ url: `${base}/mock${path.slice(4)}.json` });
     if (mocked.ok()) return r.fulfill({ response: mocked });
@@ -171,12 +188,12 @@ async function checkLook(look) {
     return r.fulfill({ json: name === 'coach' ? { show: false } : [] });
   });
   // (the machines tip's film, as Chromium can play it, and only for this look)
-  const film = await playable(tipOf('machines'), look);
-  await context.route(`${base}/films/*.mp4`, r =>
-    r.request().url().endsWith(`/films/machines-${look}.mp4`)
-      ? r.fulfill({ contentType: 'video/webm', body: film })
-      : r.fulfill({ status: 404, body: '' }),
-  );
+  const film = await playable(tipOf('machines', NAMES), look),
+    machinesFilm = `/films/${filmName('machines', look)}`;
+  await context.route(`${base}/films/*.mp4`, r => {
+    const ours = r.request().url().endsWith(machinesFilm);
+    return r.fulfill(ours ? { contentType: 'video/webm', body: film } : { status: 404, body: '' });
+  });
   await context.route('https://*.preview.example.com/**', r =>
     r.fulfill({ contentType: 'text/html', body: '<p>A preview</p>' }),
   );
@@ -212,15 +229,23 @@ async function checkLook(look) {
   await page.waitForTimeout(500); // (the card's bounce settled)
   await shot('1-tip');
   await keysInView(page, look, 'a tablet');
-  await page.setViewportSize(PHONE);
-  await page.waitForTimeout(300); // (laid out again)
-  await shot('1-tip-phone');
-  await keysInView(page, look, 'a phone');
+  // on short phones, as the desk phone opens
+  for (const phone of PHONES) {
+    const size = `${phone.width}x${phone.height}`;
+    await page.keyboard.press('Escape');
+    await page.setViewportSize(phone);
+    await page.waitForTimeout(1000); // (laid out again, and the pin settled)
+    await page.evaluate(() => import('/shell/desk.js').then(m => m.openPhone(4)));
+    await page.waitForSelector('#phone-screen .req.tip .film video');
+    await page.waitForTimeout(500); // (the card's bounce settled)
+    await shot(`1-tip-phone-${size}`);
+    await keysInView(page, look, `a ${size} phone`);
+  }
   await page.setViewportSize(TABLET);
 
   // Show me: the phone closes, and each step points at its control until it's pressed
   await page.click('[data-show-me]');
-  for (const [i, at] of tipOf('machines')
+  for (const [i, at] of tipOf('machines', NAMES)
     .steps.map(s => s.at)
     .entries()) {
     await page.waitForSelector('.showme-step:not([hidden])');
@@ -269,14 +294,44 @@ async function checkLook(look) {
   await context.close();
 }
 
-// Show me and Got it on the desk phone's screen as it opens, under the film, without scrolling
+// Show me and Got it on the desk phone's screen as it opens, under the film, without scrolling, and nothing over them
+// (HQ's pin sits in a phone's bottom right corner): what's 3 px inside a key, at its middle, its two ends, its top
+// edge, along its bottom edge and on each rounded corner, is the key.
 async function keysInView(page, look, device) {
-  const below = await page.$eval('#phone-screen', screen => {
-    const keys = [...screen.querySelectorAll('.req.tip .btns button')].map(b => b.getBoundingClientRect().bottom);
-    return Math.max(...keys) - screen.getBoundingClientRect().bottom;
+  const { below, covered } = await page.$eval('#phone-screen', screen => {
+    const keys = [...screen.querySelectorAll('.req.tip .btns button')];
+    // what's over a key at each spot, by name
+    const whatCovers = key => {
+      const box = key.getBoundingClientRect(),
+        radius = parseFloat(getComputedStyle(key).borderBottomRightRadius) || 0, // (a pill's is 999px)
+        corner = Math.max(3, Math.min(radius, box.height / 2)),
+        slant = (corner - 3) / Math.SQRT2, // (halfway round a corner's arc)
+        midX = (box.left + box.right) / 2,
+        midY = (box.top + box.bottom) / 2;
+      const spots = [
+        [midX, midY],
+        [box.left + 3, midY],
+        [box.right - 3, midY],
+        [midX, box.top + 3],
+        [box.left + corner - slant, box.top + corner - slant],
+        [box.right - corner + slant, box.top + corner - slant],
+        [box.left + corner - slant, box.bottom - corner + slant],
+        [box.right - corner + slant, box.bottom - corner + slant],
+      ];
+      for (let along = box.left + corner; along < box.right - corner; along += 8) spots.push([along, box.bottom - 3]);
+      spots.push([box.right - corner, box.bottom - 3]);
+      return spots
+        .map(([x, y]) => document.elementFromPoint(x, y))
+        .filter(e => !key.contains(e))
+        .map(e => `${key.textContent} under ${e?.id || e?.className || e?.tagName || 'nothing'}`);
+    };
+    return {
+      below: Math.max(...keys.map(k => k.getBoundingClientRect().bottom)) - screen.getBoundingClientRect().bottom,
+      covered: keys.flatMap(whatCovers),
+    };
   });
-  console.log(`tips-check: ${look} ${device} ${below}`);
   assert.ok(below <= 0, `${look}: on ${device}, Show me and Got it in view (${Math.ceil(below)} px below)`);
+  assert.deepEqual(covered, [], `${look}: on ${device}, nothing over Show me and Got it`);
 }
 
 // Every tip's Show me, each step's ring round a real control: pressed to go on, and the last one left (it may act for
@@ -302,9 +357,9 @@ async function checkEvery(page, ended, events, list) {
         .catch(() => assert.fail(`${tip.key}: step ${i + 1} found no control`));
       await page.waitForTimeout(400);
       const { ring, control, said, onTop } = await page.evaluate(
-        ([key, i, details]) =>
+        ([key, i, details, names]) =>
           import('/shell/tips.js').then(({ tipOf }) => {
-            const at = tipOf(key).steps[i].at;
+            const at = tipOf(key, names).steps[i].at;
             const found = (typeof at === 'function' ? [at(details)] : [...document.querySelectorAll(at)]).find(
               e => e && e.getBoundingClientRect().width > 0,
             );
@@ -318,7 +373,7 @@ async function checkEvery(page, ended, events, list) {
               onTop: !!document.elementFromPoint(w.x + w.width / 2, w.y + w.height / 2)?.closest('.showme-step'),
             };
           }),
-        [tip.key, i, list.find(c => c.id === id).details],
+        [tip.key, i, list.find(c => c.id === id).details, NAMES],
       );
       assert.ok(control, `${tip.key}: step ${i + 1}'s control is on the page`);
       assert.equal(said, tip.steps[i].say, `${tip.key}: step ${i + 1} says its words`);
@@ -357,7 +412,11 @@ async function checkPinOut(page, ended, setList) {
   await page.click('#phone-screen .req.tip [data-show-me]');
   await page.waitForSelector('.showme-step:not([hidden])', { timeout: 5000 });
   assert.equal(await page.textContent('.showme-step b'), 'Show me', 'pin, already out: one step');
-  assert.equal(await page.textContent('.showme-step p'), tipOf('pin').steps[1].say, "pin, already out: the pin's step");
+  assert.equal(
+    await page.textContent('.showme-step p'),
+    tipOf('pin', NAMES).steps[1].say,
+    "pin, already out: the pin's step",
+  );
   assert.ok(await page.evaluate(out), 'pin, already out: still out');
   const ring = await page.$eval('.showme-ring', e => e.getBoundingClientRect().toJSON());
   await page.mouse.click(ring.left + ring.width / 2, ring.top + ring.height / 2);

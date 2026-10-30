@@ -31,3 +31,11 @@
   longer prompt. Keeping related work in one deliverable, and chaining a feature's pieces that go live separately one
   after the other, is your discipline, not a rule.
 - Standing rules the board agrees with you are recorded (`DECISIONS.md`, your profile) and followed.
+
+- One deadline belongs to one deliverable, chosen by the board or CEO from its word. File tasks under the open
+  deliverable whose goal they serve, judged from its plan. A follow-up joins the work in flight by default and
+  inherits its deadline, with no task-level `--by`. Set the time once with `hq window <deliverable> <when>`.
+  The plan and pacing read it for all tasks, reviews and fixes. "No deadline set" is one gap for the whole
+  deliverable. A filed task’s `--by <when>` sets or tightens that deadline. A task in no deliverable takes
+  `--by <when>`, `--by <project>/<slug>` or `--by none`. Outside a live call, an unfiled board ask without `--by`
+  asks the CEO for its time. The CEO’s own ask is refused. Filing is judgment. Scheduling is an algorithm.

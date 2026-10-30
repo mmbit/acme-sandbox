@@ -107,15 +107,19 @@ async function inBook(r, mark) {
   } else await lift(r, { lines, note: { id: went.note.id, page: went.note.page }, snip: went.snip });
   return r.mark === mark ? went : null;
 }
+// What the call heard the board say since a mark began (performance.now() then; callnotes.js's for a mark in HQ's
+// viewer too.)
+export const heardSince = (r, at) =>
+  r.callHeard
+    .filter(h => h.at >= at)
+    .map(h => h.text)
+    .join(' ')
+    .trim();
 // The words heard while the mark was drawn: on a call, what the call heard since its first line; else the mic's, once
 // any still being said are in
 async function heardNow(r) {
   if (!r.call) return (r.rec || r.stopping) && stopMic(r);
-  const words = r.callHeard
-    .filter(h => h.at >= r.markAt)
-    .map(h => h.text)
-    .join(' ')
-    .trim();
+  const words = heardSince(r, r.markAt);
   Object.assign(r, { spoken: !!words, typed: false });
   r.text.value = words;
 }
@@ -132,16 +136,10 @@ export async function toBook(r) {
     words = r.text.value.trim(),
     said = !words ? null : r.spoken && !r.typed ? 'spoken' : !r.typed && words === mark.written ? 'written' : 'typed',
     general = mark.kind === 'general';
-  const taken = general ? null : await Promise.race([r.shot, new Promise(res => setTimeout(() => res(null), 9000))]);
+  const shot = general ? null : await snipOfMark(r, mark, r.strokes);
   if (r.mark !== mark) return null;
   // (a mark from the other screen keeps its picture there: handover.js.)
-  const snip =
-    mark.snap ??
-    (taken &&
-      marks.snipOf(
-        { c: expose(r, taken, r.mark), k: taken.k },
-        r.strokes.length ? boxOfLines(r.strokes) : r.mark.element.rect,
-      ));
+  const snip = mark.snap ?? shot;
   const anchor = general ? { ...marked(r), el: null } : marked(r);
   const note = await marks.post(r, { anchor, live: r.mark.el, words, said, snip });
   r.steps.push({ kind: note.group ? 'scrap' : 'note', id: note.id }); // (scrap)
@@ -149,4 +147,13 @@ export async function toBook(r) {
   mark.filed = true;
   marks.paint(r);
   return { note, snip, photoless: (!general || 'snap' in mark) && !snip };
+}
+// A mark's snip of its screenshot once taken, round its lines (or its element, with none), or null: the screenshot
+// failed, was still developing after SHOT_WAIT_MS, or the mark was let go meanwhile (toBook, and on a call
+// callframe.js.)
+const SHOT_WAIT_MS = 9000;
+export async function snipOfMark(r, mark, lines) {
+  const taken = await Promise.race([r.shot, new Promise(res => setTimeout(() => res(null), SHOT_WAIT_MS))]);
+  if (!taken || r.mark !== mark) return null;
+  return marks.snipOf({ c: expose(r, taken, mark), k: taken.k }, lines.length ? boxOfLines(lines) : mark.element.rect);
 }

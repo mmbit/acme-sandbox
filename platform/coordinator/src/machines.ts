@@ -37,6 +37,8 @@ type Reading = { at: number; cpu: number; mem: number; gpu?: number };
 
 // This server's own helpers, where a lent machine has its id (here and in runs.ts's helper_runs)
 export const SERVER = 0;
+// A helper asks for work every 10 s and beats every 10 s while it runs one (platform/helper)
+const PRESENT_MS = 90_000;
 const NAME_MAX_CHARS = 40;
 const HISTORY_MS = 5 * 60_000;
 // Readings closer than this are one point of the history: every kind's helper on a machine reads the same load
@@ -194,6 +196,10 @@ export const kindHelpers = (kind: string, lent: boolean) =>
 
 export const machineKinds = (machine: number) =>
   db.prepare('select * from machine_kinds where machine = ? order by kind').all(machine) as KindHelper[];
+
+// A machine or its helper of a kind is present while it asked for work or beat within PRESENT_MS of now
+export const isPresent = (seen: string | null | undefined, now = Date.now()) =>
+  !!seen && now - Date.parse(seen) < PRESENT_MS;
 
 // ---- live: the load and output, in memory
 

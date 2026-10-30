@@ -507,7 +507,7 @@ test('no time limit: the chair sees progress, the tally runs once all have hande
   const editor = {
     headline: 'The editor comes first',
     opening: 'We build the editor first, in one thread.',
-    projects: [{ name: 'Game', decisions: ['The editor is one thread, done today.', 'New levels wait for it.'] }],
+    projects: [{ name: 'Game', decisions: ['The editor is one deliverable, done today.', 'New levels wait for it.'] }],
     next: 'the editor starts now.',
   };
   const prose = Array.from({ length: 2 }, () => Array.from({ length: 100 }, () => 'word').join(' ')).join('\n');
@@ -563,7 +563,7 @@ test('no time limit: the chair sees progress, the tally runs once all have hande
   assert.match(shown.html, /<strong>Game<\/strong>/);
   assert.match(
     shown.html,
-    /<ul>\s*<li>The editor is one thread, done today\.<\/li>\s*<li>New levels wait for it\.<\/li>\s*<\/ul>/,
+    /<ul>\s*<li>The editor is one deliverable, done today\.<\/li>\s*<li>New levels wait for it\.<\/li>\s*<\/ul>/,
   );
   assert.match(shown.html, /<strong>Next:<\/strong> the editor starts now\./);
   assert.ok(shown.html.includes('&lt;script&gt;alert(1)&lt;/script&gt;'));
@@ -577,7 +577,7 @@ test('no time limit: the chair sees progress, the tally runs once all have hande
       'We build the editor first, in one thread.',
       '',
       '**Game**',
-      '- The editor is one thread, done today.',
+      '- The editor is one deliverable, done today.',
       '- New levels wait for it.',
       '',
       '**Site**',

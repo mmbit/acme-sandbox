@@ -8,9 +8,12 @@ import { isReadable, readGoalAndWords, readText, readTextOrStdin } from './files
 import { takeItemFlags, takeThread, takeValues, takeWhen } from './flags.ts';
 import { stopped } from './corrections.ts';
 import { minute, present, print, shown, stop, text, warn } from './output.ts';
+import { asHelp, ONE_DEADLINE } from './levels.ts';
 import { liftWords } from './pauses.ts';
+import { WINDOW_FIRST } from './levels.ts';
 
 // (the pointer to hq waits add; the title's line)
+// (one deadline per deliverable)
 // (--thread new: drawn in the project's plan)
 // (--code)
 // (a thread is one pull request, the follow-on thread's line)
@@ -90,15 +93,7 @@ export const job = {
                                                      HQ reuses the failed job's brief. Work on a PR continues there.
                                                      --findings names the review findings a fix task answers.
                                                      It carries any call item, handled when it ends done.
-                                                     A time for the work is its deliverable's window (hq window): a
-                                                     call item's time goes there by itself, and a job with one that
-                                                     would be in no open deliverable is refused. --by <when> gives it
-                                                     one as it's queued (never later than its deliverable's), --by
-                                                     <project>/<slug> the window of the deliverable it serves. The
-                                                     board's ask (handing out an item, on a call, from the intercom)
-                                                     with no time, on a deliverable nothing timed waits on, asks the CEO:
-                                                     the CEO's own is refused until it says --by <when>, <project>/<slug>
-                                                     or none.
+${asHelp(ONE_DEADLINE)}
                                                      --when <event>: it starts once that has happened, and reads what did
                                                      (repeat it: all of them). deploy or deploy:<n>, the next n deploys from
                                                      now; recreated:<service>, a deploy that recreates that container
@@ -267,6 +262,17 @@ function readArguments(args: string[]) {
   };
 }
 
+// The deliverable a queued job is in. One it joined is read back with its done when, so its queuer reads what the work
+// is filed under (board, call 172).
+function printFiled(id: string, queued: Record<string, unknown>) {
+  if (!present(queued.thread)) return;
+  if (!present(queued.doneWhen)) return print(`In deliverable ${text(queued.thread)}.`);
+  print(
+    `In deliverable ${text(queued.thread)}, ${text(queued.threadName)}, done when ${text(queued.doneWhen)}.`,
+    `If this work doesn't deliver that, move it to the one it does: hq job move ${id} <project>/<slug>.`,
+  );
+}
+
 function printQueued(
   agent: string,
   title: string,
@@ -277,7 +283,7 @@ function printQueued(
   const id = shown(queued.id);
   // (its code after the number, which tools read; none for a step of a task that had none)
   print(`Queued job #${id}${present(queued.code) ? ` ${text(queued.code)}` : ''} for ${agent}: ${title}`);
-  if (present(queued.thread)) print(`In deliverable ${text(queued.thread)}.`);
+  printFiled(id, queued);
   if (present(queued.chain)) print(text(queued.chain));
   if (present(queued.lighter))
     print(
@@ -563,7 +569,10 @@ type Miss = { project: string; name: string; deadline: number; finish: number | 
 export const window = {
   help: `
    hq window ${TARGET} <deadline | none> [--aim <time>] [--try]
-                                                     a deliverable's window (named by it, or a job or PR on it). The deadline,
+                                                     a deliverable's window (named by it, or a job or PR on it), the way
+                                                     to put work first: the scheduler makes room for it, taking the seat
+                                                     from work in its way when its time needs it and giving it back
+                                                     after, by itself (never a pause for it). The deadline,
                                                      the latest it may be merged and deployed and still be what was
                                                      agreed, orders its work; --aim, the time we said, at or before it
                                                      (else the aim stays, or is the deadline). 2h, 90m or 1h30m from now;
@@ -589,6 +598,7 @@ export const window = {
       print(
         `${tried ? 'Tried' : 'Window of'} ${thread}: deadline ${minute(String(set.deadline))}, aim ${minute(String(set.aim))}.`,
       );
+    if (present(set.deadline) && !tried) print(`${WINDOW_FIRST} Nothing needs pausing for it.`);
     if (tried) print('Nothing was saved.');
     if (Array.isArray(set.moves)) {
       if (!set.moves.length) print('Moves no deliverable.');

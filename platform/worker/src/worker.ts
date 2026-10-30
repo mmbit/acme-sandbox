@@ -170,15 +170,16 @@ const { freeMb, room } = reserve;
 // Past JOB_SHARE_MB too once no slot could start for STARVED_MS while work waits (HQ says so, and tells the CEO once: the
 // coordinator's room.ts); so does a job running more than JOB_PROCESSES processes. Past half the cores its processes get
 // nice 10, and past them for JOB_HOT_MS its busiest run is blocked. Looked at every SHARES_MS, reported to HQ every
-// REPORT_MS. (The defaults suit this server's worker; the offload machine has caps of its own: org.yaml's runs.)
-const JOB_MOST_MB = Number(process.env.JOB_MOST_MB ?? 2560), JOB_SHARE_MB = Number(process.env.JOB_SHARE_MB ?? 1536);
+// REPORT_MS. (The company's infra.env sets the memory lines, the defaults suiting a 7168m worker; the offload machine has caps
+// of its own: org.yaml's runs.)
+const JOB_MOST_MB = Number(process.env.JOB_MOST_MB || 2560), JOB_SHARE_MB = Number(process.env.JOB_SHARE_MB || 1536);
 const JOB_PROCESSES = Number(process.env.JOB_PROCESSES ?? 400), JOB_HOT_MS = Number(process.env.JOB_HOT_MINUTES ?? 10) * 60_000;
 const JOB_CORES = Math.max(2, availableParallelism() / 2), STARVED_MS = 5 * 60_000, SHARES_MS = 15_000, REPORT_MS = 60_000;
 const ROOM_REQUEST_MS = 10_000, ROOM_FRESH_MS = 3 * REPORT_MS;
 // Under LOW_MEMORY_MB free HQ tells the running agents to start nothing heavy, and that memory is back at MEMORY_BACK_MB
 // (lowmemory.ts). Busy, the worker starts jobs down to FREE_MB + JOB_MB free, so the low line sits under that and the
 // line back above it. A verdict that changes is reported at once.
-const LOW_MEMORY_MB = Number(process.env.LOW_MEMORY_MB ?? 2048), MEMORY_BACK_MB = Number(process.env.MEMORY_BACK_MB ?? 3072);
+const LOW_MEMORY_MB = Number(process.env.LOW_MEMORY_MB || 2048), MEMORY_BACK_MB = Number(process.env.MEMORY_BACK_MB || 3072);
 const { samples: CAPACITY_SAMPLES, job: CAPACITY_JOB } = JSON.parse(readFileSync(new URL('../capacity.json', import.meta.url), 'utf8')) as { samples: number; job: number };
 const inSlot = new Map<string, { job: Job; me: Me; seat: string }>();   // (each slot's job, from its claim to its end: runJob)
 const SESSION = procStat(process.pid)!.sid;   // (this process's session, which the CLIs it launches share)
@@ -604,7 +605,7 @@ const GIST_POLL_MS = 5_000;
 async function gistLoop() {
   while (!shuttingDown) {
     await sleep(GIST_POLL_MS);
-    try { const call = await smallCall('gists', ['lines']); if (call) await call.answered; }
+    try { const call = await claimSmallCall('gists', ['lines']); if (call) await call.answered; }
     catch (err) { log('meeting bubbles:', err); }
   }
 }
@@ -618,7 +619,7 @@ async function namesLoop() {
     await sleep(NAMES_POLL_MS);
     try {
       for (let i = 0; i < NAMES_PER_TURN; i++) {
-        const call = await smallCall('names', ['names']);
+        const call = await claimSmallCall('names', ['names']);
         if (!call) break;
         await call.answered;
       }
@@ -632,8 +633,9 @@ async function namesLoop() {
 // as they come, READS_AT_ONCE at most (smallturns.ts).
 const READ_POLL_MS = 1_000, READS_AT_ONCE = 3;
 function readLoop() {
-  return callsAsTheyCome({ claim: () => smallCall('reads', ['reading']), atOnce: READS_AT_ONCE, idleMs: READ_POLL_MS,
-    going: () => !shuttingDown, sleep, failed: err => log('handwriting:', err) });
+  return callsAsTheyCome({ claim: () => claimSmallCall('reads', ['reading']), atOnce: READS_AT_ONCE,
+    idleMs: READ_POLL_MS, going: () => !shuttingDown, sleep,
+    failed: err => log("handwriting and the book's judge:", err) });
 }
 
 // One call of the coordinator's small model (smallmodel.ts), claimed from HQ's `${kind}/claim` and answered to
@@ -641,15 +643,16 @@ function readLoop() {
 // prompt holds outside input) and the prompt on stdin: words, or a message's content (a picture with them) as the CLI's
 // stream-json. Its spend counts on the seat, and its rate-limit reading updates the seat's windows as a run's does.
 // The call claimed, going until it's answered; false when there was none to make.
-async function smallCall(kind: 'gists' | 'names' | 'reads', keys: string[]) {
+type SmallKind = 'gists' | 'names' | 'reads';
+async function claimSmallCall(kind: SmallKind, keys: string[]) {
   wakeSeats();
   const seat = healthiest(SEATS.filter(s => cliOf(s) === 'claude' && s.signIn === 'login' && !off(s)), 'claude');
   if (!seat) return false;
   const next = await hq.api(`${kind}/claim`);
   if (!next?.prompt && !next?.content) return false;   // (nothing due: an empty claim)
-  return { answered: smallCallMade(kind, keys, seat, next) };
+  return { answered: makeSmallCall(kind, keys, seat, next) };
 }
-async function smallCallMade(kind: string, keys: string[], seat: Seat, next: Awaited<ReturnType<typeof hq.api>>) {
+async function makeSmallCall(kind: SmallKind, keys: string[], seat: Seat, next: Awaited<ReturnType<typeof hq.api>>) {
   const claimed = Object.fromEntries(keys.map(k => [k, next[k]]));
   // (the token read once there's a call to make: reads asks every few seconds.)
   const token = readAs(keeper, `${seatDir(seat.id)}/token`)?.trim();
@@ -774,7 +777,7 @@ const tokenCandidates = (raw: string) =>
     .sort((a, b) => b.length - a.length);
 
 // A one-line call with a seat's token, as the keeper, in a fresh config dir (so no settings planted in /tmp apply):
-// checks a new token, and rechecks a limited seat. With a prompt (smallCall's), that goes on stdin, never in argv, and
+// checks a new token, and rechecks a limited seat. With a prompt (makeSmallCall's), that goes on stdin, never in argv, and
 // the call runs in the empty config dir, so no project's files are read with it.
 function oneLine(seat: SeatProvider, token: string, args: string[], prompt?: string) {
   return new Promise<{ code: number; out: string; err: string }>(resolve => {
@@ -1250,6 +1253,7 @@ function carry(job: Job, from: Resumes, cli: string, seat: Seat, me: Me) {
     return null;
   }
 }
+// (the board's places in the company's names, c.phone and c.intercom, all through)
 function briefing(job: Job, dir: string, conflicts: string[] = [], closingBriefing = '') {
   const a = job.agentInfo ?? { name: job.agent, role: 'agent', department: '', charter: '' }, c = company(job);
   const people = companyFile(dir, 'company/people/README.md'), charter = a.charter && existsSync(`${dir}/company/${a.charter}`);
@@ -1317,12 +1321,12 @@ How work happens here:
 - Nobody reads this session live, the board included: you run in the background, and your messages go to the job's
   log. Write them as a report on the work, never as a reply to the board, even when you're acting on its answer.
   The board sees only the ${c.phone}, ${c.newsletter} and the ${c.intercom} (and a call's notes, when your job says so).
-  Anything that needs its judgment goes on the desk phone (\`hq ask\`/\`hq request\`); thanks and "on it" go nowhere.`}
+  Anything that needs its judgment goes on the ${c.phone} (\`hq ask\`/\`hq request\`); thanks and "on it" go nowhere.`}
 ${closing(job)}`;
 }
 
 // Quick replies read their own context, without the work job's housekeeping or shared CLI memory.
-// (no charter or profile read first: on 29 Oct Lyra's were a turn and some 7,000 tokens before each answer.)
+// (no charter or profile read first: they cost a turn and thousands of tokens before each answer.)
 function quickBriefing(job: Job) {
   const a = job.agentInfo, c = company(job);
   return `You are ${a?.name ?? job.agent}, ${a?.role ?? 'agent'} at ${c.name}.

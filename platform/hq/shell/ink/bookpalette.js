@@ -11,14 +11,9 @@ import { button, island, setPressed, hide, besideStrip } from './bookui.js';
 import { MARKERS, MARKER_ALPHA, SHAPES, WIDTHS } from './bookinkmath.js';
 import { word } from './bookscope.js';
 import { ERASER_PATHS } from '/__review/eraser.js';
+// The pens' inks, from the book's own Night: review mode's pin offers the same
+import { PENS } from '/__review/ink.js';
 
-// The inks, from the book's own Night: a pen's, and a highlighter's wide and see-through
-export const PENS = [
-  { name: 'Night', color: '#2a2352' },
-  { name: 'Red', color: '#d0443a' },
-  { name: 'Blue', color: '#2f6bdc' },
-  { name: 'Green', color: '#1d9a5b' },
-];
 // The eraser's sizes (across, on screen: a fine one for a letter, a wide one for a line of them)
 const ERASERS = [12, 28, 56];
 // The pen's smoothing: how far each point goes towards the pointer (ink.js's follow): steady, or as the hand went

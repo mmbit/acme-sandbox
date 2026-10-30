@@ -45,7 +45,7 @@ export function mountPages(paper, { dev, shape, scope = null, calls = null }) {
     at: (x, y) => at(book, x, y),
     shown: () => shown(book),
     view: () => viewOf(book),
-    remember: zoomed => remember(book, zoomed),
+    remember: ({ zoomed = false } = {}) => remember(book, zoomed),
     far: () => book.zoom.level() !== 'page',
     zoomed: () => book.controls?.update(),
     undo: () => stepped(book, undo),

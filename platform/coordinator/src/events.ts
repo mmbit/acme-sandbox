@@ -17,8 +17,6 @@ export type Event = {
   // it again.)
   ts?: string; type: 'status' | 'chat' | 'post' | 'log' | 'lines' | 'tokens' | 'machines' | 'studio' | 'book';
   agent?: string; to?: string; text?: string; state?: string; page?: number;
-  // (call, note: a book event on a note on a live call, its verdict made or a version landed: ink/callanswer.ts.)
-  call?: number; note?: number;
   // job: the run an agent's own status or lines come from; jobs: on a status from its queue, every job it has running
   job?: number; jobs?: RunningJob[];
   // since: on a working status of a job's own, when that job started (jobs.started, kept across its runs), which its

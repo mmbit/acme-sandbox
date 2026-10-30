@@ -52,8 +52,8 @@
   }
 }
 /* the table under the book, where the page has given up its room, the screen's whole height: the left side's own
-   background (--bk-ground on <html>: booktable.js), so what the book uncovers as it lifts off, slides narrower or shuts is of a piece
-   with the page beside it, with the book's shadow on it while it rests there (the board's call 160) */
+   background (--bk-ground on <html>: booktable.js), so what the book uncovers as it lifts off, slides narrower or
+   shuts is of a piece with the page beside it, with the book's shadow on it while it rests there */
 #book .bk-table {
   right: 0;
   top: 0;

@@ -24,8 +24,7 @@ The Sketchbook is one part of Ink, and in code it is the book: one per person, a
   answers: the owner's quick run, `hq answer` (words, a drawing, a
   picture, a form, a question, versions; `answerparts.ts` checks what one holds), forms answered, ticks and the open list; `answerspot.ts` places an answer in
   free paper by its group, never over the board's own. `groupanswers.ts` is what a group's children carry.
-  `booktry.ts` starts a try run (versions of what a note asks to see, on a page of their own), `callanswer.ts` lets a
-  call's agent write its answer on a note the board drew on the call.
+  `booktry.ts` starts a try run (versions of what a note asks to see, on a page of their own).
 - Circle a version to pick it: `bookpick.ts`. A ring or a tick on a version goes
   as a reply on it, drawn over the version's frame in its picture; the judge's verdict 'pick' (offered only on a
   version) or the board's tick on it picks it (one per try),

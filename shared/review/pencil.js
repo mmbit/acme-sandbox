@@ -140,7 +140,8 @@ export function setupPencil(r) {
   r.pencil = inkjs.pen(r.$('.pencil'), r.wet, {
     halo: true,
     under: r.haloCanvas,
-    ink: () => inkjs.INKS[r.inkNow],
+    // (on HQ's own call red only, INKS' first.)
+    ink: () => inkjs.INKS[r.call ? 0 : r.inkNow],
     end: stroke => lifted(r, stroke),
   });
   // (what the pen's touches and a mark's end do with the Pencil's own, handed in: they never import it.)

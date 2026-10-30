@@ -1,4 +1,5 @@
 // Past jobs and timing exclusions shown before a queuer judges scope.
+import type { TaskTime, TaskTimingFlag } from '../../coordinator/src/tasktime.ts';
 import { duration } from './waits.ts';
 import { minute, plural, print } from './output.ts';
 
@@ -8,6 +9,7 @@ export type Job = {
   title: string;
   finished: string;
   agent_minutes: number;
+  whole: TaskTime;
   wall_minutes: number | null;
   runs: number;
   rebuilt: boolean;
@@ -32,11 +34,16 @@ export function printJobs({ job, jobs, typical }: { job?: Job; jobs: Job[]; typi
   print(
     `Clean past jobs found for ${words ? `"${words}"` : 'that'}, search matches first. Compare their scope before choosing a size.`,
   );
+  print('Whole time includes reviews, fixes, re-syncs and previews. Queue, seat, deploy and card waits are out.');
+  print('--size covers the work split only. The forecast adds review and fix rounds once per deliverable.');
+  print(
+    'Shared follow-up time is divided equally among the tasks on the branch. A shared preview is divided by branch first.',
+  );
   for (const j of jobs) print(...jobLines(j));
   if (typical) {
     const spend = typical.spend === null ? '' : `, ${spendText(typical.spend, typical.unit!)} of seat spend`;
     print(
-      `Typical of these: ${duration(typical.agent_minutes)} of agent time (the middle half ${duration(typical.low)} to ${duration(typical.high)})${spend}.`,
+      `Typical work split of these: ${duration(typical.agent_minutes)} of agent time (the middle half ${duration(typical.low)} to ${duration(typical.high)})${spend}.`,
     );
   }
   print('');
@@ -52,6 +59,7 @@ function jobLines(j: Job) {
     `#${j.id} ${j.agent}, done ${minute(j.finished)}: ${j.title}`,
     `  ${j.rebuilt ? '≈' : ''}${duration(j.agent_minutes)} of agent time in ${plural(j.runs, 'run')}${wall}; ${spent}${pr}`,
   ];
+  lines.push(wholeLine(j.whole));
   if (j.tool_bound)
     lines.push('  Mostly waiting on tools that use no tokens (renders, test suites): its hours cost the seats little.');
   if (j.changed_files?.length) lines.push(`  Files: ${j.changed_files.join(', ')}`);
@@ -61,6 +69,30 @@ function jobLines(j: Job) {
   if (j.timing_quality?.length) lines.push(`  Timing flags: ${j.timing_quality.join(', ')}`);
   return lines;
 }
+
+function wholeLine(whole: Job['whole']) {
+  const split = Object.entries(whole.split)
+    .map(([phase, minutes]) => `${phase} ${duration(minutes)}`)
+    .join(', ');
+  const state = whole.complete ? 'Whole task' : 'Task so far';
+  const shared =
+    whole.allocation === 'followup'
+      ? 'Follow-up job: its own work and subsequent rounds.'
+      : `Shared rounds: 1/${whole.tasks.length} of the branch's follow-up time.`;
+  const flags = whole.flags.length
+    ? ` Incomplete timing: ${whole.flags.map(flag => TASK_TIMING_REASONS[flag]).join(', ')}.`
+    : '';
+  return `  ${state}: ${duration(whole.agent_minutes)} of agent time (${split}). ${shared}${flags}`;
+}
+
+const TASK_TIMING_REASONS: Record<TaskTimingFlag, string> = {
+  missing_runs: 'recorded runs missing',
+  open_runs: 'runs still open',
+  invalid_time: 'invalid or nonpositive run times',
+  rebuilt: 'reconstructed runs or missing seats',
+  missing_merge_time: 'merge time missing',
+  unattributed_previews: 'historical previews without task links',
+};
 
 export function printQuality(quality: Quality) {
   const share = quality.total ? Math.round((quality.excluded / quality.total) * 100) : 0;

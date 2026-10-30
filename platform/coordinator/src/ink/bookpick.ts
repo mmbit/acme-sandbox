@@ -5,12 +5,12 @@
 //   - A pick is one per try: the version picked (book_slips.picked) and the others in its set unpicked. HQ stamps it.
 //   - Its frame and patch join the note: the note the tried group goes as when its page is sent carries the frame in
 //     its snip (sentSnip), and the job it goes to reads the pick and its patch (withPicks). A try run still going hears
-//     it at once; on a call, the call's agent hears it (callanswer.ts heardOnCall, bookcalls.ts newsOf).
+//     it at once.
 import { readFileSync } from 'node:fs';
 import { db } from '../db.ts';
 import { publish } from '../events.ts';
 import { forRun } from '../messages.ts';
-import { changed, pageRow, triesPageOfNote } from '../notebook.ts';
+import { changed, pageRow } from '../notebook.ts';
 import { groupOfNote, partsOf, row, type Group } from '../notebookgroups.ts';
 import { boxOf } from '../../../hq/shell/ink/notebookstack.js';
 import { DIR } from '../pagescraps.ts';
@@ -76,16 +76,14 @@ export function pick(v: Slip) {
     `update book_slips set picked = case when id = ? then ? else null end
       where style = 'version' and (id = ? or (grp is not null and grp = ?) or (note is not null and note = ?))`,
   ).run(v.id, new Date().toISOString(), v.id, v.grp, v.note);
-  // (the note tried: a group, on its page and its versions page; or an old book's note, a call's, on its versions page.
+  // (the group tried, on its page and its versions page)
   const root = v.grp !== null ? row(v.grp) : undefined;
   const p = root && pageRow(root.page, null);
   if (p && p.notebook !== null) changed(p.notebook, p.id);
-  const tries = root
-    ? (db.prepare('select id, notebook from book_pages where tries = ?').get(root.id) as
-        { id: number; notebook: number | null } | undefined)
-    : v.note !== null
-      ? triesPageOfNote(v.note)
-      : undefined;
+  const tries =
+    root &&
+    (db.prepare('select id, notebook from book_pages where tries = ?').get(root.id) as
+      { id: number; notebook: number | null } | undefined);
   if (tries && tries.notebook !== null) changed(tries.notebook, tries.id);
   publish({ type: 'book', agent: v.by, text: 'slip' });
   const tried = root
@@ -95,9 +93,6 @@ export function pick(v: Slip) {
           ?.tried
       : null;
   toTry(tried ?? null, v);
-  const on = root ? { grp: root.id } : v.note !== null ? { note: v.note } : null;
-  // (loaded when it's needed, as bookanswer.ts does: the call's file reads the answers, which read the send's)
-  if (on) void import('./callanswer.ts').then(m => m.heardOnCall(on));
   return v.id;
 }
 // A try run still going hears the pick at its next step (it makes no more versions of what's settled)

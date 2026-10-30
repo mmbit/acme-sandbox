@@ -276,6 +276,21 @@
     max-width: none;
   }
 }
+/* (an iPad mini's on its side, beside HQ's page: the row between the paper's left edge and the stack leaves the page's
+   name about 200 px, so it has the row's own line above the buttons, as a title being written does, and a call page's
+   longest title is whole in it. A phone's row stays one slim line. (the board, call 161.) */
+@container bk-rail (460px < width <= 600px) {
+  #book .bk-island[data-island='pages'] {
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  #book .bk-btn.bk-where {
+    order: -1;
+    flex: 1 0 100%;
+    justify-content: center;
+    max-width: none;
+  }
+}
 /* Send: the page's own action, its own island at the top of the stack (bookcontrols.js), the plane inked in. (the
    board, 28 Oct) */
 #book .bk-btn.bk-send {

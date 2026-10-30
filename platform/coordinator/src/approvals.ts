@@ -4,7 +4,7 @@
 // read the same record.
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { DATA_DIR, PUBLIC_HOST, ZONE as OWN_ZONE } from './config.ts';
-import { manifest, servedDomain } from './manifests.ts';
+import { manifest, manifests, servedDomain } from './manifests.ts';
 
 const DIR = process.env.APPROVALS_DIR ?? `${DATA_DIR}/approvals`;
 export const FRONT = 'front';
@@ -108,6 +108,13 @@ export function publicAddresses(slug: string, approving = false) {
   const host = shopHost(isPublic(FRONT) || (approving && slug === FRONT));
   const shelf = slug === FRONT ? `https://${host}` : `https://${host}/${slug}/`;
   return [...new Set([shelf, ...own])];
+}
+// Every origin publicAddresses can name, whichever products are public now: www.<zone> and each product's own domain
+// that infra/products.py serves (the shop's host among them). HQ's viewer frames the live pages there (pages.ts csp).
+export function publicOrigins() {
+  if (!ZONE) return [];
+  const domains = manifests().map(p => p.manifest.domain).filter(servedDomain);
+  return [`https://www.${ZONE}`, ...domains.map(domain => `https://${domain}`)];
 }
 // The shop's host: the front's own domain while the front is public there, else www.<zone>
 function shopHost(frontPublic: boolean) {

@@ -15,8 +15,9 @@ import type { Scrap } from '../pagescraps.ts';
 const PAPER = '#fffdf8',
   TAPE = 'rgb(246,236,200)',
   TAPE_ALPHA = 0.8;
-// Twice the page's size, or at most `side` px wide and `pixels` px in all: the page whole, however long.
-const PICTURE = { side: 2400, pixels: 40_000_000 };
+// Twice the page's size, or at most `side` px wide and `pixels` px in all: the page whole, however long; drawn again
+// smaller, `again` of the scale that fits, as its words set anew wrap and round anew
+const PICTURE = { side: 2400, pixels: 40_000_000, again: 0.98 };
 // The paper left under the last words when the picture grows down to them, in page px
 const BELOW_PX = 24;
 // Typed words as the book sets them (booktools.js TEXT): the size and the line's height in page px. The book's own face
@@ -67,8 +68,9 @@ export type Said = { name: string | null; text: string; picture?: string };
 export type Answer = Said & { x: number; y: number; w: number; name: string; color: string; ink?: Stroke[] };
 // A PNG of the page, its whole box grown down to the last line of words set on it. dir: where its scraps' files are.
 // A scrap that can't be drawn fails it: no page looks whole without one of its pictures. Words grown past PICTURE.pixels
-// draw it again smaller, once; still past it, it fails. (k: picture px a page px.)
-export async function render(page: Drawn, dir: string, k = scaleOf(page), again = true): Promise<Buffer> {
+// draw it again smaller, once (drawn: k picture px a page px, and whether it may); still past it, it fails.
+export const render = (page: Drawn, dir: string): Promise<Buffer> => drawn(page, dir, scaleOf(page), true);
+async function drawn(page: Drawn, dir: string, k: number, again: boolean): Promise<Buffer> {
   const W = Math.max(1, Math.round(page.w * k)),
     corner = { x: page.x ?? 0, y: page.y ?? 0 };
   // (a place on the page counted from its top-left, as the picture's px are)
@@ -81,7 +83,7 @@ export async function render(page: Drawn, dir: string, k = scaleOf(page), again 
   const H = Math.max(1, Math.round(page.h * k), ...words.map(l => l.top + l.height + Math.round(BELOW_PX * k)));
   if (W * H > PICTURE.pixels) {
     if (!again) throw new Error(`a page's picture is past ${PICTURE.pixels} px, even drawn smaller: ${W} × ${H}`);
-    return render(page, dir, k * Math.sqrt(PICTURE.pixels / (W * H)) * 0.98, false);
+    return drawn(page, dir, k * Math.sqrt(PICTURE.pixels / (W * H)) * PICTURE.again, false);
   }
   const layers: OverlayOptions[] = [];
   for (const s of page.scraps) {
@@ -95,10 +97,7 @@ export async function render(page: Drawn, dir: string, k = scaleOf(page), again 
     const svg = inkSvg(page.ink, corner, { w: page.w, h: H / k }, W, H);
     layers.push({ input: Buffer.from(svg), left: 0, top: 0 });
   }
-  for (const l of words) {
-    const shown = await inside(l, W, H);
-    if (shown) layers.push(shown);
-  }
+  for (const l of words) layers.push(...(await inside(l, W, H)));
   return sharp({ create: { width: W, height: H, channels: 3, background: PAPER } })
     .composite(layers)
     .png()
@@ -290,17 +289,17 @@ async function pictureAt(file: string, w: number, k: number, fill = false) {
     H = Math.max(1, Math.round((W * height) / width));
   return { input: await sharp(file).resize(W, H, { fit: 'fill' }).png().toBuffer(), width: W, height: H };
 }
-// Only the part of a layer inside the W × H picture (a box may start left of the page's top-left), null when none is
-async function inside(l: Layer, W: number, H: number): Promise<OverlayOptions | null> {
+// Only the part of a layer inside the W × H picture (a box may start left of the page's top-left), none when none is
+async function inside(l: Layer, W: number, H: number): Promise<OverlayOptions[]> {
   const x0 = Math.max(0, l.left),
     y0 = Math.max(0, l.top),
     width = Math.min(l.left + l.width, W) - x0,
     height = Math.min(l.top + l.height, H) - y0;
-  if (width <= 0 || height <= 0) return null;
-  if (width === l.width && height === l.height) return { input: l.input, left: l.left, top: l.top };
+  if (width <= 0 || height <= 0) return [];
+  if (width === l.width && height === l.height) return [{ input: l.input, left: l.left, top: l.top }];
   const cut = { left: x0 - l.left, top: y0 - l.top, width, height },
     input = await sharp(l.input).extract(cut).png().toBuffer();
-  return { input, left: x0, top: y0 };
+  return [{ input, left: x0, top: y0 }];
 }
 
 // A box's words set at k picture px a page px, in the typed words' face or another's (from typed and typedHeight)

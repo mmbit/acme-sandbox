@@ -103,6 +103,19 @@ check and a meeting's review): nothing counts or refuses deliverables running at
 prompt shows as guidance, never a cap. For an ETA, a deliverable's review is about one round when it's small (under about 200
 changed lines) and two to two and a half when it's big (past about 500).
 
+### One deadline per deliverable
+
+The board or CEO chooses one deadline for the named deliverable (`hq window`). Whoever queues a task reads the
+open plan and judges which deliverable's goal it serves. A follow-up of work in flight joins that deliverable by
+default. Every task inherits its deadline, so `hq job` asks for no task-level time, even when the deliverable has
+none. The plan, live claim, reviews, fixes and seat pacing read the same deadline through `jobs.thread`. Changing
+it updates all that work on the next plan read, without copied task deadlines. The CEO's summary, plan and board's
+deliverable view say "no deadline set" once for the deliverable. The CEO settles that gap for the whole. A task
+in no deliverable takes `--by <when>`, `--by <project>/<slug>` or `--by none`. Outside a live call, an unfiled board
+ask without `--by` asks the CEO for its time. The CEO’s own ask is refused. A filed task’s `--by <when>` sets or
+tightens the deliverable’s deadline. Filing is judgment. Scheduling is an algorithm. A filed task is not refused for
+lacking a deadline.
+
 ## The names the board reads
 
 Agents name their work for each other; the board reads a plain version. A small model (the sizer's, `smallmodel.ts`)
@@ -254,8 +267,9 @@ claim, the worker and the review panel (`threadorder.ts`). There is no setting f
   as for any push. A task that pushed nothing has its waits met at the deliverable's merge, never stranded.
   The deliverable's next task waits while a job of that pull request that pushes to the branch is open (a fix, or a ruling
   that may touch it up), and a ruling touches nothing up while a task works on the branch, so two sessions never push
-  to one branch. A merge before the deliverable's last task runs settles the branch, and the next task starts a fresh one
-  from main, whose push opens the deliverable's next pull request.
+  to one branch. A merge before the deliverable's last task runs settles the branch, as does a close with every commit
+  on main already, and the next task starts a fresh one from main, whose
+  push opens the deliverable's next pull request.
 - **Its release.** A deliverable is one pull request, so no task in it waits for that pull request to merge
   (`threadrelease.ts`). `hq job --when deployed:` on the deliverable's own work (one of its tasks, the queuing one included,
   or its pull request) puts the job in HQ's one-task wrapper in the same project, and the answer says so. A task that
@@ -270,7 +284,8 @@ claim, the worker and the review panel (`threadorder.ts`). There is no setting f
   pushes its repair the same way; a repair that leaves nothing for main deletes the branch and closes the pull request.
   Each push or deletion holds only while the branch is still at the publication its writer started from (none, for a
   new branch): of a run again and a repair at once, the later is refused rather than undo the other's lines.
-- **A merge** clears the deliverable's branch (its next task starts a new one). A deliverable it leaves with nothing open or
+- **A merge**, or a pull request closed with every commit on main already, clears the deliverable's branch (its next
+  task starts a new one). A deliverable it leaves with nothing open or
   still to merge stays open, ready to judge (`threadjudge.ts`): HQ queues its owner a job with the deliverable's "done when"
   and each task's report (`threads.judge`; one that hasn't started takes the owner's next such deliverable in too), never
   held by a pause. The owner closes it with `hq plan done` or draws its next task. `hq projects`, `hq deliverable` and the
@@ -352,14 +367,17 @@ not its project's, and a job keeps only its project's. A move that would leave a
 ## Pausing a project or a deliverable
 
 
-A hold on a line of work ("no game work until the projects view is back") is state, not prose:
+A hold on a line of work ("no game work until the projects view is back") is state, not prose. It is only for work that
+must wait on a condition (something from the board, a decision it has to make, a hold it asked for), never to put other
+work first: that is a window, and the scheduler makes room by itself (board, call 169). A hold is
 `hq project pause <project> "why"` or `hq deliverable pause <project>/<slug> "why"`, by the CEO or the project's owner, with
 what wakes them to judge it: `--until <job>` for each job it waits for, `--until-time <time>`, or `--by-hand` (nothing
 does). One naming none of them is refused. It lives in HQ's db (`pauses.ts`), not in `projects.yaml`, so it holds the
 moment it's made. While it stands, the claim starts nothing queued on the deliverable, or on any deliverable of the project: no
-work, and no review, ruling or fix of its pull requests, which wait in review until it lifts. Work already running goes on; the CEO's
-hourly follow-through check lists it under the pause, to stop (`hq stop`) or let finish as the pause's reason says.
-`hq stop` on a running review or ruling pauses it at its next step instead: it goes back in the queue in its session,
+work, and no review, ruling or fix of its pull requests, which wait in review until it lifts. Work already running yields at its next step,
+as it does to the scheduler's room, and goes on in its session once the pause lifts; the run that made the pause runs on
+to its end (`jobs.ts` `pauseSuspends`). A running review or ruling runs to its end, and
+`hq stop` on one pauses it at its next step instead: it goes back in the queue in its session,
 and the pause holds it until it lifts, so a half-written review is never read as a verdict. A
 job queued onto a paused deliverable is accepted and told it's held, `hq jobs` and HQ's projects view say it's paused,
 the live estimate plays it after the jobs the pause waits for (the earliest its owner could lift it), and the projects

@@ -8,7 +8,7 @@
 import assert from 'node:assert/strict';
 import { errorsOf, until } from '../../shared/browser/browser.mjs';
 import { button, namedNotebook } from './bookchrome.mjs';
-import { DESKTOP } from './bookkit.mjs';
+import { DESKTOP, MINI } from './bookkit.mjs';
 
 const nameIn = page => page.locator('#book .bk-where'),
   titleField = page => page.getByRole('textbox', { name: 'Page title' });
@@ -18,7 +18,45 @@ export function titleStories(c) {
   return {
     'page titles: written in place in the bar on desktop, phone and iPad mini, with no date on the canvas': browser =>
       titles(browser, c),
+    "a call page's longest title whole in the bar on an iPad mini, upright and on its side": browser =>
+      callTitle(browser, c),
   };
+}
+
+// A call page's longest title: the call's widest date and time, then a topic of the most characters it takes
+// (ink/callnotes.ts TOPIC_MOST), whole in the bar on an iPad mini: upright, the book as the spread, and on its side,
+// the book open beside HQ's page at its own width, where the narrow book's row gives the name a line of its own (the
+// board, call 161.)
+const LONGEST_CALL = '28 Sept, 22:55, iPad mini walkthrough';
+async function callTitle(browser, c) {
+  for (const [screen, viewport, mode] of [
+    ['upright', { width: 744, height: 1133 }, 'spread'],
+    ['side-on', MINI, 'open'],
+  ]) {
+    const context = await c.hqIn(browser, viewport, {
+      notebooks: namedNotebook(),
+      hasTouch: true,
+      deviceScaleFactor: 1,
+    });
+    const page = await context.newPage(),
+      errors = errorsOf(page);
+    page.setDefaultTimeout(10_000);
+    try {
+      await page.goto(`${c.base}/?intro=0&renderer=wire`);
+      await until(page, '#loading.gone');
+      // (on its side the book opens beside HQ's page by itself)
+      if ((await page.evaluate(() => document.documentElement.dataset.book)) !== mode)
+        await page.locator('#book .bk-lip').click();
+      await c.settled(page, mode);
+      context.notebook.route('/api/notebooks/pages/title', {}, { id: 2, title: LONGEST_CALL });
+      await namedBar(page, LONGEST_CALL);
+      await c.shot(`call-title-ipad-mini-${screen}`, page);
+      await whole(nameIn(page).locator('span'), `a call page's longest title in the bar on an iPad mini, ${screen}`);
+      assert.deepEqual(errors, []);
+    } finally {
+      await context.close();
+    }
+  }
 }
 
 async function titles(browser, c) {
