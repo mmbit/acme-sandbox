@@ -1,5 +1,5 @@
 // A call's notes page: an ordinary page of the board's My Notebook, made for the call as it's picked up and titled for
-// it ("Call with Juno, 15:34"), open while the call is live. The board writes on it as on any page; the call's agent
+// it ("28 Oct, 15:34, Call with Juno"), open while the call is live. The board writes on it as on any page; the call's agent
 // adds to it, through the notebook's own scraps (notebookscraps.ts).
 //   - The agent's scraps: on its turn the agent turns what the board said and drew into one scrap per change, each its
 //     own focused crop (the voice line's scrap tool, POST /api/voice/scrap): a part of one of the board's notes on this
@@ -7,18 +7,17 @@
 //     event for its page, so the Notebook shows them one by one.
 //   - The agent's promises: what it promises on the call (ledger.ts add) is on the page too, typed on a post-it.
 //   - Its scraps and promises go in two columns across the page, each under the shorter (notebookstack.js nextScrap).
-//   - Its title: a few words the agent gives once the call's subject is clear (POST /api/voice/title), a title, not a
-//     summary.
+//   - Its title: the call's date and time, then a short topic the agent gives once the call's subject is clear (POST
+//     /api/voice/title; who the call is with until then), whole in the Notebook's bar (the board, call 161.).
 //   - A page brought to the call by its folded corner (bookshare.js) is its first scrap, in front of both.
 //   - The board's notes on the call (its scribbles on HQ, bookcalls.ts) are for the agent: none becomes a scrap by
 //     itself, the agent makes one of what it judges worth keeping (the board, call 161.).
 //   - The call ended: what the board wrote the old book's way on the page (a mark before the page was the notes page)
-//     becomes groups (notebookcarry.ts), the page is sent as any page is
-//     (notebooksend.ts: each group to its agent), and stays among My Notebook's pages like any sent page. A page with
-//     nothing on it goes.
-// The page is the call's one route for what it asks of the team: each scrap and promise on it is an item on the call's
-// list and goes to its owner with the page, once; the item then has the job it went as, which the call's follow-up goes
-// through instead of handing it out again (ledger.ts brief). Its asks: callasks.ts.
+//     becomes groups (notebookcarry.ts), and the page goes in as it is, among My Notebook's pages like any sent page.
+//     A page with nothing on it goes.
+// Each scrap and promise on the page is an item on the call's list. Nothing on the page goes to anyone by itself: the
+// call's follow-up, with the whole transcript, reads the page and hands each ask out in its brief, with the board's
+// context, so nothing is misread or queued twice. Its asks: callasks.ts.
 // The call engine (the watch-along, the line's driving and drawing) knows nothing of this page: Ink reads the engine
 // here, through its routes, and the engine never reads Ink.
 import { existsSync, readFileSync } from 'node:fs';
@@ -26,6 +25,7 @@ import sharp from 'sharp';
 import { db, inOneStep } from '../db.ts';
 import { ceo, companyTime } from '../company.ts';
 import { findAgent } from '../jobs.ts';
+import { keysAgent } from '../memory.ts';
 import { DIR } from '../pagescraps.ts';
 import * as watchalong from '../watchalong.ts';
 import { regionOf } from '../region.ts';
@@ -34,16 +34,19 @@ import { BOARD, COLUMNS, row, summary, type Page } from './book.ts';
 import { pictureOf } from './bookpicture.ts';
 import { byHand, changed, endOf, newPage, ownNotebook, pageOf, pageRow, shut, type NotebookPage } from '../notebook.ts';
 import { stackPicture, stackWords } from '../notebookscraps.ts';
-import { RESEND, sendPage } from '../notebooksend.ts';
 import { carryParts } from '../notebookcarry.ts';
 import { throwAway } from './bookcalls.ts';
 import { GOAL, WHAT, add, onCallPage, oneLine } from '../ledger.ts';
-import { asked, going, leaveAsSent, marked, takenOff } from './callasks.ts';
+import { asked, marked, takenOff } from './callasks.ts';
 import { isRefused, labelOf, type Anchor, type Refused } from '../pagechecks.ts';
 import { pictureSize } from '../../../../shared/pictures/size.ts';
 
 // The most of its words a scrap carries (its post-it's): its item's line
 const WORDS_MOST = WHAT;
+// The most characters of a call page's topic, after its date and time: "28 Sept, 22:55, iPad mini walkthrough" is whole
+// in the bar's row on an upright iPad mini (book-check's call-title story).
+const TOPIC_MOST = 21;
+const titleOf = (c: Live, topic: string) => `${companyTime(Date.parse(c.ts))}, ${topic}`;
 
 type Live = { id: number; agent: string; ts: string };
 export const liveCall = (call: number) =>
@@ -67,9 +70,12 @@ export function pageFor(call: number): NotebookPage | null {
     const id = found?.id ?? newPage(notebook);
     if (found)
       db.prepare('update book_pages set notebook = ?, pos = ? where id = ?').run(notebook, endOf(notebook), id);
-    db.prepare("update book_pages set kind = 'call', call = ?, label = ? where id = ?").run(
+    // (a call about a card for keys owns its page, so what the board sends from it goes to the call's agent:
+    // notebooksend.ts.)
+    db.prepare("update book_pages set kind = 'call', call = ?, owner = ?, label = ? where id = ?").run(
       call,
-      `Call with ${findAgent(c.agent)?.name ?? c.agent}, ${companyTime(Date.parse(c.ts))}`,
+      keysAgent(call),
+      titleOf(c, `Call with ${findAgent(c.agent)?.name ?? c.agent}`),
       id,
     );
     changed(notebook, id);
@@ -117,9 +123,10 @@ async function bring(p: NotebookPage, brought: NotebookPage) {
 // notes page: a scrap, the part of what the board drew or showed that the change is about (region, fractions of the
 // picture from its top left) with the agent's words for the change, or with neither from nor region a plain note, the
 // words alone on a post-it. from: 'note 3' (the board's note 3 on this call), or
-// a moment of the shown screen ('now', '-20s', '17:03:12', '#12'). owner: the agent whose work it is, who gets it when
-// the page is sent (none: the routing check decides). It's an item on the call's list too, a task (the CEO's to see
-// through without an owner) with goal, the board's why. Made by the agent's hand: the board's Undo takes it off.
+// a moment of the shown screen ('now', '-20s', '17:03:12', '#12'). owner: the agent whose work it is, for the call's
+// follow-up to hand it to (none: the follow-up decides; on a call about a card for keys only the call's agent, its
+// owner left out too). It's an item on the call's list too, a task (the CEO's to see through without an owner) with
+// goal, the board's why. Made by the agent's hand: the board's Undo takes it off.
 export async function scrap(b: any) {
   const call = Number(b?.call);
   const c = Number.isInteger(call) && call > 0 ? liveCall(call) : undefined;
@@ -132,6 +139,13 @@ export async function scrap(b: any) {
     return [400, `goal: why the board wants it, in its own terms, one line of at most ${GOAL} characters`] as Refused;
   if (b.owner != null && !(typeof b.owner === 'string' && findAgent(b.owner)))
     return [400, 'owner: the id of the agent whose work it is, or left out'] as Refused;
+  // (a call about a card for keys is its own agent's alone: memory.ts keysAgent.)
+  const keys = keysAgent(call);
+  if (keys && b.owner != null && b.owner !== keys)
+    return [
+      400,
+      `owner: this call is about a card for keys, so its work is ${keys}'s alone: name ${keys} or leave it out`,
+    ] as Refused;
   const plain = b.from == null && b.region == null;
   const cut = plain ? null : await cutFrom(call, b);
   if (isRefused(cut)) return cut;
@@ -139,7 +153,7 @@ export async function scrap(b: any) {
   if (!liveCall(call)) return [404, 'This call has ended: its page has gone in.'] as Refused;
   const p = pageFor(call)!;
   if (shut(p)) return [409, 'This call’s page has gone in.'] as Refused;
-  const owner = b.owner ?? null;
+  const owner = b.owner ?? keys;
   const g = byHand(c.agent, () =>
     cut
       ? place(p, c.agent, cut.picture, { words, anchor: cut.anchor, owner })
@@ -216,24 +230,28 @@ const place = (
   more: { words: string; anchor: Anchor; owner: string | null },
 ) => stackPicture(p, by, picture, { ...more, said: more.words ? 'typed' : null });
 
-// POST /api/voice/title { call, title }: the page's title, a few words for what the call is about
+// POST /api/voice/title { call, title }: the page's topic, a few words for what the call is about, after its date and time
 export function title(b: any) {
   const call = Number(b?.call);
   const c = Number.isInteger(call) && call > 0 ? liveCall(call) : undefined;
   if (!c) return [404, 'This call has ended: its page has gone in.'] as Refused;
   const t = labelOf(b.title);
   if (isRefused(t)) return t;
-  if (!t || t.split(' ').length > 8)
-    return [400, 'title: a few words (at most 8) naming what the call is about'] as Refused;
+  if (!t || [...t].length > TOPIC_MOST)
+    return [
+      400,
+      `title: what the call is about in at most ${TOPIC_MOST} characters ("Shop page prices"); the page keeps the call's date and time in front of it`,
+    ] as Refused;
   const p = pageFor(call)!;
   if (p.title_by === 'board') return { ok: "The board's title stays on the call's page." };
-  db.prepare("update book_pages set label = ?, title_by = 'agent' where id = ?").run(t, p.id);
+  const label = titleOf(c, t);
+  db.prepare("update book_pages set label = ?, title_by = 'agent' where id = ?").run(label, p.id);
   changed(p.notebook, p.id);
-  return { ok: `The call's page is titled “${t}”.` };
+  return { ok: `The call's page is titled “${label}”.` };
 }
 
-// What the agent promises on a live call (ledger.ts add), written on its page in type: an ask for its owner, going with
-// the page (one for the board stays on it). Only on a page the call has: a call on the phone has none
+// What the agent promises on a live call (ledger.ts add), written on its page in type: an ask for its owner, which the
+// follow-up hands out (one for the board is a mark on it). Only on a page the call has: a call on the phone has none
 export function noted(call: number, item: { id: number; kind: string; owner: string; what: string }) {
   const c = liveCall(call);
   const open = c && openPage(call);
@@ -248,45 +266,35 @@ export function noted(call: number, item: { id: number; kind: string; owner: str
   if (agent) asked(g.id, item.id);
   else marked(g.id);
 }
-// The call has ended (call.ts handOver, ledger.ts sweep): its page sent, staying where it is, or gone if nothing is on it
-export async function ended(call: number) {
+// Which page is the call's (the call's number its one parameter)
+const CALL_PAGE = "kind = 'call' and call = ? and notebook is not null";
+// The call has ended (call.ts handOver, ledger.ts sweep): its page goes in as it is, staying where it is, or is deleted
+// if nothing is on it. Nothing on it goes to anyone: the call's follow-up reads it with the transcript and hands each ask
+// out with the board's context
+export function ended(call: number) {
   takenOff(call);
   const p = db
     .prepare(
-      `select ${COLUMNS}, notebook from book_pages where kind = 'call' and call = ? and archived = 0 and send_at is null
-        and notebook is not null order by id desc`,
+      `select ${COLUMNS}, notebook from book_pages where ${CALL_PAGE} and archived = 0 and send_at is null
+        order by id desc`,
     )
     .get(call) as (Page & { notebook: number }) | undefined;
-  if (!p || pageRow(p.id, BOARD)!.send_at !== null) return;
+  if (!p) return;
   // (what the book wrote on it the old way. The board's notes stay the call's: none goes in by itself.)
   carryParts(p, []);
-  leaveAsSent(p);
   if (!hasGroups(p.id)) {
     throwAway(p.id);
     db.prepare('delete from book_pages where id = ?').run(p.id);
     return changed(p.notebook, null);
   }
-  const open = db
-    .prepare("select 1 from notebook_groups where page = ? and parent is null and deleted is null and status = 'open'")
-    .get(p.id);
-  // (only the agent's typed notes on it: nothing to send, so it goes in as it is, not left as My Notebook's open page)
-  if (open) await send(call, p.id);
-  else db.prepare('update book_pages set send_at = ? where id = ?').run(Date.now(), p.id);
-  // (the fresh page a send makes: My Notebook's own current page stays its current one)
-  const fresh = pageRow(p.id, BOARD)!.fresh;
-  if (fresh) db.prepare('delete from book_pages where id = ?').run(fresh);
+  db.prepare("update notebook_groups set status = 'sent' where page = ? and status = 'open'").run(p.id);
+  db.prepare('update book_pages set send_at = ? where id = ?').run(Date.now(), p.id);
   changed(p.notebook, p.id);
 }
-// The call's page sent, again while the board changes it in the Notebook as it goes; any other refusal leaves it open on
-// the shelf
-async function send(call: number, page: number) {
-  let sent = await sendPage({ id: page });
-  for (let tries = 1; isRefused(sent) && sent[1] === RESEND && tries < 3; tries++) sent = await sendPage({ id: page });
-  if (isRefused(sent) || typeof sent !== 'object')
-    throw new Error(
-      `Call #${call}: its notes page #${page} wasn't sent (${JSON.stringify(sent)}); it stays open on the shelf`,
-    );
-}
+// The call's notes page, gone in or still open, for its follow-up to read (hq sketch): none if it had nothing on it
+const pageOfCall = (call: number) =>
+  (db.prepare(`select id from book_pages where ${CALL_PAGE} order by id desc`).get(call) as { id: number } | undefined)
+    ?.id;
 const hasGroups = (page: number) =>
   !!db.prepare('select 1 from notebook_groups where page = ? and parent is null and deleted is null limit 1').get(page);
 const pageAnchor = (id: number): Anchor => ({
@@ -298,4 +306,4 @@ const pageAnchor = (id: number): Anchor => ({
 });
 
 // what's recorded on a call and its end reach the page through the ledger's hook (the ledger loads no Ink)
-onCallPage({ noted, ended, going, open: call => !!(liveCall(call) && openPage(call)) });
+onCallPage({ noted, ended, page: pageOfCall, open: call => !!(liveCall(call) && openPage(call)) });

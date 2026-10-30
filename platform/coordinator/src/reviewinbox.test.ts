@@ -16,6 +16,7 @@ const h = await harness('reviewinbox', {
 const { db } = h;
 const proposals = await import('./proposals.ts');
 const inbox = await import('./reviewinbox.ts');
+const { BAD_TITLE } = await import('./tasktitles.ts');
 const projects = await import('./projects.ts');
 const order = await import('./threadorder.ts');
 const plan = await import('./plan.ts');
@@ -140,7 +141,7 @@ test('one review inbox item reaches the project owner with domains and files, an
     findings: '12',
     title: 'x'.repeat(141),
   });
-  assert.deepEqual([overlong.status, overlong.body.error], [400, inbox.BAD_TITLE]);
+  assert.deepEqual([overlong.status, overlong.body.error], [400, BAD_TITLE]);
   assert.equal((await h.hq(author, 'inbox', 'accept', 'findings:71', '--for', 'kit', '--findings', '12')).code, 1);
   assert.deepEqual(inbox.unassigned(71, 1), [12, 13]);
   const together = await h.hq(owner, 'inbox', 'accept', 'findings:71', '--for', 'kit', '--findings', '12,13');

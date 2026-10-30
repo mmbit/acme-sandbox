@@ -47,7 +47,7 @@ async function clearOfTools(browser, c) {
         // (a desktop's paper has room for the store's readable width: drawn as the store has it)
         if (how === 'open') assert.deepEqual([g.pictures[0].w, k], [STACK.w, 1], `${size}: scrap ${g.id} readable`);
         else assert.ok(k < 1, `${size}: scrap ${g.id} fitted to the paper`);
-        // (a caption never over the next scrap: the board, call 162)
+        // (a caption never over the next scrap)
         if (above) assert.ok(above.y + above.height <= picture.y, `${size}: scrap ${g.id} below the words above it`);
         above = words;
       }

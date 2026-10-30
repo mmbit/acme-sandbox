@@ -17,6 +17,7 @@ export type Row = {
   decision: number | null;
   until_time: string | null;
   woken: number | null;
+  by_job: number | null;
 };
 // A job a pause waits for, where it is in words (untilWords), and whether it has ended, merged or not (ended)
 export type Until = { id: number; agent: string; title: string; state: string; ended: boolean };
@@ -36,6 +37,7 @@ export type Pause = {
   woken: number | null;
   decision: { id: number; name: string; card: number | null } | null;
   held: number;
+  byJob: number | null; // (the run that made it, which runs on under it)
   // (step, round: a job's name, jobs.ts nameOf.)
   running: {
     id: number;
@@ -87,6 +89,7 @@ export function described(p: Row, until = untilsOf([p.id]).get(p.id) ?? [], work
     woken: p.woken,
     decision: decisionOf(p),
     held: heldQueued,
+    byJob: p.by_job,
     running,
   };
 }

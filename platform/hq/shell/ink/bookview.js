@@ -119,7 +119,8 @@ export function zoomBy(book, k, { at: point = null, slide = true } = {}) {
   const scale = clampScale(from * k, v.page, book.size),
     mid = point ?? { x: book.size.w / 2, y: book.size.h / 2 },
     pan = zoomAt(book.pan, from, scale, mid);
-  if (slide) slideTo(book, { pan, scale }, () => book.remember(true));
+  // (the board's zoom, kept on the page)
+  if (slide) slideTo(book, { pan, scale }, () => book.remember({ zoomed: true }));
   else setView(book, { pan, scale });
   return true;
 }

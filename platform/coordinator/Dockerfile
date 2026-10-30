@@ -3,7 +3,9 @@ FROM node:24.22.1-slim
 # git, to read who committed the files a workflow writes for the server (src/committed.ts): the slim image has none.
 RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
 # Chromium, for print files a company's kit draws from a page of its own and for the watch-along's mirror, started
-# headless over its DevTools pipe by shared/chromium/chromium.ts.
+# headless over its DevTools pipe by shared/chromium/chromium.ts. APT_FRESH reruns this layer for a security fix:
+# bookworm-security's chromium 156.0.8078.73-1~deb12u1 (Chrome 156.0.8078.73's four criticals).
+ARG APT_FRESH=2026-10-30
 RUN apt-get update && apt-get install -y --no-install-recommends chromium && rm -rf /var/lib/apt/lists/*
 # the browser itself, not Debian's launcher script, which adds its own flags and extensions
 ENV CHROMIUM_PATH=/usr/lib/chromium/chromium

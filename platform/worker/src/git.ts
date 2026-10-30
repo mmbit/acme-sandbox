@@ -3,6 +3,7 @@
 // nothing git writes is shared between jobs. Agents hand their commits over as a bundle; root pushes them to
 // GitHub as job/<n>, and a thread task's own profile lines as profile/<n>, and
 // nothing else.
+import * as threads from './threads.ts';
 import { pushProcess } from './pushprocess.ts';
 import { assertOwned, ownershipSignal } from './ownership.ts';
 import { execFile, execFileSync, spawnSync } from 'node:child_process';
@@ -161,12 +162,17 @@ export const runAs = (agent: Agent, cmd: string, args: string[], input?: string)
 // Whether a failed push (or the mirror's fetch) was lost on the way to GitHub
 // rather than refused by it.
 // A refused ref ([rejected], [remote rejected]: not a fast-forward, a workflow file without the scope, a lease that no
-// longer holds) means GitHub answered. A push our timeout killed, a dropped connection, or a 5xx can go again.
+// longer holds) means GitHub answered. A push our timeout killed, a dropped connection, or a 5xx can go again, and so
+// can a ref GitHub rejects with no reason but "(failed)", a transient error on GitHub's side.
 function lostOnTheWay(e: { killed?: boolean; stderr?: unknown }) {
   const said = String(e.stderr ?? '');
-  if (/\[(remote )?rejected\]|HTTP 4\d\d|returned error: 4\d\d|remote unpack failed/i.test(said)) return false;
+  const withoutFailedRefs = said.replace(/\[remote rejected\] [^\n]* \(failed\)$/gm, '');
+  const hadFailedRef = withoutFailedRefs !== said;
+  if (/\[(remote )?rejected\]|HTTP 4\d\d|returned error: 4\d\d|remote unpack failed/i.test(withoutFailedRefs))
+    return false;
   return (
     !!e.killed ||
+    hadFailedRef ||
     /RPC failed|remote end hung up|unexpected disconnect|early EOF|Could not resolve host|Failed to connect|Connection (timed out|reset|refused)|Operation timed out|returned error: 5\d\d/i.test(
       said,
     )
@@ -509,6 +515,8 @@ export function gitFlow(o: {
   // A job's side of the flow, as the uid of the slot that runs it.
   function forAgent(agent: Agent) {
     const pinned = { ...agent, env: { ...agent.env, ...pinnedGitEnv } };
+    const git = (args: string[], extra: { input?: string; env?: Record<string, string> } = {}) =>
+      runAs({ ...pinned, env: { ...pinned.env, ...extra.env } }, 'git', args, extra.input);
     const ag = (dir: string, ...args: string[]) => runAs(pinned, 'git', ['-C', dir, ...args]).trim();
 
     // The job's own clone of the mirror, in the (empty) folder root made for its slot. Work jobs get their branch
@@ -617,15 +625,11 @@ export function gitFlow(o: {
     async function pushUpdated(dir: string, branch: string) {
       fetchMirror();
       ag(dir, 'fetch', '-q', 'origin', `+refs/heads/${base}:refs/remotes/origin/${base}`);
-      try {
-        ag(dir, 'merge', '-q', '--no-edit', '-m', `Bring up to date with ${base}`, `origin/${base}`);
-      } catch (err) {
-        const conflicts = ag(dir, 'diff', '--name-only', '--diff-filter=U', '-z').split('\0').filter(Boolean);
-        if (!conflicts.length) throw err;
-        ag(dir, 'merge', '--abort');
-        o.log?.(`${branch}: main conflicts in ${conflicts.join(', ')}, pushed without main`);
-      }
-      return push(dir, branch);
+      const conflicts = threads.mergeMain({ git }, dir, base);
+      if (conflicts.length) ag(dir, 'merge', '--abort');
+      const pushed = await push(dir, branch);
+      if (conflicts.length) o.log?.(`${branch}: pushed without main: main conflicts in ${conflicts.join(', ')}`);
+      return pushed;
     }
 
     // A thread task's own profile and archive lines, as the commit its clone built on `ref` (threads.ts splitProfile, or
@@ -924,8 +928,7 @@ export function gitFlow(o: {
       touchUp,
       as: (cmd: string, args: string[], input?: string) => runAs(agent, cmd, args, input),
       // (git with stdin and variables of its own, its output whole: threads.ts)
-      git: (args: string[], extra: { input?: string; env?: Record<string, string> } = {}) =>
-        runAs({ ...pinned, env: { ...pinned.env, ...extra.env } }, 'git', args, extra.input),
+      git,
     };
   }
 

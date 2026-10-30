@@ -17,6 +17,7 @@
 //     notes back after the play that finds it (sendBack), and so does a job that ends with notes it neither fixed nor
 //     answered (feedback.ts ended): each goes to a routing check again, with why.
 // (its messages say deliverable, the board's word for a thread)
+import { ONE_DEADLINE } from '../../worker/hq/levels.ts';
 import { db, inOneStep, mergePending } from './db.ts';
 import { publish } from './events.ts';
 import * as jobs from './jobs.ts';
@@ -166,7 +167,7 @@ export function log(since: string) {
     .all(since);
 }
 
-// (deliverables, the board's word for threads, drawn whole; later pieces chained)
+// (deliverables, the board's word for threads, drawn whole, later pieces chained)
 function checkPrompt(job: number) {
   const routes = routable(job);
   const owners = routes
@@ -188,10 +189,7 @@ needing that one (\`hq plan deliverable <project> "name" "done when" --needs <pr
 queued task can start at once): never drawn to run beside it. The notes go at the end of its brief, with their pictures; a brief file only for what they don't say. Or, \
 into a job in that area an agent queued that hasn't started: \`hq route '#<job>' <note ids>\` (into its brief). Never into \
 held work, nor a new task behind it or in a paused deliverable: the notes would wait with it. A note that came back says from \
-where and why: route it where work can start. The notes \
-are the board's ask: a new task takes its window as it's queued, \`--by <when>\` (a time the board gave), \
-\`--by <project>/<slug>\` (the deliverable they serve), or \`--by none\`; in a deliverable with a window, or one a windowed \
-deliverable needs, it has it already.
+where and why: route it where work can start. ${ONE_DEADLINE}
 4. Then stop: no report, no profile line, no code, no card.
 
 Only your choice routes a note: one you leave stays unrouted, and HQ's summary shows it to your next follow-through check.

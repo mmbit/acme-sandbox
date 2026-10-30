@@ -236,7 +236,7 @@ const within = (table, scale) => {
 };
 function pinchEnd(table) {
   table.pinch = null;
-  table.book.remember(true);
+  table.book.remember({ zoomed: true });
 }
 
 // ---- a wheel, a trackpad, Safari's pinch
@@ -279,7 +279,7 @@ const rest = table =>
   (table.wheelRest = setTimeout(() => {
     table.wheel = null;
     table.toolRun = 0;
-    table.book.remember(table.wheelZoomed);
+    table.book.remember({ zoomed: table.wheelZoomed });
     table.wheelZoomed = false;
   }, WHEEL_REST_MS));
 // Whether a run of wheel events is a mouse's wheel (which zooms) or a trackpad's two fingers (which pan): a mouse's
@@ -308,7 +308,7 @@ function gestures(table) {
     setView(book, { pan: zoomAt(from.pan, from.scale, scale, from.at), scale });
   });
   desk.addEventListener('gestureend', () => {
-    if (from) book.remember(true);
+    if (from) book.remember({ zoomed: true });
     from = null;
   });
 }

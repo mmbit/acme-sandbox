@@ -172,7 +172,7 @@ compose, caddy, log = run()
 sp, pub = compose['services']['product-sprout'], site(caddy, 'sprout.company.test')
 check('site only: public, same Caddy rules as live, with its own domain', pub.startswith('sprout.company.test {')
       and site(caddy, 'sprout.shop').startswith('sprout.shop {')
-      and 'forward_auth' not in pub and 'coordinator' not in pub and 'respond * "/* review mode: off */" 200' in pub
+      and 'forward_auth' not in pub and 'coordinator' not in pub and 'rewrite * /shared/watchalong/scrolllink.js' in pub
       and 'reverse_proxy product-sprout:8080' in pub)
 check('site only: SHOP=closed, STATUS=live (the live guards fail every payment and Print API call), no partners',
       sp['environment']['SHOP'] == 'closed' and sp['environment']['STATUS'] == 'live' and sp['environment']['PARTNER_ENV'] == 'none')
@@ -184,7 +184,7 @@ compose, caddy, _ = run()
 fr, apex = site(caddy, 'www.company.test'), apex_site(caddy)
 # www only, front.<zone> redirects with the bare domain
 check('front, site approved: public at www only, like any public site', fr.startswith('www.company.test {')
-      and 'forward_auth' not in fr and 'reverse_proxy product-front:8080' in fr and 'respond * "/* review mode: off */" 200' in fr
+      and 'forward_auth' not in fr and 'reverse_proxy product-front:8080' in fr and 'rewrite * /shared/watchalong/scrolllink.js' in fr
       and compose['services']['product-front']['environment']['SHOP'] == 'closed')
 check("front, site approved: no payments token on www, a test one in the container behind its preview door",
       keys_only_for_counting('front') and test_payments_only('front'))
@@ -223,7 +223,7 @@ os.rename(os.path.join(tmp, 'time-zone'), os.path.join(data, 'time-zone'))
 check("without the company's clock published, no product is given one: the deploy stops",
       unpublished.returncode != 0 and 'time-zone' in unpublished.stderr)
 check('live site: no preview login, no review mode, nothing to the coordinator', 'forward_auth' not in live and 'coordinator' not in live
-      and 'respond * "/* review mode: off */" 200' in live and 'reverse_proxy product-pebblet:8080' in live)
+      and 'rewrite * /shared/watchalong/scrolllink.js' in live and 'reverse_proxy product-pebblet:8080' in live)
 check('the board keeps its preview door with review mode', 'reverse_proxy coordinator:8080' in site(caddy, 'pebblet.preview.company.test'))
 check('a live product counts nothing from the preview door: the door marks its requests, the public host strips the mark',
       'header_up X-Preview-Door 1' in site(caddy, 'pebblet.preview.company.test')
@@ -268,7 +268,7 @@ check('www: a shelf for each public product, none for a preview or the front its
 fresh = shelf(caddy, 'www.company.test', 'pebblet')
 check('a shelf: the app told its prefix, no login, no review mode, the floor enforced',
       'header_up X-Forwarded-Prefix /pebblet' in fresh and 'reverse_proxy product-pebblet:8080' in fresh and 'forward_auth' not in fresh
-      and 'respond * "/* review mode: off */" 200' in fresh and '\theader Content-Security-Policy "script-src \'self\'' in fresh
+      and 'rewrite * /shared/watchalong/scrolllink.js' in fresh and '\theader Content-Security-Policy "script-src \'self\'' in fresh
       and 'redir /pebblet /pebblet/{?query} permanent' in www)
 plain = site(caddy, 'freebie.company.test')
 check("the old address sends page loads to the shelf, path and query kept",
@@ -611,7 +611,7 @@ _, ownDomainCaddy, _ = run()
 www_body = site(caddy, 'www.company.test')[len('www.company.test'):]
 check("the front with its own domain: www's whole site there (its pages, chat, shelves, kit routes, review off)",
       site(ownDomainCaddy, 'testco.shop').startswith('testco.shop {') and site(ownDomainCaddy, 'testco.shop')[len('testco.shop'):] == www_body
-      and shelf(ownDomainCaddy, 'testco.shop', 'fern') and 'respond * "/* review mode: off */" 200' in www_body and 'handle /__care/*' in www_body)
+      and shelf(ownDomainCaddy, 'testco.shop', 'fern') and 'rewrite * /shared/watchalong/scrolllink.js' in www_body and 'handle /__care/*' in www_body)
 check("...and www, the bare domain and front.<zone> redirect every path there, path and query kept, and do nothing else",
       apex_site(ownDomainCaddy).strip('\n') == 'company.test, www.company.test, front.company.test {\n\tredir https://testco.shop{uri} permanent\n}'
       and ownDomainCaddy.count('www.company.test') == 1)

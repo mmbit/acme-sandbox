@@ -1,5 +1,5 @@
 // A scrap onto a notebook's current page, stacked under what's on it: a snip cut of a page somewhere, or a typed note
-// (review mode's general note). Its group is a page's like any other (notebookgroups.ts). (out of notebookgroups.ts, for its size)
+// (review mode's general note). Its group is a page's like any other (notebookgroups.ts).
 import { randomBytes } from 'node:crypto';
 import { keepPicture } from './notebookpictures.ts';
 import { emptyGroup, shifted, typedBoxes } from '../../hq/shell/ink/notebookparts.js';

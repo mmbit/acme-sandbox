@@ -7,6 +7,8 @@
 // out, the phone's speaker puts the agent's words back in the microphone, and the voice line hears them as the
 // person's. Some still gets through on some devices, so the microphone's frames carry the voice as it played too, and
 // the voice line takes out what's left (mic-worklet.js).
+import { ScreenLock } from './screenlock.js';
+import { rms } from './audiolevel.js';
 
 const MICROPHONE = {
   audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
@@ -49,41 +51,16 @@ export class CallAudio {
   }
 
   // The screen stays on for the whole call: when it goes off, iOS mutes the microphone (and the call loses what's said)
-  // until the page is back. The browser lets go of a wake lock each time the page is hidden, and the system can let go
-  // of it on its own, so it's asked for again a second after it's let go (if in view), and each time the page is back.
-  // If the page comes back while a request is pending, it's asked once more when that settles: the browser may refuse
-  // it because the page was hidden when it was made.
-  // Safari grants the first one only within a few seconds of a tap (later ones on the page without), and the microphone
-  // can take longer than that to start: the page asks before start(), in the tap. Each answer goes in the timeline.
-  async keepAwake() {
-    if (this.closed || document.hidden || (this.lock && !this.lock.released)) return;
-    if (this.locking) return void (this.lockAgain = true);
-    this.locking = true;
-    let lock;
-    try {
-      lock = await navigator.wakeLock?.request('screen');
-      this.mark(lock ? 'wake lock held' : 'no wake lock');
-    } catch {
-      this.mark('wake lock refused');
-    }
-    this.locking = false;
-    if (this.closed) return lock?.release();
-    if (lock) {
-      this.lock = lock;
-      lock.addEventListener('release', () => {
-        if (this.closed) return;
-        this.mark('wake lock released');
-        setTimeout(() => this.keepAwake(), 1000);
-      });
-    }
-    if (this.lockAgain) {
-      this.lockAgain = false;
-      this.keepAwake();
-    }
-  }
+  // until the page is back. Safari grants the first wake lock only within a few seconds of a tap, and the microphone can
+  // take longer than that to start: the page asks before start(), in the tap (awake.keep()). Each answer goes in the
+  // timeline.
+  awake = new ScreenLock(kind => this.mark(kind));
 
-  // The audio context, the microphone and its worklet, then the call's sound: throws if the microphone doesn't start.
-  async start() {
+  // The call's sound, before the microphone: the audio context and the speaker every frame plays through, so what the
+  // page plays into it (voice) is heard while a microphone starts, which a Bluetooth car kit can take seconds over. Opened
+  // in the tap, as iOS starts a context only in one; start() opens it if the page hasn't.
+  open() {
+    if (this.ctx) return;
     toShell({ call: true });
     const ctx = (this.ctx = new AudioContext());
     // (a tap brings back a context iOS stopped; the first one, in this tap: iOS starts a context back from the background
@@ -97,17 +74,21 @@ export class CallAudio {
       if (ctx.state === 'interrupted') this.interrupted++;
       if (ctx.state !== 'running') this.follow(); // (iOS took the audio away)
     };
-    // (the call's sound starts first, in the tap: what the page plays into it is heard while the microphone starts, which
-    // a Bluetooth car kit can take seconds over: HQ's ring.)
     this.startSpeaker(ctx);
     this.speak();
+  }
+
+  // The microphone and its worklet, into the call's sound (open): throws if the microphone doesn't start.
+  async start() {
+    this.open();
+    const ctx = this.ctx;
     const stream = await navigator.mediaDevices.getUserMedia(MICROPHONE);
     if (this.closed) return stream.getTracks().forEach(t => t.stop());
     this.stream = stream;
     await ctx.audioWorklet.addModule(this.worklet);
     if (this.closed) return;
-    // (and plays again now the microphone is on, as it started once only after it: Safari's echo canceller takes out
-    // the stream it plays while the microphone is on)
+    // (played again now the microphone is on: Safari's echo canceller takes out only a stream that starts playing while
+    // the microphone is on.)
     this.speaker.pause();
     this.speak();
     this.watch = setInterval(() => {
@@ -123,11 +104,10 @@ export class CallAudio {
     this.level.fftSize = 512;
     this.hear(stream);
     this.checkMicrophone(); // (one that came muted or ended is replaced)
-    this.keepAwake(); // (again: the page may have been hidden and back while the microphone started; no-op when held)
-    // (back in view after the screen went off: the screen's lock, the audio and the microphone come back)
+    this.awake.keep(); // (again: the page may have been hidden and back while the microphone started; no-op when held)
+    // (back in view after the screen went off: the audio and the microphone come back, as the screen's lock does)
     this.shown = () => {
       if (document.hidden) return;
-      this.keepAwake();
       this.wake();
       this.checkMicrophone();
     };
@@ -392,7 +372,7 @@ export class CallAudio {
     this.silence?.stop();
     if (this.speaker) this.speaker.srcObject = null;
     this.ctx?.close().catch(() => {});
-    this.lock?.release().catch(() => {});
+    this.awake.stop();
     toShell({ call: false });
   }
 
@@ -415,11 +395,4 @@ export class CallAudio {
       this.mark(kind, now - (t - at) * 1000, ...numbers);
     }
   }
-}
-
-function rms(analyser, samples) {
-  analyser.getFloatTimeDomainData(samples);
-  let sum = 0;
-  for (const s of samples) sum += s * s;
-  return Math.sqrt(sum / samples.length);
 }

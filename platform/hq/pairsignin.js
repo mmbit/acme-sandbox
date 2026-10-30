@@ -1,7 +1,10 @@
 // The board accepts a one-time device sign-in, without synchronizing app annotations.
 const form = document.querySelector('form'),
   error = document.querySelector('[role=alert]');
-const code = new URLSearchParams(location.hash.slice(1)).get('code');
+// (view: a preview HQ's viewer opens once signed in, the QR in the viewer's bar: shell/viewer.js)
+const asked = new URLSearchParams(location.hash.slice(1)),
+  code = asked.get('code'),
+  view = asked.get('view');
 if (code) {
   form.elements.code.value = code;
   history.replaceState(null, '', location.pathname);
@@ -22,7 +25,7 @@ form.addEventListener('submit', async event => {
           ? 'Too many tries. Wait a minute, then ask for a fresh code.'
           : 'This code has expired or was used. Ask for a fresh code.',
       );
-    location.assign('/');
+    location.assign(view ? `/?${new URLSearchParams({ open: 'viewer', url: view })}` : '/');
   } catch (failure) {
     error.textContent = failure.message;
   } finally {

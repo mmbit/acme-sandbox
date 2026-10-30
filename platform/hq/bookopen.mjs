@@ -5,8 +5,8 @@
 // go mostly upright, it swings back shut; a flick right shuts the open book; a tap mid-swing turns it round; the tab is a
 // button for the keyboard. Each asserts what the board sees: the board's angle, the tab at its edge, HQ's page.
 import assert from 'node:assert/strict';
-import { MINI } from './bookkit.mjs';
-import { SETTLE_MAX } from './shell/ink/bookswingmath.js';
+import { MINI, until } from './bookkit.mjs';
+import { SETTLE_MAX, SWING } from './shell/ink/bookswingmath.js';
 
 const PHONE = { width: 390, height: 844 };
 
@@ -19,7 +19,6 @@ export function openStories(c) {
       browser => shutAgain(browser, c),
     "the Notebook's swing on a phone: a tap opens it over the whole screen, its tab inside it, and shuts it": browser =>
       onAPhone(browser, c),
-    // (the board, 28 Oct)
     "the Notebook's swing: shut as opened, HQ's page blurred and faded out wholly before it takes its room, and back in":
       browser => roomWhileGone(browser, c),
   };
@@ -34,19 +33,13 @@ async function pulledOpen(browser, c) {
     await shutBy(page, c);
     await ticks(page);
     const tab = await tabAt(page);
-    await page.mouse.move(tab.x, tab.y);
-    await page.mouse.down();
-    // the hand moves quicker than the board: right after the move it's still more upright than under the finger
-    await page.mouse.move(850, tab.y, { steps: 3 });
-    const early = await seen(page);
-    await page.waitForTimeout(700);
-    const held = await seen(page);
+    const { firstAngle, held } = await lifted(page, tab);
     await c.shot('swing-lifted', page);
     assert.ok(held.angle > 0.3 && held.angle < 1.3, `lifted to ${held.angle.toFixed(2)} rad`);
-    assert.ok(early.angle > held.angle + 0.05, `no lag: ${early.angle.toFixed(2)} then ${held.angle.toFixed(2)}`);
+    assert.ok(firstAngle > held.angle + 0.05, `no lag: ${firstAngle.toFixed(2)} then ${held.angle.toFixed(2)}`);
     // (never stretched: the board's laid out at the width it opens at, turned, its tab at its outer edge)
     assert.equal(held.width, open.width, 'the book stretched while lifted');
-    // (held, the tab lifts up, never out: no gap between it and the cover, the board's call 149)
+    // (held, the tab lifts up, never out: no gap between it and the cover)
     assert.ok(
       Math.abs(held.tabRight - held.edgeLeft) <= 1,
       `the tab at ${held.tabRight}, the edge at ${held.edgeLeft}`,
@@ -58,12 +51,7 @@ async function pulledOpen(browser, c) {
     await page.waitForTimeout(500);
     assert.ok((await seen(page)).angle < 1.05, 'lowered past halfway');
     await letGoOneShadow(page, c);
-    // (HQ's page settles in its room while it's gone, then comes back in slowly: the board's call 148)
-    await page.waitForFunction(
-      () => Number(document.body.style.opacity || 1) === 1 && !document.body.style.filter,
-      null,
-      { timeout: 15_000 },
-    );
+    await hqBack(page);
     const landed = await seen(page);
     assert.equal(landed.mode, 'open');
     assert.equal(landed.angle, 0);
@@ -76,22 +64,40 @@ async function pulledOpen(browser, c) {
     await done();
   }
 }
+// The tab pressed and pulled quickly left. Gives the board's angle on the first frame after the hand's last move, and
+// the board once it rests under the finger. The quicker the hand, the more upright that first frame. Each frame is read
+// in the page, as on a loaded worker the board can catch up before a read from here arrives.
+async function lifted(page, tab) {
+  const caughtUp = () =>
+    page.evaluate(() => {
+      const angles = window.__angles;
+      return angles.length > 3 && Math.abs(angles.at(-1) - angles.at(-4)) < 0.002; // (still over three frames)
+    });
+  await page.mouse.move(tab.x, tab.y);
+  await page.mouse.down();
+  await anglesWatched(page);
+  await page.mouse.move(850, tab.y, { steps: 3 });
+  await until(caughtUp, 'the book caught up with the hand');
+  return { firstAngle: await page.evaluate(() => window.__firstAngle()), held: await seen(page) };
+}
 // Pulled from shut and held on after it lands: it stays put, then the same drag resizes it, wider
 async function resizedInTheGesture(page, c, open, tab) {
   await shutBy(page, c);
   await page.mouse.move(tab.x, tab.y);
   await page.mouse.down();
   await page.mouse.move(open.edgeLeft - 40, tab.y, { steps: 4 });
-  await page.waitForTimeout(900);
+  // (landed flat under the finger, then drawn on: the resize starts once it has lain flat for a few of the swing's own
+  // frames, which a loaded worker draws late.)
+  await until(async () => (await seen(page)).angle < 0.003, 'the book landed flat under the finger');
   await page.mouse.move(open.edgeLeft - 200, tab.y, { steps: 8 });
-  await page.waitForTimeout(400);
+  // (the cover's edge where the finger holds the tab, its grip on it kept)
+  const edge = open.edgeLeft - 200 + (MINI.width - tab.x);
+  await until(async () => Math.abs((await seen(page)).edgeLeft - edge) < 3, `the cover's edge at ${edge}, held`);
   await c.shot('swing-resized', page);
   await page.mouse.up();
   await c.settled(page, 'open');
-  await page.waitForTimeout(600);
-  // (the cover's edge where the finger holds the tab, its grip on it kept)
-  const wider = await seen(page),
-    edge = open.edgeLeft - 200 + (MINI.width - tab.x);
+  await hqBack(page);
+  const wider = await seen(page);
   assert.ok(Math.abs(wider.page - edge) < 3, `HQ's page ${wider.page}, not ${edge}`);
 }
 
@@ -160,31 +166,38 @@ async function onAPhone(browser, c) {
   }
 }
 
-// The tab tapped, HQ's page watched on every frame from then (its room, gone, blurred, opacity, when) into __rooms
+// The tab tapped, HQ's page watched on every frame from then into __rooms: its room, gone, blurred, opacity, and the
+// frame's time on two clocks: the wall clock (t), and the swing's own clock (swung), which steps at most SWING.frame a
+// frame, as the swing and its fade do (bookswing.js).
 const tappedWatched = page =>
-  page.evaluate(() => {
+  page.evaluate(longest => {
     const frames = (window.__rooms = []);
-    const watch = () => {
+    let swung = 0;
+    const watch = t => {
       const s = getComputedStyle(document.body);
+      if (frames.length) swung += Math.min(longest, t - frames.at(-1).t);
       frames.push({
         room: document.documentElement.style.getPropertyValue('--book-room'),
         gone: s.visibility === 'hidden',
         blurred: s.filter !== 'none',
         opacity: Number(s.opacity),
-        t: performance.now(),
+        t,
+        swung,
       });
       if (frames.length < 2000) requestAnimationFrame(watch);
     };
     requestAnimationFrame(watch);
     document.querySelector('#book .bk-lip').click();
-  });
-// How long HQ's page took to fade out (from the tap), stayed gone, and came back in (ms)
+  }, SWING.frame * 1000);
+// How long HQ's page took to fade out from the tap, stayed gone, and came back in (ms). The fade out is timed on the
+// swing's clock (swung), the one its fade plays on: a loaded machine's frames take longer than the swing steps. Gone
+// and back are wall-clock time (t), which settling in and coming back in run on.
 function phases(frames) {
   const first = frames.findIndex(f => f.gone),
     last = frames.findLastIndex(f => f.gone),
     clear = frames.findLastIndex(f => f.opacity < 1);
-  const ms = (i, j) => Math.round(frames[j].t - frames[i].t);
-  return { out: ms(0, first), gone: ms(first, last), back: ms(last, clear) };
+  const ms = (i, j, clock = 't') => Math.round(frames[j][clock] - frames[i][clock]);
+  return { out: ms(0, first, 'swung'), gone: ms(first, last), back: ms(last, clear), outByWall: ms(0, first) };
 }
 
 // Opened and shut by the tab: on every frame HQ's page changes its room (laid out beside the book, or the whole screen
@@ -220,17 +233,19 @@ async function roomWhileGone(browser, c) {
       );
       times[way] = phases(frames);
     }
-    // (the same timing both ways: fading out and back in, each within a third of the other's, as frames on a loaded
-    // machine come; gone, within the time the page's own transitions may take after its reflow, bookswingmath.js's
-    // SETTLE_MAX: the board's call 160)
-    for (const [k, slack] of [
+    // (the same timing both ways. Out, on the swing's clock, and back may differ by a third of the longer way's time,
+    // plus 50 ms for three 60 Hz frames late on a loaded machine. Gone may differ by SETTLE_MAX more, the time the
+    // page's own transitions may take after its reflow (bookswingmath.js).)
+    for (const [phase, slack] of [
       ['out', 0],
       ['gone', SETTLE_MAX],
       ['back', 0],
     ])
       assert.ok(
-        Math.abs(times.shut[k] - times.opened[k]) <= Math.max(times.shut[k], times.opened[k]) / 3 + 50 + slack,
-        `${k}: shut ${times.shut[k]} ms, opened ${times.opened[k]} ms`,
+        Math.abs(times.shut[phase] - times.opened[phase]) <=
+          Math.max(times.shut[phase], times.opened[phase]) / 3 + 50 + slack,
+        `${phase}: shut ${times.shut[phase]} ms, opened ${times.opened[phase]} ms ` +
+          `(out by the wall clock: shut ${times.shut.outByWall} ms, opened ${times.opened.outByWall} ms)`,
       );
     assert.deepEqual(errors, []);
   } finally {
@@ -289,6 +304,34 @@ export const seen = page =>
       shadow: (s => (s.visibility === 'visible' ? Number(s.opacity) : 0))(getComputedStyle(edge, '::before')),
     };
   });
+// The board's angle round the spine on every frame since the hand's last move, into __angles. Each move starts the
+// list again. Its listener is added after bookfollow.js's, so each frame's read is the swing's step for that move.
+// __firstAngle() stops the reads and gives the first.
+const anglesWatched = page =>
+  page.evaluate(() => {
+    const edge = document.querySelector('#book .bk-edge');
+    let frame = 0;
+    const read = () => {
+      const m = new DOMMatrix(getComputedStyle(edge).transform);
+      window.__angles.push(Math.abs(Math.atan2(m.m13, m.m11)));
+      frame = requestAnimationFrame(read);
+    };
+    const moved = () => {
+      window.__angles = [];
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(read);
+    };
+    window.__angles = [];
+    addEventListener('pointermove', moved);
+    window.__firstAngle = () => {
+      removeEventListener('pointermove', moved);
+      cancelAnimationFrame(frame);
+      return window.__angles[0];
+    };
+  });
+// HQ's page back in, sharp, after settling in its room while gone
+const hqBack = page =>
+  page.waitForFunction(() => Number(document.body.style.opacity || 1) === 1 && !document.body.style.filter);
 // The book's own shadow on HQ's page beside it (how strong it is) on every frame while it swings, into __shadows
 const shadowWatched = page =>
   page.evaluate(() => {

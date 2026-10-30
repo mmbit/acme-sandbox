@@ -8,6 +8,7 @@ import { harness, WORKER_TOKEN } from './harness.ts';
 
 const h = await harness('reins');
 const reins = await import('./reins.ts');
+reins.start(); // (as the server's start)
 
 test("jobs joining or leaving while a job's time drains change its share from then on, not what it drained", () => {
   // (played first, its clock well before the next test's, which plays before the server's clock now)
@@ -35,6 +36,7 @@ test('a job leaving the minute at a fractional clock reading stops counting at i
   // at the share without it. Only readings above zero round so, and in a fresh process the clocks this file plays are
   // below zero: the case plays on its own copy of the reins, so the shared one's clock stays where the next test starts.
   const own: typeof reins = await import(new URL('./reins.ts?expiry', import.meta.url).href);
+  own.start();
   const at = 96.421893,
     job = 900_101,
     leaving = 900_102;

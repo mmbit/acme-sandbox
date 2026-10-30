@@ -5,11 +5,13 @@ from pathlib import Path
 HQ_TOOLS = [sys.executable, str(Path(__file__).with_name('hq_tools.py'))]
 # (when: eta)
 # (git, report; ask_to_see, draw; drive, open_work; the pins' removal)
-# (answer_note)
 # (scrap and title_page: the call's notes page, callnotes.py; change_page, mark_page and read_page: the agent working it.)
-CALL_TOOLS = ['add', 'answer_note', 'ask_to_see', 'call', 'change_page', 'draw', 'drive', 'estimate', 'eta', 'expedite', 'git',
-              'hang_up', 'history', 'intercom', 'job', 'manage', 'mark_page', 'open_work', 'promise', 'reach', 'read_page',
-              'replace', 'report', 'scrap', 'screen', 'search', 'sketch', 'title_page', 'waiting', 'when']
+# (name_voice: voices.py)
+# (save_voice, forget_voice: voices.py's saved voices)
+CALL_TOOLS = ['add', 'ask_to_see', 'call', 'change_page', 'draw', 'drive', 'estimate', 'eta', 'expedite',
+              'forget_voice', 'git', 'hang_up', 'history', 'intercom', 'job', 'manage', 'mark_page', 'name_voice',
+              'open_work', 'promise', 'reach', 'read_page', 'replace', 'report', 'save_voice', 'scrap', 'screen',
+              'search', 'sketch', 'title_page', 'waiting', 'when']
 PARTNER_TOOLS = ['hang_up', 'no_transcript', 'note', 'screen']
 # Off limits to Read, Grep and Glob, where a set has them
 FENCED = ('/proc', '/seat', '/data', '/dev', '/sys', '/etc', '/models', '/tmp')
@@ -47,7 +49,7 @@ def cli_tools(names, builtin, tool_set=None):
 # - the line's own folders and /proc are off limits to its Read, Grep and Glob: the OS keeps the server's token from
 #   it, this is a second fence.
 # If hq_tools.py won't start, the CLI still does (MCP servers are optional): calls work, without its tools.
-TOOLS = cli_tools(CALL_TOOLS, 'Read,Grep,Glob,WebSearch,WebFetch')  #.
+TOOLS = cli_tools(CALL_TOOLS, 'Read,Grep,Glob,WebSearch,WebFetch')
 # A call out to a partner: no built-in tool and nothing of the company's looked up, so an outsider's words can't steer
 # a look-up (house rule 9). Its screen tool shows only the partner's own screen.
 PARTNER = cli_tools(PARTNER_TOOLS, '', 'partner')

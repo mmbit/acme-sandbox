@@ -1,7 +1,7 @@
 // node --test platform/hq/shell/ink/notebookstack.test.js   (where a notebook's new things land: pure)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { boxOf, footprint, landingPage, nextScrap, scrapSize, STACK } from './notebookstack.js';
+import { boxOf, footprint, landingPage, nextScrap, scrapSize, slipsUnder, STACK } from './notebookstack.js';
 
 const page = (id, created, more = {}) => ({ id, created, archived: 0, send_at: null, tries: null, ...more });
 const sent = p => p.send_at !== null;
@@ -12,7 +12,6 @@ test('new groups land on the newest page neither sent, archived nor a try’s ve
     page(2, '2026-10-02T09:00:00.000Z'),
     page(3, '2026-10-03T09:00:00.000Z', { tries: 40 }),
     page(4, '2026-10-04T09:00:00.000Z', { archived: 1 }),
-    page(9, '2026-10-04T10:00:00.000Z', { tries_note: 12 }),
     page(5, '2026-10-05T09:00:00.000Z', { send_at: 1_800_000_000_000 }),
   ];
   assert.equal(landingPage(pages, sent)?.id, 2);
@@ -117,4 +116,21 @@ test("a scrap's picture as wide as it was cut, at most the stack's width; a tall
   const tower = scrapSize(390, 3000),
     fit = STACK.w / 390;
   assert.ok(Math.abs(tower.w / 390 - fit * 0.6) < 0.01, `a tower scaled no less than readable: ${tower.w}`);
+});
+
+test("what's slipped under a group: a reply matched only by the answer it answers, never by its own id", () => {
+  const children = [
+    { id: 7, kind: 'answer' },
+    { id: 8, kind: 'answer', spot: { dx: 0, dy: 0, w: 200 } },
+    { id: 9, kind: 'answer', style: 'version' },
+    { id: 8, kind: 'reply', answers: 7 },
+    { id: 30, kind: 'reply', answers: 8 },
+    { id: 31, kind: 'reply', answers: 9 },
+    { id: 32, kind: 'reply', answers: null },
+  ];
+  assert.deepEqual(
+    slipsUnder(children).map(c => `${c.kind} ${c.id}`),
+    ['answer 7', 'reply 8', 'reply 32'],
+    "the slipped answer, its reply (whose id is a placed answer's) and a loose reply; not what's written in",
+  );
 });

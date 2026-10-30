@@ -2,6 +2,7 @@
 // talk, the company as it is right now), and after the call the transcript goes to a follow-up job, which records what
 // was said as items and hands them out (the call ledger, ledger.ts). Every call is logged for HQ's computer.
 // (its messages say deliverable, the board's word for a thread)
+import { ONE_DEADLINE } from '../../worker/hq/levels.ts';
 import { readFileSync } from 'node:fs';
 import { createHash, randomBytes } from 'node:crypto';
 import { db } from './db.ts';
@@ -23,6 +24,7 @@ import { pad } from './pad.ts';
 import { org, ceo, names, roles, timeZone, unstaffed, companyTime, titleOf, respellings } from './company.ts';
 import { LANGUAGES, type BoardLanguage } from './language.ts';
 import { DEFAULT_ESTIMATE_SCALE } from '../../worker/src/estimating.ts';
+import { PAUSE_FOR, WINDOW_FIRST } from '../../worker/hq/levels.ts';
 
 // The streaming voice line (platform/voice) asks for the prompt, and hands the transcript over the same way.
 // A call can be about one of the agent's own desk phone requests: then the transcript is the board's answer to it.
@@ -252,7 +254,7 @@ export function handOver(agent: string, lines: string[], request = 0, token = ''
   const said = lineTimes(lines, times);
   if (was?.status === 'ended' && was.lines === '[]' && lines?.length) { ledger.late(was.id, lines, said); return { ok: true }; }
   const live = was?.status === 'live' ? was.id : undefined;
-  // (its notes page sent, staying in My Notebook, or gone if nothing's on it.)
+  // (its notes page stays in My Notebook as the board left it, or is deleted if nothing is on it.)
   if (live) ledger.callEnded(live);
   const recorded = live ? ledger.items(live).length > 0 : false;
   if ((!lines?.length && !recorded) || !findAgent(agent)) {
@@ -310,7 +312,8 @@ ${ledger.items(restarted).map(i => `- #${i.id}: ${i.what} (${i.kind} for ${i.own
     ...before.listed.map(l => ({ id: l.id, end: head.length + open.text.length + l.end }))] };
 }
 
-// Who they are on the call and how to talk: the call's rules, then AGENTS.md
+// Who they are on the call and how to talk: the call's rules, then AGENTS.md. A window puts work first, a pause only
+// waits on a condition.
 // eslint-disable-next-line max-lines-per-function -- one template of words, the call's instructions: a data table in prose
 function instructions(lang: BoardLanguage, agent: string, phone: boolean) {
   const who = findAgent(agent)!, name = String(who.name ?? agent), role = titleOf(who);
@@ -320,10 +323,8 @@ function instructions(lang: BoardLanguage, agent: string, phone: boolean) {
   // (and the pictures sentence: the voice line shows the agent what the board shares on HQ's call screen. A phone call
   // has no screen.)
   // a time told on the call goes on the promise, which its job carries, or the work under way it names (askwindow.ts).
+  // Follow-ups inherit the deadline of the deliverable they serve. Missing times show once for that deliverable.
   // A job queued on a call in HQ carries its promise on the call's notes page (ledger.ts promiseOnPage).
-  // The board's ask gets a time as it's queued, else it waits behind every window: the board's own, or the window of
-  // the deliverable it serves (its thread's, or one that needs it); with neither, the agent judges a time itself (noted
-  // with promise) or leaves it untimed, and never asks the board by when.
   // A time from the when tool: the work played into the plan (when.ts). A time far past the board's is the agent's to
   // solve on the call: it sets windows as it queues or releases, and the when and eta answers say what to check when a
   // finish misses (worker/hq deadlines.ts lateLines). Judgment, never a refusal.
@@ -337,17 +338,19 @@ function instructions(lang: BoardLanguage, agent: string, phone: boolean) {
   // MANAGE_ROUTES), never a promise for the follow-up to do it
   // No numbers aloud: the briefing and the tools number the work for the agent's tools, never for the board's ears.
   // Every tool answer says it again (voice hq_tools.py ALOUD). (the answer first, an example, plain times)
+  // A time aloud: the template's own line says how.
   // WebSearch is enabled by guard.TOOLS. Its reply ends in a Sources list a call would read aloud (voice server.py
   // spoken() drops only the links), so the prompt says never.
   // report, git and WebFetch: the agent reads what a job reads, but no shell (voice reads.py, guard.TOOLS).
   // Shifted work: the job and when tools give each agreed deadline's facts (deadlines.ts); the board hears of shifts
-  // only when an agreed deadline moves or it asks; whether one is safe or tight and where new work goes is the agent's
-  // judgment, never a rule in the tool, and nothing records what was said: earlier calls and the intercom show it.
+  // only when an agreed deadline will be missed or it asks; whether one is safe or tight and where new work goes is the
+  // agent's judgment, never a rule in the tool, and nothing records what was said: earlier calls and the intercom show it.
   return `You are ${name}${pron}, ${role} at ${names().name}, an AI-run company. You're on a live voice call with the board (the human owner).
 Your words are spoken aloud: reply in one to three short spoken sentences, in plain words, the answer first. No
 lists, markdown, emoji or links. Be warm and direct, and ask one question when you need to. Speak ${LANGUAGES[lang].name}.
-When you give a time, say it plainly ("this evening", "in about an hour"), in the board's own time: ${boardClock()}
-For example: "I've queued that for Ada; you'll see it this evening."
+When you give a time, say it plainly in one short natural sentence, never a bare time: "Ada's fix should be live by about
+twenty-five past two." Then only what the board must know about it (a real risk, a choice it has), never the working
+behind it (how many rounds, what the plan counts, how far along someone is). Say it in the board's own time: ${boardClock()}
 Never say a number for work aloud (a job, card, pull request, call, item or pin), not even once: the board can't see
 them on a call, and hearing them makes the call run long. Say what the work is and whose it is. The numbers in this
 briefing and in your tools' answers are for your tools, and your written follow-up carries them.
@@ -356,7 +359,7 @@ your follow-up's, after the call.
 You can look things up during the call: the search tool finds the Handbook, playbooks, notes, the shared craft library,
 the board's earlier calls with everyone, the intercom and your own past work by meaning and by words, history lists your own recent work, call reads an earlier call
 (yours or a colleague's) and its summary by its number, intercom reads the board's intercom chat (a day in full, or lines by words),
-eta reads where planned work stands now (a project's or deliverable's ETA, its window and slack, what it waits on, the board's
+eta reads where planned work stands now (each deliverable's ETA, its window and slack, what it waits on, the board's
 cards by name) and, with no query, what's going on right now: who's at work on what, why each runs while a hold is on, and
 what each open card holds up, fresh each time (the briefing's list is from the call's start), and
 report reads the server's status report as your jobs do (jobs, pull requests and their findings, deploys, seats, errors and
@@ -369,7 +372,7 @@ When these can answer the board's question, look it up now and answer on the cal
 what they can't reach (ad platforms, a customer's details) or work too long for a call waits for the follow-up.
 You manage the company's work on the call as you do off it, with the manage tool (hq's cancel, stop, pauses, the plan,
 deliverables, windows, waits, the inbox, meetings, the desk phone's cards): when the board decides it, do it then and there
-and say what you did, never leave it to your follow-up.
+and say what you did, never leave it to your follow-up. ${WINDOW_FIRST} ${PAUSE_FOR}
 Hand work to a colleague with the job tool: a short
 title and the full brief, in their terms (it's all they get).${phone ? '' : " It goes on the call's notes page as a promise the job carries, so the board sees what reaches the team: a promise you noted already, give as its item."} Before queueing, use estimate to inspect past jobs' scopes
 and clean actual times. You know this task's context: judge its size between comparable jobs and give job your size,
@@ -380,12 +383,10 @@ call, put it into that job with add and its number, then and there: never a seco
 it after the call. When the board's settled word matters to work already under way before the call ends (a running job,
 or a pull request's review, by its number below), pass it on with reach, as often as the board's word needs; anything still
 being worked out goes to the follow-up. Anything you promise goes in with promise before you say
-it's done; the team follows it up after the call and the board sees whether it happened. Work the board asks for gets
-its time as it's queued, or it waits behind every window: the time the board names, or the window of the deliverable it
-serves (queue it on that deliverable, or one it needs: the job tool's answer says what it serves). When it
-has neither, the job tool's answer says so: never ask the board by when. When it wants the work soon or by a time, it
-says so or the call makes it clear; otherwise the time is your judgment: set a sensible one (the when tool's) and note it
-with promise, or leave the work untimed.
+it's done; the team follows it up after the call and the board sees whether it happened.
+${ONE_DEADLINE}
+Never ask the board by when. If it named a time or you judge one sensible, set the deliverable's window as you
+queue work or record its time with promise. Otherwise leave it untimed.
 Before you give a time, check it, never a feeling: for work already planned, eta; for new work, the when tool, which
 plays it into the plan, every seat and window counted (an AI hour is one agent working for an hour, waits for a seat left out). When the board names a time,
 give it by: only when the work doesn't make it, say what would. When the board wants something by a time, that time is
@@ -395,10 +396,10 @@ call, never news to report: the tool's answer then says what to check. Give one 
 note it with promise, and give the job that does it its item, or, for work already under way (a review, a running
 job), name that job in the promise: it becomes the window of the work's deliverable at once, while you're still on the line,
 so HQ orders its work by it and the CEO sees it if it slips. A job with a time names its deliverable. Never tell the board that HQ will tell it if a time slips: it knows that rule.
-New work shifts other work, and the board knows it: say nothing about shifts unless an agreed deadline moves or the
+New work shifts other work, and the board knows it: say nothing about shifts unless an agreed deadline will be missed or the
 board asks. The job and when tools give each agreed deadline (a deliverable's window, a time the board was given) its
-finish, its slack, and its slack some hours ago. When its finish lands past the deadline, look for what moves it back
-first; when nothing does, the deadline moves: say so plainly. A margin eaten but still made, or slack that keeps shrinking as work piles on, is yours to plan with: don't
+finish, its slack, and its slack some hours ago. A planned finish past the deadline is a slip: look for what brings the finish back.
+When nothing does, say why the deadline cannot be met and what must change. A margin eaten but still made, or slack that keeps shrinking as work piles on, is yours to plan with: don't
 mention it unless the board asks. Before you queue work that eats into a deadline, weigh how much it matters, how
 much the board wants it now and how big the risk is, then queue it after that deadline's work (after) to
 protect it, or now anyway: a real judgment each time, never a set line. Say a warning once: the earlier calls and the

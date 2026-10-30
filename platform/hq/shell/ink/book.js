@@ -45,6 +45,9 @@ let state, drawn; // state: what's asked for (mode, the book's width); drawn: th
 let placed = null; // where the parts are on the screen now (placeOf's shape), mid-drag or mid-slide too
 let laid = null; // where they're laid out ({ x, width, room }, the leaf's width as set): a move is a transform from it
 let moving = []; // the slide or fade under way: its animations
+// HQ's viewer has the open book lie over its frames, the board's pick there: HQ's page then gives up no room for it,
+// and the viewer's bar keeps clear of it by --book-over (viewer.js's viewer:over.)
+let over = false;
 
 export async function initBook({ scope = null } = {}) {
   setScope(scope);
@@ -74,6 +77,10 @@ export async function initBook({ scope = null } = {}) {
   // (a page made or thrown away outside the book, a call's: calldraw.js, markpage.js, which send book:paged: the
   // notebook's pages read again, at that page if it's new.)
   document.addEventListener('book:paged', e => pages.made(e.detail?.page));
+  document.addEventListener('viewer:over', e => {
+    over = e.detail === true;
+    if (drawn && !moving.length) show(drawn);
+  });
   show(layout(innerWidth, innerHeight, state));
   undoKeys();
   dragEdge();
@@ -269,7 +276,8 @@ function place(at, mode, act, fade = act) {
   const { x, width, room } = at;
   placed = at;
   laid = { ...at, leaf: Math.max(width, reach(at)) };
-  toRoom(Math.round(room), fade);
+  toRoom(over ? 0 : Math.round(room), fade);
+  document.documentElement.style.setProperty('--book-over', `${over ? Math.round(room) : 0}px`);
   tones(); // (the table shows round the resting book)
   root.dataset.mode = mode;
   cover(parts.table, mode === 'spread', room, fade ? ROOM_MS.out + ROOM_MS.in : 0);

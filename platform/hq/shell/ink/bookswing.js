@@ -2,7 +2,7 @@
 // cover and paper one rigid board swinging round the spine at the screen's right edge, drawn each frame by transforms
 // alone (perspective and a turn round the spine; the edge, leaf and pull tab book.js lays out). While it's lifted it
 // reads closer, its page face shades, and the page block's edge shows at its outer edge; its one shadow is the one it
-// rests with, round it all the way (the board's call 160). HQ's page dissolves (blurred and faded) as the board lowers, gone by the
+// rests with, round it all the way. HQ's page dissolves (blurred and faded) as the board lowers, gone by the
 // time it lands, settles into its new room while it's gone, and only then fades back in, sharp and slowly, so the board
 // never sees it jump; closing the same in reverse, on the opening's clock. The
 // landing thuds: a sound, a 1 to 2 px nudge of the page, a haptic tick where there is one. Shutting, it closes with a
@@ -133,7 +133,7 @@ function begin(a, w) {
   root.classList.add('bk-swinging');
   lipWidth = parts.lip.offsetWidth || lipWidth;
   // (drawn at its angle at once, not at the next frame: laid out, the parts lie flat where it opens, and WebKit can
-  // paint that before any frame's callbacks run, the tab flashing where the book last lay open. The board's call 161;
+  // paint that before any frame's callbacks run, the tab flashing where the book last lay open)
   draw();
 }
 // Back at rest: the swing's own drawing taken off (book.js's layout has the parts)
@@ -226,7 +226,7 @@ const wait = ms => new Promise(done => setTimeout(done, ms));
 // (the swing's frames too slow for the blur on this device: a plain fade from this frame on. Judged as they come, on
 // the real frame times, from the third on: judged at the end on the swing's capped steps, over at least 12, a device
 // managing four frames a second never dropped it, and a blur that costs that much in WebKit, its new radius every
-// frame, chugged the whole way (the board's call 161). The median, so a single
+// frame, chugged the whole way. The median, so a single
 // slow frame, the pages painted as the book shows, doesn't.)
 function judge(real) {
   if (!store.get('book.blur', true)) return;
@@ -264,17 +264,17 @@ function draw() {
 // HQ's page dissolving as the board lowers and back in, sharp, in its new room (never where the book lies over it)
 function dissolve(dt) {
   if (still()) return look((dis = 0));
-  // (swinging shut from HQ's page laid out beside it: gone at the opening's pace, never back from where a lift took it)
-  const target = geo?.over
-    ? 0
-    : settling
-      ? dis
-      : mode === 'shut' && laidOpen
-        ? Math.max(dis, fadeAt(shutFor))
-        : dissolveAt(body.a, laidOpen);
   // (coming back in at rest, slowly enough to be seen; under the finger, as quick as the board moves)
-  dis = dissolveStep(dis, target, dt, mode ? undefined : BACK_IN);
+  dis = dissolveStep(dis, dissolveTarget(), dt, mode ? undefined : BACK_IN);
   look(dis);
+}
+// What the dissolve heads for this frame
+function dissolveTarget() {
+  if (geo?.over) return 0;
+  if (settling) return dis;
+  // (swinging shut from HQ's page laid out beside it: gone at the opening's pace, never back from where a lift took it)
+  if (mode === 'shut' && laidOpen) return Math.max(dis, fadeAt(shutFor));
+  return dissolveAt(body.a, laidOpen);
 }
 function look(d) {
   const { blur, opacity } = dissolveLook(d),
@@ -290,8 +290,8 @@ function look(d) {
   page.visibility = d >= 0.999 ? 'hidden' : '';
 }
 
-// While it dissolves, HQ's page fades into its own colour, the table's (<html> wears it: the left side's own background,
-// book.js), never into the dark ground behind it: a dissolve, not a dimming, and of a piece with what the lifted book
+// While it dissolves, HQ's page fades into its own colour, the table's (<html> wears it: its --bk-ground, booktable.js
+// tones), never into the dark ground behind it: a dissolve, not a dimming, and of a piece with what the lifted book
 // uncovers, and as that colour changes midway (the viewer's told late: booktable.js tones).
 let grounded = false;
 function ground(on) {

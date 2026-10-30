@@ -55,17 +55,21 @@ async function percent(page) {
   return (await chip.isVisible()) ? (await chip.textContent()).trim() : '100%';
 }
 // The % shown once it's what's wanted, waited for (a loaded machine's frames come late): the % itself
-const shows = (page, wanted, what) =>
-  until(async () => {
-    const shown = await percent(page);
-    return wanted(shown) && shown;
-  }, what);
-// The page's zoom on the played store, within a % of zoom, waited for (it's kept as the view rests)
-const keptAs = (c, id, zoom) =>
-  until(
-    () =>
-      Object.values(c.notebook.route('/api/notebooks/pages', { notebook: 1 }).pages.find(p => p.id === id).zooms).some(
-        z => Math.abs(z - zoom) < 0.01,
-      ),
-    `kept at ${zoom}`,
+function shows(page, wanted, what) {
+  let shown;
+  return until(
+    async () => wanted((shown = await percent(page))) && shown,
+    () => `${what}: ${shown}`,
   );
+}
+// The page's zooms on the played store, one per screen shape
+const zoomsOf = (c, id) =>
+  Object.values(c.notebook.route('/api/notebooks/pages', { notebook: 1 }).pages.find(p => p.id === id).zooms);
+// The page's zoom on the played store, within a % of zoom, waited for (it's kept as the view rests)
+function keptAs(c, id, zoom) {
+  let zooms;
+  return until(
+    () => (zooms = zoomsOf(c, id)).some(z => Math.abs(z - zoom) < 0.01),
+    () => `kept at ${zoom}: ${JSON.stringify(zooms)}`,
+  );
+}

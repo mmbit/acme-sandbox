@@ -7,8 +7,9 @@ import { tmpdir } from 'node:os';
 import { randomBytes } from 'node:crypto';
 import { harness, until, type Running } from './harness.ts';
 import { historicalDatabase, splitPlatform } from './fixture.ts';
-import { leftoverJobs, reviewInboxDatabase, completeTriage } from './reviewfixture.ts';
+import { scenarioCleanup, reviewInboxDatabase, completeTriage } from './reviewfixture.ts';
 import { execFileSync } from 'node:child_process';
+import { once } from 'node:events';
 
 
 // the test company's kits, whatever the repo's own: care runs in the coordinator (it has a coordinator.ts), brand doesn't
@@ -145,8 +146,8 @@ async function decide(n: number, decision: string, major_visual?: boolean) {
   await end(quill, major_visual === undefined ? judged(n, decision) : { output: JSON.stringify({ decision, summary: 'ok', major_visual }) });
   return Object.assign(quill, { panel });
 }
-// A ruling on PR n: its "changes" names a blocker, as one from a later round must (review.ts unblocked), the one still
-// open when there is one; its merge judges that fixed
+// A ruling on PR n. Its "changes" names a blocker, as one from a later round must (review.ts unblocked): the one still
+// open, when there is one. Its merge judges that blocker fixed.
 function judged(n: number, decision: string) {
   const open = db.prepare("select id from findings where pr = ? and kind = 'blocking' and coalesce(outcome, 'not fixed') = 'not fixed'").all(n) as { id: number }[];
   const changes = decision === 'changes';
@@ -192,12 +193,12 @@ function lose(n: number, round?: number) {
 
 // Hand unfinished runs back and cancel each test's open leftovers so later claims take their own jobs.
 // Preserve the historical fixture's jobs. Restore GitHub's default answers.
-const cancelLeftovers = leftoverJobs(db);
+const cancelOpenWork = scenarioCleanup(db);
 afterEach(async () => {
   hold = undefined; answer = git; gitConflicts = ['products/x/ad.mp4']; github.refuse.length = 0;
   for (const job of h.jobs.listJobs())
     if (job.status === 'running') assert.equal((await putBack(job.id, job.seat!)).status, 200);
-  cancelLeftovers();
+  cancelOpenWork();
 });
 
 // First: the Codex seats' shares are counted over days, and here no seat has any yet.
@@ -409,6 +410,24 @@ test("records that do what the board asked on a call get a review against its wo
   assert.match(prompt, /What the board asked for, on a call[^]*Rename the projects/, "judged against the board's words");
   await review.actOnRulings();
   assert.deepEqual([prs(n).status, github.pr(n).merged], ['open', false], "the retry sweep doesn't merge it either");
+});
+
+test("every reader and the ruling ask first whether the change rebuilds what we already have, before any edge case", async () => {
+  const n = 1297;
+  await submit(n);
+  const question = /the simplest shape of what the board asked for, built on what we already have, or does it\s+rebuild something that exists/;
+  const panel = await claim(n, j => j.kind === 'review');
+  assert.ok(panel.length > 0, 'a panel reads it');
+  for (const run of panel) {
+    const first = run.prompt.search(question);
+    assert.ok(first > 0, `${run.agent} is asked it`);
+    assert.ok(first < run.prompt.indexOf('## Round 1'), `${run.agent} is asked it before the round's bar`);
+    assert.match(run.prompt, /A rebuild of an existing feature the board asked us to use doesn't do what the board asked, so it blocks/);
+    await end(run);
+  }
+  const [quill] = await claim(n, j => j.kind === 'consolidate');
+  const first = quill.prompt.search(question);
+  assert.ok(first > 0 && first < quill.prompt.indexOf('Merge duplicates'), 'the ruling settles it before the findings');
 });
 
 test("a fix round goes on in its author's last session on the branch, whose folders the worker keeps until the pull request is settled", async () => {
@@ -816,6 +835,59 @@ test("a check after the author's fixes that leaves a finding without its outcome
   assert.deepEqual(findingsOf(n).map(f => [f.id, f.outcome]), [[one.id, null], [two.id, null]], 'nothing judged');
 });
 
+test('a replacement ruling cannot merge while it leaves an earlier blocker unsettled', async () => {
+  for (const { n, unsettled, settling } of [
+    { n: 8110, unsettled: { outcome: 'not fixed' }, settling: { outcome: 'kept' } },
+    { n: 8111, unsettled: { outcome: 'disputed', right: 'reviewer' }, settling: { outcome: 'disputed', right: 'author' } },
+  ]) {
+    await submit(n, { files: [ONE_FILE] });
+    for (const run of await claim(n, j => j.kind === 'review')) await end(run);
+    await end((await claim(n))[0], { output: JSON.stringify({ major_visual: false, decision: 'changes',
+      blocking: [{ file: ONE_FILE, line: 3, issue: 'The fee counts twice', task: 'Count the fee once' }] }) });
+    const [fee] = findingsOf(n);
+    await submit(n, { files: [ONE_FILE], pushedSince: { sha: heads.get(n), files: [ONE_FILE] } });
+    await end((await claim(n))[0], { output: JSON.stringify({ major_visual: false, decision: 'merge', blocking: [] }) });
+    later(n);
+    const [replacement] = await claim(n);
+    const open = { output: JSON.stringify({ major_visual: false, decision: 'merge', blocking: [],
+      outcomes: [{ finding: fee.id, ...unsettled }] }) };
+    const hook = await h.agent('review-output', replacement.token, open);
+    await end(replacement, open);
+    await review.actOnRulings();
+    assert.deepEqual([github.pr(n).state, github.pr(n).merged], ['open', false]);
+    assert.equal(typeof hook.body.error, 'string', 'the Stop hook refuses the contradictory merge');
+    assert.ok(hook.body.error.includes(`#${fee.id}`), 'the refusal identifies the blocker');
+    assert.equal(prs(n).status, 'stuck');
+    assert.equal(findingsOf(n)[0].outcome, null, 'the refused ruling records no judgment');
+    assert.equal((await hqReview(n)).status, 200);
+    const [corrected] = await claim(n);
+    await end(corrected, { output: JSON.stringify({ major_visual: false, decision: 'merge', blocking: [],
+      outcomes: [{ finding: fee.id, ...settling }] }) });
+    assert.equal(prs(n).status, 'merged', 'a ruling that settles the blocker can merge');
+  }
+});
+
+test('a merge cannot leave open a nonblocking finding a later ruling sent back as blocking with "earlier"', async () => {
+  const n = 8112;
+  await submit(n, { files: [ONE_FILE] });
+  for (const run of await claim(n, j => j.kind === 'review')) await end(run);
+  await end((await claim(n))[0], { output: JSON.stringify({ major_visual: false, decision: 'changes',
+    blocking: [{ file: ONE_FILE, line: 3, issue: 'The fee counts twice', task: 'Count the fee once' }],
+    nonblocking: [{ file: ONE_FILE, line: 9, issue: 'The total is rounded early', task: 'Round the total last' }] }) });
+  const [fee, total] = findingsOf(n);
+  assert.deepEqual([fee.kind, total.kind], ['blocking', 'nonblocking']);
+  await submit(n, { files: [ONE_FILE], pushedSince: { sha: heads.get(n), files: [ONE_FILE] } });
+  await end((await claim(n))[0], { output: JSON.stringify({ major_visual: false, decision: 'changes',
+    outcomes: [{ finding: fee.id, outcome: 'fixed' }, { finding: total.id, outcome: 'not fixed' }],
+    blocking: [{ file: ONE_FILE, line: 9, issue: 'The total is still rounded early', task: 'Round the total last',
+      earlier: total.id, caused_by: { file: ONE_FILE, line: 9 } }] }) });
+  await submit(n, { files: [ONE_FILE], pushedSince: { sha: heads.get(n), files: [ONE_FILE] } });
+  const [last] = await claim(n);
+  const hook = await h.agent('review-output', last.token, { output: JSON.stringify({ major_visual: false,
+    decision: 'merge', blocking: [], outcomes: [{ finding: total.id, outcome: 'not fixed' }] }) });
+  assert.match(String(hook.body.error), new RegExp(`#${total.id} is a blocker this merge leaves open`));
+});
+
 test('hq review acts on a completed replacement ruling left behind by an older stuck attempt, without another review', async () => {
   const n = 1363;
   await submit(n, { files: [ONE_FILE] });
@@ -974,7 +1046,7 @@ test("Quill's check that fails to run, or writes no verdict, runs once more; twi
 });
 
 test('a stuck round never counts against the author: the push after it gets that round again, not a close or a final check', async () => {
-  const n = 107;
+  const n = 10107;
   for (let i = 0; i < 2; i++) { await submit(n); await decide(n, 'changes'); }
   await submit(n);
   const [first, ...rest] = await claim(n);
@@ -2517,22 +2589,119 @@ for (const transfer of ['automatic', 'manual']) test(`a failed fix retries for t
   assert.deepEqual(prs(n), { round: 2, status: 'open' });
 });
 
-test("a job's end while another process reads the database still hands its pull request to the panel", async () => {
+test("a job's end while another process reads the database still hands its pull request to the panel", async t => {
+  const n = 984;
+  const work = await h.start({ agent: 'bolt', branch: `review/${n}` });
   const { spawn } = await import('node:child_process');
-  // the status report's reader (infra/report.sh), holding the file for a moment
+  // The status report's reader (infra/report.sh) holds the file open until HQ's write waits on it.
+  const path = JSON.stringify(`${h.dataDir}/hq.db`);
   const reader = spawn(process.execPath, ['--input-type=module', '-e', `
     import { DatabaseSync } from 'node:sqlite';
-    const db = new DatabaseSync(${JSON.stringify(`${h.dataDir}/hq.db`)});
+    const db = new DatabaseSync(${path});
     db.exec('begin'); db.prepare('select count(*) from jobs').get();
-    console.log('reading');
-    setTimeout(() => db.exec('commit'), 300);`]);
-  await new Promise(r => reader.stdout.once('data', r));
-  const n = 984;
-  await submit(n);
-  reader.kill();
+    process.stdin.resume();
+    process.once('SIGUSR2', () => { db.exec('commit'); db.close(); process.stdin.destroy(); });
+    console.log('reading');`]);
+  const exited = once(reader, 'exit');
+  t.after(async () => { reader.kill(); await exited; });
+  await once(reader.stdout, 'data');
+  // SQLite shares read locks within a process, so a separate process probes for HQ's pending write.
+  const probe = spawn(process.execPath, ['--input-type=module', '-e', `
+    import { DatabaseSync } from 'node:sqlite';
+    import { setImmediate } from 'node:timers/promises';
+    const db = new DatabaseSync(${path}, { readOnly: true, timeout: 0 });
+    const read = db.prepare('select count(*) from jobs');
+    console.log('probing');
+    for (;;) {
+      try { read.all(); }
+      catch (error) {
+        if (error.errcode !== 5) throw error;
+        break; // SQLITE_BUSY: HQ's writer holds PENDING and waits for the held read.
+      }
+      await setImmediate();
+    }
+    db.close(); process.kill(${reader.pid}, 'SIGUSR2');`]);
+  const probed = once(probe, 'exit');
+  t.after(async () => { probe.kill(); await probed; });
+  await once(probe.stdout, 'data');
+  await submit(n, {}, work);
+  assert.deepEqual(await probed, [0, null], 'the probe observed writer contention');
+  assert.deepEqual(await exited, [0, null], 'the reader released after writer contention');
   assert.deepEqual(prs(n), { round: 1, status: 'open' });
   assert.equal(reviewers(n).length, 1, 'the panel is queued');
 });
+
+test('idle rounds with completed runs settle from GitHub and release merged work, with checks spaced an hour apart', async t => {
+  const [merged, closed, open] = [2104, 12104, 2766];
+  const waits = new Map<number, number[]>();
+  for (const n of [merged, closed, open]) {
+    const head = newSha();
+    const work = h.ended({ agent: 'bolt', title: 'Finished work', sha: head });
+    h.storedPr(n, work, 'open', FILES, { round: 1, sha: head, since: work });
+    const branch = `job/${work}`;
+    const extra = h.ended({ agent: 'bolt', title: 'Finished check', branch, sha: head });
+    h.ended({ agent: 'rook', kind: 'review', pr: n, round: 1, sha: head });
+    waits.set(n, [work, extra].map(after => h.queue({ agent: 'juno', after })));
+  }
+  Object.assign(github.pr(merged), { state: 'closed', merged: true });
+  github.pr(closed).state = 'closed';
+  await review.settleIdle();
+  assert.deepEqual(prs(merged), { round: 1, status: 'merged' });
+  assert.ok(waits.get(merged)!.every(id => h.job(id).after_state === null), 'both work jobs have left review');
+  assert.deepEqual(prs(closed), { round: 1, status: 'closed' });
+  assert.deepEqual(prs(open), { round: 1, status: 'open' });
+  assert.ok(waits.get(open)!.every(id => h.job(id).after_state === 'review'), 'both open work jobs remain in review');
+  Object.assign(github.pr(open), { state: 'closed', merged: true });
+  const restarted = await import(`./review.ts?idle=${newSha()}`);
+  await restarted.settleIdle();
+  assert.equal(prs(open).status, 'open', 'the hourly spacing survives a coordinator restart');
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+  try {
+    t.mock.timers.tick(60 * 60_000 + 1);
+    await restarted.settleIdle();
+    assert.equal(prs(open).status, 'merged');
+  } finally {
+    t.mock.timers.reset();
+    // GitHub answered an hour ahead on the mocked clock, so settled() would otherwise wait that hour.
+    lastAsked = Date.now();
+  }
+});
+
+test('a closed pull request reopened on GitHub can settle without waiting for its previous idle check', async () => {
+  for (const [n, ending] of [[22105, 'close'], [22106, 'withdraw']] as const) {
+    const work = h.ended({ agent: 'bolt', title: 'Finished work' });
+    h.storedPr(n, work, 'open', FILES, { round: 1, since: work });
+    await review.settleIdle();
+    assert.equal(prs(n).status, 'open');
+    if (ending === 'withdraw') await review.withdrawn(n);
+    else {
+      await submit(n);
+      await decide(n, ending);
+    }
+    assert.equal(prs(n).status, 'closed');
+    // GitHub reopened it and later merged it while nobody here was on it.
+    h.storedPr(n, work, 'open', FILES, { round: 1, since: work });
+    longAgo(n);
+    Object.assign(github.pr(n), { state: 'closed', merged: true });
+    await review.settleIdle();
+    assert.equal(prs(n).status, 'merged', 'the check before closing does not delay the reopened pull request');
+  }
+});
+
+for (const change of ['job', 'round'] as const)
+  test(`an idle pull request with a new ${change} while GitHub answers is left alone`, async () => {
+    const n = change === 'job' ? 22107 : 22108;
+    const work = h.ended({ agent: 'bolt', title: 'Finished work' });
+    h.storedPr(n, work, 'open', FILES, { round: 1, since: work });
+    Object.assign(github.pr(n), { state: 'closed', merged: true });
+    hold = (method, number) => {
+      if (method !== 'GET' || number !== n) return;
+      if (change === 'job') h.queue({ agent: 'bolt', branch: `job/${work}`, title: 'New work' });
+      else h.storedPr(n, work, 'open', FILES, { round: 2, since: work });
+    };
+    await review.settleIdle();
+    assert.equal(prs(n).status, 'open');
+  });
 
 test('a round whose hand-off was lost comes back: stuck, its author pushes again, and that push gets the same round; merged on GitHub, it is recorded so', async () => {
   const n = 9985;
@@ -2557,6 +2726,25 @@ test('a round whose hand-off was lost comes back: stuck, its author pushes again
   longAgo(busy);
   await review.reviveRounds();
   assert.deepEqual(prs(busy), { round: 1, status: 'open' });
+});
+
+test("a pull request closed on GitHub with every commit on main frees its deliverable's branch for its owner to end; one with commits not on main keeps it", async () => {
+  const projects = await import('./projects.ts'), plan = await import('./plan.ts');
+  const [landed, unlanded] = [9991, 9992];
+  for (const n of [landed, unlanded]) {
+    const thread = `office/closed-${n}`;
+    projects.createThread({ project: 'office', name: `Closed work ${n}`, goal: 'The work is in', slug: `closed-${n}` });
+    const work = await h.start({ agent: 'bolt', branch: `review/${n}`, thread });
+    await submit(n, { files: NORMAL, gates: { passed: false, report: 'lib/a.ts:3: x is never used (no-unused-vars)' } }, work);
+    for (const fix of await claim(n, j => j.kind === 'work')) await end(fix, { status: 'stopped' });
+    longAgo(n);
+    github.pr(n).state = 'closed';
+  }
+  github.pr(landed).aheadBy = 0;
+  await review.reviveRounds();
+  assert.deepEqual([landed, unlanded].map(n => prs(n).status), ['closed', 'closed']);
+  assert.deepEqual(plan.done(`office/closed-${landed}`, 'juno'), { ok: true }, 'its work is on main: the deliverable is free');
+  assert.notDeepEqual(plan.done(`office/closed-${unlanded}`, 'juno'), { ok: true }, "work not on main stays the owner's call through its findings");
 });
 
 test('round 0 that never reached the panel, its fix job stopped, is recorded merged or closed as GitHub says; still open, it is left as it is', async () => {
@@ -2778,6 +2966,30 @@ test("a ruling its author's job since left standing, ended without a push, isn't
   assert.match(why(n) ?? '', /without a push/);
   await submit(n);
   assert.equal(why(n), null, 'a push clears it');
+});
+
+test('a failed standing lookup holds its selected round but leaves a newer round alone', async () => {
+  for (const moved of [false, true]) {
+    const n = moved ? 22110 : 22109;
+    await leftStanding(n);
+    const asked = Promise.withResolvers<void>(), reply = Promise.withResolvers<void>();
+    hold = (method, number) => {
+      if (method === 'GET' && number === n) { asked.resolve(); return reply.promise; }
+    };
+    const sweep = review.actOnRulings();
+    await asked.promise;
+    try {
+      if (moved) review.startReview(n, `review/${n}`, 'bolt', FILES, newSha());
+      assert.deepEqual(prs(n), { round: moved ? 2 : 1, status: 'open' });
+      assert.equal(why(n), null);
+    } finally {
+      hold = undefined;
+      reply.reject(new Error('network down'));
+      await sweep;
+    }
+    if (moved) assert.equal(why(n), null, 'the old lookup cannot hold the new round');
+    else assert.ok(why(n), 'the failed lookup holds the round it selected');
+  }
 });
 
 test('a ruling left standing whose work landed another way is recorded merged; closed on GitHub, it is closed here too', async () => {
@@ -3354,11 +3566,86 @@ test('a ruling queues all its blockers in one fix job whose push starts the next
   });
 });
 
-// A thread's "changes" whose fix task HQ draws at once (here for the live call item its work carries, with no window)
-// names each task. One that doesn't goes back to its consolidator where it's read, and so does one read before its fix
-// task became one HQ draws at once (here, before its work carried the call item) that HQ then can't draw: a hold would
-// only retry and be refused the same way. Refused twice it's stuck, for hq review, never held. Each run again hears of
-// the findings a refused answer recorded, and the ruling that names its tasks draws one fix task on the same findings.
+// A fix that ends short of its push (stopped for running past its share: the worker pushed what it had, and started no
+// round) runs again once, from its branch. A second end, stopped or failed, leaves the pull request stuck.
+const stopped = (n: number) => ({ status: 'stopped', branch: `review/${n}`, result: 'Stopped by juno: past its share' });
+const failed = (n: number) => ({ ...FAILED, branch: `review/${n}` });
+
+test("a ruled round whose fix task was stopped before its push runs that task again once by itself; ended short again, it is stuck until hq review", async () => {
+  const inbox = await import('./reviewinbox.ts');
+  await withSetting(JSON.stringify({ review: { drawWindowedChanges: true } }), async () => {
+    for (const [n, second] of [[8101, stopped], [8102, failed]] as const) {
+      const file = 'platform/coordinator/src/total.ts';
+      const thread = h.dueThread({ deadline: Date.now() + 86_400_000 });
+      const work = await h.start({ agent: 'bolt', branch: `review/${n}`, thread });
+      await withConsolidators(async () => {
+        await submit(n, { files: [file] }, work);
+        for (const run of await claim(n, j => j.kind === 'review')) await end(run);
+        const [ruler] = await claim(n, j => j.kind === 'consolidate');
+        await end(ruler, { output: JSON.stringify({ major_visual: false, decision: 'changes', blocking: [{ file, line: 1, issue: 'The fee is missing', task: 'Add the fee' }] }) });
+        const [task] = inbox.tasks(n, 1);
+        await end(await h.claimJob(task.id), stopped(n));
+        assert.equal(inbox.unassigned(n, 1).length, 1, 'a stopped task no longer holds its findings for the draw');
+        await review.reviveRounds();
+        assert.deepEqual(inbox.tasks(n, 1).map(t => t.status), ['stopped'], 'the owner has a while to draw it another way');
+
+        longAgo(n);
+        await review.reviveRounds();
+        // a second sweep finds the task already running again
+        await review.reviveRounds();
+        const [again] = inbox.tasks(n, 1);
+        assert.deepEqual(inbox.tasks(n, 1).map(t => [t.agent, t.status, t.findings]), [['bolt', 'queued', task.findings]], 'one run again, once, on the same findings');
+        assert.equal(h.jobs.replacementOf(task.id), again.id, 'it takes over the stopped task');
+        const rerun = await h.claimJob(again.id);
+        assert.equal(rerun.branch, `review/${n}`, 'it starts from what the stopped run pushed');
+        assert.match(rerun.note ?? '', new RegExp(`#${task.id}\\b`));
+        assert.deepEqual(prs(n), { round: 1, status: 'open' });
+
+        await end(rerun, second(n));
+        longAgo(n);
+        await review.reviveRounds();
+        assert.deepEqual(prs(n), { round: 1, status: 'stuck' }, `${second(n).status} after a stop: no third run by itself`);
+        assert.match(why(n)!, /hq review/);
+        const back = await hqReview(n);
+        assert.equal(back.status, 200, JSON.stringify(back.body));
+        const [resumed] = back.body.jobs as number[];
+        await submit(n, { files: [file] }, await h.claimJob(resumed));
+        assert.deepEqual(prs(n), { round: 2, status: 'open' }, 'its push starts the next round');
+      });
+    }
+  });
+});
+
+test("a changes ruling on work with no deliverable whose author's fix job was stopped before its push runs it again once by itself; stopped again, it is stuck until hq review", async () => {
+  const n = 8103;
+  await submit(n); await decide(n, 'changes');
+  const [fix] = await claim(n, j => j.kind === 'work');
+  await end(fix, stopped(n));
+  await review.actOnRulings();
+  await review.reviveRounds();
+  assert.deepEqual(queued(n), [], 'nothing runs it again while it is new');
+
+  longAgo(n);
+  await review.reviveRounds();
+  // a second sweep finds the fix already running again
+  await review.reviveRounds();
+  const reruns = queued(n).filter(j => j.kind === 'work');
+  assert.deepEqual(reruns.map(j => [j.agent, j.stage]), [['bolt', 'fix']], 'its author runs it again, once');
+  assert.equal(h.jobs.replacementOf(fix.id), reruns[0].id, 'it takes over the stopped fix job');
+  const rerun = (await claim(n, j => j.id === reruns[0].id))[0];
+  assert.equal(rerun.branch, `review/${n}`, 'it starts from what the stopped run pushed');
+  assert.match(rerun.note ?? '', new RegExp(`#${fix.id}\\b`));
+
+  await end(rerun, stopped(n));
+  longAgo(n);
+  await review.reviveRounds();
+  assert.deepEqual(prs(n), { round: 1, status: 'stuck' }, 'stopped twice: no third run by itself');
+  assert.equal((await hqReview(n)).status, 200);
+  await submit(n);
+  assert.deepEqual(prs(n), { round: 2, status: 'open' }, 'its push starts the next round');
+});
+
+// A draw refusal needs a corrected ruling. Its retry keeps any findings already recorded.
 test('a drawn-at-once "changes" ruling that names no task is ruled again, then stuck for hq review, never held, and keeps its recorded findings', async () => {
   const projects = await import('./projects.ts'), inbox = await import('./reviewinbox.ts');
   await withSetting(JSON.stringify({ review: { drawWindowedChanges: true } }), async () => {
@@ -3366,8 +3653,7 @@ test('a drawn-at-once "changes" ruling that names no task is ruled again, then s
       const n = recorded ? 8105 : 8104, file = 'platform/coordinator/src/total.ts', slug = `named-fixes-${n}`;
       projects.createThread({ project: 'office', name: `Named fixes ${n}`, goal: 'A drawn ruling names its tasks', slug });
       const work = await h.start({ agent: 'bolt', branch: `review/${n}`, thread: `office/${slug}` });
-      const carry = () => db.prepare(`insert into call_items (call, kind, owner, what, quote, status, job, ts)
-        values (90, 'task', 'bolt', 'Total it', 'point 1', 'open', ?, 'x')`).run(work.id);
+      const carry = () => h.carriedItem(work.id, 'bolt');
       if (!recorded) carry();
       const ruling = JSON.stringify({ major_visual: false, decision: 'changes', summary: 'Two fixes', blocking: [
         { file, line: 1, issue: 'The fee is missing', fix: 'Add the fee' },
@@ -4286,6 +4572,72 @@ test('an expedited major visual change leaves no visual hold or card job after r
   assert.deepEqual(h.jobs.listJobs().filter(j => !before.includes(j.id) && j.kind === 'work'), []);
 });
 
+// PR n's review follow-ups job
+const followUpOf = (n: number) => db.prepare("select agent, prompt from jobs where kind = 'work' and title like 'Review follow-ups:%' and prompt like ?")
+  .get(`PR #${n} merged%`) as { agent: string; prompt: string } | undefined;
+test("an expedited pull request's passing review leaves its nonblocking findings to its author's follow-up job", async () => {
+  const n = 8471, file = 'products/site/page.css';
+  const author = await h.start({ agent: 'bolt', branch: `review/${n}`, expedite: true });
+  await submit(n, { files: [file], gates: { passed: true, report: 'clean' }, tests: { passed: true, report: 'passed' } }, author);
+  await until(() => github.pr(n).merged, 'expedited work merges before its review');
+  for (const run of await claim(n, j => j.kind === 'review')) await end(run);
+  const [quill] = await claim(n, j => j.kind === 'consolidate');
+  const nonblocking = [{ file, line: 30, issue: 'a name that says nothing', by: ['quill'] }];
+  await end(quill, { output: JSON.stringify({ decision: 'merge', summary: 'ok', major_visual: false, nonblocking }) });
+  await until(() => !!followUpOf(n), 'the follow-up job queued');
+  assert.equal(prs(n).status, 'merged');
+  assert.equal(followUpOf(n)!.agent, 'bolt');
+  assert.ok(followUpOf(n)!.prompt.includes('a name that says nothing'));
+});
+
+// A ruling before hq expedite left a finding in code the change didn't touch. Its review of what merged decides where
+// that one goes with its own: one follow-up job on a pass, else the job that fixes what merged.
+for (const [n, decision] of [[8473, 'merge'], [8479, 'changes']] as const)
+  test(`an expedited pull request reviewed before gets one job for its leftovers when its review after the merge says ${decision}`, async () => {
+    const file = 'products/site/page.css';
+    const author = await h.start({ agent: 'bolt', branch: `review/${n}` });
+    await submit(n, { files: [file], ...passed }, author);
+    for (const run of await claim(n, j => j.kind === 'review')) await end(run);
+    const [first] = await claim(n, j => j.kind === 'consolidate');
+    await end(first, { output: JSON.stringify({ decision: 'changes', summary: 'ok', major_visual: false,
+      blocking: [{ file, line: 1, issue: 'The total is wrong', task: 'Fix the total' }],
+      pre_existing: [{ file: 'products/site/old.css', line: 4, issue: 'an old rule nothing uses' }] }) });
+    assert.notEqual(typeof await review.expedite(author.id, 'juno'), 'string');
+    await until(() => github.pr(n).merged, 'merged ahead of its review');
+    assert.equal(followUpOf(n), undefined, 'its follow-ups wait for the review of what merged');
+    await completeTriage(h, n);
+    // (the first ruling's fix job, queued ahead of the review, waits)
+    for (const run of await claim(n, j => j.kind === 'review' || j.title === 'Fix the total'))
+      await (run.title === 'Fix the total' ? putBack(run.id, run.seat) : end(run));
+    const [after] = await claim(n, j => j.kind === 'consolidate');
+    const blocker = db.prepare("select id from findings where pr = ? and kind = 'blocking'").get(n) as { id: number };
+    await end(after, { output: JSON.stringify({ decision, summary: 'ok', major_visual: false,
+      outcomes: [{ finding: blocker.id, outcome: decision === 'merge' ? 'fixed' : 'not fixed' }],
+      blocking: decision === 'merge' ? [] : [{ file, line: 1, issue: 'The total is still wrong', task: 'Fix the total', earlier: blocker.id }],
+      nonblocking: [{ file, line: 30, issue: 'a name that says nothing', by: ['quill'] }] }) });
+    const fix = () => db.prepare("select prompt from jobs where kind = 'work' and agent = 'bolt' and prompt like ?")
+      .get(`Your pull request #${n} (branch review/${n}) merged expedited%`) as { prompt: string } | undefined;
+    await until(() => !!(decision === 'merge' ? followUpOf(n) : fix()), 'its leftovers taken');
+    const jobs = db.prepare("select count(*) n from jobs where kind = 'work' and title like 'Review follow-ups:%' and prompt like ?").get(`PR #${n} merged%`) as { n: number };
+    assert.equal(jobs.n, decision === 'merge' ? 1 : 0, 'one job takes them');
+    const brief = decision === 'merge' ? followUpOf(n)!.prompt : fix()!.prompt;
+    for (const issue of ['an old rule nothing uses', 'a name that says nothing']) assert.ok(brief.includes(issue), issue);
+  });
+test("a merge check holds only for what blocks a later round: a dropped small fix goes to the author's follow-up job", async () => {
+  const n = 8483, file = 'products/site/page.css';
+  await submit(n, { files: [file] });
+  github.refuse.push(MOVED);
+  await decide(n, 'merge');
+  await submit(n, { files: [file] });
+  const [check] = await claim(n);
+  assert.equal(check.stage, 'merge');
+  assert.ok(check.prompt.includes('Only those block now'), "the later round's bar");
+  const nonblocking = [{ file, line: 36, issue: 'the merge dropped the fit for words being typed' }];
+  await end(check, { output: JSON.stringify({ decision: 'merge', summary: 'ok', blocking: [], nonblocking }) });
+  assert.equal(prs(n).status, 'merged');
+  await until(() => !!followUpOf(n), 'the follow-up job queued');
+  assert.ok(followUpOf(n)!.prompt.includes('the merge dropped the fit for words being typed'));
+});
 test('a minor visual edit merges without a visual decision and reviewers get the company live description', async () => {
   const n = 8184, live = 'The signed-in workshop and the public gallery.';
   await withSetting(`review:\n  live: ${JSON.stringify(live)}`, async () => {

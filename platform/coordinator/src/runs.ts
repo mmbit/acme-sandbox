@@ -114,8 +114,6 @@ const BRING_MAX = 100;
 // takes it
 const WAITING_MAX = 4;
 const receiving = new Map<number, number>();
-// A helper asks for work every 10 s and beats every 10 s while it runs one (platform/helper)
-const PRESENT_MS = 90_000;
 // A faster machine that asked for work this recently, and has no run, takes the next on its next ask
 const READY_MS = 20_000;
 // The board's HQ hears of the machines at most this often
@@ -551,12 +549,12 @@ const machineState = (settings: ReturnType<typeof runSettings>) => ({
 function presence(helper: HelperName, kind: string) {
   const helpers = machines.kindHelpers(kind, helper === 'lent');
   const latest = helpers.toSorted((a, b) => b.seen.localeCompare(a.seen))[0];
-  const fastest = helpers.filter(found => isPresent(found.seen)).toSorted(bySpeed)[0] ?? latest;
+  const fastest = helpers.filter(found => machines.isPresent(found.seen)).toSorted(bySpeed)[0] ?? latest;
   const running = db
     .prepare("select id from helper_runs where state = 'running' and helper = ? and kind = ? order by id limit 1")
     .get(helper, kind) as { id: number } | undefined;
   return {
-    present: helpers.some(found => isPresent(found.seen)),
+    present: helpers.some(found => machines.isPresent(found.seen)),
     seen: latest?.seen ?? null,
     cpus: fastest?.cpus ?? null,
     memoryGb: fastest?.memory_gb ?? null,
@@ -580,7 +578,7 @@ const lentMachines = () => machines.listMachines().map(machine => machineView(ma
 
 function machineView(id: number, machine: machines.Machine | null) {
   const helpers = machines.machineKinds(id);
-  const present = helpers.filter(helper => isPresent(helper.seen));
+  const present = helpers.filter(helper => machines.isPresent(helper.seen));
   const run = runOn(id);
   const state: MachineState = machine?.paused ? 'paused' : run ? 'running' : present.length ? 'taking' : 'away';
   const most = (values: (number | null)[]) => Math.max(0, ...values.map(value => value ?? 0)) || null;
@@ -956,7 +954,7 @@ const lentFinished = (kind: string) =>
   !!db.prepare("select 1 from helper_runs where helper = 'lent' and kind = ? and state = 'done' limit 1").get(kind);
 
 // Any lent machine the board hasn't paused has a helper of that kind asking for work or beating
-const lentPresent = (kind: string) => machines.kindHelpers(kind, true).some(helper => isPresent(helper.seen));
+const lentPresent = (kind: string) => machines.kindHelpers(kind, true).some(helper => machines.isPresent(helper.seen));
 
 // The running run this helper's attempt is still on, or none: not once the run was stopped, lost, its job ended, or
 // another take, by any helper, has it now
@@ -1103,9 +1101,6 @@ const openRuns = (state: 'waiting' | 'running') =>
   db.prepare('select * from helper_runs where state = ? order by id').all(state) as RunRow[];
 
 const jobRuns = (job: number) => !!db.prepare("select 1 from jobs where id = ? and status = 'running'").get(job);
-
-// Asking for work or beating within the last 90 s
-const isPresent = (seen: string | null | undefined) => !!seen && Date.now() - Date.parse(seen) < PRESENT_MS;
 
 // ---- holds
 

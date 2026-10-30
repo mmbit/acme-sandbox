@@ -95,6 +95,45 @@ test('hq stop pauses a running review or ruling on a paused thread, and it goes 
   assert.equal((await h.heartbeat(again!)).body.yield, undefined, 'to its end');
 });
 
+test('a pause suspends its running work at its next step, but the run that made it, and it goes on in its session once resumed', async () => {
+  reset();
+  const [levels, sound] = [thread('levels'), thread('sound')];
+  const running = await h.start({ agent: 'kit', thread: levels });
+  const review = await h.start({ agent: 'rook', thread: levels, kind: 'review', pr: 9 });
+  const owner = await h.start({ agent: ceo(), thread: sound });
+  const paused = await h.hq(owner, 'project', 'pause', 'game', "Waits for the board's photos", '--by-hand');
+  assert.equal(paused.code, 0, paused.out);
+  assert.match(paused.out, new RegExp(`Running on it: #${running.id}\\. Each yields at its next step`));
+  assert.match(paused.out, new RegExp(`Reviewing on it: #${review.id}\\. Each runs to its end`));
+  assert.doesNotMatch(paused.out, new RegExp(`#${owner.id}\\b`), 'the run that paused it is no part of it');
+  assert.match(paused.out, /If this one puts other work first, resume it and give that work a window instead/);
+  assert.equal((await h.heartbeat(running)).body.yield, 'paused', 'the worker yields it at its next step');
+  assert.equal((await h.heartbeat(review)).body.yield, undefined, 'a review runs to its end');
+  assert.equal((await h.heartbeat(owner)).body.yield, undefined, 'the run that paused it runs on');
+  await h.finish(running, { status: 'yielded', session: `session-${running.id}` });
+  assert.equal(h.job(running.id).status, 'queued');
+  assert.equal(await h.claim(engineOf(running.id)), null, 'the pause holds it');
+  assert.equal(typeof pauses.resume({ project: 'game' }, ceo()), 'object');
+  const again = await h.claim(engineOf(running.id));
+  assert.equal(again?.id, running.id);
+  assert.equal(again?.session, `session-${running.id}`, 'it goes on where it stopped');
+  assert.equal((await h.heartbeat(again!)).body.yield, undefined, 'to its end');
+});
+
+test("the CEO's run that names a decision runs on under the pauses it puts in or keeps on, before its card is filed", async () => {
+  reset();
+  const [levels, sound] = [thread('levels'), thread('sound')];
+  const running = await h.start({ agent: 'kit', thread: sound });
+  const ceoRun = await h.start({ agent: ceo(), thread: levels });
+  pause({ project: 'game', why: "Waits for the board's photos" });
+  assert.equal((await h.heartbeat(ceoRun)).body.yield, 'paused', 'a pause it never made suspends it');
+  const named = await h.hq(ceoRun, 'decision', 'Choose the art direction', '--blocks', 'game');
+  assert.equal(named.code, 0, named.out);
+  assert.equal(pauses.open()[0].decision?.name, 'Choose the art direction', 'it keeps the pause on, for the decision');
+  assert.equal((await h.heartbeat(ceoRun)).body.yield, undefined, 'the run that named it runs on to file its card');
+  assert.equal((await h.heartbeat(running)).body.yield, 'paused', 'while the rest yields');
+});
+
 test("--until wakes the pause's owner once its jobs have all merged or ended, and the pause stays on until resumed", async () => {
   reset();
   const [levels, view] = [thread('levels'), thread('view', 'shop')];
@@ -680,7 +719,7 @@ test('hq thread pause and hq project resume, as the CEO runs them', async () => 
       `^Paused ${levels}: Wait for the view\\n1 queued job on it held\\. Once #${gate.id} \\(moss, running\\) has merged or ended, HQ queues you a job to judge it; only hq deliverable resume ${levels} lifts it\\.`,
     ),
   );
-  assert.match(paused.out, new RegExp(`Started before the pause: #${running.id}\\. Stop each`));
+  assert.match(paused.out, new RegExp(`Running on it: #${running.id}\\. Each yields at its next step`));
   const open = await h.hq(ceoJob, 'project', 'pause', 'game', 'All of it');
   assert.notEqual(open.code, 0, 'nothing named to wake its owner: refused');
   assert.match(open.out, /say what wakes you to judge game: --until/);

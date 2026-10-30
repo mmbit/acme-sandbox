@@ -18,6 +18,8 @@ export type PastJobFields = {
   review?: { added?: number; removed?: number; verdict?: string };
   byBranch?: boolean;
   sized?: number;
+  fixFor?: number;
+  previewFor?: number[];
   [column: string]: unknown;
 };
 type Run = { started: number; ended: number; outcome?: string; seat?: string | null };
@@ -45,6 +47,8 @@ export function recordedPastJobs(
     review,
     byBranch,
     sized,
+    fixFor,
+    previewFor,
     created,
     finished,
     ...columns
@@ -65,6 +69,7 @@ export function recordedPastJobs(
     const { lastInsertRowid } = statement.run(...values);
     const id = Number(lastInsertRowid);
     storeRuns(db, id, runs);
+    storeFollowups(db, id, fixFor, previewFor);
     if (merged !== undefined) {
       const number = Number(columns.pr ?? ++prs);
       storedPr(number, id, 'merged', files, review);
@@ -92,3 +97,23 @@ function storeRuns(db: DatabaseSync, job: number, runs: Run[]) {
 }
 
 const at = (ms: number) => new Date(ms).toISOString();
+
+function storeFollowups(db: DatabaseSync, job: number, fixFor?: number, previewFor?: number[]) {
+  if (fixFor !== undefined)
+    db.prepare("insert into review_fix_tasks (job, pr, round, findings) values (?, ?, 1, '[]')").run(job, fixFor);
+  if (previewFor) storePreview(db, job, previewFor);
+}
+
+function storePreview(db: DatabaseSync, job: number, prs: number[]) {
+  const decision = db
+    .prepare("insert into decisions (name, by, at) values ('Preview', 'kit', ?)")
+    .run(at(Date.now())).lastInsertRowid;
+  db.prepare('insert into card_jobs (job, decision) values (?, ?)').run(job, decision);
+  for (const pr of prs) {
+    db.prepare("insert into decision_merges (pr, decision, sha, scope) values (?, ?, 'preview', 'test')").run(
+      pr,
+      decision,
+    );
+    db.prepare('insert into card_merges (job, pr) values (?, ?)').run(job, pr);
+  }
+}

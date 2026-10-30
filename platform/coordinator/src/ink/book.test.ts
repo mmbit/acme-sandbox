@@ -126,7 +126,7 @@ test('a page is made today, saved with its ink and scraps, and drawn here as a p
     pixel(drawn, 20, 40).every(c => c < 80),
     'the ink',
   );
-  const kept = readdirSync(DIR).filter(f => new RegExp(`^${page.id}-w-[0-9a-f]{8}\\.png$`).test(f));
+  const kept = readdirSync(DIR).filter(f => new RegExp(`^${page.id}-x-[0-9a-f]{8}\\.png$`).test(f));
   assert.equal(kept.length, 1, 'one kept, however many read it at once, until the next change');
   assert.equal(statSync(`${DIR}/${kept[0]}`).mode & 0o777, 0o600);
   // a picture kept from an older drawing (no mark in its name) is drawn again once, the old file gone
@@ -136,7 +136,7 @@ test('a page is made today, saved with its ink and scraps, and drawn here as a p
   await picture(saved.body.picture);
   const pictures = readdirSync(DIR).filter(f => f.startsWith(`${page.id}-`) && !f.includes('-s-'));
   assert.deepEqual(
-    pictures.map(f => /^\d+-w-[0-9a-f]{8}\.png$/.test(f)),
+    pictures.map(f => /^\d+-x-[0-9a-f]{8}\.png$/.test(f)),
     [true],
     'drawn again, the old one gone',
   );

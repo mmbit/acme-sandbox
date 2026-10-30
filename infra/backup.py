@@ -96,7 +96,7 @@ RENDER_MAX_BYTES = 2 ** 30   # renders.ts RENDER_MAX: the store holds none bigge
 # whole number of GB; 3 unset). The room check alone keeps next month's database backups but not the repo's copies, so a
 # flood of renders (a job pushing films in a loop, each up to RENDER_MAX_BYTES) would take for good the room the repo's next
 # full copy needs. Any other value (or a line company.py skips): no render goes, and the status says why.
-def renders_max():   #.
+def renders_max():
     """The renders' ceiling in bytes, or None when BACKUP_RENDERS_GB isn't a whole number of GB or its line was skipped."""
     setting = INFRA.get('BACKUP_RENDERS_GB') or '3'
     return int(setting) * 1e9 if re.fullmatch(r'[1-9][0-9]*', setting) and 'BACKUP_RENDERS_GB' not in SKIPPED else None
@@ -116,6 +116,9 @@ PRODUCTS_MAX_BYTES = int(PRODUCTS_SETTING) * 1e6 if re.fullmatch(r'[0-9]+', PROD
 # and their vectors) is made again from those when the coordinator starts, so the copy leaves it out: a third of the
 # database, and most of its compressed bytes (the vectors don't compress).
 DERIVED = ('memory_vocab', 'memory_fts', 'memory', 'memory_docs')
+# Voiceprints (voiceprints.ts) stay on the server alone: biometric data, kept on the consent that it's only there, and gone
+# for good the moment it's deleted. A lost server loses them: people are enrolled again.
+ON_SERVER_ONLY = ('voiceprints',)
 HQ_SKIPPED = {'hq.db', 'hq.db-wal', 'hq.db-shm', 'hq.db-journal', 'backup-status.json', 'status', 'runs'}
 # Left out on purpose: the company's own choice (company/infra.env's BACKUP_LEFT_OUT, paths in the coordinator's data volume,
 # comma-separated, * and ? as in a shell; none by default).
@@ -468,7 +471,7 @@ def db_copy(dest, local_db=None):
         check = con.execute('pragma integrity_check').fetchone()[0]
         if check != 'ok':
             raise Stop(f'the database copy failed its integrity check: {check[:200]}')
-        for t in DERIVED:   # (the coordinator makes it again; the copy is ours alone, never the live file)
+        for t in DERIVED + ON_SERVER_ONLY:   # (the copy is ours alone, never the live file)
             con.execute(f'drop table if exists {ident(t)}')
         con.commit()
         con.execute('vacuum')   # their pages out of the file, not just freed
@@ -963,7 +966,7 @@ def renders_copy(r2, store_fd, work, recipient, listing, status, room, save):
     held = sum(size for k, (size, _) in listing.items() if k.startswith('renders/'))
     unverified = status.setdefault('renders_unverified', {})
     due, done, up, complete = [], set(), 0, False
-    cap = renders_max()   #.
+    cap = renders_max()
     def fits(size):
         if cap is None:
             raise RenderCapacityError("not uploaded: company/infra.env's BACKUP_RENDERS_GB isn't a whole number of GB")

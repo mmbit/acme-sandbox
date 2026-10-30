@@ -13,7 +13,7 @@ import { BOARD, sheetPageFor } from './book.ts';
 import { addNote } from './booknotes.ts';
 import { WORDS_MAX, isRefused } from '../pagechecks.ts';
 import { createScrap, createPageScrap } from '../notebookscraps.ts';
-import { openPageOf, pageRow } from '../notebook.ts';
+import { findOwnNotebook, openPageOf, pageRow } from '../notebook.ts';
 
 // The words' most: the book's, the cut's mark ("… (cut here)") included
 const WORDS_CUT = WORDS_MAX - 20;
@@ -121,9 +121,8 @@ const named = (owner: string) => ({ owner, name: findAgent(owner)?.name ?? owner
 // The board's notes on My Notebook's current page, where its notes go now and the book opens (notebook.ts openPageOf):
 // what it wrote or cut there and hasn't sent. None before it has one.
 function onNewestPage() {
-  const mine = db.prepare("select id from notebooks where who = ? and kind = 'mine'").get(BOARD) as
-    { id: number } | undefined;
-  const page = mine && openPageOf(mine.id);
+  const mine = findOwnNotebook(BOARD);
+  const page = mine && openPageOf(mine);
   if (!page) return 0;
   const { n } = db
     .prepare(

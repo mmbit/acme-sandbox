@@ -5,7 +5,8 @@
 import { deliveredWords, followThroughWords } from './followthroughwords.ts';
 import { BOARD_WAITS } from './pausewake.ts';
 import { pad } from './pad.ts';
-import { RELATED_WORK } from '../../worker/hq/levels.ts';
+// (the pause rule)
+import { PAUSE_FOR, RELATED_WORK, WINDOW_FIRST } from '../../worker/hq/levels.ts';
 
 // (Acting from the run when the way out is itself held.)
 // (a slip's cause, the scheduler's or the task's, instead of cutting by hand)
@@ -24,6 +25,7 @@ judge it. Start from it.
 // (deliverables, the board's word for threads, drawn whole)
 // (related work chained in one deliverable)
 // (causes fixed by judgment, not band-aid rules)
+// (a pause that only reorders is off track: a window instead)
 const STEPS = `1. Read the summary below and \`hq followthrough\`. The summary: what the board asked for and how long it has waited,
    our goals with each bet's window and next step, the numbers the company steers by, the meetings closed since the
    last check, what finished since then (deliverables done and the board's items, merged and deployed: whether the board
@@ -59,7 +61,10 @@ const STEPS = `1. Read the summary below and \`hq followthrough\`. The summary: 
    - A result the board asked for first (its priority, an experiment, a comparison) promised and not in its hands: no
      work running that brings it, or the work that should have ended without it. Queue what's missing now, and tell
      the board on the desk phone where it stands when its time is at risk.
-   Work still running on a pause started before it: stop it (\`hq stop\`) or let it finish, as the pause's reason says.
+   - A pause that puts other work first: it holds until a resume, so resume it and give the work that should go first
+     a window (\`hq window\`). ${WINDOW_FIRST} ${PAUSE_FOR}
+   Work running on a pause yields at its next step and goes on in its session once resumed; a review or ruling runs to
+   its end (\`hq stop\` pauses one).
    A hold the board agreed on a project or deliverable that isn't a pause yet goes in as the pause (\`hq project pause\`
    or \`hq deliverable pause\`, \`--until\` the jobs whose end wakes you to judge it, \`--until-time\` a time, or
    \`--by-hand\`, then \`hq item link <item> pause:<project or deliverable>\`), not as waits or a line in a brief.

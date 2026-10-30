@@ -8,8 +8,6 @@
 //     'done' or 'failed' }): its ink goes from the screen (review mode's callnotes.js, 'call:had'), so the board
 //     circles afresh. Nothing the Pencil draws on a call goes into the notebook by itself: the agent makes a scrap of
 //     what it judges worth keeping (the board, call 161.)
-//   - News on one of them (the book's verdict on it, a try's version landed: a 'book' event naming the call and the
-//     note) goes to the line too ({ type: 'noted', id }), which reads the note again.
 //   - The agent asks to see something by name: a card with Show and Not now, no countdown, blocking nothing, until it's
 //     tapped. Show starts the watch-along as Show my screen does.
 //   - The agent's ink comes down the call's own socket ({ type: 'ink', at }): a ring where it aimed on its picture of the
@@ -25,9 +23,10 @@
 //   - The call's notes page (the coordinator's ink/callnotes.ts) is open from pickup: the book turns to it if it's open,
 //     with a page brought by its folded corner on it first (bookshare.js), and the agent's scraps land there one by
 //     one (asked twice at pickup, and a card says so if it couldn't be opened). The first to land opens the book there,
-//     where it starts open beside HQ's page (a desktop, an iPad or a phone held sideways); in portrait (a phone held
-//     upright) it stays shut. Hung up, the store sends the page, which stays in My Notebook, so the book offers no Send
-//     on it while the call's on (call:page). (opens)
+//     beside HQ's page, on a screen wider than it is tall (booklayout.js initial). On one taller than it is wide (an
+//     upright phone or iPad, half a split screen) it stays shut. Hung up, the
+//     page goes in as it is and stays in My Notebook, and nothing on it goes to anyone (its call's follow-up hands it
+//     out), so the book offers no Send on it while the call's on (call:page). (opens)
 import { esc } from '../../util.js';
 import { minimise, share, shown } from '../callscreen.js';
 import { aimed } from '../calldrive.js';
@@ -66,14 +65,8 @@ export function startDrawing(c) {
     c.penDown = down;
     c.ws.send(JSON.stringify({ type: 'pen', down }));
   };
-  // (news on one of this call's notes: its verdict, a version landed.)
-  const onNoted = e => {
-    if (e.detail?.call === c.call && !c.over && c.ws?.readyState === 1)
-      c.ws.send(JSON.stringify({ type: 'noted', id: e.detail.note }));
-  };
   const pen = ['pointerdown', 'pointerup', 'pointercancel'];
   document.addEventListener('pencil:note', onNote);
-  document.addEventListener('call:noted', onNoted);
   addEventListener('pointerdown', onPen, true);
   for (const type of pen) addEventListener(type, penMoved, true);
   const unwatch = openOnFirstNote(c);
@@ -81,7 +74,6 @@ export function startDrawing(c) {
   c.drawing = () => {
     unwatch();
     document.removeEventListener('pencil:note', onNote);
-    document.removeEventListener('call:noted', onNoted);
     removeEventListener('pointerdown', onPen, true);
     for (const type of pen) removeEventListener(type, penMoved, true);
   };
@@ -98,8 +90,8 @@ function openOnFirstNote(c) {
     c.notesOpened = true;
     if (bookLayout()?.mode === 'folded') openAt({ page: c.notesPage.id, notebook: c.notesPage.notebook });
   };
-  // (a read of the page that failed is said, and the page's next news asks again)
-  const heard = e => onPage(e).catch(err => console.error("HQ: the call's notes page", err));
+  // (a failed read of the page is logged, and the page's next news reads it again.)
+  const heard = e => onPage(e).catch(err => console.error('[hq] the call’s notes page wasn’t read:', err));
   document.addEventListener('book:notebook', heard);
   return () => document.removeEventListener('book:notebook', heard);
 }
@@ -117,7 +109,7 @@ async function notesPage(c) {
     event('book:paged', { page: page.id });
     event('call:page', { page: page.id }); // (no Send on it while it's on.)
   } catch (err) {
-    console.error("HQ: the call's notes page", err);
+    console.error('[hq] the call’s notes page wasn’t opened:', err);
     if (!c.over) notesCard(c);
   }
 }
@@ -234,7 +226,7 @@ function pageCard(c) {
       card.remove();
       event('book:paged');
     } catch (err) {
-      console.error("HQ: the call's page wasn't thrown away", err);
+      console.error('[hq] the call’s page wasn’t thrown away:', err);
       card.querySelector('p').textContent = 'The page couldn’t be thrown away just now. Try again?';
     }
   };

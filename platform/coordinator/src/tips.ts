@@ -1,9 +1,9 @@
 // The feature tips (hq/shell/tips.js): a tip card on the desk phone the first time its feature matters, offered by the
 // hook of the event that brings it. Once per company, at most one a day, after the cards that need an answer, never
 // ringing; Got it files it with the answered cards, and one setting turns tips off.
-import { db, remember, setting } from './db.ts';
+import { db, once, remember, setting } from './db.ts';
 import { waitingCards } from './push.ts';
-import { cap } from './company.ts';
+import { cap, names } from './company.ts';
 import { tipOf } from '../../hq/shell/tips.js';
 
 const DAY_MS = 24 * 3600_000,
@@ -16,12 +16,23 @@ const isTip = (card: { kind: string }) => card.kind === KIND;
 db.exec(
   "create table if not exists tips (key text primary key, request integer not null, at text not null, details text not null default '{}')",
 );
+// The pausing tip's cards, filed before it became the deadlines tip: its advice and key.
+once('2026-10-29-pausing-tip-is-deadlines', () => {
+  db.prepare(
+    "update requests set body = replace(body, ?, ?) where id in (select request from tips where key = 'pausing')",
+  ).run(
+    'You can have work paused to make room for what matters more, and started again when you like: ask on the intercom. Projects shows what’s running.',
+    // (in the plain names those cards were written in: and company.ts may not have loaded yet)
+    tipOf('deadlines', { phone: 'desk phone', intercom: 'intercom' })!.lines({}),
+  );
+  db.exec("update tips set key = 'deadlines' where key = 'pausing'");
+});
 
 // The tip for an event that just happened, with the event's details for its lines: filed unless tips are off or it
 // came before. A tip within a day of the last one waits off the phone until that day is up (requests.hidden_until).
 // Returns the card's id, or null.
 export function offer(key: string, details: Record<string, unknown> = {}, now = Date.now()) {
-  const tip = tipOf(key);
+  const tip = tipOf(key, names());
   if (!tip) throw new Error(`no tip named ${key}`);
   if (off() || db.prepare('select 1 from tips where key = ?').get(key)) return null;
   const last = (db.prepare('select max(at) at from tips').get() as { at: string | null }).at;
@@ -71,8 +82,8 @@ export function sweep(now = Date.now()) {
   const born = (db.prepare('select min(created) at from jobs').get() as { at: string | null }).at;
   if (born && born <= ago(LOOK_DAYS * DAY_MS)) offer('look', {}, now);
   if (born && born <= ago(DAY_MS) && due('asking') && !boardAsked(ago(DAY_MS))) offer('asking', {}, now);
-  const late = due('pausing') && lateThread(now);
-  if (late) offer('pausing', { thread: late.name }, now);
+  const late = due('deadlines') && lateThread(now);
+  if (late) offer('deadlines', { thread: late.name }, now);
 }
 // The oldest hq run waiting since `before` for a helper to take it, named for the board by whose it is
 function waitingRun(before: string) {
@@ -93,7 +104,7 @@ const IN_PAGE: Record<string, () => number | null> = {
   look: () => offer('look', { pressed: true }),
   notifications: () => offer('notifications'),
 };
-export const pageEvent = (key: string) => (Object.hasOwn(IN_PAGE, key) ? { id: IN_PAGE[key]() } : 400);
+export const offerEventTip = (key: string) => (Object.hasOwn(IN_PAGE, key) ? { id: IN_PAGE[key]() } : 400);
 
 // The board's Got it, or the control Show me pointed at pressed (shown): the tip goes to the answered cards.
 export function endTip(id: number, shown = false) {

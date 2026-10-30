@@ -36,7 +36,7 @@ export const deliverable = {
   },
 };
 
-// hq projects: every open deliverable's live estimate in a line (outlooks.ts).
+// hq projects: every open deliverable's live outlook in a line (outlooks.ts).
 export const projectLines = {
   help: outlooks.projectsHelp,
   run: outlooks.projects,

@@ -1,4 +1,9 @@
 // Observed run-history complications that exclude a job from clean timing comparisons.
+// Shared SQL predicates keep whole-task totals and comparable-job evidence on the same run rules.
+export const REBUILT_RUN = "(ended_as = 'rebuilt' or seat is null)";
+export const INVALID_RUN =
+  '(julianday(ended) is null or julianday(started) is null or julianday(ended) <= julianday(started))';
+
 export type TimingFlag =
   | 'rebuilt'
   | 'unknown_seat'

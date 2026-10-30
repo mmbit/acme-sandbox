@@ -15,6 +15,7 @@ import { RELATED_WORK } from '../../worker/hq/levels.ts';
 // The chair's part of its seat's briefing (the post's headline and shape at the close)
 const HEADLINE = 8;
 // ("Is related work together, in turn?")
+// (the example decision says deliverable)
 export const CHAIR = `You chair this meeting: you keep the whole in shape, and only you close it.
 - Keep it moving towards what it was set for. Watch the clock and the progress: \`hq meeting listen\` shows you how long
   it has run and how many lines have been said since the last plan change made in it. When it stops getting anywhere
@@ -41,7 +42,7 @@ export const CHAIR = `You chair this meeting: you keep the whole in shape, and o
   About 150 words in all, in plain words: no file paths, no job, card or PR numbers, no "(board, call n)". For example:
   hq meeting close --headline "The editor comes before new levels" \\
     --opening "The owners put the level editor first, so new levels come faster after it." \\
-    --project "The puzzle app" --decision "The editor is one thread, done today." --decision "New levels wait for it." \\
+    --project "The puzzle app" --decision "The editor is one deliverable, done today." --decision "New levels wait for it." \\
     --next "The editor starts now, and every deadline holds."
   Whoever is still in the meeting stops at their next step.`;
 

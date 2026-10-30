@@ -49,7 +49,13 @@ export function record(
   if (decision.replacedCard)
     endRequest(decision.replacedCard, 'More visual changes joined, so a new card will show the whole set');
   if (decision.needsCard) prepareCard(decision.id, decision.author!);
-  else cardWindow(decision.id);
+  else {
+    // A pull request that joins before the card is filed is in the pending card job's pictures too.
+    db.prepare(
+      'insert or ignore into card_merges (job, pr) select card_job, ? from decisions where id = ? and card_job is not null',
+    ).run(pr.number, decision.id);
+    cardWindow(decision.id);
+  }
 }
 
 // The branch holds the work of a job a visual hold queued for its card (card_jobs), its card replaced since or not
@@ -136,6 +142,7 @@ If a previous card was closed because the waiting set changed, replace its pictu
   });
   db.prepare('update decisions set card_job = ? where id = ?').run(job, id);
   db.prepare('insert into card_jobs (job, decision) values (?, ?)').run(job, id);
+  db.prepare('insert into card_merges (job, pr) select ?, pr from decision_merges where decision = ?').run(job, id);
   cardWindow(id);
 }
 

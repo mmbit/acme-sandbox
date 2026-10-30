@@ -294,9 +294,10 @@ body.touring #zoom, body.touring #status, body.touring #hint { display: none; }
 /* ---- the board's desk tools ---- */
 /* the overlay follows the visual viewport, so an on-screen keyboard never covers the field being typed in */
 #tool, #call-layer { position: fixed; left: 0; right: 0; top: var(--vvt, 0px); height: var(--vvh, 100dvh); z-index: 20; display: grid; place-items: center; background: rgba(29, 26, 47, .55);
-  padding: max(12px, var(--sat)) max(12px, var(--sar)) max(12px, var(--sab)) max(12px, var(--sal));
+  --tool-bottom: max(12px, var(--sab)); /* (the narrow phone's pin room sets it) */
+  padding: max(12px, var(--sat)) max(12px, var(--sar)) var(--tool-bottom) max(12px, var(--sal));
   /* the height a device has, inside the padding */
-  --tool-h: calc(var(--vvh, 100dvh) - max(12px, var(--sat)) - max(12px, var(--sab))); }
+  --tool-h: calc(var(--vvh, 100dvh) - max(12px, var(--sat)) - var(--tool-bottom)); }
 /* a device taller than the room it has starts at the top, never above it: its header is never cut off
  */
 #tool > .device, #call-layer > .device { margin: auto; }
@@ -330,7 +331,53 @@ body.touring #zoom, body.touring #status, body.touring #hint { display: none; }
 #viewer .bar .talk[data-phase=busy] { opacity: .6; animation: none; }
 @keyframes talk-asked { to { box-shadow: 0 0 0 5px color-mix(in srgb, var(--on-deep) 30%, transparent); } }
 @media (prefers-reduced-motion: reduce) { #viewer .bar .talk { animation: none; } }
-#viewer iframe { flex: 1; width: 100%; border: 0; background: #fff; }
+/* The stage: staging, and the same page live beside it on the left, each in its column at the picked device's size, or
+   taking turns as tabs where both don't fit (shell/viewer.js). This device alone fills the stage edge to edge. A device's
+   page keeps its own width, drawn smaller where its column is narrower (--scale). */
+#viewer .stage { flex: 1; min-height: 0; display: flex; flex-direction: column; position: relative; }
+#viewer .stage .head { flex: none; height: var(--head, 0px); display: flex; align-items: center; justify-content: center; gap: var(--gap); padding: 0 max(var(--pad), 8px); position: relative; color: var(--on-deep); font-size: 15px; }
+#viewer .stage:not(.headed) .head { display: none; }
+#viewer .stage .head b { width: var(--column); text-align: center; font-weight: 600; }
+#viewer .stage .head b[data-side=live] { order: -1; }
+#viewer .stage .head[data-mode=tabs] { justify-content: space-between; }
+#viewer .stage .head .tabs { display: flex; gap: 4px; }
+#viewer .stage .head .tabs button { height: 32px; padding: 0 16px; border: 0; border-radius: var(--r) var(--r) 0 0; background: color-mix(in srgb, var(--on-deep) 12%, transparent); color: color-mix(in srgb, var(--on-deep) 75%, transparent); font: inherit; }
+#viewer .stage .head .tabs button[aria-selected=true] { background: var(--on-deep); color: var(--deep); font-weight: 600; }
+#viewer .stage .head .link { display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px 0 8px; border: 0; border-radius: 99px; background: none; color: var(--on-deep); font: inherit; font-size: 14px; opacity: .6; }
+#viewer .stage .head .link[aria-pressed=true] { opacity: 1; box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--on-deep) 45%, transparent); }
+#viewer .stage .head[data-mode=columns] .link { position: absolute; left: 50%; transform: translateX(-50%); }
+#viewer .stage .head .link svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+#viewer .stage .frames { flex: 1; min-height: 0; display: flex; justify-content: center; gap: var(--gap); padding: 0 var(--pad) calc(var(--pad) / 2); position: relative; }
+#viewer .stage .pane { flex: none; width: var(--column); display: flex; justify-content: center; }
+#viewer .stage:not(.headed) .pane { flex: 1; width: auto; }
+#viewer .stage .pane.live { order: -1; }
+#viewer .stage[data-mode=tabs] .pane { position: absolute; inset: 0 var(--pad) calc(var(--pad) / 2); width: auto; }
+#viewer .stage .pane.behind { visibility: hidden; }
+#viewer .stage .sized { flex: none; height: 100%; overflow: hidden; background: #fff; }
+#viewer .stage:not(.headed) .sized { flex: 1; width: auto !important; }
+#viewer .stage .sized[data-device=phone] { border-radius: 28px; box-shadow: 0 0 0 3px color-mix(in srgb, var(--on-deep) 45%, transparent); }
+#viewer .stage .sized[data-device=tablet] { border-radius: 18px; box-shadow: 0 0 0 3px color-mix(in srgb, var(--on-deep) 45%, transparent); }
+#viewer .stage .sized[data-device=desktop] { border-radius: 6px; box-shadow: 0 0 0 2px color-mix(in srgb, var(--on-deep) 45%, transparent); }
+#viewer .stage iframe { display: block; border: 0; background: #fff; transform: scale(var(--scale, 1)); transform-origin: 0 0; }
+#viewer .stage:not(.headed) iframe { width: 100% !important; height: 100% !important; }
+/* The stage's choices on the bar: the device's size, the notebook over the frames or beside them, and the QR code. With
+   the open notebook over the frames, the bar and what drops from it keep clear of it (--book-over, shell/ink/book.js). */
+#viewer .bar { margin-right: var(--book-over, 0px); }
+#viewer .sharebox, #viewer .qrcard { margin-right: var(--book-over, 0px); }
+#viewer .bar .choices { flex: none; display: flex; align-items: center; gap: 6px; }
+#viewer .bar .choices .seg { display: flex; gap: 2px; padding: 2px; border-radius: 99px; box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--on-deep) 35%, transparent); }
+#viewer .bar .choices .seg button { height: 30px; min-width: 0; padding: 0 11px; border: 0; border-radius: 99px; box-shadow: none; transform: none; background: none; color: color-mix(in srgb, var(--on-deep) 75%, transparent); font-size: 14px; }
+#viewer .bar .choices .seg button[aria-pressed=true] { background: var(--on-deep); color: var(--deep); font-weight: 600; }
+@container page (max-width: 760px) { #viewer .bar .choices .seg button { padding: 0 8px; font-size: 13px; } #viewer .bar .share span { display: none; } }
+#viewer .bar .qr svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.6; }
+#viewer .bar .qr[aria-expanded=true] { background: color-mix(in srgb, var(--on-deep) 16%, transparent); }
+#viewer .qrcard { position: absolute; z-index: 1; top: calc(var(--sat) + 44px); right: calc(var(--sar) + 8px); width: min(400px, calc(100% - 16px)); display: flex; gap: 16px; align-items: center;
+  padding: 16px; border-radius: var(--r-lg, 14px); background: var(--paper); color: var(--ink); border: var(--bw-lg) solid var(--line); box-shadow: var(--shadow-xl); font-size: 15px;
+  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
+#viewer .qrcard[hidden] { display: none; }
+#viewer .qrcard .pair-qr { flex: none; width: 160px; height: 160px; }
+#viewer .qrcard p { margin: 6px 0 0; line-height: 1.35; }
+#viewer .qrcard .dim { color: var(--muted); font-size: 13px; }
 /* Share for outside notes: a quiet button on the bar, and its small form dropping over the page's top */
 #viewer .bar .share { background: none; color: var(--on-deep); padding: 0 8px; }
 #viewer .bar .share .ico { width: 16px; height: 16px; fill: currentColor; }
@@ -475,6 +522,11 @@ body.touring #zoom, body.touring #status, body.touring #hint { display: none; }
 .alert.done .sign { background: var(--green); color: var(--ink); }
 .alert .sign svg { width: 16px; height: 16px; shape-rendering: var(--icons, auto); }
 .device.phone { background: var(--red); }
+/* On a narrow screen the desk phone ends above HQ's pin, bottom right (shared/review dock.js: 60 px, 18 px or the home
+   bar's height above the bottom), so the pin never sits over the phone, in every look. */
+@media (max-width: 700px) {
+  #tool:has(> .device.phone) { --tool-bottom: calc(60px + max(18px, var(--sab) + 10px)); }
+}
 .pager { display: flex; align-items: center; justify-content: space-between; gap: var(--keys-gap); margin: 0 0 var(--keys-gap); font-size: 14px; color: var(--muted); }
 .pager button { width: 40px; height: 36px; font-size: 22px; background: var(--cream); border: var(--bw) solid var(--line); border-radius: var(--r); }
 .pager button[disabled] { opacity: .3; }
@@ -683,41 +735,55 @@ body.touring #zoom, body.touring #status, body.touring #hint { display: none; }
 .intercom .call .call-face[data-state=thinking] .cf-figure > img { animation: cb-think 1.6s steps(4) infinite; }
 .intercom .call .call-face .state { position: absolute; z-index: 1; left: 10px; top: 8px; margin: 0; font-size: 13px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase;
   color: var(--scr); text-shadow: var(--scr-glow); }
-/* (its whole height, the call's keys on one row on a phone too.) */
-.intercom .call .lines { display: flex; flex-direction: column; gap: 6px; height: clamp(160px, calc(24dvh + 64px), 284px); margin: 0 0 12px; padding: 8px; list-style: none; overflow-y: auto; overscroll-behavior: contain;
+/* (a quarter of the screen's height and 64 px, 160 to 284 px, less where the box is shorter: see the call's column
+   below.) */
+.intercom .call .lines { display: flex; flex-direction: column; gap: 6px; height: clamp(160px, 24dvh + 64px, 284px); margin: 0 0 12px; padding: 8px; list-style: none; overflow-y: auto; overscroll-behavior: contain;
   text-align: left; background: #1d1f2e; border: var(--bw) solid var(--line); border-radius: var(--r); }
 .intercom .call .lines:empty::before { content: attr(data-empty); margin: auto; padding: 0 12px; font-size: 13px; color: #9a9eb4; text-align: center; }
 .intercom .call .lines li { max-width: 88%; padding: 5px 9px 6px; font-size: 14px; line-height: 1.35; overflow-wrap: anywhere; border-radius: var(--r); animation: cs-line-in .2s steps(3) both; }
+/* several voices in the board's room: the line sends one line per speaker ("Voice 2: ..."). */
+.intercom .call .lines li > span { white-space: pre-line; }
 .intercom .call .lines .who { display: block; font-size: 11px; letter-spacing: .05em; text-transform: uppercase; opacity: .7; }
 .intercom .call .lines .agent { align-self: flex-start; background: var(--paper); color: var(--ink); }
 .intercom .call .lines .board { align-self: flex-end; background: var(--gold); color: var(--on-accent); }
 @keyframes cs-line-in { from { opacity: 0; transform: translateY(6px); } }
-/* a phone on its side: the little screen smaller, so the keys stay in view */
-@media (max-height: 560px) { .intercom .call .call-face { height: 104px; } .intercom .call .cf-figure > img { width: 28px; height: 56px; } .intercom .call .lines { height: 136px; } }
-.intercom .call .row { justify-content: center; gap: 12px; }
+/* The call is a column as tall as its box lets it be: in a box shorter than the call (a phone on its side, a short laptop
+   window, a short phone with a note above the transcript, such as the share's) the little screen gives up height, down
+   to its figure whole, and so do its notes and the transcript, one region that scrolls, down to one of the transcript's
+   lines, so its keys stay in view; in the larger box the transcript takes the height that's free, the keys at the
+   bottom. A short screen's little screen is smaller too, so the transcript keeps more. */
+.intercom.in-call > .screen { display: flex; flex-direction: column; }
+#call-screen { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+#call-screen > *, #call-screen .said > * { flex: none; }
+#call-screen > .call-face { flex-shrink: 1; min-height: 156px; } /* (its figure whole: 140 px, 12 px under it and the border) */
+#call-screen > .said { flex: 0 1 auto; min-height: 64px; display: flex; flex-direction: column; margin: 0 0 12px; overflow-y: auto; overscroll-behavior: contain; }
+#call-screen .said > .lines { flex: 0 1 auto; min-height: 64px; margin: 0; }
+.intercom.big #call-screen > .said, .intercom.big #call-screen .said > .lines { flex-grow: 1; }
+/* (its figure whole at 88 px: an initial's 82 px and the border) */
+@media (max-height: 560px) { .intercom .call .call-face { height: 104px; } #call-screen > .call-face { min-height: 88px; } .intercom .call .cf-figure > img { width: 28px; height: 56px; } }
+/* (no margin above the keys: a device row's 10 px would add to the 12 px under the transcript, as margins don't collapse
+   in the call's column.) */
+.intercom .call .row { justify-content: center; gap: 12px; margin-top: 0; flex-wrap: nowrap; } .intercom .call .row > button { flex: none; }
 .intercom .call .row button { min-height: 52px; padding: 0 22px; font-size: 18px; border: var(--bw) solid var(--line); box-shadow: var(--shadow); background: var(--paper); color: var(--ink); }
 .intercom .call .row button.hangup { background: var(--red); color: #fff; }
 /* pictures shown on a call: the attach button and the strip of what was sent */
 .intercom .call .row .attach { width: 52px; padding: 0; }
-@container page (max-width: 440px) { .intercom .call .row { gap: 8px; } .intercom .call .row button { padding: 0 14px; font-size: 16px; } } /* (all three on one row on a phone) */
 /* the screen's share key: Show my screen, Stop showing while the agent sees the page */
-.intercom .call #call-screenshare { display: inline-flex; align-items: center; gap: 10px; }
+.intercom .call #call-screenshare { display: inline-flex; align-items: center; gap: 8px; padding: 0 14px; white-space: nowrap; }
 .intercom .call #call-screenshare svg.icon { width: 20px; height: 20px; }
 .intercom .call #call-screenshare[aria-pressed="true"] svg.icon { color: var(--red); }
 .intercom .call #call-screenshare:disabled { opacity: .55; }
 /* (in the bottom row between the picture key and Hang up, its words always on one line. The three keys at their full
-   size need 399 px of row in Brownstone, the widest look there: a narrower call sets them as a phone does. Set so, they
-   need 333 px in Wire, the widest then: under it, a phone's, Hang up is its symbol and the share key says Share or Stop,
-   all three on the one row down to a 320 px screen (216 px of row in Brownstone).) */
+   size need 412 px of row in Brownstone, the widest look there: a narrower call (the usual box's always is) sets them as a phone does. Set so, they
+   need 353 px in Brownstone: under it, a phone's, Hang up is its symbol and the share key says Share or Stop, all three
+   on the one row down to a 320 px screen (219 px of the 230 there in Brownstone).) */
 #call-screen { container: call-keys / inline-size; }
-.intercom .call .row { flex-wrap: nowrap; } .intercom .call .row > button { flex: none; }
-.intercom .call #call-screenshare { padding: 0 14px; gap: 8px; white-space: nowrap; }
 .intercom .call .row .short, .intercom .call .row .hangup svg.icon { display: none; }
-@container call-keys (width < 399px) {
+@container call-keys (width < 412px) {
   .intercom .call .row { gap: 8px; } .intercom .call .row button { padding: 0 14px; font-size: 16px; }
   .intercom .call #call-screenshare { padding: 0 10px; gap: 6px; }
 }
-@container call-keys (width < 333px) {
+@container call-keys (width < 353px) {
   .intercom .call #call-screenshare > span { display: none; } .intercom .call #call-screenshare > .short { display: inline; }
   .intercom .call .row .hangup { display: grid; place-items: center; width: 52px; padding: 0; }
   .intercom .call .row .hangup svg.icon { display: block; width: 24px; height: 24px; fill: currentColor; shape-rendering: var(--icons, auto); }
@@ -1144,17 +1210,15 @@ body.keys .push-now { padding: 3px 10px 4px; border-radius: 999px; font-size: 12
 .intercom header .grow svg { width: 15px; height: 15px; }   /* (2.5 px a pixel: the close ×'s line.) */
 .intercom.big > .screen { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .intercom.big .chat { flex: 1; max-height: none; }
-/* a call in the larger box: its words take the height that's free, the buttons at the bottom, and words and buttons
-   scaled up with the box (on a phone it's already the whole width: only the height) */
-.intercom.big #call-screen:not([hidden]) { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.intercom.big #call-screen .said { flex: 1; max-height: none; }
+/* a call in the larger box: words and buttons scaled up with the box (on a phone it's already the whole width: only the
+   height, which the call's column takes) */
 @container page (min-width: 561px) {
   .intercom.big #call-screen .state { font-size: 28px; }
-  .intercom.big #call-screen :is(.note, .said) { font-size: 20px; line-height: 1.45; }
+  .intercom.big #call-screen .note { font-size: 20px; line-height: 1.45; }
   .intercom.big #call-screen .pics li { width: 112px; } .intercom.big #call-screen .pics .thumb { height: 84px; }
 }
-/* (its keys scaled up where their row holds them, Show my screen on one line: 506 px in Brownstone and Wire.) */
-@container call-keys (width >= 506px) {
+/* (its keys scaled up where their row holds them, Show my screen on one line: 530 px in Brownstone, the widest look.) */
+@container call-keys (width >= 530px) {
   .intercom.big #call-screen .row { gap: 16px; }
   .intercom.big #call-screen .row button { min-height: 64px; padding: 0 30px; font-size: 22px; }
   .intercom.big #call-screen .row .attach { width: 64px; padding: 0; } .intercom.big #call-screen .attach svg.icon { width: 24px; height: 24px; }
@@ -1793,6 +1857,8 @@ body.projects :is(#zoom, #hint, #status, #bubbles, #namecard, #card) { display: 
 .pj-step::before { content: ''; position: absolute; left: -12px; top: -4px; bottom: 50%; width: 12px; border: 0 solid var(--line); border-width: 0 0 2px 2px; }
 #projects .pj-step .pj-task { min-height: 32px; }
 #projects .pj-step .pj-face { width: 20px; height: 20px; }
+/* (the line over a pull request's rounds that several tasks share, the rounds' branches hung from it) */
+.pj-shared { margin: 6px 0 0 22px; font-size: 13px; font-weight: 600; color: var(--muted); }
 /* a list of threads (threadlist.js), in the task rows' looks: a finished one reads as a changelog's line, its name and
    face whole, and its time at the side */
 .pj-task-side .pj-when { font-size: 13px; font-weight: 700; white-space: nowrap; }

@@ -15,8 +15,8 @@ export function longShareStories(c) {
 }
 
 // A page four times as tall as wide (its picture as the store draws one: TALL): the PDF downloads whole on one page of
-// its shape, and on Juno the call gets it in three pieces down it, each at most half again as tall as wide and a little
-// over a third of it, so none is shrunk to be read
+// its shape, and on Juno the call gets it in pieces down it, each its whole width and at most half again as tall as
+// wide, so none is shrunk to be read, and together the whole of it
 async function longStory(browser, c) {
   const free = tapedPage(c);
   // (a line written far down it grows it, as the store grows a page to what's on it: 1200 wide, about 4800 tall)
@@ -37,12 +37,12 @@ async function longStory(browser, c) {
     await until(() => s.line.hello, 'a call started', 8000);
     for (const n of [1, 2, 3]) await shownOnCall(s, n, `piece ${n} of the page`);
     await page.waitForTimeout(800);
-    assert.equal(s.uploads.length, 3, 'three pieces');
-    for (const [i, jpeg] of s.uploads.entries()) {
-      const { width, height } = jpegSize(jpeg);
+    const sizes = s.uploads.map(jpegSize);
+    for (const [i, { width, height }] of sizes.entries()) {
       assert.equal(width, 600, `piece ${i + 1} the page’s whole width`);
-      assert.ok(height <= 900 && height >= 800, `piece ${i + 1} a third of it, a little over (${height})`);
+      assert.ok(height <= 900, `piece ${i + 1} at most half again as tall as wide (${height})`);
     }
+    assert.ok(sizes.reduce((sum, { height }) => sum + height, 0) >= 2400, 'together the whole page');
     c.noErrorsIn(s.errors);
   } finally {
     c.pages.splice(c.pages.indexOf(free), 1);

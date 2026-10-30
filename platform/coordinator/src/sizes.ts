@@ -1,4 +1,5 @@
-// Saved queue-time estimates, their evidence, and the CEO's explicit revisions.
+// Task estimates saved when queued, their evidence, and the CEO's explicit revisions.
+// The scheduler's terms and their relationships are defined at the top of eta.ts.
 import { createHash } from 'node:crypto';
 import { columnsOf, db, once, redacted } from './db.ts';
 import { ceo } from './company.ts';

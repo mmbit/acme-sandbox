@@ -16,8 +16,8 @@ type Decision = { id: number; name: string; by: string; at: string; request: num
 type DecisionRow = Decision & { answered: string | null; released: string | null; card_job: number | null };
 
 // hq decision "name" --blocks <project | project/thread>...: the CEO names it and blocks what depends on it, all of it
-// or nothing. The answer is the decision and its pauses, or why not.
-export function create(name: unknown, blocks: unknown[], by: string) {
+// or nothing, from its run (`byJob`), which runs on under them. The answer is the decision and its pauses, or why not.
+export function create(name: unknown, blocks: unknown[], by: string, byJob?: number) {
   if (by !== ceo()) return `only the CEO (${ceo()}) names a decision of the board's`;
   const said = oneLine(String(name ?? ''));
   if (!said || said.length > NAME_MAX) return `name the decision in a line of up to ${NAME_MAX} characters`;
@@ -33,7 +33,7 @@ export function create(name: unknown, blocks: unknown[], by: string) {
       );
       const held = targets.map(target => {
         const paused = pauses.pause(
-          { ...(target.includes('/') ? { thread: target } : { project: target }), why, decision: id },
+          { ...(target.includes('/') ? { thread: target } : { project: target }), why, decision: id, byJob },
           by,
         );
         if (typeof paused === 'string') throw new RefusedError(paused);

@@ -1,6 +1,6 @@
 // The table under the Notebook (book.css's .bk-table), in the ground of HQ's page: where HQ's page has given up its
 // room to the book, or all round the book where it lies over HQ's page (the spread), so nothing of HQ (its logo, menus,
-// unread badges) peeks past the book's margins (the board's call 161). book.js lays it out; the swing brings the
+// unread badges) peeks past the book's margins. book.js lays it out; the swing brings the
 // spread's in over HQ's page as the board lowers (bookswing.js).
 
 // Its ground round the book and under it as it lifts off: the left side's own background, so what the book uncovers is
@@ -8,7 +8,7 @@
 // viewer's own, where it tells none); else HQ's own ground in its look (<html>'s where its page has none). Read as the
 // book is laid out or starts to move (book.js), as a look is worn, and as the viewer opens, closes or hears its page.
 // Set on <html>, so the table and <html>'s own ground while the book lifts off (bookswing.js) follow it when it changes
-// midway. (the board's call 160.)
+// midway.
 
 let toned = null;
 

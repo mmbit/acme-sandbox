@@ -58,7 +58,7 @@ export function partsOfAnswer(
 }
 
 // What sizes an answer for its spot, its ink no bigger than a page grows and no further from the answer's top-left
-// (so placing it stays a few steps, and its picture a page's size: bookrender.ts)
+// (so placing it stays a few steps, and its picture a page's size: bookrender.ts; the top-left)
 function contentsOf(
   text: string,
   picture: { clean: Buffer } | null,

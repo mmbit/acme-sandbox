@@ -38,7 +38,8 @@
 // tip changed at once, put away.
 // The pin (bookpin.mjs): away as HQ loads on a desktop, an iPad and a phone; summoned by opening the book or the book's
 // pin control (on a phone, the control folds the book onto HQ with the pin), away again folded or with the control; an
-// artifact's pin as it was; a note's sheet and review mode's menu naming one owner. Carried and let go, it stays
+// artifact's pin as it was; none on a call, nor the viewer's Note (job #13447), and a mark on the viewer's artifact then goes to the call's agent
+// (bookframeink.mjs, job #14311); a note's sheet and review mode's menu naming one owner. Carried and let go, it stays
 // exactly where it's dropped, the same button while it's held.
 // Handwriting (bookwritten.mjs): words written on HQ's page, read once the pen rests, stand beside the ink as type and
 // go into the book as written; read late, they still reach the note.
@@ -524,14 +525,17 @@ function carryNotes(play) {
 // A picture's bytes WebKit didn't hand over (a blob's body comes as null there) with none pasted before: the snip
 // stands in for them.
 const unseen = () => Buffer.from(SNIP.split(',')[1], 'base64');
-// A live call's notes page, as the store makes it at pickup (ink/callnotes.ts openFor): a new page of My Notebook,
-// titled for the call, the same page at the call's every ask; each play's own, as each call's page is. Today's book
+// A live call's notes page, as the store makes it at pickup (ink/callnotes.ts pageFor): a new page of My Notebook,
+// titled for the call, the same page at the call's every ask. Each play keeps its own: a story seeded with its own
+// notebooks plays a store that numbers My Notebook and its pages as the shared one does, so one play's page id would
+// name another play's page. Today's book
 // lists it as the store's does (one table: kind 'call', in My Notebook), so the Pencil's first mark on the call finds it
 // there; an earlier play's page of that call number is another call's, gone from the list.
 const callPages = new WeakMap();
 function callPage(play, { call }) {
   const mine = play.route('/api/notebooks').shelf.find(n => n.kind === 'mine').id;
-  const made = callPages.get(play) ?? callPages.set(play, new Map()).get(play);
+  if (!callPages.has(play)) callPages.set(play, new Map());
+  const made = callPages.get(play);
   if (!made.has(call)) made.set(call, play.route('/api/notebooks/pages/create', {}, { notebook: mine }).id);
   const page = play.route('/api/notebooks/pages/title', {}, { id: made.get(call), title: 'Call with Lyra, 15:34' });
   const day = page.created.slice(0, 10),
@@ -888,8 +892,12 @@ function STORIES() {
             await page.waitForTimeout(SETTLE_MS);
             const seen = await sight(page);
             coversPaper(await pageAtMiddle(page, seen.book, PHONE), seen.book, `round ${round}, laid out`);
+            // (from the screen's left by the book's margin, as at its other edges: the board, 28 Oct.)
+            const gap = await page.evaluate(() =>
+              parseFloat(getComputedStyle(document.querySelector('#book')).getPropertyValue('--bk-gap')),
+            );
             assert.ok(
-              seen.book.left <= 12 && seen.rail.left >= seen.book.left && seen.rail.right <= seen.book.right,
+              seen.book.left <= gap + 12 && seen.rail.left >= seen.book.left && seen.rail.right <= seen.book.right,
               `the paper: ${JSON.stringify(seen.book)}`,
             );
             onScreen(seen.rail, PHONE, 'the rail');
@@ -968,8 +976,8 @@ function STORIES() {
           ...{ browser, hqIn, base, MINI, settled, shot, posts, pages, org, ring, noErrorsIn, look },
         }),
       ),
-    "the pin away as HQ loads on a desktop and a phone, summoned and put away, beside an upright iPad's book too; an artifact keeps its own":
-      browser => pinScreensStory({ browser, hqIn, base, settled, shot, noErrorsIn, reviewJs }),
+    "the pin away as HQ loads on a desktop and a phone, summoned and put away, beside an upright iPad's book too; an artifact keeps its own; on a call no pin anywhere and no Note, and a mark on the viewer's artifact goes to the call's agent":
+      browser => pinScreensStory({ browser, hqIn, base, settled, shot, noErrorsIn, reviewJs, posts }),
     'the Tips control opens the tips book open flat, the contents beside every tip with its scene, changed at once; put away by Escape or a tap outside':
       browser => tipsStory({ browser, hqIn, base, settled, shot, noErrorsIn }),
     // (a circle on HQ, on a call or not, and the pen's tap.)
@@ -1524,10 +1532,15 @@ async function putAway(page) {
 }
 // The book in a mode, its swing over, laid out: lifted from shut, the book is 'folded' all the while it swings, so its
 // mode alone says nothing; and headless WebKit's frames come slowly under HQ's scene, and it tells the page a new size
-// up to a second or two late
+// up to a second or two late. HQ's page shown again too: landed or shut, the swing keeps it hidden a few frames longer
+// while it lays itself out (bookswing.js settleIn), and a pen pressed on it meanwhile meets nothing of the page, so no
+// mark begins (WebKit's slow frames kept it hidden past SETTLE_MS.)
 async function settled(page, mode) {
   await page.waitForFunction(
-    m => document.documentElement.dataset.book === m && !document.querySelector('#book.bk-swinging'),
+    m =>
+      document.documentElement.dataset.book === m &&
+      !document.querySelector('#book.bk-swinging') &&
+      getComputedStyle(document.body).visibility !== 'hidden',
     mode,
   );
   await page.waitForTimeout(SETTLE_MS);

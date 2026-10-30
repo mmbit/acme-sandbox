@@ -25,12 +25,13 @@ const SENT_MARK =
 // it or brings it back
 export function pageTile(p, i, { here, drag = false, archived = false, manage = true }) {
   const name = p.title || untitledPage(),
-    said = `${name}${p.sent ? ', sent' : p.sending ? ', sending' : ''}`;
+    // (a call's notes page goes in and to nobody: no stamp.)
+    said = `${name}${p.kind === 'call' ? '' : p.sent ? ', sent' : p.sending ? ', sending' : ''}`;
   return `<div class="bk-tile" role="listitem" data-id="${esc(p.id)}"${drag ? ' data-drag' : ''}${
     String(p.id) === String(here) ? ' aria-current="page"' : ''
   }><button type="button" class="bk-tile-open" aria-label="${esc(said)}"><span class="bk-tile-paper">${
     p.picture ? `<img src="${esc(p.picture)}" alt="" draggable="false">` : ''
-  }${p.sent || p.sending ? SENT_MARK.replace('bk-stamp', `bk-stamp${p.sent ? '' : ' bk-stamp-wet'}`) : ''}</span><span class="bk-tile-name">${
+  }${(p.sent || p.sending) && p.kind !== 'call' ? SENT_MARK.replace('bk-stamp', `bk-stamp${p.sent ? '' : ' bk-stamp-wet'}`) : ''}</span><span class="bk-tile-name">${
     archived ? '' : `<small>${i + 1}</small>`
   }<span>${esc(p.title)}</span></span></button>${
     manage

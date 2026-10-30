@@ -21,6 +21,7 @@ type Thread = {
   name: string;
   goal: string;
   deadline: number | null;
+  undated: boolean;
   needs: string[];
   eta: number | null;
   stall: string | null;
@@ -68,7 +69,7 @@ export const plan = {
     const own = companyLevels();
     return `
    hq plan <project> [--json]                        the project's plan: its open deliverables, those another needs
-                                                     first, each with its "done when", window, needs, planned finish and
+                                                     first, each with its "done when", deadline, needs, ETA and
                                                      tasks in order (agent, title, size, state); --json: all of it as data.${asHelp(...marksHelp(own))}
    hq plan deliverable <project> "name" "done when" [--needs <deliverable>]... [--slug <slug>]
                                                      draw a new deliverable, owned by the project's owner: "done when" is
@@ -144,12 +145,11 @@ async function show(project: string, rest: string[]) {
   for (const t of found.threads) print('', ...threadLines(t, found.split));
 }
 
-// The thread, its "done when", window, needs and planned finish, then its tasks in order, with the marks the company's
+// The thread, its "done when", deadline, needs and ETA, then its tasks in order, with the marks the company's
 // sizes give them.
 function threadLines(t: Thread, split: Plan['split']) {
-  const finish =
-    t.eta === null ? `no planned finish${t.stall ? ` (${text(t.stall)})` : ''}` : `planned finish ${at(t.eta)}`;
-  const window = t.deadline === null ? '' : `, window ${at(t.deadline)}`;
+  const finish = t.eta === null ? `no ETA${t.stall ? ` (${text(t.stall)})` : ''}` : `ETA ${at(t.eta)}`;
+  const window = t.undated ? ', no deadline set' : t.deadline === null ? '' : `, deadline ${at(t.deadline)}`;
   const needs = t.needs.length ? `, needs ${t.needs.map(text).join(', ')}` : '';
   let place = 0;
   const taskLines = t.tasks.flatMap(j => {

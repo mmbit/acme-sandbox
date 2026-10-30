@@ -1,5 +1,5 @@
 // Push notifications on this device: the service worker (sw.js, which caches nothing) and the subscription.
-import { pushKey, pushSubscribe, pushUnsubscribe, pushTest, tipEvent } from './data.js'; // (tipEvent)
+import { pushKey, pushSubscribe, pushUnsubscribe, pushTest, offerEventTip } from './data.js'; // (offerEventTip)
 
 const ua = navigator.userAgent;
 const ios = /iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
@@ -59,7 +59,7 @@ let urgentSeen = false;
 export async function urgentCards(dev, list) {
   if (urgentSeen || !list.some(r => r.urgency === 'now')) return;
   urgentSeen = true;
-  if ((await pushState()) !== 'on') await tipEvent(dev, 'notifications');
+  if ((await pushState()) !== 'on') await offerEventTip(dev, 'notifications');
 }
 // On start: keep the coordinator's list in step with this device (a new server, a rotated key).
 export async function syncPush() {

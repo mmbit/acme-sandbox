@@ -3,13 +3,14 @@
 // as chips and its questions drawn by the desk phone's own fields (questions.js). A tap on a choice answers it; words
 // written under it are the card's "anything to add" (or its whole answer, with nothing to choose). It goes to the desk
 // phone's own route, so one answer closes the card in both places. Answered, it reads like a ticked slip with the pick.
-// A card the book can't answer (keys, uploads, an approval: bookasks.ts says which) shows its title and "Answer on the
-// desk phone". Its look: bookasks.css. (company: job #19347, under a group: job #20938, not upstream yet)
+// A card for a secret, a step or built work never comes here: it stays on the desk phone (bookasks.ts deskOnly). Its
+// look: bookasks.css.
 import { esc } from '../../util.js';
 import { parseCard } from '../card.js';
 import { chips, given, inputHtml } from '../questions.js';
 import { sfx } from '../audio.js';
 import { answerAsk } from './notebookdata.js';
+import { names } from '../brand.js';
 
 const ASK_CLIP =
   '<svg class="slip-clip" viewBox="0 0 14 34" aria-hidden="true"><path d="M10 9v15a3.5 3.5 0 0 1-7 0V6a5 5 0 0 1 10 0v19"/></svg>';
@@ -27,10 +28,6 @@ function askHtml(a) {
     return `<section class="ask-slip" data-ask="${a.id}" data-answered aria-label="${esc(label)}, answered">${head}${ASK_TICK}<p class="ask-answer">${esc(
       a.answer ?? '',
     )}</p></section>`;
-  if (a.desk)
-    return `<section class="ask-slip" data-ask="${a.id}" data-desk aria-label="${esc(label)}">${ASK_CLIP}${by}<p class="slip-text">${esc(
-      a.title,
-    )}</p><p class="ask-foot"><b>Answer on the desk phone</b></p></section>`;
   const choices = c.choices.length ? c.choices.map(ch => ch.label) : c.options;
   const chosen = choices.length
     ? `<div class="ask-chips" role="group" aria-label="Your choice">${choices
@@ -50,7 +47,7 @@ function askHtml(a) {
   const free = !choices.length && a.kind !== 'notice';
   return `<section class="ask-slip" data-ask="${a.id}" aria-label="${esc(label)}">${head}${chosen}${asked}<textarea class="ask-words" rows="1" aria-label="${esc(
     `Your answer to ${a.name ?? 'the agent'}`,
-  )}" placeholder="${free && !asked ? 'Write under it to answer' : 'Or write under it'}"></textarea><p class="ask-foot"><span>The same card is on your desk phone.</span><button type="button" class="ask-send"${
+  )}" placeholder="${free && !asked ? 'Write under it to answer' : 'Or write under it'}"></textarea><p class="ask-foot"><span>The same card is on your ${esc(names.phone)}.</span><button type="button" class="ask-send"${
     asked || free ? '' : ' hidden'
   }>Send</button></p><p class="slip-said" hidden></p></section>`;
 }
@@ -59,7 +56,7 @@ function askHtml(a) {
 // it, and the questions' answers when it has some); Send, or Enter in the words, answers with what's there.
 // dev: on the played store. asks: the cards drawn there, by id. answered(): one answered, for the page to read again.
 export function wireAsks(root, { dev, asks, answered }) {
-  for (const slip of root.querySelectorAll('.ask-slip:not([data-answered]):not([data-desk])')) {
+  for (const slip of root.querySelectorAll('.ask-slip:not([data-answered])')) {
     const a = asks.get(Number(slip.dataset.ask));
     if (a) wireAsk(slip, a, { dev, answered });
   }

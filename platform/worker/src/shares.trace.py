@@ -27,6 +27,13 @@ def ptrace(request, pid, value=0):
         raise OSError(ctypes.get_errno(), "ptrace")
 
 
+def interrupts(pid, command):
+    with open(f"/proc/{pid}/cmdline", "rb") as stream:
+        argv = stream.read().split(b"\0")
+    # sh is a priority helper only as the autogroup write: a stop's tellRun runs sh too, and that one is left to run.
+    return os.path.basename(argv[0].decode()) == command and (command != "sh" or b"/autogroup" in b" ".join(argv))
+
+
 def trace(command, interruption, arguments):
     # Orphaned helpers from a failing fixture come here to be killed and reaped.
     if libc.prctl(PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) == -1:
@@ -62,9 +69,7 @@ def trace(command, interruption, arguments):
             # grep stops once, so the fixture's later reads run healthy. Every priority helper stops, so none lowers
             # the priority unseen.
             if event == PTRACE_EVENT_EXEC and (command != "grep" or not stopped):
-                with open(f"/proc/{pid}/cmdline", "rb") as stream:
-                    executable = stream.read().split(b"\0")[0].decode()
-                if os.path.basename(executable) == command:
+                if interrupts(pid, command):
                     stopped.add(pid)
                     os.kill(pid, interruption)
                     if interruption == signal.SIGSTOP:

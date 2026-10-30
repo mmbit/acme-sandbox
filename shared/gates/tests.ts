@@ -399,6 +399,7 @@ async function failingOnHelper(
     bring: [COMPARISON_OUTPUT],
     ...bundleFor(failing),
     inputs: { [COMPARISON_INPUT]: request },
+    // (it can only run on the push's helper, so it waits while that helper is busy with other pushes' tests, as they do)
     waitWhilePresent: true,
     fallback: false,
   });

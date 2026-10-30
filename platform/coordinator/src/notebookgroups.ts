@@ -79,7 +79,7 @@ export function listGroups(b: any, who = BOARD) {
     title: p.label,
     handed: p.handed,
     groups: rows.filter(g => g.parent === null).map(g => groupOf(g, replies, listed)),
-    ...triesOf(p, shown, listed), // (a try's versions page: what it tries.)
+    ...triesOf(p, shown), // (a try's versions page: what it tries.)
   };
 }
 

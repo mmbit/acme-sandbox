@@ -91,7 +91,8 @@ def stub(name, **attrs):
 
 stub('endpoint', Endpoint=lambda path: NS(finished=lambda audio: 1.0))  # (Smart Turn: Juno's own stand-in, finished())
 stub('sherpa_onnx', OfflineRecognizer=NS(from_transducer=lambda **k: None), VoiceActivityDetector=Vad,
-     VadModelConfig=lambda: NS(silero_vad=NS(), sample_rate=0))
+     VadModelConfig=lambda: NS(silero_vad=NS(), sample_rate=0), SpeakerEmbeddingExtractor=lambda cfg: None,
+     SpeakerEmbeddingExtractorConfig=lambda **k: None)  # (voiceprints: Juno's voiceprint)
 class Canceller:
     """WebRTC's echo canceller, perfect: what played comes out of the microphone's samples exactly."""
     def __init__(self, echo_cancellation):
@@ -122,6 +123,7 @@ import server  # noqa: E402
 from server import aloud, stray, unhesitating  # noqa: E402
 import limit_model  # noqa: E402
 import guard  # noqa: E402
+import callnotes  # noqa: E402
 import room  # noqa: E402
 import echo  # noqa: E402
 import drawing  # noqa: E402
@@ -579,6 +581,14 @@ def no_screen(coordinator):
     return lambda method, path, body=None: {'on': False} if path == 'screen-turn' else coordinator(method, path, body)
 
 
+NO_VOICES = {'voices': [], 'consent': None}  # (HQ's with no saved voices nor words to save one)
+
+
+def no_voices(coordinator):
+    """A stand-in coordinator with no saved voices (NO_VOICES), and answers the rest as `coordinator` does."""
+    return lambda method, path, body=None: NO_VOICES if path == 'voiceprints' else coordinator(method, path, body)
+
+
 class Juno(unittest.IsolatedAsyncioTestCase):
     """A call with Juno around the stand-ins: the board's words go in window by window."""
     async def asyncSetUp(self):
@@ -603,12 +613,15 @@ class Juno(unittest.IsolatedAsyncioTestCase):
                                     now=lambda: self.now(), monotonic=ticked)
         self.new_call()
         self.words, self.level = {}, 0.6  # what each utterance says, by its loudness
+        self.voices = {}  # whose voice each utterance is in, by its loudness (voiceprint)
         self.sounds = {}  # whether an utterance sounds finished, by its loudness, where its words don't say
 
     def new_call(self, **limits):
         """A new call for Juno (make_call's), with these of server.Limits instead of the line's."""
         self.call = self.make_call(*self.sends, 'juno', 'en', limits=limits)
         self.call.echo = None  # (the echo tests put it back: its whole 10 ms blocks would shift these tests' windows.)
+        # (its notes page titled: the reminder to title it would come with every third turn. BoardCallNotes's own test.)
+        self.call.page.titled = True
 
     def make_call(self, *args, limits=None, **given):
         """A call as the line makes one (Call's arguments: a route's make_call), wired to self.wiring (a route's, when it
@@ -617,12 +630,13 @@ class Juno(unittest.IsolatedAsyncioTestCase):
         limits = {'wait_seconds': {'done': 0.01, 'open': 0.02}, **(limits or {})}
         call = server.Call(*args, **{'brain': self.brain, 'wiring': self.wiring, 'limits': server.Limits(**limits), **given})
         call.transcribe, call.finish_chance = self.transcribe, self.finished
+        call.voiceprint = self.voiceprint
         return call
 
     def coordinator(self, method, path, body=None):
         """The coordinator Juno's calls are given: the line's own (nothing answers it here) with no watch-along on. A test
         class that plays the coordinator answers as its own."""
-        return no_screen(server.hq)(method, path, body)
+        return no_voices(no_screen(server.hq))(method, path, body)
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -643,6 +657,12 @@ class Juno(unittest.IsolatedAsyncioTestCase):
                 words = text.split()
                 said += words[:max(1, round(len(words) * got / n))] if got < n else words
         return ' '.join(said)
+
+    def voiceprint(self, seg):
+        """The voiceprint's stand-in: everyone sounds the same (one voice), unless a test says whose each utterance is
+        (voices: a print by its loudness)."""
+        level = next((level for level in self.voices if np.isclose(seg, level).any()), None)
+        return self.voices.get(level, np.ones(4, np.float32))
 
     def utterance(self, text, windows):
         """The board saying `text` for this many VAD windows (a footstep: ''), at a level 16-bit PCM holds exactly (the
@@ -1782,6 +1802,257 @@ OPENING = "Hi, this is Juno from Testco. I'm an AI assistant, calling about our 
 
 
 @unittest.skipIf(np is None, 'numpy is not installed (see the docstring)')
+class RoomVoices(Juno):
+    """The board and someone beside it on the board's own HQ call, one microphone: the line tells them apart by voice
+    (voices.py) and names each line's speaker once it has heard a second voice."""
+    BOARD, GUEST = (1, 0, 0, 0), (0, 1, 0, 0)  # (voiceprints: numbers, so the class is made without numpy too)
+
+    async def say(self, text, windows, voice):
+        """Someone saying text (60 windows: about 1.9 s, long enough to open a voice), then a pause the line answers."""
+        x = self.utterance(text, windows)
+        self.voices[self.level] = voice
+        await self.feed(x, 2048)
+
+    async def heard_out(self):
+        """A pause the line answers, and the reply played out (6 s) before anyone talks again."""
+        await self.quiet(20)
+        await self.settle()
+        await self.quiet(200)
+
+    async def test_one_voice_is_every_call_as_before(self):
+        await self.say('Can you check the orders?', 60, self.BOARD)
+        await self.heard_out()
+        self.assertEqual(self.brain.asked, ['Can you check the orders?'])
+        self.assertEqual(self.call.lines[0], 'Board: Can you check the orders?')
+
+    async def test_a_second_voice_is_named_on_its_lines_and_told_once(self):
+        await self.say('Can you check the orders?', 60, self.BOARD)
+        await self.heard_out()
+        await self.say('And the prices too.', 60, self.GUEST)
+        await self.heard_out()
+        told, said = self.brain.asked[1].split('\n\n')
+        self.assertIn('Voice 2', told)
+        self.assertIn('name_voice', told)
+        self.assertEqual(said, 'Voice 2: And the prices too.')
+        self.assertIn('Voice 2: And the prices too.', self.call.lines)
+        await self.say('Thanks.', 60, self.BOARD)
+        await self.heard_out()
+        self.assertEqual(self.brain.asked[2], 'Board: Thanks.')  # (told once)
+        self.assertEqual(self.call.voices.report('juno'), 'call: juno voices: 2 (opened at 0.00)')
+
+    async def test_both_in_one_message_each_on_their_own_line(self):
+        await self.say('What about the basket', 60, self.BOARD)
+        await self.quiet(5)  # (a pause the VAD cuts at, too short to answer)
+        await self.say('and the colours?', 60, self.GUEST)
+        await self.heard_out()
+        self.assertTrue(self.brain.asked[0].endswith('Board: What about the basket\nVoice 2: and the colours?'),
+                        self.brain.asked[0])
+        self.assertEqual(self.call.lines[:2], ['Board: What about the basket', 'Voice 2: and the colours?'])
+
+    async def test_the_agent_names_a_voice_and_swaps_two(self):
+        await self.say('Hi, I am Sam.', 60, self.GUEST)  # (someone else first: taken for the board's voice)
+        await self.heard_out()
+        await self.say('Sam is my colleague.', 60, self.BOARD)
+        await self.heard_out()
+        self.assertTrue(self.brain.asked[-1].endswith('\n\nVoice 2: Sam is my colleague.'))
+        got = await self.call.voice_tool({'name_voice': {'voice': 'voice 2', 'name': 'Board'}})
+        self.assertEqual(got, {'ok': 'Swapped: the voice called Voice 2 is Board in the transcript from now on, and the other Voice 2.'})
+        self.assertEqual(await self.call.voice_tool({'name_voice': {'voice': 'Voice 2', 'name': 'Sam'}}),
+                         {'ok': 'Voice 2 is Sam in the transcript from now on.'})
+        self.assertIn('error', await self.call.voice_tool({'name_voice': {'voice': 'Voice 3', 'name': 'Kim'}}))
+        self.assertIn('error', await self.call.voice_tool({'name_voice': {'voice': 'Sam', 'name': ' : '}}))
+        await self.say('Nice to meet you.', 60, self.GUEST)
+        await self.heard_out()
+        await self.say('Shall we start?', 60, self.BOARD)
+        await self.heard_out()
+        self.assertEqual(self.brain.asked[-2:], ['Sam: Nice to meet you.', 'Board: Shall we start?'])
+
+    async def test_a_short_piece_too_unlike_to_place_goes_to_the_closest_voice(self):
+        await self.say('Can you check the orders?', 60, self.BOARD)
+        await self.heard_out()
+        await self.say('Yes.', 30, self.GUEST)  # (under NEW_SECONDS: no new voice from a word)
+        await self.heard_out()
+        self.assertEqual(self.brain.asked[-1], 'Yes.')
+
+    async def test_a_reply_taken_back_keeps_who_said_it(self):
+        await self.say('Can you check the orders?', 60, self.BOARD)
+        await self.quiet(20)
+        await self.settle()
+        await self.say('No wait, the prices first.', 60, self.GUEST)  # (over the reply's start: it's taken back)
+        await self.quiet(20)
+        await self.settle()
+        self.assertTrue(self.brain.asked[-1].endswith(
+            'Board: Can you check the orders?\nVoice 2: No wait, the prices first.'), self.brain.asked[-1])
+
+    async def test_a_room_and_the_phone_have_none(self):
+        self.assertIsNone(self.make_call(*self.sends, 'juno', 'en', phone=True).voices)
+        self.assertIsNone(self.make_call(*self.sends, 'juno', 'en', callout=5).voices)
+
+
+class SavedVoices(RoomVoices):
+    """Voices saved on earlier calls (HQ's voiceprints) name the room's by how they sound, whoever speaks first; the
+    agent enrols one when the board asks (save_voice), forgets one (forget_voice), and a call refines what it heard."""
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        self.saved, self.posted, self.consent = [], [], 'It is kept on our own server until deleted.'
+
+    def coordinator(self, method, path, body=None):
+        if path == 'voiceprints':
+            if self.saved is None:
+                raise OSError('HQ is restarting')
+            return {'voices': self.saved, 'consent': self.consent}
+        self.posted.append((path, body))
+        if path == 'voiceprint':
+            return {'id': 9}
+        if path == 'voiceprint-forget':
+            return {'forgot': any(v['name'] == body['name'] for v in self.saved)}
+        if path == 'voiceprints-heard':
+            return {'ok': True}
+        return super().coordinator(method, path, body)
+
+    def save(self, name, voice, pieces=3, at=1):
+        self.saved.append({'id': at, 'name': name, 'print': list(voice), 'pieces': pieces})
+
+    def sent(self, path):
+        return [body for p, body in self.posted if p == path]
+
+    async def test_saved_voices_are_named_by_how_they_sound_whoever_speaks_first(self):
+        self.save('Board', self.BOARD, at=1)
+        self.save('Esme', self.GUEST, at=2)
+        await self.call.start()
+        await self.say('Hi, shall we look at the cards?', 60, self.GUEST)
+        await self.heard_out()
+        await self.say('The new ones.', 60, self.GUEST)
+        await self.heard_out()
+        self.assertEqual(self.brain.asked, ['Hi, shall we look at the cards?', 'The new ones.'])  # (too little to name by yet)
+        await self.say('With the foxes.', 60, self.GUEST)
+        await self.heard_out()
+        told, said = self.brain.asked[2].split('\n\n')
+        self.assertIn("the voice first taken for Board's is Esme", told)
+        self.assertEqual(said, 'Esme: With the foxes.')
+        for words in ('Yes.', 'Those ones.', 'Go on.'):
+            await self.say(words, 60, self.BOARD)
+            await self.heard_out()
+        self.assertTrue(self.brain.asked[3].endswith('\n\nVoice 2: Yes.'), self.brain.asked[3])
+        told, said = self.brain.asked[5].split('\n\n')
+        self.assertIn('Voice 2 is Board', told)
+        self.assertNotIn('was taken for', told)  # (the board's voice is known: no swapping to suggest)
+        self.assertEqual(said, 'Board: Go on.')
+        self.assertEqual(self.call.voices.names, ['Esme', 'Board'])
+
+    async def test_a_call_that_cant_read_the_saved_voices_doesnt_start(self):
+        self.saved = None
+        with self.assertRaises(OSError):
+            await self.call.start()
+        self.assertEqual(self.brain.asked, [])
+
+    async def test_a_lone_board_recognised_is_as_any_call_and_a_stranger_is_a_neutral_voice(self):
+        self.save('Board', self.BOARD)
+        await self.call.start()
+        await self.say('Can you check the orders?', 60, self.BOARD)
+        await self.heard_out()
+        self.assertEqual(self.brain.asked, ['Can you check the orders?'])
+        await self.say('Sorry to barge in.', 60, self.GUEST)
+        await self.heard_out()
+        self.assertTrue(self.brain.asked[1].endswith('\n\nVoice 2: Sorry to barge in.'), self.brain.asked[1])
+        self.assertNotIn('save', self.brain.asked[1].lower())  # (an unknown voice is never offered enrolment)
+
+    async def test_the_agent_enrols_a_voice_once_they_agree_and_have_talked_a_little(self):
+        await self.call.start()
+        await self.say('This is Esme, could you enrol her voice?', 60, self.BOARD)
+        await self.heard_out()
+        asking = {'name': 'Esme', 'voice': 'Voice 2', 'consent': 'Yes, that is fine.', 'asked': 'May I remember your voice?'}
+        skipped = await self.call.enrol_tool({'save_voice': asking})  # (the consent words never told: nothing saved)
+        self.assertIn('call save_voice with Esme alone first', skipped['error'])
+        first = await self.call.enrol_tool({'save_voice': {'name': 'Esme'}})
+        self.assertIn('Nothing is saved yet', first['ok'])
+        self.assertIn('It is kept on our own server until deleted.', first['ok'])
+        await self.say('Yes, that is fine.', 60, self.GUEST)
+        await self.heard_out()
+        early = await self.call.enrol_tool({'save_voice': asking})
+        self.assertIn('Too little heard of Voice 2', early['error'])
+        self.assertEqual(self.sent('voiceprint'), [])
+        await self.say('Today I worked on the new cards for the shop.', 120, self.GUEST)
+        await self.heard_out()
+        await self.say('And on a poem for a birthday.', 60, self.GUEST)
+        await self.heard_out()
+        got = await self.call.enrol_tool({'save_voice': asking})
+        self.assertEqual(got, {'ok': 'Saved: later calls recognise Esme by their voice, and Voice 2 is Esme in the '
+                                     'transcript from now on.'})
+        [saved] = self.sent('voiceprint')
+        self.assertEqual((saved['name'], saved['pieces'], saved['consent'], saved['asked']),
+                         ('Esme', 3, 'Yes, that is fine.', 'May I remember your voice?'))
+        self.assertAlmostEqual(saved['print'][1], 1.0)
+        await self.say('Thanks!', 60, self.GUEST)
+        await self.heard_out()
+        self.assertEqual(self.brain.asked[-1], 'Esme: Thanks!')
+        await self.say('Lovely. And while we are at it, could you enrol my voice as well?', 200, self.BOARD)
+        await self.heard_out()
+        board = {'name': 'the board', 'voice': 'Board', 'consent': 'Yes, go ahead.', 'asked': 'Shall I remember your voice too?'}
+        self.assertIn('error', await self.call.enrol_tool({'save_voice': board}))
+        self.assertIn('Nothing is saved yet', (await self.call.enrol_tool({'save_voice': {'name': 'Board'}}))['ok'])
+        self.assertEqual((await self.call.enrol_tool({'save_voice': board}))['ok'][:6], 'Saved:')
+        self.assertEqual(self.sent('voiceprint')[1]['name'], 'Board')  # (the board's own, as its lines name it)
+        await asyncio.to_thread(self.call.end)
+        self.assertEqual(self.sent('voiceprints-heard'), [])  # (saved from this call: nothing to refine)
+        self.assertIn('error', await self.call.enrol_tool({'save_voice': asking}))  # (saving again asks again)
+
+    async def test_no_voice_is_saved_without_hqs_words_to_tell_them(self):
+        self.consent = None
+        await self.call.start()
+        await self.say('This is Esme, could you enrol her voice?', 60, self.BOARD)
+        await self.heard_out()
+        got = await self.call.enrol_tool({'save_voice': {'name': 'Esme'}})
+        self.assertEqual(got, {'error': server.ENROL_WORDS['unsaid']})
+
+    async def test_a_call_refines_the_saved_voices_it_heard_and_forgets_one_asked_to(self):
+        self.save('Board', self.BOARD, pieces=4, at=1)
+        self.save('Esme', self.GUEST, pieces=3, at=2)
+        await self.call.start()
+        for words, voice in (('Can you check the orders?', self.BOARD), ('And the prices.', self.GUEST),
+                             ('The shipping too.', self.BOARD), ('And the cards.', self.GUEST), ('Thanks.', self.BOARD),
+                             ('Please forget my voice.', self.GUEST)):
+            await self.say(words, 60, voice)
+            await self.heard_out()
+        self.assertEqual(self.call.voices.names, ['Board', 'Esme'])
+        self.assertEqual(await self.call.forget_tool({'forget_voice': {'name': 'Esme'}}),
+                         {'ok': "Forgotten: Esme's saved voice is deleted."})
+        self.assertIn('error', await self.call.forget_tool({'forget_voice': {'name': 'Kim'}}))
+        await asyncio.to_thread(self.call.end)
+        [heard] = self.sent('voiceprints-heard')
+        self.assertEqual([(h['id'], h['pieces']) for h in heard['heard']], [(1, 7)])  # (Esme's, forgotten, isn't)
+
+
+class SavedVoiceEvidence(unittest.TestCase):
+    """A saved voice names a call's voice only on as much speech as MATCH was measured on, and refines only a print its
+    voice still sounds like (voices.py, by the prints themselves)."""
+    ESME = [0.0, 1.0, 0.0, 0.0]
+
+    def voices(self):
+        heard = server.Voices('Board', None)
+        heard.know([{'id': 2, 'name': 'Esme', 'print': self.ESME, 'pieces': 3}])
+        return heard
+
+    def test_one_piece_like_a_saved_voice_names_no_one(self):
+        heard = self.voices()
+        stranger = [0.0, 0.6, 0.8, 0.0]  # (0.6 like Esme's: past MATCH on one piece)
+        self.assertEqual(heard.place(stranger, 1.5), 'Board')
+        self.assertEqual(heard.place(self.ESME, 1.5), 'Board')
+        self.assertEqual(heard.heard(), [])
+        self.assertEqual(heard.place(self.ESME, 1.5), 'Esme')  # (three pieces, 4.5 s: enough)
+
+    def test_a_voice_that_turned_out_unlike_its_saved_print_refines_nothing(self):
+        heard = self.voices()
+        for _ in range(3):
+            heard.place(self.ESME, 2)
+        self.assertEqual([h['id'] for h in heard.heard()], [2])
+        other = [0.0, 0.37, (1 - 0.37 ** 2) ** 0.5, 0.0]  # (someone else, close enough to join her voice on the call)
+        for _ in range(14):
+            self.assertEqual(heard.place(other, 2), 'Esme')
+        self.assertEqual(heard.heard(), [])
+
+
+@unittest.skipIf(np is None, 'numpy is not installed (see the docstring)')
 # (calls out)
 class CallOut(Juno):
     """A call we placed to a partner, on the phone: Juno speaks first in the opening's fixed words, keeps notes, and keeps
@@ -2291,6 +2562,8 @@ class Restart(unittest.IsolatedAsyncioTestCase):
             self.live.discard(body['token'])
         if path == 'call-ticket':  # (the phone line's)
             return {'agent': 'juno', 'lang': 'en'}
+        if path == 'voiceprints':
+            return NO_VOICES
 
     async def test_a_walk_through_says_so_to_call_context_on_its_new_call_only(self):
         """ HQ's hello on a walk-through carries walk beside the card it's about
@@ -2300,7 +2573,7 @@ class Restart(unittest.IsolatedAsyncioTestCase):
         self.procs = [Proc(['Hi.', None]), Proc(['Here it is.']), *(Proc(['Hi.']) for _ in hellos[1:])]
         for hello in hellos:
             ws = LiveSocket(json.dumps({'agent': 'juno', 'lang': 'en', **hello}))
-            task = asyncio.create_task(server.app_call(ws, self.make_call, self.wiring))  #.
+            task = asyncio.create_task(server.app_call(ws, self.make_call, self.wiring))
             for _ in range(300):
                 await asyncio.sleep(0.01)
                 if any(json.loads(m)['type'] == 'call' for m in ws.sent if isinstance(m, str)):
@@ -2508,6 +2781,9 @@ class Restart(unittest.IsolatedAsyncioTestCase):
                         break
             call = self.calls[-1]
             self.assertEqual(call.hello_made.done(), not stuck)
+            # (HQ's call screen says what the line tells it: not listening while it still rings.)
+            told = [json.loads(m)['type'] for m in ws.sent if isinstance(m, str)]
+            self.assertNotIn('state', told[:told.index('call')], 'the line says it listens while HQ still rings')
             if not stuck:
                 self.assertEqual(call.hello_made.result()[0], 'Hi, Juno here.')
                 await self.picked_up(call)
@@ -2964,7 +3240,7 @@ class Pictures(Juno):
             self.held[n].wait(5)
         pictures = {17: ('image/jpeg', JPEG), 18: ('image/jpeg', 'not base64!'), 19: ('image/gif', base64.b64encode(b'GIF89a').decode()),
                     **{n: ('image/jpeg', PHOTO(n)) for n in range(20, 27)}, 27: ('image/jpeg', JPEG),
-                    28: ('image/jpeg', BROKEN)}  #.
+                    28: ('image/jpeg', BROKEN)}
         for n, (kind, data) in pictures.items():
             if path == f'picture?id={n}&call=7':
                 return {'id': n, 'type': kind, 'data': data}
@@ -3152,6 +3428,8 @@ class Screen(Juno):
         self.asked.append((path, body))
         if path == 'call-end':
             return None
+        if path == 'voiceprints':
+            return NO_VOICES
         answer = (self.turns if path == 'screen-turn' else self.looks).pop(0)
         answer = answer() if callable(answer) else answer
         if isinstance(answer, Exception):
@@ -3504,7 +3782,6 @@ class BoardDrawing(Juno):
     async def asyncSetUp(self):
         await super().asyncSetUp()
         self.fetched, self.screen_on = [], False
-        self.judged = {}  # a note's verdict and versions, by its id
 
     def coordinator(self, method, path, body=None):
         if path == 'screen-turn':
@@ -3516,7 +3793,7 @@ class BoardDrawing(Juno):
         if path != f'note?id={note_id}&call=7' or note_id not in NOTES:
             raise HTTPError(f'http://hq/api/voice/{path}', 404, 'Not Found', {}, None)
         n, words, picture = NOTES[note_id]
-        return {'n': n, 'words': words, 'url': TEACUPS, 'picture': picture, **self.judged.get(note_id, {})}
+        return {'n': n, 'words': words, 'url': TEACUPS, 'picture': picture}
 
     def told(self, kind):
         return [{k: v for k, v in e.items() if k != 'type'} for e in self.events if e['type'] == kind]
@@ -3564,34 +3841,6 @@ class BoardDrawing(Juno):
         await self.call.ended_turn('', threading.Event(), {'back': False})
         await self.call.ended_turn('', threading.Event(), {'back': False})
         self.assertEqual(self.told('note'), [{'id': 41, 'state': 'received'}, {'id': 41, 'state': 'done'}], 'once')
-
-    async def test_a_notes_verdict_comes_with_it_or_later_once_and_versions_as_they_land(self):
-        self.judged[41] = {'verdict': {'reply': 'answer', 'why': 'a question'}, 'versions': []}
-        await self.call.note(41)
-        await self.turn('Is that right?')
-        self.assertIn('my ink on it.) (The board\'s note asks for an answer: write it on the page with answer_note',
-                      self.brain.asked[0])
-        await self.call.note_news(41)  # (nothing new: nothing said)
-        self.judged[42] = {'verdict': None, 'versions': []}
-        await self.call.note(42)
-        await self.turn('Hm.')
-        self.judged[42] = {'verdict': {'reply': 'try', 'why': 'see it made'}, 'versions': ['Bold card']}
-        await self.call.note_news(42)
-        await self.call.note_news(42)
-        await self.call.note_news(77)  # (a note the line never had: let be)
-        await self.quiet_turn()
-        self.assertEqual(self.brain.asked[2], "(News on note 3, on HQ's page /projects/teacups.) (The board's note asks to "
-                         "see it made: a try run is making a few versions for real, on a page right after this call's, "
-                         "which the sketch tool shows by the word 'tries'. Landed so far: “Bold card”.)")
-        self.assertEqual(len(self.brain.asked), 3)
-        self.assertEqual([line for line in self.call.lines if 'note 3' in line], ['Board: (drew note 3 on /projects/teacups)'])
-        # (the board rings a version on its page: the agent hears which.)
-        self.judged[42] = {'verdict': {'reply': 'try', 'why': 'see it made'}, 'versions': ['Bold card', 'Quiet card'],
-                           'picked': 'Quiet card'}
-        await self.call.note_news(42)
-        await self.quiet_turn()
-        self.assertTrue(self.brain.asked[3].endswith("Landed so far: “Bold card”, “Quiet card”. The board picked “Quiet "
-                                                     "card”: that's the one to build.)"), self.brain.asked[3])
 
     async def test_notes_drawn_while_the_line_is_quiet_go_in_a_turn_of_their_own_in_their_order(self):
         await self.call.note(42)  # (no picture: its words alone, here none)
@@ -3816,8 +4065,23 @@ class BoardCallNotes(Juno):
                                                          'words': ' '.join(w.split()), 'goal': 'A calmer shop'})
                                       for r, w in changes])
         self.assertEqual(self.events, [], 'nothing of the page goes through HQ\'s socket: the store tells the screens')
-        title = await self.call.page.title_tool({'title_page': 'Shop page: price, basket'})
-        self.assertEqual((title, self.asked[-1]), ({'ok': 'Titled.'}, ('POST', 'title', {'call': 7, 'title': 'Shop page: price, basket'})))
+        title = await self.call.page.title_tool({'title_page': 'Shop page prices'})
+        self.assertEqual((title, self.asked[-1]), ({'ok': 'Titled.'}, ('POST', 'title', {'call': 7, 'title': 'Shop page prices'})))
+
+    async def test_the_agent_is_reminded_every_third_turn_to_title_the_page_until_it_has(self):
+        self.call.page.titled = False
+        for words in ('Hello.', 'The shop page.', 'The prices on it.'):
+            await self.call.answer(words, None)
+        self.assertEqual(self.brain.asked, ['Hello.', 'The shop page.', f'{callnotes.TITLE_REMINDER}\n\nThe prices on it.'])
+        # (a topic too long for the Notebook's bar is refused, and the reminder goes on)
+        self.assertEqual(await self.call.page.title_tool({'title_page': 'Shop page: prices, basket'}),
+                         {'error': server.TITLE_WORDS_SAID['shape']})
+        self.assertEqual([self.call.page.told() for _ in range(3)], ['', '', callnotes.TITLE_REMINDER])
+        self.assertEqual(await self.call.page.title_tool({'title_page': 'Shop page prices'}), {'ok': 'Titled.'})
+        self.assertEqual([self.call.page.told() for _ in range(3)], ['', '', ''])
+        # (none on a call with no notes page: a call out's)
+        self.call.page.titled, self.call.callout = False, 12
+        self.assertEqual([self.call.page.told() for _ in range(3)], ['', '', ''])
 
     async def test_what_the_page_cannot_take_is_refused_in_words(self):
         tool = self.call.page.scrap_tool
@@ -4044,8 +4308,8 @@ class RealCli(unittest.IsolatedAsyncioTestCase):
         self.events = []
         return server.Call(lambda x: asyncio.sleep(0), lambda e: asyncio.sleep(0, self.events.append(e)), lambda: asyncio.sleep(0), 'juno', 'en',
                            phone=phone, callout=callout, limits=server.Limits(**limits),
-                           wiring=server.Wiring(hq=coordinator or self.coordinator, paths=paths, now=lambda: NOW, monotonic=ticked,
-                                                start_cli=start_cli))
+                           wiring=server.Wiring(hq=no_voices(coordinator or self.coordinator), paths=paths, now=lambda: NOW,
+                                                monotonic=ticked, start_cli=start_cli))
 
     def coordinator(self, method, path, body=None):
         """Juno's briefing for the call (call-context); the rest is taken in."""

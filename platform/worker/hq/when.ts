@@ -1,5 +1,6 @@
 // hq when: when new work could be done, played into the plan as it stands (the coordinator's when.ts): the earliest
-// without making any window miss, or with --by whether it makes that time, and only if not, what would.
+// without making any window miss, or with --by whether its planned live finish meets that time, and only if not, what
+// would.
 import * as seatreplay from './seatreplay.ts';
 import * as api from './api.ts';
 import { deadlineLines, type Deadline } from './deadlines.ts';
@@ -47,7 +48,7 @@ type Answer = {
 
 const USAGE = 'usage: hq when "what the work is" --size <90m> [--agent <id>] [--after <job>] [--by <time>]';
 
-// (--by's forms, the board's own time with its date and no zone among them)
+// --by names the board's time. --size supplies the task's work estimate.
 export const when = {
   help: `
    hq when --extra-seat 5x|20x                       replay the live plan with one hypothetical Claude Max seat, at
@@ -56,12 +57,12 @@ export const when = {
    hq when "what the work is" --size <90m> [--agent <id>] [--after <job>] [--by <time>]
                                                      when new work could be done (merged and deployed), played into the
                                                      plan as it stands: use hq estimate to compare clean past jobs, then
-                                                     give your own scope judgment as --size
+                                                     give your task work estimate as --size
                                                      (90m, 2h, 1h30m), as --agent's work (yours by default), after
                                                      --after's job. The earliest it can be done without making any
-                                                     window miss, and the window to set for it (hq window). With --by
+                                                     window miss, and a proposed window for it (hq window). With --by
                                                      (2h, 90m, 2026-10-26 09:00 on the company's clock, 14:30 UTC),
-                                                     whether it makes that time, and only
+                                                     whether its planned live finish meets that time, and only
                                                      if not, what would, each as played: the windows that would give
                                                      and by how much, and one more seat`,
 
@@ -138,7 +139,7 @@ function earliestLines({ free, earliest, horizon_days }: Answer) {
     `At the earliest without making any window miss: done about ${at(e.finish!)}${starts}.`,
     e.due === null
       ? "That's when it's done with no window at all: it needs none."
-      : `Its window for that: deadline ${at(e.due)}, aim ${at(e.finish!)}. With no window at all ${plain}${misses}.`,
+      : `Proposed window for that: deadline ${at(e.due)}, aim ${at(e.finish!)}. With no window at all ${plain}${misses}.`,
     ...timeLines(e),
   ];
 }
@@ -148,7 +149,7 @@ function byLines(by: NonNullable<Answer['by']>, engine: string) {
   const done = (t: Trial) => (t.finish === null ? 'no finish in sight' : `done about ${at(t.finish)}`);
   if (by.makes && by.due != null)
     return [
-      `By ${at(by.at)}: yes, ${done(by)} with every window held. Its window: deadline ${at(by.due)}, aim ${at(by.finish!)}.`,
+      `By ${at(by.at)}: yes, ${done(by)} with every window held. Proposed window: deadline ${at(by.due)}, aim ${at(by.finish!)}.`,
       ...timeLines(by),
     ];
   if (by.makes)

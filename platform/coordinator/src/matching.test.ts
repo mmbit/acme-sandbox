@@ -120,6 +120,8 @@ test("a scheduled job is sized on its own entry's earlier runs, whoever ran them
   const reader = await h.start({ agent: 'bolt', title: 'Sizing' });
   const { out } = await h.hq(reader, 'estimate', `#${job}`);
   assert.match(out, /Saved estimate: 19 min of agent time by tool/);
+  assert.match(out, /The deliverable's ETA plays on it/);
+  assert.match(out, /projected merge/);
 });
 
 test("an entry with too few runs stands on its routine's entries, its own first; with too few of those, on the matching without its slot", async () => {

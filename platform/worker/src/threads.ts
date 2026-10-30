@@ -22,14 +22,21 @@ export type InClone = {
 // clean merge is committed with the clone's own identity. One that conflicts is left in progress (MERGE_HEAD stays) for
 // the session to resolve, and its files come back. The first task (no branch on origin yet) started from main.
 export function bringUpToDate(clone: InClone, dir: string, branch: string, base: string): string[] {
-  const inClone = (...args: string[]) => clone.git(['-C', dir, ...args]);
   if (!onOrigin(clone, dir, branch)) return [];
+  return mergeMain(clone, dir, base);
+}
+
+// A conflict stays in progress for the caller to resolve or abort. Other merge failures propagate.
+export function mergeMain(clone: Pick<InClone, 'git'>, dir: string, base: string): string[] {
+  const inClone = (...args: string[]) => clone.git(['-C', dir, ...args]);
   try {
     inClone('merge', '-q', '--no-edit', '-m', `Bring up to date with ${base}`, `origin/${base}`);
     return [];
   } catch (err) {
     if (!has(clone, dir, 'MERGE_HEAD')) throw err;
-    return inClone('diff', '--name-only', '--diff-filter=U', '-z').split('\0').filter(Boolean);
+    const conflicts = inClone('diff', '--name-only', '--diff-filter=U', '-z').split('\0').filter(Boolean);
+    if (!conflicts.length) throw err;
+    return conflicts;
   }
 }
 
@@ -296,7 +303,7 @@ function mergeText(clone: InClone, dir: string, text: string, fold: { base: stri
 const onOrigin = (clone: InClone, dir: string, branch: string) =>
   clone.git(['-C', dir, 'for-each-ref', '--format=%(refname)', `refs/remotes/origin/${branch}`]).trim() !== '';
 // Whether the clone has a commit, or a file in one
-const has = (clone: InClone, dir: string, rev: string, path?: string) => {
+const has = (clone: Pick<InClone, 'git'>, dir: string, rev: string, path?: string) => {
   try {
     clone.git(['-C', dir, 'cat-file', '-e', path === undefined ? rev : `${rev}:${path}`]);
     return true;

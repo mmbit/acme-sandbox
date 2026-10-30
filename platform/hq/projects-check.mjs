@@ -575,6 +575,7 @@ for (const look of RENDERERS)
       sums = await texts(page, `${box('[data-thread]')} .pj-eta-foot small`);
     assert.equal(times.length, 2, `${at}: each its time, as its page's head has it`);
     for (const time of times) assert.match(time, /^Done about /, `${at}: when it's done, the planner's`);
+    assert.match(sums[0], /No deadline set\./, `${at}: an untimed deliverable shows its missing deadline once`);
     assert.match(sums[1], /of agent time left\. .* past its deadline /, `${at}: the agent time left and its window`);
     assert.deepEqual(await offScreen(), [], at);
     await shot('project');
@@ -1673,6 +1674,27 @@ for (const look of RENDERERS)
             finished,
             result: 'Approved as it is',
           }),
+          // (two tasks sharing their deliverable's pull request, its rounds and a fix under way)
+          ...[305, 306].map(id =>
+            job(id, `Audit part ${id - 304}`, { status: 'done', finished, branch: 'deliverable/audit' }),
+          ),
+          job(307, 'Audit parts', {
+            review: 1,
+            branch: 'deliverable/audit',
+            step: 'Reviewing',
+            round: 1,
+            status: 'done',
+            finished,
+          }),
+          job(308, 'Audit parts', {
+            review: 1,
+            branch: 'deliverable/audit',
+            step: 'Fixing',
+            round: 1,
+            fixes: { round: 1, findings: ['The broken links'] },
+          }),
+          // (and a third task at work on the branch, its work not in the pull request yet)
+          job(309, 'Audit part 3', { branch: 'deliverable/audit' }),
         ],
       });
       await (await import('/shell/projects.js')).openProjects();
@@ -1710,6 +1732,14 @@ for (const look of RENDERERS)
     assert.deepEqual(await listed('Sooner'), ['Held', 'Later', 'Sooner'], `${at}: and re-sorted`);
     await threeThreads(null);
     await page.waitForSelector('[data-thread="office/audit"]');
+    // the fix of a pull request two tasks share runs once on the tile: one row named by what it fixes, one strip mark
+    const audit = box('[data-thread="office/audit"]');
+    assert.deepEqual(
+      (await texts(page, `${audit} .pj-now li > span`)).filter(Boolean),
+      ['Audit the replies', 'Audit the macros', 'Fixing what round 1 found: The broken links', 'Audit part 3'],
+      `${at}: a shared fix once on the tile, the task at work on its branch in its own row`,
+    );
+    assert.equal((await page.$$(`${audit} .pj-strip i.working`)).length, 4, `${at}: and once on its strip`);
     await tap(page, '[data-thread="office/audit"]');
     await level('The audit');
     // (a key set as asked, whichever way it stood)
@@ -1723,6 +1753,25 @@ for (const look of RENDERERS)
     assert.match((await texts(page, '.pj-head .pj-keys button'))[0], /^Done · \d+$/, at);
     assert.ok(!(await page.$('.pj-level [data-job="302"]')), `${at}: a finished task hidden`);
     assert.ok(await page.$('.pj-level .pj-step [data-job="304"]'), `${at}: a finished review under its work`);
+    // a pull request two tasks share: its rounds once, right after the two done, under a line of their own counting
+    // only them; each says so, and the task still at work on the branch has none of it
+    assert.deepEqual(
+      await page.$$eval('.pj-level.pj-tasks > li', rows =>
+        rows
+          .map(r => r.querySelector('[data-job]')?.dataset.job ?? r.className)
+          .filter(x => ['305', '306', '307', '308', '309', 'pj-shared'].includes(x)),
+      ),
+      ['305', '306', 'pj-shared', '307', '308', '309'],
+      `${at}: a shared pull request's rounds once, after the tasks done`,
+    );
+    assert.equal(await page.textContent('.pj-shared'), "Both tasks' review, together", at);
+    for (const id of ['305', '306'])
+      assert.match(
+        await page.textContent(`.pj-level .pj-task:has([data-job="${id}"]) small`),
+        /Done, in review with the other task/,
+        at,
+      );
+    assert.match(await page.textContent('.pj-level .pj-task:has([data-job="309"]) small'), /At work/, at);
     await press('[data-done]', true);
     for (const [id, report] of [
       ['302', 'All links answer'],

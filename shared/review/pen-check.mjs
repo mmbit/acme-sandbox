@@ -184,9 +184,10 @@ const inkAt = (x, y) =>
     },
     [x, y],
   );
+// (the inks the notebook's, Night for black)
 const red = ([r, g, b, a]) => a > 200 && r > 200 && g < 140 && b < 140,
   blue = ([r, , b, a]) => a > 200 && b > 180 && r < 120,
-  black = ([r, g, b, a]) => a > 200 && r < 80 && g < 60 && b < 80;
+  night = ([r, g, b, a]) => a > 200 && r < 80 && g < 60 && b < 110;
 
 // ---- the board's iPad
 const context = await device(reviewJs);
@@ -261,7 +262,7 @@ async function penNote({ board }) {
   assert.equal(sent.element.kind, 'circle');
   assert.equal(sent.element.ink.length, 2, 'the note carries its two lines');
   const [first] = sent.element.ink;
-  assert.equal(first.color, '#ff5a5f');
+  assert.equal(first.color, '#d0443a', "the notebook's red");
   assert.ok(new Set(first.points.map(p => p[2])).size > 5, "the pen's pressure goes with each point");
   assert.ok(
     first.points.at(-1)[3] > 0 && first.points.every((p, i, all) => !i || p[3] >= all[i - 1][3]),
@@ -317,7 +318,7 @@ async function penTools() {
       fire('touchend');
       return moved;
     }, s);
-  assert.equal(await refused('.strip .pot[aria-label=Black]'), false, "the Pencil's move on an ink is never refused");
+  assert.equal(await refused('.strip .pot[aria-label=Night]'), false, "the Pencil's move on an ink is never refused");
   assert.equal(await refused('.strip .undo'), false, 'nor on Undo');
   assert.equal(await refused('.sheet textarea'), false, 'nor on the post-it');
   assert.equal(await refused('.veil'), true, 'and is on the page being marked, which never scrolls under it');
@@ -328,9 +329,9 @@ async function penTools() {
       [b.x + b.width / 2 + 1, b.y + b.height / 2],
     ]);
   };
-  await tap('.strip .pot[aria-label=Black]');
+  await tap('.strip .pot[aria-label=Night]');
   await pen(across(h1.x + 20, h1.y + 240, h1.x + 300, h1.y + 240));
-  assert.ok(black(await inkAt(h1.x + 160, h1.y + 240)), "the Pencil's tap on Black: it draws black");
+  assert.ok(night(await inkAt(h1.x + 160, h1.y + 240)), "the Pencil's tap on Night: it draws in it");
   await tap('.strip .eraser');
   assert.equal(
     await page.locator(inUi('.strip .eraser')).getAttribute('aria-pressed'),
@@ -338,14 +339,14 @@ async function penTools() {
     'the eraser is in hand',
   );
   await pen(across(h1.x + 160, h1.y + 90, h1.x + 160, h1.y + 260));
-  assert.equal((await inkAt(h1.x + 160, h1.y + 240))[3], 0, 'the eraser passed across it, the black line goes');
+  assert.equal((await inkAt(h1.x + 160, h1.y + 240))[3], 0, 'the eraser passed across it, the Night line goes');
   assert.equal((await inkAt(h1.x + 160, h1.y + 120))[3], 0, 'and the red cross-out it passed');
   assert.ok(red(await inkAt(h1.x + 360, h1.y + h1.height / 2)), 'and the ring it missed stays');
   await tap('.strip .undo');
-  assert.ok(black(await inkAt(h1.x + 160, h1.y + 240)), "the Pencil's tap on Undo brings back what was erased");
+  assert.ok(night(await inkAt(h1.x + 160, h1.y + 240)), "the Pencil's tap on Undo brings back what was erased");
   assert.ok(red(await inkAt(h1.x + 160, h1.y + 120)), 'all of it');
   await tap('.strip .undo');
-  assert.equal((await inkAt(h1.x + 160, h1.y + 240))[3], 0, 'and again takes the black line back');
+  assert.equal((await inkAt(h1.x + 160, h1.y + 240))[3], 0, 'and again takes the Night line back');
   await tap('.strip .pot[aria-label=Blue]'); // (the ink last chosen before: the mouse's rectangle draws in it)
   assert.equal(
     await page.locator(inUi('.strip .eraser')).getAttribute('aria-pressed'),
@@ -545,14 +546,14 @@ const mouseLine = async (x0, y0, x1, y1) => {
   await page.mouse.move(x1, y1, { steps: 8 });
   await page.mouse.up();
 };
-await page.locator(inUi('.strip .pot[aria-label=Black]')).click();
+await page.locator(inUi('.strip .pot[aria-label=Night]')).click();
 await mouseLine(100, 240, 300, 240);
-assert.ok(black(await inkAt(200, 240)), 'a click on Black: it draws black');
+assert.ok(night(await inkAt(200, 240)), 'a click on Night: it draws in it');
 await page.locator(inUi('.strip .eraser')).click();
 await mouseLine(200, 140, 200, 260);
 assert.equal((await inkAt(200, 240))[3] + (await inkAt(200, 170))[3], 0, 'the eraser takes both lines it crosses');
 await page.locator(inUi('.strip .undo')).click();
-assert.ok(black(await inkAt(200, 240)) && blue(await inkAt(200, 170)), 'and Undo brings them back');
+assert.ok(night(await inkAt(200, 240)) && blue(await inkAt(200, 170)), 'and Undo brings them back');
 await page.locator(inUi('.strip .pot[aria-label=Blue]')).click();
 assert.equal(await page.locator(inUi('.sheet .page')).innerText(), 'Home', 'the post-it names the home page');
 // a note keeps 64 lines (the coordinator's cap), and the pen says so rather than drop one unseen

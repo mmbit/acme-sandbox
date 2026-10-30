@@ -156,57 +156,34 @@ test('the agent changes its own scrap’s words and its item’s, moves and dele
   assert.equal((await h.voice('change', { call, id: note, words: 'x', delete: true })).status, 400);
 });
 
-test("at hang-up the agent's marks stay on the page as drawn, one the board drew on goes as its note", async () => {
+test("at hang-up the agent's notes and marks stay on the page, the board's ink on them too, and none is sent", async () => {
   const { call, token, page } = await callPage();
   const note = said(await h.voice('scrap', { call, words: 'Use the page’s width', goal: GOAL })).id as number;
   const kept = said(await h.voice('mark', { call, mark: 'ellipse', around: note })).id as number;
   const drawnOn = said(await h.voice('mark', { call, mark: 'rect', box: { x: 600, y: 600, width: 200, height: 100 } }))
     .id as number;
-  const moved = said(
-    await h.voice('mark', {
-      call,
-      mark: 'arrow',
-      points: [
-        [600, 800],
-        [700, 900],
-      ],
-    }),
-  ).id as number;
-  // (the board writes inside the rectangle, and moves the arrow)
+  // (the board writes inside the rectangle)
   const rect = (await groups(page)).find(g => g.id === drawnOn);
-  const ink = [
-    ...rect.ink,
-    {
-      color: '#d63c3c',
-      size: 4,
-      points: [
-        [650, 640, 0.5, 0],
-        [700, 650, 0.5, 16],
-      ],
-    },
-  ];
-  said(await h.board('/api/notebooks/groups/edit', { id: drawnOn, since: rect.updated, ink }));
-  said(await h.board('/api/notebooks/groups/move', { id: moved, page, dx: 30, dy: 0 }));
-  // (and draws its own line for the agent's in another: as many strokes, not the same)
-  const swapped = said(await h.voice('mark', { call, mark: 'rect', box: { x: 900, y: 600, width: 200, height: 100 } }))
-    .id as number;
-  said(
-    await h.board('/api/notebooks/groups/edit', {
-      id: swapped,
-      since: (await groups(page)).find(g => g.id === swapped).updated,
-      ink: [{ ...ink[1], points: (ink[1].points as number[][]).map(([x, y, ...r]) => [x + 300, y, ...r]) }],
-    }),
-  );
-  // (a promise for the board the agent words again stays as it wrote it)
-  ledger.add(call, { kind: 'promise', owner: 'board', what: 'Try it on the iPad', goal: GOAL, quote: 'you try' }, null);
-  const promise = (await groups(page)).find(g => g.texts.some((t: any) => /^Promise for you/.test(t.text))).id;
-  said(await h.voice('change', { call, id: promise, words: 'Promise for you: try it on the iPad and the phone' }));
+  const stroke = {
+    color: '#d63c3c',
+    size: 4,
+    points: [
+      [650, 640, 0.5, 0],
+      [700, 650, 0.5, 16],
+    ],
+  };
+  said(await h.board('/api/notebooks/groups/edit', { id: drawnOn, since: rect.updated, ink: [...rect.ink, stroke] }));
   await h.voice('call-end', { agent: 'juno', lines: ['Board: use the width.'], token });
-  for (let i = 0; i < 100 && groupRow(note).note === null; i++) await new Promise(r => setTimeout(r, 50));
-  assert.notEqual(groupRow(note).note, null, 'the note went as an ask');
-  assert.deepEqual([groupRow(kept).status, groupRow(kept).note], ['sent', null], 'the ellipse stays as drawn');
-  assert.deepEqual([groupRow(moved).status, groupRow(moved).note], ['sent', null], 'moved is unchanged');
-  assert.deepEqual([groupRow(promise).status, groupRow(promise).note], ['sent', null], 'its own change is as written');
-  assert.notEqual(groupRow(drawnOn).note, null, "the rectangle the board wrote in goes as the board's note");
-  assert.notEqual(groupRow(swapped).note, null, "the board's stroke for the agent's goes as its note");
+  for (let i = 0; i < 100 && groupRow(note).status !== 'sent'; i++) await new Promise(r => setTimeout(r, 50));
+  for (const id of [note, kept, drawnOn])
+    assert.deepEqual(
+      [groupRow(id).status, groupRow(id).note],
+      ['sent', null],
+      'on the page as it went in, sent nowhere',
+    );
+  assert.equal(
+    (await groups(page)).find(g => g.id === drawnOn).ink.length,
+    rect.ink.length + 1,
+    "the board's ink stays on the rectangle",
+  );
 });

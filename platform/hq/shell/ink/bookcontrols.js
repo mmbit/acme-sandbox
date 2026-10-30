@@ -3,7 +3,8 @@
 // New page. While the zoom is off 100% its % shows beside the page after, a tap back to 100%. Send, the page's own
 // action (the page shown sent whole, bookpagesend.js; none on a page sent, nor on a call's own page while it's on), is
 // its own island at the top of the stack over the paper's right edge, under the page's turned-down corner, so the row
-// stays one slim line with the page's name whole in it (the board, 28 Oct).
+// stays one slim line with the page's name whole in it; on an iPad mini on its side, beside HQ's page, the name has a
+// line of its own above the buttons (bookdesk.css.).
 // Ctrl/⌘ with +, − and 0 zoom too, while the book has the pointer or the focus (never HQ's page's own zoom).
 import { button, island, setPressed, MOD, lineIcon } from './bookui.js';
 import { esc } from '../../util.js';
@@ -77,7 +78,7 @@ export function mountControls(book, act) {
   return followCall(controls);
 }
 // The call's own page while the call is on (calldraw.js's call:page), till it's off: no Send there, as it goes in by
-// itself as the call ends (the board's call 161.). → controls
+// itself as the call ends. → controls
 let onCall = null;
 function followCall(controls) {
   document.addEventListener('call:page', e => ((onCall = e.detail.page), controls.update()));

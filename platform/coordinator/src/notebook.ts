@@ -26,7 +26,8 @@ import { ZOOM_KEPT } from '../../hq/shell/ink/bookrow.js';
 db.exec(`create table if not exists notebooks (id integer primary key autoincrement, who text not null, kind text not null,
   name text not null default '', archived integer not null default 0, created text not null, updated text not null);
   create index if not exists notebooks_who on notebooks (who)`);
-// (tries, tries_note: the group or old book note a versions page is for, ink/booktry.ts.)
+// (tries: the group a versions page is for, ink/booktry.ts; tries_note, an old book's note's, is a page outside the
+// notebooks, booktry.ts's.)
 for (const column of [
   'notebook integer',
   'pos real',
@@ -60,7 +61,6 @@ export type NotebookPage = Page & {
   send_at: number | null;
   fresh: number | null;
   tries: number | null;
-  tries_note: number | null;
   // The board's title, including a deliberately empty one, takes precedence over agents and models.
   title_by: TitleBy;
   // SHA-256 of the ordered groups' ink, texts, pictures and words last checked by the title model. Empty until checked.
@@ -71,7 +71,7 @@ export type NotebookPage = Page & {
   // as a step of its own
   handed: number;
 };
-const PAGE_COLUMNS = `${COLUMNS}, notebook, pos, send_at, fresh, tries, tries_note, title_by, title_seen, zooms, handed`;
+const PAGE_COLUMNS = `${COLUMNS}, notebook, pos, send_at, fresh, tries, title_by, title_seen, zooms, handed`;
 // The size a new page starts at: it grows every way as it's drawn on
 const NEW_PAGE = { w: 1200, h: 1600 };
 
@@ -102,12 +102,12 @@ export function archiveNotebook(b: any, who = BOARD) {
 }
 // A person's own notebook, made the first time it's asked for, with their old book carried in (and any old page since)
 export function mine(who = BOARD) {
-  const found = db.prepare("select * from notebooks where who = ? and kind = 'mine'").get(who) as Notebook | undefined;
-  if (found && !uncarried(who)) return found;
+  const found = findOwnNotebook(who);
+  if (found && !uncarried(who)) return notebookRow(found, who)!;
   return inOneStep(() => {
     const id = ownNotebook(who);
     // (notes written the old way since land on the current page: every screen showing it reads it again.)
-    const late = carryInto(id, who, () => currentPage(id));
+    const late = carryInto(id, who, endOf(id), () => currentPage(id));
     if (late) changed(id, late);
     return notebookRow(id, who)!;
   });
@@ -115,10 +115,11 @@ export function mine(who = BOARD) {
 // A person's own notebook's id, made if there's none, their old book not carried in (a call's notes page takes it so:
 // ink/callnotes.ts.)
 export function ownNotebook(who: string) {
-  const found = db.prepare("select id from notebooks where who = ? and kind = 'mine'").get(who) as
-    { id: number } | undefined;
-  return found?.id ?? makeNotebook(who, 'mine', 'My Notebook');
+  return findOwnNotebook(who) ?? makeNotebook(who, 'mine', 'My Notebook');
 }
+// A person's own notebook's id, or undefined before it's made
+export const findOwnNotebook = (who: string) =>
+  (db.prepare("select id from notebooks where who = ? and kind = 'mine'").get(who) as { id: number } | undefined)?.id;
 export function makeNotebook(who: string, kind: Notebook['kind'], name: string) {
   const now = new Date().toISOString();
   return Number(
@@ -207,8 +208,8 @@ export function currentPage(notebook: number) {
 // The current page if the notebook has one (review mode's count reads it: ink/bookreview.ts)
 export function openPageOf(notebook: number) {
   const pages = db
-    .prepare('select id, created, archived, send_at, tries, tries_note from book_pages where notebook = ?')
-    .all(notebook) as Pick<NotebookPage, 'id' | 'created' | 'archived' | 'send_at' | 'tries' | 'tries_note'>[];
+    .prepare('select id, created, archived, send_at, tries from book_pages where notebook = ?')
+    .all(notebook) as Pick<NotebookPage, 'id' | 'created' | 'archived' | 'send_at' | 'tries'>[];
   return landingPage(pages, (p: (typeof pages)[number]) => p.send_at !== null)?.id ?? null;
 }
 export function newPage(notebook: number) {
@@ -280,10 +281,6 @@ export const pageRow = (id: number, who: string | null) =>
         )
         .get(id, who)
     : undefined) as NotebookPage | undefined;
-// The versions page of an old book's note's try (a call's note: ink/booktry.ts), if it has one.
-export const triesPageOfNote = (note: number) =>
-  db.prepare(`select ${PAGE_COLUMNS} from book_pages where tries_note = ? and notebook is not null`).get(note) as
-    NotebookPage | undefined;
 const pagesOf = (notebook: number) =>
   db
     .prepare(`select ${PAGE_COLUMNS} from book_pages where notebook = ? order by pos, id`)
@@ -337,6 +334,5 @@ export function pageOf(p: NotebookPage) {
     groups: n,
     picture: `/api/book/picture?id=${p.id}&v=${encodeURIComponent(p.updated)}`,
     tries: p.tries, // a try's versions page: the group it's for (ink/booktry.ts).
-    tries_note: p.tries_note, // or the old book's note it's for (a call's)
   };
 }

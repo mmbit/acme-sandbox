@@ -27,7 +27,7 @@ import { pick } from './bookpick.ts';
 import { partsOfAnswer } from './answerparts.ts';
 import { isRefused, type Refused } from '../pagechecks.ts';
 import { DIR } from '../pagescraps.ts';
-import { changed, pageRow, triesPageOfNote } from '../notebook.ts';
+import { changed, pageRow } from '../notebook.ts';
 import { groupOfNote, groupOn, partsOf, rootOf, type Group } from '../notebookgroups.ts';
 import { boxOf } from '../../../hq/shell/ink/notebookstack.js';
 import { anchorOf, replyNote } from '../notebooksend.ts';
@@ -39,19 +39,12 @@ const EXPECT_MAX = 12;
 // notebookgroups.ts's)
 if (lacks('book_notes', 'reason')) db.exec('alter table book_notes add column reason integer');
 
-// A call's agent hears what's new on a note on its live call (callanswer.ts: imported when it's needed, as bookjudge.ts
-// does this file, for the cycle through the judge)
-const heardOnCall = (t: Target) => void import('./callanswer.ts').then(m => m.heardOnCall(t));
-
 // ---------------------------------------------------------------- the quick run
-// The owner's quick run for a verdict 'answer' (booktry.ts rootOn: who answers). Not on a call: there the call's agent
-// answers itself (booktry.ts onCall).
+// The owner's quick run for a verdict 'answer' (booktry.ts rootOn: who answers). Not on a live call's page: there the
+// call's agent is with the board (booktry.ts onCall).
 const PURPOSE = 'ink-answer';
 export function answerNow(t: Target, verdict: { id: number; why: string }) {
-  if (onCall(t) !== null) {
-    heardOnCall(t); // (the call's agent hears it calls for an answer: it writes it itself)
-    return null;
-  }
+  if (onCall(t) !== null) return null;
   const root = rootOn(t);
   if (root === null) return null;
   forgetReason(t);
@@ -173,10 +166,6 @@ function clip(t: Target, by: string, job: number | null, text: string, more: Mor
     spot: spot && JSON.stringify(spot),
   });
   landedIn(top);
-  // (a version of an old book's note, a call's: its versions page fills in.)
-  const tries = !top && more.style === 'version' ? triesPageOfNote(t.note!) : undefined;
-  if (tries) changed(tries.notebook, tries.id);
-  if (more.style === 'version') heardOnCall(t);
   return slip;
 }
 // A new ask or answer on a target takes the place of the reason none came: the reason goes, unless the board wrote

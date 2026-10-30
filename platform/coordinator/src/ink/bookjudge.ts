@@ -74,6 +74,7 @@ export const schemaOf = (onVersion: boolean) => ({
   required: ['reply', 'why'],
   additionalProperties: false,
 });
+// (its examples name no company's agents)
 const PROMPT = `You read one note the board (the person who runs the company) just made in its book in HQ, and decide \
 whether an agent replies to it right away, and how. A note is a mark on a page: words written by hand (read into type, \
 so a word may be misread), typed or said aloud, often with a ring, an arrow or a scribble on the page around it, which \
@@ -108,7 +109,7 @@ Notes and their verdicts:
 - "swap" (written, a ring and an arrow between two cards) -> try: a layout change best judged by seeing it.
 - "fix the typo" (written, a ring round "recieve") -> none: clear work, done when the sheet goes.
 - "Can you make the button blue?" (typed, on HQ's settings page) -> none: a clear request, work to do, not a question to answer.
-- "vrijdag Moss over de facturen" (written, on a free page) -> none: a reminder to self.
+- "vrijdag Ada over de facturen" (written, on a free page) -> none: a reminder to self.
 - no words, a ring round a button (written) -> none: a mark with nothing asked; it goes with its sheet.
 - "mooi ✔" (written, on a film's still) -> none: a reaction.
 - "and last week?" (written, replying to the answer "Reach counts unique readers over 7 days.") -> answer: asks for one more figure.

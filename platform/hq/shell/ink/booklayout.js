@@ -42,9 +42,9 @@ const PULL_SHARE = 1 / 3;
 
 export const MODES = ['open', 'folded', 'spread'];
 
-// The shape a screen's size is remembered under
-// (every one shapeOf names: the store keeps a page's zoom for each, notebook.ts zoomPage.)
+// Every shape shapeOf names (the store keeps a page's zoom for each, notebook.ts zoomPage.)
 export const SCREEN_SHAPES = ['narrow', 'portrait', 'landscape', 'wide'];
+// The shape a screen w × h px is remembered under
 export function shapeOf(w, h) {
   if (w <= NARROW) return 'narrow';
   if (h > w) return 'portrait';

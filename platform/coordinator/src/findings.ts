@@ -72,8 +72,8 @@ function inChange(change: Change, place: Place) {
 // The reviewer, after the finding's fields (trust.ts FINDING)
 export const REVIEWER_PLACES = `   One finding per mistake: where the same mistake shows in several places, write it once, name the pattern in
    "issue" and list its other places in "also". The author fixes the class. Code this change doesn't add or alter is
-   pre-existing: the round tells it from the diff, and a finding there never blocks this pull request (the project's
-   follow-ups take it). Report one only when it's real. Where the change makes such code worse (it now calls the broken
+   pre-existing: the round tells it from the diff, and a finding there never blocks this pull request (it's left with
+   what this pull request leaves when it merges, as the round's section says). Report one only when it's real. Where the change makes such code worse (it now calls the broken
    code more, or breaks a caller or a document it should have updated), name the change's own line that does it in
    "caused_by": then it's the change's. Leave "caused_by" out otherwise. A secret in code is no pre-existing finding:
    set "secret": true. It blocks without "caused_by", and is a Security incident, wherever it sits.`;
@@ -83,7 +83,7 @@ export const CONSOLIDATOR_PLACES = `
 Pre-existing findings don't block. The round set apart each reviewer finding on lines this change doesn't add or alter
 (a report's "pre_existing", told from the diff): it isn't the author's, so it never goes in "blocking" or
 "nonblocking". Verify each like any other and list the ones you confirm in "pre_existing", with your own finds in code
-the change doesn't touch: the follow-up job takes them once it merges. One that's on the change after all
+the change doesn't touch: they're left with what this pull request leaves when it merges, as the round's section says. One that's on the change after all
 (a path written another way, a line further off), or that the change makes worse (it now calls the broken code more,
 or breaks a caller or a document it should have updated), is the change's: weigh it as one. So is a secret in code,
 wherever it sits: set "secret": true. It blocks without "caused_by", and is a Security incident (the playbook's rules),
@@ -265,7 +265,7 @@ function recordEntries(
 }
 
 // What a merged pull request leaves for its follow-up job (followups.ts): its confirmed pre-existing findings, its
-// follow-ups and the findings its author left open
+// follow-ups and the findings its author left open.
 export type FollowUp = { id: number; kind: string; file: string | null; line: number | null; issue: string };
 export const followUpsOf = (pr: number) =>
   (
@@ -295,14 +295,15 @@ export function sent(ruling: Ruling, verdict: Verdict) {
   });
 }
 
-// What's wrong with a ruling's outcomes, model output read before it is acted on (review.ts decide): each finding sent
-// before it and still in scope needs one entry. Each entry names a finding sent before it, an outcome it knows, and a dispute who
-// was right. One acted on again after a restart judged its findings already, so its entries may name settled ones.
-export function misjudged(ruling: Pick<Ruling, 'id' | 'pr'>, outcomes: unknown) {
+// What's wrong with a ruling's outcomes, model output read before it is acted on (review.ts misjudged): each earlier
+// finding in scope needs judgment. A merge must settle every blocker an earlier ruling sent (finding_rulings),
+// a finding it repeats by its "earlier" id included. Accepted rulings already judged their findings, so replay can name settled ones.
+export function misjudged(ruling: Pick<Ruling, 'id' | 'pr'>, outcomes: unknown, decision: string | undefined) {
   if (accepted(ruling.id)) return;
   if (outcomes !== undefined && !Array.isArray(outcomes)) return '"outcomes" is no list';
   const entries = (outcomes ?? []) as { finding?: unknown; outcome?: unknown; right?: unknown }[];
-  const sent = sentBefore(ruling);
+  const sent = sentBefore(ruling),
+    sentBlockers = sentBlockersBefore(ruling);
   const judged = new Set<number>();
   for (const o of entries) {
     const id = Number(o?.finding);
@@ -312,6 +313,8 @@ export function misjudged(ruling: Pick<Ruling, 'id' | 'pr'>, outcomes: unknown) 
       return `finding #${id}'s outcome ${JSON.stringify(o.outcome)} isn't one of ${OUTCOMES.join(', ')}`;
     if (o.outcome === 'disputed' && !RIGHT.includes(o.right as string))
       return `finding #${id} is disputed without saying who was right`;
+    if (decision === 'merge' && sentBlockers.has(id) && !settled(o.outcome as string, o.right as string))
+      return `finding #${id} is a blocker this merge leaves open: settle it ("fixed", "kept", or "disputed" with "right": "author") or decide "changes"`;
     judged.add(id);
   }
   const left = openForReview(ruling.pr).filter(f => f.ruling < ruling.id && !judged.has(f.id));
@@ -379,6 +382,17 @@ const sentBefore = (ruling: Pick<Ruling, 'id' | 'pr'>) =>
       db.prepare(`select id from findings where pr = ? and ruling < ? and ${SENT}`).all(ruling.pr, ruling.id) as {
         id: number;
       }[]
+    ).map(f => f.id),
+  );
+const sentBlockersBefore = (ruling: Pick<Ruling, 'id' | 'pr'>) =>
+  new Set(
+    (
+      db
+        .prepare(
+          `select distinct b.value id from finding_rulings r join jobs j on j.id = r.ruling, json_each(r.blocking) b
+          where j.pr = ? and r.ruling < ?`,
+        )
+        .all(ruling.pr, ruling.id) as { id: number }[]
     ).map(f => f.id),
   );
 const settled = (outcome: string | null, right?: string | null) =>

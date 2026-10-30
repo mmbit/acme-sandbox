@@ -3,6 +3,7 @@
 // decisions.ts).
 import * as api from './api.ts';
 import { minute, plural, print, stop, text } from './output.ts';
+import { PAUSE_FOR } from './levels.ts';
 
 type Kind = 'thread' | 'project';
 type Paused = {
@@ -11,7 +12,8 @@ type Paused = {
   untilTime: string | null;
   until: { id: number; agent: string; state: string }[];
   held: number;
-  running: { id: number; status: string }[];
+  running: { id: number; kind: string; status: string }[];
+  byJob: number | null;
 };
 // What lifts a pause (the coordinator's pauses.ts): its time, the jobs it waits for, the board's decision
 export type Lift = {
@@ -30,22 +32,30 @@ const named = (kind: Kind) => (kind === 'thread' ? '<project>/<slug>' : '<projec
 const word = (kind: Kind) => (kind === 'thread' ? 'deliverable' : kind);
 
 // (--until-time's forms, the board's own time with its date and no zone among them)
+// A pause is for work that must wait on a condition, never to put other work first: the help says so after what the
+// command does, and every pause's answer ends on it (levels.ts PAUSE_FOR).
 export const help = (kind: Kind) => `
    hq ${word(kind)} pause ${named(kind)} "why" (--until <job>... | --until-time <time> | --by-hand)
                                                      pause the ${kind === 'thread' ? 'deliverable' : 'project, every deliverable of it'}: nothing queued on it starts
-                                                     (work, reviews, fixes) until it's resumed. What it waits for wakes
-                                                     you, never lifts it: --until jobs once they're all merged or ended,
-                                                     --until-time a time (2h, 90m or 1h30m from now; 2026-10-26 09:00
-                                                     with no zone, on the company's clock; one with Z or a time of day
-                                                     alone, 14:30, is UTC), both once both are met; HQ queues you a job
-                                                     to judge: resume, tell the board, or pause it again on what's still
-                                                     missing (paused already, the same command keeps it on with new
-                                                     conditions). --by-hand: nothing wakes you. Work already running goes
-                                                     on (stop it, or let it finish: hq stop pauses a review or ruling). The CEO or the project's owner. A
-                                                     hold the board agreed goes in as a pause, then hq item link <item>
-                                                     pause:<${word(kind)}>${kind === 'project' ? DESK : ''}
-   ${`hq ${word(kind)} resume ${named(kind)}`.padEnd(50)}let its queued work start again (the CEO's pause, or one with
-                                                     the board's item: the CEO only)`;
+                                                     (work, reviews, fixes) until it's resumed, and its running work
+                                                     yields at its next step, its folder, session and commits kept, to go
+                                                     on where it stopped once resumed (the run that pauses it runs on; a
+                                                     review, ruling or meeting runs to its end: hq stop pauses a review
+                                                     or ruling). Only for work that must wait on a condition (something
+                                                     from the board, a decision it has to make, a hold it asked for),
+                                                     never to put other work first: give that work a window (hq window),
+                                                     and the scheduler makes room for it by itself. What it waits
+                                                     for wakes you, never lifts it: --until jobs once they're all merged
+                                                     or ended, --until-time a time (2h, 90m or 1h30m from now; 2026-10-26
+                                                     09:00 with no zone, on the company's clock; one with Z or a time of
+                                                     day alone, 14:30, is UTC), both once both are met; HQ queues you a
+                                                     job to judge: resume, tell the board, or pause it again on what's
+                                                     still missing (paused already, the same command keeps it on with new
+                                                     conditions). --by-hand: nothing wakes you. The CEO or the project's
+                                                     owner. A hold the board agreed goes in as a pause, then hq item link
+                                                     <item> pause:<${word(kind)}>${kind === 'project' ? DESK : ''}
+   ${`hq ${word(kind)} resume ${named(kind)}`.padEnd(50)}let its work start again, what yielded to the pause in its
+                                                     session (the CEO's pause, or one with the board's item: the CEO only)`;
 
 export async function pause(kind: Kind, given: string[]) {
   const until: number[] = [],
@@ -86,14 +96,42 @@ export async function pause(kind: Kind, given: string[]) {
   const resumes = waits.length
     ? `Once ${waits.join(' and ')}, HQ queues you a job to judge it; only hq ${word(kind)} resume ${text(paused.target)} lifts it.`
     : `It holds until hq ${word(kind)} resume ${text(paused.target)}: nothing wakes you about it.`;
-  const running = paused.running.map(r => `#${r.id}${r.status === 'queued' ? ' (held mid-run)' : ''}`);
   print(
     `Paused ${text(paused.target)}: ${text(paused.why)}`,
     `${plural(paused.held, 'queued job')} on it held. ${resumes}`,
-    ...(running.length
-      ? [`Started before the pause: ${running.join(', ')}. Stop each (hq stop) or let it finish, as the reason says.`]
-      : []),
+    ...runningLines(paused),
+    `${PAUSE_FOR} If this one puts other work first, resume it and give that work a window instead (hq window): the scheduler makes room for it by itself.`,
   );
+}
+
+// What the pause does to the work under way on it, as the heartbeat does it (the coordinator's jobs.ts heartbeat): work
+// yields at its next step, a review, ruling or meeting runs to its end, and one back in the queue mid-run stays there;
+// the run that paused it runs on.
+type Run = Paused['running'][number];
+const RUNNING: [string, (r: Run) => boolean, string][] = [
+  [
+    'Running on it',
+    r => r.kind === 'work' && r.status === 'running',
+    'Each yields at its next step, its folder, session and commits kept, and goes on where it stopped once resumed.',
+  ],
+  [
+    'Reviewing on it',
+    r => (r.kind === 'review' || r.kind === 'consolidate') && r.status === 'running',
+    'Each runs to its end (hq stop pauses one).',
+  ],
+  [
+    'Meeting or call on it',
+    r => !['work', 'review', 'consolidate'].includes(r.kind) && r.status === 'running',
+    'Each runs to its end.',
+  ],
+  ['Held mid-run', r => r.status === 'queued', 'Each goes on in its session once resumed.'],
+];
+function runningLines(paused: Paused) {
+  const others = paused.running.filter(r => r.id !== paused.byJob);
+  return RUNNING.flatMap(([label, keep, then]) => {
+    const ids = others.filter(keep).map(r => `#${r.id}`);
+    return ids.length ? [`${label}: ${ids.join(', ')}. ${then}`] : [];
+  });
 }
 
 // What a pause waits for, in words: "it's resumed: its owner judges it once 2026-10-26 08:00 UTC has come and #12 (kit,
@@ -115,7 +153,7 @@ export async function resume(kind: Kind, [id, ...rest]: string[]) {
   if (!id || rest.length) stop(`usage: hq ${word(kind)} resume ${named(kind)}`);
   const answer = await api.change('pauses/resume', { body: api.withSpeaker({ [kind]: id }) });
   if (!api.isSuccess(answer.status)) stop(`Nothing was resumed: ${api.errorIn(answer.body, 'no answer')}`);
-  print(`Resumed ${id}: its queued work starts as seats free up.`);
+  print(`Resumed ${id}: its queued work, and what yielded to the pause, starts again as seats free up.`);
 }
 
 export const decision = {

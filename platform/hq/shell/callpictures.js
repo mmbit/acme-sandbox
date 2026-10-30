@@ -40,20 +40,25 @@ export function picturesLive(c) {
   $('#call-attach').disabled = false;
   for (const id of c.unanswered) c.ws.send(JSON.stringify({ type: 'picture', id }));
   sendPictures(c);
-  for (const file of c.waiting.splice(0)) sharePicture(c, file);
+  for (const files of c.waiting.splice(0)) showPictures(c, files);
 }
 // Pictures from elsewhere in HQ (a notebook page, a picture dropped on the call's window: calldrop.js), each a File or
 // a promise of one: shared as an attached one is, once the line has picked up. files can be a promise of their list too
 // (a long notebook page's pieces, counted from its picture: bookshare.js), shared once it's had, and as one picture
 // that failed when it can't be
 export function showPictures(c, files) {
-  if (!Array.isArray(files))
-    return void files.then(
-      list => !c.over && showPictures(c, list),
-      err => !c.over && showPictures(c, [Promise.reject(err)]),
-    );
-  if (c.call) files.forEach(file => sharePicture(c, file));
-  else c.waiting.push(...files);
+  if (!c.call) return void c.waiting.push(files);
+  if (Array.isArray(files)) return files.forEach(file => sharePicture(c, file));
+  const hold = { id: 0 }; // (the list's place in the order until it's had)
+  c.queued.push(hold);
+  const share = list => {
+    if (c.over) return;
+    const at = c.queued.indexOf(hold);
+    c.queued.splice(at, 1);
+    list.forEach((file, i) => sharePicture(c, file, at + i));
+    sendPictures(c);
+  };
+  files.then(share, err => share([Promise.reject(err)]));
 }
 // the uploaded pictures at the front of the queue go to the line, while it has the call on this connection
 function sendPictures(c) {
@@ -74,12 +79,13 @@ function pastePictures(c, e) {
 function sharePictures(c, files) {
   for (const file of [...files].filter(f => f.type.startsWith('image/'))) sharePicture(c, file);
 }
-async function sharePicture(c, file) {
+// at: its place in the order, after the ones picked before it
+async function sharePicture(c, file, at = c.queued.length) {
   // The call the board picked it on, by its key: a call that ends while the picture is redrawn or sent can give its
   // number to the next one, and the coordinator refuses the key of a call that's gone (pictures.ts).
   const on = { call: c.call, key: c.key, signal: c.uploads.signal },
     place = { id: 0 };
-  c.queued.push(place);
+  c.queued.splice(at, 0, place);
   const strip = $('#call-pics'),
     li = document.createElement('li');
   li.className = 'busy';

@@ -3,7 +3,7 @@ import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { harness } from './harness.ts';
-import { leftoverJobs } from './reviewfixture.ts';
+import { scenarioCleanup } from './reviewfixture.ts';
 
 const h = await harness('panel', {
   before: repo => {
@@ -13,7 +13,7 @@ const h = await harness('panel', {
 });
 const panel = await import('./panel.ts');
 const minute = 60_000;
-afterEach(leftoverJobs(h.db));
+afterEach(scenarioCleanup(h.db));
 
 function round(pr: number, dueIn: number) {
   const thread = h.dueThread({ deadline: Date.now() + dueIn * minute });

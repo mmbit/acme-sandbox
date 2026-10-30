@@ -123,14 +123,14 @@ test('the earliest without making any window miss: ahead of work whose window ca
     JSON.stringify(loose),
   );
   assert.match(await hqWhen(), /paint the harbour map, as kit's work: 40 min of agent time \(as given\)/);
-  assert.match(await hqWhen(), /Its window for that: deadline .*, aim .*\. With no window at all it's done about/);
+  assert.match(await hqWhen(), /Proposed window for that: deadline .*, aim .*\. With no window at all it's done about/);
   // A later window preserves spring's deadline and finishes at the unwindowed time.
   spring(0);
   const tight = (await ask({ q: 'paint the harbour map' })).body;
   assert.deepEqual([tight.earliest.finish, tight.earliest.due], [tight.free.finish, tight.free.finish]);
   assert.ok(tight.free.finish > SPRING_DONE);
   const out = await hqWhen();
-  assert.match(out, /At the earliest without making any window miss: done about .*\.\nIts window for that:/);
+  assert.match(out, /At the earliest without making any window miss: done about .*\.\nProposed window for that:/);
   assert.match(out, /\(Played \d+ ways on the queue as it is, in \d+\.\d s\.\)/);
 });
 
@@ -166,7 +166,7 @@ test("each agreed deadline as the answer's play leaves it, against the plan with
   const out = await hqWhen();
   assert.match(
     out,
-    /\nAgreed deadlines \(deliverable windows\):\n- .*: deadline .* UTC \(given by juno\); done about .* UTC, [\d hmin]+ of slack \(the work takes [\d hmin]+\)\.\nAn agreed deadline its finish passes is yours to move back first; the board hears of it when nothing does or it asks\. A tight or shrinking margin is yours to plan with/,
+    /\nAgreed deadlines \(deliverable windows\):\n- .*: deadline .* UTC \(given by juno\); done about .* UTC, [\d hmin]+ of slack \(the work takes [\d hmin]+\)\.\nA planned finish past an agreed deadline is a slip to judge: find why and what would bring the finish back\. The board hears of it when nothing does or it asks\. A tight or shrinking margin is yours to plan with/,
   );
   assert.doesNotMatch(out, /\b(safe|tight|moving):/, 'the facts, never a verdict');
 });
@@ -210,7 +210,7 @@ test('no finish in the play with no window: the earliest is searched for within 
     assert.ok(earliest.finish <= earliest.due && earliest.finish < T0 + 2 * HOUR, JSON.stringify(earliest));
     assert.match(
       await hqWhen(),
-      /Its window for that: deadline .*\. With no window at all it has no finish in sight\./,
+      /Proposed window for that: deadline .*\. With no window at all it has no finish in sight\./,
     );
   }
 });
@@ -223,7 +223,7 @@ test('--by: whether it makes the time, and only if not, what would, as played: w
   assert.deepEqual([yes.makes, yes.due, yes.gives], [true, T0 + 160 * MIN, []]);
   assert.match(
     await hqWhen('--by', utc(T0 + 160 * MIN)),
-    /By .*: yes, done about .* with every window held\. Its window: deadline/,
+    /By .*: yes, done about .* with every window held\. Proposed window: deadline/,
   );
   const thread = spring(0);
   const unwindowed = await by(T0 + 160 * MIN);
@@ -263,7 +263,7 @@ test('--by: whether it makes the time, and only if not, what would, as played: w
   assert.deepEqual([tighter.makes, tighter.due, tighter.gives], [true, T0 + 60 * MIN, []]);
   assert.match(
     await hqWhen('10m', '--by', utc(T0 + 80 * MIN)),
-    /By .*: yes, done about .* with every window held\. Its window: deadline .*, aim .*\./,
+    /By .*: yes, done about .* with every window held\. Proposed window: deadline .*, aim .*\./,
   );
   // with less slack, no deadline it can make puts it ahead of spring, which the plan orders first on its slow size;
   // played ahead anyway it's done in time and spring still is too: spring's window has to widen, not miss

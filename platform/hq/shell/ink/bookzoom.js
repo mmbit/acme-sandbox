@@ -156,7 +156,7 @@ function step(z, by) {
 // the view zooms, in from the Shelf it zooms back. Within the notebook a leaf turns
 function go(z, level, id = null) {
   const from = z.level,
-    out = level > from ? -1 : 1;
+    dir = level > from ? -1 : 1;
   z.level = level;
   z.notebook = id ?? z.notebook;
   z.changed(LEVELS[level]);
@@ -164,10 +164,10 @@ function go(z, level, id = null) {
     return z.zoom(
       z.far,
       () => show(z),
-      out,
+      dir,
       () => tileOf(z),
     );
-  return z.turn(out, () => show(z));
+  return z.turn(dir, () => show(z));
 }
 // The notebook's tile on the Shelf (the one the book shows where it names none), as a box on the screen: what the
 // view zooms into and back out to

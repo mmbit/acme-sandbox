@@ -4,9 +4,23 @@
 # the arguments after it. The packages come through the manager's proxy, cached on the helper (npm and the wheel's hash
 # check what they read from it).
 set -eu
+# The worker's Chromium takes from the bundle's libraries (tools) only those the helper lacks: every program here runs
+# with the path, and the helper's own C library has to stay, the one its loader matches.
 if [ -d "$PWD/../ms-playwright" ]; then
   export PLAYWRIGHT_BROWSERS_PATH="$PWD/../ms-playwright"
-  export LD_LIBRARY_PATH="$PWD/../tools${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+  libraries="$PWD/../browser-libraries"
+  mkdir -p "$libraries"
+  linked() { ls "$libraries" | wc -l; }
+  before=-1
+  while [ "$before" != "$(linked)" ]; do # until a pass links nothing new (a library linked can need more)
+    before=$(linked)
+    for shell in "$PLAYWRIGHT_BROWSERS_PATH"/chromium_headless_shell-*/chrome-headless-shell-linux64/chrome-headless-shell; do
+      LD_LIBRARY_PATH="$libraries" ldd "$shell" | awk '/=> not found/ { print $1 }' | while read -r name; do
+        if [ -e "$PWD/../tools/$name" ]; then ln -sf "$PWD/../tools/$name" "$libraries/$name"; fi
+      done
+    done
+  done
+  export LD_LIBRARY_PATH="$libraries${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 fi
 script="$1"
 shift

@@ -1,4 +1,4 @@
-// hq projects and hq deliverable <id>: each deliverable's live estimate from HQ's forecast (the coordinator's
+// hq projects and hq deliverable <id>: each deliverable's outlook from HQ's forecast (the coordinator's
 // forecast.ts and outlooks.ts), in a few lines: its ETA, the agent time its open work has left, what it waits on, its
 // planned finish against its window and the slack that leaves, and its jobs. Agents and the CEO read these instead of
 // the status report.
@@ -20,6 +20,7 @@ type Outlook = {
   aim: number | null;
   slack: number | null;
   standing: 'misses' | 'gives' | 'holds' | null;
+  undated: boolean;
   held: number | null;
   left_ms: number;
   waits: ThreadWait[];
@@ -60,7 +61,7 @@ export const projectsHelp = `
    hq projects                                       every open deliverable in a line: its ETA, the agent time its open
                                                      work has left, what it waits on, its planned finish against its window
                                                      and the slack that leaves, and the job that goes on next (HQ's live
-                                                     estimate, played on the queue as it is)
+                                                     forecast, played on the queue as it is)
    hq projects [words] --extra-seat 5x|20x            the whole live plan before and after an added Claude Max seat,
                                                      all windows included, with capacity assumptions and confidence
    hq projects <words>                               the same for the deliverables a project's or deliverable's name or a
@@ -72,7 +73,7 @@ export const nowHelp = `
                                                      it runs; then each open desk phone card with the work that waits on
                                                      it (the call's eta tool with no query)`;
 export const help = `
-   hq deliverable <project>/<slug>                   one deliverable: its estimate and window, the chain of jobs that sets its
+   hq deliverable <project>/<slug>                   one deliverable: its ETA and window, the chain of jobs that sets its
                                                      ETA, and each open job with its size, time left, start, merge and
                                                      waits`;
 
@@ -102,12 +103,12 @@ export async function now(args: string[]) {
   print(going);
 }
 
-// The thread's id and name, then its estimate in one line, then the job that goes on next.
+// The thread's id and name, then its outlook in one line, then the job that goes on next.
 function projectLine(t: Line) {
   const next = t.next
     ? `; next ${jobWords(t.next.id, t.next.code)} ${text(t.next.agent)} (${t.next.status}): ${text(t.next.title)}`
     : '';
-  return `${text(t.id)}  ${text(t.name)} (${text(t.owner)}): ${t.ready ? readyWords(t, t.ready) : estimateWords(t.outlook, t.id)}${next}`;
+  return `${text(t.id)}  ${text(t.name)} (${text(t.owner)}): ${t.ready ? readyWords(t, t.ready) : outlookWords(t.outlook, t.id)}${next}`;
 }
 
 const readyWords = (t: Line, ready: Ready) => {
@@ -116,18 +117,19 @@ const readyWords = (t: Line, ready: Ready) => {
   return `ready to judge${since}, nothing in it open: ${text(t.owner)} closes it (hq plan done ${text(t.id)}) or draws its next task${judge}`;
 };
 
-function estimateWords(o: Outlook | null, thread: string, said = threadWait) {
+function outlookWords(o: Outlook | null, thread: string, said = threadWait) {
   if (!o) return 'no open work';
   const eta = o.eta === null ? `no ETA (${o.stall ?? 'nothing merges it in the play'})` : `ETA ${at(o.eta)}`;
   const waits = o.waits.filter(w => w.on !== 'horizon' && w.on !== 'stalled');
   const on = waits.length ? `; waits on ${waits.map(w => said(w, thread)).join(', ')}` : '';
-  return `${eta}, ${duration(o.left_ms / 60_000)} of agent time left${on}; ${windowWords(o)}`;
+  const window = windowWords(o);
+  return `${eta}, ${duration(o.left_ms / 60_000)} of agent time left${on}${window ? `; ${window}` : ''}`;
 }
 
 // Its planned finish against its window: by how much it misses the deadline, or what it gives of its aim and the slack
 // left to its deadline.
 function windowWords(o: Outlook) {
-  if (o.standing === null) return 'no window';
+  if (o.standing === null) return o.undated ? 'no deadline set' : '';
   const deadline = `deadline ${at(o.deadline!)}`;
   if (o.finish === null) return `MISSES its ${deadline}: no finish in sight`;
   const finish = `planned finish ${at(o.finish)}`;
@@ -148,7 +150,7 @@ export async function thread(id: string) {
   if (!api.isSuccess(answer.status) || !t) stop(`Couldn't read ${id}: ${api.errorIn(answer.body, 'no answer')}`);
   const o = t.outlook;
   print(`${text(t.id)}  ${text(t.name)} (${text(t.owner)}, ${text(t.status)}), done when ${text(t.goal)}`);
-  print(t.ready ? readyWords(t, t.ready) : estimateWords(o, t.id));
+  print(t.ready ? readyWords(t, t.ready) : outlookWords(o, t.id));
   print(...missLines(o?.standing === 'misses' ? [t.id] : []));
   if (t.pause)
     print(
@@ -211,7 +213,7 @@ async function printOutlooks(words: string) {
     print(`${text(p.name)} (${text(p.owner)}'s project):`);
     for (const t of p.threads) {
       const next = t.next ? `; next ${namedWork(t.next, t.name)} (${statusWord(t.next.status!)})` : '';
-      print(`- ${text(t.name)}: ${estimateWords(t.outlook, t.name, namedWaitWords)}${next}`);
+      print(`- ${text(t.name)}: ${outlookWords(t.outlook, t.name, namedWaitWords)}${next}`);
     }
   }
   const threads = f.projects.flatMap(p => p.threads);

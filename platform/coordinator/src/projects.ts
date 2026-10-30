@@ -175,8 +175,8 @@ function ownedProject(job: { agent: string; thread: string | null }) {
 
 // The thread a job an agent queues serves (hq job --thread): one named (open), or else the queuing job's (createJob's
 // from). A thread drawn for it is handled by newthread.ts jobThread.
-// Where the company asks for threads, a job with no open one to inherit is refused, with the open ones listed, but the
-// CEO's own (the desk's), a call's too. A refusal carries its HTTP status.
+// Where the company asks for threads, a job with no open one to inherit is refused, with how to draw one or join one,
+// but the CEO's own (the desk's), a call's too. A refusal carries its HTTP status.
 // A title the thread or its project has is refused (taskClash). newThread.needs: its --needs.
 export type JobThreadAsk = {
   thread?: unknown;
@@ -216,7 +216,7 @@ export function threadForJob(
   return refused ? { status: 409, refusal: refused } : own === inherited ? { from: queuer.job } : {};
 }
 
-// Why a job queued by hand with no thread to inherit, and none named, is refused, with the open threads to pick from.
+// Why a job queued by hand with no thread to inherit, and none named, is refused, with how to draw one for it or join one.
 // Undefined where the company doesn't ask for threads (projects.yaml requireThread).
 function noThreadRefusal(inherited: string | null, own: string | null) {
   if (!projects().requireThread) return undefined;
@@ -257,13 +257,15 @@ export function placeOn(job: number, id: string): Thread | string {
 export const untimedRefusal = () =>
   `a window goes on the deliverable of its work, and this job would be in none: name the deliverable it serves, ${threadChoices()}`;
 
-// (deliverables, the board's word for threads)
+// (deliverables, the board's word for threads.) Drawing one for the work comes first, with the projects to draw it in:
+// a list of every open deliverable invited picking the nearest, and work landed on ones it didn't serve (board, call
+// 172). Joining one stays as easy for the agent who knows which it serves.
 const threadChoices = () => {
-  const open = listThreads();
-  const choices = open.length
-    ? `Open deliverables:\n${open.map(t => `  ${t.id}  ${t.name} (${t.owner}), done when ${t.goal}`).join('\n')}`
-    : 'There are no open deliverables yet.';
-  return `--deliverable <project>/<slug>, the open one whose feature it serves. The project's owner or the CEO may start one with --deliverable new:<project> "name" "done when", for a feature no open one makes. ${choices}`;
+  const open = projects().list;
+  const where = open.length
+    ? `Projects: ${open.map(p => `${p.id} (${p.owner})`).join(', ')}.`
+    : 'There are no projects yet.';
+  return `--deliverable new:<project> "name" "done when" draws its own with the job, its done when saying what this work delivers: the project's owner or the CEO draws one, anyone else proposes the work (hq propose --project <project>). A step of a feature whose deliverable you know joins it: --deliverable <project>/<slug> (hq deliverable <project>/<slug> shows its done when). ${where}`;
 };
 
 // ---- the board's view (projectboard.ts.)

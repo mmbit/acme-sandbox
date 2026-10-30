@@ -33,6 +33,9 @@
   // A 'review:pin' event gets the pin itself in its detail.
   // Such a page summons the pin and puts it away ('review:summon', detail true or false: on HQ, the board's opening the
   // book or the book's pin control; the Pencil writes either way); the pin starts away there.
+  // HQ's viewer tells its page whether a call is on (call): then the pin is away there too, and the Pencil inks in red
+  // only ('review:call', detail true or false: pencil.js), for the call's agent (the board, call 161.). Its marks then go to HQ for the call's agent ({ callMark }), never the notebook
+  // (callframe.js.).
   const summoned = !!document.currentScript?.hasAttribute('data-summoned');
   // ...and data-book: HQ's own pages, where the Pencil writes on the page and its notes go to the board's book
   // (pencil.js).
@@ -71,10 +74,12 @@
     toHq,
     covered: false,
     away: summoned,
+    calling: false,
   };
   // (heard from the start: a cover asked for while the tool still loads holds once it's up)
   addEventListener('review:cover', e => (config.covered = !!e.detail));
   addEventListener('review:summon', e => (config.away = !e.detail));
+  addEventListener('review:call', e => (config.calling = !!e.detail));
   let tool = null;
   const start = () => (tool ??= import(new URL('tool.js', ROUTE).href).then(m => m.start(config)));
   if (!framed) start();
@@ -85,6 +90,13 @@
         if (e.data.pin) ui.toggle(); // the pin button in HQ's viewer bar
       });
       if (e.data.ask) hello(); // HQ asks every page its frame loads
+      if (typeof e.data.call === 'boolean') {
+        dispatchEvent(new CustomEvent('review:call', { detail: e.data.call }));
+        dispatchEvent(new CustomEvent('review:summon', { detail: !e.data.call }));
+      }
+      // (a call's mark HQ took or couldn't, and the agent's turn on one done: callframe.js.)
+      if (e.data.callMark) dispatchEvent(new CustomEvent('review:callmark', { detail: e.data.callMark }));
+      if (Number.isInteger(e.data.had)) dispatchEvent(new CustomEvent('review:had', { detail: e.data.had }));
       // the call's agent driving the preview (drive.js: HQ's calldrive.js).
       if (e.data.drive)
         import(new URL('drive.js', ROUTE).href)

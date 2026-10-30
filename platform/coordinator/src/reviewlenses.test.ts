@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { harness, until } from './harness.ts';
-import { leftoverJobs } from './reviewfixture.ts';
+import { scenarioCleanup } from './reviewfixture.ts';
 
 const h = await harness('reviewlenses', {
   before: repo => {
@@ -46,8 +46,8 @@ const selection = (more = {}) => ({
   foundation: null,
   ...more,
 });
-const cancelLeftovers = leftoverJobs(db);
-afterEach(cancelLeftovers);
+const cancelOpenWork = scenarioCleanup(db);
+afterEach(cancelOpenWork);
 
 // The round's triage, claimed: what its answer check says of an output, and its finish
 async function triage(pr: number, author = 'bolt', changed = files) {

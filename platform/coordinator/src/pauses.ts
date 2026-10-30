@@ -39,7 +39,10 @@ const isDesk = (named: string) =>
 // --by-hand, nothing (the hourly check reads it). A pause for a decision (decisions.ts) is the CEO's, and waits for that.
 // Paused already, the same again by whoever may resume it keeps it on with this why and these conditions instead, and
 // they wake its owner afresh: how a woken owner keeps holding for what's still missing, or waits for the board's decision
-// (hq decision --blocks). The answer is the pause, or why not.
+// (hq decision --blocks). The answer is the pause, or why not. A pause holds work that must wait on a condition (the
+// board's answer or decision, a hold it asked for), never to put other work first: a window does that (windows.ts), and
+// the scheduler makes room (board, call 169). Its running work yields at its next step but the run that made it (`byJob`:
+// jobs.ts pauseSuspends).
 export function pause(
   ask: {
     thread?: string;
@@ -49,6 +52,7 @@ export function pause(
     untilTime?: unknown;
     byHand?: boolean;
     decision?: number;
+    byJob?: number;
   },
   agent: string,
   now = Date.now(),
@@ -78,7 +82,7 @@ export function pause(
   const untilTime = time === null ? null : new Date(time).toISOString();
   const id = written(
     already?.id,
-    { project: project.id, thread, why, by: agent, at: now, decision: ask.decision, untilTime },
+    { project: project.id, thread, why, by: agent, at: now, decision: ask.decision, untilTime, byJob: ask.byJob },
     until,
   );
   const said = already
@@ -87,7 +91,8 @@ export function pause(
   publish({ type: 'log', agent, text: `${said}: ${why}` });
   return described(row(id)!);
 }
-// A new pause, or an open one (`kept`) on new conditions, with the jobs that wake its owner: its id
+// A new pause, or an open one (`kept`) on new conditions and made anew by this run, with the jobs that wake its owner: its
+// id.
 function written(
   kept: number | undefined,
   p: {
@@ -98,28 +103,38 @@ function written(
     at: number;
     decision?: number;
     untilTime: string | null;
+    byJob?: number;
   },
   until: number[],
 ) {
   return inOneStep(() => {
     if (kept !== undefined) {
-      db.prepare('update pauses set why = ?, until_time = ?, decision = ?, woken = null where id = ?').run(
+      db.prepare('update pauses set why = ?, until_time = ?, decision = ?, by_job = ?, woken = null where id = ?').run(
         p.why,
         p.untilTime,
         p.decision ?? null,
+        p.byJob ?? null,
         kept,
       );
       db.prepare('delete from pause_until where pause = ?').run(kept);
     }
     const insert =
-      'insert into pauses (project, thread, why, by, at, decision, until_time) values (?, ?, ?, ?, ?, ?, ?)';
+      'insert into pauses (project, thread, why, by, at, decision, until_time, by_job) values (?, ?, ?, ?, ?, ?, ?, ?)';
     const id =
       kept ??
       Number(
         db
           .prepare(insert)
-          .run(p.project, p.thread, p.why, p.by, new Date(p.at).toISOString(), p.decision ?? null, p.untilTime)
-          .lastInsertRowid,
+          .run(
+            p.project,
+            p.thread,
+            p.why,
+            p.by,
+            new Date(p.at).toISOString(),
+            p.decision ?? null,
+            p.untilTime,
+            p.byJob ?? null,
+          ).lastInsertRowid,
       );
     for (const job of until) db.prepare('insert into pause_until (pause, job) values (?, ?)').run(id, job);
     return id;

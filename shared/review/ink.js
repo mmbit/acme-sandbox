@@ -13,13 +13,23 @@ import { HALO, HALO_ALPHA, outline } from './inkshape.js';
 import { ahead, dropTail, samples, show } from './inklive.js';
 export { outline }; // (the book's page picture draws with it)
 
-// The inks a small tool strip offers: the review pin's red first, then black, blue, green and a see-through highlighter
+// The pens' colours, the notebook's (HQ's bookpalette.js) and the pin's strip's alike, so a colour picked in one is found
+// in the other (the board, call 161.)
+export const PENS = [
+  { name: 'Night', color: '#2a2352' },
+  { name: 'Red', color: '#d0443a' },
+  { name: 'Blue', color: '#2f6bdc' },
+  { name: 'Green', color: '#1d9a5b' },
+];
+const penInk = name => ({ ...PENS.find(p => p.name === name), size: 5 });
+// The inks a small tool strip offers: red first (a call's only ink: pencil.js), then the notebook's other pens and its
+// first see-through highlighter
 export const INKS = [
-  { name: 'Red', color: '#ff5a5f', size: 5 },
-  { name: 'Black', color: '#2b2230', size: 5 },
-  { name: 'Blue', color: '#2f6bdc', size: 5 },
-  { name: 'Green', color: '#1d9a5b', size: 5 },
-  { name: 'Highlighter', color: '#ffd23f', size: 20, alpha: 0.45 },
+  penInk('Red'),
+  penInk('Night'),
+  penInk('Blue'),
+  penInk('Green'),
+  { name: 'Highlighter', color: '#ffd23f', size: 20, alpha: 0.42 },
 ];
 
 // how far a line's point goes towards the pointer, the rest left behind against a hand's jitter (an ink can have its own)

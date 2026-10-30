@@ -134,6 +134,22 @@ test("the screen's mirror finds its replay page's own files in the image", () =>
   }
 });
 
+// The join page's browser files, served from the coordinator's own folders (joinpage.ts ASSETS), and each module one of
+// them imports by name, which the browser asks /join/assets/ for: one the image leaves out answers 500 live and the page
+// never starts (callaudio.js and screenlock.js, found on the deployed server).
+test("the join page's files are in the image, and so is each one they import", async () => {
+  const { ASSETS } = await import('./joinpage.ts'); // (after the harness: it opens the database)
+  for (const [name, url] of Object.entries(ASSETS)) {
+    const file = url.pathname.slice(ROOT.length);
+    // (not the packages: the image installs those itself, its npm ci)
+    if (!file.startsWith('platform/coordinator/node_modules/'))
+      assert.ok(inImage(file), `${file} (/join/assets/${name}) isn't in the image`);
+    const code = readFileSync(url, 'utf8');
+    for (const [, imported] of code.matchAll(/^import [^;]*? from '\.\/([\w./-]+)'/gm))
+      assert.ok(Object.hasOwn(ASSETS, imported), `${file} imports ./${imported}, which /join/assets/ doesn't serve`);
+  }
+});
+
 // The voice line's image copies its Python modules one by one (platform/voice/Dockerfile, its COPY to /app/): a module
 // server.py imports that the list leaves out passes every test in the repo, and stops the line at each start
 test("the voice line's image has every module its server and the call agent's tools import", () => {

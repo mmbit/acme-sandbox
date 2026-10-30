@@ -1,7 +1,7 @@
 // book-check.mjs's story of what the Notebook uncovers as it's lifted off HQ's page (shell/ink/book.js's table,
 // bookswing.js): one flat colour beside the page, the screen's whole height, the left side's own (HQ's ground, or an
 // artifact's page's in HQ's viewer as its review mode tells it, else HQ's dark backdrop), and the page dissolving into
-// that same colour; the book's one shadow on it. (the board's call 160)
+// that same colour; the book's one shadow on it.
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { fulfilPart } from '../../shared/review/parts.mjs';

@@ -389,7 +389,7 @@ test("notes on two products become tasks in each product's threads, and their re
   );
 });
 
-test("a task of the board's notes is its ask: the CEO gives its time as it's queued, on the task's thread", async () => {
+test("tasks of the board's notes file under one deliverable without task deadlines", async () => {
   const HOUR = 3_600_000;
   const note = pin('loom', 'The colours clash');
   const check = await checkFor(await send('loom', [note]));
@@ -407,9 +407,10 @@ test("a task of the board's notes is its ask: the CEO gives its time as it's que
     title: 'Calmer colours',
     code: 'COLOURS',
     newThread: { project: 'loom-work', name: 'Colours', goal: 'The colours agree' },
-    by: '3h',
   });
   assert.equal(timed.status, 200, JSON.stringify(timed.body));
+  assert.equal(projects.findThread(jobs.threadOf(timed.body.id)!)?.deadline, null);
+  assert.equal((await agent('window', check.token, { job: timed.body.id, deadline: '3h' })).status, 200);
   const window = db
     .prepare('select deadline, deadline_by from threads where id = ?')
     .get(jobs.threadOf(timed.body.id)) as {

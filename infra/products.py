@@ -81,7 +81,7 @@ import os, re, sys, glob, fnmatch, json, hmac, base64, hashlib, subprocess, shut
 from datetime import datetime
 from company import INFRA, SKIPPED   # the server's names (company/infra.env), and keys whose line wasn't plain
 import run_helpers
-import care_engines   #
+import care_engines
 
 root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 public_host = os.environ['PUBLIC_HOST']
@@ -157,7 +157,7 @@ def build_shared():
         shutil.move(tree, KIT_CONTEXTS['shared'])
 
 def product_build(slug):
-    if slug in engines:   #
+    if slug in engines:
         return {**CARE_BUILD, 'args': {'PLUGIN': f'products/{slug}'}}
     # and `product`, the product's own folder (the app's parent), for code it keeps beside its app, copied the same way
     return {'context': f'../products/{slug}/app', 'args': {'APP': f'products/{slug}/app'},
@@ -588,12 +588,15 @@ def care_route(app, login='', shop=None):
 {HOLD}}}
 ''') + '}\n'
 
-# For the public there is no review mode: Caddy answers the template's review.js with an empty script itself, so nothing
-# on a public site reaches the coordinator. The board reviews on the preview. The * matcher is needed: Caddy reads a
-# first argument starting with / as a path matcher, which left the body out.
+# For the public there is no review mode: Caddy answers the template's review.js with the frame's scroll link alone
+# (shared/watchalong/scrolllink.js, from the repo), which keeps a live page in step with staging beside it in HQ's
+# viewer and reaches nothing else, so nothing on a public site reaches the coordinator. The board reviews on the preview.
 REVIEW_OFF = '''handle /__review/review.js {
 \theader Content-Type "text/javascript; charset=utf-8"
-\trespond * "/* review mode: off */" 200
+\theader Cache-Control no-cache
+\troot * /repo
+\trewrite * /shared/watchalong/scrolllink.js
+\tfile_server
 }
 handle /__review/* {
 \trespond 404

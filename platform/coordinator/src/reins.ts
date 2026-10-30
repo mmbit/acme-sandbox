@@ -20,6 +20,11 @@ const levels = new Map<number, Level>();
 let drained = -Infinity;
 const turns = new Map<number, Promise<unknown>>();
 const past = new Set<number>();
+// (whether a job past its share is held and told: the server's start. A test's company makes hundreds of jobs a minute,
+// each asking, so each one's share is a sliver and its next request would wait off the loop for most of a minute behind
+// its own earlier work: before start() (tests, scripts) the time is counted but nothing waits.)
+let holding = false;
+export const start = () => void (holding = true);
 
 // Waits while the job is past its share, after its requests held before this one, and gives how long it waited (ms).
 // longestMs: the longest this request may wait, its place in line behind those included (what its caller waits for the
@@ -84,13 +89,14 @@ promiseHooks.createHook({
 export function spend(job: number, ms: number, now = performance.now()) {
   const level = seen(job, now);
   level.ms += ms;
-  if (level.ms <= burst(now) || past.has(job)) return;
+  if (!holding || level.ms <= burst(now) || past.has(job)) return;
   past.add(job);
   console.log(`Reins: job #${job} past its share of HQ: ${seconds(level.ms)} s, its share ${seconds(burst(now))} s`);
 }
 
 // What the job's answer tells it: how long it was held, and while it's past its share, by how much and what to do
 export function words(job: number, heldMs: number, now = performance.now()) {
+  if (!holding) return undefined;
   const level = levelAt(job, now);
   if (level <= burst(now)) past.delete(job);
   if (level <= burst(now) && heldMs < 1000) return undefined;
@@ -105,6 +111,7 @@ export function words(job: number, heldMs: number, now = performance.now()) {
 
 // How long the job waits before its next request goes in (ms): until its level drains to a minute of its share
 export function heldFor(job: number, now = performance.now()) {
+  if (!holding) return 0;
   return Math.max(0, (levelAt(job, now) - burst(now)) / share(now));
 }
 

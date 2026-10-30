@@ -154,7 +154,7 @@ const frame = () => new Promise(r => requestAnimationFrame(() => r()));
 // in opposite directions. midway() swaps the view under its picture. at(): the notebook's tile on the Shelf (a box on
 // the screen, or none), what the view zooms into from where it lies, read while the Shelf shows: so opening a notebook
 // goes into the one tapped, and leaving it draws back to it. Reduced motion
-// uses the cross-fade alone. Every keyframe says its scale: WebKit drew an implicit one's zoom back out as a plain fade.
+// uses the cross-fade alone. Every keyframe says its scale: WebKit draws an implicit one's zoom back out as a plain fade.
 export async function zoom(el, { coming, midway, dir = -1, at = () => null }) {
   running.get(el)?.finish();
   if (!el.isConnected || !el.clientWidth) {

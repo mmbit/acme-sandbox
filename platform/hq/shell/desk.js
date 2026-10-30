@@ -48,11 +48,13 @@ import { copyBlocks } from './copy.js';   // (text to paste on a card, lists in 
 import { icon } from './icons.js';
 import { Tray, shrink } from './tray.js';
 import { notes, openReviews, holdReviews } from './reviews.js';   // (the computer's Reviews app)
-import { openAt } from './ink/book.js';   // (review mode's Open the book: bookAt.)
+import { openAt } from './ink/book.js';
+import { mountStage } from './viewer.js';   // (the viewer's frames)   // (review mode's Open the book: bookAt.)
 import { mountPinSummon, tellPin } from './pinsummon.js';   // (the pin's summon)
 import { mountTips } from './booktips.js';   // (the tips book)
 import { frameMic, helloFrom, stopFrameMic } from './framemic.js';   // (review mode's mic for the viewer's page; helloFrom)
 import { tipHtml, cardAbout, wireTip, tipSettings, tipsSummary } from './tipcard.js';
+import { voiceSettings, voicesSummary } from './voices.js';
 import { intakeCardHtml, wireCards, switchesLine } from './intake.js';
 import { ASKS } from './tips.js';
 
@@ -119,6 +121,7 @@ export function initDesk() {
   document.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.matches?.('.job-title[data-job]')) jobLinked(e); }, true);
   addEventListener('keydown', e => { if (e.key !== 'Escape') return; if (callInFront()) minimiseCall(); else if (open) closeTool(); });   // (a call in front goes small)
   addEventListener('message', fromViewer);
+  followCall();
   loadPin();
   // (a card answered in the book, or the book changed on the store: the cards read again, so one answered there leaves
   // the open list.)
@@ -163,6 +166,9 @@ const PIN = icon('pin');
 // Note does, so Talk's slot is kept from the start, empty until an ask, right of Note: neither moves it, and it never
 // comes under a tap meant for the address or Note.
 let viewing = null; // { url, back, review: the frame's origin while review mode runs there, heard: when it last said hello, link: the outside link } (heard)
+let staged = null; // the stage's { close } (viewer.js)
+// The frame of the page the viewer opened, the one review mode runs in (a live page may sit beside it: viewer.js)
+export const stagingFrame = () => $('#viewer .pane.after iframe');
 async function openViewer(url, back = null) {
   const v = $('#viewer');
   stopFrameMic(); // (the page before's recording, if any, goes with it)
@@ -174,11 +180,14 @@ async function openViewer(url, back = null) {
     <button class="share" aria-label="Share with an outside person">${SHARE}<span>Share</span></button>
     <button class="glyph" data-close aria-label="Close">×</button></div>
     <div class="sharebox" hidden></div>
-    <iframe title="Preview" allow="autoplay; fullscreen; clipboard-write"
-      sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-downloads"></iframe>`;
+    <div class="stage"><div class="head"></div><div class="frames"><div class="pane after" data-side="after"><div class="sized">
+      <iframe title="Preview" allow="autoplay; fullscreen; clipboard-write"
+      sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-downloads"></iframe></div></div></div></div>`;
   if (v.hidden) { v.hidden = false; sfx.blip(); hush(true); cover(true, 'viewer'); coverPin(true); }   // (cover)
-  const frame = v.querySelector('iframe'), out = v.querySelector('.bar .where');
-  v.querySelector('[data-close]').onclick = () => { stopFrameMic(); viewing = null; v.hidden = true; v.innerHTML = ''; delete v.dataset.ground; hush(false); cover(false, 'viewer'); coverPin(false); };
+  // (the stage: live beside it, device sizes, the notebook over or beside, the QR.)
+  staged?.close(); staged = mountStage(v, url);
+  const frame = stagingFrame(), out = v.querySelector('.bar .where');
+  v.querySelector('[data-close]').onclick = () => { staged?.close(); staged = null; stopFrameMic(); viewing = null; v.hidden = true; v.innerHTML = ''; delete v.dataset.ground; hush(false); cover(false, 'viewer'); coverPin(false); };
   v.querySelector('[data-back]')?.addEventListener('click', () => openViewer(back));
   v.querySelector('.pin').onclick = () => me.review && frame.contentWindow.postMessage({ hq: 'hq', pin: 1 }, me.review);
   frame.addEventListener('load', () => {
@@ -226,7 +235,25 @@ function where(url) {
 }
 function paintPin() {
   const b = $('#viewer .pin'); if (!b || !viewing) return;
-  b.hidden = !viewing.review;
+  b.hidden = !viewing.review || calling;
+}
+// On a call the board scribbles in red for the call's agent: the bar has no Note, and the viewer's page no pin (told
+// now, and in every answer to its hello), as HQ's own has none (pinsummon.js). After the call they're back (the board,
+// call 161.).
+let calling = false;
+function followCall() {
+  const set = on => {
+    calling = on; paintPin();
+    const frame = stagingFrame();
+    if (viewing?.review && frame) frame.contentWindow.postMessage({ hq: 'hq', call: on }, viewing.review);
+  };
+  document.addEventListener('call:on', () => set(true));
+  document.addEventListener('call:off', () => set(false));
+  // (the agent's turn on a note done: the page in the viewer drops its ink if the mark was its own.)
+  document.addEventListener('call:had', e => {
+    const frame = stagingFrame();
+    if (viewing?.review && frame && Number.isInteger(e.detail?.note)) frame.contentWindow.postMessage({ hq: 'hq', had: e.detail.note }, viewing.review);
+  });
 }
 // The review tool (shared/review) on HQ's own screens, for the board's notes on HQ itself, loaded once at start: the
 // coordinator serves the real one only behind the board's sign-in (feedback.ts). Its menu's Open the book opens the
@@ -396,13 +423,13 @@ export function wireShare(el, s, o) {
 // at a sheet: bookAt, or for the mic: framemic.js), a deck's button asking for a preview, a deck saying hello (it gets the look's
 // slides.css), or a page asking for a backdrop (backdropOf). Anything else, or from anywhere else, is ignored.
 function fromViewer(e) {
-  const frame = $('#viewer iframe'), d = e.data, me = viewing;
+  const frame = stagingFrame(), d = e.data, me = viewing;
   if (!me || !frame || e.source !== frame.contentWindow || !PREVIEW.test(`${e.origin}/`) || !d || typeof d !== 'object') return;
   // Decks built before 2026-10-04 inline the old deck.js: it tags its messages { onlyonery: 'deck' } and hears the look
   // under that key. Still a deck's, answered the way it listens.
   const old = d.hq === undefined && d.onlyonery === 'deck', tag = old ? 'deck' : d.hq;
   if (tag === 'review') {
-    if (d.hello) { me.review = e.origin; me.heard = performance.now(); e.source.postMessage({ hq: 'hq' }, e.origin); helloFrom(d.doc); groundOf(d.ground, frame); }   // (heard; helloFrom)
+    if (d.hello) { me.review = e.origin; me.heard = performance.now(); e.source.postMessage({ hq: 'hq', call: calling }, e.origin); helloFrom(d.doc); groundOf(d.ground, frame); }   // (heard; helloFrom)
     else if (d.bye && me.review === e.origin) { me.review = null; stopFrameMic(); }
     // (its post-it's mic tapped: HQ's own Talk key shows, the frame having no microphone, and only its tap records; the
     // ask's line, e.ports, carries the rest: framemic.js.)
@@ -413,6 +440,14 @@ function fromViewer(e) {
     // (the board's note saved there as a scrap in its Notebook: the book lands it, booklanding.js.)
     else if (d.scrap && Number.isInteger(d.scrap.id) && Number.isInteger(d.scrap.page))
       document.dispatchEvent(new CustomEvent('book:scrap', { detail: { id: d.scrap.id, page: d.scrap.page } }));
+    // (on a call, the Pencil's mark there: HQ's review mode files it as its own call's, callnotes.js, and the page hears
+    // how it went.)
+    else if (d.callMark && Number.isInteger(d.callMark.id) && me.review === e.origin) {
+      const to = e.source, from = e.origin, id = d.callMark.id;
+      const answer = a => to.postMessage({ hq: 'hq', callMark: { id, ...a } }, from);
+      if (!calling) answer({ failed: 'The call had ended.' });
+      else document.dispatchEvent(new CustomEvent('call:mark', { detail: { anchor: d.callMark.anchor, snip: typeof d.callMark.snip === 'string' ? d.callMark.snip : null, ago: Number(d.callMark.ago) || 0, answer } }));
+    }
     paintPin();
   } else if (tag === 'backdrop') {
     frame.style.background = backdropOf(d) ?? '';
@@ -2337,6 +2372,7 @@ function settings(el) {
   if (section === 'sys:seats') { el.innerHTML = '<div></div>'; return seatSettings(el.firstChild, { dev: world.dev, crumb }, page); }
   if (section === 'sys:machines') { el.innerHTML = '<div></div>'; return machineSettings(el.firstChild, { dev: world.dev, crumb }, page); }
   if (section === 'sys:alerts') { el.innerHTML = '<div></div>'; return alerts(el.firstChild); }
+  if (section === 'sys:voices') { el.innerHTML = '<div></div>'; return voiceSettings(el.firstChild, { dev: world.dev, ago }); }
   if (section === 'sys:tips') { el.innerHTML = '<div></div>'; return tipSettings(el.firstChild, { dev: world.dev }); }
   if (section === 'sys:overseer') { el.innerHTML = '<div></div>'; return oversight(el.firstChild, { dev: world.dev, ago }); }
   if (section === 'sys:language') { el.innerHTML = '<p class="acts looks"></p><p class="msg"></p>'; return languages(el.firstChild, el.lastChild); }
@@ -2356,6 +2392,7 @@ function settings(el) {
   seatsSummary(world.dev).then(t => now('sys:seats', t), () => {});
   machinesSummary(world.dev).then(t => now('sys:machines', t), () => {});
   tipsSummary(world.dev).then(t => now('sys:tips', t), () => {});
+  voicesSummary(world.dev).then(t => now('sys:voices', t), () => {});
 }
 // Settings' sections in its order, each under its caption: the compute, Seats (seats.js, with pages of its own: a seat,
 // Add a seat) and Machines (machines.js, the same way); the company, a company app's box (its settings()) and the
@@ -2371,6 +2408,7 @@ export function settingsSections() {
     ...own.filter(k => k.mod.settings).map(k => ({ caption: 'COMPANY', id: k.id, name: k.mod.app.name })),
     { caption: 'COMPANY', id: 'sys:overseer', name: 'Overseer' },
     { caption: 'COMPANY', id: 'sys:tips', name: 'Tips' },
+    { caption: 'COMPANY', id: 'sys:voices', name: 'Voices' }, // the voices calls recognise (voices.js).
     { caption: 'COMPANY', id: 'sys:language', name: 'Language', choices: async () => {
       const l = await loadLanguage(world.dev);
       return chosen(l.languages, l.languages.find(x => x.code === l.lang)).map(x => x.own);

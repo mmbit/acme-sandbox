@@ -325,6 +325,7 @@ export function planOf(id: string, f: Forecast) {
       return {
         ...{ id: t.id, name: t.name, goal: t.goal, deadline: t.deadline, aim: t.aim, branch: t.branch },
         ...{ needs: needsOf(t.id), eta: outlook?.eta ?? null, stall: outlook?.stall ?? null },
+        undated: outlook?.undated ?? false,
         ...splitMarks(
           rows.map(j => ({
             ...{ id: j.id, agent: j.agent, title: nameOf(j), status: j.status, started: j.started },

@@ -25,12 +25,12 @@ import { phone } from './phone.ts';
 import { plan } from './plan.ts';
 import { picture } from './pictures.ts';
 import { answer, sketch, sketches } from './book.ts';
-import { answerNote } from './callanswer.ts';
 import { preview } from './preview.ts';
 import * as proposals from './proposals.ts';
 import { decision } from './pauses.ts';
 import * as projects from './projects.ts';
 import { report } from './report.ts';
+import { profile } from './profile.ts';
 import * as runs from './runs.ts';
 import { tooling } from './tooling.ts';
 import { when } from './when.ts';
@@ -80,7 +80,6 @@ const COMMANDS: Record<string, Command> = {
   sketches,
   sketch,
   answer,
-  'answer-note': answerNote,
   studio,
   'seat-warning': seatWarning,
   wait: cards.wait,
@@ -110,6 +109,7 @@ const COMMANDS: Record<string, Command> = {
   call: memory.call,
   intercom: memory.intercom,
   report,
+  profile,
   estimate,
   overseer,
 };

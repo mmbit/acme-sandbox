@@ -1,6 +1,6 @@
 // node --test src/ink/bookpick.test.ts   (the board rings a version to pick it: the ring goes as a reply on that
 // version, drawn over its frame in the picture the judge reads; the judge's 'pick' picks it and unpicks the rest of its
-// set; the try run hears which; the note the tried group goes as carries the frame and the patch)
+// set; the try run hears which; the note the tried group goes as carries the frame and the patch.)
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import sharp from 'sharp';
@@ -180,65 +180,5 @@ test('a pick on what isn’t a version picks nothing', async () => {
   assert.equal(pickNow({ grp: g.id }), null, 'the note itself');
   assert.equal(pickNow({ grp: 999_999 }), null, 'nothing');
   assert.deepEqual(pickedIds([v1.id]), []);
-  await h.finish(run);
-});
-
-test("a try on a call's note: its versions on their page, and a ring on one, a note there, picks it", async () => {
-  const { tryNow } = await import('./booktry.ts');
-  const { pageFor } = await import('./callnotes.ts');
-  const { call } = await h.liveCall('juno');
-  const page = pageFor(call)!;
-  const anchor = { v: 1, url: '/?open=shop', el: null, view: { w: 1180, h: 820, x: 0, y: 0, dpr: 2 }, ink: [] };
-  const { note } = (await h.board('/api/book/note', { page: page.id, anchor, words: 'warmer?', said: 'typed' })).body;
-  assert.equal(await judged(10), null, 'a call’s note is never judged: its try is started by hand below');
-  const run = await h.claimJob(tryNow({ note: note.id }, { id: 1, why: 'wonders about a colour' })!);
-  const { review } = db.prepare('select review from book_notes where id = ?').get(note.id) as any;
-  const version = async (name: string, colour: string) =>
-    (
-      await agent('answer', run.token, {
-        note: review,
-        version: name,
-        text: `${name}, as it would look`,
-        picture: await png(colour),
-      })
-    ).body.slip;
-  const v1 = await version('Warm sand', '#e8c88a');
-  const v2 = await version('Brick red', '#b0412f');
-  const { id: tries } = db.prepare('select id from book_pages where tries_note = ?').get(note.id) as any;
-  const read = async () => (await h.board(`/api/notebooks/pages/groups?page=${tries}`)).body;
-  const before = await read();
-  assert.equal(before.tries_note, note.id);
-  assert.equal(before.tried.words, 'warmer?');
-  assert.deepEqual(
-    before.tried.children.map((c: any) => [c.kind, c.version]),
-    [
-      ['answer', 'Warm sand'],
-      ['answer', 'Brick red'],
-    ],
-    'its versions on their page',
-  );
-  // a ring round version 2: a note on the versions page, replying to it, the judge's pick picks it
-  const frame = { x: 360, y: 72, w: 300, h: 225 };
-  const sent = await h.board('/api/notebooks/groups/reply', { answer: v2.id, ink: [ring(frame)], frame });
-  assert.equal(sent.status, 200, JSON.stringify(sent.body));
-  const reply = db.prepare('select page, answers from book_notes where id = ?').get(sent.body.note) as any;
-  assert.deepEqual([reply.page, reply.answers], [tries, v2.id]);
-  const c = (await judged())!;
-  assert.match(c.content.at(-1).text, /version 2 of 2, “Brick red”/);
-  await say(c, 'pick', 'rings one version to choose it');
-  await until(() => pickedIds([v1.id, v2.id]).length === 1);
-  assert.deepEqual(pickedIds([v1.id, v2.id]), [v2.id]);
-  const after = (await read()).tried.children;
-  assert.deepEqual(
-    after.map((c: any) => [c.kind, !!c.picked]),
-    [
-      ['answer', false],
-      ['answer', true],
-      ['reply', false],
-    ],
-    'the page shows the pick and the reply',
-  );
-  const heard = db.prepare('select text from messages where job = ?').all(run.id) as { text: string }[];
-  assert.match(heard.at(-1)!.text, /The board picked your version “Brick red”/);
   await h.finish(run);
 });

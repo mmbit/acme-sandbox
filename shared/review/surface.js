@@ -14,6 +14,7 @@ import { unpicture } from './pictures.js';
 import { under } from './layer.js';
 import { paint as paintMarks } from './marks.js';
 import { ERASER_PATHS, segmentsApart } from './eraser.js';
+import { heldLines, settleCall } from './callframe.js';
 
 const UNDO =
   '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14L4 9l5-5" stroke="currentColor" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 9h10.5a5.5 5.5 0 010 11H11" stroke="currentColor" stroke-width="2.4" fill="none" stroke-linecap="round"/></svg>';
@@ -25,6 +26,7 @@ export const CSS = `
       .veil { pointer-events: auto; position: absolute; inset: 0; touch-action: none; cursor: crosshair;
         box-shadow: inset 0 0 0 4px ${ACCENT}, inset 0 0 60px rgba(255,90,95,.25); background: rgba(255,246,216,.08); }
       .veil[hidden] { display: none; }
+      .veil.call .bar { display: none; }   /* (on a call: red only, and no strip.) */
       /* over the page while the board marks it: what to do, and the inks */
       .bar { position: absolute; left: 50%; top: max(14px, env(safe-area-inset-top)); transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 12px; }
       .hint { background: #fff; border-radius: 999px; padding: 10px 18px;
@@ -69,11 +71,13 @@ const INK_KEY = '__hq_review_ink';
 // is its pass, soft and gone as it lifts.
 const ERASER = { name: 'Eraser', color: '#8f88a8', size: 24, alpha: 0.35 };
 
-// (shown: a walk-through's recording follows it) On HQ the page's numbered marks are drawn with them (marks.js).
+// (shown: a walk-through's recording follows it) On HQ the page's numbered marks are drawn with them (marks.js); on a
+// call, under them, the marks the call's agent hasn't had its turn on yet (callframe.js.).
 export function paintInk(r, lines) {
   if (r.book) return paintMarks(r, lines);
-  inkjs.draw(inkjs.fit(r.inkCanvas), lines, { halo: true });
-  inkjs.shown(r.inkCanvas, lines, { halo: true });
+  const all = [...heldLines(r), ...lines];
+  inkjs.draw(inkjs.fit(r.inkCanvas), all, { halo: true });
+  inkjs.shown(r.inkCanvas, all, { halo: true });
 }
 export const redrawInk = r => paintInk(r, r.strokes);
 export function pick(r) {
@@ -84,6 +88,7 @@ export function pick(r) {
   holdEraser(r, false); // (each note starts with an ink in hand)
   r.veil.hidden = false;
   r.veil.classList.remove('marked');
+  r.veil.classList.toggle('call', !!r.calling);
   r.undoButton.disabled = true;
   r.fab.classList.add('on');
   r.more.hidden = true;
@@ -94,6 +99,7 @@ function stroked(r, stroke, e) {
   if (e.pointerType === 'pen') r.penSeen = true;
   const area = boxOfLines([stroke]);
   r.penOn.clear();
+  settleCall(r); // (on a call the mark goes to its agent once the pen rests: callframe.js.)
   if (r.eraserInHand) return erase(r, stroke);
   if (area.w < 24 && area.h < 24) {
     // a tap: as the first mark, it pins the element under it; beside the note, nothing
@@ -277,7 +283,8 @@ export function setupSurface(r) {
     halo: true,
     under: r.haloCanvas,
     use: drawable,
-    ink: () => (r.eraserInHand ? ERASER : r.inks[r.inkNow]),
+    // (on a call red only, INKS' first, as on HQ: pencil.js.)
+    ink: () => (r.eraserInHand ? ERASER : r.calling ? inkjs.INKS[0] : r.inks[r.inkNow]),
     shape: e => (r.eraserInHand ? '' : shape(e)),
     end: (s, e) => stroked(r, s, e),
   });

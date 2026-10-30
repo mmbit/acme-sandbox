@@ -6,6 +6,17 @@
 // Nothing imported but Node's: the coordinator reads it from here too.
 import { readFileSync } from 'node:fs';
 
+export const ONE_DEADLINE =
+  'Each deliverable has one deadline, chosen by the board or the CEO from its word (hq window). File tasks under ' +
+  'the open deliverable whose goal they serve, judged from its plan. A follow-up joins the work in flight by default ' +
+  'and inherits its deadline, with no --by needed. The plan and seat pacing read that time for all its tasks, reviews ' +
+  'and fixes. A deliverable with no deadline of its own or through work that needs it reads as no deadline set: ' +
+  'settle that gap once for the deliverable. --by <when> sets or tightens the filed task’s deliverable deadline, ' +
+  'never loosens it. --by <project>/<slug> takes that deliverable’s window. A call item’s time goes on its ' +
+  'deliverable. A task in no deliverable takes --by <when>, --by <project>/<slug> or --by none. Outside a live call, ' +
+  'an unfiled board ask without --by asks the CEO for its time, and the CEO’s own ask is refused. Filing is judgment. ' +
+  'The plan and pacing are algorithms.';
+
 // How related work is drawn, the planner's judgment and never a count or a refusal (board, call 152): the levels' deliverable line, the CEO's hourly check and a meeting's review of the plans
 export const RELATED_WORK =
   'Related work is one deliverable, its tasks in turn with one review at its end: a somewhat bigger deliverable is ' +
@@ -15,12 +26,23 @@ export const RELATED_WORK =
   '--needs) before any of its tasks is queued: a queued task can start at once. The limit is seats, not agents: ' +
   'work side by side only spends the seats sooner, and the conflicts between its pieces lose more time than it ' +
   "gains. A small ask that isn't part of the feature never rides on its deliverable because the same agent has " +
-  'both: it goes in the deliverable it belongs to, or one of its own.';
+  'both: it goes in the deliverable it belongs to, or one of its own. ' +
+  ONE_DEADLINE;
 
 // What running deliverables side by side (hq plan unneed) is for, said wherever it's offered (board, call 165).
 export const SIDE_BY_SIDE =
   'Only work that changes other files runs beside it: work on the same files stays chained, as side by side it ' +
   'collides and is merged by hand.';
+
+// How work goes first, and what a pause is for, said wherever a window or a pause is offered (board, call 169).
+// Two copies keep their own words and change with these: hq pause's help column and its answer's window line
+// (worker/hq/pauses.ts), and the voice manage tool's description (platform/voice/hq_tools.py).
+export const WINDOW_FIRST =
+  'A window is how work goes first, and only ever that: the scheduler makes room for it, taking the seat from work ' +
+  'in its way when its time needs it, and gives the seat back after, by itself.';
+export const PAUSE_FOR =
+  'A pause is only for work that must wait on a condition (something from the board, a decision it has to make, a ' +
+  'hold it asked for), never to put other work first.';
 
 // The deliverable line's "until its review has ruled".
 export const LEVELS = {

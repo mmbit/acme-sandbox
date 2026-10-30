@@ -14,6 +14,7 @@ import * as pictures from './pictures.js';
 import * as dictation from './dictation.js';
 import * as pencil from './pencil.js';
 import { setupCall } from './callnotes.js';
+import { setupCallFrame } from './callframe.js';
 
 // what a part asks of the parts above it (acts.js)
 hand({
@@ -28,7 +29,7 @@ hand({
 });
 
 // r: the config review.js hands over ({ HQ, framed, OUTSIDE, outside, INK, LOOK, ROUTE, summoned, book, toHq, covered,
-// away }), the elements and the state the parts share. mode: idle | pick (marking) | note (the post-it open) | sending
+// away, calling }), the elements and the state the parts share. mode: idle | pick (marking) | note (the post-it open) | sending
 export function start(config) {
   const r = {
     ...config,
@@ -65,7 +66,7 @@ export function start(config) {
   if (r.book) {
     pencil.setupPencil(r);
     setupCall(r);
-  }
+  } else if (r.framed && !r.outside) setupCallFrame(r); // (HQ's viewer on a call)
   return { toggle: () => toggle(r), refresh: () => menu.refresh(r) };
 }
 

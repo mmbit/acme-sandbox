@@ -3,10 +3,11 @@
 On its turn the agent turns what the board said and drew into one scrap per change, each its own focused crop (scrap):
 the part of one of the board's notes on this call, or of its shown screen at a moment, that the change is about, with
 the change in the agent's words and the board's why. The coordinator's Ink store cuts it and puts it on the call's notes
-page (ink/callnotes.ts), where the board sees it land as it's made, and on the call's list; the page takes it to its
-owner as the call ends; a plain note is a scrap with no crop, its words alone on a post-it. The agent works the page as
+page (ink/callnotes.ts), where the board sees it land as it's made, and on the call's list; the call's follow-up hands
+it out; a plain note is a scrap with no crop, its words alone on a post-it. The agent works the page as
 the board does too: reads it (read_page), draws on it (mark_page) and changes, moves or deletes what's on it
-(change_page), each a step the board's Undo takes back. title names the page. Only on the board's own HQ call.
+(change_page), each a step the board's Undo takes back. title names the page's topic, after the call's date and time,
+and the agent is reminded every few turns until it has. Only on the board's own HQ call.
 The call engine's halves (drawing.py, driving.py, the screen tool) know nothing of the page: this reads them, never the
 other way round."""
 import asyncio
@@ -16,9 +17,10 @@ from urllib.error import HTTPError
 
 from drawing import box_asked, one_line
 
-# The most of the agent's words for one change (its line on the call's list) and its why, and of a title (the
-# coordinator's own limits)
-CHANGE_MOST, WHY_MOST, TITLE_MOST, TITLE_WORDS = 200, 300, 120, 8
+# The most of the agent's words for one change (its line on the call's list) and its why, and of the page's topic (the
+# coordinator's own limits: a topic of 21 characters after the call's date and time is whole in the Notebook's bar on
+# an iPad mini.)
+CHANGE_MOST, WHY_MOST, TITLE_MOST = 200, 300, 21
 # Where a scrap is cut from: one of the board's notes on the call ('note 3'), or a moment of its shown screen
 FROM = re.compile(r'^(note\s*#?[0-9]{1,4}|now|-[0-9]{1,4}[sm]|[0-9]{1,2}:[0-9]{2}(:[0-9]{2})?|#[0-9]{1,6})$', re.I)
 # What the agent hears about its scraps and the page's title
@@ -33,11 +35,17 @@ SCRAP_WORDS = {
     'failed': "The scrap couldn't be made just now",
 }
 TITLE_WORDS_SAID = {
-    'shape': f'title is a few words (at most {TITLE_WORDS}) naming what the call is about: a title, not a summary',
+    'shape': (f'title is what the call is about in at most {TITLE_MOST} characters ("Shop page prices"): the page '
+              "keeps the call's date and time in front of it"),
     'none': SCRAP_WORDS['none'],
     'gone': SCRAP_WORDS['gone'],
     'failed': "The page couldn't be titled just now",
 }
+# Every so many of the board's turns, until the agent has titled the page, a line in front of the board's words reminds
+# it to
+REMIND_EVERY = 3
+TITLE_REMINDER = ("(Your notes page has no topic yet: once it's clear what this call is about, give it one with "
+                  'title_page.)')
 
 
 def scrap_asked(a):
@@ -131,9 +139,9 @@ def change_asked(a):
 
 
 def title_asked(title):
-    """The page's title the agent gives, as one line, or None if it isn't a few words."""
+    """The page's topic the agent gives, as one line, or None if it isn't a short one."""
     title = one_line(title) if isinstance(title, str) else ''
-    return title if 0 < len(title) <= TITLE_MOST and len(title.split()) <= TITLE_WORDS else None
+    return title if 0 < len(title) <= TITLE_MOST else None
 
 
 def said_back(err):
@@ -145,9 +153,19 @@ def said_back(err):
 
 
 class CallNotes:
-    """A call's notes page, as the agent adds to it: its scraps and its title, each straight to the coordinator."""
+    """A call's notes page, as the agent adds to it: its scraps and its title, each straight to the coordinator.
+    turns: the board's turns while the page has no topic of the agent's; titled: it has one."""
     def __init__(self, call):
         self.call = call
+        self.turns, self.titled = 0, False
+
+    def told(self):
+        """The reminder to title the page for the agent's turn now, every REMIND_EVERY of the board's turns until it has
+        (or '')."""
+        if self.titled or self.refused(TITLE_WORDS_SAID):
+            return ''
+        self.turns += 1
+        return TITLE_REMINDER if self.turns % REMIND_EVERY == 0 else ''
 
     def refused(self, words):
         """Why the agent can't add to the page on this call now, or None: the board's own HQ call only (a call out's
@@ -203,4 +221,6 @@ class CallNotes:
             return {'error': refusal}
         if not (title := title_asked(asked.get('title_page'))):
             return {'error': TITLE_WORDS_SAID['shape']}
-        return await self.ask('title', {'title': title}, TITLE_WORDS_SAID)
+        got = await self.ask('title', {'title': title}, TITLE_WORDS_SAID)
+        self.titled = self.titled or 'ok' in got
+        return got

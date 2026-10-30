@@ -19,7 +19,9 @@ os.environ.setdefault('VOICE_TOKEN', 'line-check')
 # (the board's side isn't heard here: no recogniser, no VAD, no Dutch voice)
 sys.modules['sherpa_onnx'] = types.SimpleNamespace(OfflineRecognizer=NS(from_transducer=lambda **k: None),
                                                    VoiceActivityDetector=lambda *a, **k: None,
-                                                   VadModelConfig=lambda: NS(silero_vad=NS(), sample_rate=0))
+                                                   VadModelConfig=lambda: NS(silero_vad=NS(), sample_rate=0),
+                                                   SpeakerEmbeddingExtractor=lambda cfg: None,
+                                                   SpeakerEmbeddingExtractorConfig=lambda **k: None)
 sys.modules['piper'] = types.SimpleNamespace(PiperVoice=NS(load=lambda path: None))
 import server  # noqa: E402
 import limit_model  # noqa: E402

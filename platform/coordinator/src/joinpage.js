@@ -113,7 +113,7 @@ async function join(button) {
     },
     lost: () => leave(c, w.micDenied),
   });
-  c.audio.keepAwake(); // (first, still in the tap: Safari grants the first lock only seconds after one)
+  c.audio.awake.keep();
   try {
     await c.audio.start();
   } catch {

@@ -407,10 +407,8 @@ test('Voice line: VOICE_TOKEN only on /api/voice/*, and a call token assigns and
   // the reads a job has, its call's too: the status report, the Overseer's notes
   assert.notEqual((await agent('report', t)).status, 403);
   assert.equal((await agent('overseer', t)).status, 200);
-  // (closing a card that is not the call agent's is HQ's own refusal)
+  // (closing a card that is not the call agent's is HQ's own refusal.)
   assert.equal((await agent('request-close', t, { id: 1 })).status, 404);
-  // (its answer on a note the board drew on the call: the route is open to it, and no such note here.)
-  assert.equal((await agent('call-answer', t, { note: 1, words: 'Yes' })).status, 404);
   // a promise on its own call's list, nothing else: not another call's item or job
   const kit = await callToken('kit');
   const kitsItem = (await agent('item', kit, { kind: 'promise', owner: 'kit', goal: 'g', what: 'Coming-soon page', quote: 'Build it' })).body.id;
@@ -634,7 +632,7 @@ test('M5: CSP and nosniff headers', async () => {
   assert.match(hq, /^default-src 'self'; script-src 'self';/);
   // what main's HQ added: the call's WebSocket on HQ's own host, and the preview viewer's frame; nothing wider
   assert.match(hq, /connect-src 'self' ws:\/\/localhost:\d+;/);
-  assert.match(hq, /frame-src 'self';/);   // PUBLIC_HOST=localhost has no preview zone
+  assert.match(hq, /frame-src 'self' https:\/\/www\.localhost;/);   // PUBLIC_HOST=localhost: no preview zone, the public shop's host
   // and main's desk-phone photos: blob: previews, as images only (never script, frames or connections)
   assert.match(hq, /img-src 'self' data: blob:;/);
   assert.doesNotMatch(hq.replace(/img-src[^;]*/, ''), /\*(?!\.preview\.)|unsafe-eval|blob:|https:(?!\/\/)/);
@@ -649,12 +647,21 @@ test('M5: CSP and nosniff headers', async () => {
   assert.match(policy2, /form-action 'self' https:/); assert.match(policy2, /frame-ancestors 'self'/);
 });
 
-test('M5: with a real zone, HQ frames only its preview hosts and streams only to its own wss host', async () => {
+test('M5: with a real zone, HQ frames only its preview hosts and public sites and streams only to its own wss host', async () => {
   const { execFileSync } = await import('node:child_process');
-  const out = execFileSync(process.execPath, ['-e', "import('./src/pages.ts').then(p => console.log(p.csp()))"],
-    { cwd: new URL('..', import.meta.url).pathname, env: { ...process.env, PUBLIC_HOST: 'hq.example.com' }, encoding: 'utf8' });
-  assert.match(out, /connect-src 'self' wss:\/\/hq\.example\.com;/);
-  assert.match(out, /frame-src 'self' https:\/\/\*\.preview\.example\.com;/);
+  // the products' domains: one served (shop.test), one in our zone and one two products name, which infra/products.py doesn't serve
+  const repo = mkdtempSync(`${tmpdir()}/sec-csp-`);
+  for (const [slug, domain] of [['shop', 'shop.test'], ['inzone', 'inzone.example.com'], ['one', 'twice.test'], ['two', 'twice.test']]) {
+    mkdirSync(`${repo}/products/${slug}`, { recursive: true });
+    writeFileSync(`${repo}/products/${slug}/product.yaml`, `name: ${slug}\ndomain: ${domain}\n`);
+  }
+  try {
+    const out = execFileSync(process.execPath, ['-e', "import('./src/pages.ts').then(p => console.log(p.csp()))"],
+      { cwd: new URL('..', import.meta.url).pathname, env: { ...process.env, PUBLIC_HOST: 'hq.example.com', REPO_DIR: repo, DATA_DIR: `${repo}/.data` },
+        encoding: 'utf8' });
+    assert.match(out, /connect-src 'self' wss:\/\/hq\.example\.com;/);
+    assert.match(out, /frame-src 'self' https:\/\/\*\.preview\.example\.com https:\/\/www\.example\.com https:\/\/shop\.test;/);
+  } finally { rmSync(repo, { recursive: true, force: true }); }
 });
 
 test('C1 hand-off: SERVER_GITHUB_TOKEN is stored, fine-grained only, and never handed to jobs', () => {

@@ -49,7 +49,7 @@ export function notebookPlay({ seed, now = () => Date.now(), sendMs = 10_000 } =
       return JSON.parse(JSON.stringify(answered));
     },
     // An agent's desk-phone card about a sent group's note (group: its id), as bookasks.ts's asksOn lists it ({ agent,
-    // kind, title, body, questions?, desk? }), its id, note and name filled in. → the card.
+    // kind, title, body, questions? }), its id, note and name filled in. → the card.
     ask: (group, card) => askAbout(s, group, card),
     // An agent's note on a page (a call agent's scrap or typed words: ink/callnotes.ts), by: the agent's id; parts:
     // { ink, texts, pictures }. → the group
@@ -202,7 +202,7 @@ function askAbout(s, group, card) {
   const g = s.group(Number(group));
   if (!g?.note) throw new Error(`group ${group} hasn't been sent: only a sent group's note is asked about`);
   const asked = {
-    ...{ questions: null, page: null, status: 'open', answer: null, answered: null, desk: false },
+    ...{ questions: null, page: null, status: 'open', answer: null, answered: null },
     ...card,
     id: s.next('ask'),
     note: g.note,
@@ -217,7 +217,6 @@ function askAbout(s, group, card) {
 function answerAsk(s, b) {
   const a = s.asks.find(x => x.id === Number(b?.id) && x.status === 'open');
   if (!a) refuse(404);
-  if (a.desk) refuse(400, 'this card is answered on the desk phone');
   if ((a.questions ?? []).some((q, k) => !q.optional && !String(b.answers?.[k] ?? '').trim()))
     refuse(400, 'a question still needs its answer');
   Object.assign(a, { status: 'answered', answer: String(b.answer ?? ''), answered: s.stamp() });
@@ -261,7 +260,6 @@ function orderPages(s, b) {
   s.changed(n.id, null);
   return listPages(s, { notebook: n.id });
 }
-// A page archived or titled: change(p) does it
 // (the zoom the board left a page at, by the book's shape: no change to the page, notebook.ts zoomPage)
 function zoomPage(s, b) {
   const p = pageRow(s, b?.id),
@@ -271,6 +269,7 @@ function zoomPage(s, b) {
   p.zooms = { ...p.zooms, [b.shape]: Math.round(zoom * 1000) / 1000 };
   return pageOf(s, p);
 }
+// A page archived or titled: change(p) does it
 function pageChanged(s, b, change) {
   const p = pageRow(s, b?.id);
   change(p);

@@ -195,12 +195,14 @@ export const WORDS: Record<JoinLang, Record<string, string>> = {
 
 const CSS = readFileSync(new URL('./joinpage.css', import.meta.url), 'utf8');
 // the page's script, the drawing's, and the call's audio with its microphone worklet (HQ's call screen's own: the same
-// sound, and the same frames for the line)
-const ASSETS: Record<string, URL> = {
+// sound, and the same frames for the line). Served from the coordinator's image: the root .dockerignore lets each in
+// (image.test.ts).
+export const ASSETS: Record<string, URL> = {
   'join.js': new URL('./joinpage.js', import.meta.url),
   'figure.js': new URL('./joinfigure.js', import.meta.url),
   'people.js': new URL('./joinpeople.js', import.meta.url),
   'callaudio.js': new URL('../../hq/shell/callaudio.js', import.meta.url),
+  'screenlock.js': new URL('../../hq/shell/screenlock.js', import.meta.url),
   'mic-worklet.js': new URL('../../hq/shell/mic-worklet.js', import.meta.url),
   // a walk-through's: the frame and the minimised call over it, HQ's own bubble, and the watch-along's recorder
   'walk.js': new URL('./joinwalk.js', import.meta.url),

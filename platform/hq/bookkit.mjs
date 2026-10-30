@@ -4,14 +4,15 @@ export const DESKTOP = { width: 1440, height: 900 },
   // an iPad mini in landscape
   MINI = { width: 1133, height: 744 };
 
-// What read gives (awaited) once it's something, looked at every tenth of a second; what says what was awaited. (long
-// enough by default for a loaded worker, where the page's timers come seconds late: its 600 ms save took over 6 s)
+// What read gives (awaited) once it's something, looked at every tenth of a second; what says what was awaited, or is
+// called as it fails for words with what was seen. (long enough by default for a loaded worker, where the page's timers
+// come seconds late: its 600 ms save took over 6 s)
 export async function until(read, what, ms = 30_000) {
   for (const end = Date.now() + ms; Date.now() < end; await new Promise(r => setTimeout(r, 100))) {
     const v = await read();
     if (v) return v;
   }
-  throw new Error(`not ${what}`);
+  throw new Error(`not ${typeof what === 'function' ? what() : what}`);
 }
 
 // Whether a box on the screen ({ x, y, width, height }) lies clear of every one of the book's islands

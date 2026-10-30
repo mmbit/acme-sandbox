@@ -1,7 +1,7 @@
 // The feature tips: one entry per hidden feature, read by the coordinator (tips.ts files its card when its event
 // first happens) and by the desk phone (the card, and Show me's steps). A new feature adds its tip here. Its film is the
-// company's, theme/hq/films/<key>-<look>.mp4 (tip-films.mjs records it from films/scenes.mjs): a tip without one shows
-// as text only (tipcard.js filmOf).
+// company's, theme/hq/films/<key>-<look>.mp4 (filmName; tip-films.mjs records it from films/scenes.mjs): a tip without
+// one shows as text only (tipcard.js filmAddress).
 //   key     the tip's name, kept in the coordinator's tips table (once per company)
 //   when    the event that brings it, as HQ records it (the coordinator's hook names the same key)
 //   name    what the Library's manual calls it, a few words (manual.js).
@@ -16,6 +16,10 @@
 //   about   a tip about the desk phone's cards: which card has its steps' controls. Show me keeps the phone open on the
 //           first such card, and a tip with none has no Show me
 //   acts    the last control acts for real: its step says what it does, and Got it ends the tip without pressing it
+
+// A tip's film in a look, by its file name in the company's theme/hq/films/ (HQ serves it at films/<name>): the one
+// place the names are made. kind is 'mp4' (the film) or 'jpg' (its still, the Library's tile).
+export const filmName = (key, look, kind = 'mp4') => `${key}-${look}.${kind}`;
 
 const DESKTOP = { at: '#btn-computer', say: 'Open your desktop' },
   SETTINGS = { at: '#tool [data-app="settings"]', say: 'Then Settings' };
@@ -39,7 +43,11 @@ const book = () => document.documentElement.dataset.book;
 const pinWay = () => document.querySelector(book() === 'folded' ? '#book .bk-lip' : '#book .bk-pin');
 const pinOrKey = () => (book() === 'spread' ? document.querySelector('#book .bk-pin') : pin());
 
-export const TIPS = [
+// The tips in the company's names for its desk phone and intercom (brand.yaml's: the shell's brand.js names, the
+// coordinator's company.ts names), which every caller passes; TIPS, for the keys, has the foundation's
+const PLAIN = { phone: 'desk phone', intercom: 'intercom' };
+// eslint-disable-next-line max-lines-per-function -- the tips' table, data in the company's names, not logic
+const tipsFor = ({ phone, intercom }) => [
   {
     key: 'artifact',
     name: 'Share for notes',
@@ -84,7 +92,7 @@ export const TIPS = [
   },
   {
     key: 'deskphone',
-    name: 'The desk phone',
+    name: `The ${phone}`,
     when: 'the first card that needs an answer',
     title: 'Cards wait here until you answer',
     lines: () =>
@@ -137,15 +145,15 @@ export const TIPS = [
     steps: [{ at: '#tool #call-about', say: 'Call them and talk it through' }],
   },
   {
-    key: 'pausing',
-    name: 'Pausing work',
+    key: 'deadlines',
+    name: 'Deadlines',
     when: 'the first deliverable to run past its window',
     title: 'Some work ran past its time',
     lines: ({ thread } = {}) =>
-      `${thread ? `${thread} ran past the time it was due. ` : ''}You can have work paused to make room for what matters more, and started again when you like: ask on the intercom. Projects shows what’s running.`,
+      `${thread ? `${thread} ran past the time it was due. ` : ''}Give what matters a deadline on the ${intercom}: that work goes first, and the rest waits its turn. Projects shows when each piece lands.`,
     steps: [
-      { at: '#btn-projects', say: 'Projects shows all the work' },
-      { at: '#btn-intercom', say: 'Ask here to pause it, or to start it again' },
+      { at: '#btn-projects', say: 'Projects shows when each piece lands' },
+      { at: '#btn-intercom', say: 'Ask here to have it done by a day you name' },
     ],
   },
   {
@@ -163,7 +171,7 @@ export const TIPS = [
     when: 'the first full day with nothing new asked on the intercom',
     title: 'You can ask for anything',
     lines: () =>
-      'Ask on the intercom in your own words, a routine, a hire, a brand guide, an app or a website, and it gets set up.',
+      `Ask on the ${intercom} in your own words, a routine, a hire, a brand guide, an app or a website, and it gets set up.`,
     steps: [{ at: '#btn-intercom', say: 'Ask here, in your own words' }],
   },
 ];
@@ -179,4 +187,5 @@ export const ASKS = [
   { key: 'Product photos…', starts: 'Take product photos of ' },
 ];
 
-export const tipOf = key => TIPS.find(t => t.key === key) ?? null;
+export const TIPS = tipsFor(PLAIN);
+export const tipOf = (key, names) => tipsFor(names).find(t => t.key === key) ?? null;

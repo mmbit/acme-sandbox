@@ -151,9 +151,9 @@ async function noted(s, n) {
   assert.equal(notes(s).length, n, `${n} notes in the book`);
   return notes(s).at(-1).body;
 }
-// Whether the board's red shows near a point on the screen
+// Whether the board's red (the notebook's) shows near a point on the screen
 const red = (s, [x, y]) =>
-  s.page.evaluate(([x, y]) => [x + scrollX, y + scrollY], [x, y]).then(at => inkedAt(s, at, '#ff5a5f'));
+  s.page.evaluate(([x, y]) => [x + scrollX, y + scrollY], [x, y]).then(at => inkedAt(s, at, '#d0443a'));
 
 // The book's next note handled so, the rest as ever (Playwright's own times: 1 leaves a late fallback handled twice)
 function once(page, handle) {

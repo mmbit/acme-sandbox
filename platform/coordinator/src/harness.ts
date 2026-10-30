@@ -26,6 +26,8 @@ import { codedArgs, codedBody, word } from './testwords.ts';
 export const WORKER_TOKEN = 'worker-secret',
   VOICE_TOKEN = 'voice-secret';
 const HQ = new URL('../../worker/bin/hq', import.meta.url).pathname;
+// Timed hq calls wait 30 s. Admission leaves half that budget for the answer.
+const CALL_TIMEOUT_MS = 30_000;
 
 type Reply = { status: number; body: any };
 // an event of HQ's feed (stream: history, a replayed row; statuses, who's at work now.)
@@ -78,7 +80,12 @@ export async function harness(
     const res = await fetch(base + path, {
       method: body === undefined ? 'GET' : 'POST',
       body: body === undefined ? undefined : JSON.stringify(body),
-      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': 'application/json',
+        'x-hq-wait-ms': String(CALL_TIMEOUT_MS),
+      },
+      signal: AbortSignal.timeout(CALL_TIMEOUT_MS),
     });
     return { status: res.status, body: await res.json().catch(() => null) };
   };

@@ -33,16 +33,18 @@ from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
 from aloud import DAYS, aloud, number, respelt
-from drawing import ASK_WORDS, INK_SECONDS, INK_WORDS, Drawing, note_said, notes_lost, one_line, verdict_said
+from drawing import ASK_WORDS, INK_SECONDS, INK_WORDS, Drawing, note_said, notes_lost, one_line
 from driving import DRIVE_WORDS, OPEN_WORDS, Driving
 from callnotes import CHANGE_WORDS, MARK_WORDS, PAGE_WORDS, SCRAP_WORDS, TITLE_WORDS_SAID, CallNotes
 from echo import Echo
 from endpoint import Endpoint
 from guard import PARTNER, TOOLS, agent_env, hq_tools_work, sign_in_pipe, take_token
-import dictate  #.
+import dictate
 import hq_tools
 import room
 import turns
+from voices import VOICE_WORDS, Voices
+from voices import ENROL_WORDS, FORGET_WORDS, NAME_LENGTH
 
 HQ, TOKEN, ORIGIN = os.environ['HQ_URL'], take_token(os.environ), os.environ['ORIGIN']  # (guard.py: who can read what)
 MODELS = Path(os.environ.get('VOICE_MODELS', '/models'))  # (replay.py runs the real models outside the image)
@@ -320,6 +322,10 @@ asr = sherpa_onnx.OfflineRecognizer.from_transducer(
     decoder=str(MODELS / 'parakeet/decoder.int8.onnx'), joiner=str(MODELS / 'parakeet/joiner.int8.onnx'),
     model_type='nemo_transducer', feature_dim=128, decoding_method='greedy_search', num_threads=3)
 turn_end = Endpoint(MODELS / 'smart-turn-v3.2-cpu.onnx')
+# Each piece's voiceprint, on the board's HQ calls (voices.py): about 0.07 s a second of audio on one thread, beside its
+# transcription.
+voiceprints = sherpa_onnx.SpeakerEmbeddingExtractor(sherpa_onnx.SpeakerEmbeddingExtractorConfig(
+    model=str(MODELS / 'nemo_en_titanet_large.onnx'), num_threads=2))
 from pocket_tts import TTSModel  # noqa: E402 (after the recogniser: torch is slow to import)
 from piper import PiperVoice  # noqa: E402
 import torch  # noqa: E402
@@ -396,13 +402,7 @@ def fetch_note(hq, note_id, call):
     picture = got.get('picture') if isinstance(got, dict) else None
     if not isinstance(got, dict) or type(got.get('n')) is not int or got['n'] < 1 or picture is not None and not takes(picture):
         return None
-    # (verdict, versions: what the book's judge made of it, the versions its try landed.)
-    verdict = got.get('verdict') if isinstance(got.get('verdict'), dict) else None
-    versions = [one_line(v) for v in got.get('versions') or [] if isinstance(v, str)]
-    picked = one_line(got['picked']) if isinstance(got.get('picked'), str) else None
-    return {'id': f"note {got['n']}", 'note': {'n': got['n'], 'words': one_line(got.get('words')), 'url': one_line(got.get('url')),
-                                              'verdict': verdict and {'reply': one_line(verdict.get('reply')), 'why': one_line(verdict.get('why'))},
-                                              'versions': versions, 'picked': picked},
+    return {'id': f"note {got['n']}", 'note': {'n': got['n'], 'words': one_line(got.get('words')), 'url': one_line(got.get('url'))},
             'type': picture and picture['type'], 'data': picture and picture['data']}
 
 
@@ -439,7 +439,8 @@ async def serve_screens(path):
 # (scrap and title_page: the call's notes page; read_page, mark_page and change_page: the agent working it)
 ASKED_WORDS = {'sketch': SKETCH_WORDS, 'ask_to_see': ASK_WORDS, 'draw': INK_WORDS, 'open_work': OPEN_WORDS, 'drive': DRIVE_WORDS,
                'scrap': SCRAP_WORDS, 'title_page': TITLE_WORDS_SAID, 'read_page': PAGE_WORDS, 'mark_page': MARK_WORDS,
-               'change_page': CHANGE_WORDS}
+               'change_page': CHANGE_WORDS, 'name_voice': VOICE_WORDS}
+ASKED_WORDS |= {'save_voice': ENROL_WORDS, 'forget_voice': FORGET_WORDS}
 
 
 async def screen_asked(reader, writer):
@@ -452,7 +453,9 @@ async def screen_asked(reader, writer):
                          'draw': call.drawing.ink_tool, 'open_work': call.driving.open_tool,
                          'drive': call.driving.drive_tool, 'scrap': call.page.scrap_tool,
                          'title_page': call.page.title_tool, 'read_page': call.page.page_tool,
-                         'mark_page': call.page.mark_tool, 'change_page': call.page.change_tool}[kind]
+                         'mark_page': call.page.mark_tool, 'change_page': call.page.change_tool,
+                         'name_voice': call.voice_tool,
+                         'save_voice': call.enrol_tool, 'forget_voice': call.forget_tool}[kind]
         answer = await tool(asked) if tool else {'error': ASKED_WORDS.get(kind, SCREEN_WORDS)['gone']}
     except Exception as err:  # (the coordinator failed, or a request of another shape: the agent hears so)
         print(f'{kind} tool: {err!r}', flush=True)
@@ -768,7 +771,7 @@ def forget(sessions, session='*'):
             print(f'turns: {path.name}: {error!r}', flush=True)
         path.unlink(missing_ok=True)
         shutil.rmtree(path.with_suffix(''), ignore_errors=True)  # (the CLI's folder for the session: big tool results)
-    for folder in PICTURE_COPIES.glob(f'claude-*/*/{session}'):  #.
+    for folder in PICTURE_COPIES.glob(f'claude-*/*/{session}'):
         shutil.rmtree(folder, ignore_errors=True)
 
 
@@ -870,7 +873,7 @@ class Care:
         """The turn's request, in a thread of its own (http.client reads the chunks). Returns the queue the thread puts
         to (DELIVERED once the request is sent, the status, each line of the body as it comes, then None at its end, or
         the error that cut it) and stop(), which cuts the request."""
-        url = urlsplit(self.deployment['url'])  #.
+        url = urlsplit(self.deployment['url'])
         body = json.dumps({'conversation': self.conversation, 'text': text, 'lang': self.lang,
                            'informed': self.informed()}).encode()
         got, sock, cut = asyncio.Queue(), [], threading.Event()
@@ -1082,6 +1085,14 @@ def listener():
     return sherpa_onnx.VoiceActivityDetector(cfg, buffer_size_in_seconds=60)
 
 
+def voiceprint(seg):
+    """A piece's voiceprint (voices.py)."""
+    stream = voiceprints.create_stream()
+    stream.accept_waveform(RATE, seg)
+    stream.input_finished()
+    return voiceprints.compute(stream) if voiceprints.is_ready(stream) else None
+
+
 def transcribe(seg):
     s = asr.create_stream()
     s.accept_waveform(RATE, seg)
@@ -1119,7 +1130,7 @@ class Call:
         self.file = self.wiring.paths.calls / f'{secrets.token_hex(6)}.json'  # the transcript so far, in case the line crashes
         # (the brain: Agent's docstring; walk)
         self.brain = brain or Agent(agent, lang, request, phone, callout, walk, wiring=wiring)
-        self.vad = listener()  #.
+        self.vad = listener()
         # the agent's voice taken out of HQ's microphone (a phone's handset takes out its own, a room each person's: room.py).
         self.echo = None if phone or speakers else Echo()
         self.phone = phone  # (the phone's hold sound: thinking)
@@ -1160,7 +1171,6 @@ class Call:
         self.writing = threading.Lock()  # a transcript write, from its check of ended to its last byte (end() runs in a thread)
         self.pictures = []    # pictures the board shared that haven't gone to the agent yet, in the order it shared them
         self.known = set()    # the number of every picture HQ sent: HQ sends one again until it hears back (show)
-        self.news = {}        # each note's verdict line the agent has heard (noted)
         # The board's notes the agent has had in a turn not yet done (HQ's ids): HQ takes their ink off the board's screen
         # once one is (scribbled).
         self.scribbles = []
@@ -1212,25 +1222,40 @@ class Call:
         if self.care:
             self.them = 'Caller'
             self.brain.informed = self.informed
+        # The board's HQ call: whoever is in the room with it, told apart by their voices (voices.py; a room's people by
+        # their own microphones, the phone by its one caller).
+        self.voices = None if phone or speakers or callout or self.care else Voices(self.them, lambda seg: self.voiceprint(seg))
+        self.consent = ''  # (what a person hears before their voice is saved: HQ's words, saved_voices)
+        self.consenting = set()  # (the names save_voice's first call told HQ's words for: only these are saved, enrol_tool)
 
     async def start(self):
         live = self.wiring.paths.live / self.file.stem  # (live while it's set up too)
         live.touch()
-        self.new_screen_key()  #.
+        self.new_screen_key()
         try:
+            if self.voices:  # (a failed read ends the call's start, as the context's does)
+                await self.saved_voices()
             await self.brain.start()
         except BaseException:
             live.unlink(missing_ok=True)
             raise
         if self.callout:
             self.them = self.brain.who or 'Partner'
-        await self.send_event({'type': 'state', 'state': 'listening'})
+
+    async def saved_voices(self):
+        """The voices saved on earlier calls, to name the room's by (voices.py), and the words a person hears before
+        their voice is saved (enrol_tool; none: no voice is saved on this call)."""
+        got = await asyncio.to_thread(self.wiring.hq, 'GET', 'voiceprints')
+        self.voices.know(got.get('voices') or [])
+        self.consent = str(got.get('consent') or '')
 
     async def greet(self):
         """At pickup, before the board starts talking: when no Claude seat has room (the coordinator's reading of the
         worker's seats), the line says so at once, as a turn of its own the board can talk over; else the agent says hello
         (hello). On a call out the agent speaks first, in the opening's fixed words, once the other side has picked up
-        (opened)."""
+        (opened). The line says it's listening from here, never while HQ still rings: what the board says then isn't
+        heard."""
+        await self.send_event({'type': 'state', 'state': 'listening'})
         if self.callout and self.brain.opening:
             self.opening = {'said': False}
             return
@@ -1241,10 +1266,10 @@ class Call:
         seat = self.brain.seat
         if self.seatless_at_pickup():
             self.turn = asyncio.create_task(self.seatless(str(seat.get('why') or 'limit'), seat.get('until') or 0))
-        elif not self.callout:  #.
+        elif not self.callout:
             self.turn = asyncio.create_task(self.hello())
 
-    def seatless_at_pickup(self):  #.
+    def seatless_at_pickup(self):
         seat = self.brain.seat
         return isinstance(seat, dict) and seat.get('room') is False
 
@@ -1613,8 +1638,9 @@ class Call:
             upto = len(self.recent) - (self.n - self.vad.front.start - len(seg)) + int(TRAIL * RATE)
             self.vad.pop()
             ended = self.wiring.monotonic()
-            text, finish_chance = await asyncio.gather(asyncio.to_thread(self.transcribe, seg),
-                                                       asyncio.to_thread(self.finish_chance, self.recent[:max(0, upto)]))
+            text, finish_chance, voiced = await asyncio.gather(
+                asyncio.to_thread(self.transcribe, seg), asyncio.to_thread(self.finish_chance, self.recent[:max(0, upto)]),
+                asyncio.to_thread(self.voices.print_of, seg) if self.voices else asyncio.sleep(0))
             if over := self.over:
                 self.over, text = None, f"{over['text']} {text}".strip()
                 if not over.get('in') and not (over['held'] and not self.playing()):  # (played out since: a normal turn)
@@ -1630,7 +1656,7 @@ class Call:
                 self.pauses = [self.pauses[0] + self.sounded_finished, self.pauses[1] + 1]
                 if not self.draft:  # (the words began about as long before their last sound as they lasted)
                     self.draft_at = self.wall_ms(self.spoke - len(seg) / RATE)
-                self.draft.append(self.labelled(text, len(seg)))
+                self.draft.append(self.labelled(text, len(seg), voiced))
                 self.keep()  # (each piece as it's heard)
                 await self.send_event({'type': 'heard', 'text': unhesitating(self.so_far(), self.lang)})
                 self.schedule(ended)
@@ -1648,7 +1674,10 @@ class Call:
             await self.cut_in(over)
 
     def transcribe(self, seg):
-        return transcribe(seg)  #.
+        return transcribe(seg)
+
+    def voiceprint(self, seg):
+        return voiceprint(seg)
 
     def finish_chance(self, audio):
         return turn_end.finished(audio)  # (endpoint.py)
@@ -1820,28 +1849,9 @@ class Call:
             if fetched['data'] and self.picture_bytes - self.screen['bytes'] + len(fetched['data']) > self.limits.session_bytes:
                 fetched.update(type=None, data=None, note={**fetched['note'], 'full': True})
             entry.update(fetched)
-            self.news[note_id] = verdict_said(fetched['note'])
             self.picture_bytes += len(entry['data'] or '')
             await self.tell_note(note_id, 'received')
         if not self.ended and self.ready():
-            self.nudge()
-
-    async def note_news(self, note_id):
-        """Something changed on a note the line has (its verdict made, a version landed: HQ's 'noted'): read again, the
-        agent hears the new part once, with no picture, as a note's line."""
-        if ('note', note_id) not in self.known or self.ended:
-            return
-        try:
-            fetched = await asyncio.to_thread(fetch_note, self.wiring.hq, note_id, self.brain.call)
-        except Exception as err:
-            print(f'call: {self.agent} could not read note {note_id} again: {err}', flush=True)
-            return
-        said = fetched and verdict_said(fetched['note'])
-        if self.ended or not said or self.news.get(note_id) == said:
-            return
-        self.news[note_id] = said
-        self.pictures.append({**fetched, 'type': None, 'data': None, 'note': {**fetched['note'], 'news': True}})
-        if self.ready():
             self.nudge()
 
     async def tell_note(self, note_id, state, why=None):
@@ -2062,8 +2072,8 @@ class Call:
                 raise
             return {'error': refusal(err) or "That sketch couldn't be found."}
         # (a long sketch's pieces down it)
-        pictures = [picture_as(picture, 'image/png') for picture in got.get('pictures') or [None]]
-        if not all(pictures):
+        pictures = [picture_as(picture, 'image/png') for picture in got.get('pictures') or []]
+        if not pictures or not all(pictures):
             raise ValueError('the coordinator sent no PNG of the sketch')
         size = sum(len(picture['data']) for picture in pictures)
         if self.picture_bytes + size > self.limits.session_bytes:
@@ -2086,7 +2096,8 @@ class Call:
             last['back'] = True
             self.lines, self.times = self.lines[:last['n']], self.times[:last['n']]
             if last['text']:  # (pictures shown with nothing said have no words to take back)
-                self.draft.insert(0, last['text'])
+                # (named by voice already, it keeps its names: labelled)
+                self.draft.insert(0, ('\n' if self.voices and self.voices.many else '') + last['text'])
                 self.draft_at = last.get('at') or self.draft_at  # (said when they were first said)
             self.again = True
             # (shown without its "um"s; back: HQ's transcript writes it over the turn's line, which the reply had closed.
@@ -2121,8 +2132,7 @@ class Call:
             numbers = ', '.join(f"#{picture['id']}" for picture in shared)
             self.write(f"Board: (shared {'picture' if len(shared) == 1 else 'pictures'} {numbers} on screen)")
         for note in notes:
-            if not note['note'].get('news'):
-                self.write(f"Board: (drew note {note['note']['n']} on {note['note']['url']})")
+            self.write(f"Board: (drew note {note['note']['n']} on {note['note']['url']})")
         turn = self.last = {'text': text, 'n': len(self.lines), 'heard': None, 'back': False, 'sounds': 0, 'at': at}
         spoke, asked, worded_at = self.spoke, self.wiring.monotonic(), None  # (the reply's timing line: timed())
         # (what's written down and what the agent reads; taken back, it's as heard)
@@ -2146,7 +2156,9 @@ class Call:
         # (the board's answers to the agent's asks first, then the screen's words, then the notes' before the words)
         # (driving)
         ask = '\n\n'.join(filter(None, ('\n'.join(map(note_said, notes)), ask)))
-        answered = '\n'.join(filter(None, (self.drawing.told(), self.driving.told())))
+        # (and the reminder to title the call's page: callnotes.py.)
+        answered = '\n'.join(filter(None, (self.drawing.told(), self.driving.told(), self.page.told(),
+                                            self.voices and self.voices.told())))
         delivered = False  # the model has the message: its first request started
         earlier = self.lines[:turn['n']]  # (the call so far, for a fresh session: this message goes as its own)
         try:
@@ -2162,12 +2174,12 @@ class Call:
             pictures = [*(picture for picture in shown if picture['data']), *look['pictures']]
             if look['line'] and not self.objected:
                 self.lines.insert(turn['n'], look['line'])
-                self.times.insert(turn['n'], self.wall_ms())  #.
+                self.times.insert(turn['n'], self.wall_ms())
                 turn['n'] += 1
                 self.keep()
             for retry in (False, True):
                 try:
-                    self.screen_sent(look)  #.
+                    self.screen_sent(look)
                     async for delta in self.brain.ask(ask, pictures):
                         if delta is DELIVERED:  # (the pictures are seen only once the model has them)
                             delivered = True
@@ -2226,7 +2238,7 @@ class Call:
                         # the worker has moved the line to a seat with room since this session started: ask again there
                         print(f'call: {self.agent} hit {err.why} on its seat; asking again on the line\'s new one', flush=True)
                         buf, worded = '', False  # (what the failed turn wrote and nobody heard: the new session's reply is said alone)
-                        await self.restart(earlier, pictures, resent=pictures)  #.
+                        await self.restart(earlier, pictures, resent=pictures)
                         continue
                     if said.strip() and not turn['back']:
                         self.write(f'{self.agent.capitalize()}: {said.strip()} (cut off)', self.heard_at(turn))
@@ -2430,19 +2442,83 @@ class Call:
             self.times.append(at or self.wall_ms())
 
     def heard_lines(self, text):
-        """The other side's words as the transcript's lines: the board's, the partner's, or in a room each speaker's."""
-        return text.split('\n') if self.speakers else [f'{self.them}: {text}']
+        """The other side's words as the transcript's lines: the board's, the partner's, or in a room (or the board's
+        room, once it has heard a second voice) each speaker's."""
+        return text.split('\n') if self.speakers or (self.voices and self.voices.many) else [f'{self.them}: {text}']
 
-    def labelled(self, text, samples):
+    def labelled(self, text, samples, voiced=None):
         """A piece of what the line heard, for the draft: in a room it starts on a new line with its speaker's name when
-        the speaker changes (the one loudest over its samples and the VAD's pause after them)."""
-        if not self.speakers:
+        the speaker changes (the one loudest over its samples and the VAD's pause after them); on the board's call the
+        same once it has heard a second voice (voices.py: voiced, the piece's voiceprint)."""
+        if self.voices:
+            name = self.voices.place(voiced, samples / RATE)
+            if not self.voices.many:
+                self.speaker = name
+                return text
+            if self.draft and not self.draft[0].startswith('\n'):  # (the second voice came mid-draft: the words before
+                self.draft[0] = f'\n{self.voices.names[0]}: {self.draft[0]}'  # it were the one voice heard until then)
+        elif not self.speakers:
             return text
-        name = self.speakers(self.n - samples - int(0.45 * RATE), self.n)
+        else:
+            name = self.speakers(self.n - samples - int(0.45 * RATE), self.n)
         if self.draft and name == self.speaker:
             return text
         self.speaker = name
         return f'\n{name}: {text}'
+
+    async def voice_tool(self, asked):
+        """The agent's name_voice tool: a voice heard on the call named (voices.py)."""
+        if not self.voices:
+            return {'error': VOICE_WORDS['none']}
+        named = asked.get('name_voice')
+        if not isinstance(named, dict):
+            return {'error': VOICE_WORDS['shape']}
+        done, words = self.voices.rename(named.get('voice'), named.get('name'))
+        return {'ok': words} if done else {'error': words}
+
+    async def enrol_tool(self, asked):
+        """The agent's save_voice tool (voices.py), the board having asked: with a name alone, what to tell them and ask
+        first; with the voice, their words agreeing and the agent's question, their print saved in HQ (voiceprints.ts)
+        and the voice named so."""
+        if not self.voices:
+            return {'error': ENROL_WORDS['none']}
+        saving = asked.get('save_voice')
+        if not isinstance(saving, dict) or not isinstance(saving.get('name'), str):
+            return {'error': ENROL_WORDS['shape']}
+        name = re.sub(r'[\s:]+', ' ', saving['name']).strip()
+        if name.lower() in (self.them.lower(), f'the {self.them.lower()}'):  # (the board's own: as its lines name it)
+            name = self.them
+        if not name or len(name) > NAME_LENGTH:
+            return {'error': f'Give a name of 1 to {NAME_LENGTH} characters.'}
+        if not self.consent:
+            return {'error': ENROL_WORDS['unsaid']}
+        consent, question = (str(saving.get(k) or '').strip() for k in ('consent', 'asked'))
+        if not saving.get('voice') or not consent or not question:
+            self.consenting.add(name.lower())
+            return {'ok': ENROL_WORDS['first'].format(name=name, consent=self.consent)}
+        if name.lower() not in self.consenting:  # (the consent step, held here; whether their yes is one is the agent's)
+            return {'error': ENROL_WORDS['unasked'].format(name=name)}
+        at, why = self.voices.enrolling(saving['voice'])
+        if at is None:
+            return {'error': why}
+        voiceprint, pieces = self.voices.print_for(at)
+        await asyncio.to_thread(self.wiring.hq, 'POST', 'voiceprint', {'name': name, 'print': voiceprint, 'pieces': pieces,
+                                                                       'consent': consent, 'asked': question, 'call': self.brain.call})
+        was = self.voices.names[at]
+        self.voices.enrolled(at, name)
+        self.consenting.discard(name.lower())  # (saving again asks again)
+        return {'ok': f"Saved: later calls recognise {name} by their voice, and {was} is {name} in the transcript from now on."}
+
+    async def forget_tool(self, asked):
+        """The agent's forget_voice tool: a saved voice deleted, its print and consent with it."""
+        forgetting = asked.get('forget_voice')
+        if not isinstance(forgetting, dict) or not isinstance(forgetting.get('name'), str) or not forgetting['name'].strip():
+            return {'error': FORGET_WORDS['shape']}
+        name = forgetting['name'].strip()
+        got = await asyncio.to_thread(self.wiring.hq, 'POST', 'voiceprint-forget', {'name': name})
+        if self.voices:
+            self.voices.forgot(name)
+        return {'ok': f"Forgotten: {name}'s saved voice is deleted."} if got.get('forgot') else {'error': f'No saved voice is called {name}.'}
 
     def so_far(self):
         """What the board (or the other side) has said since the last answer, as one message."""
@@ -2478,6 +2554,13 @@ class Call:
         self.pictures = []
         self.drawing.end()
         self.driving.end()
+        if self.voices and self.voices.prints:
+            print(self.voices.report(self.agent), flush=True)
+            if heard := self.voices.heard():  # (the saved voices it heard, refined)
+                try:
+                    self.wiring.hq('POST', 'voiceprints-heard', {'heard': heard})
+                except Exception as err:
+                    print(f'call: {self.agent}: saved voices not refined ({type(err).__name__})', flush=True)
         if self.speaking:
             self.speaking.set()
         if self.brain.token:
@@ -2689,11 +2772,9 @@ async def app_call(ws, make_call=Call, wiring=Wiring()):
                 call.penned(e.get('down') is True)
             elif kind == 'picture' and isinstance(e.get('id'), int):  # (beside the audio)
                 asyncio.create_task(call.show(e['id']))  # (tasks start in the order they're made: so do their places)
-            # (note, asked, inked)
+            # (note, asked, inked.)
             elif kind == 'note' and isinstance(e.get('id'), int):  # (a note's place among the pictures, as theirs)
                 asyncio.create_task(call.note(e['id']))
-            elif kind == 'noted' and isinstance(e.get('id'), int):
-                asyncio.create_task(call.note_news(e['id']))
             elif kind == 'asked' and isinstance(e.get('id'), int):
                 call.drawing.asked(e['id'], e.get('answer'))
             elif kind == 'inked' and isinstance(e.get('id'), int):

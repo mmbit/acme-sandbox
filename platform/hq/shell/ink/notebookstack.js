@@ -4,9 +4,10 @@
 
 // A scrap goes this far from the left (as far in as an answer: 12 px past a phone's pull tab) and this far down from
 // the origin on an empty page, this far from what's next to it, at most this wide, in page px: a readable width, left
-// of the controls at the right edge of the widest narrower paper the board reads on (coordinator's ink/answerspot.ts
-// NARROWER[0], less ANSWER.rail and x: notebook.test.ts holds them to it). Where a screen's paper is narrower, HQ draws
-// a scrap fitted to it (bookscrapfit.js).
+// of the controls at the right edge of the book beside HQ's page on an iPad mini held sideways (473 px of paper), so
+// left of them on the widest narrower paper the board reads on wherever that's the iPad's or wider (coordinator's
+// ink/answerspot.ts NARROWER[0], from the company's screens, less ANSWER.rail and x: notebook.test.ts holds it there.). Where a screen's paper is narrower, HQ draws a scrap fitted to it
+// (bookscrapfit.js).
 export const STACK = { x: 24, gap: 48, w: 313, top: 80 };
 // A scrap's picture at most this tall (half again its width), scaled down to it, but never below this share of the
 // scale its width allows, so a tall crop's words stay readable rather than towering down the page (the board, call 162)
@@ -32,13 +33,12 @@ const COLUMNS = { call: 2 };
 const LINE_PX = 24,
   LETTER_PX = 11;
 
-// The page new groups land on, of a notebook's pages ({ id, created, archived, tries, tries_note }): the newest neither
-// sending or sent (sent(page), as the caller's pages tell it: a row's send_at, a summary's sending and sent), archived
-// nor a try's versions page (ink/booktry.ts: a group's or an old book note's); undefined for none, when the store
-// makes one
+// The page new groups land on, of a notebook's pages ({ id, created, archived, tries }): the newest neither sending or
+// sent (sent(page), as the caller's pages tell it: a row's send_at, a summary's sending and sent), archived nor a try's
+// versions page (ink/booktry.ts); undefined for none, when the store makes one
 export function landingPage(pages, sent) {
   return pages
-    .filter(p => !p.archived && !sent(p) && p.tries == null && p.tries_note == null)
+    .filter(p => !p.archived && !sent(p) && p.tries == null)
     .sort((a, b) => b.created.localeCompare(a.created) || b.id - a.id)[0];
 }
 
@@ -123,14 +123,13 @@ export const underWidth = (kind, w) =>
   kind === 'scrap' ? wordsWidth(w) : Math.max(CAPTION.least, Math.min(CAPTION.most, w));
 // A group's children slipped under it, in the order they came (bookgroups.js, and the store's picture of a page,
 // bookpicture.ts): its answers and replies, not an answer the store placed at its spot or a version, nor the replies to
-// them, which the answers' layer draws written in (bookanswers.js).
+// them, which the answers' layer draws written in (bookanswers.js). A reply's id is a group's, an answer's a slip's: a
+// reply is matched only by the answer it answers.
 /** @template {{ id: number, kind: string, spot?: unknown, style?: string | null, answers?: number | null }} C
  * @param {C[]} children @returns {C[]} */
 export function slipsUnder(children) {
   const written = new Set(
     children.filter(c => c.kind === 'answer' && (c.spot || c.style === 'version')).map(c => c.id),
   );
-  return children.filter(
-    c => !written.has(c.id) && !(c.kind === 'reply' && c.answers != null && written.has(c.answers)),
-  );
+  return children.filter(c => (c.kind === 'reply' ? c.answers == null || !written.has(c.answers) : !written.has(c.id)));
 }

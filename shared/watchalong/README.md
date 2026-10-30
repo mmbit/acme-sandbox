@@ -81,6 +81,9 @@ mode sends the frame's events up to the framing page's recorder, which keeps the
 the coordinator serves both files at `/__review/watchalong.js` and `/__review/vendor/rrweb-record.js`; on HQ's host at
 `/shared/watchalong/`.
 
+`scrolllink.js` follows `framed.js` on previews and stands alone on public hosts: it tells the frame's parent where the
+page scrolled to and scrolls where the parent says, so HQ's viewer keeps live and staging in step.
+
 ## On the server
 
 `store.ts` keeps sessions on any `node:sqlite` database and folder (the coordinator's for calls; care can open its

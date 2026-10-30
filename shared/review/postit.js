@@ -75,6 +75,9 @@ export const HTML = `<div class="sheet" hidden role="dialog" aria-label="A note 
 // to the other screen (handover.js) rather than open its post-it here, nor the mic. Never on HQ, where a mark goes into the book from the screen it's drawn on (settle.js)
 export const across = r => !r.book && document.documentElement.dataset.paired === 'page' && !r.mark?.taken && !r.call;
 
+// Whether a call is on: HQ's own (callnotes.js) or one HQ's viewer tells of (callframe.js.)
+const onCall = r => !!(r.call || r.calling);
+
 // The note for what was marked: the screenshot taken at the first mark, every line since drawn on it (develop)
 export function compose(r) {
   r.mode = 'note';
@@ -99,9 +102,9 @@ export function compose(r) {
   mark.view = viewNow();
   mark.page = location.href;
   r.shot = shoot(r, mark);
-  // (on a call the call hears the board, and no post-it shows: callnotes.js. Off one the mic starts only at its button
-  // on the post-it, never at the mark: the board, call 154.)
-  if (r.call) return;
+  // (on a call the call hears the board, and no post-it shows: callnotes.js, and in HQ's viewer callframe.js. Off one the mic starts only at its button on the post-it, never at the mark: the
+  // board, call 154.)
+  if (onCall(r)) return;
   // (a post-it kept back for a mark going across asks again as it lands: a pairing that ended meanwhile shows it on
   // this screen.)
   const unseen = across(r);
@@ -118,7 +121,7 @@ function shoot(r, mark) {
   img.textContent = '';
   r.exposure = null;
   // (on a call the snip goes to the call's agent: masked.)
-  return snapshot(r, { masked: !!r.call }).then(
+  return snapshot(r, { masked: onCall(r) }).then(
     taken => {
       if (r.mark !== mark) return taken;
       pol.classList.remove('busy');

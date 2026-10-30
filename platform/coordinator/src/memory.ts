@@ -635,6 +635,9 @@ ${c.agent === reader.agent ? 'work from what its follow-up left (its pull reques
 export const customerCall = (id: number) => !!db.prepare(`select 1 from (${CALLS}) where id = ? and customer`).get(id);
 // A call about a card for keys (own_only): its own agent's alone
 export const keysCall = (id: number) => !!db.prepare(`select 1 from (${CALLS}) where id = ? and own_only`).get(id);
+// Its own agent on a call about a card for keys, who alone reads and answers its pages, or null on any other call
+export const keysAgent = (id: number) =>
+  keysCall(id) ? (db.prepare('select agent from calls where id = ?').get(id) as { agent: string }).agent : null;
 const readsCall = (id: number, reader: Reader) => !customerCall(id) || readsCustomerCall(id, reader);
 function aboutCustomer(doc: string) {
   const [kind, id] = doc.split(':'), n = Number(id);

@@ -3,6 +3,7 @@
 // says while the CEO is still answering waits, and goes in the next turn. Every line is shown and kept as it is: a key's
 // value is redacted where it's stored (db.ts).
 // (its messages say deliverable, the board's word for a thread)
+import { ONE_DEADLINE } from '../../worker/hq/levels.ts';
 import { db, once, setting, remember, redactedJson } from './db.ts';
 import { redactJson } from './secrets.ts'; // (and redactedJson: the intake's cards.)
 import { publish } from './events.ts';
@@ -12,6 +13,7 @@ import { ceo, roles, unstaffed } from './company.ts';
 import * as pictures from './pictures.ts';
 import * as tips from './tips.ts';
 import { DEFAULT_ESTIMATE_SCALE } from '../../worker/src/estimating.ts';
+import { PAUSE_FOR, WINDOW_FIRST } from '../../worker/hq/levels.ts';
 import { isIntercom, quickRunEnded } from './quickruns.ts';
 
 // A calls row named c carries keys if it or any call it resumed concerns a credential card.
@@ -51,12 +53,12 @@ const ceoName = () => findAgent(ceo())?.name ?? 'the CEO';
 const ONBOARDING = `
 The company is new: you have no team yet, and this conversation is its onboarding. Follow company/playbooks/intake.md
 from wherever the conversation is now.`;
-// a time told on the intercom comes from hq when and goes on the work's thread as its window as it's queued (hq job --by:
-// askwindow.ts.).
+// The deliverable holds the one deadline all its tasks inherit.
 //
 // Shifted work: the agreed deadlines' facts come with hq job, hq cancel and hq when (deadlines.ts), the judgment is the
 // CEO's (call.ts says the same).
 // A long reply hears so in its next turn (LONG_REPLY).
+// A window puts work first, a pause only waits on a condition.
 const brief = (fixer = roles().process) => `The board is talking with you over HQ's intercom: a chat, turn by turn, in this one session.
 Your final message of each turn is exactly what the board sees, so make it your reply: conversational and plain.
 Lead with the answer in one or two sentences; add at most three short bullets, only if they help. About 80 words or
@@ -76,16 +78,15 @@ then queue with \`--size <time> --refs <job,job> --why "scope comparison"\`. Wit
 why. ${DEFAULT_ESTIMATE_SCALE}
 The estimate is saved once. Only the CEO changes it when work slips. Use that same size for
 \`hq when "..." --size <time>\` before telling the board when something will be done (\`--by\` the
-board's time: whether it makes it, and only if not, what would). Give one plain time. What the board asks for here takes
-its window as you queue it, \`hq job ... --by <when>\`, so HQ orders the deliverable's work by it from the first minute (its
-reviews and fixes too) and pauses work in the way, and you see it in your summary if the deliverable slips: the board's time,
-else hq when's, or \`--by <project>/<slug>\` when it serves a deliverable with a window (the meeting it's needed for).
-Only when the board gave no time and it serves nothing timed, \`--by none\`. Work already queued: \`hq window <deliverable |
-job | pr:<n>> <when>\`. When the board says a line of work is urgent, its window's deadline is now:
-\`hq window <deliverable> 1m\`.
-New work shifts other work, and the board knows it: say nothing about shifts unless an agreed deadline moves or the
+board's time: whether it makes it, and only if not, what would). Give one plain time.
+${ONE_DEADLINE}
+Work already queued: \`hq window <deliverable | job | pr:<n>> <when>\`. When the board says a line of work is urgent,
+its window's deadline is now: \`hq window <deliverable> 1m\`.
+${WINDOW_FIRST} ${PAUSE_FOR}
+New work shifts other work, and the board knows it: say nothing about shifts unless an agreed deadline will be missed or the
 board asks. \`hq job\`, \`hq cancel\` and \`hq when\` give each agreed deadline (a deliverable's window) its finish, its
-slack and its slack some hours ago. When its finish lands past the deadline, the deadline moves: say so plainly. A
+slack and its slack some hours ago. A planned finish past the deadline is a slip: look for what brings the finish back.
+When nothing does, say why the deadline cannot be met and what must change. A
 margin eaten but still made, or slack that keeps shrinking as work piles on, is yours to plan with: don't mention it
 unless the board asks. Before you queue work that eats into a deadline, weigh how much it matters, how much the
 board wants it now and how big the risk is, then queue it \`--after\` that deadline's work to protect it, or now anyway:

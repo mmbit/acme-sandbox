@@ -1,5 +1,5 @@
-// Sizing work (the coordinator's estimates.ts): its agent time (a queued job's with its ETA), the past jobs like it that
-// come from, and what the seats have left of their week; or how well past estimates held (--accuracy). When new work
+// Sizing work (the coordinator's estimates.ts): its agent time and projected merge time, the past jobs it comes
+// from, and what the seats have left of their week; or how well past estimates held (--accuracy). When new work
 // could be done is hq when's (when.ts).
 import * as api from './api.ts';
 import { printJobs, printQuality, type Job, type Typical, type Quality } from './comparisons.ts';
@@ -16,17 +16,21 @@ export const estimate = {
                                                      inspect clean past jobs found by agent and title words. Judge
                                                      scope yourself from their briefs, reports and changed files, then
                                                      queue with --size <90m> --refs <job,job> --why "scope comparison".
+                                                     Whole task time includes shared reviews and fixes, split by kind.
+                                                     --size covers the work split only. The forecast adds shared review
+                                                     and fix rounds once per deliverable. Queue and other waits stay out.
                                                      The quality audit says how many done jobs were excluded and why.
-                                                     A queued job (#n) shows its saved estimate, ETA and waits.
+                                                     A queued job (#n) shows its saved task estimate, projected merge time
+                                                     and waits.
                                                      An AI hour is one agent working for an hour, across its runs.
                                                      The seats show their measured headroom and reset times.
    hq estimate --audit                               count timing exclusions across all done work jobs, without scopes
    hq estimate --accuracy [--days n]                 how well the estimates held over the last n days (7): agent time and
-                                                     ETA against what happened, the worst misses and what moved, and
+                                                     merge projections against what happened, the worst misses and what moved, and
                                                      the matching tried again on the work done since, beside simpler ways,
                                                      and the matching within a deliverable beside HQ's
    hq estimate --calibration [--days n]              both layers' misses over the last n days (7): sizes against the
-                                                     agent time taken by agent, area and sizer; ETAs against the
+                                                     agent time taken by agent, area and sizer; merge projections against the
                                                      landings an hour, six hours and a day ahead (the prediction log)
    hq estimate --backtest [--days n] [--save <file>] the play replayed on the hourly snapshots of the last n days (7),
                                                      scored an hour, six hours and a day ahead, and how often the slow
@@ -34,7 +38,7 @@ export const estimate = {
                                                      platform/coordinator/scripts/backtest.ts to score a branch's play
                                                      beside main's
    hq estimate set <job> <time> ["why"]              re-size a queued or running job: its agent time (90m, 2h, 1h30m)
-                                                     changes the saved queue-time estimate and names the deliverables whose
+                                                     changes the saved task estimate and names the deliverables whose
                                                      ETA moved. Only the CEO may change it after work slips`,
 
   async run(given: string[]) {
@@ -146,7 +150,7 @@ function sizedLine(s: Sized, earlier: number) {
   const on = s.refs.length ? `, on ${s.refs.map(id => `#${id}`).join(', ')}` : '';
   const why = s.why ? `: ${s.why}` : '';
   const before = earlier ? ` (${plural(earlier, 'earlier size')} kept)` : '';
-  return `Saved estimate: ${duration(s.agent_minutes)} of agent time${range} by ${s.by}, ${minute(s.at)}${on}${why}. The ETA plays on it${before}.`;
+  return `Saved estimate: ${duration(s.agent_minutes)} of agent time${range} by ${s.by}, ${minute(s.at)}${on}${why}. The deliverable's ETA plays on it${before}.`;
 }
 
 // What the mean stood on: done jobs like it, or a scheduled job's earlier runs.
@@ -175,7 +179,7 @@ function outlookLine(o: Outlook, words: string) {
   const start = later ? `it starts about ${at(o.start!)}, and ` : '';
   const held =
     o.held && o.held > (o.merged ?? 0) ? ` (by ${at(o.held)} four times in five: the time a promise holds to)` : '';
-  const merged = o.merged === null ? 'no merge in sight' : `is merged about ${at(o.merged)}${held}`;
+  const merged = o.merged === null ? 'no projected merge in sight' : `projected merge ${at(o.merged)}${held}`;
   const waits = o.waits.length ? ` Waits on: ${o.waits.map(waitWords).join('; ')}.` : '';
   const cards = o.cards?.length
     ? ` It counts on the board answering ${o.cards.map(c => `card #${c.request} by ${at(c.at)}`).join(' and ')}, as it usually does.`
@@ -296,7 +300,7 @@ function printAccuracy(a: Accuracy) {
   const e = a.eta;
   const late = e.late_share === null ? '' : `, ${Math.round(e.late_share * 100)}% later than said`;
   const miss = e.median_miss_minutes === null ? '.' : `: the median miss ${duration(e.median_miss_minutes)}${late}.`;
-  print('', `ETA: ${plural(e.count, 'job')} merged or ended with one${miss}`);
+  print('', `Merge projections: ${plural(e.count, 'job')} merged or ended with a saved projection${miss}`);
   for (const w of e.worst)
     print(
       `  #${w.id} ${w.agent}: ${w.title}`,

@@ -45,6 +45,7 @@ import * as pricing from './pricing.ts';
 import { FRONT } from './approvals.ts';   // the front's door
 import { deployed } from './wakes.ts';
 import * as storage from './storage.ts';
+import * as profiles from './profiles.ts';
 import { readBody } from '../../../shared/routes/routes.ts';
 import { REVIEW_PARTS, extraFile } from '../../hq/extras.mjs';
 import { V as ANCHOR, noKeys } from '../../../shared/review/anchor.js';
@@ -172,10 +173,11 @@ const json = (res: ServerResponse, code: number, body: unknown) => reply(res, co
 export const withReviewMode = (html: string) => html.includes('/__review/review.js') ? html
   : `${html}\n<script src="/__review/review.js" defer></script>\n`;
 
-// The watch-along's answer in a page HQ frames (shared/watchalong/framed.js), HQ's origin filled in: served after
-// review.js, the tool or not.
+// The watch-along's answer in a page HQ frames (shared/watchalong/framed.js), HQ's origin filled in, and its scroll
+// link for the viewer's live page beside it (scrolllink.js): served after review.js, the tool or not.
 const framedAnswer = async () =>
-  (await readFile(`${REPO_DIR}/shared/watchalong/framed.js`, 'utf8')).replace('{{HQ_ORIGIN}}', ORIGIN);
+  (await readFile(`${REPO_DIR}/shared/watchalong/framed.js`, 'utf8')).replace('{{HQ_ORIGIN}}', ORIGIN) +
+  (await readFile(`${REPO_DIR}/shared/watchalong/scrolllink.js`, 'utf8'));
 
 // An outsider's tool draws in their colour (INK), the one their book has (sketchpeople.ts give: everyone invited).
 const inBook = (tool: string, share: shares.Session) => {
@@ -199,8 +201,12 @@ export async function product(req: IncomingMessage, res: ServerResponse) {
     const js = !tool ? '/* review mode: off */\n' : on.share ? inBook(tool.replace('{{OUTSIDE}}', companyInJs), on.share) : tool;
     // the watch-along's answer to HQ's frame, on or off
     const framed = await framedAnswer();
-    // an outsider's thank-you for a fix of theirs gone live
-    return reply(res, 200, js + framed + (on?.share ? await thanksFor(on.share) : ''), 'text/javascript; charset=utf-8', { vary: 'cookie' });
+    // what goes after the tool: on a shared link's page an outsider's thank-you for a fix of theirs gone live, and on
+    // the board's own pages the profiler while it's on
+    let after = '';
+    if (on && on.share) after = await thanksFor(on.share);
+    else if (on) after = await profiles.scriptFor(on.slug);
+    return reply(res, 200, js + framed + after, 'text/javascript; charset=utf-8', { vary: 'cookie' });
   }
   // the tool's parts beside it (tool.js and the modules it imports): the tool's own logic, so only for whoever gets the
   // tool.
@@ -226,6 +232,7 @@ export async function product(req: IncomingMessage, res: ServerResponse) {
     if (!on || on.share) return json(res, 404, { error: 'not found' });
     return json(res, 200, (await import('./ink/bookreview.ts')).menuOf(on.slug, localPath(query.get('page'), on.host, on.base), query.get('owner')));   // (owner)
   }
+  if (path === '/__review/profile' && req.method === 'POST') return profiled(req, res);
   if (req.method !== 'POST' || !['/__review/notes', '/__review/voice', '/__review/thanked', '/__review/coach'].includes(path)) return json(res, 404, { error: 'not found' });
   const p = reviewerOn(req);
   if (!p) return json(res, 403, { error: 'review mode is for the board' });
@@ -248,6 +255,18 @@ export async function product(req: IncomingMessage, res: ServerResponse) {
   if (p.share && !granted) return json(res, 409, { error: 'that note didn’t go through: write it again' });
   const r = await saveNote(p.slug, p.host, body, p.base, granted ? intoBook(req, p.host, granted, p.share!) : null);
   return 'status' in r ? json(res, r.status, { error: r.error }) : json(res, 200, r);
+}
+// The board's page's profile samples (profiles.ts), while the switch is on for its host
+async function profiled(req: IncomingMessage, res: ServerResponse) {
+  const p = reviewerOn(req);
+  if (!p || p.share || !profiles.isOn(p.slug)) return json(res, 404, { error: 'not found' });
+  if (req.headers.origin !== (p.slug === HQ ? ORIGIN : `https://${p.host}`)) return json(res, 403, { error: 'origin' });
+  const raw = await readBody(req, 64 * 1024);
+  if (!raw) return json(res, 413, { error: 'too large' });
+  let body: unknown;
+  try { body = JSON.parse(raw.toString('utf8')); } catch { return json(res, 400, { error: 'bad json' }); }
+  const r = profiles.record(p.slug, body);
+  return Array.isArray(r) ? json(res, r[0], { error: r[1] }) : json(res, 200, r);
 }
 // An invited reviewer's note into their Notebook page: theirs as 'guest:<grant>', and whether it may still
 // go in at each step past an await (the body's, the snip's cut), as an attacker's would be checked: their session still

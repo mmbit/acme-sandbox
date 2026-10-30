@@ -1,4 +1,5 @@
 // Merge precedence survives the author's re-sync and its merge check.
+import * as rulingjobs from './rulingjobs.ts';
 import * as boardmerges from './boardmerges.ts';
 import { db } from './db.ts';
 import { OPEN_PRS } from './jobs.ts';
@@ -6,12 +7,13 @@ import * as panel from './panel.ts';
 import { findThread } from './projects.ts';
 
 type Pull = { number: number; files: string };
-type Ruling = { id: number; pr: number; round: number; sha: string; finished: string };
+type Precedence = 'retain' | 'release' | 'boardAnswer';
 type Place = { at: string; id: number };
 
 // A pass keeps its original place through further merge checks. Another decision releases it. Reading the existing
-// rulings also recovers the order after a restart and for pull requests that passed before this code was deployed.
-export function predecessor(pr: Pull, decision: (job: Ruling) => string | undefined) {
+// rulings also recovers the order after a restart. Only windowed predecessors hold shared files because later merges
+// could force another re-sync and review cycle, delaying the promised window. Undated work makes no such promise.
+export function predecessor(pr: Pull, precedence: (job: rulingjobs.Ruling) => Precedence | undefined) {
   const pulls = db.prepare(`select number, branch, files from prs where status in ${OPEN_PRS}`).all() as (Pull & {
     branch: string;
   })[];
@@ -21,23 +23,15 @@ export function predecessor(pr: Pull, decision: (job: Ruling) => string | undefi
   );
   const numbers = new Set(related.map(pull => pull.number));
   const places = new Map<number, Place>();
-  const rulings = db
-    .prepare(
-      `select j.id, j.pr, j.round, j.sha, j.finished from prs p
-    join jobs j indexed by jobs_pr_loop on j.pr = p.number
-    where p.status in ${OPEN_PRS} and j.kind = 'consolidate' and j.status = 'done'
-    and j.id > p.review_since and j.voided is null and coalesce(j.stage, '') != 'triage'
-    order by j.finished, j.id`,
-    )
-    .all() as Ruling[];
+  const rulings = rulingjobs.history();
   for (const job of rulings) {
     if (!numbers.has(job.pr)) continue;
-    const decided = decision(job);
-    if (decided === 'merge') {
+    const outcome = precedence(job);
+    if (outcome === 'retain') {
       if (!places.has(job.pr)) places.set(job.pr, { at: job.finished, id: job.id });
-    } else if (decided) {
+    } else if (outcome) {
       places.delete(job.pr);
-      const answered = decided === 'board' ? boardmerges.answeredMerge(job.id) : undefined;
+      const answered = outcome === 'boardAnswer' ? boardmerges.answeredMerge(job.id) : undefined;
       if (answered) places.set(job.pr, { at: answered, id: job.id });
     }
   }

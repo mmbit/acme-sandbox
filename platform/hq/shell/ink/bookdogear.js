@@ -4,7 +4,7 @@
 // and goes (bookpaper.js); let go anywhere else, it goes back. Pressed with a key or tapped, the corner opens the same
 // three as a small menu. Carried, the copy is torn out at the spine, its edge jagged; the page itself stays whole. With
 // a call on, the call's window takes it too, as the call's target does (calldrop.js). Its look: bookshare.css. (sharing, was giving the page to a face; mounted by the book's pages, a sent page's
-// stamp bookpagesend.js's) The copy tears out with a soft tear of paper (the board's call 149).
+// stamp bookpagesend.js's) The copy tears out with a soft tear of paper.
 import { foley } from '../audio.js';
 import { picture } from './bookflip.js';
 import { fold, tear } from './bookpaper.js';

@@ -1,6 +1,6 @@
 // node --test src/ink/bookasks.test.ts   (a desk-phone card about a note or a page: hq ask --note and --page through the
-// real hq, the card under its note, one answer closing both; a page's card on the desk phone only. The card under a
-// Notebook group: notebook.test.ts)
+// real hq, the card under its note, one answer closing both; a page's card, and one for a secret, a step or built work,
+// on the desk phone only. The card under a Notebook group: notebook.test.ts)
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync } from 'node:fs';
@@ -73,7 +73,6 @@ test('a card with --note shows under its note, with its place on the desk phone;
   assert.equal(shown.id, id);
   assert.equal(shown.status, 'open');
   assert.equal(shown.name, 'Lark');
-  assert.equal(shown.desk, false);
   assert.match(shown.body, /Choose:/);
   const card = ((await h.board('/api/requests')).body as any[]).find(r => r.id === id);
   assert.equal(card.place.note, note);
@@ -94,7 +93,7 @@ test('a card with --note shows under its note, with its place on the desk phone;
   await h.finish(job);
 });
 
-test('a card with a key field or an upload shows in the book as answered only on the desk phone', async () => {
+test('a card for a key, an upload, steps or built work stays on the desk phone, with its note, and out of the book', async () => {
   const { note, review, job } = await sentNote('lark', 'Hook this up');
   const filed = await h.agent('request', job.token, {
     kind: 'credential',
@@ -117,14 +116,36 @@ test('a card with a key field or an upload shows in the book as answered only on
     'gazette',
   );
   assert.equal(typeof photo, 'number', String(photo));
-  const shown = await asksOn(note);
-  assert.deepEqual(
-    shown.map((a: any) => [a.id, a.desk]),
-    [
-      [keys, true],
-      [photo, true],
-    ],
+  const built = await askAs(
+    'notice',
+    job,
+    'The gazette is live.',
+    '--walk',
+    '--note',
+    String(review),
+    '--topic',
+    'gazette',
   );
+  assert.equal(typeof built, 'number', String(built));
+  const steps = await askAs(
+    'notice',
+    job,
+    'The gazette takes payments once its Stripe account is open.\n\nSteps:\n1. Open the Stripe account.\n2. Add the shop as its first product.',
+    '--note',
+    String(review),
+    '--topic',
+    'gazette',
+  );
+  assert.equal(typeof steps, 'number', String(steps));
+  const design = await ask(job, CARD, '--note', String(review), '--topic', 'gazette');
+  assert.deepEqual(
+    (await asksOn(note)).map((a: any) => a.id),
+    [design],
+    'the book shows the design question only',
+  );
+  const desk = (await h.board('/api/requests')).body as any[];
+  for (const id of [keys, photo, built, steps])
+    assert.equal(desk.find(r => r.id === id)?.place?.note, note, String(id));
   await h.finish(job);
 });
 

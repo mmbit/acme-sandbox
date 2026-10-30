@@ -80,6 +80,7 @@ const FATE = {
   dropped: 'Dropped',
   'follow-up': 'Moved to a follow-up task',
   later: 'For a follow-up task',
+  ended: 'Ends with this follow-up',
   open: 'Still open',
 };
 export const fateWords = f =>
@@ -107,6 +108,22 @@ export function cardsOf(t) {
 }
 export const stepsOf = (j, t) =>
   j.review || !t ? [] : t.jobs.filter(x => x.review && x.branch === branchOf(j)).sort((a, b) => a.id - b.id);
+// The tasks of a thread whose work is in a job's pull request: those done on its branch. More than one where they
+// share a branch (a deliverable's), and then its rounds are theirs together; a task still at work or ended on it has
+// none of them, as the rounds judge only what's pushed.
+export const sharersOf = (j, t) => t.jobs.filter(x => !x.review && rowState(x) === 'done' && sameBranch(x, j));
+export const sameBranch = (a, b) => branchOf(a) === branchOf(b);
+// A thread's cards as its tile counts them: a pull request's open step leads only the last of the tasks done on its
+// branch (sharersOf), so it counts once, and the others are in their own state.
+export function cardsOnce(t) {
+  const cards = cardsOf(t),
+    last = new Map();
+  for (const j of cards)
+    if (j.lead.review && rowState(j) === 'done' && !(last.get(branchOf(j)) > j.id)) last.set(branchOf(j), j.id);
+  return cards.map(j =>
+    j.lead.review && last.has(branchOf(j)) && last.get(branchOf(j)) !== j.id ? { ...j, lead: j } : j,
+  );
+}
 export const finished = j => ['done', 'ended'].includes(stateOf(j));
 // How many of a thread's tasks are finished: what its Done key brings in (an open task's steps show however they stand).
 export const doneCount = t => cardsOf(t).filter(finished).length;
@@ -162,7 +179,8 @@ export const planned = j => ({
 // "The shop's own checkout" reads "Gift wrap". The name counts with or without a leading "The", an "own" after a
 // possessive, and what follows its own colon.
 // Its job numbers are linked.
-export const taskHtml = (j, t) => withJobLinks(taskTitle(j.title, t));
+// A fix round says what it fixes wherever it shows (doingOf).
+export const taskHtml = (j, t) => withJobLinks(j.fixes ? doingOf(j) : taskTitle(j.title, t));
 function taskTitle(title, t) {
   const names = nameForms(t.name);
   for (let at = title.indexOf(': '); at > 0; at = title.indexOf(': ', at + 1)) {
@@ -183,11 +201,13 @@ function nameForms(name) {
   return lead === plain ? [plain] : [plain, lead];
 }
 // What's going on in a thread one level down: its running tasks, and the next one (the first by sorted that isn't
-// running), for its tile
+// running), for its tile. A shared pull request's running step is one row, the step itself (cardsOnce).
 export function threadNow(t) {
-  const open = sorted(cardsOf(t).filter(j => !finished(j)));
+  const open = sorted(cardsOnce(t).filter(j => !finished(j)));
   return {
-    running: open.filter(j => stateOf(j) === 'working'),
+    running: open
+      .filter(j => stateOf(j) === 'working')
+      .map(j => (j.lead.review && sharersOf(j, t).length > 1 ? j.lead : j)),
     next: open.find(j => stateOf(j) !== 'working') ?? null,
   };
 }
@@ -275,15 +295,19 @@ export const etaPlace = (t, p) => {
 export function threadEta(t) {
   const o = t.outlook;
   if (!o) return null;
+  const noDeadline = o.undated ? ' No deadline set.' : '';
   if (o.finish === null && o.booked)
     return {
       booked: true,
       time: `Booked for ${fromNow(o.booked)}`,
-      sums: `${glance(o.left_ms)} of agent time left, from then.`,
+      sums: `${glance(o.left_ms)} of agent time left, from then.${noDeadline}`,
     };
   if (o.finish === null)
-    return { time: 'No time yet', sums: `${cap(o.stall ?? 'nothing in the queue lets it merge')}.` };
-  return { time: `Done about ${clock(o.finish)}`, sums: `${glance(o.left_ms)} of agent time left.${windowWords(o)}` };
+    return { time: 'No time yet', sums: `${cap(o.stall ?? 'nothing in the queue lets it merge')}.${noDeadline}` };
+  return {
+    time: `Done about ${clock(o.finish)}`,
+    sums: `${glance(o.left_ms)} of agent time left.${windowWords(o)}${noDeadline}`,
+  };
 }
 // standing (forecast.ts): 'misses' | 'gives' | 'holds', or null without a window
 function windowWords(o) {

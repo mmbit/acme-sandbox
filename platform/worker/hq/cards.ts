@@ -125,10 +125,14 @@ export const ask = {
                                                      under that note, its choices and questions answered there or on
                                                      the desk phone: one answer closes both. This is how to ask the
                                                      board about a note (an answer of yours that ends in a question
-                                                     asks nothing). About a page with no note on it: --page <address>
+                                                     asks nothing). The book is Ink Studio, the design stage: a card
+                                                     for keys, uploads, files, an approval, steps or finished work
+                                                     (--walk, --back) stays on the desk phone only, its note shown
+                                                     there.
+                                                     About a page with no note on it: --page <address>
                                                      (a path on HQ, or a preview's https address): the book clips it
                                                      on your sheet page of the day, under your ring`,
-  // (--walk; --note, --page)
+  // (--walk; --note, --page; Ink Studio's desk-only cards)
   // (topics:, zips, --visible-from; --address; --questions; notice; --when)
   // (a pick-many, --file)
   // (Before and after; pictures in pairs on any card)

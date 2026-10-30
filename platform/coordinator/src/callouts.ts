@@ -26,7 +26,7 @@
 // Here: the table, the agent's side and the call's end; the board's card: callcard.ts; the dial and the sweep:
 // callsweep.ts; the call itself on the voice line: callline.ts.
 import { createHash, createHmac } from 'node:crypto';
-import { db, redacted, columnsOf } from './db.ts';
+import { db, redacted, redactedJson, columnsOf } from './db.ts';
 import { ORIGIN } from './config.ts';
 import { publish } from './events.ts';
 import { secret, serverKey } from './secrets.ts';
@@ -53,7 +53,8 @@ db.exec(`create table if not exists callouts (id integer primary key, created te
   started text, twilio_ended text, ended text, outcome text, transcript text, notes text, objected integer not null default 0,
   followup integer, blanked text, share integer)`);
 if (!columnsOf('callouts').includes('share')) db.exec('alter table callouts add column share integer');
-redacted('callouts', 'who', 'about', 'why', 'transcript', 'notes');
+redacted('callouts', 'who', 'about', 'why');
+redactedJson('callouts', 'transcript', 'notes');
 
 type Kind = 'phone' | 'link';
 export type Status =

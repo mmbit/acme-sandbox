@@ -1,8 +1,8 @@
 // HQ's entry point: boot, and staying current (the org, open requests, a new HQ version) without a reload button.
 import { store, esc } from '../util.js';
-// (tipEvent: the look's tip.)
+// (offerEventTip: the look's tip.)
 import {
-  tipEvent,
+  offerEventTip,
   loadOrg,
   connectEvents,
   fetchOrg,
@@ -39,6 +39,8 @@ import {
   openJob,
   bookAt,
   closeTool,
+  openLink,
+  PREVIEW,
 } from './desk.js'; // (the intercom's count; openJob; bookAt)
 import { refreshSeen, seen, onSeen } from './seen.js'; // (seen, onSeen: job #7083)
 import { registerWorker, syncPush, urgentCards } from './push.js'; // (urgentCards)
@@ -94,8 +96,11 @@ async function boot() {
   bindInput();
   bindHud();
   updateStatus();
-  $('#hud .brand').addEventListener('click', () => tipEvent(dev, 'look').catch(() => {}), { once: true }); // the look's tip (tips.js)
-  onRequests(list => urgentCards(dev, list).catch(() => {})); // the notifications' tip.
+  // The look's tip and the notifications' (tips.js), asked for in passing: one that doesn't come is a tip missed, and
+  // HQ goes on.
+  const noTip = () => {};
+  $('#hud .brand').addEventListener('click', () => offerEventTip(dev, 'look').catch(noTip), { once: true });
+  onRequests(list => urgentCards(dev, list).catch(noTip));
   keepCurrent();
   $('#loading').classList.add('gone');
   refreshMeetings().then(pollMeetings); // (once HQ is up: who's in a meeting walks there)
@@ -147,6 +152,8 @@ function openAsked(dev) {
     projects: () => openProjects(), // (/?open=projects: HQ at the projects view)
     // (no owner: the book as it is, opened if it's folded, left as it is if not: a call's card.)
     book: ({ owner }) => (owner ? bookAt(owner) : document.documentElement.dataset.book === 'folded' && openBook()),
+    // (/?open=viewer&url=<a preview>: that preview in the viewer, a QR from another device's viewer: viewer.js.)
+    viewer: ({ url }) => PREVIEW.test(url ?? '') && openLink(url),
   };
   navigator.serviceWorker?.addEventListener('message', e => {
     if (tools[e.data?.open]) {
@@ -156,11 +163,12 @@ function openAsked(dev) {
   });
   addEventListener('hq:open', e => openedOnCall(tools, e.detail));
   if (tools[q.get('open')]) {
-    tools[q.get('open')]({ job: q.get('job'), owner: q.get('owner'), card: q.get('card') });
+    tools[q.get('open')]({ job: q.get('job'), owner: q.get('owner'), card: q.get('card'), url: q.get('url') });
     q.delete('open');
     q.delete('job');
     q.delete('owner');
     q.delete('card');
+    q.delete('url');
     history.replaceState(null, '', location.pathname + (q.size ? `?${q}` : ''));
   }
   // a new company's first visit opens on the intercom, which asks the language first.

@@ -2,7 +2,7 @@
 // Care › Numbers (care-numbers.ts): the day's counts the care service sends, stored by app and day; what HQ adds itself
 // (reply times, open questions and their jobs, the knowledge base's entries, the month against the cap); the board's
 // route, the chat's line on an app's dashboard in Numbers, and hq numbers' lines. Throwaway DATA_DIR, the real hq.
-import { test } from 'node:test';
+import { beforeEach, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { harness } from './harness.ts';
@@ -43,7 +43,7 @@ const shown = async (d: string) => { const v = (await boardCall('/api/care/numbe
 // What HQ's database keeps: the promise is that it's counts only, nothing of a customer
 const stored = (app: string, d: string) => (db.prepare('select counts from care_numbers where app = ? and day = ?').get(app, d) as { counts: string }).counts;
 // Each test starts from care having sent nothing (no route forgets a day)
-const fresh = () => db.prepare('delete from care_numbers').run();
+beforeEach(() => db.prepare('delete from care_numbers').run());
 
 test("care's numbers come only with care's token, whole and of the right types; only the named counts reach HQ's database", async () => {
   assert.equal((await push('pinwheel', day(-1))).status, 200);
@@ -92,7 +92,6 @@ test('stored by app and day, replacing; today so far never replaces a finished d
   await push('pinwheel', today, counts({ conversations: 6 }));
   await push('pinwheel', today, counts({ conversations: 1 }), { partial: true });
   assert.deepEqual(await now(), [6, false], 'a late partial left the finished day as it was');
-  fresh();
 });
 
 test("asking care again: today, while the board looks, in care's state until it comes or an hour goes by", async () => {
@@ -110,7 +109,6 @@ test("asking care again: today, while the board looks, in care's state until it 
   assert.deepEqual((await careCall('/api/care/state')).body.numbers, [today], 'a quarter of an hour old: asked again');
   db.prepare('update care_numbers_asks set at = ?').run(Date.now() - 61 * 60e3);
   assert.equal((await careCall('/api/care/state')).body.numbers, undefined, 'an hour without an answer: dropped');
-  fresh();
 });
 
 test('one app: the last 28 finished days, live and preview apart, today so far apart; a count not sent is "not counted", never 0', async () => {
@@ -148,7 +146,8 @@ test('one app: the last 28 finished days, live and preview apart, today so far a
   assert.equal(live.now, null);
   // the knowledge base: the shared entries and the app's own, the README not one; the month: every app's cost together
   assert.deepEqual(d.kb, { entries: 3, shared: 2, own: 1 });
-  const month = [day(-1), day(-2), today].filter(x => x.startsWith(today.slice(0, 7))).length * 0.5 + (day(-1).startsWith(today.slice(0, 7)) ? 0.5 : 0);
+  const pushedDays = [day(-1), day(-2), day(-29), today, day(-1)];   // preview's four, then live's one
+  const month = pushedDays.filter(x => x.startsWith(today.slice(0, 7))).length * 0.5;
   assert.deepEqual([d.month.month, d.month.eur, d.month.cap, d.month.console], [today.slice(0, 7), month, 19, 20]);
   // the apps the chat has numbers for, and the refusals
   assert.deepEqual((await boardCall('/api/care/numbers')).body.apps, [{ slug: 'pinwheel', name: 'Pinwheel', live: true, preview: true, status: 'preview' }]);
@@ -156,7 +155,6 @@ test('one app: the last 28 finished days, live and preview apart, today so far a
   assert.equal((await boardCall('/api/care/numbers?app=..%2Fcompany')).status, 404);
   assert.equal((await boardCall('/api/care/numbers?app=pinwheel&mode=test')).status, 400);
   assert.equal((await careCall('/api/care/numbers?app=pinwheel')).status, 401, 'the board’s login');
-  fresh();
 });
 
 test("HQ's own drafts (app hq): only their spend kept, counted in the month and apart, and never an app (job #4184)", async () => {
@@ -176,7 +174,6 @@ test("HQ's own drafts (app hq): only their spend kept, counted in the month and 
   assert.equal(numbers.line('hq', 'live', 28), null);
   db.prepare("delete from care_numbers where app = 'hq'").run();   // (a month without any)
   assert.equal((await boardCall('/api/care/numbers?app=pinwheel&mode=live')).body.month.hq, null, 'none: no part (the meter shows no key)');
-  fresh();
 });
 
 test("reply times are HQ's own: a person card's arrival to the board's Send, in working days; open questions and their jobs", async () => {

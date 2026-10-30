@@ -96,7 +96,9 @@ compose="docker compose -f $root/infra/compose.yaml -f $root/infra/generated/pro
     console.log(reviewRefusals.report(db));
     // A pull request nobody is on: open or stuck, no job queued, running or waiting on it (a review, the consolidator's check, its
     // author's job on its branch), and the last one ended over an hour ago. HQ brings back a lost hand-off by itself
-    // (review.ts reviveRounds); what's left here waits for a person: \`hq review <n>\` for a stuck one.
+    // (review.ts reviveRounds).
+    // It also brings back a ruled round's fix that was stopped, cancelled or failed before its push (review.ts reviveFixes).
+    // What's left here waits for a person: \`hq review <n>\` for a stuck one.
     // and why, as HQ last found it (prs.why: why it's stuck, or why its ruling or lost
     // round isn't acted on), or else as its jobs show it
     console.log('== pull requests nobody is on (open or stuck, no job on them for over an hour, and why)');

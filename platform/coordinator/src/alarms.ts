@@ -1,5 +1,5 @@
 // The platform's alarms, for the company's executive (company.ts ceo()): the disk filling up (disk.ts), an app down or
-// unable to sell (watch.ts) and the off-site backup failing (backup.ts). Each incident is one job for the CEO and a line
+// unable to sell (watch.ts), the off-site backup failing (backup.ts) and a lent machine gone away (away.ts). Each incident is one job for the CEO and a line
 // in the CEO's summary while it lasts. Nothing on a timer reaches the board itself: whether the board hears is the CEO's
 // call.
 import { db, inOneStep, once } from './db.ts';
@@ -54,6 +54,14 @@ export function end(key: string, notice?: Notice, now = Date.now()) {
 }
 
 export const isOn = (key: string) => !!db.prepare('select 1 from alarms where key = ? and ended is null').get(key);
+
+// The keys of the alarms on that start with prefix
+export const keysOn = (prefix: string) =>
+  (
+    db.prepare('select key from alarms where substr(key, 1, length(?)) = ? and ended is null').all(prefix, prefix) as {
+      key: string;
+    }[]
+  ).map(alarm => alarm.key);
 
 // The summary's lines: each alarm on, oldest first, with the CEO's job about it
 export const lines = () =>

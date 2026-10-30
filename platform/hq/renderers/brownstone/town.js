@@ -57,16 +57,17 @@ export function updateTown(T, S, dt) {
   }
 }
 
-// ---- drawing: small, faceless, muted figures, so the board never mistakes them for staff, cached per look and frame
+// ---- drawing: small, faceless, muted figures, so the board never mistakes them for staff, cached per look and step
 const cache = new Map();
+// (frame counts up for as long as a figure walks: only its step, which leg swings, is drawn and keyed.)
 function figure(p, frame) {
-  const key = `${p.kind}${p.coat}${p.seed % 4}${frame}${p.front}${p.umbrella}`;
+  const step = frame % 2, key = `${p.kind}${p.coat}${p.seed % 4}${step}${p.front}${p.umbrella}`;
   let c = cache.get(key);
   if (c) return c;
   c = canvas(12, 20); const g = c.getContext('2d'), r = rng(p.seed % 4 + p.kind), R2 = (x, y, w, h, col) => { g.fillStyle = col; g.fillRect(x, y, w, h); };
   const skin = pick(r, ['#e0b89a', '#c89878', '#9c7458', '#f0caa8']), hair = pick(r, ['#3b3355', '#6e4a36', '#a8927a', '#565a70']);
   const legs = p.kind === 'jogger' ? '#3b3355' : '#565a70', top = p.kind === 'jogger' ? pick(r, ['#ff8fab', '#7bd389', '#8fd3ff']) : p.coat;
-  const step = frame % 2, lift = p.kind === 'jogger' ? 1 : 0;
+  const lift = p.kind === 'jogger' ? 1 : 0;
   R2(4, 14 - lift * step, 2, 5, legs); R2(6, 14 - lift * (1 - step), 2, 5, legs);   // legs, swinging
   if (step) R2(4, 18, 2, 1, INK); else R2(6, 18, 2, 1, INK);
   R2(3, 8, 6, 7, top); R2(3, 14, 6, 1, 'rgba(29,26,47,.25)');                   // coat

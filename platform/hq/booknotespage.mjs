@@ -1,7 +1,8 @@
 // book-check.mjs's story of a call's notes page (shell/ink/calldraw.js; the store's ink/callnotes.ts), its voice line played and the store's events as the feed hands them to the book: the call
 // picked up with the book shut makes the call's notes page in My Notebook and leaves the book shut, and the agent's
-// notes land on it one by one. On a desktop and an iPad in landscape the first opens the book there, beside HQ's page,
-// and the next lands with it open; shut by the board, it stays shut as the last lands. On a phone it stays shut. Hung
+// notes land on it one by one. On a screen wider than it is tall the first opens the book there, beside HQ's page, and
+// the next lands with it open; shut by the board, it stays shut as the last lands. On one taller than it is wide (an
+// upright phone or iPad) it stays shut (shell/ink/booklayout.js initial.). Hung
 // up, nothing asks about the page (the store sends it). One the store can't be reached for is asked for
 // twice and told on a card, and the call's page a notebook has since asks nothing. (opens)
 import assert from 'node:assert/strict';

@@ -41,6 +41,12 @@ once(
   where id in (select proposal from review_inbox)`,
 );
 
+// The statuses of a fix job that ended short of the push that starts the next round. A fix task that ended so no longer
+// holds its findings, so they can be drawn again. Left alone, review.ts reviveFixes runs it again by itself.
+export const ENDED_SHORT = ['failed', 'stopped', 'cancelled'];
+export const ENDED_SHORT_SQL = `(${ENDED_SHORT.map(status => `'${status}'`).join(', ')})`;
+export const holdsFindings = (status: string) => !ENDED_SHORT.includes(status);
+
 // Outstanding finding identities for owner assignment.
 export function unassignedFindings(pr: string, round: string) {
   return `select json_extract(finding.value, '$.id') id from review_inbox r, json_each(r.findings) finding
@@ -48,7 +54,7 @@ export function unassignedFindings(pr: string, round: string) {
       and coalesce(json_extract(finding.value, '$.kind'), 'blocking') != 'nonblocking'
       and not exists (select 1 from review_fix_tasks f join jobs j on j.id = f.job
         join json_each(f.findings) assigned where f.pr = r.pr and f.round = r.round
-          and j.status not in ('failed', 'cancelled') and assigned.value = json_extract(finding.value, '$.id'))`;
+          and j.status not in ${ENDED_SHORT_SQL} and assigned.value = json_extract(finding.value, '$.id'))`;
 }
 
 // Closing records the source before inbox delivery. Acceptance supplies its replacement edge.

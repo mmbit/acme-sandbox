@@ -1,7 +1,7 @@
 // Review rulings in the project owner's inbox, and the findings each ordered fix task answers.
 // (its messages say deliverable, the board's word for a thread)
-import { unassignedFindings } from './inbox.ts';
-import { oneLine } from './agreements.ts';
+import { unassignedFindings, holdsFindings } from './inbox.ts';
+import { BAD_TITLE, taskTitle, untitledRound, roundTitle } from './tasktitles.ts';
 import { db, inOneStep } from './db.ts';
 import * as jobs from './jobs.ts';
 import * as messages from './messages.ts';
@@ -169,14 +169,14 @@ export function accept(id: string, by: string, ask: JobThreadAsk & { for?: unkno
 }
 class RefusedError extends Error {}
 
-// Why a thread's "changes" gives its author the fix task at once (review.drawWindowedChanges), if it does: where it's
-// delivered (proposals.ts) and read (review.ts untitled), as nobody adds a --title there. A refusal repeats (DrawRefused).
+// Why the author gets the fix at once, or undefined when its owner draws it (review.ts, proposals.ts)
 export function drawReason(work: { branch: string; thread: string }) {
   if (!reviewSettings().drawWindowedChanges) return undefined;
   const thread = findThread(work.thread)!;
   if (thread.status === 'open' && thread.deadline !== null) return 'its deliverable has a window';
   return jobs.itemWorkBranches().has(work.branch) ? 'its work carries a live board call item' : undefined;
 }
+// A draw refusal needs a corrected ruling, not another delivery attempt
 export class DrawRefused extends Error {}
 
 // One author job answers the whole ruling. Separate pushes would each hold the branch for their tests.
@@ -190,6 +190,10 @@ export function drawnAtOnce(item: Item, owner: string) {
   if (typeof made === 'string') throw new DrawRefused(made);
   return { jobs: [made.job], author };
 }
+
+// The ended fix tasks a new draw on their findings takes over from, as their replacement. A cancelled task isn't one:
+// someone ended it on purpose, so a new draw is new work rather than its stand-in.
+const REPLACEABLE = ['failed', 'stopped'];
 
 export function fixFor(
   thread: string | null,
@@ -211,12 +215,15 @@ export function fixFor(
   if (typeof ids === 'string') return ids;
   if (ids.some(id => !item.findings.some(f => f.id === id))) return 'name only findings in this inbox item';
   const prior = tasks(item.pr, item.round).filter(job => job.id > (item.ruling ?? 0));
-  const assigned = prior.filter(j => j.status !== 'cancelled' && j.status !== 'failed');
+  const assigned = prior.filter(j => holdsFindings(j.status));
   if (!ids.length && assigned.some(j => !j.findings.length)) return 'a live fix task already checks these touch-ups';
   if (assigned.some(j => j.findings.some(id => ids.includes(id))))
     return 'a live fix task already names one of these findings';
   const replaces = prior
-    .filter(j => j.status === 'failed' && (ids.length ? j.findings.some(id => ids.includes(id)) : !j.findings.length))
+    .filter(
+      j =>
+        REPLACEABLE.includes(j.status) && (ids.length ? j.findings.some(id => ids.includes(id)) : !j.findings.length),
+    )
     .map(j => j.id);
   return {
     item,
@@ -282,7 +289,7 @@ function acceptDrawn(job: number, item: Item) {
   if (!proposal) return;
   const all = new Set(
     tasks(item.pr, item.round)
-      .filter(j => j.status !== 'cancelled' && j.status !== 'failed')
+      .filter(j => holdsFindings(j.status))
       .flatMap(j => j.findings),
   );
   if (!item.findings.filter(f => f.kind !== 'nonblocking').every(f => all.has(f.id))) return;
@@ -324,7 +331,7 @@ export function tasks(pr: number, round: number) {
     .prepare(
       `select j.id, j.status, j.agent, f.findings from review_fix_tasks f
     join jobs j on j.id = f.job where f.pr = ? and f.round = ?
-    and not (j.status = 'failed' and ${jobs.hasReplacement('j.id')}) order by coalesce(j.seq, j.id), j.id`,
+    and not (j.status in (${REPLACEABLE.map(status => `'${status}'`).join(', ')}) and ${jobs.hasReplacement('j.id')}) order by coalesce(j.seq, j.id), j.id`,
     )
     .all(pr, round) as { id: number; status: string; agent: string; findings: string }[];
   return rows.map(j => ({ ...j, findings: JSON.parse(j.findings) as number[] }));
@@ -349,39 +356,12 @@ export function reports(pr: number) {
 
 const NAME_FINDINGS = 'name the findings this task fixes with --findings <id,id,...>';
 const UNNAMED = 'name the task for what it fixes with --title "...": the reviewer did not name every fix';
-const TITLE_MAX = 140;
-export const BAD_TITLE = `a task's title is one line of up to ${TITLE_MAX} characters`;
-
-// A task's title as the consolidator or the accepter wrote it (model output: anything but a line is none)
-export const taskTitle = (given: unknown) => {
-  const line = typeof given === 'string' ? oneLine(given) : '';
-  return line && line.length <= TITLE_MAX ? line : undefined;
-};
 // Keep every named fix in the round's title, as for a round without thread order.
 function reviewed(fix: Fix) {
   const ruling = { blocking: fix.findings, touchups_task: fix.item.touchups };
   const touchedUp = !!fix.item.touchups;
   return untitledRound(ruling, touchedUp) ? undefined : roundTitle(ruling, touchedUp);
 }
-// The tasks a fix round without thread order goes under (review.ts), as the consolidator named them (model output):
-// each blocking finding's, and its touch-ups' check when it made touch-ups
-type Ruling = { blocking?: unknown[]; touchups_task?: unknown };
-const blockingOf = (v: Ruling) => (Array.isArray(v.blocking) ? (v.blocking as { task?: unknown }[]) : []);
-const roundTasks = (v: Ruling, touchedUp: boolean) => [
-  ...blockingOf(v).map(e => e?.task),
-  ...(touchedUp ? [v.touchups_task] : []),
-];
-// Why those tasks can't title the round, so its ruling can't be read (review.ts misjudged): one isn't a title
-export function untitledRound(v: Ruling, touchedUp: boolean) {
-  const bad = roundTasks(v, touchedUp).findIndex(task => !taskTitle(task));
-  if (bad < 0) return undefined;
-  return `${bad < blockingOf(v).length ? `blocking finding ${bad + 1}'s "task"` : '"touchups_task"'} isn't one: ${BAD_TITLE}`;
-}
-// The round's title, once its ruling reads: every task it names, together and in full (none for a ruling that names
-// no fix: no blocking finding and no touch-ups)
-export const roundTitle = (v: Ruling, touchedUp: boolean) =>
-  [...new Set(roundTasks(v, touchedUp).map(task => oneLine(task as string)))].join('; ') || undefined;
-
 function readIds(named: unknown): number[] | string {
   const ids = Array.isArray(named) ? named : typeof named === 'string' ? named.split(',').map(Number) : [];
   return !ids.length || ids.some(id => !Number.isSafeInteger(id) || id <= 0)
