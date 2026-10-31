@@ -13,7 +13,7 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { PORT, REPO_DIR, KITS_DIR, COMMIT, WORKER_TOKEN, VOICE_TOKEN, ORIGIN, ZONE } from './config.ts';
 import { isAuthed, enrollOptions, enrollVerify, loginOptions, loginVerify, keepOwnDevice } from './auth.ts';
-import { loginPage, enrollPage, csp, checkoutCsp, hqIndex, hqManifest, darkLogo, logo } from './pages.ts';
+import { loginPage, enrollPage, pairPage, csp, checkoutCsp, hqIndex, hqManifest, darkLogo, logo } from './pages.ts';
 import { brand, brandLook, theme, gazette, watchGazette, ceo, roles, reads } from './company.ts';
 import { library, unshelvedProblem } from './library.ts';
 import { TYPES } from './types.ts';
@@ -256,7 +256,7 @@ const REPLAY_CSP = `default-src 'self'; script-src ${ORIGIN}/shared/watchalong/r
   `style-src 'self' 'unsafe-inline' https://fonts.googleapis.com ${PREVIEWS}; font-src 'self' data: https://fonts.gstatic.com ${PREVIEWS}; ` +
   `img-src 'self' data: blob: ${PREVIEWS}; media-src 'self' blob: ${PREVIEWS}; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; ` +
   "frame-ancestors 'self'";
-const PAGE_CSP: Record<string, string | undefined> = { '/login': csp(loginPage()), '/enroll': csp(enrollPage()), [REPLAY_PAGE]: REPLAY_CSP };
+const PAGE_CSP: Record<string, string | undefined> = { '/login': csp(loginPage()), '/enroll': csp(enrollPage()), '/pair': csp(pairPage()), [REPLAY_PAGE]: REPLAY_CSP };
 
 // The words of a route's refusal by its status alone
 const ERRORS: Record<number, string> = { 400: 'invalid', 403: 'not allowed', 404: 'not found', 409: 'it changed meanwhile', 413: 'too long', 429: 'too many' };
@@ -779,7 +779,7 @@ function jobOrigin(b: any, me: Me) {
   const ownBrief = brief || landingSource?.prompt;
   // hq job --after request:<id>: it waits for the card's answer (jobs.ts addCardWait)
   const card = b.afterRequest == null ? undefined : Number(b.afterRequest);
-  const cardRefused = card !== undefined && (Number.isSafeInteger(card) ? jobs.whyNotAgentCard(card, me.agent) : 'cards are named by their numbers');
+  const cardRefused = card !== undefined && jobs.whyNotCardWait(card, me.agent);
   if (cardRefused) return new Refused(409, cardRefused);
   // hq job --when: it starts once those events have happened (wakes.ts)
   const when = wakes.readWhen(b.when);
@@ -818,7 +818,7 @@ function jobPlacement(b: any, me: Me, origin: Exclude<ReturnType<typeof jobOrigi
   const window = itemDue !== undefined ? { deadline: itemDue, aim: itemDue } : by === 'none' ? undefined : by;
   const target = 'thread' in thread ? thread.thread : thread.from ? jobs.threadOf(thread.from) : null;
   // A running job adds no task to a thread that isn't its agent's to draw, nor waits across threads (threadorder.ts).
-  const outOfOrder = me.call ? undefined : threadorder.jobRefusal(me.agent, target, Number(b.after) || undefined);
+  const outOfOrder = me.call ? undefined : threadorder.jobRefusal(me.agent, target, Number(b.after) || undefined, origin.card); // (card)
   if (outOfOrder) return new Refused(409, outOfOrder);
   const timed = window === undefined ? undefined : target === null ? projects.untimedRefusal() : windows.threadOf({ thread: target });
   if (typeof timed === 'string')
@@ -1930,8 +1930,9 @@ const anyHost = routes({
       ? send(res, 200, await pagecheck.check(req.socket.localPort!))
       : send(res, 404, { error: 'not found' }),
   'GET /vendor/webauthn.js': async ({ res }) => send(res, 200, await readFile(WEBAUTHN), TYPES['.js']),
-  'GET /login': ({ res }) => send(res, 200, loginPage(brand()), TYPES['.html']),
-  'GET /enroll': ({ res }) => send(res, 200, enrollPage(brand()), TYPES['.html']),
+  // (signed out, in the company's look until the device's own pick: pages.ts)
+  'GET /login': ({ res }) => send(res, 200, loginPage(brand(), theme()?.renderer), TYPES['.html']),
+  'GET /enroll': ({ res }) => send(res, 200, enrollPage(brand(), theme()?.renderer), TYPES['.html']),
   // Product previews: Caddy's forward_auth check and the key hand-off run without the board session.
   '* /api/preview/check': ({ req, res }) => preview.check(req, res),
   // ...and whether a try host is a version's, before Caddy gets it a certificate
@@ -1993,7 +1994,7 @@ const board: RouteTable = {
   // slip's (book.ts, booknotes.ts, bookslips.ts).
   // (who and every book's pictures)
   // (a question typed there asks: booktyped.ts.)
-  'POST /api/book/page/save': boardJson((q, s, b) => notebookguests.managedPage(Number(b.id)) ? 403 : inBook(b.who, who => refusal(booktyped.savePage(b, who))), SAVE_MAX),
+  'POST /api/book/page/save': boardJson((q, s, b) => inBook(b.who, who => refusal(booktyped.savePage(b, who))), SAVE_MAX),
   'POST /api/book/note': boardJson((q, s, b) => refusal(booknotes.addNote(b)), NOTE_MAX),
   'GET /api/book/picture': ({ req, res }) => servePicture(req, res, null),
   'POST /api/book/scrap': ({ req, res, url }) =>
@@ -2113,9 +2114,8 @@ const hq = routes({
 
   // From HQ's own pages, or a page of its own without the board's session
   ...wrapped(signIn, (key, handle) => sameOrigin(boardJson(handle, JSON_MAX))),
-  'GET /pair': ({ res }) => send(res, 200, pair.pairPage, 'text/html; charset=utf-8'),
+  'GET /pair': ({ res }) => send(res, 200, pairPage(brand(), theme()?.renderer), TYPES['.html']),
   'GET /pair/signin.js': hqFile(hqDir('/pairsignin.js'), '/pairsignin.js'),
-  'GET /pair/signin.css': hqFile(hqDir('/pairsignin.css'), '/pairsignin.css'),
   // The guest desk (guests.ts): an outside colleague's page (and its script), opened by its link and a code by email, never by the board's session
   '* /guest/*': sameOrigin(({ req, res }) => guests.page(req, res)),
   // A call out's join link (callouts.ts): its page by its token, never the board's session

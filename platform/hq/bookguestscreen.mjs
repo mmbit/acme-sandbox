@@ -54,11 +54,18 @@ export async function drawNote(state, page, pageId) {
     .locator('#book')
     .getByRole('button', { name: await named(page, 'Pen'), exact: true })
     .click();
-  for (const height of [0.45, 0.48]) {
-    const left = await pointOnPaper(page, 0.3, height);
-    const right = await pointOnPaper(page, 0.7, height);
-    await pen(page, [left, right], page.mouse);
-  }
+  // (under what's written: the page is as tall as what's on it, so a point down the paper can land on the typed note.
+  const below = await underWords(page);
+  const [[left], [right]] = await Promise.all([0.3, 0.7].map(across => pointOnPaper(page, across, 0)));
+  for (const y of [below + 30, below + 60])
+    await pen(
+      page,
+      [
+        [left, y],
+        [right, y],
+      ],
+      page.mouse,
+    );
   await waitFor(async () => {
     const contents = (await state.h.board(`/api/notebooks/guests/groups?page=${pageId}`)).body;
     return contents.groups.reduce((total, group) => total + group.ink.length, 0) === 2;
@@ -85,6 +92,13 @@ export async function pointOnPaper(page, across, down) {
     { across, down },
   );
 }
+
+// The bottom of the lowest thing written on the page, typed or drawn
+const underWords = page =>
+  page.evaluate(() => {
+    const paper = [...document.querySelectorAll('#book .bk-page')].find(p => !p.hidden);
+    return Math.max(...[...paper.querySelectorAll('.bk-typed, .bk-unit')].map(el => el.getBoundingClientRect().bottom));
+  });
 
 // The select tool's bar round the lassoed note and lines, and the cog's card, in the guest's words
 export async function selectionAndPrefs(page) {
@@ -124,7 +138,11 @@ const aroundUnits = page =>
 // The new page after a send, untitled: its name in the bar and the pages menu, and the title field, in the guest's words
 export async function untitledPage(page) {
   const untitled = await named(page, 'Untitled page');
-  await until(page, '#book .bk-where', new RegExp(RegExp.escape(untitled)));
+  // (the rail's page button shows where it is, its name is in its label.)
+  await page.waitForFunction(
+    name => document.querySelector('#book .bk-where')?.getAttribute('aria-label').includes(name),
+    untitled,
+  );
   await page.locator('#book .bk-where').click();
   const field = page.getByRole('textbox', { name: await named(page, 'Page title'), exact: true });
   assert.equal(await field.getAttribute('placeholder'), untitled);

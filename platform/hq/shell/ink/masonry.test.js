@@ -124,7 +124,7 @@ test('units without a day get no headers', () => {
   assert.deepEqual(layout(units, 744).headers, []);
 });
 
-// (A to F of mixed heights, a line the board wrote under one following it)
+// (A to F of mixed heights, a line the board wrote under one following it.)
 const scraps = [200, 400, 420, 200, 200, 200].map((h, i) => ({ id: 'ABCDEF'[i], h }));
 const under = (all, id, line) => {
   const a = all.find(p => p.id === id),

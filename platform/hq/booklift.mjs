@@ -1,13 +1,14 @@
 // book-check.mjs's stories of the lift (shared/review/lift.js, shell/ink/booklanding.js; Ink's folder), held like an iPad mini in landscape, on book-check's played store.
 // A mark on HQ's page, saved from its post-it, lifts off as one layer at once and drifts into the book: open, onto the
 // page shown, where its scrap shows once it's in the Notebook's newest page (turned to); folded, into the handle, which
-// hears book:landed, then the scrap's id and page with it. Nothing of it stays over HQ (rule zero: bookink.mjs).
+// hears book:landed, and the scrap's id and page with it. Nothing of it stays over HQ (rule zero: bookink.mjs).
 // (Saved from the post-it since the pin flow)
 import assert from 'node:assert/strict';
 import { nothingDrawn } from './bookink.mjs';
 import { groupsOf } from './bookplayed.mjs';
 import { savedScrap } from './bookscrap.mjs';
 import { pressAlong } from './bookkit.mjs';
+import { press } from './bookbar.mjs';
 
 const FLIGHT_MS = 6000; // (the lift's flight, on a loaded worker)
 const RINGS = [
@@ -60,11 +61,15 @@ async function foldedStory(c) {
     );
     towards(flight, 'into the handle');
     assert.ok(flight.landed.length >= 1, 'the handle heard it land (book:landed)');
-    assert.deepEqual(
-      flight.landed.at(-1),
-      { id: flight.id, page: flight.page, group: true },
-      '...then its scrap, once the Notebook has it (book:scrap)',
-    );
+    // (its scrap, once the Notebook has it (book:scrap), before or after the ink's own landing: WebKit's flight can end
+    // after the save. The handle keeps the one with an id: bookhandle.js land.)
+    const scrap = await page
+      .waitForFunction(() => window.__flight.landed.find(l => l.id), null, { timeout: 5000 })
+      .then(
+        h => h.jsonValue(),
+        () => null,
+      );
+    assert.deepEqual(scrap, { id: flight.id, page: flight.page, group: true }, '...and its scrap (book:scrap)');
     await clean(page, 'folded');
     await c.shot('lift-folded', page);
     c.noErrorsIn(errors);
@@ -83,15 +88,27 @@ async function lifted(c, page, ring) {
       'pencil:landing',
       e => {
         // (the book answers before this listener, added after it, hears the ask)
-        queueMicrotask(() => Object.assign(f, { from: e.detail.from, land: e.detail.land }));
+        // (up: its layer over HQ once lift.js has made it, though no frame may come before it's gone in headless
+        // WebKit.)
+        queueMicrotask(() =>
+          Object.assign(f, { from: e.detail.from, land: e.detail.land, up: !!document.querySelector('review-lift') }),
+        );
         const sample = () => {
           const layer = document.querySelector('review-lift');
-          if (!layer) return (f.gone = f.path.length > 0);
+          if (!layer) return;
           const b = layer.getBoundingClientRect();
           f.path.push({ x: b.x, y: b.y, w: b.width, h: b.height });
           requestAnimationFrame(sample);
         };
+        // (gone when it leaves the page: headless WebKit's frames come far apart, and the next may come long after it's
+        // gone.)
         requestAnimationFrame(sample);
+        const left = new MutationObserver(() => {
+          if (document.querySelector('review-lift')) return;
+          f.gone = true;
+          left.disconnect();
+        });
+        left.observe(document.documentElement, { childList: true, subtree: true });
       },
       { once: true },
     );
@@ -120,7 +137,7 @@ async function shows(page, { id, page: on, picture }, what) {
     .waitForFunction(
       ([on, id, scrap]) => {
         const layer = document.querySelector(`#book .bk-world .bk-page:not([hidden]) > .bk-groups[data-page="${on}"]`);
-        // (the store keeps the picture in its unit's own px: moved to where the masonry put the unit. job #15978)
+        // (the store keeps the picture in its unit's own px: moved to where the masonry put the unit.)
         const card = layer?.parentElement.querySelector(`.bk-unit[data-unit="${id}"]`);
         if (!card) return false;
         const el = layer.parentElement,
@@ -146,8 +163,8 @@ async function shows(page, { id, page: on, picture }, what) {
   assert.equal(seen, null, `${what}: the book shows its scrap on its page`);
 }
 // The layer moved from the ink towards where it lands: halfway through its frames it's nearer there than it started
-function towards({ from, land, path }, what) {
-  assert.ok(path.length >= 1, `${what}: a flight of its own`);
+function towards({ from, land, path, up }, what) {
+  assert.ok(path.length >= 1 || up, `${what}: a flight of its own`);
   // (on a loaded worker Save's photo, cut as the ink flies, can hold every frame of the flight up: its path is judged
   // where its frames are seen, and said when they aren't. job #12594)
   if (path.length < 4)
@@ -168,7 +185,8 @@ async function clean(page, what) {
 // The book on a page other than the newest: New page's blank one, turned to (it's stored once something's drawn on
 // it, so the newest page is still the one before)
 async function otherPage(page) {
-  await page.locator('#book button[aria-label="New page"]').first().click();
+  // (from More where the rail has folded it away.)
+  await press(page, 'New page');
   await page.waitForFunction(
     () => document.querySelector('#book button[aria-label="The page before"]')?.disabled === false,
     null,

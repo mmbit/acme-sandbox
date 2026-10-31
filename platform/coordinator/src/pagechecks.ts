@@ -34,7 +34,7 @@ const TEXT_W_MIN = 20;
 export const SAVE_MAX = 100 + MAX_POINTS * 140 + MAX_SCRAPS * 200 + TEXTS_MAX * (100 + TEXT_MAX * 6),
   NOTE_MAX = Math.ceil(pictures.MAX_BYTES / 3) * 4 + MAX_POINTS * 140 + 64 * 1024;
 export const FULL = 'This page is full: start a new page to keep drawing (undo the last lines to save this one)';
-// (every check refuses the same way: a [status, why] pair)
+// Every check refuses with [status, why, reason?].
 // The optional reason lets a guest page word a refusal in its own language.
 export type Refused = [number, string, string?];
 export const isRefused = (v: unknown): v is Refused => Array.isArray(v) && typeof v[0] === 'number';

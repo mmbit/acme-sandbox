@@ -212,4 +212,4 @@ function endOf(id: number, depth = 0): WorkEnd | undefined {
   return reland ? endOf(reland.id, depth + 1) : 'dropped';
 }
 
-const when = (ms: number) => `${new Date(ms).toISOString().slice(0, 16).replace('T', ' ')} UTC`;
+export const when = (ms: number) => `${new Date(ms).toISOString().slice(0, 16).replace('T', ' ')} UTC`;

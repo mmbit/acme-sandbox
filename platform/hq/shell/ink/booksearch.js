@@ -20,8 +20,8 @@ const HTML = `<div class="bk-find" role="search">
     spellcheck="false" placeholder="Search the book" aria-label="Search the book"></label>
   <div class="bk-find-list" hidden><p class="bk-find-say" role="status"></p><ol class="bk-found"></ol></div></div>`;
 
-// host: where its line goes (the overview's head). dev: on mock data. find({ day, page, note }): the book opens the
-// page at the note (bookpages.js).
+// host: where its line goes (the overview's head). dev: on mock data. find({ day, page, note, notebook }): the book
+// opens the page at the note (bookpages.js).
 export function mountSearch(host, { dev, find }) {
   host.insertAdjacentHTML('afterbegin', HTML);
   const card = host.querySelector('.bk-find'),
@@ -55,7 +55,8 @@ export function mountSearch(host, { dev, find }) {
     const f = s.found[Number(e.target.closest('[data-i]')?.dataset.i)];
     if (!f) return;
     s.field.blur();
-    find({ day: f.day, page: f.page, note: f.note });
+    // (its notebook: a find on the Shelf opens it there.)
+    find({ day: f.day, page: f.page, note: f.note, notebook: f.notebook });
   });
   told(s);
 }

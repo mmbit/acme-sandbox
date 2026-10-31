@@ -102,7 +102,7 @@ function watchSize() {
 }
 
 // The book's table, its cover's edge, leaf (the cover with its paper and spine), the page's left edge a swipe closes it
-// from (the stack), rail and pull tab (the lip), on <html>
+// from (the stack), rail and pull tab (the lip, kept clear), on <html>
 function mountRoot() {
   root = document.createElement('div');
   root.id = 'book';
@@ -112,7 +112,7 @@ function mountRoot() {
     <section class="bk-leaf" aria-label="${word('The Notebook')}"><div class="bk-paper"></div><div class="bk-stack"></div><nav class="bk-rail" aria-label="${word(
       "The Notebook's controls",
     )}"></nav></section>
-    <button class="bk-lip" aria-label="${word('The Notebook: tap or pull it to open')}"></button>`;
+    <button class="bk-lip" aria-label="${word('The Notebook: tap or pull it to open')}" data-keep-clear></button>`;
   document.documentElement.append(root);
   parts = Object.fromEntries(
     ['table', 'edge', 'leaf', 'paper', 'stack', 'rail', 'lip'].map(k => [k, root.querySelector(`.bk-${k}`)]),
@@ -150,7 +150,7 @@ function openTo(find) {
   document.addEventListener('book:layout', find, { once: true });
   openBook();
 }
-// A page of the day shown turned to (a second screen's turn: pair.js.)
+// A page of the day shown turned to.
 export const showBookPage = id => pages?.show(id);
 const shape = () => shapeOf(innerWidth, innerHeight);
 // Go to a state, and remember it for this shape: opened or shut, the board swings (from where it is, mid-swing too);
@@ -374,9 +374,14 @@ function show(l, { fade = false } = {}) {
   document.documentElement.dataset.book = l.mode;
   parts.leaf.inert = l.mode === 'folded';
   parts.edge.inert = l.mode === 'folded';
-  // in the spread the book covers HQ's page on purpose: it can't be tapped through
-  document.body.inert = l.mode === 'spread';
+  coverPage(l.mode === 'spread');
   document.dispatchEvent(new CustomEvent('book:layout', { detail: l }));
+}
+
+// In the spread the book covers HQ's page on purpose, untappable; what floats over it in the top layer (a small call,
+// its cards) still can be.
+export function coverPage(covered) {
+  for (const el of document.body.children) el.inert = covered && !el.matches(':popover-open');
 }
 
 // The cover's outer edge: dragged, it resizes the open book, the edge following the finger (or the mouse) while held

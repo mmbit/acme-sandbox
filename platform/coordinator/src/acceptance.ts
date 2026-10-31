@@ -23,6 +23,12 @@ export function queue(proposal: Proposal, by: string, work: Work) {
     queuedBy: proposal.agent,
     plannedBy: by,
   });
+  // its proposer's card: the job waits for its answer, or, answered already, has it in its brief, reads its pictures and,
+  // if no job heard it, is the one that did (proposals.ts propose)
+  if (proposal.request !== null) {
+    jobs.holdForCard(job.id, proposal.request);
+    jobs.heardHeldAnswer(proposal.request, job.id);
+  }
   db.prepare("update proposals set status = 'accepted', decided = ?, accepted = ? where id = ?").run(
     new Date().toISOString(),
     job.id,

@@ -69,6 +69,16 @@
   flex-wrap: wrap;
   margin: 16px 0;
 }
+/* (each row says what it switches, as the eyebrow does: unlabelled, the notebooks and the pages read as one list) */
+.ng-notebooks:not(:empty)::before,
+.ng-pages::before {
+  content: attr(aria-label);
+  flex-basis: 100%;
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #666156;
+}
 .ng-book [aria-pressed='true'] {
   background: #292722;
   color: #fffaf0;
@@ -96,7 +106,8 @@
   position: absolute;
   top: -16px;
   left: 12px;
-  font-size: 32px;
+  width: 24px;
+  height: 36px;
   transform: rotate(-25deg);
   color: #817d70;
 }

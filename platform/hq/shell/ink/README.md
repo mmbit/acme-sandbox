@@ -1,7 +1,7 @@
 # Ink, in HQ's browser
 
 Ink is the pen platform as a whole: the Sketchbook you draw in, marks drawn anywhere and sent to it, the sheets that
-send them to agents, their answers, the call's view of the page, and a second screen paired to the first. This folder
+send them to agents, their answers, the call's view of the page, and one-time sign-in on another device. This folder
 is its browser side in HQ. The coordinator's side is `platform/coordinator/src/ink/`, the marks on any page are review
 mode's (`shared/review/`), and the ink's one outline is `shared/review/ink.js`.
 
@@ -82,8 +82,10 @@ An opted-in review round lets its guests make invitation links for up to three s
 only their own pages. The board can watch retained pages after revocation. Guest passkeys use the separate guest
 session, never the board's. Existing email codes remain available.
 
-Run `node platform/hq/book-check.mjs --stories 'guest notebooks' --shots /tmp/ink-guests` for the real coordinator
-journeys and tablet, phone and desktop evidence. `--chromium-only` is for local debugging when WebKit is absent.
+Run `hq run --kind render --bring .data/guest-shots -- node platform/hq/book-check.mjs --stories 'guest notebooks'
+--out .data/guest-shots` for the real coordinator journeys and tablet, phone and desktop evidence: `hq run` installs
+the coordinator's packages, which the check's own browser dispatch doesn't.
+`--chromium-only` is for local debugging when WebKit is absent.
 The real-server story needs the coordinator's pinned dependencies as well as Playwright.
 
 ## The notebook's link

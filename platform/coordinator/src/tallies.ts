@@ -8,13 +8,15 @@ type Lines = { added: number; removed: number };
 
 // Every thread's tallies at once, through the thread's index, which holds each job's state, end
 // and branch: the view reads them all in two reads, not two per thread.
+// (only a failed job's row is read, for its kind and pr: the case asks its state first. Asked of every job, they read
+// every thread's row, its prompt and output: 48 MB at HQ's size, 2-3 s off a cold disk.)
 export function tallies() {
   const counts = new Map(
     (
       prepared(
         `select j.thread, count(*) jobs, sum(j.status = 'done') done,
-        sum(j.kind = 'work' and j.pr is null and j.status = 'failed' and not ${failedAside('j')}) failed, max(j.finished) last from jobs j
-        indexed by jobs_thread_state where j.thread is not null group by j.thread`,
+        sum(case when j.status = 'failed' then j.kind = 'work' and j.pr is null and not ${failedAside('j')} else 0 end) failed,
+        max(j.finished) last from jobs j indexed by jobs_thread_state where j.thread is not null group by j.thread`,
       ).all() as (Counts & { thread: string })[]
     ).map(({ thread, ...counted }) => [thread, counted]),
   );

@@ -10,6 +10,7 @@ export function search(s, q) {
       top = g.parent ?? g.id;
     const at = {
       ...{ note: top, n: on.filter(x => x.page === g.page && x.parent === null && x.id <= top).length, page: p.id },
+      notebook: p.notebook,
       ...{ day: p.created.slice(0, 10), kind: s.notebook(p.notebook).kind, owner: g.owner },
     };
     if (g.words) entries.push({ ...at, how: g.said ?? 'typed', by: g.by, text: g.words, at: g.created });

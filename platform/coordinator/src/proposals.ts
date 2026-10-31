@@ -5,7 +5,7 @@
 // makes the owner's planning job, one open at a time, which takes everything waiting when it starts. The proposer's job
 // hears a drop while it runs, and hq inbox shows the proposer what became of each.
 // (its messages say deliverable, the board's word for a thread)
-import { windowed } from './inbox.ts';
+import { openProposal, windowed } from './inbox.ts'; // (openProposal)
 import * as threadends from './threadends.ts';
 import { db, inOneStep } from './db.ts';
 import { publish } from './events.ts';
@@ -48,6 +48,7 @@ export type Proposal = {
   decided: string | null;
   accepted: number | null;
   why: string | null;
+  request: number | null;
 };
 
 // hq propose: `from`, an agent's job, proposes work for itself or `ask.for`, someone who can take work (mayTake), to the
@@ -55,7 +56,7 @@ export type Proposal = {
 // and whose inbox it's in, or why not.
 export function propose(
   from: { agent: string; job: number },
-  ask: { title: unknown; brief: unknown; for?: unknown; thread?: unknown; project?: unknown },
+  ask: { title: unknown; brief: unknown; for?: unknown; thread?: unknown; project?: unknown; afterRequest?: unknown },
   mayTake: (agent: string) => boolean,
 ) {
   const title = oneLine(String(ask.title ?? '')),
@@ -71,15 +72,18 @@ export function propose(
   const thread = named?.id ?? null;
   const asked = ask.project == null ? null : String(ask.project);
   if (asked !== null && !findProject(asked)) return `there's no project "${asked}"`;
+  const card = ask.afterRequest == null ? null : Number(ask.afterRequest);
+  const cardRefused = card !== null && jobs.whyNotCardWait(card, from.agent);
+  if (cardRefused) return cardRefused;
   const own = from.job ? jobs.threadOf(from.job) : null;
   const project = asked ?? findThread(thread ?? own ?? '')?.project ?? null;
   // (kept only with its owner told: untold)
   return untold(() => {
     const { lastInsertRowid } = db
       .prepare(
-        'insert into proposals (created, agent, job, title, brief, for_agent, thread, project) values (?, ?, ?, ?, ?, ?, ?, ?)',
+        'insert into proposals (created, agent, job, title, brief, for_agent, thread, project, request) values (?, ?, ?, ?, ?, ?, ?, ?, ?)',
       )
-      .run(new Date().toISOString(), from.agent, from.job, title, brief, forAgent, thread, project);
+      .run(new Date().toISOString(), from.agent, from.job, title, brief, forAgent, thread, project, card);
     const id = Number(lastInsertRowid);
     const owner = ownerOf({ project });
     tell(owner, { id, agent: from.agent, title, project }, from);
@@ -336,6 +340,7 @@ export function drop(given: number | string, by: { agent: string; job: number },
     );
     if (item?.decision === 'close') redraws.drop(item.pr);
     if (item !== null) threadends.settled(item.branch);
+    if (p.request !== null) jobs.heldAnswerDropped(p.request);
   });
   // (a Codex job takes no message mid-run: it would become a job of its own)
   const running = !!p.job && messages.inSession(p.job);
@@ -349,12 +354,6 @@ export const waiting = () =>
     p =>
       `#${reviewinbox.externalId(p.id)} "${p.title}", from ${p.agent}${p.for_agent ? ` for ${p.for_agent}` : ''}, ${ownerOf(p) === ceo() ? 'yours' : `${ownerOf(p)}'s`} to decide, since ${p.created.slice(0, 16).replace('T', ' ')} UTC`,
   );
-function openProposal(id: number): Proposal | string {
-  const p = db.prepare('select * from proposals where id = ?').get(id) as Proposal | undefined;
-  if (!p) return `there's no proposal #${id} (hq inbox)`;
-  if (p.status !== 'open') return `proposal #${id} was ${p.status} already`;
-  return p;
-}
 
 // Why `by` may not decide the proposal: only its owner or the CEO does
 const notTheirs = (p: Proposal, by: string) =>

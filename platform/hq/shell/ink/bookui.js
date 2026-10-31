@@ -67,6 +67,7 @@ export function islands() {
   controls = div('bk-controls');
   const column = div('bk-column'),
     strip = div('bk-strip');
+  column.setAttribute('data-keep-clear', ''); // (a minimised call keeps clear of it.)
   strip.append(one('tools'));
   column.append(strip, ...RAIL.slice(1).map(name => one(name)), moreButton());
   controls.append(column);

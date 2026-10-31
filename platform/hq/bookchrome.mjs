@@ -9,13 +9,15 @@
 import assert from 'node:assert/strict';
 import { errorsOf, openPage, until } from '../../shared/browser/browser.mjs';
 import { DESKTOP, MINI } from './bookkit.mjs';
+import { press } from './bookbar.mjs';
 
 // a home-screen app's blurred strip at the top (style.css's standalone --sat: 48 px under the status bar)
 const SAT_PX = 72;
 // the tool rail at the foot, left to right: the tools, then Undo and Redo (bookstrip.js, the board's call 170)
 const RAIL = ['Select', 'Pen', 'Marker', 'Eraser', /^Shapes/, 'Text', 'Undo', 'Redo'],
   // what the column over the paper's right edge may hold
-  CONTROLS = ['Send', 'Tips', 'Invite'];
+  CONTROLS = ['Send', 'Tips', 'Invite'],
+  OVERVIEW = "The overview: the notebook's pages, and the Shelf";
 
 // c: book-check.mjs's helpers: { base, hqIn(browser, viewport), settled(page, mode), shot, settle }
 export function chromeStories(c) {
@@ -76,12 +78,16 @@ async function column(browser, c) {
   }
 }
 
+// (overview and names, in headless WebKit, fail with two or three page views at once (.bk-dogear, .bk-desk) once a turn
+// has swung: the harness's known fault, a swing that stays upright and never finishes there, on main too; Chromium
+// passes.)
 async function overview(browser, c) {
   const { page, errors, done } = await onMini(browser, c);
   try {
     const foot = page.locator('#book nav [data-island=pages]'),
       over = foot.getByRole('button', { name: /^The overview/ });
-    await over.click();
+    // (from More where the rail has folded it away: WebKit's iPad mini rail is tighter.)
+    await press(page, OVERVIEW);
     await page.waitForTimeout(c.settle);
     const far = page.getByRole('list', { name: 'The overview' });
     assert.ok(await far.isVisible(), 'the overview opened');
@@ -112,7 +118,9 @@ async function overview(browser, c) {
     await find.waitFor({ timeout: 3000 });
     await c.shot('chrome-search', page);
     await find.click();
-    await page.waitForTimeout(c.settle);
+    // (its notebook read first, another's: a moment more than a step. A wait that runs out isn't the failure: the
+    // assertion under it is, and says what failed.)
+    await far.waitFor({ state: 'hidden', timeout: 5000 }).catch(() => {});
     assert.ok(!(await far.isVisible()), 'a find opens its page');
     assert.equal(await over.getAttribute('aria-pressed'), 'false');
     assert.ok(await foot.getByRole('button', { name: /^The notebook's pages/ }).isVisible(), "the page's name back");
@@ -253,6 +261,7 @@ export function namedNotebook() {
   };
 }
 
+// (in headless WebKit: the never-finishing swing, as overview's note says)
 async function names(browser, c) {
   const context = await c.hqIn(browser, MINI, { notebooks: namedNotebook() });
   const page = await context.newPage(),
@@ -264,8 +273,9 @@ async function names(browser, c) {
     const where = () => button(page, /^The notebook's pages/).getAttribute('aria-label');
     assert.equal(await where(), "The notebook's pages: Untitled page, 2 of 2", 'the newest page, untitled');
     await c.shot('chrome-names', page);
-    await button(page, 'New page', true).click();
-    await button(page, "The notebook's pages: Untitled page, 3 of 3", true).waitFor();
+    // (New page and the overview from More where the rail has folded them away.)
+    await press(page, 'New page');
+    await button(page, "The notebook's pages: Untitled page, 3 of 3", true).waitFor({ state: 'attached' });
     assert.equal(await where(), "The notebook's pages: Untitled page, 3 of 3");
     // written on, it keeps its name
     const desk = await page.locator('#book .bk-desk').boundingBox();
@@ -276,7 +286,7 @@ async function names(browser, c) {
     await page.waitForTimeout(c.settle);
     assert.equal(await where(), "The notebook's pages: Untitled page, 3 of 3");
     // the overview names them the same, the oldest first
-    await button(page, /^The overview/).click();
+    await press(page, OVERVIEW);
     await page.waitForTimeout(c.settle);
     const tiles = await page
       .getByRole('list', { name: 'The overview' })

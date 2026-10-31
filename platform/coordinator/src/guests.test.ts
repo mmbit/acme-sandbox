@@ -142,7 +142,7 @@ test('a checklist reaches the board as a card, the guest opens it with a code, a
     /^default-src 'none'; script-src 'self'; style-src 'sha256-[^']+'; img-src 'self'/,
   );
   for (const script of p.html.matchAll(/<script([^>]*)>([^]*?)<\/script>/g)) {
-    assert.match(script[1], /src="\/guest\/[a-z]+\.js"/);
+    assert.match(script[1], /src="\/(?:guest\/[a-z]+|vendor\/webauthn)\.js"/);
     assert.equal(script[2], '', 'guest pages never run inline scripts');
   }
   p = await guest(`${path}/send`, { form: {} });

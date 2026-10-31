@@ -4,17 +4,16 @@
 // paper, held sideways too, the bar over the picture.
 import assert from 'node:assert/strict';
 import { group, ids, open } from './booknotebook.mjs';
-import { onPaper, tool } from './booknotebookscreen.mjs';
+import { inSight, tool } from './booknotebookscreen.mjs';
 import { DESKTOP, until } from './bookkit.mjs';
 
 const PHONE = { width: 390, height: 844 },
   // (held sideways the book opens beside HQ, its paper about 340 px high: the bar's rows go over the picture)
   PHONE_SIDEWAYS = { width: 844, height: 390 };
-// the seed's second and newest pages, and the lone picture on the newest (mock/notebook.json), its middle
+// the seed's second and newest pages, and the lone picture on the newest (mock/notebook.json)
 const SECOND = 2,
   NEWEST = 3,
-  SHOT = 11,
-  MIDDLE = [330, 626];
+  SHOT = 11;
 
 // c: book-check.mjs's hqIn, base, settled, shot, noErrorsIn, shots
 export function notebookSelectStories(c) {
@@ -33,7 +32,7 @@ async function loneFromBar(browser, c) {
   const bar = name => page.locator('#book .bk-sel-bar').getByRole('button', { name, exact: true });
   const pick = async () => {
     await tool(page, 'Select');
-    await page.mouse.click(...(await onPaper(page, [MIDDLE]))[0]);
+    await page.mouse.click(...(await middle(page, play)));
   };
   try {
     // picked with Select, its bar moves it to another page, and Undo brings it back
@@ -53,7 +52,7 @@ async function loneFromBar(browser, c) {
     await page.keyboard.press('Control+z');
     await until(() => ids(play, NEWEST).includes(SHOT), 'Undo restores it');
     // everything on the page picked isn't one whole group: no Move to page… in the bar
-    await page.mouse.move(...(await onPaper(page, [MIDDLE]))[0]);
+    await page.mouse.move(...(await middle(page, play)));
     await page.keyboard.press('Escape');
     await page.keyboard.press('Control+a');
     await bar('Delete').waitFor();
@@ -66,10 +65,14 @@ async function loneFromBar(browser, c) {
 
 async function barOnPhone(browser, c, screen = PHONE) {
   const upright = screen.height > screen.width;
-  const { page, errors, done } = await open(browser, c, screen, { hasTouch: true, isMobile: true, folded: upright });
+  const { page, play, errors, done } = await open(browser, c, screen, {
+    hasTouch: true,
+    isMobile: true,
+    folded: upright,
+  });
   try {
     await tool(page, 'Select');
-    await page.touchscreen.tap(...(await onPaper(page, [MIDDLE]))[0]);
+    await page.touchscreen.tap(...(await middle(page, play)));
     await page.locator('#book .bk-sel-bar').getByRole('button', { name: 'Move to page…', exact: true }).waitFor();
     // (on the paper, and none under the pages' row or another control)
     const out = await page.evaluate(() => {
@@ -94,4 +97,10 @@ async function barOnPhone(browser, c, screen = PHONE) {
   } finally {
     await done();
   }
+}
+
+// The lone picture's middle on the screen, its unit slid into view: the store keeps it in its unit's own px
+async function middle(page, play) {
+  const p = group(play, SHOT).pictures[0];
+  return (await inSight(page, NEWEST, SHOT, [[p.x + p.w / 2, p.y + p.h / 2]]))[0];
 }

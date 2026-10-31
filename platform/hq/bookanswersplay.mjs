@@ -71,10 +71,14 @@ export async function opened(browser, c, viewport, nb, options = {}) {
   page.on('pageerror', e => errors.push(e.message));
   await page.goto(`${c.base}/?intro=0`);
   await page.waitForSelector('#loading.gone');
-  await c.settled(page, 'open');
-  // (a phone's book starts folded, an iPad's upright too: its lip opens it as the spread. The lip's own
-  // click, in the page: on a loaded worker Playwright's waits on it for longer than its timeout; then the book open,
-  // however late its swing.)
+  // A phone's book comes to rest folded, an iPad's upright too: its lip opens it as the spread. The lip's own click, in
+  // the page: on a loaded worker Playwright's waits on it for longer than its timeout.
+  await page.waitForFunction(
+    () => document.documentElement.dataset.book && !document.querySelector('#book.bk-swinging'),
+    null,
+    { timeout: 60_000 },
+  );
+  await page.waitForTimeout(c.settle);
   if ((await page.evaluate(() => document.documentElement.dataset.book)) === 'folded') {
     await page.evaluate(() => document.querySelector('#book .bk-lip').click());
     await page.waitForFunction(

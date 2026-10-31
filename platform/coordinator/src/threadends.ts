@@ -52,7 +52,8 @@ function closeIfDone(id: string, failedEnds = false) {
   if (!tasks.length || !tasks.every(settled)) return;
   close(thread);
 }
-const close = (thread: Thread, what = 'deliverable done: its work settled') => {
+// HQ's close of a thread, its plan saying why (threadjudge.ts ended too)
+export const close = (thread: Thread, what = 'deliverable done: its work settled') => {
   db.prepare("update threads set status = 'done', done = ?, branch = null where id = ?").run(
     new Date().toISOString(),
     thread.id,

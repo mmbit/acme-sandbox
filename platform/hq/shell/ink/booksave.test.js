@@ -136,6 +136,36 @@ test('an Undo the store takes puts its group back, and saves on', async () => {
   assert.equal(book.view.said, '');
 });
 
+test("an edit refused as another screen changed the unit first: only what this screen added is drawn anew, the unit's own ink stays the store's", async () => {
+  const store = (globalThis.store = storeOf());
+  store.add({ ink: [line(0), line(60)] });
+  const page = { id: 1, w: 800 },
+    book = bookOf(page);
+  await readPage(book, page);
+  // (the unit laid at its place on the page: its ink in the page's px, as bookunits.js lays it)
+  page.origins = new Map([[1, { x: 50, y: 200 }]]);
+  for (const el of page.ink) el.points = el.points.map(([x, y, ...r]) => [x + 50, y + 200, ...r]);
+  // (a line written on the unit; meanwhile another screen takes the unit's second line off)
+  const added = { ...line(150), g: 1 };
+  page.ink.push(added);
+  store.groups.set(1, { ...store.groups.get(1), updated: 99, ink: [line(0)] });
+  store.editGroup = async () => {
+    throw Object.assign(new Error('changed on another screen'), { status: 409 });
+  };
+  await save(book, page);
+  assert.deepEqual(
+    page.ink.filter(el => !(el.g > 0)),
+    [added],
+    'only the line written here waits for its unit again',
+  );
+  assert.deepEqual(
+    page.ink.filter(el => el.g === 1).map(el => el.points[0][0]),
+    [50],
+    "the unit's ink as the other screen left it, where the unit is",
+  );
+  assert.equal(added.points[0][0], 150, 'the line where it was written');
+});
+
 test('a drawing with nothing above it stays in the column it was drawn in when its page is read again', async () => {
   globalThis.store = storeOf();
   // (two columns, the page not laid since: bookunits.js keeps 8 px off the paper's sides)

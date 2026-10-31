@@ -3,6 +3,7 @@
 // project, each opening beside the book (bookguestwork.js). At every step the next one is lit: the book, then the work,
 // with asks for them, else the first. Its look: bookguest.css.
 import { esc } from '../../util.js';
+import { companyFormats } from '../../world/clock.js';
 
 // Line drawings, ink only, in currentColor: shared work (a page in a window) and a journal (lines and a pencil)
 const WORK = `<svg viewBox="0 0 120 120" aria-hidden="true"><rect x="16" y="22" width="88" height="76" rx="4"/>
@@ -61,5 +62,8 @@ function workHtml(a, lit, text) {
     <h3>${esc(a.name)}</h3><p class="bk-guest-at">${esc(a.where)}</p>${state}
     <a class="bk-guest-open" href="?notebook=${+a.notebook}">${esc(text.open)} ${ARROW}</a></li>`;
 }
-const day = iso =>
-  new Date(iso).toLocaleDateString(document.documentElement.lang, { weekday: 'short', day: 'numeric', month: 'short' });
+// The day a share ends, in the guest's language: "za 31 okt"
+const day = iso => {
+  const f = companyFormats();
+  return f.day(f.dayAt(new Date(iso)), document.documentElement.lang, { weekday: true, short: true });
+};

@@ -64,16 +64,19 @@ async function torn(browser, c, size) {
     await done();
   }
 }
-// The copy carried over the targets in the rail's place, over the page bar, and let go on Submit: a plane
+// The copy carried over the targets, in view and clear of the rail's controls, and let go on Submit: a plane
 async function carried(c, page, size) {
   await watch(page, true);
   await dragTo(page, size.touch ? 'touch' : 'mouse', 'submit', async () => {
     const m = await lane(page);
     assert.match(m.submit, /^\w ?Submit → \w+$/, `Submit names the CEO (${size.name}): ${m.submit}`);
     assert.deepEqual(m.kinds, ['submit', 'pdf', 'png'], `Submit, PDF and PNG (${size.name})`);
-    assert.ok(m.toolsHidden, `the tools make way for them (${size.name})`);
-    assert.ok(m.row.bottom <= m.bar.top + 1, `over the page bar (${size.name}): ${JSON.stringify(m)}`);
-    assert.ok(m.row.left >= m.paper.left && m.row.right <= m.paper.right, `on the paper (${size.name})`);
+    assert.deepEqual(m.covering, [], `clear of the rail's controls: the tools, the page bar, More (${size.name})`);
+    const t = m.targets;
+    assert.ok(
+      t.left >= 0 && t.top >= 0 && t.right <= m.view.width && t.bottom <= m.view.height,
+      `whole in view (${size.name}): ${JSON.stringify(m)}`,
+    );
     await c.shot(`tear-carried-${size.name}`, page);
   });
   await page.waitForFunction(() => window.__sent.held, null, { timeout: 10_000 });
@@ -200,19 +203,23 @@ const watch = (page, hold = false) =>
       }
     }).observe(document.getElementById('book'), { childList: true, subtree: true });
   }, hold);
-// The lane while the copy is carried: the targets' row and what shows on it, the page bar, the paper, the tools
+// The lane while the copy is carried: the targets and what shows on them, the rail's controls still showing over
+// them, the screen
 const lane = page =>
   page.evaluate(() => {
     const box = r => ({ left: r.left, top: r.top, right: r.right, bottom: r.bottom }),
-      row = document.querySelector('#book .bk-share'),
-      shown = [...row.querySelectorAll('[data-share]')].filter(b => !b.hidden);
+      overlaps = (a, b) => a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom,
+      targets = document.querySelector('#book .bk-share'),
+      at = box(targets.getBoundingClientRect()),
+      shown = [...targets.querySelectorAll('[data-share]')].filter(b => !b.hidden);
     return {
       kinds: shown.map(b => b.dataset.share),
       submit: shown[0].innerText.replace(/\s+/g, ' ').trim(),
-      row: box(row.getBoundingClientRect()),
-      bar: box(document.querySelector('#book [data-island=pages]').getBoundingClientRect()),
-      paper: box(document.querySelector('#book .bk-desk').getBoundingClientRect()),
-      toolsHidden: getComputedStyle(document.querySelector('#book .bk-strip')).visibility === 'hidden',
+      targets: at,
+      covering: [...document.querySelector('#book .bk-column').children]
+        .filter(el => el.checkVisibility({ visibilityProperty: true }) && overlaps(box(el.getBoundingClientRect()), at))
+        .map(el => el.dataset.island ?? el.className),
+      view: { width: innerWidth, height: innerHeight },
     };
   });
 // The shown page's stamp: its words and box, the paper's, what's written on the page (its title and units), and whether

@@ -3,8 +3,7 @@
 // A ring drawn round the computer's Mail shows while it's made; once its note is in the book (saved) the page is clean
 // at once, its lines only in the note's snip. A ring scribbled out (cancelled) goes as well, and no note is made. Notes
 // kept from before, with their lines in the store, show nowhere. Sending the sheet, reloading and another tab bring
-// nothing back. nothingDrawn is the assertion, shared with the pairing's and the call's stories (bookpair.mjs,
-// bookcall.mjs).
+// nothing back. nothingDrawn is the assertion, shared with the call's stories (bookcall.mjs).
 import assert from 'node:assert/strict';
 import { savedScrap } from './bookscrap.mjs';
 import { pressAlong, ui } from './bookkit.mjs';
@@ -46,7 +45,7 @@ export async function inkStory(c) {
   }
 }
 
-// Nothing drawn over the page: review mode's ink layers blank to the last pixel, a second screen's ink blank, no ring
+// Nothing drawn over the page: review mode's ink layers blank to the last pixel, no ring
 // or pointer of a call's agent, nothing lifting into the book. Read from the layers themselves, never a guess at what's
 // on them; waits up to `within` ms for a lift in flight to land. A lift is held to its own clock: a flight of at most
 // LIFT_MS by its animations' timing, waited for while it's flying (LANDS_MS at most), never the machine's frames.
@@ -62,7 +61,6 @@ export async function nothingDrawn(page, where, within = LIFT_MS) {
       const review = document.querySelector('review-mode')?.shadowRoot;
       return [
         ...[...(review?.querySelectorAll('.ui > canvas') ?? [])].filter(inked).map(() => 'review mode’s ink'),
-        ...[...document.querySelectorAll('canvas.pair-ink')].filter(inked).map(() => 'the other screen’s ink'),
         ...[...document.querySelectorAll('[data-call-ink]')].map(() => 'a call’s ring'),
         ...[...document.querySelectorAll('.hq-pointer')].map(() => 'a call’s pointer'),
         ...[...document.querySelectorAll('review-lift')].map(l => {

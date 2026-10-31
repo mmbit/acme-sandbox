@@ -585,7 +585,7 @@ export function addPerson(id: number, name: unknown, email: unknown) {
 // domain of the first person's address, as it was when the board switched it on), up to MAX_INVITES a request in all:
 // each gets a link of their own by email at once, in the inviting guest's language, and shows on the card as invited by
 // them, for the board to remove like anyone. Never for a public mail service's domain, where "the same domain" is anyone.
-const MAX_INVITES = 3;
+export const MAX_INVITES = 3;
 const domainOf = (email: string | null | undefined) => email ? email.slice(email.lastIndexOf('@') + 1).toLowerCase() : null;
 // The domain the card's switch would allow now: its first person's, while that's not a public mail service's
 const colleagueDomain = (r: Request) => { const d = domainOf(people(r.id)[0]?.email); return d && !mailout.sharedDomain(d) ? d : null; };
@@ -932,7 +932,7 @@ function html(res: ServerResponse, status: number, lang: Lang, body: string, pct
   res.writeHead(status, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'referrer-policy': 'same-origin',
     'content-security-policy': `default-src 'none'; script-src 'self'; style-src 'sha256-${createHash('sha256').update(css).digest('base64')}'; img-src 'self'; font-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'`, ...headers });
   res.end(`<!doctype html><html lang="${lang}"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="robots" content="noindex"><title>${esc(n)}</title>${l.favicon ? `<link rel="icon" href="/guest/theme/${l.favicon}">` : ''}<style>${css}</style><script src="/guest/guest.js" defer></script><script src="/guest/webauthn.js" defer></script><script src="/guest/guestkeys.js" defer></script>
+<meta name="robots" content="noindex"><title>${esc(n)}</title>${l.favicon ? `<link rel="icon" href="/guest/theme/${l.favicon}">` : ''}<style>${css}</style><script src="/guest/guest.js" defer></script><script src="/vendor/webauthn.js" defer></script><script src="/guest/guestkeys.js" defer></script>
 <header>${logoHtml()}</header>
 <main>${body}</main>`); // (logoHtml)
 }
@@ -1252,13 +1252,21 @@ async function onDoor(req: IncomingMessage, res: ServerResponse, token: string, 
 
 function passkeyPage(req: IncomingMessage, res: ServerResponse) {
   const identity = (enroll: boolean, token: string) => {
-    const at = enroll ? undefined : opening(token), door = enroll || at ? undefined : doorOf(sha256(token));
-    const person = enroll ? signedIn(req) : at ? at.g : door?.open ? guest(door.guest) : null;
-    return person?.email && !person.revoked
-      ? { ...person, scope: enroll ? 'passkeys/enroll' : `${token}/passkey`, session: enroll ? sha256(cookies(req).g ?? '') : '' }
-      : null;
+    const person = passkeyGuest(req, enroll, token);
+    if (!person?.email || person.revoked) return null;
+    const scope = enroll ? guestkeys.enrollmentScope : guestkeys.loginScope(token);
+    const session = enroll ? sha256(cookies(req).g ?? '') : '';
+    return { ...person, scope, session };
   };
   return guestkeys.page(req, res, identity, startSession);
+}
+
+function passkeyGuest(req: IncomingMessage, enroll: boolean, token: string) {
+  if (enroll) return signedIn(req);
+  const request = opening(token);
+  if (request) return request.g;
+  const door = doorOf(sha256(token));
+  return door?.open ? guest(door.guest) : null;
 }
 
 export async function page(req: IncomingMessage, res: ServerResponse) {

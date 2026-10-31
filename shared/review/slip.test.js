@@ -1,7 +1,7 @@
 // node --test shared/review/slip.test.js   (a tick written on a slip, the slip it's on, and what "now" shows)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { isTick, nowOf, slipUnder } from './slip.js';
+import { isTick, nowOf, slipHtml, slipUnder } from './slip.js';
 
 // a line through these corners, a point every 2 px
 const line = (...corners) =>
@@ -60,4 +60,26 @@ test('now is the preview for something new, else a cut kept from before, else no
   assert.equal(nowOf({ preview: { pending: true } }).empty, 'Its preview shows here once it runs');
   assert.deepEqual(nowOf({ preview: null, now: '/cut.jpg' }), { src: '/cut.jpg', label: 'Now' });
   assert.equal(nowOf({}), null, 'nothing cuts the place again (rule zero)');
+});
+
+test("a slip in the reader's words, its agent's name marked as an AI's", () => {
+  const dutch = {
+    "{name}'s answer": 'Antwoord van {name}',
+    'Tick it: done': 'Afvinken: klaar',
+    'Reply to {name}': 'Antwoord aan {name}',
+    'Write under it to reply': 'Schrijf eronder om te antwoorden',
+  };
+  const say = (en, places = {}) => (dutch[en] ?? en).replace(/\{(\w+)\}/g, (_, k) => places[k]);
+  // each word on its own element, whatever the order of the markup around it
+  const tag = (html, name) => html.match(new RegExp(`<${name}\\b[^>]*>`))[0];
+  const html = slipHtml({ id: 1, name: 'Vera', text: 'Klaar' }, {}, { say, mark: 'AI-agent' });
+  assert.match(tag(html, 'section'), /aria-label="Antwoord van Vera · AI-agent"/);
+  assert.match(html, /<b class="slip-by">Vera · AI-agent<\/b>/);
+  assert.match(tag(html, 'button'), /aria-label="Afvinken: klaar"/);
+  assert.match(tag(html, 'textarea'), /aria-label="Antwoord aan Vera"/);
+  assert.match(tag(html, 'textarea'), /placeholder="Schrijf eronder om te antwoorden"/);
+  const english = slipHtml({ id: 1, name: 'Vera', text: 'Done' }, {});
+  assert.match(english, /<b class="slip-by">Vera<\/b>/);
+  assert.match(tag(english, 'textarea'), /aria-label="Reply to Vera"/);
+  assert.match(tag(english, 'textarea'), /placeholder="Write under it to reply"/);
 });

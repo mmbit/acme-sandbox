@@ -9,6 +9,7 @@ import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
 import { harness, until, type Running } from './harness.ts';
+import { duration } from '../../worker/hq/waits.ts';
 
 const FILE = `projects:
   - { id: game, name: The game, owner: wren }
@@ -35,11 +36,13 @@ const threadjudge = await import('./threadjudge.ts');
 const review = await import('./review.ts');
 const rounds = await import('./rounds.ts');
 const windows = await import('./windows.ts');
+const sizes = await import('./sizes.ts');
+const agenttime = await import('./agenttime.ts');
 
 beforeEach(async () => {
   h.cancelQueued();
   // Job IDs are reused here: their timing and saved estimates must leave with them.
-  db.exec(`delete from runs; delete from usage; delete from sizes; delete from predictions; delete from jobs; delete from threads; delete from thread_needs; delete from plan_changes; delete from prs;
+  db.exec(`delete from runs; delete from usage; delete from sizes; delete from predictions; delete from jobs; delete from threads; delete from judgings; delete from thread_needs; delete from plan_changes; delete from prs;
     delete from waits; delete from wakes; delete from meetings; delete from meeting_seats; delete from meeting_asks;
     delete from review_fix_tasks; delete from review_inbox; delete from proposals; delete from review_waiting_pushes`);
 });
@@ -562,6 +565,111 @@ test('a queued task cancelled after the rest of its deliverable ended wakes its 
   assert.equal(judgeOf(engine), null, 'not while its next task is queued');
   assert.ok(ledger.cancelJob(next, 'not needed after all'));
   assert.match(judgeRow(judgeOf(engine)!).prompt, new RegExp(`#${ran!.id} bolt: .*It ended failed`));
+});
+
+// A judge reads what the deliverable has had (threadjudge.ts historyOf), and its end leaves nothing stranded
+// (threadjudge.ts ended). A judge that ends done closes each deliverable it left open with nothing drawn in it.
+// A failed judge wakes its owner again.
+const MIN = 60_000;
+const ran = (job: number, minutes: number) => {
+  agenttime.runStarted(job, 'claude-a');
+  agenttime.runEnded(job, 'done', Date.now() + minutes * MIN);
+};
+// a task queued with its size (hq job --size), and the CEO's revision of one under way (hq estimate set)
+const sized = (thread: string, minutes: number) =>
+  h.jobs.createJob({
+    agent: 'bolt',
+    title: "bolt's step",
+    prompt: 'Do it.',
+    thread,
+    engine: 'tasks',
+    queuedBy: 'wren',
+    size: { agent_ms: minutes * MIN, refs: [], why: 'scope' },
+  }).id;
+const revised = (job: number, minutes: number) =>
+  assert.ok(!Array.isArray(sizes.setSize(job, `${minutes}m`, 'it slipped', 'juno')), 'the CEO re-sizes it');
+
+test("a judge's brief counts its deliverable's judgments, its deadline and agent time against its first size", async () => {
+  const engine = thread('engine');
+  const deadline = Date.now() - 26 * 60 * MIN;
+  windows.set(projects.findThread(engine)!, { deadline, aim: deadline }, 'wren');
+  const built = sized(engine, 20);
+  ran(built, 50);
+  await h.finish((await claim())!, { result: 'Built it' });
+  const first = judgeOf(engine)!;
+  assert.match(
+    judgeRow(first).prompt,
+    /done when: It works\nNever judged before\. Its deadline: .* UTC, 26 h( 1 min)? ago\. Agent time on it so far: 5\d min, against 20 min first sized/,
+  );
+  assert.match(judgeRow(first).prompt, /closes as your job ends/);
+  const judging = await h.claimJob(first);
+  const next = sized(engine, 30);
+  await h.finish(judging, { result: 'Drew one more check' });
+  assert.equal(projects.findThread(engine)!.status, 'open', 'it drew a task: kept open');
+  ran(next, 70);
+  await h.finish((await claim())!, { result: 'Checked: it works' });
+  const second = judgeOf(engine)!;
+  assert.notEqual(second, first);
+  assert.match(
+    judgeRow(second).prompt,
+    new RegExp(`Judged 1 time before: #${first} \\(done\\)\\. .* against 20 min first sized`),
+    'its first size is what was drawn before its first judgment',
+  );
+});
+
+test('a deliverable joining a shared judge keeps its first size: its own tasks, each at its original estimate', async () => {
+  const [engine, sound] = [thread('engine'), thread('sound')];
+  const guessed = task(engine);
+  const predicted = predictions.latest(guessed)!.agent_ms;
+  await h.finish((await claim())!, { result: 'Built it' });
+  const shared = judgeOf(engine)!;
+  const recorded = sized(sound, 20);
+  assert.ok(recorded > shared, 'its original task was queued after the judge it joins');
+  revised(recorded, 45);
+  await h.finish((await claim())!, { result: 'Recorded it' });
+  assert.equal(judgeOf(sound), shared);
+  const brief = judgeRow(shared).prompt;
+  assert.match(
+    brief,
+    new RegExp(`Thread engine .*\\n.* against ${duration(predicted / MIN)} first sized`),
+    'a prediction alone sizes it',
+  );
+  assert.match(brief, /Thread sound .*\n.* against 20 min first sized/, 'never its revision');
+  const judging = await h.claimJob(shared);
+  task(sound);
+  await h.finish(judging, { result: 'Engine is done; drew a step for sound' });
+  await h.finish((await claim())!, { result: 'Checked: it works' });
+  const again = judgeOf(sound)!;
+  assert.match(
+    judgeRow(again).prompt,
+    new RegExp(`Judged 1 time before: #${shared} \\(done\\)\\. .* against 20 min first sized`),
+    'its first size is still its task before the shared judge took it in',
+  );
+});
+
+test('a judge that ends with nothing drawn closes its deliverable; one that fails wakes its owner again', async () => {
+  const [engine, sound] = [thread('engine'), thread('sound')];
+  task(engine);
+  await h.finish((await claim())!, { result: 'Built it' });
+  const failing = judgeOf(engine)!;
+  await h.finish(await h.claimJob(failing), { status: 'failed', result: 'The session broke' });
+  const again = judgeOf(engine)!;
+  assert.notEqual(again, failing, 'a failed judge wakes its owner again');
+  assert.equal(h.job(again).status, 'queued');
+  assert.match(judgeRow(again).prompt, new RegExp(`Judged 1 time before: #${failing} \\(failed\\)`));
+  task(sound);
+  await h.finish((await claim())!, { result: 'Recorded it' });
+  assert.equal(judgeOf(sound), again, 'one judge takes both in');
+  const judging = await h.claimJob(again);
+  task(sound);
+  await h.finish(judging, { result: 'Engine kept open; drew a step for sound' });
+  assert.equal(projects.findThread(engine)!.status, 'done', 'left open with nothing drawn: closed');
+  assert.equal(projects.findThread(sound)!.status, 'open', 'its next task keeps it open');
+  const closed = db.prepare('select what, by from plan_changes where thread = ? order by id desc limit 1').get(engine);
+  assert.deepEqual(
+    { ...(closed as object) },
+    { what: `deliverable done: its judge #${again} ended with nothing drawn in it`, by: 'hq' },
+  );
 });
 
 // A task joining a deliverable takes it out of a judge that hasn't started (threadjudge.ts release)

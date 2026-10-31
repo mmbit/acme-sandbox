@@ -25,7 +25,8 @@ export async function fromBar(page, g, name, how = 'click') {
   await bar.getByRole('button', { name, exact: true })[how]();
 }
 // The first point of a unit, in screen px, scanned from its top left in rows 4 px apart and steps 8 px along, where the
-// page itself is under the point: a tall unit runs past the desk's foot, and the for-you counter floats over that foot
+// page itself is under the point and no control on it (a room's handle): a tall unit runs past the desk's foot, and the
+// for-you counter floats over that foot
 async function shownPoint(page, unit) {
   const [box, desk] = await Promise.all([unit.boundingBox(), page.locator('#book .bk-desk').boundingBox()]),
     area = {
@@ -39,8 +40,10 @@ async function shownPoint(page, unit) {
       stepPx = 8,
       insetPx = 2;
     for (let y = top + insetPx; y < bottom; y += rowPx)
-      for (let x = left + insetPx; x < right; x += stepPx)
-        if (u.closest('.bk-page').contains(document.elementFromPoint(x, y))) return [x, y];
+      for (let x = left + insetPx; x < right; x += stepPx) {
+        const hit = document.elementFromPoint(x, y);
+        if (u.closest('.bk-page').contains(hit) && !hit.closest('button')) return [x, y];
+      }
     return null;
   }, area);
 }
@@ -74,21 +77,33 @@ export const onPaper = (page, points, unit = null) =>
     },
     [points, unit],
   );
+// A column of the screen (x) in a unit's own px, as the store keeps its ink: onPaper's, the other way.
+export async function inUnit(page, unit, x) {
+  const along = [0, 1].map(dx => [dx, 0]),
+    [[x0], [x1]] = await onPaper(page, along, unit);
+  return (x - x0) / (x1 - x0);
+}
 // Bare paper on the page shown, on the screen: a little under the shortest column's last unit (and what hangs under
-// it), where a line is a unit of its own (bookunits.js newUnit), left of the controls. (the old canvas's clear place was a fixed point of its px)
+// it), where a line is a unit of its own (bookunits.js newUnit), left of the controls; where the page ends under that
+// unit (one column, as a desktop's book shows it), in the gap under the column's first unit; and the unit above it,
+// [x, y, id].
 export const clearPlace = page =>
   page.evaluate(() => {
     const shown = [...document.querySelectorAll('#book .bk-page')].find(p => !p.hidden),
-      feet = new Map();
+      columns = new Map();
     for (const u of shown.querySelectorAll('.bk-unit')) {
       const r = u.getBoundingClientRect(),
         under = shown.querySelector(`.bk-under[data-g="${u.dataset.unit}"]`),
         bottom = Math.max(r.bottom, under?.getBoundingClientRect().bottom ?? 0),
         x = Math.round(r.left);
-      if (!feet.has(x) || feet.get(x).bottom < bottom) feet.set(x, { left: r.left, bottom });
+      columns.set(x, [...(columns.get(x) ?? []), { left: r.left, top: r.top, bottom, unit: Number(u.dataset.unit) }]);
     }
-    const low = [...feet.values()].sort((a, b) => a.bottom - b.bottom)[0];
-    return [low.left + 40, low.bottom + 28];
+    const column = [...columns.values()]
+        .map(units => units.sort((a, b) => a.top - b.top))
+        .sort((a, b) => a.at(-1).bottom - b.at(-1).bottom)[0],
+      low = column.at(-1);
+    if (low.bottom + 28 < shown.getBoundingClientRect().bottom - 8) return [low.left + 40, low.bottom + 28, low.unit];
+    return [column[0].left + 40, (column[0].bottom + column[1].top) / 2, column[0].unit];
   });
 export const tool = (page, name) => page.locator('#book').getByRole('button', { name, exact: true }).click();
 // The page at a place in the notebook (1: its first; the seed's pages' ids are theirs), turned to with the foot row's

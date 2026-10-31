@@ -13,7 +13,8 @@ export { act } from './notebookguestactions.ts';
 import * as rounds from './notebookrounds.ts';
 import { findAgent } from './jobs.ts';
 import { BOARD } from './ink/book.ts';
-import { isRefused, labelOf, type Refused } from './pagechecks.ts';
+import { TEXTS_MAX, WORDS_MAX, isRefused, labelOf, type Refused } from './pagechecks.ts';
+import { TEXT_MAX } from '../../hq/shell/ink/notebookparts.js';
 
 export type Membership = {
   id: number;
@@ -152,7 +153,15 @@ export function revokeNotebook(b: any) {
 export function listNotebooks(name?: string, only?: number) {
   const members = name ? forGuest(name) : memberships();
   const ids = [...new Set(members.map(m => m.notebook))].filter(id => !only || id === only);
-  return { notebooks: ids.map(id => describe(id, name)) };
+  return {
+    notebooks: ids.map(id => describe(id, name)),
+    limits: {
+      noteCharacters: TEXT_MAX,
+      replyCharacters: WORDS_MAX,
+      typedNotes: TEXTS_MAX,
+      colleagueInvites: guests.MAX_INVITES,
+    },
+  };
 }
 
 function describe(id: number, name?: string) {
@@ -275,9 +284,9 @@ function invitesFor(m: Membership) {
   const domain = domainOf(guests.emailOf(m.guest)!);
   const round = rounds.roundOf(m.notebook);
   if (!setting?.allowed || !domain || mailout.sharedDomain(domain) || !round || round.closed) return null;
-  // The board allows at most three colleague invitations, as on guest checklist cards.
+  // Colleague invitations share the guest checklist cap.
   const used = membersOf(m.notebook).filter(person => person.invited_by !== null).length;
-  return { domain, left: Math.max(0, 3 - used) };
+  return { domain, left: Math.max(0, guests.MAX_INVITES - used) };
 }
 
 export function inviteColleague(b: any, name: string) {

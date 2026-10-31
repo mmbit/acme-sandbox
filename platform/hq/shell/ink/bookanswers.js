@@ -15,8 +15,7 @@ import { fitReplies, formHtml, replyHtml, wireForm, wireReply } from './bookansw
 import { loadGroups, sendForm, sendReply } from './bookanswersdata.js';
 import { versionsEl } from './bookversions.js';
 import { clearOf } from './bookui.js';
-import { scope, word } from './bookscope.js';
-import { words } from './notebookwords.js';
+import { aiMark, word } from './bookscope.js';
 
 for (const name of ['bookanswers', 'bookanswerform', 'bookversions']) stylesheet(`shell/ink/${name}.css`);
 
@@ -139,8 +138,9 @@ function answerEl(layer, g, a, spot, replies) {
   // (data-g: its group's, whose live move by Select carries it: bookselectlift.js)
   Object.assign(el.dataset, { answer: a.id, style: a.style, g: g.id });
   el.toggleAttribute('data-ticked', !!a.ticked);
-  // (to a guest the name says it's an AI's, in their language: charter rule 5)
-  const name = scope ? `${a.name} · ${words[document.documentElement.lang].aiAgent}` : a.name;
+  // (to a guest the name says it's an AI's, in their language: charter rule 5.)
+  const mark = aiMark(),
+    name = mark ? `${a.name} · ${mark}` : a.name;
   el.setAttribute(
     'aria-label',
     word(a.style === 'question' ? '{name} asks: {text}' : '{name} answers: {text}', { name, text: a.text ?? '' }),

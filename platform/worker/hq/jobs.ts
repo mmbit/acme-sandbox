@@ -222,16 +222,22 @@ function goalAndBrief(briefPath: string) {
   return readGoalAndWords() ?? stop('No job was queued: --goal - takes {"goal": "...", "words": "..."} on stdin');
 }
 
+// request:<id>, a card named in hq job's and hq propose's --after and in hq waits: its number, undefined for anything else
+export function cardNamed(arg: string | undefined) {
+  const card = /^request:([0-9]+)$/.exec(arg ?? '');
+  return card ? Number(card[1]) : undefined;
+}
+
 // [--after <job id> | --after request:<id>]... <agent> "title" [file | -], checked. The job comes with its first
 // wait on a job (after, null without) and its first on a card (afterRequest); the rest of its waits are `more`.
 function readArguments(args: string[]) {
   const waits: ({ job: number } | { request: number })[] = [];
   while (args[0] === '--after') {
-    const card = /^request:([0-9]+)$/.exec(args[1] ?? ''),
+    const card = cardNamed(args[1]),
       job = jsonArgument(args[1]);
-    if (!card && !(Number.isSafeInteger(job) && (job as number) > 0))
+    if (card === undefined && !(Number.isSafeInteger(job) && (job as number) > 0))
       stop('No job was queued: --after takes a job number or request:<id> for a card');
-    waits.push(card ? { request: Number(card[1]) } : { job: job as number });
+    waits.push(card !== undefined ? { request: card } : { job: job as number });
     args = args.slice(2);
   }
   const firstJob = waits.find(w => 'job' in w),
@@ -528,8 +534,8 @@ export const waits = {
     } = takeValues(given, ['--why'], 'Wait unchanged');
     if (rest.length) stop('Too many arguments: hq waits <job> add|move|drop <wait> [replacement] [--why "reason"]');
     const number = /^[0-9]+$/;
-    const card = /^request:([0-9]+)$/.exec(waitedFor ?? '');
-    if (card) return changeCardWait(id, how, Number(card[1]), replacement, why);
+    const card = cardNamed(waitedFor);
+    if (card !== undefined) return changeCardWait(id, how, card, replacement, why);
     const valid =
       number.test(id ?? '') &&
       number.test(waitedFor ?? '') &&

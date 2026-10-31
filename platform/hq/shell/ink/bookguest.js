@@ -3,14 +3,15 @@
 // opens with the book beside it at their page on it (bookguestwork.js), and their journal opens alone. In a review
 // round their page's send marks it done, Undo under it taking that back while the round is open. (the shelf, books
 // and work)
-import { initBook } from './book.js';
+import { coverPage, initBook } from './book.js';
 import { showBook, showShelf } from './bookguestshelf.js';
 import { showWork } from './bookguestwork.js';
 import { button, island } from './bookui.js';
 import { notebookRequest } from './bookscope.js';
 import { esc, stylesheet } from '../../util.js';
 import { mountGuestInvites } from './bookguestinvites.js';
-import { words, refusals } from './notebookwords.js';
+import { words, refusal } from './notebookwords.js';
+import { setTimeZone } from '../../world/clock.js';
 
 const text = words[document.documentElement.lang];
 stylesheet('shell/ink/bookguest.css'); // (its shelf, and a round's Marked done)
@@ -19,12 +20,23 @@ const api = '/guest/notebooks/api';
 const status = document.querySelector('[data-notebook-status]');
 const shelved = await fetch(`${api}/shelf`);
 const shelf = await shelved.json();
+// (its days on the company's clock, as the board's)
+if (shelved.ok) setTimeZone(shelf.timeZone);
 const id = Number(query.get('notebook'));
 const response = id ? await fetch(`${api}/list?notebook=${id}`) : null;
 const read = response ? await response.json() : null;
 const work = shelf.books?.flatMap(book => book.artifacts.map(a => ({ ...a, book }))).find(a => a.notebook === id);
+// A refusal is the page's one message, on its card: no book, and no passkey to save for a way back that's closed
+const ended = message => {
+  document.querySelector('#book')?.remove();
+  document.querySelector('[data-guest-passkey-prompt]')?.remove();
+  coverPage(false);
+  status.className = 'bk-guest-ended';
+  document.querySelector('main').append(status);
+  status.textContent = message;
+};
 if (!shelved.ok || (response && (!response.ok || !read.notebooks.length))) {
-  status.textContent = (read ?? shelf).error ?? text.invitationEnded;
+  ended((read ?? shelf).error ?? text.invitationEnded);
 } else if (!id && query.has('book')) {
   showBook(shelf, query.get('book'), document.querySelector('main'), text);
 } else if (!id) {
@@ -38,6 +50,7 @@ if (!shelved.ok || (response && (!response.ok || !read.notebooks.length))) {
       notebook: notebook.id,
       page: work?.page ?? notebook.pages.at(-1)?.id,
       singlePage: !!work || notebook.kind === 'round',
+      limits: read.limits,
     },
   });
   document.documentElement.append(document.querySelector('#toasts'));
@@ -80,10 +93,7 @@ if (!shelved.ok || (response && (!response.ok || !read.notebooks.length))) {
       const book = listed.notebooks?.[0];
       if (!current.ok || !book) {
         stopped = true;
-        document.querySelector('#book')?.remove();
-        document.body.inert = false;
-        document.querySelector('main').append(status);
-        status.textContent = refusals[listed.reason]?.[document.documentElement.lang] ?? text.invitationEnded;
+        ended(refusal(document.documentElement.lang, listed.reason) ?? text.invitationEnded);
         return;
       }
       const page = book.pages[0];

@@ -9,9 +9,12 @@
 // A watch-along records it as the board sees it.
 // It has one form for the whole call, the face, so the board always knows what it's looking at.
 // It's no page to write on: marked data-no-ink, a pen drags and taps it as a finger does (review mode's pencil.js), so
-// it always comes back with one tap. Its corner steps clear of the page's own controls marked data-keep-clear (HQ's zoom
-// buttons).
-const MARGIN_PX = 12;
+// it always comes back with one tap. It floats over everything on the page, in the top layer, and its corner steps clear
+// of the page's own controls marked data-keep-clear (HQ's tools, its zoom keys, the open desk, the book's tabs and rail),
+// to where it covers the least of what the board reads there, marked data-keep-in-sight (the book's page heading, dates
+// and scraps).
+import { clearSpot, floating, inSight, keptClear, room } from './floating.js';
+
 // The spring that carries it to a corner: stiff enough to land in about 0.4 s, damped to settle with one small overshoot
 const STIFFNESS = 380,
   DAMPING = 30;
@@ -31,6 +34,7 @@ export class CallBubble {
     const el = (this.el = document.createElement('div'));
     el.className = 'callbubble';
     el.setAttribute('data-no-ink', '');
+    el.setAttribute('data-keep-clear', ''); // (the call's cards keep clear of it, as of the page's controls)
     el.setAttribute('role', 'region');
     el.setAttribute('aria-label', words.call);
     el.innerHTML = `<button type="button" class="cb-face" aria-label="${attr(words.open)}" title="${attr(words.open)}"></button>
@@ -50,15 +54,25 @@ export class CallBubble {
     this.fitting = new ResizeObserver(this.fit);
     addEventListener('resize', this.fit);
     visualViewport?.addEventListener('resize', this.fit);
+    // (and what it keeps clear of moved: a tool opened or closed, a swing ended)
+    this.refit = () => {
+      cancelAnimationFrame(this.refitting);
+      this.refitting = requestAnimationFrame(() => this.moveIfCrowded());
+    };
+    this.changes = new MutationObserver(this.refit);
+    for (const event of ['transitionend', 'animationend']) document.addEventListener(event, this.refit);
   }
 
   // Shown over the page, growing out of `from` (the call screen's face, a DOMRect) when given
   show(from = null) {
     this.leaving?.cancel();
     this.leaving = null;
-    document.body.append(this.el);
+    floating().append(this.el);
     this.fitting.observe(document.body);
     this.fitting.observe(this.el);
+    // (a page or a tool shown or hidden, a part taking taps or not, the book's mode)
+    const attributeFilter = ['hidden', 'inert', 'data-book'];
+    this.changes.observe(document.documentElement, { attributes: true, subtree: true, attributeFilter });
     this.el.hidden = false;
     const home = this.home();
     this.place(home.x, home.y);
@@ -97,9 +111,12 @@ export class CallBubble {
 
   close() {
     cancelAnimationFrame(this.frame);
+    cancelAnimationFrame(this.refitting);
     this.fitting.disconnect();
+    this.changes.disconnect();
     removeEventListener('resize', this.fit);
     visualViewport?.removeEventListener('resize', this.fit);
+    for (const event of ['transitionend', 'animationend']) document.removeEventListener(event, this.refit);
     this.el.remove();
   }
 
@@ -178,7 +195,7 @@ export class CallBubble {
 
   throwTo(vx, vy) {
     const { x, y } = this.at;
-    const box = this.bounds();
+    const box = room();
     const ahead = { x: x + vx * THROW_S, y: y + vy * THROW_S };
     const right = ahead.x + this.size().w / 2 > (box.left + box.right) / 2,
       bottom = ahead.y + this.size().h / 2 > (box.top + box.bottom) / 2;
@@ -191,10 +208,18 @@ export class CallBubble {
   settle(animated = true) {
     if (!this.el.isConnected) return;
     if (!animated || this.reduced) {
-      const home = this.home();
+      cancelAnimationFrame(this.frame);
+      const home = (this.target = this.home());
       return this.place(home.x, home.y);
     }
     this.spring({ vx: 0, vy: 0 });
+  }
+
+  // To a new home when what it keeps clear of moved onto or off its way (not while held: the drop decides then)
+  moveIfCrowded() {
+    if (!this.el.isConnected || this.el.classList.contains('held') || !this.target) return;
+    const home = this.home();
+    if (Math.hypot(home.x - this.target.x, home.y - this.target.y) > 1) this.settle();
   }
 
   spring(v) {
@@ -204,10 +229,10 @@ export class CallBubble {
       { vx, vy } = v,
       last = performance.now(),
       landed = false;
+    const home = (this.target = this.home());
     const step = now => {
       const dt = Math.min(0.032, (now - last) / 1000);
       last = now;
-      const home = this.home();
       const ax = STIFFNESS * (home.x - x) - DAMPING * vx,
         ay = STIFFNESS * (home.y - y) - DAMPING * vy;
       vx += ax * dt;
@@ -226,29 +251,19 @@ export class CallBubble {
   }
 
   // Where its corner is now: inside the visible viewport (an on-screen keyboard, a phone's bars) and the page (HQ's
-  // narrows beside its book), off the safe areas
+  // narrows beside its book), off the safe areas, clear of the page's own controls and over as little as can be of what
+  // the board reads. With no room clear of the controls there, the nearest clear spot on the whole screen; with none
+  // there either, the corner itself.
   home() {
-    const box = this.bounds(),
-      { w, h } = this.size(),
-      top = this.corner.startsWith('top');
-    const at = { x: this.corner.endsWith('left') ? box.left : box.right - w, y: top ? box.top : box.bottom - h };
-    // (off the page's own controls there: below them in a top corner, above them in a bottom one)
-    for (const r of [...document.querySelectorAll('[data-keep-clear]')].map(c => c.getBoundingClientRect()))
-      if (r.width && r.height && r.left < at.x + w && at.x < r.right && r.top < at.y + h && at.y < r.bottom)
-        at.y = top ? r.bottom + MARGIN_PX : r.top - MARGIN_PX - h;
-    return at;
+    const size = this.size(),
+      places = [room(), room({ whole: true })].map(box => ({ room: box, at: this.cornerOf(box, size) }));
+    return clearSpot(size, places, keptClear(this.el), inSight()) ?? places[0].at;
   }
 
-  bounds() {
-    const vv = visualViewport,
-      safe = safeArea();
-    const x0 = vv?.offsetLeft ?? 0,
-      y0 = vv?.offsetTop ?? 0;
+  cornerOf(box, { w, h }) {
     return {
-      left: x0 + MARGIN_PX + safe.left,
-      top: y0 + MARGIN_PX + safe.top,
-      right: Math.min(x0 + (vv?.width ?? innerWidth), document.body.clientWidth) - MARGIN_PX - safe.right,
-      bottom: y0 + (vv?.height ?? innerHeight) - MARGIN_PX - safe.bottom,
+      x: this.corner.endsWith('left') ? box.left : box.right - w,
+      y: this.corner.startsWith('top') ? box.top : box.bottom - h,
     };
   }
 
@@ -266,27 +281,3 @@ const attr = text => String(text).replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)}
 // The live eye, open, its pupil looking around (the look animates .cb-pupil)
 const EYE = `<svg viewBox="0 0 16 10" aria-hidden="true"><path class="cb-lid" d="M1 5C3.5 1.5 6 1 8 1s4.5.5 7 4c-2.5 3.5-5 4-7 4S3.5 8.5 1 5Z"/><circle class="cb-pupil" cx="8" cy="5" r="2.4"/></svg>`;
 const HANG_UP = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 14.5c4.9-4.6 13.1-4.6 18 0l-2.4 2.6-3.6-1.6v-2.4a11 11 0 0 0-6 0v2.4l-3.6 1.6Z"/></svg>`;
-
-// The screen's safe areas (a notch, the home indicator), in px: env() reads only in a property that takes a length
-let probe = null;
-function safeArea() {
-  if (!probe?.isConnected) {
-    probe = document.createElement('div');
-    Object.assign(probe.style, {
-      position: 'fixed',
-      visibility: 'hidden',
-      pointerEvents: 'none',
-      padding:
-        'env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px)',
-    });
-    probe.setAttribute('data-watchalong-hide', '');
-    document.body.append(probe);
-  }
-  const css = getComputedStyle(probe);
-  return {
-    top: parseFloat(css.paddingTop),
-    right: parseFloat(css.paddingRight),
-    bottom: parseFloat(css.paddingBottom),
-    left: parseFloat(css.paddingLeft),
-  };
-}

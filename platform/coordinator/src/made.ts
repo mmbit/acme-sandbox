@@ -49,11 +49,20 @@ export function oneTaskThread(project: string | null | undefined, job: { id: num
 export const oneTaskName = (title: string) => (title.length > NAME_MAX ? `${title.slice(0, NAME_MAX - 1)}…` : title);
 
 // Whether a thread is HQ's one-task thread for a job of its own (as oneTaskThread names it): its id is its project's
-// and /job-<id> of a job in it. Read for every thread the board's view sends (projectboard.ts), and in SQL for a thread
+// and /job-<id> of a job in it. Every one at once for the board's view (oneTasks), and in SQL for a thread
 // id's expression (oneTaskSql: newthread.ts chainedAfter).
 export function oneTask(thread: string) {
   return !!(prepared(`select ${oneTaskSql('$thread')} one`).get({ thread }) as { one: number }).one;
 }
+// Every one-task thread, in one walk of the thread's index (the board's view reads each thread: projectboard.ts)
+export const oneTasks = () =>
+  new Set(
+    (
+      prepared(
+        "select distinct w.thread from jobs w indexed by jobs_thread_state where w.thread is not null and w.thread like '%/job-' || w.id",
+      ).all() as { thread: string }[]
+    ).map(row => row.thread),
+  );
 export function oneTaskSql(thread: string) {
   return `exists (select 1 from jobs w where w.thread = ${thread} and ${thread} like '%/job-' || w.id)`;
 }

@@ -141,8 +141,7 @@ export async function unscrap(id) {
   await toNotebook('/groups/delete', { id });
   document.dispatchEvent(new CustomEvent('pencil:wiped', { detail: { id, back: false, group: true } }));
 }
-// A note wiped (the last one in, taken back): gone from its sheet, and heard so by whatever else shows the book's notes
-// (a second screen, pair.js)
+// A note wiped (the last one in, taken back): gone from its sheet, and heard by the book's other views.
 export async function wipe(id) {
   await send('/note/delete', { id });
   document.dispatchEvent(new CustomEvent('pencil:wiped', { detail: { id, back: false } }));

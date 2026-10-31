@@ -52,9 +52,7 @@ the notebook by itself; its ink stays drawn until the agent's turn on it is done
 .
 
 **The pin** is just the pin, a red button with a pencil on it. The board reads, corrects, wipes and sends its notes in
-its book in HQ. A mark from the other screen that can't land on this
-one's layout (`handover.js`) opens a general note: the same sheet, pinned to nothing, which reads as "General note" in
-the book and in the owner's job.
+its book in HQ.
 
 `review.js` is the tool's door: a small classic script that says hello to HQ's frame and loads the tool. The tool is
 modules beside it, one concern each: `tool.js` puts them together (the shared state, Escape and Cmd+Z) and no part
@@ -166,9 +164,8 @@ it's the page's width and the book's spread covers it with the page; over a dial
   only the mark being made (`marks.js` paint: its lines, and those drawn while it goes in); once its note is in the
   book, or it's let go, the page is clean at once, and its lines live only in the note's snip. The book keeps no lines
   of a note (the coordinator's `booknotes.ts` stores its anchor without them) and nothing reads a page's notes back to
-  draw them, so no tab, screen, reload or call can bring one back. A second screen draws the other's mark only while
-  it's open (HQ's `pairink.js`); a call's agent's rings go at the end of its turn, and so do the board's own marks on
-  a call, which are for the agent (below). `book-check.mjs` asserts it
+  draw them, so no tab, screen, reload or call can bring one back. A call's agent's rings go at the end of its turn,
+  and so do the board's own marks on a call, which are for the agent (below). `book-check.mjs` asserts it
   (`bookink.mjs` `nothingDrawn`).
 - **Wipe, undo:** a scribble over the mark being made lets it go, post-it and all. A two-finger tap or Cmd/Ctrl+Z
   takes back the last thing: a line, the mark let go, or the last note sent to its sheet (gone from the book). A finger
@@ -190,13 +187,6 @@ it's the page's width and the book's spread covers it with the page; over a dial
 - **Ring something** and the mark is on what's inside the ring. Nothing asks "are you sure?". An undo the book refuses
   changes nothing, and the step stays to take back.
 - The document hears `pencil:note` (`{ id, n, page, call }`) as each note goes into the book, for the book and a call.
-- **A second screen** (`handover.js`; HQ's `shell/ink/pair.js` pairs a phone or tablet with a desktop by the book's
-  code; Ink's folder): while `<html data-paired>`, the Pencil tells `pencil:mark`
-  (the open mark as an anchor and its words, or null) at each change and `pencil:flick` when its post-it is thrown away
-  by its paper; `pencil:hand` `{ take: mark, reply }` opens a mark from the other screen here, post-it and caret ready,
-  and `{ give: true, reply }` lets the open mark go. Nothing goes across on a call. On HQ a mark goes into the book from
-  the screen it's drawn on as it settles, its ink drifting off that screen, and the other screen's book turns to it
-  (`pair.js` tells it the note's page; `pencil:wiped` has it read a wiped note's page again).
 
 **On a call** (`callnotes.js`; HQ's `shell/ink/calldraw.js` tells it through `call:on`, `call:off`, `call:heard` and `call:had`;
 Ink's folder): a mark goes on the call's page in the book (`kind: 'call'`, made

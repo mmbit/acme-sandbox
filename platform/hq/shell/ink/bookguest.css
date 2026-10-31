@@ -207,6 +207,13 @@ main.bk-guest-wide {
   color: var(--muted);
   font-size: 0.9rem;
 }
+/* (an address on one line, cut at its end, never broken mid-word.) */
+.bk-guest-work .bk-guest-at {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
 .bk-guest-asks {
   display: flex;
   align-items: center;

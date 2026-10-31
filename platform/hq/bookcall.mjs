@@ -73,7 +73,10 @@ export async function playLine(context) {
         line.hello = e; // (bookwalk.mjs: the call's request and walk)
         ws.send(JSON.stringify({ type: 'call', id: 'line', call: 9, key: 'k' }));
         ws.send(JSON.stringify({ type: 'state', state: 'listening' }));
-      } else if (e.type !== 'ping') line.said.push(e);
+      } else if (e.type === 'ping')
+        // (answered, as the line does: its pongs clear what HQ keeps to send again.)
+        ws.send(JSON.stringify({ type: 'pong', t: e.t, late: 0 }));
+      else line.said.push(e);
     }),
   );
   line.send = e => line.ws.send(JSON.stringify(e));

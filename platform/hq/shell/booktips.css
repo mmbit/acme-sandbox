@@ -1,136 +1,116 @@
-/* The tips book (booktips.js): a small black hardcover open flat in the middle of the screen, the contents on its left
-   page and a tip on its right; on a phone one page at a time. (the open book) */
+/* The tips book (booktips.js): a hard cover that opens to two-page spreads in the middle of the screen, each tip a
+   spread like a slide of the Ink deck, a leaf turning over the spine between them; on a phone one page wide. The
+   cover's rules, the turns and their phone overrides are in booktipsturn.css. */
 .tb {
   position: fixed;
   inset: 0;
   z-index: 55;
   display: grid;
   place-items: center;
-  background: rgba(20, 16, 40, 0.18);
+  background: rgba(20, 16, 40, 0.22);
   touch-action: none;
 }
+/* The book: two pages, each a little narrower than tall, as big as the screen lets them be. Each page sits on the
+   cover's board, the cloth showing round it; shut, only the cover shows, the book slid to keep it in the middle */
 .tb-book {
-  --tb-cover: #141414;
-  /* (the Notebook's own gold and face, made for its paper, not the look's) */
-  --tb-accent: var(--bk-gold);
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  width: min(780px, 100vw - 32px);
-  height: min(620px, 100dvh - 32px);
-  padding: 8px;
-  box-sizing: border-box;
-  border-radius: 10px;
-  background: var(--tb-cover);
-  box-shadow:
-    0 18px 40px rgba(10, 8, 24, 0.35),
-    0 3px 8px rgba(10, 8, 24, 0.3);
+  --tb-cloth: var(--bk-cloth, #151517);
+  --tb-gold: #d9b45a;
+  --tb-board: 9px;
+  --tb-h: min(700px, 100dvh - 64px, (100vw - 56px) / 2 / 0.7);
+  /* the Ink deck's look (shared/deck/deck.css): its ink, paper, hard shadow, heavy monospace headings and plain sans */
+  --tb-ink: #1d1a2f;
+  --tb-deck-paper: #fffaf0;
+  --tb-shadow: 3px 3px 0 var(--tb-ink);
+  --tb-mono: ui-monospace, 'SF Mono', Menlo, 'Cascadia Mono', 'DejaVu Sans Mono', monospace;
+  --tb-sans: system-ui, -apple-system, 'Segoe UI', Roboto, 'Liberation Sans', 'DejaVu Sans', sans-serif;
+  position: relative;
+  width: calc(var(--tb-h) * 0.7 * 2);
+  height: var(--tb-h);
+  perspective: 2600px;
   color: var(--bk-night);
   font-family: var(--bk-font);
   user-select: none;
   -webkit-user-select: none;
+  outline: none;
 }
-/* a page: the paper, shaded towards the spine between the two */
+.tb-book.tb-shut {
+  translate: calc(-25% - var(--tb-board) / 2) 0;
+}
+.tb-spreads,
+.tb-spread {
+  position: absolute;
+  inset: 0;
+}
+.tb-spread {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+.tb-spread[hidden],
+.tb-cover[hidden],
+.tb-home[hidden] {
+  display: none;
+}
+/* a page: the paper on its board, shaded towards the spine */
 .tb-page {
+  position: relative;
   min-height: 0;
   box-sizing: border-box;
-  background: var(--bk-paper);
-}
-.tb-contents {
-  padding: 18px 22px;
+  padding: 30px 30px 60px;
   overflow: hidden auto;
-  border-radius: 4px 1px 1px 4px;
-  background: linear-gradient(270deg, rgba(42, 35, 82, 0.12), transparent 18px), var(--bk-paper);
+  background: var(--bk-paper);
+  box-shadow:
+    0 0 0 var(--tb-board) var(--tb-cloth),
+    0 20px 44px calc(var(--tb-board) - 2px) rgba(10, 8, 24, 0.32);
 }
-.tb-tip {
+.tb-l {
+  border-radius: 3px 0 0 3px;
+  background: linear-gradient(270deg, rgba(42, 35, 82, 0.16), transparent 26px), var(--bk-paper);
+}
+.tb-r {
+  border-radius: 0 3px 3px 0;
+  background: linear-gradient(90deg, rgba(42, 35, 82, 0.16), transparent 26px), var(--bk-paper);
+}
+.tb-book:has(.tb-spread:not([hidden])) .tb-spreads::after {
+  /* (the spine: the boards' fold between the pages) */
+  content: '';
+  position: absolute;
+  top: calc(-1 * var(--tb-board));
+  bottom: calc(-1 * var(--tb-board));
+  left: calc(50% - 1px);
+  width: 2px;
+  background: rgba(0, 0, 0, 0.45);
+  pointer-events: none;
+}
+
+/* The title, inside the cover: the book's name, Tips, and how to turn */
+.tb-title {
   display: flex;
   flex-direction: column;
-  border-radius: 1px 4px 4px 1px;
-  background: linear-gradient(90deg, rgba(42, 35, 82, 0.12), transparent 18px), var(--bk-paper);
+  justify-content: center;
+  text-align: center;
 }
-.tb-leaves {
-  flex: 1;
-  min-height: 0;
-}
-.tb-leaf {
-  height: 100%;
-  padding: 18px 22px 8px;
-  box-sizing: border-box;
-  overflow: hidden auto;
-}
-.tb-part {
-  margin: 0 0 8px;
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--bk-muted);
-}
-.tb-leaf h3 {
-  margin: 14px 0 6px;
-  font-size: 20px;
-  line-height: 1.2;
-}
-.tb-words {
+.tb-title h2 {
   margin: 0;
-  font-size: 15px;
+  font: 800 clamp(44px, calc(var(--tb-h) * 0.11), 76px) / 1 var(--tb-mono);
+  letter-spacing: -0.04em;
+}
+.tb-intro {
+  margin: 14px 0 0;
+  font: 18px/1.35 var(--tb-sans);
+}
+.tb-how {
+  margin: 28px auto 0;
+  max-width: 24ch;
+  font-family: var(--tb-sans);
+  font-size: 14px;
   line-height: 1.45;
-}
-
-/* the contents, the tip on the right page underlined in gold */
-.tb-contents h3 {
-  margin: 12px 0 2px;
-  font-size: 12px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
   color: var(--bk-muted);
-}
-.tb-contents ol {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-.tb-contents li button {
-  width: 100%;
-  padding: 3px 0;
-  border: 0;
-  border-bottom: 1px dashed var(--bk-line);
-  background: none;
-  font: inherit;
-  font-size: 15px;
-  text-align: left;
-  color: inherit;
-  cursor: pointer;
-}
-.tb-contents li button:hover,
-.tb-contents li button:focus-visible,
-.tb-contents li button[aria-current] {
-  color: var(--bk-night);
-  text-decoration: underline;
-  text-decoration-color: var(--tb-accent);
-  text-decoration-thickness: 3px;
-}
-.tb-contents li button[aria-current] {
-  font-weight: 700;
-}
-.tb-contents li button:focus-visible {
-  outline: 2px solid var(--bk-night);
-  outline-offset: 2px;
-}
-
-/* The book's name over the contents: the word, its flowing line through its foot */
-.tb-logo-small {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 0;
-  font-size: 18px;
 }
 .tb-logo {
   display: block;
-  flex: none;
-  width: 104px;
-  height: 52px;
-  margin: -8px -4px -10px -10px;
+  width: 150px;
+  height: 75px;
+  margin: 0 auto 6px;
   overflow: visible;
 }
 .tb-logo text {
@@ -144,244 +124,250 @@
 }
 .tb-logo path {
   fill: none;
-  stroke: var(--tb-accent);
+  stroke: var(--bk-gold);
   stroke-width: 7;
   stroke-linecap: round;
 }
 
-/* the turns at the tip page's foot, and the way back to the contents on a phone */
-.tb-turns {
+/* The index: every tip by its chapter, each with its colour as the deck's contents show it, the spread's number at
+   the line's end */
+.tb-index {
+  padding: 20px 28px 52px;
+  font-family: var(--tb-sans);
+}
+.tb-index h2 {
+  margin: 0;
+  font: 800 20px/1.2 var(--tb-mono);
+  letter-spacing: -0.03em;
+}
+.tb-index h3 {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 4px 10px 6px;
-  box-shadow: 0 -1px 0 var(--bk-line);
-  font-size: 13px;
+  gap: 7px;
+  margin: 9px 0 2px;
+  font: 700 11px/1 var(--tb-mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
   color: var(--bk-muted);
 }
-.tb-turns button,
-.tb-home {
-  height: 36px;
+.tb-index h3::before {
+  content: '';
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid var(--tb-ink);
+  flex: none;
+  border-radius: 2px;
+  background: var(--tb-accent);
+}
+.tb-index ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.tb-index button {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 1px 0;
   border: 0;
-  border-radius: 18px;
   background: none;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.22;
+  text-align: left;
+  color: inherit;
+  cursor: pointer;
+}
+.tb-index button span {
+  flex: 1;
+}
+.tb-index button b {
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  color: var(--bk-muted);
+}
+.tb-index button:hover span,
+.tb-index button:focus-visible span {
+  text-decoration: underline;
+  text-decoration-color: var(--bk-gold);
+  text-decoration-thickness: 3px;
+}
+.tb-index button:focus-visible {
+  outline: 2px solid var(--bk-night);
+  outline-offset: 2px;
+}
+
+/* A tip's spread, like a slide of the deck: the chapter's chip, the plain title big, its words; the picture opposite */
+.tb-words-page {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+.tb-kicker {
+  align-self: flex-start;
+  margin: 0 0 18px;
+  padding: 6px 9px;
+  border: 2px solid var(--tb-ink);
+  border-radius: 3px;
+  background: var(--tb-accent);
+  box-shadow: var(--tb-shadow);
+  font: 700 12px/1 var(--tb-mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--tb-ink);
+}
+.tb-words-page h2 {
+  margin: 0 0 14px;
+  font: 800 clamp(22px, calc(var(--tb-h) * 0.048), 32px) / 1.1 var(--tb-mono);
+  letter-spacing: -0.03em;
+  text-wrap: balance;
+  color: var(--tb-ink);
+}
+.tb-words {
+  margin: 0;
+  font: clamp(15px, calc(var(--tb-h) * 0.026), 18px) / 1.45 var(--tb-sans);
+  color: var(--tb-ink);
+}
+.tb-shot-page {
+  display: grid;
+  place-items: center;
+}
+
+/* The turns at the corners, Contents under the left page and the spread's number under the right */
+.tb-foot {
+  position: absolute;
+  inset: auto 0 0;
+  z-index: 4;
+  height: 52px;
+  pointer-events: none;
+}
+.tb-shut .tb-foot {
+  display: none;
+}
+.tb-foot > * {
+  position: absolute;
+  bottom: 8px;
+  pointer-events: auto;
+}
+.tb-back,
+.tb-on {
+  width: 44px;
+  height: 44px;
+  border: 0;
+  border-radius: 22px;
+  background: none;
+  font: 700 26px/1 var(--bk-font);
   color: var(--bk-night);
   cursor: pointer;
 }
-.tb-turns button {
-  width: 40px;
-  font: 700 24px/1 var(--bk-font);
+.tb-back {
+  left: 8px;
 }
-.tb-turns button:disabled {
+.tb-on {
+  right: 8px;
+}
+.tb-back:disabled,
+.tb-on:disabled {
   opacity: 0.2;
   cursor: default;
 }
-.tb-turns button:focus-visible,
+.tb-home {
+  left: 25%;
+  translate: -50% 0;
+  height: 36px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 18px;
+  background: none;
+  font: 700 14px/1 var(--bk-font);
+  color: var(--bk-night);
+  cursor: pointer;
+}
+.tb-count {
+  left: 75%;
+  translate: -50% 0;
+  bottom: 18px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: var(--bk-muted);
+}
+.tb-back:hover,
+.tb-on:enabled:hover,
+.tb-home:hover {
+  background: var(--bk-ink-soft);
+}
+.tb-back:focus-visible,
+.tb-on:focus-visible,
 .tb-home:focus-visible {
   outline: 2px solid var(--bk-night);
 }
-.tb-home {
-  display: none;
-  align-self: flex-start;
-  margin: 8px 0 0 10px;
-  padding: 0 12px;
-  font: 700 14px/1 var(--bk-font);
-}
-/* a phone: one page at a time, the contents first, a tip on its own with Contents back */
+
+/* A phone: one page wide, the spread's two pages one above the other on it and scrolling as one, the cover the whole
+   of it; the leaf turns over the spine at the screen's left */
 @media (max-width: 639px) {
   .tb-book {
-    grid-template-columns: 1fr;
+    --tb-h: min(780px, 100dvh - 40px);
+    width: calc(100vw - 28px);
   }
-  .tb-contents,
-  .tb-tip {
-    border-radius: 4px;
+  .tb-book.tb-shut {
+    translate: none;
+  }
+  .tb-spread {
+    display: block;
+    overflow: hidden auto;
+    border-radius: 3px;
     background: var(--bk-paper);
+    box-shadow:
+      0 0 0 var(--tb-board) var(--tb-cloth),
+      0 20px 44px rgba(10, 8, 24, 0.32);
   }
-  .tb:not(.tb-reading) .tb-tip,
-  .tb.tb-reading .tb-contents {
+  .tb-spread .tb-page {
+    overflow: visible;
+    padding: 22px 22px 8px;
+    background: none;
+    box-shadow: none;
+  }
+  .tb-spread .tb-r {
+    padding-bottom: 64px;
+  }
+  .tb-book:has(.tb-spread:not([hidden])) .tb-spreads::after {
     display: none;
   }
-  .tb-home {
-    display: block;
+  .tb-words-page h2 {
+    font-size: 24px;
   }
-  .tb-leaf {
-    padding-top: 8px;
+  .tb-home {
+    left: 50%;
+  }
+  .tb-count {
+    left: auto;
+    right: 60px;
+    translate: none;
+  }
+  .tb-foot {
+    background: linear-gradient(transparent, var(--bk-paper) 40%);
   }
 }
 
-/* a tip's scene */
-.tb-scene {
-  display: block;
-  width: 100%;
-  height: auto;
-  margin-top: 4px;
+/* a tip's picture or film, framed as the deck frames them: the paper inside an ink edge with its hard shadow, whole */
+.tb-shot {
+  display: flex;
+  margin: 0;
+  padding: 6px;
+  max-width: 100%;
+  max-height: 100%;
+  border: 2px solid var(--tb-ink);
   border-radius: 4px;
-  background: var(--bk-paper2);
-  overflow: hidden;
+  background: var(--tb-deck-paper);
+  box-shadow: var(--tb-shadow);
 }
-.tb-scene * {
-  vector-effect: non-scaling-stroke;
-}
-.tb-hq rect:first-child {
-  fill: #fff;
-  stroke: var(--bk-line);
-}
-.tb-card {
-  fill: #ece6f6;
-}
-.tb-hq-bar {
-  fill: var(--bk-night);
-  opacity: 0.85;
-}
-.tb-paper rect {
-  fill: var(--bk-paper);
-  stroke: var(--bk-line);
-}
-.tb-rule {
-  stroke: var(--bk-line);
-}
-.tb-mini-cover {
-  fill: var(--tb-cover);
-}
-.tb-mini-paper {
-  fill: var(--bk-paper);
-}
-.tb-ink,
-.tb-lasso,
-.tb-scrawl,
-.tb-typed-line,
-.tb-clip,
-.tb-pin path,
-.tb-face-smile {
-  fill: none;
-  stroke: var(--bk-night);
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-.tb-ink {
-  stroke: #c0392b;
-}
-.tb-scrub {
-  stroke-width: 3.4;
-}
-.tb-lasso {
-  stroke-dasharray: 4 4;
-  stroke: var(--bk-muted);
-}
-.tb-scrawl,
-.tb-typed-line {
-  stroke-width: 1.6;
-  opacity: 0.7;
-}
-.tb-note rect {
-  fill: #fff6c8;
-  stroke: rgba(42, 35, 82, 0.15);
-}
-.tb-slip,
-.tb-typed {
-  fill: #fff;
-  stroke: var(--bk-line);
-}
-.tb-letters {
-  fill: var(--bk-night);
-  opacity: 0.75;
-}
-.tb-box {
-  fill: #fff;
-  stroke: var(--bk-night);
-  stroke-width: 1.5;
-}
-.tb-picked {
-  fill: none;
-  stroke: var(--tb-accent);
-  stroke-width: 3;
-}
-.tb-frame {
-  fill: none;
-  stroke: var(--bk-night);
-  stroke-dasharray: 3 3;
-}
-.tb-pen rect {
-  fill: #f4f4f4;
-  stroke: #9a9a9a;
-}
-.tb-pen-tip {
-  fill: #444;
-}
-.tb-finger {
-  fill: rgba(42, 35, 82, 0.22);
-  stroke: rgba(42, 35, 82, 0.5);
-}
-.tb-ring,
-.tb-undo-ring {
-  fill: none;
-  stroke: var(--tb-accent);
-  stroke-width: 2.5;
-}
-.tb-arrow {
-  fill: #fff;
-  stroke: var(--bk-night);
-  stroke-width: 1.2;
-}
-.tb-face circle:first-child {
-  fill: #e6dff2;
-  stroke: var(--bk-night);
-  stroke-width: 1.2;
-}
-.tb-face-lit circle:first-child {
-  fill: var(--tb-accent);
-}
-.tb-face-eye {
-  fill: var(--bk-night);
-}
-.tb-ear {
-  fill: var(--bk-paper2);
-  stroke: var(--bk-line);
-}
-.tb-plane {
-  fill: #fff;
-  stroke: var(--bk-night);
-  stroke-linejoin: round;
-}
-.tb-photo {
-  fill: #cfe3f7;
-  stroke: #fff;
-  stroke-width: 3;
-}
-.tb-photo-hill {
-  fill: #6fae7a;
-}
-.tb-photo-sun {
-  fill: var(--tb-accent);
-}
-.tb-tape {
-  fill: rgba(240, 225, 170, 0.8);
-}
-.tb-key rect {
-  fill: #fff;
-  stroke: var(--bk-night);
-  stroke-width: 1.2;
-}
-.tb-key text {
-  font: 600 13px var(--bk-font);
-  fill: var(--bk-night);
-}
-.tb-pin path {
-  stroke-width: 1.8;
-}
-.tb-pinned {
-  fill: var(--tb-accent);
-}
-.tb-tab {
-  fill: var(--tb-accent);
-}
-.tb-disc {
-  fill: var(--tb-accent);
-  stroke: var(--bk-night);
-  stroke-width: 1.2;
-}
-.tb-link {
-  fill: none;
-  stroke: var(--bk-night);
-  stroke-width: 1.5;
+.tb-shot img,
+.tb-shot video {
+  display: block;
+  min-width: 0;
+  min-height: 0;
+  max-width: 100%;
+  max-height: calc(var(--tb-h) - 120px);
+  object-fit: contain;
 }

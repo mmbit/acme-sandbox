@@ -1,0 +1,163 @@
+/* The tips book's cover and its turns (booktips.js), over booktips.css's pages. */
+
+/* The cover: black cloth over a board, the book's name and Tips pressed in gold in a gold frame, a ribbon out at its foot. Shut, it's
+   the right half's; a tap opens it */
+.tb-cover {
+  position: absolute;
+  top: calc(-1 * var(--tb-board));
+  left: 50%;
+  width: calc(50% + var(--tb-board));
+  height: calc(100% + 2 * var(--tb-board));
+  padding: 0;
+  border: 0;
+  border-radius: 3px 8px 8px 3px;
+  background:
+    linear-gradient(
+      90deg,
+      rgba(255, 255, 255, 0.07),
+      transparent 14px,
+      transparent calc(100% - 4px),
+      rgba(0, 0, 0, 0.4)
+    ),
+    var(--bk-grain, none), var(--tb-cloth);
+  box-shadow:
+    0 22px 48px rgba(10, 8, 24, 0.4),
+    0 3px 8px rgba(10, 8, 24, 0.3);
+  color: var(--tb-gold);
+  font-family: var(--bk-font);
+  cursor: pointer;
+}
+.tb-cover-frame {
+  position: absolute;
+  inset: 22px 22px 22px 28px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  border: 1.5px solid rgba(217, 180, 90, 0.55);
+  border-radius: 4px;
+}
+.tb-cover-kicker {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+}
+.tb-cover-title {
+  margin: 8px 0 0;
+  font-size: clamp(54px, calc(var(--tb-h) * 0.14), 96px);
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.6);
+}
+.tb-cover-line {
+  width: 62%;
+  margin: 6px 0 10px;
+  overflow: visible;
+}
+.tb-cover-line path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 3;
+  stroke-linecap: round;
+}
+.tb-cover-sub {
+  font-size: 15px;
+  letter-spacing: 0.04em;
+  opacity: 0.85;
+}
+.tb-ribbon {
+  position: absolute;
+  bottom: -26px;
+  left: 34%;
+  width: 14px;
+  height: 34px;
+  background: var(--bk-gold);
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 80%, 0 100%);
+}
+.tb-cover:focus-visible {
+  outline: 3px solid var(--tb-gold);
+  outline-offset: 3px;
+}
+
+/* A turn: pictures of the pages over the book while a leaf turns over the spine, its back the page it brings */
+.tb-book > .tb-over-l,
+.tb-book > .tb-over-r {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 50%;
+  height: 100%;
+  translate: none;
+  z-index: 2;
+  pointer-events: none;
+}
+.tb-book > .tb-over-r {
+  left: 50%;
+}
+.tb-book > .tb-over-page {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+.tb-book > .tb-over-r.tb-cover {
+  top: calc(-1 * var(--tb-board));
+  width: calc(50% + var(--tb-board));
+  height: calc(100% + 2 * var(--tb-board));
+}
+.tb-book > .tb-leaf {
+  z-index: 3;
+  transform-style: preserve-3d;
+  will-change: transform;
+}
+.tb-book > .tb-leaf.tb-over-r,
+.tb-book > .tb-leaf.tb-over-page {
+  transform-origin: 0 50%;
+}
+.tb-book > .tb-leaf.tb-over-l {
+  transform-origin: 100% 50%;
+}
+.tb-side {
+  position: absolute;
+  inset: 0;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+.tb-side-back {
+  transform: rotateY(180deg);
+}
+.tb-side > :first-child {
+  position: absolute;
+  inset: 0;
+  width: auto;
+  height: auto;
+}
+.tb-side > .tb-cover {
+  inset: calc(-1 * var(--tb-board)) calc(-1 * var(--tb-board)) calc(-1 * var(--tb-board)) 0;
+}
+.tb-shade {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
+  background: linear-gradient(90deg, rgba(20, 14, 40, 0.1), rgba(20, 14, 40, 0.5));
+}
+.tb-over-l .tb-shade {
+  background: linear-gradient(270deg, rgba(20, 14, 40, 0.1), rgba(20, 14, 40, 0.5));
+}
+
+/* A phone: the cover the whole of the one page */
+@media (max-width: 639px) {
+  .tb-cover {
+    inset: calc(-1 * var(--tb-board));
+    width: auto;
+    height: auto;
+    left: calc(-1 * var(--tb-board));
+  }
+  .tb-book > .tb-over-page.tb-cover,
+  .tb-side > .tb-cover {
+    inset: calc(-1 * var(--tb-board));
+  }
+}

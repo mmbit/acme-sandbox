@@ -1,6 +1,4 @@
-// The book: one per person (who: the board's 'board', an invited person's 'guest:<grant>', sketchpeople.ts), a row of
-// pages a day. The coordinator is its only writer; the book's screens, the Pencil, sheets, slips, calls and pairing all
-// go through its routes (book.ts for pages, booknotes.ts for sheets and notes, bookslips.ts for slips).
+// The book's pages: one book per person (board or guest:<grant>), written through the coordinator.
 //   - Four kinds of page: a sheet's page (an HQ page, at its url, owned by the agent whose work it shows: its notes go
 //     on that agent's sheet), a free page (scraps, pictures and sketches, nobody's), a call's page (what was drawn on
 //     a call, its call) and a guest's notes. A page grows any way as it's written on (x, y, w, h); New page starts the next.
@@ -40,6 +38,7 @@ import {
 } from '../pagescraps.ts';
 import { BOOK_FULL, bookFull } from './sketchpeople.ts';
 import { throwAway } from './bookcalls.ts';
+import { managedPage } from '../notebookaccess.ts';
 
 export const BOARD = 'board';
 mkdirSync(DIR, { recursive: true, mode: 0o700 });
@@ -196,6 +195,7 @@ export function sheetPageFor(owner: string, url: string, w: number, h: number) {
 // saver merges (pagemerge.js).
 export const CHANGED = 'this page changed since it was read: read it again';
 export function savePage(b: any, who = BOARD) {
+  if (managedPage(Number(b?.id))) return 403;
   const p = row(Number(b?.id), who);
   if (!p) return 404;
   if (typeof b.since === 'string' && b.since !== p.updated) return [409, CHANGED] as Refused;

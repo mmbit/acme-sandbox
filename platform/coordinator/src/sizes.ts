@@ -108,6 +108,13 @@ export function history(job: number) {
   return rows.map(shown);
 }
 
+// A job's original estimate (taskaudit.ts first_estimate, predictions.ts firstSizes): the earliest of its given sizes
+// (the oldest first) that isn't a revision, and the tool's prediction. At the same instant the given size counts over
+// the tool's.
+export function original<G extends { at: string; revised?: boolean }, T extends { at: string }>(given: G[], tool: T[]) {
+  return [...given.filter(size => !size.revised), ...tool].sort((a, b) => a.at.localeCompare(b.at))[0] ?? null;
+}
+
 const shown = ({ id: _id, ...row }: Row & { id?: number }): GivenSize => ({
   ...row,
   refs: JSON.parse(row.refs) as number[],

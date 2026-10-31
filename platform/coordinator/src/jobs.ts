@@ -74,6 +74,7 @@ import * as engineOnly from './engineonly.ts';
 import { runEnded, runStarted, runsLost } from './agenttime.ts';
 import { sweepTeam } from './team.ts';
 import * as owed from './owed.ts';
+import { answerLetGo, cardHeard, holdAnswer } from './inbox.ts';
 import * as later from './later.ts';
 import { shownCard } from './shown.ts';
 import * as decisions from './decisions.ts';
@@ -278,7 +279,7 @@ export function createJob(j: NewJob) {
   const id = insertJob(j, thread, runsOn);
   if (j.size) sizes.recordQueued(id, (j.plannedBy ?? j.queuedBy)!, j.prompt, j.size);
   predictions.recordQueued(id, Date.now(), j.schedule);
-  if (runsOn.forSeat && !j.forSeat) shareTo(runsOn.forSeat, id);
+  if (runsOn.forSeat && runsOn.forSeat !== j.forSeat) shareTo(runsOn.forSeat, id);
   // (a task in place of one that failed takes its place in their thread: threadorder.ts.)
   for (const prior of predecessors.slice(1))
     db.prepare('insert into job_replacements (job, replaces) values (?, ?)').run(id, prior);
@@ -304,7 +305,9 @@ function engineFor(j: NewJob, thread: string | null) {
   const runsOn = j.engine ? null : agentEngine(j.agent);
   const engine = j.engine ?? runsOn?.engine ?? 'claude',
     cli = j.cli ?? runsOn?.cli ?? undefined;
-  const forSeat = j.forSeat ?? (engine === 'codex' ? codexShare(cli) : null);
+  // A pin it's given (a retry's) holds only for a seat of the engine it runs on that's there.
+  const given = j.forSeat && db.prepare('select 1 from seats where id = ? and engine = ?').get(j.forSeat, engine);
+  const forSeat = given ? j.forSeat! : engine === 'codex' ? codexShare(cli) : null;
   return { engine, cli, forSeat, model: j.model, only: null };
 }
 
@@ -798,12 +801,12 @@ export const itemWorkBranches = () => new Set(itemWorkCarriers().values());
 // sent (routing.ts), a sheet the board sent from its book to its page's owner (booknotes.ts), work carrying a call's
 // item (ITEM_WORK), and a meeting's seat when queued work carrying one waits for any of that meeting's seats (--after or
 // hq waits: seats take no items). A carrier waits only while queued, so a cancelled or ended one leaves the seats (read
-// from jobs_queue, which covers its after).
+// from jobs_play, which covers its after).
 export const BOARD_CALL = (job: string) =>
   `(exists (select 1 from calls c where c.job = ${job}.id) or exists (select 1 from note_routes r where r.job = ${job}.id)
     or exists (select 1 from book_sheets b where b.job = ${job}.id) or ${job}.id in (${ITEM_WORK}) or ${job}.kind = 'meeting' and exists (select 1 from meeting_seats s
       join meeting_seats o on o.meeting = s.meeting
-      join jobs w indexed by jobs_queue on w.status = 'queued' and w.id in (${ITEM_WORK}) where s.job = ${job}.id
+      join jobs w indexed by jobs_play on w.status = 'queued' and w.id in (${ITEM_WORK}) where s.job = ${job}.id
       and (w.after = o.job or exists (select 1 from waits x where x.job = w.id and x.on_job = o.job))))`;
 // The CEO's hourly follow-through check (followthrough.ts), which runs to its end once started (planner.ts pausable;
 export const FOLLOW_THROUGH = (job: string) => `exists (select 1 from followthrough_checks f where f.job = ${job}.id)`;
@@ -1033,6 +1036,9 @@ export function whyNotAgentCard(request: number, by: string) {
   if (!open || !agentCard(request) || customerCard(request) || !askedBy(request, by))
     return `card #${request} isn't an open card you filed`;
 }
+// hq job and hq propose --after request:<id>: why work may not wait for that card, if it may not
+export const whyNotCardWait = (request: number, by: string) =>
+  Number.isSafeInteger(request) ? whyNotAgentCard(request, by) : 'cards are named by their numbers';
 export function holdForCard(job: number, request: number) {
   db.prepare('insert or ignore into request_waits (job, request) values (?, ?)').run(job, request);
 }
@@ -1787,13 +1793,13 @@ const letsParams = () => {
   };
 };
 
-// What a seat claims as its own (claim): its engine's work, for that seat or for none, on a CLI the seat runs (createJob
-// cli).
-// The arguments are SQL expressions, and the statement binds $engine.
-const seatTakes = (seat: string, cli: string) =>
-  `j.engine = $engine and (j.for_seat is null or j.for_seat = ${seat}) and (j.cli is null or j.cli = ${cli})`;
-// (never work only its own engine does: engineonly.ts.)
-const FALLS_BACK = "j.kind = 'work' and j.session is null and j.engine_only is null";
+// What a seat claims as its own (claim, seatReadyFor): its engine's work, for that seat or for none, on a CLI the seat
+// runs (createJob cli).
+// The arguments are SQL expressions: the seat's id, CLI and engine ($engine, which the statement binds, by default).
+const seatTakes = (seat: string, cli: string, engine = '$engine') =>
+  `j.engine = ${engine} and (j.for_seat is null or j.for_seat = ${seat}) and (j.cli is null or j.cli = ${cli})`;
+// (never work only its own engine does: engineonly.ts. The play reads it too: backlog.ts.)
+export const FALLS_BACK = "j.kind = 'work' and j.session is null and j.engine_only is null";
 // A seat that takes work now: ready, or past the reset its drain or sleep waits for. The statement binds $now. (exported for panel.ts)
 export const SEAT_READY = "(state = 'ready' or state in ('draining', 'sleeping') and until <= $now)";
 
@@ -1805,8 +1811,8 @@ export function seatReadyFor(job: number, t = now(), on: string | null = null, p
   const seats = db
     .prepare(
       `select iif(s.pace is null or s.week_resets <= $now, null, s.week_resets) until, ${LANE('j')} board, j.expedite from jobs j
-    join (select * from seats where ${SEAT_READY}) s on s.engine = j.engine and ($on is null or s.id = $on)
-    and (j.for_seat is null or j.for_seat = s.id) and (j.cli is null or j.cli = coalesce(s.cli, s.engine))
+    join (select * from seats where ${SEAT_READY}) s on ${seatTakes('s.id', 'coalesce(s.cli, s.engine)', 's.engine')}
+    and ($on is null or s.id = $on)
     where j.id = $job`,
     )
     .all({ job, now: t, on }) as { until: number | null; board: number; expedite: number }[];
@@ -2614,6 +2620,9 @@ function handOn(job: Job, r: RunEnd) {
   const ended = r.status === 'failed' || r.status === 'stopped' || (r.status === 'done' && !r.sha);
   if ((job.kind === 'work' || job.kind === 'meeting') && ended && !r.pr && !later && job.thread)
     threadends.runEnded(job.thread);
+  // (a judge that left a deliverable open with nothing drawn in it closes it, or wakes its owner again if it failed:
+  // threadjudge.ts ended.)
+  threadjudge.ended(job.id, r.status);
   // Hand-offs to the review panel: a finished pull request gets reviewed; finished reviews move on.
   if ((job.kind === 'work' || job.kind === 'chat') && r.status === 'done' && r.pr)
     startReview(
@@ -3384,10 +3393,10 @@ function answerHeard(req: any, answer: string, gotIt: boolean) {
     const heir = askerHears(req) ? undefined : waitingFor(id)[0];
     const heard = owed.answered(req, answer, heir, (extra, others) => {
       tellWaiting(id, waitingLine, job => (job === heir ? extra : others));
-      return tell(req, `The board answered your request #${id} ("${req.title}") on its desk phone: ${answer}${extra}`, {
-        audience: true,
-        waiting: heir,
-      });
+      const line = `The board answered your request #${id} ("${req.title}") on its desk phone: ${answer}${extra}`;
+      // (an open proposal whose work waits for the card may hold it for the asker)
+      if (heir === undefined && !askerHears(req) && holdAnswer(id)) return undefined;
+      return tell(req, line, { audience: true, waiting: heir });
     });
     if (heard) db.prepare('update requests set heard_by = ? where id = ?').run(heard, id);
   }
@@ -3403,6 +3412,22 @@ function answerHeard(req: any, answer: string, gotIt: boolean) {
       id,
     );
   }
+}
+
+// The board's answer to a card that no job heard, which open proposals may hold for its asker (inbox.ts holdAnswer): the
+// job the first one accepted becomes hears it (acceptance.ts queue), or, once the last is dropped, the asker hears it as
+// tell() tells it, with which job brings each product back (owed.ts answered left each return with a job of its own).
+export const heardHeldAnswer = (request: number, job: number) =>
+  db
+    .prepare("update requests set heard_by = ? where id = ? and status = 'answered' and heard_by is null")
+    .run(job, request);
+export function heldAnswerDropped(request: number) {
+  if (!answerLetGo(request)) return;
+  const req = db.prepare('select * from requests where id = ? and heard_by is null').get(request) as any;
+  if (!req) return;
+  const line = `The board answered your request #${request} ("${req.title}") on its desk phone: ${req.answer}`;
+  const heard = tell(req, `${line}${owed.carriers(request)}`, { audience: true });
+  if (heard) heardHeldAnswer(request, heard);
 }
 
 // Whether the job that filed a card hears its answer itself: the intercom's chat, or a job parked on it or still running
@@ -3617,10 +3642,12 @@ function unanswered(request: number, why: string) {
 }
 
 // The jobs waiting for a card (db.ts request_waits) that haven't started: the end of each one's prompt takes the card's
-// answer, or why it left the desk phone without one, and then what extraFor gives that job.
+// answer, or why it left the desk phone without one, and then what extraFor gives that job. So does the brief of each
+// open proposal whose work waits for it (inbox.ts cardHeard).
 function tellWaiting(request: number, line: string, extraFor: (job: number) => string = () => '') {
   const append = db.prepare('update jobs set prompt = prompt || ? where id = ?');
   for (const job of waitingFor(request)) append.run(`\n\n${line}${extraFor(job)}`, job);
+  cardHeard(request, line);
 }
 const waitingFor = (request: number) =>
   (

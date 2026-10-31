@@ -71,10 +71,6 @@ export const HTML = `<div class="sheet" hidden role="dialog" aria-label="A note 
         <p class="msg" aria-live="polite"></p>
       </div>`;
 
-// Whether the open mark is this screen's own on the page's screen of a pairing (<html data-paired="page">), which goes
-// to the other screen (handover.js) rather than open its post-it here, nor the mic. Never on HQ, where a mark goes into the book from the screen it's drawn on (settle.js)
-export const across = r => !r.book && document.documentElement.dataset.paired === 'page' && !r.mark?.taken && !r.call;
-
 // Whether a call is on: HQ's own (callnotes.js) or one HQ's viewer tells of (callframe.js.)
 const onCall = r => !!(r.call || r.calling);
 
@@ -105,15 +101,11 @@ export function compose(r) {
   // (on a call the call hears the board, and no post-it shows: callnotes.js, and in HQ's viewer callframe.js. Off one the mic starts only at its button on the post-it, never at the mark: the
   // board, call 154.)
   if (onCall(r)) return;
-  // (a post-it kept back for a mark going across asks again as it lands: a pairing that ended meanwhile shows it on
-  // this screen.)
-  const unseen = across(r);
   // (a mark on HQ, the Pencil's or a mouse's, has its post-it too, as on any page: its Save puts it in the Notebook as
   // a scrap, the board's pin flow.)
-  setTimeout(() => stuck(r, mark, unseen), 380); // let the pin land, then the note
+  setTimeout(() => stuck(r, mark), 380); // let the pin land, then the note
 }
-// The mark's screenshot, developed in the polaroid while the mark is open: the picture is the mark's either way, for
-// one that left for the other screen meanwhile (handover.js.)
+// The mark's screenshot, developed in the polaroid while the mark is open.
 function shoot(r, mark) {
   const pol = r.$('.polaroid'),
     img = r.$('.polaroid .img');
@@ -134,7 +126,7 @@ function shoot(r, mark) {
     () => null,
   );
 }
-function stuck(r, mark, unseen) {
+function stuck(r, mark) {
   if (r.mark !== mark) return;
   r.veil.classList.add('marked');
   r.dock.hidden = true;
@@ -144,7 +136,6 @@ function stuck(r, mark, unseen) {
   r.$('.chip').textContent = `<${t.tag}>${t.video ? ` at ${clock(t.video.time)}` : ''}${words}`; // (the moment before the words the chip may cut)
   r.$('.page').textContent = r.towards ?? pageName(); // (whose sheet, on HQ: towards, below.)
   r.$('.who h2').textContent = mark.kind === 'circle' ? 'About this bit…' : 'About this…';
-  if (unseen && across(r)) return; // (the pairing ended meanwhile: it shows here.)
   showSheet(r);
   if (mark.frameless) r.msg.textContent = `${r.msg.textContent} ${mark.frameless}`.trim();
 }
@@ -185,30 +176,6 @@ function general(r) {
   r.text.placeholder = 'Something across the pages, or that differs between them? Type it, or tap the mic and say it.';
   showSheet(r);
   if (r.book) towards(r, r.mark);
-}
-// A mark from the other screen that can't land on this one's layout (handover.js): a note about the page, its picture
-// the other screen's own with the mark on it (snap: a data URL, or null when it had none; el: what it marked there, by
-// its anchor), nothing drawn on this page.
-export function snapped(r, snap, el) {
-  general(r);
-  r.$('.chip').textContent = el
-    ? `<${el.tag}>${el.text ? ` “${el.text.slice(0, 40)}${el.text.length > 40 ? '…' : ''}”` : ''}`
-    : '';
-  r.mark.snap = snap;
-  r.mark.taken = true;
-  r.$('.who h2').textContent = 'From your other screen';
-  r.$('.page').textContent = `${snap ? 'As it looked there' : 'No picture came across'} · ${pageName()}`;
-  r.text.placeholder = r.ask;
-  if (!snap) return;
-  r.sheet.classList.remove('bare');
-  const img = r.$('.polaroid .img');
-  r.$('.polaroid').classList.remove('busy');
-  const pic = Object.assign(document.createElement('img'), {
-    src: snap,
-    alt: 'The mark as your other screen showed it',
-  });
-  Object.assign(pic.style, { objectFit: 'contain', objectPosition: 'center' }); // (the snip is cut round the mark: all of it shows)
-  img.replaceChildren(pic);
 }
 export function showSheet(r) {
   r.msg.textContent = '';
@@ -316,7 +283,7 @@ async function pinned(r, note, url, added) {
 async function booked(r) {
   const mark = r.mark,
     open = () => r.mark === mark,
-    wordless = () => mark.kind === 'general' && !mark.snap && !r.text.value.trim();
+    wordless = () => mark.kind === 'general' && !r.text.value.trim();
   if (wordless() && !r.rec && !r.stopping) return askWords(r);
   r.mode = 'sending';
   r.pinIt.disabled = true;

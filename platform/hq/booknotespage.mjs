@@ -137,7 +137,7 @@ async function landed(page, c, { context, line, device, notes }) {
       for (let i = 0; i < 40 && !/: Call with Lyra/.test(await where(page)); i++) await page.waitForTimeout(250);
       assert.match(
         await where(page),
-        /^The notebook's pages: Call with Lyra, 15:34,/,
+        /^The notebook's pages: Call with Lyra, 15:34(,|$)/, // (counted in Calls)
         `note ${n}: on the call's notes page`,
       );
     }

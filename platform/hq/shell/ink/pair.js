@@ -15,7 +15,7 @@ export function initPair() {
   leaf.append(card);
   const shortcut = button({
     text: 'Devices',
-    label: 'Sign in another device',
+    label: 'Devices',
     onClick: () => {
       if (!card.hidden) {
         card.hidden = true;

@@ -44,7 +44,7 @@ export function take<T extends Claim>(
       row => queue.orders.get(row.id)!.latestStart !== null,
     );
     const spare = spareOnly(picked.row, picked.order);
-    for (const group of groupsOn(queue, seat, seats.now, limits)) {
+    for (const group of groupsOn(queue, seat, seats, limits)) {
       if (group.spare && !spare) continue;
       while (group.next < group.runs.length && !queue.pending.has(group.runs[group.next])) group.next++;
       const candidate = group.runs[group.next];
@@ -55,17 +55,23 @@ export function take<T extends Claim>(
   return picked;
 }
 
-function groupsOn<T extends Claim>(queue: Queue<T>, seat: capacity.Seat, now: number, limits: Record<string, number>) {
+function groupsOn<T extends Claim>(
+  queue: Queue<T>,
+  seat: capacity.Seat,
+  { now, seats }: capacity.Moment,
+  limits: Record<string, number>,
+) {
   const cached = queue.groups.get(seat.id);
   if (cached) return cached;
   // (by kind, then the board's and spare standing; in the order they first come up)
   const groups = new Map<string, Group<T>[]>(),
     indexed: Group<T>[] = [];
+  // (pacing as the seat alone has it, a fallback by all the moment's seats)
   const alone = capacity.at([seat], now);
   if (!capacity.available(seat, now)) return [];
   for (const run of queue.runs) {
     if (!queue.pending.has(run)) continue;
-    if ((limits[seat.engine] ?? Infinity) <= 0 || !capacity.takes(seat, run.row, run.order, alone)) continue;
+    if ((limits[seat.engine] ?? Infinity) <= 0 || !capacity.takes(seat, run.row, run.order, alone, seats)) continue;
     const spare = spareOnly(run.row, run.order);
     let kind = groups.get(run.row.kind);
     if (!kind) groups.set(run.row.kind, (kind = []));

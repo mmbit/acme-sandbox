@@ -264,3 +264,6 @@ async function serveArtifact(context) {
     return fulfilResponse(route, response);
   });
 }
+// (the coordinator's page-title and judge timers outlive its server by minutes: a run with shots once ran out its limit
+// on them.)
+process.exit(0);

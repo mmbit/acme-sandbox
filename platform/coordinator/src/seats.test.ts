@@ -406,3 +406,40 @@ test("a seat's name: dash-separated lowercase parts with digits anywhere after t
     assert.ok(!SEAT_ID.test(id), id);
   assert.equal((await board('/api/seats/add', { id: 'claude--2', provider: 'anthropic-key', key: KEY })).body.error, SEAT_RULE);
 });
+
+test('a seat pin holds only for a seat of its own engine that is there, and work no seat takes reads as stuck', async () => {
+  const threats = await import('./threats.ts'),
+    forecast = await import('./forecast.ts');
+  h.cancelQueued();
+  await worker('seat', { seat: 'claude-1', engine: 'claude', state: 'ready', util: 0.1 });
+  await worker('seat', { seat: 'codex-1', engine: 'codex', state: 'ready', util: 0.1 });
+  try {
+    // a retry's Codex pin, the retry made on Claude: no pin, and a Claude seat takes it
+    const moved = h.jobs.createJob({ agent: 'bolt', title: 'Moved', prompt: 'x', engine: 'claude', forSeat: 'codex-1' });
+    assert.equal(forSeat(moved.id), null);
+    assert.equal(h.jobs.seatReadyFor(moved.id, Date.now(), 'claude-1'), true);
+    // a pin to a seat that's gone: a Codex seat that's there
+    const gone = h.jobs.createJob({ agent: 'bolt', title: 'Gone', prompt: 'x', engine: 'codex', forSeat: 'codex-9' });
+    assert.equal((await seat(forSeat(gone.id)!))?.engine, 'codex');
+    // a seat whose report leaves with the worker's list lets go of its jobs
+    await worker('seat', { seat: 'codex-2', engine: 'codex', state: 'ready', util: 0.1 });
+    const left = h.jobs.createJob({ agent: 'bolt', title: 'Left', prompt: 'x', engine: 'codex', forSeat: 'codex-2' });
+    assert.equal(forSeat(left.id), 'codex-2');
+    await list();
+    assert.equal(forSeat(left.id), null);
+    // work on a CLI no seat runs: the play gives it no seat, and the CEO's summary reads that as stuck
+    await h.capacity({ claude: 1, codex: 1 });
+    const nowhere = h.jobs.createJob({ agent: 'bolt', title: 'Nowhere', prompt: 'x', engine: 'codex', cli: 'nowhere' });
+    const played = forecast.refresh(Date.now());
+    const own = played.usual.get(nowhere.id)!;
+    assert.equal(own.start, null);
+    assert.deepEqual(own.waits, [{ on: 'stalled', why: 'No codex seat takes it', job: nowhere.id }]);
+    const lines = threats.lines(played).filter(l => / is stuck: no \w+ seat takes it/.test(l));
+    assert.deepEqual(
+      lines.map(l => l.split(' ')[0]),
+      [`#${nowhere.id}`],
+    );
+  } finally {
+    h.cancelQueued();
+  }
+});

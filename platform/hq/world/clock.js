@@ -59,15 +59,18 @@ export function checkDay() {
   return day === was ? null : on;
 }
 
-// ---- the company's clock: org.yaml's company.timeZone (world.setOrg sets it), UTC until the org is read.
+// ---- the company's clock: org.yaml's company.timeZone, UTC until setTimeZone is called (world.setOrg on the board's
+// HQ, a guest notebook's shelf on theirs).
 let zone = 'UTC';
 const bindings = new Map();
 export function setTimeZone(timeZone) { zone = timeZone; }
-// Money, days and times as HQ writes them (shared/format), in British English on the company's clock. currency: the
-// amounts' own, as the data names it (Care's numbers and the testers' vouchers count euros)
+// Money, days and times as HQ writes them (shared/format), in British English on the company's clock, and in a guest
+// notebook's Dutch or German. currency: the amounts' own, as the data names it
+// (Care's numbers and the testers' vouchers count euros)
 export function companyFormats(currency) {
   const key = `${zone} ${currency ?? ''}`;
-  if (!bindings.has(key)) bindings.set(key, formats({ locales: { en: 'en-GB' }, currency, timeZone: zone }));
+  if (!bindings.has(key))
+    bindings.set(key, formats({ locales: { en: 'en-GB', nl: 'nl-NL', de: 'de-DE' }, currency, timeZone: zone }));
   return bindings.get(key);
 }
 // A moment's time of day, "16:40". ms: a time in ms or a date string.

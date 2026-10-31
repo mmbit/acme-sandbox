@@ -104,6 +104,7 @@ test("the assets are the page's scripts, the call's audio and microphone worklet
     'mic-worklet.js',
     'walk.js',
     'callbubble.js',
+    'floating.js',
     'watchalong.js',
     'vendor/rrweb-record.js',
   ])

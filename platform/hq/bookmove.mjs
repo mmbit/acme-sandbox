@@ -4,18 +4,19 @@
 //   - the pen draws across a scrap: the line lands on it (in the scrap's group), and the scrap stays where it was;
 //   - Select pressed on one line of a group picks the whole group (its frame round all of it), and every line of it,
 //     its frame with them, follows the pointer while it's held; let go, nothing jumps, and the store has every line
-//     moved by the same (in its unit's own px, the unit where the masonry put it).
+//     moved by the same (in its unit's own px, the unit where the masonry put it), and every line shows on the page
+//     where it landed, past its unit's edge too.
 import assert from 'node:assert/strict';
-import { inSight as shown, pen, tool } from './booknotebookscreen.mjs';
+import { inSight, onPaper, pen, tool } from './booknotebookscreen.mjs';
 import { open } from './booknotebook.mjs';
-import { DESKTOP, MINI, pressAlong, until } from './bookkit.mjs';
+import { DESKTOP, MINI, pixelsIn, pressAlong, until } from './bookkit.mjs';
 
 // the seed's newest page, its wave (four lines) and its big scrap (mock/notebook.json)
 const NEWEST = 3,
   WAVE = 9,
   SCRAP = 11;
-// the drag, in screen px
-const BY = [70, 45];
+// the drag, in screen px: to the left, past the left edge of the wave's unit
+const BY = [-45, 0];
 
 // c: book-check.mjs's hqIn, base, settled, shot, noErrorsIn, shots
 export function moveStories(c) {
@@ -51,7 +52,7 @@ async function drawsOnAScrap(page, play, pencil) {
   await tool(page, 'Pen');
   // (across the scrap's top, starting and ending on it)
   const s = was.pictures[0],
-    points = await inSight(page, SCRAP, [
+    points = await inSight(page, NEWEST, SCRAP, [
       [s.x + 30, s.y + 16],
       [s.x + s.w / 2, s.y + 30],
       [s.x + s.w - 30, s.y + 22],
@@ -65,18 +66,15 @@ async function drawsOnAScrap(page, play, pencil) {
   assert.equal(await page.locator('#book .bk-sel').count(), 0, 'nothing picked by the pen');
 }
 
-// A group of the newest page slid into view, and points on it (its unit's px) on the screen
-const inSight = (page, id, at) => shown(page, NEWEST, id, at);
-
 // ---- Select moves a group, live
 
 async function movesAGroup(page, play, pencil, c, name) {
   const was = group(play, WAVE);
   await tool(page, 'Select');
   // pressed on the wave's first line only
-  const [from] = await inSight(page, WAVE, [was.ink[0].points[1].slice(0, 2)]),
+  const [from] = await inSight(page, NEWEST, WAVE, [was.ink[0].points[1].slice(0, 2)]),
     k = await scaleOf(page),
-    // (the group's frame: on the units page its lines move inside their unit, which stays in its place. job #15978)
+    // (the group's frame: on the units page its lines move inside their unit, which stays in its place.)
     clip = () => rectOf(page, '#book .bk-sel');
   const held = await press(page, from, pencil);
   try {
@@ -105,7 +103,8 @@ async function movesAGroup(page, play, pencil, c, name) {
   } finally {
     await held.up();
   }
-  await landed(page, play, { was, k, clip, clipHeld: await clip() });
+  const moved = await landed(page, play, { was, k, clip, clipHeld: await clip() });
+  await shows(page, moved);
   await c.shot(`move-${name}-group-moved`, page);
 }
 // Let go: the store has every line moved by the same, and the frame where it was let go (no jump)
@@ -127,7 +126,51 @@ async function landed(page, play, { was, k, clip, clipHeld }) {
     near([clipNow.x, clipNow.y], [clipHeld.x, clipHeld.y], 2),
     `the frame stays where it was let go (${Math.round(clipNow.x - clipHeld.x)}, ${Math.round(clipNow.y - clipHeld.y)})`,
   );
+  return moved;
 }
+// Let go, every line of the group shows on the page where it landed, past its unit's edge too (the unit's canvas
+// reaches its ink wherever it goes: bookpage.js): read on the screen once the lifted canvas is gone and nothing is
+// picked over them.
+async function shows(page, moved) {
+  await until(async () => !(await page.locator('#book canvas.bk-sel-lifted').count()), 'the lifted canvas gone');
+  await tool(page, 'Pen');
+  await until(async () => !(await page.locator('#book .bk-sel').count()), 'nothing picked over the lines');
+  const lines = await Promise.all(moved.ink.map(s => onPaper(page, s.points, WAVE))),
+    box = boxOf(lines.map(points => ({ points }))),
+    unit = await page.locator(`#book .bk-page:not([hidden]) .bk-unit[data-unit="${WAVE}"]`).boundingBox();
+  assert.ok(
+    box.y0 < unit.y || box.x0 < unit.x || box.x1 > unit.x + unit.width,
+    `the lines moved past their unit's edge (lines ${frameWords(box)}, unit ${frameWords(unitBox(unit))})`,
+  );
+  const paper = await page.locator('#book .bk-page:not([hidden])').boundingBox();
+  assert.ok(
+    box.x0 > paper.x && box.x1 < paper.x + paper.width && box.y0 > Math.max(0, paper.y),
+    `the lines landed on the paper in sight (${frameWords(box)})`,
+  );
+  const ink = await inkIn(page, box);
+  for (const [i, points] of lines.entries()) {
+    const seen = points.filter(([x, y]) => ink(x, y)).length / points.length;
+    assert.ok(seen > 0.9, `line ${i + 1} shows where it landed (${Math.round(seen * 100)}% of its points)`);
+  }
+}
+// Whether the board's ink (#2a2352, dark on the paper) is on the screen within 2 px of a point, in a box of it
+async function inkIn(page, box) {
+  const clip = { x: Math.floor(box.x0) - 4, y: Math.floor(box.y0) - 4 },
+    width = Math.ceil(box.x1) + 4 - clip.x,
+    height = Math.ceil(box.y1) + 4 - clip.y,
+    pixels = await pixelsIn(page, { ...clip, width, height }),
+    // (the screenshot's px for a CSS px)
+    k = Math.round(Math.sqrt(pixels.length / (width * height))),
+    dark = (x, y) => pixels[y * width * k + x].reduce((a, b) => a + b) < 360;
+  return (x, y) => {
+    for (let dy = -2 * k; dy <= 2 * k; dy++)
+      for (let dx = -2 * k; dx <= 2 * k; dx++)
+        if (dark(Math.round((x - clip.x) * k) + dx, Math.round((y - clip.y) * k) + dy)) return true;
+    return false;
+  };
+}
+const unitBox = ({ x, y, width, height }) => ({ x0: x, y0: y, x1: x + width, y1: y + height });
+const frameWords = b => [b.x0, b.y0, b.x1, b.y1].map(Math.round).join(', ');
 
 // ---- the pointer
 

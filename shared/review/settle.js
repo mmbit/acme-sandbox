@@ -14,7 +14,6 @@ import * as marks from './marks.js';
 import { boxOfLines, marked } from './mark.js';
 import { expose } from './snapshot.js';
 import * as written from './written.js';
-import { moved } from './handover.js';
 
 // The Pencil up this long and the mark is done: about a breath, so a circle and the arrow after it stay one note
 export const SETTLE_MS = 1500;
@@ -55,9 +54,6 @@ export function settleSoon(r) {
 export function file(r) {
   if (!r.book || r.mode !== 'note' || !r.mark || !r.sheet.hidden) return;
   r.mode = 'sending';
-  // (a second screen hears at once that it's no longer open: nothing of it stays drawn there while it goes in. Rule
-  // zero)
-  moved(r);
   const mark = r.mark,
     tried = { mark, sent: [...r.strokes], at: r.markAt };
   return (r.filing = inBook(r, mark).then(
@@ -77,7 +73,6 @@ export function file(r) {
       console.error('The Pencil: a note into the book', err);
       if (r.mark !== mark) return false;
       r.mode = 'note';
-      moved(r); // (open again, there too)
       r.unheard = err?.status ? null : tried;
       for (const line of r.nextLines.splice(0)) liftedLine(r, line);
       const why = err?.status ? `The book said no: ${err.message}.` : 'Could not reach the book.';
@@ -136,17 +131,15 @@ export async function toBook(r) {
     words = r.text.value.trim(),
     said = !words ? null : r.spoken && !r.typed ? 'spoken' : !r.typed && words === mark.written ? 'written' : 'typed',
     general = mark.kind === 'general';
-  const shot = general ? null : await snipOfMark(r, mark, r.strokes);
+  const snip = general ? null : await snipOfMark(r, mark, r.strokes);
   if (r.mark !== mark) return null;
-  // (a mark from the other screen keeps its picture there: handover.js.)
-  const snip = mark.snap ?? shot;
   const anchor = general ? { ...marked(r), el: null } : marked(r);
   const note = await marks.post(r, { anchor, live: r.mark.el, words, said, snip });
   r.steps.push({ kind: note.group ? 'scrap' : 'note', id: note.id }); // (scrap)
   written.sent(r, mark, note);
   mark.filed = true;
   marks.paint(r);
-  return { note, snip, photoless: (!general || 'snap' in mark) && !snip };
+  return { note, snip, photoless: !general && !snip };
 }
 // A mark's snip of its screenshot once taken, round its lines (or its element, with none), or null: the screenshot
 // failed, was still developing after SHOT_WAIT_MS, or the mark was let go meanwhile (toBook, and on a call

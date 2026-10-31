@@ -1,8 +1,7 @@
-/* A second screen (pair.js): the card over the book's paper (the code, then who's paired), the island's swap, and the other
-   screen's ink over HQ's page (pairink.js). In the book's own look (booklook.css). */
+/* Another device's sign-in (pair.js): the card over the book's paper with the one-time code. In the book's own look
+   (booklook.css). */
 /* the card: a .bk-card (bookui.css) floating over the paper beside the book's island, laid out to fit any book's width:
-   its head, the QR beside the words (under them on a narrow book), the field for the other screen's code a row of its
-   own with Join beside it, never clipped. */
+   its head, the QR beside the words (the words under it on a narrow book) and Close, never clipped. */
 #book .pair-card {
   position: absolute;
   /* (beside the rail at the paper's right edge, --bk-rail-width, and in from the pages' edges, --bk-pages: book.css.) */
@@ -31,13 +30,7 @@
 }
 #book .pair-head {
   flex: 1 0 100%;
-  padding-right: 34px;
   font-size: 17px;
-}
-#book .pair-x {
-  position: absolute;
-  top: 8px;
-  right: 8px;
 }
 #book .pair-qr {
   flex: none;
@@ -55,63 +48,4 @@
   white-space: nowrap;
   letter-spacing: 0.06em;
   color: var(--bk-night);
-}
-#book .pair-join {
-  flex: 1 0 100%;
-  display: flex;
-  gap: 8px;
-  min-width: 0;
-}
-#book .pair-join input {
-  flex: 1;
-  min-width: 0;
-  box-sizing: border-box;
-  height: 36px;
-  padding: 0 10px;
-  border: 1.5px solid var(--bk-line);
-  border-radius: 9px;
-  font: 16px var(--bk-font); /* (16 px: Safari zooms into a smaller field) */
-  letter-spacing: 0.04em;
-  color: inherit;
-  background: #fff;
-  -webkit-user-select: text;
-  user-select: text;
-}
-#book .pair-join input:focus {
-  outline: 2px solid var(--bk-night);
-  outline-offset: 1px;
-}
-/* waiting, or paired: one line, its phone, its words and Close */
-#book .pair-card[data-state='waiting'],
-#book .pair-card[data-state='paired'],
-#book .pair-card[data-state='away'] {
-  padding: 8px 8px 8px 14px;
-}
-#book .pair-line {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin: 0;
-}
-#book .pair-line span {
-  flex: 1;
-  min-width: 0;
-}
-#book .pair-line > svg {
-  flex: none;
-  width: 20px;
-  height: 20px;
-}
-#book .bk-swap[hidden] {
-  display: none;
-}
-.pair-ink {
-  position: fixed;
-  left: 0;
-  top: 0;
-  width: calc(100vw - var(--book-room, 0px));
-  height: 100vh;
-  z-index: 39;
-  pointer-events: none;
 }

@@ -59,9 +59,3 @@ function recordWrongGuess(now: number) {
   remember('pair_wrong_guesses', String(guesses));
   if (guesses >= MAX_WRONG_GUESSES) db.exec('delete from notebook_pair_codes');
 }
-
-export const pairPage = `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Sign in on this device</title><link rel="stylesheet" href="/pair/signin.css"><main><h1>Bring your Notebook</h1>
-<p>On a device already signed in, open the Notebook’s Shelf and choose “Sign in another device”.</p>
-<form><label for="code">One-time code</label><input id="code" name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 ]{6,7}" maxlength="7" required autofocus>
-<button>Sign in on this device</button></form><p role="alert"></p><a href="/login">Use a passkey instead</a></main><script type="module" src="/pair/signin.js"></script></html>`;

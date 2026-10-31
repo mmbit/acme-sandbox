@@ -103,6 +103,7 @@ async function atSize(browser, c, name, size) {
     await opened(page, 6);
     await page.waitForTimeout(400);
     await sound(page, `${name}, as the call left it`);
+    await boardDays(page, name);
     await c.shot(`units-${name}-1-call`, page);
     const low = await annotate(page, name);
     await page.waitForTimeout(900);
@@ -119,6 +120,12 @@ async function atSize(browser, c, name, size) {
   } finally {
     await context.close();
   }
+}
+// The board's page days in its English with no comma, "Sat 31 Oct", in WebKit too, whose en-GB writes "Sat, 31 Oct"
+async function boardDays(page, name) {
+  const days = await page.evaluate(() => [...document.querySelectorAll('#book .bk-day')].map(d => d.textContent));
+  assert.ok(days.length, `${name}: the book shows a page day`);
+  for (const day of days) assert.match(day, /^[A-Z][a-z]{2} \d{1,2} [A-Z][a-z]{2}$/, `${name}: the board's page day`);
 }
 // The book open, tapped open from its tab where it starts folded (a phone's), its n units drawn
 async function opened(page, n) {
@@ -185,8 +192,8 @@ async function deskAt(browser, c, size) {
   const { width, height, book } = size,
     viewport = { width, height },
     context = await c.hqIn(browser, viewport, { notebooks: structuredClone(SEED), hasTouch: false, isMobile: false });
-  // (no microphone: on a loaded machine a line's first move can come after the hold, and the press held still is then
-  // a voice note, the voice line's words in a box of their own (bookinput.js); bookvoice.mjs has those. job #15274)
+  // No microphone: a line's first move can come after the hold on a loaded machine, and a held press with a microphone
+  // is a voice note (bookinput.js).
   await context.addInitScript(() => (navigator.mediaDevices.enumerateDevices = async () => []));
   if (book)
     await context.addInitScript(

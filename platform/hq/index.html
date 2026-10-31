@@ -25,7 +25,7 @@
   <header id="hud">
     <div class="brand"><img src="wordmark.svg" alt="Company" width="160" height="30"><span><b>HQ</b><small id="clock"></small></span><span id="dev" hidden title="Using mock data: the coordinator API is not reachable">DEV</span></div>
     <!-- Icons drawn by the look's style (shell/icons.js). -->
-    <nav class="tools">
+    <nav class="tools" data-keep-clear><!-- (a minimised call steps clear of it: callbubble.js.) -->
       <!-- a plain href, so a middle-click opens a new HQ with the phone open; its icon alone, as the others' -->
       <a id="btn-desk" href="/?open=phone" title="Desk phone: requests waiting for you" class="desk board-tool"><svg class="icon i-phone" data-icon="phone" aria-hidden="true"></svg><span class="sr">Phone</span><b id="desk-count" class="count" hidden>0</b></a>
       <button id="btn-news" class="board-tool" title="The newsletter"><svg class="icon i-news" data-icon="news" aria-hidden="true"></svg><span class="sr">News</span><b id="news-count" class="count" hidden>0</b></button>

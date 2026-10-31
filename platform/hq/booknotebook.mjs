@@ -12,8 +12,20 @@
 // The phone story: booknotebookphone.mjs.
 import assert from 'node:assert/strict';
 import { readFile, rename } from 'node:fs/promises';
-import { clearPlace, clipped, fromBar, inSight, onPaper, pen, stamp, tool, where } from './booknotebookscreen.mjs';
+import {
+  clearPlace,
+  clipped,
+  fromBar,
+  inSight,
+  onPaper,
+  pen,
+  stamp,
+  tool,
+  turnTo,
+  where,
+} from './booknotebookscreen.mjs';
 import { DESKTOP, MINI, crumpled, until } from './bookkit.mjs';
+import { press } from './bookbar.mjs';
 import { dragTo } from './bookshare.mjs';
 
 const SEED = JSON.parse(await readFile(new URL('./mock/notebook.json', import.meta.url), 'utf8'));
@@ -75,58 +87,37 @@ async function deleteAndUndo(page, play, c) {
 }
 
 async function linesAndScratch(page, play, c) {
-  // a line in the gap under the second unit: a group of its own; the next, started on its card and soon after, joins
-  // it, as the words of a line do. (drawn one after the other: a wait on the store between them can put more than the
-  // join's 4 s between their saves on a loaded worker, whose save timers fire late; the card is the page's own.)
+  // a line on a blank page (New page's): a group of its own; the next, near it and soon after, joins it. (the seed's
+  // newest page is the board's drawings, one column on an iPad mini, and a line that near one is part of it:
+  // bookunits.js nearDrawing. Drawn one after the other: a loaded worker's save timers fire late, past the join's 4 s.)
+  // Then a scratch-out over it, from its middle (its clip at its left is its own button): deleted, no ink kept.
+  await press(page, 'New page');
+  await until(async () => !(await clipped(page)).length, 'a blank page shown');
   await tool(page, 'Pen');
-  const before = ids(play, NEWEST),
-    cards = await clipped(page);
-  await pen(
-    page,
-    await onPaper(page, [
-      [180, 441],
-      [210, 446],
-      [235, 442],
-    ]),
-  );
-  const card = await until(
-    async () => (await clipped(page)).find(id => !cards.includes(id)),
-    'the line has a card of its own',
-  );
-  await pen(
-    page,
-    await onPaper(
-      page,
-      [
-        [72, 10],
-        [100, 14],
-        [130, 11],
-      ],
-      card,
-    ),
-  );
-  const made = await until(
-    () => ids(play, NEWEST).find(id => !before.includes(id) && group(play, id).ink.length === 2),
-    'a new group for the line, the next line joining it',
-  );
-  assert.equal(ids(play, NEWEST).length, before.length + 1, 'one group for both lines');
+  const line = await onPaper(page, [
+    [180, 425],
+    [210, 432],
+    [235, 428],
+  ]);
+  const next = await onPaper(page, [
+    [252, 426],
+    [280, 430],
+    [305, 427],
+  ]);
+  await pen(page, line);
+  await pen(page, next);
+  const blank = await until(() => pagesOf(play).find(p => p.id > NEWEST)?.id, 'the blank page kept with its line'),
+    made = await until(() => {
+      const [only, ...more] = ids(play, blank);
+      return !more.length && group(play, only)?.ink.length === 2 && only;
+    }, 'one group for the line, the next line joining it');
   await until(async () => (await clipped(page)).includes(made), 'the new group has its clip');
   await c.shot('notebook-mini-lines', page);
-  await scratchOut(page, play, made, before);
-}
-
-async function scratchOut(page, play, made, before) {
-  // a scratch-out over it, from the card's left (its middle is a button of its own, "The scrap before"): deleted, no ink kept
-  // (across the whole card, which is as tall as the two lines)
-  const high = await page.evaluate(
-      g => parseFloat(document.querySelector(`#book .bk-page:not([hidden]) .bk-unit[data-unit="${g}"]`).style.height),
-      made,
-    ),
-    zig = [];
-  for (let i = 0; i < 14; i++) zig.push([i % 2 ? 200 : 40, 2 + ((high - 4) * i) / 13]);
-  await pen(page, await onPaper(page, zig, made));
-  await until(() => !ids(play, NEWEST).includes(made), 'the scratch-out deletes the group');
-  assert.deepEqual(ids(play, NEWEST), before, 'and leaves no ink of its own');
+  const zig = [];
+  for (let i = 0; i < 7; i++) zig.push([260, 419 + i * 3], [i % 2 ? 198 : 320, 418 + i * 3]);
+  await pen(page, await onPaper(page, zig));
+  await until(() => !ids(play, blank).length, 'the scratch-out deletes the group, and leaves no ink of its own');
+  await turnTo(page, NEWEST);
 }
 
 // Torn to Submit with a finger: sent at once, the page stays shown and stamped, no page made; nothing written on it is
@@ -143,9 +134,9 @@ async function torn(page, play, c) {
   const kept = ids(play, NEWEST);
   await pen(
     page,
-    await onPaper(page, [
-      [180, 425],
-      [280, 430],
+    await besideClear(page, [
+      [0, 0],
+      [100, 5],
     ]),
   );
   await page.waitForTimeout(1200);
@@ -199,7 +190,9 @@ async function refusedEdit(page, play, c) {
   // line kept and saved anew
   const refused = [];
   page.on('response', r => r.status() === 409 && refused.push(r.url()));
-  // (on the rows' own unit, slid into view: its px as the store keeps them)
+  // (with the pen: Move to page… left Select on, whose press on the rows draws nothing. On the rows' own unit, slid
+  // into view: its px as the store keeps them.)
+  await tool(page, 'Pen');
   const rows = group(play, ROWS),
     drawn = await inSight(page, NEWEST, ROWS, [
       [110, 70],
@@ -234,7 +227,7 @@ async function refusedEdit(page, play, c) {
 async function failedSave(page, play) {
   const down = r => r.fulfill({ status: 503, json: { error: 'The store is busy' } });
   await page.route('**/api/notebooks/groups/*', down);
-  const drawn = (await besideClear(page))([
+  const drawn = await besideClear(page, [
     [0, 0],
     [50, 4],
     [100, 1],
@@ -290,10 +283,22 @@ export const group = (play, id) =>
 const pagesOf = play => play.route('/api/notebooks/pages', { notebook: 1 }).pages;
 const pageOf = (play, id) => pagesOf(play).find(p => p.id === id);
 const near = ([x, y], [x1, y1], px = 4) => Math.abs(x - x1) <= px && Math.abs(y - y1) <= px;
-// Points about a clear place on the page shown (clearPlace), in screen px from it
-async function besideClear(page) {
-  const [x, y] = await clearPlace(page);
-  return points => points.map(([dx, dy]) => [x + dx, y + dy]);
+// Points about a clear place on the newest page (clearPlace), in screen px, slid into view with the unit above it and
+// on bare paper
+async function besideClear(page, points) {
+  const [x, y, unit] = await clearPlace(page),
+    [[x0, y0], [x1, y1]] = await onPaper(
+      page,
+      [0, 1].map(d => [d, d]),
+      unit,
+    ),
+    at = [(x - x0) / (x1 - x0), (y - y0) / (y1 - y0)];
+  return inSight(
+    page,
+    NEWEST,
+    unit,
+    points.map(([dx, dy]) => [at[0] + dx, at[1] + dy]),
+  );
 }
 // Whether a line the store keeps on the newest page starts at a point of the screen: each stroke's first point, in its
 // unit's own px, where the page shows it
