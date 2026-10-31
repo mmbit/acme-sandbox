@@ -5,8 +5,8 @@ The timer runs sync.sh from the checkout it resets, and bash goes on reading the
 throwaway folder; the script under test is a small stand-in around sync.sh's own rerun lines, taken from the file.
 """
 import os, re, subprocess, tempfile, unittest
+from sync_fixture import git, sync_lines
 
-here = os.path.dirname(os.path.abspath(__file__))
 RERUN_LINES = re.compile(
     r'^(?P<before_reset>running=\$\(git rev-parse.*\n)'
     r'git reset -q --hard "\$commit" \|\| exit 1\n'
@@ -14,25 +14,14 @@ RERUN_LINES = re.compile(
     re.M)
 COMMIT_LINE = re.compile(r'^commit=.*FETCH_HEAD.*\n', re.M)
 PADDING = '# padding so the old copy is longer than the new one\n' * 20
-GIT_IDENTITY = {'GIT_AUTHOR_NAME': 't', 'GIT_AUTHOR_EMAIL': 't@t.test', 'GIT_COMMITTER_NAME': 't',
-                'GIT_COMMITTER_EMAIL': 't@t.test'}
-
-
-def sync_sh():
-    with open(os.path.join(here, 'sync.sh')) as f:
-        return f.read()
 
 
 def rerun_lines():
-    found = RERUN_LINES.search(sync_sh())
-    assert found, 'sync.sh: the rerun lines after the reset were not found'
-    return found
+    return sync_lines(RERUN_LINES, 'the rerun lines after the reset')
 
 
 def commit_line():
-    found = COMMIT_LINE.search(sync_sh())
-    assert found, 'sync.sh: the line that picks the commit to deploy was not found'
-    return found.group(0)
+    return sync_lines(COMMIT_LINE, 'the line that picks the commit to deploy').group(0)
 
 
 def stand_in(version, with_rerun):
@@ -55,11 +44,6 @@ def stand_in(version, with_rerun):
         + PADDING
         + f'echo "tail {version} on $(git log -1 --format=%s)"\n'
     )
-
-
-def git(root, *args):
-    env = {**os.environ, **GIT_IDENTITY}
-    return subprocess.run(['git', '-C', root, *args], check=True, capture_output=True, text=True, env=env).stdout
 
 
 def deploy(with_rerun, change_sync=True, advance=False):

@@ -65,6 +65,7 @@ hq plan done <deliverable>, hq plan rename <deliverable> "name" ["done when"] [-
 
 // (help reads the company's levels when it's shown)
 // (a feature's pieces chained with need)
+// (the deliverable line's booked-for-later sentence)
 export const plan = {
   get help() {
     const own = companyLevels();
@@ -79,8 +80,11 @@ export const plan = {
                                                      after the deliverables it needs: those named, else the last one
                                                      chained from the one under way it most likely continues (the
                                                      drawing job's, else the project's newest), so draws in a row run
-                                                     as one chain. Its tasks: hq job --deliverable <project>/<slug>
-                                                     --code WORD. hq plan thread, the old name, still works
+                                                     as one chain. One whose open work is all booked for later (--when
+                                                     a time), with no pull request open, isn't under way: it and what
+                                                     waits for it are passed over and named, so ready work plays now.
+                                                     Its tasks: hq job --deliverable <project>/<slug> --code WORD. hq
+                                                     plan thread, the old name, still works
    hq plan need <deliverable> <deliverable>          the first deliverable starts once the second is done and merged (a
                                                      loop is refused, at any depth): how a feature's pieces that go
                                                      live separately are chained, one merging at a time

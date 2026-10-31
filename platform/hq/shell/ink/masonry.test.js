@@ -2,6 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DAY_H, GAP, columnsOf, layout, placeAt, widthFor } from './masonry.js';
+import { UNIT_W } from './scrapunit.js';
 
 // Units of mixed heights, as a page has them
 const units = Array.from({ length: 23 }, (_, i) => ({ id: i + 1, h: 80 + ((i * 137) % 400) }));
@@ -121,4 +122,41 @@ test("a new day's units start under its header, below every unit of the day befo
 
 test('units without a day get no headers', () => {
   assert.deepEqual(layout(units, 744).headers, []);
+});
+
+// (A to F of mixed heights, a line the board wrote under one following it)
+const scraps = [200, 400, 420, 200, 200, 200].map((h, i) => ({ id: 'ABCDEF'[i], h }));
+const under = (all, id, line) => {
+  const a = all.find(p => p.id === id),
+    l = all.find(p => p.id === line);
+  return l.column === a.column && Math.abs(l.y - (a.y + a.h + (GAP * l.w) / UNIT_W)) < 1e-9;
+};
+
+test('a unit that follows stays right under the one before it, at every column count', () => {
+  const page = [scraps[0], { id: 'line', h: 40, follows: true }, ...scraps.slice(1)];
+  for (const n of [1, 2, 3, 4]) {
+    const { places, columns } = layout(page, widthFor(n));
+    assert.equal(columns, n);
+    assert.ok(under(places, 'A', 'line'), `${n} columns: ${JSON.stringify(places)}`);
+  }
+});
+
+test("a unit following the tallest column's last stays in that column, under it", () => {
+  const page = [...scraps.slice(0, 3), { id: 'line', h: 40, follows: true }],
+    { places } = layout(page, widthFor(3));
+  assert.equal(places.find(p => p.id === 'C').column, 2);
+  assert.ok(under(places, 'C', 'line'), JSON.stringify(places));
+});
+
+test('a unit kept in its column stays there, at that column foot, and one past the columns goes to the shortest', () => {
+  const two = [
+    { id: 1, h: 100 },
+    { id: 2, h: 400 },
+  ];
+  const kept = layout([...two, { id: 3, h: 50, column: 1 }], widthFor(2)).places.at(-1),
+    free = layout([...two, { id: 3, h: 50 }], widthFor(2)).places.at(-1),
+    narrow = layout([...two, { id: 3, h: 50, column: 1 }], widthFor(1)).places.at(-1);
+  assert.deepEqual([kept.column, kept.y], [1, 24 + 400 + GAP]);
+  assert.equal(free.column, 0);
+  assert.equal(narrow.column, 0);
 });

@@ -1,9 +1,7 @@
 // Branch authors, review eligibility and the consolidator selected for a round.
 import { db, redactedJson } from './db.ts';
 import { org, roles } from './company.ts';
-import { findAgent, SEAT_READY } from './jobs.ts';
-import * as ordering from './ordering.ts';
-import * as planner from './planner.ts';
+import * as capacity from './panelcapacity.ts';
 import { withPicks } from './models.ts';
 
 db.exec(`create table if not exists review_triage (job integer primary key, pr integer not null,
@@ -63,53 +61,16 @@ export function consolidator(pr?: number, stage = 'triage') {
   return pr === undefined ? candidates[0] : soonest(pr, candidates, stage);
 }
 
-// The candidate whose seats start the round's next run soonest: the fewest rounds' runs ahead of it per seat of the
-// candidate's engine that takes it now, the preference order breaking ties. Ahead are the runs running and the queued
-// ones the shared plan puts first (planner.ts compare). Seat eligibility uses that plan's key too (pacedTakes).
+// The shared play decides the start. Equally soon starts favor the engine with more of its week left for the time.
+// Stable sorting leaves preference order to break remaining ties.
 function soonest(pr: number, candidates: string[], stage: string) {
-  const t = Date.now();
-  const { branch, round } = db.prepare('select branch, round from prs where number = ?').get(pr) as {
-    branch: string;
-    round: number;
-  };
-  const { id } = db.prepare('select coalesce(max(id), 0) + 1 id from jobs').get() as { id: number };
-  const timings = ordering.withRound(
-    {
-      id,
-      pr,
-      round,
-      branch,
-      thread: threadOfBranch(branch),
-      stage,
-      agent: candidates[0],
-      engine: findAgent(candidates[0])!.engine,
-      kind: 'consolidate',
-      status: 'queued',
-    },
-    t,
-  );
-  const order = timings.get(id)!;
-  const seats = db
-    .prepare(
-      `select engine, iif(pace is null or week_resets <= $now, null, week_resets) until from seats where ${SEAT_READY}`,
-    )
-    .all({ now: t }) as { engine: string; until: number | null }[];
-  const runs = db
-    .prepare(
-      `select id, engine, status from jobs indexed by jobs_status
-    where status in ('queued', 'running') and kind in ('review', 'consolidate')`,
-    )
-    .all() as { id: number; engine: string; status: string }[];
-  const goesFirst = (run: (typeof runs)[number]) =>
-    run.status === 'running' || planner.compare(timings.get(run.id)!, order) < 0;
-  const wait = (agent: string) => {
-    const engine = findAgent(agent)?.engine,
-      taking = seats.filter(seat => seat.engine === engine && planner.pacedTakes(order, seat.until ?? undefined));
-    const ahead = runs.filter(run => run.engine === engine && goesFirst(run)).length;
-    return taking.length ? ahead / taking.length : Infinity;
-  };
-  const waits = candidates.map(wait);
-  return candidates[waits.indexOf(Math.min(...waits))];
+  const choices = capacity.choices(pr, candidates, stage);
+  choices.sort((a, b) => {
+    const sooner = (a.start ?? Infinity) - (b.start ?? Infinity);
+    const roomier = a.weekLeft === null || b.weekLeft === null ? 0 : b.weekLeft - a.weekLeft;
+    return sooner || roomier;
+  });
+  return choices[0].agent;
 }
 
 // Each agent on the engine it runs on, from one read of the chart (a findAgent per agent read it and the picks again).

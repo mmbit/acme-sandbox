@@ -15,9 +15,10 @@ test.after(() => mock.timers.reset());
 test.afterEach(() => h.cancelQueued());
 
 // A done job juno sized at `gave` minutes that took `took`, a day ago.
-const sizedJob = (gave: number, took: number, by = 'juno') => {
+const sizedJob = (gave: number, took: number, by = 'juno', carry?: string) => {
   const id = h.pastJob({
     title: `Paint the harbour ${gave}`,
+    carry,
     run: { started: T0 - 24 * HOUR - took * MIN, ended: T0 - 24 * HOUR },
   });
   sizes.record(
@@ -85,4 +86,10 @@ test('a job sized and done after the bias was read reaches it at the next read',
   for (let i = 0; i < bias.LEAST; i++) sizedJob(60, 30, 'reel');
   const played = bias.corrected(HOUR, 'reel');
   assert.deepEqual([played.agent_ms, played.bias?.own, played.bias?.jobs], [30 * MIN, true, bias.LEAST]);
+});
+
+test('mechanical occupancy never trains a model-agent sizer, whatever the title says', () => {
+  const before = bias.corrected(HOUR, 'juno');
+  for (let i = 0; i < bias.LEAST; i++) sizedJob(60, 0.5, 'juno', i.toString(16).padStart(40, '0'));
+  assert.deepEqual(bias.corrected(HOUR, 'juno'), before);
 });

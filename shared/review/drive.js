@@ -6,7 +6,10 @@
 //     bottom; point: a spot { x, y }, ring: a box { x, y, w, h } (screen px, ring.js), words beside it: both where the
 //     agent aimed on its picture of the screen, never chosen here.
 //     drive({ wipe }): its rings and pointer gone.
-import { isPrivate } from './anchor.js';
+//     drive({ flash, color }): the element at flash (an anchor's selector: an agent's ask's spot, HQ's bookaskspot.js)
+//     scrolled to and flashed in color (flash.js).
+import { found, isPrivate } from './anchor.js';
+import { flash } from './flash.js';
 import { ringAt, wipeRings } from './ring.js';
 
 // The pointer stays this long where it points, then fades; it glides there in about a third of a second
@@ -15,6 +18,7 @@ const POINT_MS = 6000,
 
 export async function drive(d) {
   if (d?.wipe) return wiped();
+  if (typeof d?.flash === 'string') return flashed(d.flash, d.color);
   if (typeof d?.by === 'string') return scrolled(d.by);
   if (d?.ring) {
     await ringAt(d.ring, d);
@@ -28,6 +32,17 @@ export async function drive(d) {
   if (target.why) return { done: false, why: target.why };
   target.el.scrollIntoView({ behavior: 'smooth', block: 'center' });
   await settled(target.el);
+  return { done: true };
+}
+
+// An ask's spot: its element scrolled to the middle of the screen and flashed, or why not
+async function flashed(selector, color) {
+  const el = found(selector, document);
+  if (!el) return { done: false, why: `Nothing on ${location.pathname} matches ${selector} now.` };
+  const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  el.scrollIntoView({ behavior: still ? 'auto' : 'smooth', block: 'center' });
+  await settled(el);
+  flash(el, color);
   return { done: true };
 }
 

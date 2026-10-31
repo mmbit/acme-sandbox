@@ -11,6 +11,7 @@ import { playwright, openPage, until } from '../../shared/browser/browser.mjs';
 import { ASKS } from './shell/tips.js';
 import { lookNames } from './looks.mjs';
 import { notebookPlay } from './shell/ink/notebookplay.js';
+import { notebookRoute } from './notebookroute.mjs';
 
 const { chromium } = playwright();
 const server = await serve(),
@@ -64,11 +65,11 @@ const REPLIES = [
 ];
 
 // What the rest of HQ reads as it boots, answered quietly: the intercom is all this check looks at. The Notebook's
-// routes go to its store played in memory, as dev mode's (notebookplay.js), and the work piles are the mock's
+// routes go to its store played in memory, as dev mode's (notebookroute.mjs on notebookplay.js), and the work piles
+// are the mock's.
 const BOOT = {
   '/api/review/products': [],
   '/api/requests/later': [],
-  '/api/notebooks/open': { forms: [], questions: [] },
   '/api/pictures/waiting': { pictures: [] },
   '/api/work/piles': (await (await fetch(`${base}/mock/work.json`)).json()).piles,
   '/api/room': { line: null },
@@ -126,8 +127,7 @@ async function checkLook(look) {
     const mocked = await r.fetch({ url: `${base}/mock${path.slice(4)}.json` });
     if (mocked.ok()) return r.fulfill({ response: mocked });
     if (path in BOOT) return r.fulfill({ json: BOOT[path] });
-    if (path.startsWith('/api/notebooks'))
-      return r.fulfill({ json: notebook.route(path, url.searchParams, r.request().postDataJSON() ?? undefined) });
+    if (path.startsWith('/api/notebooks')) return notebookRoute(r, notebook);
     if (path === '/api/events') return r.fulfill({ body: 'retry: 600000\n\n', contentType: 'text/event-stream' }); // (no events)
     return r.fulfill({ status: 404, body: '' });
   });

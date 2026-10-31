@@ -7,7 +7,8 @@ import { darkness, fireworksRate } from './env.js';
 import { update, walkCheck, errand } from './sim.js';
 import { createRenderer, render, ISLAND } from './render.js';
 import { cam, view, home, clampCam, camStep, focus, camera } from './camera.js';
-import { build, forget, L, S } from './build.js';
+import * as buildings from './build.js';
+import { L, S } from './build.js';
 import { find, hit, act, anchor, near } from './hit.js';
 import { listen, burst, setParty, CONFETTI } from './react.js';
 import { SIGN } from './sign.js';
@@ -44,7 +45,7 @@ function loadFont() {
 // settings.intro: the floors drop into place first. shell: sound, toasts, cards, what its chrome covers.
 export function createScene({ canvas: screen, world: w, brand: b, settings, shell: s }) {
   R = createRenderer(screen); world = w; brand = dress(b, w.mascots); names = b.names; shell = s; view.chrome = s.chrome;
-  now = view.now = camDt = 0; introT = settings.intro ? 0 : null; touring = false; lit = null; layout.key = null; forget();
+  now = view.now = camDt = 0; introT = settings.intro ? 0 : null; touring = false; lit = null; layout.key = null; buildings.forget();
   Object.assign(fx, { planes: [], bells: [], signTaps: [], rounds: [], poured: 0 });
   const on = !!s.store.get('walls', false);
   Object.assign(walls, { on, shut: settings.intro || on, anim: null, freeze: null });
@@ -55,7 +56,7 @@ export function createScene({ canvas: screen, world: w, brand: b, settings, shel
   const unfold = moreKey(() => s.sound.play('press'));
   if (w.dev) for (const m of w.mascots) if (!ART[m.kind]) console.warn(`[hq] the brownstone has no art for a ${m.kind}, so ${m.name} isn't in the building`);
   return {
-    update: step, draw, hit, focus, resize, camera, anchor, highlight: t => { lit = t; }, act, portrait, near, where, showcase,
+    update: step, draw, hit, focus, resize, prepare, camera, anchor, highlight: t => { lit = t; }, act, portrait, near, where, showcase,
     // its signals stop, and its sky and its pixel touches leave the page
     dispose() { for (const off of offs) off(); unfold(); document.body.style.background = ''; document.body.classList.remove('brownstone'); },
     controls: [{ id: 'walls', title: 'Outside walls', pressed: () => walls.on, toggle: () => setWalls(!walls.on) }],
@@ -88,15 +89,22 @@ function resize(w, h, d) {
   Object.assign(view, { SW, SH, dpr });
   layout();
 }
-// a new layout when the screen changes shape (or when asked), then the camera home
-function layout(force) {
-  const key = `${SW > SH}|${Math.round(SW / 200)}|${Math.round(SH / 200)}`;
-  if (force || key !== layout.key) { layout.key = key; build(); }
+// The building for a screen that shape is laid out ahead (the shell's prepare: the book opening beside HQ's page, or
+// shutting), so it's there as the screen takes it
+function prepare(w, h, d) {
+  const sw = Math.round(w * d), sh = Math.round(h * d);
+  buildings.prepare(shapeKey(sw, sh), sw, sh);
+}
+const shapeKey = (sw, sh) => `${sw > sh}|${Math.round(sw / 200)}|${Math.round(sh / 200)}`;
+// a new layout when the screen changes shape (a kept one where there is one), then the camera home
+function layout() {
+  const key = shapeKey(SW, SH);
+  if (key !== layout.key) { layout.key = key; buildings.build(key); }
   cam.min = L.zFit; cam.max = Math.max(cam.min + 4, Math.round(9 * dpr));
   home(true);
 }
-// the org or the day changed (the world's signals: react.js)
-export function rebuild() { build(); clampCam(); }
+// the org or the day changed (the world's signals: react.js): no kept building stays
+export function rebuild() { buildings.forgetKept(); buildings.build(layout.key); clampCam(); }
 
 // ---------------------------------------------------------------- the frame
 function step(dt) {

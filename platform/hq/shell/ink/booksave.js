@@ -120,7 +120,8 @@ async function restoreGone(dev, page) {
   return refused;
 }
 // The units drawn here, a stroke between units or below the last: made in the store right after the unit above them,
-// their elements in their own px (bookunits.js); the ones made.
+// or as the page's last kept in the column they're drawn in, their elements in their own px (bookunits.js); the ones
+// made.
 async function makeUnits(dev, page, els) {
   const news = [...(page.pending ?? [])];
   for (const unit of news) {
@@ -131,7 +132,7 @@ async function makeUnits(dev, page, els) {
     }
     const parts = partsOf(page, items),
       after = unit.after === null || unit.after > 0 ? unit.after : undefined,
-      made = await createGroup(dev, page.id, after == null ? parts : { ...parts, after });
+      made = await createGroup(dev, page.id, after == null ? { ...parts, column: unit.column } : { ...parts, after });
     madeUnit(page, unit.id, made.id);
     keep(page, made, parts);
   }
@@ -218,15 +219,14 @@ export function named(book, page, title) {
   if (view) view.el.ariaLabel = nameOf(page);
   book.controls?.update();
 }
-// (the page's own saves come back as the store's change too: nothing new in them, nothing's drawn again. Its answers
-// and the agents' cards under it are new too: cards.)
+// (the page's own saves come back as the store's change too: nothing new in them, nothing's drawn again. Its answers,
+// the agents' cards under it and who it was handed to are new too.)
 const unchanged = (page, groups) =>
   groups.length === page.groups.size &&
   groups.every(g => {
-    const had = page.groups.get(g.id);
-    return (
-      had?.updated === g.updated && JSON.stringify([had.children, had.asks]) === JSON.stringify([g.children, g.asks])
-    );
+    const had = page.groups.get(g.id),
+      around = x => JSON.stringify([x.children, x.asks, x.assigned]);
+    return had?.updated === g.updated && around(had) === around(g);
   });
 // (the store's elements in their units' own px, until the page lays them: bookunits.js. What's drawn here and not
 // yet in the store, in a unit drawn here, stays where it is.)

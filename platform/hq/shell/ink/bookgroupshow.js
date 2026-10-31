@@ -3,14 +3,12 @@
 // whole, its words under it too, clear of the islands over the paper's edges: a phone's book reads a page's scraps as a
 // list, and a stroke on a scrap must start on it, not on the tools.
 import { slideTo } from './bookview.js';
-import { island, controlsLeft } from './bookui.js';
 import { readAgain } from './booksave.js';
 import { loadGroups } from './notebookdata.js';
 import { store } from '../../util.js';
 
-// room left of a scrap shown when the paper must pan to it (page px), and on screen between it and the islands (px)
-const ROOM = 24,
-  RAIL_GAP = 12;
+// room left of a scrap shown when the paper must pan to it (page px)
+const ROOM = 24;
 
 let book = null; // (bookpages.js's, once the groups are mounted: bookgroups.js)
 // The newest group this screen has shown, by id: one newer the book shows as it opens (booknewest.js)
@@ -56,30 +54,14 @@ export function reachOf(v, id) {
   if (!p) return null;
   return { x: p.x, y: p.y, w: p.w, h: under ? under.offsetTop + under.offsetHeight - p.y : p.h };
 }
-// Where the paper shows a group: zoomed out (never in) till it fits the paper clear of the islands with a little room,
+// Where the paper shows a group: zoomed out (never in) till it fits the paper with a little room,
 // and panned only as far as it must to show it there, its top a quarter down (less, if its foot would be hidden)
 function inSight(r) {
-  const band = clearBand(),
-    s = Math.min(book.scale, band.right / (r.w + 2 * ROOM), band.bottom / (r.h + 2 * ROOM)),
-    seen = { x0: book.pan.x, x1: book.pan.x + band.right / s, h: band.bottom / s },
+  const paper = book.size,
+    s = Math.min(book.scale, paper.w / (r.w + 2 * ROOM), paper.h / (r.h + 2 * ROOM)),
+    seen = { x0: book.pan.x, x1: book.pan.x + paper.w / s, h: paper.h / s },
     { y } = book.pan;
   const across = r.x >= seen.x0 && r.x + r.w <= seen.x1 ? book.pan.x : r.x - ROOM,
     down = r.y >= y && r.y + r.h <= y + seen.h ? y : r.y - Math.min(seen.h / 4, seen.h - r.h - ROOM);
   return { pan: { x: across, y: down }, scale: s };
-}
-// The paper clear of the islands floating over it (bookui.js), the controls at its right (the stack and the tool strip
-// beside it) and the pages' row at its foot with the asks' counter over it (bookforyou.js), with a little room: in px
-// of the paper on screen from its top left, as its share of the paper so a book still swinging open measures the same
-function clearBand() {
-  const desk = book.desk.getBoundingClientRect(),
-    across = x => book.size.w * Math.min(1, Math.max(0, (x - desk.left) / desk.width)),
-    down = y => book.size.h * Math.min(1, Math.max(0, (y - desk.top) / desk.height)),
-    controls = controlsLeft(),
-    foot = island('pages'),
-    count = foot?.querySelector('.bk-for-you-count:not([hidden])'),
-    top = (count ?? foot)?.getBoundingClientRect().top;
-  return {
-    right: controls === null ? book.size.w : across(controls) - RAIL_GAP,
-    bottom: foot?.offsetWidth ? down(top) - RAIL_GAP : book.size.h,
-  };
 }

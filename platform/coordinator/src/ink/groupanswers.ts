@@ -7,6 +7,7 @@ import { findAgent, jobAgent } from '../jobs.ts';
 import { ceo } from '../company.ts';
 import { answersOnGroups, comingOf, going, slipsOf, waitingOf, type Listed } from './bookslips.ts';
 import { asksBy, asksOn } from './bookasks.ts';
+import { assignedOf } from './bookassign.ts';
 import type { Group } from '../notebookgroups.ts';
 
 // What HQ reads of a group with its answers: its own parts (head), its owner and the
@@ -44,6 +45,8 @@ export function answersOf(g: Group, replies: Group[], listed: Listed) {
     try: top ? tryOf(g, [...onNotes, ...onGroups]) : null,
     // (and the card it is, an agent's design ask on an Asks page: askpages.ts)
     asks: [...(g.request && top ? asksBy(g.request) : []), ...notes.flatMap(asksOn)],
+    // (who it was handed to, for its tags)
+    assigned: top ? assignedOf(g.id) : [],
   };
 }
 // A group's try (booktry.ts), as its versions block shows it under the group: coming while its run is queued or going

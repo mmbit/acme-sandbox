@@ -5,9 +5,8 @@
 // board saw HQ's buttons peeking over the notebook; a book that grew as it landed wouldn't feel like one (the board's
 // call 161). Run it in WebKit too (--webkit).
 import assert from 'node:assert/strict';
-import { MINI } from './bookkit.mjs';
+import { MINI, UPRIGHT, middleOf } from './bookkit.mjs';
 
-const UPRIGHT = { width: MINI.height, height: MINI.width };
 // The points sampled round the book (px apart)
 const GRID = 12;
 
@@ -32,7 +31,7 @@ async function spread(browser, c) {
       await c.settled(page, sideways ? 'open' : 'folded');
       if (sideways) {
         // (its cover's edge drawn left as far as it goes: the board's "the full width of my screen")
-        await drag(page, await middle(page, '#book .bk-edge'), -(viewport.width - 60));
+        await drag(page, middleOf(await page.locator('#book .bk-edge').boundingBox()), -(viewport.width - 60));
         await rests(page, c, 'spread', `drawn out by its edge (${size})`);
         await covered(page, `pulled out to full width (${size})`);
         await c.shot?.(`book-backdrop-${size}-wide`, page);
@@ -112,10 +111,6 @@ const rests = (page, c, mode, when) =>
     const is = await page.evaluate(() => document.documentElement.dataset.book);
     assert.fail(`the book isn't ${mode} once ${when}, but ${is}`);
   });
-const middle = async (page, selector) => {
-  const r = await page.locator(selector).boundingBox();
-  return [r.x + r.width / 2, r.y + r.height / 2];
-};
 // A drag, a move a frame, held still a moment before it's let go (no flick): the cover's edge stays where it's let go
 async function drag(page, [x, y], dx) {
   await page.mouse.move(x, y);

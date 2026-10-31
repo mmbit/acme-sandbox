@@ -41,6 +41,7 @@ import * as guests from './guests.ts';
 import * as shares from './shares.ts';
 import { invitedPeople } from './notebookguests.ts';
 import { syncReviewNotebook } from './notebookreviews.ts';
+import { shelfLink } from './notebookguestshelf.ts';
 import * as pricing from './pricing.ts';
 import { FRONT } from './approvals.ts';   // the front's door
 import { deployed } from './wakes.ts';
@@ -693,24 +694,27 @@ export function linkedFrom(scope: shares.Scope): shares.Reach[] {
   return [...found.values()];
 }
 
-// The board's Invite: {page, name, email, days, view, tester} from the viewer's Share, or {id,
-// name, email} on a share in Reviews. The person is a guest (guests.invite), so they sign in as a checklist's guest does.
+// The board's Invite: {page, name, email, lasting, days, view, tester} from the viewer's Share, or {id,
+// name, email} on a share in Reviews. lasting: a lasting guest's, open till the board ends it; without, a notes share is
+// a review round, open a week unless days says otherwise (days is from before Ink 1.1's two kinds). The person is a guest (guests.invite), so they sign in as a checklist's guest does.
 // A page whose scope has an open share of the same kind adds them to it (its date stays); otherwise a new share opens for
 // days. view: true for view only; tester: true for a tester invite, on the shop's preview door or a product's preview with
 // plans (shares.ts), and cap what each of its vouchers pays at most, in euros (setShareCap; €50 without).
 export function inviteToShare(b: any) {
   const found = b?.id !== undefined ? shares.byId(Number(b.id)) : undefined;
   if (b?.id !== undefined && (!found || found.ended || Date.parse(found.ends) <= Date.now())) return [404, 'that share has ended'];
-  const scope = found ? null : scopeOf(b?.page), days = Number(b?.days);
+  const scope = found ? null : scopeOf(b?.page),
+    days = b?.days === undefined ? shares.ROUND_DAYS : Number(b.days);
   let kind: shares.Kind = 'notes';
   if (b?.view === true) kind = 'view';
   if (b?.tester === true) kind = 'tester';
+  if (b?.lasting === true && kind === 'notes') kind = 'lasting';
   if (!found && !scope) return [400, 'a share opens a product’s preview, the shop’s, or a page in a cycle folder'];
   if (!found && kind === 'tester' && !tryable(scope!.about)) return [400, 'a tester invite is to the shop’s preview, where testers can order, or to a product with plans'];
   const cap = b?.cap === undefined ? null : capCents(b.cap);
   if (cap === undefined) return [400, CAP_RULE];
   const open = found ?? shares.openFor(scope!, kind);
-  if (!open && !shares.DAYS.includes(days)) return [400, `a link stays open ${shares.DAYS.join(', ')} days`];
+  if (!open && kind !== 'lasting' && !shares.DAYS.includes(days)) return [400, `a link stays open ${shares.DAYS.join(', ')} days`];
   const name = String(b?.name ?? '').trim();
   if (open && shares.people(open.id).some(p => shares.onIt(p) && p.guest.toLowerCase() === name.toLowerCase())) return [409, `${name} is on it already`];
   // a name alone: someone the board shared with lately, at the address they had
@@ -721,9 +725,10 @@ export function inviteToShare(b: any) {
   if (kind === 'tester' && cap !== null && !found && !open) shares.setCap(s.id, cap);
   shares.invite(s.id, who.name);
   syncReviewNotebook(s);
-  const what = { notes: 'to leave outside notes on', view: 'to view', tester: 'to try out, notes and one order,' }[shares.kindOf(s)];
+  const what = { lasting: 'as a lasting guest on', notes: 'to leave outside notes on', view: 'to view', tester: 'to try out, notes and one order,' }[shares.kindOf(s)];
   // (until, on the board's clock)
-  publish({ type: 'log', agent: owed.ownerOf(s.about).agent, text: `The board invited ${who.name} ${what} ${s.about}, until ${companyTime(Date.parse(s.ends))}` });
+  const until = s.lasting ? 'till the board ends it' : `until ${companyTime(Date.parse(s.ends))}`;
+  publish({ type: 'log', agent: owed.ownerOf(s.about).agent, text: `The board invited ${who.name} ${what} ${s.about}, ${until}` });
   return shareRow(shares.byId(s.id)!);
 }
 
@@ -781,10 +786,11 @@ function shareRow(s: shares.Share) {
   const owner = owed.ownerOf(s.about);
   // ordered: on a tester invite, the stalls their order was from, once they ordered (null before, and once its parcel
   // was cancelled with nothing sent: shares.orderOf)
-  // (title: the board's for them, listPeople; their colour in their book and the board's)
+  // (title: the board's for them, listPeople; their colour in their book and the board's; shelf: a guest's one link,
+  // to their shelf of books, the same on every share, which Send link sends: notebookguestshelf.ts.)
   const people = shares.people(s.id).filter(shares.onIt).map(p => ({ name: p.guest, title: guests.titleOf(p.guest), colour: sketchPeople.colourFor(p.guest), address: guests.addressOf(p.guest), opened: p.opened,
-    link: s.ended ? null : shares.linkOf(p), ordered: shares.orderOf(p) ? shares.orderedFrom(p) : null }));
-  return { id: s.id, what: owner.name, host: s.host, prefix: s.prefix, ends: s.ends, ended: s.ended, people, view: !!s.view,
+    link: s.ended ? null : shares.linkOf(p), shelf: s.ended || s.view || s.tester ? null : shelfLink(p.guest), ordered: shares.orderOf(p) ? shares.orderedFrom(p) : null }));
+  return { id: s.id, what: owner.name, host: s.host, prefix: s.prefix, ends: s.ends, ended: s.ended, people, view: !!s.view, lasting: !!s.lasting,
     tester: !!s.tester, cap: s.tester ? shares.capOf(s) / 100 : null, pays: s.about === FRONT ? 'order' : 'plan', owner: findAgent(owner.agent)?.name ?? owner.agent };
 }
 

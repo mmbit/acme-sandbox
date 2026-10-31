@@ -68,6 +68,10 @@ export const editGroup = (dev, id, since, parts) =>
 export const moveGroup = (dev, id, page, after) => ask(dev, '/api/notebooks/groups/move', null, { id, page, after });
 export const deleteGroup = (dev, id) => ask(dev, '/api/notebooks/groups/delete', null, { id });
 export const restoreGroup = (dev, id) => ask(dev, '/api/notebooks/groups/restore', null, { id });
+// Whom a scrap can be handed to: { recent, everyone }, each person { to, name, kind } (bookassign.js)
+export const loadPeople = dev => ask(dev, '/api/notebooks/people');
+// A group handed to a person (their to) → { group, to }; it stays where it is, wearing their tag
+export const assignGroup = (dev, id, to) => ask(dev, '/api/notebooks/groups/assign', null, { id, to });
 // A reply under an agent's answer (a slip's id) → { id, parent }; taken back in its seconds
 export const reply = (dev, answer, words) => ask(dev, '/api/notebooks/groups/reply', null, { answer, words });
 export const deleteReply = (dev, id) => ask(dev, '/api/notebooks/replies/delete', null, { id });

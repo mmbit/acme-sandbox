@@ -1,13 +1,14 @@
-// The book's tools on the rail (bookstrip.js): Select, the pen and the marker (one tool split in two, the half last
-// used remembered), the eraser, shapes and Text, and over the rail the tool's own card: its colours, its line's width,
-// the eraser's size, a shape's kind and whether it's filled, the pen's smoothing. The tool in use pressed again opens
-// its card; the keys a drawing app has do the same on a desktop. Every setting is remembered in this browser, and the
-// book opens on the pen or the marker, whichever was last in use.
+// The book's tools on the rail (bookstrip.js): Select, the pen (the marker the same tool: one button, showing the one
+// in use, both side by side only where the rail has room), the eraser, shapes and Text, and beside the rail the tool's
+// own card: the pen or the marker, its colours, its line's width, the eraser's size, a shape's kind and whether it's
+// filled, the pen's smoothing. The tool in use pressed again, or any tool held, opens its card; the keys a drawing app
+// has do the same on a desktop. Every setting is remembered in this browser, and the book opens on the pen or the
+// marker, whichever was last in use. (the pen one tool)
 //
 // st: booktools.js's state; this keeps st.mode and the settings on it, and calls st.changedTool(mode) when the tool
 // changes.
 import { store } from '../../util.js';
-import { button, island, setPressed, hide, overRail } from './bookui.js';
+import { button, island, setPressed, hide, besideRail } from './bookui.js';
 import { MARKERS, MARKER_ALPHA, SHAPES, WIDTHS } from './bookinkmath.js';
 import { word } from './bookscope.js';
 import { ERASER_PATHS } from '/__review/eraser.js';
@@ -16,6 +17,10 @@ import { PENS } from '/__review/ink.js';
 
 // The eraser's sizes (across, on screen: a fine one for a letter, a wide one for a line of them)
 const ERASERS = [12, 28, 56];
+// A press held this long on a tool opens its card (the marker's way in from the pen)
+const HOLD_MS = 400;
+// a held press that moves this far (px) is a slide along the rail (bookstrip.js), not a hold
+const HOLD_SLIP_PX = 6;
 // The pen's smoothing: how far each point goes towards the pointer (ink.js's follow): steady, or as the hand went
 const SMOOTH = { on: 0.42, off: 0.75 };
 
@@ -40,7 +45,7 @@ const ICONS = {
   filled: svg('<rect x="4" y="4" width="12" height="12" rx="2" fill="currentColor"/>'),
   smooth: svg('<path d="M3 13c2.5-6 4.5-6 7-1.5S15 15 17 7"/>'),
 };
-// The tools along the rail, left to right (the pen and the marker side by side, one button split in two)
+// The tools down the rail (the pen and the marker one tool: the one not in use shows only where there's room)
 export const TOOLS = [
   { mode: 'select', label: 'Select', key: 'V' },
   { mode: 'pen', label: 'Pen', key: 'P' },
@@ -100,30 +105,46 @@ export const eraserRadius = st => ERASERS[st.eraser] / 2;
 
 // ---- the rail's tools
 
-// The tools put first on the rail, before Undo and Redo (bookrail.js); the pen and the marker in a pair of their own
+// The tools put first on the rail, before Undo and Redo (bookrail.js)
 function makeIsland(st) {
-  const el = island('tools'),
-    pair = document.createElement('div');
-  pair.className = 'bk-pair';
-  pair.setAttribute('role', 'group');
-  pair.setAttribute('aria-label', word('Pen and marker'));
   const own = TOOLS.map(t => {
-    const b = button({
-      icon: ICONS[t.mode],
-      label: word(t.label),
-      keys: t.key,
-      pressed: false,
-      // (the tool in use pressed again opens its card)
-      onClick: () => (st.mode === t.mode ? card(st) : setMode(st, t.mode)),
-    });
+    const b = button({ icon: ICONS[t.mode], label: word(t.label), keys: t.key, pressed: false });
     b.dataset.mode = t.mode;
     if (t.mode !== 'select') b.setAttribute('aria-haspopup', 'true');
     st.buttons[t.mode] = b;
-    if (!INKS.includes(t.mode)) return b;
-    pair.append(b);
-    return t.mode === 'pen' ? pair : null;
+    pressing(st, b, t.mode);
+    return b;
   });
-  el.prepend(...own.filter(Boolean), document.createElement('hr'));
+  island('tools').prepend(...own, document.createElement('hr'));
+}
+// A tap picks the tool, or opens its card when it's in use; a hold opens its card at once, the tool picked. (held: the
+// click that ends a hold goes.)
+function pressing(st, b, mode) {
+  let timer = 0,
+    from = null,
+    held = false;
+  const stop = () => clearTimeout(timer);
+  b.addEventListener('pointerdown', e => {
+    if (!e.isPrimary || e.button > 0 || mode === 'select') return;
+    from = { x: e.clientX, y: e.clientY };
+    held = false;
+    timer = setTimeout(() => {
+      held = true;
+      setMode(st, mode);
+      card(st);
+    }, HOLD_MS);
+  });
+  b.addEventListener('pointermove', e => {
+    if (from && Math.hypot(e.clientX - from.x, e.clientY - from.y) > HOLD_SLIP_PX) stop();
+  });
+  for (const type of ['pointerup', 'pointercancel', 'pointerleave']) b.addEventListener(type, stop);
+  // (a long press on a phone is no context menu here)
+  b.addEventListener('contextmenu', e => e.preventDefault());
+  b.addEventListener('click', () => {
+    if (held) return (held = false);
+    if (st.mode === mode) card(st);
+    else setMode(st, mode);
+  });
 }
 
 // (keep: what's picked stays picked, a Ctrl-held Select's tool back: booktools.js.)
@@ -133,6 +154,8 @@ export function setMode(st, mode, { keep = false } = {}) {
   st.mode = mode;
   if (INKS.includes(mode)) st.ink = mode;
   for (const [m, b] of Object.entries(st.buttons)) setPressed(b, m === mode);
+  // (the ink not in use: shown only where the rail has room, bookstrip.css)
+  for (const m of INKS) st.buttons[m].toggleAttribute('data-spare', m !== st.ink);
   st.book.desk.dataset.tool = mode;
   if (st.card) closeCard(st);
   show(st);
@@ -168,7 +191,7 @@ function stepSize(st, by) {
   return true;
 }
 
-// The shapes' button as the settings are, the pen's and the marker's colours on their halves (a dot under the icon,
+// The shapes' button as the settings are, the pen's and the marker's colours on their buttons (a dot under the icon,
 // bookstrip.css), and the cursor in the tool's colour and size
 function show(st) {
   st.buttons.shapes.innerHTML = ICONS[st.shape];
@@ -203,7 +226,7 @@ const remember = st =>
     smooth: st.smooth,
   });
 
-// ---- the tool's card, over the rail
+// ---- the tool's card, beside the rail
 
 function card(st) {
   if (st.card) return closeCard(st);
@@ -217,7 +240,7 @@ function card(st) {
   st.opener.setAttribute('aria-expanded', 'true');
   st.card = el;
   fillCard(st);
-  overRail(el);
+  besideRail(el, st.opener);
   el.querySelector('[aria-pressed=true]')?.focus({ preventScroll: true });
   // (a press anywhere else, or Escape, closes it)
   st.away = e => {
@@ -227,9 +250,11 @@ function card(st) {
   addEventListener('pointerdown', st.away, true);
   addEventListener('keydown', st.away, true);
 }
-// The card's rows for the tool: a shape's kind and fill, the colours, the widths (the eraser: its sizes), smoothing
+// The card's rows for the tool: the pen or the marker, a shape's kind and fill, the colours, the widths (the eraser:
+// its sizes), smoothing
 function fillCard(st) {
   const rows = [];
+  if (INKS.includes(st.mode)) rows.push(inkChoice(st));
   if (st.mode === 'shapes') rows.push(...shapeRows(st));
   if (st.mode === 'eraser') rows.push(eraserRow(st));
   else rows.push(...inkRows(st));
@@ -248,6 +273,21 @@ function row(name, items) {
   }
   return r;
 }
+// (the card opened again for the one picked, as its colours are its own)
+const inkChoice = st =>
+  row(
+    'Pen or marker',
+    INKS.map(m => {
+      const tool = TOOLS.find(t => t.mode === m);
+      return {
+        icon: ICONS[m],
+        label: tool.label,
+        keys: tool.key,
+        on: st.mode === m,
+        pick: () => m !== st.mode && (setMode(st, m), card(st)),
+      };
+    }),
+  );
 const shapeRows = st => [
   row(
     'Shape',

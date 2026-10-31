@@ -2,6 +2,9 @@
 // A job that brings memory down hears its cause too. Nothing is stopped, blocked or retried here.
 import { db, inOneStep } from './db.ts';
 import { offloadPlaces } from './runs.ts';
+import type { RoomRecord, WorkerRecords } from '../../worker/src/roomrecords.ts';
+import { STALE_MS } from './roomretention.ts';
+import { observeNoticeReport, emittedWarning } from './noticeinterval.ts';
 
 // cause: the job that took the most since memory was last calm, when that was a third of what was free then (took_mb
 // of cause_free_mb). told: the jobs that heard a spell, and whether they've heard it end (back).
@@ -10,7 +13,6 @@ db.exec(`create table if not exists memory_spells (id integer primary key, began
 db.exec(`create table if not exists memory_told (spell integer not null, job integer not null,
   back integer not null default 0, primary key (spell, job))`);
 
-const STALE_MS = 3 * 60_000; // a report older than this says nothing: the worker is restarting, or gone (room.ts)
 type Spell = {
   id: number;
   ended: string | null;
@@ -20,41 +22,105 @@ type Spell = {
   cause_free_mb: number | null;
 };
 // The worker's last report: when, whether it said low, and the free memory it gave
-let latest: { at: number; low: boolean; freeMb: number; reasons: string[] } | undefined;
+let latest: { low: boolean; report: NoticeReport } | undefined;
+
+export type NoticeReport = {
+  receivedAt: number;
+  freeMb: number;
+  memory: unknown;
+  worker: Pick<RoomRecord, 'identity' | 'sourceAt' | 'inputs' | 'pressure'> | null;
+  transition: { kind: 'opened' | 'continued' | 'cleared' | 'none'; spell: number | null };
+};
+let spellReports: {
+  spell: number;
+  openingIdentity: RoomRecord['identity'] | null;
+  clearingIdentity: RoomRecord['identity'] | null;
+} | null = null;
+let notice: {
+  kind: 'warning' | 'all-clear';
+  spell: number;
+  job: number;
+  emittedAt: number;
+  report: NoticeReport | null;
+  openingIdentity: RoomRecord['identity'] | null;
+  clearingIdentity: RoomRecord['identity'] | null;
+  cause: { job: number; tookMb: number | null; freeMb: number | null } | null;
+  pressureLine: boolean;
+} | null = null;
 
 // The worker's verdict in its room report (room.ts): low opens a spell unless one is open, calm ends it, and anything
 // between leaves it as it is. A worker that sends none (an older one) changes nothing.
-export function report(memory: unknown, freeMb: number, now = Date.now()) {
-  const { verdict, cause, reasons } = (memory ?? {}) as {
+export function report(
+  memory: unknown,
+  freeMb: number,
+  now = Date.now(),
+  record?: RoomRecord | null,
+  workerSource?: WorkerRecords['source'],
+) {
+  const { verdict, cause } = (memory ?? {}) as {
     verdict?: unknown;
     cause?: Record<string, unknown>;
-    reasons?: string[];
   };
-  if (verdict !== 'low' && verdict !== 'between' && verdict !== 'calm') return;
+  if (verdict !== 'low' && verdict !== 'between' && verdict !== 'calm') {
+    observeNoticeReport(null, workerSource, record);
+    return null;
+  }
   const open = openSpell();
-  latest = {
-    at: now,
-    low: verdict === 'low' || (verdict === 'between' && !!open),
-    freeMb,
-    reasons: reasons ?? [`memory short: ${gb(freeMb)} GB free`],
-  };
-  if (verdict === 'calm' && open)
-    db.prepare('update memory_spells set ended = ? where id = ?').run(new Date(now).toISOString(), open.id);
-  if (verdict !== 'low' || open) return;
-  const known = cause && Number.isInteger(cause.job) && positive(cause.tookMb) && positive(cause.freeMb);
-  const [job, tookMb, causeFreeMb] = known ? [Number(cause.job), Number(cause.tookMb), Number(cause.freeMb)] : [];
-  db.prepare('insert into memory_spells (began, free_mb, cause, took_mb, cause_free_mb) values (?, ?, ?, ?, ?)').run(
-    new Date(now).toISOString(),
-    freeMb,
-    job ?? null,
-    tookMb === undefined ? null : Math.round(tookMb),
-    causeFreeMb === undefined ? null : Math.round(causeFreeMb),
-  );
+  const transition = updateSpell(verdict, cause, freeMb, now, open, structuredClone(record?.identity ?? null));
+  const source = reportSource(memory, freeMb, now, transition, record);
+  latest = { low: verdict === 'low' || (verdict === 'between' && !!open), report: source };
+  observeNoticeReport(source, workerSource, record);
+  return source;
+}
+
+function updateSpell(
+  verdict: 'low' | 'between' | 'calm',
+  cause: Record<string, unknown> | undefined,
+  freeMb: number,
+  now: number,
+  open: Spell | undefined,
+  identity: RoomRecord['identity'] | null,
+): NoticeReport['transition'] {
+  if (open) {
+    if (verdict === 'calm') {
+      db.prepare('update memory_spells set ended = ? where id = ?').run(new Date(now).toISOString(), open.id);
+      if (spellReports?.spell === open.id) spellReports.clearingIdentity = identity;
+    }
+    return { kind: verdict === 'calm' ? 'cleared' : 'continued', spell: open.id };
+  }
+  if (verdict !== 'low') return { kind: 'none', spell: null };
+  const spell = beginSpell(cause, freeMb, now);
+  spellReports = { spell, openingIdentity: identity, clearingIdentity: null };
+  return { kind: 'opened', spell };
 }
 export const inspectMemory = (now = Date.now()) => ({
-  latest: latest ?? null,
-  stale: latest ? now - latest.at > STALE_MS : null,
+  latest: latest
+    ? {
+        at: latest.report.receivedAt,
+        low: latest.low,
+        freeMb: latest.report.freeMb,
+        reasons: structuredClone(latestReasons()),
+      }
+    : null,
+  stale: latest ? now - latest.report.receivedAt > STALE_MS : null,
+  report: structuredClone(latest?.report ?? null),
+  notice: structuredClone(notice),
 });
+
+function beginSpell(cause: Record<string, unknown> | undefined, freeMb: number, now: number) {
+  const known = cause && Number.isInteger(cause.job) && positive(cause.tookMb) && positive(cause.freeMb);
+  const [job, tookMb, causeFreeMb] = known ? [Number(cause.job), Number(cause.tookMb), Number(cause.freeMb)] : [];
+  const inserted = db
+    .prepare('insert into memory_spells (began, free_mb, cause, took_mb, cause_free_mb) values (?, ?, ?, ?, ?)')
+    .run(
+      new Date(now).toISOString(),
+      freeMb,
+      job ?? null,
+      tookMb === undefined ? null : Math.round(tookMb),
+      causeFreeMb === undefined ? null : Math.round(causeFreeMb),
+    );
+  return Number(inserted.lastInsertRowid);
+}
 
 const positive = (v: unknown) => typeof v === 'number' && Number.isFinite(v) && v > 0;
 
@@ -70,20 +136,71 @@ export function take(job: number, stopping: boolean, now = Date.now()) {
       )
       .get(job, job) as Spell | undefined;
     const open = openSpell(),
-      lowNow = !!open && !!latest?.low && now - latest.at <= STALE_MS;
+      lowNow = !!open && !!latest?.low && now - latest.report.receivedAt <= STALE_MS;
     if (caused) {
       tell(caused, job, !!caused.ended);
-      const spell = lowNow && caused.id === open.id ? `${lowLine(latest!.reasons)}\n` : '';
+      const spell = lowNow && caused.id === open.id ? `${lowLine(latestReasons())}\n` : '';
+      retainNotice('warning', caused.id, job, now, caused, !!spell);
       return [{ memory: caused.id, text: `${spell}${nudgeLine(caused, job)}` }];
     }
-    if (lowNow && tell(open, job, false)) return [{ memory: open.id, text: lowLine(latest!.reasons) }];
+    if (lowNow && tell(open, job, false)) {
+      retainNotice('warning', open.id, job, now, open, true);
+      return [{ memory: open.id, text: lowLine(latestReasons()) }];
+    }
     if (open) return [];
     const heard = db
       .prepare('select spell from memory_told where job = ? and back = 0 order by spell desc limit 1')
       .get(job) as { spell: number } | undefined;
     if (!heard) return [];
     db.prepare('update memory_told set back = 1 where job = ?').run(job);
-    return [{ memory: heard.spell, text: backLine(latest?.freeMb) }];
+    retainNotice('all-clear', heard.spell, job, now, undefined, false);
+    return [{ memory: heard.spell, text: backLine(latest?.report.freeMb) }];
+  });
+}
+
+function reportSource(
+  memory: unknown,
+  freeMb: number,
+  now: number,
+  transition: NoticeReport['transition'],
+  record?: RoomRecord | null,
+): NoticeReport {
+  return structuredClone({
+    receivedAt: now,
+    freeMb,
+    memory,
+    transition,
+    worker: record
+      ? {
+          identity: record.identity,
+          sourceAt: record.sourceAt,
+          inputs: record.inputs.filter(input => input.phase === 'watch'),
+          pressure: record.pressure,
+        }
+      : null,
+  });
+}
+
+function retainNotice(
+  kind: 'warning' | 'all-clear',
+  spell: number,
+  job: number,
+  now: number,
+  cause: Spell | undefined,
+  pressureLine: boolean,
+) {
+  if (kind === 'warning') emittedWarning();
+  const identities = spellReports?.spell === spell ? spellReports : null;
+  notice = structuredClone({
+    kind,
+    spell,
+    job,
+    emittedAt: now,
+    report: kind === 'all-clear' || pressureLine ? (latest?.report ?? null) : null,
+    openingIdentity: identities?.openingIdentity ?? null,
+    clearingIdentity: identities?.clearingIdentity ?? null,
+    cause: cause?.cause ? { job: cause.cause, tookMb: cause.took_mb, freeMb: cause.cause_free_mb } : null,
+    pressureLine,
   });
 }
 
@@ -93,6 +210,11 @@ const openSpell = () =>
 const tell = (spell: Spell, job: number, back: boolean) =>
   db.prepare('insert or ignore into memory_told (spell, job, back) values (?, ?, ?)').run(spell.id, job, Number(back))
     .changes > 0;
+
+function latestReasons() {
+  const memory = latest?.report.memory as { reasons?: string[] } | undefined;
+  return memory?.reasons ?? [`memory short: ${gb(latest!.report.freeMb)} GB free`];
+}
 
 function lowLine(reasons: string[]) {
   return (

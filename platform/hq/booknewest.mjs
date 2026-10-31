@@ -1,7 +1,7 @@
 // book-check.mjs's stories of a note the board sends from review mode finding it in the Notebook (shell/ink/booknewest.js,
 // notebookstack.js), on the played Notebook seeded as dev mode's (mock/notebook.json):
 //   - a desktop and an iPad mini: a scrap sent while the book is shut, on another notebook (a desktop) or turned to
-//     another page (an iPad mini), lands under the newest thing on My journal's current page (on a desktop its ink in
+//     another page (an iPad mini), lands as the last unit of My journal's current page (on a desktop its ink in
 //     the folded book's handle); the pull tab opens the book there, the scrap in view; on a desktop, turned away again,
 //     HQ's book link in a tab of its own opens HQ there;
 //   - a phone: a scrap sent with the book folded, the pull tab opens the spread at it.
@@ -19,7 +19,7 @@ const SECOND = 2,
 // c: book-check.mjs's hqIn, base, settled, shot, noErrorsIn, shots, org
 export function newestStories(c) {
   return {
-    "a note sent from review mode, on a desktop: it lands under the newest thing on the page, the book opens to it, and HQ's book link in a tab opens there":
+    "a note sent from review mode, on a desktop: it lands as the page's last unit, the book opens to it, and HQ's book link in a tab opens there":
       browser => beside(browser, c, DESKTOP, 'desktop'),
     'a note sent from review mode, on an iPad mini: the book opens to it': browser => beside(browser, c, MINI, 'mini'),
     'a note sent from review mode, on a phone: the folded book opens at it': browser => onPhone(browser, c),
@@ -46,33 +46,35 @@ async function beside(browser, c, viewport, name) {
     if (!touch) await landed(page, sent);
     await tap(page, '#book .bk-lip');
     await atRest(page, 'open');
-    await inView(page, play, sent.id, 'the pull tab opens the book at the scrap');
+    await inView(page, sent.id, 'the pull tab opens the book at the scrap');
     await c.shot(`newest-${name}-opened`, page);
-    if (!touch) await inATab(page, play, c, sent.id, errors, away);
+    if (!touch) await inATab(page, c, sent.id, errors, away);
     c.noErrorsIn(errors);
   } finally {
     await done();
   }
 }
 // Left away from the current page, HQ's book link in a tab of its own (main.js): HQ opened at the scrap
-async function inATab(page, play, c, id, errors, away) {
+async function inATab(page, c, id, errors, away) {
   await away();
   await page.waitForTimeout(500); // (the place the book remembers)
   const tab = await page.context().newPage();
   tab.on('pageerror', e => errors.push(e.message));
   await tab.goto(`${c.base}/?intro=0&open=book&owner=${c.org.company.ceo}`);
   await atRest(tab, 'open');
-  await inView(tab, play, id, "a tab's book link opens HQ at the scrap");
+  await inView(tab, id, "a tab's book link opens HQ at the scrap");
 }
 
 async function onPhone(browser, c) {
   const { page, play, errors, done } = await open(browser, c, PHONE, { hasTouch: true, isMobile: true, folded: true });
   try {
+    // (open() taps the folded book open: folded again, as the board left it.)
+    await tap(page, '#book .bk-lip');
     await atRest(page, 'folded');
     const sent = await sendScrap(page, play);
     await tap(page, '#book .bk-lip');
     await atRest(page, 'spread');
-    await inView(page, play, sent.id, 'the pull tab opens the folded book at the scrap');
+    await inView(page, sent.id, 'the pull tab opens the folded book at the scrap');
     await c.shot('newest-phone-opened', page);
     c.noErrorsIn(errors);
   } finally {
@@ -82,7 +84,7 @@ async function onPhone(browser, c) {
 
 // ---- review mode
 
-// A ring's note saved as review mode saves it: a scrap on the current page, which lands under its newest group
+// A ring's note saved as review mode saves it: a scrap on the current page, the page's last unit
 async function sendScrap(page, play) {
   const before = groupsOn(play, NEWEST),
     snip = await page.evaluate(() => {
@@ -105,22 +107,16 @@ async function sendScrap(page, play) {
     { anchor, words: 'The basket hides', said: 'typed', snip },
   );
   assert.equal(sent.page, NEWEST, 'on the current page');
-  under(sent.box, before);
+  last(sent, before);
   return sent;
 }
-// A scrap's box under the newest of a page's groups (the highest id), at its left edge, and clear of every group
-function under(box, groups) {
-  const boxes = groups.filter(g => g.box),
-    newest = boxes.reduce((a, b) => (b.id > a.id ? b : a)).box;
-  assert.equal(box.x, Math.round(newest.x), "at the newest thing's left edge");
-  assert.ok(box.y >= newest.y + newest.h, `under the newest thing on the page (${box.y} by ${newest.y + newest.h})`);
-  const over = boxes.filter(
-    ({ box: b }) => box.x < b.x + b.w && b.x < box.x + box.w && box.y < b.y + b.h && b.y < box.y + box.h,
-  );
-  assert.deepEqual(
-    over.map(g => g.id),
-    [],
-    'over nothing already on the page',
+// The scrap the page's last unit, after everything already on it: a page lays its units out in their order, a unit's
+// box in its own px (bookunits.js).
+function last(sent, groups) {
+  const tops = groups.filter(g => g.parent == null);
+  assert.ok(
+    tops.every(g => g.pos < sent.pos),
+    `the page's last unit (${sent.pos} after ${JSON.stringify(tops.map(g => g.pos))})`,
   );
 }
 // The scrap's ink lifted into the folded book as review mode's lift.js asks ('pencil:landing', a Notebook scrap's), the
@@ -143,7 +139,7 @@ async function landed(page, { id, page: on }) {
 }
 // The pages' row turned back to page n, its arrow's own click in the page (tap)
 async function turnBack(page, n) {
-  const at = () => where(page).then(w => Number(/(\d+) \/ \d+$/.exec(w)?.[1]));
+  const at = () => where(page).then(w => Number(/(\d+)\/\d+$/.exec(w)?.[1]));
   for (let i = 0; i < 8 && (await at()) > n; i++) {
     const was = await at();
     await page.locator('#book').getByRole('button', { name: 'The page before' }).dispatchEvent('click');
@@ -170,26 +166,23 @@ const tap = (page, selector) => page.locator(selector).dispatchEvent('click');
 // ---- reading
 
 const groupsOn = (play, page) => play.route('/api/notebooks/pages/groups', { page }).groups;
-// The group whole in the paper's view on its page, shown (its groups' layer), clear of the tool
-// strip, the islands and the pages' row (the book slides there: wait on it, as frames come late on a loaded machine)
-async function inView(page, play, id, what) {
-  const on = NEWEST,
-    box = groupsOn(play, on).find(g => g.id === id).box;
+// The group's unit, as the page lays it, whole in the paper's view on its page, shown (its groups' layer), clear of the
+// tool strip, the islands and the pages' row (the book slides there: wait on it, as frames come late on a loaded
+// machine).
+async function inView(page, id, what) {
+  const on = NEWEST;
   const seen = () =>
     page.evaluate(
-      ([on, box]) => {
+      ([on, id]) => {
         const shown = [...document.querySelectorAll('#book .bk-page')].find(p => !p.hidden);
         if (!shown?.querySelector(`:scope > .bk-groups[data-page="${on}"]`)) return false;
-        const o = shown.getBoundingClientRect(),
-          k = o.width / shown.offsetWidth,
-          r = { left: o.left + box.x * k, right: o.left + (box.x + box.w) * k, top: o.top + box.y * k };
-        r.bottom = r.top + box.h * k;
+        const unit = shown.querySelector(`.bk-unit[data-unit="${id}"]`);
+        if (!unit) return false;
+        const r = unit.getBoundingClientRect();
         const desk = document.querySelector('#book .bk-desk').getBoundingClientRect(),
           over = [
             // (the tool's name beside the strip is never in a press's way, and fades: bookstrip.css)
-            ...document.querySelectorAll(
-              '#book .bk-strip > :not(.bk-now), #book .bk-islands > *, #book .bk-controls > .bk-island',
-            ),
+            ...document.querySelectorAll('#book .bk-column > :not(.bk-locked)'),
           ]
             .filter(el => el.offsetWidth)
             .map(el => el.getBoundingClientRect())
@@ -201,7 +194,7 @@ async function inView(page, play, id, what) {
           ? over.length === 0
           : false;
       },
-      [on, box],
+      [on, id],
     );
   await until(seen, what, 60_000);
 }

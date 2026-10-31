@@ -7,13 +7,8 @@
 // on a long press, and a finger that pans once the pen's been used where the preferences say so. Each asserts what the
 // board sees and what the store keeps.
 import assert from 'node:assert/strict';
-import { freePage, onDesk, paperBox, savedWhere, colourIn, BLUE } from './bookmouse.mjs';
-import { MINI, chromiumPen, until } from './bookkit.mjs';
-
-// how long a story waits to be sure something didn't happen (the page is saved this soon after a change)
-export const QUIET_MS = 1200;
-// what the stand-in microphone hears
-export const HEARD = 'order the blue mugs';
+import { desk, freePage, paperBox, savedWhere, colourIn, BLUE } from './bookmouse.mjs';
+import { HEARD, QUIET_MS, middleOf, mini, until, wordsHeard } from './bookkit.mjs';
 
 // c: book-check.mjs's played store and helpers
 export function stripStories(c) {
@@ -38,8 +33,10 @@ async function mouse(browser, c) {
   try {
     const paper = await paperBox(page);
     assert.equal(await pressed(page), 'Pen', 'the pen in use');
-    const mid = [paper.x + paper.width / 2, paper.y + paper.height / 2];
-    // a blue line (the page scrolls down only, so Shift no longer pans it: job #14672)
+    const mid = middleOf(paper);
+    // a blue line, its key pressed with the mouse over the book: the colour keys are the book's only while the
+    // pointer is on it (bookpalette.js)
+    await page.mouse.move(...mid);
     await page.keyboard.press('3');
     await stroke(page, [mid[0] - 80, mid[1]], [mid[0] + 80, mid[1]]);
     await savedWhere(c, free.id, p => p.ink.length === 1);
@@ -68,15 +65,19 @@ async function voiceByMouse(browser, c) {
       at = [paper.x + 300, paper.y + 260];
     await page.mouse.move(...at);
     await page.mouse.down();
-    await page.locator('#book .bk-voice').waitFor({ timeout: 2000 });
-    await until(async () => (await page.locator('#book .bk-voice').textContent()).includes(HEARD), 'the words heard');
+    await page.locator('#book .bk-voice').waitFor();
+    await wordsHeard(page);
     await c.shot('book-voice-listening', page);
     await page.mouse.up();
     const saved = await savedWhere(c, free.id, p => p.texts.length === 1);
     assert.equal(saved.texts[0].text, HEARD);
     assert.equal(saved.ink.length, 0, 'the hold drew nothing');
-    const box = await page.locator('#book .bk-typed').boundingBox();
-    assert.ok(Math.abs(box.x - at[0]) < 30 && Math.abs(box.y + box.height / 2 - at[1]) < 30, 'the words where it held');
+    // (a unit of their own in the column it was held, where the masonry lays it: bookunits.js. Hidden while they
+    // land: bookarrive.js)
+    const words = page.locator('#book .bk-typed');
+    await words.waitFor();
+    const box = await words.boundingBox();
+    assert.ok(box.x <= at[0] && at[0] <= box.x + box.width, `the words where it held: ${JSON.stringify([at, box])}`);
     assert.equal(await page.locator('#book .bk-voice').count(), 0, 'the listening slip gone');
     await page.locator('#book').getByRole('button', { name: 'Undo', exact: true }).click();
     await savedWhere(c, free.id, p => p.texts.length === 0);
@@ -112,6 +113,7 @@ async function preferences(browser, c) {
     await page.waitForTimeout(800);
     assert.equal(await page.locator('#book .bk-voice').count(), 0, 'no voice note at 800 ms with Long');
     await page.locator('#book .bk-voice').waitFor({ timeout: 1000 });
+    await wordsHeard(page);
     await page.mouse.up();
     await savedWhere(c, free.id, p => p.texts.length === 1);
     assert.deepEqual(errors, []);
@@ -125,11 +127,11 @@ async function fingers(browser, c) {
   const { page, touch, errors, done } = await mini(browser, c);
   try {
     const paper = await paperBox(page),
-      mid = [paper.x + paper.width / 2, paper.y + paper.height / 2];
+      mid = middleOf(paper);
     // a slide along the rail: each tool's name as it passes, the one it lifts on picked, no hold
     const b = name => page.locator('#book .bk-strip').getByRole('button', { name, exact: true }).boundingBox();
     const [select, eraser] = [await b('Select'), await b('Eraser')];
-    await touch.down([[select.x + select.width / 2, select.y + select.height / 2]]);
+    await touch.down([middleOf(select)]);
     // (drifting above the rail onto the paper: the tool level with the finger)
     await touch.move([[eraser.x + eraser.width / 2, eraser.y - 30]], 8);
     await until(async () => (await page.locator('#bk-tip').textContent()).startsWith('Eraser'), "the eraser's name");
@@ -171,17 +173,19 @@ async function pencil(browser, c) {
   try {
     const paper = await paperBox(page),
       at = [paper.x + paper.width / 2 - 60, paper.y + 200];
-    // a double tap held: the first tap's dot taken off, the words where it held
-    await pen.tap(at);
-    await page.waitForTimeout(120);
-    await pen.down(at);
-    await page.locator('#book .bk-voice').waitFor({ timeout: 2000 });
-    await until(async () => (await page.locator('#book .bk-voice').textContent()).includes(HEARD), 'the words heard');
+    // a lone tap draws a dot (so a double tap's first one does too)
+    await pen.tap([at[0] + 160, at[1]]);
+    const [lone] = (await savedWhere(c, free.id, p => p.ink.length === 1)).ink;
+    // a double tap held: the first tap's dot taken off, the lone dot kept, the words where it held
+    await pen.doubleTap(at);
+    await page.locator('#book .bk-voice').waitFor();
+    await wordsHeard(page);
     await pen.up(at);
     const saved = await savedWhere(c, free.id, p => p.texts.length === 1);
     assert.equal(saved.texts[0].text, HEARD);
     await page.waitForTimeout(QUIET_MS);
-    assert.equal(stored(c, free).ink.length, 0, "the double tap's dot taken off");
+    const left = stored(c, free).ink.map(s => s.points);
+    assert.deepEqual(left, [lone.points], "the double tap's dot taken off, the lone dot kept");
     // the radial menu on: a long press opens it, a slide out to the highlighter and a lift picks it
     await page.evaluate(() =>
       localStorage.setItem('ink.prefs', JSON.stringify({ radial: true, penPans: true, hold: 'medium' })),
@@ -190,9 +194,9 @@ async function pencil(browser, c) {
     await pen.down(ring);
     await page.locator('#book .bk-radial [role=menuitemradio]').first().waitFor({ timeout: 2000 });
     const lit = await page.locator('#book .bk-radial').getByRole('menuitemradio', { name: 'Marker' }).boundingBox();
-    await pen.move([lit.x + lit.width / 2, lit.y + lit.height / 2]);
+    await pen.move(middleOf(lit));
     await c.shot('book-radial', page);
-    await pen.up([lit.x + lit.width / 2, lit.y + lit.height / 2]);
+    await pen.up(middleOf(lit));
     await until(async () => (await pressed(page)) === 'Marker', 'the highlighter picked from the ring');
     assert.equal(await page.locator('#book .bk-radial').count(), 0, 'the ring gone');
     // "touch always pans" on, and the pen used: a finger moves the page and draws nothing
@@ -208,85 +212,6 @@ async function pencil(browser, c) {
 
 // ---- helpers
 
-// A desktop with a mouse and a microphone (the stand-in: shell/voice.js's recording and /api/voice's words).
-export async function desk(browser, c, opts) {
-  const opened = await onDesk(browser, c, opts);
-  await heard(opened.page);
-  await opened.page.reload();
-  await opened.page.waitForSelector('#book .bk-desk', { timeout: 30_000 });
-  await c.settled(opened.page, 'open');
-  return opened;
-}
-// The iPad mini as a touch screen with a pen, in Chromium (its own touch and pen events, trusted); more: the context's
-// own options
-export async function mini(browser, c, more = {}) {
-  // (at 1x, so a screenshot's px are the screen's: colourIn)
-  const context = await c.hqIn(browser, MINI, { hasTouch: true, deviceScaleFactor: 1, ...more });
-  const page = await context.newPage(),
-    errors = [];
-  page.on('pageerror', e => errors.push(e.message));
-  await heard(page);
-  await page.goto(`${c.base}/?intro=0`);
-  await page.waitForSelector('#book .bk-desk', { timeout: 30_000 });
-  await c.settled(page, 'open');
-  const cdp = await context.newCDPSession(page);
-  return { page, pen: chromiumPen(cdp), touch: touchOf(cdp), errors, done: () => context.close() };
-}
-// The microphone's stand-in: the recording module answered with one that hears at once, and its words; dictate.js runs
-// for real on it (seconds)
-export async function heard(page) {
-  await page.route('**/shell/voice.js', r =>
-    r.fulfill({
-      contentType: 'text/javascript',
-      body: `export const MAX_SECONDS = 1200, TRANSCRIBER = true, canRecord = true;
-export function record({ onSegment } = {}) {
-  const s = { ready: Promise.resolve(), level: () => 0.4, seconds: () => 1, cancel() {} };
-  setTimeout(() => onSegment?.(new Blob(['piece'], { type: 'audio/wav' })), 100);
-  s.stop = async () => new Blob(['clip'], { type: 'audio/webm' });
-  return s;
-}`,
-    }),
-  );
-  // (and allowed already)
-  await page.route('**/__review/micallowed.js', r =>
-    r.fulfill({
-      contentType: 'text/javascript',
-      body: 'export const micAllowed = () => true, micBlocked = () => false, gotStream = () => {};',
-    }),
-  );
-  await page.route('**/api/voice**', r => r.fulfill({ json: { text: HEARD } }));
-  await page.addInitScript(() => {
-    if (navigator.mediaDevices)
-      navigator.mediaDevices.enumerateDevices = async () => [{ kind: 'audioinput', deviceId: 'mic', label: '' }];
-  });
-}
-// Fingers: down at points, moved to others in steps, lifted
-export function touchOf(cdp) {
-  let last = [];
-  const points = all => all.map(([x, y], id) => ({ x, y, id, radiusX: 4, radiusY: 4, force: 1 }));
-  const t = {
-    down: async at => {
-      last = at;
-      await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: points(at) });
-    },
-    move: async (to, steps = 12) => {
-      const from = last;
-      for (let i = 1; i <= steps; i++) {
-        const now = from.map(([x, y], k) => [x + ((to[k][0] - x) * i) / steps, y + ((to[k][1] - y) * i) / steps]);
-        await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: points(now) });
-      }
-      last = to;
-    },
-    up: () => cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }),
-    stroke: async (from, to) => {
-      await t.down(from);
-      await t.move(to);
-      await t.up();
-    },
-  };
-  return t;
-}
-export const middleOf = b => [b.x + b.width / 2, b.y + b.height / 2];
 async function stroke(page, [x0, y0], [x1, y1]) {
   await page.mouse.move(x0, y0);
   await page.mouse.down();

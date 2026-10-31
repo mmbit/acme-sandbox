@@ -18,7 +18,7 @@ export function versionStories(c) {
 
 async function versions(browser, c) {
   const { nb, warmer, version } = triedNote(c);
-  nb.seed.slips.push(version(4410, 'Sand and honey'), version(4411, 'Brick red'));
+  nb.seed.slips.push({ id: 4410, ...version('Sand and honey') }, { id: 4411, ...version('Brick red') });
   await inStory(browser, c, { viewport: c.MINI, nb }, async (page, play) => {
     const frame = which => layer(page).locator(`.bk-versions .bk-version${which}`);
     await frame('').first().waitFor({ timeout: FEED_MS });
@@ -27,7 +27,7 @@ async function versions(browser, c) {
     assert.ok(await frame('[data-empty] .bk-answer-dots').isVisible());
     await under(page, warmer);
     await c.shot('answers-versions-coming', page);
-    const { id } = play.answer(warmer.id, version(null, 'Late sun'));
+    const { id } = play.answer(warmer.id, version('Late sun'));
     play.trying(warmer.id, { ...warmer.tried, going: false });
     await frame(`[data-answer="${id}"]`).waitFor({ timeout: FEED_MS });
     assert.equal(await frame('[data-empty]').count(), 0, 'all three in');
@@ -66,7 +66,7 @@ async function under(page, g) {
 // beside it (exported for bookpicks.mjs)
 export async function clearOfTools(page, selector) {
   const tools = await page
-      .locator('#book .bk-islands .bk-island, #book .bk-strip .bk-island')
+      .locator('#book .bk-column .bk-island')
       .evaluateAll(els => Math.min(...els.filter(el => el.offsetWidth).map(el => el.getBoundingClientRect().left))),
     rights = await layer(page)
       .locator(selector)

@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Hout &amp; Co. · Shop</title>
+  <!-- A product's page as an agent's ask points at it (book-check's ask's spot stories, dev mode's mock) -->
+  <style>
+    @font-face {
+      font-family: Bricolage;
+      src: url(/fonts/bricolage-grotesque.woff2) format('woff2');
+      font-weight: 200 800;
+    }
+    body {
+      margin: 0;
+      background: #f7f2e8;
+      color: #1f1b16;
+      font:
+        17px/1.5 Bricolage,
+        system-ui,
+        sans-serif;
+    }
+    header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 18px 40px;
+      border-bottom: 2px solid #1f1b16;
+    }
+    .logo {
+      width: 26px;
+      height: 26px;
+      border: 2.5px solid #1f1b16;
+      border-radius: 50%;
+    }
+    header b {
+      font-size: 22px;
+      letter-spacing: -0.01em;
+    }
+    nav {
+      display: flex;
+      gap: 28px;
+      align-items: center;
+      margin-left: auto;
+    }
+    .hero {
+      margin: 32px 40px;
+      padding: 72px 32px 84px;
+      border: 2px solid #1f1b16;
+      border-radius: 18px;
+      background:
+        radial-gradient(circle, rgb(31 27 22 / 0.26) 1.3px, transparent 1.7px) 0 0 / 14px 14px,
+        #efe6d4;
+      text-align: center;
+    }
+    .hero h1 {
+      display: inline-block;
+      margin: 0;
+      padding: 4px 18px;
+      font-size: 76px;
+      line-height: 1.05;
+      font-weight: 800;
+      letter-spacing: -0.03em;
+    }
+    .hero p {
+      max-width: 34ch;
+      margin: 18px auto 0;
+      font-size: 19px;
+    }
+    .shelf {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 24px;
+      margin: 0 40px 64px;
+    }
+    .item {
+      padding: 16px;
+      border: 2px solid #1f1b16;
+      border-radius: 14px;
+      background: #fffaf0;
+    }
+    .item svg {
+      display: block;
+      width: 100%;
+      height: 160px;
+      border-radius: 8px;
+      background: #efe6d4;
+    }
+    .item h2 {
+      margin: 12px 0 2px;
+      font-size: 19px;
+    }
+    .item span {
+      color: #6b6152;
+    }
+  </style>
+  <header>
+    <i class="logo"></i><b>Hout &amp; Co.</b>
+    <nav>
+      <span>Toys</span><span>Kitchen</span><span>Our story</span>
+      <svg width="26" height="24" viewBox="0 0 26 24" fill="none" stroke="#1f1b16" stroke-width="2" aria-label="Basket">
+        <path d="M1 3h4l3 12h13l3-9H7" stroke-linejoin="round" />
+        <circle cx="10" cy="20" r="2" />
+        <circle cx="19" cy="20" r="2" />
+      </svg>
+    </nav>
+  </header>
+  <main>
+    <section class="hero" id="hero">
+      <h1>Made to last</h1>
+      <p>Beech and oak toys, oiled by hand, made to be handed down.</p>
+    </section>
+    <section class="shelf">
+      <article class="item">
+        <svg viewBox="0 0 200 160" aria-hidden="true">
+          <path d="M100 40v-18" stroke="#1f1b16" stroke-width="5" stroke-linecap="round" />
+          <path d="M52 64h96l-48 70z" fill="#c98a4b" stroke="#1f1b16" stroke-width="3" stroke-linejoin="round" />
+          <ellipse cx="100" cy="64" rx="48" ry="16" fill="#e2b27c" stroke="#1f1b16" stroke-width="3" />
+          <path d="M70 84h60" stroke="#1f1b16" stroke-width="2" opacity=".5" />
+        </svg>
+        <h2>Spinning top</h2>
+        <span>Oak · €18</span>
+      </article>
+      <article class="item">
+        <svg viewBox="0 0 200 160" aria-hidden="true">
+          <path d="M100 24v84" stroke="#1f1b16" stroke-width="4" />
+          <path d="M104 30l46 68h-46z" fill="#fffaf0" stroke="#1f1b16" stroke-width="3" stroke-linejoin="round" />
+          <path d="M40 108h120l-18 26H58z" fill="#c98a4b" stroke="#1f1b16" stroke-width="3" stroke-linejoin="round" />
+          <path d="M20 142c20-8 40 8 60 0s40 8 60 0 40 8 40 0" stroke="#56704a" stroke-width="3" fill="none" />
+        </svg>
+        <h2>Little boat</h2>
+        <span>Beech · €24</span>
+      </article>
+      <article class="item">
+        <svg viewBox="0 0 200 160" aria-hidden="true">
+          <ellipse cx="100" cy="128" rx="58" ry="16" fill="#56704a" stroke="#1f1b16" stroke-width="3" />
+          <ellipse cx="100" cy="100" rx="44" ry="14" fill="#c98a4b" stroke="#1f1b16" stroke-width="3" />
+          <ellipse cx="100" cy="74" rx="32" ry="12" fill="#e2b27c" stroke="#1f1b16" stroke-width="3" />
+          <ellipse cx="100" cy="52" rx="20" ry="10" fill="#fffaf0" stroke="#1f1b16" stroke-width="3" />
+        </svg>
+        <h2>Stacking stones</h2>
+        <span>Beech · €32</span>
+      </article>
+    </section>
+  </main>
+  <script src="/__review/review.js"></script>
+</html>

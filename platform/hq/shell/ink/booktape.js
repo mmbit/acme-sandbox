@@ -21,7 +21,6 @@ import { shrink } from './bookscrapdraw.js';
 import { placeScrap } from './bookscrap.js';
 import { arrive } from './bookarrive.js';
 import { READ } from './booktexts.js';
-import { clearShown } from './bookui.js';
 import { downToClear } from './bookwords.js';
 import * as brought from './bookbrought.js';
 
@@ -195,7 +194,7 @@ async function wordsIn(tape, words, { at = null }) {
     const k = book.views.indexOf(v);
     if (k < 0) return; // (the book went to another notebook meanwhile)
     const point = found.at && book.at(at[0], at[1]),
-      view = k === book.cur ? clearShown(book) : pageBox(page),
+      view = k === book.cur ? book.shown() : pageBox(page),
       half = Math.max(0, Math.min(READ / 2, (view.x1 - view.x0) / 2 - EDGE));
     const [x, y] = point?.i === k ? [point.x, point.y] : [(view.x0 + view.x1) / 2, view.y0 + (view.y1 - view.y0) * 0.4];
     const texts = book.tools.put({ view: v, x, y }, words, x + half, { centre: true });

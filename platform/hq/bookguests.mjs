@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { mkdir, rename } from 'node:fs/promises';
 import { coordinator, openVisitor } from './bookguestserver.mjs';
-import { createNotebook, inviteScreens, createReviewRound, knownInvitation, readyHQ } from './bookinvitechecks.mjs';
+import { createNotebook, inviteScreens, createReviewRound, openShelf, readyHQ } from './bookinvitechecks.mjs';
 import { artifactScrap } from './bookguestartifact.mjs';
 import { until as waitFor } from './bookkit.mjs';
 import { refusalStory } from './bookguestrefusals.mjs';
@@ -33,8 +33,6 @@ export async function guestNotebookStories({ shots = null, webkit = true } = {})
     const board = await openVisitor(state, { width: 1440, height: 960 }, h.boardCookie);
     await board.page.goto(`${origin}/?intro=0`);
     await readyHQ(board.page);
-    await board.page.evaluate(async () => (await import('/shell/ink/bookinvites.js')).showGuestNotebooks());
-    await until(board.page, 'form.invite');
     await roundStory(state, board.page);
     console.log('Guest browser: review round complete');
     const invited = await invitedStory(state, board.page);
@@ -59,12 +57,18 @@ export async function guestNotebookStories({ shots = null, webkit = true } = {})
     throw error;
   } finally {
     for (const visitor of state.opened) if (visitor.errors.length) console.log('Browser errors:', visitor.errors);
-    await Promise.all(state.opened.map(visitor => visitor.context.close()));
+    await Promise.all(state.opened.map(closeVisitor));
     if (state.recording) await rename(await state.recording.path(), `${state.shots}/invited-notebook-phone.webm`);
     await browser.close();
     h.server.closeAllConnections();
     h.server.close();
   }
+}
+
+// (its routes let go first: a route still fetching when its context closes throws "Response has been disposed")
+async function closeVisitor(visitor) {
+  await visitor.context.unrouteAll({ behavior: 'ignoreErrors' });
+  await visitor.context.close();
 }
 
 async function emailSignIn(state, visitor, link) {
@@ -106,19 +110,24 @@ async function dismissPasskey(state, page) {
     'a dismissed passkey prompt stays dismissed after reload',
   );
 }
-const reopenManager = async board => {
-  await board.locator('[data-close]').click();
-  await board.evaluate(async () => (await import('/shell/ink/bookinvites.js')).showGuestNotebooks());
-  await until(board, 'form.invite');
-};
-async function watch(board, notebook) {
-  if (notebook.kind === 'round') {
-    await board.locator('[data-close]').click();
-    await board.evaluate(async id => (await import('/shell/ink/bookinvites.js')).showGuestNotebooks(id), notebook.id);
-  } else await board.locator(`[data-watch="${notebook.id}"]`).click();
+// The board watching a guest's book live: a round's from its own call, an invited one from its cover on the Shelf
+async function watch(state, board, notebook) {
+  if (notebook.kind === 'round')
+    await board.evaluate(async id => (await import('/shell/ink/bookinvites.js')).watchGuestBook(id), notebook.id);
+  else {
+    await board.goto(`${state.origin}/?intro=0`);
+    await readyHQ(board);
+    await board.evaluate(async () => (await import('/shell/ink/book.js')).openBook());
+    await openShelf(board);
+    await board.locator(`#book .bk-tile[data-book="${notebook.id}"] .bk-tile-open`).click();
+  }
   await board.waitForFunction(name => document.querySelector('.bi-watch h1')?.textContent === name, notebook.name);
   assert.equal(await board.locator('.bi-watch .ng-compose').isVisible(), false);
 }
+const stopWatching = async board => {
+  await board.locator('dialog.bi-dialog [data-close]').click();
+  await board.locator('dialog.bi-dialog').waitFor({ state: 'detached' });
+};
 
 async function roundStory(state, board) {
   const round = await createReviewRound(state, board);
@@ -140,7 +149,7 @@ async function roundStory(state, board) {
   await artifactScrap(state, ada, round.people[0].reviewLink, round.people[0].page, 'desktop');
   await artifactScrap(state, bela, round.people[1].reviewLink, round.people[1].page, 'phone');
   console.log('Guest browser: both artifact scraps saved');
-  await watch(board, round);
+  await watch(state, board, round);
   await board.locator(`[data-page="${round.people[0].page}"]`).click();
   await until(board, '.ng-groups', /Give the page title/);
   await board.locator(`[data-page="${round.people[1].page}"]`).click();
@@ -173,10 +182,10 @@ async function completeRound(state, board, round, ada, bela) {
   await until(bela.page, '[data-notebook-status]', /round is closed/, 20_000);
   const closed = (await state.h.board(`/api/notebooks/guests/list?notebook=${round.id}`)).body.notebooks[0];
   assert.deepEqual([closed.state, closed.pages.length], ['closed', 2]);
-  const advice = state.h.db.prepare('select deck from notebook_rounds where notebook = ?').get(round.id);
-  assert.ok(advice.deck, 'the board closing it queues the Advice job');
+  const closing = state.h.db.prepare('select advice from notebook_rounds where notebook = ?').get(round.id);
+  assert.ok(closing.advice, 'the board closing it queues the Advice job');
   await snapshot(state, 'round-closed-phone', bela.page);
-  await reopenManager(board);
+  await stopWatching(board);
 }
 
 async function answerDuringRound(state, visitor, page, screen) {
@@ -191,23 +200,22 @@ async function answerDuringRound(state, visitor, page, screen) {
   );
   const group = (await state.h.board(`/api/notebooks/guests/groups?page=${page}`)).body.groups[0];
   await answerNote(state, group.id, 'I will give the heading more room.');
-  await until(visitor.page, '#book .bk-answer', /heading more room/);
+  await until(visitor.page, '#book .answer-slip', /heading more room/);
   await snapshot(state, `round-answer-${screen}`, visitor.page);
   await reopenPage(visitor.page);
   await visitor.page.locator('#book .bk-island button.bk-send').waitFor({ state: 'visible' });
-  await until(visitor.page, '#book .bk-answer', /heading more room/);
+  await until(visitor.page, '#book .answer-slip', /heading more room/);
 }
 
 async function invitedStory(state, board) {
-  await knownInvitation(state, board);
-  const book = await createNotebook(state, board, 'Design notebook', 'Cora');
+  const book = await createNotebook(state, 'Design notebook', 'Cora');
   assert.equal(book.ends, null);
   const guest = await openVisitor(state, { width: 390, height: 844 }, '', state.browser, true);
   state.recording = guest.page.video();
   await passkeyStory(state, guest, book);
   await addNote(guest.page, 'Could the menu be easier to find');
   await drawNote(state, guest.page, book.pages[0].id);
-  await watch(board, book);
+  await watch(state, board, book);
   await until(board, '.ng-groups', /menu be easier/);
   await board.locator('.ng-ink').first().waitFor({ state: 'visible' });
   await sendPage(guest.page);
@@ -215,7 +223,7 @@ async function invitedStory(state, board) {
   const groups = (await state.h.board(`/api/notebooks/guests/groups?page=${book.pages[0].id}`)).body.groups;
   await answerNote(state, groups[0].id, 'I will make the menu label clearer.');
   await firstPage(guest.page);
-  await until(guest.page, '#book .bk-answer', /make the menu label clearer/);
+  await until(guest.page, '#book .answer-slip', /make the menu label clearer/);
   await until(board, '.ng-answer', /make the menu label clearer/);
   await snapshot(state, 'invited-answer-phone', guest.page);
   await snapshot(state, 'invited-watching-desktop', board);
@@ -297,10 +305,10 @@ async function tabletStory(state, invited) {
     await tablet.page.goto(`${state.origin}/guest/notebooks/?notebook=${invited.book.id}`);
     await readyNotebook(tablet.page);
     await firstPage(tablet.page);
-    await until(tablet.page, '#book .bk-answer', /make the menu label clearer/);
+    await until(tablet.page, '#book .answer-slip', /make the menu label clearer/);
     await snapshot(state, 'invited-answer-ipad-webkit', tablet.page);
     assert.deepEqual(tablet.errors, []);
-    await tablet.context.close();
+    await closeVisitor(tablet);
     state.opened.splice(state.opened.indexOf(tablet), 1);
   } finally {
     await browser.close();
@@ -336,10 +344,10 @@ async function languageStory(state, job, [lang, name, intro, open, label]) {
   const groups = (await state.h.board(`/api/notebooks/guests/groups?page=${book.pages[0].id}`)).body.groups;
   await answerNote(state, groups[0].id, 'An answer for the guest');
   await firstPage(page);
-  await until(page, '#book .bk-answer', /An answer for the guest/);
-  const head = await page.locator('#book .bk-answer-name').first().innerText();
-  assert.ok(head.endsWith(` · ${words[lang].aiAgent}`), head);
-  const prompt = await page.locator('#book .bk-answer-reply').first().getAttribute('aria-label');
+  await until(page, '#book .answer-slip', /An answer for the guest/);
+  const head = await page.locator('#book .answer-slip .slip-by').first().innerText();
+  assert.ok(head.endsWith(` · ${words[lang].aiAgent}`), `${head}: an agent's answer is marked as an AI's`);
+  const prompt = await page.locator('#book .answer-slip .slip-reply').first().getAttribute('aria-label');
   assert.equal(prompt, (await named(page, 'Write your reply to {name} here')).replace('{name}', head.split(' · ')[0]));
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
   await snapshot(state, `guest-language-${lang}-phone`, page);

@@ -47,7 +47,7 @@ export async function artifactScrap(state, visitor, invitation, pageId, screen) 
   await page.goto(notebookUrl);
   await readyNotebook(page);
   await page
-    .locator('#book .bk-under')
+    .locator('#book .bk-words')
     .filter({ hasText: `Say when it ships, ${screen}` })
     .waitFor();
   await snapshot(state, `reviewer-notebook-${screen}`, page);

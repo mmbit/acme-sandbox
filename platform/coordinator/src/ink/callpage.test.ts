@@ -17,6 +17,10 @@ const said = (r: { status: number; body: any }) => {
 };
 const groupRow = (id: number) =>
   db.prepare('select kind, by, status, note, deleted, words from notebook_groups where id = ?').get(id) as any;
+// The call's page gone in at its end, its group with it
+async function sent(id: number) {
+  for (let i = 0; i < 100 && groupRow(id).status !== 'sent'; i++) await new Promise(r => setTimeout(r, 50));
+}
 // (every change the agent makes is counted on the page as its hand's: each screen's read takes it as a step its Undo
 // takes back)
 const handed = async (page: number) =>
@@ -177,6 +181,38 @@ test('the agent changes its own scrap’s words and its item’s, moves and dele
   assert.equal((await h.voice('change', { call, id: note, words: 'x', delete: true })).status, 400);
 });
 
+test("after the board's Undo of the agent's new words, its note and its promise for the board are still its own", async () => {
+  const { call, page } = await callPage();
+  const note = said(await h.voice('scrap', { call, words: 'Make the price smaller', goal: GOAL })).id as number;
+  ledger.add(
+    call,
+    { kind: 'promise', owner: 'board', what: 'Try the shop on the phone', goal: GOAL, quote: 'try it' },
+    null,
+  );
+  const promise = (await groups(page)).find(g => g.id !== note).id as number;
+  for (const id of [note, promise]) {
+    const before = (await groups(page)).find(g => g.id === id);
+    said(await h.voice('change', { call, id, words: 'Make it smaller still' }));
+    // (Undo: the board's screen puts the group's lines back as they were, their own ids)
+    const after = (await groups(page)).find(g => g.id === id);
+    said(await h.board('/api/notebooks/groups/edit', { id, since: after.updated, texts: before.texts }));
+    said(await h.voice('change', { call, id, words: 'Make it a little smaller' }));
+  }
+  assert.equal(ledger.items(call)[0].what, 'Make it a little smaller');
+});
+
+test("the board's Undo of the agent's new words takes its item's line back too, by the call's end", async () => {
+  const { call, token, page } = await callPage();
+  const note = said(await h.voice('scrap', { call, words: 'Make the price smaller', goal: GOAL })).id as number;
+  const before = (await groups(page)).find(g => g.id === note);
+  said(await h.voice('change', { call, id: note, words: 'Make it smaller still' }));
+  const after = (await groups(page)).find(g => g.id === note);
+  said(await h.board('/api/notebooks/groups/edit', { id: note, since: after.updated, texts: before.texts }));
+  await h.voice('call-end', { agent: 'juno', lines: ['Board: smaller.'], token });
+  await sent(note);
+  assert.equal(ledger.items(call)[0].what, 'Make the price smaller');
+});
+
 test("at hang-up the agent's notes and marks stay on the page, the board's ink on them too, and none is sent", async () => {
   const { call, token, page } = await callPage();
   const note = said(await h.voice('scrap', { call, words: 'Use the page’s width', goal: GOAL })).id as number;
@@ -195,7 +231,7 @@ test("at hang-up the agent's notes and marks stay on the page, the board's ink o
   };
   said(await h.board('/api/notebooks/groups/edit', { id: drawnOn, since: rect.updated, ink: [...rect.ink, stroke] }));
   await h.voice('call-end', { agent: 'juno', lines: ['Board: use the width.'], token });
-  for (let i = 0; i < 100 && groupRow(note).status !== 'sent'; i++) await new Promise(r => setTimeout(r, 50));
+  await sent(note);
   for (const id of [note, kept, drawnOn])
     assert.deepEqual(
       [groupRow(id).status, groupRow(id).note],

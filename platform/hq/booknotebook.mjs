@@ -9,18 +9,14 @@
 //     group another screen changed meanwhile, refused (409), kept and saved anew once the page is read again; a save
 //     the store refuses (503) said, Submit sending nothing while it still refuses, and the page saved and sent once
 //     it's back.
-//   - a phone: the book a whole page, the sent page's scrap with its words, its answer under it (and an agent's card
-//     under another group), a reply written under the answer, kept while another answer comes, and taken back with
-//     its Undo; a new answer under it
-//     within seconds of the store's event, with a picture of what was made and its link, and ticked.
+// The phone story: booknotebookphone.mjs.
 import assert from 'node:assert/strict';
 import { readFile, rename } from 'node:fs/promises';
-import { clipped, fromBar, onPaper, pen, stamp, turnTo, where } from './booknotebookscreen.mjs';
+import { clearPlace, clipped, fromBar, inSight, onPaper, pen, stamp, tool, where } from './booknotebookscreen.mjs';
 import { DESKTOP, MINI, crumpled, until } from './bookkit.mjs';
 import { dragTo } from './bookshare.mjs';
 
 const SEED = JSON.parse(await readFile(new URL('./mock/notebook.json', import.meta.url), 'utf8'));
-const PHONE = { width: 390, height: 844 };
 // the seed's pages, and its groups on the newest (mock/notebook.json)
 const SENT = 1,
   SECOND = 2,
@@ -35,8 +31,6 @@ export function notebookStories(c) {
       browser => onMini(browser, c),
     "the Notebook on a desktop: Move to page… and Undo, another screen's group drawn, a refused edit kept, a failed save tried again by Submit":
       browser => onDesktop(browser, c),
-    'the Notebook on a phone: the sent page whole, its answer under its scrap, a reply written (kept as another answer comes) and taken back, a new answer there within seconds, ticked':
-      browser => onPhone(browser, c),
   };
 }
 
@@ -68,8 +62,8 @@ async function deleteAndUndo(page, play, c) {
   dropped.catch(() => {}); // a failure below shows first; awaiting it later still throws
   await fromBar(page, WAVE, 'Delete', 'tap');
   await c.shot('notebook-mini-menu', page);
-  await until(async () => !(await clipped(page)).includes(WAVE), 'the unit goes with its group at once', 2000);
   const { picture, down, aside, shown } = await dropped;
+  assert.ok(!(await clipped(page)).includes(WAVE), 'the unit goes with its group at once');
   assert.ok(picture && down > 40 && aside < 2, `crumpled and dropped straight down (${down} down, ${aside} aside)`);
   assert.ok(shown > 0.4, `still shown as it drops (${shown})`);
   await page.locator('#toasts .toast', { hasText: 'Deleted' }).waitFor();
@@ -81,22 +75,36 @@ async function deleteAndUndo(page, play, c) {
 }
 
 async function linesAndScratch(page, play, c) {
-  // a line in a clear place, left of the controls over the paper's right edge: a group of its own; the next, near it
-  // and soon after, joins it, as the words of a line do. (drawn one after the other: a wait on the store between them
-  // can put more than the join's 4 s between their saves on a loaded worker, whose save timers fire late.)
-  const before = ids(play, NEWEST);
-  const line = await onPaper(page, [
-    [180, 425],
-    [210, 432],
-    [235, 428],
-  ]);
-  const next = await onPaper(page, [
-    [252, 426],
-    [280, 430],
-    [305, 427],
-  ]);
-  await pen(page, line);
-  await pen(page, next);
+  // a line in the gap under the second unit: a group of its own; the next, started on its card and soon after, joins
+  // it, as the words of a line do. (drawn one after the other: a wait on the store between them can put more than the
+  // join's 4 s between their saves on a loaded worker, whose save timers fire late; the card is the page's own.)
+  await tool(page, 'Pen');
+  const before = ids(play, NEWEST),
+    cards = await clipped(page);
+  await pen(
+    page,
+    await onPaper(page, [
+      [180, 441],
+      [210, 446],
+      [235, 442],
+    ]),
+  );
+  const card = await until(
+    async () => (await clipped(page)).find(id => !cards.includes(id)),
+    'the line has a card of its own',
+  );
+  await pen(
+    page,
+    await onPaper(
+      page,
+      [
+        [72, 10],
+        [100, 14],
+        [130, 11],
+      ],
+      card,
+    ),
+  );
   const made = await until(
     () => ids(play, NEWEST).find(id => !before.includes(id) && group(play, id).ink.length === 2),
     'a new group for the line, the next line joining it',
@@ -104,10 +112,19 @@ async function linesAndScratch(page, play, c) {
   assert.equal(ids(play, NEWEST).length, before.length + 1, 'one group for both lines');
   await until(async () => (await clipped(page)).includes(made), 'the new group has its clip');
   await c.shot('notebook-mini-lines', page);
-  // a scratch-out over it, from its middle (its clip at its left is a button of its own): deleted, no ink kept
-  const zig = [];
-  for (let i = 0; i < 7; i++) zig.push([260, 419 + i * 3], [i % 2 ? 198 : 320, 418 + i * 3]);
-  await pen(page, await onPaper(page, zig));
+  await scratchOut(page, play, made, before);
+}
+
+async function scratchOut(page, play, made, before) {
+  // a scratch-out over it, from the card's left (its middle is a button of its own, "The scrap before"): deleted, no ink kept
+  // (across the whole card, which is as tall as the two lines)
+  const high = await page.evaluate(
+      g => parseFloat(document.querySelector(`#book .bk-page:not([hidden]) .bk-unit[data-unit="${g}"]`).style.height),
+      made,
+    ),
+    zig = [];
+  for (let i = 0; i < 14; i++) zig.push([i % 2 ? 200 : 40, 2 + ((high - 4) * i) / 13]);
+  await pen(page, await onPaper(page, zig, made));
   await until(() => !ids(play, NEWEST).includes(made), 'the scratch-out deletes the group');
   assert.deepEqual(ids(play, NEWEST), before, 'and leaves no ink of its own');
 }
@@ -182,16 +199,14 @@ async function refusedEdit(page, play, c) {
   // line kept and saved anew
   const refused = [];
   page.on('response', r => r.status() === 409 && refused.push(r.url()));
-  const rows = group(play, ROWS);
-  await pen(
-    page,
-    await onPaper(page, [
-      [150, 530],
-      [200, 534],
-      [250, 531],
-    ]),
-    page.mouse,
-  );
+  // (on the rows' own unit, slid into view: its px as the store keeps them)
+  const rows = group(play, ROWS),
+    drawn = await inSight(page, NEWEST, ROWS, [
+      [110, 70],
+      [160, 74],
+      [210, 71],
+    ]);
+  await pen(page, drawn, page.mouse);
   play.route(
     '/api/notebooks/groups/edit',
     {},
@@ -204,10 +219,7 @@ async function refusedEdit(page, play, c) {
     },
   );
   await until(() => refused.length, 'the edit refused');
-  await until(
-    () => groupsOn(play, NEWEST).some(g => g.ink.some(s => near(s.points[0], [150, 530]))),
-    'the line saved anew once the page is read again',
-  );
+  await until(() => inkFrom(page, play, drawn[0]), 'the line saved anew once the page is read again');
   assert.ok(
     rows.ink.slice(0, -1).every(s => group(play, ROWS).ink.some(t => near(t.points[0], s.points[0], 0.01))) &&
       !group(play, ROWS).ink.some(t => near(t.points[0], rows.ink.at(-1).points[0], 0.01)),
@@ -222,15 +234,12 @@ async function refusedEdit(page, play, c) {
 async function failedSave(page, play) {
   const down = r => r.fulfill({ status: 503, json: { error: 'The store is busy' } });
   await page.route('**/api/notebooks/groups/*', down);
-  await pen(
-    page,
-    await onPaper(page, [
-      [150, 610],
-      [200, 614],
-      [250, 611],
-    ]),
-    page.mouse,
-  );
+  const drawn = (await besideClear(page))([
+    [0, 0],
+    [50, 4],
+    [100, 1],
+  ]);
+  await pen(page, drawn, page.mouse);
   await page.locator('#book .bk-refusal:not([hidden])').first().waitFor();
   await dragTo(page, 'mouse', 'submit');
   await page.waitForTimeout(1500);
@@ -238,86 +247,7 @@ async function failedSave(page, play) {
   await page.unroute('**/api/notebooks/groups/*', down);
   await dragTo(page, 'mouse', 'submit');
   await until(() => pageOf(play, NEWEST).sent, 'the page sent once the store answers');
-  assert.ok(
-    groupsOn(play, NEWEST).some(g => g.ink.some(s => near(s.points[0], [150, 610]))),
-    'with the line its failed save held',
-  );
-}
-
-async function onPhone(browser, c) {
-  const { page, play, errors, done } = await open(browser, c, PHONE, { hasTouch: true, isMobile: true, folded: true });
-  try {
-    await turnTo(page, SENT);
-    await until(async () => /^Sent /.test(await stamp(page)), 'the sent page stamped');
-    const words = page.locator('#book .bk-scrap-words').first();
-    await words.scrollIntoViewIfNeeded();
-    assert.equal((await words.textContent()).trim(), group(play, 3).words, "the scrap's words under it");
-    const slip = page.locator('#book .bk-under .answer-slip').first();
-    await slip.scrollIntoViewIfNeeded();
-    assert.match(await slip.textContent(), /Warmer it is/, 'the answer under its group');
-    // (an agent's desk-phone card under its group, on a phone too: booknotebookasks.mjs.)
-    const asked = page.locator('#book .bk-under[data-g="2"] .ask-slip').first();
-    await asked.scrollIntoViewIfNeeded();
-    assert.match(await asked.innerText(), /Moss asks[\s\S]*The wave/, "an agent's card under its group");
-    await slip.scrollIntoViewIfNeeded();
-    await c.shot('notebook-phone-answer', page);
-    const replies = () => group(play, 3).children.filter(r => r.kind === 'reply').length;
-    const had = replies();
-    await slip.locator('.slip-reply').tap();
-    await page.keyboard.type('Lovely: one more in the teal, please');
-    // (another answer comes meanwhile: the reply being written stays, unsent, till it's sent.)
-    const slips = page.locator('#book .bk-under[data-g="3"] .answer-slip'),
-      shown = await slips.count();
-    play.answer(3, { by: 'moss', text: 'Teal is on its way' });
-    await page.waitForTimeout(1500);
-    assert.equal(replies(), had, 'nothing sent while the reply is written');
-    assert.equal(
-      await slip.locator('.slip-reply').inputValue(),
-      'Lovely: one more in the teal, please',
-      'the reply being written kept',
-    );
-    await page.keyboard.press('Enter');
-    await until(() => replies() === had + 1, 'the reply in the store');
-    await until(async () => (await slips.count()) === shown + 1, 'the answer that came meanwhile drawn once it went');
-    const undo = page.locator('#book .bk-unreply').first();
-    await undo.waitFor();
-    await c.shot('notebook-phone-replied', page);
-    // (its own click, in its seconds: on a loaded machine a tap waits seconds for frames, and review mode's pin at the
-    // foot may be over it till it steps off, dock.js)
-    await undo.dispatchEvent('click');
-    await until(() => replies() === had, 'the reply taken back');
-    await answered(page, play, c);
-    c.noErrorsIn(errors);
-  } finally {
-    await done();
-  }
-}
-
-// A new answer from the store under its group within seconds (the store's event, not a read on a timer), with a
-// picture of what was made and its link; its box ticks it
-async function answered(page, play, c) {
-  const ticks = [];
-  await page.route('**/api/book/slip/tick', r => {
-    ticks.push(r.request().postDataJSON());
-    return r.fulfill({ json: { ok: true } });
-  });
-  const slips = page.locator('#book .bk-under[data-g="3"] .answer-slip'),
-    had = await slips.count();
-  const made = play.answer(3, {
-    ...{ by: 'moss', text: 'And one in teal: here it is' },
-    ...{ picture: '/mock/book-snip-2.svg', link: 'https://teal.preview.example' },
-  });
-  await until(async () => (await slips.count()) === had + 1, 'the answer under its group within seconds', 4000);
-  const slip = page.locator(`#book .answer-slip[data-slip="${made.id}"]`);
-  await slip.scrollIntoViewIfNeeded();
-  assert.equal(await slip.locator('.slip-pic').count(), 1, 'a picture of what was made');
-  const link = slip.getByRole('link', { name: 'Open what Moss made' });
-  assert.equal(await link.getAttribute('href'), 'https://teal.preview.example', 'and its link');
-  await c.shot('notebook-phone-new-answer', page);
-  await slip.locator('.slip-tick').tap();
-  await until(() => ticks.length, 'the tick sent');
-  assert.deepEqual(ticks, [{ id: made.id, ticked: true }]);
-  assert.equal(await slip.getAttribute('data-ticked'), '', 'the slip ticked');
+  assert.ok(await inkFrom(page, play, drawn[0]), 'with the line its failed save held');
 }
 
 // ---- HQ, the book open on the seeded Notebook's newest page
@@ -360,3 +290,22 @@ export const group = (play, id) =>
 const pagesOf = play => play.route('/api/notebooks/pages', { notebook: 1 }).pages;
 const pageOf = (play, id) => pagesOf(play).find(p => p.id === id);
 const near = ([x, y], [x1, y1], px = 4) => Math.abs(x - x1) <= px && Math.abs(y - y1) <= px;
+// Points about a clear place on the page shown (clearPlace), in screen px from it
+async function besideClear(page) {
+  const [x, y] = await clearPlace(page);
+  return points => points.map(([dx, dy]) => [x + dx, y + dy]);
+}
+// Whether a line the store keeps on the newest page starts at a point of the screen: each stroke's first point, in its
+// unit's own px, where the page shows it
+async function inkFrom(page, play, [x, y]) {
+  for (const g of groupsOn(play, NEWEST)) {
+    if (!g.ink.length || !(await clipped(page)).includes(g.id)) continue;
+    const starts = await onPaper(
+      page,
+      g.ink.map(s => s.points[0]),
+      g.id,
+    );
+    if (starts.some(p => near(p, [x, y]))) return true;
+  }
+  return false;
+}

@@ -13,7 +13,8 @@ const h = await harness('visual', {
       `${repo}/company/org.yaml`,
       '\nreview:\n  visual:\n' +
         '    - { paths: ["platform/hq/renderers/**"], except: ["**/*.test.js"], run: "node preview.mjs", look: "lit in the dark", record: "qa/previews" }\n' +
-        '    - { paths: ["kits/pixels/**"], run: "node sprites.mjs", look: "crisp", record: "qa/sprites" }\n',
+        '    - { paths: ["kits/pixels/**"], run: "node sprites.mjs", look: "crisp", record: "qa/sprites" }\n' +
+        '    - { paths: ["platform/hq/renderers/*/*.css"], run: "node icons.mjs", look: "drawn for each look", record: "qa/icons" }\n',
     ),
 });
 const { db } = h;
@@ -44,7 +45,7 @@ const onPr = (pr: number) =>
     .prepare("select id, agent, kind, prompt, engine from jobs where pr = ? and status = 'queued' order by id")
     .all(pr) as Row[];
 
-test('a push of what people see without its record of the previews goes back to its author before any review, and so does its unchanged retry', async () => {
+test("a push of what people see without its record of the previews goes back to its author before any review, and that send-back's run pushing nothing waits stuck until a push brings it, hq review included", async () => {
   const run = await h.start({ agent: 'bolt', engine: 'claude', branch: 'job/room' });
   await h.finish(run, { pr: 601, branch: 'job/room', files: [ROOM], sha: 'a'.repeat(40) });
   const [back, ...rest] = onPr(601);
@@ -60,11 +61,92 @@ test('a push of what people see without its record of the previews goes back to 
     sha: 'a'.repeat(40),
     pushedSince: { sha: 'a'.repeat(40), files: [] },
   });
+  await sleep(50);
+  assert.deepEqual(onPr(601), [], 'not sent back again, and no review');
+  const pr = db.prepare('select status, sha from prs where number = 601').get() as { status: string; sha: string };
   assert.deepEqual(
-    onPr(601).map(j => j.kind),
-    ['work'],
-    'back again, still no review',
+    { ...pr },
+    { status: 'stuck', sha: 'a'.repeat(40) },
+    'stuck on the commit its owner can send to the panel',
   );
+  const told = db.prepare("select brief from proposals where title like 'PR #601:%'").get() as
+    { brief: string } | undefined;
+  assert.match(told?.brief ?? '', /hq review 601/, "the owner's proposal");
+
+  const owner = await h.start({ agent: 'bolt' });
+  const resumed = await h.agent('review', owner.token, { pr: 601 });
+  await h.finish(owner);
+  assert.equal(resumed.status, 409, 'hq review runs it through its checks, which still hold it');
+  assert.deepEqual(onPr(601), [], 'no panel, and no send-back for the same again');
+  assert.deepEqual({ ...db.prepare('select status from prs where number = 601').get() }, { status: 'stuck' });
+  const told2 = db.prepare("select count(*) n from proposals where title like 'PR #601:%'").get() as { n: number };
+  assert.equal(told2.n, 1, 'told once');
+
+  const fix = await h.start({ agent: 'bolt', engine: 'claude', branch: 'job/room' });
+  await h.finish(fix, {
+    pr: 601,
+    branch: 'job/room',
+    files: [ROOM, RECORD],
+    sha: 'c'.repeat(40),
+    pushedSince: { sha: 'a'.repeat(40), files: [RECORD] },
+  });
+  const reviews = onPr(601);
+  assert.ok(reviews.length && reviews.every(j => j.kind === 'review'), 'a push with its record goes on to review');
+});
+
+test('a record already on the branch clears its own check, for two checks over one file recorded in separate pushes', async () => {
+  const SKIN = 'platform/hq/renderers/brownstone/skin.css',
+    ROOMS = 'qa/previews/job-skin.md',
+    ICONS = 'qa/icons/job-skin.md';
+  panels.set(606, { readers: ['rook'], looker: null });
+  const run = await h.start({ agent: 'bolt', engine: 'claude', branch: 'job/skin' });
+  await h.finish(run, { pr: 606, branch: 'job/skin', files: [SKIN], sha: '1'.repeat(40) });
+  assert.deepEqual(
+    onPr(606).map(j => j.kind),
+    ['work'],
+    'back for both records',
+  );
+
+  const rooms = await h.claim('claude');
+  await h.finish(rooms!, {
+    pr: 606,
+    branch: 'job/skin',
+    files: [SKIN, ROOMS],
+    sha: '2'.repeat(40),
+    pushedSince: { sha: '1'.repeat(40), files: [ROOMS] },
+  });
+  const [back] = onPr(606);
+  assert.ok(back.kind === 'work' && back.prompt.includes('node icons.mjs'), 'back for the icons record');
+
+  const icons = await h.claim('claude');
+  await h.finish(icons!, {
+    pr: 606,
+    branch: 'job/skin',
+    files: [SKIN, ROOMS, ICONS],
+    sha: '3'.repeat(40),
+    pushedSince: { sha: '2'.repeat(40), files: [ICONS] },
+  });
+  assert.equal(db.prepare('select 1 from previews_owed where pr = 606').get(), undefined, 'nothing owed');
+  const reviews = onPr(606);
+  assert.ok(
+    reviews.length && reviews.every(j => j.kind === 'review'),
+    'the rooms record of the push before still counts',
+  );
+});
+
+test('a stale record does not clear an outstanding preview obligation during migration', async () => {
+  db.prepare('insert into previews_owed (pr, files) values (607, ?)').run(JSON.stringify([ROOM]));
+  const run = await h.start({ agent: 'bolt', engine: 'claude', branch: 'job/old' });
+  await h.finish(run, {
+    pr: 607,
+    branch: 'job/old',
+    files: [ROOM, 'qa/previews/job-old.md'],
+    sha: '3'.repeat(40),
+    pushedSince: { sha: '4'.repeat(40), files: [] },
+  });
+  const jobs = onPr(607);
+  assert.equal(jobs.length, 1);
+  assert.equal(jobs[0].kind, 'work', 'still owes a fresh record before review');
 });
 
 test('a push that changes what two checks cover owes both records, and gets both checks', async () => {

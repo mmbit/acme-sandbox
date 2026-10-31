@@ -1,13 +1,12 @@
 // book-check.mjs's story of where scraps land (the coordinator's notebookscraps.ts, played: shell/ink/notebookplay.js)
-// on the narrowest papers the board reads on, a phone's and an upright iPad mini's book at its least: saved one under
-// another, each scrap's picture and words as drawn lie inside the paper and under none of the controls, each below the
-// words above it; and on a desktop's at the store's readable width, as the store has them.
+// on the narrowest papers the board reads on, a phone's and an upright iPad mini's book at its least: saved one after
+// another, each scrap's unit and its post-it words lie inside the paper and under none of the controls, the two apart;
+// and on a desktop's at the unit's own width, unscaled. (A page of units at five sizes: bookunitspage.mjs.)
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { onPaper } from './booknotebookscreen.mjs';
 import { paperBox } from './bookmouse.mjs';
 import { islandsClearOf } from './bookkit.mjs';
-import { STACK } from './shell/ink/notebookstack.js';
+import { UNIT_W } from './shell/ink/scrapunit.js';
 
 const SEED = JSON.parse(await readFile(new URL('./mock/notebook.json', import.meta.url), 'utf8'));
 const NEWEST = 3; // (the seed's open page, the one the book opens on)
@@ -38,17 +37,20 @@ async function clearOfTools(browser, c) {
             { anchor: ANCHOR, words, said: 'spoken', snip: c.snipPng(640, 320) },
           ).id,
       );
-      for (const id of scraps) await page.locator(`#book .bk-under[data-g="${id}"]`).waitFor({ timeout: 30_000 });
-      const { groups } = context.notebook.route('/api/notebooks/pages/groups', { page: NEWEST });
+      for (const id of scraps) await page.locator(`#book .bk-words[data-g="${id}"]`).waitFor({ timeout: 30_000 });
       let above = null;
-      for (const g of groups.filter(x => scraps.includes(x.id))) {
-        const { k, picture, words } = await clear(page, size, g);
-        // (a desktop's paper has room for the store's readable width: drawn as the store has it)
-        if (how === 'open') assert.deepEqual([g.pictures[0].w, k], [STACK.w, 1], `${size}: scrap ${g.id} readable`);
-        else assert.ok(k < 1, `${size}: scrap ${g.id} fitted to the paper`);
-        // (a caption never over the next scrap)
-        if (above) assert.ok(above.y + above.height <= picture.y, `${size}: scrap ${g.id} below the words above it`);
-        above = words;
+      for (const id of scraps) {
+        const { k, unit } = await clear(page, size, id);
+        // (a desktop's paper has room for a unit's own width: drawn unscaled)
+        if (how === 'open') assert.ok(Math.abs(k - 1) < 0.01, `${size}: scrap ${id} unscaled (${k})`);
+        else assert.ok(k <= 1, `${size}: scrap ${id} fitted to the paper (${k})`);
+        // (the masonry lays the second beside or below the first, never over it)
+        if (above)
+          assert.ok(
+            above.x + above.width <= unit.x + 0.5 || above.y + above.height <= unit.y + 0.5,
+            `${size}: scrap ${id} clear of the one before`,
+          );
+        above = unit;
       }
       await c.shot(`scraps-clear-${size}`, page);
       c.noErrorsIn(errors);
@@ -82,25 +84,23 @@ async function opened(browser, c, viewport, how) {
   return { context, page, errors };
 }
 
-// A scrap's picture and its words as drawn inside the paper, under none of the controls: how much it's scaled to fit
-// (its words' --fit, as its picture is, about the store's box's top-left)
-async function clear(page, size, g) {
-  const under = page.locator(`#book .bk-under[data-g="${g.id}"]`),
-    k = Number(await under.evaluate(el => el.style.getPropertyValue('--fit'))),
-    paper = await paperBox(page),
-    [[x0, y0], [x1, y1]] = await onPaper(page, [
-      [g.box.x, g.box.y],
-      [g.box.x + g.box.w * k, g.box.y + g.box.h * k],
-    ]),
-    words = await under.boundingBox(),
-    picture = { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
+// A scrap's unit and its post-it words (bookunits.js) inside the paper, what shows of them under none of the controls: how much the page
+// scales the unit to fit (its width drawn over UNIT_W), and the unit's box. (the
+// old canvas's --fit and picture box gone with it)
+async function clear(page, size, id) {
+  const unit = await page.locator(`#book .bk-unit[data-unit="${id}"]`).boundingBox(),
+    words = await page.locator(`#book .bk-words[data-g="${id}"]`).boundingBox(),
+    paper = await paperBox(page);
   for (const [what, r] of [
-    ['picture', picture],
+    ['unit', unit],
     ['words', words],
   ]) {
-    const where = `${size}: scrap ${g.id}'s ${what} at ${Math.round(r.x)}..${Math.round(r.x + r.width)}`;
+    const where = `${size}: scrap ${id}'s ${what} at ${Math.round(r.x)}..${Math.round(r.x + r.width)}`;
     assert.ok(r.x >= paper.x && r.x + r.width <= paper.x + paper.width, `${where}: inside the paper`);
-    assert.ok(await islandsClearOf(page, r), `${where}: under none of the controls`);
+    // (what the paper shows of it: the page scrolls, and the paper ends where the tools start)
+    const top = Math.max(r.y, paper.y),
+      shown = { ...r, y: top, height: Math.min(r.y + r.height, paper.y + paper.height) - top };
+    if (shown.height > 0) assert.ok(await islandsClearOf(page, shown), `${where}: under none of the controls`);
   }
-  return { k, picture, words };
+  return { k: unit.width / UNIT_W, unit };
 }

@@ -2,8 +2,17 @@
    its people at whole pixels. */
 /* (Pixelify Sans comes on a <link> of its own: scene.js loadFont) */
 :root {
-  --font: 'Pixelify Sans', ui-monospace, 'Cascadia Mono', monospace;
+  --font: 'Plain Half', 'Pixelify Sans', ui-monospace, 'Cascadia Mono', monospace;
   --icons: crispEdges;
+}
+/* Pixelify Sans draws ½ exactly like ⅛ ("1½ h" reads "1⅛ h"): U+00BD comes from a plain system face. */
+@font-face {
+  font-family: 'Plain Half';
+  unicode-range: U+00BD;
+  size-adjust: 105%;
+  src:
+    local('Arial'), local('Helvetica Neue'), local('Helvetica'), local('Liberation Sans'), local('DejaVu Sans'),
+    local('Roboto');
 }
 #world,
 .portrait,

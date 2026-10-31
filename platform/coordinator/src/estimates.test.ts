@@ -192,6 +192,7 @@ test('credential-call follow-ups and jobs holding keys never expose estimate sco
     run,
   });
   const privateJobs = [...follows, marked, customer];
+  later(1);
   const queued = h.queue({ agent: 'kit', title: 'Credential comparison' });
   const sizes = await import('./sizes.ts');
   sizes.recordQueued(queued, 'kit', 'Compare historical scopes', {
@@ -227,6 +228,14 @@ async function privateComparisons(token: string, privateJobs: number[], safe: nu
     const publicJob = response.body.jobs.find((j: any) => j.id === safe);
     assert.deepEqual([publicJob?.brief, publicJob?.report], ['Public scope', 'Public report']);
     assert.ok(response.body.jobs.every((j: any) => !privateJobs.includes(j.id)));
+    assert.doesNotMatch(JSON.stringify(response.body), /otter space zebra/);
+  }
+  for (const mode of ['accuracy', 'calibration']) {
+    const response = await h.agent(`estimate/${mode}`, token);
+    assert.equal(response.status, 200);
+    assert.ok(response.body.tasks.rows.some((j: any) => j.id === safe));
+    assert.ok(response.body.tasks.rows.every((j: any) => !privateJobs.includes(j.id)));
+    assert.ok(response.body.tasks.coverage.private_tasks >= privateJobs.length);
     assert.doesNotMatch(JSON.stringify(response.body), /otter space zebra/);
   }
 }

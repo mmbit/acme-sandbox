@@ -104,7 +104,7 @@ async function onDesktop(browser, c) {
 
 const asksOf = play => play.route('/api/notebooks/pages/groups', { page: SENT }).groups.find(g => g.id === GROUP).asks;
 // The page shown, by its place in the notebook (1: its first)
-const at = async page => Number(/(\d+) \/ \d+$/.exec(await where(page))?.[1]);
+const at = async page => Number(/(\d+)\/\d+$/.exec(await where(page))?.[1]);
 // The book turned to the sent page with the foot row's arrows
 async function turnToSent(page) {
   for (let i = 0; i < 8 && (await at(page)) !== SENT; i++) {

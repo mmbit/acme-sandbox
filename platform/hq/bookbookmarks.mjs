@@ -6,6 +6,7 @@
 // Recorded with --shots.
 import assert from 'node:assert/strict';
 import { until } from './bookkit.mjs';
+import { press } from './bookbar.mjs';
 import { typedBoxes } from './shell/ink/notebookparts.js';
 
 const T0 = '2026-10-29T15:00:00.000Z',
@@ -106,9 +107,9 @@ async function atSize(browser, c, name, size) {
     await p.waitForTimeout(500);
     await placed(p, name);
     for (const [chapter, first, where] of [
-      ['sketch', 'Ideas', '1 / 2'],
-      ['asks', 'Asks', null],
-      ['calls', 'Call with Lyra: cover edge', '1 / 2'],
+      ['sketch', 'Ideas', '1/2'],
+      ['asks', 'Asks', '1/1'],
+      ['calls', 'Call with Lyra: cover edge', '1/2'],
     ]) {
       await p.locator(`#book .bk-marks [data-chapter=${chapter}]`).click({ timeout: LOADED_MS });
       await until(async () => (await shown(p)).title === first, `${name}: ${chapter} opens ${first}`, 8000);
@@ -124,7 +125,7 @@ async function atSize(browser, c, name, size) {
     await until(async () => (await shown(p)).title === 'Call with Moss', `${name}: the next call`, 8000);
     await p.waitForTimeout(700);
     const moss = await shown(p);
-    assert.deepEqual([moss.where, moss.stamp], ['2 / 2', null], `${name}: with its follow-up, unstamped`);
+    assert.deepEqual([moss.where, moss.stamp], ['2/2', null], `${name}: with its follow-up, unstamped`);
     assert.equal((await tabs(p)).find(t => t.chapter === 'asks').count, '3', `${name}: Asks' count`);
     await noneFar(p, name);
     await c.shot(`bookmarks-${name}-overview`, p);
@@ -140,7 +141,8 @@ async function atSize(browser, c, name, size) {
 
 // The overview open: no bookmarks over it, nor the room they take on a page
 async function noneFar(p, name) {
-  await p.locator('#book .bk-btn[aria-label^="The overview"]').click({ timeout: LOADED_MS });
+  await p.locator('#book .bk-column').waitFor({ timeout: LOADED_MS });
+  await press(p, "The overview: the notebook's pages, and the Shelf");
   await p.waitForFunction(() => document.querySelector('#book')?.dataset.far, null, { timeout: LOADED_MS });
   await p.waitForTimeout(600);
   assert.equal(await p.locator('#book .bk-marks').isVisible(), false, `${name}: no bookmarks on the overview`);
@@ -173,14 +175,14 @@ const tabs = p =>
       };
     }),
   );
-// The page shown: its title in the bar, where it is, the lit tab and its stamp's words
+// The page shown: its title at its head, where it is on the rail, the lit tab and its stamp's words
 const shown = p =>
   p.evaluate(() => {
     const name = document.querySelector('#book .bk-where');
     const stamp = document.querySelector('#book .bk-page:not([hidden]) [data-slot=stamp].bk-stamped svg');
     return {
-      title: name?.querySelector('span')?.textContent ?? '',
-      where: name?.querySelector('small')?.textContent.replace('·', '').trim() || null,
+      title: document.querySelector('#book .bk-page:not([hidden]) .bk-page-title')?.textContent ?? '',
+      where: name?.querySelector('small')?.textContent || null,
       lit: document.querySelector('#book .bk-marks [aria-current=page]')?.dataset.chapter ?? null,
       stamp: stamp?.getAttribute('aria-label') ?? null,
     };

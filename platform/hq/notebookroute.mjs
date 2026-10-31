@@ -3,7 +3,10 @@ import { fileURLToPath } from 'node:url';
 // The Notebook's routes in a browser check, answered by a play of its store (shell/ink/notebookplay.js), the one dev
 // mode plays: a refusal as the coordinator's, its status and { error }. One stand-in, so a check's notebook moves with
 // notebook.ts's answers.
-//   - heard(path, body): each POST as it comes in, before the play answers it (a picture's body: { bytes, type }).
+// Its checks, to run on a change to the play's answers: book-check (its stories too), call-check, tips-check,
+// intake-check and intercom-badge-check.
+//   - heard(path, body, picture): each POST as it comes in, before the play answers it. picture is true for an upload
+//     to /api/notebooks/pictures, and its body is then { bytes, type }.
 //   - bytes(): a picture's bytes the browser didn't hand over (WebKit gives a blob's body as null).
 export function notebookRoute(r, play, { heard, bytes } = {}) {
   const req = r.request(),
@@ -16,7 +19,7 @@ export function notebookRoute(r, play, { heard, bytes } = {}) {
       : picture
         ? { bytes: req.postDataBuffer() ?? bytes?.(), type: req.headers()['content-type'] }
         : req.postDataJSON();
-  if (body) heard?.(path, body);
+  if (body) heard?.(path, body, picture);
   try {
     const answer = play.route(path, url.searchParams, body);
     if (picture && !body) return r.fulfill({ contentType: answer.type, body: Buffer.from(answer.bytes) });

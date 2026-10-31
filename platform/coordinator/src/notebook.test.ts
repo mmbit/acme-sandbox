@@ -179,8 +179,9 @@ test('groups: units in order, edited (another screen first: read again), resized
   const nb = await myNotebook(),
     page = await current(nb);
   const a = (await draw(page, [stroke(10, 10)])).body,
-    b = (await draw(page, [stroke(300, 10)])).body;
+    b = (await h.board('/api/notebooks/groups/create', { page, ink: [stroke(300, 10)], column: 1 })).body;
   assert.deepEqual([a.kind, a.status, a.children], ['drawing', 'open', []]);
+  assert.deepEqual([a.column, b.column], [null, 1], "the page's last kept in the column it was drawn in");
   assert.ok(b.pos > a.pos, "a new unit the page's last");
   assert.ok(a.h >= a.box.y + a.box.h, 'as tall as its ink');
   assert.equal((await draw(page, [])).status, 400, 'a group holds something');

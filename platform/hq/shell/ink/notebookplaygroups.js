@@ -6,6 +6,7 @@ import { emptyGroup, hasAny, picks, typedBoxes } from './notebookparts.js';
 import { boxOf, scrapSize } from './notebookstack.js';
 import { ROOM, UNIT_W, heightFor, resized, unitOf } from './scrapunit.js';
 import { answersOf } from './notebookplayanswers.js';
+import { assignedOf } from './notebookplaypeople.js';
 
 export const BOARD = 'board';
 export const CHANGED = 'this group changed on another screen: read it again';
@@ -22,13 +23,14 @@ export const GROUP_ROUTES = {
   'POST /api/notebooks/groups/restore': restoreGroup,
   'POST /api/notebooks/groups/split': splitGroup,
 };
-// A drawing on an open page, its parts in its own scrap px: a unit at the page's end, or right after unit `after`
+// A drawing on an open page, its parts in its own scrap px: a unit right after unit `after`, or at the page's end, kept
+// in its `column` when given
 function createGroup(s, b) {
   const p = openPage(s, b?.page),
     parts = elementsOf(s, b, emptyGroup);
   if (!hasAny(parts)) refuse(400, 'a group holds something: ink, words or a picture');
-  const pos = b.after == null ? endOf(s, p) : posAfter(s, p, Number(b.after));
-  return shown(s, insertGroup(s, p, 'drawing', BOARD, parts, { pos, h: heightFor(parts, 0) }));
+  const [pos, column] = b.after == null ? [endOf(s, p), b.column ?? null] : [posAfter(s, p, Number(b.after)), null];
+  return shown(s, insertGroup(s, p, 'drawing', BOARD, parts, { pos, column, h: heightFor(parts, 0) }));
 }
 // An open group's elements changed. since: its updated as the screen last read it (one changed since: 409).
 function editGroup(s, b) {
@@ -167,7 +169,7 @@ export function insertGroup(s, p, kind, by, parts, more = {}) {
   const now = s.stamp();
   const g = {
     ...{ id: s.next('group'), page: p.id, parent: null, answers: null, kind, by, ...parts, anchor: null, words: '' },
-    ...{ pos: null, h: null },
+    ...{ pos: null, h: null, column: null },
     ...{ said: null, owner: null, status: 'open', note: null, created: now, updated: now, deleted: null, ...more },
   };
   s.groups.push(g);
@@ -210,7 +212,7 @@ function posAfter(s, p, after) {
 }
 // What HQ reads of a group: its elements, its box, its children (answers and replies, in the order they came) and its
 // asks
-const shown = (s, g) =>
+export const shown = (s, g) =>
   groupOf(
     s,
     g,
@@ -224,18 +226,20 @@ export function groupOf(s, g, replies) {
     anchor: g.anchor,
     ...about,
     owner: g.owner,
-    owner_name: g.owner ? (s.names[g.owner] ?? g.owner) : null,
+    owner_name: g.owner ? s.name(g.owner) : null,
     children: [
       ...answers.map(a => ({ kind: 'answer', ...a })),
-      ...mine.map(r => ({ ...element(r), kind: 'reply', answers: r.answers })),
+      ...mine.map(r => ({ ...element(r), kind: 'reply', answers: r.answers, frame: r.frame ?? null })),
     ].sort((a, b) => a.created.localeCompare(b.created)),
+    // (who it was handed to, for its tags: bookassign.ts.)
+    assigned: assignedOf(s, g),
   };
 }
 const element = g => ({
   ...{ id: g.id, page: g.page, kind: g.kind, by: g.by, ink: g.ink, texts: g.texts },
   pictures: g.pictures.map(c => ({ ...c, url: pictureUrl(c.file) })),
   ...{ words: g.words, said: g.said, status: g.status, note: g.note, box: boxOf(partsOf(g)) },
-  ...{ pos: g.pos, h: g.h },
+  ...{ pos: g.pos, h: g.h, column: g.column },
   ...{ created: g.created, updated: g.updated },
 });
 // A picture kept for a page's group: its file's name (the coordinator's own pattern, `<page>-g-<8 hex>`)
@@ -250,6 +254,7 @@ export const pictureUrl = file => `/api/notebooks/pictures?file=${encodeURICompo
 // store's carry makes it (notebookunits.ts).
 const GROUP = { parent: null, answers: null, by: BOARD, ink: [], texts: [], pictures: [], anchor: null, words: '' };
 Object.assign(GROUP, { said: null, owner: null, status: 'open', note: null, deleted: null });
+Object.assign(GROUP, { asking: null, tried: null });
 export function seededGroup(seeded) {
   const g = { ...GROUP, ...seeded };
   if (g.parent !== null) return { ...g, pos: null, h: null };

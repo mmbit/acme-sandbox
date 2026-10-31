@@ -1,7 +1,6 @@
 // Whole-task agent time, read from the run ledger and the recorded review relationships.
 import { db } from './db.ts';
 import { workBranch, type Named } from './jobs.ts';
-import type { PastJob } from './matching.ts';
 import { REBUILT_RUN, INVALID_RUN } from './timing.ts';
 
 export type Phase = 'work' | 'reviews' | 'fixes' | 'syncs' | 'previews';
@@ -15,6 +14,7 @@ type Member = Named & {
   created: string;
   finished: string | null;
   fix: number;
+  preview: number;
 };
 export type TaskTimingFlag =
   'missing_runs' | 'open_runs' | 'invalid_time' | 'rebuilt' | 'missing_merge_time' | 'unattributed_previews';
@@ -35,21 +35,22 @@ type WindowJob = Pick<Member, 'id' | 'created' | 'finished'>;
 type Window = { from: number; until: number };
 const phases = (): Record<Phase, number> => ({ work: 0, reviews: 0, fixes: 0, syncs: 0, previews: 0 });
 
-export function taskTimes() {
+export type TimedTask = { id: number; created: string; finished: string };
+export function taskTimes(asOf = Infinity) {
   const families = new Map<string, Family>();
   const getFamily = (branch: string) => {
     if (!families.has(branch)) families.set(branch, readFamily(branch));
     return families.get(branch)!;
   };
-  return (job: PastJob) => measureTask(job, getFamily);
+  return (job: TimedTask) => measureTask(job, getFamily, asOf);
 }
 
-function measureTask(job: PastJob, getFamily: (branch: string) => Family): TaskTime {
+function measureTask(job: TimedTask, getFamily: (branch: string) => Family, asOf: number): TaskTime {
   const branch = db.prepare(`select ${workBranch('j')} branch from jobs j where id = ?`).get(job.id) as {
     branch: string;
   };
   const family = getFamily(branch.branch);
-  const { last, from, until, landed } = boundaries(job, family.prs);
+  const { last, from, until, landed } = boundaries(job, family.prs, asOf);
   const tasks = tasksInWindow(family.members, { from, until });
   const sharesRounds = tasks.some(member => member.id === job.id);
   const count = sharesRounds ? tasks.length : 1;
@@ -98,13 +99,13 @@ function tasksInWindow(members: Member[], { from, until }: Window) {
   });
 }
 
-function boundaries(job: WindowJob, prs: PullRequest[]) {
+function boundaries(job: WindowJob, prs: PullRequest[], asOf = Infinity) {
   const finished = finishedAt(job) ?? Infinity;
-  const landings = prs.filter(pr => pr.status === 'merged' && pr.merged_at);
+  const landings = prs.filter(pr => pr.status === 'merged' && pr.merged_at && Date.parse(pr.merged_at) < asOf);
   const landing = landings.find(pr => Date.parse(pr.merged_at!) >= finished);
   const last = landing ?? prs.at(-1);
   const landed = landing !== undefined;
-  const until = landing ? Date.parse(landing.merged_at!) : Infinity;
+  const until = landing ? Date.parse(landing.merged_at!) : asOf;
   const before = landings.filter(pr => Date.parse(pr.merged_at!) < finished);
   const from = Math.max(...before.map(pr => Date.parse(pr.merged_at!)));
   return { last, from, until, landed };
@@ -179,17 +180,19 @@ function readFamily(branch: string): Family {
     union select j.id from prs p join jobs j on j.pr = p.number where p.branch = :branch
     union select f.job from prs p join review_fix_tasks f on f.pr = p.number where p.branch = :branch
   ) select j.id, j.agent, j.title, j.kind, j.stage, j.round, j.status, j.created, j.finished, ${workBranch('j')} branch,
-    exists(select 1 from review_fix_tasks f where f.job = j.id) fix
+    exists(select 1 from review_fix_tasks f where f.job = j.id) fix,
+    exists(select 1 from card_jobs c where c.job = j.id) preview
     from candidates c join jobs j on j.id = c.id order by j.id`,
     )
     .all({ branch }) as Member[];
   return { members, prs };
 }
 
-const isTask = (member: Member) =>
+export const isTask = (member: Pick<Member, 'kind' | 'status' | 'fix' | 'preview' | 'stage'>) =>
   member.kind === 'work' &&
   member.status !== 'cancelled' &&
   !member.fix &&
+  !member.preview &&
   !['fix', 'feedback'].includes(member.stage ?? '');
 function phaseOf(member: Member): Phase {
   if (isReview(member)) return 'reviews';
@@ -211,6 +214,7 @@ function measured(member: Member, phase: Phase, share: number, { from, until }: 
   let agentMs = 0;
   if (!runs.length && member.status !== 'cancelled') flags.push('missing_runs');
   for (const run of runs) {
+    if (Date.parse(run.started) >= until) continue;
     if (run.ended === null) {
       flags.push('open_runs');
       continue;

@@ -3,7 +3,7 @@
    is past the screen's right edge; its one colour is the pull
    tab's, the brand's accent (brand.yaml's colours.notebook, set at onboarding; --notebook on :root, main.js), never a
    colour of the platform's own. No cover title: the book opens straight onto its page (the page and the overview are
-   bookdesk.css's). (the hardcover) */
+   bookdesk.css's). (the hardcover; the spine past the screen and the smaller pull tab's corners) */
 #book {
   /* the board: a black book cloth over board, its grain fine and quiet */
   --bk-cloth: #151517;

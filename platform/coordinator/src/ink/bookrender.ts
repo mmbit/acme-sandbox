@@ -10,6 +10,21 @@ import { outline } from '../../../../shared/review/ink.js';
 import { pathsOf } from '../../../hq/shell/ink/bookanswerart.js';
 import type { Stroke, Typed } from '../pagechecks.ts';
 import type { Scrap } from '../pagescraps.ts';
+import {
+  block,
+  escaped,
+  faceDisc,
+  HAND_FONT,
+  paper,
+  pictureAt,
+  setMarkup,
+  TEXT,
+  WORDS,
+  FACE_LINE,
+} from './bookrendertext.ts';
+import type { Face, Layer } from './bookrendertext.ts';
+import { asked, formed, type Asked, type Form } from './bookrenderasks.ts';
+import { versioned, type Tried } from './bookrenderversions.ts';
 
 // The paper as the book shows it (as bookpaperdraw.js PAPER), and the tape across a scrap
 const PAPER = '#fffdf8',
@@ -20,12 +35,6 @@ const PAPER = '#fffdf8',
 const PICTURE = { side: 2400, pixels: 40_000_000, again: 0.98 };
 // The paper left under the last words when the picture grows down to them, in page px
 const BELOW_PX = 24;
-// Typed words as the book sets them (booktools.js TEXT): the size and the line's height in page px. The book's own face
-// is HQ's; here it's the first of these the machine has (DejaVu Sans comes with fontconfig on Debian).
-const TEXT = { size: 18, line: 1.4, font: 'Atkinson Hyperlegible, DejaVu Sans, sans-serif' };
-// A scrap's words as the book sets them under it (bookgroups.css .bk-scrap-words): a yellow post-it, its padding and
-// its soft shadow
-const WORDS = { size: 14, line: 1.45, pad: { x: 10, y: 8 }, ink: '#2a2352', paper: '#fff3a8', shadow: 0.18 };
 // An answer slipped under its group (shared/review/slip.js): 12 px below what's over it, on paper, its agent's name
 // over its typed words; the board's reply under it 8 px down and 18 in, its words after "You" (bookgroups.js .bk-reply)
 const SLIP = {
@@ -40,11 +49,9 @@ const SLIP = {
 const HAND = {
   ...{ pad: 4, head: 26, face: 22, gap: 6, below: 2 },
   name: { size: 13, line: 1.17 },
-  text: { size: 23, line: 26 / 23, font: 'Caveat, Comic Neue, DejaVu Sans Condensed, sans-serif' },
+  text: { size: 23, line: 26 / 23, font: HAND_FONT },
   picture: { x: 6, top: 10, frame: 5, bottom: 4 },
 };
-// (Pango's own line in these faces is about 1.17 of the size: the rest of the book's line is spacing between lines)
-const FACE_LINE = 1.17;
 
 // x, y: the page's top-left (0,0 where it hasn't grown up or left), w × h its size from there. under: what's under its
 // groups, answers: its answers at their spots. (x, y)
@@ -60,10 +67,11 @@ export type Drawn = {
   answers?: Answer[];
 };
 // What's under a group (bookgroups.js .bk-under), from x, y, w wide: a scrap's words on a post-it (text, '': none), then
-// its answers and replies slipped under it in the order they came. A reply is the board's (name null); picture: a file
-// in the page's dir.
-export type Under = { x: number; y: number; w: number; text: string; slips?: Said[] };
-export type Said = { name: string | null; text: string; picture?: string };
+// its answers and replies slipped under it in the order they came, the agents' cards clipped under it (asks), and a
+// try's versions. A reply is the board's (name null); picture: a file in the page's dir. (asks, tried)
+export type Under = { x: number; y: number; w: number; text: string; slips?: Said[]; asks?: Asked[]; tried?: Tried };
+// form: an answer's clipped form
+export type Said = { name: string | null; text: string; picture?: string; form?: Form };
 // An agent's answer at its spot, from x, y, w wide, in its ink (color): its drawing's strokes from its top-left
 export type Answer = Said & { x: number; y: number; w: number; name: string; color: string; ink?: Stroke[] };
 // A PNG of the page, its whole box grown down to the last line of words set on it. dir: where its scraps' files are.
@@ -121,10 +129,7 @@ const inkSvg = (
     .map(s => `<path d="${outline(s)}" fill="${s.color}"${(s.alpha ?? 1) < 1 ? ` fill-opacity="${s.alpha}"` : ''}/>`)
     .join('')}</svg>`;
 
-// A picture of words at its place on the page's picture, in picture px
-type Layer = { input: Buffer; left: number; top: number; width: number; height: number };
 // A box of typed words at its place on the picture (k picture px a page px), wrapped at its width, in its colour
-const escaped = (text: string) => text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 async function typed(t: Typed, k: number): Promise<Layer> {
   const set = await setText(t, k);
   return {
@@ -154,8 +159,8 @@ async function posted(p: Under, k: number) {
 // How tall what's under a group stands in page px as the picture sets it: the room the store's picture of a page
 // leaves it (bookpicture.ts).
 export const underHigh = async (u: Under, dir: string) => (await under({ ...u, y: 0 }, 1, dir)).at(-1)?.foot ?? 0;
-// What's under a group at its place on the picture: a scrap's words on their post-it, then its slips, each under the
-// one before
+// What's under a group at its place on the picture: a scrap's words on their post-it, then its slips, its cards and its
+// versions, each under the one before (cards, versions)
 async function under(u: Under, k: number, dir: string) {
   const layers: (Layer & { foot: number })[] = [];
   let foot = Math.round(u.y * k);
@@ -164,6 +169,8 @@ async function under(u: Under, k: number, dir: string) {
     ...(u.slips ?? []).map(
       s => (top: number) => (s.name === null ? replied(s, u, top, k) : slipped(s, u, top, k, dir)),
     ),
+    ...(u.asks ?? []).map(a => (top: number) => asked(a, u, top, k)),
+    ...(u.tried ? [(top: number) => versioned(u.tried!, u, top, k, dir)] : []),
   ]) {
     const l = await make(foot);
     layers.push(l);
@@ -171,7 +178,8 @@ async function under(u: Under, k: number, dir: string) {
   }
   return layers;
 }
-// An agent's answer slipped under its group from top (picture px): its name and words on paper, its picture under them
+// An agent's answer slipped under its group from top (picture px): its name and words on paper, its picture under them,
+// its form under that
 async function slipped(s: Said, u: Under, top: number, k: number, dir: string) {
   const { pad, name: face } = SLIP,
     x = Math.round(pad.x * k),
@@ -184,7 +192,7 @@ async function slipped(s: Said, u: Under, top: number, k: number, dir: string) {
     ),
     words = await block(`<span foreground="${WORDS.ink}">${escaped(s.text)}</span>`, inner, k, SLIP.text);
   const at = Math.round(pad.top * k) + name.tall + Math.round(face.gap * k),
-    on = [
+    on: OverlayOptions[] = [
       { input: name.input, left: x, top: Math.round(pad.top * k) + name.lead },
       { input: words.input, left: x, top: at + words.lead },
     ];
@@ -193,6 +201,11 @@ async function slipped(s: Said, u: Under, top: number, k: number, dir: string) {
     const picture = await pictureAt(`${dir}/${s.picture}`, inner, k);
     on.push({ input: picture.input, left: x, top: h + Math.round(SLIP.picture * k) });
     h += Math.round(SLIP.picture * k) + picture.height;
+  }
+  if (s.form) {
+    const form = await formed(s.form, inner, k);
+    on.push({ input: form.input, left: x, top: h + Math.round(SLIP.picture * k) });
+    h += Math.round(SLIP.picture * k) + form.height;
   }
   h += Math.round(pad.bottom * k);
   return paper(Math.round(u.x * k), top + Math.round(SLIP.gap * k), Math.round(u.w * k), h, k, { ...SLIP, on });
@@ -230,10 +243,9 @@ async function answered(a: Answer, k: number, dir: string): Promise<Layer> {
       HAND.name,
     ),
     words = await block(`<span weight="500" foreground="${a.color}">${escaped(a.text)}</span>`, across, k, HAND.text);
-  const initial = escaped([...a.name][0] ?? ''),
-    disc = `<svg xmlns="http://www.w3.org/2000/svg" width="${px(face)}" height="${px(face)}" viewBox="0 0 ${face} ${face}"><circle cx="${face / 2}" cy="${face / 2}" r="${face / 2}" fill="${a.color}"/><text x="${face / 2}" y="${face / 2 + 4.5}" text-anchor="middle" font-family="DejaVu Sans, sans-serif" font-size="12" font-weight="bold" fill="#fff">${initial}</text></svg>`;
+  const disc = faceDisc(a.name, a.color, face, 12, k);
   const on: OverlayOptions[] = [
-    { input: Buffer.from(disc), left: px(pad), top: px((head - face) / 2) },
+    { input: disc, left: px(pad), top: px((head - face) / 2) },
     { input: name.input, left: px(pad + face + gap), top: Math.round((px(head) - name.height) / 2) },
     { input: words.input, left: px(pad), top: px(head + HAND.below) + words.lead },
   ];
@@ -269,29 +281,6 @@ async function answered(a: Answer, k: number, dir: string): Promise<Layer> {
     .toBuffer();
   return { input, left: px(a.x), top: px(a.y), width: px(a.w), height: h };
 }
-// Paper w × h at left, top (picture px) with its soft shadow and what's on it (each from the paper's top-left), with room
-// round it for the shadow's blur; foot: the paper's foot.
-async function paper(
-  left: number,
-  top: number,
-  w: number,
-  h: number,
-  k: number,
-  look: { paper: string; shadow: number; on: OverlayOptions[] },
-) {
-  const m = Math.ceil(3 * k);
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w + 2 * m}" height="${h + 2 * m}"><filter id="s"><feGaussianBlur stdDeviation="${1.5 * k}"/></filter><rect x="${m}" y="${m + k}" width="${w}" height="${h}" fill="${WORDS.ink}" fill-opacity="${look.shadow}" filter="url(#s)"/><rect x="${m}" y="${m}" width="${w}" height="${h}" fill="${look.paper}"/></svg>`;
-  const on = look.on.map(o => ({ ...o, left: (o.left ?? 0) + m, top: (o.top ?? 0) + m })),
-    input = await sharp(Buffer.from(svg)).composite(on).png().toBuffer();
-  return { input, left: left - m, top: top - m, width: w + 2 * m, height: h + 2 * m, foot: top + h };
-}
-// A picture's file at most w page px wide and never past its own width, or as wide as w (fill), at k picture px a page px
-async function pictureAt(file: string, w: number, k: number, fill = false) {
-  const { width = 1, height = 1 } = await sharp(file).metadata(),
-    W = Math.max(1, Math.round((fill ? w : Math.min(w, width)) * k)),
-    H = Math.max(1, Math.round((W * height) / width));
-  return { input: await sharp(file).resize(W, H, { fit: 'fill' }).png().toBuffer(), width: W, height: H };
-}
 // Only the part of a layer inside the W × H picture (a box may start left of the page's top-left), none when none is
 async function inside(l: Layer, W: number, H: number): Promise<OverlayOptions[]> {
   const x0 = Math.max(0, l.left),
@@ -306,34 +295,8 @@ async function inside(l: Layer, W: number, H: number): Promise<OverlayOptions[]>
 }
 
 // A box's words set at k picture px a page px, in the typed words' face or another's (from typed and typedHeight)
-type Face = { size: number; line: number; font?: string };
 const setText = (t: Omit<Typed, 'x' | 'y'>, k: number, face: Face = TEXT) =>
   setMarkup(`<span foreground="${t.color}">${escaped(t.text)}</span>`, t.w, k, face);
-// Words in Pango's markup set w page px wide
-const setMarkup = (markup: string, w: number, k: number, face: Face) =>
-  sharp({
-    text: {
-      text: markup,
-      font: `${face.font ?? TEXT.font} ${face.size}`,
-      width: Math.max(1, Math.round(w * k)),
-      dpi: Math.round(72 * k),
-      rgba: true,
-      wrap: 'word-char',
-      spacing: Math.max(0, Math.round((face.line - FACE_LINE) * face.size * k)),
-    },
-  })
-    .png()
-    .toBuffer({ resolveWithObject: true });
-// Words set w page px wide as the book stands them: their picture (width × height), and how tall they stand at the
-// face's line height (half a line's spacing above and below Pango's lines: their ink lead px down)
-async function block(markup: string, w: number, k: number, face: Face) {
-  const set = await setMarkup(markup, w, k, face),
-    spacing = (face.line - FACE_LINE) * face.size * k;
-  return {
-    ...{ input: set.data, width: set.info.width, height: set.info.height },
-    ...{ tall: Math.round(set.info.height + spacing), lead: Math.round(spacing / 2) },
-  };
-}
 // How tall a box's words stand on its page, in page px, as its picture sets them: its lines at the book's line height
 // (an answer typed under a question: bookslips.ts.)
 export async function typedHeight(t: Typed) {

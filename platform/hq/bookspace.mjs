@@ -6,7 +6,7 @@
 // that never came are events made without their ends.
 import assert from 'node:assert/strict';
 import { BLUE, freePage, paperBox, pick, savedWhere, tool } from './bookmouse.mjs';
-import { MINI, chromiumPen } from './bookkit.mjs';
+import { MINI, chromiumPen, middleOf } from './bookkit.mjs';
 
 // how far a finger's pan or a pinch may land from where it was aimed (px): the pan's smoothing is none, its rounding one
 const NEAR_PX = 3;
@@ -225,7 +225,6 @@ const pan = (fingers, [x, y], [dx, dy]) =>
 
 // ---- what the board sees
 
-const middleOf = b => [b.x + b.width / 2, b.y + b.height / 2];
 // The origin of the page shown, on the screen
 const originAt = page => page.locator('#book .bk-page:not([hidden])').boundingBox();
 // The page's zoom, as the paper draws it

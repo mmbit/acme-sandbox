@@ -1,5 +1,4 @@
-// The arithmetic the estimates share: a mean, a median, the value a share of them fit in, a time to whole seconds, and
-// times in whole minutes and shares to hundredths (hq estimate --calibration's threads).
+// Shared estimate statistics, time conversions and prediction scores.
 
 // Null for no values.
 export const mean = (values: number[]) =>
@@ -30,3 +29,23 @@ export const minutes = (values: number[]) => ({
   median: values.length ? Math.round(median(values)! / MINUTE_MS) : null,
 });
 export const share = (n: number) => Math.round(n * 100) / 100;
+
+// Milliseconds in minutes to hundredths, including subminute carry checks.
+export const fractionalMinutes = (ms: number) => Math.round(ms / (MINUTE_MS / 100)) / 100;
+
+// Predictions [predicted, actual]: median factor, share within twice or half, and ratio of totals.
+export function spread(pairs: [number, number][], floorMs = MINUTE_MS) {
+  const by = pairs.map(([predicted, actual]) => Math.abs(factor(predicted, actual, floorMs)));
+  const middle = median(by);
+  const sum = (i: 0 | 1) => pairs.reduce((total, pair) => total + pair[i], 0);
+  return {
+    count: pairs.length,
+    median_factor: middle === null ? null : share(Math.exp(middle)),
+    within_twice: by.length ? share(by.filter(f => f <= Math.LN2).length / by.length) : null,
+    sum_ratio: sum(1) ? share(sum(0) / sum(1)) : null,
+  };
+}
+
+// Ordinary jobs floor durations at a minute. Carry checks pass zero to retain their measured ratios.
+export const factor = (predicted: number, actual: number, floorMs = MINUTE_MS) =>
+  Math.log(Math.max(actual, floorMs) / Math.max(predicted, floorMs));

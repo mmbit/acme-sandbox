@@ -147,3 +147,37 @@ test("a note the board types on a live call's page gets no quick run: the call's
   assert.equal(onCall({ grp: typed.id }), call);
   assert.equal(answerNow({ grp: typed.id }, VERDICT), null);
 });
+
+test("the page's picture shows a try's versions under its scrap, in its agent's ink, and the ones still coming", async () => {
+  const g = await scrap('Test: who is this');
+  const run = (await h.claimJob(tryNow({ grp: g.id }, VERDICT)!))!;
+  const blue = `data:image/png;base64,${(
+    await sharp({ create: { width: 320, height: 240, channels: 3, background: '#2050ff' } })
+      .png()
+      .toBuffer()
+  ).toString('base64')}`;
+  const picture = async () => {
+    const res = await fetch(`${h.base}/api/book/picture?id=${g.page}`, { headers: { cookie: h.boardCookie } });
+    return sharp(Buffer.from(await res.arrayBuffer()))
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+  };
+  const before = await picture();
+  assert.equal((await h.agent('answer', run.token, { grp: g.id, expect: 2 })).status, 200);
+  const landed = await h.agent('answer', run.token, { grp: g.id, version: 'Quiet harbour', picture: blue });
+  assert.equal(landed.status, 200, JSON.stringify(landed.body));
+  const { data, info } = await picture();
+  const counted = (is: (r: number, g: number, b: number) => boolean, p = { data, info }) => {
+    let n = 0;
+    for (let i = 0; i < p.data.length; i += p.info.channels) if (is(p.data[i], p.data[i + 1], p.data[i + 2])) n++;
+    return n;
+  };
+  const blueish = (r: number, gr: number, b: number) => r < 60 && gr < 110 && b > 220;
+  assert.equal(counted(blueish, before), 0, 'only frames still coming before it landed');
+  assert.ok(counted(blueish) > 10_000, "the version's picture once it landed");
+  // (Kit's face and name, and the pencil dots of the one still coming)
+  const { inkOf } = await import('../../../hq/shell/ink/agentink.js');
+  const [R, G, B] = [1, 3, 5].map(i => parseInt((inkOf('kit') as string).slice(i, i + 2), 16));
+  assert.ok(counted((r, gr, b) => Math.abs(r - R) + Math.abs(gr - G) + Math.abs(b - B) < 60) > 300, "in Kit's ink");
+  await h.finish(run);
+});

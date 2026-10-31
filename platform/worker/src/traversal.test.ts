@@ -42,29 +42,26 @@ for (const replacement of ['descendant', 'root'])
     symlinkSync(outside, join(root, 'outside'));
     const baseline = await measure();
     assert.ok(baseline < 4 * 1024 * 1024, 'static symlink does not add the outside tree');
-    let swapping = true;
-    const swap = () => {
-      if (!swapping) return;
-      renameSync(directory, held);
-      symlinkSync(outside, directory);
-      setImmediate(() => {
+    // Each measurement races a fixed batch so a slow scan cannot generate more filesystem work for itself.
+    const swap = async () => {
+      for (let i = 0; i < 8; i++) {
+        renameSync(directory, held);
+        symlinkSync(outside, directory);
+        await new Promise<void>(resolve => setImmediate(resolve));
         rmSync(directory);
         renameSync(held, directory);
-        if (swapping) setImmediate(swap);
-      });
-    };
-    swap();
-    try {
-      for (let i = 0; i < 8; i++) {
-        try {
-          assert.ok((await measure()) < 4 * 1024 * 1024, 'racing symlink does not add the outside tree');
-        } catch (failure) {
-          assert.match(String(failure), /replaced|ENOENT|ENOTDIR|ELOOP|changes lost/);
-        }
+        await new Promise<void>(resolve => setImmediate(resolve));
       }
-    } finally {
-      swapping = false;
-      await new Promise<void>(resolve => setImmediate(resolve));
+    };
+    for (let i = 0; i < 8; i++) {
+      const swapping = swap();
+      try {
+        assert.ok((await measure()) < 4 * 1024 * 1024, 'racing symlink does not add the outside tree');
+      } catch (failure) {
+        assert.match(String(failure), /replaced|ENOENT|ENOTDIR|ELOOP|changes lost/);
+      } finally {
+        await swapping;
+      }
     }
     assert.equal(await measure(), baseline);
     writeFileSync(join(outside, 'later'), Buffer.alloc(1024 * 1024));

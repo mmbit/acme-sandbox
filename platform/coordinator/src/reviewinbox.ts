@@ -125,7 +125,9 @@ export function accept(id: string, by: string, ask: JobThreadAsk & { for?: unkno
   if (!item) return `there's no ${id} (hq inbox)`;
   const refused = reviewwork.authorized(item, by);
   if (refused) return refused;
-  if (!ask.for || !jobs.findAgent(String(ask.for))) return 'name the fix task agent with --for <agent>';
+  // (a pull request's author may have left: its fix is still theirs, as a fix job is.)
+  if (!ask.for || !(jobs.findAgent(String(ask.for)) || jobs.alumnus(String(ask.for))))
+    return 'name the fix task agent with --for <agent>';
   if (item.decision === 'close') return inOneStep(() => reviewclosure.redraw(item, by, ask));
   try {
     return inOneStep(() => {
@@ -176,19 +178,16 @@ export function drawReason(work: { branch: string; thread: string }) {
   if (thread.status === 'open' && thread.deadline !== null) return 'its deliverable has a window';
   return jobs.itemWorkBranches().has(work.branch) ? 'its work carries a live board call item' : undefined;
 }
-// A draw refusal needs a corrected ruling, not another delivery attempt
-export class DrawRefused extends Error {}
-
 // One author job answers the whole ruling. Separate pushes would each hold the branch for their tests.
-export function drawnAtOnce(item: Item, owner: string) {
+// A refused draw is HQ's, not the ruling's: it returns why, and nothing rules again.
+export function drawnAtOnce(item: Item, owner: string): { jobs: number[]; author: string } | { refused: string } {
   const { author } = db.prepare('select author from prs where number = ?').get(item.pr) as { author: string };
   const blocking = item.findings.filter(f => f.kind !== 'nonblocking');
   const made = accept(`${FINDINGS}${item.pr}`, owner, {
     for: author,
     findings: blocking.length ? blocking.map(f => f.id) : undefined,
   });
-  if (typeof made === 'string') throw new DrawRefused(made);
-  return { jobs: [made.job], author };
+  return typeof made === 'string' ? { refused: made } : { jobs: [made.job], author };
 }
 
 // The ended fix tasks a new draw on their findings takes over from, as their replacement. A cancelled task isn't one:

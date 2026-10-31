@@ -3,7 +3,7 @@
 import { INKS } from '/__review/ink.js';
 import { at } from './bookview.js';
 import { boxOf } from './bookrow.js';
-import { strokeUnit } from './bookunits.js';
+import { inkUnit } from './bookunits.js';
 import { changed, shut } from './booksave.js';
 import { scrapAt } from './bookscrap.js';
 import { isTap, wandered } from '/__review/tap.js';
@@ -21,6 +21,7 @@ export const INK = { color: '#2a2352', size: INKS[0].size };
 export function drawable(book, e, table) {
   if (e === book.waited) {
     book.waited = null;
+    book.assign?.inking(e); // (a ring round a scrap and a line out of it: bookassign.js)
     return true;
   }
   // (a note's words kept from Scribble for the pen take its strokes: bookamend.js; a read refused, over the page, is tapped to try again)
@@ -40,6 +41,7 @@ export function drawable(book, e, table) {
   book.target = hit.i;
   book.inking = book.tools?.ink() ?? INK;
   if (e.pointerType !== 'mouse' && onSomething(e, hit)) return waitFor(book, e);
+  book.assign?.inking(e);
   return true;
 }
 const onSomething = (e, hit) =>
@@ -97,10 +99,12 @@ export function dried(book, stroke, hooks) {
     if (book.groups?.scratch(v, line)) return book.ink.clear();
     // A line across words strikes them out or slices them open instead of adding ink.
     if (book.amend?.claim(stroke, book.pointer)) return book.ink.clear();
+    // A stroke that circled a scrap and was lifted on the list it opened handed the scrap over (bookassign.js).
+    if (book.assign?.claim()) return book.ink.clear();
   }
-  // (into the unit it starts on, else a new unit of its own: bookunits.js.)
+  // (into the unit it starts on, else the board's drawing it comes near, else a new unit of its own: bookunits.js.
   page.blank = false;
-  line.g = strokeUnit(page, ...line.points[0]);
+  line.g = inkUnit(page, line);
   page.ink.push(line);
   book.ink.clear();
   book.steps.push({

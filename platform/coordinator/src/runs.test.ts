@@ -1416,6 +1416,93 @@ test("a machine set up with its install command: one command with its key, the m
   await h.finish(job);
 });
 
+test("a lent machine's manager: HQ keeps its setup calls with the code it runs, shows one on old code or quiet while its helpers ask, and cards the board once with the install command without a key, taken away once it runs HQ's code again", async t => {
+  h.declareKinds(t, TESTS_KIND);
+  await lendNone();
+  const added = await lend('the rig');
+  lentKey = added.key;
+  const managerOf = async () =>
+    (await h.board('/api/machines')).body.find((one: { id: unknown }) => one.id === added.id).manager;
+  const cards = () =>
+    h.db.prepare("select * from requests where title like '%the rig%' order by id").all() as {
+      id: number;
+      kind: string;
+      status: string;
+      body: string;
+      closing: string | null;
+    }[];
+  const ask = () => asHelper('/api/helper/take', { kind: 'tests', slot: 1, locked: true });
+  await ask();
+  assert.equal(await managerOf(), null, 'no manager yet: helpers started by hand');
+
+  // the manager itself, as the install command starts it, sends the hash of the code it runs
+  const install = (await h.board('/api/machines/setup')).body.install as string;
+  const bootstrap = / -e "(.*)"$/.exec(install)![1];
+  const state = mkdtempSync(`${tmpdir()}/manager-`);
+  writeFileSync(`${state}/key`, `${lentKey}\n`);
+  const manager = spawn(process.execPath, ['-e', bootstrap], {
+    env: {
+      PATH: process.env.PATH,
+      TMPDIR: state,
+      HQ_URL: h.base,
+      HQ_PRIVATE: '1',
+      KEY_FILE: `${state}/key`,
+      DOCKER_SOCKET: `${state}/no-docker.sock`,
+    },
+    stdio: 'ignore',
+  });
+  t.after(() => manager.kill());
+  await until(async () => (await managerOf())?.state === 'current', 'the manager calls with its code', 15_000);
+  manager.kill();
+  runs.managerCheck();
+  assert.deepEqual(cards(), [], 'nothing to card');
+
+  // one on code HQ no longer serves: one card, with the install command that keeps the machine's key
+  assert.equal((await asHelper('/api/helper/setup', { code: 'f'.repeat(64) })).status, 200);
+  assert.equal((await managerOf()).state, 'old');
+  runs.managerCheck();
+  runs.managerCheck();
+  const [old] = cards();
+  assert.equal(cards().length, 1, 'one card a machine');
+  assert.equal(old.kind, 'action');
+  assert.ok(old.body.includes(install), old.body);
+  assert.doesNotMatch(old.body, /HELPER_KEY/);
+  const job = await h.start({ agent: 'bolt' });
+  assert.match((await hqIn(tmpdir(), job, 'run', 'helper')).out, /the rig: taking.*its manager runs old code/);
+
+  // back on HQ's code: the card leaves the desk phone
+  const code = createHash('sha256')
+    .update(await fetch(`${h.base}/api/helper/manager`).then(r => r.text()))
+    .digest('hex');
+  await asHelper('/api/helper/setup', { code });
+  runs.managerCheck();
+  assert.equal(cards()[0].status, 'done');
+  assert.match(cards()[0].closing!, /runs HQ's code again/);
+
+  // quiet for hours while its helpers ask: a new card; none for one that's away (away.ts tells of that)
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() - 3 * 3600_000 });
+  await asHelper('/api/helper/setup', { code });
+  t.mock.timers.reset();
+  await ask();
+  assert.equal((await managerOf()).state, 'quiet');
+  assert.match((await hqIn(tmpdir(), job, 'run', 'helper')).out, /its manager stopped \(last heard/);
+  runs.managerCheck();
+  assert.equal(cards().length, 2);
+  assert.match(cards()[1].body, /hasn't checked in since/);
+  runs.managerCheck(Date.now() + 10 * 60_000);
+  assert.equal(cards()[1].status, 'open', 'its helpers gone too: away, the card waits for it');
+  // an old manager (no hash) on a paused machine: shown, never carded, and its card ends
+  await h.board('/api/machines/pause', { machine: added.id, paused: true });
+  await asHelper('/api/helper/setup', {});
+  await ask();
+  assert.equal((await managerOf()).state, 'old');
+  runs.managerCheck();
+  assert.equal(cards().length, 2);
+  assert.equal(cards()[1].status, 'done');
+  assert.match(cards()[1].closing!, /was paused or removed/);
+  await h.finish(job);
+});
+
 test("a lent machine's pull of a kind's private image signs in with HQ's registry key, for an image a kind names alone", async t => {
   // (an owner whose sign-in isn't a multiple of 3 bytes long, so its base64 needs padding)
   const voice = `ghcr.io/acme1/voice@sha256:${'a'.repeat(64)}`;

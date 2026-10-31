@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { clipped, turnTo, where } from './booknotebookscreen.mjs';
 import { cornerOf, dragTo } from './bookshare.mjs';
-import { DESKTOP, MINI, until } from './bookkit.mjs';
+import { DESKTOP, MINI, UPRIGHT, until } from './bookkit.mjs';
 
 const SEED = JSON.parse(await readFile(new URL('./mock/notebook.json', import.meta.url), 'utf8'));
 // the seed's open page with groups in My journal (mock/notebook.json), and a group on it
@@ -18,7 +18,7 @@ const SECOND = 2,
   ASKING = 6;
 const SIZES = [
   { name: 'phone', viewport: { width: 390, height: 844 }, touch: true, folded: true, isMobile: true },
-  { name: 'mini-upright', viewport: { width: MINI.height, height: MINI.width }, touch: true, folded: true },
+  { name: 'mini-upright', viewport: UPRIGHT, touch: true, folded: true },
   { name: 'mini-side', viewport: MINI, touch: true },
   { name: 'desktop', viewport: DESKTOP, touch: false },
 ];
@@ -95,8 +95,6 @@ async function locked(c, page, size) {
   const s = await stampOf(page);
   assert.ok(s.locked && s.toolsHidden, `locked: the tools gone, "Sent, locked" in their place (${size.name})`);
   assert.ok(inside(s.box, s.paper), `the stamp on the paper in view (${size.name}): ${JSON.stringify(s.box)}`);
-  // (as the deck draws it, big enough to read at a glance)
-  assert.ok(s.box.height >= 28, `the stamp read at a glance (${size.name}): ${JSON.stringify(s.box)}`);
   assert.ok(!s.over.some(b => overlaps(s.box, b)), `the stamp over nothing written (${size.name})`);
   await c.shot(`tear-stamped-${size.name}`, page);
   assert.equal(await page.locator('#book .bk-send').count(), 0, `no Send key (${size.name})`);

@@ -2,36 +2,40 @@
 // gave it) against the agent time the job took, by agent, by area, by sizer and by how the job was queued; and the ETAs
 // the prediction log (predictionlog.ts) held an hour, six hours and a day before each landing against the landing. Also
 // the threads merged in the window, their work, review and waiting time (threadtime.ts).
-import { cleanPastJobs, pastJobsSoon, type PastJob } from './matching.ts';
-import { latestSizes, type JobSize } from './predictions.ts';
+import { cleanPastJobs, pastJobsSoon, isPrivate, type PastJob } from './matching.ts';
+import { latestSizes, storedSizes, type JobSize } from './predictions.ts';
 import { landings } from './landings.ts';
 import * as predictionlog from './predictionlog.ts';
 import { byLead, LEADS, type Sample } from './backtest.ts';
-import { spread } from './accuracy.ts';
+import { spread } from './arithmetic.ts';
 import { db } from './db.ts';
 import { usualOf, WINDOW_MS as BIAS_WINDOW_MS } from './sizerbias.ts';
 import { threadTimes } from './threadtime.ts';
 import * as latency from './latency.ts';
-
-const DAY_MS = 24 * 60 * 60_000;
+import * as taskaudit from './taskaudit.ts';
 
 // Its parts each run in a turn of HQ's thread of their own, so the server answers other requests between them, and one
 // that holds it half a second or more is named in the status report's holds (latency.ts turns).
-export async function report(ask: { days?: unknown }, now = Date.now()) {
-  const days = ask.days === undefined ? 7 : Number(ask.days);
-  if (!Number.isInteger(days) || days < 1 || days > 30) return 400;
+export async function report(ask: taskaudit.AuditAsk, now = Date.now()) {
+  const window = taskaudit.readWindow(ask, now);
+  if (typeof window === 'number') return window;
+  const { days } = window;
   const turn = latency.turns('hq estimate --calibration');
-  const since = new Date(now - days * DAY_MS).toISOString(),
-    lookback = new Date(now - days * DAY_MS - BIAS_WINDOW_MS).toISOString();
-  const recent = (await turn('the pool', pastJobsSoon())).filter(j => j.finished >= lookback);
+  const tasks = await taskaudit.report(window, turn);
+  const since = window.since,
+    lookback = new Date(Date.parse(since) - BIAS_WINDOW_MS).toISOString();
+  const recent = (await turn('the pool', pastJobsSoon())).filter(
+    j => j.finished >= lookback && j.finished < window.until && !isPrivate(j),
+  );
   const done = recent.filter(j => j.finished >= since);
   await turn('the window');
   const sizes = await sizeMisses(done, recent, turn);
   const eta = await etaMisses(
     done.map(j => j.id),
     turn,
+    Date.parse(window.until),
   );
-  return { days, sizes, eta, threads: await threadTimes(since, turn) };
+  return { days, tasks, sizes, eta, threads: await threadTimes(since, turn, window.until) };
 }
 
 // ---- layer 1: the sizes
@@ -39,13 +43,19 @@ export async function report(ask: { days?: unknown }, now = Date.now()) {
 type Sized = { j: PastJob; size: JobSize };
 
 async function sizeMisses(done: PastJob[], recent: PastJob[], turn: latency.Turn) {
-  const sizes = latestSizes(recent.map(j => j.id));
+  const ids = recent.map(j => j.id);
+  const sizes = latestSizes(ids, storedSizes(ids, { persist: false }));
   await turn('the sizes');
-  const sized = sizedOf(done, sizes);
+  const all = sizedOf(done, sizes);
+  const sized = all.filter(s => s.j.origin !== 'carry');
   const queued = queuedHow(sized.map(s => s.j.id));
   await turn('how the jobs were queued');
   const misses = {
     count: sized.length,
+    carry_checks: spread(
+      all.filter(s => s.j.origin === 'carry').map(s => [s.size.agent_ms, s.j.agent_ms]),
+      0,
+    ),
     by_agent: grouped(sized, s => s.j.agent),
     by_area: grouped(sized, s => areaOf(s.j)),
     by_sizer: grouped(sized, s => s.size.by),
@@ -102,7 +112,7 @@ function givenSizes(sized: Sized[], measured: Sized[]) {
   const pairOf = (s: Sized): [number, number] => [s.size.agent_ms, s.j.agent_ms];
   // (by finish, each one's parsed once)
   const pool = measured
-    .filter(m => m.size.by !== 'tool' && !m.size.revised && m.j.agent_ms > 0)
+    .filter(m => m.j.origin !== 'carry' && m.size.by !== 'tool' && !m.size.revised && m.j.agent_ms > 0)
     .map(m => ({ by: m.size.by, finished: Date.parse(m.j.finished), pair: pairOf(m) }))
     .sort((a, b) => a.finished - b.finished);
   const everyone = usualIn(pool),
@@ -162,12 +172,13 @@ export function areaOf(j: Pick<PastJob, 'pr' | 'files'>) {
 
 // For each job that landed and each lead, the log's row standing that long before the landing (the last one written
 // by then): a row stands until the next one moves it. One seek each (predictionlog.jobAt), never a job's every row.
-async function etaMisses(jobs: number[], turn: latency.Turn) {
+async function etaMisses(jobs: number[], turn: latency.Turn, until: number) {
   const landed = landings(jobs);
   await turn('the landings');
   const samples: Sample[] = [];
   for (const { lead, ms } of LEADS)
     for (const [job, at] of landed) {
+      if (at >= until) continue;
       const standing = predictionlog.jobAt(job, at - ms);
       if (standing) samples.push({ lead, merged: standing.merged, held: standing.held, landed: at });
     }

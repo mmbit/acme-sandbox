@@ -18,8 +18,11 @@
 //     Their order is made and sent as a customer's is; what they noted on the way goes as any share's notes do.
 //     On the preview of a product with plans (plans.ts), the voucher pays one of its plans instead, typed in the
 //     product's own screen by its own tester.
+//   - A lasting share (lasting) is a guest's for good, a colleague's: it never ends by date, only by the board's Remove
+//     or End on the work. A notes share is a review round: open a week (Ink 1.1's two kinds of guest, the deck's Guests
+//     chapter.)
 import { createHash, randomBytes, randomInt } from 'node:crypto';
-import { db } from './db.ts';
+import { db, lacks } from './db.ts';
 import { FRONT } from './approvals.ts';
 import { brand, infra, names } from './company.ts';
 import * as guests from './guests.ts';
@@ -35,18 +38,22 @@ import { viewerId } from './viewers.ts';
 // - tester: 1 for a tester invite.
 // - cap: the most a voucher pays in cents, delivery included, from the board's Share box.
 // - ended_by: why it ended.
+// - lasting: 1 for a lasting guest's share, open till the board ends it (LASTING_ENDS).
 // - review_share_people.voucher, ordered: the person's tester voucher and the session that spent it.
 // - review_share_sessions.guest: the person whose session it is.
 // - host: where it was handed, or null for the share's own host.
 db.exec(`create table if not exists review_shares (id integer primary key, created text not null, about text not null,
     host text not null, prefix text not null, start text not null, ends text not null, ended text,
-    linked text, view integer not null default 0, tester integer not null default 0, cap integer, ended_by text);
+    linked text, view integer not null default 0, tester integer not null default 0, cap integer, ended_by text,
+    lasting integer not null default 0);
   create table if not exists review_share_people (share integer not null, guest text not null collate nocase,
     nonce text not null, link text not null unique, added text not null, opened text, removed text,
     voucher text, ordered text, primary key (share, guest));
   create table if not exists review_share_sessions (hash text primary key, share integer not null, seal text not null,
     guest text collate nocase, host text, expires integer)`);
 db.exec('create unique index if not exists review_share_vouchers on review_share_people (voucher)');
+if (lacks('review_shares', 'lasting'))
+  db.exec('alter table review_shares add column lasting integer not null default 0');
 
 // about: what the notes are about (owed.about), and so whose they are; prefix: the paths it opens on host; start: the
 // page it opens at; ended: when it ended, and ended_by why: the board ended it or its date passed (null: ended before we
@@ -65,6 +72,7 @@ export type Share = {
   view: number;
   tester: number;
   cap: number | null;
+  lasting: number;
 };
 // One of a share's people: their own link, when they first opened it, or were removed
 export type Person = {
@@ -83,6 +91,9 @@ export type Scope = Pick<Share, 'about' | 'host' | 'prefix' | 'start'>;
 // A preview host and the paths a share opens on it
 export type Reach = Pick<Share, 'host' | 'prefix'>;
 export const DAYS = [1, 3, 7];
+// A review round's days, the one length the board's Share offers; and a lasting share's end, never reached
+export const ROUND_DAYS = 7,
+  LASTING_ENDS = '9999-12-31T00:00:00.000Z';
 // What a tester's voucher pays at most, in cents, delivery included: the board's amount for the invite, €50 until it sets
 // one
 export const DEFAULT_CAP_CENTS = 5000,
@@ -126,27 +137,36 @@ export const sharedWith = (guest: string) =>
   !!db.prepare('select 1 from review_share_people where guest = ?').get(guest);
 
 // ---------------------------------------------------------------- the board (HQ)
-// What a share is for: notes, to view only, or a tester invite (notes and an order)
-export type Kind = 'notes' | 'view' | 'tester';
-export const kindOf = (s: Pick<Share, 'view' | 'tester'>): Kind => (s.tester ? 'tester' : s.view ? 'view' : 'notes');
+// What a share is for: a lasting guest's notes, a review round's notes, to view only, or a tester invite (notes and an
+// order)
+export type Kind = 'lasting' | 'notes' | 'view' | 'tester';
+export const kindOf = (s: Pick<Share, 'view' | 'tester' | 'lasting'>): Kind =>
+  s.tester ? 'tester' : s.view ? 'view' : s.lasting ? 'lasting' : 'notes';
 // The open share of a scope, of a kind: the board's Share on any page it opens leads to it, so one share has all its people
 export const openFor = (scope: Pick<Scope, 'host' | 'prefix'>, kind: Kind = 'notes') =>
   db
     .prepare(
-      `select * from review_shares where host = ? and prefix = ? and view = ? and tester = ? and ended is null and ends > ?
-      order by id desc`,
+      `select * from review_shares where host = ? and prefix = ? and view = ? and tester = ? and lasting = ?
+      and ended is null and ends > ? order by id desc`,
     )
-    .get(scope.host, scope.prefix, kind === 'view' ? 1 : 0, kind === 'tester' ? 1 : 0, new Date().toISOString()) as
-    Share | undefined;
+    .get(
+      scope.host,
+      scope.prefix,
+      kind === 'view' ? 1 : 0,
+      kind === 'tester' ? 1 : 0,
+      kind === 'lasting' ? 1 : 0,
+      new Date().toISOString(),
+    ) as Share | undefined;
 
-// A new share: scope and linked from feedback.ts (scopeOf, linkedFrom), open for days, of a kind, with nobody on it yet
-// (invite).
+// A new share: scope and linked from feedback.ts (scopeOf, linkedFrom), open for days (a lasting one till the board
+// ends it), of a kind, with nobody on it yet (invite).
 export function create(scope: Scope, linked: Reach[], days: number, kind: Kind = 'notes') {
   const now = new Date();
-  const ends = new Date(now.getTime() + days * 864e5).toISOString();
+  const ends = kind === 'lasting' ? LASTING_ENDS : new Date(now.getTime() + days * 864e5).toISOString();
   const { lastInsertRowid } = db
     .prepare(
-      'insert into review_shares (created, about, host, prefix, start, ends, linked, view, tester) values (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      `insert into review_shares (created, about, host, prefix, start, ends, linked, view, tester, lasting)
+      values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       now.toISOString(),
@@ -158,6 +178,7 @@ export function create(scope: Scope, linked: Reach[], days: number, kind: Kind =
       JSON.stringify(linked),
       kind === 'view' ? 1 : 0,
       kind === 'tester' ? 1 : 0,
+      kind === 'lasting' ? 1 : 0,
     );
   return byId(Number(lastInsertRowid))!;
 }

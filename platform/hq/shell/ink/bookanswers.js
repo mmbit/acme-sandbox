@@ -115,19 +115,14 @@ function edgeOf(layer, again) {
   return paper && clearOf(layer.slot, paper);
 }
 // The paper's width across at 100%, null before the book has sized it; again() lays the answers again whenever it
-// sizes it (bookpages.js's bk:paper on the world, as the book opens and when the screen turns) and whenever the
-// controls' width beside it settles (bookui.js bk:controls-width), each heard once the page is in the book
+// sizes it (bookpages.js's bk:paper on the world, as the book opens and when the screen turns), heard once the page is
+// in the book
 function paperOf(layer, again) {
   layer.again = again;
-  const world = layer.slot.closest('.bk-world'),
-    book = layer.slot.closest('#book');
+  const world = layer.slot.closest('.bk-world');
   if (world && !layer.hearsPaper) {
     layer.hearsPaper = true;
     hearWhileShown(layer.slot, world, 'bk:paper', () => layer.again());
-  }
-  if (book && !layer.hearsControlsWidth) {
-    layer.hearsControlsWidth = true;
-    hearWhileShown(layer.slot, book, 'bk:controls-width', () => layer.again());
   }
   return parseFloat(world?.style.getPropertyValue('--paper-w') ?? '') || null;
 }

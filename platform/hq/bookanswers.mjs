@@ -5,7 +5,7 @@
 // and never over the board's groups. A symbol written in its reply area (a tick, a Dutch krul, a cross, a question
 // mark) goes to the agent as ink, nothing read from it. A drawing, a form (answered and sent) and an agent's question;
 // the overview lists what's open (a note's versions: bookversions.mjs). On a call's page, the call's agent's answer lands the same way. On an iPad mini, a phone and a
-// desktop.
+// desktop. (Its Notebook played by notebookOn)
 import assert from 'node:assert/strict';
 import {
   FEED_MS,
@@ -129,7 +129,7 @@ async function placedLate(browser, c) {
   const nb = notebookOn(c),
     asked = nb.typed(4150, 'Is this live yet?', 60, 60);
   nb.groups.push(asked);
-  nb.seed.slips.push(nb.answer(asked, 4250, 'text', 'Yes: this morning.', { dx: 0, dy: 120, w: 300 }));
+  nb.seed.slips.push({ id: 4250, ...nb.answer(asked, 'text', 'Yes: this morning.', { dx: 0, dy: 120, w: 300 }) });
   const context = await c.hqIn(browser, c.MINI, { notebooks: nb.seed });
   let release;
   const held = new Promise(go => (release = go));
@@ -178,7 +178,7 @@ async function waitingFor(c, nb, play, page, asked, spot, size) {
 }
 // the answer: written in by a small pen, quickly, with the bulb and the face, never over the board's groups
 async function writtenIn(c, nb, play, page, asked, spot, size) {
-  const { id } = play.answer(asked.id, nb.answer(asked, null, 'text', WENT_LIVE, spot));
+  const { id } = play.answer(asked.id, nb.answer(asked, 'text', WENT_LIVE, spot));
   const slip = layer(page).locator(`.bk-answer[data-answer="${id}"]`);
   await slip.waitFor({ timeout: FEED_MS });
   const t0 = Date.now();
@@ -241,10 +241,13 @@ async function kinds(browser, c) {
   nb.groups.push(chart, colour, banner);
   // (each where the store places it: beside its note on a wide book, below it, right of the tool strip, on the mini's.
   const [up, two, shall] = ['Up a bit since Monday:', 'Two quick ones:', 'Shall I make it one line on phones?'];
+  const atChart = placed(nb, chart, { text: up, ink: 80 }),
+    atColour = placed(nb, colour, { text: two, questions: form.length }),
+    atBanner = placed(nb, banner, { text: shall });
   nb.seed.slips.push(
-    nb.answer(chart, 4310, 'drawing', up, placed(nb, chart, { text: up, ink: 80 }), { ink }),
-    nb.answer(colour, 4311, 'form', two, placed(nb, colour, { text: two, questions: form.length }), { form }),
-    nb.answer(banner, 4312, 'question', shall, placed(nb, banner, { text: shall })),
+    { id: 4310, ...nb.answer(chart, 'drawing', up, atChart, { ink }) },
+    { id: 4311, ...nb.answer(colour, 'form', two, atColour, { form }) },
+    { id: 4312, ...nb.answer(banner, 'question', shall, atBanner) },
   );
   await inStory(browser, c, { viewport: c.MINI, nb }, async page => {
     await written(page, 4310);
@@ -299,7 +302,7 @@ async function onCall(browser, c) {
   nb.groups.push(asked);
   await inStory(browser, c, { viewport: c.MINI, nb }, async (page, play) => {
     const text = 'People who saw it at least once, not views.';
-    const { id } = play.answer(asked.id, nb.answer(asked, null, 'text', text, placed(nb, asked, { text })));
+    const { id } = play.answer(asked.id, nb.answer(asked, 'text', text, placed(nb, asked, { text })));
     await written(page, id);
     const at = await pagePx(page, `.bk-answer[data-answer="${id}"]`);
     assert.ok(at && !overlapping(at, asked.box), "clear of the board's note");

@@ -64,7 +64,7 @@ export async function submit(book, v, copy, aside = []) {
 export const openAsks = page =>
   [...(page.groups?.values() ?? [])].filter(g => (g.asks ?? []).some(a => a.status !== 'answered'));
 
-// The card that opens from Submit when asks are still open on the page (lane: the line the targets show in, bookui.js;
+// The card that opens from Submit when asks are still open on the page (lane: the rail the targets show on, bookui.js;
 // at: Submit's box on the screen): whether to send now, those asks moved to a new page (true), or answer them first
 // (false, as Escape or a tap away). The page stays in view behind it.
 export function askedFirst(lane, at, asks) {
@@ -81,8 +81,8 @@ export function askedFirst(lane, at, asks) {
     n === 1 ? 'Send now, move it to a new page' : 'Send now, move them to a new page',
   )}</button><button type="button" data-wait>${esc(n === 1 ? 'Answer it first' : 'Answer them first')}</button>`;
   lane.append(card);
-  // (its tail points down at Submit: the card's left by its layout, as it scales in)
-  const left = lane.getBoundingClientRect().left + card.offsetLeft - card.offsetWidth / 2;
+  // (its tail points down at Submit: the card's left by its layout, as it scales in.)
+  const left = lane.getBoundingClientRect().left + card.offsetLeft;
   card.style.setProperty('--bk-tail', `${Math.round(at.left + at.width / 2 - left)}px`);
   card.querySelector('[data-go]').focus();
   return new Promise(done => {

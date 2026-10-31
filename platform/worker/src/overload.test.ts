@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test, type TestContext } from 'node:test';
 import { overloadWatch } from './overload.ts';
+import { memoryFixture } from './memory.fixture.ts';
 
 function pressureFiles(context: TestContext) {
   const folder = mkdtempSync(join(tmpdir(), 'overload-'));
@@ -51,4 +52,39 @@ test('the worker room and low memory share the alert without changing a job memo
   assert.equal(recovering.verdict, 'between');
   assert.match(recovering.reasons.join(), /memory recovering: 2\.4 GB free/);
   assert.equal(look().verdict, 'calm');
+});
+
+test('a memory warning retains the baseline actually compared and its original metered watch inputs', context => {
+  const { memory, pressure, reading } = memoryFixture(context);
+  const look = (used: number, uses = new Map<number, number>()) => {
+    reading(8e9, used, 0, 8e9);
+    const captured = memory.inspect(() => ({ freeMb: memory.freeMb(false), uses, room: memory.room() }));
+    return pressure({ ...captured.value, inputs: captured.inputs });
+  };
+  const calm = look(2e9, new Map([[7, 300]]));
+  const low = look(7e9, new Map([[7, 5000]]));
+  assert.equal(low.cause?.job, 7);
+  assert.deepEqual(low.inputs.baselineUsed, calm.inputs.calmSource);
+  assert.equal(low.inputs.baselineUsed?.kind, 'calm');
+  assert.ok(low.inputs.source?.free?.measurement.identity);
+  assert.notDeepEqual(low.inputs.source?.free?.measurement.identity, calm.inputs.source?.free?.measurement.identity);
+  assert.equal(low.inputs.source?.free?.value, low.inputs.freeMb);
+  assert.equal(low.inputs.source?.room?.value, low.inputs.room);
+  const recovered = look(2e9);
+  assert.equal(recovered.inputs.baselineUsed, null, 'a replacement calm baseline was not used for cause comparison');
+  assert.notDeepEqual(recovered.inputs.calmSource?.source, low.inputs.baselineUsed?.source);
+  assert.deepEqual(
+    low.inputs.baselineUsed,
+    calm.inputs.calmSource,
+    'the retained low look keeps its original baseline',
+  );
+});
+
+test('an initial low look labels its stand-in baseline and missing metered source explicitly', context => {
+  const { look } = pressureFiles(context);
+  const first = look({ freeMb: 1000, uses: new Map([[7, 5000]]) });
+  assert.equal(first.inputs.baselineUsed?.kind, 'initial stand-in');
+  assert.equal(first.inputs.baselineUsed?.source, null);
+  assert.equal(first.inputs.source, null);
+  assert.equal(first.cause, undefined);
 });

@@ -1,9 +1,11 @@
 // How the estimates score against what happened (the coordinator's calibration.ts, backtest.ts and accuracy.ts): hq
 // estimate --calibration, hq estimate --backtest [--save <file>], and --accuracy's thread matching.
 import { writeFileSync } from 'node:fs';
+import type { TaskAudit } from '../../coordinator/src/taskaudit.ts';
 import * as api from './api.ts';
-import { duration, spreadWords, type Spread } from './estimate.ts';
+import { carryLine, duration, spreadWords, type Spread } from './estimate.ts';
 import { plural, print } from './output.ts';
+import { printTaskAudit } from './taskaudit.ts';
 
 type Lead = {
   lead: string;
@@ -53,8 +55,10 @@ const LINE_WORDS: Record<LineHold, string> = {
 };
 type Calibration = {
   days: number;
+  tasks: TaskAudit;
   sizes: {
     count: number;
+    carry_checks: Spread;
     by_agent: Group[];
     by_area: Group[];
     by_sizer: Group[];
@@ -89,12 +93,19 @@ type Backtest = {
 };
 export type ByThread = { jobs: number; usual: Spread; thread_first: Spread };
 
-export async function calibration(days: URLSearchParams) {
-  const c: Calibration = JSON.parse(
-    await api.orStop(api.get(`estimate/calibration?${days}`), "Couldn't read the estimates."),
-  );
-  print(`How both layers missed over the last ${plural(c.days, 'day')}.`, '');
+export async function calibration(days: URLSearchParams, save: string | undefined) {
+  const response = await api.orStop(api.get(`estimate/calibration?${days}`), "Couldn't read the estimates.");
+  if (save !== undefined) writeFileSync(save, response);
+  const c: Calibration = JSON.parse(response);
+  printTaskAudit(c.tasks);
+  print('', `Latest-size diagnostic over the last ${plural(c.days, 'day')}.`, '');
+  printCalibration(c);
+  if (save !== undefined) print('', `Saved the full estimate audit to ${save}.`);
+}
+
+function printCalibration(c: Calibration) {
   print(`Sizes against the agent time each job took: ${plural(c.sizes.count, 'job')} with a size.`);
+  print(carryLine(c.sizes.carry_checks));
   const groups: [string, Group[]][] = [
     ['By agent', c.sizes.by_agent],
     ['By area (the folder its pull request changed most)', c.sizes.by_area],

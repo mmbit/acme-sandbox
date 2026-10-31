@@ -4,8 +4,8 @@
 // the radial menu on a long press. Chromium's trusted touch and pen: bookstrip.mjs.
 import assert from 'node:assert/strict';
 import { freePage, paperBox, savedWhere } from './bookmouse.mjs';
-import { QUIET_MS, HEARD, heard, middleOf, pressed, stored } from './bookstrip.mjs';
-import { MINI, until } from './bookkit.mjs';
+import { pressed, stored } from './bookstrip.mjs';
+import { HEARD, MINI, QUIET_MS, heard, middleOf, until, wordsHeard } from './bookkit.mjs';
 
 // c: book-check.mjs's played store and helpers
 export function webkitStories(c) {
@@ -27,7 +27,7 @@ async function webkit(browser, c) {
     await page.waitForSelector('#book .bk-desk', { timeout: 30_000 });
     await c.settled(page, 'open');
     const paper = await paperBox(page),
-      mid = [paper.x + paper.width / 2, paper.y + paper.height / 2];
+      mid = middleOf(paper);
     await slidAndDrawn(page, c, free, mid);
     await voiceAndRing(page, c, free, mid);
     assert.deepEqual(errors, []);
@@ -63,7 +63,7 @@ async function voiceAndRing(page, c, free, mid) {
   await page.waitForTimeout(120);
   await safari(page, 'pen', 'pointerdown', at);
   await page.locator('#book .bk-voice').waitFor({ timeout: 2000 });
-  await until(async () => (await page.locator('#book .bk-voice').textContent()).includes(HEARD), 'the words heard');
+  await wordsHeard(page);
   await c.shot('book-voice-webkit', page);
   await safari(page, 'pen', 'pointerup', at);
   const saved = await savedWhere(c, free.id, p => p.texts.length === 1);

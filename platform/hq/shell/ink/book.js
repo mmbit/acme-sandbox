@@ -22,6 +22,9 @@ import { setScope, word } from './bookscope.js';
 import { useFaces } from './bookfaces.js';
 import { STYLES } from './bookstyles.js';
 import { mountTones, tones, cover } from './booktable.js';
+import { namePhone } from './bookasks.js';
+import * as bookstage from './bookstage.js';
+import { undoKeys } from './bookundokeys.js';
 
 // How long the book slides from one open width to another, pushed aside quick and soft (the swing's: bookswing.js)
 const SLIDE_MS = 240,
@@ -47,6 +50,7 @@ export async function initBook({ scope = null } = {}) {
   setScope(scope);
   if (!scope) {
     stage = await import('../stage.js');
+    namePhone((await import('../brand.js')).names.phone);
     useFaces({
       look: () => stage.look,
       draw: id => (world.agents.has(id) ? stage.scene?.portrait?.({ kind: 'agent', id }) : null),
@@ -72,8 +76,9 @@ export async function initBook({ scope = null } = {}) {
   // (a page made or thrown away outside the book, a call's: calldraw.js, markpage.js, which send book:paged: the
   // notebook's pages read again, at that page if it's new.)
   document.addEventListener('book:paged', e => pages.made(e.detail?.page));
+  if (!scope) document.addEventListener('stage:look', () => bookstage.resting(stage, state, drawn?.mode, given));
   show(layout(innerWidth, innerHeight, state));
-  undoKeys();
+  undoKeys({ shut: () => drawn.mode === 'folded', pages: () => pages });
   dragEdge();
   mountSwing();
   mountHandle(parts.lip, { open: openBook, fold: foldBook, openOn, shut: shutOrShutting });
@@ -118,6 +123,9 @@ export const bookLayout = () => drawn;
 // Open the book (a face's tap, Search, the pull tab), or shut it (the pull tab)
 export const openBook = () => go({ ...state, mode: 'open' });
 export const foldBook = () => go({ ...state, mode: 'folded' });
+// The open book lying over HQ's viewer's frames (the board's Over, or the spread) rather than beside them (an ask's
+// spot: bookaskspot.js.)
+export const coversViewer = () => drawn.mode === 'spread' || (drawn.mode === 'open' && over);
 // Over HQ's viewer or not: laid out now unless moving
 export function layOver(on) {
   over = on;
@@ -205,7 +213,7 @@ function mountSwing() {
       go(pulled(innerWidth, innerHeight, state, dx, v));
       return state.mode !== 'folded';
     },
-    moving: on => stage?.cover(on, 'book'),
+    moving: on => bookstage.moving(stage, on),
   });
 }
 // (the book already where it's going: HQ's page lays itself out in its new room at once, never sliding)
@@ -216,6 +224,7 @@ const same = (a, b) => a && ['x', 'width'].every(k => Math.abs(a[k] - b[k]) < 0.
 // whatever the book uncovers on the way is the table's. Laid out where it landed once it's there.
 function glide(to) {
   stop();
+  bookstage.held();
   const from = placed,
     target = placeOf(to);
   widen(Math.max(reach(from), reach(target)));
@@ -263,6 +272,8 @@ function placeOf(l) {
   }
   return { x: l.page, width: l.book, room: l.room };
 }
+// The room HQ's page gives up: none over HQ's viewer, whose page keeps its width
+const given = l => (over ? 0 : Math.round(l.room));
 // (the spread's margin from the screen's left edge, as the book has at the others: book.css's --bk-gap, none upright)
 const margin = () => parseFloat(getComputedStyle(root).getPropertyValue('--bk-gap'));
 const upright = () => matchMedia('(orientation: portrait)').matches;
@@ -274,7 +285,7 @@ function place(at, mode, fade) {
   const { x, width, room } = at;
   placed = at;
   laid = { ...at, leaf: Math.max(width, reach(at)) };
-  toRoom(over ? 0 : Math.round(room), fade);
+  toRoom(given(at), fade);
   document.documentElement.style.setProperty('--book-over', `${over ? Math.round(room) : 0}px`);
   tones(); // (the table shows round the resting book)
   root.dataset.mode = mode;
@@ -321,6 +332,7 @@ const fadeBody = ([from, to], timing) =>
 // the book's pulled wider than it is. width: what the book's paper is then.
 function hold(at) {
   stop();
+  bookstage.held();
   placed = at;
   widen(Math.max(at.width, reach(at)));
   shift(at.x - laid.x);
@@ -358,6 +370,7 @@ function stop() {
 function show(l, { fade = false } = {}) {
   drawn = l;
   place(placeOf(l), l.mode, fade);
+  bookstage.resting(stage, state, l.mode, given);
   document.documentElement.dataset.book = l.mode;
   parts.leaf.inert = l.mode === 'folded';
   parts.edge.inert = l.mode === 'folded';
@@ -379,15 +392,3 @@ function edgeMove(dx) {
   hold({ ...from, x, width: Math.max(from.width, innerWidth - x - EDGE) });
 }
 const edgeEnd = dx => go(released(innerWidth, innerHeight, state, dx));
-// ⌘Z (Ctrl+Z) takes back the book's last step while it's open and nothing being typed into has the keys; with Shift
-// (or Ctrl+Y) it makes the last undone again (redo job #19243)
-function undoKeys() {
-  addEventListener('keydown', e => {
-    const key = e.key.toLowerCase();
-    if (!(e.metaKey || e.ctrlKey) || e.altKey || !(key === 'z' || (key === 'y' && e.ctrlKey && !e.shiftKey))) return;
-    if (drawn.mode === 'folded' || e.target.closest?.('input, textarea, select, [contenteditable]')) return;
-    e.preventDefault();
-    if (e.shiftKey || key === 'y') pages.redo();
-    else pages.undo();
-  });
-}

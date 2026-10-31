@@ -586,6 +586,16 @@ test('ask names its grant (approval) or its keys (credential); agent and job com
   assert.deepEqual(last().body, { kind: 'decision', urgency: 'whenever', title: 'Which?', body: 'Please decide.', secrets: '', topic: 'phone line', as: 'rivet' });
 });
 
+test("hq ask --at under another domain than the preview's files nothing and opens no browser with its pass", async () => {
+  const before = seen.length;
+  const r = await new Promise<{ code: number; err: string }>(resolve =>
+    execFile('bash', [HQ, 'ask', 'decision', 'today', 'Header?', `${tmp}/body.md`, '--topic', 'shop', '--book', '3',
+      '--at', 'https://hello.preview.elsewhere.test/', '--spot', 'h1'], { env }, (e, _o, err) => resolve({ code: (e as any)?.code ?? 0, err })));
+  assert.equal(r.code, 1);
+  assert.match(r.err, /Nothing was filed: --at https:\/\/hello\.preview\.elsewhere\.test isn't hello's preview, which is https:\/\/hello\.preview\.company\.test/);
+  assert.ok(!seen.slice(before).some(x => x.url === '/api/agent/request'), 'nothing filed');
+});
+
 test('ask and request file nothing without a topic, and hq topic changes an open card\'s', async () => {
   const before = seen.length;
   requestList = [{ id: 7, topic: 'Ads' }, { id: 8, topic: 'ads' }, { id: 9, topic: 'Phone line' }, { id: 10, topic: null }];

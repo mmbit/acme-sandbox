@@ -280,7 +280,9 @@ export function bookAt(owner, at = null) {
 }
 // Share for outside notes: the people
 // invited to pin notes on this preview (a product's whole preview, the shop's, or a deck's or demo's own cycle folder),
-// each with where they stand, Send link and Remove, and Invite (peopleHtml); the first invite opens it for 1, 3 or 7 days.
+// each with where they stand, Send link and Remove, and Invite (peopleHtml) from the board's address book: everyone it
+// ever shared with. Two kinds of guest only (Ink 1.1, the deck's Guests chapter): lasting, a colleague's for good, or a
+// review round, open a week. Send link sends their one link, the same every time, to their shelf of books.
 // They sign in with a code sent to the address the board gives (the guest desk's sign-in). Their notes never come here:
 // they're on the round's pages in the board's book; the board closes it, and the CEO writes its Advice (notebookrounds.ts). It opens
 // at the page the viewer opened. Reviews lists the same (sharesHtml).
@@ -289,11 +291,12 @@ export function bookAt(owner, at = null) {
 // To try out: a tester invite, on the shop's preview or a product's with plans: notes as above, and each person's link
 // carries a voucher of their own, free, up to the amount the box sets (capHtml, €50 until the board sets one). On the
 // shop it pays one real order, made and sent like a customer's; on a product, one of its plans, with nothing charged
-const DAYS = [1, 3, 7];
+// (the deck's two kinds, and a tester invite where one opens; View only's shares still list in Reviews.)
+const ROUND_DAYS = 7;
 // a share's kind as the box chooses it; the shop's preview door (the coordinator's FRONT), and the cycles host, where no
 // tester invite opens
-const KINDS = [['notes', 'Notes only'], ['view', 'View only'], ['tester', 'To try out']];
-export const kindOf = s => s.tester ? 'tester' : s.view ? 'view' : 'notes';
+const KINDS = [['lasting', 'Lasting'], ['notes', 'A week’s round'], ['tester', 'To try out']];
+export const kindOf = s => s.tester ? 'tester' : s.view ? 'view' : s.lasting ? 'lasting' : 'notes';
 const onShop = url => new URL(url).host.startsWith('front.preview.');
 const onCycles = url => new URL(url).host.startsWith('cycles.');
 // the open share a page is in: its host, and its folder unless it opens the host whole
@@ -313,8 +316,8 @@ async function shareBox(me) {
   // (and Recent)
   try { [list] = await Promise.all([loadShares(world.dev), loadRecent()]); } catch { box.innerHTML = '<p class="dim">Could not reach the coordinator. Try again.</p>'; return; }
   if (viewing !== me || box.hidden) return;
-  drawShareBox(box, me, list, 'notes');
-  if (!shareOn(list, me.url, 'notes')) box.querySelector('[name=name]').focus();
+  drawShareBox(box, me, list, 'lasting');
+  if (!shareOn(list, me.url, 'lasting')) box.querySelector('[name=name]').focus();
 }
 // A tap anywhere outside the box closes it: on the bar or the page around it, or in the preview (its frame takes the
 // focus, so this page loses it). Share itself toggles it.
@@ -328,25 +331,20 @@ function closeOutside(box) {
 // kind: the kind the box shows, for notes, view only or to try out; list: the shares as loaded, with the ones it has made
 // since
 function drawShareBox(box, me, list, kind, s = shareOn(list, me.url, kind), said = '') {
-  let days = 3;
   const live = s && !s.ended ? s : null;
   const kinds = KINDS.filter(([k]) => k !== 'tester' || !onCycles(me.url));
-  // the kinds, and the days before the first invite, each one segmented control
-  box.innerHTML = `<b>${shareTitle(kind)}${live ? ` on ${esc(live.what)}` : ''}</b>
+  // (who has access, on what; the kinds one segmented control)
+  box.innerHTML = `<b>Who has access</b><p class="dim">${live ? `${esc(live.what)} · ` : ''}${esc(new URL(me.url).host)}</p>
     <div class="seg" role="group" aria-label="Share">${kinds.map(([k, label]) => `<button type="button" data-kind="${k}" aria-pressed="${k === kind}">${label}</button>`).join('')}</div>
-    ${live ? `<p class="dim">${untilLine(live)}</p>` : `<div class="open-for"><span class="dim">Open for</span><div class="seg" role="group" aria-label="Open for">${DAYS.map(d => `<button type="button" data-days="${d}" aria-pressed="${d === days}">${d} ${d === 1 ? 'day' : 'days'}</button>`).join('')}</div></div>`}
+    <p class="dim">${live ? untilLine(live) : aheadLine(kind)}</p>
     ${kind === 'tester' ? capHtml(live, onShop(me.url)) : ''}${shareHtml(live)}`;
-  box.querySelectorAll('[data-days]').forEach(b => b.onclick = () => {
-    days = +b.dataset.days;
-    box.querySelectorAll('[data-days]').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
-  });
   box.querySelectorAll('[data-kind]').forEach(b => b.onclick = () => { sfx.blip(); drawShareBox(box, me, list, b.dataset.kind); });
   const redraw = (next, text) => {
     if (next) list = [next, ...list.filter(x => x.id !== next.id)];
     if (viewing === me) drawShareBox(box, me, list, kind, next, text);
   };
   const capField = box.querySelector('form.cap [name=cap]');
-  wireShare(box, live, { page: me.url, kind, days: () => days, cap: () => Number(capField?.value), redraw });
+  wireShare(box, live, { page: me.url, kind, days: () => ROUND_DAYS, cap: () => Number(capField?.value), redraw });
   wireCap(box, live, redraw);
   if (said) box.querySelector('.invites .msg').innerHTML = said;
 }
@@ -366,16 +364,21 @@ function wireCap(box, s, redraw) {
     catch (err) { button.disabled = false; tell(msg(), refused(err)); }
   });
 }
-export const shareTitle = kind => ({ notes: 'Outside notes', view: 'View only', tester: 'Testers' })[kind];
+export const shareTitle = kind => ({ lasting: 'Lasting guests', notes: 'Review round', view: 'View only', tester: 'Testers' })[kind];
+// Before the first invite of a kind: what it gives them
+const aheadLine = kind => esc(kind === 'lasting' ? 'A lasting guest keeps it on their own shelf until you remove them.'
+  : kind === 'notes' ? 'A review round: open a week, on their own shelf, then it ends.'
+  : 'A review round with a voucher each: open a week.');
 // An open share's line (as HTML): until when, and where its notes go: each person's on their own page in the round
 // notebook on the board's Shelf, reaching the team when they send it.
 const intoBook = () => 'Each person writes on their own page in the round notebook on your Shelf; their notes reach the team when they send it.';
-export const untilLine = s => esc(s.view ? `Until ${dayTime(s.ends)}. They see it as it is: no notes, nothing to answer.`
+export const untilLine = s => esc(s.lasting ? 'Lasting: on their own shelf until you remove them. Their notes land on their own page in its book on your Shelf.'
+  : s.view ? `Until ${dayTime(s.ends)}. They see it as it is: no notes, nothing to answer.`
   : s.tester && s.pays === 'plan' ? `Until ${dayTime(s.ends)}. Each link carries a voucher for one plan up to ${euros(s.cap)}: nothing charged, nothing recurring. ${intoBook(s)}`
   : s.tester ? `Until ${dayTime(s.ends)}. Each link carries a voucher for one free order up to ${euros(s.cap)}, made and sent for real. ${intoBook(s)}`
   : `Until ${dayTime(s.ends)}. ${intoBook(s)}`);
 // a share's people and End now (none before the first invite): whether each opened it, and a tester's order
-const reviewState = (s, p) => `${p.opened ? 'Opened it' : 'Hasn’t opened it yet'}${ordered(s, p)}`;
+const reviewState = (s, p) => `${p.opened ? `Guest since ${dayTime(p.opened)}` : `Invited · on ${p.name.split(' ')[0]}’s shelf now`}${ordered(s, p)}`;
 // a tester's order, once placed: the stalls it was from, or the plan and tiers it took
 const ordered = (s, p) => !s.tester ? '' : s.pays === 'plan' ? (p.ordered ? ` · took ${p.ordered.join(' with ')}` : ' · no plan yet')
   : p.ordered ? ` · ordered${p.ordered.length ? ` from ${p.ordered.join(', ')}` : ''}` : ' · no order yet';
@@ -395,10 +398,11 @@ export function wireShare(el, s, o) {
     return text;
   };
   wirePeople(el, {
-    send: (name, button, out) => { const p = s?.people.find(x => x.name === name); if (p?.link) share({ url: p.link }, out); },
+    // (a guest's one link to their shelf, where the share has one: notebookguestshelf.ts)
+    send: (name, button, out) => { const p = s?.people.find(x => x.name === name), url = p?.shelf ?? p?.link; if (url) share({ url }, out); },
     remove: name => busy(async () => after(await removeFromShare(world.dev, s.id, name), `${esc(name)} removed.`)),
     invite: (name, email) => busy(async () => {
-      const next = await makeShare(world.dev, s ? { id: s.id, name, email } : { page: o.page, name, email, days: o.days(), view: o.kind === 'view', tester: o.kind === 'tester', ...(o.kind === 'tester' ? { cap: o.cap() } : {}) });
+      const next = await makeShare(world.dev, s ? { id: s.id, name, email } : { page: o.page, name, email, days: o.days(), lasting: o.kind === 'lasting', view: o.kind === 'view', tester: o.kind === 'tester', ...(o.kind === 'tester' ? { cap: o.cap() } : {}) });
       if (!s) sfx.ding(0.6);
       return after(next, `${esc(name)} invited. Send link sends them theirs.`);
     }),
@@ -426,7 +430,8 @@ function fromViewer(e) {
   // under that key. Still a deck's, answered the way it listens.
   const old = d.hq === undefined && d.onlyonery === 'deck', tag = old ? 'deck' : d.hq;
   if (tag === 'review') {
-    if (d.hello) { me.review = e.origin; me.heard = performance.now(); e.source.postMessage({ hq: 'hq', call: calling }, e.origin); helloFrom(d.doc); groundOf(d.ground, frame); }   // (heard; helloFrom)
+    // (told on the document too, for an ask's spot waiting to flash there: ink/bookaskspot.js.)
+    if (d.hello) { me.review = e.origin; me.heard = performance.now(); e.source.postMessage({ hq: 'hq', call: calling }, e.origin); helloFrom(d.doc); groundOf(d.ground, frame); document.dispatchEvent(new CustomEvent('viewer:review', { detail: { url: me.url } })); }   // (heard; helloFrom)
     else if (d.bye && me.review === e.origin) { me.review = null; stopFrameMic(); }
     // (its post-it open: HQ's own mic key over the post-it's, the frame having no microphone, and only its tap records;
     // the offer's line, e.ports, carries the rest: framemic.js.)
@@ -555,11 +560,18 @@ export async function refreshRequests() {
 
 // ---------------------------------------------------------------- the company's apps' lines on the phone
 // A company app may keep a line at the top of the phone's screen (its phone(el, hq,
-// { fresh, past })): fresh with every requests poll, from what it has on every repaint. It repaints only its own line,
-// never a card being answered; with past (the answered cards on screen) it takes its line away.
+// { fresh })): fresh with every requests poll, from what it has on every repaint. It repaints only its own line,
+// never a card being answered.
+// el is the app's own slot, the same element for good, at the top of every screen drawn, in the order of `own`: the
+// lines keep that order whichever app answers first, and a fresh line lands in the screen drawn meanwhile. The answered
+// cards' screens (past) have no slots: each draws its whole screen, so a line painted late lands in a slot off screen.
+const lineSlots = new Map();
 function paintLines(fresh = false) {
   const el = $('#phone-screen'); if (!el) return;
-  for (const k of own) if (k.mod.phone) Promise.resolve().then(() => k.mod.phone(el, hq(), { fresh, past })).catch(e => console.warn(`[hq] ${k.id}: its phone line failed`, e));   // (by its id, Care being no kit)
+  const apps = own.filter(k => k.mod.phone);
+  const slots = apps.map(k => lineSlots.get(k.id) ?? lineSlots.set(k.id, Object.assign(document.createElement('div'), { className: 'line-slot' })).get(k.id));
+  if (!past && slots.some((s, i) => el.children[i] !== s)) el.prepend(...slots);   // (moved only when out of place: a pressed line keeps its focus)
+  apps.forEach((k, i) => Promise.resolve().then(() => k.mod.phone(slots[i], hq(), { fresh })).catch(e => console.warn(`[hq] ${k.id}: its phone line failed`, e)));   // (by its id, Care being no kit)
 }
 
 // ---------------------------------------------------------------- phone
@@ -638,6 +650,7 @@ function renderPhone() {
   const mail = r.kind === 'mail' && ['open', 'sending'].includes(r.mail?.status) ? r.mail : null; // an email card: the email itself, Send and Discard
   const call = r.kind === 'call' && r.call ? r.call : null; // a call out: who, how and when, Call and Don't call
   const notice = r.kind === 'notice'; // news that asks nothing: Got it, a word optional
+  const action = r.kind === 'action'; // steps for the board to do: once done there's often nothing to say, so a word optional
   // work brought back for a look: HQ's own two answers, Good now, or notes on the
   // preview in review mode (which queue their own job), and no box to type changes in. A card's own choices don't show.
   // Both answers sit on one row with Call as its phone alone (the name in its
@@ -660,7 +673,7 @@ function renderPhone() {
         : keys ? (address ? addressPickHtml(r, address) : '') + keys.map((k, i) => AGE.test(k) ? ageHtml(r, k, saved.has(k)) : `<label class="key"${address ? ' data-private' : ' data-watchalong-hide'}>${esc(address ? ADDRESS_PARTS[i] : keyLabel(k))}${saved.has(k) ? ' <b class="saved">saved ✓</b>' : ''}<input type="${address ? 'text' : 'password'}" data-key="${esc(k)}" autocomplete="${address ? ADDRESS_FILL[i] : 'off'}" spellcheck="false"${saved.has(k) ? ' placeholder="Saved. Type here only to replace it."' : ''}></label>${refusedKeys.get(r.id)?.[k] ? `<p class="hint refused">${SIGNS.problem}<span>${esc(refusedKeys.get(r.id)[k])}</span></p>` : ''}`).join('')
         + (address ? addressKeepHtml(address) : keys.length > 1 ? '<p class="hint">Save the ones you have now; the others can follow later.</p>' : '') : back ? answerFields(r, '') : `
       ${answerFields(r, `${pics ? '<div class="tray" id="answer-pics" hidden></div>' : ''}<label class="sr" for="answer">Your answer</label>
-      <textarea id="answer" rows="3" placeholder="${guest ? `Anything for ${esc(who(r.agent))} (optional)` : grant !== null || notice || card.choices.length || asked ? 'Anything to add (optional)' : 'Your answer'}"></textarea>`)}`}
+      <textarea id="answer" rows="3" placeholder="${guest ? `Anything for ${esc(who(r.agent))} (optional)` : grant !== null || notice || action || card.choices.length || asked ? 'Anything to add (optional)' : 'Your answer'}"></textarea>`)}`}
       ${r.walk && r.agent && !login && window.AudioWorkletNode ? walkButton(r) : ''}<div class="row btns">${login ? '<button class="send" id="open-seats">Open Seats</button>' : mail ? `<button class="send" id="mail-send"${mail.ready && mail.status === 'open' ? '' : ' disabled'}>${SEND}Send email</button><button class="send later" id="mail-discard"${mail.status === 'open' ? '' : ' disabled'}>Discard</button>` : call ? callButtons(call) : asking ? `<button class="send" id="guest-save">${TICK}Save</button>` : guest ? `<button class="send" id="send-answer">${TICK}Done</button>` : notice ? `<button class="send" id="send-answer">${TICK}Got it</button>` : back ? '<button class="send" id="send-answer">Good now</button><button class="send later" id="in-review" title="Leave your notes on the preview in review mode">Add notes</button>' : grant !== null ? `<button class="send approve" id="approve">${TICK}Approve</button><button class="send later" id="send-answer">Not now</button>` : `<button class="send" id="send-answer">${address ? `${TICK}Save address` : keys ? `${KEY}Save keys` : `${SEND}Send`}</button>`}${canRecord && !login && !keys && !back && grant === null && !asking && !mail && !call ? `<button class="mic" id="answer-mic" title="Tap to talk, tap again to stop" aria-label="Dictate the answer">${MIC}</button>` : ''}${pics ? `<button class="mic attach" id="answer-attach" title="Add a picture" aria-label="Add a picture">${PICTURE}</button><input type="file" id="answer-file" accept="image/*" multiple hidden>` : ''}${r.agent && !login && window.AudioWorkletNode && !r.walk ? (`<button class="talk${back ? ' icon' : ''}" id="call-about" title="Call ${esc(who(r.agent))} about this"${back ? ` aria-label="Call ${esc(who(r.agent))}">${PHONE}` : ` aria-label="Call ${esc(who(r.agent))}">${PHONE}<span class="name">${esc(who(r.agent))}</span>`}</button>`) : ''}${r.share ? `<button class="share" id="share" title="Send this on to whoever has to act on it" aria-label="Share">${SHARE}Share</button>` : ''}<span class="msg" id="answer-msg"></span></div>
     </article>`;
   wirePager(el);
@@ -695,11 +708,11 @@ function renderPhone() {
   if (mail) wireMail(el, r);
   if (call) wireCall(el, r);
   const send = async (approve, review = false) => {
-    // keys: at least one filled in (the rest can follow); an approval's and a notice's note is optional; anything else needs an answer
+    // keys: at least one filled in (the rest can follow); an approval's, a notice's and an action card's note is optional; anything else needs an answer
     const pick = card.choices[chosen.get(choiceKey(r))]?.label;
     // (address; the answer box is optional where the board answers in fields: questions, or a file in a photo, document or zip field)
     const empty = keys ? (address?.use != null || fields.some(f => f.value.trim()) ? null : fields.find(f => !saved.has(f.dataset.key) && f.type !== 'hidden') || el.querySelector('.agekey button, .agekey input:not([type=hidden])') || fields[0])
-      : grant !== null || back || pick || guest || notice || answeredInFields(r) || pics?.batch().length ? null : card.choices.length && !fields[0]?.value.trim() ? el.querySelector('.choice input') : fields.find(f => !f.value.trim());
+      : grant !== null || back || pick || guest || notice || action || answeredInFields(r) || pics?.batch().length ? null : card.choices.length && !fields[0]?.value.trim() ? el.querySelector('.choice input') : fields.find(f => !f.value.trim());
     if (empty) { empty.focus(); return; }
     if (address?.use == null && address?.save && !address.label.trim()) { el.querySelector('[data-address-label]').focus(); return; }
     if (asked && !questionsReady(el, r)) return;

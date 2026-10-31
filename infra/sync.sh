@@ -192,8 +192,19 @@ fi
 # The office's records (platform/coordinator/src/office.paths: profiles and their archives, the decision log, briefs,
 # the knowledge base's notes) run nothing, and the coordinator reads them from this checkout: a commit that changes only
 # those since the last deploy is recorded as deployed, with no build, restart or report.
+# records_only <last> <commit> fails closed: a diff that fails or a grep that errs means a full deploy.
+records_only() {
+  local changed
+  # the whole diff is read before grep sees it: grep exits at the first code file, which in a pipe would cut git off
+  changed=$(git diff --no-renames --name-only "$1" "$2") || return 1
+  # nothing changed: the here-string would still hand grep one empty line, which no record matches
+  [ -z "$changed" ] && return 0
+  # grep -v's status 1 (no line outside the records) is the one "records only": 0 found code, 2 is an error
+  grep -qvEf platform/coordinator/src/office.paths <<< "$changed"
+  [ $? = 1 ]
+}
 if [ -z "$restarted" ] && [ "$(cat "$approved" 2>/dev/null)" = "$approvals" ] && git cat-file -e "$last" 2>/dev/null &&
-   ! git diff --no-renames --name-only "$last" "$commit" | grep -qvEf platform/coordinator/src/office.paths; then
+   records_only "$last" "$commit"; then
   echo "$commit" > "$state"
   stack_env "$commit"; containers=$(mktemp)
   [ -z "$HQ_DATA" ] || { $compose ps -a --format '{{.Service}} {{.ID}}' > "$containers" 2>/dev/null &&

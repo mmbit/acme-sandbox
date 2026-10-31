@@ -54,10 +54,9 @@ type Row = {
   wakes: string;
 };
 
-// Open jobs except chats, done work still in review, then prospective work (hq when).
-// Deadlines come from threads still open or in review. Historical jobs stay out of the read.
-export function snapshot(now: number, planned: Omit<Planned, 'size'>[] = []): Snapshot {
-  const queue = orderingSnapshot(now, planned),
+// Open jobs except chats, done work still in review and prospective runs, with open threads' deadlines.
+export function snapshot(now: number, planned: Omit<Planned, 'size'>[] = [], prospective?: ProspectiveRun): Snapshot {
+  const queue = orderingSnapshot(now, planned, false, prospective),
     capacity = plannerCapacity(now),
     measured = fillRates(now);
   const stages = queue.jobs.flatMap(row => row.reviewPlan?.stages.filter(stage => stage.job === undefined) ?? []);

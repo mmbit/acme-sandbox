@@ -1,12 +1,14 @@
 // Settings › Machines: the machines the board lends HQ for long runs, kept by the board itself as Seats keeps the seats.
 // One list: each machine a row (its name, its state in a word, what it has and its speed), Add a machine, and a line on
 // which takes a run. A machine opens its own page: its load now and over the last minutes, the run it has and that run's
-// newest output, then Pause, Rename, its colours, Install again and Remove. A new machine's page shows, this once, its install
-// command, with its key: pasted once, it keeps the machine's helpers in step with HQ from then on. The coordinator's 'machines' event redraws it (world.machines), with no polling. desk.js's
+// newest output (machinelive.js), then Pause, Rename, its colours, Install again and Remove. A new machine's page shows, this once, its install
+// command, with its key: pasted once, it keeps the machine's helpers in step with HQ from then on. A machine whose manager
+// runs old code or stopped says so, and its page shows the install command without a key, which starts it again on the
+// key it has. The coordinator's 'machines' event redraws it (world.machines), with no polling. desk.js's
 // Settings draws it, and its back button steps back a page here first (machinesBack).
 import { esc } from '../util.js';
-import { timeOf } from '../world/clock.js';
-import { withJobLinks, jobNameLink } from './prose.js';
+import { dayTime } from '../world/clock.js';
+import { livePart } from './machinelive.js';
 import * as world from '../world/world.js';
 import {
   loadMachines,
@@ -22,6 +24,8 @@ import { sfx } from './audio.js';
 
 // A machine's state in a word (the coordinator's: taking, running, away, paused)
 const STATE = { taking: 'Taking runs', running: 'Running one', away: 'Away', paused: 'Paused' };
+// A manager that needs installing again, in a word (the coordinator's managerOf)
+const MANAGER = { old: 'Manager out of date', quiet: 'Manager stopped' };
 const RETRY_MS = 5000;
 // The colours the board can give a machine, its case's and its lights', that every look draws its rig in. The first is
 // the looks' own; its swatch shows how Wire draws it.
@@ -143,7 +147,7 @@ function page(list) {
 function listPage(list, server) {
   const gone = ui.removed ? said('done', `✓ ${ui.removed} removed. Its key no longer works.`) : '';
   const row = m => `<li data-machine="${esc(m.id)}"><button data-open="${esc(m.id)}"><b>${esc(m.name)}</b>
-    <span class="to">${stateWord(m)} ›</span><span class="dim">${esc(sizeLine(m, server))}</span></button></li>`;
+    <span class="to">${stateWord(m)} ›</span><span class="dim">${esc([sizeLine(m, server), MANAGER[m.manager?.state]].filter(Boolean).join(' · '))}</span></button></li>`;
   return `${gone}<p class="cap"><i class="prompt">&gt; </i>MACHINES</p><ul class="rows settings seats machines">${list.filter(isLent).map(row).join('')}
     <li><button data-add><b>+ Add a machine</b><span class="to">›</span></button></li></ul>
     <p class="seat-foot">The fastest free machine takes each run. This server takes those no machine takes in time.</p>`;
@@ -163,7 +167,18 @@ function sizeLine(m, server) {
 function machinePage(m, server) {
   const head = `<div class="seat-top"><b class="seat-name">${esc(m.name)}</b>${stateWord(m)}</div>
     <p class="dim">${esc(sizeLine(m, server))}</p>`;
-  return `${head}${ui.added?.id === m.id ? setupBox(ui.added.install) : ''}${livePart(m)}${settingsOf(m)}`;
+  return `${head}${ui.added?.id === m.id ? setupBox(ui.added.install) : managerBox(m)}${livePart(m)}${settingsOf(m)}`;
+}
+// A manager on old code or stopped: what to paste on the machine to start it again, on the key it has
+function managerBox(m) {
+  const state = m.manager?.state;
+  if (!MANAGER[state]) return '';
+  const why =
+    state === 'old'
+      ? 'Its manager runs code HQ has since changed. It stops when the machine or Docker restarts, and the helpers keep their old images.'
+      : `Its manager hasn’t checked in since ${dayTime(Date.parse(m.manager.seen))}, while its helpers still take runs: it has most likely stopped.`;
+  return `<div class="seat-signin machine-setup"><p>${esc(why)} On the machine, with Docker running, paste this once. It keeps the machine’s key:</p>
+    ${copyBlock(shown.setup.install)}</div>`;
 }
 // What the board pastes on a machine: its install command, its key in it
 function setupBox(install) {
@@ -172,40 +187,6 @@ function setupBox(install) {
 }
 const copyBlock = text =>
   `<div class="machine-cmd"><code>${esc(text)}</code><button type="button" class="act" data-copy="${esc(text)}">Copy</button></div>`;
-// Its load now, the last minutes of it as a graph, and the run it has with that run's newest output. The output is an
-// agent's command's: text only, never markup. Its job is a link to it.
-function livePart(m) {
-  const run = m.run
-    ? `<p class="machine-run">${esc(m.run.agent)}: ${m.run.title ? withJobLinks(m.run.title) : `job ${jobNameLink(m.run.job, m.run.job_code)}`} <span class="dim">${esc(m.run.kind)}, since ${esc(timeOf(m.run.since))}</span></p>`
-    : '';
-  const live = m.live;
-  if (!live) return run;
-  const meter = (label, value) => {
-    const pct = Math.max(0, Math.min(100, Number(value) || 0));
-    return `<span class="use-label">${label}</span><span class="bar"><i style="width:${pct}%"></i></span><span class="use-pct">${pct}%</span>`;
-  };
-  const gpu = live.gpu !== undefined && live.gpu !== null ? meter('GPU', live.gpu) : '';
-  const lines = live.lines?.length ? `<pre class="machine-lines">${esc(live.lines.join('\n'))}</pre>` : '';
-  return `<div class="machine-live"><div class="use">${meter('CPU', live.cpu)}${meter('Memory', live.mem)}${gpu}</div>${freeNow(live)}${graph(live.history ?? [])}${run}${lines}</div>`;
-}
-// What's free of the whole machine now: its memory and the cores its load leaves
-function freeNow(live) {
-  if (!live.freeMb || !live.cores) return '';
-  const cores = Math.max(0, Math.round(live.cores * (1 - (Number(live.cpu) || 0) / 100)));
-  return `<p class="machine-free dim">Free now: ${(live.freeMb / 1024).toFixed(1)} GB and ${cores} of ${live.cores} cores</p>`;
-}
-// The last minutes of CPU (a line) and memory (dashed), 0 to 100%
-function graph(history) {
-  if (history.length < 2) return '';
-  const first = Date.parse(history[0].at),
-    span = Math.max(1, Date.parse(history.at(-1).at) - first);
-  const points = key =>
-    history
-      .map(p => `${(((Date.parse(p.at) - first) / span) * 100).toFixed(1)},${(100 - Number(p[key])).toFixed(1)}`)
-      .join(' ');
-  return `<svg class="machine-graph" viewBox="0 0 100 100" preserveAspectRatio="none" role="img" aria-label="CPU and memory over the last minutes">
-    <polyline points="${points('cpu')}"/><polyline class="mem" points="${points('mem')}"/></svg>`;
-}
 // a machine's settings, as Settings' rows: Pause, Rename, its helpers' commands, Remove (which asks first, in place)
 function settingsOf(m) {
   const id = esc(m.id),
@@ -231,7 +212,7 @@ function settingsOf(m) {
     <li class="switch-row"><b id="pause-${id}">Pause</b><span class="ctl"><button type="button" class="switch" role="switch" data-toggle="pause" aria-checked="${paused}" aria-labelledby="pause-${id}"${ui.sending.has('pause') ? ' disabled' : ''}><i></i></button></span>${outcome('pause')}</li>
     <li><button data-do="rename"><b>Rename</b><span class="to">›</span></button>${rename}</li>
     ${coloursOf(m)}
-    <li><button data-do="install"><b>Install again</b><span class="dim">For a machine set up by hand, or after a manager update</span><span class="to">›</span></button>${install}</li>
+    <li><button data-do="install"><b>Install again</b><span class="dim">For a machine whose helpers were started by hand</span><span class="to">›</span></button>${install}</li>
     <li><button data-do="remove" class="danger-row"><b>Remove machine</b></button>${remove}</li></ul>`;
 }
 // Its colours: a swatch per finish, the one it has pressed, and that one's name (a pair set another way: Its own)

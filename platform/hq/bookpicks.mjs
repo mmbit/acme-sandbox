@@ -4,7 +4,8 @@
 // a reply on that version (the one it's drawn round, with the box its picture shows in), and stays drawn where it was.
 // Nothing in HQ reads the circle: the store's judge does, played here on the store's own pick (a tick on the version the
 // reply is on), and the block stamps it CHOSEN, the others to be cleared once the page is sent. A tick on another moves the
-// pick. On a call's page the same.
+// pick. On a call's page the same. (Its Notebook played by triedNote)
+// The iPad turned after a circle, the circle stays round the version it chose
 import assert from 'node:assert/strict';
 import { inStory } from './bookanswers.mjs';
 import { clearOfTools } from './bookversions.mjs';
@@ -19,7 +20,7 @@ const STAMPED_MS = 1500;
 // A circle drawn as a hand draws one, about half a second round
 const PACE_MS = 12;
 
-// c: book-check's { hqIn, base, store, pages, posts, org, shot, settled, settle, MINI, PHONE, DESKTOP }
+// c: book-check's { hqIn, base, store, pages, posts, org, shot, settled, settle, MINI, UPRIGHT, PHONE, DESKTOP, pullLip }
 export function pickStories(c) {
   return {
     'a circle round a version chooses it, stamped CHOSEN, and a tick on another moves the pick: the Pencil on an iPad mini':
@@ -57,7 +58,7 @@ const VERSIONS = [
 async function picked(browser, c, { viewport, size, pointer, options = {}, moves = false, call = false }) {
   const { nb, warmer, version } = triedNote(c, call ? { kind: 'call', label: `Call with ${c.org.company.ceo}` } : {});
   warmer.tried = { ...warmer.tried, going: false };
-  nb.seed.slips.push(...VERSIONS.map(([id, name, picture]) => version(id, name, picture)));
+  nb.seed.slips.push(...VERSIONS.map(([id, name, picture]) => ({ id, ...version(name, picture) })));
   await inStory(browser, c, { viewport, nb, options }, async (page, play) => {
     judged(play, warmer);
     const of = id => childrenOf(play, warmer).find(v => v.id === id);
@@ -87,6 +88,12 @@ async function picked(browser, c, { viewport, size, pointer, options = {}, moves
     await page.waitForTimeout(STAMPED_MS);
     await c.shot(`picks-circled-${size}`, page);
     if (!moves) return;
+    await turned(page, c, {
+      reply: childrenOf(play, warmer).find(r => r.kind === 'reply' && r.answers === 4611),
+      sent,
+      viewport,
+      size,
+    });
     // a tick on the first moves it: one pick per try
     await tick(page, 4610, pointer);
     await frame(4610).locator('.bk-version-stamp').waitFor({ timeout: LANDS_MS });
@@ -95,6 +102,28 @@ async function picked(browser, c, { viewport, size, pointer, options = {}, moves
     await page.waitForTimeout(STAMPED_MS);
     await c.shot(`picks-moved-${size}`, page);
   });
+}
+
+// The iPad turned upright after the circle: the frames wrap anew, and the circle, read back with its frame, still rings
+// the one it chose; then turned back
+async function turned(page, c, { reply, sent, viewport, size }) {
+  assert.ok(near(reply?.frame, sent.frame), `the reply read back with its frame: ${JSON.stringify(reply?.frame)}`);
+  const before = await ringed(page, 4611);
+  await page.setViewportSize(c.UPRIGHT);
+  await c.settled(page, 'folded');
+  await c.pullLip(page, -600);
+  await c.settled(page, 'spread');
+  await page.waitForTimeout(c.settle);
+  const after = await ringed(page, 4611);
+  assert.ok(
+    ['x', 'y', 'w'].some(k => Math.abs(before.paper[k] - after.paper[k]) >= 2),
+    `the turn moved the frame on the block: ${JSON.stringify([before.paper, after.paper])}`,
+  );
+  assert.ok(around(after.ink, after.paper), `the circle still round it: ${JSON.stringify(after)}`);
+  await c.shot(`picks-turned-${size}`, page);
+  await page.setViewportSize(viewport);
+  await c.settled(page, 'open');
+  await page.waitForTimeout(c.settle);
 }
 
 // The judge, played: each new reply on a version is read as its pick (bookpick.ts pickNow), through the store's own
@@ -145,6 +174,21 @@ const paperPx = (page, id) =>
       k = root.offsetWidth ? o.width / root.offsetWidth : 1;
     return { x: (r.left - o.left) / k, y: (r.top - o.top) / k, w: r.width / k, h: r.height / k };
   }, id);
+// A version's picture and its reply's ink, in the px of the block its frames wrap in
+const ringed = (page, id) =>
+  page.evaluate(id => {
+    const paper = document.querySelector(`#book .bk-version[data-answer="${id}"] .bk-version-paper`),
+      surface = paper?.closest('.bk-versions-frames'),
+      ink = surface?.querySelector(`.bk-reply-sent > g[data-on="${id}"]`);
+    if (!ink) return null;
+    const o = surface.getBoundingClientRect(),
+      box = el => {
+        const r = el.getBoundingClientRect();
+        return { x: r.left - o.left, y: r.top - o.top, w: r.width, h: r.height };
+      };
+    return { paper: box(paper), ink: box(ink) };
+  }, id);
+const around = (a, b) => a.x < b.x && a.y < b.y && a.x + a.w > b.x + b.w && a.y + a.h > b.y + b.h;
 const near = (a, b) => a && b && ['x', 'y', 'w', 'h'].every(k => Math.abs(a[k] - b[k]) < 2);
 
 // A circle round a version's picture, in screen px, as a hand draws one: a loop a little outside it, a little more than

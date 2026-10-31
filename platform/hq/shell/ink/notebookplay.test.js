@@ -94,11 +94,16 @@ test('delete keeps a group aside, restore brings it back', () => {
   assert.throws(() => post('groups/restore', { id: g.id }), refusal(404, 'not found'));
 });
 
-test("a unit is created at the page's end or right after another, as tall as its parts reach", () => {
+test("a unit is created at the page's end (in a column) or right after another, as tall as its parts reach", () => {
   const { post, groups, page } = played();
   const a = post('groups/create', { page, ink: [stroke(10, 10)] }),
-    b = post('groups/create', { page, ink: [stroke(10, 200)] }),
-    c = post('groups/create', { page, ink: [stroke(10, 10)], after: a.id });
+    b = post('groups/create', { page, ink: [stroke(10, 200)], column: 1 }),
+    c = post('groups/create', { page, ink: [stroke(10, 10)], after: a.id, column: 1 });
+  assert.deepEqual(
+    groups().map(x => x.column),
+    [null, null, 1],
+    "the column kept only by the page's last",
+  );
   assert.deepEqual(
     groups().map(x => x.id),
     [a.id, c.id, b.id],
@@ -302,6 +307,22 @@ test('an answer under a sent group, a reply to it, taken back in its seconds', (
     ],
   );
   assert.equal(children[1].answers, slip.id);
+  assert.equal(children[1].frame, null, 'words alone: no frame');
+  // (a reply on a version keeps its frame, and refuses an invalid one)
+  const frame = { x: 360, y: 72, w: 300, h: 225 };
+  const ringed = post('groups/reply', { answer: slip.id, ink: [stroke(350, 60)], frame: { ...frame, extra: 1 } });
+  assert.deepEqual(groups()[0].children.find(c => c.id === ringed.id).frame, frame);
+  assert.throws(
+    () => post('groups/reply', { answer: slip.id, ink: [stroke(350, 60)], frame: { ...frame, w: 0 } }),
+    e => e.status === 400,
+  );
+  assert.throws(
+    () => post('groups/reply', { answer: slip.id, frame: { ...frame, w: 0 } }),
+    refusal(400, 'a reply has words or ink'),
+    'an empty reply is refused before its frame is read, as in notebooksend.ts replyTo',
+  );
+  assert.equal(groups()[0].children.length, 3, 'a refused frame leaves no reply');
+  post('replies/delete', { id: ringed.id });
   assert.throws(
     () => post('groups/delete', { id: reply.id }),
     refusal(409, 'a reply is taken back with /api/notebooks/replies/delete'),
@@ -373,7 +394,7 @@ test("pages are titled, ordered and archived; dev mode's seed reads whole", () =
   const shelf = play.route('/api/notebooks').shelf;
   assert.deepEqual(
     shelf.map(n => n.kind),
-    ['mine', 'round', 'round', 'round', 'round', 'invited'],
+    ['mine', 'round', 'round', 'round', 'round', 'project', 'project', 'invited'],
   );
   const { pages } = play.route('/api/notebooks/pages', { notebook });
   assert.ok(pages[0].sent && !pages.at(-1).sent, 'a page sent, the newest open');
@@ -383,6 +404,18 @@ test("pages are titled, ordered and archived; dev mode's seed reads whole", () =
     ['answer', 'reply'],
   );
   assert.equal(answered.owner_name, 'Moss');
+  // (the agents' answers the book's answers layer draws: a project book's sent page with a form, a question, a try's
+  // versions and an answer still coming; the open list from them.)
+  const launch = shelf.find(n => n.name === 'Launch').id,
+    asked = groups(play.route('/api/notebooks/pages', { notebook: launch }).pages[0].id);
+  assert.deepEqual(
+    ['form', 'question', 'version'].map(style => asked.some(g => g.children.some(c => c.style === style))),
+    [true, true, true],
+  );
+  assert.equal(asked.find(g => g.try)?.try.state, 'made');
+  assert.ok(asked.some(g => g.waiting));
+  const open = play.route('/api/notebooks/open');
+  assert.deepEqual([open.forms.length, open.questions.length], [1, 1]);
   const order = pages.map(p => p.id).reverse();
   assert.deepEqual(
     post('pages/order', { notebook, pages: order }).pages.map(p => p.id),
@@ -424,6 +457,44 @@ test("Search: a group's words, its handwriting and the answers under it, as book
     ],
   );
   assert.deepEqual(play.route('/api/book/search', { q: '' }), { q: '', found: [], total: 0 });
+});
+
+test('a scrap handed to someone keeps its place and wears their tag; the short list puts them first', () => {
+  const people = [
+    { to: 'guest:14', name: 'Femke Jansen-Okafor', kind: 'guest' },
+    { to: 'agent:wiebe', name: 'Wiebe', kind: 'agent' },
+    { to: 'guest:11', name: 'Annemieke Bos', kind: 'guest' },
+  ];
+  const { play, post, groups, page } = played({ people });
+  const names = list => list.map(p => p.name);
+  assert.deepEqual(names(play.route('/api/notebooks/people').everyone), [
+    'Annemieke Bos',
+    'Femke Jansen-Okafor',
+    'Wiebe',
+  ]);
+  const g = post('groups/create', { page, ink: [stroke(10, 10)] });
+  const given = post('groups/assign', { id: g.id, to: 'agent:wiebe' });
+  assert.deepEqual(given.to, people[1]);
+  assert.deepEqual(given.group.box, g.box, 'it stays where it is');
+  assert.deepEqual(groups()[0].assigned, [{ ...people[1], answered: false }]);
+  assert.deepEqual(names(play.route('/api/notebooks/people').recent), [
+    'Wiebe',
+    'Annemieke Bos',
+    'Femke Jansen-Okafor',
+  ]);
+  assert.throws(
+    () => post('groups/assign', { id: g.id, to: 'guest:Nobody' }),
+    e => e.status === 400,
+  );
+  assert.throws(
+    () => post('groups/assign', { id: 999, to: 'agent:wiebe' }),
+    e => e.status === 404,
+  );
+  post('pages/send', { id: page });
+  assert.throws(
+    () => post('groups/assign', { id: g.id, to: 'agent:wiebe' }),
+    e => e.status === 409,
+  );
 });
 
 test("a book's cover given from the shelf, read back with it; anything but a picture refused", () => {

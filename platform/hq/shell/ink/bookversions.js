@@ -19,30 +19,26 @@ import { esc } from '../../util.js';
 import { inkOf } from './agentink.js';
 import { DOTS, inkBox, pathsOf } from './bookanswerart.js';
 import { frameUnder } from './bookversionframes.js';
-
-const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+import { LETTERS, versionsOf } from './bookversionsof.js';
 
 export function versionsEl(g, parts, was = null) {
-  const versions = g.children.filter(c => c.kind === 'answer' && c.style === 'version');
-  if (!g.try && !versions.length) return null;
-  const who = g.try ?? versions[0],
-    coming = g.try?.state === 'coming' ? Math.max(0, Math.max(g.try.expect ?? 1, 1) - versions.length) : 0,
-    chosen = versions.some(v => v.picked);
+  const read = versionsOf(g);
+  if (!read) return null;
+  const { who, versions, coming } = read;
   const el = document.createElement('section');
   el.className = 'bk-versions';
   el.dataset.g = g.id;
   el.style.setProperty('--ink', inkOf(who.by));
   el.style.setProperty('--frames', String(Math.max(1, versions.length + coming)));
   el.setAttribute('aria-label', `${who.name}’s versions of “${g.words ?? ''}”`);
-  const ended = g.try?.state === 'empty' && !versions.length;
   const frames = [
-    ...versions.map((v, i) => versionHtml(v, LETTERS[i], chosen)),
+    ...versions.map(({ v, letter, fate }) => versionHtml(v, letter, fate)),
     ...Array.from({ length: coming }, (_, i) => comingHtml(LETTERS[versions.length + i])),
   ];
   el.innerHTML = `<header class="bk-versions-head">${parts.faceHtml(who)}<b>${esc(who.name)}</b><span>· on staging</span></header>${
-    ended
-      ? `<p class="bk-versions-ended" role="status">${esc(g.try.reason ?? '')}</p>`
-      : `<div class="bk-versions-frames">${frames.join('')}${inkHtml(g, versions)}</div>`
+    read.ended
+      ? `<p class="bk-versions-ended" role="status">${esc(read.ended)}</p>`
+      : `<div class="bk-versions-frames">${frames.join('')}${inkHtml(versions.flatMap(({ replies }) => replies))}</div>`
   }`;
   if (was) markNew(el, was);
   const surface = el.querySelector('.bk-versions-frames');
@@ -56,9 +52,8 @@ export function versionsEl(g, parts, was = null) {
 // ---- a frame
 
 // A version: its screenshot (CHOSEN stamped on it once the board chose it), then its letter, name, what's different,
-// and its live preview, or what's become of it: cleared, or cleared once the page goes because another was chosen
-function versionHtml(v, letter, chosen) {
-  const fate = v.cleared ? 'cleared' : chosen && !v.picked ? 'cleared once the page is sent' : null;
+// and its live preview, or what's become of it (its fate)
+function versionHtml(v, letter, fate) {
   const marks = [v.picked && 'data-picked', v.crossed && 'data-crossed', fate && 'data-cleared'].filter(Boolean);
   const label = `${letter}, ${v.version ?? ''}${v.picked ? ', chosen' : ''}${v.crossed ? ', crossed out' : ''}`;
   return `<figure class="bk-version" data-answer="${v.id}" ${marks.join(' ')} aria-label="${esc(label)}"><div class="bk-version-paper">${
@@ -88,10 +83,9 @@ const STAMP =
 const comingHtml = letter =>
   `<figure class="bk-version" data-empty aria-label="${letter}, still coming"><div class="bk-version-paper">${DOTS}</div><figcaption><b class="bk-version-letter">${letter}</b></figcaption></figure>`;
 
-// The board's ink on the versions, each reply's in a layer of its own that fitInk lays over its version's frame
-function inkHtml(g, versions) {
-  const ids = new Set(versions.map(v => v.id)),
-    replies = g.children.filter(c => c.kind === 'reply' && ids.has(c.answers));
+// The board's ink on the versions (versionsOf's replies), each reply's in a layer
+// of its own that fitInk lays over its version's frame
+function inkHtml(replies) {
   return `<svg class="bk-reply-ink" aria-hidden="true"><g class="bk-reply-sent">${replies
     .map(
       r =>

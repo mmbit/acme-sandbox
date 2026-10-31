@@ -30,6 +30,6 @@ export const shownScrap = (page, g) =>
       right: Math.max(photo.x + photo.w, under.getBoundingClientRect().right),
       words: words?.value ?? words?.textContent ?? '',
       paper: document.querySelector('#book .bk-desk').getBoundingClientRect().toJSON(),
-      tools: document.querySelector('#book .bk-islands').getBoundingClientRect().left,
+      tools: document.querySelector('#book .bk-column').getBoundingClientRect().left,
     };
   }, g);

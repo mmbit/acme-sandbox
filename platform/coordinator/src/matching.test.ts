@@ -174,7 +174,7 @@ test('a job whose title ends in a date and that no schedule made is matched as b
   assert.equal(size.agent_ms, 15 * MINUTE);
 
   // hq estimate --accuracy: the rest sized as before, the matching alone and HQ's way now alike
-  const report = accuracy.report({ days: 7 }) as any;
+  const report = (await accuracy.report({ days: 7 })) as any;
   const rest = report.matching_by_schedule.rest;
   assert.deepEqual(rest.now, rest.matching_alone);
   assert.equal(report.matching_by_schedule.scheduled.jobs, 0);

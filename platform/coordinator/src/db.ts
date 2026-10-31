@@ -136,7 +136,9 @@ const born = (db.prepare("select name from sqlite_master where type = 'table' an
 // - stopping: who stopped it (hq stop) and why, kept when it ends stopped.
 // - suspending: who paused it with its thread (suspendReview) and why, until the run ends.
 // - off_worker: its suspending is HQ's, for the worker's room (offWorker), not a pause's.
-// - queued_by: the agent who queued it (null: the coordinator's own).
+// - queued_by: the agent or board who queued it (null: unattributed or automatic work).
+//   Board assignments take normal queued-work permissions for additions, cancellation and waits.
+//   A non-null queuer does not grant an agent permission to act as the board.
 // - customers: it was handed a customer's own details (charter rule 7), never spread.
 // - downtime: maintenance on spare capacity only.
 // - cut: what a stop of the worker's container cut in its last run, for the next run's prompt.
@@ -377,8 +379,8 @@ redacted('prs', 'checks_note');
 // on it, else 0 (null: pushed before it was kept): what an expedited merge needs (review.ts checksPassed).
 db.exec('create table if not exists pushes (pr integer not null, sha text not null, files text not null, lines text, at text, checked integer, primary key (pr, sha))');
 // What a pull request's pushes still owe before a review: work only one engine does that a run on another changed, to
-// restore from \`since\` and redo (engineonly.ts), and changed files people see whose previews no push recorded yet
-// (visual.ts).
+// restore from `since` and redo (engineonly.ts), and changed files people see whose previews no push recorded since,
+// by record (visual.ts).
 db.exec('create table if not exists engine_redo (pr integer primary key, files text not null, since text)');
 db.exec('create table if not exists previews_owed (pr integer primary key, files text not null)');
 // The review findings that reached an author (a ruling's "changes"), with what became of each as the next ruling judged

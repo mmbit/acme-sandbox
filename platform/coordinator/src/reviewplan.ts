@@ -52,7 +52,7 @@ export function reviewPlans(now: number, prospective?: ProspectiveRun) {
   const record = records(now, prospective),
     actors = panelActors(record);
   return (work: Work): ReviewPlan | undefined => {
-    if (work.opensReview === false || work.kind !== 'work' || work.origin === 'fix' || work.origin === 'merge')
+    if (work.opensReview === false || work.kind !== 'work' || ['fix', 'merge', 'carry'].includes(work.origin))
       return undefined;
     const pr = record.branches.get(workBranchOf(work));
     const resolution = pr ? resolutionOf(sweepAction(pr, true), now) : undefined;

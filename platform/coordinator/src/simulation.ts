@@ -110,6 +110,10 @@ export function playPlan(
   return simulate(snapshot, sizes, pace, undefined, order).outlooks;
 }
 
+export function startPlan(snapshot: Snapshot, sizes: ReadonlyMap<number, Size>) {
+  return simulate(snapshot, sizes, 'usual').starts;
+}
+
 export function inspectPlan(snapshot: Snapshot, sizes: ReadonlyMap<number, Size>, pace: 'usual' | 'slow') {
   return simulate(snapshot, sizes, pace, ledger.create(snapshot));
 }
@@ -142,6 +146,7 @@ function simulate(
   );
   return {
     outlooks,
+    starts: new Map([...play.runs].map(([id, run]) => [id, run.start])),
     seats: account?.seats ?? [],
     resources: ledger.resources(snapshot),
     review_queue: account ? ledger.reviewQueue(play) : [],

@@ -84,14 +84,13 @@ export const count = async dev => { const c = await loadCareCount(dev); return [
 // The desk phone's line: "Care: 3 replies to check, 1 remedy to approve" above the cards (and on the quiet screen), opening
 // Computer › Care. It follows GET /api/care/count, read with every requests poll (fresh); a change repaints only the line.
 let careCount = null;
-export async function phone(el, hq, { fresh, past }) {
+export async function phone(el, hq, { fresh }) {
   if (fresh) {
     const c = await loadCareCount(world.dev).catch(() => null);
     if (!c || JSON.stringify(c) === JSON.stringify(careCount)) return;
-    careCount = c; el = document.querySelector('#phone-screen');   // (the screen may have been redrawn meanwhile)
-    if (!el) return;
+    careCount = c;   // (el, Care's slot, moves into a screen drawn meanwhile)
   }
-  const words = past ? '' : careWords(careCount), line = el.querySelector(':scope > .care-line');
+  const words = careWords(careCount), line = el.querySelector(':scope > .care-line');
   if (!words) { line?.remove(); return; }
   const html = `<button class="care-line app-line" data-care>${PIN_CARE}<span><b>Care:</b> ${esc(words)}</span><i aria-hidden="true">›</i></button>`;
   if (line) line.outerHTML = html; else el.insertAdjacentHTML('afterbegin', html);   // (app-line: style.css)

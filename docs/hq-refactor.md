@@ -153,6 +153,7 @@ scene = {
   // optional
   act(hit, { double }), portrait(target) → { img, accent } | null, near(a, b) → boolean, where(target),
   controls: [{ id, title, pressed(), toggle() }], showcase(on) → { lead, stops: [{ target, title, sub, hold }] } | null,
+  prepare(w, h, dpr),                  // a screen of that shape coming soon (the book opening or shutting): laid out ahead
   dev: { S, L, R, cam, fx, walkCheck, errand, rebuild, walls, tick },
 };
 ```

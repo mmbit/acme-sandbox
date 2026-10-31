@@ -216,16 +216,14 @@ async function callSized(browser, c, viewport, device) {
       await page.keyboard.press('Enter');
       await c.settled(page, 'open');
     }
-    await page.waitForFunction(() => document.querySelectorAll('[data-page="9101"] .bk-under').length === 12, null, {
+    // (a scrap's words in its body: .bk-words.)
+    await page.waitForFunction(() => document.querySelectorAll('[data-page="9101"] .bk-words').length === 12, null, {
       timeout: 30_000,
     });
     await page.waitForFunction(() => document.querySelectorAll('.bk-typed[data-note]').length === 5);
     const groups = context.notebook.route('/api/notebooks/pages/groups', { page: 9101 }).groups;
     assert.equal(groups.filter(g => g.kind === 'note').length, 5, 'the promises, notes of their own kind');
-    noneOver(
-      groups.filter(g => g.kind === 'scrap').map(g => ({ ...g.box, g: g.id })),
-      await laidOut(page),
-    );
+    noneOver(await laidOut(page), groups.length);
     // (seen as the board reads it, the scraps' pictures drawn)
     await page.waitForTimeout(1500);
     await c.shot(`book-notes-call-sized-${device}`, page);
@@ -250,32 +248,42 @@ async function fillCall(page, play, viewport) {
   }
   put({ words: PROMISES[4] });
 }
-// The scraps' words and the promises' post-its as the page lays them out, in page px
+// The page's units (each scrap and promise, as its masonry lays them), the scraps' words and the promises' post-its,
+// in CSS px, each with its group.
 const laidOut = page =>
   page.evaluate(() => {
-    const box = (el, pad = 0) => ({
-      x: el.offsetLeft - pad,
-      y: el.offsetTop - pad,
-      w: el.offsetWidth + 2 * pad,
-      h: el.offsetHeight + 2 * pad,
-      g: Number(el.dataset.g),
-    });
+    const view = document.querySelector('#book .bk-groups[data-page="9101"]').parentElement,
+      box = (el, pad = 0) => {
+        const r = el.getBoundingClientRect();
+        // (whose: a unit's group, a scrap's words' (data-g) or a post-it's typed words' (booktexts.js))
+        const g = el.dataset.unit ?? el.dataset.g ?? el.typed?.g;
+        return { x: r.left - pad, y: r.top - pad, w: r.width + 2 * pad, h: r.height + 2 * pad, g: String(g) };
+      };
     return {
-      words: [...document.querySelectorAll('[data-page="9101"] .bk-under')].map(el => box(el)),
+      units: [...view.querySelectorAll('.bk-unit')].map(el => box(el)),
+      words: [...view.querySelectorAll('.bk-words')].map(el => box(el)),
       // (the post-it's paper reaches 6 px round its words: booktools.css)
-      notes: [...document.querySelectorAll('.bk-typed[data-note]')].map(el => box(el, 6)),
+      notes: [...view.querySelectorAll('.bk-typed[data-note]')].map(el => box(el, 6)),
     };
   });
-// Nothing over anything else
-function noneOver(pictures, laid) {
-  const all = [
-    ...pictures.map(b => ['scrap', b]),
-    ...laid.words.map(b => ['words', b]),
-    ...laid.notes.map(b => ['promise', b]),
-  ];
-  for (const [i, [ka, a]] of all.entries())
-    for (const [kb, b] of all.slice(i + 1)) {
-      const over = a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
-      assert.ok(!over, `a ${ka} (#${a.g}) and a ${kb} (#${b.g}) don't overlap: ${JSON.stringify([a, b])}`);
+const overlap = (a, b) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+// Every group a unit of its own, no two over each other, and each scrap's words and promise's post-it on its own unit
+// and no other's
+function noneOver({ units, words, notes }, groups) {
+  assert.equal(units.length, groups, 'each scrap and promise a unit of its own');
+  for (const [i, a] of units.entries())
+    for (const b of units.slice(i + 1))
+      assert.ok(!overlap(a, b), `units #${a.g} and #${b.g} don't overlap: ${JSON.stringify([a, b])}`);
+  for (const [kind, all] of [
+    ['words', words],
+    ['promise', notes],
+  ])
+    for (const x of all) {
+      const on = units.filter(u => overlap(x, u));
+      assert.deepEqual(
+        on.map(u => u.g),
+        [x.g],
+        `a ${kind} on its own unit only: ${JSON.stringify([x, ...on])}`,
+      );
     }
 }

@@ -1,122 +1,144 @@
-/* The lane at the paper's foot (bookui.js), every control the book has: the tool rail (bookstrip.js) and the book's
-   own islands beside it (Send, Tips), on a line of their own where the paper's too narrow for both, centred
-   over the page bar (bookcontrols.js), each a row that fits the paper's width, never scrolling. The page's scroll area
-   ends above the lane (--bk-foot, its height, bookui.js), so nothing ever sits over what's written. The cards of the rail (a tool's, the preferences) open
-   over it, on the paper. (the board, call 170.) */
-#book .bk-lane {
+/* The rail at the paper's right edge, by the spine (bookui.js): one column of every control the book has, the tools
+   (bookstrip.js) at its head, Send, then the page's controls (bookcontrols.js) and the book's own (Tips) at its foot. A
+   strip of the page block's edge, the same on every HQ look, the paper ending left of it (--bk-rail-width, book.css),
+   so nothing ever sits over what's written. It fits by data-fit (bookui.js): the pen and the marker side by side where
+   there's room, the rarely used folded into More where there isn't, the page's arrows too at the least, and its
+   controls closer at the very least (a phone on its side). The cards of the rail (a tool's, the preferences, the
+   pages, More) open beside it, on the paper. (the board's rail at the spine) */
+#book .bk-controls {
   position: absolute;
-  left: 0;
+  top: 0;
   right: 0;
   bottom: 0;
+  width: var(--bk-rail-width);
+  pointer-events: none;
+}
+#book .bk-column {
+  box-sizing: border-box;
+  height: 100%;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
-  padding: 8px 8px 0;
-  pointer-events: none;
+  gap: 2px;
+  padding: 6px env(safe-area-inset-right, 0px) max(6px, env(safe-area-inset-bottom)) 0;
+  overflow: hidden;
+  /* (the page block's edge: warm paper, shaded into the gutter at its left and towards the spine at its right) */
+  background:
+    linear-gradient(90deg, rgba(42, 35, 82, 0.1), transparent 5px),
+    linear-gradient(90deg, transparent 70%, rgba(120, 92, 48, 0.1)), var(--bk-rail);
+  box-shadow: -1px 0 0 #d9c8a6;
+  pointer-events: auto;
 }
-/* the rail and the book's islands: one line, the rail centred and the islands at its right end, where the paper's
-   wide enough; else wrapping onto two lines, the islands under the rail */
-#book .bk-lane-line {
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  pointer-events: none;
+/* (the islands are the rail's own groups: no card of their own, a rule between them) */
+#book .bk-column .bk-island {
+  padding: 0;
+  gap: 2px;
+  background: none;
+  box-shadow: none;
+  border-radius: 0;
 }
-#book .bk-lane-line > .bk-strip {
-  grid-column: 2;
+#book .bk-column > .bk-island:not(:first-child, [data-island='pages']),
+#book .bk-column > .bk-more {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--bk-edge);
 }
-#book .bk-lane-line > .bk-islands {
-  grid-column: 3;
-  justify-self: end;
+#book .bk-column > .bk-more {
+  box-sizing: content-box;
 }
-@container bk-rail (max-width: 600px) {
-  #book .bk-lane-line {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: center;
-  }
+/* (the tools at the head, the page's controls and the rest at the foot) */
+#book .bk-column > [data-island='pages'] {
+  margin-top: auto;
 }
-#book .bk-rail .bk-lane .bk-islands {
-  position: static;
-  flex-direction: row;
-  align-items: center;
-  gap: 8px;
+#book .bk-column .bk-island hr {
+  align-self: stretch;
+  margin: 4px 6px;
 }
-#book .bk-rail .bk-lane .bk-island[data-island='book'] {
-  margin-top: 0;
+#book .bk-column .bk-btn {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
 }
-#book .bk-lane .bk-islands .bk-island {
-  padding: 4px;
-  border-radius: 16px;
+#book .bk-column .bk-btn svg {
+  width: 22px;
+  height: 22px;
+}
+#book .bk-column .bk-btn::after {
+  inset: 0;
+}
+/* where the page is, between its arrows: "2/8" */
+#book .bk-column .bk-btn.bk-where {
+  height: 36px;
+  font: 600 12px/1 var(--bk-font);
+  font-variant-numeric: tabular-nums;
+  color: var(--bk-ink);
+}
+/* a word on the rail (a guest's Mark done and Undo): on two lines if it must, the rail's width */
+#book .bk-column .bk-btn.bk-text,
+#book .bk-column .bk-guest-marked {
+  width: 48px;
+  height: auto;
+  min-height: 44px;
+  padding: 6px 2px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  white-space: normal;
+  text-align: center;
+  font-size: 12px;
+  line-height: 1.15;
 }
 
-/* ---- the rail: one row of tools, a pill of the book's paper */
-#book .bk-strip {
-  position: relative;
-  display: flex;
-  max-width: 100%;
-  pointer-events: none;
+/* ---- the fits: the ink not in use only where there's room; More only where the rarely used fold into it */
+#book .bk-column:not([data-fit='roomy']) .bk-btn[data-spare],
+#book .bk-column:not([data-fit='more'], [data-fit='least'], [data-fit='tight']) > .bk-more,
+#book
+  .bk-column:is([data-fit='more'], [data-fit='least'], [data-fit='tight'])
+  :is(.bk-rare, [data-island='book'], [data-island='pages'] hr),
+#book .bk-column:is([data-fit='least'], [data-fit='tight']) .bk-turns {
+  display: none;
 }
+#book .bk-column[data-fit='tight'],
+#book .bk-column[data-fit='tight'] .bk-island {
+  gap: 0;
+}
+#book .bk-column[data-fit='tight'] {
+  padding-block: 4px;
+}
+#book .bk-column[data-fit='tight'] .bk-btn {
+  height: 36px;
+}
+#book .bk-column[data-fit='tight'] .bk-island hr {
+  margin-block: 2px;
+}
+
+/* ---- the tools */
 #book .bk-strip .bk-island {
-  flex-direction: row;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 8px;
-  border-radius: 16px;
   /* (a finger or a pen slides along it: nothing here scrolls, so no hold) */
   touch-action: none;
   user-select: none;
   -webkit-user-select: none;
   -webkit-touch-callout: none;
 }
-#book .bk-lane-line .bk-btn {
-  width: 44px;
-  height: 44px;
-  border-radius: 12px;
-}
-#book .bk-lane-line .bk-btn svg {
-  width: 22px;
-  height: 22px;
-}
-#book .bk-lane-line .bk-btn::after {
-  inset: 0;
-}
-#book .bk-strip .bk-island hr {
-  align-self: stretch;
-  margin: 8px 2px;
-  border: 0;
-  border-left: 1px solid var(--bk-edge);
-}
-/* the pen and the marker: one tool split in two, a pill round both with a line between, lit while either is in use,
-   the half in use inked */
-#book .bk-pair {
-  display: flex;
-  border-radius: 12px;
-  box-shadow: inset 0 0 0 1.5px var(--bk-edge);
-  background: linear-gradient(var(--bk-edge), var(--bk-edge)) no-repeat center / 1px 50%;
-}
-#book .bk-pair:has([aria-pressed='true']) {
-  background-color: var(--bk-ink-soft);
-}
-/* (each half's colour as a dot at its foot: bookpalette.js --bk-dot; ringed in paper on the half in use) */
-#book .bk-pair .bk-btn svg {
+/* the pen's and the marker's colour as a dot at the foot of its button (bookpalette.js --bk-dot), ringed in paper on
+   the one in use */
+#book .bk-strip .bk-btn:is([data-mode='pen'], [data-mode='highlighter']) svg {
   translate: 0 -3px;
 }
-#book .bk-pair .bk-btn::before {
+#book .bk-strip .bk-btn:is([data-mode='pen'], [data-mode='highlighter'])::before {
   content: '';
   position: absolute;
   left: calc(50% - 3px);
-  bottom: 4px;
+  bottom: 5px;
   width: 6px;
   height: 6px;
   border-radius: 50%;
   background: var(--bk-dot, transparent);
   pointer-events: none;
 }
-#book .bk-pair .bk-btn[aria-pressed='true']::before {
+#book .bk-strip .bk-btn[aria-pressed='true']::before {
   box-shadow: 0 0 0 1.5px var(--bk-paper, #fffaf0);
 }
 /* a slide along the rail: the tool under the finger or the pen inked lightly */
@@ -128,36 +150,28 @@
   transform: none;
 }
 
-/* ---- the page bar: right at the paper's foot, its buttons clear of a phone's rounded corners and home bar, as wide
-   as it needs and no wider, its name cut short only where it can't fit */
-#book .bk-rail .bk-island[data-island='pages'] {
-  position: static;
-  max-width: 100%;
-  min-width: 0;
-  box-sizing: border-box;
-  gap: 2px;
-  padding: 4px 8px max(4px, env(safe-area-inset-bottom));
-  border-radius: 14px 14px 0 0;
-  box-shadow:
-    0 0 0 1px var(--bk-edge),
-    0 -6px 16px -8px rgba(29, 26, 47, 0.24);
-  transform: none;
-}
-#book .bk-rail .bk-island[data-island='pages'] hr {
-  margin: 8px 2px;
-}
-
-/* ---- a card over the rail: a tool's colours and widths (bookpalette.js), this device's preferences (bookprefs.js) */
-#book .bk-strip > .bk-card {
+/* ---- a card beside the rail, on the paper left of it, level with what opened it (bookui.js besideRail): a tool's
+   colours and widths (bookpalette.js), this device's preferences (bookprefs.js), the pages, More */
+#book .bk-controls > .bk-card {
   position: absolute;
-  bottom: calc(100% + 8px);
-  left: 50%;
-  transform: translateX(-50%);
+  right: calc(100% + 8px);
   width: max-content;
-  max-width: calc(100vw - 16px);
-  max-height: 60vh;
+  max-width: calc(100vw - var(--bk-rail-width) - 24px);
+  max-height: calc(100% - 16px);
   overflow-y: auto;
   pointer-events: auto;
+  /* (over the for-you counter, which stands over the lane at the same place: bookforyou.css.) */
+  z-index: 1;
+}
+#book .bk-more-card svg {
+  width: 20px;
+  height: 20px;
+  flex: none;
+}
+@media (pointer: coarse) {
+  #book .bk-more-card > button {
+    min-height: 44px;
+  }
 }
 #book .bk-prefs {
   max-width: min(320px, calc(100vw - 16px));
@@ -204,50 +218,6 @@
   }
 }
 
-/* ---- a narrow book (a phone's): the rail slimmer, every tool still 40 px or more to the touch */
-@container bk-rail (max-width: 460px) {
-  #book .bk-lane {
-    gap: 6px;
-    padding-top: 6px;
-  }
-  #book .bk-strip .bk-island {
-    gap: 1px;
-    padding: 3px 4px;
-    border-radius: 14px;
-  }
-  #book .bk-lane-line {
-    gap: 6px;
-  }
-  #book .bk-lane-line .bk-btn {
-    width: 42px;
-    height: 42px;
-  }
-  #book .bk-rail .bk-island[data-island='pages'] .bk-btn:not(.bk-where) {
-    width: 40px;
-    height: 40px;
-  }
-  #book .bk-rail .bk-island[data-island='pages'] {
-    padding-inline: 4px;
-  }
-}
-/* (the narrowest book, an iPad mini's beside HQ at its least: the rail's eight tools share the paper's width, 36 to
-   40 px each, still 40 px tall) */
-@container bk-rail (max-width: 370px) {
-  #book .bk-lane {
-    padding-inline: 4px;
-  }
-  #book .bk-strip .bk-island {
-    gap: 0;
-    padding-inline: 2px;
-  }
-  #book .bk-strip .bk-btn {
-    width: clamp(36px, calc((100cqw - 20px) / 8), 40px);
-    height: 40px;
-  }
-  #book .bk-strip .bk-island hr {
-    margin-inline: 0;
-  }
-}
 @media (prefers-reduced-motion: reduce) {
   #book .bk-prefs {
     animation: none;

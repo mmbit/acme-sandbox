@@ -565,8 +565,9 @@ export function promiseOnPage(call: number, job: { owner: string; what: string; 
   if (!callPage?.open(call)) return undefined;
   return add(call, { kind: 'promise', owner: job.owner, what: job.what, goal: job.goal, quote: job.what }, null);
 }
-// An open item's line in the words its call's agent changed it to on its notes page (ink/callasks.ts rewrote), before
-// it's gone anywhere
+// An open item's line kept with its call's note while it hasn't gone anywhere: the words its call's agent changed it to
+// on its notes page (ink/callasks.ts rewrote), or at the call's end the line its note says again after the board's Undo
+// of such a change (ink/callasks.ts saidAtEnd.)
 export const reworded = (id: number, what: string) =>
   void db.prepare("update call_items set what = ? where id = ? and status = 'open' and job is null").run(what, id);
 // (by: the job that handed it out, null for the live call's own token: the call's follow-up handing it out has gone through it.)

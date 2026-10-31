@@ -17,7 +17,7 @@ const JPEG_QUALITY = 0.92;
 // and a picture can be 2400 wide.
 const STRIP_PX = 4000;
 
-// The three targets in lane (the line of the rail and the book's islands, bookui.js), hidden. act(kind, box) a target
+// The three targets on lane (the rail, bookui.js islands()), hidden. act(kind, box) a target
 // taken ('submit' | 'pdf' | 'png', its box on the screen); closed() the menu put away with a key. Returns
 // { carrying(sendable), menu(sendable), under(x, y), over(item), take(item), hide(), shown() }.
 export function mountTargets(lane, { act, closed }) {
@@ -57,7 +57,7 @@ function words(kind) {
   return `<i class="bk-share-face" aria-hidden="true">${esc(ceo.charAt(0).toUpperCase())}</i>Submit → ${esc(ceo)}`;
 }
 
-// (the rail and the islands make way for them: bookshare.css)
+// (the rail's controls make way for them: bookshare.css)
 function show({ lane, row, items }, mode, sendable) {
   items.forEach(item => {
     item.innerHTML = words(item.dataset.share);

@@ -7,7 +7,7 @@ import { db, inOneStep } from '../db.ts';
 import { ORIGIN } from '../config.ts';
 import { publish } from '../events.ts';
 import { ceo } from '../company.ts';
-import { createJob, NoSeat } from '../jobs.ts';
+import * as jobs from '../jobs.ts';
 import * as feedback from '../feedback.ts';
 import * as routing from '../routing.ts';
 import { BOARD, row as pageRow } from './book.ts';
@@ -163,8 +163,9 @@ function jobFor(s: Sheet, notes: Note[], kept: ReturnType<typeof keep>[], wrote:
   if (s.owner && s.owner !== ceo())
     try {
       const place = placeOf(notes);
-      return createJob({
+      return jobs.createJob({
         agent: s.owner,
+        queuedBy: jobs.BOARD,
         ...(s.page
           ? booksend.pageTask(s.page, place, texts[0])
           : {
@@ -174,7 +175,7 @@ function jobFor(s: Sheet, notes: Note[], kept: ReturnType<typeof keep>[], wrote:
         customers: outsiders.length > 0,
       }).id;
     } catch (err) {
-      if (!(err instanceof NoSeat)) throw err;
+      if (!(err instanceof jobs.NoSeat)) throw err;
     }
   // (each note as its own page's: the product or HQ it was made on, and that product's return it comes back as; a page
   // sent on its own named by its number in the book.)

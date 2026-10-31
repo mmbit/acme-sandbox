@@ -5,6 +5,7 @@ import {
   ORIGIN,
   pastJobs,
   cleanPastJobs,
+  isPrivate,
   timingAudit,
   RUN_COLUMNS,
   RUN_JOIN,
@@ -13,7 +14,7 @@ import {
   type Run,
   type Work,
 } from './matching.ts';
-import { median } from './arithmetic.ts';
+import { median, fractionalMinutes } from './arithmetic.ts';
 import { taskTimes } from './tasktime.ts';
 import { seatHeadroom } from './headroom.ts';
 import * as predictions from './predictions.ts';
@@ -71,7 +72,9 @@ export function estimate(ask: Ask) {
       pool.filter(j => j !== own),
     );
   const saved = job?.open ? predictions.sizeHistory(job.id)[0] : undefined;
-  const compared = saved ? past.filter(j => !j.customers && !j.about_keys && saved.refs.includes(j.id)) : sized.picks;
+  const compared = (saved ? past.filter(j => !isPrivate(j) && saved.refs.includes(j.id)) : sized.picks).filter(
+    j => (j.origin === 'carry') === (work.origin === 'carry'),
+  );
   return {
     quality,
     ...(own ? { job: shown(own, pool, measureTask) } : {}),
@@ -79,7 +82,8 @@ export function estimate(ask: Ask) {
     ...(job?.open
       ? {
           estimate: {
-            agent_minutes: minutes(saved?.agent_ms ?? sized.size.agent_ms),
+            origin: work.origin,
+            agent_minutes: fractionalMinutes(saved?.agent_ms ?? sized.size.agent_ms),
             compared: compared.length,
             basis: sized.basis,
             guessed: sized.guessed,
@@ -126,16 +130,15 @@ function openOutlook(id: number) {
 // held: the time a promise holds to, the one the summary's late line gives (predictions.heldTo)
 const shownOutlook = (o: Outlook, slow?: Outlook) => ({
   ...o,
-  left_minutes: minutes(o.left_ms),
+  left_minutes: fractionalMinutes(o.left_ms),
   held: slow ? predictions.heldTo(o, slow) : null,
 });
-const minutes = (ms: number) => Math.round(ms / 60_000);
 const shownSize = (s: ReturnType<typeof predictions.sizeHistory>[number]) => ({
   by: s.by,
   at: s.at,
-  agent_minutes: minutes(s.agent_ms),
-  low_minutes: s.low_ms === null ? null : minutes(s.low_ms),
-  high_minutes: s.high_ms === null ? null : minutes(s.high_ms),
+  agent_minutes: fractionalMinutes(s.agent_ms),
+  low_minutes: s.low_ms === null ? null : fractionalMinutes(s.low_ms),
+  high_minutes: s.high_ms === null ? null : fractionalMinutes(s.high_ms),
   refs: s.refs,
   why: s.why,
 });
@@ -162,9 +165,9 @@ function shown(j: PastJob, pool: PastJob[], measureTask: ReturnType<typeof taskT
     engine: j.engine,
     origin: j.origin,
     finished: j.finished,
-    agent_minutes: minutes(j.agent_ms),
+    agent_minutes: fractionalMinutes(j.agent_ms),
     whole: measureTask(j),
-    wall_minutes: j.wall_ms === null ? null : minutes(j.wall_ms),
+    wall_minutes: j.wall_ms === null ? null : fractionalMinutes(j.wall_ms),
     runs: j.runs,
     rebuilt: j.rebuilt > 0,
     spend: j.spend === null ? null : Math.round(j.spend * 100) / 100,
@@ -178,7 +181,7 @@ function shown(j: PastJob, pool: PastJob[], measureTask: ReturnType<typeof taskT
     removed: j.removed,
     timing_quality: j.timing_flags ?? [],
     pr: j.pr === null ? null : { number: j.pr, status: j.pr_status, merged_at: j.merged_at },
-    tool_bound: usual !== null && priced(j) && j.agent_ms >= 10 * 60_000 && rate(j) < usual / 3,
+    tool_bound: j.origin !== 'carry' && usual !== null && priced(j) && j.agent_ms >= 10 * 60_000 && rate(j) < usual / 3,
   };
 }
 const priced = (j: PastJob): j is PastJob & { spend: number } => j.spend !== null;
@@ -188,7 +191,10 @@ const rate = (j: PastJob & { spend: number }) => j.spend / Math.max(j.agent_ms, 
 function typical(jobs: PastJob[]) {
   if (jobs.length < 3) return null;
   const sorted = jobs.map(j => j.agent_ms / 60_000).sort((a, b) => a - b);
-  const at = (share: number) => Math.round(sorted[Math.floor(share * (sorted.length - 1))]);
+  const at = (share: number) => {
+    const minutes = sorted[Math.floor(share * (sorted.length - 1))];
+    return jobs[0].origin === 'carry' ? minutes : Math.round(minutes);
+  };
   const reported = jobs.filter(priced);
   const units = new Set(reported.map(j => j.unit));
   const spend = units.size === 1 ? median(reported.map(j => j.spend)) : null;

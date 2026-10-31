@@ -13,8 +13,8 @@ import { firstMergeAfter, spanOf, type Group, type Job, type Merge } from './thr
 // Its parts each run in a turn of HQ's thread of their own, each ended by calibration.ts's report's `turn`, which names
 // a slow one (latency.ts turns).
 // (the turns say deliverables)
-export async function threadTimes(since: string, turn: Turn) {
-  const lately = (db.prepare(MERGED).all(since) as MergeRow[]).map(mergeOf);
+export async function threadTimes(since: string, turn: Turn, until = new Date().toISOString()) {
+  const lately = (db.prepare(MERGED).all(since, until) as MergeRow[]).map(mergeOf);
   const jobs = await jobsOn(lately, turn);
   const runs = runsOf(jobs.map(j => j.id));
   await turn("the deliverables' runs");
@@ -35,7 +35,7 @@ export async function threadTimes(since: string, turn: Turn) {
 
 // ---- the rows, ids first and then each row by its id
 
-const MERGED = "select number, branch, merged_at from prs where merged_at >= ? and status = 'merged'";
+const MERGED = "select number, branch, merged_at from prs where merged_at >= ? and merged_at < ? and status = 'merged'";
 type MergeRow = { number: number; branch: string; merged_at: string | null };
 const mergeOf = (r: MergeRow): Merge => ({ number: r.number, branch: r.branch, merged: Date.parse(r.merged_at!) });
 

@@ -1,8 +1,11 @@
-// The invited person's Ink notebook: the board's shell with access to their own pages. A guest with more than one book
-// picks one from their own small shelf first (bookguestshelf.js). In a review round their page's send marks it done,
-// Undo under it taking that back while the round is open. (shelf and Mark done)
+// The invited person's Ink notebook: the board's shell with access to their own pages. Their one address opens their
+// shelf, one book per project, and a book's first page the work shared with them (bookguestshelf.js); a piece of work
+// opens with the book beside it at their page on it (bookguestwork.js), and their journal opens alone. In a review
+// round their page's send marks it done, Undo under it taking that back while the round is open. (the shelf, books
+// and work)
 import { initBook } from './book.js';
-import { showGuestShelf } from './bookguestshelf.js';
+import { showBook, showShelf } from './bookguestshelf.js';
+import { showWork } from './bookguestwork.js';
 import { button, island } from './bookui.js';
 import { notebookRequest } from './bookscope.js';
 import { esc, stylesheet } from '../../util.js';
@@ -14,18 +17,28 @@ stylesheet('shell/ink/bookguest.css'); // (its shelf, and a round's Marked done)
 const query = new URLSearchParams(location.search);
 const api = '/guest/notebooks/api';
 const status = document.querySelector('[data-notebook-status]');
-const response = await fetch(
-  `${api}/list${query.has('notebook') ? `?notebook=${encodeURIComponent(query.get('notebook'))}` : ''}`,
-);
-const read = await response.json();
-if (!response.ok || !read.notebooks.length) {
-  status.textContent = read.error ?? text.invitationEnded;
-} else if (!query.has('notebook') && read.notebooks.length > 1) {
-  showGuestShelf(read.notebooks, status, text);
+const shelved = await fetch(`${api}/shelf`);
+const shelf = await shelved.json();
+const id = Number(query.get('notebook'));
+const response = id ? await fetch(`${api}/list?notebook=${id}`) : null;
+const read = response ? await response.json() : null;
+const work = shelf.books?.flatMap(book => book.artifacts.map(a => ({ ...a, book }))).find(a => a.notebook === id);
+if (!shelved.ok || (response && (!response.ok || !read.notebooks.length))) {
+  status.textContent = (read ?? shelf).error ?? text.invitationEnded;
+} else if (!id && query.has('book')) {
+  showBook(shelf, query.get('book'), document.querySelector('main'), text);
+} else if (!id) {
+  showShelf(shelf, document.querySelector('main'), text);
 } else {
   const notebook = read.notebooks[0];
+  if (work) showWork(work, text);
   await initBook({
-    scope: { api, notebook: notebook.id, page: notebook.pages.at(-1)?.id, singlePage: notebook.kind === 'round' },
+    scope: {
+      api,
+      notebook: notebook.id,
+      page: work?.page ?? notebook.pages.at(-1)?.id,
+      singlePage: !!work || notebook.kind === 'round',
+    },
   });
   document.documentElement.append(document.querySelector('#toasts'));
   const invites = mountGuestInvites(notebook);

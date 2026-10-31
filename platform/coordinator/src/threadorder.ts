@@ -13,6 +13,7 @@ import * as jobs from './jobs.ts';
 import * as reviewclosure from './reviewclosure.ts';
 import type { Planned } from './eta.ts';
 import { mergeBoundaries } from './threadboundary.ts';
+import { waitsUntil } from './wakes.ts';
 
 // Threads with every thread they need (in the list) before them, otherwise in their order
 export function inNeedsOrder(threads: Thread[]) {
@@ -61,7 +62,7 @@ const OPEN = ['queued', 'running', 'blocked'];
 export const tasksOf = (thread: string) => {
   return prepared(
     `select j.id, j.agent, j.title, j.step, j.round, j.status, j.branch, j.session, j.started, j.created, j.finished,
-      max(0, coalesce((select max(cast(arg as real)) from wakes where job = j.id and kind = 'at' and met is null), 0)) until
+      max(0, ${waitsUntil('j.id')}) until
       from jobs j where j.thread = ? and j.kind = 'work' and j.pr is null and j.status != 'cancelled' and not ${jobs.failedAside('j')}
       order by coalesce(j.seq, j.id), j.id`,
   ).all(thread) as Task[];

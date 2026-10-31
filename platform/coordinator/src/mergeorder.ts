@@ -6,7 +6,7 @@ import { OPEN_PRS } from './jobs.ts';
 import * as panel from './panel.ts';
 import { findThread, needsOf } from './projects.ts';
 
-type Pull = { number: number; branch: string; files: string };
+type Pull = { number: number; branch: string; files: string; status?: string };
 type Precedence = 'retain' | 'release' | 'boardAnswer';
 type Place = { at: string; id: number };
 
@@ -14,7 +14,7 @@ type Place = { at: string; id: number };
 // rulings also recovers the order after a restart. Only windowed predecessors hold shared files because later merges
 // could force another re-sync and review cycle, delaying the promised window. Undated work makes no such promise.
 export function predecessor(pr: Pull, precedence: (job: rulingjobs.Ruling) => Precedence | undefined) {
-  const pulls = db.prepare(`select number, branch, files from prs where status in ${OPEN_PRS}`).all() as Pull[];
+  const pulls = db.prepare(`select number, branch, files, status from prs where status in ${OPEN_PRS}`).all() as Pull[];
   const files = new Set(JSON.parse(pr.files) as string[]);
   const related = pulls.filter(pull => pull.number === pr.number || shares(pull, files));
   const numbers = new Set(related.map(pull => pull.number));
@@ -37,10 +37,13 @@ export function predecessor(pr: Pull, precedence: (job: rulingjobs.Ruling) => Pr
   const needed = neededBy(pr, pulls);
   if (needed) return needed.number;
   const own = places.get(pr.number);
+  // A stuck one keeps its place but holds nobody meanwhile: one ruled to merge goes first, and the stuck one is brought up
+  // to date onto it once it moves.
   return related
     .filter(pull => {
       const place = places.get(pull.number);
-      if (pull.number === pr.number || !place || (own && compare(place, own) >= 0)) return false;
+      if (pull.number === pr.number || pull.status === 'stuck' || !place || (own && compare(place, own) >= 0))
+        return false;
       const thread = panel.threadOfBranch(pull.branch);
       if (!thread || findThread(thread)?.deadline == null) return false;
       return !neededBy(pull, pulls);

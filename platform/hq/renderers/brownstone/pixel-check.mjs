@@ -148,7 +148,9 @@ const SCENARIOS = [
   live('zoom buttons', async (page, shot) => {
     for (const b of ['#zin', '#zin', '#zout', '#zfit']) { await tap(page, b); await run(page, 1500); await shot(`after ${b}`); }
   }),
-  live('tour', async (page, shot) => { await tap(page, '#btn-tour'); await run(page, 8000); await shot('8 s'); }),
+  live('tour', async (page, shot) => { // the tour's key folds away under More
+    await tap(page, '#btn-more'); await tap(page, '#btn-tour'); await run(page, 8000); await shot('8 s');
+  }),
   live('walls', async (page, shot) => {
     await tap(page, '#btn-walls'); await run(page, 400); await shot('lowering'); await run(page, 1000); await shot('on');
   }),
@@ -186,7 +188,12 @@ const SCENARIOS = [
     await tap(page, '#panel .card'); await run(page, 500); await shot('post');
   }),
   live('Library', async (page, shot) => { await tap(page, await spot(page, 'search')); await run(page, 500); await shot('open'); }),
-  live('phone', async (page, shot) => { await tap(page, '#btn-desk'); await run(page, 1000); await shot('open'); }),
+  // the first opening and the second, its stylesheets loaded: the apps' lines in the same order at both (desk.js paintLines'
+  // slots)
+  live('phone', async (page, shot) => {
+    await tap(page, '#btn-desk'); await run(page, 1000); await shot('first'); await keys(page, ['Escape']); await run(page, 1000);
+    await tap(page, '#btn-desk'); await run(page, 1000); await shot('open');
+  }),
   live('intercom', async (page, shot) => { await tap(page, '#btn-intercom'); await run(page, 1000); await shot('open'); }),
 ];
 

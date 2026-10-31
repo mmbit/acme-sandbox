@@ -2,8 +2,9 @@
    (book.css): sideways, small tabs peek out between the pages of a thick white stack of page edges at the book's left;
    upright, where the stack is off screen, they stand along the book's top, its paper trimmed to make room. The trim and
    the stack are only for a book with bookmarks (.bk-marked on #book), on its page: never on the overview or the shelf
-   (data-far, bookpagesfar.js), which show none. The chapter shown is lit in the deck's lime, as a
-   chosen version is (bookversions.css). (the board's call 171.) */
+   (data-far, bookpagesfar.js), which show none. The tabs are staggered, as index tabs stuck in by hand, and the
+   chapter shown is lit in the deck's lime, as a chosen version is (bookversions.css), come forward and joined to its
+   page with no dark outline: paper, not a button. (the board's call 171.) */
 #book {
   --bk-mk-paper: #f3ecdf;
   --bk-mk-edge: #cdbd9f;
@@ -37,13 +38,14 @@
   transform: scale(0.96);
 }
 #book .bk-marks button[aria-current='page'] {
-  border-color: #2a2352;
+  z-index: 2;
+  border-color: color-mix(in srgb, var(--bk-mk-lit), #2a2352 18%);
   background: var(--bk-mk-lit);
   color: #2a2352;
   font-weight: 700;
 }
-/* (a chapter with no pages yet: there, dim) */
-#book .bk-marks button[data-empty] {
+/* (a chapter with no pages yet: there, dim, unless it's the one shown.) */
+#book .bk-marks button[data-empty]:not([aria-current]) {
   color: rgba(42, 35, 82, 0.38);
 }
 #book .bk-mk-count {
@@ -66,7 +68,7 @@
   #book.bk-marked:not([data-far]) {
     --bk-mk-head: 40px;
   }
-  #book.bk-marked:not([data-far]) :is(.bk-paper, .bk-rail, .bk-stack) {
+  #book.bk-marked:not([data-far]) :is(.bk-paper, .bk-rail, .bk-stack, .bk-mk-blank) {
     top: calc(var(--bk-board) + var(--bk-mk-head));
   }
   #book .bk-marks {
@@ -85,9 +87,18 @@
     border-bottom: 0;
     border-radius: 8px 8px 0 0;
   }
-  /* the chapter shown joined to its page, a little taller */
+  /* (staggered: each reaches up a little more or less than the one beside it) */
+  #book .bk-marks button:nth-child(2) {
+    height: 30px;
+  }
+  #book .bk-marks button:nth-child(3) {
+    height: 32px;
+  }
+  /* the chapter shown come forward, a little taller, and run on into its page under it */
   #book .bk-marks button[aria-current='page'] {
     height: 38px;
+    margin-bottom: -1px;
+    box-shadow: 0 -2px 4px rgba(42, 35, 82, 0.12);
   }
 }
 
@@ -106,6 +117,12 @@
     gap: 10px;
     padding-top: 14px;
     box-sizing: border-box;
+  }
+  /* (the stack starts in from the leaf's edge: the cover's inside shows there, under the tabs reaching furthest) */
+  #book .bk-marks::before {
+    content: '';
+    position: absolute;
+    inset: 0 0 0 7px;
     background: repeating-linear-gradient(90deg, #fffaf0 0 2px, #d9cbb0 2px 3px);
   }
   /* (the last pages over the tabs' ends, so they read as between the pages) */
@@ -119,11 +136,13 @@
     background: repeating-linear-gradient(90deg, #fffaf0 0 2px, #d9cbb0 2px 3px);
   }
   #book .bk-marks button {
+    --bk-mk-reach: 3px;
+    position: relative;
     flex-direction: column-reverse;
-    width: 25px;
+    width: calc(var(--bk-pages) - var(--bk-mk-reach));
     min-height: 84px;
-    margin-left: 1px;
-    padding: 8px 0;
+    margin-left: var(--bk-mk-reach);
+    padding: 8px 6px 8px 0;
     border-right: 0;
     border-radius: 7px 0 0 7px;
     box-shadow: -1px 1px 2px rgba(42, 35, 82, 0.14);
@@ -133,17 +152,39 @@
     writing-mode: vertical-rl;
     rotate: 180deg;
   }
-  /* (each a little further out than the one before, as tabs stuck in by hand) */
+  /* (staggered: the first reaches furthest, slightly over the cover's inside; the second least; the third between) */
   #book .bk-marks button:nth-child(2) {
-    margin-left: 0;
+    --bk-mk-reach: 10px;
   }
   #book .bk-marks button:nth-child(3) {
-    margin-left: 2px;
+    --bk-mk-reach: 6px;
   }
+  /* the chapter shown come forward over the last pages' edges, joined to its page */
   #book .bk-marks button[aria-current='page'] {
-    width: 27px;
-    margin-left: 0;
+    width: calc(var(--bk-pages) - var(--bk-mk-reach) + 1px);
+    box-shadow: -2px 1px 4px rgba(42, 35, 82, 0.2);
   }
+}
+
+/* a chapter with no pages yet: its own empty page over the page shown, the paper bare under its name (bookmarks.js),
+   ending left of the rail as the page does */
+#book .bk-mk-blank {
+  position: absolute;
+  z-index: 1;
+  inset: var(--bk-board) var(--bk-rail-width) var(--bk-board) var(--bk-pages);
+  background-color: var(--bk-paper);
+  background-image: var(--bk-dots);
+  background-size: 22px 22px;
+}
+#book .bk-mk-blank[hidden] {
+  display: none;
+}
+#book .bk-mk-blank h2 {
+  margin: 0;
+  padding-top: 22px;
+  text-align: center;
+  font: 600 20px/1.3 var(--bk-font, system-ui, sans-serif);
+  color: var(--bk-ink, #2a2352);
 }
 
 /* a round's guests: a small sheet of paper beside the tabs */

@@ -19,6 +19,7 @@ const projects = await import('./projects.ts');
 const forecast = await import('./forecast.ts');
 const windows = await import('./windows.ts');
 const wakes = await import('./wakes.ts');
+const { newThread } = await import('./newthread.ts');
 
 const MINUTE = 60_000,
   HOUR = 60 * MINUTE;
@@ -440,5 +441,42 @@ test('missing deadlines show once for a deliverable, excluding served windows an
     const shown = await h.hq(lead, 'thread', id);
     assert.equal(shown.code, 0, shown.out);
     assert.doesNotMatch(shown.out, /no deadline set/);
+  }
+});
+
+test('a deliverable drawn naming no needs after a read booked days ahead plays now: the read and its chain passed over', () => {
+  db.exec('delete from pauses; delete from thread_needs');
+  const read = thread('read');
+  const at = Math.ceil((T + 5 * 24 * HOUR) / MINUTE) * MINUTE;
+  const booking = wakes.readWhen(`${new Date(at).toISOString().slice(0, 16)}Z`, T);
+  assert.ok(Array.isArray(booking), String(booking));
+  wakes.hold(queued(read), booking, T);
+  const draw = (name: string, needs?: string[]) =>
+    newThread({ project: 'game', name, goal: 'It wakes', needs }, { agent: 'wren' }) as any;
+  try {
+    const quiet = draw('Quiet');
+    assert.deepEqual(quiet.needs, [], 'the newest under way is the read, all of it booked ahead');
+    assert.match(
+      quiet.chain,
+      /^game\/read waits for a time booked ahead and was passed over: .* game\/quiet game\/read\.$/,
+    );
+    queued(quiet.id);
+    const eta = forecast.refresh(T).threads.get(quiet.id)!.eta!;
+    assert.ok(eta < T + 2 * (RUN + REVIEW), `now, not the read's time: ${new Date(eta).toISOString()}`);
+    // ready work drawn before the read, then work drawn after it needing it, with a ready task of its own, and work that
+    // needs both: the chain neither starts at what waits for the read nor goes on to it
+    db.prepare("update threads set created = '2000-01-01' where id = ?").run(quiet.id);
+    const after = draw('After', [read]);
+    assert.deepEqual(after.needs, [read]);
+    queued(after.id);
+    assert.deepEqual(draw('Both', [quiet.id, read]).needs, [quiet.id, read]);
+    const next = draw('Next');
+    assert.deepEqual(next.needs, [quiet.id], 'after the ready work, never the read or what waits for it');
+    assert.match(
+      next.chain,
+      /game\/after waits for game\/read, booked for a time ahead, and was passed over: .* game\/next game\/after\./,
+    );
+  } finally {
+    db.exec('delete from thread_needs');
   }
 });

@@ -118,18 +118,20 @@ async function lifted(c, page, ring) {
 async function shows(page, { id, page: on, picture }, what) {
   const seen = await page
     .waitForFunction(
-      ([on, scrap]) => {
+      ([on, id, scrap]) => {
         const layer = document.querySelector(`#book .bk-world .bk-page:not([hidden]) > .bk-groups[data-page="${on}"]`);
-        if (!layer) return false;
+        // (the store keeps the picture in its unit's own px: moved to where the masonry put the unit. job #15978)
+        const card = layer?.parentElement.querySelector(`.bk-unit[data-unit="${id}"]`);
+        if (!card) return false;
         const el = layer.parentElement,
           o = el.getBoundingClientRect(),
           k = o.width / el.offsetWidth,
           paper = document.querySelector('#book .bk-desk').getBoundingClientRect(),
-          x = o.left + (scrap.x + scrap.w / 2) * k,
-          y = o.top + (scrap.y + scrap.h / 2) * k;
+          x = o.left + (parseFloat(card.style.left) + scrap.x + scrap.w / 2) * k,
+          y = o.top + (parseFloat(card.style.top) + scrap.y + scrap.h / 2) * k;
         return x > paper.left && x < paper.right && y > paper.top && y < paper.bottom;
       },
-      [on, picture],
+      [on, id, picture],
       { timeout: 5000 },
     )
     .then(

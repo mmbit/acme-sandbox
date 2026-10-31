@@ -10,7 +10,6 @@ import { recordFor, sizesFor } from './predictions.ts';
 import { expand } from './rounds.ts';
 import { backward, compare, precedence, ready, spareOnly, type Timing } from './planner.ts';
 import type { QueuedJob } from './eta.ts';
-import type { ProspectiveRun } from './reviewplan.ts';
 import { placeholders } from './threadorder.ts';
 
 // The plan is kept between reads and played again after a change HQ publishes (as forecast.ts start: an agent's own
@@ -77,12 +76,7 @@ export function current(now = Date.now()) {
 // The queue the claim orders: open work, and each open thread with no task yet as one piece of its owner's work
 // (threadorder.ts placeholders), as the forecast plays it, so work a timed thread with no task needs takes its latest
 // start from that thread's deadline.
-const queueAt = (now: number, run?: ProspectiveRun) => orderingSnapshot(now, placeholders(), false, run);
-
-// Route a round before its next run is stored, with that run in both the queue and its remaining review stages.
-export function withRound(run: ProspectiveRun, now: number) {
-  return latestStarts(queueAt(now, run), now).timings;
-}
+const queueAt = (now: number) => orderingSnapshot(now, placeholders());
 
 function played(now: number) {
   const queue = queueAt(now);

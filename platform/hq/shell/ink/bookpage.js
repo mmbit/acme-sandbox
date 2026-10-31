@@ -2,7 +2,7 @@
 // book's (bookpages.js draws them where the page shows), so the page itself has no edge.
 //
 // The page is its units (bookunits.js): each draws its pictures and dry ink on a canvas of its own at its place, as
-// big as the unit. (were tiles across an endless page)
+// big as the unit and what's drawn on it. (were tiles across an endless page; what's drawn)
 import { draw } from '/__review/ink.js';
 import { drawScrap } from './bookscrapdraw.js';
 import { picture } from '../../util.js';
@@ -10,7 +10,7 @@ import { pageBox } from './bookrow.js';
 import { landing } from './bookgroupmath.js';
 import { mountAnswers } from './bookanswers.js';
 import { nameOf } from './bookhead.js';
-import { layUnits } from './bookunits.js';
+import { layUnits, reachOn } from './bookunits.js';
 
 // The page record (bookpages.js): { id (null while it waits blank), kind ('free' | 'sheet' | 'call' | 'guest'), owner,
 // label, x, y, w, h (its box: bookrow.js), ink (null until read), scraps: [{ file, url, x, y, w, h, tilt }], texts, error }.
@@ -101,16 +101,20 @@ function paint(st, p) {
     st.el.prepend(canvas);
     units.set(p.id, { canvas, id: p.id });
   }
+  // (as big as the unit, and further wherever its ink reaches past it: nothing drawn is cut.)
   const { canvas } = units.get(p.id),
+    r = reachOn(page, p),
+    [x, y] = [Math.floor(r.x0), Math.floor(r.y0)],
+    [cw, ch] = [Math.ceil(r.x1) - x, Math.ceil(r.y1) - y],
     k = devicePixelRatio || 1,
-    w = Math.round(p.w * k),
-    h = Math.round(p.h * k);
+    w = Math.round(cw * k),
+    h = Math.round(ch * k);
   if (canvas.width !== w || canvas.height !== h) Object.assign(canvas, { width: w, height: h });
-  Object.assign(canvas.style, { left: `${p.x}px`, top: `${p.y}px`, width: `${p.w}px`, height: `${p.h}px` });
+  Object.assign(canvas.style, { left: `${x}px`, top: `${y}px`, width: `${cw}px`, height: `${ch}px` });
   const g = canvas.getContext('2d');
   g.setTransform(1, 0, 0, 1, 0, 0);
   g.clearRect(0, 0, w, h);
-  g.setTransform(k, 0, 0, k, -p.x * k, -p.y * k);
+  g.setTransform(k, 0, 0, k, -x * k, -y * k);
   for (const s of page.scraps) if (s.g === p.id && !landing(page, s)) drawScrap(g, withPicture(st, s));
   const here = page.ink.filter(s => s.g === p.id && !landing(page, s));
   draw(g, [...here.filter(s => s.alpha < 1), ...here.filter(s => !(s.alpha < 1))]);

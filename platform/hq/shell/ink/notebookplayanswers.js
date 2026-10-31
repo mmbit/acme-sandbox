@@ -1,8 +1,8 @@
 // The Notebook store's answers, played (notebookplay.js): the agents' answers on a group as HQ reads them with it
 // (groupanswers.ts answersOf: its children, the answer still coming, its try), a form answered and an answer ticked or
-// a version picked (bookanswer.ts answerForm and tickAnswer, bookpick.ts pick), and the open list (bookanswer.ts
-// openList), with the coordinator's answers and refusals. The runs an answer comes from aren't played: a seeded group
-// (or play.asking and play.trying) says where they are.
+// a version picked (bookanswer.ts answerForm and tickAnswer, bookpick.ts pick), the open list (bookanswer.ts
+// openList) and a card under a group answered on the desk phone, with the coordinator's answers and refusals. The runs
+// an answer comes from aren't played: a seeded group (or play.asking and play.trying) says where they are.
 //   - group.asking: its owner's quick run going, { by, spot, reason? } (bookslips.ts comingOf); an answer on the group
 //     ends it.
 //   - group.tried: its try run, { by, expect, going, said? } (booktry.ts): going while it makes versions, said its last
@@ -15,7 +15,7 @@ const SLIP = { note: null, grp: null, text: '', picture: null, link: null, previ
 Object.assign(SLIP, { ticked: null, face: null, style: 'text', ink: null, form: null, form_answer: null });
 Object.assign(SLIP, { version: null, patch: false, spot: null, picked: null, source: null, branch: null });
 Object.assign(SLIP, { crossed: null, cleared: null, branch_failed: null });
-export const slipRow = (s, x) => ({ ...SLIP, ...x, name: x.name ?? s.names[x.by] ?? x.by });
+export const slipRow = (s, x) => ({ ...SLIP, ...x, name: x.name ?? s.name(x.by) });
 
 // A group's run said where it is (play.asking, play.trying): run, its asking or tried
 export function ran(s, group, run) {
@@ -29,6 +29,7 @@ export const ANSWER_ROUTES = {
   'POST /api/notebooks/answers/form': answerForm,
   'POST /api/notebooks/answers/tick': tickAnswer,
   'GET /api/notebooks/open': openList,
+  'POST /api/requests/answer': answerAsk,
 };
 
 // A group's answers (on the notes it and its replies went as, or on the groups themselves, each once), the answer
@@ -42,12 +43,13 @@ export function answersOf(s, g, replies) {
     answers,
     waiting: top ? ([g, ...replies].map(x => x.asking && comingOf(s, x.asking)).find(w => w) ?? null) : null,
     try: top ? tryOf(s, g, answers) : null,
-    asks: notes.flatMap(n => s.asks.filter(a => a.note === n)),
+    // (or the design ask it is, on an Asks page: askpages.ts, its group.)
+    asks: [...notes.flatMap(n => s.asks.filter(a => a.note === n)), ...s.asks.filter(a => a.group === g.id)],
   };
 }
 const comingOf = (s, { by, spot, reason }) => ({
   by,
-  name: s.names[by] ?? by,
+  name: s.name(by),
   spot: spot ?? null,
   style: 'text',
   ...(reason && { reason }),
@@ -55,7 +57,7 @@ const comingOf = (s, { by, spot, reason }) => ({
 function tryOf(s, g, answers) {
   if (!g.tried) return null;
   const { by, expect, going, said } = g.tried,
-    name = s.names[by] ?? by;
+    name = s.name(by);
   const state = going ? 'coming' : answers.some(a => a.style === 'version') ? 'made' : 'empty';
   const reason = said
     ? `${name} made no version: ${said}`
@@ -69,7 +71,8 @@ export function groupOn(s, slip) {
   const g = slip.grp !== null ? s.group(slip.grp) : s.groups.find(x => x.note !== null && x.note === slip.note);
   return g?.deleted === null ? g : undefined;
 }
-const rootOf = (s, g) => (g.parent === null ? g : s.group(g.parent));
+// The top group of a group or reply
+export const rootOf = (s, g) => (g.parent === null ? g : s.group(g.parent));
 // The answer on a group's page read again, as every change is (notebook.ts changed)
 function changedOn(s, slip) {
   const g = groupOn(s, slip);
@@ -141,4 +144,16 @@ function itemOf(s, x) {
     ...{ id: x.id, group: top?.id ?? null, page: p?.id ?? null, notebook: p?.notebook ?? null },
     ...{ day: p?.created.slice(0, 10) ?? null, by: x.by, name: x.name, text: x.text, created: x.created },
   };
+}
+// The desk phone's answer to a card (jobs.ts answerRequest), for one under a group: answered, its group's page read
+// again. Its questions all answered first (an optional one may be blank), as the desk phone's own route refuses.
+function answerAsk(s, b) {
+  const a = s.asks.find(x => x.id === Number(b?.id) && x.status === 'open');
+  if (!a) refuse(404);
+  if ((a.questions ?? []).some((q, k) => !q.optional && !String(b.answers?.[k] ?? '').trim()))
+    refuse(400, 'a question still needs its answer');
+  Object.assign(a, { status: 'answered', answer: String(b.answer ?? ''), answered: s.stamp() });
+  const g = s.groups.find(x => (a.group ? x.id === a.group : x.note === a.note));
+  if (g) s.changed(s.page(g.page).notebook, g.page);
+  return { ok: true };
 }

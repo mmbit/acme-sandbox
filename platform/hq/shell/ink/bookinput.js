@@ -28,9 +28,9 @@ const HELD_TOOLS = ['pen', 'highlighter', 'eraser', 'shapes', 'text'];
 
 export function mountInput(book) {
   stylesheet('shell/ink/bookinput.css');
-  // last: a tap, the first half of a double tap maybe; step: the book's last step as the press began, for whether the
-  // tap drew a dot; at: the point on its page it pressed, where that dot is
-  const input = { book, last: null, step: null, at: null, hold: null, pen: false, mic: null };
+  // last: a tap, the first half of a double tap maybe; stepAtPress: the book's last step as the press began, for the
+  // dot the tap drew (the step it made since.)
+  const input = { book, last: null, stepAtPress: null, hold: null, pen: false, mic: null };
   addEventListener('pointerdown', e => e.pointerType === 'pen' && (input.pen = true), true);
   book.desk.addEventListener('pointerdown', e => pressed(input, e), true);
   addEventListener('pointermove', e => input.hold && moved(input, e), true);
@@ -78,15 +78,14 @@ function pressed(input, e) {
   if (!e.isPrimary) return letGo(input);
   // (a finger's or a pen's press, for whether it was a tap)
   input.down = e.pointerType === 'mouse' ? null : e;
-  input.step = input.book.steps?.at(-1);
-  input.at = input.book.at(e.clientX, e.clientY);
+  input.stepAtPress = input.book.steps?.at(-1);
   const kind = kindOf(input, e);
   if (!kind) return;
   clearTimeout(input.hold?.timer);
   // (a double tap's first tap drew a dot only if the book has a step since it pressed: a finger that moved the page, the
-  // eraser, Shapes or Type drew none. dotted: that tap, where its dot is.)
-  const dotted = kind === 'voice' && doubled(input, e) && input.step !== input.last.step ? input.last : null;
-  input.hold = { down: e, kind, dotted };
+  // eraser, Shapes or Type drew none: undot() knows. firstTap: that tap.)
+  const firstTap = kind === 'voice' && doubled(input, e) ? input.last : null;
+  input.hold = { down: e, kind, firstTap };
   input.hold.timer = setTimeout(() => held(input), holdMs());
 }
 function moved(input, e) {
@@ -100,7 +99,7 @@ function lifted(input, e) {
   if (down?.pointerId !== e.pointerId) return;
   input.down = null;
   input.last = isTap(down, e)
-    ? { t: e.timeStamp, x: e.clientX, y: e.clientY, type: e.pointerType, step: input.step, at: input.at }
+    ? { t: e.timeStamp, x: e.clientX, y: e.clientY, type: e.pointerType, stepAtPress: input.stepAtPress }
     : null;
 }
 function letGo(input) {
@@ -112,12 +111,12 @@ function letGo(input) {
 // tap's first dot), and the voice note or the radial menu opens there
 function held(input) {
   const { book } = input,
-    { down, kind, dotted } = input.hold;
+    { down, kind, firstTap } = input.hold;
   input.hold = null;
   if (book.ink?.drawing) book.ink.cancel();
   book.table?.letGo();
   unmake(book.desk, down);
-  if (dotted) book.tools?.undot?.(dotted.at);
+  if (firstTap) book.tools?.undot?.(firstTap.stepAtPress);
   navigator.vibrate?.(8);
   if (kind === 'voice') return micAllowed() ? listen(book, down) : cantListen(down, micBlocked());
   const tools = Object.entries(book.tools?.buttons?.() ?? {})

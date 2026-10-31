@@ -1,6 +1,6 @@
 // Worker admission from reclaim-aware memory and startup/meeting reservations.
 import { readFileSync } from 'node:fs';
-import { reservations, FREE_MB, JOB_MB, SEAT_MB } from './reserve.ts';
+import { reservations, reservationInputs, type ReservationInputs } from './reserve.ts';
 import { workerMemory } from './memory.ts';
 
 export type AdmissionInput = {
@@ -10,13 +10,7 @@ export type AdmissionInput = {
   measurement: ReturnType<typeof workerMemory>;
   readStartedAt: number;
   readEndedAt: number;
-  reserves: {
-    starting: { until: number; mb: number }[] | null;
-    heldSlots: number;
-    heldMb: number;
-    freeReserveMb: number;
-    defaultRunMb: number;
-  };
+  reserves: ReservationInputs;
   value: number | boolean;
 };
 
@@ -61,10 +55,6 @@ export function admission<Seat>(now = Date.now, measure = workerMemory, meminfo 
 
 export const hostAvailableBytes = (meminfo = '/proc/meminfo') =>
   Number(readFileSync(meminfo, 'utf8').match(/^MemAvailable:\s+(\d+)/m)![1]) * 1024;
-
-function reservationInputs(starting: AdmissionInput['reserves']['starting'], heldSlots: number) {
-  return { starting, heldSlots, heldMb: heldSlots * SEAT_MB, freeReserveMb: FREE_MB, defaultRunMb: JOB_MB };
-}
 
 function inputInspection() {
   let inputs: AdmissionInput[] | undefined;

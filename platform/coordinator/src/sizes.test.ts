@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
 import { harness } from './harness.ts';
 import { git } from './fixture.ts';
+import { recordedWorkEvidence, type WorkEvidence } from './pastjobs.fixture.ts';
 
 const h = await harness('sizes');
 const predictions = await import('./predictions.ts');
@@ -125,6 +126,142 @@ for (const withItem of [false, true]) {
     assert.equal((await estimate(job)).estimate.agent_minutes, 40);
     await h.voice('call-end', { agent: 'juno', token, lines: ['Board: Check the whole map.'] });
     assert.equal(h.job(job).status, 'queued');
+  });
+}
+
+const plannedWork = [
+  {
+    source: 'scope',
+    queue: async () =>
+      h.jobs.createJob({
+        agent: 'kit',
+        title: request.title,
+        prompt: request.prompt,
+        plannedBy: 'juno',
+        size: { agent_ms: 45 * MIN, refs: request.refs, why: request.why },
+      }).id,
+    queuedBy: null,
+    savedMinutes: [45],
+  },
+  {
+    source: 'item',
+    queue: async () =>
+      h.jobs.createJob({
+        agent: 'kit',
+        title: request.title,
+        prompt: request.prompt,
+        item: h.openItem('kit', request.title),
+      }).id,
+    queuedBy: null,
+    savedMinutes: [],
+  },
+  {
+    source: 'board',
+    queue: async () => (await h.board('/api/jobs', { agent: 'kit', title: request.title })).body.id,
+    queuedBy: 'board',
+    savedMinutes: [],
+  },
+];
+for (const { source, queue, queuedBy, savedMinutes } of plannedWork) {
+  test(`planned work from ${source} keeps its work size and CEO revision without an agent queuer`, async () => {
+    const job = await queue();
+    assert.equal(h.jobs.openJobs({}).find(j => j.id === job)!.queued_by, queuedBy);
+    assert.equal((await estimate(job)).estimate.origin, 'work');
+    assert.deepEqual(
+      sizes.history(job).map(s => s.agent_ms / MIN),
+      savedMinutes,
+    );
+    const revised = await h.agent('sizes', planner.token, { job, time: '55m', why: 'The full scope includes fixes' });
+    assert.equal(revised.status, 200, JSON.stringify(revised.body));
+    assert.equal((await estimate(job)).estimate.agent_minutes, 55);
+    assert.equal(predictions.latest(job)!.agent_ms, 55 * MIN);
+  });
+}
+
+for (const evidence of [{ proposal: 'accepted' }, { sheet: 'sent', owner: 'kit' }] as const) {
+  const source = 'proposal' in evidence ? 'accepted proposal' : 'sent owner sheet';
+  test(`${source} evidence makes unattributed planned work resizable through HQ`, async () => {
+    const job = h.jobs.createJob({ agent: 'kit', title: request.title, prompt: request.prompt }).id;
+    const original = predictions.latest(job);
+    assert.equal((await estimate(job)).estimate.origin, 'hq');
+    assert.deepEqual(sizes.history(job), []);
+    recordedWorkEvidence(h.db, job, evidence);
+    assert.equal(h.jobs.openJobs({}).find(j => j.id === job)!.queued_by, null);
+    assert.equal((await estimate(job)).estimate.origin, 'work');
+    assert.deepEqual(predictions.latest(job), original);
+    const revised = await h.agent('sizes', planner.token, { job, time: '45m', why: request.why });
+    assert.equal(revised.status, 200, JSON.stringify(revised.body));
+    assert.equal((await estimate(job)).estimate.agent_minutes, 45);
+    assert.equal(sizes.history(job)[0].revised, true);
+  });
+
+  test(`${source} evidence refreshes a completed comparison on the next read`, async () => {
+    const job = h.pastJob({
+      title: 'Check every notebook size',
+      queued_by: null,
+      run: { started: T0 - HOUR, ended: T0 - MIN },
+    });
+    assert.equal((await estimate(job)).job.origin, 'hq');
+    recordedWorkEvidence(h.db, job, evidence);
+    assert.equal((await estimate(job)).job.origin, 'work');
+  });
+
+  test(`${source} evidence preserves carry and repair origins`, async () => {
+    for (const [change, origin] of [
+      [{ stage: 'feedback' }, 'fix'],
+      [{ stage: 'fix', round: 1 }, 'fix'],
+      [{ stage: 'fix' }, 'merge'],
+      [{ carry: 'abc' }, 'carry'],
+    ] as const) {
+      const job = h.jobs.createJob({ agent: 'kit', title: request.title, prompt: request.prompt, ...change }).id;
+      recordedWorkEvidence(h.db, job, evidence);
+      assert.equal((await estimate(job)).estimate.origin, origin);
+      assert.equal((await h.agent('sizes', planner.token, { job, time: '45m', why: request.why })).status, 409);
+    }
+  });
+}
+
+test('unsent sheets, other owners and routing checks remain automatic work', async () => {
+  const cases: { evidence: WorkEvidence; agent: string; check?: boolean }[] = [
+    { evidence: { proposal: 'open' }, agent: 'kit' },
+    { evidence: { proposal: 'dropped' }, agent: 'kit' },
+    { evidence: { sheet: 'open', owner: 'kit' }, agent: 'kit' },
+    { evidence: { sheet: 'sending', owner: 'moss' }, agent: 'moss' },
+    { evidence: { sheet: 'sent', owner: 'moss' }, agent: 'kit' },
+    { evidence: { sheet: 'sent', owner: null }, agent: 'juno', check: true },
+    { evidence: { sheet: 'sent', owner: 'juno' }, agent: 'juno', check: true },
+  ];
+  for (const { evidence, ...assignment } of cases) {
+    const job = h.jobs.createJob({ ...assignment, title: request.title, prompt: request.prompt }).id;
+    recordedWorkEvidence(h.db, job, evidence);
+    assert.equal((await estimate(job)).estimate.origin, 'hq');
+    assert.equal((await h.agent('sizes', planner.token, { job, time: '45m', why: request.why })).status, 409);
+  }
+});
+
+test('recorded scope makes completed work available as a work comparison on the next read', async () => {
+  const job = h.pastJob({
+    title: request.title,
+    queued_by: null,
+    run: { started: T0 - HOUR, ended: T0 - MIN },
+  });
+  assert.equal((await estimate(job)).job.origin, 'hq');
+  sizes.recordQueued(job, 'juno', request.prompt, { agent_ms: 45 * MIN, refs: [], why: request.why });
+  assert.equal((await estimate(job)).job.origin, 'work');
+});
+
+const repairScope = { plannedBy: 'juno', size: { agent_ms: 45 * MIN, refs: [], why: request.why } };
+for (const { source, assignment } of [
+  { source: 'automatic job', assignment: {} },
+  { source: 'board feedback', assignment: { ...repairScope, stage: 'feedback' } },
+  { source: 'review fix', assignment: { ...repairScope, stage: 'fix', round: 1 } },
+  { source: 'merge repair', assignment: { ...repairScope, stage: 'fix' } },
+  { source: 'carry check', assignment: { ...repairScope, carry: 'abc' } },
+]) {
+  test(`${source} refuses a CEO work-size revision`, async () => {
+    const job = h.jobs.createJob({ agent: 'kit', title: request.title, prompt: request.prompt, ...assignment }).id;
+    const revised = await h.agent('sizes', planner.token, { job, time: '55m', why: 'Attempted revision' });
+    assert.equal(revised.status, 409, JSON.stringify(revised.body));
   });
 }
 

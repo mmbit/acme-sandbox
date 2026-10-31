@@ -1,8 +1,8 @@
-/* Guest notebooks use HQ's device frame and Reviews invitation controls. */
+/* The board watching a guest's book (bookinvites.js), in HQ's device frame. */
 .bi-dialog {
   padding: 0;
   margin: auto;
-  width: min(600px, calc(100vw - 24px));
+  width: min(1000px, calc(100vw - 24px));
   max-height: calc(100dvh - 24px);
   color: var(--ink);
   font: 16px/1.4 var(--font);
@@ -24,50 +24,9 @@
   height: auto;
   max-height: calc(100dvh - 150px);
 }
-.bi-dialog h2 {
-  margin: 0 0 16px;
-  font-size: 18px;
-}
-.bi-dialog .notebook-name {
-  flex: 1 1 100%;
-  font-size: 14px;
-}
-.bi-dialog .notebook-name input {
-  display: block;
-  width: 100%;
-  margin-top: 4px;
-}
-.bi-list {
-  display: grid;
-  gap: 16px;
-  margin-top: 24px;
-}
-.bi-list article {
-  padding-top: 12px;
-  border-top: 1px solid color-mix(in srgb, var(--scr) 35%, transparent);
-}
-.bi-actions,
-.bi-invitation {
-  display: flex;
-  gap: 12px;
-  flex-wrap: wrap;
-  align-items: center;
-}
 .bi-dialog a {
   color: inherit;
   text-underline-offset: 3px;
-}
-.bi-list button {
-  font: inherit;
-  min-height: 44px;
-  padding: 6px 12px;
-  color: inherit;
-  background: none;
-  border: 1px solid currentColor;
-  border-radius: var(--r-sm);
-}
-.bi-dialog:has(.bi-watch:not([hidden])) {
-  width: min(1000px, calc(100vw - 24px));
 }
 .bi-watch.ng-book {
   margin: 0;

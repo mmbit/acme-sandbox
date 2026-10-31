@@ -149,7 +149,12 @@ function viewHeight() {
   document.documentElement.style.setProperty('--app-h', `${h}px`);
   return h;
 }
-export function resize() { scene.resize(pageWidth(), viewHeight(), Math.min(devicePixelRatio || 1, 2)); }
+// The device pixels per CSS px the scene draws at, two at most
+const pixelRatio = () => Math.min(devicePixelRatio || 1, 2);
+export function resize() { scene.resize(pageWidth(), viewHeight(), pixelRatio()); }
+// HQ's page at another width soon (the book opening beside it, or shutting): w, in CSS px. A scene that lays itself out
+// for the screen's shape lays that one out ahead, so the change costs it nothing as it comes
+export function prepare(w) { scene?.prepare?.(w, viewHeight(), pixelRatio()); }
 
 // ---------------------------------------------------------------- loop
 let last = 0, acc = 0, cost = 8;

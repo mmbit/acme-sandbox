@@ -1,7 +1,4 @@
-// A live meeting's talk as speech bubbles: each turn put in a few plain lines by the coordinator's small model
-// (meetinggist.ts), shown over its speaker one at a time, long enough to read. With time to spare a turn's lines follow
-// each other, main one first. Once a newer turn has its lines, the room moves on to it, skipping any in between, so the
-// bubbles keep to the latest point and never pile up.
+// A live meeting's talk as speech bubbles over its speakers, each turn in a few plain lines (meetinggist.ts)
 import * as world from '../world/world.js';
 import { bubble } from './overlay.js';
 
@@ -18,7 +15,8 @@ export function initTalk() {
   world.on('meetings', advance);
 }
 
-// Called when a turn's bubbles arrive and when a bubble's time is up: whatever comes next, or nothing yet.
+// Called when a turn's bubbles arrive and when a bubble's time is up: whatever comes next, or nothing yet. A newer turn
+// goes first, skipping any in between, so the bubbles keep to the latest point and never pile up.
 function advance() {
   if (shown && Date.now() < shown.until) return;
   const turns = (world.meetings?.live ?? []).flatMap(m => m.said ?? []).filter(s => s.bubbles?.length),

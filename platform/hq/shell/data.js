@@ -666,10 +666,10 @@ export async function makeShare(dev, body) {
   if (!share) {
     // what and whose: the product the page belongs to, as the dev mock's notes have it
     const host = new URL(body.page).host, slug = host.split('.')[0], product = (await mockList('review')).products.find(p => p.slug === slug);
-    share = mock.shares.find(s => !s.ended && s.host === host && s.view === !!body.view && s.tester === !!body.tester);
-    if (!share) mock.shares.unshift(share = { id: mock.shares.length + 1, what: product?.name ?? slug, host, prefix: '/', ends: new Date(Date.now() + body.days * 864e5).toISOString(),
+    share = mock.shares.find(s => !s.ended && s.host === host && s.view === !!body.view && s.tester === !!body.tester && s.lasting === !!body.lasting);
+    if (!share) mock.shares.unshift(share = { id: mock.shares.length + 1, what: product?.name ?? slug, host, prefix: '/', ends: body.lasting ? '9999-12-31T00:00:00.000Z' : new Date(Date.now() + body.days * 864e5).toISOString(),
       ended: null, people: [], owner: product?.ownerName ?? '',
-        view: !!body.view, tester: !!body.tester, cap: body.tester ? body.cap ?? 50 : null, pays: slug === 'front' ? 'order' : 'plan' });
+        view: !!body.view, tester: !!body.tester, lasting: !!body.lasting, cap: body.tester ? body.cap ?? 50 : null, pays: slug === 'front' ? 'order' : 'plan' });
   }
   if (share.people.some(p => p.name === body.name)) throw mockRefusal(`${body.name} is on it already`);
   const known = mockShared().find(p => p.name === body.name), email = body.email ?? known?.email;

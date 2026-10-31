@@ -11,26 +11,48 @@ export const clipped = page =>
       .flatMap(p => [...p.querySelectorAll('.bk-unit')].map(u => Number(u.dataset.unit)))
       .sort((a, b) => a - b);
   });
-// A group's unit (g: its id; null: the page's first) picked with Select (the rail's), by a click or a tap (how), and the button named on Select's bar
-// pressed the same way: its Delete, its Move to page…
+// A group's unit (g: its id; null: the page's first) picked with Select, by a click or a tap (how), and the button named
+// on Select's bar pressed the same way: its Delete, its Move to page…
 export async function fromBar(page, g, name, how = 'click') {
   await page.locator('#book [data-island=tools] [data-mode=select]')[how]();
-  // (the middle of what shows of the unit: a tall one runs past the desk's foot on a short screen, where a press isn't the paper's)
   const unit = page.locator(`#book .bk-page:not([hidden]) .bk-unit${g == null ? '' : `[data-unit="${g}"]`}`).first(),
-    [b, desk] = await Promise.all([unit.boundingBox(), page.locator('#book .bk-desk').boundingBox()]),
-    [x0, x1] = [Math.max(b.x, desk.x), Math.min(b.x + b.width, desk.x + desk.width)],
-    [y0, y1] = [Math.max(b.y, desk.y), Math.min(b.y + b.height, desk.y + desk.height)],
-    press = [(x0 + x1) / 2, (y0 + y1) / 2];
+    press = await shownPoint(page, unit);
+  assert.ok(press, 'a point of the unit shows on the page');
   if (how === 'tap') await page.touchscreen.tap(...press);
   else await page.mouse.click(...press);
   const bar = page.locator('#book .bk-sel-bar');
   await bar.waitFor({ timeout: 5000 });
   await bar.getByRole('button', { name, exact: true })[how]();
 }
+// The first point of a unit, in screen px, scanned from its top left in rows 4 px apart and steps 8 px along, where the
+// page itself is under the point: a tall unit runs past the desk's foot, and the for-you counter floats over that foot
+async function shownPoint(page, unit) {
+  const [box, desk] = await Promise.all([unit.boundingBox(), page.locator('#book .bk-desk').boundingBox()]),
+    area = {
+      left: Math.max(box.x, desk.x),
+      right: Math.min(box.x + box.width, desk.x + desk.width),
+      top: Math.max(box.y, desk.y),
+      bottom: Math.min(box.y + box.height, desk.y + desk.height),
+    };
+  return unit.evaluate((u, { left, right, top, bottom }) => {
+    const rowPx = 4,
+      stepPx = 8,
+      insetPx = 2;
+    for (let y = top + insetPx; y < bottom; y += rowPx)
+      for (let x = left + insetPx; x < right; x += stepPx)
+        if (u.closest('.bk-page').contains(document.elementFromPoint(x, y))) return [x, y];
+    return null;
+  }, area);
+}
 // The groups of two or more things, which have a clip, by group
 export const held = groups =>
   groups.filter(g => (g.ink?.length ?? 0) + (g.texts?.length ?? 0) + (g.pictures?.length ?? 0) > 1).map(g => g.id);
-export const where = page => page.locator('#book .bk-where').textContent();
+// The page shown: its title at its head and where it is on the rail ("Ideas 2/3")
+export const where = page =>
+  page.evaluate(
+    () =>
+      `${document.querySelector('#book .bk-page:not([hidden]) .bk-page-title')?.textContent ?? ''} ${document.querySelector('#book .bk-where')?.textContent ?? ''}`,
+  );
 export const stamp = page =>
   page.evaluate(() => {
     const shown = [...document.querySelectorAll('#book .bk-page')].find(p => !p.hidden);
@@ -52,11 +74,27 @@ export const onPaper = (page, points, unit = null) =>
     },
     [points, unit],
   );
+// Bare paper on the page shown, on the screen: a little under the shortest column's last unit (and what hangs under
+// it), where a line is a unit of its own (bookunits.js newUnit), left of the controls. (the old canvas's clear place was a fixed point of its px)
+export const clearPlace = page =>
+  page.evaluate(() => {
+    const shown = [...document.querySelectorAll('#book .bk-page')].find(p => !p.hidden),
+      feet = new Map();
+    for (const u of shown.querySelectorAll('.bk-unit')) {
+      const r = u.getBoundingClientRect(),
+        under = shown.querySelector(`.bk-under[data-g="${u.dataset.unit}"]`),
+        bottom = Math.max(r.bottom, under?.getBoundingClientRect().bottom ?? 0),
+        x = Math.round(r.left);
+      if (!feet.has(x) || feet.get(x).bottom < bottom) feet.set(x, { left: r.left, bottom });
+    }
+    const low = [...feet.values()].sort((a, b) => a.bottom - b.bottom)[0];
+    return [low.left + 40, low.bottom + 28];
+  });
 export const tool = (page, name) => page.locator('#book').getByRole('button', { name, exact: true }).click();
 // The page at a place in the notebook (1: its first; the seed's pages' ids are theirs), turned to with the foot row's
 // arrows
 export async function turnTo(page, id) {
-  const n = () => where(page).then(w => Number(/(\d+) \/ \d+$/.exec(w)?.[1]));
+  const n = () => where(page).then(w => Number(/(\d+)\/\d+$/.exec(w)?.[1]));
   for (let i = 0, turns = 0; i < 60 && turns < 8 && (await n()) !== id; i++) {
     const was = await n(),
       arrow = page.locator('#book').getByRole('button', { name: was > id ? 'The page before' : 'The page after' });
@@ -81,4 +119,24 @@ export async function pen(page, points, mouse = null) {
     return mouse.up();
   }
   await pressAlong(page, points);
+}
+// A group (id, on the page on) slid into view, as the book shows a scrap ('book:scrap'), and points on it (its unit's
+// px, as the store keeps them) on the screen once the paper's still and nothing's over them
+export async function inSight(page, on, id, at) {
+  await page.evaluate(detail => document.dispatchEvent(new CustomEvent('book:scrap', { detail })), {
+    id,
+    page: on,
+  });
+  await page.locator(`#book .bk-page:not([hidden]) .bk-unit[data-unit="${id}"]`).waitFor();
+  let was = '';
+  return until(async () => {
+    const points = await onPaper(page, at, id),
+      still = JSON.stringify(points) === was;
+    was = JSON.stringify(points);
+    const bare = await page.evaluate(
+      ps => ps.every(([x, y]) => document.elementFromPoint(x, y)?.closest('#book .bk-page')),
+      points,
+    );
+    return still && bare && points;
+  }, 'the scrap in view, nothing over it');
 }

@@ -14,7 +14,7 @@ import { execFileSync } from 'node:child_process';
 import { PORT, REPO_DIR, KITS_DIR, COMMIT, WORKER_TOKEN, VOICE_TOKEN, ORIGIN, ZONE } from './config.ts';
 import { isAuthed, enrollOptions, enrollVerify, loginOptions, loginVerify, keepOwnDevice } from './auth.ts';
 import { loginPage, enrollPage, csp, checkoutCsp, hqIndex, hqManifest, darkLogo, logo } from './pages.ts';
-import { org, brand, brandLook, theme, gazette, watchGazette, ceo, roles, reads } from './company.ts';
+import { brand, brandLook, theme, gazette, watchGazette, ceo, roles, reads } from './company.ts';
 import { library, unshelvedProblem } from './library.ts';
 import { TYPES } from './types.ts';
 import { attachment, findFile, inside, HQ_DIR, THEME_DIR, hqDir } from './files.ts';
@@ -24,6 +24,7 @@ import * as jobs from './jobs.ts';
 import * as engineOnly from './engineonly.ts';
 import * as room from './room.ts';
 import * as roomrecords from './roomrecords.ts';
+import * as inspection from './inspection.ts';
 import * as blocks from './blocks.ts';
 import * as seats from './seats.ts';
 import { stallSweep } from './stalls.ts';
@@ -108,6 +109,7 @@ import { notFound } from './pagescraps.ts';   // (its files)
 import { bookFor, people as bookPeople } from './ink/sketchpeople.ts';   // (and invited people's)
 import * as booknotes from './ink/booknotes.ts';   // and its sheets and notes
 import * as askpages from './ink/askpages.ts';   // (a design ask, a scrap on its book's Asks page)
+import * as bookassign from './ink/bookassign.ts';   // (a scrap handed to a person)
 import * as bookasks from './ink/bookasks.ts';   // and the desk-phone cards about its notes and pages
 import * as booksheets from './ink/booksheets.ts';   // and its sheets going out.
 import * as bookreads from './ink/bookreads.ts';   // and the agents' and calls' reads of its pages
@@ -508,6 +510,9 @@ const api: Record<string, BoardRoute> = {
     return refusal(guestPage(Number(b.page)) ? notebookguestroom.listBoardGroups(b) : notebookgroups.listGroups(b));
   },
   'POST /api/notebooks/groups/move': (q, s, b) => refusal(notebookgroups.moveGroup(b)),
+  // (a scrap handed to someone from the short list)
+  'GET /api/notebooks/people': () => bookassign.listPeople(),
+  'POST /api/notebooks/groups/assign': (q, s, b) => refusal(bookassign.assignGroup(b)),
   'POST /api/notebooks/groups/delete': (q, s, b) => refusal(notebookgroups.deleteGroup(b)),
   'POST /api/notebooks/replies/delete': (q, s, b) => refusal(notebooksend.deleteReply(b)),
   'POST /api/notebooks/groups/restore': (q, s, b) => refusal(notebookgroups.restoreGroup(b)),
@@ -520,7 +525,7 @@ const api: Record<string, BoardRoute> = {
   // (the live call's notes page, opened as the call starts. callnotes.ts)
   'POST /api/notebooks/call': async (q, s, b) => refusal(await callnotes.openFor(b)),
   'POST /api/preview/link': (q, s, b) => preview.link(String(b.url ?? '')),
-  'POST /api/jobs': (q, s, b) => jobs.createJob({ agent: b.agent ?? ceo(), title: b.title, prompt: b.prompt ?? b.title }),
+  'POST /api/jobs': (q, s, b) => jobs.createJob({ agent: b.agent ?? ceo(), title: b.title, prompt: b.prompt ?? b.title, queuedBy: jobs.BOARD }),
   'GET /api/seats': () => seats.listSeats(),
   'GET /api/mail': () => mail.listMail(),
   'GET /api/mail/one': q => mail.getMail(Number(new URL(q.url ?? '/', 'http://x').searchParams.get('id'))),
@@ -727,7 +732,7 @@ const seePhotos = (id: number, me: Me, read: () => unknown) => {
   return r;
 };
 // Work goes to an org.yaml agent or an alumnus (a lead brings one back), never to the board.
-const assignable = (id: string) => staff(id) || (org().alumni ?? []).some((a: { id: string }) => a.id === id);
+const assignable = (id: string) => staff(id) || jobs.alumnus(id);
 // The thread a job queued by an agent serves (hq job --thread; one started for it is the plan's, with its chain's
 // words: newthread.ts). (chain)
 function threadFor(b: any, me: Me) {
@@ -1392,11 +1397,12 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
   // hq reply: what the board reads after the call, apart from the job's report (ledger.ts reply).
   'POST /api/agent/reply': (b, me) => refusal(ledger.reply(me.id, String(b.text ?? ''))),
   // A lead can ask the board and keep its session (and team) alive while it waits: hq ask / hq wait.
-  'POST /api/agent/request': (b, me) => {
+  'POST /api/agent/request': async (b, me) => {
     const agent = speaker(b.as, me);
     if (!agent) return 403;
-    // (a design ask's book first: a card the book refuses says so, whatever else is wrong with it. askpages.ts)
-    const book = askpages.bookOf(b);
+    // (a design ask's book first: a card the book refuses says so, whatever else is wrong with it. askpages.ts; its spot
+    // ringed there too)
+    const book = await askpages.bookOf(b);
     if (typeof book === 'string') return new Refused(400, book);
     if (plainCredential(b)) return new Refused(400, 'a credential request names the keys it asks for (their names after the brief file, comma-separated): the board types them into key fields, never an answer box');
     if (!agentRequest(b, me.agent)) return 400;
@@ -1411,7 +1417,7 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
       agent, job: me.id, secrets: str(b.secrets), approves: str(b.approves), photos: b.photos, documents: b.documents, zips: b.zips, products: b.products, back: b.back, topic: b.topic, visibleFrom: b.visibleFrom,
       address: b.address, questions: b.questions, decides: b.decides, when: b.when, walk: b.walk, ...place });   // (topic, zips, visibleFrom, address, questions, decides, when; walk)
     if (!book || typeof card !== 'object') return refusal(card);   // (a card about a page stays on the desk phone)
-    const scrap = askpages.placeAsk(card.id, book.notebook, agent, String(b.title));
+    const scrap = askpages.placeAsk(card.id, book, agent, String(b.title));
     return { ...card, book: { ...scrap, name: book.name, fell: book.fell } };
   },
   // hq advice <book> ...: a scrap of a closed round's Advice, or its hand back (notebookrounds.ts)
@@ -1443,6 +1449,16 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
   'GET /api/agent/room/records': (b, me) => {
     if (!jobs.inProcess(me.agent) || me.call) return 403;
     return roomrecords.getRoomRecords(b.population, b.after) ?? new Refused(400, 'Use a documented room history and a nonnegative cursor. Deliveries use spell.job.');
+  },
+  'GET /api/agent/room/inspection/binding': (b, me) =>
+    !jobs.inProcess(me.agent) || me.call ? 403 : inspection.inspectionBinding(),
+  'POST /api/agent/room/inspection/arm': (b, me) => {
+    if (!jobs.inProcess(me.agent) || me.call) return 403;
+    return refusal(inspection.armInspection(b, me.agent));
+  },
+  'GET /api/agent/room/inspection': (b, me) => {
+    if (!jobs.inProcess(me.agent) || me.call) return 403;
+    return inspection.readInspection(b.id) ?? 404;
   },
   'GET /api/agent/room': () => room.getRoom(),   // (hq jobs: the same, naming the job by its number)
   // hq followthrough: the CEO's read of what the board agreed against the work under way; ok | acted "line": the
@@ -2308,6 +2324,7 @@ if (import.meta.main) server.listen(PORT, () => {  // tests import app without s
 // soon as it idles. The search model's thread ends before the process does, between two of its batches (memory.ts
 // stopModel()).
 export function stop(on = server, exit: (code: number) => void = code => process.exit(code)) {
+  inspection.interruptInspection('Coordinator stopped for a deploy.');
   const idle = setInterval(() => on.closeIdleConnections(), 50);
   on.close(() => {
     clearInterval(idle);
@@ -2319,4 +2336,7 @@ export function stop(on = server, exit: (code: number) => void = code => process
   on.closeIdleConnections();
   setTimeout(() => exit(0), 5_000).unref();
 }
-if (import.meta.main) process.once('SIGTERM', () => stop());
+if (import.meta.main) {
+  inspection.startInspection();
+  process.once('SIGTERM', () => stop());
+}

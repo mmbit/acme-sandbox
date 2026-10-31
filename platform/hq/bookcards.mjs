@@ -4,11 +4,9 @@
 // and what's picked in them takes; and each left open while the iPad turns on its side and its screen gets shorter.
 import assert from 'node:assert/strict';
 import { onDesk } from './bookmouse.mjs';
-import { heard, touchOf } from './bookstrip.mjs';
-import { MINI, chromiumPen } from './bookkit.mjs';
+import { MINI, UPRIGHT, middleOf, mini } from './bookkit.mjs';
 
-const UPRIGHT = { width: MINI.height, height: MINI.width },
-  SHORT = { width: MINI.width, height: 560 };
+const SHORT = { width: MINI.width, height: 560 };
 
 // c: book-check.mjs's played store and helpers
 export function cardStories(c) {
@@ -35,7 +33,7 @@ async function cards(browser, c) {
   }
 }
 async function onIPad(browser, c, viewport) {
-  const pad = await iPad(browser, c, viewport),
+  const pad = await mini(browser, c, { viewport }),
     { page, errors, done } = pad,
     size = `${viewport.width}x${viewport.height}`;
   try {
@@ -57,7 +55,7 @@ async function turned(browser, c) {
     ['Preferences on this device', '.bk-prefs'],
     ['Pen', '.bk-palette'],
   ]) {
-    const { page, touch, errors, done } = await iPad(browser, c, UPRIGHT);
+    const { page, touch, errors, done } = await mini(browser, c, { viewport: UPRIGHT });
     try {
       await tapped(touch, await at(page, name));
       await whole(page, selector, `${selector} upright`);
@@ -80,7 +78,7 @@ async function preferencesTapped({ page, pen, touch }, size) {
     long = () => page.locator('#book .bk-prefs').getByLabel('Long');
   await tapped(touch, await at(page, COG));
   await whole(page, '.bk-prefs', `the preferences at ${size}, a finger's tap`);
-  await tapped(touch, centre(await long().boundingBox()));
+  await tapped(touch, middleOf(await long().boundingBox()));
   assert.equal(await long().isChecked(), true, 'Long picked by a finger');
   await tapped(touch, await at(page, COG));
   await pen.tap(await at(page, COG));
@@ -90,43 +88,24 @@ async function preferencesTapped({ page, pen, touch }, size) {
 async function coloursTapped({ page, pen, touch }, size) {
   await pen.tap(await at(page, 'Pen'));
   await whole(page, '.bk-palette', `the colours at ${size}, the Pencil's tap`);
-  await pen.tap(centre(await ink(page, 'Red').boundingBox()));
+  await pen.tap(middleOf(await ink(page, 'Red').boundingBox()));
   await page.keyboard.press('Escape');
   await tapped(touch, await at(page, 'Pen'));
   await whole(page, '.bk-palette', `the colours at ${size}, a finger's tap`);
   assert.equal(await ink(page, 'Red').getAttribute('aria-pressed'), 'true', 'Red picked by the Pencil');
-  await tapped(touch, centre(await ink(page, 'Blue').boundingBox()));
+  await tapped(touch, middleOf(await ink(page, 'Blue').boundingBox()));
   assert.equal(await ink(page, 'Blue').getAttribute('aria-pressed'), 'true', 'Blue picked by a finger');
 }
 
-// The iPad mini as a touch screen with a pen (Chromium's own touch and pen events, trusted), the book open: upright it
-// starts folded, and its lip opens it as the spread over HQ
-async function iPad(browser, c, viewport) {
-  const context = await c.hqIn(browser, viewport, { hasTouch: true, deviceScaleFactor: 1 });
-  const page = await context.newPage(),
-    errors = [];
-  page.on('pageerror', e => errors.push(e.message));
-  await heard(page);
-  await page.goto(`${c.base}/?intro=0`);
-  if (viewport.width > viewport.height) await c.settled(page, 'open');
-  else {
-    await c.settled(page, 'folded');
-    await page.evaluate(() => document.querySelector('#book .bk-lip').click());
-    await c.settled(page, 'spread');
-  }
-  const cdp = await context.newCDPSession(page);
-  return { page, pen: chromiumPen(cdp), touch: touchOf(cdp), errors, done: () => context.close() };
-}
 // (a button of the rail's or the page bar's)
-const strip = (page, name) => page.locator('#book .bk-lane .bk-island').getByRole('button', { name, exact: true });
+const strip = (page, name) => page.locator('#book .bk-column .bk-island').getByRole('button', { name, exact: true });
 const ink = (page, name) => page.locator('#book .bk-palette').getByRole('menuitemradio', { name, exact: true });
 // A rail's or bar's button's middle on the screen
-const at = async (page, name) => centre(await strip(page, name).boundingBox());
+const at = async (page, name) => middleOf(await strip(page, name).boundingBox());
 async function tapped(touch, point) {
   await touch.down([point]);
   await touch.up();
 }
-const centre = box => [box.x + box.width / 2, box.y + box.height / 2];
 
 // The card open and nothing of it hidden: its corners (inside their rounding) and both ends of each of its lines and
 // buttons are the card's own on the screen, so neither a clipping box nor the screen's edge nor anything over it hides
@@ -151,7 +130,12 @@ async function whole(page, selector, what) {
         [`${name}'s end`, b.right - 2, b.top + b.height / 2],
       );
     }
-    return points.filter(([, x, y]) => !card.contains(document.elementFromPoint(x, y))).map(([name]) => name);
+    // (each with what's there instead)
+    const over = el => (el ? `${el.tagName.toLowerCase()}.${[...el.classList].join('.')}` : 'off the screen');
+    return points
+      .map(([name, x, y]) => [name, document.elementFromPoint(x, y)])
+      .filter(([, el]) => !card.contains(el))
+      .map(([name, el]) => `${name} (under ${over(el)})`);
   }, selector);
   assert.deepEqual(hidden, [], `${what}: whole`);
 }

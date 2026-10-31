@@ -7,8 +7,9 @@ import { join } from 'node:path';
 import { playwright } from '../../../shared/browser/browser.mjs';
 import { harness } from './harness.ts';
 
-// (the push checks have Playwright's Chromium: hqloads.test.ts)
-process.env.CHROMIUM_PATH ??= playwright().chromium.executablePath();
+// (the push checks have Playwright's Chromium, hqloads.test.ts: on the tests helper only its headless shell, which
+// tests-on-helper.sh names)
+process.env.CHROMIUM_PATH ??= process.env.BROWSER_HEADLESS_SHELL ?? playwright().chromium.executablePath();
 let theme = '';
 const h = await harness('pagecheck', {
   before: repo => mkdirSync((theme = join(repo, 'theme/hq/shell')), { recursive: true }),

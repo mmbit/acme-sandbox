@@ -1,0 +1,280 @@
+/* Assigning (bookassign.js, bookassignlist.js, bookassignfly.js): the short list and everyone's sheet, each person's
+   initial in a circle, their whole name and what they are; the row the line or the pointer is on lit in Ink's chosen
+   colour; the line drawn over everything and the copy flying to a name; and the tags a scrap wears for whom it went to.
+   The cards and the line live on the screen (fixed), the tags in the page's px with the scrap.
+ */
+
+/* ---- a card of people: as wide as its longest name, on the screen whole (its max-width: bookassignlist.js put) */
+#book > .bk-assign {
+  position: fixed;
+  z-index: 56;
+  top: auto;
+  height: auto;
+  width: max-content;
+  min-width: 260px;
+  padding: 6px;
+  border: 2px solid var(--bk-ink);
+  border-radius: 18px;
+  display: flex;
+  flex-direction: column;
+  transform-origin: 0 0;
+  animation: bk-assign-in 0.22s cubic-bezier(0.2, 0.8, 0.3, 1.25) backwards;
+}
+#book > .bk-assign[inert] {
+  pointer-events: none;
+}
+.bk-assign-head {
+  margin: 6px 14px 4px;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--bk-muted, #5a5478);
+}
+
+/* a person: 56 px tall, their initial in a ring, their name in bold, guest or agent at the right */
+.bk-assign .bk-person {
+  all: unset;
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: 40px 1fr auto;
+  align-items: center;
+  gap: 14px;
+  min-height: 56px;
+  padding: 6px 14px 6px 8px;
+  border: 2px solid transparent;
+  border-radius: 13px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.bk-assign-short .bk-person {
+  animation: bk-assign-row 0.24s cubic-bezier(0.2, 0.8, 0.3, 1.4) backwards;
+  animation-delay: calc(0.05s + var(--i) * 0.1s);
+}
+.bk-assign .bk-person[hidden] {
+  display: none;
+}
+.bk-assign .bk-face,
+.bk-tag .bk-face {
+  display: grid;
+  place-items: center;
+  box-sizing: border-box;
+  border: 2px solid var(--bk-ink);
+  border-radius: 50%;
+  background: var(--bk-paper, #fffaf0);
+  font-weight: 700;
+  line-height: 1;
+}
+.bk-assign .bk-face {
+  width: 40px;
+  height: 40px;
+  font-size: 18px;
+}
+.bk-assign .bk-name {
+  font-size: 20px;
+  font-weight: 700;
+  /* (a name too long for the screen wraps: never cut) */
+  overflow-wrap: anywhere;
+}
+.bk-assign .bk-kind {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--bk-muted, #5a5478);
+}
+.bk-assign .bk-person[data-lit] {
+  border-color: var(--bk-ink);
+  background: var(--bk-chosen, #d6ea3c);
+  color: var(--bk-ink);
+}
+.bk-assign .bk-person[data-lit] .bk-kind {
+  color: inherit;
+}
+@media (hover: hover) {
+  .bk-assign .bk-person:not([data-lit]):hover {
+    background: var(--bk-ink-soft);
+  }
+}
+.bk-assign .bk-person:focus-visible {
+  outline: 2px solid var(--bk-ink);
+  outline-offset: -2px;
+}
+
+/* More…: under a rule, three dots in a grey ring, everyone's count beside it */
+.bk-assign-more {
+  margin-top: 4px;
+  position: relative;
+}
+.bk-assign-more::before {
+  content: '';
+  position: absolute;
+  top: -4px;
+  left: 12px;
+  right: 12px;
+  border-top: 1.5px solid var(--bk-edge);
+}
+.bk-assign-more .bk-face {
+  display: flex;
+  justify-content: center;
+  gap: 4px;
+  background: var(--bk-ink-soft);
+}
+.bk-assign-more .bk-face i {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--bk-ink);
+}
+.bk-assign-more small {
+  margin-left: 4px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--bk-muted, #5a5478);
+}
+
+/* ---- everyone: Share with and Done, a search, the rows scrolling under them */
+#book > .bk-assign-all {
+  min-width: min(340px, calc(100vw - 16px));
+  max-height: min(600px, calc(100vh - 16px));
+}
+.bk-assign-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 4px 0 14px;
+  font-size: 19px;
+}
+.bk-assign-done {
+  all: unset;
+  min-height: 44px;
+  padding: 0 12px;
+  border-radius: 10px;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--bk-muted, #5a5478);
+  cursor: pointer;
+}
+.bk-assign-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 2px 6px 8px;
+  padding: 0 14px;
+  min-height: 44px;
+  border: 2px solid var(--bk-ink);
+  border-radius: 22px;
+}
+.bk-assign-search svg {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: var(--bk-ink);
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+.bk-assign-search input {
+  all: unset;
+  flex: 1;
+  min-width: 0;
+  min-height: 40px;
+  font-size: 16px;
+  -webkit-user-select: text;
+  user-select: text;
+}
+.bk-assign-search input::placeholder {
+  color: var(--bk-muted, #5a5478);
+}
+.bk-assign-rows {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-top: 1.5px solid var(--bk-edge);
+  padding-top: 4px;
+}
+.bk-assign-none {
+  margin: 12px 14px;
+  color: var(--bk-muted, #5a5478);
+}
+
+@keyframes bk-assign-in {
+  from {
+    opacity: 0;
+    scale: 0.9;
+  }
+}
+@keyframes bk-assign-row {
+  from {
+    opacity: 0;
+    scale: 0.7;
+  }
+}
+
+/* ---- the line out of the ring, over everything; the copy in flight, over that */
+#book > .bk-assign-line {
+  position: fixed;
+  z-index: 57;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+.bk-assign-line path {
+  fill: none;
+  stroke: var(--bk-ink);
+  stroke-width: 2.5px;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+#book > .bk-assign-copy {
+  position: fixed;
+  z-index: 58;
+  pointer-events: none;
+  filter: drop-shadow(0 8px 10px rgb(42 35 82 / 25%));
+  will-change: transform;
+}
+.bk-assign-copy canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* ---- a scrap's tags at its bottom-right corner, inside it: an initial in a circle, a tick by one who answered.
+   A tag just given pops in once its copy has landed (--wait). They take no press: the scrap's are its own. */
+#book .bk-groups > .bk-tags {
+  display: flex;
+  gap: 4px;
+  translate: calc(-100% - 8px) calc(-100% - 8px);
+  pointer-events: none;
+}
+.bk-tag {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  color: var(--bk-ink);
+}
+.bk-tag .bk-face {
+  width: 26px;
+  height: 26px;
+  font: 700 13px/1 var(--bk-font, system-ui, sans-serif);
+}
+.bk-tag svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: var(--bk-ink);
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.bk-tag[data-new] {
+  animation: bk-assign-row 0.3s cubic-bezier(0.2, 0.8, 0.3, 1.6) backwards;
+  animation-delay: var(--wait, 0ms);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #book > .bk-assign,
+  .bk-assign-short .bk-person,
+  .bk-tag[data-new] {
+    animation: none;
+  }
+}

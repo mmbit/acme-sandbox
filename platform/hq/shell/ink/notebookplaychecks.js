@@ -1,6 +1,7 @@
 // What notebookplay.js checks of a request: the coordinator's own (pagechecks.ts, pagescraps.ts), copied with the same
 // refusals' status and words. Each check throws its refusal, an Error with .status. No DOM.
 import { TEXT_MAX } from './notebookparts.js';
+import { frameOf } from './bookversionframes.js';
 
 // A refusal as the coordinator answers it: a status and its words (a bare status: server.ts's ERRORS word)
 export const refuse = (status, words = status === 404 ? 'not found' : 'refused') => {
@@ -89,6 +90,9 @@ export function picturesOf(v, ours) {
     return { file: c.file, x: round(c.x), y: round(c.y), w: round(c.w), h: round(c.h), tilt: round(c.tilt) };
   });
 }
+// A reply's frame, as notebooksend.ts replyTo refuses one sent unfit (none sent: null).
+export const replyFrameOf = v =>
+  v === undefined ? null : (frameOf(v) ?? refuse(400, "a reply's frame is a box {x, y, w, h} in page px"));
 // A note's words, spoken, typed or written: { words, said }
 export function wordsOf(v, said) {
   if (v == null || v === '') return { words: '', said: null };

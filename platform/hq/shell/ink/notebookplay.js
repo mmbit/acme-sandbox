@@ -1,24 +1,27 @@
 // The Notebook's store played in memory: every route of the coordinator's (notebook.ts, notebookgroups.ts,
 // notebooksend.ts, notebookpictures.ts) with the same answers and refusals, for dev mode (notebookdata.js, on
-// mock/notebook.json) and book-check's stand-in. No DOM: the browser and node import it alike. The board's own
-// notebooks only, every route the board's session.
-//   - seed: { notebooks, pages, groups, slips, asks, names } as the store keeps them, a group's ink, texts, pictures and
-//     anchor as values, not JSON; asks: the agents' desk-phone cards about a note, as bookasks.ts's asksOn lists them,
-//     each with its note (asks). names: an agent's name by id, for a scrap's
-//     owner_name. A page's send_at is in ms (a seeded sent page's: some time gone). slips: the agents' answers, as
-//     slipOf lists them (on a group: grp), their spots and forms as values. A group's asking and tried: where its
-//     answer's run and its try are (notebookplayanswers.js). No seed: My journal with one blank page.
+// mock/notebook.json) and every HQ browser check's stand-in (notebookroute.mjs lists them: a change runs those). No
+// DOM: the browser and node import it alike. The board's own notebooks only, every route the board's session.
+// (every HQ browser check's stand-in)
+//   - seed: { notebooks, pages, groups, slips, asks, names, people } as the store keeps them, a group's ink, texts,
+//     pictures and anchor as values, not JSON; asks: the agents' desk-phone cards about a note, as bookasks.ts's
+//     asksOn lists them, each with its note (asks), or with its group for a design ask on an Asks page. names: an
+//     agent's name by id, for a scrap's owner_name. people: whom a scrap can be handed to (notebookplaypeople.js). A
+//     page's send_at is in ms (a seeded sent page's: some time gone). slips: the agents' answers, as slipOf lists
+//     them (on a group: grp), their spots and forms as values. A group's asking and tried: where its answer's run and
+//     its try are (notebookplayanswers.js). No seed: My journal with one blank page.
 //   - now(): the time in ms (a story's clock). sendMs: a reply's time to undo (notebooksend.ts's SEND_MS).
 //   - A page's picture is null here: in dev mode the browser draws it (notebookpicture.js).
-import { inkOf, labelOf, pictureOf, refuse, wordsOf } from './notebookplaychecks.js';
+import { inkOf, labelOf, pictureOf, refuse, replyFrameOf, wordsOf } from './notebookplaychecks.js';
 import { boxOf, landingPage } from './notebookstack.js';
 import { chapterOf, inChapters } from './notebookchapters.js';
 import { BOARD, GROUP_ROUTES, groupOf, insertGroup, keepPicture, pictureUrl, putAside } from './notebookplaygroups.js';
 import { seededGroup, unitsOn } from './notebookplaygroups.js';
 import { search } from './notebookplaysearch.js';
+import { PEOPLE_ROUTES } from './notebookplaypeople.js';
 import { closeRound, unwrapRound } from './notebookplayrounds.js';
 import { setCover, shelfOf } from './notebookplayshelf.js';
-import { ANSWER_ROUTES, groupOn, ran, slipRow } from './notebookplayanswers.js';
+import { ANSWER_ROUTES, groupOn, ran, rootOf, slipRow } from './notebookplayanswers.js';
 import { SCREEN_SHAPES } from './booklayout.js';
 import { ZOOM_KEPT } from './bookrow.js';
 
@@ -84,6 +87,7 @@ function store(seed, now, sendMs) {
     slips: [],
     asks: [...(seed?.asks ?? [])],
     names: { ...seed?.names },
+    people: [...(seed?.people ?? [])],
     // a note's time to go (ms), by its id: one seeded is long gone
     notes: new Map(),
     // the pictures uploaded (a seeded group's files: null, mock/'s)
@@ -99,6 +103,7 @@ function store(seed, now, sendMs) {
     notebook: id => s.notebooks.find(n => n.id === id),
     page: id => s.pages.find(p => p.id === id),
     group: id => s.groups.find(g => g.id === id),
+    name: id => s.names[id] ?? id, // (an agent's, else its id.)
     shut: p => p.send_at !== null,
     gone: p => p.send_at !== null && p.send_at <= s.now(),
     noteGone: id => (s.notes.get(id) ?? 0) <= s.now(),
@@ -196,6 +201,7 @@ const ROUTES = {
   'GET /api/notebooks/pages/groups': listGroups,
   ...GROUP_ROUTES,
   ...ANSWER_ROUTES,
+  ...PEOPLE_ROUTES,
   'POST /api/notebooks/groups/reply': replyTo,
   'POST /api/notebooks/replies/delete': deleteReply,
   'POST /api/notebooks/pictures': uploadPicture,
@@ -204,7 +210,6 @@ const ROUTES = {
   'POST /api/notebooks/round/unwrap': unwrapRound,
   'POST /api/notebooks/cover': setCover,
   'GET /api/book/search': search,
-  'POST /api/requests/answer': answerAsk,
 };
 function askAbout(s, group, card) {
   const g = s.group(Number(group));
@@ -214,23 +219,11 @@ function askAbout(s, group, card) {
     ...card,
     id: s.next('ask'),
     note: g.note,
-    name: card.name ?? s.names[card.agent] ?? card.agent,
+    name: card.name ?? s.name(card.agent),
   };
   s.asks.push(asked);
   s.changed(s.page(g.page).notebook, g.page);
   return JSON.parse(JSON.stringify(asked));
-}
-// The desk phone's answer to a card (jobs.ts answerRequest), for one under a group: answered, its group's page read
-// again. Its questions all answered first (an optional one may be blank), as the desk phone's own route refuses.
-function answerAsk(s, b) {
-  const a = s.asks.find(x => x.id === Number(b?.id) && x.status === 'open');
-  if (!a) refuse(404);
-  if ((a.questions ?? []).some((q, k) => !q.optional && !String(b.answers?.[k] ?? '').trim()))
-    refuse(400, 'a question still needs its answer');
-  Object.assign(a, { status: 'answered', answer: String(b.answer ?? ''), answered: s.stamp() });
-  const g = s.groups.find(x => x.note === a.note);
-  if (g) s.changed(s.page(g.page).notebook, g.page);
-  return { ok: true };
 }
 function listNotebooks(s) {
   s.mine();
@@ -331,7 +324,9 @@ function replyTo(s, b) {
   const said = wordsOf(b.words, b.said ?? 'written'),
     ink = b.ink === undefined ? [] : inkOf(b.ink);
   if (!said.words && !ink.length) refuse(400, 'a reply has words or ink');
-  const top = answered.parent === null ? answered : s.group(answered.parent);
+  // (an empty reply is refused before its frame is read, as in notebooksend.ts replyTo)
+  const frame = replyFrameOf(b.frame);
+  const top = rootOf(s, answered);
   const g = insertGroup(
     s,
     p,
@@ -340,7 +335,7 @@ function replyTo(s, b) {
     { ink, texts: [], pictures: [] },
     {
       ...{ parent: top.id, answers: slip.id, words: said.words, said: said.said },
-      ...{ status: 'sent', note: s.next('note') },
+      ...{ status: 'sent', note: s.next('note'), frame },
     },
   );
   s.notes.set(g.note, s.now() + s.sendMs);

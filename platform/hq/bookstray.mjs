@@ -3,10 +3,7 @@
 // iOS's long-press callout where the engine knows it; while the intercom's words still select and copy. Run it in
 // WebKit too (--webkit), the iPad's engine.
 import assert from 'node:assert/strict';
-import { heard } from './bookstrip.mjs';
-import { DESKTOP, MINI } from './bookkit.mjs';
-
-const UPRIGHT = { width: MINI.height, height: MINI.width };
+import { DESKTOP, UPRIGHT, heard } from './bookkit.mjs';
 
 // c: book-check.mjs's played store and helpers
 export function strayStories(c) {
@@ -33,8 +30,8 @@ async function stray(browser, c) {
       await c.settled(page, upright ? 'folded' : 'open');
       // HQ's page with the book folded (upright) or beside it: every point of it
       assert.deepEqual(await selectable(page, 'hq'), [], `HQ's page selects nothing (${size})`);
-      await dragged(page, await middle(page, '#world'), [8, 8]);
-      await page.mouse.dblclick(...(await middle(page, '#world')));
+      await dragged(page, await quarterAcross(page, '#world'), [8, 8]);
+      await page.mouse.dblclick(...(await quarterAcross(page, '#world')));
       assert.equal(await selected(page), '', `a drag or a double click on HQ's canvas selects nothing (${size})`);
       await copied(page, size);
       await page.keyboard.press('Escape');
@@ -111,7 +108,8 @@ async function dragged(page, from, to) {
   await page.mouse.up();
 }
 const selected = page => page.evaluate(() => getSelection().toString());
-async function middle(page, selector) {
+// A point a quarter across an element, halfway down
+async function quarterAcross(page, selector) {
   const box = await page.locator(selector).boundingBox();
   return [box.x + box.width / 4, box.y + box.height / 2];
 }

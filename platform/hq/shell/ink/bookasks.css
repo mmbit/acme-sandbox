@@ -142,3 +142,31 @@
   stroke-linecap: round;
   stroke-linejoin: round;
 }
+/* Where an ask's thing is (an ask about one thing on a page): the page and its selector, a tap opening it there.
+ */
+#book .ask-spot {
+  all: unset;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  min-height: 32px;
+  margin-top: 4px;
+  color: #5a5478;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+#book .ask-spot i {
+  font-style: normal;
+  color: var(--bk-cloth);
+}
+#book .ask-spot:hover {
+  color: var(--bk-cloth);
+  text-decoration: underline;
+}
+#book .ask-spot:focus-visible {
+  outline: 2px solid var(--bk-cloth);
+  outline-offset: 2px;
+}

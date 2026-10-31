@@ -1,9 +1,16 @@
 // Measured server pressure for the existing next-step alert. It changes no admission or share rule.
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { memoryWatch, type MemoryCause, type MemoryVerdict } from './lowmemory.ts';
+import type { AdmissionInput } from './admission.ts';
+import {
+  memoryWatch,
+  type CalmBaseline,
+  type MemorySource,
+  type MemoryCause,
+  type MemoryVerdict,
+} from './lowmemory.ts';
 
-type Reading = { freeMb: number; uses: Map<number, number>; room: boolean };
+type Reading = { freeMb: number; uses: Map<number, number>; room: boolean; inputs?: AdmissionInput[] };
 export type Pressure = {
   verdict: MemoryVerdict;
   cause?: MemoryCause;
@@ -15,6 +22,9 @@ export type Pressure = {
     room: boolean;
     uses: Record<string, number>;
     memoryVerdict: MemoryVerdict;
+    source: MemorySource | null;
+    baselineUsed: CalmBaseline | null;
+    calmSource: CalmBaseline | null;
     calm: { freeMb: number; uses: Record<string, number> } | null;
     lowMb: number;
     clearMb: number;
@@ -27,9 +37,11 @@ export type Pressure = {
 export function overloadWatch(lowMb: number, clearMb: number, cgroup = '/sys/fs/cgroup', host = '/proc/pressure/cpu') {
   const memoryOf = memoryWatch(lowMb, clearMb);
   let cpuBusy = false;
-  return ({ freeMb, uses, room }: Reading): Pressure => {
+  return ({ freeMb, uses, room, inputs }: Reading): Pressure => {
     const readStartedAt = Date.now();
-    const memory = memoryOf(freeMb, uses);
+    const source = watchSource(inputs);
+    const memory = memoryOf(freeMb, uses, source ?? undefined);
+    const calmSource = memoryOf.baseline();
     const hostCpuPressure = readFileSync(host, 'utf8'),
       workerCpuPressure = readFileSync(join(cgroup, 'cpu.pressure'), 'utf8');
     const cpu = Math.max(cpuStall(hostCpuPressure), cpuStall(workerCpuPressure));
@@ -53,6 +65,9 @@ export function overloadWatch(lowMb: number, clearMb: number, cgroup = '/sys/fs/
         room,
         uses: Object.fromEntries(uses),
         memoryVerdict: memory.verdict,
+        source: structuredClone(source),
+        baselineUsed: memory.verdict === 'low' ? calmSource : null,
+        calmSource,
         calm: memoryOf.inspect(),
         lowMb,
         clearMb,
@@ -61,6 +76,14 @@ export function overloadWatch(lowMb: number, clearMb: number, cgroup = '/sys/fs/
         cpuBusy,
       },
     };
+  };
+}
+
+function watchSource(inputs?: AdmissionInput[]): MemorySource | null {
+  if (!inputs) return null;
+  return {
+    free: inputs.find(input => input.operation === 'freeMb' && input.young === false) ?? null,
+    room: inputs.find(input => input.operation === 'room' && input.young === true) ?? null,
   };
 }
 

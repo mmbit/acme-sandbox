@@ -60,6 +60,12 @@
 !platform/worker/src/estimating.ts
 # Disk-accounting failure reasons shared by the worker and coordinator receipts.
 !platform/worker/src/accounting.ts
+# Pure admission calculations reused for recorded notice evidence.
+!platform/worker/src/availability.ts
+!platform/worker/src/reserve.ts
+!platform/worker/src/gateevidence.ts
+# Immutable authorized inspection snapshots shared with the coordinator.
+!platform/worker/src/immutable.ts
 # the order numbers' check digit, which payments.ts gives and a company's kits check (shared/ordernumber)
 !shared/ordernumber/ordernumber.js
 # the holidays' one table, which a company's kits read (kits/holidays: the order emails' sign-off)
@@ -73,6 +79,8 @@
 # and its live line and the stroke's shapes, which it imports
 !shared/review/inklive.js
 !shared/review/inkshape.js
+# the pencil ring round the thing an ask's scrap is about (platform/coordinator/src/ink/askspot.ts.)
+!shared/review/ring.js
 # the plan levels' text, which hq's help and the coordinator's refusals and planning prompt share (names.ts, proposals.ts).
 !platform/worker/hq/levels.ts
 # what holds work in words, which hq's estimates and the CEO's summary share (threats.ts).
@@ -104,6 +112,10 @@
 # a note group's parts as one (joined, shifted, a lasso's picks, typed boxes), which the store and its play share
 # (notebookparts.js)
 !platform/hq/shell/ink/notebookparts.js
+# a reply's frame on a try's version, which the store keeps and its play shares, and the overlap it reads with
+# (bookversionframes.js, bookgroupmath.js)
+!platform/hq/shell/ink/bookversionframes.js
+!platform/hq/shell/ink/bookgroupmath.js
 # a scrap unit and a page's masonry of them, which the store keeps and draws pages by and its play shares
 # (scrapunit.js, masonry.js.)
 !platform/hq/shell/ink/scrapunit.js
@@ -115,6 +127,9 @@
 # on a call in, which the call's sketch tool cuts it into (platform/coordinator/src/ink/bookrender.ts, bookreads.ts.
 !platform/hq/shell/ink/bookanswerart.js
 !platform/hq/shell/ink/booksharefiles.js
+# a try's versions as the book shows them, which the book's page picture draws them by (bookversionsof.js;
+# platform/coordinator/src/ink/bookpicture.ts.)
+!platform/hq/shell/ink/bookversionsof.js
 !kits
 **/node_modules
 **/*.test.ts

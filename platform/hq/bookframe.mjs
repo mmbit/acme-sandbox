@@ -274,7 +274,7 @@ async function onDesk(browser, c, options = {}, viewport = DESKTOP) {
 const box = (page, selector) => page.locator(selector).first().boundingBox();
 // The boxes of the islands' stack that show, one column or two
 const stackOf = page =>
-  page.$$eval('#book nav .bk-islands [role=toolbar]', all =>
+  page.$$eval('#book nav .bk-column [role=toolbar]', all =>
     all.map(el => el.getBoundingClientRect().toJSON()).filter(r => r.width),
   );
 const spineLeft = page =>

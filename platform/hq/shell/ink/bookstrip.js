@@ -1,9 +1,8 @@
-// The tool rail: one row at the paper's foot, centred over the page bar, that always fits and never scrolls (the board,
-// call 170): Select, the pen and the marker (one tool, split in two), the eraser, shapes, Text, then Undo and Redo
+// The tools on the rail at the paper's right edge (bookui.js), one column that fits and never scrolls: Select, the pen
+// (the marker the same tool, by a hold or its card: bookpalette.js), the eraser, shapes, Text, then Undo and Redo
 // (bookrail.js). A tap picks a tool at once. A finger, a pen or the mouse pressed on the rail and slid along it shows
-// the tool under it and picks it on the lift: nothing on the rail scrolls, so no hold is needed. The tool in use
-// pressed again opens its card (bookpalette.js). Ctrl held and the wheel over the page steps through the tools
-// (bookpan.js asks cycle()).
+// the tool under it and picks it on the lift. The tool in use pressed again opens its card (bookpalette.js). Ctrl held
+// and the wheel over the page steps through the tools (bookpan.js asks cycle()). (the rail at the spine)
 //
 // st: booktools.js's state (book, mode, buttons); setMode: bookpalette.js's.
 import { stylesheet } from '../../util.js';
@@ -18,7 +17,7 @@ export function mountStrip(st, setMode) {
   sliding(island('tools'), mode => setMode(st, mode));
   return {
     // One tool on along the rail (by 1) or back (by −1), round from the last to the first; the pen and the marker one
-    // stop, at the half last used
+    // stop, the one last used
     cycle(by) {
       const stops = TOOLS.map(t => t.mode).filter(m => m !== (st.ink === 'pen' ? 'highlighter' : 'pen')),
         i = stops.indexOf(st.mode === 'pen' || st.mode === 'highlighter' ? st.ink : st.mode);
@@ -30,16 +29,16 @@ export function mountStrip(st, setMode) {
 
 // A press on the rail moved along it slides: the tool under it lit and named, the one it lifts on picked. A press that
 // doesn't move is the button's own click (a tap, or the tool in use pressed again for its card). Only the tools are
-// picked by a slide: lifted on Undo or Redo, nothing happens. (s: the slide under way, or null: { id, x, on, over })
+// picked by a slide: lifted on Undo or Redo, nothing happens. (s: the slide under way, or null: { id, y, on, over })
 function sliding(el, pick) {
   let s = null;
   el.addEventListener('pointerdown', e => {
     if (!e.isPrimary || (e.pointerType === 'mouse' && e.button !== 0) || !e.target.closest?.('.bk-btn')) return;
-    s = { id: e.pointerId, x: e.clientX, on: false, over: null };
+    s = { id: e.pointerId, y: e.clientY, on: false, over: null };
   });
   el.addEventListener('pointermove', e => {
     if (!s || e.pointerId !== s.id) return;
-    if (!s.on && Math.abs(e.clientX - s.x) <= SLIDE_PX) return;
+    if (!s.on && Math.abs(e.clientY - s.y) <= SLIDE_PX) return;
     if (!s.on) {
       s.on = true;
       el.dataset.sliding = '';
@@ -49,10 +48,10 @@ function sliding(el, pick) {
         /* lifted already */
       }
     }
-    // (the tool level with the finger along the rail, though it drifts above or below it)
+    // (the tool level with the finger along the rail, though it drifts off it to either side)
     const r = el.getBoundingClientRect(),
-      x = Math.max(r.left + 1, Math.min(r.right - 1, e.clientX));
-    over(document.elementFromPoint(x, r.top + r.height / 2)?.closest('.bk-btn[data-mode]'));
+      y = Math.max(r.top + 1, Math.min(r.bottom - 1, e.clientY));
+    over(document.elementFromPoint(r.left + r.width / 2, y)?.closest('.bk-btn[data-mode]'));
   });
   const over = b => {
     if (b === s.over) return;

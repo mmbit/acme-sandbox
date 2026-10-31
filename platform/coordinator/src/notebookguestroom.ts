@@ -6,6 +6,7 @@ import * as handwriting from './handwriting.ts';
 import { fetchPicture } from './ink/bookfetch.ts';
 import * as files from './notebookguestfiles.ts';
 import * as notebooks from './notebookguests.ts';
+import { shelfOf } from './notebookguestshelf.ts';
 import * as pictures from './notebookpictures.ts';
 import * as bookpicture from './ink/bookpicture.ts';
 import * as slips from './ink/bookslips.ts';
@@ -76,6 +77,7 @@ function serveRead(req: IncomingMessage, res: ServerResponse, name: string, path
   }
   if (path === '/') return files.servePage(res, name, guests.langOf(guests.signedIn(req)!));
   if (files.serveFile(res, path)) return;
+  if (path === '/api/shelf') return answer(res, shelfOf(name));
   if (path === '/api/pages')
     return answer(res, guestUrls(notebooks.guestPages({ notebook: url.searchParams.get('notebook') }, name)));
   if (path === '/api/list')

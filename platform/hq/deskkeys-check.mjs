@@ -168,9 +168,9 @@ async function checkIn(browser, look, size) {
     }
   };
 
-  // ---- a card brought back for a look: Good now lit, Add notes plain, with Care's line over it
+  // ---- a card brought back for a look: Good now lit, Add notes plain, with Care's line over it (in its slot)
   await phoneOn(CARDS.back);
-  await page.waitForSelector('#phone-screen > .app-line');
+  await page.waitForSelector('#phone-screen > .line-slot > .app-line');
   const back = await rowOf(page, '.req .btns', lit);
   expect(() => assert.deepEqual(back.lit, ['Good now']), 'a card brought back lights Good now alone');
   expect(() => keysTheirSize(back, size, renderer), 'a card brought back');
@@ -179,7 +179,7 @@ async function checkIn(browser, look, size) {
     const [past, x] = ['.device header .past-btn', '.device header .x'].map(s =>
       document.querySelector(s).getBoundingClientRect(),
     );
-    const line = document.querySelector('#phone-screen > .app-line'),
+    const line = document.querySelector('#phone-screen > .line-slot > .app-line'),
       arrow = line.querySelector('i').getBoundingClientRect();
     return {
       between: x.left - past.right,
