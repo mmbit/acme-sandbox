@@ -857,11 +857,21 @@ body.touring #zoom, body.touring #status, body.touring #hint { display: none; }
   .callbubble .cb-eye { left: 7px; top: 7px; width: 22px; height: 17px; }
   .callbubble .cb-eye svg { width: 13px; height: 13px; }
 }
+/* and on a short one (a phone on its side) smaller still: the book's page there has little room clear of its heading,
+   dates and scraps (floating.js clearSpot). */
+@media (max-height: 499px) {
+  .callbubble { width: 96px; }
+  .callbubble .cb-face { height: 52px; }
+  .callbubble .cb-face > img { width: 22px; height: 44px; }
+  .callbubble .cb-keys button { padding: 0 3px; font-size: 11px; }
+  .callbubble .cb-keys .cb-hangup { width: 28px; }
+}
 @media (prefers-reduced-motion: reduce) { .callbubble .cb-face > *, .callbubble .cb-eye svg, .intercom .call .cf-figure > *, .intercom .call .lines li { animation: none !important; } #call-layer, #call-layer.leaving { animation: none; } } /* (the little screen, the lines.) */
 /* A call's cards (shell/ink/calldraw.js; Ink's folder): the agent's ask to see,
    with Show and Not now, and the page a call left, kept or thrown away; over HQ and the call alike, in a toast's look,
    waiting until tapped. */
-#call-cards { position: fixed; top: calc(70px + var(--sat)); left: 50%; transform: translateX(-50%); z-index: 46; display: grid; gap: 8px; width: min(92vw, 380px); }
+#call-cards { position: fixed; top: calc(70px + var(--sat)); left: calc((100vw - var(--book-room, 0px)) / 2); transform: translateX(-50%); z-index: 46; display: grid; gap: 8px;
+  width: min(calc(.92 * (100vw - var(--book-room, 0px))), 380px); }
 #call-cards:empty { display: none; }
 #call-cards .call-card p { margin: 0 0 8px; }
 #call-cards .call-card .row { display: flex; gap: 8px; justify-content: flex-end; }

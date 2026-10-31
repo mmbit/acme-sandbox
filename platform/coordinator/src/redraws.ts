@@ -214,6 +214,7 @@ function mergedBranches() {
 
 // Unary + removes the CTE column affinity so SQLite can seek the branch expression index. Waiters are open tasks, read
 // from their own index (db.ts jobs_open_tasks): a thread's done jobs aren't read.
+// A source's kind and thread come from that branch index, a replacement's thread from db.ts jobs_listed: never their rows.
 function holds(waiter?: string) {
   const open = (job: string) =>
     `${job}.kind = 'work' and ${job}.pr is null and ${job}.status in ('queued', 'running', 'blocked')`;
@@ -221,7 +222,7 @@ function holds(waiter?: string) {
       select s.origin, s.branch, replacement.id, source.thread source_thread, replacement.thread replacement_thread
       from redraw_states s cross join jobs source indexed by jobs_work_branch
         on coalesce(source.branch, 'job/' || source.id) = +s.origin and source.kind = 'work'
-      join jobs replacement on replacement.id = coalesce(s.job, source.id)
+      join jobs replacement indexed by jobs_listed on replacement.id = coalesce(s.job, source.id)
       where s.state not in ('merged', 'dropped')),
     redraw_waiters as materialized (
       select s.origin, s.branch, s.id, waiting.id waiter from redraw_sources s

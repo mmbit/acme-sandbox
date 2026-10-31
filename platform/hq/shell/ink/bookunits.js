@@ -18,7 +18,9 @@ import { UNIT_W, bodyOf, resized } from './scrapunit.js';
 import { ask } from './notebookdata.js';
 import { nameOf } from './bookhead.js';
 import { esc } from '../../util.js';
-import { word } from './bookscope.js';
+// (bookLang and companyFormats write a page's day in the book's language)
+import { bookLang, word } from './bookscope.js';
+import { companyFormats } from '../../world/clock.js';
 import { boxOf as inkBox } from './bookrow.js';
 import { scrapBox, union } from './bookselectmath.js';
 
@@ -136,19 +138,24 @@ export function layUnits(view, width) {
   page.origins = origins;
   page.places = l.places.map(p => ({ id: p.id, ...onPage(p, s), w: UNIT_W, h: heights.get(p.id) }));
   page.laid = laid;
-  page.headers = l.headers.map(h => ({ day: h.day, y: h.y / s + TITLE_H }));
+  page.headers = l.headers.map(h => ({ day: h.day, y: h.y / s + TITLE_H })).filter(h => !inkedOver(page, h.y));
   page.columns = l.columns;
   Object.assign(page, { x: 0, y: 0, w: width / s, h: l.height / s + TITLE_H, scale: s });
   drawCards(view);
   return moved;
 }
-// Where a new unit h tall (its scrap px) goes as the page's last, today's, in the page's px as layUnits lays it:
-// where a scrap lands (booklanding.js). null on a page not laid yet.
-export function nextPlace(page, h) {
+// Whether the board's own writing, kept where drawn (above its unit too), crosses the words of a day's date at y (the
+// page's px, bookgroups.css's .bk-day): the date gives way.
+const inkedOver = (page, y) =>
+  page.places.some(p => drawing(page, p.id) && reachOn(page, p).y0 < y + 26 && reachOn(page, p).y1 > y + 14);
+// Where a new unit h tall (its scrap px) goes as the page's last, today's: where a scrap lands (booklanding.js)
+export const nextPlace = (page, h) => placeAmong(page, { id: null, h, day: today() }, page.laid?.units.length);
+// Where a unit put among the page's laid units at an index goes, in the page's px as layUnits lays it: null on a page
+// not laid yet
+function placeAmong(page, unit, at) {
   if (!page.laid) return null;
-  const { units, width } = page.laid,
-    l = layout([...units, { id: null, h, day: today() }], width);
-  return onPage(l.places.at(-1), l.scale);
+  const l = layout(page.laid.units.toSpliced(at, 0, unit), page.laid.width);
+  return onPage(l.places[at], l.scale); // (the masonry's places in its units' order)
 }
 // A place in the masonry's px as the page's own, at the layout's scale
 const onPage = (p, s) => ({ x: (p.x + INSET) / s, y: p.y / s + TITLE_H });
@@ -205,11 +212,10 @@ function newUnit(page, box, y) {
       .sort((a, b) => b.y - a.y)[0];
   (page.pending ??= []).push(above ? { id, after: above.id } : { id, after: null, column });
   const units = page.laid?.units ?? [],
-    at = units.findIndex(u => u.id === above?.id),
+    at = units.findIndex(u => u.id === above?.id) + 1 || units.length, // (right after the unit above, else last)
     unit = above ? { id, h: 0, follows: true } : { id, h: 0, day: units.at(-1)?.day ?? today(), column },
-    laid = units.toSpliced(at < 0 ? units.length : at + 1, 0, unit),
-    place = page.laid && layout(laid, page.laid.width).places.find(p => p.id === id);
-  page.origins.set(id, place ? onPage(place, page.scale ?? 1) : { x: 0, y: Math.max(TITLE_H, box.y0 - PAD) });
+    place = placeAmong(page, unit, at);
+  page.origins.set(id, place ?? { x: 0, y: Math.max(TITLE_H, box.y0 - PAD) });
   return id;
 }
 // The masonry's column under an x on the page (its px), the nearest where it's beside the grid
@@ -232,11 +238,14 @@ export function madeUnit(page, temp, id) {
 }
 
 // An element as the store keeps it: in its unit's own px
-export function localOf(page, kind, el) {
+export const localOf = (page, kind, el) => byOrigin(page, kind, el, -1);
+// An element of the store's at its unit's place on the page, in the page's px
+export const laidOf = (page, kind, el) => byOrigin(page, kind, el, 1);
+function byOrigin(page, kind, el, sign) {
   const o = page.origins?.get(el.g);
   if (!o) return el;
   const copy = { ...el };
-  shift(kind, copy, -o.x, -o.y);
+  shift(kind, copy, sign * o.x, sign * o.y);
   return copy;
 }
 // An element moved by dx, dy in place (its points or its box)
@@ -271,39 +280,43 @@ function underOf(view, id) {
 
 // ---- the cards
 
+// Words the board reads (a heading, a date), marked so a minimised call covers as little of them as it can: by their own
+// box, not the page-wide line.
+const seen = words => `<span data-keep-in-sight>${esc(words)}</span>`;
 // The page's title, its days' dates, and a card for every unit (the scrap's paper, its room to write and the handle
 // at its foot), what hangs under each moved to its foot
 function drawCards(view) {
   const page = view.page;
   let layer = view.el.querySelector(':scope > .bk-units'),
-    grabs = view.el.querySelector(':scope > .bk-grabs');
+    handles = view.el.querySelector(':scope > .bk-handles');
   if (!layer) {
     layer = document.createElement('div');
     layer.className = 'bk-units';
     view.el.prepend(layer);
   }
   // (the handles over the page, where a press reaches them: the cards' layer is behind the paper's own box.)
-  if (!grabs) {
-    grabs = document.createElement('div');
-    grabs.className = 'bk-grabs';
-    view.el.append(grabs);
-    handles(view, grabs);
+  if (!handles) {
+    handles = document.createElement('div');
+    handles.className = 'bk-handles';
+    view.el.append(handles);
+    dragged(view, handles);
   }
   const open = !(page.sending || page.sent || page.readonly);
   layer.style.height = `${page.h}px`;
-  layer.innerHTML = `<h2 class="bk-page-title" style="width:${page.w}px">${esc(nameOf(page))}</h2>${page.headers
-    .map(h => `<p class="bk-day" style="top:${h.y}px;width:${page.w}px">${esc(dayWords(h.day))}</p>`)
+  layer.innerHTML = `<h2 class="bk-page-title" style="width:${page.w}px">${seen(nameOf(page))}</h2>${page.headers
+    .map(h => `<p class="bk-day" style="top:${h.y}px;width:${page.w}px">${seen(dayWords(h.day))}</p>`)
     .join('')}${page.places
     .map(p => {
       const body = bodyIn(page, p.id) + wordsOf(page, p.id),
         room = body > 0 && p.h - body > 8 ? `<div class="bk-room" style="top:${body}px"></div>` : '',
         // (the board's own drawing is ink on the page: no paper.)
         ink = drawing(page, p.id);
-      return `<div class="bk-unit"${ink ? ' data-drawing' : ''} data-unit="${p.id}" style="left:${p.x}px;top:${p.y}px;width:${p.w}px;height:${p.h}px">${room}</div>`;
+      // (what the board reads: a minimised call covers as little of it as it can.)
+      return `<div class="bk-unit"${ink ? ' data-drawing' : ''} data-keep-in-sight data-unit="${p.id}" style="left:${p.x}px;top:${p.y}px;width:${p.w}px;height:${p.h}px">${room}</div>`;
     })
     .join('')}`;
   // (no room to drag on the board's own drawing)
-  grab(grabs, open ? page.places.filter(p => !drawing(page, p.id)) : []);
+  placeHandles(handles, open ? page.places.filter(p => !drawing(page, p.id)) : []);
   for (const p of page.places) {
     const words = view.el.querySelector(`:scope > .bk-groups > .bk-words[data-g="${p.id}"]`);
     if (words) Object.assign(words.style, { left: `${p.x}px`, top: `${p.y + bodyIn(page, p.id)}px` });
@@ -315,8 +328,8 @@ function drawCards(view) {
   }
 }
 // A handle at every unit's foot, each kept as the page is laid again (the one held keeps its pointer)
-function grab(grabs, places) {
-  const had = new Map([...grabs.children].map(b => [b.dataset.unit, b]));
+function placeHandles(layer, places) {
+  const had = new Map([...layer.children].map(b => [b.dataset.unit, b]));
   for (const p of places) {
     let b = had.get(String(p.id));
     had.delete(String(p.id));
@@ -324,20 +337,19 @@ function grab(grabs, places) {
       b = Object.assign(document.createElement('button'), { type: 'button', className: 'bk-room-handle' });
       b.dataset.unit = p.id;
       b.setAttribute('aria-label', word('Make the room to write taller or shorter'));
-      grabs.append(b);
+      b.setAttribute('data-keep-clear', ''); // (a minimised call keeps clear of it.)
+      layer.append(b);
     }
     Object.assign(b.style, { left: `${p.x + p.w / 2}px`, top: `${p.y + p.h}px` });
   }
   for (const b of had.values()) b.remove();
 }
-const dayWords = day =>
-  new Date(`${day}T12:00`)
-    .toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })
-    .replace(',', '');
+// A page's day in the book's language, no comma: "Sat 31 Oct", "za 31 okt"
+const dayWords = day => companyFormats().day(day, bookLang(), { weekday: true, short: true }).replace(',', '');
 
 // A unit's handle dragged: its height follows (never into what's drawn: resized), the masonry laid again as it goes,
 // and saved as it's let go (/api/notebooks/groups/resize)
-function handles(view, layer) {
+function dragged(view, layer) {
   layer.addEventListener('pointerdown', e => {
     const b = e.target.closest('.bk-room-handle');
     if (!b) return;

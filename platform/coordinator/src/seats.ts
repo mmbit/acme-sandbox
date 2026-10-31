@@ -486,7 +486,9 @@ const lastWeek = (id: string) => {
 export function workerSeats() {
   const seats = listed();
   const kept = JSON.stringify(seats.filter(s => !s.removing).map(s => s.id));
-  db.prepare('delete from seats where id not in (select value from json_each(?))').run(kept);
+  // A seat's report that goes lets go of its jobs, as forget.
+  const gone = db.prepare('delete from seats where id not in (select value from json_each(?)) returning id').all(kept);
+  for (const { id } of gone as { id: string }[]) releaseSeat(id, true);
   seatsGone();
   return {
     seats: seats

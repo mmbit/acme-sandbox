@@ -58,3 +58,11 @@ test("a page's change: groups changed are edited, groups emptied deleted, the re
   );
   assert.deepEqual(deletes, [3]);
 });
+
+test("a unit's line laid on the page and taken back to its px is the same element, unchanged", () => {
+  const stored = { size: 2, points: [[1.76, 11.43, 0.48, 0]] },
+    back = { size: 2, points: [[1.76 + 1009 - 1009, 11.43 + 605 - 605, 0.48, 0]] };
+  assert.notEqual(back.points[0][0], 1.76);
+  const base = new Map([[1, { ...emptyParts(), ink: [keyOf(stored)] }]]);
+  assert.deepEqual(changesOf(base, new Map([[1, { ...emptyParts(), ink: [back] }]])), { edits: [], deletes: [] });
+});

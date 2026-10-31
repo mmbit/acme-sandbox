@@ -208,6 +208,7 @@ export const ASSETS: Record<string, URL> = {
   // a walk-through's: the frame and the minimised call over it, HQ's own bubble, and the watch-along's recorder
   'walk.js': new URL('./joinwalk.js', import.meta.url),
   'callbubble.js': new URL('../../hq/shell/callbubble.js', import.meta.url),
+  'floating.js': new URL('../../hq/shell/floating.js', import.meta.url),
   'watchalong.js': new URL('../../../shared/watchalong/watchalong.js', import.meta.url),
   'strokes.js': new URL('../../../shared/watchalong/strokes.js', import.meta.url),
   'vendor/rrweb-record.js': new URL('../node_modules/@rrweb/record/dist/record.js', import.meta.url), // (watchalong.ts RECORDER)

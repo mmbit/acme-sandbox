@@ -32,6 +32,7 @@ export function mountBookmarks(leaf, pages) {
   leaf.closest('#book').classList.add('bk-marked');
   s.nav = Object.assign(document.createElement('nav'), { className: 'bk-marks' });
   s.nav.setAttribute('aria-label', word('Chapters'));
+  s.nav.setAttribute('data-keep-clear', ''); // (a minimised call keeps clear of the tabs.)
   s.panel = Object.assign(document.createElement('div'), { className: 'bk-mk-guests', hidden: true });
   s.blank = Object.assign(document.createElement('div'), { className: 'bk-mk-blank', hidden: true });
   leaf.append(s.nav, s.panel, s.blank);

@@ -204,11 +204,19 @@ export async function onDesk(browser, c, { keep = false, viewport = DESKTOP, ini
 }
 export const tool = (page, name) => page.locator('#book').getByRole('button', { name, exact: true });
 // A tool taken in hand by a click (or a tap: how), unless it's in hand already: pressed again, it opens its card over
-// the paper beside the strip (bookstrip.js.)
+// the paper beside the strip (bookstrip.js.) The pen and the marker are one tool on the rail: the one not in use shows
+// only where the rail has room, and is otherwise picked on the card the other opens, pressed in hand (bookpalette.js).
 export async function pick(page, name, how = 'click') {
   const b = tool(page, name).first();
-  if ((await b.getAttribute('aria-pressed')) !== 'true') await b[how]();
+  if (!(await b.isVisible()) && INKS.includes(name)) {
+    const other = INKS.find(n => n !== name);
+    await pick(page, other, how);
+    await tool(page, other).first()[how]();
+    await page.locator('#book .bk-palette').getByRole('menuitemradio', { name, exact: true })[how]();
+    await page.keyboard.press('Escape');
+  } else if ((await b.getAttribute('aria-pressed')) !== 'true') await b[how]();
 }
+const INKS = ['Pen', 'Marker'];
 export const paperBox = page => page.locator('#book .bk-desk').boundingBox();
 // A line drawn with the mouse, from x across by dx
 export async function line(page, x, y, dx) {

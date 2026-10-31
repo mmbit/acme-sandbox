@@ -39,8 +39,8 @@
 // asks still open on it asked about first.
 // The tool strip's cards (bookcards.mjs): the preferences and the colours whole on the iPad mini, upright, on its side
 // and on a screen short enough that the strip scrolls, and on a desktop.
-// The tips book (booktips.mjs): the Tips control opens it flat in the middle, the contents beside the tip, every
-// tip changed at once, put away.
+// The tips book (booktips.mjs): the Tips control brings up a hard cover in the middle that opens to two-page spreads,
+// the index first, a leaf turning over the spine to each tip, never waited on; closed again, put away.
 // The pin (bookpin.mjs): away as HQ loads on a desktop, an iPad and a phone, the book open or folded, and the book
 // never bringing it; Settings' Pin on HQ brings it and puts it away, kept for the device after a reload; an artifact's
 // pin as it was; none on a call, nor the viewer's Note (job #13447), and a mark on the viewer's artifact then goes to the call's agent
@@ -57,6 +57,8 @@
 // selected, moved, cut, pasted and deleted, Undo and Redo through all of it, with a mouse and the Pencil.
 // One way to move things (bookmove.mjs): the pen draws across a scrap, which stays put; Select pressed on one line of a
 // group moves the whole group, live, nothing jumping as it's let go. On a desktop and an iPad mini.
+// The book in a native shell (booknative.mjs): the shell told where the paper is, a stroke it drew landing as the pen's
+// line, its tap a click.
 // A note sent from review mode (booknewest.mjs): it lands under the newest thing on the current page, the book opens to
 // it, and HQ's book link in a tab of its own opens there. On a desktop, an iPad mini and a phone.
 // Ink answers any note (bookanswers.mjs): the agent's face and dots, then its answer written in by a pen beside the note,
@@ -68,6 +70,8 @@
 import assert from 'node:assert/strict';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { crc32, deflateSync } from 'node:zlib';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { serve, ROOT } from './serve.mjs';
 import { playwright, errorsOf, until, openPage } from '../../shared/browser/browser.mjs';
 import { fulfilPart } from '../../shared/review/parts.mjs';
@@ -129,7 +133,9 @@ import { scrapsClearStories } from './booknotebookclear.mjs';
 import { notebookSelectStories } from './booknotebookselect.mjs';
 import { assignStories } from './bookassign.mjs';
 import { moveStories } from './bookmove.mjs';
+import { nativeStories } from './booknative.mjs';
 import { newestStories } from './booknewest.mjs';
+import { callSizesStories } from './bookcallsizes.mjs';
 import { scrapStories, savedScrap } from './bookscrap.mjs'; // (the pin flow)
 import { talked, voiceLine, hush, SAID } from './bookvoice.mjs';
 import { DESKTOP, MINI, UPRIGHT, pressAlong, ui, bookAtRest } from './bookkit.mjs';
@@ -137,16 +143,17 @@ import { groupsOf } from './bookplayed.mjs';
 // (LOOKS: job #19359)
 import { morningStory, everyWidthStory, LOOKS } from './bookfilm.mjs';
 
-import { guestNotebookStories } from './bookguests.mjs';
-
 const only = process.argv.includes('--stories') ? process.argv[process.argv.indexOf('--stories') + 1] : null;
 const shots = process.argv.includes('--shots') ? process.argv[process.argv.indexOf('--shots') + 1] : null;
+// (the guest notebooks on the real coordinator: the browser dispatch as every story's, then a process of their own, as
+// this check's imports have read its config before harness() could set the env.)
 if (only === 'guest notebooks') {
   const { render } = await import('../../shared/browser/render.ts');
   await render();
   const output = process.argv.includes('--out') ? process.argv[process.argv.indexOf('--out') + 1] : shots;
-  await guestNotebookStories({ shots: output, webkit: !process.argv.includes('--chromium-only') });
-  process.exit(0);
+  const entry = fileURLToPath(new URL('./guestnotebooks-check.mjs', import.meta.url));
+  const flags = [...(output ? ['--shots', output] : []), ...process.argv.filter(a => a === '--chromium-only')];
+  process.exit(spawnSync(process.execPath, [entry, ...flags], { stdio: 'inherit' }).status ?? 1);
 }
 // (--webkit with --stories: those stories in WebKit, the iPad's engine, where it's installed.)
 const inWebKit = process.argv.includes('--webkit');
@@ -558,7 +565,7 @@ function callPage(play, { call }) {
   const mine = play.route('/api/notebooks').shelf.find(n => n.kind === 'mine').id;
   if (!callPages.has(play)) callPages.set(play, new Map());
   const made = callPages.get(play);
-  if (!made.has(call)) made.set(call, play.route('/api/notebooks/pages/create', {}, { notebook: mine }).id);
+  if (!made.has(call)) made.set(call, play.callPage(mine)); // (in Calls)
   const page = play.route('/api/notebooks/pages/title', {}, { id: made.get(call), title: 'Call with Lyra, 15:34' });
   const day = page.created.slice(0, 10),
     was = pages.findIndex(p => p.kind === 'call' && p.call === call);
@@ -602,6 +609,8 @@ function STORIES() {
     ...forYouStories({ hqIn, base, settled, shot, noErrorsIn, shots }),
     // (one way to move things: the pen draws on a scrap, Select moves a group as one.)
     ...moveStories({ hqIn, base, settled, shot, noErrorsIn, shots }),
+    // (the Pencil drawn by a native shell)
+    ...nativeStories({ hqIn, base, settled, shot, noErrorsIn }),
     // (a note sent from review mode finds the board.)
     ...newestStories({ hqIn, base, settled, shot, noErrorsIn, shots, org }),
     // (the book's tools with a mouse on a desktop.)
@@ -654,6 +663,8 @@ function STORIES() {
     }),
     // (a call's notes page: the agent's scraps landing on it, the book opening there where it fits.)
     ...notesPageStories({ hqIn, base, shot, settled, noErrorsIn, MINI, DESKTOP, PHONE }),
+    // (the test call at a phone both ways, an iPad mini on its side and a desktop)
+    ...callSizesStories({ hqIn, base, shot, noErrorsIn }),
     ...agentPageStories({ hqIn, base, shot, settled, noErrorsIn, DESKTOP }),
     // (the drawing tools: the eraser, shapes, Select, Undo and Redo, with a mouse and the Pencil.)
     ...drawStories({ hqIn, base, store, pages, notebook, shot, settled, settle: SETTLE_MS }),
@@ -1093,7 +1104,7 @@ function STORIES() {
         ),
     "the pin away as HQ loads on a desktop and a phone, the book never bringing it, Settings' switch bringing it and putting it away; an artifact keeps its own; on a call no pin anywhere and no Note, and a mark on the viewer's artifact goes to the call's agent":
       browser => pinScreensStory({ browser, hqIn, base, settled, shot, noErrorsIn, reviewJs, posts }),
-    'the Tips control opens the tips book open flat, the contents beside every tip with its scene, changed at once; put away by Escape or a tap outside':
+    'the Tips control brings up the tips book shut, its cover opening onto spreads, the index and every tip with the deck’s picture of it, turned leaf by leaf and never waited on; put away by Escape or a tap outside':
       browser => tipsStory({ browser, hqIn, base, settled, shot, noErrorsIn }),
     // (a circle on HQ, on a call or not, and the pen's tap.)
     ...circleStories({

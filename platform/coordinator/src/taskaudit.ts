@@ -2,7 +2,7 @@
 import { ORIGIN, PRIVATE, type JobOrigin } from './matching.ts';
 import { db } from './db.ts';
 import { workBranch } from './jobs.ts';
-import { history, type GivenSize } from './sizes.ts';
+import { history, original, type GivenSize } from './sizes.ts';
 import { isTask, taskTimes, type TaskTime } from './tasktime.ts';
 import { INVALID_RUN, REBUILT_RUN, timingFlags } from './timing.ts';
 import { spread, fractionalMinutes } from './arithmetic.ts';
@@ -177,8 +177,7 @@ function savedEstimates(job: Candidate, runs: Run[]) {
         },
       ]
     : [];
-  // At the same instant the caller's saved size takes precedence over the automatic prediction.
-  const first = [...callers.filter(size => !size.revised), ...tool].sort((a, b) => a.at.localeCompare(b.at))[0] ?? null;
+  const first = original(callers, tool);
   return {
     first_estimate: first,
     revisions: callers.filter(size => size !== first),

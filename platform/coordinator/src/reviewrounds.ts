@@ -39,8 +39,8 @@ const NONBLOCKING = `Everything else is nonblocking, in the fixes' own code too:
 // (the line, and what a later round's reviewers and ruling do with the nonblocking findings)
 const LEFT = {
   later: {
-    line: `What's left when this pull request merges goes into one follow-up job for its author, queued in the same
-deliverable and done after the work is live.`,
+    line: `What's left when this pull request merges goes into one follow-up job for its author, on its own deliverable
+in the same project after the work is live. It does not hold deliverables that need the merged work.`,
     reviewer: "Report one only when it's worth that job.",
     ruling: 'Put those in "nonblocking".',
   },

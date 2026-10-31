@@ -3,6 +3,7 @@
 import * as api from './api.ts';
 import { readTextOrStdin } from './files.ts';
 import { deliverableFlag, takeThread, takeValues } from './flags.ts';
+import { cardNamed } from './jobs.ts';
 import { inbox as messageInbox } from './messages.ts';
 import { minute, print, stop, text } from './output.ts';
 
@@ -22,29 +23,36 @@ type Proposal = {
   status: string;
   accepted: number | null;
   why: string | null;
+  request?: number | null;
 };
 
 export const propose = {
   help: `
-   hq propose "title" <brief-file | -> [--project <project>] [--for <agent>] [--deliverable <project>/<slug>]
+   hq propose "title" <brief-file | -> [--project <project>] [--for <agent>] [--deliverable <project>/<slug>] [--after request:<id>]
                                                      propose new work beyond your job's deliverable to the owner of the
                                                      project it's for (--project, else your deliverable's), instead of queueing
                                                      it: it waits in their inbox, not the queue, until they accept it into
                                                      their plan (a job with your brief, for you or --for) or drop it with
-                                                     why. Your job's own follow-ups (its fixes, hand-offs within its
-                                                     deliverable) are hq job, as before`,
+                                                     why. --after request:<id>: work that needs the board's answer to a
+                                                     card you filed starts once it's answered and reads the answer, as
+                                                     hq job's does, even if it's answered before it's accepted. Your
+                                                     job's own follow-ups (its fixes, hand-offs within its deliverable)
+                                                     are hq job, as before`,
 
   async run(given: string[]) {
     const { values, args } = takeValues(
       deliverableFlag(given),
-      ['--for', '--deliverable', '--project'],
+      ['--for', '--deliverable', '--project', '--after'],
       'Nothing was proposed',
     );
     const [title, briefPath, ...rest] = args;
     if (!title?.trim() || !briefPath || rest.length)
       stop(
-        'usage: hq propose "title" <brief-file | -> [--project <project>] [--for <agent>] [--deliverable <project>/<slug>]',
+        'usage: hq propose "title" <brief-file | -> [--project <project>] [--for <agent>] [--deliverable <project>/<slug>] [--after request:<id>]',
       );
+    const card = cardNamed(values.after);
+    if (values.after !== undefined && card === undefined)
+      stop('Nothing was proposed: --after takes request:<id>, a card you filed');
     const brief = readTextOrStdin(briefPath).trim();
     const body = api.withSpeaker({
       title,
@@ -52,6 +60,7 @@ export const propose = {
       ...(values.for && { for: values.for }),
       ...(values.deliverable && { thread: values.deliverable }),
       ...(values.project && { project: values.project }),
+      ...(card !== undefined && { afterRequest: card }),
     });
     const answer = await api.call('proposals', { body });
     const made = api.parseOrNull(answer.body) as { id?: number; owner?: string; project?: string | null } | null;
@@ -115,13 +124,14 @@ function line(p: Proposal) {
   const who = `from ${text(p.agent)}${p.for_agent ? ` for ${text(p.for_agent)}` : ''}`;
   const thread = p.thread ? `, in ${text(p.thread)}` : p.project ? `, for ${text(p.project)}` : '';
   const whose = p.status === 'open' ? `, ${text(p.owner)}'s to decide` : '';
+  const card = p.request ? `, after card #${p.request}` : '';
   const became =
     p.status === 'accepted'
       ? `: accepted as job #${p.accepted}`
       : p.status === 'dropped'
         ? `: dropped, ${text(p.why)}`
         : '';
-  return `#${p.id} ${text(p.title)} (${who}${thread}${whose}, ${minute(p.created)})${became}`;
+  return `#${p.id} ${text(p.title)} (${who}${thread}${card}${whose}, ${minute(p.created)})${became}`;
 }
 
 async function accept(given: string[]) {

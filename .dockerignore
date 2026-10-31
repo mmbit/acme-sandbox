@@ -32,6 +32,7 @@
 !platform/hq/shell/screenlock.js
 !platform/hq/shell/mic-worklet.js
 !platform/hq/shell/callbubble.js
+!platform/hq/shell/floating.js
 !shared/watchalong/watchalong.js
 # the one HTML escaper, which the emails' look writes with (platform/coordinator/src/mailpage.ts)
 !shared/html/escape.ts

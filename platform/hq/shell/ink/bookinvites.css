@@ -32,6 +32,11 @@
   margin: 0;
   max-width: none;
 }
+/* (the book is paper in every look: its title in the book's ink, never a look's glowing one.) */
+.bi-watch.ng-book h1 {
+  color: var(--ng-ink);
+  text-shadow: none;
+}
 @media (max-width: 600px) {
   .bi-dialog {
     width: calc(100vw - 16px);

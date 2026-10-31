@@ -29,6 +29,7 @@ export function mountDogEar(book) {
   ear.hidden = true;
   ear.setAttribute('aria-label', 'Send this page: drag its corner onto Submit, PDF or PNG, or press for the choices');
   ear.setAttribute('aria-haspopup', 'menu');
+  ear.setAttribute('data-keep-clear', ''); // (a minimised call keeps clear of it.)
   ear.innerHTML = '<i aria-hidden="true"></i>';
   pages.append(ear);
   const corner = { book, ear, files: null, lane: islands() }; // (the rail)

@@ -453,3 +453,119 @@ test('a review bundle its owner left open gets their next planning job when it g
   const [next, ...none] = queuedWork();
   assert.deepEqual([next.agent, next.title, none], ['wren', 'Sort new proposals into the plan', []]);
 });
+
+test("work proposed after the proposer's card waits for its answer once accepted, and hears it, answered before or after; HQ makes no job of its own unless every such proposal is dropped", async () => {
+  db.exec('delete from requests; delete from request_waits; delete from sorts; delete from review_inbox'); // (sorts, review_inbox: by proposal ids reused here)
+  const jobs = await import('./jobs.ts');
+  projects.createThread({ project: 'game', name: 'The menus', goal: 'Menus work', slug: 'menus' });
+  projects.createThread({ project: 'game', name: 'The pause', goal: 'Pausing works', slug: 'pause' });
+  const bolt = await h.start({ agent: 'bolt', title: 'Level art' });
+  const titles = ['Which menu style?', 'Pause?', 'Sound?'];
+  const [later, first, sound] = [
+    await h.ask(bolt, { title: titles[0] }),
+    await h.ask(bolt, { title: titles[1] }),
+    await h.ask(bolt, { title: titles[2] }),
+  ];
+  // hq job into an owner's deliverable is refused, and says how to propose it with its card
+  const queued = await h.agent('job', bolt.token, {
+    agent: 'kit',
+    title: 'Draw the menus',
+    prompt: 'x',
+    thread: 'game/menus',
+    afterRequest: later,
+  });
+  assert.equal(queued.status, 409, JSON.stringify(queued.body));
+  assert.match(
+    queued.body.error,
+    new RegExp(`hq propose --project game "title" <brief-file> --after request:${later}$`),
+  );
+  // only an open card the proposer filed
+  const moss = await h.start({ agent: 'moss', title: 'The shop' });
+  const notTheirs = await h.agent('proposals', moss.token, {
+    title: 'x',
+    brief: 'y',
+    project: 'game',
+    afterRequest: later,
+  });
+  assert.match(notTheirs.body.error, /isn't an open card you filed/);
+  const proposed = await h.hq(
+    bolt,
+    'propose',
+    'Menus as the board says',
+    brief,
+    '--project',
+    'game',
+    '--after',
+    `request:${later}`,
+  );
+  assert.equal(proposed.code, 0, proposed.out);
+  const after = async (card: number, title: string) => {
+    const made = await h.agent('proposals', bolt.token, {
+      title,
+      brief: `${title}.`,
+      project: 'game',
+      afterRequest: card,
+    });
+    assert.equal(made.status, 200, JSON.stringify(made.body));
+    return made.body.id as number;
+  };
+  const [pause, pauseSounds, music, effects] = [
+    await after(first, 'A pause menu'),
+    await after(first, 'Pause sounds'),
+    await after(sound, 'Music'),
+    await after(sound, 'Effects'),
+  ];
+  await h.finish(bolt); // the asker has ended: whoever waits for its cards hears them
+  const heard = (card: number, answer: string) =>
+    `The board answered card #${card} ("${titles[[later, first, sound].indexOf(card)]}"), which this job waited for, on its desk phone: ${answer}`;
+  const boardOn = () =>
+    db.prepare("select agent, title, prompt from jobs where title like 'The board on:%'").all() as {
+      agent: string;
+      title: string;
+      prompt: string;
+    }[];
+
+  // accepted before the answer: the job waits for the card, then starts with its answer
+  const wren = await h.start({ agent: 'wren', title: 'Your plan' });
+  const id = /^#(\d+) Menus as the board says \(from bolt, for game, after card #(\d+), wren's to decide/m.exec(
+    (await h.hq(wren, 'inbox')).out,
+  )!;
+  assert.equal(Number(id[2]), later);
+  const accepted = await h.hq(wren, 'inbox', 'accept', id[1], '--deliverable', 'game/menus');
+  assert.equal(accepted.code, 0, accepted.out);
+  const job = Number(/job #(\d+)/.exec(accepted.out)![1]);
+  assert.ok(!jobs.readyWork().includes(job), 'it waits for the card');
+  // answered before it's accepted: the proposals hold it, and the job the first accepted becomes starts with it and reads
+  // the answer's pictures, for another agent than the asker too
+  assert.equal((await h.answer(first, 'Yes, on Escape')).status, 200);
+  assert.deepEqual(boardOn(), [], 'no job from HQ for an answer the proposals hold');
+  const drawn = await h.agent('proposals/accept', wren.token, { id: pause, thread: 'game/pause', for: 'kit' });
+  assert.equal(drawn.status, 200, JSON.stringify(drawn.body));
+  const prompt = (job: number) =>
+    (db.prepare('select prompt from jobs where id = ?').get(job) as { prompt: string }).prompt;
+  assert.equal(
+    prompt(drawn.body.job),
+    `A pause menu.\n\n${heard(first, 'Yes, on Escape')}\n\n(Proposed by bolt, accepted by wren.)`,
+  );
+  assert.equal(jobs.cardAccess(first, { id: drawn.body.job, agent: 'kit' }), true, "it reads the answer's pictures");
+  // that job heard it: dropping the other proposal that held it makes none
+  assert.equal((await h.agent('proposals/drop', wren.token, { id: pauseSounds, why: 'Not now' })).status, 200);
+  assert.deepEqual(boardOn(), [], 'the accepted job heard it');
+
+  // answered, and every proposal that held it dropped: the asker hears it, once
+  assert.equal((await h.answer(sound, 'Quiet ones')).status, 200);
+  assert.equal((await h.agent('proposals/drop', wren.token, { id: music, why: 'Not now' })).status, 200);
+  assert.deepEqual(boardOn(), [], 'another proposal still holds it');
+  assert.equal((await h.agent('proposals/drop', wren.token, { id: effects, why: 'Not now' })).status, 200);
+  const [told, ...none] = boardOn();
+  assert.deepEqual([told.agent, told.title, none], ['bolt', 'The board on: Sound?', []]);
+  assert.match(
+    told.prompt,
+    new RegExp(`^The board answered your request #${sound} \\("Sound\\?"\\) on its desk phone: Quiet ones`),
+  );
+
+  assert.equal((await h.answer(later, 'Flat ones')).status, 200);
+  assert.ok(prompt(job).endsWith(`\n\n${heard(later, 'Flat ones')}`), prompt(job));
+  assert.ok(jobs.readyWork().includes(job), 'it starts once answered');
+  assert.equal(boardOn().length, 1, 'the job that waited hears it');
+});

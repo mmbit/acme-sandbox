@@ -79,8 +79,6 @@ export function answered(req: { id: number; agent: string | null; job: number | 
   const hearerAgent = !hearing && heir ? agentOf(heir) : req.agent;
   const kept = asker?.kind === 'chat' ? []
     : tagged.filter(product => (product.held?.agent ?? product.agent) === hearerAgent && holds(product.slug, hearer));
-  const carriedBy = (product: { name: string }, carrier: { agent: string; job: number }) =>
-    `${product.name}: ${jobs.findAgent(carrier.agent)?.name ?? carrier.agent} (job #${carrier.job})`;
   const routed = tagged.filter(product => !kept.includes(product)).map(product => carriedBy(product, feedback(product.slug, piece(product))));
   const yours = kept.map(product => `\n\nYou own bringing ${product.name} (${folder(product.slug)}) back to the board after `
     + `this answer. HQ keeps that open, as owed to the board, until you do.\n${duty(product.slug, product.name)}`).join('');
@@ -94,6 +92,13 @@ export function answered(req: { id: number; agent: string | null; job: number | 
   for (const product of kept) feedback(product.slug, piece(product), heard);
   return heard;
 }
+// (carriedBy, out of answered() for carriers too)
+const carriedBy = (product: { name: string }, carrier: { agent: string; job: number }) =>
+  `${product.name}: ${jobs.findAgent(carrier.agent)?.name ?? carrier.agent} (job #${carrier.job})`;
+// goneTo's line for each product card `request`'s answer went to as a piece, for a job hearing it later (jobs.ts)
+export const carriers = (request: number) => goneTo((db.prepare(`select o.slug, o.job, j.agent from owed o join jobs j
+  on j.id = o.job where o.closed is null and exists (select 1 from owed_pieces p where p.owed = o.id and p.kind = 'answer'
+  and p.request = ?) order by o.slug`).all(request) as { slug: string; job: number; agent: string }[]).map(h => carriedBy(ownerOf(h.slug), h)));
 // The line on which job brings each product back (carriers: "<product>: <agent> (job #<n>)"), for a job that doesn't.
 function goneTo(carriers: string[]) {
   if (!carriers.length) return '';

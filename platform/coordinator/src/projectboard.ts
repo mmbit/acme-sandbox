@@ -13,7 +13,7 @@ import { meetingSeats } from './meetingboard.ts';
 import { findThread, ownerOf, sentenceOf, type Thread } from './projects.ts';
 import { pad } from './pad.ts';
 import { isGoal } from './goals.ts';
-import { oneTask } from './made.ts';
+import { oneTask, oneTasks } from './made.ts';
 
 // GET /api/projects: the businesses the projects are grouped under and the side groups (company.ts projects), then
 // projects with their owner's latest sentence and threads. A thread is ongoing while it has work that can still merge
@@ -38,10 +38,11 @@ export function listProjectBoard(t = Date.now()) {
   const pending = pendingThreads();
   const rows = boardRows(pending, t);
   const schedules = routines();
-  // (each thread's rows and tallies read once for the whole view; and the names.)
+  // (each thread's rows and tallies read once for the whole view; and the names, and which are one-task threads.)
   const byThread = Map.groupBy(rows, j => j.thread),
     counted = tallies(),
-    names = boardNames();
+    names = boardNames(),
+    single = oneTasks();
   const jobsOf = (id: string) => byThread.get(id) ?? [];
   const ongoing = (th: Thread) => pending.has(th.id) || (th.status === 'open' && !jobsOf(th.id).length);
   const listed = projects().list.map(project => {
@@ -56,16 +57,16 @@ export function listProjectBoard(t = Date.now()) {
         ? { ...names.sentence(project.id, sentence), since: doneSince(project.id, sentence.at) }
         : null,
       threads: own.filter(ongoing).map(th => ({
-        ...shownThread(th, counted, names),
+        ...shownThread(th, counted, names, single),
         owner: project.owner,
         jobs: jobsOf(th.id),
       })),
       done: own
         .filter(th => !ongoing(th))
-        .map(th => ({ ...named(th, names), owner: project.owner, ...counted.tally(th) })),
+        .map(th => ({ ...named(th, names, single), owner: project.owner, ...counted.tally(th) })),
     };
   });
-  const completed = completedProjects(threads, counted, names),
+  const completed = completedProjects(threads, counted, names, single),
     placed = new Set([...listed, ...completed].map(p => p.id));
   const known = new Set(threads.filter(th => placed.has(th.project)).map(th => th.id));
   const loose = [...rows.filter(j => isOpenJob(j) && !(j.thread && known.has(j.thread))), ...recentLoose(known, t)];
@@ -118,7 +119,7 @@ const pendingThreads = () =>
   );
 
 // The projects done (hq project done), the latest first, each with when and its threads (all done) with their tallies.
-const completedProjects = (threads: Thread[], counted: Tallies, names: BoardNames) =>
+const completedProjects = (threads: Thread[], counted: Tallies, names: BoardNames, single: Set<string>) =>
   (
     db
       .prepare(
@@ -129,7 +130,7 @@ const completedProjects = (threads: Thread[], counted: Tallies, names: BoardName
     ...names.project(Object.fromEntries(Object.entries(p).filter(([, v]) => v !== null)) as Project & { done: string }),
     threads: threads
       .filter(th => th.project === p.id)
-      .map(th => ({ ...named(th, names), owner: p.owner, ...counted.tally(th) })),
+      .map(th => ({ ...named(th, names, single), owner: p.owner, ...counted.tally(th) })),
   }));
 
 // The latest RECENT finished jobs outside known threads, newest first, but for meetings' seats (meetingSeats has
@@ -159,16 +160,25 @@ export function getThread(id: string, t = Date.now()) {
       }),
     ),
   );
-  return { ...boardThread(thread), ...wrapper(thread), owner: ownerOf(thread), lines: linesOf(thread.id), jobs };
+  return {
+    ...boardThread(thread),
+    ...wrapper(oneTask(thread.id)),
+    owner: ownerOf(thread),
+    lines: linesOf(thread.id),
+    jobs,
+  };
 }
 
-// A thread's board name, and oneTask when it's HQ's one-task thread for a job of its own (made.ts), which the board
-// reads as a task rather than a deliverable (HQ's threads.js boardKind)
-const wrapper = (th: Thread) => (oneTask(th.id) ? { oneTask: true } : {});
-const named = (th: Thread, names: BoardNames) => ({ ...names.thread(th), ...wrapper(th) });
+// A thread's board name, and oneTask when it's HQ's one-task thread for a job of its own (made.ts; `single`: all of
+// them, made.ts oneTasks), which the board reads as a task rather than a deliverable (HQ's threads.js boardKind)
+const wrapper = (one: boolean) => (one ? { oneTask: true } : {});
+const named = (th: Thread, names: BoardNames, single: Set<string>) => ({
+  ...names.thread(th),
+  ...wrapper(single.has(th.id)),
+});
 // A thread as the board's view shows it: with the threads it needs and its lines.
-const shownThread = (th: Thread, counted: Tallies, names: BoardNames) => ({
-  ...named(th, names),
+const shownThread = (th: Thread, counted: Tallies, names: BoardNames, single: Set<string>) => ({
+  ...named(th, names, single),
   needs: needsOf(th.id),
   lines: counted.linesOf(th.id),
 });

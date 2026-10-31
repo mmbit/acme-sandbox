@@ -22,7 +22,8 @@ where it suffices.
   and keeps only its own additions in `prompt`.
 - **Roles**: who does what (`roles:` in `company/org.yaml`), never an agent's name in platform code.
 - **Settings**: the server's names and switches in `company/infra.env`; a product's needs in its `product.yaml`.
-  `company/brand.yaml` `names: book` names the board's book on its tips book's cover; left out, the cover reads Tips.
+  `company/brand.yaml` `names: book` names the board's book on its tips book's cover and title page, over Tips and
+  in the line under it; left out, both read Tips alone.
   Its `screens` names the screens the board reads on, which a try's versions are shot at; left out, a desktop's.
 - **Memory inspections**: `company/infra.env`'s `MEMORY_INSPECTION_BUDGET_MS` is the separately authorized
   observation budget in integer milliseconds. Missing or zero refuses arming. Positive values must fit Node's timer
@@ -37,6 +38,8 @@ where it suffices.
   worker slots and room. An absent per-seat run cap means the added seat shares those worker resources.
   Capacity comes from measured usage, with low confidence. Scaling between plan sizes is an assumption.
   This setting only describes subscriptions for the replay. It neither adds a real seat nor changes the saved plan.
+- **The host**: HQ's address is `infra/host`. The native shell (`platform/ios`) opens the one in `theme/ios.xcconfig`
+  (`HQ_URL`, beside the app's id): a move of HQ changes both.
 - **Looks**: the company's HQ theme and renderer choice in `theme/hq.yaml`. Wire's colourways name the one thing lit
   `accent`, `side` and `onAccent`: a company's `theme/hq.yaml` still saying `knop` and `onKnop` renames them at the
   carry, or Wire falls back to its own Day and Night.
@@ -123,9 +126,12 @@ where it suffices.
   answers every finding, and from the second only blocking findings hold the merge. Internal work blocks only on what
   breaks HQ or the work it carries, loops without end or loses data (security and a missed ask block everywhere).
   org.yaml's `review.shipped` says what keeps the release bar, where real bugs and what a customer meets block too. A
-  merged pull request's other findings go to its author as one follow-up job in its deliverable, and a follow-up
-  job's own pull request leaves none (`platform/coordinator/src/reviewrounds.ts`, `followups.ts`). Before it carries,
-  Onlyonery's agreement is asked through the Overseer. A switch comes only if Onlyonery asks for one.
+  follow-up needed to meet the deliverable's done when, including a blocking fix, stays in the source deliverable
+  with its deadline. After a merge, the remaining nonblocking findings go to the author as one follow-up job on its
+  own one-task deliverable in the same project. It does not inherit the source deadline or hold deliverables that
+  need the merged work. A follow-up job's own pull request leaves none (`platform/coordinator/src/reviewrounds.ts`,
+  `followups.ts`). Before it carries, Onlyonery's agreement is asked through the Overseer. A switch comes only if
+  Onlyonery asks for one.
 - A call's notes page goes to nobody, for every company, with no setting: as the call ends it goes in as the board
   left it and stays in My journal, unstamped and with no Send (the old book's Send refuses it too). Each scrap and
   promise on it is an item on the call's list, which the call's follow-up hands out with the transcript, so nothing on

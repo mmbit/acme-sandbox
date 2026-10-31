@@ -1,22 +1,61 @@
 // Shared storage for proposals and owner-directed review findings.
 import { db, redacted, redactedJson, once, lacks } from './db.ts'; // (lacks)
+import type { Proposal } from './proposals.ts';
 
 // agent, job: the proposer and its job; for_agent: who it proposes does the work (the proposer when null); thread: the
 // thread it proposes; project: the project whose owner decides it (null: the CEO); heard_by: the owner's planning job
 // or running session that takes it, since heard_at (when it reached that job's owner); status: open, accepted (accepted: the job it became)
-// or dropped (why). planning_jobs: each owner's planning jobs by project (null: no project's), the open one taking what
-// arrives for it until it ends.
+// or dropped (why); request: a card of the proposer's that its work waits for (hq propose --after request:<id>): the
+// job it becomes waits for it too, and the card's answer, if it comes first, goes into the brief (cardHeard); held: that
+// answer is its asker's too, which no job heard (holdAnswer).
+// planning_jobs: each owner's planning jobs by project (null: no project's), the open one taking what arrives for it
+// until it ends.
 db.exec(`create table if not exists proposals (id integer primary key, created text not null, agent text not null,
   job integer, title text not null, brief text not null, for_agent text, thread text, status text not null default 'open',
-  decided text, accepted integer, why text, project text, heard_by integer, heard_at text);
+  decided text, accepted integer, why text, project text, heard_by integer, heard_at text, request integer,
+  held integer not null default 0);
   create table if not exists planning_jobs (job integer primary key, agent text not null, project text)`);
 // (planning jobs from before have no project: they keep what they hold.)
 once(
   '2026-10-25-planning-jobs-project',
   () => lacks('planning_jobs', 'project') && db.exec('alter table planning_jobs add column project text'),
 );
+once(
+  '2026-10-31-proposals-request',
+  () => lacks('proposals', 'request') && db.exec('alter table proposals add column request integer'),
+);
+once(
+  '2026-10-31-proposals-held',
+  () => lacks('proposals', 'held') && db.exec('alter table proposals add column held integer not null default 0'),
+);
 db.exec('create index if not exists proposals_accepted on proposals (accepted) where accepted is not null');
 redacted('proposals', 'title', 'brief', 'why');
+
+// A card answered or taken off the desk phone before the open proposals whose work waits for it are accepted puts its
+// line at the end of their briefs (jobs.ts tellWaiting), so the job each becomes hears it.
+export function cardHeard(request: number, line: string) {
+  db.prepare("update proposals set brief = brief || ? where request = ? and status = 'open'").run(
+    `\n\n${line}`,
+    request,
+  );
+}
+// When neither the asker nor a job queued after the card hears its answer (jobs.ts answerHeard), those proposals hold it
+// for the asker: the first accepted is the job that heard it, or, all dropped, the asker hears it (jobs.ts
+// heldAnswerDropped). Whether any does.
+export const holdAnswer = (request: number) =>
+  db.prepare("update proposals set held = 1 where request = ? and status = 'open'").run(request).changes > 0;
+// Whether the proposals that held card `request`'s answer for its asker are all dropped (false: none held it)
+export const answerLetGo = (request: number) =>
+  !!db
+    .prepare("select 1 from proposals where request = ? and held = 1 group by request having sum(status = 'open') = 0")
+    .get(request);
+
+export function openProposal(id: number): Proposal | string {
+  const p = db.prepare('select * from proposals where id = ?').get(id) as Proposal | undefined;
+  if (!p) return `there's no proposal #${id} (hq inbox)`;
+  if (p.status !== 'open') return `proposal #${id} was ${p.status} already`;
+  return p;
+}
 
 db.exec(`create table if not exists review_inbox (pr integer primary key, proposal integer not null unique,
   round integer not null, branch text not null, agent text not null, decision text not null, summary text not null,

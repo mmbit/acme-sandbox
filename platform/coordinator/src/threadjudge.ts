@@ -2,7 +2,9 @@
 // judge (threadends.ts settled, runEnded): it stays open, ready to judge, and HQ queues its owner a job with the
 // thread's "done when" and its tasks' reports. They close it (hq plan done) or draw its next task: a merge says the
 // work landed, not that the thread did what it was for. Each report is its agent's words, so the brief quotes it as
-// data (a JSON string), and only one its owner may read (jobs.ts readsReport).
+// data (a JSON string), and only one its owner may read (jobs.ts readsReport). With them, how often it was judged before,
+// its deadline and its agent time against its first size, so ending it is as easy to see as feeding it. A judge that
+// ends done closes each deliverable it left open with nothing drawn in it. A failed judge wakes its owner again (ended).
 // (its messages say deliverable, the board's word for a thread)
 import { db, inOneStep, mergePending } from './db.ts';
 import { projects } from './company.ts';
@@ -13,11 +15,21 @@ import { findThread, ownerOf, type Thread } from './projects.ts';
 import { tasksOf } from './threadorder.ts';
 import { made, madeCode } from './made.ts';
 import { STANDING } from './jobcodes.ts';
-import { clock } from './windows.ts';
+import { clock, when } from './windows.ts';
 import { cancelJob } from './ledger.ts';
+import { firstSizes } from './predictions.ts';
+import { close } from './threadends.ts';
+import { duration } from '../../worker/hq/waits.ts';
 
 // (the most of each task's report a judge's brief carries: the rest is in hq history)
 const REPORT_MAX = 2_000;
+
+// Each judge that took a thread in (wake), for the next judge's brief: how often it was judged before, and upto, the id
+// of the thread's last task when this judge took it in (none for a thread with no task). The first judge's upto marks
+// the tasks the thread's first size covers; the judge's own id doesn't, as a judge shared with other threads may be
+// older than this one's tasks. A judge that let it go before it started (release) never judged it.
+db.exec(`create table if not exists judgings (thread text not null, job integer not null, upto integer,
+  primary key (thread, job))`);
 
 // After a merge, or a task's end with nothing to merge (threadends.ts runEnded): an open thread with tasks, none of them
 // open or still to merge, is ready to judge, and its owner hears it in a job of their own. One that hasn't started yet
@@ -57,6 +69,9 @@ export function wake(id: string, t = Date.now()) {
         projects().made.alarms?.hq ? { asap: t } : undefined,
       );
     db.prepare('update threads set judge = ? where id = ?').run(job, thread.id);
+    const tasks = tasksOf(thread.id).map(task => task.id);
+    const upto = tasks.length ? Math.max(...tasks) : null;
+    db.prepare('insert or ignore into judgings (thread, job, upto) values (?, ?, ?)').run(thread.id, job, upto);
     return job;
   });
   publish({
@@ -80,6 +95,7 @@ export function release(thread: string) {
     .get(thread) as { id: number; agent: string } | undefined;
   if (!judge) return;
   db.prepare('update threads set judge = null where id = ?').run(thread);
+  db.prepare('delete from judgings where thread = ? and job = ?').run(thread, judge.id);
   const judged = judgedBy(judge.id);
   if (!judged.length) return void cancelJob(judge.id, `${thread} has new work in it, so there's nothing left to judge`);
   const { prompt } = judgeBrief(judged, judge);
@@ -131,7 +147,7 @@ function judgeBrief(judged: Thread[], reader: jobs.Reader) {
       const pr = reviewclosure.status(jobs.workBranchOf(task));
       return `- #${task.id} ${task.agent}: ${jobs.nameOf(task)}. It ended ${task.status}${pr ? `, its pull request ${pr}` : ''}.\n  Its report: ${quoted}`;
     });
-    return `The deliverable ${thread.name} (${thread.id}), done when: ${thread.goal}\nIts tasks:\n${tasks.join('\n')}`;
+    return `The deliverable ${thread.name} (${thread.id}), done when: ${thread.goal}\n${historyOf(thread.id, reader.id)}\nIts tasks:\n${tasks.join('\n')}`;
   });
   const prompt = [
     judged.length === 1
@@ -141,11 +157,70 @@ function judgeBrief(judged: Thread[], reader: jobs.Reader) {
     ...threadLines,
     `Judge each against its "done when", not against whether its tasks ended: a task that ended done, merged or deployed hasn't met a "done when" its work didn't reach (a check that never loaded its model still ends done). Then, for each, one of:`,
     `- It did what it was for: close it (\`hq plan done <deliverable>\`). A deliverable whose every task merged has let the deliverables that need it go on already; one with a task that failed or a pull request closed unmerged holds them until it's closed.`,
-    `- It fell short (no results, a failure, a pull request closed unmerged, a step still missing): draw its next task (\`hq job ... --deliverable <deliverable>\`), which keeps it open. Deliverables that need it may have gone on from its merged work: tell their owners what's missing (\`hq say\`).`,
-    `- Only the board can judge it: one card on the desk phone, the deliverable kept open.`,
-    `Say in your report which you did for each and why.`,
+    `- It fell short (no results, a failure, a pull request closed unmerged, a step still missing): draw its next task (\`hq job ... --deliverable <deliverable>\`), which keeps it open. Weigh that step against what the deliverable has had already (its judgments, its deadline and its agent time above), and against what it was for: a goal that holds is met, even where the "done when"'s words wait on something still to come. Deliverables that need it may have gone on from its merged work: tell their owners what's missing (\`hq say\`).`,
+    `- Only the board can judge it: one card on the desk phone, and the step that acts on its answer drawn as its next task, queued after the card (\`hq job --after request:<id> ... --deliverable <deliverable>\`).`,
+    `A deliverable you leave open with nothing drawn in it closes as your job ends, as \`hq plan done\` would: to keep one open, draw its next task. Say in your report which you did for each and why.`,
   ].join('\n\n');
   return { prompt, customers };
+}
+
+// What a thread has had, for its judge (`job`, 0 for one not made yet): the judges before it, its deadline and how far
+// past it is, and its agent time (each run of its jobs: agenttime.ts) against its first size, the original estimates of
+// its tasks when its first judge took it in (predictions.ts firstSizes).
+function historyOf(thread: string, job: number) {
+  const now = Date.now();
+  const before = db
+    .prepare(
+      `select g.job, g.upto, j.status from judgings g join jobs j on j.id = g.job where g.thread = ? and g.job != ?
+      and j.status != 'cancelled' order by g.job`,
+    )
+    .all(thread, job) as { job: number; upto: number | null; status: string }[];
+  const judged = before.length
+    ? `Judged ${before.length} time${before.length === 1 ? '' : 's'} before: ${before.map(b => `#${b.job} (${b.status})`).join(', ')}.`
+    : 'Never judged before.';
+  const deadline = findThread(thread)!.deadline;
+  const due =
+    deadline === null
+      ? 'No deadline.'
+      : `Its deadline: ${when(deadline)}, ${
+          deadline < now ? `${duration((now - deadline) / 60_000)} ago` : `in ${duration((deadline - now) / 60_000)}`
+        }.`;
+  const { ms } = db
+    .prepare(
+      `select coalesce(sum(julianday(coalesce(r.ended, ?)) - julianday(r.started)), 0) * 86400000 ms from runs r
+      join jobs j on j.id = r.job where j.thread = ?`,
+    )
+    .get(new Date(now).toISOString(), thread) as { ms: number };
+  const first = before[0];
+  const sized = tasksOf(thread)
+    .filter(task => !first || (first.upto !== null && task.id <= first.upto))
+    .map(task => task.id);
+  const sizes = [...firstSizes(sized).values()];
+  const size = sizes.length ? sizes.reduce((sum, agentMs) => sum + agentMs, 0) : null;
+  const spent = `Agent time on it so far: ${duration(ms / 60_000)}, against ${
+    size === null ? 'no size saved' : `${duration(size / 60_000)} first sized`
+  } (its tasks before its first judgment).`;
+  return `${judged} ${due} ${spent}`;
+}
+
+// A judge's end (jobs.ts handOn): each thread it judged that it left open with nothing drawn in it closes, as hq plan
+// done would, as its brief says. A failed judge wakes its owner again, its new brief counting the failed one.
+// One a judge was stopped on stays with whoever stopped it.
+export function ended(job: number, status: string) {
+  if (status !== 'done' && status !== 'failed') return;
+  const left = db
+    .prepare("select * from threads where judge = ? and status = 'open' and branch is null")
+    .all(job) as Thread[];
+  for (const thread of left) {
+    if (!quiet(thread.id)) continue;
+    if (status === 'failed') {
+      wake(thread.id);
+      continue;
+    }
+    const what = `deliverable done: its judge #${job} ended with nothing drawn in it`;
+    close(thread, what);
+    publish({ type: 'log', agent: ownerOf(thread), text: `${thread.id}: ${what}` });
+  }
 }
 
 // The summary's lines (summary.ts): each open thread ready to judge whose merge woke its owner, or that an open thread

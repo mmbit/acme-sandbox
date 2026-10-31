@@ -24,7 +24,7 @@ import type { ProspectiveRun } from './reviewplan.ts';
 import { playOrder } from './simulation.ts';
 import { loopSizes, SLOW_SHARE, type Pace } from './reviewtime.ts';
 import { fitIn, wholeSeconds } from './arithmetic.ts';
-import { history, latestGiven } from './sizes.ts';
+import { history, latestGiven, original } from './sizes.ts';
 import { corrected } from './sizerbias.ts';
 import * as threadorder from './threadorder.ts';
 
@@ -331,6 +331,18 @@ export function latestSizes(jobs?: number[], stored = storedSizes(jobs)) {
   return latest;
 }
 export const latest = (job: number) => latestSizes([job]).get(job);
+
+// These jobs' original estimates (sizes.ts original), the agent time of each: none for a job never sized.
+export function firstSizes(jobs: number[]) {
+  const stored = storedSizes(jobs);
+  return new Map(
+    jobs.flatMap(job => {
+      const tool = stored.get(job);
+      const first = original(history(job).reverse(), tool ? [{ at: tool.made, ...tool.usual }] : []);
+      return first ? [[job, first.agent_ms] as const] : [];
+    }),
+  );
+}
 
 // A job's sizes, the latest first and the tool's last, each with the done jobs it stands on and why (hq estimate #n).
 export function sizeHistory(job: number) {

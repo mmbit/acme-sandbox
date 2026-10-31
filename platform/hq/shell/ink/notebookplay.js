@@ -61,6 +61,13 @@ export function notebookPlay({ seed, now = () => Date.now(), sendMs = 10_000 } =
     // { ink, texts, pictures }. → the group
     note: (page, by, parts) =>
       inHand(s, by, () => copy(insertGroup(s, s.page(Number(page)), 'scrap', by, { ...EMPTY, ...parts }))),
+    // A live call's notes page as the store makes it at pickup (ink/callnotes.ts pageFor): a new page of the notebook,
+    // in its Calls chapter. → its id
+    callPage: notebook => {
+      const id = newPage(s, notebook);
+      s.page(id).kind = 'call';
+      return id;
+    },
     // The board's routes as a call's agent works the page through them (ink/callpage.ts): its changes counted on the
     // page as made by its hand (notebook.ts byHand)
     by: (agent, path, body) => inHand(s, agent, () => routed(s, path, {}, body)),

@@ -23,8 +23,7 @@ export function mountLanding({ pages, lip, paper, layout }) {
   document.addEventListener('pencil:landing', e => {
     const ask = e.detail,
       mode = layout()?.mode;
-    // (paired, the page's screen leaves it to the other's book: the ink drifts off this one, pair.js)
-    if (ask.land || !mode || document.documentElement.dataset.paired === 'page') return;
+    if (ask.land || !mode) return;
     foley('slide', { dur: 0.5, material: 'paper', size: 0.8 }, { vol: 0.6 });
     if (mode === 'folded') {
       ask.land = inHandle(lip, ask.from);

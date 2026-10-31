@@ -11,7 +11,7 @@
 import { createGroup, deleteGroup, editGroup, loadGroups, restoreGroup } from './notebookdata.js';
 import { changesOf, emptyParts, keyOf } from './bookgroupmath.js';
 import { arrive } from './bookarrive.js';
-import { localOf, madeUnit } from './bookunits.js';
+import { laidOf, localOf, madeUnit } from './bookunits.js';
 import { nameOf } from './bookhead.js';
 import { arrived } from './bookedit.js';
 
@@ -228,17 +228,20 @@ const unchanged = (page, groups) =>
       around = x => JSON.stringify([x.children, x.asks, x.assigned]);
     return had?.updated === g.updated && around(had) === around(g);
   });
-// (the store's elements in their units' own px, until the page lays them: bookunits.js. What's drawn here and not
-// yet in the store, in a unit drawn here, stays where it is.)
+// (the store's elements where their units are laid on the page, a unit new to it in its own px until the page lays it:
+// bookunits.js. What's drawn here and not yet in the store, in a unit drawn here, stays where it is: all in the page's
+// px, so a line let go by a refused edit and homed again moves only with its unit.)
 function fill(page, groups) {
-  const unsaved = elementsOf(page).filter(x => !(x.el.g > 0));
+  const unsaved = elementsOf(page).filter(x => !(x.el.g > 0)),
+    ids = new Set(groups.map(g => g.id));
   page.groups = new Map();
   page.gone ??= new Map();
-  page.origins = new Map([...(page.origins ?? [])].filter(([id]) => id < 0));
+  page.origins = new Map([...(page.origins ?? [])].filter(([id]) => id < 0 || ids.has(id)));
   const lists = { ink: [], texts: [], pictures: [] };
   for (const g of groups) {
     keep(page, g, g);
-    for (const kind of Object.keys(LISTS)) lists[kind].push(...g[kind].map(el => ({ ...el, g: g.id })));
+    for (const kind of Object.keys(LISTS))
+      lists[kind].push(...g[kind].map(el => laidOf(page, kind, { ...el, g: g.id })));
   }
   for (const x of unsaved) lists[x.kind].push(x.el);
   for (const [kind, list] of Object.entries(LISTS)) {
@@ -247,10 +250,12 @@ function fill(page, groups) {
   }
 }
 // A group whose edit was refused (another screen changed it first): what this screen added to it is drawn and not
-// yet in a group again, so the page read again keeps it and the next save sorts it anew
+// yet in a group again, so the page read again keeps it and the next save sorts it anew (compared in its unit's own
+// px, as the store keeps it: what it had stays the store's.)
 function loosen(page, id) {
   const had = new Set(Object.values(page.groups.get(id).base).flat());
-  for (const x of elementsOf(page)) if (x.el.g === id && !had.has(keyOf(x.el))) x.el.g = undefined;
+  for (const x of elementsOf(page))
+    if (x.el.g === id && !had.has(keyOf(localOf(page, x.kind, x.el)))) x.el.g = undefined;
 }
 // A group as this screen keeps it: the store's answer, and what it held (sent: what was sent for it, the elements as
 // the store has them when it's the read itself)

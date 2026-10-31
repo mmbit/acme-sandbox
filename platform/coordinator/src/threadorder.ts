@@ -29,7 +29,7 @@ export function inNeedsOrder(threads: Thread[]) {
 }
 
 // A task: a work job in a thread that isn't a pull request's (its fixes and updates are the pull request's).
-type Job = { id: number; kind: string; pr: number | null; thread: string | null; branch: string | null };
+export type Job = { id: number; kind: string; pr: number | null; thread: string | null; branch: string | null };
 // A fix for a round's findings or the board's notes (matching.ts ORIGIN's 'fix'), a thread's task or a pull request's
 export const answersRound = (j: { stage: string | null; round: number | null }) =>
   j.stage === 'feedback' || (j.stage === 'fix' && j.round !== null);
@@ -94,30 +94,33 @@ export type Waits = {
   round: number | null;
   needs: { thread: string; task: number | null }[];
 };
+type ThreadReading = {
+  tasks: Task[];
+  turn: Task[];
+  timedFrom: number;
+  first: number | null;
+  branch: string | null;
+  status: Thread['status'] | undefined;
+  round: number | null;
+};
 // The thread's tasks and each one's waits in their turns (inTurn), read once per thread for a whole queue (the claim's,
 // the play's, a list's).
 export function reader() {
-  type Read = {
-    tasks: Task[];
-    turn: Task[];
-    timedFrom: number;
-    first: number | null;
-    branch: string | null;
-    round: number | null;
-  };
-  const threads = new Map<string, Read>();
+  const threads = new Map<string, ThreadReading>();
   const openNeeds = needsReader();
   const of = (thread: string) => {
     if (!threads.has(thread)) {
       const tasks = tasksOf(thread),
         { turn, timedFrom } = inTurn(tasks);
-      const branch = findThread(thread)?.branch ?? null;
+      const current = findThread(thread);
+      const branch = current?.branch ?? null;
       threads.set(thread, {
         tasks,
         turn,
         timedFrom,
         first: turn.find(t => OPEN.includes(t.status))?.id ?? null,
         branch,
+        status: current?.status,
         round: branch ? pushingOn(branch) : null,
       });
     }
@@ -246,13 +249,32 @@ export function placing(placeholders: Pick<Planned, 'id' | 'thread'>[] = [], row
       branch,
     };
   };
+  const branchTask = branchCarrier(read, rows, place);
   // (an --after on a task before it in its thread, which the order covers: afterInOrder, whatever that task's status)
   const inOrder = (row: Job, prior: number) =>
     !!prepared(`select 1 from jobs j join jobs a on a.id = ? where j.id = ? and ${afterInOrder('j', 'a')}`).get(
       prior,
       row.id,
     );
-  return { place, waits, inOrder };
+  return { place, waits, inOrder, branchTask };
+}
+
+// A finished task's wait follows the last remaining task on its open deliverable's current branch.
+function branchCarrier(
+  read: ReturnType<typeof reader>,
+  rows: (Job & { status: string })[],
+  place: (row: Job & { status: string }) => Placed | undefined,
+) {
+  const remaining = new Map(rows.map(row => [row.id, row]));
+  return (before: Job & { status: string }) => {
+    if (before.status !== 'done' || !isTask(before)) return;
+    const { turn, branch, status } = read.of(before.thread);
+    if (status !== 'open' || branch !== jobs.workBranchOf(before)) return;
+    return turn.findLast(task => {
+      const row = remaining.get(task.id);
+      return row && place(row)?.branch === branch;
+    })?.id;
+  };
 }
 
 // The open threads with no task yet, each played as one piece of its owner's work under its name and "done when"
@@ -299,36 +321,7 @@ export function claimed(job: Job) {
   };
 }
 
-// A task's finish that pushed work (a commit, a pull request) makes its branch the thread's, the branch each later task
-// runs on, until it merges (threadends.ts merged). So does one that failed or was stopped after pushing a commit of its
-// own (the worker's ownCommit, or GitHub's refusal of its pull request in its land), so the task taking its place pushes
-// there. One that pushed nothing leaves the thread without a branch, and so does a parked or handed-up run's: its task
-// goes on.
-export function pushed(job: Job, r: { status: string; branch?: string; sha?: string; pr?: number }) {
-  if (!isTask(job) || !r.branch || !(r.sha || r.pr)) return;
-  // The task keeps the commit it pushed, from whichever of its runs pushed it (a later run that adds nothing reports
-  // none, as does a landing run after a snag): its pull request's merge brings that work to main (jobs.ts failedAside).
-  if (r.sha && ['done', 'failed', 'stopped', 'parked', 'up', 'snagged'].includes(r.status))
-    db.prepare('update jobs set sha = ? where id = ?').run(r.sha, job.id);
-  if (!['done', 'failed', 'stopped'].includes(r.status)) return;
-  db.prepare("update threads set branch = ? where id = ? and branch is null and status = 'open'").run(
-    r.branch,
-    job.thread,
-  );
-}
-
-// The thread's pull request as a task's push opens it: titled with the thread's name, its "done when" and its tasks in
-// the body (the worker adds that task's report). Its later tasks' pushes are its next rounds.
-export function pullOf(id: number) {
-  const job = db.prepare('select id, kind, pr, thread, branch from jobs where id = ?').get(id) as Job | undefined;
-  const thread = job && isTask(job) ? findThread(job.thread) : undefined;
-  if (!thread) return undefined;
-  const tasks = tasksOf(thread.id).map(t => `- #${t.id}, ${t.agent}: ${jobs.nameOf(t)}`);
-  return {
-    title: thread.name,
-    body: `The deliverable ${thread.id}, done when: ${thread.goal}\n\nIts tasks:\n${tasks.join('\n')}`,
-  };
-}
+export { pushed, pullOf } from './threadpush.ts';
 
 // The task after job `id` in its thread's turns, if it's a task and that one starts now: running, or queued with
 // nothing to wait for but a seat (jobs.ts readyWork). Its push waits for it (review.ts heldForThread). Undefined for a
@@ -354,19 +347,21 @@ export function onThreadBranch(job: Job, branch = jobs.workBranchOf(job)) {
 
 // ---- who changes a plan, and hq job's refusals
 
-// Why `agent` may not change the project's plan (plan.ts), with what to do instead; undefined when it may.
-export function refusal(project: Project, agent: string) {
+// Why `agent` may not change the project's plan (plan.ts), with what to do instead; undefined when it may. card: one the
+// work waits for, which the proposal carries.
+export function refusal(project: Project, agent: string, card?: number) {
   if (agent === project.owner || agent === ceo()) return undefined;
-  return `${project.name}'s plan is ${project.owner}'s (and the CEO's) to change: propose it to ${project.owner} with hq propose --project ${project.id} "title" <brief-file>`;
+  const after = card === undefined ? '' : ` --after request:${card}`;
+  return `${project.name}'s plan is ${project.owner}'s (and the CEO's) to change: propose it to ${project.owner} with hq propose --project ${project.id} "title" <brief-file>${after}`;
 }
 
 // hq job from a running job (server.ts): only the project's owner or the CEO adds
 // a task to a thread (anyone else proposes it), and no job waits --after a job in another thread (a need, the owner's to
-// draw) or in its own (its tasks run in order).
-export function jobRefusal(agent: string, thread: string | null, after?: number) {
+// draw) or in its own (its tasks run in order). card: the card it waits for (refusal).
+export function jobRefusal(agent: string, thread: string | null, after?: number, card?: number) {
   if (!thread) return undefined;
   const project = findProject(thread.split('/')[0]);
-  const notYours = project && refusal(project, agent);
+  const notYours = project && refusal(project, agent, card);
   if (notYours) return `${thread}'s tasks are drawn by its owner: ${notYours}`;
   const theirs = after ? jobs.threadOf(after) : null;
   if (!theirs) return undefined;

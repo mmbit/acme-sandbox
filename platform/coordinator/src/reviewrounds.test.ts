@@ -23,6 +23,7 @@ const plan = await import('./plan.ts');
 const windows = await import('./windows.ts');
 const proposals = await import('./proposals.ts');
 const inbox = await import('./reviewinbox.ts');
+const backlog = await import('./backlog.ts');
 await worker('seat', { seat: 'codex-1', engine: 'codex', state: 'ready' });
 plan.setOwner('game', 'wren', { agent: 'juno', job: 0 }, agent => !!h.jobs.findAgent(agent));
 projects.createThread({
@@ -121,7 +122,16 @@ const followUps = () =>
 
 test('each round gets the briefing of its stage, and what the reviews leave goes to the author as one follow-up job', async () => {
   const n = 601;
+  projects.createThread({
+    project: 'game',
+    name: 'The next world plays',
+    goal: 'The next world can finish',
+    slug: 'next',
+  });
+  assert.deepEqual(plan.need('game/next', 'game/world', 'wren'), { ok: true });
+  const next = h.queue({ agent: 'bolt', thread: 'game/next', engine: 'next-piece' });
   await push(n);
+  assert.equal(await h.claim('next-piece'), null, 'the next piece waits for the main work to merge');
   const panel = await claim(n, 'review');
   for (const run of panel) {
     assert.match(run.prompt, /## Round 1: the first look/);
@@ -154,6 +164,7 @@ test('each round gets the briefing of its stage, and what the reviews leave goes
   const [bonus, name, long] = findingsOf(n).filter(f => f.kind !== 'pre-existing');
   assert.deepEqual([bonus.kind, name.kind, long.kind], ['blocking', 'nonblocking', 'nonblocking']);
   assert.match(fixPrompt(n), /Fix or answer each nonblocking one too/);
+  assert.equal(await h.claim('next-piece'), null, 'blocking fixes still hold the next piece');
 
   // round 2, a later round: only blocking findings hold the merge, and the rest goes to the follow-up job
   await push(n);
@@ -211,10 +222,19 @@ test('each round gets the briefing of its stage, and what the reviews leave goes
   const accepted = await h.agent('review-output', last.token, mergeRuling);
   assert.equal(accepted.body.error, null, 'the merge retires its blocker and leaves only nonblocking findings');
   await end(last, mergeRuling);
-  // one job for the author, in the same deliverable, with every finding that didn't hold the merge
+  // One job for the author with every finding that did not hold the merge.
   await until(() => followUps().length === 1, 'the follow-up job queued');
+  await until(() => h.github.pr(n).merged, 'the main work merged');
   const [job] = followUps();
-  assert.deepEqual([job.agent, job.thread, job.status], ['bolt', 'game/world', 'queued']);
+  assert.ok(h.jobs.readyWork().includes(next), 'the main merge releases the next piece while its follow-up is open');
+  const planned = backlog.orderingSnapshot(Date.now()).jobs.find(j => j.id === next)!;
+  assert.deepEqual(planned.needs ?? [], [], 'the play no longer waits for the source deliverable');
+  const nextRun = (await h.claim('next-piece'))!;
+  assert.equal(nextRun.id, next, 'the dependent can actually start');
+  await h.finish(nextRun);
+  assert.deepEqual([job.agent, job.status], ['bolt', 'queued']);
+  assert.notEqual(job.thread, 'game/world');
+  assert.equal(projects.findThread(job.thread!)?.project, 'game');
   for (const issue of [
     'a name that says nothing',
     'the helper could be shorter',
@@ -255,6 +275,7 @@ test('each round gets the briefing of its stage, and what the reviews leave goes
     () => db.prepare("select 1 from prs where number = ? and status = 'merged'").get(m) !== undefined,
     'merged',
   );
+  assert.equal(projects.findThread(job.thread!)?.status, 'done', 'the follow-up deliverable closes at its own merge');
   assert.equal(followUps().length, 1);
   const shown = (await h.board(`/api/projects/findings?job=${quill.id}`)).body.findings as {
     issue: string;

@@ -1,5 +1,6 @@
 // Seat-window readings retain their observation time when a later report omits usage.
 import { db } from './db.ts';
+import { fallingBackTo } from './models.ts';
 import type { SeatNow, UsageSource } from './eta.ts';
 
 type Window = { used: number | null; reset: number | null; observedAt: number | null; source: UsageSource };
@@ -36,16 +37,19 @@ export function recordWindowObservations(seat: string, times: ObservationTimes =
 }
 
 // A seat without a configured stop uses seats.ts STOP_DEFAULT. Credits bypass quota stops in playseats.ts.
-// Weekly pacing still applies, as in the worker.
+// Weekly pacing still applies, as in the worker. Each with the CLI it runs and the agents whose fallback runs on it, as
+// claim reads them (jobs.ts claimable).
 export function observedSeats(now: number, stopDefault: number): SeatNow[] {
   const rows = db
     .prepare(
-      `select s.id, s.engine, s.state, s.until, s.updated, s.util, s.resets, s.week, s.week_resets,
+      `select s.id, s.engine, coalesce(s.cli, s.engine) cli, s.state, s.until, s.updated, s.util, s.resets, s.week,
+      s.week_resets,
       s.credits, l.stop from seats s left join seat_list l on l.id = s.id order by s.id`,
     )
     .all() as {
     id: string;
     engine: string;
+    cli: string;
     state: string;
     until: number | null;
     updated: number | null;
@@ -59,7 +63,8 @@ export function observedSeats(now: number, stopDefault: number): SeatNow[] {
   return rows.map(s => {
     const windows = observedWindows(s, now);
     return {
-      ...{ id: s.id, engine: s.engine, state: s.state, until: s.until },
+      ...{ id: s.id, engine: s.engine, cli: s.cli, fallbacks: fallingBackTo(s.engine, s.cli) },
+      ...{ state: s.state, until: s.until },
       fiveHour: windows.fiveHour.used,
       fiveHourResets: windows.fiveHour.reset,
       fiveHourObservedAt: windows.fiveHour.observedAt,

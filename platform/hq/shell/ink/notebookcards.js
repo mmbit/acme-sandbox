@@ -1,6 +1,6 @@
 // Notebook groups and their agent answers, rendered in the guest and board views.
+import { esc } from '../../util.js';
 import { draw } from '/__review/ink.js';
-const esc = value => String(value ?? '').replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`);
 
 export function renderGroups(s) {
   const parent = s.host.querySelector('.ng-groups');
@@ -11,7 +11,7 @@ export function renderGroups(s) {
   parent.innerHTML = s.groups
     .map(
       group => `<article class="ng-group" data-group="${group.id}">
-    <div class="ng-clip" aria-hidden="true">⌁</div>${group.ink.length ? `<canvas class="ng-ink" data-ink="${group.id}" aria-label="${s.text.handwrittenNote}"></canvas>` : ''}
+    <div class="ng-clip" aria-hidden="true"><svg viewBox="0 0 24 36" width="24" height="36" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M16 12v15a6 6 0 0 1-12 0V10a8 8 0 0 1 16 0v17a4 4 0 0 1-8 0V11"/></svg></div>${group.ink.length ? `<canvas class="ng-ink" data-ink="${group.id}" aria-label="${s.text.handwrittenNote}"></canvas>` : ''}
     ${group.pictures.map(p => `<img class="ng-picture" src="${esc(p.url)}" alt="${s.text.notePicture}">`).join('')}
     ${group.texts.map(t => `<p class="ng-words">${esc(t.text)}</p>`).join('')}${group.words ? `<p class="ng-words">${esc(group.words)}</p>` : ''}
     ${!s.watch && !s.books.find(n => n.id === s.notebook)?.pages.find(p => p.id === s.page)?.readonly && group.status === 'open' ? `<div class="ng-actions"><button type="button" data-edit="${group.id}">${s.text.editNote}</button><button type="button" data-delete="${group.id}">${s.text.delete}</button></div>` : ''}

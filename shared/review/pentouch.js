@@ -6,7 +6,6 @@ import { micAllowed } from './micallowed.js';
 import { reset } from './acts.js';
 import { distance, isTap } from './tap.js';
 import { settleSoon } from './settle.js';
-import { across } from './postit.js';
 import { holdMs } from './prefs.js';
 
 // (offPage, theirs and free)
@@ -75,9 +74,8 @@ const penDown = (r, p, begin) => e => {
   // a call, or where nothing records and the note is typed.)
   const holds = r.call || !canRecord || listens(r);
   p.timer = holds ? setTimeout(() => p.down === e && !p.drawing && hold(r, e, p, begin), holdMs()) : 0;
-  // The audio context is made here, at the pen's touch, a gesture, so Safari lets it run. A paired page's mark goes to
-  // the other screen with no mic.
-  if (listens(r) && r.mode === 'idle' && !across(r)) {
+  // The audio context is made here, at the pen's touch, a gesture, so Safari lets it run.
+  if (listens(r) && r.mode === 'idle') {
     p.mic = e.pointerId;
     p.ctx = audioContext();
   }

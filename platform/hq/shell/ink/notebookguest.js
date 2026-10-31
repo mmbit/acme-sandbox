@@ -1,9 +1,9 @@
 // The board's read-only live view of an invited notebook.
+import { esc } from '../../util.js';
 import { renderGroups } from './notebookcards.js';
 import { mountPen } from './notebookpen.js';
-import { words, refusals } from './notebookwords.js';
+import { words, refusal } from './notebookwords.js';
 
-const esc = value => String(value ?? '').replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`);
 const POLL_MS = 1000;
 
 export function mountNotebook(host, { api, watch = true, notebook = null }) {
@@ -82,7 +82,7 @@ async function request(s, path, body) {
     throw new Error(s.text.failed);
   });
   if (!response.ok) {
-    const message = answer.reason ? refusals[answer.reason][document.documentElement.lang] : answer.error;
+    const message = refusal(document.documentElement.lang, answer.reason, s.limits) ?? answer.error;
     throw Object.assign(new Error(message), { status: response.status });
   }
   return answer;
@@ -98,7 +98,7 @@ async function refresh(s) {
   const intent = s.intent,
     wanted = { ...s.wanted };
   try {
-    const read = await request(s, '/list');
+    const read = await request(s, s.watch ? '' : '/list');
     if (s.stopped) return;
     const book = read.notebooks.find(n => n.id === wanted.notebook) ?? read.notebooks[0];
     if (!book) return empty(s);
@@ -110,16 +110,16 @@ async function refresh(s) {
       return;
     }
     if (s.notebook !== book.id || s.page !== page?.id) turnPage(s, page?.id);
-    Object.assign(s, { books: read.notebooks, notebook: book.id, page: page?.id ?? null, groups: contents.groups });
+    Object.assign(s, {
+      books: read.notebooks,
+      limits: read.limits,
+      notebook: book.id,
+      page: page?.id ?? null,
+      groups: contents.groups,
+    });
     s.wanted = { notebook: book.id, page: page?.id ?? null };
     navigation(s, book, page);
-    const signature = JSON.stringify(contents);
-    if (signature !== s.signature) {
-      if (!s.host.querySelector('.ng-groups textarea:focus, [data-editing], .ng-drawing:not([hidden])')) {
-        s.signature = signature;
-        renderGroups(s);
-      }
-    }
+    updateGroups(s, contents);
   } catch (error) {
     if (!s.watch && [401, 403].includes(error.status)) {
       empty(s);
@@ -133,6 +133,14 @@ async function refresh(s) {
       queueMicrotask(() => refresh(s));
     }
   }
+}
+
+function updateGroups(s, contents) {
+  const signature = JSON.stringify(contents);
+  if (signature === s.signature) return;
+  if (s.host.querySelector('.ng-groups textarea:focus, [data-editing], .ng-drawing:not([hidden])')) return;
+  s.signature = signature;
+  renderGroups(s);
 }
 
 function turnPage(s, page) {

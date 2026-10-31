@@ -76,6 +76,11 @@ test("scraps' words, said or typed, and answers under them are found with their 
   assert.equal(tear.found[1].by, 'wren', 'an answer says who answered');
   assert.equal(tear.found[1].note, said.id, 'under the group it answers');
   assert.equal(tear.found[0].owner, null, "a scrap nobody's yet: the routing check's");
+  // (its notebook, which a find on the Shelf opens)
+  const { notebook } = db.prepare('select notebook from book_pages where id = ?').get(yesterday) as {
+    notebook: number;
+  };
+  assert.equal(spoken.notebook, notebook, "a find says its page's notebook");
 
   // every word of the query, each the start of a word, with or without its accent
   assert.deepEqual(

@@ -1,4 +1,5 @@
-// HQ in a web view: its microphone granted, signed in with a one-time code, and its calls' audio handed to CallAudio.
+// HQ in a web view: its microphone granted, signed in with a one-time code, its calls' audio handed to CallAudio and
+// the notebook's Pencil drawn by Pen.
 import SwiftUI
 import WebKit
 
@@ -24,6 +25,7 @@ struct ShellView: UIViewRepresentable {
     web.navigationDelegate = context.coordinator
     web.scrollView.contentInsetAdjustmentBehavior = .never
     web.isInspectable = true  // (Safari's Develop menu on a Mac shows the page's console)
+    context.coordinator.pen = Pen(over: web)
     web.load(URLRequest(url: Self.home))
     return web
   }
@@ -34,13 +36,18 @@ struct ShellView: UIViewRepresentable {
 @MainActor
 final class Bridge: NSObject, WKScriptMessageHandler, WKUIDelegate, WKNavigationDelegate {
   let call = CallAudio()
+  var pen: Pen!
 
-  // The page's word on its call (callaudio.js): {call: true} as it starts, {call: false} as it ends.
+  // The page's word on its call (callaudio.js): {call: true} as it starts, {call: false} as it ends; and on its pen
+  // (booknative.js): {pen: {paper, tool, color, size, alpha}} while the notebook's Pencil is the shell's, {pen: false}.
   func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
-    guard message.frameInfo.securityOrigin.host == ShellView.home.host,
-      let body = message.body as? [String: Any], let live = body["call"] as? Bool
+    guard message.frameInfo.securityOrigin.host == ShellView.home.host, let body = message.body as? [String: Any]
     else { return }
-    if live { call.start() } else { call.end() }
+    if let live = body["call"] as? Bool {
+      if live { call.start() } else { call.end() }
+    }
+    // (false: the Pencil the page's)
+    if let said = body["pen"] { pen.set(said as? Bool == false ? nil : (said as! [String: Any])) }
   }
 
   // HQ's own pages get the microphone without the web view asking at every call.
@@ -66,9 +73,10 @@ final class Bridge: NSObject, WKScriptMessageHandler, WKUIDelegate, WKNavigation
     webView.load(URLRequest(url: URL(string: "/pair", relativeTo: ShellView.home)!.absoluteURL))
   }
 
-  // A new page, or the page's process lost, has no call: one still on ends with the old page.
+  // A new page, or the page's process lost, has no call and no notebook: the old page's end with it.
   func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
     call.end()
+    pen.set(nil)
   }
 
   // A page that doesn't load at the network (no signal, HQ not answering) leaves WKWebView blank: this page says so,
@@ -101,6 +109,7 @@ final class Bridge: NSObject, WKScriptMessageHandler, WKUIDelegate, WKNavigation
 
   func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
     call.end()
+    pen.set(nil)
     webView.reload()
   }
 

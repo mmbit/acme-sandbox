@@ -862,6 +862,20 @@ test("a thread's lines are its pull requests' added and removed, each counted on
   assert.deepEqual(opened.body.lines, { added: 35, removed: 5 });
 });
 
+test("the projects view marks HQ's one-task threads, and no thread the board drew", async () => {
+  reset();
+  const named = started('named');
+  jobs.createJob({ agent: 'bolt', title: 'In a named one', prompt: 'x', queuedBy: 'wren', thread: named });
+  const made = await import('./made.ts');
+  const job = jobs.createJob({ agent: 'bolt', title: 'A task of its own', prompt: 'x', queuedBy: 'wren' });
+  const own = made.oneTaskThread('game', { id: job.id, title: 'A task of its own' })!;
+  const threads = (await h.board('/api/projects')).body.projects[0].threads as { id: string; oneTask?: boolean }[];
+  assert.deepEqual(
+    [named, own].map(id => threads.find(t => t.id === id)?.oneTask),
+    [undefined, true],
+  );
+});
+
 test("the board's order of the projects: the tiles it drags take the places they held, and its view follows it", async () => {
   const listed = async () =>
     (await h.board('/api/projects')).body.projects.map((p: { id: string }) => p.id) as string[];

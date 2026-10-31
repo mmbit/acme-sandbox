@@ -8,8 +8,11 @@ import { readFileSync } from 'node:fs';
 
 export const ONE_DEADLINE =
   'Each deliverable has one deadline, chosen by the board or the CEO from its word (hq window). File tasks under ' +
-  'the open deliverable whose goal they serve, judged from its plan. A follow-up joins the work in flight by default ' +
-  'and inherits its deadline, with no --by needed. The plan and seat pacing read that time for all its tasks, reviews ' +
+  'the open deliverable whose goal they serve, judged from its plan. A follow-up needed to meet the source ' +
+  "deliverable's done when, including a blocking fix, joins that deliverable's work in flight and inherits its " +
+  'deadline, with no --by needed. Non-blocking ' +
+  'review follow-ups after a merge get their own deliverable and do not hold work that needs the merged one. ' +
+  'The plan and seat pacing read the deliverable’s time for all its tasks, reviews ' +
   'and fixes. A deliverable with no deadline of its own or through work that needs it reads as no deadline set: ' +
   'settle that gap once for the deliverable. --by <when> sets or tightens the filed task’s deliverable deadline, ' +
   'never loosens it. --by <project>/<slug> takes that deliverable’s window. A call item’s time goes on its ' +

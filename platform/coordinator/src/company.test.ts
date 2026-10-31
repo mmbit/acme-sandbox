@@ -110,7 +110,9 @@ logo: { svg: acme.svg, svgDark: acme-dark.svg, alt: Acme }
   const manifest = await (await page('/manifest.webmanifest')).json();
   assert.equal(manifest.name, 'Acme Studio');
   assert.equal(manifest.theme_color, '#102030');
-  assert.match(await (await page('/login')).text(), /<h1><img src="\/acme-dark.svg" alt="Acme"[^>]*> Studio<\/h1>/);
+  // (both logos: the light one on a light look's card, the dark on Holo's)
+  assert.match(await (await page('/login')).text(),
+    /<h1><img class="day" src="\/acme.svg" alt="Acme"[^>]*><img class="night" src="\/acme-dark.svg" alt="Acme"[^>]*> Studio<\/h1>/);
   assert.equal((await page('/acme-dark.svg')).status, 200);   // the login page's logo, so it's public
   writeFileSync(`${repo}/company/brand.yaml`, 'logo: { svgDark: api/org }\n');
   assert.equal((await page('/api/org')).status, 401);          // and only a logo is

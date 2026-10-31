@@ -12,6 +12,7 @@ type Entry = {
   note: number;
   n: number;
   page: number;
+  notebook: number;
   day: string;
   kind: string;
   owner: string | null;
@@ -22,13 +23,15 @@ type Entry = {
 };
 
 // GET /api/book/search?q=: { q, found: [{ note (the group, a reply's the one it's under), n (that group's place on its
-// page), page, day, kind (its notebook's), owner (who its scrap goes to: null, the routing check's), how ('written' |
+// page), page, notebook (its page's: a find on the Shelf opens it there.), day,
+// kind (its notebook's), owner (who its scrap goes to: null, the routing check's), how ('written' |
 // 'spoken' | 'typed', or 'answer': a slip's), by (who wrote or answered), text (the words around the find), at }],
 // total }, the newest finds first, total: how many there are (findIn shows the newest)
 export function searchBook(q: unknown, who = BOARD) {
   const query = typeof q === 'string' ? q : '';
   const columns = `select coalesce(g.parent, g.id) note, (select count(*) from notebook_groups x where x.page = g.page
-      and x.parent is null and x.deleted is null and x.id <= coalesce(g.parent, g.id)) n, g.page, p.day, b.kind, g.owner`,
+      and x.parent is null and x.deleted is null and x.id <= coalesce(g.parent, g.id)) n, g.page, p.notebook, p.day, b.kind,
+      g.owner`,
     board = `join book_pages p on p.id = g.page join notebooks b on b.id = p.notebook where b.who = ? and g.deleted is null`,
     typed = `json_extract(t.value, '$.text')`;
   const entries = db

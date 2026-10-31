@@ -84,7 +84,7 @@
   pointer-events: none;
 }
 /* the handles, over the paper's box so a press is theirs */
-#book .bk-grabs {
+#book .bk-handles {
   position: absolute;
   inset: 0 auto auto 0;
   pointer-events: none;

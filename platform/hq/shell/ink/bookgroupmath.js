@@ -41,9 +41,13 @@ export function changesOf(base, now) {
   return { edits, deletes };
 }
 // An element as the store keeps it, for comparing (what HQ adds to one to draw it left out; one drawn to fit this
-// screen's paper, the one it was drawn from: bookscrapfit.js)
+// screen's paper, the one it was drawn from: bookscrapfit.js). Its numbers to a thousandth: a unit's ink laid on the
+// page and taken back to its own px (bookunits.js localOf) comes back a float's last digits off, and is the same
+// element.
 export const keyOf = el =>
-  JSON.stringify(el.fit ?? el, (k, v) => (k === 'g' || k === 'img' || k === 'url' ? undefined : v));
+  JSON.stringify(el.fit ?? el, (k, v) =>
+    k === 'g' || k === 'img' || k === 'url' ? undefined : typeof v === 'number' ? Math.round(v * 1000) / 1000 : v,
+  );
 // Whether an element of a page is held off it while it lands (bookarrive.js)
 export const landing = (page, el) => !!page.landing?.size && page.landing.has(keyOf(el));
 const same = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);

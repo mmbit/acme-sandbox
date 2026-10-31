@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { drainUntil } from '../../worker/src/downtime.ts';
-import { available, binding, burnRates, consume, drained, seatEvent, seatsOf } from './playseats.ts';
+import { at, available, binding, burnRates, choices, consume, drained, seatEvent, seatsOf } from './playseats.ts';
 import type { Snapshot } from './eta.ts';
 
 const HOUR = 3_600_000,
@@ -78,4 +78,27 @@ test('missing prices and unidentifiable mixes remain explicit while known usage 
   assert.ok(Math.abs(seat.week! - 0.2) < 1e-10);
   seat.fiveHour = null;
   assert.equal(available(seat, now), false, 'an unmeasured reported quota is not free headroom');
+});
+
+test("a seat takes work as claim does: its engine's on its CLI, else its agent's fallback's while its own is out", () => {
+  const input = snapshot();
+  input.seats[0].cli = 'claude';
+  input.seats.push({ ...input.seats[0], id: 'codex-1', engine: 'codex', cli: 'codex', fallbacks: ['bolt'] });
+  const seats = seatsOf(input);
+  const order = { id: 1, board: 0, latestStart: null };
+  const pick = (row: { id: number; agent: string; cli?: string; fallsBack?: boolean }) =>
+    choices(at(seats, now), new Map(), {})({ engine: 'claude', for_seat: null, downtime: 0, ...row }, order).seat;
+  assert.equal((pick({ id: 1, agent: 'bolt', fallsBack: true }) as { id: string }).id, 'claude-mix');
+  // (a CLI no seat runs, its agent with no fallback: stuck, its wait naming it)
+  assert.deepEqual(pick({ id: 2, agent: 'wren', cli: 'nowhere' }), {
+    on: 'stalled',
+    why: 'No claude seat takes it',
+    job: 2,
+  });
+  assert.equal((pick({ id: 3, agent: 'bolt', cli: 'nowhere', fallsBack: true }) as { id: string }).id, 'codex-1');
+  // its own seat asleep: the fallback's while it's out, and without one it waits for the seat's return
+  seats[0].state = 'sleeping';
+  seats[0].until = now + HOUR;
+  assert.equal((pick({ id: 4, agent: 'bolt', fallsBack: true }) as { id: string }).id, 'codex-1');
+  assert.deepEqual(pick({ id: 5, agent: 'wren' }), { on: 'seats', engine: 'claude', until: now + HOUR });
 });

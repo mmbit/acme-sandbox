@@ -20,6 +20,7 @@ const forecast = await import('./forecast.ts');
 const windows = await import('./windows.ts');
 const wakes = await import('./wakes.ts');
 const { newThread } = await import('./newthread.ts');
+const plan = await import('./plan.ts');
 
 const MINUTE = 60_000,
   HOUR = 60 * MINUTE;
@@ -84,6 +85,59 @@ test("a thread's two numbers: the agent time its open work has left, and its las
   assert.equal(o.next, first, 'the job that goes on first');
   assert.equal(f.threads.get(shop)!.jobs.length, 1);
 });
+
+for (const running of [false, true]) {
+  test(`a merge wait on a finished task follows its deliverable while the next task is ${running ? 'running' : 'queued'}`, async () => {
+    const source = thread('source'),
+      dependent = thread('dependent');
+    const first = queued(source, { engine: 'codex' });
+    const second = queued(source, { engine: 'codex' });
+    const waiter = queued(dependent, { engine: 'codex' });
+    jobs.holdForMerge(waiter, first, 'wren');
+    const started = await h.claim('codex', { seat: 'codex-1' });
+    assert.equal(started?.id, first);
+    await h.finish(started!, { branch: `job/${first}`, sha: 'a'.repeat(40) });
+    if (running) assert.equal((await h.claim('codex', { seat: 'codex-1' }))?.id, second);
+    const f = forecast.refresh(Date.now());
+    const sourceEta = f.threads.get(source)!.eta;
+    assert.notEqual(sourceEta, null, 'the remaining task has a merge ETA');
+    for (const pace of ['usual', 'slow'] as const) {
+      const merged = f[pace].get(second)!.merged;
+      const waiting = f[pace].get(waiter)!;
+      assert.notEqual(merged, null);
+      assert.notEqual(waiting.start, null, JSON.stringify(waiting.waits));
+      assert.ok(waiting.start! >= merged!, 'the waiter starts after the shared branch merges');
+      assert.notEqual(waiting.merged, null);
+    }
+    assert.notEqual(f.threads.get(dependent)!.eta, null);
+  });
+}
+
+for (const state of ['failed', 'cancelled', 'closed', 'done', 'deliverable closed'] as const) {
+  test(`a merge wait on a really dead task stays stalled when it is ${state}`, async () => {
+    const source = thread('dead'),
+      dependent = thread('dependent');
+    let first: number;
+    if (state === 'closed') {
+      first = queued(source, { engine: 'codex' });
+      const started = await h.claim('codex', { seat: 'codex-1' });
+      assert.equal(started?.id, first);
+      await h.finish(started!, { branch: `job/${first}`, sha: 'a'.repeat(40) });
+      h.storedPr(9801, first, 'closed');
+    } else first = h.ended({ agent: 'bolt', thread: source }, state === 'deliverable closed' ? 'done' : state);
+    if (state === 'deliverable closed') assert.deepEqual(plan.done(source, 'wren'), { ok: true });
+    else queued(source);
+    const waiter = queued(dependent);
+    h.storedWait(waiter, first);
+    const f = forecast.refresh(T);
+    assert.equal(f.threads.get(dependent)!.eta, null);
+    for (const pace of ['usual', 'slow'] as const) {
+      const waiting = f[pace].get(waiter)!;
+      assert.equal(waiting.merged, null);
+      assert.match(JSON.stringify(waiting.waits), /ended without merged work/);
+    }
+  });
+}
 
 test("each thread's window and slack: one that gives, one that misses, one without; the view and hq read them", async () => {
   const gives = thread('gives'),
@@ -189,7 +243,7 @@ test('the view and hq read its jobs: the chain that sets its ETA, each job sized
 
 test('a thread nothing finishes says why, and misses its window', async () => {
   const levels = thread('levels');
-  queued(levels, { forSeat: 'claude-9' }); // a seat that isn't there: nothing runs it
+  queued(levels, { cli: 'nowhere' }); // a CLI no seat runs: nothing runs it
   windowed(levels, T + 2 * 24 * HOUR);
   forecast.refresh(T);
   const lead = await h.start({ agent: 'juno' });

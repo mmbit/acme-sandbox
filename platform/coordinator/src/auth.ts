@@ -10,6 +10,7 @@ import {
   generateAuthenticationOptions, verifyAuthenticationResponse,
 } from '@simplewebauthn/server';
 import { db } from './db.ts';
+import * as challenges from './challenges.ts';
 import { ORIGIN, PUBLIC_HOST, REPO_DIR, ZONE } from './config.ts';
 import { names } from './company.ts';
 import { workflowCommit } from './committed.ts';
@@ -17,10 +18,6 @@ import { workflowCommit } from './committed.ts';
 const SESSION_DAYS = 90;
 const OWN_DEVICE_DAYS = 400;
 const secure = ORIGIN.startsWith('https') ? '; Secure' : '';
-// A challenge in flight: a sign-in or an enrollment between its two calls. It's in the database, so a restart in between
-// (a deploy, which the enrollment link's own commit sets off) doesn't lose it.
-db.exec(`create table if not exists challenges (key text primary key, challenge text not null, enroll_hash text,
-  expires integer not null, client text not null)`);
 
 function cookies(req: IncomingMessage) {
   return Object.fromEntries((req.headers.cookie ?? '').split(/;\s*/).filter(Boolean).map(c => c.split('=') as [string, string]));
@@ -58,12 +55,6 @@ export function keepOwnDevice(req: IncomingMessage, res: ServerResponse) {
   if (req.method === 'GET' && cookies(req)[OWN_DEVICE] !== '1' && isAuthed(req)) markOwnDevice(res);
 }
 
-// Anyone can ask for a challenge, so expired ones are swept. Each client (an IPv6 /64 counts as one) holds at most a few: a new one pushes out that client's own oldest, never
-// anyone else's. And the table is capped: when it's full, new challenges are refused rather than pushing out the one the
-// board is signing in with. A client is the address Caddy puts in X-Forwarded-For, but only on a request that comes
-// from Caddy: anything else (a job reaching coordinator:8080 from the worker) is the address it connects from, whatever
-// header it sends, so all the jobs together are one client.
-const MAX_PENDING = 2000, PER_CLIENT = 5;
 // Caddy reaches the coordinator only on the voice network (the one network they share, infra/compose.yaml), so the
 // address `caddy` resolves to here is the one it connects from. Looked up again after a minute, or after 5 seconds when
 // a forwarded request comes from somewhere else (Caddy may have restarted with a new address).
@@ -95,24 +86,17 @@ export const clientOf = async (req: IncomingMessage) => {
 };
 async function hold(req: IncomingMessage, res: ServerResponse, challenge: string, enrollHash?: string) {
   const client = await clientOf(req);
-  db.prepare('delete from challenges where expires <= ?').run(Date.now());
-  const mine = db.prepare('select key from challenges where client = ? order by rowid').all(client) as { key: string }[];
-  if (mine.length >= PER_CLIENT) db.prepare('delete from challenges where key = ?').run(mine[0].key);
-  if ((db.prepare('select count(*) as n from challenges').get() as { n: number }).n >= MAX_PENDING) return false;
   const key = randomBytes(16).toString('base64url');
-  db.prepare('insert into challenges (key, challenge, enroll_hash, expires, client) values (?, ?, ?, ?, ?)')
-    .run(key, challenge, enrollHash ?? null, Date.now() + 5 * 60_000, client);
-  setCookie(res, 'c', key, 300);
+  if (!challenges.hold('board', key, client, challenge, { enrollHash })) return false;
+  setCookie(res, 'c', key, challenges.CHALLENGE_MS / 1000);
   return true;
 }
 
 function take(req: IncomingMessage) {
   const key = cookies(req).c;
   if (!key) return;
-  const row = db.prepare('select challenge, enroll_hash, expires from challenges where key = ?').get(key) as
-    { challenge: string; enroll_hash: string | null; expires: number } | undefined;
-  db.prepare('delete from challenges where key = ?').run(key);
-  return row && row.expires > Date.now() ? { challenge: row.challenge, enrollHash: row.enroll_hash ?? undefined } : undefined;
+  const pending = challenges.take<{ enrollHash?: string }>('board', key);
+  return pending && { challenge: pending.challenge, enrollHash: pending.context.enrollHash };
 }
 
 // Enrollment codes are committed to the repo only as hashes: infra/enroll/<expiry-epoch>.sha256

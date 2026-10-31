@@ -73,6 +73,10 @@ export type QueuedJob = {
   status: string;
   engine: string;
   for_seat: string | null;
+  // the CLI it must run on (jobs.ts createJob cli), and whether its agent's fallback may take it (jobs.ts FALLS_BACK):
+  // absent from snapshots stored before seats were matched by them.
+  cli?: string | null;
+  fallsBack?: boolean;
   downtime: number;
   created: number;
   finished: number | null;
@@ -103,6 +107,10 @@ export type QueuedJob = {
 export type SeatNow = {
   id: string;
   engine: string;
+  // the CLI it runs, and the agents whose fallback runs on it (models.ts fallingBackTo): absent from snapshots stored
+  // before seats were matched by them.
+  cli?: string;
+  fallbacks?: string[];
   state: string;
   until: number | null;
   fiveHour: number | null;

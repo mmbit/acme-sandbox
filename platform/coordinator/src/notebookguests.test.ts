@@ -457,7 +457,17 @@ test('colleague invitations require the board switch and company domain, and sto
   };
   const book = created.body.notebook;
   const dina = await signIn(book.people[0].link);
-  assert.deepEqual((await dina(`${api}/list`)).body.notebooks.at(-1).invites, { domain: 'studio.example', left: 3 });
+  const listed = (await dina(`${api}/list`)).body;
+  const { TEXTS_MAX, WORDS_MAX } = await import('./pagechecks.ts');
+  const { TEXT_MAX } = await import('../../hq/shell/ink/notebookparts.js');
+  const { MAX_INVITES } = await import('./guests.ts');
+  assert.deepEqual(listed.limits, {
+    noteCharacters: TEXT_MAX,
+    replyCharacters: WORDS_MAX,
+    typedNotes: TEXTS_MAX,
+    colleagueInvites: MAX_INVITES,
+  });
+  assert.deepEqual(listed.notebooks.at(-1).invites, { domain: 'studio.example', left: listed.limits.colleagueInvites });
   assert.equal(
     (await dina(`${api}/invite`, { notebook: book.id, name: 'Elena', email: 'elena@elsewhere.example' })).status,
     400,

@@ -58,6 +58,8 @@ export function mountPages(paper, { dev, shape, scope = null, calls = null }) {
     pictured: true,
   });
   endLostLines(book);
+  // (the Pencil drawn by a native shell's own ink)
+  if (window.webkit?.messageHandlers?.shell) import('./booknative.js').then(m => m.mountNative(book));
   mountTape(book, paper, { lay, inView, current }); // (pictures taped in.)
   book.groups = mountGroups(book, groupHooks(book));
   if (!scope) import('./bookdogear.js').then(m => m.mountDogEar(book)); // (a page shared by its corner)
@@ -318,7 +320,6 @@ function remember(book) {
     y: Math.round(pan.y),
     s: Math.round(scale * 1000) / 1000,
   });
-  // (the page shown: book:turn on the document, for a second screen to follow.)
   document.dispatchEvent(new CustomEvent('book:turn', { detail: { page: v.page.id } }));
 }
 function shownPage(book) {
@@ -366,7 +367,7 @@ const controlsOf = book => ({
       under: id => show1(book, indexOf(book, id)),
     }),
 });
-// A page of the notebook by its id (a second screen's turn, a send's fresh page), turned to at its top; y: that far
+// A page of the notebook by its id, turned to at its top; y: that far
 // down it, Search's find. (y: job #18532)
 function show(book, id, y = 0) {
   const i = indexOf(book, id);
@@ -374,9 +375,12 @@ function show(book, id, y = 0) {
   book.zoom.near();
   return turnTo(book, i, { x: 0, y: Math.max(0, y), s: book.scale });
 }
-// Search's find, or a card's Open in the book: its page, or its notebook at it
-const find = (book, { page, notebook = null }) =>
-  indexOf(book, page) >= 0 || notebook === null ? show(book, page) : openNotebook(book, notebook, { page });
+// Search's find, or a card's Open in the book: its page, its notebook opened at it first where it's another's (from
+// the Shelf too: brought near.)
+async function find(book, { page, notebook = null }) {
+  if (indexOf(book, page) < 0 && notebook !== null) await openNotebook(book, notebook, { page });
+  return show(book, page);
+}
 // The view slides to show a box on page i, unless the paper shows it already (turning to that page first), anywhere
 // on the page.
 async function inView(book, i, box) {

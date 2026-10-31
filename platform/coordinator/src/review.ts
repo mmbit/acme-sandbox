@@ -38,7 +38,7 @@ import * as boardmerges from './boardmerges.ts';
 import * as mergeorder from './mergeorder.ts';
 import * as rulingjobs from './rulingjobs.ts';
 
-// A pull request merged: marked so, what its reviews left into its author's follow-up job, queued in its thread before
+// A pull request merged: marked so, what its reviews left into its author's separate follow-up deliverable before
 // the threads whose work it held let go of its branch (threadends.ts merged), and the visual hold it was still in, when
 // it landed another way (visualapproval.closed). An expedited merge's review follows it (reviewFollows), so its
 // follow-ups wait for that review's ruling (reviewedAfter).

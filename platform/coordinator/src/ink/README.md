@@ -2,7 +2,7 @@
 
 
 Ink is the pen platform as a whole: the Sketchbook you draw in, marks drawn anywhere and sent to it, the sheets that
-send them to agents, their answers, the call's view of the page, and a second screen paired to the first. This folder
+send them to agents, their answers, the call's view of the page, and one-time sign-in on another device. This folder
 is its store and routes. HQ's side is `platform/hq/shell/ink/` (its README lists the parts), the marks on any page are
 review mode's (`shared/review/`), and the worker's `hq sketches`, `hq sketch` and `hq book` read the book
 (`platform/worker/hq/book.ts`).
@@ -54,13 +54,17 @@ The routes keep their addresses (`/api/book/…`): they are the Sketchbook's.
 
 `../notebookguests.ts` keeps board-created notebooks and their guests. The notebook belongs to the board. Each page
 belongs to its guest's existing `sketchpeople.ts` grant. The board reads every page and its answers, while only the
-guest edits. Revoking an invitation closes guest access and retains the pages for the board. Round invitations
-expire after `days` (seven by default). An invited notebook has exactly one guest and lasts until revoked.
+guest edits. Revoking an invitation closes guest access and retains the pages for the board. Reviews
+(`../notebookreviews.ts`) makes a share's notebook and ends access with the share. A review share gets a round notebook.
+A lasting share gets an invited notebook with a page per reviewer. An invited notebook made through
+`POST /api/notebooks/guests` has one guest and lasts until revoked.
 
 Board routes:
 
-- `GET /api/notebooks/guests` and `/list` return `{ notebooks }`, with guests, invitation links and all pages.
-- `POST /api/notebooks/guests` takes `{ kind: 'round' | 'invited', name, people: [{ name, email }], days?, colleagues? }`.
+- `GET /api/notebooks/guests` returns `{ notebooks, limits }`, with guests, invitation links and all pages.
+  The limits give note and reply character counts, typed notes per page and colleague invitations.
+- `POST /api/notebooks/guests` takes `{ kind?: 'invited', name?, people: [{ name, email? }] }` with one person, and makes
+  one invited notebook (named for the person when no name is given). It refuses `kind: 'round'`: rounds start in Reviews.
 - `POST /api/notebooks/guests/revoke` takes `{ notebook, guest? }`. Omitting `guest` revokes every invitation.
 - `GET /api/notebooks/guests/pages?notebook=` reads one notebook. `/groups?page=` reads a page with child answers.
 - `/pictures?file=`, `/slip/picture?id=` and `/slip/now?id=` serve its pictures to the board's authenticated session.
@@ -70,11 +74,12 @@ email-code and passkey sign-in. Its `/api/list` contains only the signed-in pers
 `/picture`, `/pictures` and `/slip/picture` check that same page membership. POST actions are `/create`, `/edit`,
 `/delete`, `/restore`, `/send`, `/undo`, `/reply`, `/replies/delete` and `/pages/create`. New pages are only for invited
 notebooks. Send and reply recheck both the session and the invitation after rendering, before saving anything.
-The room serves only its notebook scripts and stylesheet. It does not expose HQ's other files.
+The room serves its notebook scripts, stylesheet and shared utility module. It does not expose HQ's other files.
 
-When the board enables `colleagues` for a round, `/api/invite` takes `{ notebook, name, email }` and returns the new
-person's link. The guest can invite three colleagues at their own company domain, as on checklist cards. Shared
-mail domains are excluded. The notebook's `invites` field gives the permitted domain and remaining invitations.
+A round notebook may allow `colleagues` (Reviews never does). In those notebooks, `/api/invite` takes
+`{ notebook, name, email }` and returns the new person's link. The guest can invite three colleagues at their own
+company domain, as on checklist cards. Shared mail domains are excluded. The notebook's `invites` field gives the
+permitted domain and remaining invitations.
 
 `../notebookrounds.ts` sends each guest page through the normal notebook note routing. While a round remains open,
 a guest can un-send and revise their page. Dispatched revisions and their answers stay attached to the group. The

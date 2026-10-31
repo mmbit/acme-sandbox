@@ -303,13 +303,16 @@ export const remember = (key: string, value: string | null) => value === null ? 
 // numbers and states (redraws.ts review_branches, every play's: a pull request's verdict sits before the rest of its
 // row). And the feed's old lines, which payments.ts's sweep looks for every two
 // minutes.
+// A branch's work carries its kind and thread (redraws.ts redraw_sources, in every statement wrapped in redraws.query:
+// from the row, ~4 MB of briefs a read), and a branch's lines (tallies.ts linesByThread, the projects view's).
 db.exec(`create index if not exists jobs_pr on jobs (pr) where pr is not null;
   create index if not exists jobs_branch on jobs (branch) where branch is not null;
-  create index if not exists jobs_work_branch on jobs (coalesce(branch, 'job/' || id)) where kind = 'work';
+  create index if not exists jobs_work_branch on jobs (coalesce(branch, 'job/' || id), kind, thread) where kind = 'work';
   create index if not exists jobs_peak on jobs (agent, kind, id) where peak_mb is not null and status = 'done';
   create index if not exists jobs_status on jobs (status, finished);
   create index if not exists jobs_token on jobs (token) where token is not null;
   create index if not exists prs_branch_state on prs (branch, number, status);
+  create index if not exists prs_lines on prs (branch, added, removed) where added is not null;
   drop index if exists prs_branch;
   create index if not exists events_ts on events (ts)`);
 // Covers the jobs columns read by reviewtime.ts and reviewplan.ts (the measured runs, and each pull request's review
@@ -318,9 +321,12 @@ db.exec(`create index if not exists jobs_pr on jobs (pr) where pr is not null;
 db.exec(`create index if not exists jobs_review_runs on jobs (id, status, kind, stage, engine, round, agent, pr, seq);
   drop index if exists jobs_run_sizes`);
 // Covers queueRows in backlog.ts, ordered by status then id, so queue reads avoid brief and output overflow pages.
-// That query names it with `indexed by`.
-db.exec(`create index if not exists jobs_queue on jobs (status, id, kind, agent, title, step, round, engine, for_seat,
-  downtime, after, request, not_before, held_by, created, branch, pr, seat, thread, finished, stage, queued_by)`);
+// That query names it with `indexed by`. It replaced jobs_queue, dropped here, with the seats a job may run on: its CLI,
+// and whether it falls back (jobs.ts FALLS_BACK).
+db.exec(`create index if not exists jobs_play on jobs (status, id, kind, agent, title, step, round, engine, for_seat,
+  downtime, after, request, not_before, held_by, created, branch, pr, seat, thread, finished, stage, queued_by, cli,
+  session, engine_only);
+  drop index if exists jobs_queue`);
 // Covers reviewplan.ts records and selections and backlog.ts work in review without reading verdict overflow pages.
 // Files and links are fetched separately for PRs in review. Those queries name it with `indexed by`
 db.exec(`create index if not exists prs_plan on prs (number, branch, author, panel, review_class, round, status, sha,
@@ -960,4 +966,9 @@ once('2026-10-30-incidents', () => {
   if (lacks('jobs', 'incident')) db.exec('alter table jobs add column incident integer not null default 0');
   if (lacks('deploys', 'broke')) db.exec("alter table deploys add column broke text not null default ''");
   if (lacks('deploys', 'reverted')) db.exec("alter table deploys add column reverted text not null default ''");
+});
+// jobs_work_branch with its kind and thread (above), in place of the branch alone.
+once('2026-10-31-jobs-work-branch-thread', () => {
+  db.exec(`drop index if exists jobs_work_branch;
+    create index jobs_work_branch on jobs (coalesce(branch, 'job/' || id), kind, thread) where kind = 'work'`);
 });

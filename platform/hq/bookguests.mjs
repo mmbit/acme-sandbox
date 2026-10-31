@@ -20,7 +20,7 @@ import {
   untitledPage,
 } from './bookguestscreen.mjs';
 import { playwright, until } from '../../shared/browser/browser.mjs';
-import { words } from './shell/ink/notebookwords.js';
+import { markedSlip, pageDate } from './bookguestlanguage.mjs';
 
 export async function guestNotebookStories({ shots = null, webkit = true } = {}) {
   if (shots) await mkdir(shots, { recursive: true });
@@ -219,11 +219,13 @@ async function invitedStory(state, board) {
   await until(board, '.ng-groups', /menu be easier/);
   await board.locator('.ng-ink').first().waitFor({ state: 'visible' });
   await sendPage(guest.page);
-  await guest.page.waitForFunction(() => document.querySelectorAll('#book .bk-page').length === 2);
+  // (the send's turn to its fresh page over, or it turns the book away from the first page again.)
+  await guest.page.waitForFunction(() => document.querySelectorAll('#book .bk-page')[1]?.hidden === false);
   const groups = (await state.h.board(`/api/notebooks/guests/groups?page=${book.pages[0].id}`)).body.groups;
   await answerNote(state, groups[0].id, 'I will make the menu label clearer.');
   await firstPage(guest.page);
   await until(guest.page, '#book .answer-slip', /make the menu label clearer/);
+  await markedSlip(guest.page, 'en');
   await until(board, '.ng-answer', /make the menu label clearer/);
   await snapshot(state, 'invited-answer-phone', guest.page);
   await snapshot(state, 'invited-watching-desktop', board);
@@ -289,6 +291,10 @@ async function pairingStory(state) {
   const code = (await state.h.board('/api/notebooks/pair', {})).body.code;
   const other = await openVisitor(state, { width: 390, height: 844 });
   await other.page.goto(`${state.origin}/pair#code=${code}`);
+  // (the look's logo: a day one and a night one, one shown.)
+  await other.page.locator('main h1 img:visible').waitFor();
+  await snapshot(state, 'device-sign-in-phone', other.page);
+  assert.equal(await other.page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
   await other.page.locator('form button').click();
   await other.page.waitForURL(state.origin + '/');
   const cookies = await other.context.cookies();
@@ -345,10 +351,8 @@ async function languageStory(state, job, [lang, name, intro, open, label]) {
   await answerNote(state, groups[0].id, 'An answer for the guest');
   await firstPage(page);
   await until(page, '#book .answer-slip', /An answer for the guest/);
-  const head = await page.locator('#book .answer-slip .slip-by').first().innerText();
-  assert.ok(head.endsWith(` · ${words[lang].aiAgent}`), `${head}: an agent's answer is marked as an AI's`);
-  const prompt = await page.locator('#book .answer-slip .slip-reply').first().getAttribute('aria-label');
-  assert.equal(prompt, (await named(page, 'Write your reply to {name} here')).replace('{name}', head.split(' · ')[0]));
+  await markedSlip(page, lang);
+  await pageDate(page, lang);
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
   await snapshot(state, `guest-language-${lang}-phone`, page);
   await page.goto(state.origin + new URL(book.people[0].link).pathname);

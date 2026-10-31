@@ -43,7 +43,7 @@ export function lines(f: Forecast) {
     ...giving(open, f.now),
     ...[...stalled(), ...[getRoom().line ?? []].flat(), ...roomLow(f.now), ...seatsNear(f)],
     ...[...tests(f.now), ...timedOut(f.now), ...pastSize(f)],
-    ...[...stuckPrs(f.now), ...failed(f.now)],
+    ...[...stuckPrs(f.now), ...seatless(f), ...failed(f.now)],
     ...[...heldByNeeds(open, f.now), ...undated(open, f), ...inboxes(f.now), ...meetingAsks(f.now), ...sprawl(f.now)],
   ];
 }
@@ -210,6 +210,13 @@ function stuckPrs(now: number) {
     const stuck = `pull request #${p.number} (${p.author}'s, round ${p.round}) is stuck${p.why ? `: ${p.why}` : ''}`;
     return `${stuck}. ${movedWords(prMoved(p.number), now)}`;
   });
+}
+
+// Work the play finds no seat takes (playseats.ts choices): no seat coming back starts it.
+function seatless(f: Forecast) {
+  return f.snapshot.jobs
+    .filter(j => f.usual.get(j.id)?.waits.some(w => w.on === 'stalled' && w.job === j.id))
+    .map(j => `#${j.id} (${j.agent}: ${jobs.nameOf(j)}) is stuck: no ${j.engine} seat takes it, whatever comes back`);
 }
 
 // When work last moved, for the hourly check to tell work that moved since the last check from work only acted on: a new

@@ -14,6 +14,7 @@ const { ORIGIN } = await import('./config.ts');
 const { currentPage, mine } = await import('./notebook.ts');
 const shares = await import('./shares.ts');
 const { endDue } = await import('./feedback.ts');
+const { timeZone } = await import('./company.ts');
 afterEach(() => h.cancelQueued());
 
 const HELLO = 'hello.preview.company.test'; // (the fixture's product)
@@ -67,6 +68,7 @@ test('a lasting guest and a round guest each come in by one link to a shelf of p
   assert.equal(guest.go, '/guest/notebooks/', 'their link opens their shelf');
   const shelf = await guest.shelf();
   assert.equal(shelf.name, 'Sam de Vries');
+  assert.equal(shelf.timeZone, timeZone(), "the guest's days are on the company's clock");
   assert.equal(shelf.books.length, 1, 'one book per project');
   const [book] = shelf.books;
   assert.equal(book.name, 'Hello (platform test)');

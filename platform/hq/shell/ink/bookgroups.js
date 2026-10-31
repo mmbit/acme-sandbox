@@ -6,7 +6,7 @@
 // (bookasks.js), one still open edged red (bookforyou.js). A group deleted crumples away at once, Undo a tap away in a
 // toast and on the book's Undo; a scratch-out written over a group deletes it the same way. A sent page's own groups are read-only.
 // What's saved is booksave.js's; the maths bookgroupmath.js's. Its look: bookgroups.css.
-import { notebookRequest, word } from './bookscope.js';
+import { aiMark, notebookRequest, word } from './bookscope.js';
 import { esc, stylesheet } from '../../util.js';
 import { toast } from '../toast.js';
 import { sfx } from '../audio.js';
@@ -96,7 +96,7 @@ function draw(gs, view) {
       }${tagsHtml(g)}`;
     })
     .join('');
-  wireSlips(layer, slipsOn(gs, view));
+  wireSlips(layer, slipsOn(gs, view), word);
   wireAsks(layer, {
     dev: gs.book.dev,
     asks: new Map([...(page.groups?.values() ?? [])].flatMap(g => g.asks ?? []).map(a => [a.id, a])),
@@ -177,8 +177,10 @@ function partsNow(page, id) {
 // A group's children slipped under it, its answers and replies (notebookstack.js slipsUnder)
 const slipsHtml = children =>
   slipsUnder(children)
-    .map(c => (c.kind === 'reply' ? replyHtml(c) : slipHtml(c, {})))
+    .map(c => (c.kind === 'reply' ? replyHtml(c) : slipHtml(c, {}, slipWords())))
     .join('');
+// (the slip in the reader's words, and to a guest its agent's name says it's an AI's: charter rule 5.)
+const slipWords = () => ({ say: word, mark: aiMark() });
 
 const slipsOn = (gs, view) => ({
   tick: (id, ticked) => (gs.book.dev ? Promise.resolve() : notebookRequest('/api/book/slip/tick', { id, ticked })),

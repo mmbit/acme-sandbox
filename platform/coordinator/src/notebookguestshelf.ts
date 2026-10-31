@@ -11,6 +11,7 @@ import * as guests from './guests.ts';
 import * as shares from './shares.ts';
 import * as artifacts from './artifacts.ts';
 import { ownerOf } from './owed.ts';
+import { timeZone } from './company.ts';
 import { makeNotebook, changed } from './notebook.ts';
 import { BOARD } from './ink/book.ts';
 import { addMember, forGuest, whoOf, type Membership } from './notebookguests.ts';
@@ -44,7 +45,8 @@ guests.addDoor(link => {
 
 type Linked = { m: Membership; share: shares.Share };
 type Book = { key: string; name: string; asks: number; artifacts: ReturnType<typeof workOf>[] };
-// GET /guest/notebooks/api/shelf: { books: [{ key, name, asks, artifacts }], journal }, the book with asks lit first
+// GET /guest/notebooks/api/shelf: { books: [{ key, name, asks, artifacts }], journal, timeZone }, the book with asks lit
+// first; timeZone the company's clock, which the guest's days are written on
 export function shelfOf(name: string) {
   const linked: Linked[] = [];
   let journal: Membership | undefined;
@@ -72,7 +74,12 @@ export function shelfOf(name: string) {
     books.set(key, book);
   }
   const shelf = [...books.values()].sort((a, b) => Number(b.asks > 0) - Number(a.asks > 0));
-  return { name, books: shelf, journal: { notebook: journal.notebook, page: journal.page, asks: asksFor(journal) } };
+  return {
+    name,
+    books: shelf,
+    journal: { notebook: journal.notebook, page: journal.page, asks: asksFor(journal) },
+    timeZone: timeZone(),
+  };
 }
 
 // A piece of work shared with them: its name, where it opens (through the guest desk's onward, which hands them their

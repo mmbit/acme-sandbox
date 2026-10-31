@@ -18,6 +18,7 @@ import { holdMerges } from './mergeholds.ts';
 import { deployLag } from './deploytime.ts';
 import { heldWindows } from './inbox.ts';
 import { observedSeats } from './seatobservations.ts';
+import { mergeWait } from './mergewait.ts';
 import { measuredMemories } from './room.ts';
 import type { Memory, OrderingSnapshot, Planned, QueuedJob, Snapshot } from './eta.ts';
 
@@ -34,6 +35,8 @@ type Row = {
   status: string;
   engine: string;
   for_seat: string | null;
+  cli: string | null;
+  falls_back: number;
   downtime: number;
   after: number | null;
   request: number | null;
@@ -114,7 +117,7 @@ export function orderingSnapshot(
     const placed = itemCarriers.has(row.id) ? placement.place(row) : undefined;
     if (placed) itemBranches.add(placed.branch);
   }
-  const { waits, inOrder } = placement;
+  const { waits, inOrder, branchTask } = placement;
   const answers = answerTimes(now),
     lag = deployLag(now);
   const reviewing = rows.filter(row => row.kind === 'work' && row.status === 'done').map(row => row.thread);
@@ -131,7 +134,7 @@ export function orderingSnapshot(
   const holdingOf = pauses.holdings(); // (one read for every thread)
   const holds = new Map([...new Set(rows.map(row => row.thread))].map(thread => [thread, holdingOf(thread)]));
   const queued = rows.map((row, index) => {
-    const job = queuedJob(row, { open, waits, answers, lag, paused, due, held, now, byPr, holds, inOrder });
+    const job = queuedJob(row, { open, waits, answers, lag, paused, due, held, now, byPr, holds, inOrder, branchTask });
     if (row.id < 0) job.orderId = lastId + index + 1;
     job.itemWork = itemBranches.has(placement.place(row)?.branch ?? jobs.workBranchOf(row));
     job.reviewPlan = rounds(row);
@@ -145,10 +148,11 @@ export function orderingSnapshot(
 }
 
 function queueRows(now: number) {
-  // jobs_queue holds every jobs column here, by state then id: open work and the done work in review are read without
+  // jobs_play holds every jobs column here, by state then id: open work and the done work in review are read without
   // a row's brief and output, and prs_plan finds the pull requests in review without their verdicts (db.ts).
-  // (board: the order's first lane, jobs.ts LANE)
-  const columns = `j.id, j.agent, j.title, j.step, j.round, j.kind, j.status, j.engine, j.for_seat, j.downtime,
+  // (board: the order's first lane, jobs.ts LANE; cli, falls_back: the seats it may run on, playseats.ts)
+  const columns = `j.id, j.agent, j.title, j.step, j.round, j.kind, j.status, j.engine, j.for_seat, j.cli,
+    ${jobs.FALLS_BACK} falls_back, j.downtime,
     j.after, j.request, j.not_before, j.held_by, j.created, j.branch, j.pr, j.seat, j.thread,
     coalesce(j.finished, (select max(ended) from runs where job = j.id)) finished,
     (select coalesce(sum((julianday(coalesce(ended, $now)) - julianday(started)) * 86400000), 0) from runs where job = j.id) spent_ms,
@@ -161,8 +165,8 @@ function queueRows(now: number) {
     where p.status in ${jobs.OPEN_PRS} and p.branch like 'job/%'`;
   const rows = db
     .prepare(
-      `select ${columns} from jobs j indexed by jobs_queue where j.kind != 'chat' and j.status in ${jobs.OPEN_JOBS}
-      union all select ${columns} from jobs j indexed by jobs_queue where j.id in (${inReview}) and j.kind = 'work'
+      `select ${columns} from jobs j indexed by jobs_play where j.kind != 'chat' and j.status in ${jobs.OPEN_JOBS}
+      union all select ${columns} from jobs j indexed by jobs_play where j.id in (${inReview}) and j.kind = 'work'
         and j.status = 'done'
         and (select status from prs where branch = ${jobs.workBranch('j')} order by number desc limit 1) in ${jobs.OPEN_PRS}`,
     )
@@ -209,7 +213,8 @@ function inThreads(
 
 // Planned work as a queued job: nothing run of it yet, nothing it waits on but its --after.
 const plannedRow = (p: Omit<Planned, 'size'>, now: number): Row => ({
-  ...{ kind: 'work', origin: 'work', status: 'queued', for_seat: null, downtime: 0, request: null, not_before: 0 },
+  ...{ kind: 'work', origin: 'work', status: 'queued', for_seat: null, cli: null, falls_back: 0, downtime: 0 },
+  ...{ request: null, not_before: 0 },
   ...{
     follow_through: 0,
     held_by: null,
@@ -241,6 +246,7 @@ type Context = {
   byPr: Map<number | null, Row[]>;
   holds: Map<string | null, ReturnType<typeof pauses.holding>>;
   inOrder: ReturnType<typeof threadorder.placing>['inOrder'];
+  branchTask: ReturnType<typeof threadorder.placing>['branchTask'];
 };
 
 // What a job waits for: its --after, its further waits and cards (jobs.ts READY), its wakes (hq job --when), and the
@@ -272,7 +278,8 @@ function queuedJob(row: Row, c: Context): QueuedJob {
 function unplanned(row: Row): QueuedJob {
   return {
     ...{ id: row.id, agent: row.agent, title: row.title, kind: row.kind, origin: row.origin, status: row.status },
-    ...{ engine: row.engine, for_seat: row.for_seat, downtime: row.downtime },
+    ...{ engine: row.engine, for_seat: row.for_seat, cli: row.cli, downtime: row.downtime },
+    fallsBack: !!row.falls_back,
     ...{ created: Date.parse(row.created), finished: row.finished === null ? null : Date.parse(row.finished) },
     ...{ notBefore: row.held_by ? 0 : row.not_before, seat: row.seat, pr: row.pr, board: row.board },
     ...(row.follow_through ? { followThrough: true } : {}),
@@ -292,27 +299,19 @@ function waitForJobs(job: QueuedJob, row: Row, c: Context) {
   }
   const further = c.waits.get(row.id) ?? [];
   for (const prior of further) {
+    if (prior.status === 'done' && waitForBranch(job, prior.id, c)) continue;
     if (c.open.has(prior.id)) waitFor(job, prior.id);
-    else if (prior.status !== 'done' || !waitForBranch(job, prior.id, c))
-      stall(job, `it waits for job #${prior.id}, which ended without merged work`);
+    else stall(job, `it waits for job #${prior.id}, which ended without merged work`);
   }
 }
 
-// A completed prerequisite leaves its branch merge edge in the plan until the PR resolves.
+// A prerequisite's merge edge follows its branch's open PR. A finished task can follow its open deliverable's
+// remaining work on that branch first.
 function waitForBranch(job: QueuedJob, prior: number, c: Context) {
-  const before = prepared('select id, branch from jobs where id = ?').get(prior) as
-    { id: number; branch: string | null } | undefined;
-  if (!before) return false;
-  const branch = jobs.workBranchOf(before);
-  const pr = prepared(
-    `select number from prs where branch = ? and status in ${jobs.OPEN_PRS} order by number limit 1`,
-  ).get(branch) as { number: number } | undefined;
-  if (!pr) return false;
-  const work = [...c.open.values()].find(
-    r => r.kind === 'work' && r.status === 'done' && jobs.workBranchOf(r) === branch,
-  );
-  if (work) waitFor(job, work.id);
-  else stall(job, `it waits for pull request #${pr.number}, whose work isn't open`);
+  const target = mergeWait(prior, c.open, c.branchTask);
+  if (!target) return false;
+  if ('job' in target) waitFor(job, target.job);
+  else stall(job, `it waits for pull request #${target.pr}, whose work isn't open`);
   return true;
 }
 

@@ -80,20 +80,7 @@ function reopenDelivered(page: number, who: string) {
   inOneStep(() => {
     for (const g of groups) {
       // Preserve the dispatched revision and its answers when the guest edits and sends again.
-      insertGroup(
-        p,
-        'reply',
-        who,
-        { ink: [], texts: [], pictures: [] },
-        {
-          parent: g.id,
-          note: g.note,
-          status: 'sent',
-        },
-      );
-      const revision = db.prepare('select max(id) id from notebook_groups where parent = ?').get(g.id) as {
-        id: number;
-      };
+      const revision = insertGroup(p, 'reply', who, { ink: [], texts: [], pictures: [] }, { parent: g.id });
       db.prepare("update notebook_groups set note = ?, status = 'sent' where id = ?").run(g.note, revision.id);
       db.prepare("update notebook_groups set note = null, status = 'open' where id = ?").run(g.id);
     }

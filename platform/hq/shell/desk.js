@@ -136,7 +136,7 @@ function show(kind, html, force = false) {
   if (was === kind && typing() && !force) return false; // already open with text in it: leave it be (unless a company app asks to move on)
   if (was === 'phone' && kind !== 'phone') forgetAge();
   open = kind; el.hidden = false; el.dataset.kind = kind;
-  el.innerHTML = `<div class="device ${kind}" role="dialog" aria-modal="true">${html}</div>`;
+  el.innerHTML = `<div class="device ${kind}" role="dialog" aria-modal="true" data-keep-clear>${html}</div>`;   // (a minimised call steps clear of it: callbubble.js.)
   if (!was) sfx.open(); else sfx.blip();
   clearInterval(timer); timer = null; homeFit?.disconnect(); homeFit = null;   // (homeFit)
   opened(kind);

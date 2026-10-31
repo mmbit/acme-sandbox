@@ -106,8 +106,10 @@ changed lines) and two to two and a half when it's big (past about 500).
 ### One deadline per deliverable
 
 The board or CEO chooses one deadline for the named deliverable (`hq window`). Whoever queues a task reads the
-open plan and judges which deliverable's goal it serves. A follow-up of work in flight joins that deliverable by
-default. Every task inherits its deadline, so `hq job` asks for no task-level time, even when the deliverable has
+open plan and judges which deliverable's goal it serves. A follow-up needed to meet its done when, including a
+blocking fix, joins that deliverable. Non-blocking review follow-ups after its merge get their own one-task
+deliverable in the same project. They do not hold deliverables that need the merged work or inherit its deadline.
+Every task inherits its own deliverable's deadline, so `hq job` asks for no task-level time, even when the deliverable has
 none. The plan, live claim, reviews, fixes and seat pacing read the same deadline through `jobs.thread`. Changing
 it updates all that work on the next plan read, without copied task deadlines. The CEO's summary, plan and board's
 deliverable view say "no deadline set" once for the deliverable. The CEO settles that gap for the whole. A task
@@ -115,6 +117,7 @@ in no deliverable takes `--by <when>`, `--by <project>/<slug>` or `--by none`. O
 ask without `--by` asks the CEO for its time. The CEO’s own ask is refused. A filed task’s `--by <when>` sets or
 tightens the deliverable’s deadline. Filing is judgment. Scheduling is an algorithm. A filed task is not refused for
 lacking a deadline.
+
 
 ## The names the board reads
 
@@ -305,8 +308,12 @@ claim, the worker and the review panel (`threadorder.ts`). There is no setting f
   own. A task that joins a deliverable before its judge has started (a landing, a requeue, the owner's next task) takes
   it out of that judge, whose brief is rewritten from the others it judges, or which is cancelled if it judges none
   (`threadjudge.ts release`, from `jobs.ts createJob`); its end wakes a judge again.
-  The owner closes it with `hq plan done` or draws its next task. `hq projects`, `hq deliverable` and the
-  CEO's summary say "ready to judge" until then, with the open deliverables that need it. HQ's one-task wrappers (a routine's
+  The owner closes it with `hq plan done` or draws its next task (a card's step too: `--after request:<id>`). The brief
+  says how often it was judged before (`judgings`), its deadline and its agent time against its first size, so ending
+  it is as plain as feeding it. A judge that ends done closes each deliverable it left open with nothing drawn in it.
+  A judge that fails wakes the owner again (`threadjudge.ts ended`, from `jobs.ts handOn`).
+  `hq projects`, `hq deliverable` and the CEO's summary say "ready to judge" while the deliverable stays open, with the
+  open deliverables that need it. HQ's one-task wrappers (a routine's
   run, a check, a note's job) and a judge's own deliverable close at their merge. The judge's brief carries each
   task's report as quoted data, and only a report its owner may read (`jobs.ts readsReport`): one holding a customer's
   own details stays with its job unless the owner has roles.customerData, and a judge handed it holds those details

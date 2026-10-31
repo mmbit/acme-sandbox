@@ -54,8 +54,10 @@ function opening(r, el) {
 function liftHost(r, reshow) {
   const { host } = r;
   r.popups = r.popups.filter(e => e.isConnected);
+  // (not into a popup marked data-no-ink, no page to write on: a call's floating parts over HQ's spread book, which
+  // would lift the ink over the book with them.)
   const modal = activeModal(r),
-    topmost = openPopups(r).findLast(e => !modal || modal.contains(e));
+    topmost = openPopups(r).findLast(e => (!modal || modal.contains(e)) && !e.matches('[data-no-ink]'));
   if (!topmost) {
     if (host.parentNode !== homeOf(r)) homeOf(r).append(host);
     host.removeAttribute('popover');

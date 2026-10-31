@@ -24,8 +24,6 @@ import { setupCarry } from './carry.js';
 // (handwriting read into type.)
 import * as written from './written.js';
 import { unpen } from './postitpen.js';
-// (the open mark finished on a second screen.)
-import { moved, setupHandover } from './handover.js';
 
 export const CSS = `
       .listen { position: absolute; width: 44px; height: 44px; margin: -22px 0 0 -22px; border-radius: 50%; pointer-events: none;
@@ -55,7 +53,6 @@ function lifted(r, stroke) {
     marks.paint(r);
     develop(r);
     written.readSoon(r);
-    moved(r);
     return;
   }
   if (r.mode !== 'idle') return;
@@ -68,7 +65,6 @@ function lifted(r, stroke) {
     r.mark.ringed = true; // (a finger can carry what it holds into the book: carry.js)
   }
   begin(r);
-  moved(r);
 }
 function begin(r) {
   r.undoTo = { mark: null, shot: null, exposure: null };
@@ -108,7 +104,6 @@ export async function undo(r) {
     marks.paint(r);
     develop(r);
     written.readSoon(r);
-    moved(r);
     return;
   }
   if (r.mode === 'note') return reset(r);
@@ -147,7 +142,6 @@ export function setupPencil(r) {
   // (what the pen's touches and a mark's end do with the Pencil's own, handed in: they never import it.)
   setupTouch(r, { begin, undo });
   setupSettle(r, { lifted });
-  setupHandover(r, { begin });
   carry(r);
   followPage(r);
 }
@@ -175,5 +169,4 @@ export const unmark = r => {
   if (r.listen && !r.holding) r.listen.hidden = true;
   r.spoken = r.typed = false;
   if (r.book) r.pinIt.textContent = 'Save';
-  if (r.book) moved(r); // (no open mark now: a second screen hears so.)
 };

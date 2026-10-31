@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { freePage, onDesk, paperBox, pick, savedWhere } from './bookmouse.mjs';
 import { DESKTOP, MINI, pressAlong, until } from './bookkit.mjs';
-import { fromBar } from './booknotebookscreen.mjs';
+import { fromBar, inUnit } from './booknotebookscreen.mjs';
 
 export function highlightStories(c) {
   return Object.fromEntries(
@@ -141,17 +141,6 @@ async function deletesMarks(page, c, free, draw) {
   assert.deepEqual(await painted(), [0, 0], "Select's bar's Delete takes them off at once too");
 }
 
-// A column of the screen in a unit's own px, as the store keeps its ink (bookunits.js).
-const inUnit = (page, unit, x) =>
-  page.evaluate(
-    ([unit, x]) => {
-      const shown = [...document.querySelectorAll('#book .bk-page')].find(p => !p.hidden),
-        r = shown.getBoundingClientRect(),
-        card = shown.querySelector(`.bk-unit[data-unit="${unit}"]`);
-      return (x - r.left) / (r.width / shown.offsetWidth) - parseFloat(card.style.left);
-    },
-    [unit, x],
-  );
 const offColumn = (ink, x) =>
   ink.every(stroke => stroke.points.every(point => point[0] < x) || stroke.points.every(point => point[0] > x));
 

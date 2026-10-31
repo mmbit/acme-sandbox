@@ -1,6 +1,6 @@
 // Reported seat windows renewed and consumed by simulated runs.
 import type { MixRate } from './workmix.ts';
-import type { SeatNow, Snapshot, Wait } from './eta.ts';
+import type { QueuedJob, SeatNow, Snapshot, Wait } from './eta.ts';
 import { pacedTakes, spareOnly, type Order } from './planner.ts';
 import {
   drainLifts,
@@ -114,8 +114,11 @@ export function drained(seat: Seat, now: number) {
   return binding(seat, now) !== null;
 }
 
+// What a seat's claim reads of a job (jobs.ts claimable).
+type Claimed = Pick<QueuedJob, 'id' | 'agent' | 'engine' | 'for_seat' | 'cli' | 'fallsBack' | 'downtime'>;
+
 export function choose(
-  row: { engine: string; for_seat: string | null; downtime: number },
+  row: Claimed,
   order: Order,
   moment: Moment,
   busy: Map<string, number>,
@@ -137,7 +140,7 @@ export function choose(
   // (downtime work behind other work, on an open seat, waits in the queue too)
   if (eligible) return { on: 'queue', engine: row.engine, minutes: 0 };
   // (an open seat that doesn't take it is paced, so it aims somewhere: it may take it once its pacing lifts)
-  const own = seats.filter(s => s.engine === row.engine && (!row.for_seat || s.id === row.for_seat));
+  const own = seats.filter(s => fits(s, row) || fallsBackOnto(s, row));
   const returns = own
     .flatMap(s =>
       available(s, now) ? [pacingLifts(week(s), moment.aims.get(s)!, now)] : [s.until, s.fiveHourResets, s.weekResets],
@@ -150,31 +153,48 @@ export function choose(
   };
 }
 
-export function takes(seat: Seat, row: { engine: string; for_seat: string | null }, order: Order, moment: Moment) {
+// seats: those whose readiness decides a fallback, the moment's unless it's one seat's alone (playclaims.ts groupsOn).
+export function takes(seat: Seat, row: Claimed, order: Order, moment: Moment, seats = moment.seats) {
+  const ownOut = () => !seats.some(s => fits(s, row) && available(s, moment.now));
   return (
-    seat.engine === row.engine &&
-    (!row.for_seat || row.for_seat === seat.id) &&
+    (fits(seat, row) || (fallsBackOnto(seat, row) && ownOut())) &&
     available(seat, moment.now) &&
     pacedTakes(order, moment.paced.get(seat))
   );
 }
+
+// A seat of its own: of its engine, the one it's pinned to if it is, running the CLI it must run on, as claim's.
+const fits = (seat: Seat, row: Claimed) =>
+  seat.engine === row.engine &&
+  (!row.for_seat || row.for_seat === seat.id) &&
+  (!row.cli || row.cli === (seat.cli ?? seat.engine));
+// A seat its agent's fallback runs on. Claim gives it work there only while none of its own is available.
+const fallsBackOnto = (seat: Seat, row: Claimed) => !!row.fallsBack && !!seat.fallbacks?.includes(row.agent);
 
 const compareSeats = (a: Seat, b: Seat, now: number) =>
   (windowUsed(windowsOf(a), now) ?? 1) - (windowUsed(windowsOf(b), now) ?? 1) || a.id.localeCompare(b.id);
 
 // A full room holds its occupancy for the rest of the moment, as the seats' occupancy holds between two claims that
 // start. Claims with the same engine, seat binding, paced seats open to them and spare standing (with others waiting)
-// therefore see the same seats (between claims, and spare standing).
+// therefore see the same seats (between claims, and spare standing). The binding is its pin, its CLI and the agent whose
+// fallback may take it.
 export function choices(moment: Moment, busy: Map<string, number>, limits: Record<string, number>) {
   type Pick = { seat: Seat | Wait; roomSeat: Seat | Wait };
-  const cached = new Map<string, Map<string | null, Map<number, Pick>>>();
+  const cached = new Map<string, Map<string, Map<number, Pick>>>();
   const paced = [...new Set(moment.paced.values())].filter((until): until is number => until !== undefined);
   const empty = new Map<string, number>();
-  return (row: { engine: string; for_seat: string | null; downtime: number }, order: Order, others = false) => {
+  return (row: Claimed, order: Order, others = false) => {
+    // Work no seat takes, not even its fallback's, is stuck whatever comes back. Its wait names it for the CEO's summary
+    // (threats.ts). With no seat reported at all, choose says so.
+    if (moment.seats.length && !moment.seats.some(s => fits(s, row) || fallsBackOnto(s, row))) {
+      const stuck = { on: 'stalled' as const, why: `No ${row.engine} seat takes it`, job: row.id };
+      return { seat: stuck, roomSeat: stuck };
+    }
     let engine = cached.get(row.engine);
     if (!engine) cached.set(row.engine, (engine = new Map()));
-    let bound = engine.get(row.for_seat);
-    if (!bound) engine.set(row.for_seat, (bound = new Map()));
+    const binding = JSON.stringify([row.for_seat, row.cli ?? null, row.fallsBack ? row.agent : null]);
+    let bound = engine.get(binding);
+    if (!bound) engine.set(binding, (bound = new Map()));
     // Pacing thresholds are nested. The count identifies the same set of seats for every claim.
     let admitted = 0;
     for (const until of paced) admitted += Number(pacedTakes(order, until));
