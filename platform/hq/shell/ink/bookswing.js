@@ -44,8 +44,7 @@ import {
 } from './bookswingmath.js';
 
 // HQ's page blurs as it dissolves only where frames keep up: the median of its last JUDGED frames slower than this (s)
-// turns the blur off on this device, then and there and for good (a plain fade instead): the prototype's "measure,
-// then fall back"
+// turns the blur off on this device, then and there and for good (a plain fade instead)
 const SLOW_FRAME = 1 / 45,
   JUDGED = 5;
 // Landed or shut, HQ's page stays gone while it lays itself out in its new room (SETTLE_MAX: bookswingmath.js); then it
@@ -239,11 +238,9 @@ async function settleIn() {
 }
 const framesOut = n => new Promise(done => (n ? requestAnimationFrame(() => framesOut(n - 1).then(done)) : done()));
 const wait = ms => new Promise(done => setTimeout(done, ms));
-// (the swing's frames too slow for the blur on this device: a plain fade from this frame on. Judged as they come, on
-// the real frame times, from the third on: judged at the end on the swing's capped steps, over at least 12, a device
-// managing four frames a second never dropped it, and a blur that costs that much in WebKit, its new radius every
-// frame, chugged the whole way. The median, so a single
-// slow frame, the pages painted as the book shows, doesn't.)
+// Each dissolve frame judged on its real time (s), not the swing's capped step. Once three are in, a median over
+// SLOW_FRAME turns the blur off from this frame on. The median, so one slow frame (the pages painted as the book shows)
+// doesn't.
 function judge(real) {
   if (!store.get('book.blur', true)) return;
   frames.push(real);

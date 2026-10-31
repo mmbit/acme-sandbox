@@ -33,12 +33,13 @@ export const stateOf = (r: Round) =>
   !r.closed ? 'open' : r.unwrapped || !r.advice ? 'done' : r.back ? 'back' : 'away';
 
 // A guest marks their page done: its notes go as a page's do, and no fresh page comes after it
+// (sendPage's who and stillOpen as options)
 export async function handIn(page: number, who: string, stillOpen: () => boolean) {
   const p = pageRow(page, who);
   if (!p) return 404;
   const round = roundOf(p.notebook);
   if (round?.closed) return [409, 'the round is closed', 'roundClosed'] as Refused;
-  const sent = await sendPage({ id: page }, who, stillOpen);
+  const sent = await sendPage({ id: page }, { who, stillOpen });
   if (typeof sent === 'number' || isRefused(sent)) return sent;
   if (!stillOpen()) {
     undoSend({ id: page }, who);

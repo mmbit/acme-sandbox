@@ -6,6 +6,7 @@ import { harness } from './harness.ts';
 import { splitPlatform } from './fixture.ts';
 import { roomRecords, workerSource } from '../../worker/src/roomrecords.ts';
 import { memoryFixture } from '../../worker/src/memory.fixture.ts';
+import { ordinaryGate } from '../../worker/src/gateevidence.ts';
 
 const h = await harness('roomrecords', {
   before: repo => {
@@ -226,6 +227,77 @@ test('Process inspection keeps two independent source records, original receipts
   assert.equal(previous.room.receiptStale, false);
   assert.equal(previous.decision.previousSession, true);
   assert.deepEqual(previous.decision.record, inspected.decision.record);
+});
+
+test('Process reads both fixed populations with independent receipts and explicit previous-session invalidation', async t => {
+  const reader = await h.start({ agent: 'bolt' });
+  const fixture = memoryFixture(t);
+  const records = roomRecords();
+  fixture.reading(8e9, 7.28e9, 5.45e9, 9.7e9, 'active_file 4000000000\n');
+  fixture.memory.room();
+  fixture.advance(10_000);
+  fixture.memory.room();
+  const inputs = fixture.memory.inspect(() => fixture.memory.room()).inputs;
+  const ready = [{ seat: 'codex', engine: 'codex', state: 'ready', check: false }];
+  const selected = records.decision({
+    action: 'select claim',
+    outcome: 'claim selected',
+    slot: 'ordinary',
+    claim: { seat: 'codex', engine: 'codex', kind: null, room: null },
+    job: null,
+    inputs,
+    gate: ordinaryGate({ ready, shortClaims: [], ordinarySelected: true }, inputs),
+  });
+  records.answered(selected, { id: reader.id });
+  const at = Date.now();
+  reportRoom({ records: records.latest() }, at);
+  const read = async () => (await h.agent('room/records', reader.token)).body.retained;
+  const first = await read();
+  assert.equal(first.ordinary.record.job, reader.id);
+  assert.deepEqual(first.ordinary.record.selectionIdentity, selected);
+  assert.equal(first.ordinary.previousSession, false);
+  fixture.write('memory.pressure', 'some avg10=12.00 avg60=0 avg300=0 total=100');
+  const blocked = fixture.memory.inspect(() => {
+    fixture.memory.room();
+    fixture.memory.claimMb();
+  });
+  records.decision({
+    action: 'select claim',
+    outcome: 'no claim',
+    slot: 'ordinary',
+    claim: null,
+    job: null,
+    inputs: blocked.inputs,
+    gate: ordinaryGate(
+      {
+        ready,
+        ordinarySelected: false,
+        shortClaims: [{ engine: 'codex', throttled: false, exclusion: 'nonpositive room' }],
+      },
+      blocked.inputs,
+    ),
+  });
+  reportRoom({ records: records.latest() }, at + 1);
+  const both = await read();
+  assert.deepEqual(both.ordinary, first.ordinary);
+  assert.equal(both.pressure.record.gate.room.measurement.availableBytes, 0);
+  assert.equal(both.pressure.receivedAt, at + 1);
+  reportRoom({ records: records.latest() }, at + 2);
+  assert.equal((await read()).pressure.receivedAt, at + 1);
+  reportRoom({
+    records: {
+      source: { ...workerSource, session: randomUUID() },
+      room: null,
+      decision: null,
+      ordinary: null,
+      pressure: null,
+    },
+  });
+  const previous = await read();
+  assert.equal(previous.ordinary.previousSession, true);
+  assert.equal(previous.pressure.previousSession, true);
+  assert.deepEqual(previous.ordinary.record, both.ordinary.record);
+  assert.deepEqual(previous.pressure.record, both.pressure.record);
 });
 
 function reportLowRoom(job: number, at = Date.now()) {

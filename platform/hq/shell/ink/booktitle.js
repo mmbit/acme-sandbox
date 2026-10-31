@@ -1,5 +1,5 @@
-// The page's title, written where it shows: while the notebook's pages are open (bookcontrols.js), the page's name in
-// the bar is its field, ruled like a notebook's line. Enter or a tap away saves what was written, Escape leaves the
+// The page's title, written where its name is listed: while the notebook's pages are open (bookcontrols.js), their
+// card has the page's title at its head, its field ruled like a notebook's line. Enter or a tap away saves what was written, Escape leaves the
 // title as it was (nothing sent: the title route marks what it gets as the board's), and an empty title leaves the
 // page Untitled page. A save that's refused says why quietly over the field, which keeps what was written: Enter or
 // a tap away tries again, Escape or a tap on the note lets it go. While a save is out, the field can't be written in.
@@ -8,7 +8,8 @@ import { untitledPage } from './bookhead.js';
 import { word } from './bookscope.js';
 import { named, said } from './booksave.js';
 
-// name: the bar's name, hidden while its field is in its place; within: where a tap isn't one away (the pages);
+// name: the rail's control the pages opened from, the focus's way back; within: the pages' card, the field at its
+// head, where a tap isn't one away;
 // answered(ended): the edit ended (true: saved, let go, or ended from outside) or its save was refused (false: it
 // stays, saying so). Returns { page, box, field, end(keep) }: end(true) saves what was written when it changed,
 // end(false) puts the name back at once, a save still out then landing on its page alone; end resolves true once the
@@ -16,7 +17,7 @@ import { named, said } from './booksave.js';
 export function editTitle(name, book, within, answered) {
   const page = book.views[book.cur].page,
     edit = { name, book, page, within, was: page.label ?? '', answered, saving: null, ended: false };
-  Object.assign(edit, mountField(name, edit.was));
+  Object.assign(edit, mountField(within, edit.was));
   const { box, field, error } = edit,
     end = keep => endTitle(edit, keep);
   field.addEventListener('keydown', e => {
@@ -63,7 +64,7 @@ function endTitle(edit, keep) {
   );
   return edit.saving;
 }
-// The edit's last step: the field out, the name back, the listeners gone (ended first: Chromium blurs the field as
+// The edit's last step: the field out, the listeners gone (ended first: Chromium blurs the field as
 // it's taken out, which would end it again)
 function closeEdit(edit) {
   const focused = [edit.box, edit.within].some(el => el.contains(document.activeElement));
@@ -71,14 +72,12 @@ function closeEdit(edit) {
   removeEventListener('pointerdown', edit.away, true);
   removeEventListener('keydown', edit.escape);
   edit.box.remove();
-  edit.name.classList.remove('bk-titling');
   if (focused) edit.name.focus({ preventScroll: true });
   edit.answered(true);
   return true;
 }
-// The field in the name's place and box, so the bar doesn't move as it opens, as wide as what's written in it
-// (Untitled page at its least), and its error, hidden: a tap on it lets the title go
-function mountField(name, was) {
+// The field at the head of the pages' card, and its error, hidden: a tap on it lets the title go
+function mountField(within, was) {
   const box = document.createElement('span'),
     field = document.createElement('input'),
     error = document.createElement('small');
@@ -105,9 +104,6 @@ function mountField(name, was) {
     error.hidden = true;
     field.removeAttribute('aria-invalid');
   });
-  box.style.minWidth = `${name.offsetWidth}px`;
-  box.style.setProperty('--bk-title-h', `${name.offsetHeight}px`);
-  name.classList.add('bk-titling');
-  name.after(box);
+  within.prepend(box);
   return { box, field, error };
 }

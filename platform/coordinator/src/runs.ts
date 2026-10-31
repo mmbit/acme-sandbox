@@ -23,9 +23,9 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import type { RouteRequest, RouteTable } from '../../../shared/routes/routes.ts';
-import { roles, yamlFile } from './company.ts';
+import { companyTime, roles, yamlFile } from './company.ts';
 import { DATA_DIR, ORIGIN, REPO_DIR, RUNS_TOKEN } from './config.ts';
-import { db } from './db.ts';
+import { db, remember, setting } from './db.ts';
 import * as jobs from './jobs.ts';
 import * as machines from './machines.ts';
 import { secret } from './secrets.ts';
@@ -253,7 +253,9 @@ export const routeTable: RouteTable = {
   ),
   'GET /api/helper/code': ({ res }) => sendFile(res, HELPER_CODE, 'text/javascript; charset=utf-8'),
   'GET /api/helper/manager': ({ res }) => sendFile(res, MANAGER_CODE, 'text/javascript; charset=utf-8'),
-  'POST /api/helper/setup': forHelper((helper, { res }) => answer(res, managerSetup(helper))),
+  'POST /api/helper/setup': forHelper(async (helper, { res, jsonBody }) =>
+    answer(res, managerSetup(helper, await jsonBody())),
+  ),
   'POST /api/helper/pull': forHelper(async (helper, { res, jsonBody }) =>
     answer(res, pullAuth(helper, await jsonBody())),
   ),
@@ -280,6 +282,7 @@ export function start() {
   setInterval(() => {
     try {
       sweep();
+      managerCheck();
       publishKinds();
       publishHolds();
     } catch (error) {
@@ -491,7 +494,7 @@ function helperState() {
   const setup = machineSetup();
   return {
     ...machineState(settings),
-    machines: lentMachines().map(({ name, state, speed, cpus, memoryGb, gpu, kinds }) => ({
+    machines: lentMachines().map(({ name, state, speed, cpus, memoryGb, gpu, kinds, manager }) => ({
       name,
       state,
       speed,
@@ -499,6 +502,7 @@ function helperState() {
       memoryGb,
       gpu,
       kinds,
+      manager,
     })),
     kinds: settings.kinds.map((kind, index) => ({
       name: kind.name,
@@ -608,6 +612,7 @@ function machineView(id: number, machine: machines.Machine | null) {
     paused: !!machine?.paused,
     added: machine?.added ?? null,
     seen: machine ? machine.seen : (lastSeen ?? null),
+    manager: machine ? managerOf(machine, present.length > 0) : null,
     ...(run
       ? {
           run: {
@@ -684,7 +689,7 @@ const managedVolume = () =>
     .replace(/^-|-$/g, '');
 
 function managerBootstrap() {
-  const hash = createHash('sha256').update(readFileSync(MANAGER_CODE)).digest('hex');
+  const hash = managerCode();
   return (
     "fetch(process.env.HQ_URL+'/api/helper/manager',{redirect:'error'}).then(r=>r.text()).then(t=>{" +
     `if(require('crypto').createHash('sha256').update(t).digest('hex')!='${hash}')` +
@@ -693,10 +698,15 @@ function managerBootstrap() {
   );
 }
 
+// The hash of the manager's code HQ serves now, which the install command trusts
+const managerCode = () => createHash('sha256').update(readFileSync(MANAGER_CODE)).digest('hex');
+
 // What a lent machine's manager keeps it in step with: every kind's helpers, with their image and caps, and the ones of
-// them that have a run now, which it changes only once that run has ended
-function managerSetup(helper: Helper) {
+// them that have a run now, which it changes only once that run has ended. Each call is kept with the code the manager
+// says it runs ({ code }, its hash: managerOf).
+function managerSetup(helper: Helper, said: unknown) {
   if (helper.name !== 'lent') return new Refusal(403, 'a lent machine sets itself up, never this server');
+  machines.managerHeard(helper.machine, said);
   const kinds = runSettings().kinds.map(({ name, image, cpus, memoryGb, diskGb, gpus, helpers, sockets }) => ({
     name,
     image,
@@ -748,6 +758,80 @@ function askForKey(name: string, kind: string, image: string) {
         'here. HQ hands it to a machine for each pull of an image one of its kinds names, and the machine never keeps it.',
     });
   return new Refusal(409, `HQ has no key for ${image.split('/')[0]} yet: the board has a card for it`);
+}
+
+// ---- a lent machine's manager
+
+// The manager calls each minute, but a tick waits for the pulls it starts (a kind's image can be 12 GB on a home line):
+// two hours without one, while the machine's helpers still ask for work, is a manager that stopped.
+const MANAGER_QUIET_MS = 2 * 3600_000;
+const MANAGER_CARD = 'runs.manager.';
+
+// A lent machine's manager as HQ last heard it: 'current', 'old' (it runs code HQ no longer serves: the install command
+// trusts that code by its hash, so it stops at the machine's next restart, and its helpers keep their images) or 'quiet'
+// (no setup call for MANAGER_QUIET_MS while its helpers ask for work). null for a machine that never had one (its
+// helpers started by hand), or one away: away.ts tells of that.
+function managerOf(machine: machines.Machine, present: boolean, now = Date.now()) {
+  if (!machine.manager_seen || !present) return null;
+  const quiet = now - Date.parse(machine.manager_seen) >= MANAGER_QUIET_MS;
+  const state = quiet ? 'quiet' : machine.manager_code === managerCode() ? 'current' : 'old';
+  return { state, seen: machine.manager_seen } as const;
+}
+
+// Each minute: a card for the board for each lent machine whose manager runs old code or went quiet, with the install
+// command without a key (the machine keeps its own). One a machine until its manager runs HQ's code again, which takes an
+// open one off the desk phone, as the board pausing or removing the machine does. A machine away keeps its card: its
+// manager still needs the paste when it's back.
+export function managerCheck(now = Date.now()) {
+  const lent = new Map(machines.listMachines().map(machine => [`${MANAGER_CARD}${machine.id}`, machine]));
+  const carded = db.prepare('select key, value from settings where key like ?').all(`${MANAGER_CARD}%`) as {
+    key: string;
+    value: string;
+  }[];
+  for (const { key, value } of carded) {
+    const machine = lent.get(key);
+    const gone = !machine || machine.paused;
+    if (!gone && managerOf(machine, true, now)?.state !== 'current') continue;
+    remember(key, null);
+    if (db.prepare("select 1 from requests where id = ? and status = 'open'").get(Number(value)))
+      jobs.endRequest(
+        Number(value),
+        gone
+          ? `${machine?.name ?? 'The machine'} was paused or removed.`
+          : `${machine.name}'s manager runs HQ's code again: nothing to paste.`,
+      );
+  }
+  for (const [key, machine] of lent) {
+    const manager = machine.paused ? null : managerOf(machine, presentOn(machine.id, now), now);
+    if (!manager || manager.state === 'current' || setting(key)) continue;
+    const card = jobs.createRequest({
+      kind: 'action',
+      urgency: 'today',
+      agent: roles().process,
+      topic: 'lent machines',
+      title: `Install ${machine.name}'s helper manager again`,
+      body: managerCard(machine.name, manager),
+    });
+    if (typeof card === 'object') remember(key, String(card.id));
+  }
+}
+
+const presentOn = (machine: number, now: number) =>
+  machines.machineKinds(machine).some(helper => machines.isPresent(helper.seen, now));
+
+function managerCard(name: string, manager: NonNullable<ReturnType<typeof managerOf>>) {
+  const what =
+    manager.state === 'old'
+      ? `${name}'s manager (it keeps the machine's helpers in step with HQ) runs code HQ has since changed. It goes on ` +
+        'until the machine or Docker restarts, then stops, and the helpers keep their old images.'
+      : `${name}'s manager (it keeps the machine's helpers in step with HQ) hasn't checked in since ` +
+        `${companyTime(Date.parse(manager.seen))}, while its helpers still take runs. It has most likely stopped, so ` +
+        'the helpers keep their old images.';
+  return (
+    `${what}\n\nOn the machine, with Docker running, paste this once (PowerShell or a terminal). It keeps the ` +
+    `machine's key:\n\n\`\`\`\n${installCommand()}\n\`\`\`\n\nHQ takes this card away once the manager checks in ` +
+    'with the new code, within a few minutes.'
+  );
 }
 
 // The commands that set a machine's helpers up, one per kind and the same on every machine (Settings › Machines, hq run

@@ -6,10 +6,9 @@
 // of each other, its name and line unclipped, standing on its board; a book opens to its pages as before.
 import assert from 'node:assert/strict';
 import { errorsOf, until } from '../../shared/browser/browser.mjs';
-import { DESKTOP, MINI } from './bookkit.mjs';
+import { DESKTOP, MINI, UPRIGHT } from './bookkit.mjs';
 
-const PHONE = { width: 390, height: 844 },
-  UPRIGHT = { width: 744, height: 1133 };
+const PHONE = { width: 390, height: 844 };
 const DAY = 86_400_000,
   at = ms => new Date(ms).toISOString();
 

@@ -3,6 +3,32 @@
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
 import type { recordedReviews } from './reviewfixture.ts';
 
+// Planning links retained by tasks made before the queue paths saved attribution and scope sizes.
+export type WorkEvidence =
+  { proposal: 'open' | 'accepted' | 'dropped' } | { sheet: 'open' | 'sending' | 'sent'; owner: string | null };
+export function recordedWorkEvidence(db: DatabaseSync, job: number, evidence: WorkEvidence) {
+  const at = new Date().toISOString();
+  if ('proposal' in evidence)
+    db.prepare(
+      'insert into proposals (created, agent, title, brief, status, job, accepted) values (?, ?, ?, ?, ?, ?, ?)',
+    ).run(
+      at,
+      'juno',
+      'Check the whole map',
+      'Check every size and fix it',
+      evidence.proposal,
+      evidence.proposal === 'accepted' ? null : job,
+      evidence.proposal === 'accepted' ? job : null,
+    );
+  else
+    db.prepare('insert into book_sheets (created, owner, status, job) values (?, ?, ?, ?)').run(
+      at,
+      evidence.owner,
+      evidence.sheet,
+      job,
+    );
+}
+
 // The columns a test names (as the jobs table has them), with times in ms. run: its one run on claude-a, whose started
 // and ended are also the job's started and finished unless overridden; runs: several, in order, the first's start and
 // the last's end the job's. merged: its pull request merged then (numbered as the job's `pr` if named), changing
@@ -18,6 +44,7 @@ export type PastJobFields = {
   review?: { added?: number; removed?: number; verdict?: string };
   byBranch?: boolean;
   sized?: number;
+  slowSized?: number | null;
   fixFor?: number;
   previewFor?: number[];
   [column: string]: unknown;
@@ -47,6 +74,7 @@ export function recordedPastJobs(
     review,
     byBranch,
     sized,
+    slowSized,
     fixFor,
     previewFor,
     created,
@@ -79,7 +107,7 @@ export function recordedPastJobs(
       db.prepare(
         `insert into predictions (job, made, agent_ms, picks, basis, slow_agent_ms)
         values (?, ?, ?, '[]', '{"kind":"work","agent":null,"words":[]}', ?)`,
-      ).run(id, String(row.created), sized, sized);
+      ).run(id, String(row.created), sized, slowSized === undefined ? sized : slowSized);
     return id;
   };
 }

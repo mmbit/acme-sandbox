@@ -1,28 +1,27 @@
 // book-check.mjs's stories of what's still the board's to answer on a Notebook page (shell/ink/bookforyou.js), on the
 // played Notebook seeded as dev mode's (mock/notebook.json) with two more cards on its sent page: one open and one
-// answered, beside Moss's open one. On a phone and an iPad mini, upright: the page counts "2 open" over its name, the two
-// groups edged "for you" and the answered one not; next slides the page to the first open ask, next again to the
-// second; a chip tapped there answers it and the count drops to "1 open"; once none is open the same arrows step
-// through every scrap on the page, round to the first again.
+// answered, beside Moss's open one. On a phone and an iPad mini, upright: the rail counts "2 open" over the page's
+// arrows, the two groups edged "for you" and the answered one not; next slides the page to the first open ask, next
+// again to the second; a chip tapped there answers it and the count drops to "1 open"; once none is open the counter is away.
+// (on the rail)
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { open } from './booknotebook.mjs';
 import { turnTo } from './booknotebookscreen.mjs';
-import { islandsClearOf, until } from './bookkit.mjs';
+import { UPRIGHT, islandsClearOf, until } from './bookkit.mjs';
 
 const SEED = JSON.parse(await readFile(new URL('./mock/notebook.json', import.meta.url), 'utf8'));
-const PHONE = { width: 390, height: 844 },
-  MINI_UPRIGHT = { width: 744, height: 1133 };
+const PHONE = { width: 390, height: 844 };
 // the seed's sent page (the first of My Notebook's)
 const SENT = 1;
 
 // c: book-check.mjs's hqIn, base, settled, shot, noErrorsIn, shots
 export function forYouStories(c) {
   return {
-    'asks for you on a phone: "2 open" by the title, next going to each, one answered in the book leaving "1 open", none open stepping through every scrap':
+    'asks for you on a phone: "2 open" on the rail, next going to each, one answered in the book leaving "1 open", none open putting the counter away':
       browser => story(browser, c, 'phone', PHONE, { isMobile: true, folded: true }),
-    'asks for you on an iPad mini upright: "2 open" by the title, next going to each, one answered in the book leaving "1 open", none open stepping through every scrap':
-      browser => story(browser, c, 'mini', MINI_UPRIGHT, { folded: true }),
+    'asks for you on an iPad mini upright: "2 open" on the rail, next going to each, one answered in the book leaving "1 open", none open putting the counter away':
+      browser => story(browser, c, 'mini', UPRIGHT, { folded: true }),
   };
 }
 
@@ -38,7 +37,7 @@ async function story(browser, c, name, viewport, more) {
     const count = page.locator('#book .bk-for-you-count');
     const edged = await twoOpen(page, count, c, name);
     await answeredInTheBook(page, count, edged, c, name);
-    await everyScrap(page, play, count, c, name);
+    await noneOpen(page, play, count, c, name);
     c.noErrorsIn(errors);
   } finally {
     await done();
@@ -70,30 +69,15 @@ async function answeredInTheBook(page, count, [first, second], c, name) {
   assert.deepEqual(await edges(page), [first], 'only the one still open edged');
   await c.shot(`for-you-${name}-one-open`, page);
 }
-// The last answered on the desk phone: no dot, the arrows stepping through every scrap and round again
-async function everyScrap(page, play, count, c, name) {
+// The last answered on the desk phone: the counter and its arrows away, nothing left edged (they stepped through every scrap, and showed on any page with one)
+async function noneOpen(page, play, count, c, name) {
   const last = groupsOn(play)
     .flatMap(g => g.asks)
     .find(a => a.status === 'open');
   play.route('/api/requests/answer', {}, { id: last.id, answer: 'The wave' });
-  await until(async () => (await count.getAttribute('data-open')) === '0', 'nothing open');
-  assert.equal(await count.locator('.bk-open').textContent(), '', 'no count, no dot');
+  await until(async () => await count.isHidden(), 'the counter away once nothing is open');
   assert.deepEqual(await edges(page), [], 'no edge left');
-  const scraps = groupsOn(play).map(g => g.id),
-    reached = [];
-  for (let i = 0; i <= scraps.length; i++) {
-    const was = await count.getAttribute('data-at');
-    await count.getByRole('button', { name: 'The next scrap' }).tap();
-    const at = await until(async () => {
-      const now = await count.getAttribute('data-at');
-      return now !== was && now;
-    }, 'the next scrap reached');
-    await until(() => inView(page, `.bk-reached[data-g="${at}"]`), `scrap ${at} slid into view`);
-    reached.push(Number(at));
-  }
-  assert.deepEqual([...reached.slice(0, -1)].sort(), [...scraps].sort(), 'every scrap on the page, once each');
-  assert.equal(reached.at(-1), reached[0], 'and round to the first again');
-  await c.shot(`for-you-${name}-scraps`, page);
+  await c.shot(`for-you-${name}-none-open`, page);
 }
 
 // The seed with two more cards on the sent page's groups: one open on its scrap, one answered on its first drawing
@@ -141,9 +125,9 @@ const inView = async (page, selector) => {
       el = shown.querySelector(`:scope > .bk-groups > ${selector}`);
     if (!el) return null;
     const r = el.getBoundingClientRect(),
-      desk = document.querySelector('#book .bk-desk').getBoundingClientRect(),
-      count = document.querySelector('#book .bk-for-you-count').getBoundingClientRect();
-    const on = r.top >= desk.top && r.bottom <= count.top && r.left >= desk.left && r.right <= desk.right;
+      desk = document.querySelector('#book .bk-desk').getBoundingClientRect();
+    // (the counter is on the rail beside the paper)
+    const on = r.top >= desk.top && r.bottom <= desk.bottom && r.left >= desk.left && r.right <= desk.right;
     return on && { x: r.x, y: r.y, width: r.width, height: r.height };
   }, selector);
   return box && islandsClearOf(page, box);

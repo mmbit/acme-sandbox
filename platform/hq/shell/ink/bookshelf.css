@@ -9,8 +9,8 @@
   overscroll-behavior: contain;
   display: flex;
   flex-direction: column;
-  /* (its right clear of the controls floating over the paper, the tool strip's too: bookui.js's --bk-controls-width.) */
-  --bk-far-right: calc(var(--bk-controls-width, 112px) + 24px);
+  /* (its right clear of the rail at the paper's right edge: book.css --bk-rail-width.) */
+  --bk-far-right: calc(var(--bk-rail-width) + 24px);
   --bk-far-left: 28px;
   padding: 18px var(--bk-far-right) 88px var(--bk-far-left);
   background-color: var(--bk-paper2);

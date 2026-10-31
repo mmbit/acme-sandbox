@@ -1,6 +1,7 @@
 // The latest push while a round's panel is out or its board card awaits an answer (review.ts startReview). It waits
 // for the ruling and board answer before review continues on the newer head. A thread task's push waits here too while
-// the thread's next task starts (review.ts heldForThread).
+// the thread's next task starts (review.ts heldForThread). So does a push a check stopped, its send-back's run having
+// pushed nothing, until a push takes its place or `hq review` runs its checks again (review.ts sendBackOnce, resume).
 import { db } from './db.ts';
 import type { Check } from './review.ts';
 import type { ChangedLines } from './findings.ts';
@@ -21,6 +22,7 @@ export type Push = {
   lines?: ChangedLines;
   job?: number; // (the job whose run pushed it: jobs.ts handOn)
   heldFor?: number; // (the thread's next task it waits for: review.ts heldForThread)
+  stopped?: string;
 };
 
 export const keep = (push: Push) =>

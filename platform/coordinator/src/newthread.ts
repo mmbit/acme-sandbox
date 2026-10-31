@@ -21,6 +21,7 @@ import {
 import { noProject, placeOf, taskClash } from './names.ts';
 import { oneTaskSql } from './made.ts';
 import { refusal } from './threadorder.ts';
+import { waitsUntil } from './wakes.ts';
 import { SIDE_BY_SIDE } from '../../worker/hq/levels.ts';
 
 // hq plan thread: a new thread in the project, owned by its owner, with the threads it needs: those named, else the one
@@ -54,27 +55,62 @@ export function newThread(
   if (typeof made === 'string') return made;
   planChange({ project: project.id, thread: made.id, what: `deliverable drawn: ${made.name}`, by: by.agent });
   for (const n of needs) addNeed(made, n, by.agent);
-  return { ...made, needs, place: placeOf(made), chain: chainWords(made.id, chained.paused) };
+  return { ...made, needs, place: placeOf(made), chain: chainWords(made.id, chained) };
 }
 
 // The thread a new one in the project chains after when it names none, in two steps: the thread under way it most
 // likely continues (the drawing job's own, else the project's newest), then the newest open one chained from it, one
 // drawn but given no work yet too, so draws in a row chain one after another. Under way: open work, or a pull request
 // not merged yet. HQ's one-task wrapper for a job of its own is passed over, and so is a paused one, so new work isn't
-// held by a pause it was never part of: that one is named (paused) for the drawer to judge.
-function chainedAfter(project: string, job: number | undefined): { after?: string; paused?: string } {
+// held by a pause it was never part of: that one is named (paused) for the drawer to judge. A thread whose open work all
+// waits for a time still to come (hq job --when <time>, a week's read), with no pull request open, is passed over too,
+// with every thread that needs it at any depth, so ready work never queues behind it: the one the chain would end on
+// without that is named (booked), with the thread it waits for, for the drawer to judge.
+function chainedAfter(project: string, job: number | undefined): Chain {
   const own = job ? threadOf(job) : null;
-  const underWay = `(exists (select 1 from jobs j where j.thread = t.id and j.status in ${OPEN_JOBS})
-    or exists (select 1 from prs p where p.branch = t.branch and p.status in ${OPEN_PRS}))`;
-  const chainedFrom = `t.id in (with recursive chained(id) as (select $start
-    union select n.thread from thread_needs n join chained c on n.needs = c.id) select id from chained)`;
-  const lastIn = (pausedToo: boolean) => {
-    const newest = (where: string, at: Record<string, string>) => newestOpen(project, where, at, pausedToo);
-    const start = (own && newest(`t.id = $own and ${underWay}`, { own })) || newest(underWay, {});
-    return start && newest(chainedFrom, { start: start.id });
+  const openJob = (t: string, which = 'true') =>
+    `exists (select 1 from jobs j where j.thread = ${t} and j.status in ${OPEN_JOBS} and ${which})`;
+  const openPr = (t: string) =>
+    `exists (select 1 from prs p where p.branch = (select branch from threads where id = ${t}) and p.status in ${OPEN_PRS})`;
+  const underWay = (t: string) => `(${openJob(t)} or ${openPr(t)})`;
+  const ready = (t: string) =>
+    `(${openJob(t, `not (j.status = 'queued' and ${waitsUntil('j.id')} > ${Date.now()})`)} or ${openPr(t)})`;
+  const bookedOnly = (t: string) => `(${openJob(t)} and not ${ready(t)})`;
+  // the open threads whose work is all booked for later, and every thread that needs one of them
+  const held = `(with recursive held(id) as (select b.id from threads b where b.status = 'open' and ${bookedOnly('b.id')}
+    union select n.thread from thread_needs n join held h on n.needs = h.id) select id from held)`;
+  // The newest thread chained from the start, where `going` holds for the start and no thread on the way is in `over`
+  // (paused ones left out unless paused)
+  const lastIn = ({ going, over, paused = false }: { going: Going; over?: string; paused?: boolean }) => {
+    const newest = (where: string, at: Record<string, string>) => newestOpen(project, where, at, paused);
+    const starts = going('t.id') + (over ? ` and t.id not in ${over}` : '');
+    const start = (own && newest(`t.id = $own and ${starts}`, { own })) || newest(starts, {});
+    const chained = `t.id in (with recursive chained(id) as (select $start
+      union select n.thread from thread_needs n join chained c on n.needs = c.id ${over ? `where n.thread not in ${over}` : ''})
+      select id from chained)`;
+    return start && newest(chained, { start: start.id });
   };
-  const passed = lastIn(true);
-  return { after: lastIn(false)?.id, paused: passed?.paused ? passed.id : undefined };
+  const after = lastIn({ going: ready, over: held }),
+    paused = lastIn({ going: ready, over: held, paused: true }),
+    booked = lastIn({ going: underWay });
+  return {
+    after: after?.id,
+    paused: paused?.paused ? paused.id : undefined,
+    booked: booked && booked.id !== after?.id ? { thread: booked.id, waits: heldBy(booked.id, bookedOnly) } : undefined,
+  };
+}
+type Going = (thread: string) => string;
+type Chain = { after?: string; paused?: string; booked?: { thread: string; waits: string } };
+
+// The thread `thread` waits for, at any depth or itself, whose work is all booked for later
+function heldBy(thread: string, bookedOnly: Going) {
+  const row = db
+    .prepare(
+      `with recursive needed(id) as (select ? union select n.needs from thread_needs n join needed d on n.thread = d.id)
+      select d.id from needed d where ${bookedOnly('d.id')} limit 1`,
+    )
+    .get(thread) as { id: string };
+  return row.id;
 }
 
 // The project's newest open thread where `where` holds (its paused ones left out unless pausedToo), never a one-task
@@ -92,11 +128,15 @@ function newestOpen(project: string, where: string, at: Record<string, string>, 
 
 // What a drawn thread's needs mean for its work, said where it's drawn (hq plan deliverable, hq job and hq inbox accept
 // with --deliverable new:): one deliverable after another, and when and how it may run beside them instead; and a
-// paused one its chain passed over.
-function chainWords(thread: string, paused: string | undefined): string | undefined {
-  const passed = paused
-    ? `${paused} is paused and was passed over: if this work changes its files, hq plan need ${thread} ${paused}.`
-    : undefined;
+// paused one its chain passed over, or one waiting for a time booked ahead.
+function chainWords(thread: string, { paused, booked }: Chain): string | undefined {
+  const over = (other: string, why: string) =>
+    `${other} ${why} and was passed over: if this work changes its files, hq plan need ${thread} ${other}.`;
+  const waits = (b: NonNullable<Chain['booked']>) =>
+    b.waits === b.thread ? 'waits for a time booked ahead' : `waits for ${b.waits}, booked for a time ahead,`;
+  const passed =
+    [paused && over(paused, 'is paused'), booked && over(booked.thread, waits(booked))].filter(Boolean).join(' ') ||
+    undefined;
   const needs = needsOf(thread);
   if (!needs.length) return passed;
   const after = needs.join(' and ');

@@ -17,7 +17,8 @@ import { posAfter } from './notebookorder.ts';
 import { groupOn, insertGroup, partsOf, putAside, rootOf, row, type Group } from './notebookgroups.ts';
 import { boxOf } from '../../hq/shell/ink/notebookstack.js';
 import { judgeLater } from './ink/bookjudge.ts';
-import { frameOf, replySnip, sentSnip } from './ink/bookpick.ts';
+import { replySnip, sentSnip } from './ink/bookpick.ts';
+import { frameOf } from '../../hq/shell/ink/bookversionframes.js';
 import { inkOf, isRefused, wordsOf, type Anchor, type Refused } from './pagechecks.ts';
 
 // Room round a group's picture, in page px
@@ -28,10 +29,13 @@ const PAD = 24;
 // book's own list), moved to a new page at the notebook's end first, to answer there. A call's notes page is never
 // sent: it goes in as the call ends, and its follow-up hands out what's on it (ink/callnotes.ts ended).
 const RESEND = 'the page changed while it was being sent: send it again';
-export const sendShown = (b: any) => sendPage(b, BOARD, undefined, true);
-// now: at once (the board's); else in SEND_MS, a fresh page made when no other is open (an invited person's hand-in,
-// which notebookrounds.ts hands to them or drops)
-export async function sendPage(b: any, who = BOARD, stillOpen?: () => boolean, now = false) {
+export const sendShown = (b: any) => sendPage(b, { atOnce: true });
+// atOnce: delivered now (the board's own Send); otherwise in SEND_MS, with a fresh page made when no other is open (an
+// invited person's hand-in, which notebookrounds.ts hands to them or drops).
+export async function sendPage(
+  b: any,
+  { who = BOARD, stillOpen, atOnce = false }: { who?: string; stillOpen?: () => boolean; atOnce?: boolean } = {},
+) {
   const p = pageRow(Number(b?.id), who);
   if (!p) return 404;
   if (shut(p)) return [409, 'this page has been sent', 'pageSent'] as Refused;
@@ -69,12 +73,12 @@ export async function sendPage(b: any, who = BOARD, stillOpen?: () => boolean, n
       p,
       open().filter(g => aside.has(g.id)),
     );
-    db.prepare('update book_pages set send_at = ? where id = ?').run(asNotes(who, groups, snips, now), p.id);
-    const fresh = !now && openPageOf(p.notebook) === null ? newPage(p.notebook) : null;
+    db.prepare('update book_pages set send_at = ? where id = ?').run(asNotes(who, groups, snips, atOnce), p.id);
+    const fresh = !atOnce && openPageOf(p.notebook) === null ? newPage(p.notebook) : null;
     db.prepare('update book_pages set fresh = ? where id = ?').run(fresh, p.id);
     changed(p.notebook, p.id);
   });
-  deliverLater(now ? 0 : SEND_MS);
+  deliverLater(atOnce ? 0 : SEND_MS);
   return pageOf(pageRow(p.id, who)!);
 }
 // The groups with open asks moved, with what hangs under them, to a new page at the notebook's end, in their order
@@ -91,7 +95,7 @@ function setAside(p: NotebookPage, groups: Group[]) {
 // call about a card for keys keeps every group on its pages for its own agent, whoever a group names, however the page
 // was made (memory.ts keysAgent, as bookreads.ts callRead keeps it for reads); elsewhere a group nobody owns is its
 // page's owner's, as an old book's note is (booknotes.ts addNote).
-function asNotes(who: string, groups: Group[], snips: ({ type: string; clean: Buffer } | null)[], now = false) {
+function asNotes(who: string, groups: Group[], snips: ({ type: string; clean: Buffer } | null)[], atOnce = false) {
   const sheets = new Map<string | null, number>();
   groups.forEach((g, i) => {
     const page = pageRow(g.page, null)!;
@@ -102,7 +106,7 @@ function asNotes(who: string, groups: Group[], snips: ({ type: string; clean: Bu
     db.prepare("update notebook_groups set status = 'sent', note = ? where id = ?").run(id, g.id);
   });
   // (its seconds start once its notes are on it: a sheet goes with what was on it at the tap, booksheets.ts deliver)
-  const at = Date.now() + (now ? 0 : SEND_MS);
+  const at = Date.now() + (atOnce ? 0 : SEND_MS);
   for (const sheet of sheets.values())
     db.prepare("update book_sheets set status = 'sending', send_at = ? where id = ?").run(at, sheet);
   return at;
@@ -217,9 +221,12 @@ export async function replyTo(b: any, who = BOARD, stillOpen?: () => boolean) {
   if (!said.words && !ink.length) return [400, 'a reply has words or ink', 'replyEmpty'] as Refused;
   const closed = () => !!stillOpen && !stillOpen();
   const top = rootOf(answered);
-  const parts = { ink, texts: [], pictures: [] };
+  const parts = { ink, texts: [], pictures: [] },
+    frame = frameOf(b.frame);
+  if (b.frame !== undefined && !frame)
+    return [400, "a reply's frame is a box {x, y, w, h} in page px", 'replyFrame'] as Refused;
   const snip = ink.length
-    ? ((await replySnip(slip.id, frameOf(b.frame), ink)) ?? (await snipOf({ ...top, ...partsJson(parts) })))
+    ? ((await replySnip(slip.id, frame, ink)) ?? (await snipOf({ ...top, ...partsJson(parts) })))
     : null;
   if (closed()) return [403, 'this invitation has closed', 'invitationEnded'] as Refused;
   const reply = inOneStep(() => {
@@ -230,7 +237,12 @@ export async function replyTo(b: any, who = BOARD, stillOpen?: () => boolean) {
       said: said.said,
     });
     const id = replyNote(p.id, anchorOf(top), slip, said, snip, who);
-    db.prepare("update notebook_groups set status = 'sent', note = ? where id = ?").run(id, g.id);
+    // (its frame kept, so HQ lays its ink over that version wherever the frames wrap to)
+    db.prepare("update notebook_groups set status = 'sent', note = ?, frame = ? where id = ?").run(
+      id,
+      frame && JSON.stringify(frame),
+      g.id,
+    );
     return g;
   });
   if (who === BOARD) judgeLater({ grp: reply.id }); // (with the answer it replies to)

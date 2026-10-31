@@ -7,8 +7,8 @@ cache's steps and the images' layers, and `docker builder prune` refuses anythin
 
 """
 import json, os, re, subprocess, tempfile, unittest
+from sync_fixture import sync_lines
 
-here = os.path.dirname(os.path.abspath(__file__))
 PRUNE_CACHE = re.compile(r'^floorBytes=.*?^prune_cache\(\) \{.*?^\}$', re.M | re.S)
 PRUNE_IMAGES = re.compile(r'^# The images a rebuild replaced go after every deploy.*?(?=^\./infra/report\.sh "\$log"$)',
                           re.M | re.S)
@@ -51,14 +51,11 @@ with open(state_file, 'w') as f:
 
 
 def script(floor_gb):
-    with open(os.path.join(here, 'sync.sh')) as f:
-        text = f.read()
-    cache, images = PRUNE_CACHE.search(text), PRUNE_IMAGES.search(text)
-    assert cache and images, "sync.sh: the prune lines were not found"
-    lines = cache.group(0)
+    lines = sync_lines(PRUNE_CACHE, 'the cache prune lines').group(0)
+    image_lines = sync_lines(PRUNE_IMAGES, 'the image prune lines').group(0)
     assert 'floorBytes=$((10 << 30))' in lines, "sync.sh: the 10 GB free line was not found"
     lines = lines.replace('floorBytes=$((10 << 30))', f'floorBytes=$(({floor_gb} << 30))')
-    return 'log=$1/log\n' + lines + '\nprune_cache >> "$log"\n' + images.group(0)
+    return 'log=$1/log\n' + lines + '\nprune_cache >> "$log"\n' + image_lines
 
 
 class Host:

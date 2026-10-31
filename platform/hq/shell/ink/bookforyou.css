@@ -1,42 +1,35 @@
-/* What's still the board's to answer (bookforyou.js): the counter over the page's name in the pages' row, a red dot
-   and "2 open" beside its arrows, and the red edge marked "for you" round a group with an open ask, the ring a step
-   reaches pulsing once. The edge and the ring are in the page's px: they pan and zoom with it.
- */
+/* What's still the board's to answer (bookforyou.js): the counter at the head of the page's controls on the rail, a
+   red dot over "2 open" over its arrows, and the red edge marked "for you" round a group with an open ask, the ring a
+   step reaches pulsing once. The edge and the ring are in the page's px: they pan and zoom with it.
+   (on the rail) */
 #book .bk-for-you-count {
-  position: absolute;
-  bottom: calc(100% + 8px);
-  left: 50%;
-  translate: -50% 0;
   display: flex;
+  flex-direction: column;
   align-items: center;
   gap: 2px;
-  padding: 2px 2px 2px 4px;
-  border-radius: 999px;
-  background: var(--bk-paper, #fffaf0);
-  box-shadow: var(--bk-lift);
+  margin-bottom: 4px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--bk-edge);
   color: var(--bk-ink);
-  font: 600 14px/1 var(--bk-font);
+  font: 600 12px/1 var(--bk-font);
   white-space: nowrap;
 }
 #book .bk-for-you-count[hidden] {
   display: none;
 }
 #book .bk-for-you-count .bk-open:not(:empty) {
-  display: inline-flex;
+  display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 7px;
-  padding: 0 10px 0 8px;
-  border-right: 1px solid var(--bk-edge);
+  gap: 5px;
+  padding: 6px 0 4px;
 }
 #book .bk-for-you-count .bk-open:not(:empty)::before {
   content: '';
-  width: 9px;
-  height: 9px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   background: var(--bk-red);
-}
-#book .bk-for-you-count .bk-btn {
-  border-radius: 999px;
 }
 
 /* the edge round a group waiting on the board, a little off what it holds, its tag at the top right */

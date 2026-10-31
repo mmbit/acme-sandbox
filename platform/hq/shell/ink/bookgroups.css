@@ -83,6 +83,12 @@
   z-index: -1;
   pointer-events: none;
 }
+/* the handles, over the paper's box so a press is theirs */
+#book .bk-grabs {
+  position: absolute;
+  inset: 0 auto auto 0;
+  pointer-events: none;
+}
 #book .bk-page-title {
   position: absolute;
   top: 22px;
@@ -114,6 +120,15 @@
     0 3px 10px rgba(42, 35, 82, 0.1);
   /* (the turned corner: cut off here, drawn by ::after) */
   clip-path: polygon(0 0, 100% 0, 100% calc(100% - 18px), calc(100% - 18px) 100%, 0 100%);
+}
+/* the board's own drawing: ink on the page, no paper under it (bookunits.js.) */
+#book .bk-unit[data-drawing] {
+  background: none;
+  box-shadow: none;
+  clip-path: none;
+}
+#book .bk-unit[data-drawing]::after {
+  content: none;
 }
 #book .bk-unit::after {
   content: '';
@@ -157,9 +172,9 @@
 #book .bk-room-handle:focus-visible::before {
   background: rgba(42, 35, 82, 0.4);
 }
-/* the paper the page scrolls in ends where the tools start (--bk-foot: bookui.js), so nothing is under them */
+/* the paper the page scrolls in ends left of the rail (--bk-rail-width: book.css), so nothing is under it */
 #book .bk-pages .bk-desk {
-  bottom: var(--bk-foot, 0px);
+  right: var(--bk-rail-width);
 }
 /* a scrap's post-it words, part of its body under its picture, the unit's width */
 #book .bk-words {

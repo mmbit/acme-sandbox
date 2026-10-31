@@ -306,7 +306,7 @@ async function onMini(browser, c) {
   return { page, errors, done: () => context.close() };
 }
 export const button = (page, name, exact = false) => page.locator('#book').getByRole('button', { name, exact });
-// The names of the buttons in the book's own islands (in the lane at the foot) that show
+// The names of the book's own buttons on the rail (Send, Tips, invites) that show
 // The overview or the Shelf: no tools, Undo, Redo or dog-ear, with nothing to draw on
 async function nothingToDraw(page, where) {
   assert.ok(!(await page.locator('#book [data-island=tools]').isVisible()), `no tools, Undo or Redo ${where}`);
@@ -314,7 +314,7 @@ async function nothingToDraw(page, where) {
 }
 const columnNames = page =>
   page
-    .locator('#book .bk-islands button')
+    .locator('#book .bk-column :is([data-island=send], [data-island=book]) button')
     .evaluateAll(all => all.filter(b => b.getBoundingClientRect().width).map(b => b.getAttribute('aria-label')));
 // Every visible control, field and send stamp starts below the strip
 async function clearOfTheStrip(page, when) {

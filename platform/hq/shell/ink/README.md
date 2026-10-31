@@ -1,6 +1,5 @@
 # Ink, in HQ's browser
 
-
 Ink is the pen platform as a whole: the Sketchbook you draw in, marks drawn anywhere and sent to it, the sheets that
 send them to agents, their answers, the call's view of the page, and a second screen paired to the first. This folder
 is its browser side in HQ. The coordinator's side is `platform/coordinator/src/ink/`, the marks on any page are review
@@ -40,7 +39,6 @@ The book's routes keep their addresses (`/api/book/…`): they are the Sketchboo
 
 ## A page of scrap units
 
-
 A notebook page is a column of scrap units laid out as a masonry, never a canvas with marks of its own. Three ideas
 carry it, each in one module that the store, its play and HQ's page share:
 
@@ -49,27 +47,28 @@ carry it, each in one module that the store, its play and HQ's page share:
   Below its body (`bodyOf`: what an agent put down) is its room to write, part of the same unit. What an agent puts on
   a page comes with `ROOM` of it, and a drag resizes it (`resized`: never into what's drawn). Drawing past the
   bottom makes the unit taller (`heightFor`). In the store a unit is a top-level `notebook_groups` row: `pos` is its
-  order on the page, `h` its height. Its answers and replies slip under it.
+  order on the page, `h` its height, `column` the column a drawing with no unit above it keeps. Its answers and replies slip under it.
 - **The masonry** (`masonry.js`) places a page's units, in order, each under the shortest column. The page's width
-  decides the columns (`columnsOf`): one in a sliver, two on an iPad mini upright, ten or more across a 4K screen.
+  decides the columns (`columnsOf`): one in a sliver and on an iPad mini, ten or more across a 4K screen.
   Units keep their width and grow down, always `GAP` apart. A page narrower than one column draws it scaled
   (`scale`). `layout` takes each unit's height as the page draws it (its `h` and whatever hangs under it) and gives
   every place. A new day on the page starts under a date across every column (`headers`). `placeAt` finds the unit under a pen, and `pointIn` turns the pen's point into that unit's px.
-- **The page** is HQ's (`bookunits.js`): it measures its width, calls `layout` again whenever the width
-  or a unit's height changes, and draws each unit at its place as a sticky note, the page's title on top and a date
-  where a day starts. It scrolls down only and ends above the tools (`--bk-foot`). A stroke goes to the unit it
-  starts on; one started between units, or below the last, is a new unit of its own, made by the store's create
-  `after` the unit above it. A scrap's words are part of its body; under an agent's body its room shows, with a handle
-  at its foot (`resized`, saved with `/api/notebooks/groups/resize`). The page's lists hold each element at its
-  unit's place on the page; `booksave.js` saves it in the unit's own px.
+- **The page** is HQ's (`bookunits.js`): it measures its width, calls `layout` again whenever the width or a unit's
+  height changes, and draws each unit at its place as a sticky note, the page's title on top and a date where a day
+  starts. It scrolls down only and ends left of the rail of controls (`--bk-rail-width`). A stroke goes to the unit it
+  starts on, else to the board's own drawing it comes near, else it's a new unit of its own, the page's last, kept in
+  the column it was drawn in (masonry's and the store's `column`), its ink where it was drawn; a unit's canvas reaches all its ink. The
+  board's own drawings have no paper card. A scrap's words are part of its body; under an agent's body its
+  room shows, with a handle at its foot (`resized`, saved with `/api/notebooks/groups/resize`). The page's lists hold
+  each element at its unit's place on the page; `booksave.js` saves it in the unit's own px.
 
 ## Bookmarks
 
 Every book of the board's has its chapters as bookmarks (`bookmarks.js`, `notebookchapters.js` shared with the store):
 Sketch, Asks and Calls, a round's Guests, Asks and Advice. A page's chapter comes from its kind, and the store lists a
-book's pages chapter by chapter, so the page bar counts within one ("Ideas · 1 / 4"). Upright the tabs stand along the
-book's top; sideways they peek out of a thick white stack of page edges at its left. A call's notes page is under
-Calls, shut at hang-up and stamped Sent once the call's follow-up has handed out what's on it.
+book's pages chapter by chapter, so the rail counts within one ("1/4" between the page's arrows). Upright the tabs stand
+along the book's top; sideways they peek out of a thick white stack of page edges at its left. A call's notes page is
+under Calls, shut at hang-up and stamped Sent once the call's follow-up has handed out what's on it.
 
 ## Guest notebooks
 
@@ -88,7 +87,6 @@ journeys and tablet, phone and desktop evidence. `--chromium-only` is for local 
 The real-server story needs the coordinator's pinned dependencies as well as Playwright.
 
 ## The notebook's link
-
 
 The notebook tells HQ and the artifact in the viewer (a game, a deck, a site) when a hand moves it, and hears them talk
 back. It's optional: a page that never listens is untouched. `notebooklink.js` is the notebook's end:

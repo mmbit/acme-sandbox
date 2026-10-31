@@ -51,6 +51,8 @@ export function carryLift(S, old) {
   Object.assign(S.lift, { z: old.lift.z, lvl, target: old.lift.z === lvl * FH ? null : lvl });
   S.party = old.party;
 }
+// Leaving a building that's kept for later (build.js): nobody holds a place in it any more
+export function leave(S) { for (const A of S.people.values()) release(A); }
 
 // ---------------------------------------------------------------- geometry of a level
 function zone(S, i, p) {

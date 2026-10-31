@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // A notice card (kind notice: news that asks nothing) closes with Got it: no answer needed, a typed note optional, the
-// call there as on any card. A decision card still asks for its answer.
+// call there as on any card. An action card (steps for the board to do) sends with its box empty too.
+// A decision card still asks for its answer.
 //   node platform/hq/notice-check.mjs
-// HQ on its own files with a fake /api (so it isn't in dev mode), the phone open on a notice and a decision.
+// HQ on its own files with a fake /api (so it isn't in dev mode), the phone open on a notice, a decision and an action.
 import assert from 'node:assert/strict';
 import { serve } from './serve.mjs';
 import { playwright, openPage } from '../../shared/browser/browser.mjs';
@@ -28,6 +29,15 @@ const decision = {
   body: 'For the van.',
   urgency: 'today',
 };
+const action = {
+  id: 11,
+  created: at,
+  agent: 'wren',
+  kind: 'action',
+  title: 'Start Docker on the desktop',
+  body: 'Open Docker Desktop.',
+  urgency: 'today',
+};
 const answers = [];
 const browser = await playwright().chromium.launch();
 const { context, page, errors } = await openPage(browser, { viewport: { width: 420, height: 912 } });
@@ -35,7 +45,7 @@ await context.route(`${base}/api/**`, async r => {
   const path = new URL(r.request().url()).pathname;
   if (path === '/api/org') return r.fulfill({ response: await r.fetch({ url: `${base}/mock/org.json` }) });
   if (path === '/api/requests')
-    return r.fulfill({ json: [notice, decision].filter(c => !answers.some(a => a.id === c.id)) });
+    return r.fulfill({ json: [notice, decision, action].filter(c => !answers.some(a => a.id === c.id)) });
   if (path === '/api/gazette') return r.fulfill({ json: [] }); // (HQ's boot waits for it)
   if (path === '/api/requests/answer') {
     answers.push(r.request().postDataJSON());
@@ -65,6 +75,21 @@ await page.waitForSelector('.req.done');
 assert.deepEqual(
   answers.map(a => [a.id, a.answer]),
   [[9, '']],
+);
+// the action card: its box optional, Send with nothing typed sends it (the server records it as Done.)
+await page.click('[data-step="1"]');
+await page.waitForSelector('#send-answer:has-text("Send")');
+await page.click('[data-step="1"]');
+await page.waitForSelector('h3:has-text("Start Docker")');
+assert.equal(await page.getAttribute('#answer', 'placeholder'), 'Anything to add (optional)');
+await page.click('#send-answer');
+await page.waitForSelector('.req.done');
+assert.deepEqual(
+  answers.map(a => [a.id, a.answer]),
+  [
+    [9, ''],
+    [11, ''],
+  ],
 );
 assert.deepEqual(errors, []);
 await browser.close();

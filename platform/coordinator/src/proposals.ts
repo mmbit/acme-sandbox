@@ -100,7 +100,7 @@ export function deliverFindings(details: reviewinbox.Delivery, by?: { agent: str
     const owner = ownerOf(item);
     const reason = item.decision === 'changes' && reviewinbox.drawReason({ branch: item.branch, thread: item.thread! });
     const drawn = reason ? reviewinbox.drawnAtOnce(item, owner) : undefined;
-    if (drawn) {
+    if (drawn && 'jobs' in drawn) {
       messages.withdraw(item.proposal);
       const tasks = drawn.jobs.map(job => `#${job}`).join(' and ');
       const running = by && messages.runningSession(owner);
@@ -115,17 +115,18 @@ export function deliverFindings(details: reviewinbox.Delivery, by?: { agent: str
         agent: drawn.author,
         text: `PR #${item.pr}'s review asked for changes: ${tasks} drawn at once, as ${reason}`,
       });
-    } else
+    } else {
+      // (a refused draw waits for its owner like any other item.)
+      const refused =
+        drawn &&
+        `PR #${item.pr}'s review asked for changes, and HQ couldn't draw their fix at once (${drawn.refused}), so ${reviewinbox.externalId(item.proposal)} waits for ${owner} to draw it`;
+      if (refused) publish({ type: 'log', agent: item.agent, text: refused });
       tell(
         owner,
-        {
-          id: item.proposal,
-          agent: item.agent,
-          title: reviewinbox.titleOf(item),
-          project: item.project,
-        },
+        { id: item.proposal, agent: item.agent, title: reviewinbox.titleOf(item), project: item.project },
         by,
       );
+    }
     return item;
   });
 }

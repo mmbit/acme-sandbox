@@ -4,8 +4,8 @@
 // frame with a handle at each corner: pressed inside and dragged, it moves; a handle scales it about the opposite
 // corner. Select is the only way things move on a page (one way to move things: job #13071). Cut, copy, paste,
 // duplicate and delete are bookselectclip.js's (the keys, the clipboard and the bar beside the frame); the live move
-// and resize bookselectlift.js's. Post-its keep their own order on their sheet and are never picked (booktools.js sends
-// their presses elsewhere).
+// and resize bookselectlift.js's; Assign in the bar and a Pencil's loop out of one scrap, bookassign.js's. Post-its
+// keep their own order on their sheet and are never picked (booktools.js sends their presses elsewhere).
 //
 // booktools.js mounts it and calls press(e) for a mouse's or a Pencil's press on the page in select mode, and settle()
 // before Undo or Redo and when the tool changes. Every change is one step through hooks.begin(view) (bookedit.js).
@@ -15,9 +15,9 @@ import { grownTo } from './bookrow.js';
 import { boundsOf, gestureOf, groupOf, membersOf, picked, topAt, union, within } from './bookselectmath.js';
 import { unitAt } from './bookunits.js';
 import { mountClip } from './bookselectclip.js';
+import { mountAssign } from './bookassign.js';
 import { drag } from './bookselectlift.js';
 import { followPress } from './bookpress.js';
-import { clearShown } from './bookui.js';
 
 // a press that moves less than this far (screen px) is a click; a line this near (screen px) is under the pointer
 const CLICK_PX = 4,
@@ -47,6 +47,7 @@ export function mountSelect(book, hooks) {
   // (away: a loop gone off the screen's edge, waiting for the Pencil to come back: comingBack)
   const sel = { book, hooks, view: null, ink: [], scraps: [], texts: [], frame: null, last: null, away: null };
   sel.clip = mountClip(sel);
+  sel.assign = mountAssign(sel); // (a scrap circled with the Pencil and a line out of it: handed to a person)
   hovering(sel);
   comingBack(sel);
   return {
@@ -137,10 +138,11 @@ function follow(sel, loop, e, lifted = () => {}) {
     loop.far = true;
     // (once it strays it's a lasso, however it ends; a box back from the screen's edge stays a box, its corner following)
     if (loop.kind === 'box' && !loop.back) loop.kind = gestureOf(path, SLOP_PX / book.scale).kind;
-    drawLoop(loop);
+    if (!sel.assign.drew(loop, m)) drawLoop(loop);
   };
   const up = u => {
     lifted();
+    if (sel.assign.lifted(loop, u)) return;
     const away = loop.far && u.pointerType === 'pen' && atEdge(u);
     if (!away) svg.remove();
     if (u.type === 'pointercancel' && !away) return;
@@ -160,10 +162,8 @@ function follow(sel, loop, e, lifted = () => {}) {
 }
 function drawLoop({ kind, path, svg }) {
   const [a, b] = [path[0], path.at(-1)];
-  svg.firstChild.setAttribute(
-    'd',
-    kind === 'box' ? `M${a[0]} ${a[1]}H${b[0]}V${b[1]}H${a[0]}Z` : `M${path.map(p => p.join(' ')).join('L')}Z`,
-  );
+  const d = kind === 'box' ? `M${a[0]} ${a[1]}H${b[0]}V${b[1]}H${a[0]}Z` : `M${path.map(p => p.join(' ')).join('L')}Z`;
+  svg.firstChild.setAttribute('d', d);
 }
 // What's in a loop picked (with Shift, added)
 function pickIn(sel, { view, kind, path, down }) {
@@ -297,6 +297,7 @@ export function framed(sel, b = bounds(sel)) {
   }
   const { el, bar } = sel.frame;
   sel.clip.fit();
+  sel.assign.fit(bar);
   // (appended once: a node put back starts its fade in again)
   if (el.parentNode !== sel.view.el) sel.view.el.append(el, bar);
   Object.assign(el.style, {
@@ -305,20 +306,18 @@ export function framed(sel, b = bounds(sel)) {
     width: `${b.x1 - b.x0}px`,
     height: `${b.y1 - b.y0}px`,
   });
-  // (its bar under it, else over it, else over its foot, always where the paper shows it clear of the islands across
-  // its rows: the strip's at its left too)
+  // (its bar under it, else over it, else over its foot, always where the paper shows it)
   const s = sel.book.scale,
     shown = sel.book.shown();
   // (never wider than the paper shows clear: on a phone's its words go on in a second row.)
-  bar.style.maxWidth = `${(clearShown(sel.book).x1 - shown.x0) * s - 2 * BAR.side}px`;
+  bar.style.maxWidth = `${(shown.x1 - shown.x0) * s - 2 * BAR.side}px`;
   // (over, the bar hangs above y: only its foot's room under it, and its whole height over it, its top on the paper.
   const h = bar.offsetHeight,
     under = b.y1 + (BAR.below + h) / s < shown.y1,
     y = under ? b.y1 : Math.max(Math.min(b.y0, shown.y1 - BAR.below / s), shown.y0 + (BAR.above + h) / s),
     top = sel.book.desk.getBoundingClientRect().top + (y - shown.y0) * s,
-    clear = clearShown(sel.book, under ? [top + BAR.gap, top + BAR.gap + h] : [top - BAR.gap - h, top - BAR.gap]),
     half = (bar.offsetWidth / 2 + BAR.side) / s,
-    x = Math.min(Math.max((b.x0 + b.x1) / 2, clear.x0 + half), clear.x1 - half);
+    x = Math.min(Math.max((b.x0 + b.x1) / 2, shown.x0 + half), shown.x1 - half);
   bar.dataset.side = under ? 'under' : 'over';
   Object.assign(bar.style, { left: `${x}px`, top: `${y}px` });
 }

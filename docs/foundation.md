@@ -24,6 +24,11 @@ where it suffices.
 - **Settings**: the server's names and switches in `company/infra.env`; a product's needs in its `product.yaml`.
   `company/brand.yaml` `names: book` names the board's book on its tips book's cover; left out, the cover reads Tips.
   Its `screens` names the screens the board reads on, which a try's versions are shot at; left out, a desktop's.
+- **Memory inspections**: `company/infra.env`'s `MEMORY_INSPECTION_BUDGET_MS` is the separately authorized
+  observation budget in integer milliseconds. Missing or zero refuses arming. Positive values must fit Node's timer
+  range, at most 2,147,483,647 ms. The Process arm must record absolute bounds exactly that far apart. This setting
+  never arms automatically, extends a saved attempt or allows rearming. The single attempt retains two write-once
+  receipts and one terminal disposition. See `platform/coordinator/docs/inspection.md` for the operations.
 - **Seat plans**: optional `company/seatplans.yaml` maps worker seat names to confirmed Claude subscription sizes,
   `5` or `20`. For example, `claude-main: 20` declares that seat's 20x plan. Omit seats whose size is unknown.
   `hq when --extra-seat 5x` (or `20x`) and `hq projects [words] --extra-seat 5x` replay the live plan with one fresh

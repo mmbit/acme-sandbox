@@ -174,6 +174,11 @@ it's read (`projects.ts ownerOf`), so `hq project owner` hands on every delivera
   "name" "done when"` draws the deliverable the same way first, refused before anything is written for anyone but the
   project's owner and the CEO (`newthread.ts`). A drawn deliverable is read back as
   the board reads it: its product, project, name and "done when", then the names of the project's other open deliverables.
+  With no `--needs` it needs the last one chained from the deliverable under way it most likely continues (the drawing
+  job's, else the project's newest), so draws in a row run as one chain. A paused one is passed over, and so is one whose
+  open work is all booked for a later time (`hq job --when` a time) with no pull request open, with what waits for it:
+  each is named in the answer, for the drawer to `hq plan need` when the work shares its files, so ready work never
+  queues behind a read days away.
 - `hq plan rename <deliverable> "name" ["done when"] [--slug <slug>]` renames an open deliverable, read back the same way; a new
   slug makes it `<project>/<slug>` and its old id keeps resolving, as `hq deliverable move` does. `hq plan title <job>
   "title"` gives a task still to start a new title.
@@ -198,7 +203,9 @@ it's read (`projects.ts ownerOf`), so `hq project owner` hands on every delivera
   `review.drawWindowedChanges: true` (off unless set), a review's "changes" on a deliverable with a window is drawn at once,
   as `hq inbox accept findings:<pr> --for <author> --findings <blocking ids>` would: the PR's author fixes every
   blocking finding (or checks the touch-ups) in the reviewed deliverable, and the owner's running session hears of the task
-  (a held notice, which lapses unread) and may cancel and redraw it (job #9562). Other findings on a deliverable with a
+  (a held notice, which lapses unread) and may cancel and redraw it (job #9562). A draw HQ can't make at once (`hq inbox
+  accept` refuses it) leaves the item with its owner as any other, findings and all, and its ruling isn't ruled again
+. Other findings on a deliverable with a
   window (a close, or any of them without that setting) wait in no planning job that isn't running:
   the owner's running session hears them first and holds them while it runs (once it ends, yields or parks on a card,
   the sweep hands them on and its unread notice lapses rather than becoming a message job), and a planning job holding

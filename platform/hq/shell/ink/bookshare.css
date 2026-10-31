@@ -11,7 +11,8 @@
   all: unset;
   position: absolute;
   top: 0;
-  right: 0;
+  /* (the writing paper's corner, left of the rail) */
+  right: var(--bk-rail-width, 0px);
   z-index: 6;
   width: var(--bk-ear);
   height: var(--bk-ear);
@@ -106,20 +107,19 @@
   opacity: 0.75;
 }
 
-/* the targets: a row in the rail's place, over the page bar, never over the tools, which make way for it while it
-   shows: Submit, big, its CEO on a disc; PDF and PNG, small, each a finger wide; lit under the page. */
-#book .bk-lane-line {
-  position: relative;
-}
-#book .bk-lane-line[data-targets] > :not(.bk-share, .bk-asks-open) {
+/* the targets: a column on the rail, its controls making way for it while it shows, its right at the rail's: Submit,
+   big, its CEO on a disc; PDF and PNG, small, each a finger wide; lit under the page. (on the rail) */
+#book .bk-controls[data-targets] > .bk-column > * {
   visibility: hidden;
 }
 #book .bk-share {
   position: absolute;
-  left: 50%;
+  right: 4px;
   top: 50%;
   z-index: 8;
   display: flex;
+  flex-direction: column;
+  align-items: stretch;
   gap: 6px;
   padding: 6px;
   border-radius: 18px;
@@ -127,7 +127,7 @@
   box-shadow:
     0 0 0 1.5px var(--bk-ink),
     0 10px 24px rgba(20, 14, 40, 0.22);
-  translate: -50% -50%;
+  translate: 0 -50%;
   pointer-events: auto;
   animation: bk-share-in 0.16s ease-out;
 }
@@ -190,45 +190,39 @@
   }
 }
 
-/* a page sent: locked, its tools gone, a quiet lock in the rail's place (bookcontrols.js) */
+/* a page sent: locked, its tools gone, a quiet lock and its words in the tools' place (bookcontrols.js) */
 #book .bk-locked {
   display: none;
-  grid-column: 2;
+  flex-direction: column;
   align-items: center;
-  gap: 8px;
-  height: 46px;
-  margin: 0;
+  gap: 4px;
+  width: 44px;
+  margin: 6px 0;
   color: var(--bk-muted);
-  font: 600 15px/1 var(--bk-font);
+  font: 600 11px/1.2 var(--bk-font);
+  text-align: center;
 }
 #book .bk-locked svg {
   width: 20px;
   height: 20px;
 }
-#book .bk-lane-line[data-locked] > .bk-strip {
+#book .bk-column[data-locked] > .bk-strip {
   display: none;
 }
-#book .bk-lane-line[data-locked] > .bk-locked {
+#book .bk-column[data-locked] > .bk-locked {
   display: flex;
 }
-/* (a lane too narrow for the rail centred with the islands beside it: the islands under it, the rail kept centred,
-   as before the board's Send key left them; the lock line short enough for the book's beside it) */
-@container bk-rail (max-width: 600px) {
-  #book .bk-lane-line:not([data-locked]) > .bk-islands {
-    flex-basis: 100%;
-    justify-content: center;
-  }
-}
 
-/* asks still open as the page is let go on Submit: a small card over the targets, its tail down at Submit, the page in
-   view behind it; Send now in the accent */
+/* asks still open as the page is let go on Submit: a small card over the targets, at the rail's right, its tail down
+   at Submit, the page in view behind it; Send now in the accent. (above the targets' column, half of its three 46 px
+   targets, their gaps and edge, and 12 px clear) */
 #book .bk-asks-open {
   position: absolute;
-  left: 50%;
-  bottom: calc(50% + 40px);
+  right: 4px;
+  bottom: calc(50% + 94px);
   z-index: 9;
   box-sizing: border-box;
-  width: min(100% - 16px, 420px);
+  width: min(100vw - 16px, 420px);
   padding: 16px 14px 14px;
   border: 2.5px solid var(--bk-ink);
   border-radius: 18px;
@@ -236,7 +230,6 @@
   box-shadow: 0 12px 30px rgba(20, 14, 40, 0.25);
   color: var(--bk-ink);
   font: 600 14px/1.3 var(--bk-font);
-  translate: -50% 0;
   pointer-events: auto;
   animation: bk-share-in 0.16s ease-out;
 }

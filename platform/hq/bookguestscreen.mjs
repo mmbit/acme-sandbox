@@ -86,12 +86,11 @@ export async function pointOnPaper(page, across, down) {
   );
 }
 
-// The select tool's bar round the lassoed note and lines, their group's clip and menu once Group joins them, and the
-// cog's card, in the guest's words
+// The select tool's bar round the lassoed note and lines, and the cog's card, in the guest's words
 export async function selectionAndPrefs(page) {
   const book = page.locator('#book');
   await book.getByRole('button', { name: await named(page, 'Select'), exact: true }).click();
-  const [from, to] = [await pointOnPaper(page, 0.05, 0.1), await pointOnPaper(page, 0.95, 0.5)];
+  const [from, to] = await aroundUnits(page);
   await page.mouse.move(...from);
   await page.mouse.down();
   await page.mouse.move(...to, { steps: 12 });
@@ -101,13 +100,6 @@ export async function selectionAndPrefs(page) {
   const acts = await Promise.all(['Cut', 'Copy', 'Duplicate', 'Delete'].map(en => named(page, en)));
   assert.deepEqual(await bar.locator('button:not([hidden])').allInnerTexts(), acts);
   await page.keyboard.press('Escape');
-  const clip = book.getByRole('button', { name: await named(page, 'A group: its menu'), exact: true });
-  // (in its middle, as the board taps it: the note at the group's corner lies under it.)
-  await clip.click();
-  const menu = page.getByRole('menu');
-  await menu.waitFor();
-  assert.deepEqual(await menu.getByRole('menuitem').allInnerTexts(), [await named(page, 'Delete')]);
-  await page.keyboard.press('Escape');
   const cog = await named(page, 'Preferences on this device');
   await book.getByRole('button', { name: cog, exact: true }).click();
   const card = await page.getByRole('dialog', { name: cog, exact: true }).innerText();
@@ -115,6 +107,19 @@ export async function selectionAndPrefs(page) {
     assert.ok(card.includes(await named(page, en)), `${en} in ${card}`);
   await page.keyboard.press('Escape');
 }
+
+// A box round everything on the page, just above its first unit and below its last (the page is as tall as what's on
+// it), clear of the screen's edge, where a drag folds the book away
+const aroundUnits = page =>
+  page.evaluate(() => {
+    const paper = [...document.querySelectorAll('#book .bk-page')].find(p => !p.hidden);
+    const units = [...paper.querySelectorAll('.bk-unit')].map(unit => unit.getBoundingClientRect());
+    const edge = paper.getBoundingClientRect();
+    return [
+      [edge.left + 50, Math.min(...units.map(unit => unit.top)) - 10],
+      [edge.right - 30, Math.max(...units.map(unit => unit.bottom)) + 10],
+    ];
+  });
 
 // The new page after a send, untitled: its name in the bar and the pages menu, and the title field, in the guest's words
 export async function untitledPage(page) {

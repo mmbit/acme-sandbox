@@ -29,9 +29,9 @@ const GAP = 24,
   SMALL_GAP = 16,
   SMALL = 600,
   PAGES = 4;
-// The controls floating over the paper's right edge, as bookui.css lays them: Undo's column and the tool strip beside
-// it, 52 px each with a finger and 8 apart (bookui.js measures them as --bk-controls-width), 12 px in from the paper's
-// edge and 12 more kept clear of them. What lies on the paper keeps left of them.
+// The controls floating over the paper's right edge (book.css --bk-controls-width: none, the rail being beside the
+// paper; this width only until the book's style says so), and 12 px in from the
+// paper's edge and 12 more kept clear of them. What lies on the paper keeps left of them.
 export const CONTROLS = { width: 52 + 8 + 52, clear: 12 + 12 };
 // HQ's page narrower than a small phone's is no page: the book opens as the spread instead. A phone's width beside the
 // book still is one.

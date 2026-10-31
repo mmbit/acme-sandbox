@@ -157,10 +157,15 @@ export function startReview(
   sha = /^[0-9a-f]{40}([0-9a-f]{24})?$/.test(sha ?? '') ? sha : undefined;
   if (sha) recordPush(pr, sha, files, lines, gates?.passed === true && tests?.passed === true);
   // (gate_fails; tests_incomplete)
+  reviewPush({ pr, branch, author, files, sha, links, frontmatter, knowledge, pushedSince, gates, tests, lines, job });
+}
+
+// A push as startReview took it, or a stopped one `hq review` runs through its checks again (resume)
+function reviewPush(pushed: reviewpushes.Push) {
+  const { pr, branch, author, files, sha, links, pushedSince, gates, tests } = pushed;
   const prev = db
     .prepare('select sha, round, status, since, gate_fails, tests_incomplete from prs where number = ?')
     .get(pr) as Push['prev'];
-  const pushed: reviewpushes.Push = { pr, branch, author, files, sha, links, frontmatter, knowledge, pushedSince, gates, tests, lines, job };
   if (waitsForRuling(pushed, prev)) return;
   const push: Push = { pr, branch, author, sha, prev }, failing = cleared(push, pushed);
   if (!failing) return;
@@ -204,7 +209,7 @@ function cleared(push: Push, pushed: reviewpushes.Push) {
     // (only a task still open holds it, its own push to come: one that ended, done or not, pushes nothing more)
     if (reviewinbox.tasks(pr, prev.round).some(isOpenJob)) return;
   }
-  if (documentsSentBack(push, frontmatter, knowledge) || madeRightFirst(push, files, owed)) return;
+  if (documentsSentBack(push, pushed, frontmatter, knowledge) || madeRightFirst(push, pushed, files, owed)) return;
   const failing = failingChecks(gates, tests);
   if (heldForChecks(push, failing, gates, tests)) return;
   // (only a push that owes nothing waits for the thread's next task)
@@ -250,12 +255,56 @@ function owedFirst(push: Push, files: string[], pushedSince?: { sha: string; fil
 
 // A push that goes back to its author before any review for how it was made: on the wrong engine (redone on the right
 // one, jobs.ts onlyFor), or without its author's look at the previews. A check, not a round, like the gates.
-function madeRightFirst(push: Push, files: string[], owed: ReturnType<typeof owedFirst>) {
+function madeRightFirst(push: Push, pushed: reviewpushes.Push, files: string[], owed: ReturnType<typeof owedFirst>) {
   const { redo, previews } = owed;
-  if (redo) sendBack(push, `Redoing ${redo.rule.what} on ${redo.rule.model}`, engineOnly.redoPrompt(redo), files);
+  if (redo)
+    sendBackOnce(push, pushed, {
+      what: `Redoing ${redo.rule.what} on ${redo.rule.model}`,
+      prompt: engineOnly.redoPrompt(redo),
+      files,
+      owes: `${redo.rule.what} redone on ${redo.rule.model}`,
+    });
   else if (previews.length)
-    sendBack(push, 'Looking at the previews', 'This push changes what people see, without its record of the previews.', files);
+    sendBackOnce(push, pushed, {
+      what: 'Looking at the previews',
+      prompt: 'This push changes what people see, without its record of the previews.',
+      files,
+      owes: previews
+        .map(check => `a record in ${visual.recordOf(check, push.branch)} newer than ${check.files.join(', ')}`)
+        .join('; '),
+    });
   return !!redo || previews.length > 0;
+}
+
+// A check's send-back before any review, unless this push is the run of that same send-back and pushed nothing of the
+// pull request's own (`pushedSince`: none of its files changed): another run would find what that one did. It waits
+// stuck for its deliverable's owner's judgement then (followups.ts sentBackForNothing), once, not round and round.
+// `owes`: what the push still owes, in a few words. The push waits with what its checks read (reviewpushes, `stopped`)
+// until a push takes its place, or `hq review` runs it through its checks again (resume): still owing, it stays stuck
+// without another send-back or proposal. The pull request keeps the commit its last round was judged on.
+function sendBackOnce(
+  push: Push,
+  pushed: reviewpushes.Push,
+  { what, prompt, files, owes }: { what: string; prompt: string; files?: string[]; owes: string },
+) {
+  const { pr, author } = push,
+    { job, pushedSince } = pushed;
+  const pushedNothing =
+    pushedSince &&
+    !pushedSince.files.length &&
+    job !== undefined &&
+    db.prepare("select 1 from jobs where id = ? and kind = 'work' and stage = 'fix' and step = ?").get(job, what);
+  if (!pushedNothing) return sendBack(push, what, prompt, files);
+  recordSentBack(push);
+  stuck(
+    pr,
+    `${author}'s run for "${what}" pushed nothing, and the push still owes ${owes}: its deliverable's owner judges it`,
+  );
+  reviewpushes.keep({ ...pushed, stopped: what });
+  if (pushed.stopped) return;
+  void followups
+    .sentBackForNothing(push, what, owes)
+    .catch(err => console.error(`Could not tell PR #${pr}'s owner it was sent back for nothing:`, err));
 }
 
 // The Library shows a document's frontmatter title as its name and its date: frontmatter it would read cut (the worker
@@ -267,6 +316,7 @@ function madeRightFirst(push: Push, files: string[], owed: ReturnType<typeof owe
 // whole, with the files under knowledge/): HQ would show a broken picture.
 function documentsSentBack(
   push: Push,
+  pushed: reviewpushes.Push,
   frontmatter: { path: string; text: string | null }[],
   knowledge: { docs: { path: string; text: string }[]; files: string[] },
 ) {
@@ -289,18 +339,19 @@ function documentsSentBack(
           .flatMap(d => missing(d.path, d.text, there).map(m => `- ${d.path}: ${m}`))
       : [];
   if (!cut.length && !gone.length) return false;
-  sendBack(
-    push,
-    'Fixing documents',
-    `Your pull request #${pr} (branch ${branch}) ${[
-      cut.length &&
-        `changes documents whose frontmatter HQ's Library would read cut (it shows \`title:\` as a document's name and ` +
-          `\`verified:\` as its date):\n${cut.join('\n')}`,
-      gone.length && `points at files that aren't in the repo:\n${gone.join('\n')}`,
-    ]
-      .filter(Boolean)
-      .join('\n\nIt also ')}\n\n` + `Fix each one and push again; the review starts then.`,
-  );
+  sendBackOnce(push, pushed, {
+    what: 'Fixing documents',
+    prompt:
+      `Your pull request #${pr} (branch ${branch}) ${[
+        cut.length &&
+          `changes documents whose frontmatter HQ's Library would read cut (it shows \`title:\` as a document's name and ` +
+            `\`verified:\` as its date):\n${cut.join('\n')}`,
+        gone.length && `points at files that aren't in the repo:\n${gone.join('\n')}`,
+      ]
+        .filter(Boolean)
+        .join('\n\nIt also ')}\n\n` + `Fix each one and push again; the review starts then.`,
+    owes: [...cut, ...gone].map(line => line.slice(2)).join('; '),
+  });
   return true;
 }
 
@@ -507,8 +558,7 @@ function calledBack(pr: number, round: number) {
 function sendBack(push: { pr: number; branch: string; author: string; sha?: string; prev?: { sha: string | null; round: number; status: string; since: number } },
   what: string, prompt: string, files?: string[]) {
   const { pr, branch, author, sha, prev } = push;
-  db.prepare('insert into prs (number, branch, author, sha) values (?, ?, ?, ?) on conflict(number) do nothing').run(pr, branch, author, sha ?? null);
-  ledger.prOpened(branch);
+  recordSentBack(push);
   // The fix job reads these files to choose its engine and previews step.
   if (files) db.prepare('update prs set files = ? where number = ?').run(JSON.stringify(files), pr);
   if (prev?.status === 'open' && prev.sha !== (sha ?? null) && !ruled(pr, prev.round, prev.sha) && db.prepare(`select 1 from jobs
@@ -520,6 +570,17 @@ function sendBack(push: { pr: number; branch: string; author: string; sha?: stri
   }
   if (prev?.status === 'stuck' && !ruled(pr, prev.round, prev.sha)) db.prepare('update prs set sha = ? where number = ?').run(sha ?? null, pr);
   fixJob({ number: pr, branch, author } as Pr, what, prompt);
+}
+
+function recordSentBack(push: Pick<Push, 'pr' | 'branch' | 'author' | 'sha'>) {
+  const { pr, branch, author, sha } = push;
+  db.prepare('insert into prs (number, branch, author, sha) values (?, ?, ?, ?) on conflict(number) do nothing').run(
+    pr,
+    branch,
+    author,
+    sha ?? null,
+  );
+  ledger.prOpened(branch);
 }
 
 // The gates' or the tests' report on a push, from the worker: passed, failed, or not run (null).
@@ -671,7 +732,7 @@ const lookerOf = (pr: number, round: number, sha: string | null) => reviewtriage
 function misjudged(j: { id: number; pr: number; round: number; stage: string | null; output: string | null }, touchupsPending = false) {
   const v = parse(j.output ?? '');
   if (!DECIDES.includes(v.decision as string)) return undefined;
-  // (one refused when it was acted on: decide's undrawn fix task)
+  // (one refused when it was acted on)
   const refused = reviewrefusals.reason(db, j.id);
   if (refused) return refused;
   const decision = decisionOf(j.output ?? '', j.stage);
@@ -864,6 +925,7 @@ function replayWaiting(n: number) {
   const pr = db.prepare('select * from prs where number = ?').get(n) as Pr | undefined;
   if (!pr || !reviewpushes.waits(n) || pr.status === 'board' || panelOut(n, pr)) return;
   if (!['open', 'stuck'].includes(pr.status)) return void reviewpushes.drop(n);
+  if (held?.stopped) return;
   const p = reviewpushes.take(n)!;
   publish({ type: 'log', agent: panel.consolidator(n), text: `PR #${n}: round ${pr.round} is ${pr.status === 'stuck' ? 'stuck' : 'ruled'}, so the push that waited for it is reviewed now` });
   startReview(p.pr, p.branch, p.author, p.files, p.sha, p.links, p.frontmatter, p.knowledge, p.pushedSince, [], p.gates, p.tests, p.lines);
@@ -995,19 +1057,9 @@ async function decide(job: { id: number; pr: number; round: number; sha: string 
     const brief = `${changesPrompt(pr, job.round, v, name, touchup)} ${briefingFor(pr.branch, job.round).author} ${AUTHOR_TRUST}\n${findings.AUTHOR_CLASSES}\n\n${name}'s verdict:\n${out}`;
     // (a thread's findings go to its owner, who draws its fix tasks. Work with no thread, an HQ-made or call job, goes
     // back to its author at once, as nobody plans it.)
-    // (one whose fix task HQ draws at once and can't is refused the same way at every try: its consolidator rules again,
-    // then it's stuck, never held for a retry.)
-    if (toOwner(pr.branch)) {
-      try {
-        await ownerFindings(pr, job, v, 'changes', brief);
-      } catch (err) {
-        if (!(err instanceof reviewinbox.DrawRefused)) throw err;
-        const undrawn = `its fix task can't be drawn: ${err.message}`;
-        if (refusedRead(job.id, undrawn)) return;
-        return stuck(job.pr, `${name}'s "changes" (job #${job.id}): ${undrawn}, twice; \`hq review ${job.pr}\` has it ruled again`);
-      }
-      return;
-    }
+    // (one whose fix task HQ draws at once and can't stays with its owner, findings and all: ruling it again only finds
+    // the same.)
+    if (toOwner(pr.branch)) return void (await ownerFindings(pr, job, v, 'changes', brief));
     // (the fix round named by the consolidator, for what it fixes, a merge check's too; one that names no fix, by its
     // work)
     const tasks = tasktitles.roundTitle(v, !!touchup?.head);
@@ -1135,21 +1187,31 @@ async function merge(pr: Pr, title: string, voided = () => false): Promise<Merge
   return m;
 }
 function waitingForMerge(pr: Pr) {
+  const why = mergeOrderReason(pr);
+  if (why) hold(pr.number, why);
+  return !!why;
+}
+function mergeOrderReason(pr: Pr) {
   const before = mergePredecessor(pr);
-  if (!before) return false;
-  hold(pr.number, `waiting for PR #${before} to merge its shared files first`);
-  return true;
+  return before ? `waiting for PR #${before} to merge its shared files first` : undefined;
 }
 function mergePredecessor(pr: Pick<Pr, 'number' | 'branch' | 'files'>) {
   if (expedites(pr.branch)) return undefined;
   return mergeorder.predecessor(pr, job => {
     const judged = ruling(job.pr, job.round, job.sha);
+    if (!judged && sentBack(job)) return 'release';
     if (judged?.id !== job.id || changedFor(job.id).length) return undefined;
     if (reviewpushes.passLeft(job.id)) return 'release';
     if (judged.decision === 'merge') return 'retain';
     if (judged.decision === 'board') return 'boardAnswer';
     return judged.decision ? 'release' : undefined;
   });
+}
+// The latest ruling on its commit says it can't merge as it is, even one refused for how it's written (misjudged): its
+// pass no longer holds a place while it is ruled again.
+function sentBack(job: rulingjobs.Ruling) {
+  const latest = rulingjobs.latest(job.pr, job.round, job.sha);
+  return latest?.id === job.id && ['changes', 'close'].includes(decisionOf(latest.output ?? '', latest.stage) as string);
 }
 // `superseded`: a push started a new round while it waited, which the old ruling no longer decides, or the ruling was set
 // aside (`voided`). `commit`: the merge commit GitHub made of the reviewed head.
@@ -1403,47 +1465,69 @@ export async function actOnRulings() {
   // (the open ones by db.ts prs_open, not every pull request's row. Its `status in` term repeats the index's own where
   // on purpose: SQLite uses a partial index only when the query states that term itself, so `status = 'open'` alone
   // fails `indexed by` at prepare ('no query solution') and stops this sweep every run.)
-  for (const pr of db.prepare(`select * from prs indexed by prs_open where status in ${OPEN_PRS} and status = 'open' and sha is not null`).all() as Pr[]) {
-    if (deciding.has(pr.number)) continue;
-    const action = sweepAction(pr);
-    if (!action || action.author?.going) continue;
-    if (action.kind === 'office') {
-      if (!action.author) await mergeOffice(pr);
-      continue;
+  for (const pr of db.prepare(`select * from prs indexed by prs_open where status in ${OPEN_PRS} and status = 'open' and sha is not null`).all() as Pr[])
+    await actOnRuling(pr);
+}
+async function actOnRuling(pr: Pr) {
+  if (deciding.has(pr.number)) return;
+  const action = sweepAction(pr);
+  if (!action) return stillWaiting(pr);
+  if (action.author?.going) return;
+  if (action.kind === 'office') {
+    if (!action.author) await mergeOffice(pr);
+    return;
+  }
+  if (action.kind === 'kept') {
+    if (!action.author) {
+      publish({ type: 'log', agent: panel.attribution(pr.number), text: `PR #${pr.number}: the touch-ups ${pr.author} kept on round ${pr.round} were never merged, so they are now` });
+      await mergeKept(pr);
     }
-    if (action.kind === 'kept') {
-      if (!action.author) {
-        publish({ type: 'log', agent: panel.attribution(pr.number), text: `PR #${pr.number}: the touch-ups ${pr.author} kept on round ${pr.round} were never merged, so they are now` });
-        await mergeKept(pr);
-      }
-      continue;
-    }
-    const { job: j, decision, author: since } = action;
-    const { agent, name } = ruler(j.id);
-    const said = `${name}'s "${decision}" on round ${pr.round} (job #${j.id})`;
-    if (since) {
-      await standing(pr, `${said} stands, but ${pr.author}'s job #${since.id} on it since ended (${since.status}) without a push, so nothing acts on it`);
-      continue;
-    }
-    hold(pr.number, null);
-    publish({ type: 'log', agent, text: `PR #${pr.number}: ${name}'s ruling on round ${pr.round} (job #${j.id}) was never acted on, so it is now` });
-    await reviewFinished(j).catch(err => {
-      console.error(`Could not act on PR #${pr.number}'s ruling:`, err);
-      hold(pr.number, `${said} couldn't be acted on (${String(err?.message ?? err).slice(0, 200)}); HQ tries again every 5 minutes`);
-    });
+    return;
+  }
+  const { job: j, decision, author: since } = action;
+  const { agent, name } = ruler(j.id);
+  const said = `${name}'s "${decision}" on round ${pr.round} (job #${j.id})`;
+  if (since) return standing(pr, `${said} stands, but ${pr.author}'s job #${since.id} on it since ended (${since.status}) without a push, so nothing acts on it`);
+  hold(pr.number, null);
+  publish({ type: 'log', agent, text: `PR #${pr.number}: ${name}'s ruling on round ${pr.round} (job #${j.id}) was never acted on, so it is now` });
+  await reviewFinished(j).catch(err => {
+    console.error(`Could not act on PR #${pr.number}'s ruling:`, err);
+    hold(pr.number, `${said} couldn't be acted on (${String(err?.message ?? err).slice(0, 200)}); HQ tries again every 5 minutes`);
+  });
+}
+// A pass the sweep leaves waiting says what holds it now, not what held it when its merge was last tried (STATUS.md)
+function stillWaiting(pr: Pr) {
+  const saved = sweepRuling(pr);
+  if (saved?.decision !== 'merge' || misjudged(saved.job) || changedFor(saved.job.id).length) return;
+  // (in the order merge() asks)
+  const why = visualapproval.waitReason(pr.number) ?? mergeOrderReason(pr);
+  if (why) hold(pr.number, why);
+}
+
+// A pull request merged or closed (settledAside): each one held in merge order behind it, sharing its files, has its
+// pass acted on at once, as the sweep would five minutes on (actOnRulings). One still held behind another says so.
+async function mergeOrderMoved(settled: number) {
+  const { files } = db.prepare('select files from prs where number = ?').get(settled) as Pick<Pr, 'files'>;
+  const shared = new Set(JSON.parse(files) as string[]);
+  const behind = (db.prepare(`select * from prs indexed by prs_open where status in ${OPEN_PRS}`).all() as Pr[])
+    .filter(pr => (JSON.parse(pr.files) as string[]).some(file => shared.has(file)));
+  for (const pr of behind) {
+    if (pr.status === 'board') await retryBoardMerge(pr.number);
+    else if (pr.status === 'open' && pr.sha && sweepAction(pr)?.merges) await actOnRuling(pr);
   }
 }
 
 // A board-authorized merge can wait for another pull request, just as it can wait for visual approval.
 async function retryBoardMerges() {
   const boardPulls = db.prepare("select number from prs where status = 'board'").all() as { number: number }[];
-  for (const pr of boardPulls) {
-    if (deciding.has(pr.number)) continue;
-    const request = boardmerges.latestRequest(pr.number);
-    if (request?.status !== 'answered' || boardmerges.answerAction(request.answer) !== 'merge') continue;
-    try { await boardDecided(pr.number, request.answer); }
-    catch (err) { console.error(`Could not resume PR #${pr.number}'s board-authorized merge:`, err); }
-  }
+  for (const pr of boardPulls) await retryBoardMerge(pr.number);
+}
+async function retryBoardMerge(n: number) {
+  if (deciding.has(n)) return;
+  const request = boardmerges.latestRequest(n);
+  if (request?.status !== 'answered' || boardmerges.answerAction(request.answer) !== 'merge') return;
+  try { await boardDecided(n, request.answer); }
+  catch (err) { console.error(`Could not resume PR #${n}'s board-authorized merge:`, err); }
 }
 
 // The sweep's action and the author work that must finish before it can act.
@@ -1677,6 +1761,8 @@ function settledAside(pr: number) {
   if (job) ledger.cancelJob(job, `PR #${pr} is merged or closed`);
   remember(stuckKey(pr), null);
   remember(idleCheckKey(pr), null);
+  // (once the path that settled it has done the rest)
+  setImmediate(() => mergeOrderMoved(pr).catch(err => console.error(`Could not merge the pull requests held behind PR #${pr}:`, err)));
 }
 
 // Ask GitHub about open pull requests with no active job and no job activity for an hour, whatever their round.
@@ -2284,7 +2370,10 @@ const mergePrompt = (pr: number, branch: string, author: string, before: string,
   return `
 You are ${consolidatorName(pr)}. Pull request #${pr} (branch ${branch}) passed review at ${before} but couldn't merge, so its author took main
 in. Check only that: \`git log --oneline ${before}..HEAD\` should be the merge (and main's commits it brings), and
-\`git show --remerge-diff <the merge>\` shows how conflicts were resolved. New work beyond the merge means "changes". A
+\`git show --remerge-diff <the merge>\` shows how conflicts were resolved. A commit after the merge that the gates
+(Prettier, ESLint, the type check) need for the merged code is part of the merge too: a file both sides grew past a
+lint limit split, a call fitted to main's new signature. Judge it as a resolution, by whether it keeps both sides'
+behaviour; taking it out would fail the gates again. Other new work beyond the merge means "changes". A
 resolution that drops either side's intent is a finding, judged as a later round judges: ${laterBar}
 ${ownProfile(author, [])} Don't re-review the rest. Don't modify any files.
 
@@ -2385,14 +2474,16 @@ export async function heldDecided(merges: { number: number }[]) {
 // checks the merge); with no commit pinned, it gets the same round again (startReview). One stuck because its tests
 // couldn't complete gets a push of the same commit with no agent run (testsAgain), at which the worker runs the gates
 // and tests again, and the round goes on from there (startReview). A ruled branch that moved outside any job gets that push from
-// its author's job (movedOutside). Its author, the CEO or the process team can ask. A later valid ruling that finished
+// its author's job (movedOutside). Its author, its deliverable's owner, the CEO or the process team can ask. A later valid ruling that finished
 // while the PR was stuck is acted on without another review. A merge GitHub refused twice on the same head is tried
-// again (movedOutside).
+// again (movedOutside). A push a check stopped runs through its checks again, never past them (checkedAgain).
 export async function resume(n: number, by: string): Promise<{ ok: true; jobs: number[]; ruling?: number } | string> {
   const pr = db.prepare('select * from prs where number = ?').get(n) as Pr | undefined;
   if (!pr) return `PR #${n} isn't in review`;
-  if (by !== pr.author && by !== ceo() && !inProcess(by)) return `only PR #${n}'s author (${pr.author}), ${findAgent(ceo())?.name ?? 'the CEO'} or ${findAgent(roles().process)?.name ?? roles().process}'s team can send it back to the panel`;
+  const thread = panel.threadOfBranch(pr.branch), deliverable = thread ? findThread(thread) : undefined;
+  if (by !== pr.author && by !== ceo() && !inProcess(by) && !(deliverable && by === ownerOf(deliverable))) return `only PR #${n}'s author (${pr.author}), its deliverable's owner, ${findAgent(ceo())?.name ?? 'the CEO'} or ${findAgent(roles().process)?.name ?? roles().process}'s team can send it back to the panel`;
   if (pr.status !== 'stuck') return `PR #${n} isn't stuck (it's ${pr.status})`;
+  if (reviewpushes.find(n)?.stopped) return checkedAgain(n, by);
   // stuck because its author's job on it failed twice (fixFailed()): that job runs again. A round the consolidator never ruled on (one
   // that never reached the panel: 'Pushing again') stays stuck until the push, so the push gets that round again
   // (startReview's redo); after a ruling, the push is the next round.
@@ -2429,6 +2520,23 @@ export async function resume(n: number, by: string): Promise<{ ok: true; jobs: n
   const jobs = runs.map(j => again(j, 0));
   publish({ type: 'log', agent: by, text: `PR #${n} goes back to the panel (round ${pr.round}, asked by ${by}): job${jobs.length > 1 ? 's' : ''} ${jobs.map(j => `#${j}`).join(', ')}` });
   return { ok: true, jobs };
+}
+// A push a check stopped (sendBackOnce) runs through its checks again, as it came: one it still owes holds it, stuck, with
+// no other send-back. Its jobs: what its checks queued (its round, a send-back for something else). It runs on the pull
+// request open again, its commit and round kept: a send-back for something else leaves it open with that fix to come,
+// never stuck with nothing held, which another `hq review` would take to the panel (panelNow).
+function checkedAgain(n: number, by: string): { ok: true; jobs: number[] } | string {
+  const push = reviewpushes.take(n)!;
+  const { id: last } = db.prepare('select coalesce(max(id), 0) id from jobs').get() as { id: number };
+  publish({ type: 'log', agent: by, text: `PR #${n}: its push stopped for "${push.stopped}" runs through its checks again (asked by ${by})` });
+  db.prepare("update prs set status = 'open', why = null where number = ?").run(n);   // (why)
+  reviewPush(push);
+  if (reviewpushes.find(n)?.stopped) {
+    const { why } = db.prepare('select why from prs where number = ?').get(n) as Pick<Pr, 'why'>;
+    return `PR #${n} is checked again and stays stuck: ${why}. A push that makes it right gets its review`;
+  }
+  const jobs = db.prepare('select id from jobs where pr = ? and id > ? order by id').all(n, last) as { id: number }[];
+  return { ok: true, jobs: jobs.map(j => j.id) };
 }
 // A round that never reached its panel (its hand-off lost, and the push to bring it back changed nothing) has nothing
 // that failed to run: its triage starts now, on the commit it pinned.

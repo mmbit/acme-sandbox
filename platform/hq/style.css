@@ -1406,6 +1406,8 @@ body.keys .mailfwd .act:disabled { transform: var(--key-down); box-shadow: var(-
 .calls .missed .chars { font-size: 12px; color: var(--scr-dim); margin-left: auto; } .calls .missed .chars.over { color: #ff5c6a; }
 .calls .missed .msg { flex-basis: 100%; font-size: 13px; color: #ffd966; } .calls .missed .msg:empty { display: none; }
 /* a platform app's line on the desk phone (shell/care.js phone(), shell/studio.js phone()). */
+/* each app's slot for it, at the top of the screen in a fixed order (desk.js paintLines): no box of its own */
+.line-slot { display: contents; }
 .app-line { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 44px; margin: 0 0 var(--keys-gap); padding: 6px 18px; font: inherit; font-size: 15px; text-align: left; cursor: pointer;
   color: var(--on-accent); background: var(--tint-gold, #fff3c4); border: var(--bw) solid var(--line); border-radius: var(--r); box-shadow: var(--shadow-sm); }
 .app-line svg { flex: none; width: 16px; height: 16px; fill: var(--red); shape-rendering: var(--icons, auto); }

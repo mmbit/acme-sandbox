@@ -24,9 +24,11 @@
 // pointing and ringing inside it. (the preview: job #18848)
 // An agent's answer under its group within seconds, ticked and replied to (booknotebook.mjs), and an agent's
 // desk-phone card about a note under the note's group, answered there by a chip (booknotebookasks.mjs).
-// What's still the board's to answer on a page (bookforyou.mjs): open asks edged "for you", counted by the page's name,
-// its arrows going to each, and through every scrap once none is open.
+// What's still the board's to answer on a page (bookforyou.mjs): open asks edged "for you", counted on the rail,
+// its arrows going to each, and away once none is open. (on the rail)
 // A lone picture, a scrap of its own, moved to another page and deleted from Select's bar (booknotebookselect.mjs).
+// A scrap assigned to a person by the Pencil's circle and line, and by Select's Assign, More… and a search
+// (bookassign.mjs).
 // Search (bookfind.mjs): a word said while drawing yesterday found as it's written, an answer by its words, and the
 // find opening its page at the note, its number lit. On a desktop, the caret in
 // the field, Search put away with the book and back with it.
@@ -115,18 +117,22 @@ import { editStories } from './bookedits.mjs';
 import { notebookPlay } from './shell/ink/notebookplay.js';
 import { notebookRoute } from './notebookroute.mjs';
 import { notebookStories } from './booknotebook.mjs';
+import { notebookPhoneStories } from './booknotebookphone.mjs';
 import { unitsPageStories } from './bookunitspage.mjs';
+import { drawnPageStories } from './bookdrawn.mjs';
 import { bookmarksStories } from './bookbookmarks.mjs';
 import { notebookAskStories } from './booknotebookasks.mjs';
+import { notebookSpotStories } from './booknotebookspot.mjs'; // (an ask's spot)
 import { forYouStories } from './bookforyou.mjs';
 import { notebookRowStories } from './booknotebookrow.mjs';
 import { scrapsClearStories } from './booknotebookclear.mjs';
 import { notebookSelectStories } from './booknotebookselect.mjs';
+import { assignStories } from './bookassign.mjs';
 import { moveStories } from './bookmove.mjs';
 import { newestStories } from './booknewest.mjs';
 import { scrapStories, savedScrap } from './bookscrap.mjs'; // (the pin flow)
 import { talked, voiceLine, hush, SAID } from './bookvoice.mjs';
-import { DESKTOP, MINI, pressAlong, ui, bookAtRest } from './bookkit.mjs';
+import { DESKTOP, MINI, UPRIGHT, pressAlong, ui, bookAtRest } from './bookkit.mjs';
 import { groupsOf } from './bookplayed.mjs';
 // (LOOKS: job #19359)
 import { morningStory, everyWidthStory, LOOKS } from './bookfilm.mjs';
@@ -459,8 +465,8 @@ async function hqIn(browser, viewport = IPAD_MINI.viewport, { notebooks, pen = t
       if (r.request().method() === 'GET') carryNotes(context.notebook);
       // (the posts kept, a picture's as its type and size.)
       return notebookRoute(r, context.notebook, {
-        heard: (path, body) =>
-          posts.push({ path, body: path.endsWith('/pictures') ? { type: body.type, size: body.bytes.length } : body }),
+        heard: (path, body, picture) =>
+          posts.push({ path, body: picture ? { type: body.type, size: body.bytes.length } : body }),
         bytes: () => pasted ?? unseen(),
       });
     }
@@ -582,13 +588,17 @@ function STORIES() {
       morningStory(browser, { hq, inBook, shot, noErrorsIn, viewport: MINI, settle: SETTLE_MS }),
     // (the Notebook's page: its groups, Send, the store's changes and answers, on an iPad mini, a desktop and a phone.
     ...notebookStories({ hqIn, base, settled, shot, noErrorsIn, shots }),
+    ...notebookPhoneStories({ hqIn, base, settled, shot, noErrorsIn, shots }),
     // (a page of scrap units laid as a masonry at every width: job #14672)
     ...unitsPageStories({ hqIn, base, settled, shot, noErrorsIn }),
+    ...drawnPageStories({ hqIn, base, pages, notebook, shot, noErrorsIn }),
     ...bookmarksStories({ hqIn, base, shot, noErrorsIn }), // (the bookmarks: job #14679)
     ...notebookRowStories({ hqIn, base, settled, shot, noErrorsIn, shots }),
     ...scrapsClearStories({ hqIn, base, settled, shot, noErrorsIn, snipPng }),
     ...notebookSelectStories({ hqIn, base, settled, shot, noErrorsIn, shots }),
+    ...assignStories({ hqIn, base, settled, shot, noErrorsIn, shots }),
     ...notebookAskStories({ hqIn, base, settled, shot, noErrorsIn, shots, org }),
+    ...notebookSpotStories({ hqIn, base, settled, shot, noErrorsIn, shots, reviewJs }),
     ...forYouStories({ hqIn, base, settled, shot, noErrorsIn, shots }),
     // (one way to move things: the pen draws on a scrap, Select moves a group as one.)
     ...moveStories({ hqIn, base, settled, shot, noErrorsIn, shots }),
@@ -697,6 +707,8 @@ function STORIES() {
       settled,
       settle: SETTLE_MS,
       MINI,
+      UPRIGHT,
+      pullLip,
       PHONE,
       DESKTOP,
     }),
@@ -1681,16 +1693,17 @@ async function settled(page, mode) {
   });
   await page.waitForTimeout(SETTLE_MS);
 }
-async function bookStories(browser, which, more = {}) {
+// The book's stories run in browser (named engine in the log), and the main flow's stories to run with them
+async function bookStories(browser, engine, flowStories = {}) {
   let failed = 0;
-  for (const [name, story] of Object.entries({ ...STORIES(), ...more })) {
+  for (const [name, story] of Object.entries({ ...STORIES(), ...flowStories })) {
     if (only && !only.split('|').some(w => name.includes(w))) continue;
     try {
       await story(browser);
-      console.log(`ok   ${which}: ${name}`);
+      console.log(`ok   ${engine}: ${name}`);
     } catch (e) {
       failed++;
-      console.log(`FAIL ${which}: ${name}\n     ${e.message.split('\n').join('\n     ')}`);
+      console.log(`FAIL ${engine}: ${name}\n     ${e.message.split('\n').join('\n     ')}`);
     }
   }
   return failed;
@@ -1942,7 +1955,7 @@ const noErrors = () =>
   );
 
 // A call drawing in (bookcall.mjs), on a context of its own, in a look (none: HQ's own).
-async function called(browser, look) {
+async function callDrawingIn(browser, look) {
   await context.close();
   context = await hqIn(browser);
   await callStory({ context, open, page: () => page, pen, ring, ui, posts, org, pixels, grab, shot, look });
@@ -1954,7 +1967,7 @@ async function called(browser, look) {
 // (the call's story too, in the look the whole check gives it in that browser: Brownstone in WebKit, Wire in Chromium)
 if (only) {
   const failed = await bookStories(browser, inWebKit ? 'webkit' : 'chromium', {
-    'a call drawing in': () => called(browser, inWebKit ? undefined : 'wire'),
+    'a call drawing in': browser => callDrawingIn(browser, inWebKit ? undefined : 'wire'),
   });
   await context.close();
   await browser.close();
@@ -2017,7 +2030,7 @@ assert.equal(
 noErrors();
 
 // ---- a call drawing in (bookcall.mjs; the agent's ink, aimed: bookaim.mjs.)
-await called(browser);
+await callDrawingIn(browser);
 // ---- a walk-through of finished work (bookwalk.mjs)
 await context.close();
 context = await hqIn(browser);
@@ -2050,7 +2063,7 @@ assert.equal(await page.evaluate(() => document.body.classList.contains('brownst
 const wire = await ringed('-wire');
 noErrors();
 // ---- a call drawing in, in Wire (bookcall.mjs)
-await called(chromium, 'wire');
+await callDrawingIn(chromium, 'wire');
 await besideTheBook(chromium);
 failed += await bookStories(chromium, 'chromium');
 await chromium.close();

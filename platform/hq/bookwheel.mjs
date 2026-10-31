@@ -1,8 +1,8 @@
 // book-check.mjs's story of Ctrl and the wheel on a desktop (shell/ink/bookstrip.js, bookpan.js): a notch on steps to
 // the next tool along the rail, the pen and the marker one stop, and a notch back steps back.
 import assert from 'node:assert/strict';
-import { paperBox } from './bookmouse.mjs';
-import { desk, pressed } from './bookstrip.mjs';
+import { desk, paperBox } from './bookmouse.mjs';
+import { pressed } from './bookstrip.mjs';
 import { until } from './bookkit.mjs';
 
 // c: book-check.mjs's played store and helpers

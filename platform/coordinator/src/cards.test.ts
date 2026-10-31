@@ -193,6 +193,7 @@ test("a notice asks nothing: Got it closes it without a word and makes no job, a
   const job = await h.start({ agent: 'dex', title: 'Photo night' });
   const quiet = await h.ask(job, { kind: 'notice', title: 'No more photo work tonight', body: 'The batch is in.' });
   const noted = await h.ask(job, { kind: 'notice', title: 'The batch is in', body: 'All twelve.' });
+  const steps = await h.ask(job, { kind: 'action', title: 'Start Docker on the desktop', body: 'Open Docker Desktop.' });
   for (const more of [{ photos: [{ label: 'x' }] }, { questions: [{ title: 'Ok?', type: 'yes-no' }] }, { secrets: 'A_KEY' }, { approves: 'live:hello' }])
     assert.equal((await h.agent('request', job.token, { kind: 'notice', title: 'Not a notice', body: 'x', ...more })).status, 400, JSON.stringify(more));
   assert.deepEqual(await titled('Not a notice'), []);
@@ -203,6 +204,10 @@ test("a notice asks nothing: Got it closes it without a word and makes no job, a
   assert.deepEqual(heard('No more photo work tonight'), [], 'nothing to hear');
   assert.equal((await h.answer(noted, 'Lovely, thanks')).status, 200);
   assert.match(heard('The batch is in')[0]?.prompt ?? '', /Lovely, thanks/);
+  // (an action card sent without a word is recorded as done, and heard)
+  assert.equal((await h.answer(steps, '')).status, 200);
+  assert.equal((h.db.prepare('select answer from requests where id = ?').get(steps) as { answer: string }).answer, 'Done.');
+  assert.match(heard('Start Docker on the desktop')[0]?.prompt ?? '', /Done\./);
 
   // (hq request notice parks the job: Got it lets it go on)
   const parked = await h.start({ agent: 'dex', title: 'Photo night, parked' });

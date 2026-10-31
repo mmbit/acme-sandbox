@@ -31,7 +31,15 @@ export function measured(now: number, pool: PastJob[]) {
   const pairs = new Map<string, [number, number][]>();
   for (const j of cleanPastJobs(pool.filter(job => given.has(job.id)))) {
     const size = given.get(j.id);
-    if (!size || size.revised || j.finished < since || size.at > j.finished || !(j.agent_ms > 0)) continue;
+    if (
+      j.origin === 'carry' ||
+      !size ||
+      size.revised ||
+      j.finished < since ||
+      size.at > j.finished ||
+      !(j.agent_ms > 0)
+    )
+      continue;
     pairs.set(size.by, [...(pairs.get(size.by) ?? []), [size.agent_ms, j.agent_ms]]);
   }
   return pairs;

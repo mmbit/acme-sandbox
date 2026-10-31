@@ -23,6 +23,7 @@ const { db, github, worker } = h;
 const review = await import('./review.ts');   // its sweeps, which the server runs on timers
 const { unreadable, missing } = await import('./company.ts');
 const { reading } = await import('./outcomes.ts');
+const reviewrefusals = await import('./reviewrefusals.ts');
 
 const newSha = () => randomBytes(20).toString('hex');
 const CODEX = 'codex-1';
@@ -2230,6 +2231,81 @@ test("a close ruling GitHub didn't take is acted on again", async () => {
   assert.deepEqual(doing(n), []);
 });
 
+test('a pass held in merge order merges once the one before it lands, with nobody acting on it', async () => {
+  const [first, second] = [9680, 9681];
+  for (const n of [first, second]) {
+    const work = await h.start({ agent: 'bolt', branch: `review/${n}`, thread: h.dueThread({ deadline: Date.now() + 86_400_000 }) });
+    await submit(n, { files: ['platform/coordinator/src/order.ts'] }, work);
+  }
+  // (each run of a windowed round starts at once: later)
+  const pass = async (n: number) => {
+    later(n);
+    for (const run of await claim(n, j => j.kind === 'review')) await end(run);
+    later(n);
+    const [quill] = await claim(n, j => j.kind === 'consolidate');
+    await end(quill, judged(n, 'merge'));
+  };
+  // GitHub keeps the first one's merge waiting, outside what settled() waits for
+  const asks = github.wait;
+  let land = () => {};
+  const landing = new Promise<void>(resolve => { land = resolve; });
+  github.wait = (method, k, signal) => (method === 'PUT' && k === first ? landing : asks?.(method, k, signal));
+  try {
+    await pass(first);
+    await pass(second);
+    assert.equal(why(second), `waiting for PR #${first} to merge its shared files first`);
+    land();
+    await until(() => github.pr(second).merged, `PR #${second} merged`);
+  } finally { github.wait = asks; }
+  await settled();
+  assert.deepEqual([prs(first), prs(second)], [{ round: 1, status: 'merged' }, { round: 1, status: 'merged' }]);
+  assert.equal(why(second), null);
+});
+
+for (const { shape, held, first, second } of [
+  { shape: 'stuck', held: 'stuck', first: 9682, second: 9683 },
+  { shape: 'refused', held: 'sent back by a refused ruling', first: 9684, second: 9685 },
+])
+  test(`a pull request that passed first holds none ruled to merge after it on a shared file once it's ${held}`, async () => {
+    const files = ['platform/coordinator/src/order.ts'];
+    const work = new Map<number, Running>();
+    for (const n of [first, second])
+      work.set(n, await h.start({ agent: 'bolt', branch: `review/${n}`, thread: h.dueThread({ deadline: Date.now() + 86_400_000 }) }));
+    const pass = async (n: number) => {
+      later(n);
+      for (const run of await claim(n, j => j.kind === 'review')) await end(run);
+      later(n);
+      const [quill] = await claim(n, j => j.kind === 'consolidate');
+      await end(quill, judged(n, 'merge'));
+    };
+    // the first passes first and conflicts with main
+    github.pr(first).mergeable = false;
+    await submit(first, { files }, work.get(first));
+    await pass(first);
+    assert.deepEqual(doing(first), ['Bringing up to date']);
+    later(first);
+    if (shape === 'stuck') {
+      // its unchanged head is refused again
+      await submit(first, { files, sha: heads.get(first) });
+      await pass(first);
+      assert.equal(prs(first).status, 'stuck');
+    } else {
+      // its merge check's "changes", refused as it's acted on
+      github.pr(first).mergeable = true;
+      await submit(first, { files });
+      later(first);
+      const [check] = await claim(first, j => j.kind === 'consolidate');
+      await end(check, judged(first, 'changes'));
+      reviewrefusals.record(db, check.id, "its fix task can't be drawn: name the fix task agent with --for <agent>");
+      assert.equal(prs(first).status, 'open');
+    }
+    await submit(second, { files }, work.get(second));
+    await pass(second);
+    await review.actOnRulings();
+    await settled();
+    assert.deepEqual(prs(second), { round: 1, status: 'merged' }, `held: ${why(second)}`);
+  });
+
 test('a merge ruling on a pull request closed on GitHub by hand closes it here, with no fix job', async () => {
   const n = 967;
   await submit(n);
@@ -3718,64 +3794,49 @@ test("a changes ruling on work with no deliverable whose author's fix job was st
   assert.deepEqual(prs(n), { round: 2, status: 'open' }, 'its push starts the next round');
 });
 
-// A draw refusal needs a corrected ruling. Its retry keeps any findings already recorded.
-test('a drawn-at-once "changes" ruling that names no task is ruled again, then stuck for hq review, never held, and keeps its recorded findings', async () => {
+// A drawn-at-once ruling that names no task can't be read: its consolidator rules again (a draw HQ refuses doesn't:
+// below)
+test('a drawn-at-once "changes" ruling that names no task is ruled again, then stuck for hq review, never held', async () => {
   const projects = await import('./projects.ts'), inbox = await import('./reviewinbox.ts');
   await withSetting(JSON.stringify({ review: { drawWindowedChanges: true } }), async () => {
-    for (const recorded of [false, true]) {
-      const n = recorded ? 8105 : 8104, file = 'platform/coordinator/src/total.ts', slug = `named-fixes-${n}`;
-      projects.createThread({ project: 'office', name: `Named fixes ${n}`, goal: 'A drawn ruling names its tasks', slug });
-      const work = await h.start({ agent: 'bolt', branch: `review/${n}`, thread: `office/${slug}` });
-      const carry = () => h.carriedItem(work.id, 'bolt');
-      if (!recorded) carry();
-      const ruling = JSON.stringify({ major_visual: false, decision: 'changes', summary: 'Two fixes', blocking: [
-        { file, line: 1, issue: 'The fee is missing', fix: 'Add the fee' },
-        { file, line: 2, issue: 'The voucher counts twice', fix: 'Count it once' },
-      ] });
-      await withConsolidators(async () => {
-        await submit(n, { files: [file] }, work);
-        for (const run of await claim(n, j => j.kind === 'review')) await end(run);
-        const [ruler] = await claim(n, j => j.kind === 'consolidate');
-        await end(ruler, { output: ruling });
-        if (recorded) {
-          // (its findings recorded and no inbox item left, then the work drawn at once)
-          await until(() => !!inbox.get(n), 'the ruling to be read');
-          db.prepare('delete from review_inbox where pr = ?').run(n);
-          carry();
-        }
-        const blockers = () => (db.prepare("select id from findings where pr = ? and kind = 'blocking' order by id").all(n) as { id: number }[]).map(f => f.id);
-        const original = blockers();
-        assert.equal(original.length, recorded ? 2 : 0);
-        const told = (prompt: string) => original.every(id => prompt.includes(`#${id} (blocking) ${file}:`)) && (!recorded || prompt.includes('"earlier": its number'));
-        await review.actOnRulings();
-        const { why } = db.prepare('select why from prs where number = ?').get(n) as { why: string | null };
-        assert.equal(why, null, 'nothing holds it for a retry');
-        assert.deepEqual(queued(n).map(j => [j.kind, j.agent]), [['consolidate', ruler.agent]], 'its consolidator rules again');
-        assert.equal(inbox.tasks(n, 1).length, 0);
-        later(n);
-        const [again] = await claim(n, j => j.kind === 'consolidate');
-        assert.match(again.prompt, recorded ? /its fix task can't be drawn/ : /blocking finding 1's "task" isn't one/);
-        assert.ok(told(again.prompt), 'its run again hears of the recorded findings');
-        await end(again, { output: ruling });
-        assert.deepEqual(prs(n), { round: 1, status: 'stuck' });
-        const back = await hqReview(n);
-        assert.equal(back.status, 200, JSON.stringify(back.body));
-        assert.deepEqual(queued(n).map(j => [j.kind, j.agent]), [['consolidate', ruler.agent]], 'hq review has it ruled again');
-        const [resumed] = await claim(n, j => j.kind === 'consolidate');
-        assert.ok(told(resumed.prompt), "hq review's run hears of them too");
-        assert.equal(resumed.prompt.split('## The findings an earlier answer recorded').length, recorded ? 2 : 1, 'once');
-        await end(resumed, { output: JSON.stringify({ major_visual: false, decision: 'changes', summary: 'Two fixes',
-          outcomes: original.map(finding => ({ finding, outcome: 'not fixed' })), blocking: [
-            { file, line: 1, issue: 'The fee is missing', fix: 'Add the fee', task: 'Add the fee', earlier: original[0] },
-            { file, line: 2, issue: 'The voucher counts twice', fix: 'Count it once', task: 'Count the voucher once', earlier: original[1] },
-          ] }) });
-        const tasks = inbox.tasks(n, 1), drawn = blockers();
-        assert.equal(tasks.length, 1, 'one fix task is drawn');
-        assert.deepEqual(tasks[0].findings, drawn);
-        if (recorded) assert.deepEqual(drawn, original, 'on the findings the refused answer recorded');
-        else assert.equal(drawn.length, 2);
-      });
-    }
+    const n = 8104, file = 'platform/coordinator/src/total.ts', slug = `named-fixes-${n}`;
+    projects.createThread({ project: 'office', name: `Named fixes ${n}`, goal: 'A drawn ruling names its tasks', slug });
+    const work = await h.start({ agent: 'bolt', branch: `review/${n}`, thread: `office/${slug}` });
+    h.carriedItem(work.id, 'bolt');
+    const ruling = JSON.stringify({ major_visual: false, decision: 'changes', summary: 'Two fixes', blocking: [
+      { file, line: 1, issue: 'The fee is missing', fix: 'Add the fee' },
+      { file, line: 2, issue: 'The voucher counts twice', fix: 'Count it once' },
+    ] });
+    await withConsolidators(async () => {
+      await submit(n, { files: [file] }, work);
+      for (const run of await claim(n, j => j.kind === 'review')) await end(run);
+      const [ruler] = await claim(n, j => j.kind === 'consolidate');
+      await end(ruler, { output: ruling });
+      const blockers = () => (db.prepare("select id from findings where pr = ? and kind = 'blocking' order by id").all(n) as { id: number }[]).map(f => f.id);
+      assert.deepEqual(blockers(), []);
+      await review.actOnRulings();
+      const { why } = db.prepare('select why from prs where number = ?').get(n) as { why: string | null };
+      assert.equal(why, null, 'nothing holds it for a retry');
+      assert.deepEqual(queued(n).map(j => [j.kind, j.agent]), [['consolidate', ruler.agent]], 'its consolidator rules again');
+      assert.equal(inbox.tasks(n, 1).length, 0);
+      later(n);
+      const [again] = await claim(n, j => j.kind === 'consolidate');
+      assert.match(again.prompt, /blocking finding 1's "task" isn't one/);
+      await end(again, { output: ruling });
+      assert.deepEqual(prs(n), { round: 1, status: 'stuck' });
+      const back = await hqReview(n);
+      assert.equal(back.status, 200, JSON.stringify(back.body));
+      assert.deepEqual(queued(n).map(j => [j.kind, j.agent]), [['consolidate', ruler.agent]], 'hq review has it ruled again');
+      const [resumed] = await claim(n, j => j.kind === 'consolidate');
+      await end(resumed, { output: JSON.stringify({ major_visual: false, decision: 'changes', summary: 'Two fixes', blocking: [
+        { file, line: 1, issue: 'The fee is missing', fix: 'Add the fee', task: 'Add the fee' },
+        { file, line: 2, issue: 'The voucher counts twice', fix: 'Count it once', task: 'Count the voucher once' },
+      ] }) });
+      const tasks = inbox.tasks(n, 1), drawn = blockers();
+      assert.equal(tasks.length, 1, 'one fix task is drawn');
+      assert.deepEqual(tasks[0].findings, drawn);
+      assert.equal(drawn.length, 2);
+    });
   });
 });
 
@@ -3812,6 +3873,46 @@ test("a drawn-at-once merge check's unnamed fix is asked for by its Stop hook, t
     assert.deepEqual(prs(n), { round: 1, status: 'open' });
     const tasks = inbox.tasks(n, 1);
     assert.equal(tasks.length, 1, 'its fix task is drawn');
+    assert.equal((await h.claimJob(tasks[0].id)).title, 'Take the new work off the branch');
+  });
+});
+
+test("a merge check's blocker HQ can't draw at once waits in its owner's inbox, is never ruled again, and draws one fix task", async () => {
+  const projects = await import('./projects.ts'), inbox = await import('./reviewinbox.ts');
+  await withSetting(JSON.stringify({ review: { drawWindowedChanges: true } }), async () => {
+    const n = 8108, files = ['platform/coordinator/src/total.ts'];
+    const thread = h.dueThread({ deadline: Date.now() + 86_400_000 });
+    // (its author is in no org.yaml, current or alumni: HQ can't give them a task)
+    const work = await h.start({ agent: 'nobody', branch: `review/${n}`, thread });
+    await submit(n, { files }, work);
+    github.pr(n).mergeable = false;
+    await decide(n, 'merge');
+    const [sync] = await claim(n, job => job.kind === 'work');
+    github.pr(n).mergeable = true;
+    await submit(n, { files }, sync);
+    const [check] = await claim(n);
+    assert.equal(check.stage, 'merge');
+    const blocking = [{ file: files[0], line: 1, issue: 'New work beyond the merge', fix: 'Take it off the branch', task: 'Take the new work off the branch' }];
+    await end(check, { output: JSON.stringify({ decision: 'changes', summary: 'new work', blocking }) });
+    const consolidations = () => h.jobs.listJobs().filter(j => j.pr === n && j.kind === 'consolidate').length;
+    const ruled = consolidations();
+    const item = inbox.get(n);
+    assert.equal(item?.ruling, check.id, 'its findings are in the inbox');
+    assert.deepEqual(item!.findings.map(f => f.issue), ['New work beyond the merge']);
+    assert.deepEqual(inbox.tasks(n, 1), []);
+    assert.ok((await h.feed()).some(e => e.text?.includes(`findings:${n}`)), 'the log names the item to draw');
+    for (const sweep of [1, 2]) {
+      await review.actOnRulings();
+      later(n);
+      assert.deepEqual(prs(n), { round: 1, status: 'open' }, `sweep ${sweep}: not stuck`);
+      assert.equal(consolidations(), ruled, `sweep ${sweep}: nothing rules on it again`);
+    }
+    // its owner draws it as `hq inbox accept findings:<pr> --for <agent>` does
+    const owner = projects.findProject('due')!.owner;
+    const made = inbox.accept(`findings:${n}`, owner, { for: 'bolt', findings: item!.findings.map(f => f.id) });
+    assert.equal(typeof made, 'object', String(made));
+    const tasks = inbox.tasks(n, 1);
+    assert.equal(tasks.length, 1, 'one fix task');
     assert.equal((await h.claimJob(tasks[0].id)).title, 'Take the new work off the branch');
   });
 });

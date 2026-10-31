@@ -111,7 +111,7 @@ export const app = { name: 'Things', what: 'What the board sees under the name',
 export async function draw(el, hq) { … }   // its screen: on opening, then every 15 s (not while a field has text)
 export function back() { return false; }   // optional: a step back inside the app (true), or the computer's home (false)
 export async function count(dev) { … }     // optional: the number on its icon
-export async function phone(el, hq, { fresh, past }) { … }   // optional: its own line at the top of the desk phone
+export async function phone(el, hq, { fresh }) { … }   // optional: its own line at the top of the desk phone, in el (its slot)
 export async function settings(el, hq) { … }                 // optional: its page in Settings (Settings › its name)
 export function numbers(d, view, hq) { return { html, wire(el) {} }; }   // optional: a section on an app's dashboard (figures, never a sentence: "Numbers" above)
 ```

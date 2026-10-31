@@ -219,17 +219,10 @@ for (const [name, viewport, touch] of [
   });
   const { context, page, open } = await phone({ width: 390, height: 844 }, true);
   await open('input[data-document="0"]');
-  assert.equal(await page.getAttribute('#answer', 'placeholder'), 'Your answer');
-  await page.tap('#send-answer');
-  assert.equal(
-    await page.evaluate(() => document.activeElement?.id),
-    'answer',
-    'no file, no text: the answer box asks first',
-  );
-  await page.fill('#answer', 'here');
+  // (an action card's answer box is optional)
+  assert.equal(await page.getAttribute('#answer', 'placeholder'), 'Anything to add (optional)');
   await page.tap('#send-answer');
   assert.match(await page.textContent('#answer-msg'), /Add the file for “The invoice” first\./);
-  await page.fill('#answer', '');
   await page.setInputFiles('input[data-document="0"]', {
     name: 'invoice.pdf',
     mimeType: 'application/pdf',
@@ -348,7 +341,7 @@ for (const [name, viewport, touch] of [
     { label: 'The mug, handle left, on white', shot: 'product' },
     { label: 'Anything that looks wrong', optional: true },
   ]);
-  const { ctx, page, open } = await phone({ width: 390, height: 844 }, true),
+  const { context: ctx, page, open } = await phone({ width: 390, height: 844 }, true),
     errors = [];
   page.on('pageerror', e => errors.push(e.message));
   await open('.req .photos');

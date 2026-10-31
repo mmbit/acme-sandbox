@@ -1,6 +1,6 @@
 /* The book's pages (bookpages.js): one page filling the paper, its paper and dots drawn wherever it's panned or zoomed
    (bookview.js sets the dots' size and place), its send stamp at its top-left; and the
-   controls for moving about (bookcontrols.js). (the overview: bookshelf.css.) The book's own look, the same on every HQ look. (was book.css's and booklook.css's head strip, table and row of pages) */
+   controls for moving about (bookcontrols.js, on the rail). (the overview: bookshelf.css.) The book's own look, the same on every HQ look. (was book.css's and booklook.css's head strip, table and row of pages) */
 
 #book .bk-pages {
   position: absolute;
@@ -130,45 +130,16 @@
   display: none;
 }
 
-/* ---- the page bar (bookcontrols.js; placed in the lane at the foot, bookstrip.css): the page's name and where it is,
-   "Shop launch · 2 / 3", the name cut short before its place is */
-#book .bk-btn.bk-where {
-  display: inline-flex;
-  flex: 0 1 auto;
-  min-width: 0;
-  padding: 0 10px;
-  box-shadow: none;
-  gap: 8px;
-}
-/* (the name and the title written in its place: as wide as each other) */
-#book .bk-btn.bk-where,
-#book .bk-title {
-  max-width: 360px;
-}
-#book .bk-btn.bk-where[hidden] {
-  display: none;
-}
-#book .bk-where span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-#book .bk-where small {
-  flex: none;
-  margin-left: -4px;
-}
-/* (the page's title written in place of its name, booktitle.js: the name's word on a ruled line, in the name's box
-   and wider as what's written needs, an error quietly over it.) */
-#book .bk-btn.bk-where.bk-titling {
-  display: none;
-}
+/* ---- the page's title, written at the head of the notebook's pages (booktitle.js, bookcontrols.js): on a ruled line,
+   an error quietly under it. */
 #book .bk-title {
   --bk-refused: #b3261e;
+  --bk-title-h: 40px;
   position: relative;
-  flex: 0 1 auto;
-  min-width: 0;
+  display: block;
+  margin: 6px 6px 0;
 }
-/* (what's written, unseen, giving the box its width: the field lies over it) */
+/* (what's written, unseen, giving the box its height: the field lies over it) */
 #book .bk-title::after {
   content: attr(data-value) ' ';
   display: block;
@@ -179,7 +150,9 @@
 #book .bk-title input {
   all: unset;
   position: absolute;
-  inset: 0;
+  top: 0;
+  left: 0;
+  right: 0;
   text-align: center;
   color: var(--bk-ink);
   caret-color: var(--bk-ink);
@@ -213,14 +186,9 @@
     font-size: 16px;
   }
 }
-/* (above the field on the paper, so the bar doesn't move) */
 #book .bk-title-error {
-  position: absolute;
-  bottom: calc(100% + 10px);
-  left: 50%;
-  transform: translateX(-50%);
-  width: max-content;
-  max-width: 260px;
+  display: block;
+  margin-top: 4px;
   padding: 4px 10px;
   border-radius: 8px;
   background: var(--bk-paper);
@@ -241,25 +209,7 @@
   color: var(--bk-ink);
   opacity: 0.75;
 }
-/* (a narrow book, an iPad mini's on its side and narrower) */
-@container bk-rail (max-width: 600px) {
-  /* (clear of the tool rail beside the row on a phone) */
-  #book .bk-title-error {
-    max-width: 180px;
-  }
-  /* (a title being written has a row of its own above the rest, all of it, until it's through) */
-  #book .bk-island[data-island='pages']:has(.bk-title) {
-    flex-wrap: wrap;
-    justify-content: center;
-  }
-  #book .bk-title {
-    order: -1;
-    flex: 1 0 100%;
-    max-width: none;
-  }
-}
-/* Send: the page's own action, its own island at the top of the stack (bookcontrols.js), the plane inked in. (the
-   board, 28 Oct) */
+/* Send: the page's own action, its own island on the rail under the tools (bookcontrols.js), the plane inked in */
 #book .bk-btn.bk-send {
   background: var(--bk-ink);
   color: var(--bk-paper, #fffaf0);
@@ -277,8 +227,6 @@
   color: var(--bk-muted);
 }
 #book .bk-pages-menu {
-  position: fixed;
-  z-index: 55;
   min-width: 200px;
   max-width: min(320px, 90vw);
   max-height: 60vh;

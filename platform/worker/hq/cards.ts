@@ -4,6 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import * as api from './api.ts';
+import { shootSpot } from './askspot.ts';
 import { MAX_FILE_BYTES, fileToSend, isFile, isReadable, privateFolder, readText, saveInFolder } from './files.ts';
 import { compareText, print, stop, text } from './output.ts';
 
@@ -21,6 +22,7 @@ export const ask = {
   help: `
    hq ask <kind> <urgency> "title" <body-file> ${CARD_USAGE} [--when deployed:<job>]... [--walk]
                                                      [--note <n> | --page <address> | --book <project | journal | n>]
+                                                     [--at <address> --spot <selector>]
                                                      ask the board now; prints the request id (session stays alive).
                                                      Every card has a topic, a word or two the board's list of open
                                                      cards groups it under (e.g. billing, hosting): an open card's
@@ -143,7 +145,14 @@ export const ask = {
                                                      the scrap too, and the board deleting the scrap the card. Keys,
                                                      logins, approvals (money, launches), uploads, files, steps in
                                                      another system and finished work are refused with --book: they
-                                                     go on the desk phone alone`,
+                                                     go on the desk phone alone.
+                                                     About one thing on a page: add --at <its https address, a
+                                                     preview's> --spot <a CSS selector>. hq opens the page in
+                                                     Chromium, and the scrap is its shot with the thing ringed in
+                                                     pencil and where it is. The board's tap opens the page there,
+                                                     the thing flashing. A page that won't load or a selector that
+                                                     matches nothing files nothing`,
+  // (--at, --spot)
   // (--walk; --note, --page; Ink Studio's desk-only cards; --book)
   // (topics:, zips, --visible-from; --address; --questions; notice; --when)
   // (a pick-many, --file)
@@ -154,6 +163,7 @@ export const ask = {
     const card = await readCard(given, 'ask');
     const { visibleFrom, questions, when } = card.request;
     await checkCard(card.bodyPath, card.back, { visibleFrom, questions, when });
+    if (card.at) card.request.spot = await shootSpot(card.at.address, card.at.selector);
     const refusal =
       "The coordinator didn't take the request. A --topic is 1 to 40 characters. Photo, document and zip fields need 1 to 8 different labels of 1 to 80 characters, and can't go with keys or an approval; --documents-to names one of the company's own addresses, not one for the board alone; an approval grants live:<slug> or site:<slug> only (several slugs comma-separated); --product and --back name products (products/<slug>), never on a card for keys; --address goes on a credential card asking for four of a company tool's own keys; --decides names an awaited CEO decision or your review-assigned visual decision; a notice asks nothing (no keys, approval, fields or --decides); --note names a note of the board's sent to you, by its number in your brief, --page a path on HQ or a preview's https address, --book a project, journal or a guest's book's number (a design ask: no keys, approval, uploads, files or steps), one of them at most."; // (--note, --page, --book)
     const filed = await api.orStop(api.postJson('request', api.withSpeaker(card.request)), refusal, true);
@@ -246,7 +256,12 @@ function hasUnreviewedWork(clone: string) {
 
 type Field = { label: string; optional?: true; to?: string; shot?: 'product' };
 
-type Card = { bodyPath: string; back: string[]; request: Record<string, unknown> };
+type Card = {
+  bodyPath: string;
+  back: string[];
+  request: Record<string, unknown>;
+  at: { address: string; selector: string } | null;
+};
 
 // ask and request: the flags anywhere after the command, then kind, urgency, title, the body's file and the grant or
 // keys.
@@ -292,7 +307,19 @@ async function readCard(given: string[], command: string): Promise<Card> {
     ...(flags.page !== '' && { page: flags.page }),
     ...(flags.book !== '' && { book: flags.book }),
   };
-  return { bodyPath, back: flags.back, request };
+  return { bodyPath, back: flags.back, request, at: spotOf(flags, command) };
+}
+
+// --at and --spot: the page and the thing on it a design ask is about, shot by hq ask (askspot.ts)
+function spotOf(flags: CardFlags, command: string) {
+  if (flags.at === '' && flags.spot === '') return null;
+  if (flags.at === '' || flags.spot === '')
+    stop('Nothing was filed: --at <address> and --spot <selector> go together: the page, and the thing on it.');
+  if (command !== 'ask' || flags.book === '')
+    stop(
+      "Nothing was filed: --at and --spot go with hq ask --book: the ask's scrap in the board's book shows the spot.",
+    );
+  return { address: flags.at, selector: flags.spot };
 }
 
 // --questions: the file's list, as JSON (the coordinator checks each question and says what's wrong with one)
@@ -349,6 +376,8 @@ type CardFlags = {
   note: string; // (note, page)
   page: string;
   book: string; // (a design ask's book: a project, journal, or a guest's book's number)
+  at: string; // (the page a design ask is about, and the thing on it: askspot.ts)
+  spot: string;
 };
 
 // (--product-shot: a photo field marked as a product photo)
@@ -379,6 +408,8 @@ const NEEDS = new Map([
   ['--note', "a note's number (from your brief)"], // (--note, --page)
   ['--page', "a page's address (a path on HQ, or a preview's https address)"],
   ['--book', "a project, journal, or a guest's book by its number"],
+  ['--at', "a page's https address"],
+  ['--spot', 'a CSS selector'],
 ]);
 
 // The flags that take no value: an address card, and a walk-through offered
@@ -407,6 +438,8 @@ const noFlags = (): CardFlags => ({
   note: '',
   page: '',
   book: '',
+  at: '',
+  spot: '',
 });
 
 // --topic, --approves <grant>, --photo / --optional-photo / --product-shot / --optional-product-shot "label",
@@ -442,6 +475,8 @@ function takeCardFlags(given: string[]) {
     else if (flag === '--note') flags.note = value;
     else if (flag === '--page') flags.page = value;
     else if (flag === '--book') flags.book = value;
+    else if (flag === '--at') flags.at = value;
+    else if (flag === '--spot') flags.spot = value;
     else flags.documentsTo = value;
   }
   checkDocuments(flags);

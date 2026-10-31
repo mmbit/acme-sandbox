@@ -1037,11 +1037,14 @@ test('an original finder retained by engine constraints needs no omission reason
 // The seats' state for one test: paused ones take nothing, a paced one only work whose latest start precedes its reset
 async function seatsFor(states: Record<string, 'ready' | 'paused' | 'paced'>, body: () => Promise<void>) {
   const set = async (seat: string, state: 'ready' | 'paused' | 'paced') => {
-    await h.worker('seat', { seat, engine: seat.split('-')[0], state: state === 'paced' ? 'ready' : state });
-    db.prepare('update seats set pace = ?, week_resets = ? where id = ?').run(
-      ...(state === 'paced' ? [1, Date.now() + 24 * 3_600_000] : [null, null]),
+    await h.worker('seat', {
       seat,
-    );
+      engine: seat.split('-')[0],
+      state: state === 'paced' ? 'ready' : state,
+      pace: state === 'paced',
+      week: state === 'paced' ? 0.89 : 0,
+      weekResets: Date.now() + (state === 'paced' ? 1 : 7) * 24 * 3_600_000,
+    });
   };
   try {
     for (const [seat, state] of Object.entries(states)) await set(seat, state);
@@ -1059,7 +1062,12 @@ async function pushDue(pr: number, hours: number) {
   await push(pr, sha(), {}, { thread });
 }
 
+async function routingRoom() {
+  await h.worker('room', { capacity: { slots: { claude: 1, codex: 1 }, seatRuns: { claude: 1, codex: 1 }, room: 2 } });
+}
+
 test('rounds open at once go to more than one consolidator while more than one seat has room', async () => {
+  await routingRoom();
   for (const pr of [160, 161, 162, 163]) await push(pr);
   assert.deepEqual([160, 161, 162, 163].map(triager), ['quill', 'nib', 'quill', 'nib']);
   await seatsFor({ 'codex-1': 'paused' }, async () => {
@@ -1068,7 +1076,8 @@ test('rounds open at once go to more than one consolidator while more than one s
   });
 });
 
-test('a round counts queued runs ahead in the shared plan, and a paced seat takes a round whose latest start precedes reset', async () => {
+test('a round follows projected queue waits, and a paced seat takes a round whose latest start precedes reset', async () => {
+  await routingRoom();
   await seatsFor({ 'codex-1': 'paused' }, async () => {
     for (const pr of [165, 166, 167]) await pushDue(pr, 1);
   });
@@ -1078,13 +1087,13 @@ test('a round counts queued runs ahead in the shared plan, and a paced seat take
   assert.deepEqual([165, 166, 167, 168, 169, 170].map(triager), ['quill', 'quill', 'quill', 'nib', 'nib', 'nib']);
   await pushDue(171, 2);
   assert.equal(triager(171), 'nib', "Codex's three queued rounds have no window, so they wait behind it");
-  await push(172);
-  assert.equal(triager(172), 'quill', 'a round without a window waits behind all of them');
   cancelOpenWork();
   await seatsFor({ 'claude-1': 'paced' }, async () => {
     for (const pr of [173, 174]) await push(pr);
     assert.deepEqual([173, 174].map(triager), ['nib', 'nib'], 'the paced seat takes no undated round');
-    await pushDue(175, 2);
-    assert.equal(triager(175), 'quill', 'a round due before the reset is one the paced seat takes');
+    await seatsFor({ 'codex-1': 'paused' }, async () => {
+      await pushDue(175, 2);
+      assert.equal(triager(175), 'quill', 'a round due before the reset is one the paced seat takes');
+    });
   });
 });

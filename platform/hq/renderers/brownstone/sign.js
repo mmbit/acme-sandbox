@@ -24,9 +24,9 @@ export function signFace(sign, colours, phase) {
   return c;
 }
 
-// brand: as scene.js dresses it
-export function buildRoofBits(R, L, brand, party) {
-  R.sign = R.bunting = R.splashAreas = null;
+// The roof's sign and bunting (either null where there's none). brand: as scene.js dresses it
+export function roofBits(L, brand, party) {
+  let sign = null, bunting = null;
   const P = L.pent, z = L.roofZ;
   if (P) {
     const faces = [0, 1, 2].map(phase => signFace(brand.sign, brand.logo.colours, phase));
@@ -41,7 +41,7 @@ export function buildRoofBits(R, L, brand, party) {
     });
     const x1 = x0 + len;
     const hot = { x0: SX(x0, 0.1), x1: SX(x1, 0.1), y0: SY(x0, 0.1, base + H + 2), y1: SY(x1, 0.1, base - 2) };
-    R.sign = { img: imgs[0], imgs, x: l, y: t0, glow: signGlow(faces[0], x0, base), hot };
+    sign = { img: imgs[0], imgs, x: l, y: t0, glow: signGlow(faces[0], x0, base), hot };
   }
   if (party) {
     const tr = L.rooms.find(r => r.id === 'terrace-x') || L.rooms.find(r => r.kind === 'terrace');
@@ -54,9 +54,10 @@ export function buildRoofBits(R, L, brand, party) {
       g.translate(-l, -t0);
       for (let u = 0; u <= n; u += 2) { const p = pt(Math.min(u, n - 0.05)), sx = SX(p.x, p.y), sy = SY(p.x, p.y, z); F(g, sx, sy - POST, 1, POST, '#fdf3e1'); }
       for (let u = 0.25, i = 0; u < n; u += 0.25, i++) { const p = pt(u), sag = Math.sin(((u % 2) / 2) * Math.PI) * 5, sx = SX(p.x, p.y), sy = SY(p.x, p.y, z + POST - sag); F(g, sx, sy, 4, 1, '#fffaf0'); F(g, sx + 1, sy + 1, 2, 2, cols[i % 5]); F(g, sx + 1, sy + 3, 1, 1, cols[i % 5]); }
-      R.bunting = { img: c, x: l, y: t0 };
+      bunting = { img: c, x: l, y: t0 };
     }
   }
+  return { sign, bunting };
 }
 // The rooftop sign at night: `lit` keeps the panel itself out of the night shade (exactly its own shape), and
 // `img` is a soft halo round only its bright pixels (letters, bulbs, stars), so the glow doesn't enlarge it.

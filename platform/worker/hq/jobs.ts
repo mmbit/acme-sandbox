@@ -34,6 +34,7 @@ export const code = {
 
 export const job = {
   // (the title's step alone; a feature's later piece chained)
+  // (--deliverable new:'s booked-for-later words)
   // (--needs, and the drawn deliverable's chain)
   help: `
    hq job [--after <job id> | --after request:<id>]... <agent> "title" [file | -] --code WORD [--downtime] [--when <event>]... [--deliverable <project>/<slug> | --deliverable new:<project> "name" "done when" [--needs <deliverable>]...] [--check]
@@ -79,12 +80,13 @@ export const job = {
                                                      one for it in the project's plan, as hq plan deliverable does (its
                                                      owner or the CEO), chained after the deliverables it needs: those
                                                      named, else the last one chained from the one under way it most
-                                                     likely continues. Related work joins the open deliverable it
-                                                     belongs to. --thread,
-                                                     the old name, still works. With requireThread enabled in
-                                                     company/projects.yaml, a job with no deliverable to inherit must
-                                                     name one. --check: QA, audits, security and compliance reads, which
-                                                     fold in the projects view. --item <item>: the job
+                                                     likely continues (one whose work is all booked for later, with no
+                                                     pull request open, passed over and named). Related work joins the
+                                                     open deliverable it belongs to. --thread, the old name, still
+                                                     works. With requireThread enabled in company/projects.yaml, a job
+                                                     with no deliverable to inherit must name one. --check: QA, audits,
+                                                     security and compliance reads, which fold in the projects view.
+                                                     --item <item>: the job
                                                      carries an item from a call (hq items), with the words from the call;
                                                      the item is handled when the job ends done. One open job per item.
                                                      --lands <job>: replace that failed or stopped job for its own agent, landing

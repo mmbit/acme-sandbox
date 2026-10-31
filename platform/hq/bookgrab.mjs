@@ -1,20 +1,19 @@
 // book-check.mjs's story of the pull tab under the finger: grabbed on the iPad mini (on its side, after the book was
 // last pulled out wider, and upright), shut and open, the tab never shows ahead of the finger, from the first frame.
 // The state is read as every move's handlers end, where the engine may paint before any frame's callbacks run
-// (WebKit's), and at every frame: the board saw it flash for a frame or two near the screen's middle, where the book
-// last lay open (the board's call 161). Run it in WebKit too (--webkit).
+// (WebKit's), and at every frame: a flash would be a frame or two near the screen's middle, where the book last lay
+// open. Run it in WebKit too (--webkit).
 import assert from 'node:assert/strict';
-import { MINI } from './bookkit.mjs';
+import { MINI, UPRIGHT, middleOf, touchOf } from './bookkit.mjs';
 import { HOLD } from './shell/ink/bookswingmath.js';
 
-const UPRIGHT = { width: MINI.height, height: MINI.width };
 // How far past the finger the tab's far side may be (px): the finger holds it about its middle
 const AHEAD = 12;
 
 // c: book-check.mjs's played store and helpers
 export function grabStories(c) {
   return {
-    'the pull tab under the finger: grabbed shut or open, on its side or upright, it never flashes anywhere else':
+    'the pull tab under the finger: grabbed shut or open, on its side or upright, it never shows ahead of the finger':
       browser => grabbed(browser, c),
   };
 }
@@ -31,8 +30,8 @@ async function grabbed(browser, c) {
       const sideways = viewport === MINI;
       await c.settled(page, sideways ? 'open' : 'folded');
       if (sideways) {
-        // (pulled out wider by its edge, then shut: the board's "how far I last extended it")
-        const edge = await middle(page, '#book .bk-edge');
+        // (pulled out wider by its edge, then shut: the book remembers how far it was last pulled out)
+        const edge = middleOf(await page.locator('#book .bk-edge').boundingBox());
         await page.mouse.move(...edge);
         await page.mouse.down();
         await page.mouse.move(edge[0] - 140, edge[1], { steps: 6 });
@@ -43,11 +42,11 @@ async function grabbed(browser, c) {
       }
       // shut, pulled in by the finger: lowered past halfway and let go, it opens
       const shut = await pull(page, -1, 0.75);
-      assert.equal(show(away(shut, -1)), '', `the shut tab flashed away from the finger (${size}), all: ${show(shut)}`);
+      assert.equal(show(ahead(shut, -1)), '', `the shut tab showed ahead of the finger (${size}), all: ${show(shut)}`);
       await c.settled(page, sideways ? 'open' : 'spread');
       // open (beside HQ or lying over it), pulled right: no frame elsewhere either
       const open = await pull(page, 1, 0.25);
-      assert.equal(show(away(open, 1)), '', `the open tab flashed away from the finger (${size}), all: ${show(open)}`);
+      assert.equal(show(ahead(open, 1)), '', `the open tab showed ahead of the finger (${size}), all: ${show(open)}`);
       // (headless WebKit draws about a frame a second: its swing takes a while to end)
       await page.waitForFunction(() => !document.querySelector('#book.bk-swinging'), null, { timeout: 60_000 });
       assert.deepEqual(errors, []);
@@ -57,9 +56,9 @@ async function grabbed(browser, c) {
   }
 }
 
-// The tab pulled by a finger from where it is across share of the screen, left (-1) or
-// right (1), a move a frame, then let go: the tab's box and the finger, as every move's handlers end and at every frame,
-// till it's let go
+// The tab pulled by a finger across share of the screen's width, left (dir -1) or right (dir 1), a move a frame, then
+// let go. Gives what was seen till the lift: at each move's end and at each frame, the finger's x and the tab's left
+// and right.
 async function pull(page, dir, share) {
   await page.evaluate(() => {
     const lip = document.querySelector('#book .bk-lip'),
@@ -81,10 +80,10 @@ async function pull(page, dir, share) {
     };
     requestAnimationFrame(frame);
   });
-  const [x, y] = await middle(page, '#book .bk-lip'),
+  const [x, y] = middleOf(await page.locator('#book .bk-lip').boundingBox()),
     width = page.viewportSize().width,
     steps = 24,
-    at = i => ({ x: Math.round(x + (dir * share * width * i) / steps), y: Math.round(y) }),
+    at = i => [Math.round(x + (dir * share * width * i) / steps), Math.round(y)],
     finger = await fingerOf(page);
   await finger.down(at(0));
   for (let i = 1; i <= steps; i++) {
@@ -102,29 +101,25 @@ async function pull(page, dir, share) {
   await finger.up();
   return seen;
 }
-// A finger: Chromium's own touch events; WebKit has none to play, so its mouse, the same pointer events to the tab
+// A finger at [x, y]: Chromium's own touch events; WebKit has none to play, so its mouse, the same pointer events to
+// the tab
 async function fingerOf(page) {
   if (page.context().browser().browserType().name() !== 'chromium')
     return {
-      down: ({ x, y }) => page.mouse.move(x, y).then(() => page.mouse.down()),
-      move: ({ x, y }) => page.mouse.move(x, y),
+      down: at => page.mouse.move(...at).then(() => page.mouse.down()),
+      move: at => page.mouse.move(...at),
       up: () => page.mouse.up(),
     };
   const cdp = await page.context().newCDPSession(page),
-    touch = (type, touchPoints) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints });
+    touch = touchOf(cdp);
   return {
-    down: p => touch('touchStart', [p]),
-    move: p => touch('touchMove', [p]),
-    up: () => touch('touchEnd', []).then(() => cdp.detach()),
+    down: at => touch.down([at]),
+    move: at => touch.move([at], 1),
+    up: () => touch.up().then(() => cdp.detach()),
   };
 }
 // Where the tab showed ahead of the finger pulling it dir: it trails the hand (the board's weight lags it), it never
 // leads it
-const away = (seen, dir) =>
+const ahead = (seen, dir) =>
   seen.filter(({ finger, lip: [left, right] }) => (dir < 0 ? right < finger - AHEAD : left > finger + AHEAD));
 const show = seen => seen.map(s => `${s.at} ${s.finger}: ${s.lip.join('-')}`).join(', ');
-const middle = (page, selector) =>
-  page.locator(selector).evaluate(el => {
-    const r = el.getBoundingClientRect();
-    return [r.left + r.width / 2, r.top + r.height / 2];
-  });

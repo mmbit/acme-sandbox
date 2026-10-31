@@ -20,21 +20,28 @@ export function visualFor(files: string[]): Applied[] {
 export const recordOf = (check: VisualCheck, branch: string) => `${check.record}/${branch.replaceAll('/', '-')}.md`;
 
 // The checks a pull request still owes its author's record of, after this push (`changed`: what it changed since the
-// head before it; `files`: what it changes against main). Files a check covers stay owed from push to push, a push sent
-// back included, until one carries that check's record, or the pull request no longer changes them (the tool previews
-// nothing then).
+// head before it; `files`: what it changes against main), each judged on its own on the branch as it is: a check whose
+// record isn't on the branch owes every file of the pull request it covers, and one whose record is owes those that
+// changed after the record last did. They stay owed from push to push, a push sent back included, until a push carries
+// that check's record, or the pull request no longer changes them (the tool previews nothing then). Two checks over
+// one file are cleared by their records in different pushes.
 export function owedPreviews(pr: number, branch: string, changed: string[], files: string[]) {
-  const owed = db.prepare('select files from previews_owed where pr = ?').get(pr) as { files: string } | undefined;
-  const drawn = [...new Set([...(owed ? (JSON.parse(owed.files) as string[]) : []), ...changed])].filter(file =>
-    files.includes(file),
-  );
-  const checks = visualFor(drawn).filter(check => !changed.includes(recordOf(check, branch)));
-  const still = [...new Set(checks.flatMap(check => check.files))];
-  if (!still.length) db.prepare('delete from previews_owed where pr = ?').run(pr);
+  const row = db.prepare('select files from previews_owed where pr = ?').get(pr) as { files: string } | undefined;
+  const kept = row ? (JSON.parse(row.files) as Record<string, string[]> | string[]) : {};
+  const before = (record: string) => (Array.isArray(kept) ? kept : (kept[record] ?? []));
+  const checks = visualFor(files)
+    .map(check => {
+      const record = recordOf(check, branch);
+      if (!files.includes(record)) return check;
+      if (changed.includes(record)) return { ...check, files: [] };
+      return { ...check, files: check.files.filter(file => changed.includes(file) || before(record).includes(file)) };
+    })
+    .filter(check => check.files.length);
+  if (!checks.length) db.prepare('delete from previews_owed where pr = ?').run(pr);
   else
     db.prepare(
       'insert into previews_owed (pr, files) values (?, ?) on conflict(pr) do update set files = excluded.files',
-    ).run(pr, JSON.stringify(still));
+    ).run(pr, JSON.stringify(Object.fromEntries(checks.map(check => [recordOf(check, branch), check.files]))));
   return checks;
 }
 

@@ -18,16 +18,16 @@ from urllib.error import HTTPError
 
 from drawing import box_asked, one_line
 
-# The most of the agent's words for one change (its line on the call's list) and its why, and of the page's topic (the
-# coordinator's own limits: a topic of 21 characters after the call's date and time is whole in the Notebook's bar on
-# an iPad mini.)
-CHANGE_MOST, WHY_MOST, TITLE_MOST = 200, 300, 21
+# The most of an item's line and of its goal, a scrap's words and goal among them: the coordinator's ledger.ts WHAT and
+# GOAL, which every hand-off and note from a call keeps to. hq_tools reads them here. The most of the page's topic is
+# callnotes.ts TOPIC_MOST: 21 characters after the call's date and time are whole in the Notebook's bar on an iPad mini.
+WHAT, GOAL, TOPIC_MOST = 200, 300, 21
 # Where a scrap is cut from: one of the board's notes on the call ('note 3'), or a moment of its shown screen
 FROM = re.compile(r'^(note\s*#?[0-9]{1,4}|now|-[0-9]{1,4}[sm]|[0-9]{1,2}:[0-9]{2}(:[0-9]{2})?|#[0-9]{1,6})$', re.I)
 # What the agent hears about its scraps and the page's title
 SCRAP_WORDS = {
-    'shape': (f"scrap takes words (the one change, at most {CHANGE_MOST} characters), goal (why the board wants it, at "
-              f"most {WHY_MOST} characters), owner (the id of the agent whose work it is) if you know it, and for a crop "
+    'shape': (f"scrap takes words (the one change, at most {WHAT} characters), goal (why the board wants it, at "
+              f"most {GOAL} characters), owner (the id of the agent whose work it is) if you know it, and for a crop "
               f"both from ('note 3': one of the board's notes on this call; or a moment of its shown screen: 'now', "
               f"'-20s', '17:03:12', '#12') and region (the part of that picture the change is about: x, y, width and "
               f"height, fractions from 0 to 1 from its top left), or neither for a plain note"),
@@ -36,7 +36,7 @@ SCRAP_WORDS = {
     'failed': "The scrap couldn't be made just now",
 }
 TITLE_WORDS_SAID = {
-    'shape': (f'title is what the call is about in at most {TITLE_MOST} characters ("Shop page prices"): the page '
+    'shape': (f'title is what the call is about in at most {TOPIC_MOST} characters ("Shop page prices"): the page '
               "keeps the call's date and time in front of it"),
     'none': SCRAP_WORDS['none'],
     'gone': SCRAP_WORDS['gone'],
@@ -57,7 +57,7 @@ def scrap_asked(a):
     words = one_line(a.get('words')) if isinstance(a.get('words'), str) else ''
     goal = one_line(a.get('goal')) if isinstance(a.get('goal'), str) else ''
     owner = a.get('owner')
-    if not 0 < len(words) <= CHANGE_MOST or not 0 < len(goal) <= WHY_MOST:
+    if not 0 < len(words) <= WHAT or not 0 < len(goal) <= GOAL:
         return None
     if owner is not None and not (isinstance(owner, str) and re.fullmatch(r'[a-z0-9-]{1,40}', owner)):
         return None
@@ -90,7 +90,7 @@ MARK_WORDS = {  # (scrap px)
 }
 CHANGE_WORDS = {  # (after)
     'shape': (f"change_page takes id (a number on the page, as read_page gives it) and one of words (your own note's or "
-              f"scrap's new words, at most {CHANGE_MOST} characters), after (the number of the scrap it goes right after) "
+              f"scrap's new words, at most {WHAT} characters), after (the number of the scrap it goes right after) "
               "and delete (true)"),
     'none': SCRAP_WORDS['none'],
     'gone': SCRAP_WORDS['gone'],
@@ -101,7 +101,7 @@ CHANGE_WORDS = {  # (after)
 # booktry.ts), and each lands under it
 TRY_WORDS = {
     'shape': (f"try takes id (a number on the page, as read_page or the scrap tool gives it) and why (the board's ask, "
-              f"in one plain line of at most {CHANGE_MOST} characters)"),
+              f"in one plain line of at most {WHAT} characters)"),
     'none': SCRAP_WORDS['none'],
     'gone': SCRAP_WORDS['gone'],
     'failed': "The try couldn't be started just now",
@@ -141,7 +141,7 @@ def change_asked(a):
         return None
     if 'words' in a:
         words = one_line(a['words']) if isinstance(a['words'], str) else ''
-        return {'id': a['id'], 'words': words} if 0 < len(words) <= CHANGE_MOST else None
+        return {'id': a['id'], 'words': words} if 0 < len(words) <= WHAT else None
     if 'after' in a:
         after = a['after']
         ok = isinstance(after, int) and not isinstance(after, bool) and after > 0
@@ -154,13 +154,13 @@ def try_asked(a):
     if not isinstance(a, dict) or set(a) != {'id', 'why'} or not isinstance(a['id'], int) or a['id'] < 1:
         return None
     why = one_line(a['why']) if isinstance(a['why'], str) else ''
-    return {'id': a['id'], 'why': why} if 0 < len(why) <= CHANGE_MOST else None
+    return {'id': a['id'], 'why': why} if 0 < len(why) <= WHAT else None
 
 
 def title_asked(title):
     """The page's topic the agent gives, as one line, or None if it isn't a short one."""
     title = one_line(title) if isinstance(title, str) else ''
-    return title if 0 < len(title) <= TITLE_MOST else None
+    return title if 0 < len(title) <= TOPIC_MOST else None
 
 
 def said_back(err):

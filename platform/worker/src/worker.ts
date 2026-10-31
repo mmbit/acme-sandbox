@@ -32,6 +32,8 @@ import { checkDue, claimAnswered, codexLimits, codexLogLine, codexReading, codex
 import { FREE_MB, JOB_MB, SEAT_MB, STARTING_MS } from './reserve.ts';
 import { type AdmissionInput, admission, hostAvailableBytes } from './admission.ts';
 import { roomRecords, type RecordIdentity } from './roomrecords.ts';
+import { ordinaryGate, type GateEvaluation } from './gateevidence.ts';
+import { shortClaimRoom } from './shortclaim.ts';
 import { cgroup } from './memory.ts';
 import { CHAT_SLOT, KEEPER, SLOT_IDS, WORK_SLOTS, askHome, jobDirs, killAll, makeDir, own, rootDir, sweep, type Ids } from './slots.ts';
 import { limitReset, observe, outcome, parkedRequest, preview, tail, verdict, whole } from './outcome.ts';   // (parkedRequest)
@@ -146,11 +148,12 @@ const lastClaimAt = new Map<string, number>();   // when each Codex seat last cl
 // now.
 const SHORT_EVERY_MS = 60_000;
 const shortAskedAt = new Map<string, number>();
-function shortClaim(engine: string) {
+function shortClaim(engine: string, evaluation?: GateEvaluation) {
   const free = reserve.claimMb();
-  if (Date.now() - (shortAskedAt.get(engine) ?? 0) < SHORT_EVERY_MS || free <= 0) return undefined;
-  shortAskedAt.set(engine, Date.now());
-  return free;
+  const throttled = Date.now() - (shortAskedAt.get(engine) ?? 0) < SHORT_EVERY_MS;
+  const room = shortClaimRoom(engine, free, throttled, evaluation);
+  if (room !== undefined) shortAskedAt.set(engine, Date.now());
+  return room;
 }
 // The claims' starts and the slots holding a meeting's seat (reserve.ts): a hold also keeps its seat's place (places).
 const reserve = admission<Seat>(), holding = reserve.holding;
@@ -214,18 +217,8 @@ async function watchShares() {
       }
       const intervalMs = t - at, uses = tally(procs, before, intervalMs);
       const previous = before; before = procs; at = t;
-      const look = reserve.inspect(() => {
-        const short = !room(false);
-        watch.shortSince = short ? (watch.shortSince ?? t) : undefined;
-        const pressure = pressureOf({
-          freeMb: freeMb(false),
-          uses: new Map(jobs.map(j => [j.job.id, uses.get(j.uid)?.memoryMb ?? 0])),
-          room: room(),
-        });
-        return { short, pressure };
-      });
-      const { short, pressure } = look.value;
-      if (!watch.reporting && (t - watch.reportedAt >= REPORT_MS || pressure.verdict !== watch.memory)) void reportRoom(watch, jobs, uses, short, t, pressure, look.inputs);
+      const { short, pressure, inputs } = readPressure(watch, jobs, uses, t, pressureOf);
+      if (!watch.reporting && (t - watch.reportedAt >= REPORT_MS || pressure.verdict !== watch.memory)) void reportRoom(watch, jobs, uses, short, t, pressure, inputs);
       const starved = watch.shortSince !== undefined && t - watch.shortSince >= STARVED_MS && t - watch.answeredAt <= ROOM_FRESH_MS && watch.waiting > 0;
       const cli = new Set(jobs.flatMap(j => j.launch ? [...cliProcesses(procs, j.launch)] : []));
       for (const uid of hotSince.keys()) if (!((uses.get(uid)?.cores ?? 0) > JOB_CORES)) hotSince.delete(uid);
@@ -242,6 +235,20 @@ async function watchShares() {
     } catch (err) { log('shares:', err); capacityTrial.note(`Shares failed: ${err}`); }
   }
   diskShares.close();
+}
+function readPressure(watch: RoomWatch, jobs: SlotJob[], uses: Map<number, JobUse>, t: number, pressureOf: ReturnType<typeof overloadWatch>) {
+  const look = reserve.inspect(() => {
+    const short = !room(false);
+    watch.shortSince = short ? (watch.shortSince ?? t) : undefined;
+    const reading = {
+      freeMb: freeMb(false),
+      uses: new Map(jobs.map(j => [j.job.id, uses.get(j.uid)?.memoryMb ?? 0])),
+      room: room(),
+    };
+    return { short, reading };
+  });
+  const { short, reading } = look.value;
+  return { short, pressure: pressureOf({ ...reading, inputs: look.inputs }), inputs: look.inputs };
 }
 async function sampleDisk(shares: DiskShares, jobs: SlotJob[], uses: Map<number, JobUse>, cli: Set<number>) {
   const reserve = await hq.api('disk', {}, AbortSignal.timeout(ROOM_REQUEST_MS));
@@ -2746,25 +2753,28 @@ async function slotLoop(slot: string, kind?: string, adopted?: RunRecord) {
   }
 }
 async function claimAdmission(identity: RecordIdentity, claim: Record<string, unknown>) {
+  const selection = retainedRecords.claimSelection(identity);
   reporting++;
   try {
     const answer = await hq.api('claim', claim);
-    retainedRecords.answered(identity, answer);
+    retainedRecords.answered(identity, answer, false, selection);
     return answer;
   } catch (error) {
-    retainedRecords.answered(identity, null, true);
+    retainedRecords.answered(identity, null, true, selection);
     throw error;
   } finally {
     reporting--;
   }
 }
 
-// Selection inputs leave this synchronous scope only through the latest immutable record.
+// A qualifying selection stays in its actual request only until the matching answer arrives.
 function selectAdmission(slot: string, kind: string | undefined, held: Seat | undefined) {
+  const gate: GateEvaluation = { ready: [], shortClaims: [], ordinarySelected: false };
   const selection = reserve.inspect((): NextClaim | undefined =>
-    held ? { engine: held.engine, seat: held } : nextClaim(kind),
+    held ? { engine: held.engine, seat: held } : nextClaim(kind, gate),
   );
   const next = selection.value;
+  const selectionInputs = selection.inputs.map(input => ({ ...input, phase: 'selection' as const }));
   const admissionIdentity = retainedRecords.decision({
     action: 'select claim',
     outcome: next ? 'claim selected' : 'no claim',
@@ -2773,7 +2783,8 @@ function selectAdmission(slot: string, kind: string | undefined, held: Seat | un
     claim: next
       ? { seat: next.seat.id, engine: next.engine, kind: next.kind ?? kind ?? null, room: next.room ?? null }
       : null,
-    inputs: selection.inputs.map(input => ({ ...input, phase: 'selection' as const })),
+    inputs: selectionInputs,
+    gate: ordinaryGate(gate, selectionInputs),
   });
   return { next, admissionIdentity };
 }
@@ -2786,7 +2797,7 @@ function selectAdmission(slot: string, kind: string | undefined, held: Seat | un
 type NextClaim = { engine: string; seat: Seat; check?: boolean; room?: number; kind?: string };
 const INCIDENT_MS = 15_000;
 let incidentAskedAt = 0;
-function nextClaim(kind?: string): NextClaim | undefined {
+function nextClaim(kind?: string, evaluation?: GateEvaluation): NextClaim | undefined {
   if (kind === 'chat') {
     const seat = pickSeat('claude', undefined, true);
     return seat && { engine: 'claude', seat };
@@ -2796,7 +2807,9 @@ function nextClaim(kind?: string): NextClaim | undefined {
     const seat = pickSeat(engine), check = !seat && roomy ? checkSeat(engine) : undefined;
     return seat ? [{ engine, seat }] : check ? [{ engine, seat: check, check: true }] : [];
   });
-  const next = turns.next(ready, roomy, shortClaim);
+  if (evaluation) evaluation.ready = ready.map(candidate => ({ seat: candidate.seat.id, engine: candidate.engine, state: candidate.seat.state, check: !!candidate.check }));
+  const next = turns.next(ready, roomy, engine => shortClaim(engine, evaluation));
+  if (evaluation) evaluation.ordinarySelected = !!next;
   if (next?.check) next.seat.checked = Date.now();
   if (next || Date.now() - incidentAskedAt < INCIDENT_MS) return next;
   const seat = pickSeat('claude', undefined, true);

@@ -1,11 +1,22 @@
 // Sizing work (the coordinator's estimates.ts): its agent time and projected merge time, the past jobs it comes
 // from, and what the seats have left of their week; or how well past estimates held (--accuracy). When new work
 // could be done is hq when's (when.ts).
+import { writeFileSync } from 'node:fs';
+import type { TaskAudit } from '../../coordinator/src/taskaudit.ts';
 import * as api from './api.ts';
-import { printJobs, printQuality, type Job, type Typical, type Quality } from './comparisons.ts';
+import {
+  workDuration,
+  workUnit,
+  printJobs,
+  printQuality,
+  type Job,
+  type Typical,
+  type Quality,
+} from './comparisons.ts';
 import { changeLines } from './deadlines.ts';
 import { minute, plural, print, stop, TIME_ZONE } from './output.ts';
 import * as scoring from './scoring.ts';
+import { printTaskAudit } from './taskaudit.ts';
 import { duration, waitWords as wordsOf, type Wait } from './waits.ts';
 
 export { duration, type Wait };
@@ -25,11 +36,17 @@ export const estimate = {
                                                      An AI hour is one agent working for an hour, across its runs.
                                                      The seats show their measured headroom and reset times.
    hq estimate --audit                               count timing exclusions across all done work jobs, without scopes
-   hq estimate --accuracy [--days n]                 how well the estimates held over the last n days (7): agent time and
-                                                     merge projections against what happened, the worst misses and what moved, and
+   hq estimate --accuracy [--days n] [--until <ISO instant>] [--save <file>]
+                                                     first estimates against whole tasks, selected by own completion
+                                                     before the exclusive --until instant (now by default). --save
+                                                     writes the full response and every task row as JSON.
+                                                     Also compares saved automatic predictions with each job's
+                                                     work time and merge date, the worst misses and what moved, and
                                                      the matching tried again on the work done since, beside simpler ways,
                                                      and the matching within a deliverable beside HQ's
-   hq estimate --calibration [--days n]              both layers' misses over the last n days (7): sizes against the
+   hq estimate --calibration [--days n] [--until <ISO instant>] [--save <file>]
+                                                     the same whole-task audit and full JSON export, followed by the
+                                                     latest-size diagnostic over the last n days (7): sizes against the
                                                      agent time taken by agent, area and sizer; merge projections against the
                                                      landings an hour, six hours and a day ahead (the prediction log)
    hq estimate --backtest [--days n] [--save <file>] the play replayed on the hourly snapshots of the last n days (7),
@@ -45,14 +62,12 @@ export const estimate = {
     if (given[0] === 'set') return setSize(given.slice(1));
     const { words, flags } = takeFlags(given);
     const scored = new URLSearchParams(flags.days ? { days: flags.days } : {});
+    if (flags.until) scored.set('until', flags.until);
     if ('audit' in flags)
       return printQuality(JSON.parse(await api.orStop(api.get('estimate/audit'), "Couldn't audit past jobs.")));
-    if ('calibration' in flags) return scoring.calibration(scored);
+    if ('calibration' in flags) return scoring.calibration(scored, flags.save);
     if ('backtest' in flags) return scoring.backtest(scored, flags.save);
-    if ('accuracy' in flags)
-      return printAccuracy(
-        JSON.parse(await api.orStop(api.get(`estimate/accuracy?${scored}`), "Couldn't read the estimates.")),
-      );
+    if ('accuracy' in flags) return accuracy(scored, flags.save);
     const query = new URLSearchParams({ q: words, ...flags });
     const found: Found = JSON.parse(await api.orStop(api.get(`estimate?${query}`), "Couldn't read past jobs."));
     if (found.quality) printQuality(found.quality);
@@ -66,7 +81,7 @@ function takeFlags(given: string[]) {
   const flags: Record<string, string> = {};
   const rest: string[] = [];
   for (let i = 0; i < given.length; i++) {
-    const name = given[i].match(/^--(agent|path|limit|days|save)$/)?.[1];
+    const name = given[i].match(/^--(agent|path|limit|days|until|save)$/)?.[1];
     const mode = given[i].match(/^--(accuracy|calibration|backtest|audit)$/)?.[1];
     if (mode) flags[mode] = '';
     else if (!name) rest.push(given[i]);
@@ -114,7 +129,7 @@ type Found = {
   jobs: Job[];
   typical: Typical | null;
   quality?: Quality;
-  estimate?: { agent_minutes: number; compared: number; basis: Basis; guessed: boolean };
+  estimate?: { origin: string; agent_minutes: number; compared: number; basis: Basis; guessed: boolean };
   outlook?: Outlook | null;
   sizes?: Sized[];
   seats: { seats: Seat[]; engines: Engine[] };
@@ -135,22 +150,24 @@ type Sized = {
 function printEstimate({ estimate, outlook, sizes }: Found, words: string) {
   const e = estimate!;
   const saved = sizes?.[0];
-  if (saved) print(sizedLine(saved, (sizes?.length ?? 1) - 1));
-  else print(`The saved estimate: ${duration(e.agent_minutes)} of agent time.`);
-  if (outlook) print(outlookLine(outlook, words));
+  const unit = workUnit(e.origin);
+  if (saved) print(sizedLine(saved, (sizes?.length ?? 1) - 1, e.origin));
+  else print(`The saved estimate: ${workDuration(e.agent_minutes, e.origin)} of ${unit}.`);
+  if (outlook) print(outlookLine(outlook, words, e.origin));
   print('');
 }
 
 // The saved estimate and the evidence the queuer or CEO supplied.
-function sizedLine(s: Sized, earlier: number) {
+function sizedLine(s: Sized, earlier: number, origin?: string) {
+  const unit = workUnit(origin);
   const range =
     s.low_minutes !== null && s.high_minutes !== null
-      ? ` (${duration(s.low_minutes)} to ${duration(s.high_minutes)})`
+      ? ` (${workDuration(s.low_minutes, origin)} to ${workDuration(s.high_minutes, origin)})`
       : '';
   const on = s.refs.length ? `, on ${s.refs.map(id => `#${id}`).join(', ')}` : '';
   const why = s.why ? `: ${s.why}` : '';
   const before = earlier ? ` (${plural(earlier, 'earlier size')} kept)` : '';
-  return `Saved estimate: ${duration(s.agent_minutes)} of agent time${range} by ${s.by}, ${minute(s.at)}${on}${why}. The deliverable's ETA plays on it${before}.`;
+  return `Saved estimate: ${workDuration(s.agent_minutes, origin)} of ${unit}${range} by ${s.by}, ${minute(s.at)}${on}${why}. The deliverable's ETA plays on it${before}.`;
 }
 
 // What the mean stood on: done jobs like it, or a scheduled job's earlier runs.
@@ -162,19 +179,21 @@ export const comparedWords = (n: number, b: Basis) =>
       : `${plural(n, 'done job')} like it: ${basisWords(b)}`;
 
 const basisWords = (b: Basis) =>
-  b.entry
-    ? `this entry's earlier runs (${b.entry})`
-    : b.routine
-      ? `earlier runs of the ${b.routine} routine's entries`
-      : [
-          b.agent ? `${b.agent}'s` : "anyone's",
-          b.kind ? `${b.kind} jobs` : 'jobs of any kind',
-          b.words.length ? `by the words ${b.words.map(w => `"${w}"`).join(', ')}` : 'the latest',
-        ].join(', ');
+  b.kind === 'carry'
+    ? 'mechanical carry checks, by measured worker occupancy'
+    : b.entry
+      ? `this entry's earlier runs (${b.entry})`
+      : b.routine
+        ? `earlier runs of the ${b.routine} routine's entries`
+        : [
+            b.agent ? `${b.agent}'s` : "anyone's",
+            b.kind ? `${b.kind} jobs` : 'jobs of any kind',
+            b.words.length ? `by the words ${b.words.map(w => `"${w}"`).join(', ')}` : 'the latest',
+          ].join(', ');
 
-function outlookLine(o: Outlook, words: string) {
+function outlookLine(o: Outlook, words: string, origin?: string) {
   const who = `${words} now`;
-  const left = `${duration(o.left_minutes)} of agent time left; `;
+  const left = `${workDuration(o.left_minutes, origin)} of ${workUnit(origin)} left; `;
   const later = o.start !== null && o.start > Date.now() + 60_000;
   const start = later ? `it starts about ${at(o.start!)}, and ` : '';
   const held =
@@ -269,6 +288,8 @@ export type Spread = {
 type Named = { id: number; agent: string; title: string };
 type Accuracy = {
   days: number;
+  tasks: TaskAudit;
+  carry_checks: Spread;
   agent_time: Spread & {
     worst: (Named & { predicted_minutes: number; actual_minutes: number; basis: Basis; picks: number[] })[];
   };
@@ -288,8 +309,17 @@ type Moved = {
   board_minutes: number;
 };
 
+async function accuracy(window: URLSearchParams, save: string | undefined) {
+  const response = await api.orStop(api.get(`estimate/accuracy?${window}`), "Couldn't read the estimates.");
+  if (save !== undefined) writeFileSync(save, response);
+  printAccuracy(JSON.parse(response));
+  if (save !== undefined) print('', `Saved the full estimate audit to ${save}.`);
+}
+
 function printAccuracy(a: Accuracy) {
-  print(`How the estimates held over the last ${plural(a.days, 'day')}.`, '');
+  printTaskAudit(a.tasks);
+  print('', `Saved automatic predictions against each job's work over the last ${plural(a.days, 'day')}.`, '');
+  print(carryLine(a.carry_checks));
   const t = a.agent_time;
   print(`Agent time: ${plural(t.count, 'job')} with a stored estimate${t.count ? `: ${spreadWords(t)}` : '.'}`);
   for (const w of t.worst)
@@ -328,6 +358,9 @@ function printAccuracy(a: Accuracy) {
 export const spreadWords = (s: Spread) =>
   `the median miss ×${s.median_factor} either way, ${Math.round(s.within_twice! * 100)}% within twice or half, ` +
   `all of them together ${s.sum_ratio ?? '?'} of what they took.`;
+
+export const carryLine = (s: Spread) =>
+  `Mechanical carry checks, worker occupancy: ${plural(s.count, 'job')}${s.count ? `: ${spreadWords(s)}` : '.'}`;
 
 const movedWords = (m: Moved) =>
   [

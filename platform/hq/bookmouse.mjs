@@ -4,7 +4,7 @@
 // a reload, edited, and emptied away. Each asserts what the board sees (pixels on the book's paper, the words on it)
 // and what the store keeps (the page saved).
 import assert from 'node:assert/strict';
-import { DESKTOP, until } from './bookkit.mjs';
+import { DESKTOP, heard, until } from './bookkit.mjs';
 
 // c: book-check.mjs's played store and helpers: { hqIn, base, store, pages, notes, posts, org, renumber, shot, settled,
 // noErrorsIn, settle }
@@ -109,13 +109,7 @@ async function typed(browser, c) {
     assert.equal(kept.texts[0].text, 'Order the teal mugs\nand the gold box');
     assert.equal(kept.texts[0].color, '#2a2352', 'in Night, the pen colour');
     await c.shot('book-mouse-typed', page);
-    // a double click on bare paper with the pen: another box there, and no dots left by the clicks
-    await pick(page, 'Pen');
-    await page.mouse.dblclick(paper.x + 160, paper.y + 420);
-    await page.keyboard.type('Ask Lark');
-    await page.mouse.click(paper.x + 700, paper.y + 600);
-    const two = await savedWhere(c, free.id, p => p.texts?.length === 2);
-    assert.equal(two.ink.length, 0, 'the double click left no ink');
+    await boxByDoubleClick(page, c, free, paper);
     // kept after a reload: the words on the page as the board reads them
     await done();
     const again = await onDesk(browser, c, { keep: true });
@@ -140,6 +134,23 @@ async function typed(browser, c) {
     await done();
     c.pages.splice(c.pages.indexOf(free), 1);
   }
+}
+
+// A lone click with the pen draws a dot (so a double click's first one does too); a double click on bare paper another
+// box there, no dots left by its clicks, the lone dot kept.
+async function boxByDoubleClick(page, c, free, paper) {
+  await pick(page, 'Pen');
+  await page.mouse.click(paper.x + 300, paper.y + 540);
+  const [lone] = (await savedWhere(c, free.id, p => p.ink.length === 1)).ink;
+  await page.mouse.dblclick(paper.x + 160, paper.y + 420);
+  await page.keyboard.type('Ask Lark');
+  await page.mouse.click(paper.x + 700, paper.y + 600);
+  const two = await savedWhere(c, free.id, p => p.texts?.length === 2);
+  assert.deepEqual(
+    two.ink.map(s => s.points),
+    [lone.points],
+    'the double click left no ink, the lone dot kept',
+  );
 }
 
 // ---- helpers (the drawing tools' stories use them too: bookdraw.mjs)
@@ -248,4 +259,13 @@ export async function colourIn(page, rgb, near = 40) {
     [`data:image/png;base64,${png.toString('base64')}`, rgb, near],
   );
   return { n: seen.n, x: box.x + seen.x, y: box.y + seen.y };
+}
+// A desktop with a mouse and a microphone (the stand-in: shell/voice.js's recording and /api/voice's words).
+export async function desk(browser, c, opts) {
+  const opened = await onDesk(browser, c, opts);
+  await heard(opened.page);
+  await opened.page.reload();
+  await opened.page.waitForSelector('#book .bk-desk', { timeout: 30_000 });
+  await c.settled(opened.page, 'open');
+  return opened;
 }

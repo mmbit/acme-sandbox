@@ -1,8 +1,15 @@
-// What book-check.mjs's story files share: the screens they play on, a wait, the Pencil, and review mode's parts.
+// What book-check.mjs's story files share: the screens they play on, a wait, the Pencil and fingers, the iPad mini and
+// the microphone's stand-in, review mode's parts and a preview in HQ's viewer.
+import { fulfilPart } from '../../shared/review/parts.mjs';
 
 export const DESKTOP = { width: 1440, height: 900 },
-  // an iPad mini in landscape
-  MINI = { width: 1133, height: 744 };
+  // an iPad mini in landscape, and held upright
+  MINI = { width: 1133, height: 744 },
+  UPRIGHT = { width: MINI.height, height: MINI.width };
+// how long a story waits to be sure something didn't happen (the page is saved this soon after a change), and what the
+// stand-in microphone hears
+export const QUIET_MS = 1200,
+  HEARD = 'order the blue mugs';
 
 // What read gives (awaited) once it's something, looked at every tenth of a second; what says what was awaited, or is
 // called as it fails for words with what was seen. (long enough by default for a loaded worker, where the page's timers
@@ -61,9 +68,10 @@ export async function pixelsIn(page, clip) {
 
 // A pointer pressed at the first point and moved along the rest, as Safari hands the Pencil over (type 'touch': a
 // finger), and let go at the last unless lift is false. Held, it's moved on along(more points) and let go by up(), or
-// in the page by window.__lift() (to see the very frame of the lift). on: a page or a frame.
-export async function pressAlong(on, points, { lift = true, type = 'pen' } = {}) {
-  await on.evaluate(sendPointer, { points, press: true, lift, type });
+// in the page by window.__lift() (to see the very frame of the lift). on: a page or a frame. doubleTap: a tap at the
+// first point just before, in the same go, as a double tap's
+export async function pressAlong(on, points, { lift = true, type = 'pen', doubleTap = false } = {}) {
+  await on.evaluate(sendPointer, { points, press: true, lift, type, doubleTap });
   return {
     along: more => on.evaluate(sendPointer, { points: more, press: false, lift: false, type }),
     up: () => on.evaluate(() => window.__lift()),
@@ -72,7 +80,7 @@ export async function pressAlong(on, points, { lift = true, type = 'pen' } = {})
 // (in the page) Every event goes to what was under the press, inside review mode's shadow root too, as the page's
 // pointer capture sends a real pointer's: a made-up one can't be captured. Points are filled in to no more than STEP_PX
 // apart, as a Pencil reports them, its pressure rising and falling along the line and none at the lift.
-function sendPointer({ points, press, lift, type }) {
+function sendPointer({ points, press, lift, type, doubleTap }) {
   const STEP_PX = 8;
   const deepest = ([x, y]) => {
     let under = document.elementFromPoint(x, y) ?? document.body;
@@ -90,6 +98,10 @@ function sendPointer({ points, press, lift, type }) {
       );
     window.__pressed = held;
     window.__lift = () => held.send('pointerup', held.last, 0);
+    if (doubleTap) {
+      held.send('pointerdown', points[0], 0.4);
+      held.send('pointerup', points[0], 0);
+    }
     held.send('pointerdown', points[0], 0.4);
   }
   const held = window.__pressed;
@@ -108,7 +120,8 @@ function sendPointer({ points, press, lift, type }) {
 // Chromium's own Pencil (cdp: the page's CDP session), whose events are trusted: their clicks and pointer capture are
 // the browser's. Chromium only.
 export function chromiumPen(cdp) {
-  const send = (type, [x, y], down) =>
+  // (timestamp: when the hand did it, in s since 1970, else as it's sent)
+  const send = (type, [x, y], down, timestamp) =>
     cdp.send('Input.dispatchMouseEvent', {
       type,
       x,
@@ -118,6 +131,7 @@ export function chromiumPen(cdp) {
       clickCount: 1,
       pointerType: 'pen',
       force: down ? 0.5 : 0,
+      ...(timestamp && { timestamp }),
     });
   const pen = {
     down: at => send('mousePressed', at, true),
@@ -130,8 +144,99 @@ export function chromiumPen(cdp) {
       await pen.up(points.at(-1));
     },
     tap: at => pen.stroke([at]),
+    // A double tap pressed on, let go by up(): a 60 ms tap and the press 120 ms after its lift, in the times the page
+    // reads (tap.js, bookinput.js) however late a loaded worker hands them on
+    doubleTap: async at => {
+      const t = Date.now() / 1000;
+      await send('mousePressed', at, true, t);
+      await send('mouseReleased', at, false, t + 0.06);
+      await send('mousePressed', at, true, t + 0.18);
+    },
   };
   return pen;
+}
+// Fingers (cdp: the page's CDP session, Chromium's trusted touch events): down at points, moved to others in steps,
+// lifted
+export function touchOf(cdp) {
+  let last = [];
+  const points = all => all.map(([x, y], id) => ({ x, y, id, radiusX: 4, radiusY: 4, force: 1 }));
+  const t = {
+    down: async at => {
+      last = at;
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: points(at) });
+    },
+    move: async (to, steps = 12) => {
+      const from = last;
+      for (let i = 1; i <= steps; i++) {
+        const now = from.map(([x, y], k) => [x + ((to[k][0] - x) * i) / steps, y + ((to[k][1] - y) * i) / steps]);
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: points(now) });
+      }
+      last = to;
+    },
+    up: () => cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }),
+    stroke: async (from, to) => {
+      await t.down(from);
+      await t.move(to);
+      await t.up();
+    },
+  };
+  return t;
+}
+// A box's middle on the screen (a locator's boundingBox()).
+export const middleOf = b => [b.x + b.width / 2, b.y + b.height / 2];
+
+// The iPad mini as a touch screen with a pen, in Chromium (its own touch and pen events, trusted), the book open:
+// upright (viewport UPRIGHT) it starts folded, and its lip opens it as the spread over HQ; more: the context's own
+// options
+export async function mini(browser, c, { viewport = MINI, ...more } = {}) {
+  // (at 1x, so a screenshot's px are the screen's: colourIn)
+  const context = await c.hqIn(browser, viewport, { hasTouch: true, deviceScaleFactor: 1, ...more });
+  const page = await context.newPage(),
+    errors = [];
+  page.on('pageerror', e => errors.push(e.message));
+  await heard(page);
+  await page.goto(`${c.base}/?intro=0`);
+  if (viewport.width > viewport.height) {
+    await page.waitForSelector('#book .bk-desk', { timeout: 30_000 });
+    await c.settled(page, 'open');
+  } else {
+    await c.settled(page, 'folded');
+    await page.evaluate(() => document.querySelector('#book .bk-lip').click());
+    await c.settled(page, 'spread');
+  }
+  const cdp = await context.newCDPSession(page);
+  return { page, pen: chromiumPen(cdp), touch: touchOf(cdp), errors, done: () => context.close() };
+}
+// The listening slip once it shows the stand-in microphone's words
+export const wordsHeard = page =>
+  until(async () => (await page.locator('#book .bk-voice').textContent()).includes(HEARD), 'the words heard');
+// The microphone's stand-in: the recording module answered with one that hears at once, and its words; dictate.js runs
+// for real on it (seconds).
+export async function heard(page) {
+  await page.route('**/shell/voice.js', r =>
+    r.fulfill({
+      contentType: 'text/javascript',
+      body: `export const MAX_SECONDS = 1200, TRANSCRIBER = true, canRecord = true;
+export function record({ onSegment } = {}) {
+  const s = { ready: Promise.resolve(), level: () => 0.4, seconds: () => 1, cancel() {} };
+  setTimeout(() => onSegment?.(new Blob(['piece'], { type: 'audio/wav' })), 100);
+  s.stop = async () => new Blob(['clip'], { type: 'audio/webm' });
+  return s;
+}`,
+    }),
+  );
+  // (and allowed already)
+  await page.route('**/__review/micallowed.js', r =>
+    r.fulfill({
+      contentType: 'text/javascript',
+      body: 'export const micAllowed = () => true, micBlocked = () => false, gotStream = () => {};',
+    }),
+  );
+  await page.route('**/api/voice**', r => r.fulfill({ json: { text: HEARD } }));
+  await page.addInitScript(() => {
+    if (navigator.mediaDevices)
+      navigator.mediaDevices.enumerateDevices = async () => [{ kind: 'audioinput', deviceId: 'mic', label: '' }];
+  });
 }
 
 // A part of review mode's (CSS), inside its shadow root
@@ -178,3 +283,39 @@ export const crumpled = page =>
         }).observe(document.body, { childList: true, subtree: true }),
       ),
   );
+
+// ---- a preview in HQ's viewer, review mode running in its frame
+export const PREVIEW = 'https://scrap.preview.test';
+const PREVIEW_PAGE = `<!doctype html><meta name="viewport" content="width=device-width"><title>Basket</title>
+<body style="margin: 0; font: 16px system-ui, sans-serif">
+<h1 style="margin: 24px">Your basket</h1>
+<p style="margin: 24px; max-width: 30em">Two jars of plum jam, gift-wrapped, at the pick-up point by Friday.</p>
+<script src="/__review/review.js"></script>`;
+// The preview at PREVIEW served to context, each note posted from it kept in c.posts (c.reviewJs: review mode's script)
+export async function previewServed(c, context) {
+  await context.route(/\/api\/preview\/link$/, r => r.fulfill({ json: { url: r.request().postDataJSON().url } }));
+  await context.route(`${PREVIEW}/**`, r => {
+    const path = new URL(r.request().url()).pathname;
+    if (fulfilPart(r, path, c.reviewJs)) return;
+    // the board's note: the coordinator makes it a scrap on My journal's current page (bookreview.ts)
+    if (path === '/__review/notes' && r.request().method() === 'POST') {
+      const body = r.request().postDataJSON();
+      c.posts.push({ path, body });
+      const { v, url, el, view, ink } = body.element ?? {},
+        g = context.notebook.route(
+          '/api/notebooks/groups/scrap',
+          {},
+          {
+            anchor: { v, url, el, view, ink },
+            words: body.note,
+            said: body.said === 'spoken' ? 'spoken' : 'typed',
+            snip: body.shot,
+            owner: 'juno',
+          },
+        );
+      return r.fulfill({ json: { ok: true, id: g.id, page: g.page, owner: 'juno', name: 'Juno' } });
+    }
+    if (path.startsWith('/__review/')) return r.fulfill({ json: { show: false } });
+    return r.fulfill({ contentType: 'text/html', body: PREVIEW_PAGE });
+  });
+}

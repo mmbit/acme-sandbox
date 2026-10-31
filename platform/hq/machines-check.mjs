@@ -4,11 +4,12 @@
 // server's; a machine's page shows its load, a graph of the last minutes, its run and that run's newest output as text
 // (never markup), and redraws on the coordinator's 'machines' event with nothing typed lost; Pause, Rename (a taken name
 // refused), Colours (Wire's key wears them), Install again (asked in place, then its install command); Add a machine
-// shows its install command once; Remove asks in place with the command that clears the machine, and the list says so; the back button steps back a page at a time;
+// shows its install command once; a machine whose manager runs old code or stopped has the install command without its
+// key on its page; Remove asks in place with the command that clears the machine, and the list says so; the back button steps back a page at a time;
 // nothing is off the screen. In every look, on a phone and a tablet.
 //   node platform/hq/machines-check.mjs [looks]  (holo,wire: those only; screenshots go to a temp folder, printed at the end)
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { serve } from './serve.mjs';
@@ -16,6 +17,15 @@ import { playwright, errorsOf, tap, until } from '../../shared/browser/browser.m
 import { lookNames } from './looks.mjs';
 
 const RENDERERS = process.argv[2]?.split(',') ?? lookNames();
+// the mock machines, and one whose manager stopped while its helpers take runs
+const mockMachines = JSON.parse(readFileSync(new URL('mock/machines.json', import.meta.url), 'utf8'));
+mockMachines.splice(-1, 0, {
+  ...mockMachines.find(m => m.id === 2),
+  id: 5,
+  name: 'The attic PC',
+  added: '2026-10-16T09:00:00.000Z',
+  manager: { state: 'quiet', seen: '2026-10-17T05:40:00.000Z' },
+});
 const server = await serve(undefined, 0),
   base = `http://localhost:${server.address().port}`;
 // (WebGL on SwiftShader, as screens-check.mjs has it: without it the holo look takes minutes a page)
@@ -37,9 +47,14 @@ for (const look of RENDERERS)
       isMobile: device === 'phone',
     });
     const errors = errorsOf(page);
+    await page.route('**/mock/machines.json', r => r.fulfill({ json: mockMachines }));
     const at = `${look}, ${device}`;
     console.log(`${at}…`);
+    // the look on stage (stage.js stage:look) before anything is read or opened: on SwiftShader a boot can outlast a
+    // fixed wait, and then Wire has no board yet and Settings names no look
+    await page.addInitScript(() => document.addEventListener('stage:look', e => (window.staged = e.detail.look)));
     await page.goto(`${base}/?intro=0&renderer=${look}`);
+    await page.waitForFunction(l => window.staged === l, look, { polling: 100 });
     await page.waitForTimeout(1200);
     const shot = async (name, sel) => {
       if (sel) await page.$eval(sel, e => e.scrollIntoView({ block: 'start' }));
@@ -87,7 +102,7 @@ for (const look of RENDERERS)
 
     // Settings has Machines, after Seats, with how many the board lends
     await page.evaluate(() => import('/shell/desk.js').then(m => m.openComputer('settings')));
-    await until(page, '[data-section="sys:machines"]', /Machines 4/);
+    await until(page, '[data-section="sys:machines"]', /Machines 5/);
     assert.deepEqual(
       await page.$$eval('[data-section]', l => l.slice(0, 2).map(b => b.dataset.section)),
       ['sys:seats', 'sys:machines'],
@@ -100,11 +115,12 @@ for (const look of RENDERERS)
     // each row: its state in a word, what it has and its speed next to this server's; this server isn't one of them
     const reads = {
       1: /The rig Running one › 24 cores · 40 GB · NVIDIA GeForce RTX 4090 · 8\.4× this server/,
-      2: /The study’s laptop Taking runs › 4 cores · 8 GB · 1\.0× this server/,
+      2: /The study’s laptop Taking runs › 4 cores · 8 GB · 1\.0× this server · Manager out of date/,
       3: /Old tower Away › 8 cores · 16 GB · 1\.7× this server/,
       4: /Spare mini PC Paused ›/,
+      5: /The attic PC Taking runs › .* · Manager stopped/,
     };
-    assert.equal(await page.$$eval('.machines li[data-machine]', l => l.length), 4, at);
+    assert.equal(await page.$$eval('.machines li[data-machine]', l => l.length), 5, at);
     for (const [id, re] of Object.entries(reads))
       assert.match(await text(page, `.machines li[data-machine="${id}"]`), new RegExp(re.source, 'i'), `${at}: ${id}`);
     assert.match(await text(page, '.machines-app'), /The fastest free machine takes each run/, at);
@@ -232,7 +248,7 @@ for (const look of RENDERERS)
     assert.equal(await crumb(page), '› Settings › Machines › Garage NUC', at);
     const setup = await page.$$eval('.machine-setup [data-copy]', l => l.map(b => b.dataset.copy));
     assert.equal(setup.length, 1, at);
-    assert.match(setup[0], /^docker run --rm .*-e MANAGER=install .*helper_MOCK5/, at);
+    assert.match(setup[0], /^docker run --rm .*-e MANAGER=install .*helper_MOCK6/, at);
     assert.match(
       await text(page, '.machine-setup'),
       /paste this once\. It holds the machine’s key, and HQ shows it only now/,
@@ -240,11 +256,25 @@ for (const look of RENDERERS)
     );
     await shot('added');
     await back();
-    assert.match(await text(page, '.machines li[data-machine="5"]'), /Garage NUC Away › Not heard from yet/, at);
+    assert.match(await text(page, '.machines li[data-machine="6"]'), /Garage NUC Away › Not heard from yet/, at);
     await open('Garage NUC');
     assert.equal(await page.$('.machine-setup'), null, `${at}: the install command was shown once`);
     assert.deepEqual(await pressed(), ['HQ violet'], `${at}: a new machine has the looks’ own colours`);
     await back();
+
+    // a manager on old code or stopped: its page has the install command without a key, which starts it again on the
+    // machine's own
+    for (const [name, state] of [
+      ['The study’s laptop', 'old'],
+      ['The attic PC', 'quiet'],
+    ]) {
+      await open(name);
+      const manager = await text(page, '.machine-setup');
+      assert.match(manager, /docker run .*-e MANAGER=install/, `${at}: ${name}`);
+      assert.doesNotMatch(manager, /HELPER_KEY/, `${at}: ${name}`);
+      await shot(`manager-${state}`, '.machine-setup');
+      await back();
+    }
 
     // Remove asks in place, with the commands that clear the machine; then the list says so
     await open('Old tower');

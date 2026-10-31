@@ -37,9 +37,16 @@ export function openNewest() {
 }
 // My journal's current page's newest note from review mode (one with an anchor), slid into view when the book hasn't
 // shown it yet, My journal opened at that page when the book shows another. always: shown whatever it has shown, and
-// with no note there the current page at its top.
+// with no note there the current page at its top. A read refused leaves the book where it is, the refusal logged (a
+// first opening's own refusal shows: bookpages.js openNotebook).
 export async function showNewest(pages, always = false) {
-  const { notebook, page, groups } = await mine(pages);
+  let read;
+  try {
+    read = await mine(pages);
+  } catch (e) {
+    return console.error('[hq] My Notebook’s newest note can’t be read:', e);
+  }
+  const { notebook, page, groups } = read;
   const pinned = groups.filter(g => g.anchor).map(g => g.id),
     id = pinned.length ? Math.max(...pinned) : null;
   if (!always && !(id > lastShown())) return;

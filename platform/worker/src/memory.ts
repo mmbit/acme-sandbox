@@ -1,32 +1,65 @@
 // Reclaim-aware worker memory, with a shared pressure brake for admission and diagnostics.
 import { readFileSync } from 'node:fs';
-import { recordIdentity } from './roomrecords.ts';
+import { immutable } from './immutable.ts';
+import { memoryAvailability, pressureReading, cgroupField, decimal, QUIET_MS } from './availability.ts';
+import { recordIdentity, type RecordIdentity } from './roomrecords.ts';
+
+export { decimal, QUIET_MS, PRESSURE_PERCENT } from './availability.ts';
 
 export const readCgroup = (name: string) => readFileSync(`/sys/fs/cgroup/${name}`, 'utf8').trim();
-export const QUIET_MS = 10_000; // PSI's shortest reported averaging window.
-// Admission stops when tasks stall on memory at least a tenth of the ten-second average.
-export const PRESSURE_PERCENT = 10;
 export const workerMemory = memoryMeter();
 
+export type QuietObservation = {
+  identity: RecordIdentity;
+  readStartedAt: number;
+  readEndedAt: number;
+  sequence: number;
+};
+export type QuietPredecessor = {
+  first: QuietObservation;
+  last: QuietObservation;
+  observedReadCount: number;
+  initialPreviousOomEvents: number[] | null;
+  previousOomEvents: number[] | null;
+};
+export type PressureTrigger = QuietObservation & {
+  pressureUntil: number;
+  psiThreshold: boolean;
+  someAvg10: number;
+  memoryPressure: string;
+  memoryEvents: string;
+  newOomEvent: boolean;
+  previousOomEvents: number[] | null;
+  oomEvents: number[];
+};
+type MeterEvidence = {
+  quiet: QuietPredecessor | null;
+  lastPressureTrigger: PressureTrigger | null;
+  sequence: number;
+};
+
 export function memoryMeter(read = readCgroup, now = Date.now) {
-  let previousEvents: number[] | undefined;
+  let previousEvents: number[] | null = null;
   let pressureUntil = 0;
+  const evidence: MeterEvidence = { quiet: null, lastPressureTrigger: null, sequence: 0 };
   return (hostAvailableBytes: number) => {
-    const identity = recordIdentity(),
-      readStartedAt = now();
-    const reading = readMemory(read);
+    const { identity, readStartedAt, reading, at } = readMeasurement(read, now);
     const { memoryEvents, memoryPressure } = reading;
-    const events = ['oom', 'oom_kill'].map(name => field(memoryEvents, name));
-    const at = now();
-    const someAvg10 = memoryPressure.match(/^some avg10=([\d.]+)/m);
-    if (!someAvg10) throw new Error('Memory pressure has no some reading');
-    const newEvent = previousEvents && events.some((count, i) => count > previousEvents![i]);
+    const pressure = pressureReading(memoryPressure, memoryEvents, previousEvents);
     // High/max events and tiny stalls can accompany successful cache reclaim.
     // They caused the all-night 0 MB false brake on 30 October. Only failed allocation or sustained stalls hold room.
-    if (newEvent || Number(someAvg10[1]) >= PRESSURE_PERCENT) pressureUntil = at + QUIET_MS;
+    if (pressure.newOomEvent || pressure.psiThreshold) pressureUntil = at + QUIET_MS;
     const previousOomEvents = previousEvents;
-    previousEvents = events;
+    previousEvents = pressure.oomEvents;
     const underPressure = at < pressureUntil;
+    const observation = { identity, readStartedAt, readEndedAt: at, sequence: ++evidence.sequence };
+    const quietPredecessor = observeQuiet(evidence, observation, {
+      pressureUntil,
+      ...pressure,
+      memoryPressure,
+      memoryEvents,
+      previousOomEvents,
+    });
     return {
       identity,
       readStartedAt,
@@ -35,55 +68,62 @@ export function memoryMeter(read = readCgroup, now = Date.now) {
       ...reading,
       ...memoryAvailability(reading, hostAvailableBytes, underPressure),
       pressureUntil,
-      previousOomEvents: previousOomEvents ?? null,
-      newOomEvent: !!newEvent,
+      previousOomEvents,
+      newOomEvent: pressure.newOomEvent,
       underPressure,
+      quietPredecessor,
+      lastPressureTrigger: evidence.lastPressureTrigger,
     };
   };
+}
+
+function readMeasurement(read: typeof readCgroup, now: () => number) {
+  const identity = recordIdentity(),
+    readStartedAt = now();
+  const reading = readMemory(read);
+  const at = now();
+  return { identity, readStartedAt, reading, at };
+}
+
+function observeQuiet(
+  evidence: MeterEvidence,
+  observation: QuietObservation,
+  trigger: Omit<PressureTrigger, keyof QuietObservation>,
+) {
+  if (trigger.psiThreshold || trigger.newOomEvent) {
+    evidence.quiet = null;
+    evidence.lastPressureTrigger = immutable({ ...observation, ...trigger });
+    return null;
+  }
+  if (observation.readEndedAt < trigger.pressureUntil) return null;
+  const predecessor = evidence.quiet;
+  evidence.quiet = immutable({
+    first: predecessor?.first ?? observation,
+    last: observation,
+    observedReadCount: (predecessor?.observedReadCount ?? 0) + 1,
+    initialPreviousOomEvents: predecessor ? predecessor.initialPreviousOomEvents : trigger.previousOomEvents,
+    previousOomEvents: trigger.previousOomEvents,
+  });
+  return predecessor;
 }
 
 function readMemory(read: typeof readCgroup) {
   const memoryCurrentBytes = decimal(read('memory.current'));
   const memoryMaxBytes = read('memory.max');
+  if (memoryMaxBytes !== 'max') decimal(memoryMaxBytes);
   const stat = read('memory.stat');
   const memoryEvents = read('memory.events');
   const memoryPressure = read('memory.pressure');
   const activeFile = stat.match(/^active_file (\d+)$/m)?.[1];
   const raw = {
-    file: field(stat, 'file'),
+    file: cgroupField(stat, 'file'),
     active_file: activeFile === undefined ? null : decimal(activeFile),
-    shmem: field(stat, 'shmem'),
-    file_dirty: field(stat, 'file_dirty'),
-    file_writeback: field(stat, 'file_writeback'),
-    unevictable: field(stat, 'unevictable'),
+    shmem: cgroupField(stat, 'shmem'),
+    file_dirty: cgroupField(stat, 'file_dirty'),
+    file_writeback: cgroupField(stat, 'file_writeback'),
+    unevictable: cgroupField(stat, 'unevictable'),
   };
   return { memoryCurrentBytes, memoryMaxBytes, raw, memoryEvents, memoryPressure };
-}
-
-function memoryAvailability(
-  reading: ReturnType<typeof readMemory>,
-  hostAvailableBytes: number,
-  underPressure: boolean,
-) {
-  const { memoryCurrentBytes, memoryMaxBytes, raw } = reading;
-  // File includes tmpfs. Dirty, writeback and locked pages cannot be treated as immediately free.
-  const retainedFileBytes = raw.shmem + raw.file_dirty + raw.file_writeback + raw.unevictable;
-  const reclaimableFileBytes = Math.min(memoryCurrentBytes, Math.max(0, raw.file - retainedFileBytes));
-  const heldBytes = memoryCurrentBytes - reclaimableFileBytes;
-  const cap = memoryMaxBytes === 'max' ? Infinity : decimal(memoryMaxBytes);
-  const availableBytes = underPressure ? 0 : Math.min(hostAvailableBytes, cap - heldBytes);
-  return { reclaimableFileBytes, heldBytes, availableBytes };
-}
-
-function field(text: string, name: string) {
-  const reading = text.match(new RegExp(`^${name} (\\d+)$`, 'm'));
-  if (!reading) throw new Error(`Memory measurement has no ${name} reading`);
-  return decimal(reading[1]);
-}
-
-export function decimal(text: string) {
-  if (!/^\d+$/.test(text)) throw new Error(`Invalid memory measurement: ${text}`);
-  return Number(text);
 }
 
 // Startup logs tolerate an unknown limit. Required admission and capacity reads still throw.

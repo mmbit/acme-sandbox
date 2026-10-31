@@ -100,7 +100,7 @@ to this server's. A machine's page shows it live (below), and has:
 - **Pause**: its helpers take no new run and finish the one they have. They still beat and show live.
 - **Rename**: the name the board gives it, which agents read too (`hq run` says which machine a run is on).
 - **Install again**: a new key and the install command that carries it, shown once (the old key stops working). For a
-  machine whose helpers were started by hand, or after `manager.mjs` changed.
+  machine whose helpers were started by hand. (A manager on old code or stopped needs no new key: below.)
 - **Remove**: its key stops working at once, so HQ lets none of its helpers in. A run one of them had goes on on this
   server's helper. The page shows the command that clears the machine itself.
 
@@ -117,8 +117,14 @@ and which helpers have a run) and keeps it so:
   replaces its helpers once their runs end. Helpers of a kind HQ no longer has go, and so do helpers an old start
   command made by hand for the same HQ.
 - the helpers' code follows HQ: each fetches `GET /api/helper/code` as it starts, with no hash, since a helper reaches
-  nothing but HQ (below). Only the manager, which holds the Docker socket, is pinned: a changed `manager.mjs` needs
-  Install again.
+  nothing but HQ (below). Only the manager, which holds the Docker socket, is pinned: a changed `manager.mjs` stops it
+  at the machine's next restart (Docker's or the machine's), while its old helpers go on taking runs on their old
+  images. So each setup call carries the hash of the code the manager runs (`{ code }`), and HQ keeps the machine's last
+  call: a manager on code HQ no longer serves (or one that sends no hash, older than that) is **out of date**, and one
+  that hasn't called for two hours while its helpers still ask for work has **stopped** (a tick waits for its pulls, and
+  a kind's image can be 12 GB). Settings › Machines and `hq run helper` say so, and the board gets one card per
+  machine with the install command without a key, which starts the manager again on the key it has; HQ takes the card
+  away once the manager calls with HQ's code.
 - everything is named for HQ's host, so one machine can lend itself to several companies' HQs.
 
 The page's remove command (`MANAGER=remove`) takes all of it away again: the helpers, the proxy, the network, the

@@ -26,6 +26,8 @@ export type Machine = {
     gpu: string | null;
     // the kinds whose helpers on it are asking for work or beating
     kinds: string[];
+    // its manager while its helpers ask: in step, on code HQ no longer serves, or not heard from for hours (null: none)
+    manager?: { state: 'current' | 'old' | 'quiet'; seen: string } | null;
   }[];
   kinds: (Presence & {
     name: string;
@@ -56,7 +58,7 @@ export async function showHelper() {
     machine.lent
       ? `${machine.name}: ${lent} (the board's, in HQ's Settings › Machines), one helper per kind of run on each`
       : `${machine.name}: no machine yet (the board adds them in HQ's Settings › Machines)`,
-    ...machine.machines.map(one => `  ${one.name}: ${one.state}${machineLine(one)}`),
+    ...machine.machines.map(one => `  ${one.name}: ${one.state}${machineLine(one)}${managerLine(one)}`),
     ...machine.kinds.map(kind => `  ${kind.name}: ${asking(kind.present)}${presenceLine(kind)}`),
     ...machine.leftOut.map(kind => `  ${kind.name}: left out of org.yaml's runs.kinds: ${kind.why}`),
     `${SERVER}, one per kind of run in the kind's image:`,
@@ -89,7 +91,8 @@ export async function showHelper() {
     '',
     `install: ${machine.install}`,
     "         pasted once on a machine, with its key (HQ's Settings › Machines shows it when the board adds the machine,",
-    "         or makes a new one): it keeps the machine's helpers in step with HQ from then on",
+    "         or makes a new one): it keeps the machine's helpers in step with HQ from then on. As it is here, without a",
+    "         key, it starts a machine's stopped or old manager again on the key it has (HQ cards the board with it)",
     `remove:  ${machine.remove}`,
   );
 }
@@ -97,6 +100,15 @@ export async function showHelper() {
 function machineLine({ speed, cpus, memoryGb, gpu, kinds }: Machine['machines'][number]) {
   const size = cpus ? `, ${cpus} cores and ${memoryGb} GB${gpu ? `, ${gpu}` : ''}` : '';
   return `${speed ? `, speed ${speed}` : ''}${size}${kinds.length ? `, helpers of ${kinds.join(', ')}` : ''}`;
+}
+
+function managerLine({ manager }: Machine['machines'][number]) {
+  if (!manager || manager.state === 'current') return '';
+  const what =
+    manager.state === 'old'
+      ? "runs old code (it stops at the machine's next restart)"
+      : `stopped (last heard ${minute(manager.seen)})`;
+  return `, its manager ${what}: paste the install command on it, without a key`;
 }
 
 function presenceLine({ seen, cpus, memoryGb, running }: Presence) {

@@ -1,6 +1,5 @@
-// The book's controls put over its paper (bookui.js islands(): the stack at the right edge, and the lane at the foot
-// with the tool rail over the page bar), and Undo and Redo at the rail's right end, after the tools (bookpalette.js
-// puts them first).
+// The book's controls put over its paper (bookui.js islands(): the rail at its right edge), and Undo and Redo on the
+// rail after the tools (bookpalette.js puts them first).
 import { button, island, islands, MOD } from './bookui.js';
 import { word } from './bookscope.js';
 

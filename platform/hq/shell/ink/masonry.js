@@ -16,11 +16,13 @@ export const widthFor = n => n * UNIT_W + (n - 1) * GAP + 2 * MARGIN;
 // A day's header across the page, where a day's units start: as tall as its date and the space under it
 export const DAY_H = 48;
 
-// The page's layout at width (CSS px), its units in order: [{ id, h, day? }], h a unit's height at scale 1 with
-// whatever its page draws under it. A unit whose day differs from the one before starts that day under a header
-// across every column. Returns the columns, the scale (1, or less on a page too narrow for one column), each unit's
-// place { id, column, x, y, w, h } and each header's { day, y, h } in the page's CSS px, and the page's height. Extra
-// width centres the grid.
+// The page's layout at width (CSS px), its units in order: [{ id, h, day?, follows?, column? }], h a unit's height at
+// scale 1 with whatever its page draws under it. A unit whose day differs from the one before starts that day under a
+// header across every column. One that follows (never the first) is laid right under the unit before it, in its
+// column, at every width. One with a column stays in it where the page has it (the board's drawing, the page's last,
+// in the column it was drawn in: bookunits.js). Returns the columns, the scale
+// (1, or less on a page too narrow for one column), each unit's place { id, column, x, y, w, h } and each header's
+// { day, y, h } in the page's CSS px, and the page's height. Extra width centres the grid.
 export function layout(units, width) {
   const columns = columnsOf(width),
     scale = Math.min(1, width / widthFor(1)),
@@ -28,18 +30,19 @@ export function layout(units, width) {
     feet = Array(columns).fill(MARGIN * scale),
     headers = [];
   let day;
-  const places = units.map(u => {
+  const places = [];
+  for (const u of units) {
     if (u.day !== undefined && u.day !== day) {
       day = u.day;
       const top = Math.max(...feet);
       headers.push({ day, y: top, h: DAY_H * scale });
       feet.fill(top + DAY_H * scale);
     }
-    const column = feet.indexOf(Math.min(...feet)),
+    const column = u.column < columns ? u.column : u.follows ? places.at(-1).column : feet.indexOf(Math.min(...feet)),
       place = { id: u.id, column, x: left + column * (UNIT_W + GAP) * scale, y: feet[column], w: UNIT_W * scale };
     feet[column] += (u.h + GAP) * scale;
-    return { ...place, h: u.h * scale };
-  });
+    places.push({ ...place, h: u.h * scale });
+  }
   const foot = places.length ? Math.max(...feet) - GAP * scale : MARGIN * scale;
   return { columns, scale, places, headers, height: foot + MARGIN * scale };
 }

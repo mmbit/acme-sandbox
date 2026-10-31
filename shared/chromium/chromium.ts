@@ -67,14 +67,15 @@ export type Browser = {
 // Chromium, started and answering. An abort before then stops it.
 export async function launch(abort?: AbortSignal): Promise<Browser> {
   const profile = mkdtempSync(join(tmpdir(), 'chromium-'));
-  // only PATH, HOME and TMPDIR: the server's keys never reach the browser. TMPDIR is the profile too, as Chromium's
-  // lock socket otherwise goes in /tmp, read-only on a lent machine. It's given relative to the profile, its working
-  // folder: a socket's path holds 107 bytes at most, and Chromium stops at once on a longer one, which a long temp
-  // folder makes (a push's tests).
+  // only PATH, HOME, TMPDIR and where its libraries are: the server's keys never reach the browser. TMPDIR is the
+  // profile too, as Chromium's lock socket otherwise goes in /tmp, read-only on a lent machine. It's given relative to
+  // the profile, its working folder: a socket's path holds 107 bytes at most, and Chromium stops at once on a longer
+  // one, which a long temp folder makes (a push's tests). A lent machine's Chromium loads the libraries it lacks from
+  // the bundle's (LD_LIBRARY_PATH, tests-on-helper.sh).
   const chromium = spawn(chromiumPath(), [...SWITCHES, `--user-data-dir=${profile}`, 'about:blank'], {
     cwd: profile,
     stdio: ['ignore', 'ignore', 'pipe', 'pipe', 'pipe'],
-    env: { PATH: process.env.PATH ?? '', HOME: profile, TMPDIR: '.' },
+    env: { PATH: process.env.PATH ?? '', HOME: profile, TMPDIR: '.', LD_LIBRARY_PATH: process.env.LD_LIBRARY_PATH },
   });
   const devtools = connect(chromium);
   const closed = new Promise<void>(resolve =>

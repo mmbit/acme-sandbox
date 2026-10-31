@@ -20,6 +20,7 @@ import {
 } from './matching.ts';
 import { play, type Outlook, type Planned, type QueuedJob, type Size, type Snapshot } from './eta.ts';
 import { snapshot } from './backlog.ts';
+import type { ProspectiveRun } from './reviewplan.ts';
 import { playOrder } from './simulation.ts';
 import { loopSizes, SLOW_SHARE, type Pace } from './reviewtime.ts';
 import { fitIn, wholeSeconds } from './arithmetic.ts';
@@ -170,10 +171,15 @@ export function played(now = Date.now(), planned: SizedPlan[] = [], paces: Pace[
   };
 }
 // The snapshot and each pace's sizes, ready to play: hq when plays them several ways (when.ts).
-export function prepared(now = Date.now(), given: SizedPlan[] = [], paces: Pace[] = ['usual', 'slow']) {
+export function prepared(
+  now = Date.now(),
+  given: SizedPlan[] = [],
+  paces: Pace[] = ['usual', 'slow'],
+  prospective?: ProspectiveRun,
+) {
   // (a drawn thread with no task yet plays as one, sized on its name and "done when": threadorder.ts placeholders.)
   const placeholders = threadorder.placeholders();
-  const queue = snapshot(now, [...given, ...placeholders]);
+  const queue = snapshot(now, [...given, ...placeholders], prospective);
   const record = recordFor(queue.now, queue.jobs);
   const drawn = placeholders.map(p => {
     const { size, slow } = record.drawn(p);
@@ -265,7 +271,7 @@ export function sizesFor(queue: Pick<Snapshot, 'jobs'>, pace: Pace, { stored, la
 
 // Every stored prediction's usual and slow size, or these jobs' only. A row without a slow one gets it from its picks,
 // once.
-function storedSizes(jobs?: number[]) {
+export function storedSizes(jobs?: number[], { persist = true } = {}) {
   const rows = (
     jobs
       ? db.prepare('select * from predictions where job in (select value from json_each(?))').all(JSON.stringify(jobs))
@@ -279,7 +285,7 @@ function storedSizes(jobs?: number[]) {
       const picks = (JSON.parse(row.picks) as number[]).flatMap(id => byId.get(id) ?? []);
       const slow = slowOf(row.guessed ? [] : picks, row);
       row.slow_agent_ms = slow.agent_ms;
-      keep.run(row.slow_agent_ms, row.job);
+      if (persist) keep.run(row.slow_agent_ms, row.job);
     }
   }
   return new Map(

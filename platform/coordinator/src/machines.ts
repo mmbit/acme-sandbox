@@ -6,7 +6,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { rmSync } from 'node:fs';
 import { yamlFile } from './company.ts';
-import { db } from './db.ts';
+import { columnsOf, db } from './db.ts';
 import { redact } from './events.ts';
 import * as secrets from './secrets.ts';
 
@@ -21,6 +21,9 @@ export type Machine = {
   // its case's colour and its lights', as '#rrggbb', or null for the look's own
   body: string | null;
   glow: string | null;
+  // its manager's last setup call, and the hash of the code it said it runs (null: one that says none, older than that)
+  manager_seen: string | null;
+  manager_code: string | null;
 };
 // A machine's helper of a kind: when it last asked for work, and asked or beat, with the size and speed it gave
 export type KindHelper = {
@@ -54,7 +57,9 @@ const ENDED_LINES_MS = 10 * 60_000;
 
 db.exec(`create table if not exists machines (id integer primary key autoincrement, name text not null,
   key_hash text not null unique, gpu text, paused integer not null default 0, added text not null, seen text, body text,
-  glow text)`);
+  glow text, manager_seen text, manager_code text)`);
+for (const column of ['manager_seen text', 'manager_code text'])
+  if (!columnsOf('machines').includes(column.split(' ')[0])) db.exec(`alter table machines add column ${column}`);
 db.exec(`create table if not exists machine_kinds (machine integer not null, kind text not null, asked text,
   seen text not null, cpus integer, memory_gb integer, speed integer, primary key (machine, kind))`);
 
@@ -179,6 +184,16 @@ export function heard(machine: number, kind: string, report: unknown, asked: boo
   if (machine !== SERVER)
     db.prepare('update machines set seen = ?, gpu = coalesce(?, gpu) where id = ?').run(now, gpu || null, machine);
   if (isMap(given.live)) read(machine, given.live);
+}
+
+// Its manager's setup call (each minute, platform/helper/manager.mjs), with the hash of the code it runs where it says one
+export function managerHeard(machine: number, said: unknown) {
+  const code = isMap(said) && typeof said.code === 'string' && /^[0-9a-f]{64}$/.test(said.code) ? said.code : null;
+  db.prepare('update machines set manager_seen = ?, manager_code = ? where id = ?').run(
+    new Date().toISOString(),
+    code,
+    machine,
+  );
 }
 
 export const kindHelper = (machine: number, kind: string) =>

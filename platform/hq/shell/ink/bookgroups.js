@@ -25,6 +25,7 @@ import { nameOf } from './bookhead.js';
 import { asksHtml, wireAsks } from './bookasks.js';
 import { mountShow } from './bookgroupshow.js';
 import { markOpen } from './bookforyou.js';
+import { tagsHtml } from './bookassignlist.js';
 
 // a reply can be taken back this long after it's written (notebooksend.ts SEND_MS)
 const REPLY_MS = 10_000;
@@ -86,13 +87,13 @@ function draw(gs, view) {
       // (a group whose elements are all off the page, deleted and not yet saved, is drawn no more)
       const { box } = partsNow(page, g.id);
       if (!box) return '';
-      // (a scrap's words part of its body, under its picture; its answers and replies under the unit: bookunits.js
-      // places both. A scrap is a unit, no clip: Select's bar has its menu. job #14672)
+      // (a scrap's words part of its body, under its picture; its answers and replies under the unit, and whom it
+      // went to at its corner: bookunits.js places them. A scrap is a unit, no clip: Select's bar has its menu. job #14672)
       const words = g.kind === 'scrap' ? wordsHtml(page, g, open) : '';
       const under = slipsHtml(g.children ?? []) + asksHtml(g);
       return `${words ? `<div class="bk-words" data-g="${g.id}">${words}</div>` : ''}${
         under ? `<div class="bk-under" data-g="${g.id}">${under}</div>` : ''
-      }`;
+      }${tagsHtml(g)}`;
     })
     .join('');
   wireSlips(layer, slipsOn(gs, view));
@@ -282,6 +283,8 @@ function remove(gs, view, id) {
   });
   if (!ok) return;
   const step = book.steps.at(-1);
+  // (its unit's card goes with it, not when the save deletes the group in the store: bookunits.js unitsOf;
+  view.page.groups.get(id).vanished = true;
   hooks.refresh(view);
   drop(gs, view, box, parts);
   sfx.tick();

@@ -4,6 +4,7 @@ import { duration } from './waits.ts';
 import { minute, plural, print } from './output.ts';
 
 export type Job = {
+  origin?: string;
   id: number;
   agent: string;
   title: string;
@@ -41,25 +42,27 @@ export function printJobs({ job, jobs, typical }: { job?: Job; jobs: Job[]; typi
   );
   for (const j of jobs) print(...jobLines(j));
   if (typical) {
+    const origin = jobs[0].origin;
     const spend = typical.spend === null ? '' : `, ${spendText(typical.spend, typical.unit!)} of seat spend`;
     print(
-      `Typical work split of these: ${duration(typical.agent_minutes)} of agent time (the middle half ${duration(typical.low)} to ${duration(typical.high)})${spend}.`,
+      `Typical work split of these: ${workDuration(typical.agent_minutes, origin)} of ${workUnit(origin)} (the middle half ${workDuration(typical.low, origin)} to ${workDuration(typical.high, origin)})${spend}.`,
     );
   }
   print('');
 }
 
 function jobLines(j: Job) {
-  const wall = j.wall_minutes === null ? '' : `, ${duration(j.wall_minutes)} from its first start to its end`;
+  const wall =
+    j.wall_minutes === null ? '' : `, ${workDuration(j.wall_minutes, j.origin)} from its first start to its end`;
   const pr = j.pr
     ? `, ${j.files} files changed, PR #${j.pr.number} ${j.pr.merged_at ? `merged ${minute(j.pr.merged_at)}` : j.pr.status}`
     : ', no pull request';
   const spent = j.spend === null ? 'seat spend not reported' : `${spendText(j.spend, j.unit)} of seat spend`;
   const lines = [
     `#${j.id} ${j.agent}, done ${minute(j.finished)}: ${j.title}`,
-    `  ${j.rebuilt ? '≈' : ''}${duration(j.agent_minutes)} of agent time in ${plural(j.runs, 'run')}${wall}; ${spent}${pr}`,
+    `  ${j.rebuilt ? '≈' : ''}${workDuration(j.agent_minutes, j.origin)} of ${workUnit(j.origin)} in ${plural(j.runs, 'run')}${wall}; ${spent}${pr}`,
   ];
-  lines.push(wholeLine(j.whole));
+  lines.push(wholeLine(j.whole, j.origin));
   if (j.tool_bound)
     lines.push('  Mostly waiting on tools that use no tokens (renders, test suites): its hours cost the seats little.');
   if (j.changed_files?.length) lines.push(`  Files: ${j.changed_files.join(', ')}`);
@@ -70,9 +73,9 @@ function jobLines(j: Job) {
   return lines;
 }
 
-function wholeLine(whole: Job['whole']) {
+function wholeLine(whole: Job['whole'], origin?: string) {
   const split = Object.entries(whole.split)
-    .map(([phase, minutes]) => `${phase} ${duration(minutes)}`)
+    .map(([phase, minutes]) => `${phase} ${workDuration(minutes, origin)}`)
     .join(', ');
   const state = whole.complete ? 'Whole task' : 'Task so far';
   const shared =
@@ -82,10 +85,10 @@ function wholeLine(whole: Job['whole']) {
   const flags = whole.flags.length
     ? ` Incomplete timing: ${whole.flags.map(flag => TASK_TIMING_REASONS[flag]).join(', ')}.`
     : '';
-  return `  ${state}: ${duration(whole.agent_minutes)} of agent time (${split}). ${shared}${flags}`;
+  return `  ${state}: ${workDuration(whole.agent_minutes, origin)} of ${workUnit(origin)} (${split}). ${shared}${flags}`;
 }
 
-const TASK_TIMING_REASONS: Record<TaskTimingFlag, string> = {
+export const TASK_TIMING_REASONS: Record<TaskTimingFlag, string> = {
   missing_runs: 'recorded runs missing',
   open_runs: 'runs still open',
   invalid_time: 'invalid or nonpositive run times',
@@ -105,3 +108,9 @@ export function printQuality(quality: Quality) {
 
 const spendText = (amount: number, unit: string) =>
   unit === '$' ? `$${amount.toFixed(2)}` : `${Math.round(amount).toLocaleString('en-GB')} tokens`;
+
+// Carry runs are often shorter than a minute. Keep their measured occupancy visible.
+export const workDuration = (minutes: number, origin?: string) =>
+  origin === 'carry' && minutes > 0 && minutes < 1 ? `${Math.round(minutes * 60)} sec` : duration(minutes);
+
+export const workUnit = (origin?: string) => (origin === 'carry' ? 'worker occupancy' : 'agent time');

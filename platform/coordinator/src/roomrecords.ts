@@ -4,6 +4,7 @@ import { REBUILT_RUN } from './timing.ts';
 import { inspectRoom } from './room.ts';
 import { inspectMemory } from './lowmemory.ts';
 import { inspectWorkerRecords } from './roomretention.ts';
+import { inspectNoticeInterval } from './noticeinterval.ts';
 
 // Bound each response's database work and payload. Cursors leave every later row accessible.
 const PAGE_ROWS = 100;
@@ -44,12 +45,14 @@ export function getRoomRecords(population: unknown = 'spells', after?: unknown) 
   const last = page.at(-1);
   const next = rows.length <= PAGE_ROWS ? null : history.keys.map(key => last![key]).join('.');
   const retained = inspectWorkerRecords();
+  const notices = inspectMemory();
   const decision = retained.decision?.record;
   return {
     inspectedAt: Date.now(),
     coordinator: { pid: process.pid, startedAt: performance.timeOrigin },
     room: inspectRoom(),
-    notices: inspectMemory(),
+    notices,
+    noticeInterval: inspectNoticeInterval(),
     retained,
     population,
     rows: page,
@@ -60,7 +63,7 @@ export function getRoomRecords(population: unknown = 'spells', after?: unknown) 
         ? { decision: decision.identity, measurements: decision.inputs.map(input => input.measurement.identity) }
         : null,
       roomToDecision: null,
-      noticeToMeasurement: null,
+      noticeToMeasurement: noticeMeasurementJoin(notices),
     },
     missing: {
       sharedMeasurement: null,
@@ -69,7 +72,20 @@ export function getRoomRecords(population: unknown = 'spells', after?: unknown) 
       historicalClaimToJob: null,
       calmMeasurementIdentity: null,
       reason:
-        'Retained records contain only the latest room report and latest select-claim decision, each with its own sequential source reads. No atomic room measurement or historical reconstruction is available. Only a matching latest claim answer can supply a job identity. A claimed job is not proof that its process started. Chat and held-seat selection bypass memory reads. Calm baseline identity and notice-history joins remain unavailable. Replacement can lose a natural pressure case before inspection. Missing raw fields stay null.',
+        'Retained records contain the two latest records, one quiet ordinary admission and one eligible ordinary pressure gate. All inputs are sequential. The latest emitted notice retains its original report and baseline anchors when available. The notice interval retains only first/last qualifying report decisions and their observed count. Every intervening processed report must qualify and actual warning emissions break the active summary. Its bounds exclude later events, including events in the same millisecond. It proves no actual warning within those observed decision bounds, not continuous kernel calm, notification of all users or absence of reports lost before transmission. Coordinator exit loses both summaries. None supplies complete report history, a named queued-job rejection or process start. Separately recorded runs and launch linkage are required for starts. Missing raw fields and historical joins stay null.',
     },
   };
+}
+
+function noticeMeasurementJoin(notices: ReturnType<typeof inspectMemory>) {
+  const noticeWorker = notices.notice?.report?.worker;
+  return noticeWorker
+    ? {
+        report: noticeWorker.identity,
+        measurements: noticeWorker.inputs.map(input => input.measurement.identity),
+        spell: notices.notice!.spell,
+        job: notices.notice!.job,
+        kind: notices.notice!.kind,
+      }
+    : null;
 }

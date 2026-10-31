@@ -10,19 +10,27 @@ import { parseCard } from '../card.js';
 import { chips, given, inputHtml } from '../questions.js';
 import { sfx } from '../audio.js';
 import { answerAsk } from './notebookdata.js';
-import { names } from '../brand.js';
+import { openSpot } from './bookaskspot.js';
+
+// The desk phone's name, the company's (brand.js), told by the board's book (book.js): a guest's page has no HQ brand
+// to read, and shows no asks of the board's
+let phone = 'desk phone';
+export const namePhone = name => {
+  phone = name;
+};
 
 const ASK_CLIP =
   '<svg class="slip-clip" viewBox="0 0 14 34" aria-hidden="true"><path d="M10 9v15a3.5 3.5 0 0 1-7 0V6a5 5 0 0 1 10 0v19"/></svg>';
 const ASK_TICK = '<svg class="ask-tick" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 13l5.5 5L21 4"/></svg>';
 
-// A group's cards, under its answers
-export const asksHtml = g => (g.asks ?? []).map(askHtml).join('');
-function askHtml(a) {
+// A group's cards, under its answers. A scrap of an ask about one thing on a page (hq ask --at --spot) says where it
+// is, and a tap there opens it (bookaskspot.js). (spot)
+export const asksHtml = g => (g.asks ?? []).map(a => askHtml(a, g.anchor?.el ? spotHtml(g.anchor) : '')).join('');
+function askHtml(a, spot) {
   const c = parseCard(a.body ?? ''),
     said = (c.summary[0] || a.title).trim();
   const by = `<b class="slip-by">${esc(a.name ?? 'An agent')} asks</b>`;
-  const head = `${ASK_CLIP}${by}<p class="slip-text">${esc(said)}</p>`;
+  const head = `${ASK_CLIP}${by}<p class="slip-text">${esc(said)}</p>${spot}`;
   const label = `${a.name ?? 'An agent'} asks: ${a.title}`;
   if (a.status === 'answered')
     return `<section class="ask-slip" data-ask="${a.id}" data-answered aria-label="${esc(label)}, answered">${head}${ASK_TICK}<p class="ask-answer">${esc(
@@ -47,15 +55,29 @@ function askHtml(a) {
   const free = !choices.length && a.kind !== 'notice';
   return `<section class="ask-slip" data-ask="${a.id}" aria-label="${esc(label)}">${head}${chosen}${asked}<textarea class="ask-words" rows="1" aria-label="${esc(
     `Your answer to ${a.name ?? 'the agent'}`,
-  )}" placeholder="${free && !asked ? 'Write under it to answer' : 'Or write under it'}"></textarea><p class="ask-foot"><span>The same card is on your ${esc(names.phone)}.</span><button type="button" class="ask-send"${
+  )}" placeholder="${free && !asked ? 'Write under it to answer' : 'Or write under it'}"></textarea><p class="ask-foot"><span>The same card is on your ${esc(phone)}.</span><button type="button" class="ask-send"${
     asked || free ? '' : ' hidden'
   }>Send</button></p><p class="slip-said" hidden></p></section>`;
+}
+
+// Where an ask's thing is, as a tap that opens it there: the page's name and the thing's selector
+function spotHtml(anchor) {
+  const url = new URL(anchor.url),
+    name = url.pathname.split('/').filter(Boolean).pop() ?? url.host.split('.')[0],
+    where = `${name} page · ${anchor.el.selector}`;
+  const data = `data-url="${esc(anchor.url)}" data-selector="${esc(anchor.el.selector)}" data-text="${esc(anchor.el.text)}"`;
+  return `<button type="button" class="ask-spot" ${data} aria-label="${esc(`Open it: ${where}`)}">${esc(where)}<i aria-hidden="true">↗</i></button>`;
 }
 
 // The cards under root wired to the desk phone's answer: a choice tapped answers at once (with any words written under
 // it, and the questions' answers when it has some); Send, or Enter in the words, answers with what's there.
 // dev: on the played store. asks: the cards drawn there, by id. answered(): one answered, for the page to read again.
 export function wireAsks(root, { dev, asks, answered }) {
+  for (const spot of root.querySelectorAll('.ask-spot'))
+    spot.addEventListener('click', () => {
+      const { url, selector, text } = spot.dataset;
+      openSpot({ url, el: { selector, text } });
+    });
   for (const slip of root.querySelectorAll('.ask-slip:not([data-answered])')) {
     const a = asks.get(Number(slip.dataset.ask));
     if (a) wireAsk(slip, a, { dev, answered });

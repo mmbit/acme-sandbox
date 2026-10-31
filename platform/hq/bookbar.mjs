@@ -1,31 +1,32 @@
-// book-check.mjs's stories of the tool rail and the page bar at the paper's foot (shell/ink/bookstrip.js, bookui.js,
-// bookcontrols.js; the board, call 170): on a phone, an iPad mini upright and on its side, and a desktop with the
-// notebook wide and narrow, every tool on one row that fits, nothing scrolling, each 40 px or more to the touch; the
-// rail centred over the bar, the bar right at the paper's foot with the page's name whole; --bk-foot the lane's height,
-// and the page's scroll area ending above it, so no tool sits over what's written. Press and slide: a press on Select
-// slid to Text picks Text the moment it lifts, with no hold (the mouse, and in Chromium a finger); the pin and
-// Tips in the lane as well, nothing floating over the page. Run with --webkit for the same in the iPad's engine.
+// book-check.mjs's story of the rail at the paper's right edge (shell/ink/bookui.js, bookstrip.js, bookcontrols.js):
+// on a phone and an iPad mini both ways and a desktop with the notebook wide and narrow, every control the page has on
+// one vertical column at the paper's right edge, nothing scrolling and nothing floating over the page; the tools
+// first, the pen one tool (the marker beside it only where the rail has room), each 40 px wide or more; the page's
+// scroll area ending left of the rail, so no control sits over what's written; the cog's and the pen's cards whole on
+// the screen beside it. Press and slide: a press on Select slid down to Text picks Text the moment it lifts, with no
+// hold (the mouse, and in Chromium a finger). Run with --webkit for the same in the iPad's engine.
+// (the rail at the right edge)
 import assert from 'node:assert/strict';
 import { freePage } from './bookmouse.mjs';
-import { until } from './bookkit.mjs';
-import { touchOf } from './bookstrip.mjs';
+import { touchOf, until } from './bookkit.mjs';
 
 const SIZES = [
   { name: 'phone', viewport: { width: 390, height: 844 }, touch: true },
+  { name: 'phone-sideways', viewport: { width: 844, height: 390 }, touch: true },
   { name: 'mini-upright', viewport: { width: 744, height: 1133 }, touch: true },
   { name: 'mini-sideways', viewport: { width: 1133, height: 744 }, touch: true },
   { name: 'desktop-wide', viewport: { width: 1920, height: 1080 }, touch: false },
   { name: 'desktop-narrow', viewport: { width: 1920, height: 1080 }, touch: false, narrow: 420 },
 ];
-// the rail, left to right
-const RAIL = ['Select', 'Pen', 'Marker', 'Eraser', /^Shapes/, 'Text', 'Undo', 'Redo'];
+// the rail's tools, top to bottom (the ink not in use, Marker, only where the rail is roomy)
+const TOOLS = ['Select', 'Pen', 'Eraser', /^Shapes/, 'Text', 'Undo', 'Redo'];
 // a slide's lift picks its tool this soon (ms)
 const PICK_MS = 100;
 
 // c: book-check.mjs's played store and helpers
 export function barStories(c) {
   return {
-    'the tool rail and the page bar: one row that fits at every size, no scrolling, clear of the page, the name whole; press and slide picks with no hold':
+    "the rail: every control on one column at the paper's right edge at every size, no scrolling, clear of the page, one pen; press and slide picks with no hold":
       async browser => {
         for (const size of SIZES)
           try {
@@ -49,10 +50,9 @@ async function atSize(browser, c, size) {
     await page.waitForSelector('#book .bk-lip', { timeout: 30_000 });
     await opened(page);
     if (size.narrow) await narrowed(page, size.narrow);
-    await settledFoot(page);
+    await fitted(page);
     await c.shot(`book-rail-${size.name}`, page);
     await fits(page);
-    await clearOfThePage(page);
     await cards(page, c, size);
     await slides(page, size, browser);
     assert.deepEqual(errors, []);
@@ -78,49 +78,51 @@ async function narrowed(page, width) {
   await page.mouse.down();
   await page.mouse.move(view.width - width, view.height / 2, { steps: 12 });
   await page.mouse.up();
-  // (the book comes to rest at its new width, and the lane fitted to it, a frame after)
-  await until(
-    () =>
-      page.evaluate(() => {
-        const lane = document.querySelector('#book .bk-lane'),
-          foot = getComputedStyle(document.querySelector('#book')).getPropertyValue('--bk-foot');
-        return !document.querySelector('#book.bk-swinging') && parseFloat(foot) === lane.offsetHeight;
-      }),
-    'the book at rest, narrowed',
-  );
   await page.waitForTimeout(300);
 }
-
-// The lane fitted to the book at rest (a frame after it resizes; on a loaded machine, frames come late)
-const settledFoot = page =>
+// The book at rest and its rail fitted to it (data-fit, a frame after it resizes; on a loaded machine, frames come
+// late), nothing in the column past its foot
+const fitted = page =>
   until(
     () =>
       page.evaluate(() => {
-        const lane = document.querySelector('#book .bk-lane'),
-          foot = getComputedStyle(document.querySelector('#book')).getPropertyValue('--bk-foot');
-        return !document.querySelector('#book.bk-swinging') && parseFloat(foot) === lane.offsetHeight;
+        const column = document.querySelector('#book .bk-column');
+        return (
+          !document.querySelector('#book.bk-swinging') &&
+          !!column?.dataset.fit &&
+          column.scrollHeight <= column.clientHeight + 1
+        );
       }),
-    'the lane fitted, --bk-foot its height',
+    'the book at rest, its rail fitted',
   );
 
-// The cog's preferences and the pen's card (the pen in use pressed again) open over the rail, whole on the screen
+// A control on the rail pressed: on the rail, or from More's card where the rail has folded it away (also
+// bookbookmarks.mjs's)
+export async function press(page, name) {
+  const own = page.locator('#book .bk-column').getByRole('button', { name, exact: true });
+  if (await own.isVisible()) return own.click();
+  await page.locator('#book .bk-column').getByRole('button', { name: 'More', exact: true }).click();
+  await page.locator('#book .bk-more-card').getByRole('menuitem', { name, exact: true }).click();
+}
+
+// The cog's preferences and the pen's card (the pen in use pressed again) open beside the rail, whole on the screen
 async function cards(page, c, size) {
   for (const [name, selector] of [
     ['Preferences on this device', '.bk-prefs'],
     ['Pen', '.bk-palette'],
   ]) {
-    await page.locator('#book .bk-lane').getByRole('button', { name, exact: true }).click();
+    await press(page, name);
     const card = page.locator(`#book ${selector}`);
     await card.waitFor({ state: 'visible', timeout: 5000 });
     await page.waitForTimeout(300);
     await c.shot(`book-rail-${size.name}-${selector.slice(4)}`, page);
-    const [b, rail] = [await card.boundingBox(), await page.locator('#book [data-island=tools]').boundingBox()],
+    const [b, rail] = [await card.boundingBox(), await page.locator('#book .bk-column').boundingBox()],
       view = page.viewportSize();
     assert.ok(
-      b.x >= 0 && b.y >= 0 && b.x + b.width <= view.width,
+      b.x >= 0 && b.y >= 0 && b.x + b.width <= view.width && b.y + b.height <= view.height,
       `${name}'s card on the screen: ${JSON.stringify(b)}`,
     );
-    assert.ok(b.y + b.height <= rail.y, `${name}'s card over the rail`);
+    assert.ok(b.x + b.width <= rail.x + 1, `${name}'s card beside the rail, left of it`);
     const mine = await card.evaluate(el => {
       const r = el.getBoundingClientRect();
       return el.contains(document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2));
@@ -131,96 +133,60 @@ async function cards(page, c, size) {
   }
 }
 
-// Where the lane's parts are, and what's in them (the screen's px)
+// Where the rail and the page are, and what's on the rail (the screen's px)
 const measured = page =>
   page.evaluate(() => {
     const box = el => el && el.getBoundingClientRect().toJSON(),
-      rail = document.querySelector('#book [data-island=tools]'),
-      bar = document.querySelector('#book [data-island=pages]'),
-      name = bar.querySelector('.bk-where');
+      column = document.querySelector('#book .bk-column');
     return {
+      fit: column.dataset.fit,
       paper: box(document.querySelector('#book .bk-paper')),
-      rail: box(rail),
-      railScrolls: rail.scrollWidth > rail.clientWidth + 1 || rail.scrollHeight > rail.clientHeight + 1,
-      tools: [...rail.querySelectorAll('.bk-btn')]
+      desk: box(document.querySelector('#book .bk-pages .bk-desk')),
+      column: box(column),
+      scrolls: column.scrollHeight > column.clientHeight + 1 || column.scrollWidth > column.clientWidth + 1,
+      buttons: [...column.querySelectorAll('.bk-btn')]
         .filter(b => b.getBoundingClientRect().width)
         .map(b => ({ name: b.getAttribute('aria-label'), ...box(b) })),
-      bar: box(bar),
-      buttons: [...bar.querySelectorAll('.bk-btn')].filter(b => b.getBoundingClientRect().width).map(box),
-      name: name && {
-        text: name.textContent,
-        whole: [...name.children].every(el => el.scrollWidth <= el.clientWidth + 1),
-      },
-      lane: box(document.querySelector('#book .bk-lane')),
-      // (the book's own controls, the pin and Tips, in the lane beside the rail or a line of their own)
-      own: [...document.querySelectorAll('#book .bk-islands .bk-btn')]
-        .filter(b => b.getBoundingClientRect().width)
-        .map(b => ({ name: b.getAttribute('aria-label'), ...box(b) })),
+      // (the overview's own tools are in its head)
       floating: [...document.querySelectorAll('#book .bk-island')]
-        .filter(el => el.getBoundingClientRect().width && !el.closest('.bk-lane, .bk-far-head'))
+        .filter(el => el.getBoundingClientRect().width && !el.closest('.bk-column, .bk-far-head'))
         .map(el => el.dataset.island),
     };
   });
 
-// Every tool on the rail in its order, whole on the screen and on the paper, 40 px or more each, nothing scrolling; the
-// rail centred over the bar, the bar at the paper's foot, its name whole; the pin and Tips in the lane too (no Send: the dog-ear's), and
-// no control anywhere else over the page
+// Every control on the column, one above the other, whole on the screen and 40 px wide or more; the column at the
+// paper's right edge, scrolling nothing; the tools first in their order, the pen one tool; the page's scroll area
+// ending left of it; no control anywhere else over the page
 async function fits(page) {
-  const m = await measured(page);
-  const view = page.viewportSize(),
-    names = m.tools.map(t => t.name);
-  assert.equal(names.length, RAIL.length, `the rail's tools: ${names.join(', ')}`);
-  names.forEach((n, i) => assert.ok(RAIL[i].test?.(n) ?? RAIL[i] === n, `the rail's tools: ${names.join(', ')}`));
-  assert.ok(!m.railScrolls, 'the rail scrolls nothing');
-  for (const t of m.tools) {
-    assert.ok(t.width >= 40 && t.height >= 40, `${t.name} 40 px or more: ${t.width}x${t.height}`);
-    assert.ok(t.left >= m.paper.left && t.right <= Math.min(m.paper.right, view.width), `${t.name} on the paper`);
-    assert.ok(t.top >= 0 && t.bottom <= view.height, `${t.name} on the screen`);
-  }
-  assert.ok(m.rail.bottom <= m.bar.top, 'the rail over the bar');
-  const mid = r => (r.left + r.right) / 2;
-  // (centred, or nearly where the book's islands beside it need more than half the room left of it)
-  assert.ok(Math.abs(mid(m.rail) - mid(m.paper)) < 12, `the rail centred on the paper: ${mid(m.rail)} ${mid(m.paper)}`);
+  const m = await measured(page),
+    view = page.viewportSize(),
+    names = m.buttons.map(b => b.name),
+    mid = r => (r.left + r.right) / 2;
+  assert.ok(!m.scrolls, `the rail scrolls nothing (${m.fit})`);
   assert.ok(
-    Math.abs(m.bar.bottom - m.paper.bottom) < 1.5,
-    `the bar at the paper's foot: ${m.bar.bottom} ${m.paper.bottom}`,
+    Math.abs(m.column.right - Math.min(m.paper.right, view.width)) < 1.5,
+    `the rail at the paper's right edge: ${m.column.right} ${m.paper.right}`,
   );
-  assert.ok(m.bar.left >= m.paper.left && m.bar.right <= m.paper.right, 'the bar on the paper');
-  assert.ok(m.name?.whole, `the page's name whole: ${JSON.stringify(m.name)}`);
-  for (const b of m.buttons) assert.ok(b.height >= 36 && b.top >= m.bar.top, 'the bar one row of whole buttons');
-  // (--bk-foot is the lane's height once the book's at rest: settledFoot)
-  assert.ok(Math.abs(m.lane.bottom - m.paper.bottom) < 1.5, "the lane at the paper's foot");
-  assert.ok(
-    !m.own.some(b => b.name === 'Send'),
-    `no Send key: the page goes by its dog-ear (${m.own.map(b => b.name)})`,
-  );
-  for (const b of m.own) {
-    assert.ok(b.width >= 40 && b.height >= 40, `${b.name} 40 px or more: ${b.width}x${b.height}`);
-    assert.ok(b.top >= m.lane.top && b.bottom <= m.bar.top, `${b.name} in the lane, over the bar`);
-    assert.ok(b.left >= m.paper.left && b.right <= Math.min(m.paper.right, view.width), `${b.name} on the paper`);
+  for (const b of m.buttons) {
+    assert.ok(Math.abs(mid(b) - mid(m.column)) < 2, `${b.name} on the rail's one column: ${mid(b)} ${mid(m.column)}`);
+    assert.ok(b.width >= 40 && b.height >= 36, `${b.name} big enough to tap: ${b.width}x${b.height}`);
+    assert.ok(b.top >= 0 && b.bottom <= view.height && b.right <= view.width, `${b.name} on the screen`);
   }
+  m.buttons.slice(1).forEach((b, i) => assert.ok(b.top >= m.buttons[i].bottom - 1, `${b.name} under the one above`));
+  const tools = names.filter(n => n !== 'Marker' && TOOLS.some(t => t.test?.(n) ?? t === n));
+  assert.equal(tools.length, TOOLS.length, `the rail's tools: ${names.join(', ')}`);
+  tools.forEach((n, i) => assert.ok(TOOLS[i].test?.(n) ?? TOOLS[i] === n, `the rail's tools: ${names.join(', ')}`));
+  assert.ok(
+    m.fit === 'roomy' || !names.includes('Marker'),
+    `one pen: the marker shows only where it's roomy (${m.fit})`,
+  );
+  assert.ok(m.desk.right <= m.column.left + 1, `the page ends left of the rail: ${m.desk.right} ${m.column.left}`);
   assert.deepEqual(m.floating, [], 'no island of controls floats over the page');
 }
 
-// The page's scroll area (the element under the paper that scrolls) ends at or above the lane
-async function clearOfThePage(page) {
-  const { lane, scroll } = await page.evaluate(() => {
-    const paper = document.querySelector('#book .bk-paper'),
-      scroller = [...paper.querySelectorAll('*')].find(el => /auto|scroll/.test(getComputedStyle(el).overflowY));
-    return {
-      lane: document.querySelector('#book .bk-lane').getBoundingClientRect().toJSON(),
-      scroll: scroller && { cls: scroller.className, ...scroller.getBoundingClientRect().toJSON() },
-    };
-  });
-  assert.ok(scroll, "the page's scroll area found under the paper");
-  assert.ok(
-    scroll.bottom <= lane.top + 1,
-    `the page's scroll area ends above the lane: ${JSON.stringify([scroll, lane])}`,
-  );
-}
-
-// A press on Select slid along to Text, then let go: Text in use within PICK_MS of the lift, with no hold before the
-// slide; by the mouse everywhere, and by a finger in Chromium on a touch screen. Then a plain tap on the pen picks it.
+// A press on Select slid down the rail to Text, then let go: Text in use within PICK_MS of the lift, with no hold
+// before the slide; by the mouse everywhere, and by a finger in Chromium on a touch screen. Then a plain tap on the
+// pen picks it.
 async function slides(page, size, browser) {
   const rail = page.locator('#book [data-island=tools]'),
     at = async name => {
@@ -258,8 +224,8 @@ async function slides(page, size, browser) {
   const touch = touchOf(await page.context().newCDPSession(page));
   await watch();
   await touch.down([select]);
-  // (drifting a little above the rail as it goes: the tool level with the finger)
-  await touch.move([[text[0], text[1] - 30]], 8);
+  // (drifting a little left of the rail as it goes: the tool level with the finger)
+  await touch.move([[text[0] - 30, text[1]]], 8);
   await until(
     async () => ((await page.locator('#bk-tip').textContent()) ?? '').startsWith('Text'),
     "Text's name shown under the finger",

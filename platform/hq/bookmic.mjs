@@ -7,10 +7,9 @@
 // half second there, and the page hears nothing back before.
 // (its helpers from bookkit.mjs)
 import assert from 'node:assert/strict';
-import { QUIET_MS, touchOf } from './bookstrip.mjs';
 import { freePage, paperBox } from './bookmouse.mjs';
-import { MINI, chromiumPen, pressAlong, ui } from './bookkit.mjs';
-import { PREVIEW, previewServed } from './bookscrap.mjs';
+import { voiceServed } from './bookvoice.mjs';
+import { MINI, PREVIEW, QUIET_MS, chromiumPen, pressAlong, previewServed, touchOf, ui } from './bookkit.mjs';
 
 const HELD = [250, 620]; // (where the pen's held still on HQ's page, clear of the book)
 
@@ -70,11 +69,11 @@ async function inBook(c) {
     await pen.up([at[0] + 120, at[1] + 120]);
     await touch.stroke([[at[0], at[1] + 200]], [[at[0] + 120, at[1] + 200]]);
     // (the double tap in one evaluate: on a loaded worker one CDP press after another can miss its window)
-    await penPressed(page, at, ['pointerdown', 'pointerup', 'pointerdown']);
+    const held = await pressAlong(page, [at], { lift: false, doubleTap: true });
     await page
       .locator('#book .bk-voice[data-state="said"]', { hasText: 'Tap a mic once' })
       .waitFor({ timeout: 15_000 });
-    await penPressed(page, at, ['pointerup']);
+    await held.up();
     await page.waitForTimeout(QUIET_MS);
     assert.equal(await page.evaluate(() => window.micsAsked), 0, 'nothing asked for the microphone');
     assert.deepEqual(errors, []);
@@ -145,6 +144,7 @@ async function pagePosted(c) {
     });
   });
   try {
+    await voiceServed(c, context);
     await previewServed(c, context);
     await page.evaluate(url => import('/shell/desk.js').then(desk => desk.openLink(url)), `${PREVIEW}/basket`);
     await page.waitForSelector('#viewer .bar .pin:not([hidden])', { timeout: 15_000 }); // (review mode said hello)
@@ -199,28 +199,6 @@ async function moved(page, frame, key) {
   await key.click();
   assert.equal(await key.getAttribute('data-phase'), 'ready', 'a tap as the key moves under it isn’t taken');
 }
-
-// The pen's presses at a point, dispatched in the page as the browser would hand them over
-const penPressed = (page, [x, y], types) =>
-  page.evaluate(
-    ([x, y, types]) => {
-      for (const type of types)
-        (document.elementFromPoint(x, y) ?? document.body).dispatchEvent(
-          new PointerEvent(type, {
-            pointerId: 7,
-            pointerType: 'pen',
-            isPrimary: true,
-            clientX: x,
-            clientY: y,
-            buttons: type === 'pointerup' ? 0 : 1,
-            bubbles: true,
-            composed: true,
-            cancelable: true,
-          }),
-        );
-    },
-    [x, y, types],
-  );
 
 // HQ with the microphone not allowed, each time the page asks for it counted (window.micsAsked) and refused; mic: what
 // the browser's microphone does instead, if anything

@@ -5,6 +5,7 @@ import { org, roles } from './company.ts';
 import { findAgent, OPEN_PRS } from './jobs.ts';
 import { withPicks } from './models.ts';
 import * as panel from './panel.ts';
+import * as capacity from './panelcapacity.ts';
 import * as findings from './findings.ts';
 import * as reviewinbox from './reviewinbox.ts';
 import * as engineOnly from './engineonly.ts';
@@ -27,7 +28,6 @@ export type Selection = {
 
 export function brief(pr: number, branch: string, files: string[], links: string[], base: string | null) {
   const candidates = candidatesFor(pr);
-  const seats = db.prepare('select engine, state, pace from seats').all();
   const context = panel.threadContext(branch);
   const earlier = base && light.throwaway(pr) ? light.EARLIER : '';
   return `Choose who needs to review PR #${pr}, round ${roundOf(pr)}, and why. Do one triage read, not a review panel.
@@ -41,13 +41,13 @@ General reviewers: ${JSON.stringify(panel.reviewers(pr))}. Eligible consolidator
 HQ assigns the ruling's consolidator. You may suggest an eligible candidate. HQ resolves an unavailable suggestion by seats.
 ${base ? `Eligible original finders: ${JSON.stringify(finders(pr, files).map(reader => reader.agent))}.` : ''}
 ${earlier}
-Engine availability: ${JSON.stringify(seats)}. Mandatory engine constraints: ${JSON.stringify(engineOnly.rules())}. Availability never excuses a required independent security read.
+${capacity.brief(pr, panel.consolidators(pr))}
+Mandatory engine constraints: ${JSON.stringify(engineOnly.rules())}. Availability never excuses a required independent security read.
 
 Judge what the code does, not its folder, filename, line count or a fixed seat table. What can hurt users, money,
 secrets, sign-in, outside data or the review machinery? Which domain owner needs to look? A drawing or copy change can
 need only one domain read. Security joins for a concrete risk in how HTML is built or escaped, scripts, credentials,
 external data or other dangerous behavior. Keep Codex for security and general independent reads where needed.
-Prefer Claude for visual and domain reads and low-risk rulings when an eligible Claude consolidator can do them.
 ${lenses.brief(readabilityReader(pr))}
 
 On a re-review, omit "reviewers" to use just the eligible original finders of the open blockers listed below${finderList(pr, files)}.

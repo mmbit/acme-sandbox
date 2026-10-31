@@ -9,7 +9,7 @@
 //   way. A book's own menu changes its cover (bookshelfcover.js), archives it or brings it back (never My journal).
 // Its head holds what's used from here: Search and the phone (bookui.js's overview island). What it reads and does is
 // notebookdata.js's; the grid's numbers bookshelfgrid.js's. Drawn at once from what it read last, read again behind.
-import { showGuestNotebooks } from './bookinvites.js';
+import { watchGuestBook } from './bookinvites.js';
 import { esc } from '../../util.js';
 import { island } from './bookui.js';
 import { word } from './bookscope.js';
@@ -206,8 +206,8 @@ function stamped(s, read) {
       }
   });
 }
-// My shelf, or its Archive: its name in hand and its count, the way to the other, Invite; its books in rows, each on
-// its shelf board
+// My shelf, or its Archive: its name in hand and its count, the way to the other; its books in rows, each on its shelf
+// board. Guests are invited from the work, Share on it (desk.js): no Invite here
 function drawShelf(s) {
   const read = s.read.shelf,
     archive = s.tab === 'archive',
@@ -217,7 +217,7 @@ function drawShelf(s) {
     read ? `<span class="bk-shelf-count">${books.length} ${books.length === 1 ? 'book' : 'books'}</span>` : ''
   }<button type="button" class="bk-far-go" data-tab="${archive ? 'shelf' : 'archive'}">${
     archive ? 'My shelf' : `Archive${away ? ` <small>${away}</small>` : ''}`
-  }</button><button type="button" class="bk-far-go" data-invite>Invite</button>`;
+  }</button>`;
   if (!read) return void (s.body.innerHTML = '');
   s.cols = shelfCols(s);
   s.body.innerHTML = books.length
@@ -243,7 +243,6 @@ function columns(s) {
 function clicked(s, e) {
   const t = e.target;
   if (s.swallow) return;
-  if (t.closest('[data-invite]')) return showGuestNotebooks();
   if (t.closest('[data-go=shelf]')) return s.hooks.shelf();
   const tab = t.closest('button[data-tab]');
   if (tab) return switchTab(s, tab.dataset.tab);
@@ -267,7 +266,7 @@ function clicked(s, e) {
       if (round) return s.rounded(n, round);
       if (n.round.state === 'away') return told(s, `With ${n.round.with}'s team: it comes back here with the Advice.`);
     }
-    if (n.kind === 'invited') return showGuestNotebooks(n.id);
+    if (n.kind === 'invited') return watchGuestBook(n.id);
     return s.hooks.notebook(n.id);
   }
   const read = s.read.books.get(s.id),

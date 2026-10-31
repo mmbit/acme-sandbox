@@ -1,26 +1,15 @@
 // Guest and Reviews invitations through their shared controls, on desktop and phone.
 import assert from 'node:assert/strict';
 import { until } from '../../shared/browser/browser.mjs';
-export async function createNotebook(state, board, name, person) {
-  await board.locator('form.invite [name=name]').fill(person);
-  await board.locator('form.invite [name=email]').fill(`${person.toLowerCase()}@example.org`);
-  await board.locator('[name=notebookName]').fill(name);
-  const held = Promise.withResolvers();
-  state.invitationReady = held.promise;
-  await board.locator('form.invite [type=submit]').click();
-  try {
-    assert.equal(await board.locator('form.invite [type=submit]').isDisabled(), true);
-    for (const button of await board.locator('form.invite [data-again]').all())
-      assert.equal(await button.isDisabled(), true);
-  } finally {
-    held.resolve();
-    state.invitationReady = null;
-  }
-  await until(board, '.bi-list', new RegExp(name));
-  const listed = await state.h.board('/api/notebooks/guests/list');
-  const notebook = listed.body.notebooks.find(book => book.name === name);
-  assert.ok(notebook);
-  return notebook;
+// An invited notebook for one person, through the coordinator's route (guests are invited from the work: no form)
+export async function createNotebook(state, name, person) {
+  const created = await state.h.board('/api/notebooks/guests', {
+    kind: 'invited',
+    name,
+    people: [{ name: person, email: `${person.toLowerCase()}@example.org` }],
+  });
+  assert.equal(created.status, 200);
+  return created.body.notebook;
 }
 
 export async function inviteScreens(state, board) {
@@ -44,18 +33,8 @@ export async function inviteScreens(state, board) {
       (await import('/shell/ink/book.js')).openBook();
     });
     await settledBook(board, 'open');
-    await board.getByRole('button', { name: "The overview: the notebook's pages, and the Shelf", exact: true }).click();
-    await settledTurn(board);
-    await board.locator('[data-go=shelf]').click();
-    await settledTurn(board);
-    await board.locator('[data-invite]').click();
-    await board.locator('form.invite').waitFor();
-    assert.equal(await board.locator('[name=kind], [name=days], [name=colleagues], [data-add]').count(), 0);
-    assert.equal(await board.evaluate(() => document.querySelector('dialog').scrollWidth > innerWidth), false);
-    await board
-      .locator('dialog.bi-dialog')
-      .evaluate(dialog => Promise.all(dialog.getAnimations().map(animation => animation.finished)));
-    await snapshot(state, `notebook-invite-${viewport.width}`, board);
+    await openShelf(board);
+    assert.equal(await board.locator('[data-invite]').count(), 0, 'the Shelf has no Invite: guests come from the work');
   }
   await board.setViewportSize({ width: 1440, height: 960 });
 }
@@ -81,21 +60,11 @@ export async function reviewInvite(state, board) {
         '<header><b>Outside notes</b></header><div class="crt"><div class="screen"><section class="notes">' +
         shareHtml(share) +
         '</section></div></div>';
-      wireShare(host, share, { page: `https://hello${preview}/`, kind: 'notes', days: () => 3, redraw: draw });
+      wireShare(host, share, { page: `https://hello${preview}/`, kind: 'notes', days: () => 7, redraw: draw });
     };
     draw(null);
   }, state.preview);
 }
-export async function knownInvitation(state, board) {
-  await board.locator('[data-again="Ada"]').click();
-  await until(board, '.bi-list', /Ada/);
-  const book = (await state.h.board('/api/notebooks/guests/list')).body.notebooks.find(
-    book => book.kind === 'invited' && book.name === 'Ada',
-  );
-  assert.ok(book, 'a known name creates its permanent notebook without retyping the email');
-  assert.equal(book.ends, null);
-}
-
 export async function createReviewRound(state, board) {
   await reviewInvite(state, board);
   for (const person of ['Ada', 'Bela']) {
@@ -107,8 +76,16 @@ export async function createReviewRound(state, board) {
   const round = (await state.h.board('/api/notebooks/guests/list')).body.notebooks.find(book => book.kind === 'round');
   assert.ok((await state.h.board('/api/notebooks')).body.shelf.some(book => book.id === round.id));
   await board.evaluate(() => document.querySelector('dialog[open]').remove());
-  await board.evaluate(async () => (await import('/shell/ink/bookinvites.js')).showGuestNotebooks());
   return round;
+}
+
+// The board's Shelf, from the open book's overview
+export async function openShelf(board) {
+  await board.getByRole('button', { name: "The overview: the notebook's pages, and the Shelf", exact: true }).click();
+  await settledTurn(board);
+  await board.locator('[data-go=shelf]').click();
+  await settledTurn(board);
+  await board.locator('button.bk-far-go[data-tab=archive]').waitFor();
 }
 
 function settledBook(page, mode) {

@@ -14,7 +14,8 @@ import { BOARD } from './book.ts';
 import { companyDay } from '../company.ts';
 import { deskOnly, type DeskCard } from './bookasks.ts';
 import { changed, endOf, makeNotebook, mine, notebookRow, type Notebook } from '../notebook.ts';
-import { addWords } from '../notebookscraps.ts';
+import { addPicture, addWords } from '../notebookscraps.ts';
+import { spotOf } from './askspot.ts';
 import { roundOf } from '../notebookrounds.ts';
 import { isRefused, type Refused } from '../pagechecks.ts';
 
@@ -53,9 +54,23 @@ const projectBook = (project: string) =>
 
 // ---------------------------------------------------------------- an ask
 // hq ask's --book: the notebook its scrap goes in ({ notebook, name, fell: true when the project has no book yet and it
-// goes in My journal }), undefined for a card without one, or what's wrong (worded for the agent)
-export function bookOf(b: any) {
-  if (b?.book == null) return undefined;
+// goes in My journal, spot: the thing on a page it's about, ringed, with --at and --spot }), undefined for a card without
+// one, or what's wrong (worded for the agent)
+export async function bookOf(b: any) {
+  if (b?.book == null) return b?.spot == null ? undefined : '--at and --spot go with --book: a design ask in the book';
+  const book = bookNamed(b);
+  if (typeof book === 'string' || b.spot == null) return book;
+  const spot = await spotOf(b.spot);
+  return typeof spot === 'string' ? `--at and --spot: ${spot}` : { ...book, spot };
+}
+// (--at, --spot: askspot.ts.)
+type Book = {
+  notebook: number;
+  name: string;
+  fell: boolean;
+  spot?: Exclude<Awaited<ReturnType<typeof spotOf>>, string>;
+};
+function bookNamed(b: any): Book | string {
   if (b.note != null || b.page != null)
     return 'a card is about one place: --book for a design ask in the board’s book, --note for a note, --page for a page';
   const asked = String(b.book);
@@ -92,37 +107,41 @@ function asFiled(b: any) {
 }
 // The filed card as a scrap of the agent's on the notebook's Asks page, its title the scrap's words, its card under it.
 // An archived project book comes back on the shelf with it.
-export function placeAsk(request: number, notebook: number, agent: string, title: string) {
+// With a spot, the scrap is its ringed shot, the title its words and the spot its anchor (askspot.ts).
+export function placeAsk(request: number, book: Book, agent: string, title: string) {
+  const notebook = book.notebook;
   db.prepare("update notebooks set archived = 0 where id = ? and kind = 'project'").run(notebook);
   const page = asksPage(notebook);
-  const g = addWords(page, agent, title, { owner: agent });
+  const g = book.spot
+    ? addPicture(page, agent, book.spot.shot, { anchor: book.spot.anchor, words: title, said: 'typed', owner: agent })
+    : addWords(page, agent, title, { owner: agent });
   // (a title the card's checks let through always fits a scrap: a refusal here is our bug)
   if (isRefused(g)) throw new Error(`Asks page ${page.id}: the ask's scrap was refused: ${g[1]}`);
   db.prepare('update notebook_groups set request = ? where id = ?').run(request, g.id);
   changed(notebook, page.id);
   return { page: page.id, group: g.id };
 }
-// A notebook's Asks page: its newest one not sent or archived, made if there's none
-function asksPage(notebook: number) {
+// A notebook's Asks page of a person's (the board's, or a guest's in a book they're in: bookassign.ts): its newest one
+// not sent or archived, made if there's none
+export function asksPage(notebook: number, who = BOARD) {
   const found = db
     .prepare(
-      `select id from book_pages where notebook = ? and kind = 'asks' and archived = 0 and send_at is null
+      `select id from book_pages where notebook = ? and who = ? and kind = 'asks' and archived = 0 and send_at is null
       order by id desc limit 1`,
     )
-    .get(notebook) as { id: number } | undefined;
-  const id = found?.id ?? newAsksPage(notebook);
+    .get(notebook, who) as { id: number } | undefined;
+  const id = found?.id ?? newAsksPage(notebook, who);
   return db.prepare('select * from book_pages where id = ?').get(id) as Parameters<typeof addWords>[0];
 }
-function newAsksPage(notebook: number) {
-  const n = notebookRow(notebook, BOARD)!,
-    now = new Date().toISOString();
+function newAsksPage(notebook: number, who: string) {
+  const now = new Date().toISOString();
   return Number(
     db
       .prepare(
         `insert into book_pages (who, day, kind, label, title_by, created, updated, w, h, notebook, pos)
         values (?, ?, 'asks', ?, 'agent', ?, ?, ?, ?, ?, ?)`,
       )
-      .run(n.who, companyDay(Date.now()), ASKS_LABEL, now, now, NEW_PAGE.w, NEW_PAGE.h, notebook, endOf(notebook))
+      .run(who, companyDay(Date.now()), ASKS_LABEL, now, now, NEW_PAGE.w, NEW_PAGE.h, notebook, endOf(notebook))
       .lastInsertRowid,
   );
 }

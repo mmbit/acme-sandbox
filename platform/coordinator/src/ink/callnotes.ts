@@ -41,12 +41,10 @@ import { boxOf } from '../../../hq/shell/ink/notebookstack.js';
 import { carryParts } from '../notebookcarry.ts';
 import { throwAway } from './bookcalls.ts';
 import { GOAL, WHAT, add, onCallPage, oneLine } from '../ledger.ts';
-import { asked, marked, takenOff } from './callasks.ts';
+import { asked, marked, saidAtEnd, takenOff } from './callasks.ts';
 import { isRefused, labelOf, type Anchor, type Refused } from '../pagechecks.ts';
 import { pictureSize } from '../../../../shared/pictures/size.ts';
 
-// The most of its words a scrap carries (its post-it's): its item's line
-const WORDS_MOST = WHAT;
 // The most characters of a call page's topic, after its date and time: "28 Sept, 22:55, iPad mini walkthrough" is whole
 // in the bar's row on an upright iPad mini (book-check's call-title story).
 const TOPIC_MOST = 21;
@@ -135,8 +133,9 @@ export async function scrap(b: any) {
   const c = Number.isInteger(call) && call > 0 ? liveCall(call) : undefined;
   if (!c) return [404, 'This call has ended: its page has gone in.'] as Refused;
   const words = typeof b.words === 'string' ? b.words.replace(/\s+/g, ' ').trim() : '';
-  if (!words || [...words].length > WORDS_MOST)
-    return [400, `words: the one change, in a line of at most ${WORDS_MOST} characters`] as Refused;
+  // (a scrap's words, its post-it's, are its item's line)
+  if (!words || [...words].length > WHAT)
+    return [400, `words: the one change, in a line of at most ${WHAT} characters`] as Refused;
   const goal = oneLine(b.goal, GOAL);
   if (!goal)
     return [400, `goal: why the board wants it, in its own terms, one line of at most ${GOAL} characters`] as Refused;
@@ -163,7 +162,7 @@ export async function scrap(b: any) {
   if (isRefused(g)) return g;
   const item = add(call, { kind: 'task', owner: owner ?? ceo(), what: words, goal, quote: words }, null, false);
   if (typeof item !== 'object') throw new Error(`Call #${call}'s scrap #${g.id} has no item on its list: ${item}`);
-  asked(g.id, item.id);
+  asked(g.id, { id: item.id, what: words });
   const n = (
     db
       .prepare('select count(*) n from notebook_groups where page = ? and kind = ? and by = ? and deleted is null')
@@ -272,7 +271,7 @@ export function noted(call: number, item: { id: number; kind: string; owner: str
   const g = byHand(c.agent, () => addWords(p, c.agent, text, { owner: agent ? item.owner : null }));
   if (isRefused(g)) return;
   // (one for the board stays on the page as written)
-  if (agent) asked(g.id, item.id);
+  if (agent) asked(g.id, item);
   else marked(g.id);
 }
 // The call has ended (call.ts handOver, ledger.ts sweep): its page is shut as it is, staying where it is, with the
@@ -280,6 +279,7 @@ export function noted(call: number, item: { id: number; kind: string; owner: str
 // out with the board's context
 export function ended(call: number) {
   takenOff(call);
+  saidAtEnd(call);
   const open = openPage(call);
   if (!open) return;
   const p = pageRow(open, BOARD)!;

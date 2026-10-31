@@ -3,6 +3,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { harness } from './harness.ts';
+import { memoryFixture } from '../../worker/src/memory.fixture.ts';
+import { roomRecords } from '../../worker/src/roomrecords.ts';
 
 const h = await harness('room');
 const { reportRoom } = await import('./room.ts');
@@ -311,4 +313,119 @@ test('server CPU pressure reaches every running job once, including reviews and 
   assert.equal((await inbox(first.token)).length, 1, 'a new spell warns again');
   await report('calm');
   await inbox(first.token);
+});
+
+test('each emitted notice keeps its actual report while a spell continues with newer reasons and later clears', async context => {
+  const { inspectMemory } = await import('./lowmemory.ts');
+  const first = await h.start({ agent: 'bolt' });
+  const late = await h.start({ agent: 'juno' });
+  const { memory, pressure, reading, write } = memoryFixture(context);
+  const records = roomRecords();
+  const report = (used: number, cpu = 0, uses = new Map<number, number>()) => {
+    reading(8e9, used, 0, 8e9);
+    write('cpu.pressure', `some avg10=${cpu} avg60=0 avg300=0 total=0`);
+    const captured = memory.inspect(() => ({
+      freeMb: memory.freeMb(false),
+      uses,
+      room: memory.room(),
+    }));
+    const verdict = pressure({ ...captured.value, inputs: captured.inputs });
+    const outgoing = { free: captured.value.freeMb, memory: verdict };
+    records.room({
+      report: outgoing,
+      pressure: verdict,
+      inputs: captured.inputs.map(input => ({ ...input, phase: 'watch' })),
+    });
+    const record = records.latest().room!;
+    reportRoom({ ...outgoing, records: records.latest() });
+    return record;
+  };
+  const readRoom = async () => (await h.agent('room/records', first.token)).body.retained.room;
+  const calm = report(2e9);
+  const calmRoom = await readRoom();
+  assert.deepEqual(calmRoom.record, calm);
+  assert.deepEqual(calmRoom.notice.transition, { kind: 'none', spell: null });
+  const opening = report(7e9);
+  const openedRoom = await readRoom();
+  assert.deepEqual(openedRoom.record, opening);
+  assert.deepEqual(openedRoom.notice, inspectMemory().report);
+  assert.equal('transition' in opening, false, 'the worker record remains unchanged');
+  const inbox = (token: string) => h.agent('inbox', token, { stopping: false });
+  assert.ok((await inbox(first.token)).body.some((line: any) => line.memory));
+  const original = inspectMemory().notice!;
+  assert.deepEqual(original.report!.transition, { kind: 'opened', spell: original.spell });
+  assert.deepEqual(openedRoom.notice, original.report);
+  assert.equal(original.kind, 'warning');
+  assert.deepEqual(original.report?.worker?.identity, opening.identity);
+  assert.deepEqual(original.openingIdentity, opening.identity);
+  assert.equal(original.report?.worker?.pressure.inputs.cpuBusy, false);
+  const continuing = report(2e9, 75);
+  const continuedRoom = await readRoom();
+  assert.deepEqual(continuedRoom.record, continuing);
+  assert.deepEqual(continuedRoom.notice, inspectMemory().report);
+  assert.deepEqual(inspectMemory().notice, original, 'a report alone does not replace an emitted-notice witness');
+  assert.ok((await inbox(late.token)).body.some((line: any) => line.memory));
+  const newer = inspectMemory().notice!;
+  assert.deepEqual(newer.report!.transition, { kind: 'continued', spell: newer.spell });
+  assert.equal(newer.spell, original.spell);
+  assert.equal(newer.job, late.id);
+  assert.deepEqual(newer.openingIdentity, opening.identity);
+  assert.deepEqual(newer.report?.worker?.identity, continuing.identity);
+  assert.equal(newer.report?.worker?.pressure.inputs.memoryVerdict, 'calm');
+  assert.equal(newer.report?.worker?.pressure.inputs.cpuBusy, true);
+  assert.deepEqual(newer.report?.worker?.pressure.inputs.source, continuing.pressure.inputs.source);
+  records.decision({
+    action: 'select claim',
+    outcome: 'claim selected',
+    slot: 'chat',
+    claim: { seat: 'chat', engine: 'codex', kind: 'chat', room: null },
+    job: null,
+    inputs: [],
+  });
+  assert.deepEqual(inspectMemory().notice, newer, 'an unrelated selection cannot replace the emitting report');
+  await inbox(late.token);
+  assert.deepEqual(inspectMemory().notice, newer, 'an empty hook does not replace the witness');
+  const cleared = report(2e9);
+  const clearedRoom = await readRoom();
+  assert.deepEqual(clearedRoom.record, cleared);
+  assert.deepEqual(clearedRoom.notice, inspectMemory().report);
+  assert.deepEqual(openedRoom.notice.transition, { kind: 'opened', spell: original.spell });
+  assert.ok((await inbox(first.token)).body.some((line: any) => line.memory));
+  const allClear = inspectMemory().notice!;
+  assert.deepEqual(allClear.report!.transition, { kind: 'cleared', spell: allClear.spell });
+  assert.equal(allClear.kind, 'all-clear');
+  assert.equal(allClear.spell, original.spell);
+  assert.deepEqual(allClear.clearingIdentity, cleared.identity);
+  assert.deepEqual(allClear.report?.worker?.identity, cleared.identity);
+  assert.deepEqual(
+    original.report?.worker?.pressure,
+    opening.pressure,
+    'the first delivery preserves its original inputs',
+  );
+  reportRoom({ ...cleared.report, records: records.latest() });
+  assert.deepEqual(await readRoom(), clearedRoom, 'the same record keeps its original transition');
+  reportRoom({ memory: { verdict: 'low', reasons: ['old worker without record'] }, free: 1000 });
+  assert.equal(inspectMemory().report?.worker, null, 'a missing source stays absent');
+  assert.deepEqual(await readRoom(), clearedRoom, 'a report without records leaves the retained copy alone');
+  const unanchored = await h.start({ agent: 'quill', kind: 'review' });
+  assert.ok((await inbox(unanchored.token)).body.some((line: any) => line.memory));
+  assert.equal(inspectMemory().notice?.report?.worker, null, 'a legacy report keeps its absent worker source');
+  assert.equal(inspectMemory().notice?.openingIdentity, null);
+  report(2e9);
+  report(7e9, 0, new Map([[first.id, 3000]]));
+  const causedSpell = inspectMemory().report!.transition.spell;
+  report(2e9);
+  const next = report(7e9);
+  const nudge = (await inbox(first.token)).body;
+  assert.equal(nudge.length, 1);
+  assert.match(nudge[0].text, /this job's own use/);
+  assert.doesNotMatch(nudge[0].text, /the server is full/);
+  const inspected = (await h.agent('room/records', first.token)).body;
+  assert.deepEqual(inspected.retained.room.record.identity, next.identity);
+  assert.equal(inspected.notices.notice.spell, causedSpell);
+  assert.equal(inspected.notices.notice.pressureLine, false);
+  assert.deepEqual(inspected.notices.notice.cause, { job: first.id, tookMb: 3000, freeMb: 5722 });
+  assert.equal(inspected.notices.notice.report, null, 'a cause-only nudge uses no report');
+  assert.equal(inspected.joins.noticeToMeasurement, null, 'a newer spell supplies none of the nudge text');
+  report(2e9);
 });

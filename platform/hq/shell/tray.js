@@ -1,7 +1,4 @@
-// Pictures for the board's next intercom line, or for a desk-phone card's answer:
-// attached, pasted or dropped. Each is redrawn as a JPEG (shrink(): no camera metadata, HEIC turned into JPEG) and
-// uploaded at once, so Send rarely waits. The line (or answer) then carries their numbers, and its reader saves them with
-// hq picture (chat.ts, jobs.ts answerRequest, pictures.ts). One tray for the intercom (request 0), one per card.
+// Pictures for the board's next intercom line (request 0) or a desk-phone card's answer, each uploaded as it's added
 import * as world from '../world/world.js';
 import { loadWaitingPictures, forgetPicture, uploadPicture, pictureUrl } from './data.js';
 import { sfx } from './audio.js';
@@ -31,6 +28,8 @@ export class Tray {
     this.paint();
     sfx.blip();
   }
+  // The line (or answer) sent carries the pictures' numbers: the coordinator reads them (chat.ts, jobs.ts's
+  // answerRequest) and saves them (pictures.ts).
   upload(file) {
     const p = { key: ++this.keys, pct: 0 };
     this.list.push(p);
@@ -206,9 +205,9 @@ const pictureError = err => {
           : 'Could not reach the coordinator. Try the picture again.';
 };
 
-// Decode (honouring the camera's rotation), scale down to maxSide pixels on the long side, re-encode as JPEG. Throws
-// 'decode' if the browser can't read it. (The desk phone's photo fields, a call's pictures and the studio's photos redraw
-// theirs the same way.)
+// Decode (honouring the camera's rotation), scale down to maxSide pixels on the long side, re-encode as JPEG: no camera
+// metadata, and HEIC turned into JPEG. Throws 'decode' if the browser can't read it. (The desk phone's photo fields, a
+// call's pictures and the studio's photos redraw theirs the same way.)
 export async function shrink(file, maxSide = MAX_SIDE) {
   let src = await createImageBitmap(file, { imageOrientation: 'from-image' }).catch(() => null);
   if (!src)

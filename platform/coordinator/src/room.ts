@@ -13,7 +13,8 @@ import type { Memory } from './eta.ts';
 import * as lowmemory from './lowmemory.ts';
 import * as meetingroom from './meetingroom.ts';
 import { roomReported } from './startholds.ts';
-import { reportWorkerRecords } from './roomretention.ts';
+import { reportWorkerRecords, STALE_MS } from './roomretention.ts';
+import { inspectReportBoundary } from './inspection.ts';
 import type { WorkerRecords } from '../../worker/src/roomrecords.ts';
 
 export const inspectRoom = (now = Date.now()) => ({
@@ -24,7 +25,6 @@ export const inspectRoom = (now = Date.now()) => ({
 });
 
 export const STARVED_MS = 5 * 60_000;
-const STALE_MS = 3 * 60_000; // a report older than this says nothing: the worker is restarting, or gone
 type Share = { job: number; mb: number; cores: number };
 type Room = {
   at: number;
@@ -114,7 +114,6 @@ export function reportRoom(
   },
   now = Date.now(),
 ) {
-  reportWorkerRecords(workerReport.records, now);
   recordCapacity(workerReport.capacity, now);
   const jobs = (Array.isArray(workerReport.jobs) ? workerReport.jobs : [])
     .slice(0, 64)
@@ -143,12 +142,24 @@ export function reportRoom(
     waiting,
     gathering: gatheringCount(workerReport.gathering),
   };
-  lowmemory.report(workerReport.memory, lastReport.free, now);
+  retainReports(workerReport, lastReport.free, now);
   roomReported(short, since, now);
   const s = starved(now);
   if (s && setting('room.told') !== String(s.since)) tell(s, now);
   jam.watch(s && { since: s.since, free: s.free, waiting: s.waiting, jobs: lastReport.jobs }, now);
   return { waiting, ...meetingStatus(now) };
+}
+
+function retainReports(workerReport: Parameters<typeof reportRoom>[0], freeMb: number, now: number) {
+  const notice = lowmemory.report(
+    workerReport.memory,
+    freeMb,
+    now,
+    workerReport.records?.room,
+    workerReport.records?.source,
+  );
+  reportWorkerRecords(workerReport.records, now, notice);
+  inspectReportBoundary(workerReport.records?.source);
 }
 
 const gatheringCount = (value: unknown) =>

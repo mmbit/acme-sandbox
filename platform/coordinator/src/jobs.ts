@@ -195,8 +195,9 @@ function agentEngine(agent: string) {
 
 // The board and its members are people, and the company's mascots (brand.yaml) pets, not agents: no job runs, and
 // nothing is said, in their name.
+export const BOARD = 'board';
 export const boardId = (id: string) =>
-  id === 'board' ||
+  id === BOARD ||
   [...(yamlFile('company/org.yaml').board?.members ?? []), ...(brand().mascots ?? [])].some(
     (m: { id: string }) => m.id === id,
   );
@@ -735,8 +736,8 @@ adding a parallel one.`;
 
 // hq extend: more for a job that hasn't started yet, instead of a second job beside it. Only work that has never
 // run (a started job's session has read its prompt already: wait on it with --after instead), and only work an agent
-// queued: the coordinator's own jobs (the board's answers, its directives) take nothing added. The signature goes after
-// the text, like hq job's "(Assigned by ...)", so a sign-off inside the text is never the last word.
+// or the board queued. The coordinator's own jobs (the board's answers, its directives) take nothing added.
+// The signature goes after the text, like hq job's "(Assigned by ...)", so a sign-off inside the text is never the last word.
 export function extendJob(id: number, by: string, text: string) {
   text = text.trim();
   if (!text) return 400;
@@ -1899,6 +1900,9 @@ export const ended = (ids: number[]) =>
         )
         .all(...ids)
     : [];
+
+// An org.yaml alumnus: work still goes to one (a lead brings it back, a fix on its own pull request)
+export const alumnus = (id: string) => (org().alumni ?? []).some((a: { id: string }) => a.id === id);
 
 // The agent with its department, charter, its voice on calls (voiceOf), and the model, effort and auto-compact window it
 // runs on (company/models.yaml, overridable per agent in org.yaml). (voice)
@@ -3163,6 +3167,12 @@ export const archivePhoto = (id: number, field: number) => {
 
 // A field's line goes after what the board typed; with nothing typed there are no blank lines first
 const withLine = (answer: string, line: string) => [answer, line].filter(Boolean).join('\n\n');
+// What a card answered without a word records. A notice (kind notice: news, no question) is closed with the desk phone's
+// Got it, a word optional: taken without one (gotIt), its record says so, and no job is made to hear it (a job parked on
+// it goes on: answerHeard). So is a card that brings work back, answered with notes on its preview in review mode
+// (review): the notes queue their own job as they're sent (feedback.ts).
+const wordless = (answer: string, review: boolean, gotIt: boolean) =>
+  review ? 'Leaving notes on the preview, in review mode.' : gotIt ? 'Got it.' : answer;
 // approve: the board pressed Approve on an approval request with a grant. That, and the board saving all of a credential
 // grant's keys (approvals.ts), are the only ways an approval record is written.
 // address, on an address card: use, a saved address the board picked, goes into the
@@ -3207,17 +3217,15 @@ export function answerRequest(
       : `Not approved.${answer ? ` The board said: ${answer}` : ''}`;
   }
   answer = withLine(answer, pictures.mention(waitingPictures.ids));
-  // A notice (kind notice: news, no question) is closed with the desk phone's Got it, a word optional: taken without one,
-  // its record says so, and no job is made to hear it (a job parked on it goes on: below)
-  // So is a card that brings work back, answered with notes on its preview in review mode (review): the notes queue
-  // their own job as they're sent (feedback.ts)
   const gotIt = (req.kind === 'notice' && !answer.trim()) || review;
-  if (review) answer = 'Leaving notes on the preview, in review mode.';
-  else if (gotIt) answer = 'Got it.';
+  answer = wordless(answer, review, gotIt);
   const withFiles = filesAnswered(req, answer);
   if (typeof withFiles === 'number') return withFiles;
-  answerRecorded(req, withFiles, questions.asked, waitingPictures.ids);
-  if (!voiceprints.settleYearlyCard(req.id)) answerHeard(req, withFiles, gotIt);
+  // An action card (steps for the board to do) sent with nothing at all is recorded as done, and heard like any answer:
+  // its asker may have work waiting on it
+  const recorded = req.kind === 'action' && !withFiles.trim() ? 'Done.' : withFiles;
+  answerRecorded(req, recorded, questions.asked, waitingPictures.ids);
+  if (!voiceprints.settleYearlyCard(req.id)) answerHeard(req, recorded, gotIt);
   return { ok: true };
 }
 // A card about a note, filed, answered on the desk phone or in the book, or taken off the desk phone unanswered: the

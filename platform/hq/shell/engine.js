@@ -1,8 +1,4 @@
-// An agent's or a seat's engine as its mark: the one way HQ shows an engine (the agent panel, People, Calls, Seats,
-// Settings › Seats and Wire's keys). Every mark is our own drawing, never a provider's logo: Claude a spark, Codex a
-// prompt in a window, a pay-per-use key a key, a person a head and shoulders, Vibe a gust of wind, Antigravity an
-// arrow rising off the ground. The drawings are icons (icons.js), so each look shows its own style's. The engine's name is
-// the mark's label for screen readers, and its tooltip where it stands alone.
+// An agent's or a seat's engine as its mark: the one way HQ shows an engine
 import { esc } from '../util.js';
 import { icon } from './icons.js';
 
@@ -14,7 +10,7 @@ const NAMES = {
   vibe: 'Mistral Vibe',
   agy: 'Antigravity CLI',
 };
-// Each engine's icon: a person's is the people's own
+// Each engine's icon, our own drawing and never a provider's logo: a person's is the people's own
 const ICONS = {
   claude: 'engine-claude',
   codex: 'engine-codex',

@@ -1,10 +1,8 @@
-// Blocks of text to copy, in a post or a note and on a desk phone card: each block gets a Copy button that copies it
-// exactly, with its newlines and indents, and says "Copied" for a moment. On a tablet, dragging to select a long block is
-// fiddly and easy to cut short. A block its CSS holds to a few lines also gets Show all.
-//   under: Copy goes under the block, on one row with Show all, rather than on a row of its own above it (a desk phone
-//   card, where every line counts).
+// A Copy button on each block of text in a post, a note or a desk phone card, and Show all on a block held short
 import { sfx } from './audio.js';
 
+// under: Copy goes under the block, on one row with Show all, rather than on a row of its own above it (a desk phone
+// card, where every line counts)
 export function copyBlocks(scope, { trimFinalNewline = false, under = false } = {}) {
   scope.querySelectorAll('pre').forEach(pre => {
     const copy = document.createElement('button');

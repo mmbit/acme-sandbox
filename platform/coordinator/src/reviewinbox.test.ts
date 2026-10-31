@@ -395,6 +395,33 @@ test('a transferred project sends the open findings to its new owner through the
   );
 });
 
+test('with review.drawWindowedChanges, a "changes" on a pull request whose author has left draws the fix task for that author', async t => {
+  const org = `${h.repo}/company/org.yaml`,
+    before = readFileSync(org, 'utf8');
+  writeFileSync(org, before + '\nreview:\n  drawWindowedChanges: true\n');
+  t.after(() => writeFileSync(org, before));
+  const windows = await import('./windows.ts');
+  const deadline = Date.now() + 3_600_000;
+  windows.set(projects.findThread('game/world')!, { deadline, aim: deadline }, 'juno');
+  const author = await h.start({ agent: 'bolt', title: 'Build the world', thread: 'game/world' });
+  const branch = `job/${author.id}`;
+  h.storedPr(71, author.id, 'open', ['game.ts'], { round: 1 });
+  db.prepare("update prs set author = 'rivet' where number = 71").run();
+  proposals.deliverFindings({
+    pr: 71,
+    round: 1,
+    branch,
+    agent: 'bolt',
+    decision: 'changes',
+    summary: 'Fixes',
+    findings,
+  });
+  assert.deepEqual(
+    fixTasks().map(task => ({ agent: task.agent, branch: task.branch })),
+    [{ agent: 'rivet', branch }],
+  );
+});
+
 // Lyra's findings:2064 on 23 Oct: a windowed thread's ruling sat 27 minutes in the inbox while her running sessions
 // worked on other things
 test('with review.drawWindowedChanges, a windowed thread\'s "changes" ruling gives its author a fix task at once, whatever the owner\'s session does', async t => {

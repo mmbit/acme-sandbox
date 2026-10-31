@@ -49,10 +49,11 @@ export function notebookOn(c, page = {}) {
       return Math.ceil(this.box.y + this.box.h);
     },
   });
-  // An agent's answer on group g: for the seed with its id, or for play.answer mid-story without (the store's)
+  // An agent's answer on group g, without an id. A seeded answer gives its own ({ id, ...answer(…) }), and play.answer
+  // gives one to an answer that lands mid-story.
   let made = 0;
-  const answer = (g, id, style, text, spot, more = {}) => ({
-    ...(id && { id, grp: g.id }),
+  const answer = (g, style, text, spot, more = {}) => ({
+    grp: g.id,
     by: ceo,
     style,
     text,
@@ -112,7 +113,7 @@ export const onScreen = (page, selector) =>
     return {
       at: el && box(el),
       paper: box(document.querySelector('#book .bk-desk')),
-      rail: [...document.querySelectorAll('#book .bk-islands .bk-island')].filter(i => i.offsetWidth).map(box),
+      rail: [...document.querySelectorAll('#book .bk-column .bk-island')].filter(i => i.offsetWidth).map(box),
       strip: box(document.querySelector('#book .bk-strip')),
     };
   }, selector);
@@ -179,15 +180,16 @@ export const SYMBOLS = {
 const RED =
   'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAgAAAAGCAIAAABxZ0isAAAAEUlEQVR4nGN4ZmODFTEMpAQAW3NBof5buBkAAAAASUVORK5CYII=';
 // A board's note tried in versions: the played Notebook, the note (its try going, three versions said) and a version
-// made on it (A, B, C… as they come: its screenshot and its staging preview's address), for the seed with its id, or
-// for play.answer mid-story without (bookanswers.mjs and bookpicks.mjs). page: its page's own columns (notebookOn).
+// made on it (A, B, C… as they come: its screenshot and its staging preview's address), as notebookOn's answer is
+// (bookanswers.mjs and bookpicks.mjs). page: its page's own columns (notebookOn). version() returns an answer without
+// an id, as answer() does: a seeded version gives its own, and play.answer gives one to a version made mid-story.
 export function triedNote(c, page = {}) {
   const nb = notebookOn(c, page),
     warmer = nb.typed(4400, 'warmer?', 60, 60);
   warmer.tried = { by: nb.ceo, expect: 3, going: true };
-  const version = (id, name, picture = RED) => {
+  const version = (name, picture = RED) => {
     const slug = name.toLowerCase().replace(/\W+/g, '-');
-    return nb.answer(warmer, id, 'version', `${name}, as it would look`, null, {
+    return nb.answer(warmer, 'version', `${name}, as it would look`, null, {
       ...{ version: name, picture, link: `https://try-${slug}.preview.example.com/`, branch: `try/${slug}` },
     });
   };

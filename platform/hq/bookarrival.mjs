@@ -6,10 +6,8 @@
 import assert from 'node:assert/strict';
 import { open } from './booknotebook.mjs';
 import { pen } from './booknotebookscreen.mjs';
-import { until } from './bookkit.mjs';
+import { DESKTOP, UPRIGHT, until } from './bookkit.mjs';
 
-const MINI = { width: 744, height: 1133 },
-  DESKTOP = { width: 1440, height: 900 };
 // a picture of the seed's store (mock/notebook.json)
 const SNIP = 'book-snip-1.svg';
 // share of a landing's pixels that may differ from the page's drawing of it (antialiasing: by more than ROUGH of 255
@@ -25,7 +23,7 @@ export function arrivalStories(c) {
   return {
     'things arriving on a Notebook page: a scrap from the store and a picture pasted each land once, where the page draws them, on the iPad mini and a desktop':
       async browser => {
-        await arrivals(browser, c, MINI, { hasTouch: true, folded: true });
+        await arrivals(browser, c, UPRIGHT, { hasTouch: true, folded: true });
         await arrivals(browser, c, DESKTOP, {});
       },
   };

@@ -5,8 +5,8 @@ from concurrent.futures import ThreadPoolExecutor, wait
 import reads
 from drawing import ASK_WORDS, BESIDE_MOST, INK_WORDS, WHAT_MOST, ink_asked, what_asked
 from driving import BY, DRIVE_WORDS, OPEN_WORDS, move_asked, work_asked
-from callnotes import (CHANGE_MOST, CHANGE_WORDS, MARK_WORDS, MARKS, PAGE_WORDS, SCRAP_WORDS, TITLE_MOST, TITLE_WORDS_SAID,
-                       TRY_WORDS, change_asked, mark_asked, scrap_asked, title_asked, try_asked)
+from callnotes import (CHANGE_WORDS, GOAL, MARK_WORDS, MARKS, PAGE_WORDS, SCRAP_WORDS, TITLE_WORDS_SAID, TOPIC_MOST,
+                       TRY_WORDS, WHAT, change_asked, mark_asked, scrap_asked, title_asked, try_asked)
 from voices import NAME_LENGTH, VOICE_WORDS
 from voices import ENROL_WORDS, FORGET_WORDS
 
@@ -18,8 +18,9 @@ HQ_ENV = {k: os.environ[k] for k in ('PATH', 'LANG', 'HQ_URL', 'HQ_TOKEN', 'HQ_A
 # socket, by the session's key (guard.agent_env): the line keeps the call's picture budget and its own token. Neither is
 # here on a call with no screen.
 SCREEN_SOCKET, SCREEN_KEY = os.environ.get('SCREEN_SOCKET', ''), os.environ.get('SCREEN_KEY', '')
-# (the coordinator refuses longer ones from a call too: server.ts, ledger.ts, messages.ts)
-TITLE, BRIEF, WHAT, GOAL, ADD = 140, 8000, 200, 300, 8000
+# (the coordinator refuses longer ones from a call too: server.ts, ledger.ts, messages.ts. An item's line and goal:
+# callnotes.py WHAT, GOAL.)
+TITLE, BRIEF, ADD = 140, 8000, 8000
 UNSURE = "{} Don't hand it on again: tell the board the hand-off is unconfirmed and that you'll check after the call."
 UNNOTED = "{} Don't note it again: the follow-up goes through the whole call afterwards and records it if it's missing."
 WORK = ThreadPoolExecutor()  # (the tools under way, every call's: what's under way at hang-up still lands)
@@ -494,7 +495,7 @@ TOOLS += [
                     'properties': {k: FRACTION for k in ('x', 'y', 'width', 'height')},
                     'description': "for a crop: the part of that picture the change is about, with a little room round "
                     'it, in fractions of its width and height (0 to 1) from its top left'},
-         'words': {'type': 'string', 'minLength': 1, 'maxLength': CHANGE_MOST,
+         'words': {'type': 'string', 'minLength': 1, 'maxLength': WHAT,
                    'description': 'the one change, in a short plain line ("Make the price smaller")'},
          'goal': GOALS,
          'owner': {'type': 'string', 'description': "the id of the agent whose work it is, if you know; left out, "
@@ -503,8 +504,8 @@ TOOLS += [
      'is about ("Shop page prices"), and again if that changes: a title, not a summary. The page keeps the call\'s date '
      'and time in front of it ("28 Oct, 22:55, Shop page prices"), so give the topic alone.',
      'inputSchema': {'type': 'object', 'required': ['title'], 'additionalProperties': False, 'properties': {
-         'title': {'type': 'string', 'minLength': 1, 'maxLength': TITLE_MOST,
-                   'description': f'the topic, at most {TITLE_MOST} characters: whole in the Notebook\'s bar'}}}},
+         'title': {'type': 'string', 'minLength': 1, 'maxLength': TOPIC_MOST,
+                   'description': f'the topic, at most {TOPIC_MOST} characters: whole in the Notebook\'s bar'}}}},
 ]
 # The call's notes page worked as the board works it: read, drawn on, changed, moved and deleted, each a step the
 # board's Undo takes back (callnotes.py; the coordinator's ink/callpage.ts). Scrap px and after.
@@ -541,7 +542,7 @@ TOOLS += [
      'wrong, rather than adding another beside it. The board sees it happen and can undo it.',
      'inputSchema': {'type': 'object', 'required': ['id'], 'additionalProperties': False, 'properties': {
          'id': {'type': 'integer', 'minimum': 1, 'description': 'its number, as read_page or the scrap tool gives it'},
-         'words': {'type': 'string', 'minLength': 1, 'maxLength': CHANGE_MOST,
+         'words': {'type': 'string', 'minLength': 1, 'maxLength': WHAT,
                    'description': 'your note\'s or scrap\'s new words, one plain line'},
          'after': {'type': 'integer', 'minimum': 1, 'description': 'the number of the scrap it goes right after, as '
                    'read_page gives it'},
@@ -553,7 +554,7 @@ TOOLS += [
      "it one by one, and how long only as this tool's answer says. Never also queue a job for it.",
      'inputSchema': {'type': 'object', 'required': ['id', 'why'], 'additionalProperties': False, 'properties': {
          'id': {'type': 'integer', 'minimum': 1, 'description': 'its number, as read_page or the scrap tool gives it'},
-         'why': {'type': 'string', 'minLength': 1, 'maxLength': CHANGE_MOST,
+         'why': {'type': 'string', 'minLength': 1, 'maxLength': WHAT,
                  'description': "what the board asked to see, in its own words, one plain line"}}}},
 ]
 

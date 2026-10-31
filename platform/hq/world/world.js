@@ -168,8 +168,7 @@ const said = (jobs, ev) => jobs?.map(j => (j.id === ev.job && ev.text ? { ...j, 
 // Who is at work, as the org's read has it (the coordinator's status of each): the feed alone misses what happened while
 // it was cut off (a tablet asleep, a reconnect that replays only the latest events), and the ring and the order would
 // keep that for good. asked: when the read was asked for; a status the feed brought since is newer and stays. One still at
-// work takes the read's task and jobs too: the feed misses one job ending and the next starting just the same (the
-// board's picture #67.)
+// work takes the read's task and jobs too: the feed misses one job ending and the next starting just the same
 export function setStatuses(org, asked) {
   for (const d of org.departments || []) for (const a of d.agents || []) {
     const A = agents.get(a.id), s = a.status;

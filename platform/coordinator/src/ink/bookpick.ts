@@ -29,8 +29,6 @@ const PAD = 24,
 // The most of a picked version's patch quoted to the job it goes to (a try's patch is a few kB; one longer is the
 // frame's to show, and the try's to make again)
 const PATCH_QUOTED = 20_000;
-// A frame's sides as HQ may send them, page px
-const FRAME_MAX = 4000;
 
 type Box = { x: number; y: number; w: number; h: number };
 const slipById = (id: number | null) =>
@@ -38,18 +36,8 @@ const slipById = (id: number | null) =>
 const isVersion = (s: Slip | undefined): s is Slip => !!s && s.style === 'version';
 
 // ---------------------------------------------------------------- the reply's picture
-// A frame HQ sent with a reply: the box the version's picture shows in, in its page's px, or null for none fit to use
-export function frameOf(v: unknown): Box | null {
-  const f = v as Box | null;
-  if (!f || typeof f !== 'object') return null;
-  const ok = (n: unknown, max: number, min = -max) =>
-    typeof n === 'number' && Number.isFinite(n) && n >= min && n <= max;
-  return ok(f.x, 1e5) && ok(f.y, 1e5) && ok(f.w, FRAME_MAX, 1) && ok(f.h, FRAME_MAX, 1)
-    ? { x: f.x, y: f.y, w: f.w, h: f.h }
-    : null;
-}
-// A reply's ink on a version, drawn over the version's frame where the board saw it (frame: frameOf's), so the judge
-// and the agent see what was ringed or ticked; null when the answer isn't a version with a picture, or there's no frame
+// A reply's ink drawn over its version's frame (bookversionframes.js frameOf), so the judge and agent see what was
+// marked. Null when the answer isn't a version with a picture, or there's no frame.
 export async function replySnip(answer: number, frame: Box | null, ink: Stroke[]) {
   const v = slipById(answer);
   if (!isVersion(v) || !v.picture || !frame) return null;

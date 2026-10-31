@@ -36,7 +36,6 @@ export async function openVisitor(state, viewport, cookie = '', browser = state.
       return route.abort('blockedbyclient');
     }
     if (url.pathname === '/api/events') return streamFrame(state, route, url);
-    if (request.method() === 'POST' && url.pathname === '/api/notebooks/guests') await state.invitationReady;
     const response = await route.fetch({
       url: state.h.base + url.pathname + url.search,
       headers: { ...request.headers(), host: url.host },

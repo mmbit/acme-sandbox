@@ -131,6 +131,11 @@ export function pending(job: number): string[] {
   return unmet(job).map(describeWake);
 }
 
+// The time a job waits for (hq job --when a time) as SQL, `job` its id's column: the latest of its 'at' wakes still to
+// meet, 0 for none (threadorder.ts tasksOf, newthread.ts chainedAfter).
+export const waitsUntil = (job: string) =>
+  `coalesce((select max(cast(arg as real)) from wakes where job = ${job} and kind = 'at' and met is null), 0)`;
+
 // The wakes a queued job still waits for
 const unmet = (job: number) =>
   prepared('select kind, arg, since from wakes where job = ? and met is null order by rowid').all(job) as WakeRow[];

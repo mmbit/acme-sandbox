@@ -6,6 +6,7 @@ import { harness } from './harness.ts';
 
 const h = await harness('carries');
 // (after the harness: jobcodes.ts opens the database, which must be the test's)
+const predictions = await import('./predictions.ts');
 const { STANDING } = await import('./jobcodes.ts');
 
 const sha = (n: number) => n.toString(16).padStart(40, '0');
@@ -70,6 +71,9 @@ test("a red check queues the keeper's fix with both commits and the report; a gr
   });
   const [fix] = fixes();
   assert.equal(fix?.agent, 'juno');
+  const planned = predictions.prepared(Date.now()).snapshot.jobs.find(job => job.id === fix.id)!;
+  assert.equal(planned.origin, 'hq');
+  assert.equal(planned.opensReview, true, 'the keeper repairs the failed gates as engineering work');
   const brief = h.db.prepare('select prompt from jobs where id = ?').get(fix.id) as { prompt: string };
   for (const words of [sha(4), sha(3), report]) assert.ok(brief.prompt.includes(words), `the brief has ${words}`);
   assert.ok(!brief.prompt.includes('Tests passed'), 'only the red check reports');

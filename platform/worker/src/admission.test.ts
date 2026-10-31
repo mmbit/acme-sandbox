@@ -155,3 +155,71 @@ test('shortage begins below 2200 MiB while a measured small claim can still fit'
   assert.equal(memory.room(false), false);
   assert.equal(memory.claimMb(), 699);
 });
+
+test('ordinary admission keeps immutable prior observed quiet bounds without inventing an initial OOM baseline', t => {
+  const { reading, memory, advance } = memoryFixture(t);
+  reading(8e9, 7.28e9, 5.45e9, 9.7e9);
+  const roomInput = () => memory.inspect(() => memory.room()).inputs[0].measurement;
+  const first = roomInput();
+  assert.equal(first.quietPredecessor, null);
+  assert.equal(first.previousOomEvents, null);
+  advance(QUIET_MS);
+  const second = roomInput();
+  assert.deepEqual(second.quietPredecessor?.first.identity, first.identity);
+  assert.equal(second.quietPredecessor?.observedReadCount, 1);
+  assert.equal(second.quietPredecessor?.initialPreviousOomEvents, null);
+  const third = roomInput();
+  const quiet = third.quietPredecessor!;
+  assert.equal(quiet.observedReadCount, 2);
+  assert.deepEqual(quiet.last.identity, second.identity);
+  assert.equal(quiet.last.readEndedAt - quiet.first.readStartedAt, QUIET_MS);
+  assert.equal(quiet.last.sequence - quiet.first.sequence, 1);
+  assert.deepEqual(quiet.previousOomEvents, [2, 1]);
+  assert.equal(third.underPressure, false);
+  assert.equal(third.lastPressureTrigger, null);
+  assert.equal(third.availableBytes, 6.17e9);
+  advance(1000);
+  roomInput();
+  assert.equal(quiet.observedReadCount, 2);
+});
+
+for (const cause of ['psi', 'oom'] as const) {
+  test(`an observed ${cause} trigger clears quiet history and preserves its identity through the hold`, t => {
+    const { reading, memory, write, advance } = memoryFixture(t);
+    reading(8e9, 7.28e9, 5.45e9, 9.7e9);
+    const roomInput = () => memory.inspect(() => memory.room()).inputs[0].measurement;
+    roomInput();
+    advance(QUIET_MS);
+    roomInput();
+    if (cause === 'psi') write('memory.pressure', `some avg10=${PRESSURE_PERCENT} avg60=0 avg300=0 total=100`);
+    else write('memory.events', 'low 0\nhigh 0\nmax 42\noom 3\noom_kill 1');
+    const blocked = roomInput();
+    assert.equal(blocked.quietPredecessor, null);
+    assert.equal(blocked.underPressure, true);
+    assert.equal(blocked.availableBytes, 0);
+    assert.deepEqual(blocked.lastPressureTrigger?.identity, blocked.identity);
+    assert.equal(blocked.lastPressureTrigger?.psiThreshold, cause === 'psi');
+    assert.equal(blocked.lastPressureTrigger?.someAvg10, cause === 'psi' ? PRESSURE_PERCENT : 0);
+    assert.equal(blocked.lastPressureTrigger?.memoryPressure, blocked.memoryPressure);
+    assert.equal(blocked.lastPressureTrigger?.memoryEvents, blocked.memoryEvents);
+    assert.equal(blocked.lastPressureTrigger?.newOomEvent, cause === 'oom');
+    assert.deepEqual(blocked.lastPressureTrigger?.previousOomEvents, [2, 1]);
+    write('memory.pressure', 'some avg10=0 avg60=0 avg300=0 total=100');
+    advance(QUIET_MS - 1);
+    const held = roomInput();
+    assert.equal(held.quietPredecessor, null);
+    assert.deepEqual(held.lastPressureTrigger, blocked.lastPressureTrigger);
+    advance(1);
+    const recovered = roomInput();
+    assert.equal(recovered.underPressure, false);
+    assert.equal(recovered.quietPredecessor, null, 'quiet reads inside the hold do not supply a predecessor');
+    assert.equal(recovered.pressureUntil, blocked.lastPressureTrigger?.pressureUntil);
+    advance(QUIET_MS);
+    const next = roomInput();
+    assert.equal(next.quietPredecessor?.observedReadCount, 1);
+    assert.deepEqual(next.quietPredecessor?.first.identity, recovered.identity);
+    const qualified = roomInput();
+    assert.equal(qualified.quietPredecessor?.observedReadCount, 2);
+    assert.deepEqual(qualified.lastPressureTrigger, blocked.lastPressureTrigger);
+  });
+}

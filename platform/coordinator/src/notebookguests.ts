@@ -120,7 +120,7 @@ export function createNotebook(b: any) {
   });
 }
 
-function addMember(notebookId: number, name: string, ends: string | null) {
+export function addMember(notebookId: number, name: string, ends: string | null) {
   const grant = people.grantOf(name)!;
   const page = notebook.newPage(notebookId);
   db.prepare('update book_pages set who = ?, label = ? where id = ?').run(people.whoOf(grant), name, page);
@@ -254,13 +254,18 @@ export function listGroups(b: any, name?: string) {
       const owner = holder?.agent ?? g.owner;
       return {
         ...g,
-        ...(name ? { asks: [] } : {}),
+        // (a guest's own asks are the board's scraps handed to them: forYou till they write on one.)
+        ...(name ? { asks: [], forYou: waitsFor(g.id) } : {}),
         owner,
         owner_name: owner ? (findAgent(owner)?.name ?? owner) : null,
       };
     }),
   };
 }
+
+// A copy handed to a guest (ink/bookassign.ts) still waiting for them to write on it
+export const waitsFor = (group: number) =>
+  !!db.prepare('select 1 from notebook_assigns where copy = ? and answered = 0').get(group);
 
 const domainOf = (email: string) => email.split('@')[1]?.toLowerCase();
 function invitesFor(m: Membership) {

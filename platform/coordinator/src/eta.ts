@@ -15,6 +15,7 @@
 import { inspectPlan, playPlan, type PlayOrder } from './simulation.ts';
 import type { Snapshot, Size } from './playtypes.ts';
 export type * from './playtypes.ts';
+export { startPlan } from './simulation.ts';
 export const PLAY_VERSION = 4;
 // order: the snapshot's playOrder, played once for both paces (predictions.ts played).
 export function play(

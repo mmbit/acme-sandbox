@@ -597,6 +597,26 @@ test("an ask follows its own lines however the board retypes them; the board's o
   assert.equal(split.status, 200, JSON.stringify(split.body));
   const added = split.body.split.id as number;
   assert.equal(groupOf(icon), into, 'the retyped line keeps its ask');
+  // (a post-it is the agent's words: the board's own line lifted out is plain typed words; a promise for the board
+  // lifted out of the board's line stays a post-it, and the board's line left behind is plain.)
+  promise(call, 'board', 'Try the shop on the phone');
+  const yours = (await groups(page)).find(g => g.texts[0]?.text.startsWith('Promise for you'));
+  const mine = { ...yours.texts[0], id: undefined, y: yours.box.y + yours.box.h + 20, text: 'Mine too' };
+  const typed = { id: yours.id, since: yours.updated, texts: [mine, ...yours.texts] };
+  assert.equal((await h.board('/api/notebooks/groups/edit', typed)).status, 200);
+  const out = await h.board('/api/notebooks/groups/split', { id: yours.id, texts: [1] });
+  assert.equal(out.status, 200, JSON.stringify(out.body));
+  const lifted = out.body.split.id as number;
+  const kinds = new Map((await groups(page)).map(g => [g.id, g.kind]));
+  assert.deepEqual(
+    [into, added, lifted, yours.id].map(id => kinds.get(id)),
+    ['note', 'drawing', 'note', 'drawing'],
+  );
+  assert.equal(
+    (await h.voice('change', { call, id: lifted, words: 'Try the shop on the tablet' })).status,
+    200,
+    'the promise lifted out is still its one note',
+  );
 
   await ends(page, token);
   const after = await groups(page);
@@ -664,6 +684,34 @@ async function scrapped(more: { owner?: string } = {}) {
   return { call, token, page, scrap: made.body.id as number };
 }
 const THIRD = { x: 0, y: 0, width: 1 / 3, height: 1 };
+
+test("a scrap's item keeps the agent's line through the board's Undo of its new words, and the board's own words stay its", async () => {
+  const { call, token, page, scrap } = await scrapped();
+  const other = await h.voice('scrap', {
+    call,
+    from: 'note 1',
+    region: { ...THIRD, x: 1 / 3 },
+    words: 'Move the basket up',
+    goal: GOAL,
+  });
+  assert.equal(other.status, 200, JSON.stringify(other.body));
+  // (the board's Undo puts the scrap's post-it back as it was; on the other it writes its own words)
+  for (const [id, words] of [
+    [scrap, 'Make the price smaller'],
+    [other.body.id, 'Move the basket up\nand make it green'],
+  ]) {
+    assert.equal((await h.voice('change', { call, id, words: 'Make it smaller still' })).status, 200);
+    const g = (await groups(page)).find(g => g.id === id);
+    const edited = await h.board('/api/notebooks/groups/edit', { id, since: g.updated, words, said: 'typed' });
+    assert.equal(edited.status, 200, JSON.stringify(edited.body));
+  }
+  await ends(page, token);
+  assert.deepEqual(
+    ledger.items(call).map(i => i.what),
+    ['Make the price smaller', 'Make it smaller still'],
+    "the Undo takes the line back; the board's words on the post-it are its own, not the item's line",
+  );
+});
 
 test('a scrap still being cut as the call ends is refused: the page goes in as it was', async () => {
   const { call, token, page } = await scrapped();

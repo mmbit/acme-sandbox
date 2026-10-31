@@ -2,7 +2,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import sharp from 'sharp';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { render } from './bookrender.ts';
+import type { Tried } from './bookrenderversions.ts';
 
 const INK = '#2a2352';
 const WORDS = 'The page bar at the bottom grew too tall with the title: make it slim again, and keep the title whole';
@@ -119,4 +123,159 @@ test("an agent's answers and the board's replies are drawn: slipped under their 
     drawn.info.height > 1000 && last > drawn.info.height - 80,
     `grown down to the reply (${last} of ${drawn.info.height})`,
   );
+});
+
+const TEAL = ([r, g, b]: number[]) => r < 60 && g > 100 && g < 160 && b > 110 && b < 170;
+const count = (drawn: Awaited<ReturnType<typeof pixels>>, is: (p: number[]) => boolean, box = [0, 0, 1e9, 1e9]) => {
+  let n = 0;
+  for (let y = box[1]; y < Math.min(box[3], drawn.info.height); y++)
+    for (let x = box[0]; x < Math.min(box[2], drawn.info.width); x++) if (is(at(drawn, x, y))) n++;
+  return n;
+};
+
+const RED = ([r, g, b]: number[]) => r > 200 && g < 70 && b < 70;
+// A red cross over a box (x, y, w, h): two strokes corner to corner
+const cross = (x: number, y: number, w: number, h: number) =>
+  [
+    [0.2, 0.2, 0.8, 0.8],
+    [0.8, 0.2, 0.2, 0.8],
+  ].map(([x0, y0, x1, y1]) => ({
+    ...{ color: '#e02020', size: 4, alpha: 1 },
+    points: [
+      [x + x0 * w, y + y0 * h],
+      [x + x1 * w, y + y1 * h],
+    ],
+  }));
+
+const GREEN = ([r, g, b]: number[]) => r < 70 && g > 150 && b < 70;
+// A green ring round a box (x, y, w, h), reach px outside it on every side, as bookpicks.mjs's circle
+const ring = (x: number, y: number, w: number, h: number, reach: number) => [
+  {
+    ...{ color: '#20c020', size: 4, alpha: 1 },
+    points: Array.from({ length: 49 }, (_, i) => [
+      x + w / 2 + (w / 2 + reach) * Math.cos((i / 48) * 2 * Math.PI),
+      y + h / 2 + (h / 2 + reach) * Math.sin((i / 48) * 2 * Math.PI),
+    ]),
+  },
+];
+
+test("a try's versions are drawn under its scrap: each version's picture and letter, the chosen one stamped, the others' fates, the board's ink on them, and the ones coming", async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'versions-'));
+  for (const [file, colour] of [
+    ['a.png', '#2050ff'],
+    ['b.png', '#ff8c00'],
+  ])
+    await sharp({ create: { width: 320, height: 240, channels: 3, background: colour } })
+      .png()
+      .toFile(join(dir, file));
+  const tried: Tried = {
+    ...{ name: 'Lyra', color: '#12808a', coming: 1, ended: null },
+    versions: [
+      {
+        ...{ letter: 'A', name: 'Quiet harbour', text: 'Softer greys', picture: 'a.png' },
+        ...{ chosen: true, greyed: false, fate: null },
+        // (the board's ring round A's picture when it showed 200 px wide, reaching 10 px past it)
+        marks: [{ frame: { x: 100, y: 300, w: 200, h: 150 }, ink: ring(100, 300, 200, 150, 10) }],
+      },
+      {
+        ...{ letter: 'B', name: 'Bright quay', text: '', picture: 'b.png', chosen: false, greyed: true },
+        fate: 'cleared once the page is sent',
+        // (the board's cross, written over B's picture when it showed 200 px wide)
+        marks: [{ frame: { x: 500, y: 300, w: 200, h: 150 }, ink: cross(500, 300, 200, 150) }],
+      },
+    ],
+  };
+  const page = (t?: typeof tried) => ({
+    ...{ w: 700, h: 300, ink: [], scraps: [] },
+    under: [{ x: 24, y: 120, w: 640, text: 'Test: who is this', ...(t ? { tried: t } : {}) }],
+  });
+  const [bare, drawn] = await Promise.all(
+    [render(page(), dir), render(page(tried), dir)].map(async p => pixels(await p)),
+  );
+  // the block under the post-it, grown down to it: Lyra's face and name, and the frame still coming, in her ink
+  assert.ok(drawn.info.height > bare.info.height + 300, `grown down to it (${bare.info.height}, ${drawn.info.height})`);
+  assert.equal(count(bare, TEAL), 0);
+  assert.ok(count(drawn, TEAL) > 600, "Lyra's face, name and pencil dots");
+  // A's picture with CHOSEN across it (#d6ea3c); B's greyed: no orange left
+  assert.ok(count(drawn, ([r, g, b]) => r < 60 && g < 110 && b > 220) > 20_000, "A's picture");
+  assert.ok(count(drawn, ([r, g, b]) => r > 190 && g > 210 && b < 90) > 2_000, 'CHOSEN stamped on it');
+  assert.equal(
+    count(drawn, ([r, g, b]) => r > 230 && g > 110 && g < 160 && b < 40),
+    0,
+    'B greyed',
+  );
+  // the board's red cross over B's frame, and its fate a line under it
+  assert.ok(count(drawn, RED) > 200, "the board's cross on B");
+  // the ring whole round A's picture: past its blue on all four sides, not cut to its corners
+  const blue = ([r, g, b]: number[]) => r < 60 && g < 110 && b > 220;
+  const xs: number[] = [],
+    ys: number[] = [];
+  for (let y = 0; y < drawn.info.height; y++)
+    for (let x = 0; x < drawn.info.width; x++)
+      if (blue(at(drawn, x, y))) {
+        xs.push(x);
+        ys.push(y);
+      }
+  const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+  for (const [side, box] of [
+    ['left', [0, y0, x0 - 4, y1]],
+    ['right', [x1 + 5, y0, x1 + 40, y1]],
+    ['above', [x0, 0, x1, y0 - 4]],
+    ['below', [x0, y1 + 5, x1, y1 + 40]],
+  ] as const)
+    assert.ok(count(drawn, GREEN, [...box]) > 100, `the ring ${side} A's picture`);
+  const unmarked = { ...tried, versions: tried.versions.map(v => ({ ...v, fate: null, marks: [] })) };
+  const plain = await pixels(await render(page(unmarked), dir));
+  assert.equal(count(plain, RED), 0);
+  assert.equal(count(plain, GREEN), 0);
+  assert.ok(drawn.info.height > plain.info.height, `B's fate under it (${plain.info.height}, ${drawn.info.height})`);
+  const ended = await pixels(
+    await render(page({ ...tried, versions: [], coming: 0, ended: 'The try ended without a version.' }), dir),
+  );
+  assert.ok(count(ended, TEAL) > 600, "the ended try's agent and reason");
+});
+
+test("an agent's card clipped under a unit is drawn in its ink: its words, its choices as chips, its questions", async () => {
+  const card = {
+    ...{ name: 'Lyra', color: '#12808a', text: 'Give me a choice to test', answer: null },
+    ...{ choices: ['Red', 'Blue'], questions: [{ title: 'Anything to add?', choices: [] }] },
+  };
+  const page = (asks: (typeof card)[]) => ({
+    ...{ w: 400, h: 200, ink: [], scraps: [] },
+    under: [{ x: 24, y: 40, w: 313, text: 'Give me a choice to test :)', asks }],
+  });
+  const [bare, drawn] = await Promise.all(
+    [render(page([]), '.'), render(page([card]), '.')].map(async p => pixels(await p)),
+  );
+  // its slip under the post-it (#fff4cf), "Lyra asks", its chips in her ink; the picture grown down to it
+  const slip = ([r, g, b]: number[]) => r > 250 && g > 238 && g < 250 && b > 196 && b < 214;
+  assert.ok(count(drawn, slip) > 20_000, "the card's slip");
+  assert.ok(count(drawn, TEAL) > 600, "in Lyra's ink");
+  assert.equal(count(bare, TEAL), 0);
+  assert.ok(drawn.info.height > bare.info.height + 100, `grown down to it (${bare.info.height}, ${drawn.info.height})`);
+});
+
+test("a form clipped onto an answer is drawn under its words in the agent's ink: chips and a line, then the answers", async () => {
+  const form = (answered: boolean) => ({
+    color: '#12808a',
+    questions: [
+      { title: 'Warmer or cooler?', choices: ['Warmer', 'Cooler'], ...(answered ? { answer: 'Warmer' } : {}) },
+      { title: 'Anything to add?', choices: [], ...(answered ? { answer: '' } : {}) },
+    ],
+  });
+  const page = (slip: object) => ({
+    ...{ w: 400, h: 200, ink: [], scraps: [] },
+    under: [
+      { x: 24, y: 40, w: 313, text: 'Which colour?', slips: [{ name: 'Lyra', text: 'Two things first', ...slip }] },
+    ],
+  });
+  const [bare, open, answered] = await Promise.all(
+    [render(page({}), '.'), render(page({ form: form(false) }), '.'), render(page({ form: form(true) }), '.')].map(
+      async p => pixels(await p),
+    ),
+  );
+  assert.equal(count(bare, TEAL), 0);
+  assert.ok(count(open, TEAL) > 1500, "its chips and line in Lyra's ink");
+  assert.ok(count(answered, TEAL) > 200 && count(answered, TEAL) < count(open, TEAL), "the answers in Lyra's ink");
+  assert.ok(open.info.height > bare.info.height + 100, `grown down to it (${bare.info.height}, ${open.info.height})`);
 });

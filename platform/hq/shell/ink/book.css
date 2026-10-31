@@ -1,7 +1,8 @@
 /* The Notebook beside HQ's page (book.js): half a book come in from the right, its spine just past the screen's right
    edge, so its other half reads as out of sight. Its paper lies on the black cover, the board showing round it at the
    head, the foot and the outer edge on HQ's side, never at the spine's; the page block's edge shows between the cover's
-   outer edge and the paper, the controls float over the paper (bookui.css) and its pull tab is on the cover's edge.
+   outer edge and the paper, the controls are on a rail at the paper's right edge by the spine (bookstrip.css) and its
+   pull tab is on the cover's edge. (the rail)
    (from the right, the board's call 171.) One object under one soft shadow, a margin
    from the screen's edges so the shadow shows round it. The book's own look (booklook.css), the
    same on every HQ look: no look's stylesheet styles it, and only the table under it wears the look's tones (book.js
@@ -11,6 +12,10 @@
   --bk-lamp: #ffd966;
   --bk-red: #ff5a5f;
   --bk-rail: #f3e6d0;
+  /* the rail of controls at the paper's right edge, by the spine (bookstrip.css): a 44 px control and its margins, and
+     a phone's notch on its side clear; nothing floats over the paper's edge besides (bookui.js clearOf). */
+  --bk-rail-width: calc(52px + env(safe-area-inset-right, 0px));
+  --bk-controls-width: 0px;
   --bk-table: #3a3148;
   /* the black cover showing round the pages at their head and foot (the cover's edge is its outer side: .bk-edge), and
      the page block's edge showing past the paper on its left, the outer side (.bk-paper's leaves) */
@@ -91,7 +96,7 @@
     -4px 0 0 -1px #c9b998,
     -6px 0 0 -2px #efe5d1;
 }
-/* the controls: the rail, the page bar and the book's own islands in one lane at the paper's foot (bookui.js, bookrail.js) */
+/* the controls: one rail at the paper's right edge (bookui.js, bookrail.js, bookstrip.css), over this layer's right */
 #book .bk-rail {
   container: bk-rail / inline-size;
   position: absolute;
@@ -159,14 +164,15 @@
    answer waits to be read; a note that lands in the shut book shows its snip beside it for a moment (bookhandle.js).
    Small to look at, a finger's size to the touch (::after, 44 px across at least). Which side of the edge it hangs is
    its margin, never its translate, whose lift is eased: eased, the tab flicked to the edge's other side and back as the
-   book landed in a phone's spread. (smaller to look at, the same touch area: the board's call 171.) */
+   book landed in a phone's spread. --bk-lip-w: its width, which its margin hangs it out by (one width). (smaller to look at, the same touch area: the board's call 171.) */
 #book .bk-lip {
   all: unset;
+  --bk-lip-w: 16px;
   position: fixed;
   top: calc(var(--bk-top) + (var(--app-h, 100dvh) - var(--bk-top) - var(--bk-gap)) / 2);
-  width: 16px;
+  width: var(--bk-lip-w);
   height: 52px;
-  margin-left: -16px;
+  margin-left: calc(-1 * var(--bk-lip-w));
   translate: 0 -50%;
   border-radius: 8px 0 0 8px;
   z-index: 44;

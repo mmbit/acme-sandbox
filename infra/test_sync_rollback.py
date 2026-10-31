@@ -5,24 +5,14 @@ is sync.sh's own lines after the deploy's steps, taken from the file, with HQ's 
 themselves (bring_up) as stand-ins.
 """
 import os, re, subprocess, tempfile, unittest
+from sync_fixture import git, sync_lines
 
-here = os.path.dirname(os.path.abspath(__file__))
 AFTER_DEPLOY = re.compile(r'^up=0; said=.*?\n^fi\n', re.M | re.S)
 SKIP_FAILED = re.compile(r'^failed=.*\n^if \[ "\$\(cat "\$failed".*\n', re.M)
-GIT_IDENTITY = {'GIT_AUTHOR_NAME': 't', 'GIT_AUTHOR_EMAIL': 't@t.test', 'GIT_COMMITTER_NAME': 't',
-                'GIT_COMMITTER_EMAIL': 't@t.test'}
 
 
 def lines(pattern, what):
-    with open(os.path.join(here, 'sync.sh')) as f:
-        found = pattern.search(f.read())
-    assert found, f"sync.sh: {what} were not found"
-    return found.group(0)
-
-
-def git(root, *args):
-    return subprocess.run(['git', '-C', root, *args], check=True, capture_output=True, text=True,
-                          env={**os.environ, **GIT_IDENTITY}).stdout.strip()
+    return sync_lines(pattern, what).group(0)
 
 
 # The failed commit's revert.py, standing in: what it was asked, and its answer
@@ -43,7 +33,7 @@ def deploy(hq_comes_up, deployed=0, good_comes_up=True):
                     f.write(REVERT)
             git(root, 'add', '-A')
             git(root, 'commit', '-q', '-m', message)
-        good, bad = git(root, 'rev-parse', 'HEAD~1'), git(root, 'rev-parse', 'HEAD')
+        good, bad = git(root, 'rev-parse', 'HEAD~1').strip(), git(root, 'rev-parse', 'HEAD').strip()
         with open(f'{root}/infra/infra-env.sh', 'w') as f:
             f.write(':\n')
         # HQ's check: down on the new commit when hq_comes_up is false, up on the good one
@@ -67,7 +57,7 @@ def deploy(hq_comes_up, deployed=0, good_comes_up=True):
             with open(f'{root}/{name}') as f:
                 return f.read().strip()
         return {'out': done.stdout.strip(), 'err': done.stderr.strip(), 'state': read('state'), 'failed': read('failed'),
-                'ran': read('ran'), 'log': read('log'), 'reverted': read('reverted'), 'checkout': git(root, 'log', '-1', '--format=%s'),
+                'ran': read('ran'), 'log': read('log'), 'reverted': read('reverted'), 'checkout': git(root, 'log', '-1', '--format=%s').strip(),
                 'good': good, 'bad': bad}
 
 

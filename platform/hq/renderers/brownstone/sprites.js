@@ -157,31 +157,17 @@ function drawItem(R, P, item, front, sy) {
   }
 }
 
-// Sprite frames are cached per agent, so drawing a character is one drawImage.
-const cache = new Map();
 export function spriteFrame(id, d, frame, front = true, right = true, item = '') {
   const k = `${id}|${frame}|${front}|${right}|${item}|${d.party ? 1 : 0}`;
-  let c = cache.get(k);
-  if (!c) {
-    c = canvas(CW, CH);
-    const g = c.getContext('2d');
-    if (!right) { g.translate(CW, 0); g.scale(-1, 1); }
-    drawSprite(g, d, frame, front, item);
-    cache.set(k, c);
-  }
-  return c;
+  return cached(k, CW, CH, right, g => drawSprite(g, d, frame, front, item));
 }
-export const clearSpriteCache = () => cache.clear();
 
 // ---- the rooftop cat: plum fur, gold eyes and a board-member collar ----
 const CAT = '#3b3355', CAT2 = '#4f4670';
-export function catFrame(frame, right) {
-  const k = `cat|${frame}|${right}`;
-  let c = cache.get(k);
-  if (c) return c;
-  c = canvas(14, 12);
-  const g = c.getContext('2d');
-  if (!right) { g.translate(14, 0); g.scale(-1, 1); }
+const MASCOT_W = 14, MASCOT_H = 12; // the cat's frame, and the penguin's
+export const catFrame = (frame, right) =>
+  cached(`cat|${frame}|${right}`, MASCOT_W, MASCOT_H, right, g => drawCat(g, frame));
+function drawCat(g, frame) {
   const R = (x, y, w, h, col) => { g.fillStyle = col; g.fillRect(x, y, w, h); };
   if (frame === 'sleep') {
     R(3, 7, 8, 3, CAT); R(4, 6, 6, 1, CAT); R(9, 6, 3, 3, CAT2); R(2, 9, 5, 1, CAT2); R(9, 5, 1, 1, CAT); R(11, 5, 1, 1, CAT);
@@ -197,8 +183,6 @@ export function catFrame(frame, right) {
     R(3, 8, 1, 2 - step, CAT); R(8, 8, 1, 2 - step, CAT); R(4, 8, 1, 1 + step, CAT); R(7, 8, 1, 1 + step, CAT);
     R(10, 4, 1, 1, '#ffd966'); R(8, 6, 3, 1, '#e8505b'); R(9, 7, 1, 1, '#ffd966');
   }
-  cache.set(k, c);
-  return c;
 }
 
 // ---- the rooftop penguin: the cat's plum on its back, a cream front, orange beak and feet, a board member's bow tie.
@@ -244,17 +228,23 @@ const PENGUIN_ROWS = {
 const waddle = (lean, foot) => UPRIGHT.map((row, y) => y < 5 ? (lean > 0 ? '.' + row.slice(0, -1) : row.slice(1) + '.')
   : y === 6 ? '....k' + row.slice(5) : y === 9 ? foot : row);
 PENGUIN_ROWS.walk1 = waddle(1, '.....OO.......'); PENGUIN_ROWS.walk2 = waddle(-1, '.........OO...');
-export function penguinFrame(frame, right) {
-  const k = `penguin|${frame}|${right}`;
-  let c = cache.get(k);
-  if (c) return c;
-  c = canvas(14, 12);
-  const g = c.getContext('2d');
-  if (!right) { g.translate(14, 0); g.scale(-1, 1); }
+export const penguinFrame = (frame, right) =>
+  cached(`penguin|${frame}|${right}`, MASCOT_W, MASCOT_H, right, g => drawPenguin(g, frame));
+const drawPenguin = (g, frame) =>
   PENGUIN_ROWS[frame].forEach((row, y) => [...row].forEach((ch, x) => { if (PENGUIN[ch]) { g.fillStyle = PENGUIN[ch]; g.fillRect(x, y, 1, 1); } }));
-  cache.set(k, c);
-  return c;
+
+// Frames are cached (a sprite's per agent), so drawing a character is one drawImage. Left-facing ones are mirrored.
+const cache = new Map();
+function cached(k, w, h, right, draw) {
+  if (!cache.has(k)) {
+    const c = canvas(w, h), g = c.getContext('2d');
+    if (!right) { g.translate(w, 0); g.scale(-1, 1); }
+    draw(g);
+    cache.set(k, c);
+  }
+  return cache.get(k);
 }
+export const clearSpriteCache = () => cache.clear();
 
 // Things on desks, from the look text. They are drawn front-on, which reads fine on iso desk tops.
 export function drawProp(g, name, x, y) {

@@ -249,7 +249,7 @@ export async function inkPixels(page) {
     k = w / paper.width,
     // (the rail's and the bar's boxes in the shot's px, with a few px round them for their shadows)
     strip = await page.evaluate(() =>
-      [...document.querySelectorAll('#book .bk-lane .bk-island')]
+      [...document.querySelectorAll('#book .bk-column .bk-island')]
         .filter(el => el.offsetParent)
         .map(el => el.getBoundingClientRect())
         .map(r => ({ left: r.left, top: r.top, right: r.right, bottom: r.bottom })),

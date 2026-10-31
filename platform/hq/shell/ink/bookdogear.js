@@ -31,7 +31,7 @@ export function mountDogEar(book) {
   ear.setAttribute('aria-haspopup', 'menu');
   ear.innerHTML = '<i aria-hidden="true"></i>';
   pages.append(ear);
-  const corner = { book, ear, files: null, lane: islands().querySelector('.bk-lane-line') };
+  const corner = { book, ear, files: null, lane: islands() }; // (the rail)
   corner.targets = mountTargets(corner.lane, {
     act: (kind, box) => went(corner, kind, box, null),
     closed: () => ear.focus(),

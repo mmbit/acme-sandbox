@@ -7,7 +7,6 @@
 // bookpages.js mounts them and asks, on a press on the paper: press(e) true: taken here; otherwise the pen draws with
 // ink().
 import { stylesheet } from '../../util.js';
-import { controlsLeft } from './bookui.js';
 import { mountTexts } from './booktexts.js';
 import { begin } from './bookedit.js';
 import { mountPalette, inkOf, eraserRadius, setMode } from './bookpalette.js';
@@ -66,12 +65,11 @@ function toolsOf(st) {
     put: (...a) => st.texts.put(...a),
     // One tool on or back along the rail (Ctrl and the wheel: bookpan.js).
     cycle: by => st.strip.cycle(by),
-    // A tool picked (the radial menu), and the dot a first tap drew at a point on its page taken off (bookinput.js)
+    // A tool picked (the radial menu), and the dot a first tap drew taken off (bookinput.js, with the book's last step
+    // as that tap pressed)
     use: mode => setMode(st, mode),
     buttons: () => st.buttons,
-    undot(at) {
-      if (at) undot(st, at);
-    },
+    undot: stepAtPress => undot(st, stepAtPress),
     // (whether words are being typed in a box: a page read again leaves its boxes as they are.)
     editing: () => st.texts.editing(),
     // (before Undo or Redo: the words being typed kept, a selection let go.)
@@ -151,39 +149,35 @@ function selectFor(st, e) {
 // A second press of a double click on bare paper: the dot the first one drew taken off, and a box of words there
 function doubled(st, e, at) {
   const last = st.last;
-  st.last = { t: e.timeStamp, x: e.clientX, y: e.clientY, at };
+  st.last = { t: e.timeStamp, x: e.clientX, y: e.clientY, stepAtPress: st.book.steps.at(-1) };
   if (!last || e.timeStamp - last.t > DOUBLE_MS || Math.hypot(e.clientX - last.x, e.clientY - last.y) > DOUBLE_PX)
     return false;
   st.last = null;
-  undot(st, last.at);
+  undot(st, last.stepAtPress);
   e.preventDefault();
   st.texts.place(at, roomTo(st, e));
   return true;
 }
-// The dot a first press drew taken off: the book's last step, a stroke of a few px on this page around the point where
-// it pressed (a double click's, and a double tap's that holds for a voice note: bookinput.js)
-function undot(st, at) {
+// The dot a first press drew taken off (a double click's, and a double tap's that holds for a voice note:
+// bookinput.js): the book's last step, if it's a stroke of a few px made since that press, undone as Undo would.
+// Known by its step, not by where it is: a new unit's dot moves with it once the page is saved and laid again.
+function undot(st, stepAtPress) {
   const steps = st.book.steps,
     dot = steps.at(-1);
-  if (!(dot?.stroke && dot.page === at.view.page && isDot(dot.stroke, at))) return;
+  if (!(dot !== stepAtPress && dot?.stroke && isDot(dot.stroke))) return;
   steps.pop();
-  const ink = at.view.page.ink;
-  ink.splice(ink.lastIndexOf(dot.stroke), 1);
-  st.hooks.redraw(at.view, boxAround(dot.stroke));
-  st.hooks.changed(at.view.page);
+  dot.undo();
 }
-// Where a new box's words must wrap by, in its page's px: before the paper's edge or the controls over it, whichever
-// comes first at the press's height
+// Where a new box's words must wrap by, in its page's px: before the paper's edge
 function roomTo(st, e) {
   const desk = st.book.desk.getBoundingClientRect(),
-    right = Math.min(desk.right, controlsLeft() ?? desk.right) - 16;
+    right = desk.right - 16;
   return st.book.at(right, e.clientY)?.x ?? st.book.shown().x1;
 }
-function isDot(stroke, at) {
+function isDot(stroke) {
   const b = boxAround(stroke);
   const small = 12 + stroke.size * 2;
-  // (under the point both ways)
-  return b.x1 - b.x0 < small && b.y1 - b.y0 < small && b.x0 < at.x && at.x < b.x1 && b.y0 < at.y && at.y < b.y1;
+  return b.x1 - b.x0 < small && b.y1 - b.y0 < small;
 }
 function boxAround(stroke) {
   const r = stroke.size + 2,

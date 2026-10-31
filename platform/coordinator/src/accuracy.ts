@@ -3,22 +3,49 @@
 // lately, each job sized from the jobs done before it was queued, beside the simpler ways it could be done.
 import { db } from './db.ts';
 import { workBranch } from './jobs.ts';
-import { FEWEST, LATEST, PICKS, pastJobs, picksFor, rankedFirst, sizeOf, wordsOf, type PastJob } from './matching.ts';
-import { mean, median } from './arithmetic.ts';
+import {
+  ORIGIN,
+  PRIVATE,
+  FEWEST,
+  LATEST,
+  PICKS,
+  pastJobs,
+  pastJobsSoon,
+  isPrivate,
+  picksFor,
+  rankedFirst,
+  sizeOf,
+  wordsOf,
+  type PastJob,
+} from './matching.ts';
+import { mean, median, MINUTE_MS, spread, factor, fractionalMinutes } from './arithmetic.ts';
+import * as taskaudit from './taskaudit.ts';
+import * as latency from './latency.ts';
 
-const MINUTE_MS = 60_000,
-  DAY_MS = 24 * 60 * MINUTE_MS;
 const WORST = 5,
   REPLAYED = 200;
 
-export function report(ask: { days?: unknown }) {
-  const days = ask.days === undefined ? 7 : Number(ask.days);
-  if (!Number.isInteger(days) || days < 1 || days > 30) return 400;
-  const since = new Date(Date.now() - days * DAY_MS).toISOString();
-  const { ways, byThread, bySchedule } = replayed(days, since);
-  const kept = db.prepare(KEPT).all(since) as Kept[];
+export async function report(ask: taskaudit.AuditAsk) {
+  const window = taskaudit.readWindow(ask);
+  if (typeof window === 'number') return window;
+  const { days, since } = window;
+  const turn = latency.turns('hq estimate --accuracy');
+  const tasks = await taskaudit.report(window, turn);
+  await turn('the diagnostic pool', pastJobsSoon());
+  const { ways, byThread, bySchedule } = replayed(`${days}/${ask.until ?? 'live'}`, window);
+  await turn('the matching diagnostics');
+  const kept = db.prepare(KEPT).all(since, window.until) as Kept[];
   return {
-    ...{ days, agent_time: agentTime(kept), eta: etas(kept) },
+    tasks,
+    ...{
+      days,
+      agent_time: agentTime(kept.filter(k => k.origin !== 'carry')),
+      carry_checks: agentTime(
+        kept.filter(k => k.origin === 'carry'),
+        0,
+      ),
+      eta: etas(kept.filter(k => !k.merged_at || k.merged_at < window.until)),
+    },
     ...{ matching: ways, matching_by_thread: byThread, matching_by_schedule: bySchedule },
   };
 }
@@ -27,6 +54,7 @@ export function report(ask: { days?: unknown }) {
 
 type Kept = {
   job: number;
+  origin: string;
   agent: string;
   title: string;
   made: string;
@@ -45,24 +73,28 @@ type Kept = {
 // Work that ended done since then, with its prediction, its ended runs and its latest pull request. Each job's runs are
 // summed in a subquery: joined to every job's sums, the planner scans them all again per job. The jobs are read through
 // db.ts jobs_history, never their rows, which hold the briefs.
-const KEPT = `select * from (select p.*, j.agent, j.title, j.finished,
+const KEPT = `select * from (select p.*, ${ORIGIN} origin, j.agent, j.title, j.finished,
     (select min(started) from runs where job = j.id and ended is not null) started,
     (select sum((julianday(ended) - julianday(started)) * 86400000) from runs where job = j.id and ended is not null)
       spent_ms,
     pr.merged_at, pr.number pr
   from predictions p cross join jobs j indexed by jobs_history on j.id = p.job
   left join prs pr on pr.number = (select max(number) from prs where branch = ${workBranch('j')})
-  where j.kind = 'work' and j.status = 'done' and j.finished >= ? and p.made <= j.finished) where started is not null`;
+  where j.kind = 'work' and j.status = 'done' and j.finished >= ? and j.finished < ? and p.made <= j.finished
+    and not ${PRIVATE}) where started is not null`;
 
-function agentTime(kept: Kept[]) {
-  const misses = kept.map(k => ({ k, by: factor(k.agent_ms, k.spent_ms) }));
+function agentTime(kept: Kept[], floorMs = MINUTE_MS) {
+  const misses = kept.map(k => ({ k, by: factor(k.agent_ms, k.spent_ms, floorMs) }));
   const worst = misses.sort((a, b) => Math.abs(b.by) - Math.abs(a.by)).slice(0, WORST);
   return {
-    ...spread(kept.map(k => [k.agent_ms, k.spent_ms])),
+    ...spread(
+      kept.map(k => [k.agent_ms, k.spent_ms]),
+      floorMs,
+    ),
     worst: worst.map(({ k }) => ({
       ...named(k),
-      predicted_minutes: minutes(k.agent_ms),
-      actual_minutes: minutes(k.spent_ms),
+      predicted_minutes: fractionalMinutes(k.agent_ms),
+      actual_minutes: fractionalMinutes(k.spent_ms),
       basis: JSON.parse(k.basis),
       picks: JSON.parse(k.picks),
     })),
@@ -82,13 +114,13 @@ function etas(all: Kept[]) {
   const worst = misses.sort((a, b) => Math.abs(b.late) - Math.abs(a.late)).slice(0, WORST);
   return {
     count: kept.length,
-    median_miss_minutes: middle === null ? null : minutes(middle),
+    median_miss_minutes: middle === null ? null : fractionalMinutes(middle),
     late_share: kept.length ? round(misses.filter(m => m.late > 0).length / kept.length) : null,
     worst: worst.map(({ k, landed, late }) => ({
       ...named(k),
       eta: k.eta,
       landed,
-      late_minutes: minutes(late),
+      late_minutes: fractionalMinutes(late),
       moved: moved(k, landed),
     })),
   };
@@ -99,11 +131,11 @@ function moved(k: Kept, landed: number) {
     finished = Date.parse(k.finished);
   const span = (from: number | null, to: number | null) => (from === null || to === null ? null : to - from);
   const by = (actual: number | null, predicted: number | null) =>
-    actual === null || predicted === null ? null : minutes(actual - predicted);
+    actual === null || predicted === null ? null : fractionalMinutes(actual - predicted);
   return {
     start_minutes: by(started, k.start),
     run_minutes: by(span(started, finished), span(k.start, k.done)),
-    board_minutes: minutes(boardTime(k.job, Date.parse(k.made), landed)),
+    board_minutes: fractionalMinutes(boardTime(k.job, Date.parse(k.made), landed)),
   };
 }
 
@@ -127,10 +159,10 @@ function boardTime(job: number, from: number, to: number) {
 
 // A replay takes a second or so of the server's time, and changes little within the hour: kept for half of one.
 const KEEP_MS = 30 * MINUTE_MS;
-let lastReplay: { days: number; at: number; found: ReturnType<typeof replay> } | null = null;
-function replayed(days: number, since: string) {
-  if (lastReplay?.days !== days || Date.now() - lastReplay.at > KEEP_MS)
-    lastReplay = { days, at: Date.now(), found: replay(since) };
+let lastReplay: { key: string; at: number; found: ReturnType<typeof replay> } | null = null;
+function replayed(key: string, window: { since: string; until: string }) {
+  if (lastReplay?.key !== key || Date.now() - lastReplay.at > KEEP_MS)
+    lastReplay = { key, at: Date.now(), found: replay(window.since, window.until) };
   return lastReplay.found;
 }
 
@@ -138,10 +170,12 @@ function replayed(days: number, since: string) {
 // over everyone's work (their median), and the agent's latest of the origin alone.
 // The jobs done before each one was queued are the first of them all by when they finished, found once per job: every
 // way matches against that same list, so matching.ts's work on a pool (its groups, its titles' index) is done once.
-function replay(since: string) {
+function replay(since: string, until: string) {
   // (a copy: the pool is shared)
-  const all = [...pastJobs()].sort((a, b) => Date.parse(a.finished) - Date.parse(b.finished));
-  const tried = all.filter(j => j.finished >= since).slice(-REPLAYED);
+  const all = pastJobs()
+    .filter(j => j.origin !== 'carry' && !isPrivate(j))
+    .sort((a, b) => Date.parse(a.finished) - Date.parse(b.finished));
+  const tried = all.filter(j => j.finished >= since && j.finished < until).slice(-REPLAYED);
   const countBefore = new Map(
     tried.map(j => {
       const n = all.findIndex(p => p.finished >= j.created);
@@ -221,25 +255,5 @@ function replayBySchedule(tried: PastJob[], all: PastJob[], beforeOf: Map<PastJo
 const latestOfOrigin = (j: PastJob, before: PastJob[]) =>
   before.filter(p => p.origin === j.origin && p.agent === j.agent).slice(-LATEST);
 
-// ---- measures
-
-// How far predictions [predicted, actual] were off: the median factor either way, the share within twice or half, and
-// the sum of the predictions against the sum of what happened (total task work). hq estimate --calibration
-// measures its groups with it too.
-export function spread(pairs: [number, number][]) {
-  const by = pairs.map(([predicted, actual]) => Math.abs(factor(predicted, actual)));
-  const middle = median(by);
-  const sum = (i: 0 | 1) => pairs.reduce((total, pair) => total + pair[i], 0);
-  return {
-    count: pairs.length,
-    median_factor: middle === null ? null : round(Math.exp(middle)),
-    within_twice: by.length ? round(by.filter(f => f <= Math.LN2).length / by.length) : null,
-    sum_ratio: sum(1) ? round(sum(0) / sum(1)) : null,
-  };
-}
-// (a minute at least: a job of seconds is no miss)
-const factor = (predicted: number, actual: number) =>
-  Math.log(Math.max(actual, MINUTE_MS) / Math.max(predicted, MINUTE_MS));
 const named = (k: Kept) => ({ id: k.job, agent: k.agent, title: k.title });
-const minutes = (ms: number) => Math.round(ms / MINUTE_MS);
 const round = (n: number) => Math.round(n * 100) / 100;

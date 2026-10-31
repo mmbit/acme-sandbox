@@ -2,12 +2,13 @@
 // or a round's (notebookrounds.ts) Guests, Asks and Advice (once the round is done). Upright they stand along the
 // book's top, its page trimmed to make room under Safari's blurred strip; sideways they peek out of a thick white
 // stack of page edges at the book's left (bookmarks.css). The chapter shown is lit; Asks has a red count of the asks
-// still open. A tab opens the first page of its chapter; one with no pages yet shows, dim, and says so. A round's
+// still open. A tab opens the first page of its chapter; one with no pages yet shows, dim, and opens an empty page of its
+// own, its chapter's name at its head, till another page or tab is chosen (it
+// said so in a toast). A round's
 // Guests tab also opens a short list of its guests, one line each with how far their page is (nothing yet, its notes,
 // done), a tap opening their page.
 import { esc } from '../../util.js';
 import { foley } from '../audio.js';
-import { toast } from '../toast.js';
 import { word } from './bookscope.js';
 import { chaptersOf } from './notebookchapters.js';
 import { loadPages } from './notebookdata.js';
@@ -32,7 +33,8 @@ export function mountBookmarks(leaf, pages) {
   s.nav = Object.assign(document.createElement('nav'), { className: 'bk-marks' });
   s.nav.setAttribute('aria-label', word('Chapters'));
   s.panel = Object.assign(document.createElement('div'), { className: 'bk-mk-guests', hidden: true });
-  leaf.append(s.nav, s.panel);
+  s.blank = Object.assign(document.createElement('div'), { className: 'bk-mk-blank', hidden: true });
+  leaf.append(s.nav, s.panel, s.blank);
   s.nav.addEventListener('click', e => tapped(s, e.target.closest('[data-chapter]')?.dataset.chapter));
   s.panel.addEventListener('click', e => chose(s, e.target.closest('[data-name]')));
   // (a tap anywhere else lets the list go)
@@ -41,10 +43,11 @@ export function mountBookmarks(leaf, pages) {
   });
   const later = () => (clearTimeout(s.timer), (s.timer = setTimeout(() => read(s), SETTLE_MS)));
   for (const type of ['book:notebook', 'book:changed']) document.addEventListener(type, later);
-  new MutationObserver(() => (pages.page()?.notebook !== s.notebook ? read(s) : draw(s))).observe(
-    leaf.querySelector('.bk-world'),
-    { subtree: true, attributeFilter: ['hidden'] },
-  );
+  new MutationObserver(() => {
+    // (another page turned to: the empty chapter's page let go)
+    if (s.empty && pages.page()?.id !== s.empty.over) emptied(s, null);
+    return pages.page()?.notebook !== s.notebook ? read(s) : draw(s);
+  }).observe(leaf.querySelector('.bk-world'), { subtree: true, attributeFilter: ['hidden'] });
 }
 
 // The notebook of the page shown read again: its kind, open asks and round, and its pages' chapters, the latest read
@@ -77,7 +80,7 @@ function draw(s) {
     { round } = s.book;
   s.nav.innerHTML = chaptersOf(s.book.kind)
     .filter(c => c !== 'advice' || round?.state === 'done')
-    .map(c => tab(s, c, shown?.chapter === c))
+    .map(c => tab(s, c, s.empty ? s.empty.chapter === c : shown?.chapter === c))
     .join('');
   if (!round) return void (s.panel.hidden = true);
   s.panel.innerHTML = round.guests.length
@@ -98,10 +101,16 @@ function tapped(s, chapter) {
   if (!chapter) return;
   s.panel.hidden = chapter !== 'guests' || !s.panel.hidden;
   const first = firstOf(s, chapter);
+  emptied(s, first || chapter === 'guests' ? null : chapter);
   if (first) return first.id !== s.pages.page()?.id && s.pages.show(first.id);
-  if (chapter === 'guests') return;
-  foley('slide', { dur: 0.12, material: 'paper', size: 0.3 }, { vol: 0.15 });
-  toast(esc(word('Nothing under {chapter} yet', { chapter: word(TITLES[chapter]) })));
+  if (chapter !== 'guests') foley('slide', { dur: 0.12, material: 'paper', size: 0.3 }, { vol: 0.15 });
+}
+// A chapter's empty page over the page shown (null: let go), its tab lit
+function emptied(s, chapter) {
+  s.empty = chapter && { chapter, over: s.pages.page()?.id };
+  s.blank.hidden = !chapter;
+  s.blank.innerHTML = chapter ? `<h2>${esc(word(TITLES[chapter]))}</h2>` : '';
+  draw(s);
 }
 // A guest chosen from the list: their page, by its id or by their name on it
 function chose(s, line) {

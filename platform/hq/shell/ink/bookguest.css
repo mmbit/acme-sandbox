@@ -1,38 +1,298 @@
-/* The guest's own shelf of books (bookguestshelf.js), and a round page's Marked done with its Undo (bookguest.js).
- */
+/* A guest's shelf of books and a book's first page (bookguestshelf.js), the work open beside the book
+   (bookguestwork.js), and a round page's Marked done with its Undo (bookguest.js). Line drawings in ink, the lit
+   one in the notebook's lime, asks for them in red. (the shelf, books and work) */
+@font-face {
+  font-family: 'Ink hand';
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('fonts/caveat-latin.woff2') format('woff2');
+}
+main.bk-guest-wide {
+  max-width: 1040px;
+  margin: 8px auto;
+}
+.bk-guest-wide ~ footer {
+  display: none;
+}
+.bk-guest-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding-bottom: 14px;
+  border-bottom: 1.5px solid var(--ink);
+}
+.bk-guest-head h1 {
+  margin: 0;
+  font:
+    400 clamp(1.7rem, 5vw, 2.4rem) / 1.1 'Ink hand',
+    'Segoe Print',
+    'Bradley Hand',
+    cursive;
+  overflow-wrap: anywhere;
+}
+.bk-guest-me {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border: 1.5px solid var(--ink);
+  border-radius: 50%;
+  font-weight: 700;
+}
+.bk-guest-where {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
 .bk-guest-shelf {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-  gap: 16px;
-  margin: 24px 0;
+  grid-template-columns: repeat(auto-fill, minmax(min(200px, 36vw), 1fr));
+  gap: clamp(14px, 3vw, 36px);
+  margin: 28px 0 0;
+  padding: 0 4px 18px;
+  border-bottom: 6px double var(--ink);
 }
 .bk-guest-book {
+  position: relative;
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
-  aspect-ratio: 3 / 4;
-  padding: 16px 14px 14px 20px;
+  gap: 2px;
+  padding: 12px 12px 14px 20px;
+  border: 1.5px solid var(--ink);
   border-radius: 3px 8px 8px 3px;
-  background: var(--notebook, #2a2352);
+  background: var(--card);
   box-shadow:
-    inset 6px 0 0 rgba(0, 0, 0, 0.25),
-    0 6px 14px rgba(0, 0, 0, 0.22);
-  color: #f5efe2;
+    inset 8px 0 0 -6.5px var(--ink),
+    4px 4px 0 -1px var(--bg),
+    4px 4px 0 0 var(--line);
+  color: var(--ink);
+  text-align: center;
   text-decoration: none;
 }
-.bk-guest-book:focus-visible {
-  outline: 3px solid var(--accent, #ff5a5f);
+.bk-guest-book[data-lit] {
+  background: var(--bk-chosen, #d6ea3c);
+}
+.bk-guest-book:focus-visible,
+.bk-guest-open:focus-visible {
+  outline: 3px solid var(--ink);
   outline-offset: 3px;
 }
+.bk-guest-cover {
+  display: block;
+  margin-bottom: 8px;
+  border: 1.5px solid var(--ink);
+  border-radius: 4px;
+  background: var(--card);
+}
+.bk-guest-cover svg,
+.bk-guest-shot svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1;
+  fill: none;
+  stroke: var(--ink);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
 .bk-guest-book-name {
-  font-size: 1.05rem;
-  font-weight: 600;
-  line-height: 1.25;
+  font-size: 1.15rem;
+  font-weight: 700;
+  line-height: 1.2;
   overflow-wrap: anywhere;
 }
 .bk-guest-book-state {
-  font-size: 0.82rem;
-  opacity: 0.85;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+.bk-guest-book[data-lit] .bk-guest-book-state {
+  color: var(--ink);
+  font-weight: 600;
+}
+.bk-guest-count {
+  position: absolute;
+  top: -14px;
+  right: -12px;
+  display: grid;
+  place-items: center;
+  min-width: 34px;
+  height: 34px;
+  padding: 0 8px;
+  border: 2px solid var(--card);
+  border-radius: 99px;
+  background: var(--bk-ask, #c0412f);
+  color: #fff;
+  font-weight: 700;
+}
+.bk-guest-foot {
+  margin: 22px 0 0;
+  color: var(--muted);
+  text-align: center;
+}
+.bk-guest-back {
+  margin: 0 0 12px;
+}
+.bk-guest-back a,
+.bk-guest-bar a:first-child {
+  color: var(--ink);
+  font-weight: 600;
+  text-decoration: none;
+}
+/* (a book's first page: paper with a dot grid, its name in hand) */
+.bk-guest-page {
+  padding: clamp(18px, 4vw, 40px);
+  border: 1.5px solid var(--ink);
+  border-radius: 6px;
+  background:
+    radial-gradient(circle, var(--line) 1px, transparent 1.2px) 0 0 / 22px 22px,
+    var(--card);
+}
+.bk-guest-page h1 {
+  display: inline-block;
+  margin: 0 0 18px;
+  padding-bottom: 4px;
+  border-bottom: 1.5px solid var(--ink);
+  font:
+    400 clamp(1.8rem, 5vw, 2.4rem) / 1.1 'Ink hand',
+    'Segoe Print',
+    'Bradley Hand',
+    cursive;
+}
+.bk-guest-page h2 {
+  margin: 0 0 14px;
+  font-size: 1.1rem;
+}
+.bk-guest-works {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr));
+  gap: 18px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.bk-guest-work {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: end;
+  gap: 4px 12px;
+  padding: 14px;
+  border: 1.5px solid var(--ink);
+  border-radius: 10px;
+  background: var(--card);
+}
+.bk-guest-shot {
+  grid-column: 1 / -1;
+  margin-bottom: 6px;
+  border: 1.5px solid var(--ink);
+  border-radius: 6px;
+}
+.bk-guest-shot svg {
+  aspect-ratio: 2;
+  stroke-width: 1.5;
+}
+.bk-guest-work h3,
+.bk-guest-work p {
+  grid-column: 1;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.bk-guest-work h3 {
+  font-size: 1.2rem;
+}
+.bk-guest-at,
+.bk-guest-state {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+.bk-guest-asks {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--bk-ask, #c0412f);
+  font-weight: 600;
+}
+.bk-guest-asks i {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.bk-guest-open {
+  grid-column: 2;
+  grid-row: 3 / span 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 44px;
+  padding: 0 18px;
+  border: 1.5px solid var(--ink);
+  border-radius: 99px;
+  color: var(--ink);
+  font-weight: 700;
+  text-decoration: none;
+}
+.bk-guest-work[data-lit] .bk-guest-open {
+  background: var(--bk-chosen, #d6ea3c);
+}
+.bk-guest-open svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+}
+/* (the work beside the book: the page's room left of it, a slim bar over the frame) */
+body.bk-guest-working {
+  padding: 0;
+}
+body.bk-guest-working > header,
+body.bk-guest-working > main > h1,
+body.bk-guest-working > footer {
+  display: none;
+}
+.bk-guest-view {
+  position: fixed;
+  inset: 0 var(--book-room, 0px) 0 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--card);
+}
+.bk-guest-bar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-height: 52px;
+  padding: calc(var(--sat) + 6px) 16px 6px;
+  border-bottom: 1.5px solid var(--ink);
+}
+.bk-guest-address {
+  overflow: hidden;
+  min-width: 0;
+  padding: 6px 14px;
+  border: 1.5px solid var(--ink);
+  border-radius: 99px;
+  color: var(--muted);
+  font-size: 0.9rem;
+  text-decoration: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* (the passkey prompt and the page's status over the work, bottom left) */
+body.bk-guest-working .passkey-prompt {
+  position: fixed;
+  z-index: 2;
+  bottom: 16px;
+  left: 16px;
+  max-width: min(420px, calc(100vw - var(--book-room, 0px) - 32px));
+  margin: 0;
+}
+.bk-guest-view iframe {
+  flex: 1;
+  width: 100%;
+  border: 0;
 }
 
 #book .bk-guest-mark span {
@@ -59,6 +319,13 @@
 #book .bk-guest-undo span {
   text-decoration: underline;
   text-underline-offset: 3px;
+}
+/* (a round page's lane wraps Mark done under the rail where the two don't fit side by side: in the rail's grid its
+   words ran off the paper's edge) */
+#book .bk-lane-line:has(.bk-guest-mark) {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
 }
 /* (Mark done in words, as wide as they are, in the send stack) */
 #book .bk-btn.bk-guest-mark {

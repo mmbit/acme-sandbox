@@ -19,7 +19,8 @@ export function reviewAccess(m: { notebook: number; guest: string }) {
 }
 db.exec('create table if not exists notebook_reviews (share integer primary key, notebook integer not null unique)');
 
-// Reviews owns the round's invitation and expiry. Its notebook is made once, at the first invite.
+// Reviews owns the round's invitation and expiry. Its notebook is made once, at the first invite. A lasting share's is
+// an invited notebook, no round: it never closes, and each guest's page in it is theirs for good.
 export function syncReviewNotebook(share: shares.Share) {
   if (share.view) return;
   return inOneStep(() => {
@@ -27,15 +28,16 @@ export function syncReviewNotebook(share: shares.Share) {
       { notebook: number } | undefined;
     if (!linked) {
       if (!shares.isOpen(share)) return;
-      const name = `${ownerOf(share.about).name}: ${companyTime(Date.parse(share.created))}`;
-      const id = notebook.makeNotebook(BOARD, 'round', name);
-      db.prepare('insert into notebook_rounds (notebook) values (?)').run(id);
+      const owner = ownerOf(share.about).name;
+      const name = share.lasting ? owner : `${owner}: ${companyTime(Date.parse(share.created))}`;
+      const id = notebook.makeNotebook(BOARD, share.lasting ? 'invited' : 'round', name);
+      if (!share.lasting) db.prepare('insert into notebook_rounds (notebook) values (?)').run(id);
       db.prepare('insert into notebook_reviews (share, notebook) values (?, ?)').run(share.id, id);
       linked = { notebook: id };
     }
     for (const person of shares.people(share.id)) syncReviewer(linked.notebook, person, share);
-    const round = rounds.roundOf(linked.notebook)!;
-    if (shares.isOpen(share) && shares.people(share.id).some(shares.onIt) && round.closed && !round.advice) {
+    const round = rounds.roundOf(linked.notebook);
+    if (round && shares.isOpen(share) && shares.people(share.id).some(shares.onIt) && round.closed && !round.advice) {
       db.prepare('update notebook_rounds set closed = null where notebook = ?').run(linked.notebook);
       db.prepare('update notebooks set archived = 0 where id = ?').run(linked.notebook);
     }

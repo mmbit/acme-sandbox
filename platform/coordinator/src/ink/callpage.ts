@@ -26,7 +26,7 @@ import { boxOf } from '../../../hq/shell/ink/notebookstack.js';
 import { typedNote } from '../notebookscraps.ts';
 import { isRefused, type Refused } from '../pagechecks.ts';
 import { boxWords, liveCall, pageFor } from './callnotes.ts';
-import { asksOf, marked, oneNote, rewrote } from './callasks.ts'; // (oneNote)
+import { asksOf, marked, oneNote, rewrote } from './callasks.ts';
 import { WHAT } from '../ledger.ts';
 import { MARKERS, MARKER_ALPHA, WIDTHS, shape } from '../../../hq/shell/ink/bookinkmath.js';
 import { inkOf } from '../../../hq/shell/ink/agentink.js';
@@ -125,10 +125,11 @@ function strokeOf(b: any, agent: string, on: Group | null) {
   if (isRefused(box)) return box;
   const from: [number, number] = [box.x, box.y],
     to: [number, number] = [box.x + box.w, box.y + box.h];
-  if (b.mark === 'highlight') return shape('rect', from, to, { ...highlight, size: 2 }, { fill: true })!;
-  return (
-    shape(b.mark, from, to, ink, { fill: b.filled === true }) ?? ([400, 'the box is too small to draw'] as Refused)
-  );
+  const drawn =
+    b.mark === 'highlight'
+      ? shape('rect', from, to, { ...highlight, size: 2 }, { fill: true })
+      : shape(b.mark, from, to, ink, { fill: b.filled === true });
+  return drawn ?? ([400, 'the box is too small to draw'] as Refused);
 }
 // A box the agent names: its own (box), or round the contents of the scrap it's on with room, inside the scrap
 function boxAsked(b: any, on: Group | null): { x: number; y: number; w: number; h: number } | Refused {

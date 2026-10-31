@@ -115,6 +115,13 @@ async function tried() {
 test('a ring round a version goes as a reply over its frame; the judge’s pick picks it, the run hears which', async () => {
   const { page, g, run, v1, v2 } = await tried();
   const frame = { x: 360, y: 72, w: 300, h: 225 };
+  const refused = await h.board('/api/notebooks/groups/reply', {
+    answer: v2.id,
+    ink: [ring(frame)],
+    frame: { ...frame, w: 0 },
+  });
+  assert.equal(refused.status, 400);
+  assert.ok(!(await childrenOf(page, g.id)).some((x: any) => x.kind === 'reply'));
   const sent = await h.board('/api/notebooks/groups/reply', { answer: v2.id, ink: [ring(frame)], frame });
   assert.equal(sent.status, 200, JSON.stringify(sent.body));
   const c = (await judged())!;
@@ -134,6 +141,9 @@ test('a ring round a version goes as a reply over its frame; the judge’s pick 
     [false, true],
     'the page shows it',
   );
+  // (its frame read back, so HQ lays the ring over the version wherever it wraps)
+  const reply = (await childrenOf(page, g.id)).find((x: any) => x.kind === 'reply' && x.answers === v2.id);
+  assert.deepEqual(reply.frame, frame, 'the reply keeps the frame it was drawn over');
   const heard = db.prepare('select text from messages where job = ?').all(run.id) as { text: string }[];
   assert.match(heard.at(-1)!.text, /The board picked your version “Brick red”/);
   // a tick on the other moves the pick: one per try

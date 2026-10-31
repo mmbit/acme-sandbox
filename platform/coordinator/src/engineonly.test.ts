@@ -201,3 +201,48 @@ test("a push goes back for a redo when the last run on its branch was Codex's: b
     );
   }
 });
+
+test("a stopped redo checked again after its rule changed goes back for its previews, open, and a second hq review doesn't take it past them to the panel", async () => {
+  const run = await h.start({ agent: 'nib', engine: 'codex', branch: 'job/sill' });
+  await h.finish(run, { pr: 510, branch: 'job/sill', files: [PIXEL], sha: sha('d') });
+  const [queued] = onPr(510);
+  const redo = await h.claim('claude');
+  assert.equal(redo?.id, queued.id, 'the redo, first');
+  await h.finish(redo!, {
+    pr: 510,
+    branch: 'job/sill',
+    files: [PIXEL],
+    sha: sha('d'),
+    pushedSince: { sha: sha('d'), files: [] },
+  });
+  assert.equal((db.prepare('select status from prs where number = 510').get() as { status: string }).status, 'stuck');
+
+  // the rule no longer covers the file: only the previews are owed
+  const org = readFileSync(`${h.repo}/company/org.yaml`, 'utf8');
+  writeFileSync(
+    `${h.repo}/company/org.yaml`,
+    org.replace('paths: ["platform/hq/renderers/**"] }\n', 'paths: ["kits/pixels/**"] }\n'),
+  );
+  try {
+    const owner = await h.start({ agent: 'bolt' });
+    const first = await h.agent('review', owner.token, { pr: 510 });
+    assert.equal(first.status, 200);
+    assert.deepEqual(
+      onPr(510).map(row => row.kind),
+      ['work'],
+      'its previews, back to its author',
+    );
+    assert.equal((db.prepare('select status from prs where number = 510').get() as { status: string }).status, 'open');
+
+    const second = await h.agent('review', owner.token, { pr: 510 });
+    await h.finish(owner);
+    assert.equal(second.status, 409, 'nothing stuck to send on');
+    assert.deepEqual(
+      onPr(510).map(row => row.kind),
+      ['work'],
+      'no triage before the previews',
+    );
+  } finally {
+    writeFileSync(`${h.repo}/company/org.yaml`, org);
+  }
+});

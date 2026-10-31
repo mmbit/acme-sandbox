@@ -1,12 +1,12 @@
-// The cog's small pop-up, the page bar's (bookcontrols.js), over the tool rail: this device's preferences (shared/review/prefs.js keeps them), each
+// The cog's small pop-up, the rail's (bookcontrols.js), beside it: this device's preferences (shared/review/prefs.js keeps them), each
 // kept the moment it's changed. A press anywhere else, or Escape, closes it.
 import { prefs, setPrefs, HOLDS } from '/__review/prefs.js';
-import { hide, overRail } from './bookui.js';
+import { hide, besideRail } from './bookui.js';
 import { word } from './bookscope.js';
 
 const HOLD_NAMES = { short: 'Short', medium: 'Medium', long: 'Long' };
 
-// cog: the page bar's button that opens it
+// cog: the rail's button that opens it
 export function mountPrefs(cog) {
   cog.setAttribute('aria-haspopup', 'dialog');
   cog.setAttribute('aria-expanded', 'false');
@@ -27,7 +27,7 @@ export function mountPrefs(cog) {
     if (card) return close();
     hide();
     card = filled();
-    overRail(card);
+    besideRail(card, cog);
     cog.setAttribute('aria-expanded', 'true');
     setPressed(true);
     card.querySelector('input')?.focus({ preventScroll: true });

@@ -50,8 +50,15 @@ export function readQueuedSize(given: { size?: unknown; refs?: unknown; why?: un
   if (!Array.isArray(refs) || refs.some(id => !Number.isSafeInteger(id) || id <= 0))
     return '--refs takes the comparable done job numbers';
   // only the references are read: the check needs no other past job.
-  const clean = new Set(refs.length ? cleanPastJobs(pastJobs(refs)).map(j => j.id) : []);
-  if (refs.some(id => !clean.has(id))) return 'each estimate reference must be a done job with clean recorded time';
+  const clean = new Set(
+    refs.length
+      ? cleanPastJobs(pastJobs(refs))
+          .filter(j => j.origin !== 'carry')
+          .map(j => j.id)
+      : [],
+  );
+  if (refs.some(id => !clean.has(id)))
+    return 'each estimate reference must be done model-agent work with clean recorded time';
   return { agent_ms: agentMs, refs: [...new Set(refs)], why: given.why.trim() };
 }
 

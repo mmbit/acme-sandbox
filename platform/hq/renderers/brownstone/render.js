@@ -25,7 +25,7 @@ export const ISLAND = -99;
 // The visible canvas is the low-resolution frame buffer, and CSS scales it up (pixelated) on the GPU.
 // Speech bubbles and name cards are DOM elements over it (see shell/overlay.js).
 export function createRenderer(screen) {
-  const R = { fb: screen, lm: canvas(1, 1), glows: new Map(), winKey: '', hits: [] };
+  const R = { fb: screen, lm: canvas(1, 1), glows: new Map(), hits: [] };
   R.fg = R.fb.getContext('2d'); R.lg = R.lm.getContext('2d');
   return R;
 }
@@ -38,7 +38,7 @@ export function render(R, S, L, cam, o) {
   const bx0 = Math.floor(cam.x - SW / 2 / z), by0 = Math.floor(cam.y - SH / 2 / z);
   const dark = darkness(h), wx = S.weather, g = R.fg;
   R.hits = []; R.bx0 = bx0; R.by0 = by0;
-  tintWindows(R, L, h, Math.max(wx.rain, wx.snow) * 0.6, dark);
+  tintWindows(L, h, Math.max(wx.rain, wx.snow) * 0.6, dark);
   // the scene only ever covers the island's box: limit full-buffer passes to it
   const A = lightArea(L, o.intro), rx = clamp(A.x - bx0, 0, bw), ry = clamp(A.y - by0, 0, bh);
   R.rect = [rx, ry, clamp(A.x + A.w - bx0, 0, bw) - rx, clamp(A.y + A.h - by0, 0, bh) - ry];
@@ -82,11 +82,12 @@ function fitBuffer(R, w, h, settled) {
   fb.width = settled ? w : Math.max(w, fb.width);
   fb.height = settled ? h : Math.max(h, fb.height);
 }
-// the sky seen through the back walls' windows, tinted again when the sky changes
-function tintWindows(R, L, h, wet, dark) {
+// the sky seen through the back walls' windows, tinted again when the sky changes (its key on the building's layout, so a
+// kept building keeps its own)
+function tintWindows(L, h, wet, dark) {
   const [a, b] = skyAt(h, wet), key = `${a}${b}`;
-  if (key === R.winKey) return;
-  R.winKey = key;
+  if (key === L.winKey) return;
+  L.winKey = key;
   const r = rng('winstars');
   for (const room of L.rooms) {
     const art = room.art; if (!art?.m) continue;
@@ -563,7 +564,7 @@ function drawIsland(f) {
   if (labels > 0) { g.globalAlpha = labels; blit(island.labels.c, island.labels.x, island.labels.y); g.globalAlpha = 1; }
   for (const fiber of island.fiber || []) fiberPulses(g, fiber, t);
   if (walls) drawPlug(g, facade, 1 - walls(-1), blit);
-  if (wx.cover > 0.02 || wx.wet > 0.02) groundFx(R, g, S, L, t, blit);
+  if (wx.cover > 0.02 || wx.wet > 0.02) groundFx(g, S, L, t, blit);
   g.translate(0, off);
 }
 // data on the fibre in the ground: a few soft pulses sliding from the server room to the park end
@@ -576,16 +577,16 @@ function fiberPulses(g, f, t) {
   }
   g.globalAlpha = 1;
 }
-// wet sheen, puddles and snow cover on everything outdoors
-function groundFx(R, g, S, L, t, blit) {
+// wet sheen, puddles and snow cover on everything outdoors (drawn once onto the building's island)
+function groundFx(g, S, L, t, blit) {
   const wx = S.weather, isl = S.island;
-  if (!R.snowTops) { R.snowTops = silhouette(isl.tops, '#f4f6ff'); R.wetTops = silhouette(isl.tops, '#3b4a7a'); }
-  if (wx.wet > 0.02) { g.globalAlpha = wx.wet * 0.22; blit(R.wetTops, L.bounds.x0, L.bounds.y0); g.globalAlpha = 1; }
-  if (wx.cover > 0.02) { g.globalAlpha = wx.cover * 0.85; blit(R.snowTops, L.bounds.x0, L.bounds.y0); g.globalAlpha = 1; }
+  if (!isl.snowTops) { isl.snowTops = silhouette(isl.tops, '#f4f6ff'); isl.wetTops = silhouette(isl.tops, '#3b4a7a'); }
+  if (wx.wet > 0.02) { g.globalAlpha = wx.wet * 0.22; blit(isl.wetTops, L.bounds.x0, L.bounds.y0); g.globalAlpha = 1; }
+  if (wx.cover > 0.02) { g.globalAlpha = wx.cover * 0.85; blit(isl.snowTops, L.bounds.x0, L.bounds.y0); g.globalAlpha = 1; }
   if (wx.wet > 0.1 && wx.cover < 0.3) {
-    R.puddles ??= (() => { const r = rng('puddles'), out = []; for (let i = 0; i < 16; i++) { const k = r(), p = k < 0.5 ? { x: CORE + 1 + r() * (L.Lx - 1), y: CORE + 0.2 + r() * 0.6 } : k < 0.75 ? isl.E(r() * isl.streetLen, 0.6 + r() * 2.2) : { x: CORE + 0.2 + r() * 0.6, y: CORE + 1 + r() * (L.Ly - 1) }; out.push({ ...p, rx: 3 + (r() * 6 | 0), ry: 1 + (r() * 2 | 0) }); } return out; })();
+    isl.puddles ??= (() => { const r = rng('puddles'), out = []; for (let i = 0; i < 16; i++) { const k = r(), p = k < 0.5 ? { x: CORE + 1 + r() * (L.Lx - 1), y: CORE + 0.2 + r() * 0.6 } : k < 0.75 ? isl.E(r() * isl.streetLen, 0.6 + r() * 2.2) : { x: CORE + 0.2 + r() * 0.6, y: CORE + 1 + r() * (L.Ly - 1) }; out.push({ ...p, rx: 3 + (r() * 6 | 0), ry: 1 + (r() * 2 | 0) }); } return out; })();
     const [skyTop] = skyAt(S.hour, 0.6);
-    for (const p of R.puddles) {
+    for (const p of isl.puddles) {
       const sx = Math.round(SX(p.x, p.y)), sy = Math.round(SY(p.x, p.y)), k = Math.min(1, wx.wet * 1.4);
       const rx = Math.max(1, Math.round(p.rx * k)), ry = Math.max(1, Math.round(p.ry * k + 0.4));
       g.globalAlpha = 0.75; ellipse(g, sx, sy, rx, ry, mix(skyTop, '#8a94c0', 0.35)); g.globalAlpha = 1;
@@ -807,8 +808,8 @@ function nightShade(R, S, L, dark, gloom, lampOn, intro, W) {
   };
   litRooms(true);
   const land = S.island.land, ioff = islandOffset(intro);
-  R.landShade ??= silhouette(land.c, '#0d0b28');
-  gloomOver(R.landShade, land.x, land.y - ioff);
+  S.island.landShade ??= silhouette(land.c, '#0d0b28');
+  gloomOver(S.island.landShade, land.x, land.y - ioff);
   if (W) { lg.translate(0, -ioff); lightPlug(lg, R.facade, 1 - W(-1), gloom); lg.translate(0, ioff); }
   litRooms(false);
   // the island's props are drawn over any room behind them (drawOutdoors comes
@@ -1001,7 +1002,7 @@ function weather(R, g, S, L, t, bw, bh, bx0, by0, dark) {
       g.fillRect(x | 0, y | 0, 1, 3); g.fillRect((x | 0) - 1, (y | 0) + 3, 1, 2);
     }
     // splashes on the ground outside and on the open roof decks (not on railings or glass)
-    const sr = rng('splash' + (t * 6 | 0)), spots = R.splashAreas ??= splashAreas(L);
+    const sr = rng('splash' + (t * 6 | 0)), spots = L.splashAreas ??= splashAreas(L);
     g.fillStyle = 'rgba(230,240,255,.7)';
     for (let i = 0; i < 60 * wx.rain; i++) {
       let k = sr() * spots.total, q = spots.list[0];

@@ -199,12 +199,19 @@ async function ensureNetwork() {
 
 const key = () => (existsSync(KEY_FILE) ? readFileSync(KEY_FILE, 'utf8').trim() : '');
 
+// This code's own hash, as the install command checked it: HQ keeps it with each setup call, so it sees a machine whose
+// manager runs code it no longer serves, which stops at its next restart
+const CODE = createHash('sha256')
+  .update(readFileSync(new URL(import.meta.url)))
+  .digest('hex');
+
 // What HQ wants on this machine: its kinds, and which helpers here have a run ({ kind, slot })
 async function setup() {
   const res = await fetch(`${HQ_URL}/api/helper/setup`, {
     method: 'POST',
     redirect: 'error',
-    headers: { authorization: `Bearer ${key()}` },
+    headers: { authorization: `Bearer ${key()}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ code: CODE }),
     signal: AbortSignal.timeout(60_000),
   });
   if (!res.ok) throw new Error(`HQ said ${res.status} to the setup`);

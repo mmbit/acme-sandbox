@@ -3,10 +3,10 @@
 // desktop with a mouse and on an iPad mini with the Pencil:
 //   - the pen draws across a scrap: the line lands on it (in the scrap's group), and the scrap stays where it was;
 //   - Select pressed on one line of a group picks the whole group (its frame round all of it), and every line of it,
-//     its clip with them, follows the pointer while it's held; let go, nothing jumps, and the store has every line
-//     moved by the same.
+//     its frame with them, follows the pointer while it's held; let go, nothing jumps, and the store has every line
+//     moved by the same (in its unit's own px, the unit where the masonry put it).
 import assert from 'node:assert/strict';
-import { onPaper, pen, tool } from './booknotebookscreen.mjs';
+import { inSight as shown, pen, tool } from './booknotebookscreen.mjs';
 import { open } from './booknotebook.mjs';
 import { DESKTOP, MINI, pressAlong, until } from './bookkit.mjs';
 
@@ -65,26 +65,8 @@ async function drawsOnAScrap(page, play, pencil) {
   assert.equal(await page.locator('#book .bk-sel').count(), 0, 'nothing picked by the pen');
 }
 
-// A group slid into view, as the book shows a scrap ('book:scrap'), and points on it (its unit's px, as the store keeps
-// them) on the screen once the paper's still and nothing's over them
-async function inSight(page, id, at) {
-  await page.evaluate(detail => document.dispatchEvent(new CustomEvent('book:scrap', { detail })), {
-    id,
-    page: NEWEST,
-  });
-  await page.locator(`#book .bk-page:not([hidden]) .bk-unit[data-unit="${id}"]`).waitFor();
-  let was = '';
-  return until(async () => {
-    const points = await onPaper(page, at, id),
-      still = JSON.stringify(points) === was;
-    was = JSON.stringify(points);
-    const bare = await page.evaluate(
-      ps => ps.every(([x, y]) => document.elementFromPoint(x, y)?.closest('#book .bk-page')),
-      points,
-    );
-    return still && bare && points;
-  }, 'the scrap in view, nothing over it');
-}
+// A group of the newest page slid into view, and points on it (its unit's px) on the screen
+const inSight = (page, id, at) => shown(page, NEWEST, id, at);
 
 // ---- Select moves a group, live
 
@@ -94,19 +76,21 @@ async function movesAGroup(page, play, pencil, c, name) {
   // pressed on the wave's first line only
   const [from] = await inSight(page, WAVE, [was.ink[0].points[1].slice(0, 2)]),
     k = await scaleOf(page),
-    clip = () => rectOf(page, `#book .bk-unit[data-unit="${WAVE}"]`),
-    clipWas = await clip();
+    // (the group's frame: on the units page its lines move inside their unit, which stays in its place. job #15978)
+    clip = () => rectOf(page, '#book .bk-sel');
   const held = await press(page, from, pencil);
   try {
+    await until(clip, 'the group picked');
+    const clipWas = await clip();
     const steps = 8;
     for (let i = 1; i <= steps; i++) {
       const at = [from[0] + (BY[0] * i) / steps, from[1] + (BY[1] * i) / steps];
       await held.move(at);
-      // every frame: the clip with the pointer, as far as it's come
+      // every frame: the group's frame with the pointer, as far as it's come
       const now = await clip();
       assert.ok(
         near([now.x - clipWas.x, now.y - clipWas.y], [at[0] - from[0], at[1] - from[1]], 2),
-        `the group's clip follows the pointer live (step ${i}: ${Math.round(now.x - clipWas.x)}, ${Math.round(now.y - clipWas.y)})`,
+        `the group's frame follows the pointer live (step ${i}: ${Math.round(now.x - clipWas.x)}, ${Math.round(now.y - clipWas.y)})`,
       );
     }
     // the whole group picked: its frame round every line of it, lifted together
@@ -124,7 +108,7 @@ async function movesAGroup(page, play, pencil, c, name) {
   await landed(page, play, { was, k, clip, clipHeld: await clip() });
   await c.shot(`move-${name}-group-moved`, page);
 }
-// Let go: the store has every line moved by the same, and the clip where it was let go (no jump)
+// Let go: the store has every line moved by the same, and the frame where it was let go (no jump)
 async function landed(page, play, { was, k, clip, clipHeld }) {
   const dx = BY[0] / k,
     dy = BY[1] / k;
@@ -141,7 +125,7 @@ async function landed(page, play, { was, k, clip, clipHeld }) {
   const clipNow = await clip();
   assert.ok(
     near([clipNow.x, clipNow.y], [clipHeld.x, clipHeld.y], 2),
-    `the clip stays where it was let go (${Math.round(clipNow.x - clipHeld.x)}, ${Math.round(clipNow.y - clipHeld.y)})`,
+    `the frame stays where it was let go (${Math.round(clipNow.x - clipHeld.x)}, ${Math.round(clipNow.y - clipHeld.y)})`,
   );
 }
 

@@ -10,12 +10,11 @@
 // the phone; its post-it's Save goes to the preview's /__review/notes, which the coordinator makes a scrap on the same
 // page. Cancel: the mark gone, nothing saved.
 import assert from 'node:assert/strict';
-import { fulfilPart } from '../../shared/review/parts.mjs';
 import { nothingDrawn } from './bookink.mjs';
 import { groupsOf, newestPage, shownScrap } from './bookplayed.mjs';
 import { talked, voiceServed } from './bookvoice.mjs';
 import { talkedInViewer, askLeftBehind, pagesWatched } from './booktalk.mjs';
-import { DESKTOP, MINI, pinOn, pressAlong, ui, until } from './bookkit.mjs';
+import { DESKTOP, MINI, PREVIEW, pinOn, pressAlong, previewServed, ui, until } from './bookkit.mjs';
 
 // ---- the stories
 const IPAD_SCREEN = { name: 'ipad', viewport: MINI, more: {}, starts: 'open', hand: 'pen' },
@@ -35,12 +34,6 @@ const IPAD_SCREEN = { name: 'ipad', viewport: MINI, more: {}, starts: 'open', ha
     starts: 'open',
     hand: 'mouse',
   };
-export const PREVIEW = 'https://scrap.preview.test';
-const PREVIEW_PAGE = `<!doctype html><meta name="viewport" content="width=device-width"><title>Basket</title>
-<body style="margin: 0; font: 16px system-ui, sans-serif">
-<h1 style="margin: 24px">Your basket</h1>
-<p style="margin: 24px; max-width: 30em">Two jars of plum jam, gift-wrapped, at the pick-up point by Friday.</p>
-<script src="/__review/review.js"></script>`;
 // How long a saved mark's ink may take to fly into the book: its flight is half a second, but HQ's scene drawn without a
 // GPU on a loaded worker holds the page's frames up for seconds (job #12594's desktop run: past the default's 0.9 s)
 const FLIGHT_MS = 4000;
@@ -60,6 +53,7 @@ export function scrapStories(c) {
 async function pinFlow(c, screen) {
   const context = await c.hqIn(c.browser, screen.viewport, { ...screen.more, notebooks: {} }),
     errors = [];
+  await voiceServed(c, context);
   await previewServed(c, context);
   const page = await context.newPage();
   page.on('pageerror', e => errors.push(e.message));
@@ -261,34 +255,6 @@ async function cancelled(s) {
 }
 
 // ---- an artifact: a preview in HQ's viewer, review mode running in its frame
-export async function previewServed(c, context) {
-  await voiceServed(c, context);
-  await context.route(/\/api\/preview\/link$/, r => r.fulfill({ json: { url: r.request().postDataJSON().url } }));
-  await context.route(`${PREVIEW}/**`, r => {
-    const path = new URL(r.request().url()).pathname;
-    if (fulfilPart(r, path, c.reviewJs)) return;
-    // the board's note: the coordinator makes it a scrap on My journal's current page (bookreview.ts)
-    if (path === '/__review/notes' && r.request().method() === 'POST') {
-      const body = r.request().postDataJSON();
-      c.posts.push({ path, body });
-      const { v, url, el, view, ink } = body.element ?? {},
-        g = context.notebook.route(
-          '/api/notebooks/groups/scrap',
-          {},
-          {
-            anchor: { v, url, el, view, ink },
-            words: body.note,
-            said: body.said === 'spoken' ? 'spoken' : 'typed',
-            snip: body.shot,
-            owner: 'juno',
-          },
-        );
-      return r.fulfill({ json: { ok: true, id: g.id, page: g.page, owner: 'juno', name: 'Juno' } });
-    }
-    if (path.startsWith('/__review/')) return r.fulfill({ json: { show: false } });
-    return r.fulfill({ contentType: 'text/html', body: PREVIEW_PAGE });
-  });
-}
 // A mark on the preview: its post-it in the frame, words said through HQ's microphone (the frame never asking for it)
 // or typed, Save to the preview's notes, the mark gone, and the scrap on the Notebook's newest page, the open book
 // turned to it (shut, opened at it by the tab once the preview's closed)

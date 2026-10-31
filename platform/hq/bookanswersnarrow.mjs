@@ -1,6 +1,6 @@
 // book-check.mjs's answers story on a narrower book (bookanswers.mjs): a note's answer placed beside it on a wide page,
 // drawn at the narrow spot placed for the paper each book shows where it hasn't the room, and a note the board wrote
-// later on one of its spots.
+// later on one of its spots. (Its Notebook played by notebookOn)
 import assert from 'node:assert/strict';
 import { notebookOn, onScreen, pagePx } from './bookanswersplay.mjs';
 import { inPaper, inStory, written } from './bookanswers.mjs';
@@ -35,7 +35,7 @@ export async function besideOnNarrower(browser, c, later = null) {
   assert.equal(spot.dx, note.box.w + ANSWER.gap, "beside the note on a wide page's paper");
   nb.groups.push(note, next);
   if (later) spot = writtenOn(nb, note.box, spot, later);
-  nb.seed.slips.push(nb.answer(note, 4410, 'text', text, spot));
+  nb.seed.slips.push({ id: 4410, ...nb.answer(note, 'text', text, spot) });
   // (each screen's spot: its wide one, or the narrow one placed for the widest of NARROWER's papers that fits its own)
   const spots = spotChain(spot),
     on = (viewport, state) =>

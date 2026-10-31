@@ -96,18 +96,6 @@
   transform: translateY(2px);
   box-shadow: none;
 }
-/* a quiet word: on the paper, no ink (Cancel, Not now) */
-.bk-btn.bk-text.bk-quiet {
-  background: transparent;
-  color: var(--bk-ink);
-  box-shadow: inset 0 0 0 1.5px var(--bk-edge);
-}
-@media (hover: hover) {
-  .bk-btn.bk-text.bk-quiet:hover {
-    background: var(--bk-ink-soft);
-    color: var(--bk-ink);
-  }
-}
 @media (pointer: coarse) {
   .bk-btn {
     width: 44px;
@@ -235,15 +223,8 @@
   }
 }
 
-/* ---- the islands: small cards of controls in the lane at the paper's foot (bookui.js, bookstrip.css); an island with
-   nothing in it, or nothing shown (Send on a page sent), doesn't show */
-.bk-islands {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 10px;
-  pointer-events: none;
-}
+/* ---- the islands: groups of controls, on the rail at the paper's right edge (bookui.js, bookstrip.css) or the
+   overview's head; an island with nothing in it, or nothing shown (Send on a page sent), doesn't show */
 .bk-island {
   display: flex;
   flex-direction: column;
@@ -262,7 +243,7 @@
 /* the overview and the Shelf (data-far, bookpagesfar.js): nothing there to draw on, undo or share by its corner, so
    the tools, Undo and Redo and the page's dog-ear put away */
 #book[data-far] .bk-island[data-island='tools'],
-#book[data-far] .bk-strip > .bk-card,
+#book[data-far] .bk-controls > .bk-palette,
 #book[data-far] .bk-undo,
 #book[data-far] .bk-redo,
 #book[data-far] .bk-dogear {
@@ -282,7 +263,7 @@
     animation: none;
   }
 }
-/* the pages' row at the paper's foot, centred, its controls side by side */
+/* a row of controls (the overview's head), side by side */
 .bk-island[aria-orientation='horizontal'] {
   flex-direction: row;
 }

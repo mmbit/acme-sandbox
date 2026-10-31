@@ -13,7 +13,7 @@ import { boxesOf } from './bookwords.js';
 import { word } from './bookscope.js';
 import { landing } from './bookgroupmath.js';
 import { arrive } from './bookarrive.js';
-import { footOf, strokeUnit } from './bookunits.js';
+import { footOf, pointUnit } from './bookunits.js';
 import { UNIT_W } from './scrapunit.js';
 
 // The words' size and line in page px (bookrender.ts TEXT), and the room round them inside the box, for the caret
@@ -312,7 +312,7 @@ function put(tx, { view, x, y }, words, right, centre) {
 }
 // The scrap a box written at x, y goes to (the one there, else a new one) and the room across it for words (page px)
 function inUnit(page, x, y) {
-  const g = strokeUnit(page, x, y),
+  const g = pointUnit(page, x, y),
     o = page.origins?.get(g) ?? { x: 0 };
   return { g, left: o.x + UNIT_PAD, edge: o.x + UNIT_W - UNIT_PAD };
 }

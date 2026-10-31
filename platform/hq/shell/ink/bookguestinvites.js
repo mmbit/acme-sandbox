@@ -1,5 +1,5 @@
-// Colleague invitations on an existing guest round, beside the shared Notebook's controls.
-import { button, island } from './bookui.js';
+// Colleague invitations on an existing guest round, among the shared Notebook's controls on its rail.
+import { button, island, lineIcon } from './bookui.js';
 import { notebookRequest } from './bookscope.js';
 import { words } from './notebookwords.js';
 import { esc } from '../../util.js';
@@ -13,8 +13,12 @@ export function mountGuestInvites(notebook) {
   form.querySelector('[data-close]').onclick = () => {
     form.hidden = true;
   };
+  // (an icon on the rail, its words its label)
   const invite = button({
-    text: text.inviteColleague,
+    icon: lineIcon(
+      '<circle cx="9.5" cy="8" r="3.5"/><path d="M3 20c.6-3.8 3.1-6 6.5-6s5.9 2.2 6.5 6"/><path d="M19 8v6M16 11h6"/>',
+    ),
+    label: text.inviteColleague,
     onClick: () => {
       form.hidden = !form.hidden;
     },

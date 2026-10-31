@@ -28,7 +28,9 @@ globalThis.addEventListener = () => {};
 globalThis.document = { addEventListener: () => {} };
 globalThis.location = { hostname: '', search: '', pathname: '/' };
 const { changed, readPage, saved } = await import('./booksave.js');
-const { strokeUnit } = await import('./bookunits.js');
+const { pointUnit, unitsOf } = await import('./bookunits.js');
+const { GAP, MARGIN, layout, widthFor } = await import('./masonry.js');
+const { UNIT_W } = await import('./scrapunit.js');
 
 const line = x => ({
   color: '#2a2352',
@@ -53,7 +55,7 @@ function storeOf(refuse = new Set()) {
     groups,
     add: parts => kept(++id, parts),
     loadGroups: async () => ({ title: 'A page', handed: 0, groups: [...groups.values()].map(g => structuredClone(g)) }),
-    createGroup: async (page, parts) => kept(++id, parts),
+    createGroup: async (page, parts) => kept(++id, { kind: 'drawing', ...parts }),
     editGroup: async (gid, since, parts) => kept(gid, parts),
     deleteGroup: async gid => {
       gone.set(gid, groups.get(gid));
@@ -85,7 +87,7 @@ const save = (book, page) => (changed(book, page), saved(book, page));
 // A line drawn on the page, into the unit it starts on or a new one, as the pen puts it (bookunits.js)
 const drawn = (page, x) => {
   const el = line(x);
-  el.g = strokeUnit(page, x, 100);
+  el.g = pointUnit(page, x, 100);
   page.ink.push(el);
 };
 
@@ -132,4 +134,22 @@ test('an Undo the store takes puts its group back, and saves on', async () => {
   assert.deepEqual([...store.groups.keys()].sort(), [1, 2, 3]);
   assert.ok(page.ink.some(el => el.g === 2));
   assert.equal(book.view.said, '');
+});
+
+test('a drawing with nothing above it stays in the column it was drawn in when its page is read again', async () => {
+  globalThis.store = storeOf();
+  // (two columns, the page not laid since: bookunits.js keeps 8 px off the paper's sides)
+  const width = widthFor(2),
+    page = { id: 1, w: width + 16, columns: 2, scale: 1, origins: new Map(), places: [], laid: { units: [], width } },
+    book = bookOf(page);
+  await readPage(book, page);
+  drawn(page, 8 + MARGIN + 20);
+  drawn(page, 8 + MARGIN + UNIT_W + GAP + 20);
+  await save(book, page);
+  const again = { id: 1, w: width + 16 };
+  await readPage(bookOf(again), again);
+  assert.deepEqual(
+    layout(unitsOf(again), width).places.map(p => p.column),
+    [0, 1],
+  );
 });

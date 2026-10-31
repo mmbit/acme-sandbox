@@ -1,6 +1,4 @@
-// Done jobs like a piece of work, the ones an estimate stands on: jobs of the same origin by the same agent, the words
-// of its title deciding which, each word weighed by how rare it is among past titles. A scheduled job stands on its own
-// schedule entry's runs first.
+// Done jobs matched by agent, origin and title words, or scheduled entry. Carry checks match only carry checks.
 import { db } from './db.ts';
 import { keptPool, type Notes, type RowAlias } from './keptpool.ts';
 // (the runs table, which the pool is read from and counted on)
@@ -10,12 +8,20 @@ import { workBranch } from './jobs.ts';
 import { mean, wholeSeconds } from './arithmetic.ts';
 import { REBUILT_RUN, INVALID_RUN, timingFlags, type TimingEvidence, type TimingFlag } from './timing.ts';
 
-// A work job's origin, how it was made: work an agent queued (or a pull request's re-land), the author's fixes for a
+// A work job's origin, how it was made: planned work (or a pull request's re-land), the author's fixes for a
 // review or the board's notes, a pull request only brought up to date with main, or a job HQ made on its own (the
-// board's answer, a message, a notice).
-export type JobOrigin = 'work' | 'fix' | 'merge' | 'hq';
-export const ORIGIN = `case when j.stage = 'feedback' or j.stage = 'fix' and j.round is not null then 'fix'
-  when j.stage = 'fix' then 'merge' when j.queued_by is not null or j.pr is not null then 'work' else 'hq' end`;
+// board's answer, a message, a notice), or a mechanical carry check identified by its commit relationship.
+export type JobOrigin = 'work' | 'fix' | 'merge' | 'hq' | 'carry';
+// Planning evidence identifies work even without its queuer. Sent owner sheets exclude routing checks.
+export const ORIGIN = `case when j.carry is not null then 'carry' when j.stage = 'feedback' or j.stage = 'fix' and j.round is not null then 'fix'
+  when j.stage = 'fix' then 'merge'
+  when j.queued_by is not null or j.pr is not null or j.item is not null
+    or exists(select 1 from sizes s where s.job = j.id)
+    or exists(select 1 from proposals p where p.accepted = j.id and p.status = 'accepted')
+    or (not j.is_check and exists(select 1 from book_sheets s where s.job = j.id and s.status = 'sent'
+      and s.owner = j.agent)) then 'work' else 'hq' end`;
+export const ABOUT_KEYS = `(j.about_keys or exists(select 1 from calls c where c.job = j.id and ${keysCondition()}))`;
+export const PRIVATE = `(j.customers or ${ABOUT_KEYS})`;
 
 export type PastJob = {
   id: number;
@@ -72,7 +78,7 @@ const past = (only = false) => {
     r.agent_ms, r.runs, r.rebuilt, (julianday(coalesce(j.finished, r.last)) - julianday(r.first)) * 86400000 wall_ms,
     coalesce(u.cost, u.tokens) spend, iif(u.cost is null, 'tokens', '$') unit,
     p.number pr, p.status pr_status, p.merged_at, coalesce(p.files, '[]') files, p.added, p.removed, j.thread, ${RUN_COLUMNS}, r.outcomes, r.invalid_runs, r.unknown_seats, j.customers,
-    (j.about_keys or exists(select 1 from calls c where c.job = j.id and ${keysCondition()})) about_keys,
+    ${ABOUT_KEYS} about_keys,
     j.id in (select job from job_replacement_links) is_replacement
   from (select job, count(*) runs, sum(${REBUILT_RUN}) rebuilt, min(started) first, max(ended) last,
     sum((julianday(ended) - julianday(started)) * 86400000) agent_ms,
@@ -91,7 +97,9 @@ const past = (only = false) => {
 
 // The notes of past()'s kept pool (keptpool.ts): for each table it reads, the done jobs a row of it is read into. A row
 // of jobs, runs or usage is its done work job's, a scheduled run or a replacement link its job's, a pull request its
-// branch's jobs'. A call, or a credential request, is any job's (null: the pool is read whole), since a call's chain of resumes
+// branch's jobs'.
+// Scope estimates and sent sheets belong to their job, accepted proposals to their accepted job.
+// A call, or a credential request, is any job's (null: the pool is read whole), since a call's chain of resumes
 // may reach it. A new call is only its own job's: nothing resumes it yet.
 const DONE = (row: string) => `${row}.kind = 'work' and ${row}.status = 'done'`,
   OF_DONE = (row: RowAlias) =>
@@ -108,6 +116,12 @@ const NOTES: Notes = {
   calls: { of: () => 'select null', added: OF_JOB('new') },
   requests: { of: row => `select null where ${row}.kind = 'credential' or ${row}.secrets is not null` },
   schedule_runs: { of: OF_JOB },
+  sizes: { of: OF_DONE },
+  proposals: {
+    of: row =>
+      `select ${row}.accepted where exists (select 1 from jobs d where d.id = ${row}.accepted and ${DONE('d')})`,
+  },
+  book_sheets: { of: OF_DONE },
   job_replacements: { of: OF_JOB },
 };
 const keptPast = keptPool('past', past, readPast, NOTES);
@@ -131,7 +145,8 @@ function readPast(only?: number[]) {
 }
 
 export const cleanPastJobs = (pool: PastJob[] = pastJobs()) =>
-  pool.filter(job => !job.timing_flags?.length && !job.customers && !job.about_keys);
+  pool.filter(job => !job.timing_flags?.length && !isPrivate(job));
+export const isPrivate = (job: Pick<PastJob, 'customers' | 'about_keys'>) => !!(job.customers || job.about_keys);
 export function timingAudit(pool: PastJob[] = pastJobs()) {
   const reasons: Partial<Record<TimingFlag, number>> = {};
   for (const job of pool) for (const reason of job.timing_flags ?? []) reasons[reason] = (reasons[reason] ?? 0) + 1;
@@ -160,7 +175,26 @@ export function picksFor(work: Work, pool: PastJob[]): { picks: PastJob[]; basis
 }
 // Historical baseline only. Candidate comparisons always use picksFor.
 export function rawPicksFor(work: Work, pool: PastJob[]): { picks: PastJob[]; basis: Basis } {
-  return runsLike(work, pool) ?? matched(work, pool);
+  if (work.origin === 'carry')
+    return {
+      picks: pool
+        .filter(job => job.origin === 'carry')
+        .sort((a, b) => b.id - a.id)
+        .slice(0, PICKS),
+      basis: { kind: 'carry', agent: null, words: [] },
+    };
+  const agents = agentPool(pool);
+  return runsLike(work, agents) ?? matched(work, agents);
+}
+// A worker-only check never becomes evidence for model-agent work, even in a sparse pool.
+const agentPools = new WeakMap<PastJob[], PastJob[]>();
+function agentPool(pool: PastJob[]) {
+  if (!agentPools.has(pool))
+    agentPools.set(
+      pool,
+      pool.filter(job => job.origin !== 'carry'),
+    );
+  return agentPools.get(pool)!;
 }
 const cleanPools = new WeakMap<PastJob[], PastJob[]>();
 function cleanPool(pool: PastJob[]) {
@@ -193,7 +227,7 @@ function runsLike(work: Work, pool: PastJob[]) {
   return { picks: [...own, ...others].slice(0, PICKS), basis: { ...basis, routine: work.routine! } };
 }
 
-// The work's agent time: the mean of its picks. None with fewer than FEWEST picks.
+// The work's time: the mean of its picks. None with fewer than FEWEST picks.
 export function sizeOf(picks: PastJob[]) {
   if (picks.length < FEWEST) return null;
   return {

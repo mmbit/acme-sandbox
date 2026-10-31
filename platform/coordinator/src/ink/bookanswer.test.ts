@@ -38,6 +38,19 @@ const groupOn = async (page: number, id: number) => (await groups(page)).find(g 
 const draw = async (page: number, x: number, y: number, texts: unknown[] = []) =>
   (await h.board('/api/notebooks/groups/create', { page, ink: [stroke(x, y)], texts })).body;
 const open = async () => (await h.board('/api/notebooks/open')).body;
+// How many px of a page's picture are in an agent's ink
+async function inkIn(page: number, by: string) {
+  const { inkOf } = await import('../../../hq/shell/ink/agentink.js');
+  const [R, G, B] = [1, 3, 5].map(i => parseInt((inkOf(by) as string).slice(i, i + 2), 16));
+  const res = await fetch(`${h.base}/api/book/picture?id=${page}`, { headers: { cookie: h.boardCookie } });
+  const { data, info } = await sharp(Buffer.from(await res.arrayBuffer()))
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  let n = 0;
+  for (let i = 0; i < data.length; i += info.channels)
+    if (Math.abs(data[i] - R) + Math.abs(data[i + 1] - G) + Math.abs(data[i + 2] - B) < 60) n++;
+  return n;
+}
 // A group's quick run, started as the judge starts it, and claimed on the worker's chat slot
 async function asked(texts: string) {
   const page = await currentPage();
@@ -109,8 +122,12 @@ test('a form: answered by the board, kept, and gone to the agent as a reply; the
   ];
   const refused = await agent('answer', run.token, { grp: g.id, text: 'Two things first', form: [{ title: '' }] });
   assert.equal(refused.status, 400);
+  // (the page's picture agents read: the form clipped onto the answer, in its agent's ink.)
+  const inked = await inkIn(page, run.agent);
   const clipped = (await agent('answer', run.token, { grp: g.id, text: 'Two things first', form })).body.slip;
   assert.equal(clipped.style, 'form');
+  const asking = await inkIn(page, run.agent);
+  assert.ok(asking > inked + 1500, `its questions' chips and line in the ink (${inked}, ${asking})`);
   await h.finish(run, { status: 'done', result: 'I asked two things.' });
   const children = (await groupOn(page, g.id)).children;
   assert.deepEqual(
@@ -131,6 +148,8 @@ test('a form: answered by the board, kept, and gone to the agent as a reply; the
   );
   const answered = (await h.board('/api/notebooks/answers/form', { id: clipped.id, answers: ['Warmer', '5 %'] })).body;
   assert.deepEqual(answered.answer.form_answer, ['Warmer', '5']);
+  const said = await inkIn(page, run.agent);
+  assert.ok(said > inked + 300 && said < asking, `answered: the board's answers in the ink, no chips (${said})`);
   assert.equal(
     (await h.board('/api/notebooks/answers/form', { id: clipped.id, answers: ['Warmer', '5'] })).status,
     409,

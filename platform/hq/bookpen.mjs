@@ -7,7 +7,7 @@
 // row. Each asserts what the board sees and what the store keeps.
 import assert from 'node:assert/strict';
 import { freePage, paperBox, pasteGreen, savedWhere } from './bookmouse.mjs';
-import { MINI, chromiumPen, until } from './bookkit.mjs';
+import { MINI, chromiumPen, middleOf, until } from './bookkit.mjs';
 
 // how long a story waits to be sure something didn't happen (the page is saved this soon after a change)
 const QUIET_MS = 1200;
@@ -222,7 +222,6 @@ async function tool(page, name) {
 }
 const key = (page, name) => page.locator('#book .bk-typed[data-editing] .bk-typed-keys').getByRole('button', { name });
 const bar = page => page.locator('#book .bk-sel-bar');
-const middleOf = b => [b.x + b.width / 2, b.y + b.height / 2];
 const line = ([x, y], dx) => Array.from({ length: 16 }, (_, i) => [x + (i * dx) / 15, y + 2 * Math.sin(i / 2)]);
 const path = ([x0, y0], [x1, y1]) =>
   Array.from({ length: 16 }, (_, i) => [x0 + ((x1 - x0) * i) / 15, y0 + ((y1 - y0) * i) / 15]);

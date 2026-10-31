@@ -9,18 +9,26 @@ import { onSplit, partsOf, type Group } from '../notebookgroups.ts';
 // ask's own lines or picture out into takes that ask. wrote: what the agent
 // wrote for it ({ texts, pictures, words }: the typed lines, each by its own id and words, the picture files, the
 // post-it's words); owner: its group's owner then. A line keeps its id through the board's edits and splits, so an ask
-// follows its own lines however the board retypes them
+// follows its own lines however the board retypes them. An ask's typed line carries what: the item's line it says; and
+// posts are the post-it's words the agent gave it, each with its item's line then
 db.exec(`create table if not exists call_asks (grp integer not null, item integer not null, wrote text not null,
   owner text, primary key (grp, item))`);
 type Ask = { grp: number; item: number; wrote: string; owner: string | null };
-type Writing = { texts: Line[]; pictures: string[]; words: string };
-type Line = { id?: string; text: string };
-export function asked(grp: number, item: number) {
-  const g = groupRow(grp);
+type Writing = { texts: Line[]; pictures: string[]; words: string; posts?: Post[] };
+type Line = { id?: string; text: string; what?: string };
+type Post = { words: string; what: string };
+// An ask the agent made: its group as it wrote it, each typed line and the post-it's words saying its item's line
+export function asked(grp: number, item: { id: number; what: string }) {
+  const g = groupRow(grp),
+    w = writingOf(g);
   db.prepare('insert into call_asks (grp, item, wrote, owner) values (?, ?, ?, ?)').run(
     grp,
-    item,
-    JSON.stringify(writingOf(g)),
+    item.id,
+    JSON.stringify({
+      ...w,
+      texts: w.texts.map(t => ({ ...t, what: item.what })),
+      posts: [{ words: w.words, what: item.what }],
+    }),
     g.owner,
   );
 }
@@ -34,17 +42,29 @@ function writingOf(g: Group): Writing {
   };
 }
 // The agent's own change of its note (callpage.ts): what it wrote is the group as it is now, for its ask or its mark (a
-// promise for the board), and its ask's item's line the new words
+// promise for the board), still with the lines it wrote before, which the board's Undo of the change brings back; and
+// its ask's item's line the new words, which its new lines and its post-it's words now say
 export function rewrote(grp: number, what: string) {
-  const wrote = JSON.stringify(writingOf(groupRow(grp)));
-  db.prepare('update call_asks set wrote = ? where grp = ?').run(wrote, grp);
-  db.prepare('update call_marks set wrote = ? where grp = ?').run(wrote, grp);
-  for (const { item } of asksOf(grp)) reworded(item, what);
+  const now = writingOf(groupRow(grp));
+  const withBefore = (before: string, what?: string) => {
+    const was = JSON.parse(before) as Writing,
+      earlier = was.texts.filter(t => !now.texts.some(n => n.id === t.id));
+    if (what === undefined) return JSON.stringify({ ...now, texts: [...earlier, ...now.texts] });
+    const texts = now.texts.map(t => ({ ...t, what }));
+    const posts = [...(was.posts ?? []), { words: now.words, what }];
+    return JSON.stringify({ ...now, texts: [...earlier, ...texts], posts });
+  };
+  for (const a of asksOf(grp)) {
+    db.prepare('update call_asks set wrote = ? where grp = ? and item = ?').run(withBefore(a.wrote, what), grp, a.item);
+    reworded(a.item, what);
+  }
+  const mark = markOf(grp);
+  if (mark) db.prepare('update call_marks set wrote = ? where grp = ?').run(withBefore(mark.wrote), grp);
 }
 // Whether a group is one note of the agent's, every line of it that one's (its ask's or its mark's): not one the board
 // typed in, whose lines a change of words would take off the page (callpage.ts newWords)
 export function oneNote(grp: number) {
-  const mark = db.prepare('select wrote from call_marks where grp = ?').get(grp) as { wrote: string } | undefined;
+  const mark = markOf(grp);
   const wrote = [...asksOf(grp).map(a => a.wrote), ...(mark ? [mark.wrote] : [])];
   if (wrote.length !== 1) return false;
   const ids = (JSON.parse(wrote[0]) as Writing).texts.map(t => t.id);
@@ -52,6 +72,8 @@ export function oneNote(grp: number) {
 }
 export const asksOf = (grp: number) =>
   db.prepare('select * from call_asks where grp = ? order by item').all(grp) as Ask[];
+const markOf = (grp: number) =>
+  db.prepare('select wrote from call_marks where grp = ?').get(grp) as { wrote: string } | undefined;
 
 // What the agent drew on the page that asks for nothing (a shape, a pen line, a highlight: callpage.ts), or typed (a
 // promise for the board: callnotes.ts noted), as it put it there: no ask, so the agent may change its words (oneNote)
@@ -78,21 +100,53 @@ export function takenOff(call: number) {
     .all({ call }) as { item: number }[];
   for (const { item } of off) drop(item, "taken off the call's page", null);
 }
+// At the call's end each ask's item's line is what its note says then, so the board's Undo of the agent's change of
+// its words takes the line back too: a scrap's, the line the agent gave with its post-it's words (none for words the
+// board wrote there), or the item's line of the newest of the ask's typed lines the note still holds
+export function saidAtEnd(call: number) {
+  const asks = db
+    .prepare(
+      `select a.item, a.wrote, g.kind, g.words, g.texts from call_asks a join notebook_groups g on g.id = a.grp
+        join book_pages p on p.id = g.page where p.kind = 'call' and p.call = ? and g.deleted is null`,
+    )
+    .all(call) as (Pick<Ask, 'item' | 'wrote'> & Pick<Group, 'kind' | 'words' | 'texts'>)[];
+  for (const a of asks) {
+    const wrote = JSON.parse(a.wrote) as Writing,
+      ids = (JSON.parse(a.texts) as Line[]).map(t => t.id);
+    const what =
+      a.kind === 'scrap'
+        ? wrote.posts?.findLast(p => p.words === a.words)?.what
+        : wrote.texts.findLast(t => ids.includes(t.id))?.what;
+    if (what) reworded(a.item, what);
+  }
+}
 // (an ask goes with its own typed lines, by their ids however the board retyped them, or its picture when the board
-// lifts them out of a group, and each side is its asks' owner's)
+// lifts them out of a group, and each side is its asks' owner's. A promise for the board goes with its lines the same
+// way, and a post-it is the agent's words: each side of one is a note while it holds an ask's or the promise's lines,
+// and plain typed words once it holds only the board's.)
 onSplit((from, lifted) => {
-  const asks = asksOf(from);
+  const asks = asksOf(from),
+    mark = markOf(from),
+    wasNote = groupRow(from).kind === 'note' && (asks.length > 0 || !!mark);
   const [left, out] = [writingOf(groupRow(from)), writingOf(groupRow(lifted))];
   const moved = asks.filter(a => sharedWith(a, out) > sharedWith(a, left));
-  if (!moved.length) return;
   for (const a of moved)
     db.prepare('update call_asks set grp = ? where grp = ? and item = ?').run(lifted, from, a.item);
+  const markMoved = !!mark && sharedWith(mark, out) > sharedWith(mark, left);
+  if (markMoved) db.prepare('update call_marks set grp = ? where grp = ?').run(lifted, from);
+  if (wasNote) {
+    const fromHoldsAgents = moved.length < asks.length || (!!mark && !markMoved),
+      liftedHoldsAgents = moved.length > 0 || markMoved;
+    db.prepare('update notebook_groups set kind = ? where id = ?').run(fromHoldsAgents ? 'note' : 'drawing', from);
+    db.prepare('update notebook_groups set kind = ? where id = ?').run(liftedHoldsAgents ? 'note' : 'drawing', lifted);
+  }
+  if (!moved.length) return;
   const stayed = asks.find(a => !moved.includes(a));
   db.prepare('update notebook_groups set owner = ? where id = ?').run(moved[0].owner, lifted);
   if (stayed) db.prepare('update notebook_groups set owner = ? where id = ?').run(stayed.owner, from);
 });
-// How many of an ask's own lines (by id) and pictures a group holds
-function sharedWith(a: Ask, w: Writing) {
+// How many of an ask's (or a mark's) own lines (by id) and pictures a group holds
+function sharedWith(a: { wrote: string }, w: Writing) {
   const wrote = JSON.parse(a.wrote) as Writing,
     ids = w.texts.map(t => t.id).filter(Boolean);
   return wrote.texts.filter(t => ids.includes(t.id)).length + wrote.pictures.filter(f => w.pictures.includes(f)).length;

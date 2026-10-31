@@ -1,7 +1,8 @@
 // What's still the board's to answer on the page shown: a group carrying an open ask (an agent's card, bookasks.js)
-// wears a red edge marked "for you", and a small counter over the page's name in the pages' row says how many are
-// open, its arrows sliding the page to each in turn, the one reached pulsing once. With none open the arrows step
-// through every scrap on the page. The board's own book only: a guest's has no asks. Its look: bookforyou.css.
+// wears a red edge marked "for you", and a small counter on the rail over the page's arrows says how many are open,
+// its arrows sliding the page to each in turn, the one reached pulsing once. With none open it's away: nothing waits
+// on the board (the board's own drawings brought it up as soon as a page had any). In a guest's book, the board's scraps handed to them wait the same way till they write on one (forYou). Its
+// look: bookforyou.css. (a guest's)
 import { stylesheet } from '../../util.js';
 import { button, lineIcon } from './bookui.js';
 import { bringIntoSight, reachOf } from './bookgroupshow.js';
@@ -11,8 +12,8 @@ const ICONS = {
   next: lineIcon('<path d="M6 9l6 6 6-6"/>'),
 };
 
-// book: bookpages.js's; foot: the pages' row (bookui.js island('pages')), which the counter stands over. Returns
-// { update(far) }: the counter as the page shown is now (far: the overview open, where it's away).
+// book: bookpages.js's; foot: the page's controls on the rail (bookui.js island('pages')), the counter at their head.
+// Returns { update(far) }: the counter as the page shown is now (far: the overview open, where it's away).
 export function mountForYou(book, foot) {
   stylesheet('shell/ink/bookforyou.css');
   const el = document.createElement('div'),
@@ -24,7 +25,7 @@ export function mountForYou(book, foot) {
   st.before = button({ icon: ICONS.before, onClick: () => step(st, -1) });
   st.next = button({ icon: ICONS.next, onClick: () => step(st, 1) });
   el.append(st.before, st.next);
-  foot.append(el);
+  foot.prepend(el);
   return { update: far => update(st, far) };
 }
 
@@ -48,19 +49,18 @@ function update(st, far) {
     Object.assign(st, { page, at: null });
     delete st.el.dataset.at;
   }
-  st.el.hidden = far || !page?.groups?.size;
+  const open = openOn(page).length;
+  st.el.hidden = far || !open;
   if (st.el.hidden) return;
-  const open = openOn(page).length,
-    said = open ? `${open} open` : '';
   st.el.dataset.open = open;
-  st.el.querySelector('.bk-open').textContent = said;
-  st.el.setAttribute('aria-label', open ? `${said} for you to answer` : 'The scraps on this page');
-  st.before.setAttribute('aria-label', open ? 'The open ask before' : 'The scrap before');
-  st.next.setAttribute('aria-label', open ? 'The next open ask' : 'The next scrap');
+  st.el.querySelector('.bk-open').textContent = `${open} open`;
+  st.el.setAttribute('aria-label', `${open} open for you to answer`);
+  st.before.setAttribute('aria-label', 'The open ask before');
+  st.next.setAttribute('aria-label', 'The next open ask');
 }
 
 // The arrows: the page slid to the next open ask (dir 1) or the one before (-1), from the last reached, round to the
-// first after the last; with none open, the next scrap
+// first after the last
 function step(st, dir) {
   const view = st.book.views[st.book.cur];
   if (!view?.page.groups) return;
@@ -72,26 +72,24 @@ function step(st, dir) {
   st.el.dataset.at = to.id;
   bringIntoSight(view, to.id, () => pulse(view, to));
 }
-// The groups the arrows step through, top to bottom: the open asks, or every scrap when there are none
+// The groups the arrows step through, top to bottom: the open asks
 function stepsOn(view) {
-  const open = openOn(view.page),
-    groups = open.length ? open : [...view.page.groups.values()];
-  return groups
+  return openOn(view.page)
     .map(g => ({ id: g.id, r: reachOf(view, g.id) }))
     .filter(s => s.r)
     .sort((a, b) => compare(a.r, b.r));
 }
 const compare = (a, b) => a.y - b.y || a.x - b.x;
-const openOn = page => [...(page?.groups?.values() ?? [])].filter(g => g.asks?.some(a => a.status === 'open'));
+const openOn = page =>
+  [...(page?.groups?.values() ?? [])].filter(g => g.forYou || g.asks?.some(a => a.status === 'open'));
 
-// The group reached ringed once, red when it waits on the board
+// The group reached ringed once, red: it waits on the board
 function pulse(view, to) {
   const layer = view.el.querySelector(':scope > .bk-groups');
   layer?.querySelector(':scope > .bk-reached')?.remove();
-  const open = openOn(view.page).some(g => g.id === to.id);
   layer?.insertAdjacentHTML(
     'afterbegin',
-    `<div class="bk-reached" data-g="${to.id}"${open ? ' data-open' : ''} style="${boxStyle(to.r)}" aria-hidden="true"></div>`,
+    `<div class="bk-reached" data-g="${to.id}" data-open style="${boxStyle(to.r)}" aria-hidden="true"></div>`,
   );
 }
 const boxStyle = r => `left:${r.x}px;top:${r.y}px;width:${r.w}px;height:${r.h}px`;

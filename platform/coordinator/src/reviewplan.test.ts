@@ -370,6 +370,7 @@ test('one ruling with several fix titles occupies one job in the play before its
     touchups: 'Check the move names',
   });
   const drawn = inbox.drawnAtOnce(item, projects.findProject('due')!.owner);
+  assert.ok('jobs' in drawn, JSON.stringify(drawn));
   assert.equal(drawn.jobs.length, 1);
   const [fix] = inbox.tasks(pr, 1);
   assert.deepEqual(

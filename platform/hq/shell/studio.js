@@ -1,10 +1,5 @@
-// HQ-OS › Photos: the photo studio. The keeper (an agent) brings the photos the shop needs into the studio and edits
-// each with the image model; the board checks them here. Which photos get made is the crew's, never the board's.
-// Three tabs: Approvals (one photo at a time, big, with the page it goes on, what it should show and what to check;
-// Accept or Reject with an optional comment), Queue (the darkroom: what the keeper is developing, to read only) and
-// History (the approved ones, found by product or page, each one able to change). Only approved photos reach the
-// agents. The one photo big is studiobig.js. An HQ app on the interface a company's own apps use
-// (template/kits/README.md): desk.js loads it when the company runs the studio (GET /api/brand's studio).
+// HQ-OS › Photos: the board approves the photos the studio's keeper (an agent) edits; only approved ones reach the
+// agents. desk.js loads it when the company runs the studio.
 import { esc, stylesheet } from '../util.js';
 import { icon } from './icons.js';
 import { loadStudio } from './data.js';
@@ -67,18 +62,16 @@ export const count = async dev => waitingOf(await loadStudio(dev)).length;
 // The desk phone's line while photos wait for the board ("Photos: 4 photos to approve"), opening the app. It follows
 // GET /api/studio, read with every requests poll (fresh).
 let lineCount = 0;
-export async function phone(el, hq, { fresh, past }) {
+export async function phone(el, hq, { fresh }) {
   screen.who = hq.who;
   if (fresh) {
     const n = await count(world.dev).catch(() => null);
     if (n === null || n === lineCount) return;
-    lineCount = n;
-    el = document.querySelector('#phone-screen');
-    if (!el) return;
+    lineCount = n; // (el, the studio's slot, moves into a screen drawn meanwhile)
   }
   await stylesheet('shell/studio.css');
   const line = el.querySelector(':scope > .studio-line');
-  if (past || !lineCount) return line?.remove();
+  if (!lineCount) return line?.remove();
   const html = `<button class="app-line studio-line">${icon('app-studio')}<span><b>${esc(app.name)}:</b> ${plural(lineCount, 'photo', 'photos')} to approve</span><i aria-hidden="true">›</i></button>`;
   if (line) line.outerHTML = html;
   else el.insertAdjacentHTML('afterbegin', html);

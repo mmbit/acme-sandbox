@@ -116,6 +116,29 @@ export async function upstream(ruling: { id: number; pr: number }, line: string)
   });
 }
 
+// A send-back whose own run pushed nothing of its pull request's, and whose push would go back for the same again
+// (review.ts madeRightFirst): the pull request waits stuck, and its deliverable's owner judges in a proposal who makes it
+// right, once each time it happens, rather than another run finding what that one did.
+export async function sentBackForNothing(
+  push: { pr: number; branch: string; author: string },
+  what: string,
+  why: string,
+) {
+  const proposals = await import('./proposals.ts');
+  const { pr, branch, author } = push;
+  proposals.bundle({
+    agent: author,
+    title: `PR #${pr}: "${what}" again, with nothing to push`,
+    brief: `${author}'s run sent back to PR #${pr} (branch ${branch}) for "${what}" ended with nothing of the pull
+request's own pushed, and the push still owes it (${why}), so HQ didn't send it back once more: another run would find
+what that one did. It waits stuck until a push makes it right: no judgement waives what its checks ask. Accept this as
+a task for whoever should make it right (\`hq inbox accept <id> --for <agent> --code WORD\`), whose push is checked
+again, or drop it with why. Where the check itself was wrong and is fixed, \`hq review ${pr}\` runs the same push
+through its checks again.`,
+    project: projectOf(branch),
+  });
+}
+
 const projectOf = (branch: string) => {
   const thread = panel.threadOfBranch(branch);
   return thread ? (findThread(thread)?.project ?? null) : null;
