@@ -4,7 +4,7 @@
 import { rng, pick, mix, canvas } from '../../util.js';
 import { toTile, FH, SLAB, WALL_H, INNER_WALL_H, PENT_H, CORE, CORE_X, ENTRANCE, SHAFT, STAIR, inWell, INK, F, disc, sprite, SX, SY, top, wallY, wallX, box, onWallY, onWallX, wallYCol, wallXCol, ellipse, text, textW, upright, namePlate } from './iso.js';
 import { drawProp, DRINKS } from './sprites.js';
-import { levelName, arcadeWall, wallHidden, clearOf, partitionDepth, wallSpan, covers, NOTICE, ART_MARGIN } from './layout.js';
+import { levelName, arcadeWall, wallHidden, clearOf, partitionDepth, wallSpan, covers, NOTICE, ART_MARGIN, TRANSOM, MEET, STAND } from './layout.js';
 import { today } from './env.js';
 import { darkroomThing } from './darkroom.js';
 
@@ -56,8 +56,9 @@ const WALL = {
   portrait: [10, (g, x, y) => { F(g, x, y, 10, 12, '#d9a441'); F(g, x + 1, y + 1, 8, 10, '#5a3825'); F(g, x + 3, y + 3, 4, 4, '#f5c49c'); F(g, x + 2, y + 8, 6, 3, '#2f3b63'); }],
   screen: [18, (g, x, y) => { F(g, x, y, 18, 11, '#141a2e'); for (let i = 0; i < 14; i++) F(g, x + 2 + i, y + 8 - Math.round(3 + 2 * Math.sin(i)), 1, 1, '#7bd389'); F(g, x + 2, y + 2, 5, 1, '#4fb5a5'); }],
   vent: [10, (g, x, y) => { F(g, x, y + 2, 10, 8, '#565a70'); for (let i = 0; i < 3; i++) F(g, x + 1, y + 3 + i * 2, 8, 1, '#23283f'); }],
-  // (low enough to hang under the room's string, its letters upright on the wall's slant)
-  vacant: [NOTICE.w, (g, x, y, r, glass, leds, lit, tops) => { const [z0, z1] = NOTICE.z, t = y + BAND - z1; F(g, x, t, NOTICE.w, z1 - z0, '#fffaf0'); upright(g, 'EMPTY', x + 1, t + 2, '#e8505b', tops); }],
+  // (low enough to hang under the room's string, or at rows high over the next room's transom (wallHidden), its letters
+  // upright on the wall's slant)
+  vacant: [NOTICE.w, (g, x, y, r, glass, leds, lit, tops, [z0, z1] = NOTICE.z) => { const t = y + BAND - z1; F(g, x, t, NOTICE.w, z1 - z0, '#fffaf0'); upright(g, 'EMPTY', x + 1, t + 2, '#e8505b', tops); }],
   vaultdoor: [30, (g, x, y) => { disc(g, x + 15, y + 6, 13, '#8b8fa3'); disc(g, x + 15, y + 6, 10, '#c9ccd8'); disc(g, x + 15, y + 6, 3, '#565a70'); for (let a = 0; a < 6; a++) F(g, x + 15 + Math.round(Math.cos(a) * 7), y + 6 + Math.round(Math.sin(a) * 7), 1, 1, '#565a70'); F(g, x + 26, y + 3, 3, 6, '#565a70'); }],
   shutter: [28, (g, x, y) => { F(g, x, y - 12, 28, 30, '#565a70'); for (let i = 0; i < 14; i++) F(g, x + 1, y - 11 + i * 2, 26, 1, '#8b8fa3'); for (let i = 0; i < 7; i++) F(g, x + i * 4, y + 15, 2, 3, '#f2c14e'); }],
   // the booth's lightbox over the desk, 21 to 29 px up (the floor above can hide what's higher): dark until someone
@@ -237,28 +238,29 @@ function backWall(g, gm, room, F_, H, spec) {
     // wall art spread along the wall, an empty room's notice first. The notice keeps the floor in front of it clear of the
     // back row (space: furnish steps past it), and the row's depth on past its end, as what stands d out from the wall hides
     // it d nearer the room's start: no cabinet or plant stands in front of it, nor close enough that its leaves reach
-    // over the card (LEAVES, at both ends). It keeps clear of what stands further
-    // out (hidden: wallHidden). Each window goes in leafless: no big plant's leaves reach over it (furnish)
+    // over the card (LEAVES, at both ends). It keeps clear of what stands further out (hidden: wallHidden, at its rows).
+    // Each window goes in leafless: no big plant's leaves reach over it (furnish)
     const items = spec.notice ? [spec.notice, ...spec.items] : spec.items.slice();
-    let cx = spec.at ?? (spec.start ?? 6) + (r() * 6 | 0), i = 0, from = ART_MARGIN[0]; // (at: exactly there. once: each item once, not round again. from: where the art so far ends)
+    let cx = spec.at ?? (spec.start ?? 6) + (r() * 6 | 0), i = 0, from = ART_MARGIN[0], notice = null;
     const band = H - BAND - (spec.high || 0);
-    const put = (name, x) => WALL[name][1](f, x, band, r, (x, y, gw, gh) => glassRects.push([x, y, gw, gh]), spec.leds && ((x, y, o) => spec.leds.push({ ...F_.pt(x / 16, 0), z: room.z + H - y, c: '#ffb35a', ...o })), // (a light on flat pixel (x, y) of an X wall, once its screen point is rounded)
+    const put = (name, x, rows) => WALL[name][1](f, x, band, r, (x, y, gw, gh) => glassRects.push([x, y, gw, gh]), spec.leds && ((x, y, o) => spec.leds.push({ ...F_.pt(x / 16, 0), z: room.z + H - y, c: '#ffb35a', ...o })), // (a light on flat pixel (x, y) of an X wall, once its screen point is rounded)
       litFlat && ((x, y, paint) => { paint(litFlat.getContext('2d')); spec.lit.glow = { ...F_.pt(F_.X ? x / 16 : F_.len - x / 16, 0), z: room.z + H - y }; }), // (what lights up on air, its glow at flat pixel (x, y))
-      tops); // (the screen row each of the wall's columns lands on, for words upright on it.)
+      tops, rows); // (the screen row each of the wall's columns lands on, for words upright on it. rows: the notice's)
     for (const [name, x] of spec.pins ?? []) put(name, x); // (pins: [name, flat x], each exactly there.)
     while (items.length && i < (spec.once ? items.length : 30)) {
       const name = items[i % items.length];
       i++;
       const [iw] = WALL[name];
-      if (name === spec.notice) { const at = spec.hidden.map(h => clearOf(h, F_, cx, iw, from, w - ART_MARGIN[1])).find(u => u !== null); if (at === undefined) throw new Error(`room ${room.id}: its ${F_.len}-tile back wall has nowhere for its notice`); cx = at; }
+      if (name === spec.notice) { const fit = spec.hidden.map(h => ({ ...h, at: clearOf(h.spans, F_, cx, iw, from, w - ART_MARGIN[1]) })).find(h => h.at !== null); if (!fit) throw new Error(`room ${room.id}: its ${F_.len}-tile back wall has nowhere for its notice`); cx = fit.at; notice = [cx, fit.rows]; }
       if (cx + iw > w - ART_MARGIN[1]) break;
       if (name === spec.notice) { const [a0, a1] = wallSpan(F_, cx, iw); spec.space.take(a0 - LEAVES, 0, a1 + BACK + LEAVES, BACK); }
       if (name === 'window') spec.leafless?.push(wallSpan(F_, cx, iw));
-      put(name, cx);
+      if (name !== spec.notice) put(name, cx);
       from = cx + iw + 2;
       cx += iw + 6 + (r() * 8 | 0);
     }
     if (spec.string) wallString(f, room, F_, H, w, wallC, spec);
+    if (notice) put(spec.notice, ...notice);
   });
   const mask = glassRects.length ? flatCanvas(w, H, f => glassRects.forEach(([x, y, gw, gh]) => F(f, x, y, gw, gh, '#fff'))) : null;
   if (F_.X) { onWallY(g, flat, room.x0, room.y0, room.z); if (mask) onWallY(gm, mask, room.x0, room.y0, room.z); }
@@ -291,7 +293,7 @@ function partition(g, room, H, solid) {
   g.globalAlpha = 0.22; plane(0, d1, 7, H, '#bfe6ff'); g.globalAlpha = 0.35;
   plane(d1 * 0.3, d1 * 0.3 + 0.12, 12, H, '#ffffff'); plane(d1 * 0.36, d1 * 0.36 + 0.05, 12, H, '#ffffff');
   g.globalAlpha = 1;
-  plane(d1 - 0.07, d1, 0, H, frameC); plane(d1 / 2 - 0.03, d1 / 2 + 0.03, 7, H, frameC); plane(0, d1, 30, 31, frameC);
+  plane(d1 - 0.07, d1, 0, H, frameC); plane(d1 / 2 - 0.03, d1 / 2 + 0.03, 7, H, frameC); plane(0, d1, TRANSOM, TRANSOM + 1, frameC);
 }
 
 // ---- reserved space: walkways and seats first, then furniture and decor only where it's free ----
@@ -341,7 +343,7 @@ function furniture(ctx, name, a, room, F_) {
       anchors.glows.push({ ...F_.pt(a + 0.5, 0.7), z: room.z + 16, c: '#8fd3ff', r: 14 }); return 1;
     case 'bench': F_.box(g, a + 0.05, 0.05, a + 0.95, 0.6, 0, 11, '#e6e8f0');
       for (let i = 0; i < 4; i++) { const c = pick(r, ['#7bd389', '#ff8fab', '#8fd3ff', '#f2c14e']), u = a + 0.15 + i * 0.2; F_.box(g, u, 0.2, u + 0.1, 0.3, 11, 17, '#e6f4ff'); F_.box(g, u, 0.2, u + 0.1, 0.3, 11, 14, c); } return 1;
-    case 'speaker': F_.box(g, a + 0.25, 0.08, a + 0.65, 0.4, 0, 22, '#2b2230'); face(a + 0.25, a + 0.65, 0.4, 0, 7, 22, f => { disc(f, 3, 15, 2, '#565a70'); disc(f, 3, 6, 1, '#565a70'); }); anchors.notes.push({ ...F_.pt(a + 0.45, 0.3), z: room.z + 24 }); return 1;
+    case 'speaker': F_.box(g, a + SPEAKER.a[0], SPEAKER.d[0], a + SPEAKER.a[1], SPEAKER.d[1], 0, SPEAKER.z, '#2b2230'); face(a + SPEAKER.a[0], a + SPEAKER.a[1], SPEAKER.d[1], 0, 7, SPEAKER.z, f => { disc(f, 3, 15, 2, '#565a70'); disc(f, 3, 6, 1, '#565a70'); }); anchors.notes.push({ ...F_.pt(a + 0.45, 0.3), z: room.z + 24 }); return 1;
     case 'easel': F_.prop(props, 'easel', a + 0.2, 0.3, a + 0.8, 0.5, 30, g2 => { F_.box(g2, a + 0.47, 0.34, a + 0.53, 0.4, 0, 28, '#6e4029'); F_.box(g2, a + 0.2, 0.42, a + 0.8, 0.46, 10, 26, '#fffaf0'); for (let i = 0; i < 5; i++) { const u = a + 0.25 + r() * 0.45; F_.box(g2, u, 0.46, u + 0.07, 0.47, 12 + r() * 12, 15 + r() * 10, pick(r, BOOKS)); } }); return 1;
     case 'sorter': F_.box(g, a + 0.05, 0.05, a + 0.95, 0.5, 0, 16, '#a8693f'); for (let i = 0; i < 4; i++) F_.box(g, a + 0.12 + i * 0.2, 0.15, a + 0.26 + i * 0.2, 0.35, 16, 19 + (i % 2) * 2, pick(r, ['#fffaf0', '#f6e7c1', '#bfe3ff'])); return 1;
     case 'parcels': case 'pallet': F_.box(g, a + 0.05, 0.05, a + 0.95, 0.75, 0, 3, '#a8693f');
@@ -619,21 +621,28 @@ function chair(props, room, F_, a, d, [da, dd], color, height = 6) {
   });
 }
 
-// A workstation along the back wall: desk, monitor (screen animated later), keyboard, props, chair.
-function desk(ctx, room, F_, a, agent, look) {
+// A desk's monitor: its back d tiles out from the wall, its top z px up.
+// A room's desks stand o tiles further out, just far enough that the monitor's top shows under the slab above.
+// Seen across a room depth tiles deep, that slab is FH - SLAB - 16 (depth - d) px up the wall.
+// On the floors that leaves the desks against the wall. The basement is a tile deeper, so there they stand a quarter tile out.
+// The basement's slab above is the ground's, with the ground floor's names along its curb (env.js).
+const MONITOR = { d: 0.2, z: 23 };
+const deskOut = depth => Math.max(0, Math.ceil(MONITOR.z + 16 * (depth - MONITOR.d) - (FH - SLAB))) / 16;
+// A workstation along the back wall, o tiles out: desk, monitor (screen animated later), keyboard, props, chair.
+function desk(ctx, room, F_, a, agent, look, o = 0) {
   const { g, props, anchors } = ctx, [, , , deskC] = theme(room.kind);
-  F_.box(g, a + 0.08, 0.06, a + 0.92, 0.7, 0, 10, [mix(deskC, '#ffffff', 0.15), mix(deskC, INK, 0.12), mix(deskC, INK, 0.3)]);
-  F_.face(g, a + 0.08, a + 0.92, 0.7, 7, 8, mix(deskC, INK, 0.4));
-  F_.box(g, a + 0.14, 0.2, a + 0.86, 0.28, 11, 23, '#2b2230'); F_.box(g, a + 0.46, 0.22, a + 0.54, 0.3, 10, 11, '#3b3355');
-  F_.box(g, a + 0.34, 0.42, a + 0.66, 0.54, 10, 11, '#c9ccd8');
+  F_.box(g, a + 0.08, o + 0.06, a + 0.92, o + 0.7, 0, 10, [mix(deskC, '#ffffff', 0.15), mix(deskC, INK, 0.12), mix(deskC, INK, 0.3)]);
+  F_.face(g, a + 0.08, a + 0.92, o + 0.7, 7, 8, mix(deskC, INK, 0.4));
+  F_.box(g, a + 0.14, o + MONITOR.d, a + 0.86, o + 0.28, 11, MONITOR.z, '#2b2230'); F_.box(g, a + 0.46, o + 0.22, a + 0.54, o + 0.3, 10, 11, '#3b3355');
+  F_.box(g, a + 0.34, o + 0.42, a + 0.66, o + 0.54, 10, 11, '#c9ccd8');
   const tr = rng(agent.id + 'trinket'), propsList = (look?.props || []).filter(p => p !== 'cables' && p !== 'stickies').slice(0, 2);
   if (propsList.length < 2 && tr() < 0.6) propsList.push(pick(tr, room.kind === 'review' ? ['duck', 'duck', 'cactus'] : ['duck', 'cactus', 'photo'])); // something of their own
-  propsList.forEach((p, k) => { const u = k ? a + 0.2 : a + 0.8, s = F_.s(u, 0.45, 10); drawProp(g, p, Math.round(s[0]) - 1, Math.round(s[1])); if (['mug', 'bigmug', 'tea'].includes(p)) anchors.mugs.push({ ...F_.pt(u, 0.45), z: room.z + 15, id: agent.id }); });
-  if (look?.props.includes('cables')) for (let k = 0; k < 10; k++) { const s = F_.s(a + 0.1 + k * 0.08, 0.72, 0); F(g, s[0], s[1] - (k % 3 ? 0 : 1), 1, 1, BOOKS[k % 4]); }
-  if (look?.props.includes('lamp')) anchors.glows.push({ ...F_.pt(a + 0.2, 0.4), z: room.z + 14, c: '#ffd966', r: 10, desk: agent.id });
-  anchors.screens.push({ id: agent.id, X: F_.X, d: 0.28, a0: (F_.X ? room.x0 : room.y0) + a + 0.18, a1: (F_.X ? room.x0 : room.y0) + a + 0.82, z0: room.z + 12, z1: room.z + 22, ...F_.pt(a + 0.5, 0.3) });
-  const seat = F_.pt(a + 0.5, 1.25);
-  chair(props, room, F_, a + 0.5, 1.25, [0, 0.22], mix(theme(room.kind)[3], '#3b3355', 0.45));
+  propsList.forEach((p, k) => { const u = k ? a + 0.2 : a + 0.8, s = F_.s(u, o + 0.45, 10); drawProp(g, p, Math.round(s[0]) - 1, Math.round(s[1])); if (['mug', 'bigmug', 'tea'].includes(p)) anchors.mugs.push({ ...F_.pt(u, o + 0.45), z: room.z + 15, id: agent.id }); });
+  if (look?.props.includes('cables')) for (let k = 0; k < 10; k++) { const s = F_.s(a + 0.1 + k * 0.08, o + 0.72, 0); F(g, s[0], s[1] - (k % 3 ? 0 : 1), 1, 1, BOOKS[k % 4]); }
+  if (look?.props.includes('lamp')) anchors.glows.push({ ...F_.pt(a + 0.2, o + 0.4), z: room.z + 14, c: '#ffd966', r: 10, desk: agent.id });
+  anchors.screens.push({ id: agent.id, X: F_.X, d: o + 0.28, a0: (F_.X ? room.x0 : room.y0) + a + 0.18, a1: (F_.X ? room.x0 : room.y0) + a + 0.82, z0: room.z + 12, z1: room.z + 22, ...F_.pt(a + 0.5, o + 0.3) });
+  const seat = F_.pt(a + 0.5, o + 1.25);
+  chair(props, room, F_, a + 0.5, o + 1.25, [0, 0.22], mix(theme(room.kind)[3], '#3b3355', 0.45));
   return { x: seat.x, y: seat.y, front: false, right: F_.X, level: room.level, h: SEAT_H };
 }
 
@@ -833,6 +842,23 @@ function backRowFrom(sp, a, w, end) {
   return null;
 }
 
+// The studio's speaker (furniture): its box SPEAKER.a tiles along its place, SPEAKER.d tiles out from the wall and
+// SPEAKER.z px tall.
+const SPEAKER = { a: [0.25, 0.65], d: [0.08, 0.4], z: 22 };
+// The studio's speaker stands tall enough to cover a window's sill. It moves along its tile at a, a pixel at a time
+// and the nearest first, to where its top covers no window, nor the wall past its ends (leafless: furnish's). Where no
+// place in its tile is clear, it's left out. Its tile stays its own either way, so the rest of the row stands where it
+// would.
+function speaker(ctx, room, F_, a) {
+  const [a0, a1] = SPEAKER.a, [d0, d1] = SPEAKER.d, d = (d0 + d1) / 2, reach = (a1 - a0 + d1 - d0) / 2;
+  for (let k = 0; k / 16 <= Math.max(a0, 1 - a1); k++) for (const s of [-k / 16, k / 16]) {
+    if (s < -a0 || s > 1 - a1 || covers(ctx.leafless, a + s + (a0 + a1) / 2, d, reach)) continue;
+    furniture(ctx, 'speaker', a + s, room, F_);
+    ctx.space.take(a, 0, a + 1, BACK);
+    return;
+  }
+}
+
 // Walkable space comes first: the lane in front, the doorways at both ends and the way to every seat.
 // Then features and furniture fill the back row from the near end, a table may go in the middle row,
 // and plants and window spots take whatever is left.
@@ -846,10 +872,10 @@ function furnish(ctx, room, F_, L, looks) {
   // and the conveyor runs on towards the door. end: where the rest of the back row stops
   const n = room.agents.length, first = room.kind === 'dock' && n, deskStart = pent ? Math.max(CORE_X + 0.4, len - 2.6 - (n - 1) * EXEC_W) : first ? 0.1 : len - n, end = first ? len - 0.1 : deskStart;
   // seats: desks at the far end, and the board's desk faces the room
-  const seats = pent ? execDesk(ctx, room, F_, deskStart) : room.agents.map((ag, k) => {
-    sp.take(deskStart + k, 0, deskStart + k + 1, 0.75);
-    reserveSpot(sp, room, deskStart + k + 0.5, 1.25); sp.take(deskStart + k + 0.2, 1.0, deskStart + k + 0.8, 1.55); // the chair
-    return desk(ctx, room, F_, deskStart + k, ag, looks.get(ag.id));
+  const o = deskOut(D), seats = pent ? execDesk(ctx, room, F_, deskStart) : room.agents.map((ag, k) => {
+    sp.take(deskStart + k, 0, deskStart + k + 1, o + 0.75);
+    reserveSpot(sp, room, deskStart + k + 0.5, o + 1.25); sp.take(deskStart + k + 0.2, o + 1.0, deskStart + k + 0.8, o + 1.55); // the chair
+    return desk(ctx, room, F_, deskStart + k, ag, looks.get(ag.id), o);
   });
   anchors.seats = seats;
   let a = pent ? CORE_X + 0.2 : first ? deskStart + n + 0.1 : 0.1;
@@ -864,6 +890,7 @@ function furnish(ctx, room, F_, L, looks) {
   for (const name of kBack) {
     const w = { conveyor: 2, micdesk: 2, airrack: 0.7, record: 0.7, piggy: 0.7, coffee: 0.7, sweep: 1.4, darkbench: 2, testrig: 0.8, arcadecab: 0.8, timeboard: 0.8 }[name] || 1; // (sweep, darkbench; engine, arcade)
     if (!fits(w)) break;
+    if (name === 'speaker') { speaker(ctx, room, F_, a); a += w; continue; } // (clear of the windows, or left out)
     const used = furniture(ctx, name, a, room, F_);
     if (used) sp.take(a, 0, a + used, BACK);
     a += used || w;
@@ -886,18 +913,8 @@ function furnish(ctx, room, F_, L, looks) {
 // The meeting room: a long table with ten chairs round it, four behind it facing the
 // room, one at each end and four in front of it with their backs to us, the meetings' board on the back wall
 // past the table and the door sign by the near doorway. Who sits where, and what the board and the sign say, come from the
-// meetings (sim.js decide, render.js drawMeeting). The way to the chairs behind the table is in past its far end, then
-// between them and the table. Someone d tiles out from the wall hides it d tiles nearer the room's start and 16·d px lower
-// than they are, so the chairs behind the table end where the board starts, and the sign hangs above where the first one
-// hides. They stand far enough out that their backs clear the wall's skirting, with floor between, and the ones in front
-// stand just inside the lane. The room's window hangs on the wall between the sign and the board (buildRoom).
-const MEET = { t0: 1.1, t1: 4.45, d0: 1.38, d1: 1.82, back: 1.16, near: 2.06, behind: [2.03, 2.66, 1.4, 3.29], front: [2.4, 3.2, 1.6, 4.0], aisle: 1.3, way: 5.25, board: [2.5, 6.2], sign: [0.1, 1.2] };
-// Past the far end, the places to stand (a, d) in the order they fill, the nearest the table first: two 1.31 out from the
-// wall (where a standing head, 21 px, hides none of it), three at the lane's edge between them on screen, so their heads
-// come just below the back ones', and the last in the doorway, beside the lane, clear of the end wall's edge. Six is all
-// that floor holds with every head clear of everyone else's pixels, the seated ones' too (checked on the sprites, on
-// both wings).
-const STAND = [[5.125, 1.3125], [4.875, 2.125], [5.75, 1.3125], [5.5, 2.125], [6.125, 2.125], [6.5625, 1.9375]];
+// meetings (sim.js decide, render.js drawMeeting). Where its table, chairs, board and sign go, and where more than the
+// chairs hold stand: layout.js MEET and STAND (the street lamps keep clear of them).
 const CHAIR = '#8e3b4a'; // the meeting chairs' leather: apart from the room's green skirting and rug
 function meetingRoom(ctx, room, F_, a) {
   const { g, props, anchors } = ctx, sp = ctx.space, M = MEET, [, trim, , deskC] = theme(room.kind), level = room.level, P = F_.pt;

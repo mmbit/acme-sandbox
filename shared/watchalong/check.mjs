@@ -23,6 +23,7 @@ const RECORDER = {
   '/canvas.js': `${REPO}/shared/watchalong/canvas.js`,
   '/encoder.js': `${REPO}/shared/watchalong/encoder.js`,
   '/strokes.js': `${REPO}/shared/watchalong/strokes.js`,
+  '/toplayer.js': `${REPO}/shared/watchalong/toplayer.js`,
   '/ink.js': `${REPO}/shared/review/ink.js`,
   // (ink.js's live line and the stroke's shapes)
   '/inklive.js': `${REPO}/shared/review/inklive.js`,

@@ -1510,7 +1510,10 @@ export function forJob(ref: string, job: number, agent: string) {
   if (!handed && !(caresFor(c, agent) && isOpen(c))) return 404;
   const b = c.bundle ? JSON.parse(c.bundle) : null;
   const whole = investigated(c) ? { checked: c.checked, to: c.to_addr, words: c.words, facts: factsOf(c), since: c.since,
-    lines: (db.prepare('select at, who, text from care_lines where card = ? and health is null order by id').all(c.id) as { at: string; who: string; text: string }[]),
+    // (an email from another address than the case's, which anyone may send to its guessable address, says so: outside
+    // text, never the customer's word.)
+    lines: (db.prepare(`select at, case when who = 'email' and matches = 0 then 'email from another address, not the customer' else who end who,
+      text from care_lines where card = ? and health is null order by id`).all(c.id) as { at: string; who: string; text: string }[]),
     ...(handed ? {} : { draft: c.draft }) } : {};
   return { case: c.case_ref, kind: c.kind, app: c.app, lang: c.lang, status: c.status, summary: c.summary, ...whole,
     ...(b ? { bundle: { at: b.at, page: b.page, events: b.events } } : {}) };

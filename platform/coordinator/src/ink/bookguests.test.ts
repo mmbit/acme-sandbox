@@ -108,7 +108,7 @@ const guest = (ps: string, path: string, body?: unknown) =>
 const groupsOf = async (ps: string) => (await guest(ps, `/pages/groups?page=${sessions.get(ps)!.page}`)).json().groups;
 const send = async (ps: string) => {
   const page = sessions.get(ps)!.page;
-  const sent = await guest(ps, '/send', { id: page });
+  const sent = await guest(ps, '/pages/send', { id: page });
   assert.equal(sent.status, 200, sent.text);
   booksheets.deliverDue(Date.now() + booknotes.SEND_MS + 1000);
   const listed = await groupsOf(ps);

@@ -37,7 +37,8 @@ export function peopleHtml(list, open, o = {}) {
     ${open ? `<form class="invite" novalidate>${againHtml(o.again ?? [])}<input name="name" placeholder="Name" aria-label="Their name" autocomplete="off" spellcheck="false" maxlength="60"><input name="email" type="email" data-private placeholder="Email address" aria-label="Their email address" autocomplete="off" spellcheck="false">${o.notebook ? '<label class="notebook-name">Notebook name<input name="notebookName" autocomplete="off" maxlength="60" placeholder="Their name"></label>' : ''}<button type="submit">Invite</button></form>` : ''}
     <p class="msg" role="status"></p></div>`;
 }
-export const refused = err =>
+// What to say when an invite, a send or a removal is refused: the server's words, else a try again
+export const refusalWords = err =>
   err.refusal?.error ? `${cap(err.refusal.error)}.` : 'That didn’t go through. Try again.';
 // on: send(name, button, msg), and remove(name) and invite(name, email), which redraw and return what to say (as HTML)
 export function wirePeople(el, on) {
@@ -78,7 +79,7 @@ function wirePeopleActions(box, on, say, msg, invite) {
           sfx.blip();
         } catch (err) {
           b.disabled = false;
-          say(esc(refused(err)));
+          say(esc(refusalWords(err)));
         }
       }),
   );
@@ -100,7 +101,7 @@ function wirePeopleActions(box, on, say, msg, invite) {
           sfx.blip();
         } catch (err) {
           b.disabled = false;
-          say(esc(refused(err)));
+          say(esc(refusalWords(err)));
         }
       }),
   );
@@ -135,7 +136,7 @@ function wireInvitation(form, knownPeople, invite, say) {
     } catch (err) {
       name.value = who;
       email.value = address;
-      say(esc(refused(err)));
+      say(esc(refusalWords(err)));
     } finally {
       button.disabled = false;
     }

@@ -1,20 +1,15 @@
-// Notebook groups and their agent answers, rendered in the guest and board views.
+// Notebook groups and their agent answers, rendered in the board's live view of a guest's book (notebookguest.js).
 import { esc } from '../../util.js';
 import { draw } from '/__review/ink.js';
 
 export function renderGroups(s) {
   const parent = s.host.querySelector('.ng-groups');
-  // A live answer never replaces a reply the person is still writing.
-  const drafts = new Map(
-    [...parent.querySelectorAll('[data-answer]')].map(form => [form.dataset.answer, form.elements.words.value]),
-  );
   parent.innerHTML = s.groups
     .map(
       group => `<article class="ng-group" data-group="${group.id}">
     <div class="ng-clip" aria-hidden="true"><svg viewBox="0 0 24 36" width="24" height="36" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M16 12v15a6 6 0 0 1-12 0V10a8 8 0 0 1 16 0v17a4 4 0 0 1-8 0V11"/></svg></div>${group.ink.length ? `<canvas class="ng-ink" data-ink="${group.id}" aria-label="${s.text.handwrittenNote}"></canvas>` : ''}
     ${group.pictures.map(p => `<img class="ng-picture" src="${esc(p.url)}" alt="${s.text.notePicture}">`).join('')}
     ${group.texts.map(t => `<p class="ng-words">${esc(t.text)}</p>`).join('')}${group.words ? `<p class="ng-words">${esc(group.words)}</p>` : ''}
-    ${!s.watch && !s.books.find(n => n.id === s.notebook)?.pages.find(p => p.id === s.page)?.readonly && group.status === 'open' ? `<div class="ng-actions"><button type="button" data-edit="${group.id}">${s.text.editNote}</button><button type="button" data-delete="${group.id}">${s.text.delete}</button></div>` : ''}
     ${group.owner_name ? `<p class="ng-agent">${esc(s.text.pickedUp(group.owner_name))}</p>` : ''}
     ${(group.children ?? [])
       .map(child =>
@@ -29,22 +24,16 @@ export function renderGroups(s) {
     const canvas = parent.querySelector(`[data-ink="${group.id}"]`);
     if (canvas) paint(canvas, group);
   }
-  for (const form of parent.querySelectorAll('[data-answer]'))
-    form.elements.words.value = drafts.get(form.dataset.answer) ?? '';
 }
 
-function answerCard(answer, { watch, text }) {
+function answerCard(answer, { text }) {
   return `<section class="ng-answer"><p class="ng-agent">${esc(answer.name ?? answer.by)} · ${text.aiAgent}</p>
     <p class="ng-words">${esc(answer.words ?? answer.text ?? '')}</p>
     ${[answer.picture, answer.now]
       .filter(Boolean)
       .map(url => `<img class="ng-picture" src="${esc(url)}" alt="${text.agentAnswer}">`)
       .join('')}
-    ${answer.link ? `<a href="${esc(answer.link)}" target="_blank" rel="noopener">${text.openAgentLink}</a>` : ''}${
-      watch
-        ? ''
-        : `<form data-answer="${answer.id}"><label>${esc(text.replyTo(answer.name ?? answer.by))}<textarea name="words" rows="2" required></textarea></label><button>${text.reply}</button></form>`
-    }</section>`;
+    ${answer.link ? `<a href="${esc(answer.link)}" target="_blank" rel="noopener">${text.openAgentLink}</a>` : ''}</section>`;
 }
 
 function paint(canvas, group) {

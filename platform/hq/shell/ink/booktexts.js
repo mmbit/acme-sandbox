@@ -104,7 +104,7 @@ function fixes(el) {
       icon: svg(icon),
       onClick: () => el.words.isContentEditable && document.execCommand(command, false, value),
     });
-  keys.append(key(word('Delete the letter before'), BACKSPACE, 'delete'), key(word('Space'), SPACE, 'insertText', ' '));
+  keys.append(key(word('keyBackspace'), BACKSPACE, 'delete'), key(word('keySpace'), SPACE, 'insertText', ' '));
   // (their press is theirs: never the words' blur, the paper's pan or its ink)
   for (const type of ['pointerdown', 'mousedown', 'touchstart'])
     keys.addEventListener(type, e => {

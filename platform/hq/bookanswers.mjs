@@ -1,49 +1,43 @@
 // book-check.mjs's answers stories: Ink answers any note
-// (shell/ink/bookanswers*.js; the coordinator's ink/bookjudge.ts, bookanswer.ts and booktry.ts), each on a Notebook of
-// its own played by HQ's one stand-in (bookanswersplay.mjs). A board's note on a page: the agent's face and its pencil dots where
-// the answer will land, then the answer written in by a small pen, with the hand-drawn bulb and the face, in free paper
-// and never over the board's groups. A symbol written in its reply area (a tick, a Dutch krul, a cross, a question
-// mark) goes to the agent as ink, nothing read from it. A drawing, a form (answered and sent) and an agent's question;
-// the overview lists what's open (a note's versions: bookversions.mjs). On a call's page, the call's agent's answer lands the same way. On an iPad mini, a phone and a
-// desktop. (Its Notebook played by notebookOn)
+// (shell/ink/bookgroups.js and bookanswers.js; the coordinator's ink/bookjudge.ts, bookanswer.ts and booktry.ts), each on
+// a Notebook of its own played by HQ's one stand-in (bookanswersplay.mjs). A board's note on a page: the agent's face
+// and its pencil dots under the note's unit while the answer comes, or why none came, then the answer slipped there,
+// as the store keeps them (no spot): in the unit's column, clear of every other unit, at every width the board reads on.
+// A drawing, its strokes on its slip under the note, a form there too (answered and sent) and an agent's question;
+// the overview lists what's open (a note's versions: bookversions.mjs). The board answers one by drawing, in the room
+// pulled out under its slip. On a call's page, the call's agent's answer
+// lands the same way. On an iPad mini, a phone and a desktop. (Its Notebook played by notebookOn)
 import assert from 'node:assert/strict';
-import {
-  FEED_MS,
-  SYMBOLS,
-  childrenOf,
-  layer,
-  notebookOn,
-  onScreen,
-  opened,
-  pagePx,
-  placed,
-  stroke,
-} from './bookanswersplay.mjs';
-import { NARROWEST, overlapping } from '../coordinator/src/ink/answerspot.ts';
-import { besideOnNarrower } from './bookanswersnarrow.mjs';
+import { FEED_MS, notebookOn, opened, underItsNote } from './bookanswersplay.mjs';
+import { press } from './bookbar.mjs';
 
 const WENT_LIVE = 'Yes: it went live this morning, at 09:12.';
 
 // c: book-check's { hqIn, base, store, pages, posts, org, shot, settled, settle }
 export function answerStories(c) {
   return {
-    'an answer: the face and its dots, then written in by a pen beside the note, never over the board’s ink; each symbol in its reply area reaches the agent':
+    "an answer: the face and its dots under the note's unit, why none came, then its slip there, clear of every other note":
       browser => answered(browser, c, c.MINI, 'mini'),
-    'an answer on a phone, an iPad upright and a desktop, in free paper': async browser => {
-      await answered(browser, c, c.PHONE, 'phone', { hasTouch: true, isMobile: true });
-      await answered(browser, c, { width: 744, height: 1133 }, 'mini-upright');
-      await answered(browser, c, c.DESKTOP, 'desktop', { hasTouch: false, deviceScaleFactor: 1 });
-    },
+    'an answer on a phone, an iPad upright and a desktop, its book narrow and spread wide, under its note in its column':
+      async browser => {
+        await answered(browser, c, c.PHONE, 'phone', { hasTouch: true, isMobile: true });
+        await answered(browser, c, { width: 744, height: 1133 }, 'mini-upright');
+        await answered(browser, c, c.DESKTOP, 'desktop', { hasTouch: false, deviceScaleFactor: 1 });
+        // (its columns side by side)
+        const wide = { hasTouch: false, deviceScaleFactor: 1, book: 1100 };
+        await answered(browser, c, { width: 1920, height: 1080 }, 'desktop-wide', wide);
+      },
     'an agent’s drawing, form and question; the form answered; the overview lists what’s open': browser =>
       kinds(browser, c),
+    'a drawing answer’s strokes on its slip under its note, a wide one fit to the slip, answered by drawing under it, at a phone, an iPad mini and a desktop':
+      async browser => {
+        await drawn(browser, c, c.PHONE, 'phone', { hasTouch: true, isMobile: true });
+        await drawn(browser, c, c.MINI, 'mini');
+        await drawn(browser, c, c.DESKTOP, 'desktop', { hasTouch: false, deviceScaleFactor: 1 });
+      },
     "on a call's page, the call's agent's answer lands the same way": browser => onCall(browser, c),
-    'an answer read before the room placed its agent wears their face once it has': browser => placedLate(browser, c),
-    'an answer beside a note on a wide page lies below it where the book is narrower, clear of every note': browser =>
-      besideOnNarrower(browser, c),
-    "a note the board wrote later on an answer's narrow spot: on a narrower book the answer lies clear of it":
-      browser => besideOnNarrower(browser, c, 'narrow'),
-    "a note the board wrote on a narrower book over an answer's wide spot: on a wide book the answer lies clear of it":
-      browser => besideOnNarrower(browser, c, 'wide'),
+    'an answer coming on a page read before the room placed its agent wears their face once it has': browser =>
+      placedLate(browser, c),
   };
 }
 
@@ -59,24 +53,8 @@ export async function inStory(browser, c, { viewport, nb, options = {} }, steps)
     await done();
   }
 }
-// An answer settled: its pen done (data-written), and its box the same two frames running, the book done laying it out
-export async function written(page, id) {
-  await layer(page).locator(`.bk-answer[data-answer="${id}"][data-written]`).waitFor({ timeout: FEED_MS });
-  await page.waitForFunction(
-    sel => {
-      const box = () => JSON.stringify(document.querySelector(sel)?.getBoundingClientRect());
-      const before = box();
-      return new Promise(go => requestAnimationFrame(() => requestAnimationFrame(() => go(box() === before))));
-    },
-    `#book .bk-answers .bk-answer[data-answer="${id}"]`,
-    { timeout: FEED_MS },
-  );
-}
-const overview = page =>
-  page
-    .locator('#book')
-    .getByRole('button', { name: /^The overview/ })
-    .click();
+// (on the rail, or under More where the rail has folded it away.)
+const overview = page => press(page, "The overview: the notebook's pages, and the Shelf");
 // The first post to path since from, once it's made (null if none is by FEED_MS)
 async function postOf(c, from, path) {
   for (const end = Date.now() + FEED_MS; Date.now() < end; await new Promise(go => setTimeout(go, 100))) {
@@ -85,51 +63,31 @@ async function postOf(c, from, path) {
   }
   return null;
 }
-// An answer as the board sees it (or its dots, waiting: the selector): across inside the paper the book shows, left of
-// the controls at its right edge, Undo's column and the tool strip beside it, all of it, wherever the page is scrolled.
-// Only on paper narrower than the narrowest an answer is placed for (answerspot.ts
-// NARROWEST) may it run into their column, never under them.
-export async function inPaper(page, id, selector = `.bk-answer[data-answer="${id}"]`) {
-  const { at, paper, rail, strip } = await onScreen(page, selector);
-  const shown = `answer ${id} at ${Math.round(at.x)}..${Math.round(at.x + at.w)} on paper ${Math.round(paper.w)} wide`;
-  assert.ok(at.x >= paper.x && at.x + at.w <= paper.x + paper.w, `${shown}: inside the paper`);
-  for (const r of [...rail, strip])
-    assert.ok(
-      paper.w < NARROWEST ? !overlapping(at, r) : at.x + at.w <= r.x,
-      `${shown}: left of the controls from ${Math.round(r.x)}`,
-    );
-}
+// An answer's slip under its note, as the page draws it (in .bk-under: bookgroups.js)
+const slipOf = (page, g, id) => page.locator(`#book .bk-under[data-g="${g.id}"] .answer-slip[data-slip="${id}"]`);
 
+// The note asked about first on a page of short notes, each drawn in one of three columns (the board's drawing keeps
+// the column it was drawn in, where the page has it), so a wide book lays them side by side, one under another:
+// whatever hangs under a note must push the one under it down, at every width
 async function answered(browser, c, viewport, size, options = {}) {
   const nb = notebookOn(c),
-    asked = nb.typed(4100, 'Is this live yet?', 60, 60),
-    beside = nb.typed(4101, 'and the header colour', 60, 140);
-  // (the board's ink to the note's right, so the free paper is below it)
-  beside.ink = [
-    {
-      color: '#2b2b2b',
-      size: 4,
-      points: [
-        [420, 60, 0.5, 0],
-        [700, 90, 0.5, 40],
-      ],
-    },
-  ];
-  nb.groups.push(asked, beside);
-  const spot = placed(nb, asked, { text: WENT_LIVE });
+    notes = ['Is this live yet?', ...Array.from({ length: 8 }, (_, i) => `and the header colour, ${i + 1}`)].map(
+      (words, i) => Object.assign(nb.typed(4100 + i, words, 60, 60), { column: i % 3 }),
+    ),
+    [asked] = notes;
+  nb.groups.push(...notes);
   await inStory(browser, c, { viewport, nb, options }, async (page, play) => {
-    await waitingFor(c, nb, play, page, asked, spot, size);
-    const id = await writtenIn(c, nb, play, page, asked, spot, size);
-    await symbols(c, play, page, asked, id, options.hasTouch === false ? 'mouse' : 'pen', size);
+    await waitingFor(c, nb, play, page, asked, size);
+    await slipped(c, nb, play, page, asked, size);
   });
 }
-// The book reads its page as HQ loads, before the scene has placed anyone: the answer's head shows the agent's initial,
+// The book reads its page as HQ loads, before the scene has placed anyone: an answer coming shows the agent's initial,
 // then their face once the room is placed (stage.js stage:look). The look's scene held back till the initial is seen.
 async function placedLate(browser, c) {
   const nb = notebookOn(c),
     asked = nb.typed(4150, 'Is this live yet?', 60, 60);
+  asked.asking = { by: nb.ceo };
   nb.groups.push(asked);
-  nb.seed.slips.push({ id: 4250, ...nb.answer(asked, 'text', 'Yes: this morning.', { dx: 0, dy: 120, w: 300 }) });
   const context = await c.hqIn(browser, c.MINI, { notebooks: nb.seed });
   let release;
   const held = new Promise(go => (release = go));
@@ -142,16 +100,13 @@ async function placedLate(browser, c) {
       errors = [];
     page.on('pageerror', e => errors.push(e.message));
     await page.goto(`${c.base}/?intro=0`);
-    const face = layer(page).locator('.bk-answer[data-answer="4250"] .bk-answer-face');
+    const at = `#book .bk-under .bk-answer-waiting[data-group="${asked.id}"] .bk-answer-face`,
+      face = page.locator(at);
     await face.waitFor({ state: 'attached', timeout: 10_000 });
     assert.equal(await face.textContent(), [...nb.name][0], "the agent's initial while the room is empty");
     release();
     await page.waitForSelector('#loading.gone');
-    await page.waitForFunction(
-      () => document.querySelector('#book .bk-answer[data-answer="4250"] .bk-answer-face')?.style.backgroundImage,
-      null,
-      { timeout: 10_000 },
-    );
+    await page.waitForFunction(at => document.querySelector(at)?.style.backgroundImage, at, { timeout: 10_000 });
     assert.equal(await face.textContent(), '', 'their face, the initial gone');
     await c.shot('answers-face-placed-late', page);
     assert.deepEqual(errors, []);
@@ -160,114 +115,157 @@ async function placedLate(browser, c) {
     await context.close();
   }
 }
-// the verdict's in: the face and three pencil dots where the answer will go
-async function waitingFor(c, nb, play, page, asked, spot, size) {
-  play.asking(asked.id, { by: nb.ceo, spot });
-  const waiting = layer(page).locator(`.bk-answer-waiting[data-group="${asked.id}"]`);
+// the verdict's in: the face and three pencil dots under the note, where its answer will come; why, where none came
+async function waitingFor(c, nb, play, page, asked, size) {
+  play.asking(asked.id, { by: nb.ceo });
+  const selector = `.bk-answer-waiting[data-group="${asked.id}"]`,
+    waiting = page.locator(`#book .bk-under[data-g="${asked.id}"] ${selector}`);
   await waiting.waitFor({ timeout: FEED_MS });
+  assert.ok(await waiting.locator('.bk-answer-face').count(), "the agent's face");
   assert.ok(await waiting.locator('.bk-answer-dots').count(), 'its pencil dots');
+  await underItsNote(page, asked, selector);
   for (const reason of ['Waiting for my turn to answer.', "I couldn't answer that. Ask again."]) {
-    play.asking(asked.id, { by: nb.ceo, spot, reason });
-    await waiting.getByText(reason, { exact: true }).waitFor();
+    play.asking(asked.id, { by: nb.ceo, reason });
+    await waiting.getByText(reason, { exact: true }).waitFor({ timeout: FEED_MS });
     assert.equal(await waiting.locator('.bk-answer-dots').count(), 0, 'the face explains why instead of thinking');
+    await underItsNote(page, asked, selector);
   }
-  play.asking(asked.id, { by: nb.ceo, spot });
-  await waiting.locator('.bk-answer-dots').waitFor();
-  await inPaper(page, asked.id, `.bk-answer-waiting[data-group="${asked.id}"]`);
+  play.asking(asked.id, { by: nb.ceo });
+  await waiting.locator('.bk-answer-dots').waitFor({ timeout: FEED_MS });
   await c.shot(`answers-waiting-${size}`, page);
 }
-// the answer: written in by a small pen, quickly, with the bulb and the face, never over the board's groups
-async function writtenIn(c, nb, play, page, asked, spot, size) {
-  const { id } = play.answer(asked.id, nb.answer(asked, 'text', WENT_LIVE, spot));
-  const slip = layer(page).locator(`.bk-answer[data-answer="${id}"]`);
+// the answer: its slip under the note, the dots gone
+async function slipped(c, nb, play, page, asked, size) {
+  const { id } = play.answer(asked.id, nb.answer(asked, 'text', WENT_LIVE));
+  const slip = slipOf(page, asked, id);
   await slip.waitFor({ timeout: FEED_MS });
-  const t0 = Date.now();
-  await written(page, id);
-  // (its pen takes 1.5 s at most, bookanswerpace.test.js; headless WebKit draws about a frame a second)
-  assert.ok(Date.now() - t0 < 3500, `written in quickly (${Date.now() - t0} ms)`);
-  assert.equal(await layer(page).locator('.bk-answer-waiting').count(), 0, 'its dots gone');
-  assert.ok(await slip.locator('.bk-answer-bulb svg').count(), 'the hand-drawn bulb');
-  assert.ok(await slip.locator('.bk-answer-face').count(), "the agent's face");
-  assert.match(await slip.locator('.bk-answer-words').innerText(), /went live this morning/);
-  assert.equal(await slip.locator('.bk-answer-pen').count(), 0, 'the pen away once written');
-  const at = await pagePx(page, `.bk-answer[data-answer="${id}"]`);
-  assert.ok(at, 'the answer in page px');
-  for (const g of nb.groups) assert.ok(!overlapping(at, g.box), `the answer clear of group ${g.id}`);
-  await inPaper(page, id);
-  await c.shot(`answers-written-${size}`, page);
-  return id;
-}
-// each symbol written in the reply area goes to the agent as ink, nothing read from it
-async function symbols(c, play, page, asked, id, type, size) {
-  const slip = layer(page).locator(`.bk-answer[data-answer="${id}"]`),
-    reply = slip.locator('.bk-answer-reply');
-  for (const [i, [name, draw]] of Object.entries(SYMBOLS).entries()) {
-    const from = c.posts.length,
-      r = await reply.boundingBox();
-    assert.ok(r, 'the reply area shows');
-    await stroke(page, draw(r.x + 12 + i * 44, r.y + 6, Math.min(28, r.height - 10)), type);
-    const sent = await postOf(c, from, '/api/notebooks/groups/reply');
-    assert.ok(sent, `the ${name} went as a reply`);
-    assert.equal(sent.body.answer, id, `the ${name} under its answer`);
-    assert.ok(sent.body.ink?.length, `the ${name} as ink`);
-    // (the answer drawn again with it: its strip holds every reply's strokes so far.)
-    const strokes = childrenOf(play, asked)
-      .filter(r => r.kind === 'reply')
-      .reduce((n, r) => n + r.ink.length, 0);
-    await slip
-      .locator('.bk-reply-sent path')
-      .nth(strokes - 1)
-      .waitFor({ state: 'attached', timeout: FEED_MS });
-  }
-  await c.shot(`answers-symbols-${size}`, page);
+  await page.locator('#book .bk-answer-waiting').waitFor({ state: 'detached', timeout: FEED_MS });
+  assert.match(await slip.locator('.slip-text').innerText(), /went live this morning/);
+  await underItsNote(page, asked, `.answer-slip[data-slip="${id}"]`);
+  await c.shot(`answers-slipped-${size}`, page);
 }
 
 async function kinds(browser, c) {
   const nb = notebookOn(c),
     chart = nb.typed(4300, 'how did signups go this week', 60, 60),
-    colour = nb.typed(4301, 'which colour for the badge', 60, 380),
-    banner = nb.typed(4302, 'the banner wraps on my phone', 60, 820);
-  const curve = Array.from({ length: 20 }, (_, i) => [
-    i * 12,
-    80 - Math.round(Math.sin(i / 4) * 30 + i * 2),
-    0.5,
-    i * 20,
-  ]);
-  const ink = [{ color: '#2b2b2b', size: 3, points: curve }],
+    colour = nb.typed(4301, 'which colour for the badge', 60, 60),
+    banner = nb.typed(4302, 'the banner wraps on my phone', 60, 60);
+  const ink = [{ color: '#2b2b2b', size: 3, points: [0, 1, 2].map(i => [i * 40, 40 - i * 15, 0.5, i * 20]) }],
     form = [
       { title: 'Which colour?', options: ['Warm', 'Cool'] },
       { title: 'Anything else?', optional: true },
     ];
   nb.groups.push(chart, colour, banner);
-  // (each where the store places it: beside its note on a wide book, below it, right of the tool strip, on the mini's.
-  const [up, two, shall] = ['Up a bit since Monday:', 'Two quick ones:', 'Shall I make it one line on phones?'];
-  const atChart = placed(nb, chart, { text: up, ink: 80 }),
-    atColour = placed(nb, colour, { text: two, questions: form.length }),
-    atBanner = placed(nb, banner, { text: shall });
   nb.seed.slips.push(
-    { id: 4310, ...nb.answer(chart, 'drawing', up, atChart, { ink }) },
-    { id: 4311, ...nb.answer(colour, 'form', two, atColour, { form }) },
-    { id: 4312, ...nb.answer(banner, 'question', shall, atBanner) },
+    { id: 4310, ...nb.answer(chart, 'drawing', 'Up a bit since Monday:', { ink }) },
+    { id: 4311, ...nb.answer(colour, 'form', 'Two quick ones:', { form }) },
+    { id: 4312, ...nb.answer(banner, 'question', 'Shall I make it one line on phones?') },
   );
   await inStory(browser, c, { viewport: c.MINI, nb }, async page => {
-    await written(page, 4310);
-    assert.ok(
-      await layer(page).locator('.bk-answer[data-answer="4310"] .bk-answer-ink path').count(),
-      'a drawing, in ink',
-    );
-    const sheet = layer(page).locator('.bk-answer[data-answer="4311"] .bk-answer-form');
+    const sheet = slipOf(page, colour, 4311).locator('.bk-answer-form');
     await sheet.waitFor({ timeout: FEED_MS });
-    assert.ok(await layer(page).locator('.bk-answer[data-answer="4312"]').count(), "the agent's question");
-    for (const id of [4310, 4311, 4312]) await inPaper(page, id);
+    for (const [g, id] of [
+      [chart, 4310],
+      [colour, 4311],
+      [banner, 4312],
+    ])
+      await underItsNote(page, g, `.answer-slip[data-slip="${id}"]`);
     await c.shot('answers-kinds', page);
     // (the overview first: an answered form is no longer open, bookanswer.ts openList)
-    await openListed(c, page, nb.p);
+    await openListed(c, page, nb.p, slipOf(page, banner, 4312));
     await formSent(c, page, sheet);
   });
 }
+// A drawing answer's strokes on its slip, under its words: a small chart and a
+// line wider than any slip, both kept inside it
+async function drawn(browser, c, viewport, size, options) {
+  const nb = notebookOn(c),
+    small = nb.typed(4320, 'how did signups go this week', 60, 60),
+    wide = nb.typed(4321, 'and over the whole year?', 60, 60),
+    chart = [
+      { color: '#12808a', size: 3, points: [0, 1, 2, 3].map(i => [10 + i * 40, 70 - i * 18, 0.5, i * 20]) },
+      {
+        color: '#b06a12',
+        size: 4,
+        points: [
+          [10, 80, 0.5, 0],
+          [140, 80, 0.5, 40],
+        ],
+      },
+    ],
+    year = [
+      { color: '#4458c9', size: 4, points: [...Array(13).keys()].map(i => [i * 100, 40 + (i % 2) * 60, 0.5, i * 20]) },
+    ];
+  nb.groups.push(small, wide);
+  nb.seed.slips.push(
+    { id: 4330, ...nb.answer(small, 'drawing', 'Up a bit since Monday:', { ink: chart }) },
+    { id: 4331, ...nb.answer(wide, 'drawing', 'The year, month by month:', { ink: year }) },
+  );
+  await inStory(browser, c, { viewport, nb, options }, async page => {
+    await inkOnSlip(page, small, 4330, chart);
+    await inkOnSlip(page, wide, 4331, year);
+    await c.shot(`answers-drawn-${size}`, page);
+    await drawnBack(page, small, 4330);
+    await c.shot(`answers-drawn-back-${size}`, page);
+  });
+}
+// The board answers slip id by drawing: no field under it, its room pulled out by the handle under it, a circle drawn
+// there gone as its reply with the room's Send, and shown under the slip as drawn
+async function drawnBack(page, g, id) {
+  const slip = slipOf(page, g, id);
+  assert.equal(await slip.locator('textarea, input').count(), 0, 'no field under an answer');
+  await slip.locator('.bk-slip-room-pull').click();
+  const room = slip.locator('.bk-slip-room-paper');
+  await room.scrollIntoViewIfNeeded();
+  const r = await room.boundingBox();
+  assert.ok(r.height > 60, `${r.height} px: the room pulled out`);
+  const ring = [...Array(17).keys()].map(i => [Math.cos(i / 2.5) * 50, Math.sin(i / 2.5) * 28]);
+  await page.mouse.move(r.x + 90 + ring[0][0], r.y + 60 + ring[0][1]);
+  await page.mouse.down();
+  for (const [dx, dy] of ring) await page.mouse.move(r.x + 90 + dx, r.y + 60 + dy);
+  await page.mouse.up();
+  await room.locator('.bk-slip-room-send').click();
+  const reply = page.locator(`#book .bk-under[data-g="${g.id}"] .bk-reply .bk-slip-ink`);
+  await reply.waitFor({ timeout: FEED_MS });
+  await reply.scrollIntoViewIfNeeded();
+  assert.equal(await room.locator('.bk-reply-wet path').count(), 0, 'its ink gone from the room, under the slip now');
+}
+// slip id's drawing (ink) under note g's words, on the slip, every stroke in view
+async function inkOnSlip(page, g, id, ink) {
+  const slip = slipOf(page, g, id),
+    svg = slip.locator('svg.bk-slip-ink');
+  await svg.waitFor({ timeout: FEED_MS });
+  await svg.scrollIntoViewIfNeeded();
+  await underItsNote(page, g, `.answer-slip[data-slip="${id}"]`);
+  const seen = await slip.evaluate(el => {
+    const box = e => e.getBoundingClientRect().toJSON(),
+      svg = el.querySelector('.bk-slip-ink');
+    return {
+      slip: box(el),
+      words: box(el.querySelector('.slip-text')),
+      svg: box(svg),
+      paths: [...svg.querySelectorAll('path')].map(box),
+    };
+  });
+  const shown = JSON.stringify(seen);
+  assert.ok(seen.svg.top >= seen.words.bottom, `under its words: ${shown}`);
+  assert.ok(
+    seen.svg.left >= seen.slip.left - TILT && seen.svg.right <= seen.slip.right + TILT,
+    `on its slip: ${shown}`,
+  );
+  assert.equal(seen.paths.length, ink.length, 'a line for every stroke');
+  seen.paths.forEach((p, i) => {
+    const inside = p.width > 0 && p.left >= seen.svg.left - 4 && p.right <= seen.svg.right + 4;
+    assert.ok(inside, `stroke ${i} in view: ${shown}`);
+  });
+}
+// (a slip's half-degree tilt, in screen px)
+const TILT = 3;
 // the form answered, and sent
 async function formSent(c, page, sheet) {
+  await sheet.scrollIntoViewIfNeeded();
   await sheet.getByRole('button', { name: 'Warm' }).click();
+  await c.shot('answers-form', page);
   const from = c.posts.length;
   await sheet.locator('button.bk-answer-send').click();
   const sent = await postOf(c, from, '/api/notebooks/answers/form');
@@ -275,8 +273,9 @@ async function formSent(c, page, sheet) {
   assert.equal(sent.body.id, 4311);
   assert.equal(sent.body.answers?.[0], 'Warm', "the board's pick");
 }
-// the overview lists what's open beside its grid of pages, which shows the story's page and no error, a tap turning to its page
-async function openListed(c, page, p) {
+// the overview lists what's open beside its grid of pages, which shows the story's page and no error, a tap turning to
+// its page (the question's slip there)
+async function openListed(c, page, p, question) {
   await overview(page);
   // (the turn's picture of the overview gone first: it shows the same list for a moment.)
   await page.waitForSelector('#book .bk-turn-picture', { state: 'detached' });
@@ -292,21 +291,18 @@ async function openListed(c, page, p) {
   await page.waitForTimeout(c.settle);
   // (the turn's picture of the page gone first: it holds a copy of its answers.)
   await page.waitForSelector('#book .bk-turn-picture', { state: 'detached' });
-  assert.ok(await layer(page).locator('.bk-answer[data-answer="4312"]').isVisible(), 'a tap turns to its page');
+  assert.ok(await question.isVisible(), 'a tap turns to its page');
 }
 
 // (the call's agent writes it itself, through its book tool: the same answer, the same place)
 async function onCall(browser, c) {
   const nb = notebookOn(c, { kind: 'call', label: `Call with ${c.org.company.ceo}` }),
     asked = nb.typed(4500, 'what does reach count here?', 60, 60);
-  nb.groups.push(asked);
+  nb.groups.push(asked, nb.typed(4501, 'and on the phone?', 60, 60));
   await inStory(browser, c, { viewport: c.MINI, nb }, async (page, play) => {
-    const text = 'People who saw it at least once, not views.';
-    const { id } = play.answer(asked.id, nb.answer(asked, 'text', text, placed(nb, asked, { text })));
-    await written(page, id);
-    const at = await pagePx(page, `.bk-answer[data-answer="${id}"]`);
-    assert.ok(at && !overlapping(at, asked.box), "clear of the board's note");
-    await inPaper(page, id);
+    const { id } = play.answer(asked.id, nb.answer(asked, 'text', 'People who saw it at least once, not views.'));
+    await slipOf(page, asked, id).waitFor({ timeout: FEED_MS });
+    await underItsNote(page, asked, `.answer-slip[data-slip="${id}"]`);
     await c.shot('answers-call', page);
   });
 }

@@ -26,6 +26,7 @@ judge it. Start from it.
 // (related work chained in one deliverable)
 // (causes fixed by judgment, not band-aid rules)
 // (a pause that only reorders is off track: a window instead)
+// (a new time reaches the board only for a time it set itself, once)
 const STEPS = `1. Read the summary below and \`hq followthrough\`. The summary: what the board asked for and how long it has waited,
    our goals with each bet's window and next step, the numbers the company steers by, the meetings closed since the
    last check, what finished since then (deliverables done and the board's items, merged and deployed: whether the board
@@ -100,9 +101,10 @@ the number now, what is the target and by when, what moves it next, and is that 
      job --expedite\` when the fault could hold up its own fix).
    - The scheduler acted and capacity is short: the deadline work's eligible seat is out of quota until its reset, or
      the server is short of room, so pausing the holder frees nothing the deadline work could use. That is no scheduler
-     fault: the shortage goes to its owner, and decide whether the board hears the new time.
+     fault: the shortage goes to its owner, and the board hears the new time only for a time it set itself (the
+     summary's line says whose), once.
    - The scheduler acted and the task itself overruns: re-size it (\`hq estimate set\`) so the plan plays its real
-     size, decide whether the board hears the new time, and find why it runs long: a heavy run that belongs off the
+     size (the board hears a new time only for a time it set itself, once), and find why it runs long: a heavy run that belongs off the
      worker (\`hq run\`), the server short of memory or cores, tests slow or hung, or something else. Its cause goes
      to its owner.
    - Something stuck: queue its cause's owner a job with what you found. HQ, the platform, the tests, the worker's room

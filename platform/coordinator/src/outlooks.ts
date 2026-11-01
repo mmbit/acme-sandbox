@@ -14,19 +14,31 @@ import { alike, scores, wordsOf } from './matching.ts';
 import { readyOf } from './threadjudge.ts';
 import { oneTask } from './made.ts';
 import { servedWindow } from './askwindow.ts';
+import { BOARD } from './windows.ts';
 
 // A thread's outlook: its two numbers, its planned finish against its window and the slack that leaves, where it stands
 // (forecast.ts standing), what it waits on, the chain that sets its finish, and why it has none (stall), with the time
-// its work is booked to start when that's past the play's horizon (booked). None while it has no open work.
+// its work is booked to start when that's past the play's horizon (booked), and whether the board set its window's time
+// itself (board: only then is a miss news to it, windows.ts BOARD). None while it has no open work.
 export function outlookOf(id: string, f: Forecast) {
   const o = f.threads.get(id);
   if (!o) return null;
   const booked = o.eta === null ? bookedOf(o, f) : null;
   return {
     ...{ eta: o.eta, finish: o.finish, deadline: o.deadline, aim: o.aim, slack: o.slack, standing: standing(o) },
-    ...{ held: o.held, left_ms: o.left_ms, waits: o.waits, cards: o.cards, chain: o.chain, next: o.next, jobs: o.jobs },
+    ...{
+      held: o.held,
+      safe: o.safe,
+      left_ms: o.left_ms,
+      waits: o.waits,
+      cards: o.cards,
+      chain: o.chain,
+      next: o.next,
+      jobs: o.jobs,
+    },
     stall: o.eta === null ? stallOf(o, booked) : null,
     booked,
+    board: o.deadline !== null && findThread(id)?.deadline_by === BOARD,
     undated: o.deadline === null && !oneTask(id) && servedWindow(id) === null,
   };
 }

@@ -11,7 +11,6 @@ export const mountFar = (book, paper, { goTo, openNotebook }) =>
   mountZoom(paper.querySelector('.bk-pages'), {
     desk: book.desk,
     dev: book.dev,
-    scope: book.scope,
     notebook: () => book.notebook,
     page: () => viewOf(book)?.page.id ?? null,
     // (what's drawn and not yet saved, saved first: the grid reads the store)

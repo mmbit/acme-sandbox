@@ -1,5 +1,8 @@
 // Memory set aside for jobs still starting and slots holding a meeting seat.
-// Jobs started in the last minute reserve JOB_MB until they reach their full size. A meeting seat mostly waits on
+// Jobs started in the last minute reserve JOB_MB until they reach their full size. A claim still waiting on HQ's answer
+// reserves JOB_MB too, but only against the other slots' claims: the worker's reading of its room (the minute's
+// report, the pressure verdict) leaves it out, since most claims find nothing. Counted there, idle slots asking
+// together read as no room, and 0 jobs fit, for the moment their claims are out. A meeting seat mostly waits on
 // hq meeting listen (~300 MB measured), so each hold reserves SEAT_MB. A free slot may claim while FREE_MB remains
 // after these reservations and the candidate's allowance (worker.ts room).
 export const FREE_MB = 1500,
@@ -19,49 +22,70 @@ export type ReservationInputs = {
 // coordinator's meetingseats.ts) with the seat each claims on. A hold keeps a seat's room until its seat starts or HQ
 // lets it go, so the slots that gather a meeting can all start it.
 export function reservations<Seat>(now = Date.now, observed?: (starting: { until: number; mb: number }[]) => void) {
-  const starts: number[] = [];
+  const { starts, claims, ...book } = claimBook(now);
   const holding = new Map<string, Seat>();
   const starting = (at = now()) => countStarts(starts, at, observed);
   const reservedMb = (n = starting()) => n * JOB_MB + holding.size * SEAT_MB;
-  const capacity = (availableMb: number, young = true) =>
-    reservationCapacity(availableMb, currentInputs(starts, holding.size, young, now, observed), young);
-  const claimMb = (availableMb: number, young = true) => capacity(availableMb, young).claimMb;
+  const roomOf = (counted: () => number[]) => {
+    const capacity = (availableMb: number, young = true) =>
+      reservationCapacity(availableMb, currentInputs(counted(), holding.size, young, now, observed), young);
+    const claimMb = (availableMb: number, young = true) => capacity(availableMb, young).claimMb;
+    return {
+      freeMb: (availableMb: number, young = true) => capacity(availableMb, young).freeMb,
+      claimMb,
+      // Each new claim first needs JOB_MB, then converts to a held seat's SEAT_MB.
+      gathering: (availableMb: number) => {
+        const free = claimMb(availableMb);
+        return free < JOB_MB ? 0 : 1 + Math.floor((free - JOB_MB) / SEAT_MB);
+      },
+      starts: (availableMb: number, young = true) => Math.floor(claimMb(availableMb, young) / JOB_MB),
+      room: (availableMb: number, young = true) => capacity(availableMb, young).room,
+    };
+  };
   return {
     holding,
     startupReservations: () => startupEntries(starts, now()),
     starting,
     reservedMb,
-    freeMb: (availableMb: number, young = true) => capacity(availableMb, young).freeMb,
-    claimMb,
-    // Each new claim first needs JOB_MB, then converts to a held seat's SEAT_MB.
-    gathering: (availableMb: number) => {
-      const free = claimMb(availableMb);
-      return free < JOB_MB ? 0 : 1 + Math.floor((free - JOB_MB) / SEAT_MB);
-    },
-    starts: (availableMb: number, young = true) => Math.floor(claimMb(availableMb, young) / JOB_MB),
-    room: (availableMb: number, young = true) => capacity(availableMb, young).room,
-    // A claim takes its room before it's asked (its start, given back if it finds nothing), so idle slots can't all
-    // start at once.
-    take() {
-      const t = now();
-      starts.push(t);
-      return t;
-    },
-    giveBack: (t: number) => starts.splice(starts.indexOf(t), 1),
-    // a claim that found a job keeps its start; the oldest go once there are many
-    started() {
-      if (starts.length > 50) starts.splice(0, 25);
-    },
-    // A claim's answer to a slot: held for a meeting, the room the claim took (its start at t) moves into the hold, and
-    // the slot asks again soon; anything else ends a hold it had.
+    // a claim's admission: the claims still out count
+    ...roomOf(() => [...starts, ...claims]),
+    reading: roomOf(() => starts),
+    ...book,
+    // A claim's answer to a slot: held for a meeting, the room the claim took (at t) moves into the hold, and the slot
+    // asks again soon; anything else ends a hold it had.
     keepsHold(slot: string, seat: Seat, t: number, answer: { held?: unknown } | null) {
       if (!answer?.held) {
         holding.delete(slot);
         return false;
       }
       holding.set(slot, seat);
-      starts.splice(starts.indexOf(t), 1);
+      book.giveBack(t);
       return true;
+    },
+  };
+}
+
+// The claims out, each taken at its time, and the starts the claims found.
+function claimBook(now: () => number) {
+  const starts: number[] = [],
+    claims: number[] = [];
+  const drop = (list: number[], t: number) => list.includes(t) && list.splice(list.indexOf(t), 1);
+  return {
+    starts,
+    claims,
+    // A claim takes its room before it's asked (given back if it finds nothing), so idle slots can't all start at once.
+    // (one whose request failed is never given back: it drops out once it's as old as a start)
+    take() {
+      const t = now();
+      claims.splice(0, claims.length, ...claims.filter(claim => t - claim < STARTING_MS), t);
+      return t;
+    },
+    giveBack: (t: number) => drop(claims, t),
+    // a claim that found a job: its room becomes the job's start; the oldest go once there are many
+    started(t: number) {
+      drop(claims, t);
+      starts.push(t);
+      if (starts.length > 50) starts.splice(0, 25);
     },
   };
 }

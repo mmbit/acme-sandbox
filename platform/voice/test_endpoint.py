@@ -1,9 +1,5 @@
 """cd platform/voice && python3 -m unittest test_endpoint   (endpoint.py's input: numpy and onnxruntime; the model
-itself with VOICE_MODELS set to a folder holding smart-turn-v3.2-cpu.onnx)
-
-features() matches transformers' WhisperFeatureExtractor(chunk_length=8) with padding='max_length' and do_normalize,
-on clips of 1 to 12.5 s, to within 5e-6.
-"""
+itself with VOICE_MODELS set to a folder holding smart-turn-v3.2-cpu.onnx)"""
 import os, unittest
 from pathlib import Path
 
@@ -26,7 +22,7 @@ class Features(unittest.TestCase):
         np.testing.assert_allclose(endpoint.features(long), endpoint.features(long[-8 * 16000:]), atol=1e-6)
 
     def test_the_spectrogram_is_whispers(self):
-        """2 s of two tones (220 and 1800 Hz): its bands and the padding's floor as WhisperFeatureExtractor gives them."""
+        """2 s of two tones (220 and 1800 Hz): its bands and the padding's floor as WhisperFeatureExtractor has them."""
         t = np.arange(2 * 16000) / 16000
         clip = (0.3 * np.sin(2 * np.pi * 220 * t) + 0.1 * np.sin(2 * np.pi * 1800 * t)).astype(np.float32)
         got = endpoint.features(clip)[0]

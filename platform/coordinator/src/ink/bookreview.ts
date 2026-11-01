@@ -30,19 +30,17 @@ const OVER_HOUR = {
   status: 429,
   error: `${feedback.PER_HOUR} notes in an hour is the most, so a page stuck in a loop can't flood the book. Try again in a while.`,
 };
-// The note review mode posted (feedback.ts saveNote's body), for its owner: the board's in its Notebook, a guest's on
-// their page in the round notebook. by: who wrote it ('board', or an
-// invited guest's 'guest:<grant>'). open: checked after the snip is cut, before anything is written (a guest's link may
-// have ended meanwhile).
+// The note review mode posted (feedback.ts saveNote's body), as a scrap: the board's on its owner's sheet in My journal,
+// an invited guest's on their own page (book.page) in the share's notebook. book.open is checked after the snip is cut,
+// before anything is written (a guest's link may have ended meanwhile).
 export async function toBook(
   slug: string,
   host: string,
   base: string,
   b: any,
-  by = BOARD,
-  open: () => feedback.Refusal | null = () => null,
-  guestPage?: number,
+  book: feedback.IntoBook | null = null,
 ): Promise<feedback.Refusal | Scrap> {
+  const by = book?.by ?? BOARD;
   const words = feedback.words(b?.note, WORDS_CUT);
   if (!words) return { status: 400, error: 'bad note' };
   const page = feedback.localPath(b.page, host, base),
@@ -65,17 +63,16 @@ export async function toBook(
   } catch {
     return { status: 400, error: 'its screenshot or a picture can’t be read' };
   }
-  const shut = open();
+  const shut = book?.open();
   if (shut) return shut;
   const { owner, name } = ownerOf(slug, page);
   // (video: a film's moment.)
   const { v, el, view, ink, video } = element,
     anchor = { v, url: element.url, el, view, ink, video };
   const said = b.said === 'spoken' ? 'spoken' : 'typed';
-  // The board uses My journal. The authenticated review share selects its guest's page.
   const note = { anchor, words, said, snip, owner, name };
   if (by === BOARD) return scrapped(slug, page, note);
-  const target = guestPage && pageRow(guestPage, by);
+  const target = book?.page && pageRow(book.page, by);
   if (!target) return { status: 403, error: 'open the notebook from your review invitation first' };
   const group = createPageScrap({ ...note, anchor: { ...anchor, ink: [] } }, target, by);
   if (isRefused(group)) return { status: group[0], error: group[1] };

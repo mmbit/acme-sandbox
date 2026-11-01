@@ -7,6 +7,7 @@ import { picture } from '../../util.js';
 import { pageBox } from './bookrow.js';
 import { TEXT } from './booktexts.js';
 import { wrapLines } from './bookpapermath.js';
+import { inkBox } from './bookanswerart.js';
 
 // The paper as the store's picture has it (bookrender.ts PAPER), and that picture's longest side at most (PICTURE_PX)
 const PAPER = '#fffdf8',
@@ -29,6 +30,24 @@ export async function pagePicture(page) {
   await Promise.all(things.scraps.map(s => s.img.decode().catch(() => {}))); // (one that fails stays a blank card)
   paint(g, things);
   return canvas;
+}
+
+// Strokes on their own as a picture to send with a desk-phone card's answer (bookasks.js), as the store draws a reply's
+// snip (bookrender.ts): on the paper, a little room round the ink (SNIP_PAD, page px), at twice its px. A PNG Blob, or
+// null for no ink.
+const SNIP_PAD = 24;
+export async function inkPicture(strokes) {
+  const box = inkBox(strokes);
+  if (!box) return null;
+  const [x, y] = [Math.floor(box.x0) - SNIP_PAD, Math.floor(box.y0) - SNIP_PAD],
+    [w, h] = [Math.ceil(box.x1) + SNIP_PAD - x, Math.ceil(box.y1) + SNIP_PAD - y];
+  const canvas = canvasOf(w * 2, h * 2),
+    g = canvas.getContext('2d');
+  g.fillStyle = PAPER;
+  g.fillRect(0, 0, canvas.width, canvas.height);
+  g.setTransform(2, 0, 0, 2, -x * 2, -y * 2);
+  paint(g, { ink: strokes, scraps: [], texts: [] });
+  return new Promise(done => canvas.toBlob(done, 'image/png'));
 }
 
 // Things on a page view (v: bookpages.js's) as a canvas over where they show on the screen, sharp at its pixel ratio.

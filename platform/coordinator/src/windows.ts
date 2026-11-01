@@ -5,7 +5,8 @@
 // thread with no window has no deadline: it runs on the room every window leaves. A window is set when the work is
 // agreed, by hq window or by a call's item with its time when it's handed out (ledger.ts link, hq job --item), and goes
 // on the thread, never on one job. HQ tells nobody by itself: whether the board hears, and the new time it's given, is
-// the CEO's call.
+// the CEO's call. Only a time the board set itself (deadline_by BOARD) can be news to it when missed, and once: a time we
+// gave, a planned finish or the new time after a miss, orders the work and is ours to plan with
 // Each task inherits the one deadline through its deliverable membership. The plan and pacing read it afresh,
 // so a deadline change applies to all its work without task-level copies.
 // (its messages say deliverable, the board's word for a thread)
@@ -124,6 +125,9 @@ export function windowOf(thread: Thread, deadline: number, aim?: number): Window
   return { deadline, aim: aim ?? (thread.aim !== null && thread.aim <= deadline ? thread.aim : deadline) };
 }
 
+// Who gave a window the board set itself: the only kind a miss of tells the board (threats.ts, deadlines.ts lines).
+export const BOARD = 'board';
+
 // A thread's window, given by `by` (who agreed the time: the summary's line names them). A new window replaces the last;
 // null takes it off. A call's item with its time comes here, both times at the item's, when the call's follow-up hands
 // it out or links it to work (ledger.ts): a time already past shows as late at once (hq window's own is ahead: parse).
@@ -162,7 +166,8 @@ export function withWindow<S extends OrderingSnapshot>(queue: S, thread: string,
   };
 }
 
-// Active threads whose forecast misses their window: planned finish past the deadline, or none in sight.
+// Active threads whose forecast misses their window: planned finish past the deadline, or none in sight; board: the
+// board set that time itself.
 export function misses(f: Forecast) {
   return [...f.threads.values()]
     .filter(o => standing(o) === 'misses')
@@ -170,7 +175,16 @@ export function misses(f: Forecast) {
       const t = findThread(o.thread);
       if (!t || (t.status !== 'open' && !inReview(t.id))) return [];
       const project = findProject(t.project)?.name ?? t.project;
-      return [{ thread: t.id, project, name: t.name, deadline: o.deadline!, finish: o.finish }];
+      return [
+        {
+          thread: t.id,
+          project,
+          name: t.name,
+          deadline: o.deadline!,
+          finish: o.finish,
+          board: t.deadline_by === BOARD,
+        },
+      ];
     })
     .sort((a, b) => a.deadline - b.deadline || a.thread.localeCompare(b.thread));
 }

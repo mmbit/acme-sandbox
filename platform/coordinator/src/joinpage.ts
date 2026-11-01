@@ -19,7 +19,7 @@ import { ORIGIN, REPO_DIR } from './config.ts';
 import { escapeHtml } from '../../../shared/html/escape.ts';
 import { brand } from './company.ts';
 import { inside } from './files.ts';
-import { look, palette } from './guests.ts';
+import { hex, look, palette } from './guests.ts';
 import { logo } from './pages.ts';
 
 export type JoinLang = 'en' | 'nl' | 'de';
@@ -211,6 +211,7 @@ export const ASSETS: Record<string, URL> = {
   'floating.js': new URL('../../hq/shell/floating.js', import.meta.url),
   'watchalong.js': new URL('../../../shared/watchalong/watchalong.js', import.meta.url),
   'strokes.js': new URL('../../../shared/watchalong/strokes.js', import.meta.url),
+  'toplayer.js': new URL('../../../shared/watchalong/toplayer.js', import.meta.url),
   'vendor/rrweb-record.js': new URL('../node_modules/@rrweb/record/dist/record.js', import.meta.url), // (watchalong.ts RECORDER)
 };
 
@@ -342,7 +343,6 @@ function figure(name: string) {
 </g></g></svg>`;
 }
 
-const hex = (v: unknown) => (typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v) ? v : null);
 // a colour part of the way to another (0: the first, 1: the second)
 const mix = (from: string, to: string, part: number) =>
   '#' +

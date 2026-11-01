@@ -81,25 +81,6 @@
   gap: 6px;
   align-items: baseline;
 }
-#book .ask-words {
-  display: block;
-  width: 100%;
-  box-sizing: border-box;
-  margin: 10px 0 0;
-  padding: 4px 0;
-  resize: none;
-  border: 0;
-  border-bottom: 1px dashed #c9bfa6;
-  background: transparent;
-  color: var(--bk-cloth);
-  font: inherit;
-  outline: none;
-  overflow: hidden;
-}
-#book .ask-words::placeholder {
-  color: #8a7f5e;
-}
-#book .ask-words:focus,
 #book .ask-q input:focus {
   border-bottom: 2px solid var(--bk-cloth);
 }
@@ -169,4 +150,12 @@
 #book .ask-spot:focus-visible {
   outline: 2px solid var(--bk-cloth);
   outline-offset: 2px;
+}
+/* the board's drawing it answered with, under the tick: the picture that went, at its own px, narrower only when the
+   card is */
+#book .ask-drawn {
+  display: block;
+  margin: 8px 40px 0 0;
+  max-width: calc(100% - 40px);
+  height: auto;
 }

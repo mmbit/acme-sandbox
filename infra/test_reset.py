@@ -15,6 +15,8 @@ BOARD = {'GIT_AUTHOR_NAME': 'Claude', 'GIT_AUTHOR_EMAIL': 'noreply@anthropic.com
          'GIT_COMMITTER_EMAIL': 'noreply@anthropic.com'}
 AGENT = {'GIT_AUTHOR_NAME': 'Mara', 'GIT_AUTHOR_EMAIL': 'mara@agents.testco.test', 'GIT_COMMITTER_NAME': 'Mara',
          'GIT_COMMITTER_EMAIL': 'mara@agents.testco.test'}
+HQ = {'GIT_AUTHOR_NAME': 'HQ', 'GIT_AUTHOR_EMAIL': 'hq@noreply.invalid', 'GIT_COMMITTER_NAME': 'HQ',
+      'GIT_COMMITTER_EMAIL': 'hq@noreply.invalid'}
 MERGER = {'GIT_AUTHOR_NAME': 'testco', 'GIT_AUTHOR_EMAIL': 'owner@testco.test', 'GIT_COMMITTER_NAME': 'GitHub',
           'GIT_COMMITTER_EMAIL': 'noreply@github.com'}
 
@@ -119,6 +121,14 @@ class Company(unittest.TestCase):
         git(self.repo, 'add', '-A')
         git(self.repo, 'commit', '-q', '-m', 'Start over', at=f'@{int(time.time()) - 5 * 86400}')
         self.assertEqual(self.reset('due').returncode, 2)
+
+    def test_an_hq_revert_touching_the_marker_is_refused(self):
+        write(self.repo, 'infra/reset', 'reverted-back\n')
+        git(self.repo, 'add', '-A')
+        git(self.repo, 'commit', '-q', '-m', 'Revert the deploy that broke HQ', who=HQ)
+        due = self.reset('due')
+        self.assertEqual(due.returncode, 2)
+        self.assertIn("HQ's", due.stdout)
 
     def test_run_archives_the_runtime_data_and_job_branches_and_keeps_the_boards_keys_and_sign_ins(self):
         for n in (1, 2):

@@ -65,7 +65,7 @@ export async function initBook({ scope = null } = {}) {
     redo: () => pages.redo(),
   });
   const calls = scope ? null : await import('../calldrop.js');
-  pages = mountPages(parts.paper, { dev: world.dev, shape, scope, calls });
+  pages = mountPages(parts.paper, { dev: world.dev, shape, calls });
   if (!scope) mountBookmarks(parts.leaf, pages); // (the board's books' chapters: bookmarks.js)
   // (Search, in the overview's head: a find opens its page at its note.)
   if (!scope) mountSearch(island('overview'), { dev: world.dev, find: at => pages.find(at) });
@@ -108,11 +108,11 @@ function mountRoot() {
   root.id = 'book';
   root.style.cssText = PAPER;
   root.innerHTML = `<div class="bk-table"></div><div class="bk-edge" role="separator" aria-orientation="vertical"
-    aria-label="${word("The Notebook's edge: drag it to make the Notebook wider or narrower")}"></div>
-    <section class="bk-leaf" aria-label="${word('The Notebook')}"><div class="bk-paper"></div><div class="bk-stack"></div><nav class="bk-rail" aria-label="${word(
-      "The Notebook's controls",
+    aria-label="${word('notebookEdge')}"></div>
+    <section class="bk-leaf" aria-label="${word('theNotebook')}"><div class="bk-paper"></div><div class="bk-stack"></div><nav class="bk-rail" aria-label="${word(
+      'notebookControls',
     )}"></nav></section>
-    <button class="bk-lip" aria-label="${word('The Notebook: tap or pull it to open')}" data-keep-clear></button>`;
+    <button class="bk-lip" aria-label="${word('notebookLip')}" data-keep-clear></button>`;
   document.documentElement.append(root);
   parts = Object.fromEntries(
     ['table', 'edge', 'leaf', 'paper', 'stack', 'rail', 'lip'].map(k => [k, root.querySelector(`.bk-${k}`)]),

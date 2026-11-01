@@ -185,12 +185,17 @@ test("an empty room's notice always hangs, clear of the fire escape at its wing'
           len = X ? r.x1 - r.x0 : r.y1 - r.y0,
           atEscape = (L.street !== 'x') === X && (X ? r.x1 === L.X1 : r.y1 === L.Y1);
         // backWall's notice, inside the wall's margins, in the first pass with a spot
-        const spots = wallHidden(r, L).map(h =>
-          clearOf(h, { X, len }, 8, NOTICE.w, ART_MARGIN[0], len * 16 - ART_MARGIN[1]),
-        );
+        const hidden = wallHidden(r, L),
+          spots = hidden.map(h => clearOf(h.spans, { X, len }, 8, NOTICE.w, ART_MARGIN[0], len * 16 - ART_MARGIN[1]));
         assert.ok(
           spots.some(u => u !== null),
           `${r.id} has a spot for its notice`,
+        );
+        // low, or high over the next room's transom only on a three-tile wall
+        const { rows } = hidden[spots.findIndex(u => u !== null)];
+        assert.ok(
+          rows === NOTICE.z || (rows === NOTICE.high && len === 3),
+          `${r.id}, ${len} tiles, hangs its notice at ${rows}`,
         );
         if (!atEscape || r.level === L.nUp) continue;
         ends.push(`${len}@${r.level}${r.level === L.nUp - 1 ? ' top' : ''}`);

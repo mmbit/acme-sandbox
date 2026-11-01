@@ -5,8 +5,8 @@
 @import url('../icons.css');
 @import url('../controls.css');
 
-/* on body, under the brand's :root: the look's surfaces, lines and lettering (Day's until scene.js sets the colourway) */
-body {
+/* the colourway, Day's until scene.js sets the one worn on the document */
+:root {
   --k-ground: #ece6da;
   --k-ink: #1d1b17;
   --k-muted: #5c554a;
@@ -14,6 +14,11 @@ body {
   --k-accent: #d6ea3c;
   --k-side: #8f9f14;
   --k-on-accent: #1d1b17;
+}
+/* on body, under the brand's :root, and on the Notebook beside it (shell/ink/book.js: its controls are HQ's): the look's
+   surfaces, lines and lettering */
+body,
+#book {
   --font: var(--k-font, 'Bricolage Grotesque'), system-ui, -apple-system, 'Segoe UI', sans-serif;
   --display: var(--font);
   --bg: var(--k-ground);
@@ -117,18 +122,23 @@ body {
   /* a tile: the lip of a key that opens something, the deepest */
   --tile-lip: 0 var(--depth-tile) 0 var(--lip);
   --key-r: 999px;
+}
+body {
   background: var(--bg);
   color: var(--ink);
   font-family: var(--font);
   font-variation-settings: 'opsz' 14;
 }
-body.wire-dark {
+body.wire-dark,
+body.wire-dark ~ #book {
   --key-bg: color-mix(in srgb, var(--k-ink) 10%, var(--k-panel));
   --lip-deep: color-mix(in srgb, var(--k-ink) 28%, var(--k-panel));
   --alarm: #ff7a93;
   --alarm-ink: #ffd3dc;
   --ok: #6fdba4;
   --no: #ff9a6b;
+}
+body.wire-dark {
   color-scheme: dark;
 }
 body.wire-dark .brand img {
@@ -334,28 +344,44 @@ body.touring #card {
     box-shadow: var(--shadow-hover-button);
   }
 }
-/* a preview's bar: the colourway's ink, with its words and Share in the ground's colour */
-#viewer .bar {
-  background: var(--k-ink);
-  color: var(--k-ground);
-}
-#viewer .bar :is(.glyph, .where, .share) {
-  color: var(--k-ground);
-}
-/* the preview bar's pin and send: ground and panel against its ink */
-#viewer .bar .pin,
-#viewer .bar button.send {
-  border: 0;
+/* a preview on HQ's own ground, its bar's and head's keys Slate's: a picked choice latched down in its own face, Share's
+   picked kind too, Note lit as the one to press */
+#viewer {
+  --on-deep: var(--k-ink);
   background: var(--k-ground);
-  color: var(--k-ink);
-  box-shadow: inset 0 -3px 0 color-mix(in srgb, var(--k-ink) 25%, var(--k-ground));
 }
-#viewer .bar button.send {
-  background: var(--k-panel);
+#viewer :is(.bar, .stage .head) button {
+  height: 38px;
+  background: var(--key-bg);
+  color: var(--key-ink);
+  border: 1.5px solid var(--key-edge);
+  border-radius: var(--key-r);
+  box-shadow: var(--key-lip);
 }
-#viewer .bar .send i {
-  background: var(--k-accent);
-  color: var(--k-on-accent);
+/* (the head's keys short enough for their lip and press in its 40 px row: shell/viewerfit.js HEAD) */
+#viewer .stage .head button {
+  height: 28px;
+}
+#viewer :is(.bar, .stage .head) button:is(:active, .down) {
+  transform: var(--key-down);
+  box-shadow: var(--key-down-lip);
+}
+#viewer :is(.bar .seg button, .bar .qr, .stage .head .link)[aria-pressed='true'],
+#viewer .bar .qr[aria-expanded='true'],
+#viewer .stage .head .tabs [aria-selected='true'],
+#viewer .sharebox .seg button[aria-pressed='true'] {
+  background: var(--key-bg);
+  color: var(--key-ink);
+  border-color: var(--key-edge);
+  transform: var(--key-down);
+  box-shadow: var(--key-down-lip);
+  font-weight: 750;
+}
+/* (button.pin: as weighty as the keys' rule above, so Note stays lit) */
+#viewer .bar button.pin {
+  background: var(--key-on-bg);
+  color: var(--key-on-ink);
+  box-shadow: var(--key-on-lip);
 }
 /* HQ-OS's screen: flat, with no glow or inset, so its words and keys align with the title on every screen size
    */
@@ -617,6 +643,35 @@ body.touring #card {
 /* the pictures are inked dark, so on a dark ground they're turned light */
 body.wire-dark .applist .pic img[data-ink] {
   filter: invert(1);
+}
+/* the Notebook's controls as Slate's (shell/ink/bookui.css): its islands and the selection's and typed text's bars panels
+   on a short lip, its cards panels as Share's box, its word the lit key. (:is()
+   gives the bars an id's weight, to outweigh bookselect.css and booktools.css whichever sheet loads first) */
+:is(#book .bk-island, .bk-sel-bar, .bk-typed-keys) {
+  border-color: transparent;
+  box-shadow: 0 var(--depth-pressed) 0 var(--lip);
+}
+#book :is(.bk-card, .bk-share, .bk-asks-open) {
+  border: 0;
+  border-radius: var(--r-xl);
+  box-shadow:
+    0 var(--depth-tile) 0 var(--lip-deep),
+    var(--shadow-lg);
+}
+/* (the asks' card's tail edgeless as the card is: body ~ #book outweighs bookshare.css's rule whichever loads first) */
+body ~ #book .bk-asks-open::after {
+  border-color: transparent;
+}
+.bk-btn.bk-text {
+  border: 0;
+  border-radius: var(--key-r);
+  background: var(--key-on-bg);
+  color: var(--key-on-ink);
+  box-shadow: var(--key-on-lip);
+}
+.bk-btn.bk-text:is(:active, .down) {
+  transform: var(--key-down);
+  box-shadow: var(--key-on-down-lip);
 }
 /* Share's box over a preview: a panel with its lip */
 #viewer .sharebox {

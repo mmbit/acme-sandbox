@@ -8,8 +8,7 @@
 // The iPad turned after a circle, the circle stays round the version it chose
 import assert from 'node:assert/strict';
 import { inStory } from './bookanswers.mjs';
-import { clearOfTools } from './bookversions.mjs';
-import { childrenOf, layer, stroke, triedNote } from './bookanswersplay.mjs';
+import { childrenOf, clearOfTools, layer, stroke, triedNote } from './bookanswersplay.mjs';
 
 // The circle sent once the pen rests, read as a pick and the page read again: about a second, but the played store's
 // routes hand a post back several seconds late while the browser's connections are taken (a reply's own wait)
@@ -104,21 +103,17 @@ async function picked(browser, c, { viewport, size, pointer, options = {}, moves
   });
 }
 
-// The iPad turned upright after the circle: the frames wrap anew, and the circle, read back with its frame, still rings
-// the one it chose; then turned back
+// The iPad turned upright after the circle: the circle, read back with its frame, still rings the one it chose; then
+// turned back. (The block is as wide as its note's unit at every width, so the frames keep their place on it: the page
+// around them moves.)
 async function turned(page, c, { reply, sent, viewport, size }) {
   assert.ok(near(reply?.frame, sent.frame), `the reply read back with its frame: ${JSON.stringify(reply?.frame)}`);
-  const before = await ringed(page, 4611);
   await page.setViewportSize(c.UPRIGHT);
   await c.settled(page, 'folded');
   await c.pullLip(page, -600);
   await c.settled(page, 'spread');
   await page.waitForTimeout(c.settle);
   const after = await ringed(page, 4611);
-  assert.ok(
-    ['x', 'y', 'w'].some(k => Math.abs(before.paper[k] - after.paper[k]) >= 2),
-    `the turn moved the frame on the block: ${JSON.stringify([before.paper, after.paper])}`,
-  );
   assert.ok(around(after.ink, after.paper), `the circle still round it: ${JSON.stringify(after)}`);
   await c.shot(`picks-turned-${size}`, page);
   await page.setViewportSize(viewport);

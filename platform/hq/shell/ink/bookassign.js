@@ -148,7 +148,7 @@ function fit(as, bar) {
   if (scope) return;
   let b = bar.querySelector('.bk-assign-btn');
   if (!b) {
-    b = button({ icon: PERSON, text: word('Assign'), onClick: () => fromBar(as) });
+    b = button({ icon: PERSON, text: word('assign'), onClick: () => fromBar(as) });
     b.classList.add('bk-assign-btn');
     bar.prepend(b);
   }

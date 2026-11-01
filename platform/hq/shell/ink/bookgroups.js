@@ -1,8 +1,9 @@
 // The groups on a Notebook page as the board sees them (knowledge/notes/platform/notebook.md), each a scrap unit the
 // page lays (bookunits.js): picked with Select (bookselect.js), whose bar has its Move to page… and its Delete. A
 // scrap's post-it words in its body under its picture (typed in and edited with the pen while its page is open:
-// bookamend.js); and under each unit its answers (review mode's slips: a tick, and words written under one go as a
-// reply) with the board's replies, a reply's Undo there in its seconds, then the agents' desk-phone cards about it
+// bookamend.js); and under each unit its answers (review mode's slips: a tick, and the room pulled out under one to
+// answer in, drawn or typed with the text tool: bookslipreply.js) with the board's replies, a reply's Undo there in its seconds, the agent's face and pencil dots while an
+// answer comes (or why none came), then the agents' desk-phone cards about it
 // (bookasks.js), one still open edged red (bookforyou.js). A group deleted crumples away at once, Undo a tap away in a
 // toast and on the book's Undo; a scratch-out written over a group deletes it the same way. A sent page's own groups are read-only.
 // What's saved is booksave.js's; the maths bookgroupmath.js's. Its look: bookgroups.css.
@@ -21,11 +22,16 @@ import { boxOf, slipsUnder } from './notebookstack.js';
 import { edit, keep } from './bookedit.js';
 import { readAgain, saved, shut, typed } from './booksave.js';
 import { deleteReply, moveGroup, reply } from './notebookdata.js';
+import { answering, slipRoomHtml, wireRooms } from './bookslipreply.js';
 import { nameOf } from './bookhead.js';
 import { asksHtml, wireAsks } from './bookasks.js';
 import { mountShow } from './bookgroupshow.js';
 import { markOpen } from './bookforyou.js';
 import { tagsHtml } from './bookassignlist.js';
+import { formHtml, formsIn, wireForms } from './bookanswerreply.js';
+import { sendForm, sendReply } from './bookanswersdata.js';
+import { waitingHtml } from './bookanswers.js';
+import { slipInkHtml } from './bookanswerart.js';
 
 // a reply can be taken back this long after it's written (notebooksend.ts SEND_MS)
 const REPLY_MS = 10_000;
@@ -43,6 +49,11 @@ export function mountGroups(book, hooks) {
   }
   const gs = { book, hooks, menu: null };
   mountShow(book); // (a scrap just saved, shown)
+  // (an answer coming on a page drawn before the scene placed the agents shows its agent's initial: their face once a
+  // look is worn, stage.js stage:look.)
+  document.addEventListener('stage:look', () => {
+    for (const view of book.views) if ([...(view.page.groups?.values() ?? [])].some(g => g.waiting)) draw(gs, view);
+  });
   return {
     added: view => layerOf(gs, view),
     drawn: page => {
@@ -62,24 +73,21 @@ function layerOf(gs, view) {
     layer = document.createElement('div');
     layer.className = 'bk-groups';
     view.el.append(layer);
-    // (a reply left empty: the groups drawn as they are now, if they waited for it)
-    layer.addEventListener('input', () => view.groupsLater && draw(gs, view));
   }
   return layer;
 }
 // A page's groups drawn on it: the clip of one that holds two or more things, a scrap's words, its answers and replies
-// under it. Not while a reply is being written under an answer, which drawing them anew would take away (or send half
-// written, as its field's blur sends it): then once it's sent or left empty. A reply field the board is in and hasn't
-// written in yet keeps the board in it.
+// under it. Not while the board answers in a room under an answer, which drawing them anew would take away: then once
+// what it answered with has gone (or it left it empty). The rooms pulled out stay out.
 function draw(gs, view) {
   const { page } = view,
     layer = layerOf(gs, view),
     open = !shut(page);
-  view.groupsLater = [...layer.querySelectorAll('.slip-reply')].some(f => f.value.trim());
+  view.groupsLater = answering(layer);
   if (view.groupsLater) return;
-  const inReply = document.activeElement?.matches('.slip-reply') && layer.contains(document.activeElement);
-  const focused = inReply && document.activeElement.closest('[data-slip]').dataset.slip;
-  const caret = caretIn(layer);
+  view.rooms ??= new Map();
+  const caret = caretIn(layer),
+    forms = formsIn(layer);
   // (the page whose groups these are: book-check finds a page's things by it, a lone one having no clip)
   layer.dataset.page = page.id;
   layer.innerHTML = [...(page.groups?.values() ?? [])]
@@ -90,19 +98,22 @@ function draw(gs, view) {
       // (a scrap's words part of its body, under its picture; its answers and replies under the unit, and whom it
       // went to at its corner: bookunits.js places them. A scrap is a unit, no clip: Select's bar has its menu. job #14672)
       const words = g.kind === 'scrap' ? wordsHtml(page, g, open) : '';
-      const under = slipsHtml(g.children ?? []) + asksHtml(g);
+      const under = slipsHtml(g, view.rooms) + asksHtml(g, view.rooms, gs.book.dev);
       return `${words ? `<div class="bk-words" data-g="${g.id}">${words}</div>` : ''}${
         under ? `<div class="bk-under" data-g="${g.id}">${under}</div>` : ''
       }${tagsHtml(g)}`;
     })
     .join('');
-  wireSlips(layer, slipsOn(gs, view), word);
+  wireSlips(layer, slipsOn(gs), word);
+  wireRooms(layer, view.rooms, roomsOn(gs, view));
   wireAsks(layer, {
-    dev: gs.book.dev,
     asks: new Map([...(page.groups?.values() ?? [])].flatMap(g => g.asks ?? []).map(a => [a.id, a])),
     answered: () => readAgain(gs.book, page),
+    rooms: view.rooms,
+    hooks: roomsOn(gs, view),
   });
   wireWords(gs, page, layer);
+  wireForms(page, layer, forms, (a, sent) => sendForm(gs.book.dev, a.id, sent).then(() => readAgain(gs.book, page)));
   for (const b of layer.querySelectorAll('[data-unreply]'))
     b.addEventListener('click', () => unreply(gs, view, Number(b.dataset.unreply)));
   // (the words' and answers' touches are their own: never the page's pan or ink. A scrap's words kept from Scribble
@@ -110,7 +121,6 @@ function draw(gs, view) {
   for (const el of layer.querySelectorAll('.bk-words, .bk-under'))
     for (const type of ['pointerdown', 'touchstart'])
       el.addEventListener(type, e => e.target.matches('[data-pen]') || e.stopPropagation());
-  if (focused) layer.querySelector(`[data-slip="${focused}"] .slip-reply`)?.focus();
   if (caret) caretBack(layer, caret);
   // (what hangs under each unit counted in its place, and moved to its foot: bookunits.js. job #14672)
   view.relay?.();
@@ -150,18 +160,17 @@ function wordsHtml(page, g, open) {
   const words = page.typed?.get(g.id) ?? g.words;
   if (!open) return words ? `<p class="bk-scrap-words">${esc(words)}</p>` : '';
   return words || page.typed?.has(g.id)
-    ? `<div class="bk-scrap-post" data-words="${esc(words)}"><textarea class="bk-scrap-words" rows="1" aria-label="${word("The scrap's words")}">${esc(
+    ? `<div class="bk-scrap-post" data-words="${esc(words)}"><textarea class="bk-scrap-words" rows="1" aria-label="${word('scrapWords')}">${esc(
         words,
       )}</textarea></div>`
     : '';
 }
-// The board's reply under an answer, and its Undo while it's in its seconds
+// The board's reply under an answer, its words and its ink as drawn, and its Undo while it's in its seconds
 function replyHtml(r) {
-  const words = r.words || (r.ink?.length ? word('Written reply') : '');
   const fresh = Date.now() - Date.parse(r.created) < REPLY_MS;
-  return `<p class="bk-reply" data-reply="${r.id}"><b>${word('You')}</b> ${esc(words)}${
-    fresh ? ` <button type="button" class="bk-unreply" data-unreply="${r.id}">${word('Undo')}</button>` : ''
-  }</p>`;
+  return `<div class="bk-reply" data-reply="${r.id}"><b>${word('you')}</b> ${esc(r.words ?? '')}${
+    fresh ? ` <button type="button" class="bk-unreply" data-unreply="${r.id}">${word('undo')}</button>` : ''
+  }${r.ink?.length ? slipInkHtml(r.ink) : ''}</div>`;
 }
 // A group's elements as they are on the page now: their box, for where its clip and answers go (null: none), how
 // many there are, whether it has a clip, and themselves by kind
@@ -174,20 +183,38 @@ function partsNow(page, id) {
 
 // ---- the answers
 
-// A group's children slipped under it, its answers and replies (notebookstack.js slipsUnder)
-const slipsHtml = children =>
-  slipsUnder(children)
-    .map(c => (c.kind === 'reply' ? replyHtml(c) : slipHtml(c, {}, slipWords())))
-    .join('');
+// A group's children slipped under it, its answers and replies (notebookstack.js slipsUnder), an answer's drawing and
+// form on its slip under its words (bookanswerart.js slipInkHtml, bookanswerreply.js formHtml), then the answer still
+// coming; at each slip's foot the room to answer it in (bookslipreply.js), pulled out as it was (rooms: answer id →
+// height).
+const slipsHtml = (g, rooms) =>
+  slipsUnder(g.children ?? [])
+    .map(c => (c.kind === 'reply' ? replyHtml(c) : slipHtml(c, {}, { ...slipWords(), more: moreOf(c, rooms) })))
+    .join('') + (g.waiting ? waitingHtml(g) : '');
+const moreOf = (c, rooms) =>
+  (c.ink?.length ? slipInkHtml(c.ink) : '') + (c.form ? formHtml(c) : '') + slipRoomHtml(c, rooms);
 // (the slip in the reader's words, and to a guest its agent's name says it's an AI's: charter rule 5.)
 const slipWords = () => ({ say: word, mark: aiMark() });
 
-const slipsOn = (gs, view) => ({
-  tick: (id, ticked) => (gs.book.dev ? Promise.resolve() : notebookRequest('/api/book/slip/tick', { id, ticked })),
-  reply: async (id, words) => {
-    await reply(gs.book.dev, id, words);
+// (a tick on the answers' route, which takes an answer not sent yet)
+const slipsOn = gs => ({
+  tick: (id, ticked) =>
+    gs.book.dev ? Promise.resolve() : notebookRequest('/api/notebooks/answers/tick', { id, ticked }),
+});
+// What the board answers in a slip's room goes as its reply, drawn or typed, and the page is read again; groups held
+// for it are drawn once it's gone
+const roomsOn = (gs, view) => ({
+  book: gs.book,
+  send: async (id, { ink, words }) => {
+    await (ink ? sendReply(gs.book.dev, id, ink) : reply(gs.book.dev, id, words));
     readAgain(gs.book, view.page);
-    return { said: word('Sent: Undo under it for 10 seconds') };
+  },
+  settled: () => view.groupsLater && draw(gs, view),
+  relay: () => {
+    view.relay?.();
+    const layer = layerOf(gs, view);
+    for (const edge of layer.querySelectorAll(':scope > .bk-for-you')) edge.remove();
+    markOpen(view, layer);
   },
 });
 async function unreply(gs, view, id) {
@@ -208,9 +235,9 @@ function menu(gs, view, from, id, moving = false) {
   const card = document.createElement('div');
   card.className = 'bk-card bk-group-menu';
   card.setAttribute('role', 'menu');
-  card.innerHTML = `<ul class="bk-menu"><li><button role="menuitem" data-act="delete">${word('Delete')}</button></li>${
+  card.innerHTML = `<ul class="bk-menu"><li><button role="menuitem" data-act="delete">${word('delete')}</button></li>${
     others.length
-      ? `<li><button role="menuitem" data-act="move" aria-expanded="false">${word('Move to page…')}</button></li>`
+      ? `<li><button role="menuitem" data-act="move" aria-expanded="false">${word('moveToPage')}</button></li>`
       : ''
   }</ul>`;
   (view.el.closest('#book') ?? document.body).append(card);
@@ -290,7 +317,7 @@ function remove(gs, view, id) {
   hooks.refresh(view);
   drop(gs, view, box, parts);
   sfx.tick();
-  toast(word('<b>Deleted.</b> Tap to undo'), () => takeBack(book, step));
+  toast(word('deletedToast'), () => takeBack(book, step));
 }
 // A step taken back from a toast: Undo's own when it's the last, else on its own and off the list
 function takeBack(book, step) {
@@ -334,7 +361,7 @@ async function moveTo(gs, view, id, to) {
     return toast(esc(e.message));
   }
   book.steps.push({ page: from, undo: () => go(id, to, from, place), redo: () => go(id, from, to) });
-  toast(word('<b>Moved to {name}.</b> Tap to go there', { name: esc(nameOf(to)) }), () => gs.hooks.turnTo(to));
+  toast(word('movedToast', { name: esc(nameOf(to)) }), () => gs.hooks.turnTo(to));
 }
 // The unit right before unit id in its page's order, its id (undefined: id is the first)
 function unitBefore(page, id) {

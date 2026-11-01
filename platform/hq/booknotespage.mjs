@@ -3,8 +3,9 @@
 // notes land on it one by one. On a screen wider than it is tall the first opens the book there, beside HQ's page, and
 // the next lands with it open; shut by the board, it stays shut as the last lands. On one taller than it is wide (an
 // upright phone or iPad) it stays shut (shell/ink/booklayout.js initial.). Hung
-// up, nothing asks about the page (the store sends it). One the store can't be reached for is asked for
-// twice and told on a card, and the call's page a notebook has since asks nothing. (opens)
+// up, nothing asks about the page (the store sends it). One the store can't be reached for is asked for again until it
+// is, with no card; one that fails there (the coordinator's 500) is told on a card at once, and the call's page a
+// notebook has since asks nothing. (opens)
 import assert from 'node:assert/strict';
 import { playLine } from './bookcall.mjs';
 
@@ -16,7 +17,9 @@ export const notesPageStories = c => ({
     scrapsLand(browser, c, c.MINI, 'ipad'),
   "a call's notes page: on a phone the book stays shut as the notes land": browser =>
     scrapsLand(browser, c, c.PHONE, 'phone'),
-  "a call's notes page that can't be opened: asked twice, a card says so, and the page a notebook has asks nothing":
+  "a call's notes page the store isn't reached for at pickup: asked again until it answers, and no card": browser =>
+    reachedLate(browser, c),
+  "a call's notes page the coordinator fails to open: a card says so, and the page a notebook has asks nothing":
     browser => notOpened(browser, c),
   //
   'a call-sized notes page: a dozen scraps and five promises as post-its, none over another (desktop)': browser =>
@@ -64,8 +67,46 @@ async function scrapsLand(browser, c, viewport, device) {
     await context.close();
   }
 }
-// The network drops the notes page's ask twice. The board's mark makes the call's page, which the agent's first scrap
-// makes the notes page in My journal (the store's pageFor): hung up, HQ neither asks about it nor throws it away.
+// The network drops the notes page's ask at pickup, then the proxy can't reach the store (its 503 while the store is
+// away): asked again, the store's answer opens it, and no card says it couldn’t be opened.
+async function reachedLate(browser, c) {
+  const context = await c.hqIn(browser, c.DESKTOP, { notebooks: {} });
+  await playLine(context);
+  const page = await context.newPage(),
+    asked = [];
+  await page.route(`${c.base}/api/notebooks/call`, r => {
+    asked.push(Date.now());
+    if (asked.length === 1) return r.abort('failed');
+    if (asked.length === 2)
+      return r.fulfill({ status: 503, body: 'Back in a moment: please try again in a few seconds.' });
+    return r.fallback();
+  });
+  const paged = [];
+  await page.exposeFunction('paged', id => paged.push(id));
+  await page.addInitScript(() => document.addEventListener('book:paged', e => window.paged(e.detail?.page)));
+  const errors = [];
+  page.on('pageerror', e => errors.push(e.message));
+  try {
+    await page.goto(`${c.base}/?intro=0&open=intercom`);
+    await page.waitForSelector('#loading.gone');
+    await page.waitForSelector('review-mode .fab', { state: 'attached' });
+    await page.locator('#call').dispatchEvent('click');
+    for (let i = 0; i < 300 && !paged.length; i++) await page.waitForTimeout(100); // (picked up: slow on a loaded machine)
+    assert.equal(asked.length, 3, 'asked again until the store answered');
+    assert.equal(paged.length, 1, "the store's answer opens the call's notes page");
+    await page.waitForTimeout(500);
+    assert.equal(
+      await page.locator('#call-cards [data-card="notes"]').count(),
+      0,
+      'no card says it couldn’t be opened',
+    );
+    c.noErrorsIn(errors);
+  } finally {
+    await context.close();
+  }
+}
+// The coordinator fails at the notes page's ask (its 500). The board's mark makes the call's page, which the agent's first scrap makes
+// the notes page in My journal (the store's pageFor): hung up, HQ neither asks about it nor throws it away.
 async function notOpened(browser, c) {
   const context = await c.hqIn(browser, c.DESKTOP);
   const line = await playLine(context);
@@ -76,7 +117,7 @@ async function notOpened(browser, c) {
     listed = [];
   await page.route(`${c.base}/api/notebooks/call`, r => {
     asked.push(r.request().postDataJSON());
-    return r.abort('failed');
+    return r.fulfill({ status: 500, json: { error: 'internal' } }); // (server.ts's answer to its own failure)
   });
   // (today's book as the store lists it at hang-up: the call's page, in My journal)
   const mark = { id: 9001, day: '2026-10-26', kind: 'call', call: 9, notebook: 1, strokes: 0, pictures: 0 };
@@ -95,7 +136,7 @@ async function notOpened(browser, c) {
     await page.locator('#call').dispatchEvent('click');
     const card = page.locator('#call-cards [data-card="notes"]');
     await card.waitFor({ timeout: 30_000 }); // (picked up: slow on a loaded machine)
-    assert.deepEqual(asked, [{ call: 9 }, { call: 9 }], 'asked once more as the network dropped it');
+    assert.deepEqual(asked, [{ call: 9 }], 'a failure past the proxy is not asked again');
     assert.match(await card.textContent(), /notes page couldn’t be opened/);
     assert.ok(line.ws, 'the call carries on');
     await c.shot('book-notes-page-not-opened', page);

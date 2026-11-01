@@ -220,8 +220,8 @@ test('a page sent: at once, read-only, it stays the last page; open asks set asi
 test('answers on a group not sent: the one coming, a form answered, a question replied to, the open list', () => {
   const { post, groups, page, play } = played();
   const g = post('groups/create', { page, texts: [{ x: 60, y: 60, w: 260, color: '#2b2230', text: 'which colour?' }] });
-  play.asking(g.id, { by: 'moss', spot: { dx: 0, dy: 60, w: 300 } });
-  assert.deepEqual(groups()[0].waiting, { by: 'moss', name: 'moss', spot: { dx: 0, dy: 60, w: 300 }, style: 'text' });
+  play.asking(g.id, { by: 'moss' }); // (under the group, no spot)
+  assert.deepEqual(groups()[0].waiting, { by: 'moss', name: 'moss', style: 'text' });
   const form = [
     { title: 'Which colour?', options: ['Warm', 'Cool'] },
     { title: 'Anything else?', optional: true },

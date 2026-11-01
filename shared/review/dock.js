@@ -34,6 +34,11 @@ export const CSS = `
       .fab.on { animation: none; background: #2b2230; box-shadow: 0 5px 0 #000, 0 10px 21px rgba(43,34,48,.3); }
       .fab.on svg { transform: rotate(45deg) scale(.9); }
       .fab[hidden] { display: none; }
+      /* an outside reviewer's caption beside the pin, the way back to their Notebook page */
+      .back { pointer-events: auto; position: absolute; right: ${SIZE + 10}px; bottom: 10px; white-space: nowrap; padding: 8px 14px; border-radius: 99px;
+        background: #fff; color: #2b2230; border: 2px solid #2b2230; font-size: 14px; font-weight: 700; text-decoration: none; }
+      .dock.left .back { right: auto; left: ${SIZE + 10}px; }
+      .back[hidden] { display: none; }
       /* hints go over the pin */
       .tip { position: absolute; right: 0; bottom: ${SIZE + 12}px; background: #2b2230; color: #fff; padding: 6px 12px; border-radius: 10px;
         font-size: 14px; white-space: nowrap; opacity: 0; transform: translateY(6px); transition: .25s; pointer-events: none; }
@@ -55,7 +60,7 @@ export const CSS = `
 
 export const HTML = `<div class="dock"><div class="tip"></div>
         <div class="coach" hidden role="note"><b>Tap the red pin to leave a note</b>Then tap the bit you mean, and say or type what should change. In the way? Drag the pin.<button>Got it</button></div>
-        <button class="fab" aria-label="Review mode: pin a note">${PEN}</button></div>`;
+        <a class="back" hidden>Review · your Notebook</a><button class="fab" aria-label="Review mode: pin a note">${PEN}</button></div>`;
 
 export function say(r, t, ms = 4000) {
   r.tip.textContent = t;
@@ -114,12 +119,10 @@ const lift = (r, up) => r.dock.style.setProperty('--up', `${Math.round(up)}px`);
 // a dragged spot, as far as this screen allows: turned sideways or in a shorter frame it stops at the top, and the
 // stored lift stays as it was, so a taller screen puts the pin back where the board left it
 const liftPlaced = r => lift(r, Math.max(0, Math.min(r.placed.up, r.dock.offsetTop - 16)));
-// the topmost of the page's tappable things under the pin, at the pin's top
+// the topmost of the page's tappable things under the pin and its caption, at the pin's top
 function tappableUnder(r, x, top) {
   let hit = null;
-  const across = [8, SIZE / 2, SIZE - 8],
-    spots = across.flatMap(dx => across.map(dy => [dx, dy]));
-  for (const [dx, dy] of spots) {
+  for (const [dx, dy] of spotsOf(r)) {
     const el = document
       .elementsFromPoint(x + dx, top + dy)
       .find(e => e !== r.host && e !== document.documentElement && e !== document.body)
@@ -128,6 +131,18 @@ function tappableUnder(r, x, top) {
     if (b && b.width * b.height < (innerWidth * innerHeight) / 4 && (!hit || b.top < hit.top)) hit = b;
   }
   return hit;
+}
+// where the dock covers the page, from its left and top: across the pin, and across an outside reviewer's caption
+// beside it while it shows (on either side: its offsets are from the pin's corner)
+function spotsOf(r) {
+  const across = [8, SIZE / 2, SIZE - 8],
+    spots = across.flatMap(dx => across.map(dy => [dx, dy]));
+  const back = r.dock.querySelector('.back');
+  if (back.hidden) return spots;
+  const { offsetLeft: left, offsetTop: top, offsetWidth: w, offsetHeight: h } = back;
+  for (let dx = left + 6; dx < left + w; dx += SIZE / 2) for (const dy of [top + 6, top + h - 6]) spots.push([dx, dy]);
+  for (const dy of [top + 6, top + h - 6]) spots.push([left + w - 6, dy]);
+  return spots;
 }
 export function settle(r) {
   if (r.mode !== 'idle' || r.dock.classList.contains('drag')) return;
@@ -277,10 +292,19 @@ export function setupDock(r) {
   summoning(r);
   covering(r);
   coach(r);
+  backLink(r);
   settling(r);
   dragging(r);
   r.fab.onclick = () => {
     if (r.dragged) r.dragged = false;
     else toggle(r);
   };
+}
+
+// An outside reviewer's caption links back to their page in the Notebook (BACK, review.js), where their notes go
+function backLink(r) {
+  if (!r.BACK) return;
+  const back = r.dock.querySelector('.back');
+  back.href = r.BACK;
+  back.hidden = false;
 }

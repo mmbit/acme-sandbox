@@ -320,7 +320,7 @@ try {
   assert.equal(await hq.$(`${BOX} [data-days]`), null, 'the days show before the first invite only');
   assert.match(
     await hq.textContent(`${BOX} .dim`),
-    /^Until .*Each person writes on their own page in the round notebook on your Shelf; their notes reach the team when they send it\.$/,
+    /^Until .*Each person writes on their own page in the round notebook on your Shelf\. Their notes reach the team when they send it\.$/,
   );
   const ends = Date.parse(db.prepare('select ends from review_shares').get().ends) - Date.now();
   assert.ok(ends > 86_000e3 && ends <= 86_400e3, 'open for 1 day');

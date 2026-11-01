@@ -108,11 +108,11 @@ test('an ask for a guest waits in red on their page and the book, until they wri
   const [work] = shelf.books[0].artifacts;
   assert.equal(work.asks, 1, 'on the work it lands on');
   assert.equal(shelf.books[0].asks, 1, 'counted on the cover');
-  const groups = (await (await guest.read(`${api}/groups?page=${work.page}`)).json()).groups;
+  const groups = (await (await guest.read(`${api}/pages/groups?page=${work.page}`)).json()).groups;
   const copy = groups.find((g: any) => g.forYou);
   assert.ok(copy, 'on their page on the work, marked for them');
 
-  const written = await fetch(`${h.base}${api}/edit`, {
+  const written = await fetch(`${h.base}${api}/groups/edit`, {
     method: 'POST',
     headers: { cookie: guest.cookie, origin: ORIGIN, 'content-type': 'application/json' },
     body: JSON.stringify({ id: copy.id, since: copy.updated, texts: typed('Yes, twice') }),

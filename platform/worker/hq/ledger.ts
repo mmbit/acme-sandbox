@@ -92,17 +92,15 @@ export const item = {
                                                      --replaces (a call's follow-up only): the board changed an earlier
                                                      item; that one is replaced, its jobs that never ran are cancelled,
                                                      and a running one is told at its next step.
-                                                     --deadline: the time the board was given for it on the call (its own
-                                                     with its date and no zone, 2026-10-26 09:00, on the company's clock;
-                                                     one with Z or a time of day alone, 14:30, is UTC; 2h counts from
-                                                     now): the deliverable of
-                                                     the job that carries it (hq job --item) or of the job it's linked to
-                                                     takes it as its window (hq window); a correction keeps the
-                                                     earlier time. --job <id>, on a live call: a promise about
-                                                     its owner's work under way, linked to it as it's recorded (handled
-                                                     when it ends done), whose deliverable takes the time at once;
-                                                     --deliverable puts a job the call queued in no deliverable on that
-                                                     one (--thread, the old name, still works)
+                                                     --deadline: the time the board was given for it on the call
+                                                     (2026-10-26 09:00 on the company's clock, 14:30 UTC, 2h): its job's
+                                                     deliverable (hq job --item, or linked) takes it as its window (hq
+                                                     window); a correction keeps the earlier time. --board-set: the
+                                                     board named it itself (else it's ours). --job <id>, on a live call:
+                                                     a promise about its owner's work under way, linked to it as it's
+                                                     recorded (handled when it ends done), whose deliverable takes the
+                                                     time at once; --deliverable puts a job the call queued in no
+                                                     deliverable on that one (--thread, the old name, still works)
    hq item replace <item> "what" - [a-b] --goal - [--call <id>] [--deadline <when>]
                                                      the same as add --replaces, with the earlier item's kind and owner.
                                                      On a live call (its own token): only an open item, while the board is
@@ -155,7 +153,7 @@ export const item = {
         lines,
         replaces,
         callId,
-        deadline: flags.deadline,
+        ...{ deadline: flags.deadline, boardSet: flags.boardSet },
         work: flags.job === undefined ? undefined : { job: flags.job, thread: values.deliverable },
         goal: flags.goal,
       });
@@ -172,7 +170,7 @@ export const item = {
         lines,
         replaces: Number(earlier),
         callId,
-        deadline: flags.deadline,
+        ...{ deadline: flags.deadline, boardSet: flags.boardSet },
         goal: flags.goal,
       });
     }
@@ -223,6 +221,7 @@ type NewItem = {
   replaces: number | null;
   callId: number | null;
   deadline?: string;
+  boardSet?: boolean; // --board-set: the board set the time itself
   work?: { job: string; thread?: string };
   goal?: string;
 };
@@ -237,6 +236,7 @@ async function recordItem({
   replaces,
   callId,
   deadline,
+  boardSet,
   work,
   goal,
 }: NewItem) {
@@ -250,7 +250,7 @@ async function recordItem({
     ...(lines !== '' && { lines }),
     ...(replaces !== null && { replaces }),
     ...(callId !== null && { call: callId }),
-    ...(deadline !== undefined && { deadline }),
+    ...(deadline !== undefined && { deadline, ...(boardSet && { board_set: true }) }),
     ...(work && { job: Number(work.job), ...(work.thread !== undefined && { thread: work.thread }) }),
   };
   const recorded = await record(body);

@@ -46,7 +46,7 @@ function ring(tools, mode, [x, y], pick) {
   const el = document.createElement('div');
   el.className = 'bk-radial';
   el.setAttribute('role', 'menu');
-  el.setAttribute('aria-label', word('Tools'));
+  el.setAttribute('aria-label', word('tools'));
   Object.assign(el.style, { left: `${x}px`, top: `${y}px` });
   const step = (2 * Math.PI) / tools.length;
   const items = tools.map((t, i) => {

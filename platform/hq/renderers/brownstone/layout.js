@@ -287,22 +287,65 @@ function escapeCrossing(level, top, z0, z1) {
 // how far out from the back wall a room's glass partition runs: a tile short of the room's front (rooms.js partition)
 export const partitionDepth = room => (room.wing !== 'y' ? room.y1 : room.x1) - 1;
 
-// The stretches of a room's back wall, [a0, a1] in tiles from its start, that what stands in front of it past its back
-// row hides, as what stands d out shows d nearer the start: the next room's glass partition at its far end, and at the
-// park end the fire escape's iron where it crosses the notice's rows (NOTICE.z). In turn: with the partition's whole
-// pane, then (for a wall too short to clear it) with only its front post, the pane's tint over the rest. Every wall at
-// the escape's end clears its iron (plan) (out of rooms.js, where backWall hangs the notice, for its test)
+// Where an empty room's notice can hang on its back wall, clear of what stands in front of it past the back row.
+// What stands d tiles out hides the wall d tiles nearer the start and 16·d px lower.
+// In front stand the next room's glass partition at the wall's far end, and at the park end the fire escape's iron.
+// It returns the passes to try in turn, each as { rows, spans }: the notice's rows, and the stretches [a0, a1] of the
+// wall (in tiles from its start) hidden at those rows.
+// - First the notice hangs low (NOTICE.z), clear of the partition's whole pane.
+// - Next, on a wall too short for that, it hangs low clear of only the partition's front post and transom. The pane's
+//   tint lies over the rest. The transom is TRANSOM px up, so it is seen falling from the wall's end towards the post.
+// - Last, on a wall too short for that too (three tiles), it hangs high (NOTICE.high), clear of where the transom
+//   crosses those rows.
+// Every pass keeps clear of the escape's iron where it crosses the notice's rows (plan).
+// It lives here, not in rooms.js (backWall hangs the notice), for its test.
 export function wallHidden(room, L) {
   const X = room.wing !== 'y', len = X ? room.x1 - room.x0 : room.y1 - room.y0, end = X ? room.x1 : room.y1;
-  const next = room.lv.rooms.find(r => r.wing === room.wing && (X ? r.x0 : r.y0) === end), post = next && len - partitionDepth(next);
-  const escape = room.level > 0 && room.level < L.nUp && (L.street !== 'x') === X && end === (X ? L.X1 : L.Y1) && escapeCrossing(room.level, L.nUp - 1, ...NOTICE.z).map((s, k) => len + s + (k ? 1 : -1) / 16);
+  const next = room.lv.rooms.find(r => r.wing === room.wing && (X ? r.x0 : r.y0) === end), d1 = next && partitionDepth(next), post = next && len - d1;
+  const escape = rows => room.level > 0 && room.level < L.nUp && (L.street !== 'x') === X && end === (X ? L.X1 : L.Y1) && escapeCrossing(room.level, L.nUp - 1, ...rows).map((s, k) => len + s + (k ? 1 : -1) / 16);
+  // (the notice's card takes the rows z0 + 1 to z1. The transom crosses them from (TRANSOM - z1) / 16 out to (TRANSOM - z0) / 16.)
+  const transom = ([z0, z1]) => { const t0 = Math.max(0, (TRANSOM - z1) / 16), t1 = Math.min(d1, (TRANSOM - z0) / 16); return t0 <= t1 && [len - t1 - 1 / 16, len - t0 + 1 / 16]; };
   const postOnly = next && [post - 1 / 16, post + 0.07 + 1 / 16];
-  return [[next && [post - 1 / 16, len], escape], [postOnly, escape]].map(h => h.filter(Boolean));
+  return [
+    { rows: NOTICE.z, spans: [next && [post - 1 / 16, len], escape(NOTICE.z)] },
+    ...[NOTICE.z, NOTICE.high].map(rows => ({ rows, spans: [postOnly, next && transom(rows), escape(rows)] })),
+  ].map(h => ({ ...h, spans: h.spans.filter(Boolean) }));
 }
-// an empty room's notice (rooms.js WALL.vacant): w px wide, its card's rows z px over the floor, under the room's bunting
-// or bulb string (wallString's lowest row is 27 px up); and the px a back wall's art keeps clear from its start and short of
-// its end (backWall)
-export const NOTICE = { w: 21, z: [16, 25] }, ART_MARGIN = [2, 4];
+// The meeting room's (rooms.js meetingRoom), in tiles from its start (a) and out from its back wall (d). The way to the
+// chairs behind the table is in past its far end, then between them and the table. Someone d tiles out from the wall
+// hides it d tiles nearer the room's start and 16·d px lower than they are, so the chairs behind the table end where the
+// board starts, and the sign hangs above where the first one hides. They stand far enough out that their backs clear the
+// wall's skirting, with floor between, and the ones in front stand just inside the lane. The room's window hangs on the
+// wall between the sign and the board (rooms.js buildRoom).
+export const MEET = { t0: 1.1, t1: 4.45, d0: 1.38, d1: 1.82, back: 1.16, near: 2.06, behind: [2.03, 2.66, 1.4, 3.29], front: [2.4, 3.2, 1.6, 4.0], aisle: 1.3, way: 5.25, board: [2.5, 6.2], sign: [0.1, 1.2] };
+// STAND: past the far end, the places to stand (a, d) in the order they fill, the nearest the table first.
+// They stand in three screen columns, half a tile (8 px, a head's width) apart.
+// Each column has one place 1.31 out from the wall, where a standing head (21 px) hides none of the board.
+// Its other place is 0.75 further out, at the lane's edge. That one shows 12 px lower, its hair under the back one's chin.
+// The first column stands 9 px on screen past the chair at the head of the table, so nobody hides who sits there.
+// The last stands 1 px short of the far end's glass post (at 7 - 2 on screen), its front place in the doorway.
+// Six is all that floor holds with every head clear of everyone else's pixels, the seated ones' too.
+export const STAND = [[5.0625, 1.3125], [5.8125, 2.0625], [5.5625, 1.3125], [6.3125, 2.0625], [6.0625, 1.3125], [6.8125, 2.0625]];
+// The street lamp (env.js lamp): its head LAMP.h px up, its post and head LAMP.w px wide. Someone is PERSON_W px wide.
+// A lamp on a sidewalk dl tiles out from the back walls stands in front of anyone d out in a ground-floor room where
+// 16 (dl - d) px is under its height. What stands d out shows d nearer the start, so the two meet on screen there.
+// lampAlong gives where along the wing (in tiles from the building's corner) the lamp goes, the nearest to u a
+// sixteenth at a time. There it hides nobody in a ground-floor meeting room's front chairs or places to stand.
+export const LAMP = { h: 33, w: 5 };
+const PERSON_W = 10;
+export function lampAlong(L, wing, u, dl) {
+  const places = [...MEET.front.map(a => [a, MEET.near]), ...STAND].filter(([, d]) => 16 * (dl - d) < LAMP.h),
+    people = L.rooms.filter(r => r.level === 0 && r.wing === wing && r.kind === 'meeting').flatMap(r => places.map(([a, d]) => (wing === 'x' ? r.x0 : r.y0) + a - d).map(c => [c - PERSON_W / 32, c + PERSON_W / 32]));
+  for (let k = 0; ; k++) for (const v of [u - k / 16, u + k / 16]) if (!covers(people, v, dl, LAMP.w / 32)) return v;
+}
+// An empty room's notice (rooms.js WALL.vacant) is w px wide. Its card's rows are z px over the floor.
+// There it hangs under the room's bunting or bulb string, whose lowest row is 27 px up (wallString).
+// A three-tile wall behind glass has no room for it under the next room's transom (wallHidden). There it hangs high.
+// High, its top stays under the slab above, which is 32 px up the back wall seen across a room three tiles deep.
+// High, it hangs in front of the string.
+// ART_MARGIN: the px a back wall's art keeps clear from its start and short of its end (backWall).
+// TRANSOM: how many px up the glass partitions' transom runs (rooms.js partition).
+export const NOTICE = { w: 21, z: [16, 25], high: [23, 31] }, ART_MARGIN = [2, 4], TRANSOM = 30;
 // flat px x to x + iw of a back wall (F_: rooms.js frame) as [a0, a1], in tiles from the room's start; and whether what
 // stands at a, d out from the wall, reaching reach along it either side, covers any of its stretches spans: it covers the
 // wall d nearer the start (backWall, plantFits)

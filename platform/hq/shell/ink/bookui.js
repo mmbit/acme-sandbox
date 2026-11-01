@@ -5,7 +5,6 @@
 // (--bk-rail-width), so no control ever sits over what's written. Every part of the book makes its controls here, so
 // they look and answer alike. (one rail at the spine)
 import { esc } from '../../util.js';
-import { CONTROLS } from './booklayout.js';
 import { word } from './bookscope.js';
 
 // The rail's islands top to bottom: the tools, Send, the page's controls, then the book's own (Tips); the overview's
@@ -98,7 +97,7 @@ function moreButton() {
     icon: lineIcon(
       '<circle cx="12" cy="5.5" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="12" cy="18.5" r="1.2"/>',
     ),
-    label: word('More'),
+    label: word('more'),
     onClick: () => moreCard(more),
   });
   more.classList.add('bk-more');
@@ -113,7 +112,7 @@ function moreCard(more) {
   );
   const card = Object.assign(document.createElement('div'), { className: 'bk-card bk-menu bk-more-card' });
   card.setAttribute('role', 'menu');
-  card.setAttribute('aria-label', word('More'));
+  card.setAttribute('aria-label', word('more'));
   for (const real of folded) {
     const label = real.getAttribute('aria-label'),
       item = Object.assign(document.createElement('button'), { type: 'button' });
@@ -156,14 +155,6 @@ export function besideRail(card, from) {
     top = Math.max(8, Math.min(rail.height - card.offsetHeight - 8, middle - card.offsetHeight / 2));
   card.style.top = `${Math.round(top)}px`;
 }
-// The x a paper this wide keeps clear left of the controls at its right edge (--bk-controls-width, as the book last
-// measured it on el or an element in it, CONTROLS.width until it has, and CONTROLS.clear from the edge). Answers,
-// versions and scraps fitted to the paper keep left of it.
-export function clearOf(el, paper) {
-  const width = parseFloat(getComputedStyle(el).getPropertyValue('--bk-controls-width'));
-  return paper - (Number.isNaN(width) ? CONTROLS.width : width) - CONTROLS.clear;
-}
-
 // The book's tooltip on any element (a button, a face): its label, its keys quieter, beside it on the side with room
 // (left of the rail; above the overview's row), on hover and on a keyboard's focus; never title=. label
 // may be a function, read each time.

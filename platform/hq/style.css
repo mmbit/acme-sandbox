@@ -306,21 +306,21 @@ body.touring #zoom, body.touring #status, body.touring #hint { display: none; }
 /* the preview ends above the home bar, so a page's own bottom corner (review mode's pin) stays easy to tap */
 #viewer { position: fixed; inset: 0 0 auto; height: var(--app-h, 100dvh); z-index: 30; display: flex; flex-direction: column; background: var(--deep); padding: var(--sat) var(--sar) var(--sab) var(--sal); }
 #viewer[hidden] { display: none; }
-/* The bar: one slim row, so the page keeps the room. Back and Close are quiet
-   glyphs, the address is the link that opens the page in the browser, and only what review mode does is filled: Note
-   in review mode's red. */
-#viewer .bar { display: flex; align-items: center; gap: 6px; height: 40px; padding: 2px 6px; color: var(--on-deep); font-size: 15px; }
-#viewer .bar button { flex: none; display: flex; align-items: center; gap: 6px; height: 36px; min-width: 36px; padding: 0 10px; border: 0; border-radius: var(--r);
-  font: inherit; white-space: nowrap; }
+/* The bar: one slim row, so the page keeps the room, its keys HQ's own as on the HUD (a look draws them its own way:
+   the brownstone's here, Slate's keys in its skin). The address is the link that opens the page in the browser; Note
+   wears review mode's red, and a picked choice is pressed in the HUD's gold. */
+#viewer .bar { display: flex; align-items: center; gap: 8px; height: 48px; padding: 2px 8px 4px; color: var(--on-deep); font-size: 15px; }
+#viewer .bar button, #viewer .stage .head button { flex: none; display: flex; align-items: center; justify-content: center; gap: 6px; height: 36px; min-width: 36px; padding: 0 12px;
+  font: inherit; white-space: nowrap; background: var(--cream); color: var(--ink); border: var(--bw) solid var(--line); border-radius: var(--r); box-shadow: var(--shadow-sm); }
 #viewer .bar button[hidden] { display: none; }
-#viewer .bar .glyph { justify-content: center; min-width: 40px; padding: 0; background: none; color: var(--on-deep); font-size: 26px; line-height: 1; }
-#viewer .bar .glyph:active { background: color-mix(in srgb, var(--on-deep) 16%, transparent); }
+#viewer :is(.bar, .stage .head) button:active { transform: var(--press); box-shadow: var(--shadow-press); }
+#viewer :is(.bar .seg button, .bar .qr, .stage .head .link)[aria-pressed=true], #viewer .bar .qr[aria-expanded=true], #viewer .stage .head .tabs [aria-selected=true] { background: var(--gold); color: var(--on-accent); }
+#viewer .bar .glyph { padding: 0; font-size: 24px; line-height: 1; }
 #viewer .bar .where { flex: 1; min-width: 0; display: flex; align-items: center; height: 36px; padding: 0 6px; color: var(--on-deep); text-decoration: none; white-space: nowrap; }
-#viewer .bar .where span { min-width: 0; overflow: hidden; text-overflow: ellipsis; opacity: .5; }
+#viewer .bar .where span { min-width: 0; overflow: hidden; text-overflow: ellipsis; opacity: .6; }
 #viewer .bar .where i { flex: none; margin-left: 6px; font-style: normal; color: var(--gold); }
-#viewer .bar .pin { background: #ff5a5f; color: #fff; box-shadow: inset 0 -3px 0 #c23c44; }
+#viewer .bar .pin { background: var(--red); color: #fff; }
 #viewer .bar .pin svg { width: 16px; height: 16px; fill: currentColor; }
-#viewer .bar button:active { transform: translateY(1px); }
 /* HQ's own mic key over the post-it's mic of a page in the viewer, looking as that one does (shared/review/dictation.js
    .mic): only its tap records, at once, red and breathing with the voice while it does (framemic.js, which places it). */
 #viewer > .framemic { position: fixed; z-index: 2; display: grid; place-items: center; padding: 0; border: 0; border-radius: 50%;
@@ -343,12 +343,9 @@ body.touring #zoom, body.touring #status, body.touring #hint { display: none; }
 #viewer .stage .head b { width: var(--column); text-align: center; font-weight: 600; }
 #viewer .stage .head b[data-side=live] { order: -1; }
 #viewer .stage .head[data-mode=tabs] { justify-content: space-between; }
-#viewer .stage .head .tabs { display: flex; gap: 4px; }
-#viewer .stage .head .tabs button { height: 32px; padding: 0 16px; border: 0; border-radius: var(--r) var(--r) 0 0; background: color-mix(in srgb, var(--on-deep) 12%, transparent); color: color-mix(in srgb, var(--on-deep) 75%, transparent); font: inherit; }
-#viewer .stage .head .tabs button[aria-selected=true] { background: var(--on-deep); color: var(--deep); font-weight: 600; }
-#viewer .stage .head .link { display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px 0 8px; border: 0; border-radius: 99px; background: none; color: var(--on-deep); font: inherit; font-size: 14px; opacity: .6; }
-#viewer .stage .head .link[aria-pressed=true] { opacity: 1; box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--on-deep) 45%, transparent); }
-#viewer .stage .head[data-mode=columns] .link { position: absolute; left: 50%; transform: translateX(-50%); }
+#viewer .stage .head .tabs { display: flex; gap: 6px; }
+#viewer .stage .head button { height: 32px; font-size: 14px; }
+#viewer .stage .head[data-mode=columns] .link { position: absolute; left: 50%; translate: -50% 0; }
 #viewer .stage .head .link svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
 #viewer .stage .frames { flex: 1; min-height: 0; display: flex; justify-content: center; gap: var(--gap); padding: 0 var(--pad) calc(var(--pad) / 2); position: relative; }
 #viewer .stage .pane { flex: none; width: var(--column); display: flex; justify-content: center; }
@@ -367,13 +364,12 @@ body.touring #zoom, body.touring #status, body.touring #hint { display: none; }
    the open notebook over the frames, the bar and what drops from it keep clear of it (--book-over, shell/ink/book.js). */
 #viewer .bar { margin-right: var(--book-over, 0px); }
 #viewer .sharebox, #viewer .qrcard { margin-right: var(--book-over, 0px); }
-#viewer .bar .choices { flex: none; display: flex; align-items: center; gap: 6px; }
-#viewer .bar .choices .seg { display: flex; gap: 2px; padding: 2px; border-radius: 99px; box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--on-deep) 35%, transparent); }
-#viewer .bar .choices .seg button { height: 30px; min-width: 0; padding: 0 11px; border: 0; border-radius: 99px; box-shadow: none; transform: none; background: none; color: color-mix(in srgb, var(--on-deep) 75%, transparent); font-size: 14px; }
-#viewer .bar .choices .seg button[aria-pressed=true] { background: var(--on-deep); color: var(--deep); font-weight: 600; }
-@container page (max-width: 760px) { #viewer .bar .choices .seg button { padding: 0 8px; font-size: 13px; } #viewer .bar .share span { display: none; } }
+#viewer .bar .choices { flex: none; display: flex; align-items: center; gap: 12px; }
+#viewer .bar .choices .seg { display: flex; gap: 4px; }
+#viewer .bar .choices .seg button { padding: 0 10px; font-size: 14px; }
+@container page (max-width: 760px) { #viewer .bar .choices .seg button { padding: 0 7px; font-size: 13px; } #viewer .bar .share span { display: none; } }
+#viewer .bar .qr { padding: 0; }
 #viewer .bar .qr svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.6; }
-#viewer .bar .qr[aria-expanded=true] { background: color-mix(in srgb, var(--on-deep) 16%, transparent); }
 #viewer .qrcard { position: absolute; z-index: 1; top: calc(var(--sat) + 44px); right: calc(var(--sar) + 8px); width: min(400px, calc(100% - 16px)); display: flex; gap: 16px; align-items: center;
   padding: 16px; border-radius: var(--r-lg, 14px); background: var(--paper); color: var(--ink); border: var(--bw-lg) solid var(--line); box-shadow: var(--shadow-xl); font-size: 15px; }
 #viewer .qrcard[hidden] { display: none; }
@@ -381,9 +377,7 @@ body.touring #zoom, body.touring #status, body.touring #hint { display: none; }
 #viewer .qrcard p { margin: 6px 0 0; line-height: 1.35; }
 #viewer .qrcard .dim { color: var(--muted); font-size: 13px; }
 /* Share for outside notes: a quiet button on the bar, and its small form dropping over the page's top */
-#viewer .bar .share { background: none; color: var(--on-deep); padding: 0 8px; }
 #viewer .bar .share .ico { width: 16px; height: 16px; fill: currentColor; }
-#viewer .bar .share:active { background: color-mix(in srgb, var(--on-deep) 16%, transparent); }
 @container page (max-width: 400px) { #viewer .bar .share span { display: none; } }
 /* The share box's parts, so it reads at a glance. The kinds, and the days before the
    first invite, are each one segmented control, the picked one raised off a quiet track. The people are a framed list with
@@ -395,22 +389,22 @@ body.touring #zoom, body.touring #status, body.touring #hint { display: none; }
 #viewer .sharebox input { font: inherit; font-size: 16px; color: var(--ink); background: var(--field, #fff); border: 1.5px solid color-mix(in srgb, var(--ink) 20%, transparent); border-radius: var(--r); padding: 8px 10px; min-width: 0; } /* 16px: under it iOS Safari zooms in on a focused field */
 #viewer .sharebox p { margin: 0; } #viewer .sharebox .dim { color: var(--muted); font-size: 13px; line-height: 1.4; }
 #viewer .sharebox > b { font-size: 17px; }
-#viewer .sharebox button { font: inherit; min-height: 40px; padding: 0 14px; border: 0; border-radius: var(--r); background: color-mix(in srgb, var(--ink) 8%, transparent); color: var(--ink); cursor: pointer; }
+/* (its keys HQ's own, as the bar's: a picked kind pressed in gold, Invite lit as the one to press.) */
+#viewer .sharebox button { font: inherit; min-height: 40px; padding: 0 14px; border: var(--bw) solid var(--line); border-radius: var(--r); background: var(--cream); color: var(--ink); box-shadow: var(--shadow-sm); cursor: pointer; }
+#viewer .sharebox button:active { transform: var(--press); box-shadow: var(--shadow-press); }
 #viewer .sharebox button:disabled { opacity: .5; }
-#viewer .sharebox .seg { display: flex; gap: 3px; padding: 3px; border-radius: var(--r); background: color-mix(in srgb, var(--ink) 8%, transparent); }
-#viewer .sharebox .seg button { flex: 1 1 0; min-width: 0; min-height: 36px; padding: 4px 6px; font-size: 14px; line-height: 1.15; background: none; color: var(--muted); }
-#viewer .sharebox .seg button[aria-pressed=true] { background: var(--cream); color: var(--ink); font-weight: 600;
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--ink) 18%, transparent), 0 1px 3px color-mix(in srgb, var(--ink) 16%, transparent); }
+#viewer .sharebox .seg { display: flex; gap: 6px; }
+#viewer .sharebox .seg button { flex: 1 1 0; min-width: 0; min-height: 36px; padding: 4px 6px; font-size: 14px; line-height: 1.15; }
+#viewer .sharebox .seg button[aria-pressed=true] { background: var(--gold); color: var(--on-accent); }
 #viewer .sharebox .cap { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; } #viewer .sharebox .cap input { width: 6ch; margin-left: 4px; } #viewer .sharebox .cap .dim { flex-basis: 100%; }
 #viewer .sharebox .open-for { display: flex; align-items: center; gap: 10px; } #viewer .sharebox .open-for .seg { flex: 1; }
 #viewer .sharebox .invites ul { margin: 0; gap: 0; border: 1px solid color-mix(in srgb, var(--ink) 14%, transparent); border-radius: var(--r); }
 #viewer .sharebox .invites ul:has(> li.none) { border: 0; } #viewer .sharebox .invites li { padding: 10px 12px; } #viewer .sharebox .invites li.none { padding: 0; } #viewer .sharebox .invites li + li { border-top: 1px solid color-mix(in srgb, var(--ink) 14%, transparent); }
-#viewer .sharebox .invites .acts button { min-height: 36px; padding: 0 12px; font-size: 14px; background: none; }
-#viewer .sharebox .invites .acts .go { border: 1px solid color-mix(in srgb, var(--ink) 28%, transparent); }
-#viewer .sharebox .invites .acts [data-remove] { padding: 0 6px; color: var(--muted); }
+#viewer .sharebox .invites .acts button { min-height: 36px; padding: 0 12px; font-size: 14px; }
+#viewer .sharebox .invites .acts [data-remove] { color: var(--muted); }
 #viewer .sharebox .invites .acts [data-remove][data-sure] { padding: 0 12px; color: var(--alarm, var(--red)); }
 #viewer .sharebox .invite { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; padding: 12px; border-radius: var(--r); background: color-mix(in srgb, var(--ink) 5%, transparent); }
-#viewer .sharebox .invite button { grid-column: 1 / -1; background: var(--deep); color: var(--on-deep); }
+#viewer .sharebox .invite button { grid-column: 1 / -1; background: var(--gold); color: var(--on-accent); }
 #viewer .sharebox .msg { font-size: 13px; color: var(--muted); }
 #viewer .sharebox .row.acts { padding-top: 10px; border-top: 1px solid color-mix(in srgb, var(--ink) 14%, transparent); }
 #viewer .sharebox [data-end] { min-height: 36px; padding: 0; background: none; color: var(--alarm, var(--red)); }
@@ -1523,7 +1517,7 @@ body.keys .seat-status .bar i { background: var(--key-ink); box-shadow: none; bo
 body.keys { --paced: #d49a12; }
 /* (Share's box on a preview: its own rules name #viewer, so its keys do too) */
 body.keys #viewer .sharebox button { background: var(--key-bg); color: var(--key-ink); border-radius: var(--key-r); box-shadow: var(--key-lip); }
-body.keys #viewer .sharebox .invite button { background: var(--key-on-bg); color: var(--key-on-ink); box-shadow: var(--key-on-lip); }
+body.keys #viewer .sharebox .invite button { background: var(--key-on-bg); color: var(--key-on-ink); box-shadow: var(--key-on-lip); border-color: transparent; }
 body.keys #viewer .sharebox .seg button[aria-pressed=true] { transform: var(--key-down); box-shadow: var(--key-down-lip); font-weight: 750; } /* (picked: down, unlit.) */
 
 /* ---- the projects view (shell/projects.js), over the building: the board's four levels as keys, a level at a time, each

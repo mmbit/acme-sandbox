@@ -12,7 +12,7 @@ import { endTip, loadRequests, loadLater, snoozeRequest, loadArchive, archivePho
   uploadPhoto, uploadDocument, sendZipChunk, loadZipField, pictureUrl, guestEmail, guestLang, guestRelease, guestRevoke, guestAdd, outboxSend, outboxDiscard, outboxPreview,
   calloutApprove, calloutDecline, calloutNumber,
   loadShares, makeShare, removeFromShare, endShare, setShareCap, loadPeople, setPersonTitle, guestColleagues, loadLanguage, setLanguage } from './data.js';
-import { peopleHtml, wirePeople, refused, dot, sameName } from './people.js';
+import { peopleHtml, wirePeople, refusalWords, dot, sameName } from './people.js';
 import { sfx, hush } from './audio.js';
 import { callAgent, inCall, callInFront, minimiseCall } from './call.js';   // (a call, over whatever is open).
 import * as world from '../world/world.js';
@@ -361,7 +361,7 @@ function wireCap(box, s, redraw) {
     button.disabled = true;
     // (the amount, not the euros formatter)
     try { redraw(await setShareCap(world.dev, s.id, amount), `Each voucher now pays up to ${euros(amount)}.`); sfx.blip(); }
-    catch (err) { button.disabled = false; tell(msg(), refused(err)); }
+    catch (err) { button.disabled = false; tell(msg(), refusalWords(err)); }
   });
 }
 export const shareTitle = kind => ({ lasting: 'Lasting guests', notes: 'Review round', view: 'View only', tester: 'Testers' })[kind];
@@ -369,14 +369,13 @@ export const shareTitle = kind => ({ lasting: 'Lasting guests', notes: 'Review r
 const aheadLine = kind => esc(kind === 'lasting' ? 'A lasting guest keeps it on their own shelf until you remove them.'
   : kind === 'notes' ? 'A review round: open a week, on their own shelf, then it ends.'
   : 'A review round with a voucher each: open a week.');
-// An open share's line (as HTML): until when, and where its notes go: each person's on their own page in the round
-// notebook on the board's Shelf, reaching the team when they send it.
-const intoBook = () => 'Each person writes on their own page in the round notebook on your Shelf; their notes reach the team when they send it.';
+// An open share's line (as HTML): until when, and where its notes go
+const intoBook = 'Each person writes on their own page in the round notebook on your Shelf. Their notes reach the team when they send it.';
 export const untilLine = s => esc(s.lasting ? 'Lasting: on their own shelf until you remove them. Their notes land on their own page in its book on your Shelf.'
   : s.view ? `Until ${dayTime(s.ends)}. They see it as it is: no notes, nothing to answer.`
-  : s.tester && s.pays === 'plan' ? `Until ${dayTime(s.ends)}. Each link carries a voucher for one plan up to ${euros(s.cap)}: nothing charged, nothing recurring. ${intoBook(s)}`
-  : s.tester ? `Until ${dayTime(s.ends)}. Each link carries a voucher for one free order up to ${euros(s.cap)}, made and sent for real. ${intoBook(s)}`
-  : `Until ${dayTime(s.ends)}. ${intoBook(s)}`);
+  : s.tester && s.pays === 'plan' ? `Until ${dayTime(s.ends)}. Each link carries a voucher for one plan up to ${euros(s.cap)}: nothing charged, nothing recurring. ${intoBook}`
+  : s.tester ? `Until ${dayTime(s.ends)}. Each link carries a voucher for one free order up to ${euros(s.cap)}, made and sent for real. ${intoBook}`
+  : `Until ${dayTime(s.ends)}. ${intoBook}`);
 // a share's people and End now (none before the first invite): whether each opened it, and a tester's order
 const reviewState = (s, p) => `${p.opened ? `Guest since ${dayTime(p.opened)}` : `Invited · on ${p.name.split(' ')[0]}’s shelf now`}${ordered(s, p)}`;
 // a tester's order, once placed: the stalls it was from, or the plan and tiers it took
@@ -1030,7 +1029,7 @@ function wireGuest(el, r) {
     const box = e.target;
     box.disabled = true;
     try { await guestColleagues(world.dev, r.id, box.checked); sfx.blip(); await again(); renderPhone(); }
-    catch (err) { box.checked = !box.checked; box.disabled = false; el.querySelector('.invites .msg').textContent = refused(err); }
+    catch (err) { box.checked = !box.checked; box.disabled = false; el.querySelector('.invites .msg').textContent = refusalWords(err); }
   });
 }
 
@@ -1178,7 +1177,8 @@ function wireCall(el, r) {
     const row = el.querySelector('.req .btns'), open = Date.parse(opens) <= Date.now() ? 'Open now' : `Opens ${callTime(opens)}`;
     row.querySelectorAll('button').forEach(b => b.remove());
     $('#call-hint').remove();
-    row.insertAdjacentHTML('beforebegin', `<div class="call-link"><p class="hint">Send them this link. ${esc(open)} until ${esc(callTime(closes))}, for one call.</p><p class="call-url">${esc(link)}</p></div>`);
+    // (the link places the call: never in a call's recording, shared/watchalong.)
+    row.insertAdjacentHTML('beforebegin', `<div class="call-link" data-watchalong-hide><p class="hint">Send them this link. ${esc(open)} until ${esc(callTime(closes))}, for one call.</p><p class="call-url">${esc(link)}</p></div>`);
     row.insertAdjacentHTML('afterbegin', `<button class="send" id="call-copy">Copy</button>${navigator.share ? `<button class="send later" id="call-share">${SHARE}Share</button>` : ''}<button class="send later" id="call-done">Done</button>`);
     msg.textContent = 'Approved.';
     setRequests(store.list.filter(x => x.id !== r.id));
@@ -2036,7 +2036,7 @@ export function openIntercom() {
   });
   device.addEventListener('dragover', e => { if (!inCall() && e.dataTransfer?.types.includes('Files')) e.preventDefault(); });
   device.addEventListener('drop', e => { if (inCall() || !e.dataTransfer?.files.length) return; e.preventDefault(); intercomTray.add(e.dataTransfer.files); });
-  $('#call')?.addEventListener('click', () => callAgent(world.company.ceo, ceoName(), { onIntercom: true }));
+  $('#call')?.addEventListener('click', () => callAgent(world.company.ceo, ceoName()));
   // (a first load that fails says so under the input while the loader stays, and the next poll tries again; a later one
   // keeps what's shown)
   let failed = false;

@@ -24,7 +24,7 @@ hand({
   words: dictation.words,
 });
 
-// r: the config review.js hands over ({ HQ, framed, OUTSIDE, outside, INK, ROUTE, summoned, book, toHq, covered,
+// r: the config review.js hands over ({ HQ, framed, OUTSIDE, outside, INK, BACK, ROUTE, summoned, book, toHq, covered,
 // away, calling }), the elements and the state the parts share. mode: idle | pick (marking) | note (the post-it open) | sending
 export function start(config) {
   const r = {

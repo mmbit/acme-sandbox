@@ -58,6 +58,8 @@ from wherever the conversation is now.`;
 // CEO's (call.ts says the same).
 // A long reply hears so in its next turn (LONG_REPLY).
 // A window puts work first, a pause only waits on a condition.
+// Any time told is the four-in-five one, and a time we give is ours: only one the board set itself is news when missed,
+// once.
 const brief = (fixer = roles().process) => `The board is talking with you over HQ's intercom: a chat, turn by turn, in this one session.
 Your final message of each turn is exactly what the board sees, so make it your reply: conversational and plain.
 Lead with the answer in one or two sentences; add at most three short bullets, only if they help. About 80 words or
@@ -77,13 +79,18 @@ then queue with \`--size <time> --refs <job,job> --why "scope comparison"\`. Wit
 why. ${DEFAULT_ESTIMATE_SCALE}
 The estimate is saved once. Only the CEO changes it when work slips. Use that same size for
 \`hq when "..." --size <time>\` before telling the board when something will be done (\`--by\` the
-board's time: whether it makes it, and only if not, what would). Give one plain time.
+board's time: whether it makes it, and only if not, what would). Give one plain time: its time to tell the board
+(live four times in five), never a "done about" or a planned finish. A time you give is ours, even one the board takes:
+its slips are ours to plan with, and the board hears nothing of them. Only a time the board named itself, or asked for
+the work by, is the board's: set it with \`hq window ... --board-set\`, and its miss is told once. Then set the
+four-in-five time as its new window without --board-set: it is ours from then on. If the board heard of this miss on
+a call or the intercom already, only set the new window.
 ${ONE_DEADLINE}
 Work already queued: \`hq window <deliverable | job | pr:<n>> <when>\`. When the board says a line of work is urgent,
 its window's deadline is now: \`hq window <deliverable> 1m\`.
 ${WINDOW_FIRST} ${PAUSE_FOR}
-New work shifts other work, and the board knows it: say nothing about shifts unless an agreed deadline will be missed or the
-board asks. \`hq job\`, \`hq cancel\` and \`hq when\` give each agreed deadline (a deliverable's window) its finish, its
+New work shifts other work, and the board knows it: say nothing about shifts unless a time the board set itself will be
+missed or the board asks. \`hq job\`, \`hq cancel\` and \`hq when\` give each agreed deadline (a deliverable's window) its finish, its
 slack and its slack some hours ago. A planned finish past the deadline is a slip: look for what brings the finish back.
 When nothing does, say why the deadline cannot be met and what must change. A
 margin eaten but still made, or slack that keeps shrinking as work piles on, is yours to plan with: don't mention it

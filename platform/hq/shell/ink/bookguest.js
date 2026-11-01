@@ -9,7 +9,6 @@ import { showWork } from './bookguestwork.js';
 import { button, island } from './bookui.js';
 import { notebookRequest } from './bookscope.js';
 import { esc, stylesheet } from '../../util.js';
-import { mountGuestInvites } from './bookguestinvites.js';
 import { words, refusal } from './notebookwords.js';
 import { setTimeZone } from '../../world/clock.js';
 
@@ -54,7 +53,6 @@ if (!shelved.ok || (response && (!response.ok || !read.notebooks.length))) {
     },
   });
   document.documentElement.append(document.querySelector('#toasts'));
-  const invites = mountGuestInvites(notebook);
   // (a round's send reads Mark done; once done, Marked done with Undo beside it)
   const round = notebook.kind === 'round';
   const send = island('send').querySelector('.bk-send');
@@ -99,7 +97,6 @@ if (!shelved.ok || (response && (!response.ok || !read.notebooks.length))) {
       const page = book.pages[0];
       undo.hidden = book.kind !== 'round' || !page?.canUndo;
       marked.hidden = book.kind !== 'round' || !(page?.canUndo || page?.sent || page?.sending);
-      invites.update(book);
       status.textContent = book.kind === 'round' ? text.round[book.state] : '';
       const next = JSON.stringify(book);
       if (signature && signature !== next) document.dispatchEvent(new CustomEvent('book:notebook'));

@@ -1,6 +1,8 @@
 /* The book's controls, one style for all of them (bookui.js): a button, a floating card and the list in it, the
-   tooltip, and the islands the controls float on over the paper. Ink on the book's paper: a quiet indigo icon, a wash
-   of ink under the pointer, a pressed toggle inked in. Lark's send button and the guest book reuse it. */
+   tooltip, and the islands the controls float on over the paper. They're HQ's own, drawn in the look HQ wears (its
+   panel, line, corners, shadow, font, and its gold for what's pressed or the one to press), and on a guest's page in
+   that page's look (its card, line and accent): never a style of the book's own. Only the paper is the book's. Lark's
+   send button and the guest book reuse it. */
 #book,
 .bk-ui {
   --bk-ink: #2a2352;
@@ -8,6 +10,19 @@
   --bk-ink-wash: rgba(42, 35, 82, 0.14);
   --bk-edge: rgba(42, 35, 82, 0.14);
   --bk-lift: 0 1px 0 rgba(42, 35, 82, 0.08), 0 6px 18px -4px rgba(29, 26, 47, 0.28), 0 0 0 1px var(--bk-edge);
+  /* the look's, for the controls (a guest's page: guests.ts palette, its --cream its card) */
+  --bk-ui-bg: var(--cream, #fffaf0);
+  --bk-ui-ink: var(--ink, #2a2352);
+  --bk-ui-muted: var(--muted, #5a5478);
+  --bk-ui-line: var(--line, var(--bk-edge));
+  --bk-ui-wash: color-mix(in srgb, var(--bk-ui-ink) 9%, transparent);
+  --bk-ui-lit: var(--gold, var(--accent, #2a2352));
+  --bk-ui-on-lit: var(--on-accent, var(--on, #fffaf0));
+  --bk-ui-font: var(--font, var(--bk-font, system-ui, sans-serif));
+  /* a key's: its edge, corner and shadow */
+  --bk-ui-border: var(--bw, 1px) solid var(--bk-ui-line);
+  --bk-ui-key-r: var(--btn-r, var(--r, 9px));
+  --bk-ui-shadow: var(--shadow-sm, none);
 }
 
 /* ---- a button: an icon on the paper, 36 px (44 to the touch), or a word on a paper label */
@@ -20,8 +35,8 @@
   width: 36px;
   height: 36px;
   flex: none;
-  border-radius: 9px;
-  color: var(--bk-muted, #5a5478);
+  border-radius: var(--r, 9px);
+  color: var(--bk-ui-muted);
   cursor: pointer;
   transition:
     background-color 0.12s,
@@ -46,21 +61,21 @@
 }
 @media (hover: hover) {
   .bk-btn:hover {
-    background: var(--bk-ink-soft);
-    color: var(--bk-ink);
+    background: var(--bk-ui-wash);
+    color: var(--bk-ui-ink);
   }
 }
 .bk-btn:active {
-  background: var(--bk-ink-wash);
+  background: var(--bk-ui-wash);
   transform: scale(0.94);
 }
 .bk-btn:focus-visible {
-  outline: 2px solid var(--bk-ink);
+  outline: 2px solid var(--bk-ui-ink);
   outline-offset: 1px;
 }
 .bk-btn[aria-pressed='true'] {
-  background: var(--bk-ink);
-  color: var(--bk-paper, #fffaf0);
+  background: var(--bk-ui-lit);
+  color: var(--bk-ui-on-lit);
 }
 .bk-btn:disabled,
 .bk-btn[aria-disabled='true'] {
@@ -68,19 +83,20 @@
   cursor: default;
   pointer-events: none;
 }
-/* a word: a paper label edged in ink (Join, Send, New page) */
+/* a word: the one to press (Join, Send, New page), lit as the look lights one */
 .bk-btn.bk-text {
   width: auto;
   min-width: 36px;
   padding: 0 14px;
   gap: 6px;
   grid-auto-flow: column;
-  border-radius: 9px;
-  background: var(--bk-ink);
-  color: var(--bk-paper, #fffaf0);
-  font: 700 14px/1 var(--bk-font, system-ui, sans-serif);
+  border: var(--bk-ui-border);
+  border-radius: var(--bk-ui-key-r);
+  background: var(--bk-ui-lit);
+  color: var(--bk-ui-on-lit);
+  font: 700 14px/1 var(--bk-ui-font);
   white-space: nowrap;
-  box-shadow: 0 2px 0 #15112b;
+  box-shadow: var(--bk-ui-shadow);
 }
 .bk-btn.bk-text svg {
   width: 18px;
@@ -88,13 +104,14 @@
 }
 @media (hover: hover) {
   .bk-btn.bk-text:hover {
-    background: #3a3168;
-    color: var(--bk-paper, #fffaf0);
+    background: var(--bk-ui-lit);
+    color: var(--bk-ui-on-lit);
+    filter: brightness(1.05);
   }
 }
 .bk-btn.bk-text:active {
-  transform: translateY(2px);
-  box-shadow: none;
+  transform: var(--press, translateY(2px));
+  box-shadow: var(--shadow-press, none);
 }
 @media (pointer: coarse) {
   .bk-btn {
@@ -114,14 +131,18 @@
   }
 }
 
-/* ---- a card: a sheet of the book's paper floating over it (the pairing card, a menu) */
-.bk-card {
+/* ---- a card: one of the look's panels floating over the paper (the pairing card, a menu, the page's targets and the
+   asks still open as it goes: bookshare.css), as the viewer's Share box */
+.bk-card,
+.bk-share,
+.bk-asks-open {
   box-sizing: border-box;
-  border-radius: 14px;
-  background: var(--bk-paper, #fffaf0);
-  color: var(--bk-ink);
-  box-shadow: var(--bk-lift);
-  font: 15px/1.4 var(--bk-font, system-ui, sans-serif);
+  border: var(--bw-lg, 1px) solid var(--bk-ui-line);
+  border-radius: var(--r-lg, 14px);
+  background: var(--bk-ui-bg);
+  color: var(--bk-ui-ink);
+  box-shadow: var(--shadow-xl, var(--bk-lift));
+  font: 15px/1.4 var(--bk-ui-font);
 }
 /* a list in a card: one row each, the current one inked */
 .bk-menu {
@@ -142,9 +163,9 @@
   width: 100%;
   min-height: 34px;
   padding: 0 10px;
-  border-radius: 8px;
-  color: var(--bk-ink);
-  font: 14px/1.3 var(--bk-font, system-ui, sans-serif);
+  border-radius: var(--r, 8px);
+  color: var(--bk-ui-ink);
+  font: 14px/1.3 var(--bk-ui-font);
   cursor: pointer;
   white-space: nowrap;
   overflow: hidden;
@@ -153,21 +174,21 @@
 @media (hover: hover) {
   .bk-menu > * > button:hover,
   .bk-menu > button:hover {
-    background: var(--bk-ink-soft);
+    background: var(--bk-ui-wash);
   }
 }
 .bk-menu > * > button:focus-visible,
 .bk-menu > button:focus-visible {
-  outline: 2px solid var(--bk-ink);
+  outline: 2px solid var(--bk-ui-ink);
   outline-offset: -2px;
 }
 .bk-menu [aria-current='true'],
 .bk-menu [aria-current='page'] {
   font-weight: 700;
-  background: var(--bk-ink-soft);
+  background: var(--bk-ui-wash);
 }
 
-/* ---- the tooltip: a slip of ink with the paper's words, its keys quieter (bookui.js places it) */
+/* ---- the tooltip: a slip in the look's ink with its panel's words, its keys quieter (bookui.js places it) */
 .bk-tip {
   position: fixed;
   z-index: 60;
@@ -181,10 +202,10 @@
   max-width: min(260px, calc(100vw - 8px));
   box-sizing: border-box;
   padding: 6px 10px;
-  border-radius: 7px;
-  background: var(--bk-ink, #2a2352);
-  color: var(--bk-paper, #fffaf0);
-  font: 600 13px/1.25 var(--bk-font, system-ui, sans-serif);
+  border-radius: var(--r-sm, 7px);
+  background: var(--bk-ui-ink);
+  color: var(--bk-ui-bg);
+  font: 600 13px/1.25 var(--bk-ui-font);
   box-shadow: 0 4px 14px -2px rgba(15, 10, 30, 0.35);
   pointer-events: none;
   animation: bk-tip-in 0.12s ease-out;
@@ -231,9 +252,10 @@
   align-items: center;
   gap: 2px;
   padding: 4px;
-  border-radius: 13px;
-  background: var(--bk-paper, #fffaf0);
-  box-shadow: var(--bk-lift);
+  border: var(--bk-ui-border);
+  border-radius: var(--r-lg, 13px);
+  background: var(--bk-ui-bg);
+  box-shadow: var(--shadow-sm, var(--bk-lift));
   pointer-events: auto;
 }
 .bk-island:empty,
@@ -254,7 +276,7 @@
   align-self: stretch;
   margin: 3px 6px;
   border: 0;
-  border-top: 1px solid var(--bk-edge);
+  border-top: 1px solid var(--bk-ui-line);
 }
 @media (prefers-reduced-motion: reduce) {
   .bk-btn,
@@ -271,7 +293,7 @@
   align-self: stretch;
   margin: 6px 3px;
   border-top: 0;
-  border-left: 1px solid var(--bk-edge);
+  border-left: 1px solid var(--bk-ui-line);
 }
 /* (the book's own fixed parts are full height: a tooltip or a card is as tall as its words) */
 #book > .bk-tip,

@@ -209,15 +209,17 @@
   color: var(--bk-ink);
   opacity: 0.75;
 }
-/* Send: the page's own action, its own island on the rail under the tools (bookcontrols.js), the plane inked in */
+/* Send: the page's own action, its own island on the rail under the tools (bookcontrols.js), lit as the one to press
+   in the look's own fill (bookui.css.) */
 #book .bk-btn.bk-send {
-  background: var(--bk-ink);
-  color: var(--bk-paper, #fffaf0);
+  background: var(--bk-ui-lit);
+  color: var(--bk-ui-on-lit);
 }
 @media (hover: hover) {
   #book .bk-btn.bk-send:hover {
-    background: #3a3168;
-    color: var(--bk-paper, #fffaf0);
+    background: var(--bk-ui-lit);
+    color: var(--bk-ui-on-lit);
+    filter: brightness(1.05);
   }
 }
 #book .bk-where small,

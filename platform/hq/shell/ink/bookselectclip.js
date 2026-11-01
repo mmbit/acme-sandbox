@@ -297,15 +297,15 @@ function barOf(clip) {
   const bar = document.createElement('div');
   bar.className = 'bk-sel-bar';
   bar.setAttribute('role', 'toolbar');
-  bar.setAttribute('aria-label', word('Selection'));
+  bar.setAttribute('aria-label', word('selection'));
   for (const type of ['pointerdown', 'touchstart', 'touchmove']) bar.addEventListener(type, e => e.stopPropagation());
   const acts = [
-    [word('Cut'), `${MOD}+X`, () => cut(clip) && copied(clip)],
-    [word('Copy'), `${MOD}+C`, () => copy(clip) && copied(clip)],
-    [word('Paste'), `${MOD}+V`, () => pasteBeside(clip)],
-    [word('Duplicate'), `${MOD}+D`, () => duplicate(clip)],
-    [word('Delete'), 'Delete', () => remove(clip)],
-    [word('Move to page…'), '', b => move(clip, b)],
+    [word('cut'), `${MOD}+X`, () => cut(clip) && copied(clip)],
+    [word('copy'), `${MOD}+C`, () => copy(clip) && copied(clip)],
+    [word('paste'), `${MOD}+V`, () => pasteBeside(clip)],
+    [word('duplicate'), `${MOD}+D`, () => duplicate(clip)],
+    [word('delete'), 'Delete', () => remove(clip)],
+    [word('moveToPage'), '', b => move(clip, b)],
   ];
   for (const [text, keys, act] of acts)
     bar.append(
@@ -375,7 +375,7 @@ function offer(clip, [x, y]) {
   const bubble = Object.assign(document.createElement('button'), {
     type: 'button',
     className: 'bk-paste',
-    textContent: word('Paste'),
+    textContent: word('paste'),
   });
   Object.assign(bubble.style, { left: `${x - box.left}px`, top: `${y - box.top}px` });
   book.paper.append((clip.bubble = bubble));

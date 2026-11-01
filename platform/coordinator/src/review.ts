@@ -37,6 +37,7 @@ import * as reviewpushes from './reviewpushes.ts';
 import * as boardmerges from './boardmerges.ts';
 import * as mergeorder from './mergeorder.ts';
 import * as rulingjobs from './rulingjobs.ts';
+import { GATES_CONFIG } from './reviewfloor.ts';
 
 // A pull request merged: marked so, what its reviews left into its author's separate follow-up deliverable before
 // the threads whose work it held let go of its branch (threadends.ts merged), and the visual hold it was still in, when
@@ -179,8 +180,10 @@ function reviewPush(pushed: reviewpushes.Push) {
   if (plantedReviewFiles(push, files)) return;
   const pinned = { ...push, sha };
   if (expedites(branch)) {
-    if (checksPassed(pr, sha)) return void mergeExpedited(pr, () => reviewRound(pinned, { round, base, before }, files, links, pushedSince));
-    publish({ type: 'log', agent: author, text: `PR #${pr} is expedited, but its gates and tests didn't both pass on this push: it merges after its review` });
+    if (checksOwn(files))
+      publish({ type: 'log', agent: author, text: `PR #${pr} is expedited, but it changes its own gates and tests: it merges after its review` });
+    else if (checksPassed(pr, sha)) return void mergeExpedited(pr, () => reviewRound(pinned, { round, base, before }, files, links, pushedSince));
+    else publish({ type: 'log', agent: author, text: `PR #${pr} is expedited, but its gates and tests didn't both pass on this push: it merges after its review` });
   }
   if (mergeChecked(pinned, round, base, before, links) || resetRefused(push, files)) return;
   if (panelCalledBack(pinned, round, files, links)) return;
@@ -1067,7 +1070,7 @@ async function decide(job: { id: number; pr: number; round: number; sha: string 
   } else if (v.decision === 'board') {
     db.prepare("update prs set status = 'board' where number = ?").run(job.pr);
     createRequest({ kind: 'review', agent, job: job.id, urgency: 'today', pr: job.pr, title: `Your call: ${work(pr.branch, job.pr)}`,
-      body: `${v.summary ?? ''}\n\nhttps://github.com/${process.env.REPO}/pull/${job.pr}\n\nAnswer "merge", "close", or what should change.` });
+      body: `${v.summary ?? ''}\n\nhttps://github.com/${process.env.REPO}/pull/${job.pr}\n\nAnswer "merge" or "close" alone, or what should change.` });
   } else await close(job.pr, v.summary ?? `${name} closed it`);   // awaited: the guard and actOnRulings()' catch cover it
 }
 
@@ -1288,17 +1291,24 @@ export const officeOnly = (author: string, branch: string, files: string[], link
   && files.every(f => OFFICE.test(f) && (!f.startsWith('company/people/') || f === `company/people/${author}.md` || f === archive(author)))
   && !ledger.asked(branch).some(i => i.kind !== 'message') && !db.prepare('select 1 from office_reviewed where pr = ?').get(pr);
 // The decision log (office.paths) only grows unreviewed: agents take its entries as the board's word, so a pull request
-// whose diff removes or changes an earlier line of it goes to the panel like any change, and stays there for its later
+// whose diff removes or changes an earlier line of it, or adds one inside an earlier entry, goes to the panel like any change, and stays there for its later
 // pushes.
 const DECISION_LOG = 'company/DECISIONS.md';
 db.exec('create table if not exists office_reviewed (pr integer primary key)');
 function reviewRecords(pr: Pr) {
   db.prepare('insert or ignore into office_reviewed (pr) values (?)').run(pr.number);
-  publish({ type: 'log', agent: pr.author, text: `PR #${pr.number} removes or changes earlier entries of the decision log, so it gets a review` });
+  publish({ type: 'log', agent: pr.author, text: `PR #${pr.number} removes, changes or adds lines inside earlier entries of the decision log, so it gets a review` });
   const row = db.prepare('select * from prs where number = ?').get(pr.number) as Pr;
   if (row.status !== 'open' || !row.sha || reachedPanel(row)) return;   // (a later push's round has its panel already)
   queueTriage(row.number, row.branch, row.sha, row.round, JSON.parse(row.files), JSON.parse(row.links),
-    `\n\nIt removes or changes earlier entries of ${DECISION_LOG}, which agents read as the board's decisions: check each such change is one the board made.`, row.fixes_from);
+    `\n\nIt removes, changes or adds lines inside earlier entries of ${DECISION_LOG}, which agents read as the board's decisions: check each such change is one the board made.`, row.fixes_from);
+}
+// Whether a patch of the decision log adds lines inside existing text, where they would read as part of an earlier entry:
+// an added run that doesn't start at a `## ` heading of its own. A blank line before it, or the end of the file, doesn't
+// make it a new entry: a heading's blank line and every paragraph's end are blank too.
+function insertsInside(patch: string) {
+  const lines = patch.split('\n').filter(line => !line.startsWith('\\'));
+  return lines.some((line, i) => line.startsWith('+') && !lines[i - 1]?.startsWith('+') && !line.startsWith('+## '));
 }
 // Unreviewed, so nothing in it may look like a key (the events' pattern) or be one of the key store's values: one that
 // does goes back to its author, and one GitHub can't show (or shows only in part) waits for the next sweep, why in STATUS.md.
@@ -1312,7 +1322,7 @@ async function mergeOffice(pr: Pr) {
   }
   if (diff === undefined) return;
   hold(pr.number, null);
-  if (diff.altered.includes(DECISION_LOG)) return reviewRecords(pr);
+  if (diff.altered.includes(DECISION_LOG) || insertsInside(diff.patches.get(DECISION_LOG) ?? '')) return reviewRecords(pr);
   const { added } = diff;
   if (new RegExp(KEYS.source).test(added) || secrets.redact(added) !== added)
     return fixJob(pr, 'Removing a key', `Your pull request #${pr.number} (branch ${pr.branch}) only updates records, but what it adds looks like a key or holds one of the company's keys. Take it out (a key never goes in text: name it instead), and push again.`, 'a key in records that merge unreviewed');
@@ -1356,6 +1366,10 @@ export const expedites = (branch: string) =>
 // GATE_TRIES-th failing push goes on to its review, and its streak's reset says nothing of how it did.
 const checksPassed = (pr: number, sha: string) =>
   (db.prepare('select checked from pushes where pr = ? and sha = ?').get(pr, sha) as { checked: number | null } | undefined)?.checked === 1;
+// An expedited merge stands on its push's gates and tests, which the worker runs from the pushed branch (shared/gates,
+// with the gates' config at the root): a pull request that changes those goes to its review before it merges, as any
+// other does.
+export const checksOwn = (files: string[]) => files.some(f => GATES_CONFIG.test(f));
 async function mergeExpedited(n: number, review: () => void) {
   const pr = db.prepare('select * from prs where number = ?').get(n) as Pr;
   const m = await mergeAlone(pr, `Merge PR #${pr.number} expedited (its review follows)`, m => {
@@ -1407,6 +1421,8 @@ async function expeditePr(n: number) {
   if (!pr || !['open', 'stuck'].includes(pr.status) || !pr.sha) return `PR #${n} has no push to merge yet: its next push merges on its checks`;
   if (pr.gate_fails || pr.tests_incomplete || !checksPassed(n, pr.sha))
     return `PR #${n}'s last push didn't pass its gates and tests, so it isn't merged ahead of its review: a later push that passes them merges`;
+  if (checksOwn(JSON.parse(pr.files)))
+    return `PR #${n} changes its own gates and tests (shared/gates or their config), so it merges after its review, not on them`;
   if (deciding.has(n)) return `PR #${n} is being merged already: if it hasn't merged in a few minutes, run hq expedite again`;
   const merged = await mergeExpedited(n, () => {
     db.prepare('update prs set since = (select coalesce(max(id), 0) from jobs) where number = ?').run(n);
@@ -1886,7 +1902,6 @@ const PROTECTED = /^company\/(CHARTER|AUTHORITY)\.md$/;
 const SETTINGS = /^company\/[^/]+\.(env|ya?ml|json)$/;
 const AGENT_CONFIG = /(^|\/)(\.(claude|codex|agents?|gemini|vibe)|_agents?)\/|(^|\/)\.mcp\.json$|(^|\/)\.?codeium\.ya?ml$|^company\/infra\.env$/i;
 const AGENT_NOTES = /(^|\/)(CLAUDE|AGENTS|GEMINI)\.md$/;
-const GATES_CONFIG = /^shared\/gates\/|(^|\/)(eslint\.config|prettier\.config|\.prettierrc)(\.[^/]*)?$|^(\.prettierignore|tsconfig\.json|package(-lock)?\.json)$/;
 const PROFILES_AND_WORKFLOWS = /^(company\/people|\.github|\.hq)\//;
 const someonesCall = (f: string) => PROTECTED.test(f) || SETTINGS.test(f) || PROFILES_AND_WORKFLOWS.test(f);
 const canWeakenCheck = (f: string) => AGENT_CONFIG.test(f) || AGENT_NOTES.test(f) || GATES_CONFIG.test(f) || f === RESET;

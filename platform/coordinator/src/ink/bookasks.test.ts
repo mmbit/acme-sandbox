@@ -93,6 +93,33 @@ test('a card with --note shows under its note, with its place on the desk phone;
   await h.finish(job);
 });
 
+// a picture: convert -size 4x4 gradient:red-blue -strip png24:-
+const PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAIAAAAmkwkpAAAAF0lEQVQI12P8z4AALKsZQrFzGBkYEAoBe+gECZtuXNMAAAAASUVORK5CYII=',
+  'base64',
+);
+test("a card answered with the board's drawing: its picture with the answer, shown in the book under its words", async () => {
+  const { note, review, job } = await sentNote('lark', 'Too long: half this');
+  const id = await ask(job, CARD, '--note', String(review), '--topic', 'gazette');
+  // (the book uploads the drawing for the card as the desk phone's tray does, and sends it with the answer)
+  const res = await fetch(`${h.base}/api/pictures?request=${id}`, {
+    method: 'POST',
+    headers: { cookie: h.boardCookie, origin: ORIGIN, 'content-type': 'image/png' },
+    body: PNG,
+  });
+  const picture = ((await res.json()) as { id: number }).id;
+  assert.equal((await h.board('/api/requests/answer', { id, answer: 'Shorter', pictures: [picture] })).status, 200);
+  const stored = (db.prepare('select answer from requests where id = ?').get(id) as { answer: string }).answer;
+  assert.match(stored, new RegExp(`^Shorter\\n\\n[^\\n]*hq picture ${picture}`), 'the agent reads how to see it');
+  const [answered] = await asksOn(note);
+  assert.deepEqual(
+    [answered.answer, answered.pictures],
+    ['Shorter', [picture]],
+    'the book shows the drawing, not the line',
+  );
+  await h.finish(job);
+});
+
 test('a card for a key, an upload, steps or built work stays on the desk phone, with its note, and out of the book', async () => {
   const { note, review, job } = await sentNote('lark', 'Hook this up');
   const filed = await h.agent('request', job.token, {

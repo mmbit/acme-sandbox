@@ -72,14 +72,11 @@ export const underAt = (box, kind) => ({ x: box.x, y: box.y + box.h + CAPTION.to
 export const underWidth = (kind, w) =>
   kind === 'scrap' ? wordsWidth(w) : Math.max(CAPTION.least, Math.min(CAPTION.most, w));
 // A group's children slipped under it, in the order they came (bookgroups.js, and the store's picture of a page,
-// bookpicture.ts): its answers and replies, not an answer the store placed at its spot or a version, nor the replies to
-// them, which the answers' layer draws written in (bookanswers.js). A reply's id is a group's, an answer's a slip's: a
-// reply is matched only by the answer it answers.
-/** @template {{ id: number, kind: string, spot?: unknown, style?: string | null, answers?: number | null }} C
+// bookpicture.ts): its answers and replies, not a try's version nor the replies to one, which its versions block draws
+// (bookanswers.js). A reply's id is a group's, an answer's a slip's: a reply is matched only by the answer it answers.
+/** @template {{ id: number, kind: string, style?: string | null, answers?: number | null }} C
  * @param {C[]} children @returns {C[]} */
 export function slipsUnder(children) {
-  const written = new Set(
-    children.filter(c => c.kind === 'answer' && (c.spot || c.style === 'version')).map(c => c.id),
-  );
+  const written = new Set(children.filter(c => c.kind === 'answer' && c.style === 'version').map(c => c.id));
   return children.filter(c => (c.kind === 'reply' ? c.answers == null || !written.has(c.answers) : !written.has(c.id)));
 }

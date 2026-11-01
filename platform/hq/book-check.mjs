@@ -673,8 +673,8 @@ function STORIES() {
     ...spaceStories({ hqIn, base, store, pages, notebook, shot, settled, noErrorsIn, settle: SETTLE_MS }),
     // (the Pencil's taps, Select off the screen's edge, Copy and Paste, boxes of words.)
     ...penStories({ hqIn, base, store, pages, notebook, shot, settled }),
-    // (Ink answers any note: an answer written in beside a note, its symbols, a drawing, a form, a question, versions,
-    // a call's page.)
+    // (Ink answers any note: its dots, then its slip under the note's unit at every width, a drawing, a form, a
+    // question, versions, a call's page.)
     ...answerStories({
       hqIn,
       base,

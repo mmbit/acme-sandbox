@@ -40,9 +40,8 @@ export const latestRequest = (pr: number) =>
     .prepare("select id, status, answer from requests where kind = 'review' and pr = ? order by id desc limit 1")
     .get(pr) as { id: number; status: string; answer: string } | undefined;
 
+// The word alone decides, punctuation allowed: "Merge the two buttons into one" is feedback, never a merge.
 export function answerAction(answer: string) {
-  const action = answer.trim();
-  if (/^merge\b/i.test(action)) return 'merge';
-  if (/^close\b/i.test(action)) return 'close';
-  return 'feedback';
+  const [, action] = /^[\p{P}\s]*(merge|close)[\p{P}\s]*$/iu.exec(answer) ?? [];
+  return action ? (action.toLowerCase() as 'merge' | 'close') : 'feedback';
 }

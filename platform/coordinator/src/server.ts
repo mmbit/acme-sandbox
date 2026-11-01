@@ -120,6 +120,7 @@ import './ink/bookreview.ts';   // and review mode's notes on previews, the ones
 import * as booktyped from './ink/booktyped.ts';   // and a question typed on its page, answered under it
 import './ink/sketchmigration.ts';   // and the Sketchbook's old sketches, folded in at start
 import * as notebookguests from './notebookguests.ts';
+import { managedPage } from './notebookaccess.ts';
 import * as notebookguestroom from './notebookguestroom.ts';
 import { syncOpenReviews } from './notebookreviews.ts';
 import * as notebookrounds from './notebookrounds.ts';
@@ -270,7 +271,7 @@ class Refused {
 // and what the company's parts add (kits.ts)
 const withChat = (r: any) => kits.numbers(r?.slug ? { ...r, chat: careNumbers.line(r.slug, r.mode, r.days) } : r);
 // A page of someone the board invited, in a notebook the board shares with them: the board reads it, never writes it
-const guestPage = (page: number) => notebookguests.managedPage(page) && !notebook.pageRow(page, book.BOARD);
+const guestPage = (page: number) => managedPage(page) && !notebook.pageRow(page, book.BOARD);
 // (its third part: what more the caller needs, or a code that goes as reason, which the page reads to know which
 // refusal it is.)
 const refusal = (r: unknown) => typeof r === 'string' ? new Refused(400, r) : Array.isArray(r) ? new Refused(r[0], r[1], typeof r[2] === 'string' ? { reason: r[2] } : r[2]) : r;
@@ -476,7 +477,6 @@ const api: Record<string, BoardRoute> = {
   // two notes linked, and a free page sent on its own
   'POST /api/book/note/link': (q, s, b) => refusal(booknotes.linkNotes(b)),
   'POST /api/book/page/send': async (q, s, b) => refusal(await booksheets.sendPage(b)),
-  'POST /api/book/slip/tick': (q, s, b) => refusal(bookslips.tick(b)),
   'POST /api/book/slip/reply': (q, s, b) => refusal(bookslips.replyTo(b)),
   // the book's words found: notes written, said or typed, and answers
   'GET /api/book/search': (q, s, b) => booksearch.searchBook(b.q),
@@ -1100,7 +1100,8 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
     if (landingSource?.customers) jobs.handedCustomerData(job.id);
     // (a correction handed out: the replaced item's running jobs hear it now, and the answer says which weren't told)
     // (a job on a paused thread is queued, and told it's held: pauses.ts)
-    const deadline = jobDeadline(job.id, placement, ownThread, byCall ? ledger.callAgent(carried!.call) : me.agent);
+    // (an item's time: the board's when it set it itself, ledger.ts dueBy)
+    const deadline = jobDeadline(job.id, placement, ownThread, byCall ? ledger.dueBy(carried!.item) : me.agent);
     const ask = untimed ? askedForTime(me, { id: job.id, agent: String(b.agent), title }, untimed, carried) : source ? servesOther(job.id) : {};
     const due = { ...deadline, ...ask, ...untilEnd.length && { untilCall: me.callId }, ...shownThread(job.id, { newThread: b.newThread, ownThread }), ...followOn, ...pauses.heldBy(job.id), ...moves.since(earlier), ...lighter && { lighter: lighter.name }, chain };  // (chain)
     return b.item != null || noted ? { ...job, ...due, ...ledger.handedOut(carried!.item, job.id, me.call ? null : me.id) } : { ...job, ...due };
@@ -1256,7 +1257,10 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
     const window = at === null ? null : windows.windowOf(thread, at, aim);
     if (typeof window === 'string') return new Refused(400, window);
     const tried = b.try === true;
-    const { made, ...said } = moves.change(() => windows.set(thread, window, thread.agent),
+    // A time given with --board-set is one the board set itself, the only kind whose miss it hears of. Any other time is
+    // ours (windows.ts BOARD); ledger.replaceWindow
+    const { made, ...said } = moves.change(
+      () => ledger.replaceWindow(thread, window, b.board_set === true ? windows.BOARD : thread.agent),
       queue => windows.withWindow(queue, thread.id, window), later => ({ misses: windows.misses(later) }), tried);
     return { ...made, tried, ...said };
   },
@@ -1348,7 +1352,8 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
     const work = b.job == null ? undefined : promisedWork(b, due, me);
     if (work instanceof Refused) return work;
     if (b.thread != null && !work) return new Refused(400, '--deliverable goes with --job: it puts that work on the deliverable');
-    const add = () => ledger.add(on, { ...b, owner: String(b.owner), quote: me.call && !b.quote ? b.what : b.quote, due }, me.call ? null : me.id);
+    // (--board-set: the board set that time itself, not one it was given: windows.ts BOARD)
+    const add = () => ledger.add(on, { ...b, owner: String(b.owner), quote: me.call && !b.quote ? b.what : b.quote, due, dueBoard: b.board_set === true }, me.call ? null : me.id);
     if (!work) return refusal(add());
     try {
       return refusal(inOneStep(() => {
@@ -1930,9 +1935,9 @@ const anyHost = routes({
       ? send(res, 200, await pagecheck.check(req.socket.localPort!))
       : send(res, 404, { error: 'not found' }),
   'GET /vendor/webauthn.js': async ({ res }) => send(res, 200, await readFile(WEBAUTHN), TYPES['.js']),
-  // (signed out, in the company's look until the device's own pick: pages.ts)
-  'GET /login': ({ res }) => send(res, 200, loginPage(brand(), theme()?.renderer), TYPES['.html']),
-  'GET /enroll': ({ res }) => send(res, 200, enrollPage(brand(), theme()?.renderer), TYPES['.html']),
+  // (with the guest pages' logo: guests.ts logoHtml.)
+  'GET /login': ({ res }) => send(res, 200, loginPage(brand(), guests.logoHtml()), TYPES['.html']),
+  'GET /enroll': ({ res }) => send(res, 200, enrollPage(brand(), guests.logoHtml()), TYPES['.html']),
   // Product previews: Caddy's forward_auth check and the key hand-off run without the board session.
   '* /api/preview/check': ({ req, res }) => preview.check(req, res),
   // ...and whether a try host is a version's, before Caddy gets it a certificate
@@ -2005,9 +2010,10 @@ const board: RouteTable = {
   'GET /api/book/snip': ({ req, res }) => booknotes.serveSnip(req, res),
   'GET /api/book/slip/picture': ({ req, res }) => bookslips.serveSlipPicture(req, res),
   // a notebook group's elements, a scrap with its snip, a reply with its ink, and a group's pictures
-  'GET /api/notebooks/guests/pictures': ({ req, res }) => notebookguestroom.serveBoardPicture(req, res),
-  'GET /api/notebooks/guests/slip/picture': ({ req, res }) => notebookguestroom.serveBoardPicture(req, res),
-  'GET /api/notebooks/guests/slip/now': ({ req, res }) => notebookguestroom.serveBoardPicture(req, res),
+  'GET /api/notebooks/guests/pictures': ({ req, res, url }) => notebookguestroom.PICTURES.pictures(req, res, url),
+  'GET /api/notebooks/guests/book/slip/picture': ({ req, res, url }) =>
+    notebookguestroom.PICTURES.slipPicture(req, res, url),
+  'GET /api/notebooks/guests/book/slip/now': ({ req, res, url }) => notebookguestroom.PICTURES.slipNow(req, res, url),
   'POST /api/notebooks/groups/create': boardJson((q, s, b) => refusal(notebookgroups.createGroup(b)), SAVE_MAX),
   'POST /api/notebooks/groups/edit': boardJson((q, s, b) => refusal(notebookgroups.editGroup(b)), SAVE_MAX),
   'POST /api/notebooks/groups/scrap': boardJson((q, s, b) => refusal(createScrap(b)), NOTE_MAX),
@@ -2114,8 +2120,10 @@ const hq = routes({
 
   // From HQ's own pages, or a page of its own without the board's session
   ...wrapped(signIn, (key, handle) => sameOrigin(boardJson(handle, JSON_MAX))),
-  'GET /pair': ({ res }) => send(res, 200, pairPage(brand(), theme()?.renderer), TYPES['.html']),
+  'GET /pair': ({ res }) => send(res, 200, pairPage(brand(), guests.logoHtml()), TYPES['.html']),
   'GET /pair/signin.js': hqFile(hqDir('/pairsignin.js'), '/pairsignin.js'),
+  // (the sign-in pages' look, the guests': pages.ts shell.)
+  'GET /pair/look.css': ({ res }) => send(res, 200, guests.signInCss(), TYPES['.css']),
   // The guest desk (guests.ts): an outside colleague's page (and its script), opened by its link and a code by email, never by the board's session
   '* /guest/*': sameOrigin(({ req, res }) => guests.page(req, res)),
   // A call out's join link (callouts.ts): its page by its token, never the board's session

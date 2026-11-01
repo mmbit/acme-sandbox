@@ -302,7 +302,7 @@ function turnLines(moments: Moments['list'], clock: (at: number) => string) {
 export async function screen(b: Record<string, unknown>) {
   const purpose = String(b.purpose ?? '');
   const watch = BRIEFS.has(purpose) ? live(purpose, String(b.ref ?? '')) : undefined;
-  if (!watch) return [404, 'No screen is being shown on this call.'];
+  if (!watch) return [404, purpose === CALL ? UNSHOWN : 'No screen is being shown on this call.'];
   settled(watch);
   if (watch.moments.paused)
     return [409, "They've paused showing their screen: you see nothing of it until they resume."];
@@ -335,6 +335,7 @@ export async function screen(b: Record<string, unknown>) {
     : [404, NOTHING];
 }
 export const NOTHING = 'Nothing of the screen was recorded by then.';
+const UNSHOWN = "Their screen isn't shown to you: ask to see it with ask_to_see, and they answer yes or no.";
 const pictured = (jpeg: Buffer, words: string) => ({
   picture: { type: 'image/jpeg', data: jpeg.toString('base64') },
   line: words,

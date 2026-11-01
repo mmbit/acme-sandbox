@@ -1,5 +1,5 @@
 // The notebook's groups from before scrap units carried into units, once (notebookgroups.ts has the units)
-import { db, once } from './db.ts';
+import { db, lacks, once } from './db.ts';
 import { partsJson, partsOf, type Group } from './notebookgroups.ts';
 import { inReadingOrder, lastPos } from './notebookorder.ts';
 import { boxOf } from '../../hq/shell/ink/notebookstack.js';
@@ -7,7 +7,7 @@ import { roomFor, unitOf } from '../../hq/shell/ink/scrapunit.js';
 
 // The groups from before scrap units, in their pages' px, as units: each moved to its own top-left (scaled down where
 // wider than a unit), in reading order of where it stood on its page, with room under what an agent put there. Deleted
-// ones too, which Undo may bring back. An answer slips under its scrap, so no answer keeps a spot beside one.
+// ones too, which Undo may bring back. An answer slips under its scrap.
 export function toUnits() {
   const old = db
     .prepare(
@@ -20,11 +20,18 @@ export function toUnits() {
       placed = old.filter(g => g.page === page).map(g => ({ id: g.id, g, box: boxOf(partsOf(g)) }));
     inReadingOrder(placed).forEach(({ g }, i) => {
       const unit = unitOf(partsOf(g), roomFor(g.by, g.who));
-      db.prepare(
-        'update notebook_groups set ink = ?, texts = ?, pictures = ?, pos = ?, h = ?, asked_spot = null where id = ?',
-      ).run(...partsJson(unit.parts), start + i, unit.h, g.id);
+      db.prepare('update notebook_groups set ink = ?, texts = ?, pictures = ?, pos = ?, h = ? where id = ?').run(
+        ...partsJson(unit.parts),
+        start + i,
+        unit.h,
+        g.id,
+      );
     });
   }
-  db.exec('update book_slips set spot = null where grp is not null');
 }
 once('2026-10-30-scrap-units', toUnits);
+// Then the spots answers lay at beside their groups, gone with them
+once('2026-10-31-answer-spots', () => {
+  if (!lacks('book_slips', 'spot')) db.exec('alter table book_slips drop column spot');
+  if (!lacks('notebook_groups', 'asked_spot')) db.exec('alter table notebook_groups drop column asked_spot');
+});

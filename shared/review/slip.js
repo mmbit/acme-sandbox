@@ -1,10 +1,11 @@
 // A slip: an agent's answer clipped onto a note in the book (the coordinator's bookslips.ts), typed on a strip of paper
 // under a paper clip, with "then and now": the note's snip as it was marked beside the running preview of something
 // new, or a cut of the same place kept from before rule zero (a page no longer cuts one: nothing of a note follows it
-// on the page). A tick in its box closes the note; writing under it is the board's reply, a new note for the same
-// agent. The book (HQ's bookgroups.js) draws it with slipHtml and wires it with
+// on the page). A tick in its box closes the note; the reader's reply is its own (the book's: drawn in the room it
+// pulls out under the slip, `more`). The book (HQ's bookgroups.js) draws it with slipHtml and wires it with
 // wireSlips; isTick, the Pencil's tick written on a slip in the book, is plain maths (slip.test.js).
-// Its words are English unless the reader's own come with it: say(en, places), the English with its {places} filled
+// Its words come from the caller in the reader's language: say(key, places), a word by its key with its {places}
+// filled (HQ's book: notebookwords.js, slip* keys).
 
 // The look: the book's paper and indigo, the answer typed
 export const CSS = `
@@ -34,17 +35,11 @@ export const CSS = `
       .slip-tick svg { width: 24px; height: 24px; fill: none; stroke: #e03131; stroke-width: 3; stroke-linecap: round;
         stroke-linejoin: round; stroke-dasharray: 40; stroke-dashoffset: 40; transition: stroke-dashoffset .3s ease-out; }
       .slip-tick[aria-pressed="true"] svg { stroke-dashoffset: 0; }
-      .slip-reply { display: block; width: 100%; box-sizing: border-box; margin: 10px 0 0; padding: 4px 0; min-height: 0; resize: none;
-        border: 0; border-bottom: 1px dashed #c9bfa6; background: transparent; color: #2a2352; font: inherit; outline: none;
-        overflow: hidden; }
-      .slip-reply::placeholder { color: #9b94b0; }
-      .slip-reply:focus { border-bottom: 1.5px solid #ffd966; }
       .slip-said { margin: 4px 0 0; font-size: 12px; color: #5a5478; }`;
 
 const CLIP =
   '<svg class="slip-clip" viewBox="0 0 14 34" aria-hidden="true"><path d="M10 9v15a3.5 3.5 0 0 1-7 0V6a5 5 0 0 1 10 0v19"/></svg>';
 const TICK = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 13l5.5 5L21 4"/></svg>';
-const english = (en, places = {}) => en.replace(/\{(\w+)\}/g, (_, k) => places[k]);
 const esc = s =>
   String(s ?? '').replace(
     /[&<>"']/g,
@@ -54,36 +49,35 @@ const esc = s =>
 // What "now" shows beside the note's snip: something new's running preview (its cover, a link to it, or that it's being
 // built), else a cut of the same place kept from before rule zero, else nothing: the snip alone. { src?, href?, label,
 // empty? } or null
-export function nowOf(slip, say = english) {
+export function nowOf(slip, say) {
   const p = slip.preview;
-  if (p?.pending) return { label: say('Now'), empty: say('Its preview shows here once it runs') };
+  if (p?.pending) return { label: say('slipNow'), empty: say('slipPreviewPending') };
   if (p)
     return {
       src: p.picture,
       href: p.open,
-      label: say('Now · {name}', { name: p.name ?? say('the preview') }),
-      empty: say('Running'),
+      label: say('slipNowOf', { name: p.name ?? say('slipPreview') }),
+      empty: say('slipRunning'),
     };
-  return slip.now ? { src: slip.now, label: say('Now') } : null;
+  return slip.now ? { src: slip.now, label: say('slipNow') } : null;
 }
 
 // One slip under its note (note: the store's, with its snip), as HTML. say: the reader's words; mark: what follows the
-// agent's name to say it's an AI (a guest's book: charter rule 5)
-export function slipHtml(slip, note, { say = english, mark = '' } = {}) {
+// agent's name to say it's an AI (a guest's book: charter rule 5); more: the reader's own HTML under its words (a
+// notebook answer's form, and the room to answer in).
+export function slipHtml(slip, note, { say, mark = '', more = '' }) {
   const now = nowOf(slip, say),
     ticked = Boolean(slip.ticked),
     name = slip.name ?? slip.by,
     marked = mark ? `${name} · ${mark}` : name;
   // its words in the reader's language, named before the markup they go in
-  const label = esc(say("{name}'s answer", { name: marked })),
+  const label = esc(say('slipAnswer', { name: marked })),
     by = esc(marked),
     tick = esc(tickWords(ticked, say)),
-    made = esc(say('Open what {name} made', { name })),
-    thenAlt = esc(say('As it was marked')),
-    thenCaption = esc(say('Then')),
-    nowAlt = esc(say('The same place now')),
-    reply = esc(say('Reply to {name}', { name })),
-    hint = esc(say('Write under it to reply'));
+    made = esc(say('slipMade', { name })),
+    thenAlt = esc(say('slipThenAlt')),
+    thenCaption = esc(say('slipThen')),
+    nowAlt = esc(say('slipNowAlt'));
   const nowPic =
     now &&
     (now.src
@@ -100,64 +94,26 @@ export function slipHtml(slip, note, { say = english, mark = '' } = {}) {
     : '';
   return `<section class="answer-slip" data-slip="${slip.id}"${ticked ? ' data-ticked' : ''} aria-label="${label}">${CLIP}<button class="slip-tick" type="button" aria-pressed="${ticked}" aria-label="${tick}">${TICK}</button><b class="slip-by">${by}</b><p class="slip-text">${esc(slip.text)}</p>${
     slip.picture ? `<img class="slip-pic" src="${esc(slip.picture)}" alt="" loading="lazy">` : ''
-  }${link}${then}<textarea class="slip-reply" rows="1" aria-label="${reply}" placeholder="${hint}"></textarea><p class="slip-said" hidden></p></section>`;
+  }${link}${then}${more}<p class="slip-said" hidden></p></section>`;
 }
-const tickWords = (ticked, say) => say(ticked ? 'Ticked: done' : 'Tick it: done');
+const tickWords = (ticked, say) => say(ticked ? 'slipTicked' : 'slipTick');
 
-// The slips under root wired: a tap on a tick box ticks it (or takes the tick back), and words written under one go as
-// the reply once the field is left or Enter is pressed. on: { tick(id, ticked), reply(id, words) → the store's answer
-// ({ note, asked }, or { said }: what to say of it) }, each a promise; refused, the slip says why and stays as it was.
-// say: the reader's words, as slipHtml's.
-export function wireSlips(root, on, say = english) {
+// The slips under root wired: a tap on a tick box ticks it (or takes the tick back). on: { tick(id, ticked) }, a
+// promise; refused, the slip says why and stays as it was. say: the reader's words, as slipHtml's.
+export function wireSlips(root, on, say) {
   for (const slip of root.querySelectorAll('.answer-slip')) {
-    const id = Number(slip.dataset.slip),
-      box = slip.querySelector('.slip-tick'),
-      field = slip.querySelector('.slip-reply'),
+    const box = slip.querySelector('.slip-tick'),
       said = slip.querySelector('.slip-said[hidden]');
     // (a finger or the Pencil here is the slip's: never the book's pan or the page's ink)
-    for (const el of [box, field])
-      for (const type of ['pointerdown', 'touchstart', 'touchmove'])
-        el.addEventListener(type, e => e.stopPropagation());
+    for (const type of ['pointerdown', 'touchstart', 'touchmove']) box.addEventListener(type, e => e.stopPropagation());
     const tell = text => Object.assign(said, { textContent: text, hidden: !text });
     box.addEventListener('click', () =>
       tickBox(slip, on, !slip.hasAttribute('data-ticked'), say).catch(e => tell(e.message)),
     );
-    const fitted = () => {
-      field.style.height = 'auto';
-      field.style.height = `${field.scrollHeight}px`;
-    };
-    field.addEventListener('input', fitted);
-    let sending = false;
-    const go = async () => {
-      const words = field.value.trim();
-      if (!words || sending) return;
-      sending = true;
-      try {
-        // (said: what the reply's owner says of it, a notebook's.)
-        const { note, asked, said: told } = await on.reply(id, words);
-        field.value = '';
-        fitted();
-        tell(
-          told ??
-            (asked
-              ? 'Asked: the answer clips on in a moment'
-              : `On the sheet as note ${note.n}: it goes with the plane`),
-        );
-      } catch (e) {
-        tell(e.message);
-      }
-      sending = false;
-    };
-    field.addEventListener('keydown', e => {
-      if (e.key !== 'Enter' || e.shiftKey || e.isComposing) return;
-      e.preventDefault();
-      go();
-    });
-    field.addEventListener('blur', go);
   }
 }
 // A slip ticked (or not), its box at once, back as it was if the store refuses
-export async function tickBox(slip, on, ticked, say = english) {
+export async function tickBox(slip, on, ticked, say) {
   const box = slip.querySelector('.slip-tick');
   const show = t => {
     slip.toggleAttribute('data-ticked', t);

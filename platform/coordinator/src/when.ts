@@ -59,13 +59,26 @@ export async function when(ask: Ask, asker: string, now = Date.now()) {
   if (typeof given === 'string') return [400, given] as const;
   const t0 = performance.now();
   const planned = plannedWork(given, asker, now);
-  const { snapshot, trialsFor, relaxedTrial, plays } = await trials(planned, now);
+  const { snapshot, trialsFor, relaxedTrial, safeFinish, plays } = await trials(planned, now);
   const original = trialsFor(snapshot);
   const free = await original.trial(null);
   const seated = () => {
     const more = oneMoreSeat(snapshot, planned.engine);
     return more && trialsFor(more);
   };
+  const answer =
+    given.by === undefined
+      ? { earliest: await earliest(free, original, now) }
+      : { by: await byTime(given.by, free, original, relaxedTrial, seated, now) };
+  // The window the answer's own play has: the earliest's (none when nothing holds), else the one --by's play holds with
+  // (null: none at all), else --by itself.
+  const due = answer.earliest
+    ? answer.earliest.found
+      ? answer.earliest.due
+      : null
+    : 'due' in answer.by!
+      ? answer.by.due
+      : given.by!;
   return {
     work: { title: given.title, agent: given.agent, engine: planned.engine },
     size: {
@@ -79,9 +92,8 @@ export async function when(ask: Ask, asker: string, now = Date.now()) {
       guessed: false,
     },
     free,
-    ...(given.by === undefined
-      ? { earliest: await earliest(free, original, now) }
-      : { by: await byTime(given.by, free, original, relaxedTrial, seated, now) }),
+    ...answer,
+    safe: await safeFinish(due),
     horizon_days: HORIZON_DAYS,
     played: { plays: plays(), ms: Math.round(performance.now() - t0) },
   };
@@ -155,7 +167,7 @@ function plannedWork(given: Given, asker: string, now: number) {
 // latest start that moves with its deadline (its own, its review stages', work it waits for) meets one that doesn't.
 // Between two crossings, that order is the same.
 async function trials(planned: ReturnType<typeof plannedWork>, now: number) {
-  const { snapshot, sizes } = predictions.prepared(now, [planned], ['usual']);
+  const { snapshot, sizes } = predictions.prepared(now, [planned], ['usual', 'slow']);
   let plays = 0;
   const played = async (queue: Snapshot) => {
     plays++;
@@ -184,7 +196,20 @@ async function trials(planned: ReturnType<typeof plannedWork>, now: number) {
       widen: [...before].map(t => giveOf(relaxedPlay.threads.get(t)!)),
     };
   };
-  return { snapshot, trialsFor, relaxedTrial, plays: () => plays };
+  // The time to tell the board for it with that window: live four times in five, the slow play's merge (predictions.ts
+  // heldTo) plus the deploy, never the usual play's finish, which is as likely late as early; none while the slow play
+  // doesn't merge it within the horizon.
+  const safeFinish = async (due: number | null) => {
+    plays += 2;
+    await new Promise(setImmediate);
+    const queue = withDue(snapshot, due);
+    const usual = play(queue, sizes.usual, { pace: 'usual' }).get(PLANNED)!;
+    return predictions.safeOf(
+      predictions.heldTo(usual, play(queue, sizes.slow, { pace: 'slow' }).get(PLANNED)!),
+      snapshot.deployLagMs,
+    );
+  };
+  return { snapshot, trialsFor, relaxedTrial, safeFinish, plays: () => plays };
 }
 
 // The deadlines between lo and hi where one of the work's rows (its own, its review stages', work it waits for) meets one

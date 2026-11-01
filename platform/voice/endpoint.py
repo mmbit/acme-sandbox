@@ -1,12 +1,4 @@
-"""Whether the board has finished its turn, heard from its voice.
-
-Pipecat's Smart Turn v3 (BSD-2-Clause, a Whisper Tiny encoder with a classifier: pipecat-ai/smart-turn on GitHub)
-listens to the last 8 s of the turn, up to the pause, and says how likely it is that the speaker has finished: the
-intonation and the words of a sentence that trails off mid-thought ("so what I'd like is... ") sound different from
-one that ends. The line asks it at each pause instead of reading the recogniser's full stop, which Parakeet writes at
-almost every pause. Its input is Whisper's log-mel spectrogram (transformers' WhisperFeatureExtractor, chunk_length=8,
-do_normalize), computed here with numpy so the image needs no transformers.
-"""
+"""Whether the board has finished its turn, heard from its voice by Pipecat's Smart Turn v3."""
 import numpy as np
 import onnxruntime as ort
 
@@ -15,7 +7,7 @@ SECONDS = 8
 N_FFT, HOP, MELS = 400, 160, 80
 
 
-def _mel_filters():
+def mel_filters():
     """Slaney-style mel filters, as librosa's and transformers' (norm='slaney', mel_scale='slaney'): (201, 80)."""
     def mel(hz):
         hz = np.asarray(hz, np.float64)
@@ -32,12 +24,14 @@ def _mel_filters():
     return np.maximum(0, np.minimum(down, up)) * (2 / (edges[2:] - edges[:-2]))
 
 
-FILTERS = _mel_filters()
+FILTERS = mel_filters()
 HANN = 0.5 - 0.5 * np.cos(2 * np.pi * np.arange(N_FFT) / N_FFT)  # (periodic)
 
 
 def features(audio):
-    """The model's input for 16 kHz float audio: its last 8 s, zeros before a shorter one, as (1, 80, 800)."""
+    """The model's input for 16 kHz float audio: Whisper's log-mel spectrogram of its last 8 s, zeros before a shorter
+    one, as (1, 80, 800). It matches transformers' WhisperFeatureExtractor (chunk_length=8, do_normalize), done in numpy
+    so the image needs no transformers."""
     x = np.asarray(audio, np.float64)[-SECONDS * RATE:]
     x = np.pad(x, (SECONDS * RATE - len(x), 0))
     x = (x - x.mean()) / np.sqrt(x.var() + 1e-7)

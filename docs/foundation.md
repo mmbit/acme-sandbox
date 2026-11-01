@@ -137,6 +137,14 @@ where it suffices.
   promise on it is an item on the call's list, which the call's follow-up hands out with the transcript, so nothing on
   it is queued twice (`platform/coordinator/src/ink/callnotes.ts` ended, `notebooksend.ts` and `ink/booksend.ts`
   sendPage). Before it carries, Onlyonery's agreement is asked through the Overseer.
+- Late notices only for times the board set, and any time told is the four-in-five one, for every company, with no
+  setting: a window's time is the board's only when it named it itself (`hq window --board-set`, a call promise with
+  `board_set`, `hq item add --board-set`: `deadline_by` BOARD, `platform/coordinator/src/windows.ts`), and only its
+  miss is news to the board, told once, after which the new time is ours. A time we give or offer orders the work but
+  its slips reach nobody. `hq when` and `hq deliverable` give the time to tell the board, the slow play's merge plus
+  the deploy, and none when the slow play doesn't finish within the horizon (`forecast.ts` safe, `when.ts`); the call,
+  intercom and hourly-check prompts say the same. Before it carries, Onlyonery's agreement is asked through the
+  Overseer; a switch only if Onlyonery asks for one.
 - `infra/provision.sh` still renames a Hetzner firewall called `web`, the name a server's firewall had before
   firewalls were named for their `SERVER_NAME` (also `harden.sh`'s header): a one-off for a server whose firewall is
   still called `web` in the Hetzner console and guards it alone, which no new company's server has. Generic form:

@@ -8,7 +8,7 @@
 //     asksOn lists them, each with its note (asks), or with its group for a design ask on an Asks page. names: an
 //     agent's name by id, for a scrap's owner_name. people: whom a scrap can be handed to (notebookplaypeople.js). A
 //     page's send_at is in ms (a seeded sent page's: some time gone). slips: the agents' answers, as slipOf lists
-//     them (on a group: grp), their spots and forms as values. A group's asking and tried: where its answer's run and
+//     them (on a group: grp), their forms as values. A group's asking and tried: where its answer's run and
 //     its try are (notebookplayanswers.js). No seed: My journal with one blank page.
 //   - now(): the time in ms (a story's clock). sendMs: a reply's time to undo (notebooksend.ts's SEND_MS).
 //   - A page's picture is null here: in dev mode the browser draws it (notebookpicture.js).
@@ -39,7 +39,7 @@ export function notebookPlay({ seed, now = () => Date.now(), sendMs = 10_000 } =
     // { bytes, type }); a refusal throws an Error with .status and the coordinator's words.
     route: (path, query = {}, body = undefined) => routed(s, path, query, body),
     // An agent's answer on a group, sent or not (group: its id): a slip as bookslips.ts's slipOf lists it ({ by, text,
-    // name?, style?, picture?, link?, preview?, ink?, form?, spot?, version? … }), its id, grp and note filled in; the
+    // name?, style?, picture?, link?, preview?, ink?, form?, version? … }), its id, grp and note filled in; the
     // answer coming on the group ends. → the slip
     answer(group, slip) {
       const g = s.group(Number(group));
@@ -50,7 +50,7 @@ export function notebookPlay({ seed, now = () => Date.now(), sendMs = 10_000 } =
       s.changed(s.page(g.page).notebook, g.page);
       return JSON.parse(JSON.stringify(answered));
     },
-    // The owner's quick run on a group going, its answer coming ({ by, spot, reason? }: bookslips.ts comingOf; null:
+    // The owner's quick run on a group going, its answer coming ({ by, reason? }: bookslips.ts comingOf; null:
     // none), and a group's try run ({ by, expect, going, said? }: groupanswers.ts tryOf), as the group's read shows them
     asking: (group, face) => ran(s, group, { asking: face }),
     trying: (group, tried) => ran(s, group, { tried }),

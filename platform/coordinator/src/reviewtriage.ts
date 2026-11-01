@@ -9,10 +9,11 @@ import * as capacity from './panelcapacity.ts';
 import * as findings from './findings.ts';
 import * as reviewinbox from './reviewinbox.ts';
 import * as engineOnly from './engineonly.ts';
-import * as visual from './visual.ts';
 import { TRUST_RULE } from './trust.ts';
 import * as lenses from './reviewlenses.ts';
 import * as light from './reviewlight.ts';
+import * as floor from './reviewfloor.ts';
+import { lookerOf, foundationOf } from './reviewseats.ts';
 
 export type Read = { agent: string; reason: string; files: string[]; domain: string; security: boolean };
 export type Selection = {
@@ -48,7 +49,7 @@ Judge what the code does, not its folder, filename, line count or a fixed seat t
 secrets, sign-in, outside data or the review machinery? Which domain owner needs to look? A drawing or copy change can
 need only one domain read. Security joins for a concrete risk in how HTML is built or escaped, scripts, credentials,
 external data or other dangerous behavior. Keep Codex for security and general independent reads where needed.
-${lenses.brief(readabilityReader(pr))}
+${lenses.brief(readabilityReader(pr))}${floor.brief(floor.needed(files, !!base, eligibleFor(pr)))}
 
 On a re-review, omit "reviewers" to use just the eligible original finders of the open blockers listed below${finderList(pr, files)}.
 You may explicitly replace that list, but name a reason in "exceptions" for each finder omitted, except a finder
@@ -161,9 +162,8 @@ export function read(job: number, output?: string): Selection | string {
   const reviewers = readersOf(row.pr, report, eligible, files);
   if (typeof reviewers === 'string') return reviewers;
   const throwaway = report.throwaway === true;
-  const assigned = constrained(row.pr, throwaway ? reviewers.filter(reader => reader.security) : reviewers);
-  const covered = throwaway || files.every(file => assigned.some(reader => reader.files.includes(file)));
-  if (assigned.length && !covered) return 'reviewers must cover every assigned file';
+  const assigned = seated(row.pr, reviewers, files, throwaway, eligible);
+  if (typeof assigned === 'string') return assigned;
   const omission = omissionProblem(row.pr, report, assigned, files, suggested);
   if (omission) return omission;
   const looker = lookerOf(report.looker ?? null, reviewers, assigned, throwaway ? consolidator : suggested);
@@ -182,32 +182,20 @@ export function read(job: number, output?: string): Selection | string {
   };
 }
 
-function lookerOf(chosen: string | null, readers: Read[], assigned: Read[], consolidator: string | undefined) {
-  if (chosen === null) return null;
-  const original = readers.find(reader => reader.agent === chosen);
-  const retained = assigned.find(reader => reader.agent === chosen);
-  if (!original && !retained && chosen !== consolidator) return undefined;
-  if (!assigned.length) return consolidator;
-  if (!readers.length && chosen === consolidator) return chosen;
-  const scope = original?.files ?? assigned.flatMap(reader => reader.files);
-  const shown = visual.visualFor(scope).flatMap(check => check.files);
-  if (!shown.length && retained) return retained.agent;
-  const files = shown.length ? shown : (original?.files ?? []);
-  if (retained?.files.some(file => files.includes(file))) return retained.agent;
-  return assigned.find(reader => reader.files.some(file => files.includes(file)))?.agent;
-}
-
-// The readers asked the foundation question: the one triage gave it, and any seat engine constraints moved that reader's
-// files to; undefined when triage named no reader of its own
-function foundationOf(chosen: string | null, readers: Read[], assigned: Read[]) {
-  if (chosen === null) return [];
-  const original = readers.find(reader => reader.agent === chosen);
-  if (!original) return undefined;
-  const kept = assigned.filter(reader => reader.agent === chosen).flatMap(reader => reader.files);
-  const moved = original.files.filter(file => !kept.includes(file));
-  return assigned
-    .filter(reader => reader.agent === chosen || reader.files.some(file => moved.includes(file)))
-    .map(reader => reader.agent);
+// The panel as the engine constraints seat it, held to the review's floor and covering every file
+function seated(
+  pr: number,
+  reviewers: Read[],
+  files: string[],
+  throwaway: boolean,
+  eligible: (agent: string) => boolean,
+) {
+  const assigned = constrained(pr, throwaway ? reviewers.filter(reader => reader.security) : reviewers);
+  const short = floor.problem(floor.needed(files, !!fixesFrom(pr), eligible), assigned, throwaway);
+  if (short) return short;
+  const covered = throwaway || files.every(file => assigned.some(reader => reader.files.includes(file)));
+  if (assigned.length && !covered) return 'reviewers must cover every assigned file';
+  return assigned;
 }
 
 function eligibleFor(pr: number) {
@@ -232,10 +220,7 @@ function readersOf(pr: number, report: any, eligible: (agent: unknown) => boolea
   )
     return 'exceptions need an agent and reason';
   const defaults = finders(pr, files);
-  const { fixes_from } = db.prepare('select fixes_from from prs where number = ?').get(pr) as {
-    fixes_from: string | null;
-  };
-  if (report.reviewers === undefined && !fixes_from) return 'a first read needs an explicit panel';
+  if (report.reviewers === undefined && !fixesFrom(pr)) return 'a first read needs an explicit panel';
   const reviewers = report.reviewers === undefined ? defaults : report.reviewers;
   if (!Array.isArray(reviewers)) return 'reviewers must be a list';
   const problem = readerProblem(reviewers, eligible);
@@ -262,11 +247,11 @@ function omissionProblem(pr: number, report: any, assigned: Read[], files: strin
 // The readability reader a first read chooses unless excepted: none on a re-review, or when they may not read
 function readabilityReader(pr: number) {
   const agent = roles().readability;
-  const { fixes_from } = db.prepare('select fixes_from from prs where number = ?').get(pr) as {
-    fixes_from: string | null;
-  };
-  return agent && !fixes_from && eligibleFor(pr)(agent) ? agent : undefined;
+  return agent && !fixesFrom(pr) && eligibleFor(pr)(agent) ? agent : undefined;
 }
+
+const fixesFrom = (pr: number) =>
+  (db.prepare('select fixes_from from prs where number = ?').get(pr) as { fixes_from: string | null }).fixes_from;
 
 // A reader's files as paths: a folder (ending in /) or a glob reads as the round's files it matches, a path as itself.
 function matching(entries: string[], files: string[]) {

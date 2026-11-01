@@ -29,13 +29,20 @@
   box-shadow: -1px 0 0 #d9c8a6;
   pointer-events: auto;
 }
-/* (the islands are the rail's own groups: no card of their own, a rule between them) */
+/* (the islands are the rail's own groups: no card of their own, a rule between them, and on the paper's edge its
+   buttons in the paper's ink in every look, only the tool in use lit in the look's own: bookui.css.) */
 #book .bk-column .bk-island {
   padding: 0;
   gap: 2px;
+  border: 0;
   background: none;
   box-shadow: none;
   border-radius: 0;
+}
+#book .bk-column .bk-btn:not([aria-pressed='true']) {
+  --bk-ui-ink: var(--bk-ink);
+  --bk-ui-muted: var(--bk-muted);
+  --bk-ui-wash: var(--bk-ink-soft);
 }
 #book .bk-column > .bk-island:not(:first-child, [data-island='pages']),
 #book .bk-column > .bk-more {
@@ -53,6 +60,7 @@
 #book .bk-column .bk-island hr {
   align-self: stretch;
   margin: 4px 6px;
+  border-color: var(--bk-edge);
 }
 #book .bk-column .bk-btn {
   width: 44px;
@@ -197,7 +205,7 @@
   width: 18px;
   height: 18px;
   margin: 0;
-  accent-color: var(--bk-ink);
+  accent-color: var(--bk-ui-lit);
 }
 #book .bk-prefs fieldset {
   margin: 4px 0 0;

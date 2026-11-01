@@ -30,7 +30,7 @@ const ICONS = {
     '<circle cx="12" cy="12" r="3"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M5.5 18.5l1.7-1.7M16.8 7.2l1.7-1.7"/><circle cx="12" cy="12" r="6.4"/>',
   ),
 };
-import { word } from './bookscope.js';
+import { scope, word } from './bookscope.js';
 
 // book (bookpages.js): { views, cur }. act: what the controls do, bookpages.js's: overview(), level(), turnTo(i),
 // newPage(), send() (an invited person's). Returns { update() }: the controls say where the book is now.
@@ -38,19 +38,19 @@ export function mountControls(book, act) {
   const pages = island('pages'),
     over = button({
       icon: ICONS.overview,
-      label: book.scope ? word("The notebook's pages") : "The overview: the notebook's pages, and the Shelf",
+      label: scope ? word('notebookPages') : "The overview: the notebook's pages, and the Shelf",
       onClick: () => act.overview(),
       pressed: false,
     }),
-    cog = button({ icon: ICONS.cog, label: word('Preferences on this device') });
+    cog = button({ icon: ICONS.cog, label: word('preferences') });
   over.classList.add('bk-rare');
   cog.classList.add('bk-cog', 'bk-rare');
   mountPrefs(cog);
   const { before, after, name, add } = pageButtons(book, act),
     rule = document.createElement('hr');
   pages.append(before, after, name, rule, over, add, cog);
-  const send = book.scope ? sendKey(act) : null,
-    locked = book.scope ? null : lockLine();
+  const send = scope ? sendKey(act) : null,
+    locked = scope ? null : lockLine();
   // (the asks still open on the page, counted on the rail over the page's arrows; in a guest's book, the scraps handed
   // to them.)
   const forYou = mountForYou(book, pages);
@@ -62,8 +62,8 @@ export function mountControls(book, act) {
       setPressed(over, far);
       // (the overview open: only its own button, pressed, to come back by)
       for (const el of [before, name, after, rule]) el.hidden = far;
-      over.hidden = !!book.scope?.singlePage;
-      add.hidden = far || !!book.scope?.singlePage;
+      over.hidden = !!scope?.singlePage;
+      add.hidden = far || !!scope?.singlePage;
       cog.hidden = far;
       if (send) send.hidden = far || !page || shut(page) || page.kind === 'call';
       locked?.(!far && !!page && shut(page) && (page.sent || page.sending ? 'Sent, locked' : 'Locked'));
@@ -85,20 +85,20 @@ function named(name, page, at, n) {
   name.innerHTML = `<small>${at}/${n}</small>`;
   name.setAttribute(
     'aria-label',
-    word("The notebook's pages: {page}", { page: nameOf(page) }) + (n > 1 ? word(', {at} of {n}', { at, n }) : ''),
+    word('notebookPagesAt', { page: nameOf(page) }) + (n > 1 ? word('pageOfPages', { at, n }) : ''),
   );
 }
 
 // The pages' buttons: the page before and after, where it is (the notebook's pages), and New page (.bk-turns: what
 // More takes last, .bk-rare first: bookui.js)
 function pageButtons(book, act) {
-  const name = button({ label: word("The notebook's pages"), onClick: () => menu(book, act, name) }),
-    before = button({ icon: ICONS.before, label: word('The page before'), onClick: () => act.turnTo(book.cur - 1) }),
-    after = button({ icon: ICONS.after, label: word('The page after'), onClick: () => act.turnTo(book.cur + 1) }),
+  const name = button({ label: word('notebookPages'), onClick: () => menu(book, act, name) }),
+    before = button({ icon: ICONS.before, label: word('pageBefore'), onClick: () => act.turnTo(book.cur - 1) }),
+    after = button({ icon: ICONS.after, label: word('pageAfter'), onClick: () => act.turnTo(book.cur + 1) }),
     add = button({
       icon: ICONS.page,
-      label: word('New page'),
-      keys: word('A blank page after the last, for the next part'),
+      label: word('newPage'),
+      keys: word('newPageHint'),
       onClick: () => act.newPage(),
     });
   name.classList.add('bk-where');
@@ -111,8 +111,8 @@ function pageButtons(book, act) {
 function sendKey(act) {
   const send = button({
     icon: ICONS.send,
-    label: word('Send'),
-    keys: word('This page to the agents: 10 seconds to undo'),
+    label: word('send'),
+    keys: word('sendHint'),
     onClick: () => act.send(),
   });
   send.classList.add('bk-send');
@@ -144,7 +144,7 @@ function menu(book, act, from) {
   const card = document.createElement('div');
   card.className = 'bk-card bk-pages-menu';
   card.setAttribute('role', 'menu');
-  card.setAttribute('aria-label', word('Pages'));
+  card.setAttribute('aria-label', word('pages'));
   card.innerHTML = menuOf(book);
   titling = editTitle(from, book, card, ended => {
     if (ended) titling = null;

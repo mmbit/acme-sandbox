@@ -24,8 +24,8 @@ The Sketchbook is one part of Ink, and in code it is the book: one per person, a
   its verdicts and their why kept; `bookseen.ts` is what it reads of a note. A note that gets no answer (its run ended
   without one, it couldn't be judged, or it came past the judge's day) says why in the answer's place, one reason a note until the next ask or answer takes it. `bookanswer.ts`
   answers: the owner's quick run, `hq answer` (words, a drawing, a
-  picture, a form, a question, versions; `answerparts.ts` checks what one holds), forms answered, ticks and the open list; `answerspot.ts` places an answer in
-  free paper by its group, never over the board's own. `groupanswers.ts` is what a group's children carry.
+  picture, a form, a question, versions; `answerparts.ts` checks what one holds), forms answered, ticks and the open list; an
+  answer slips under its note's unit. `groupanswers.ts` is what a group's children carry.
   `booktry.ts` starts a try run (versions of what a note asks to see, the real thing, drawn under the note as each
   lands: `groupanswers.ts` tryOf says coming, made, or empty with why, so no count of versions that don't exist).
   `trybranch.ts` makes each version a branch of its own on GitHub (`try/v<slip>`: the deployed main and its patch).

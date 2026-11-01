@@ -7,8 +7,8 @@ import { db } from '../db.ts';
 import { BOARD, COLUMNS, row, summary, type Page } from './book.ts';
 import { pictureOf } from './bookpicture.ts';
 import type { Refused } from '../pagechecks.ts';
-import type { Reader } from '../jobs.ts';
-import { callAccess, keysCall } from '../memory.ts';
+import { readerHanded, readsCustomerData, type Reader } from '../jobs.ts';
+import { callAccess, customerCall, keysCall } from '../memory.ts';
 import { DIR } from '../pagescraps.ts';
 import { ownerOf } from './sketchpeople.ts';
 import { cutsOf, piecesFor } from '../../../hq/shell/ink/booksharefiles.js';
@@ -22,17 +22,40 @@ export const listForAgent = (archived: boolean, reader: Reader) => ({
       p => !!p.archived === archived,
     ),
     reader,
-  ).map(p => ({ ...summary(p, false), from: ownerOf(p.who) })),
+  ).map(p => ({ ...shownTo(p, reader), from: ownerOf(p.who) })),
 });
 export async function getForAgent(id: number, reader: Reader) {
   const p = row(id, null);
-  if (!p) return 404;
+  if (!p || !readsPage(p, reader)) return 404;
   const access = callRead(p, reader);
   if (access !== true) return access;
   const file = await pictureOf(p);
   if (!file) return 404; // (deleted while it was drawn)
   const data = readFileSync(`${DIR}/${file}`).toString('base64');
-  return { ...summary(p, false), from: ownerOf(p.who), picture: { type: 'image/png', data } };
+  return { ...shownTo(p, reader), from: ownerOf(p.who), picture: { type: 'image/png', data } };
+}
+// An invited person's own page carries their notes, name and what their screenshots caught (on a tester's checkout,
+// what they typed in), like an outside reviewer's note (feedback.ts readsOutside): read only by roles.customerData and
+// the jobs it went to (a sheet of it, or its review round's Advice: notebookrounds.ts), who hold those details from
+// then on.
+const SENT_TO = `select 1 from book_notes n join book_sheets s on s.id = n.sheet where n.page = ?1 and s.job = ?2
+  union all select 1 from notebook_guests g join notebook_rounds r on r.notebook = g.notebook where g.page = ?1 and r.advice = ?2`;
+function readsPage(p: Page, reader: Reader) {
+  if (p.who === BOARD) return true;
+  const sentTo = !!reader.id && !!db.prepare(SENT_TO).get(p.id, reader.id);
+  if (!sentTo && !readsCustomerData(reader.agent)) return false;
+  readerHanded(reader);
+  return true;
+}
+// A page as a job reads it. A customer call's page is the board's like any other, but its summary is the follow-up's
+// account of the call (calls.reply), with the customer's details in it: only the call's own readers (callAccess) get it,
+// and hold those details from then on.
+function shownTo(p: Page, reader: Reader) {
+  const shown = summary(p, false);
+  if (p.kind !== 'call' || p.call == null || !shown.summary || !customerCall(p.call)) return shown;
+  if (callAccess(p.call, reader) !== true) return { ...shown, summary: null };
+  readerHanded(reader);
+  return shown;
 }
 
 // ---------------------------------------------------------------- the voice line's: a call's sketch tool
@@ -114,6 +137,7 @@ function callRead(p: Page, reader: Reader, own?: number): true | 404 | [403, str
 function readable(pages: Page[], reader: Reader, own?: number) {
   const read = new Map<number, boolean>();
   return pages.filter(p => {
+    if (!readsPage(p, reader)) return false;
     if (p.call == null) return true;
     if (!read.has(p.call)) read.set(p.call, callRead(p, reader, own) === true);
     return read.get(p.call)!;

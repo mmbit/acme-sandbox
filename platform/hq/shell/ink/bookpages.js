@@ -10,7 +10,7 @@
 // mouse's tools booktools.js, asked in this order on a press on the paper: a pan (bookpan.js), then book.tools.press(e), then ink.
 import { pen } from '/__review/ink.js';
 import { resizedNextFrame, store } from '../../util.js';
-import { word } from './bookscope.js';
+import { scope, word } from './bookscope.js';
 import { createPage, loadPages, loadShelf } from './notebookdata.js';
 import { changed, readAgain, readPage, said, saveAll, shut } from './booksave.js';
 import { pageView } from './bookpage.js';
@@ -34,9 +34,9 @@ const HTML = `<div class="bk-pages">
 
 // paper: the book's paper, empty. dev: on mock data. shape(): the screen's shape ('landscape' | 'portrait' | 'narrow'
 // | 'wide'), for the place remembered. undo() takes back the book's last step; page() is the page shown (its summary).
-export function mountPages(paper, { dev, shape, scope = null, calls = null }) {
+export function mountPages(paper, { dev, shape, calls = null }) {
   paper.innerHTML = HTML;
-  const book = bookOf(paper, { dev, shape, scope, calls });
+  const book = bookOf(paper, { dev, shape, calls });
   book.steps = stepList(book);
   // (what the mouse's tools and the pages' parts ask of the page: booktools.js, booktape.js)
   Object.assign(book, {
@@ -111,8 +111,7 @@ function storeChanged(book, id) {
   if (book.notebook) pagesAgain(book);
 }
 // The book's state as it opens on the paper
-const bookOf = (paper, { dev, shape, scope, calls }) => ({
-  scope,
+const bookOf = (paper, { dev, shape, calls }) => ({
   calls,
   dev,
   shape,
@@ -144,9 +143,9 @@ async function openNotebook(book, id = null, place = null) {
   saveAll(book);
   let read;
   try {
-    const asked = book.scope?.notebook ?? id ?? (await loadShelf(book.dev)).shelf[0]?.id;
+    const asked = scope?.notebook ?? id ?? (await loadShelf(book.dev)).shelf[0]?.id;
     read = await loadPages(book.dev, asked).catch(e =>
-      e.status === 404 && id && !book.scope
+      e.status === 404 && id && !scope
         ? loadShelf(book.dev).then(s => loadPages(book.dev, s.shelf[0].id))
         : Promise.reject(e),
     );
@@ -156,7 +155,7 @@ async function openNotebook(book, id = null, place = null) {
       read = await loadPages(book.dev, read.notebook.id);
     }
   } catch (e) {
-    book.lost.textContent = word('{error} Tap to try again.', { error: e.message });
+    book.lost.textContent = word('tapToRetry', { error: e.message });
     book.lost.onclick = () => openNotebook(book, id, place);
     return void (book.lost.hidden = false);
   }
@@ -307,7 +306,7 @@ function resized(book) {
   lay(book);
   goTo(book, place);
 }
-const placeKey = book => `book.place.${book.scope ? `guest.${book.scope.notebook}.` : ''}${book.shape()}`;
+const placeKey = book => `book.place.${scope ? `guest.${scope.notebook}.` : ''}${book.shape()}`;
 // The view's place at rest, for this device
 function remember(book) {
   const v = viewOf(book);

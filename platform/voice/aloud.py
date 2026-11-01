@@ -1,5 +1,4 @@
-"""Numbers written out as words before they are spoken, by the voice line (server.py) and On Air (shared/onair), and the
-company's words respelt as they should sound (respelt)."""
+"""Numbers written out as words, and the company's words respelt, before the voice line or On Air speaks them."""
 import re
 
 # How the line says a day that isn't today: a weekly window resets days away
@@ -368,8 +367,7 @@ def digits(written, lang='en'):
 def one_by_one(written, lang='en'):
     """A code a letter or digit at a time, a letter by its name: "7Q4K" is "seven Q four K", "zeven kuu vier kaa" or
     "sieben Kuh vier Kah"."""
-    names = dict(zip('ABCDEFGHIJKLMNOPQRSTUVWXYZ', NUMBERS[lang]['letters'].split())) if 'letters' in NUMBERS[lang] \
-        else {}
+    names = dict(zip('ABCDEFGHIJKLMNOPQRSTUVWXYZ', NUMBERS[lang].get('letters', '').split()))
     return ' '.join(digits(c, lang) if c.isdigit() else names.get(c.upper(), c.upper()) for c in written)
 
 

@@ -74,7 +74,6 @@ test("an answer on a group not sent yet: the owner's face and dots under it whil
   const waiting = (await groupOn(page, g.id)).waiting;
   assert.equal(waiting.style, 'text');
   assert.equal(waiting.by, run.agent);
-  assert.equal(waiting.spot, null, 'under its scrap, no spot of its own');
   heard.length = 0;
   await h.finish(run, { status: 'done', result: 'People who saw it at least once this week.' });
   const after = await groupOn(page, g.id);
@@ -85,7 +84,6 @@ test("an answer on a group not sent yet: the owner's face and dots under it whil
   assert.equal(answer.text, 'People who saw it at least once this week.');
   assert.equal(answer.grp, g.id);
   assert.equal(answer.note, null, 'not sent: no note');
-  assert.equal(answer.spot, null, 'it slips under its scrap, where the dots were');
   assert.ok(
     heard.some(e => e.page === page),
     "a 'book' event for the page",
@@ -98,7 +96,6 @@ test('a quick run that ends without an answer says so where the answer would lie
   const after = await groupOn(page, g.id);
   assert.deepEqual(after.children, [], 'no answer');
   assert.deepEqual([after.waiting.reason, after.waiting.by], ["I couldn't answer that. Ask again.", run.agent]);
-  assert.equal(after.waiting.spot, null, 'under its scrap, where the dots were');
 });
 
 test("a reply under an answer whose group is deleted, kept for Undo, is refused; after Undo it's taken", async () => {
@@ -232,7 +229,7 @@ test("a wiped note's question leaves the open list, which still reads; the note'
   const wiped = await h.board('/api/notebooks/open');
   assert.equal(wiped.status, 200, JSON.stringify(wiped.body));
   assert.ok(!wiped.body.questions.some((q: any) => q.id === question.id), 'wiped: off the list');
-  assert.equal((await h.board('/api/book/slip/tick', { id: question.id, ticked: true })).status, 404);
+  assert.equal((await h.board('/api/notebooks/answers/tick', { id: question.id, ticked: true })).status, 404);
   assert.equal((await h.board('/api/book/note/restore', { id: made.id })).status, 200);
   assert.ok(
     (await open()).questions.some((q: any) => q.id === question.id),
@@ -269,7 +266,7 @@ test('a tick closes an answer; a tick on a version picks it; only the run asked 
   const patch =
     'diff --git a/products/README.md b/products/README.md\n--- a/products/README.md\n+++ b/products/README.md\n@@ -1 +1 @@\n-Products\n+Warm products\n';
   const v = (await agent('answer', tryRun.token, { grp: g.id, version: 'Warm paper', picture: png, patch })).body.slip;
-  assert.deepEqual([v.style, v.version, v.patch, v.spot], ['version', 'Warm paper', true, null]);
+  assert.deepEqual([v.style, v.version, v.patch], ['version', 'Warm paper', true]);
   const picked = (await h.board('/api/notebooks/answers/tick', { id: v.id, ticked: true })).body.answer;
   assert.ok(picked.picked && !picked.ticked, 'picked');
   // a tick on another version moves the pick: one per try, and the run hears which

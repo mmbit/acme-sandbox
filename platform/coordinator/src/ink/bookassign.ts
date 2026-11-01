@@ -11,7 +11,7 @@ import { answerNow } from './bookanswer.ts';
 import { asksPage } from './askpages.ts';
 import { byHand, pageRow, shut, type NotebookPage } from '../notebook.ts';
 import { insertGroup, partsOf, row, shown, write, type Group, type Parts } from '../notebookgroups.ts';
-import { forGuest, whoOf, type Membership } from '../notebookguests.ts';
+import { forGuest, whoOf, type Membership } from '../notebookmembers.ts';
 import { DIR } from '../pagescraps.ts';
 import type { Refused } from '../pagechecks.ts';
 
@@ -25,7 +25,7 @@ db.exec(`create table if not exists notebook_assigns (id integer primary key aut
 db.exec(`create table if not exists notebook_assign_pictures (grp integer not null, file text not null,
   key text not null, primary key (grp, file))`);
 
-// to: 'agent:<id>' or a guest's book's 'guest:<grant>' (notebookguests.ts whoOf), so a name given to someone new
+// to: 'agent:<id>' or a guest's book's 'guest:<grant>' (notebookmembers.ts whoOf), so a name given to someone new
 // later never takes over what went to the one before
 export type Person = { to: string; name: string; kind: 'guest' | 'agent' };
 type Assign = {

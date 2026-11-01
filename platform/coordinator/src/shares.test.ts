@@ -771,8 +771,12 @@ test('the board’s share box remembers who it shared with for three weeks, by n
   assert.doesNotMatch(fenna.landed.text + (await call(fenna.path, { cookie: fenna.g })).text, /UX specialist/);
   assert.equal((await pinNote(fenna.ps, HELLO, `https://${HELLO}/`, 'The steps feel cramped')).status, 200);
   const [hers] = bookNotesOf('Fenna');
-  const handed = await guestbooks.act('send', { id: hers.page }, 'Fenna');
-  assert.ok(typeof handed !== 'number' && !Array.isArray(handed));
+  const handed = await call('/guest/notebooks/api/pages/send', {
+    cookie: fenna.g,
+    origin: ORIGIN,
+    body: { id: hers.page },
+  });
+  assert.equal(handed.status, 200, handed.text);
   booksheets.deliverDue(Date.now() + booknotes.SEND_MS + 1000);
   const note = bookNotesOf('Fenna').find(group => group.id === hers.id)!.note!;
   const review = (db.prepare('select review from book_notes where id = ?').get(note) as { review: number }).review;

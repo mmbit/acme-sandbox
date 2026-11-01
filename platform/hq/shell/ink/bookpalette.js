@@ -45,21 +45,32 @@ const ICONS = {
   filled: svg('<rect x="4" y="4" width="12" height="12" rx="2" fill="currentColor"/>'),
   smooth: svg('<path d="M3 13c2.5-6 4.5-6 7-1.5S15 15 17 7"/>'),
 };
-// The tools down the rail (the pen and the marker one tool: the one not in use shows only where there's room)
+// The tools down the rail (the pen and the marker one tool: the one not in use shows only where there's room).
+// Every word here, and every row's name, is a key of the guest words (notebookwords.js).
 export const TOOLS = [
-  { mode: 'select', label: 'Select', key: 'V' },
-  { mode: 'pen', label: 'Pen', key: 'P' },
-  { mode: 'highlighter', label: 'Marker', key: 'M' },
-  { mode: 'eraser', label: 'Eraser', key: 'E' },
-  { mode: 'shapes', label: 'Shapes', key: 'S' },
-  { mode: 'text', label: 'Text', key: 'T' },
+  { mode: 'select', word: 'toolSelect', key: 'V' },
+  { mode: 'pen', word: 'toolPen', key: 'P' },
+  { mode: 'highlighter', word: 'toolMarker', key: 'M' },
+  { mode: 'eraser', word: 'toolEraser', key: 'E' },
+  { mode: 'shapes', word: 'toolShapes', key: 'S' },
+  { mode: 'text', word: 'toolText', key: 'T' },
 ];
 const INKS = ['pen', 'highlighter'];
+// (shapes: the Shapes button's name with the shape in use)
 const KINDS = {
-  ellipse: { label: 'Ellipse', key: 'O' },
-  rect: { label: 'Rectangle', key: 'R' },
-  line: { label: 'Line', key: 'L' },
-  arrow: { label: 'Arrow', key: 'A' },
+  ellipse: { word: 'shapeEllipse', shapes: 'shapesEllipse', key: 'O' },
+  rect: { word: 'shapeRectangle', shapes: 'shapesRectangle', key: 'R' },
+  line: { word: 'shapeLine', shapes: 'shapesLine', key: 'L' },
+  arrow: { word: 'shapeArrow', shapes: 'shapesArrow', key: 'A' },
+};
+// the inks' words by their names (ink.js PENS, bookinkmath.js MARKERS)
+const INK_WORDS = {
+  Night: 'inkNight',
+  Red: 'inkRed',
+  Blue: 'inkBlue',
+  Green: 'inkGreen',
+  Yellow: 'inkYellow',
+  Pink: 'inkPink',
 };
 const swatch = (color, alpha = 1) =>
   `<svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7" fill="#fffaf0"/><circle cx="10" cy="10" r="7" fill="${color}" fill-opacity="${alpha}" stroke="rgba(42,35,82,.28)" stroke-width="1"/></svg>`;
@@ -108,7 +119,7 @@ export const eraserRadius = st => ERASERS[st.eraser] / 2;
 // The tools put first on the rail, before Undo and Redo (bookrail.js)
 function makeIsland(st) {
   const own = TOOLS.map(t => {
-    const b = button({ icon: ICONS[t.mode], label: word(t.label), keys: t.key, pressed: false });
+    const b = button({ icon: ICONS[t.mode], label: word(t.word), keys: t.key, pressed: false });
     b.dataset.mode = t.mode;
     if (t.mode !== 'select') b.setAttribute('aria-haspopup', 'true');
     st.buttons[t.mode] = b;
@@ -195,7 +206,7 @@ function stepSize(st, by) {
 // bookstrip.css), and the cursor in the tool's colour and size
 function show(st) {
   st.buttons.shapes.innerHTML = ICONS[st.shape];
-  st.buttons.shapes.setAttribute('aria-label', word(`Shapes: ${KINDS[st.shape].label.toLowerCase()}`));
+  st.buttons.shapes.setAttribute('aria-label', word(KINDS[st.shape].shapes));
   st.buttons.pen.style.setProperty('--bk-dot', st.pen);
   st.buttons.highlighter.style.setProperty('--bk-dot', st.marker);
   st.book.desk.style.setProperty('--bk-tool-cursor', cursorOf(st, colourOf(st)));
@@ -235,7 +246,7 @@ function card(st) {
   const el = document.createElement('div');
   el.className = 'bk-card bk-palette';
   el.setAttribute('role', 'menu');
-  el.setAttribute('aria-label', word(st.mode === 'eraser' ? 'Eraser size' : 'Colour and width'));
+  el.setAttribute('aria-label', word(st.mode === 'eraser' ? 'eraserSize' : 'colourAndWidth'));
   st.opener = st.buttons[st.mode];
   st.opener.setAttribute('aria-expanded', 'true');
   st.card = el;
@@ -266,7 +277,7 @@ function row(name, items) {
   r.className = 'bk-palette-row';
   r.setAttribute('role', 'group');
   r.setAttribute('aria-label', word(name));
-  for (const { icon, label, keys = '', on, pick } of items) {
+  for (const { icon, word: label, keys = '', on, pick } of items) {
     const b = button({ icon, label: word(label), keys, pressed: on, onClick: pick });
     b.setAttribute('role', 'menuitemradio');
     r.append(b);
@@ -276,12 +287,12 @@ function row(name, items) {
 // (the card opened again for the one picked, as its colours are its own)
 const inkChoice = st =>
   row(
-    'Pen or marker',
+    'penOrMarker',
     INKS.map(m => {
       const tool = TOOLS.find(t => t.mode === m);
       return {
         icon: ICONS[m],
-        label: tool.label,
+        word: tool.word,
         keys: tool.key,
         on: st.mode === m,
         pick: () => m !== st.mode && (setMode(st, m), card(st)),
@@ -290,20 +301,20 @@ const inkChoice = st =>
   );
 const shapeRows = st => [
   row(
-    'Shape',
+    'shape',
     SHAPES.map(k => ({ icon: ICONS[k], ...KINDS[k], on: st.shape === k, pick: () => pickShape(st, k) })),
   ),
-  row('Fill', [
-    { icon: ICONS.outline, label: 'Outline', keys: 'F', on: !st.fill, pick: () => setFill(st, false) },
-    { icon: ICONS.filled, label: 'Filled', keys: 'F', on: st.fill, pick: () => setFill(st, true) },
+  row('fill', [
+    { icon: ICONS.outline, word: 'outline', keys: 'F', on: !st.fill, pick: () => setFill(st, false) },
+    { icon: ICONS.filled, word: 'filled', keys: 'F', on: st.fill, pick: () => setFill(st, true) },
   ]),
 ];
 const eraserRow = st =>
   row(
-    'Size',
+    'eraserSizes',
     ERASERS.map((d, i) => ({
       icon: ringIcon(d, ERASERS.at(-1)),
-      label: ['Fine eraser', 'Eraser', 'Wide eraser'][i],
+      word: ['fineEraser', 'toolEraser', 'wideEraser'][i],
       keys: ['[', '', ']'][i],
       on: st.eraser === i,
       pick: () => ((st.eraser = i), changed(st)),
@@ -314,29 +325,29 @@ function inkRows(st) {
   const marker = st.mode === 'highlighter',
     k = widthsOf(st);
   const colours = row(
-    'Colour',
+    'colour',
     inksOf(st).map((ink, i) => ({
       icon: swatch(ink.color, marker ? 0.75 : 1),
-      label: ink.name,
+      word: INK_WORDS[ink.name],
       keys: String(i + 1),
       on: ink.color === colourOf(st),
       pick: () => setColour(st, ink.color),
     })),
   );
   const widths = row(
-    'Width',
+    'width',
     WIDTHS[k].map((w, i) => ({
       icon: widthIcon(w, WIDTHS[k].at(-1), colourOf(st), marker ? 0.6 : 1),
-      label: ['Fine', 'Medium', 'Bold'][i],
+      word: ['widthFine', 'widthMedium', 'widthBold'][i],
       keys: ['[', '', ']'][i],
       on: st.widths[k] === i,
       pick: () => ((st.widths[k] = i), changed(st)),
     })),
   );
-  const smooth = row('Smoothing', [
+  const smooth = row('smoothing', [
     {
       icon: ICONS.smooth,
-      label: 'Smooth the line',
+      word: 'smoothLine',
       on: st.smooth,
       pick: () => ((st.smooth = !st.smooth), changed(st)),
     },

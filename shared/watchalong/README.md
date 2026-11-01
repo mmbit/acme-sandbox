@@ -49,6 +49,14 @@ fewer after an undo, none once sent) says what it shows now (ink.js `shown`). Th
 `data-watchalong-hide`; the Sketchbook's page keeps its own canvas pictures, so its finished strokes stay drawn until
 its next picture. `strokes.js` reads the events back: the strokes on screen at any time (`Inks`, `inkAt`), and draws
 them over a replay in each document's place (`paint`, `placer`), as the mirror and the player do.
+**The top layer** (`toplayer.js`): what a page shows over everything, a popover or a modal dialog (HQ's small call
+and its cards, a picture opened large), is there by a call (`showPopover`, `showModal`), not by anything in the DOM, so
+rrweb alone records it hidden. The recorder, a framed page's too (a preview's popover), marks a `top` moment as it
+starts and whenever its document's top layer changes (`{ id: [the document, ...the layer from the bottom up] }`,
+rrweb's ids, which rrweb makes a frame's the framing page's under `id`), and the mirror and the player show the same in
+each document of their replay before each picture and frame. One their replay can't show throws, and the picture
+fails with it. Anything a page puts there is captured so, with nothing to mark; `toplayer.test.ts` compares the
+mirror's picture of such a page, and of one in a frame, with the page's own screenshot.
 **Kept out:** passwords and hidden fields' values always; anything inside `[data-watchalong-hide]` (an empty box in
 the replay: key fields). Inside `[data-private]`, for the board too (a person's address,
 email or phone, a customer's case: mark them where a page shows them): the text, what's typed, every attribute but

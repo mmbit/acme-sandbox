@@ -1,7 +1,7 @@
 /* Assigning (bookassign.js, bookassignlist.js, bookassignfly.js): the short list and everyone's sheet, each person's
-   initial in a circle, their whole name and what they are; the row the line or the pointer is on lit in Ink's chosen
-   colour; the line drawn over everything and the copy flying to a name; and the tags a scrap wears for whom it went to.
-   The cards and the line live on the screen (fixed), the tags in the page's px with the scrap.
+   initial in a circle, their whole name and what they are, on the look's card; the row the line or the pointer is on
+   lit as the look lights a key; the line drawn over everything and the copy flying to a name; and the tags a scrap wears for whom it went to.
+   The cards and the line live on the screen (fixed), the tags in the page's px with the scrap. (The cards in the look.)
  */
 
 /* ---- a card of people: as wide as its longest name, on the screen whole (its max-width: bookassignlist.js put) */
@@ -13,8 +13,6 @@
   width: max-content;
   min-width: 260px;
   padding: 6px;
-  border: 2px solid var(--bk-ink);
-  border-radius: 18px;
   display: flex;
   flex-direction: column;
   transform-origin: 0 0;
@@ -27,7 +25,7 @@
   margin: 6px 14px 4px;
   font-size: 15px;
   font-weight: 700;
-  color: var(--bk-muted, #5a5478);
+  color: var(--bk-ui-muted);
 }
 
 /* a person: 56 px tall, their initial in a ring, their name in bold, guest or agent at the right */
@@ -63,7 +61,10 @@
   font-weight: 700;
   line-height: 1;
 }
+/* (in the card, the face in the card's words) */
 .bk-assign .bk-face {
+  border-color: currentColor;
+  background: none;
   width: 40px;
   height: 40px;
   font-size: 18px;
@@ -77,28 +78,27 @@
 .bk-assign .bk-kind {
   font-size: 15px;
   font-weight: 600;
-  color: var(--bk-muted, #5a5478);
+  color: var(--bk-ui-muted);
 }
 .bk-assign .bk-person[data-lit] {
-  border-color: var(--bk-ink);
-  background: var(--bk-chosen, #d6ea3c);
-  color: var(--bk-ink);
+  background: var(--bk-ui-lit);
+  color: var(--bk-ui-on-lit);
 }
 .bk-assign .bk-person[data-lit] .bk-kind {
   color: inherit;
 }
 @media (hover: hover) {
   .bk-assign .bk-person:not([data-lit]):hover {
-    background: var(--bk-ink-soft);
+    background: var(--bk-ui-wash);
   }
 }
 .bk-assign .bk-person:focus-visible {
-  outline: 2px solid var(--bk-ink);
+  outline: 2px solid var(--bk-ui-ink);
   outline-offset: -2px;
 }
 
 /* More…: under a rule, three dots in a grey ring, everyone's count beside it */
-.bk-assign-more {
+.bk-assign .bk-assign-more {
   margin-top: 4px;
   position: relative;
 }
@@ -108,25 +108,25 @@
   top: -4px;
   left: 12px;
   right: 12px;
-  border-top: 1.5px solid var(--bk-edge);
+  border-top: 1.5px solid var(--bk-ui-line);
 }
 .bk-assign-more .bk-face {
   display: flex;
   justify-content: center;
   gap: 4px;
-  background: var(--bk-ink-soft);
+  background: var(--bk-ui-wash);
 }
 .bk-assign-more .bk-face i {
   width: 4px;
   height: 4px;
   border-radius: 50%;
-  background: var(--bk-ink);
+  background: currentColor;
 }
 .bk-assign-more small {
   margin-left: 4px;
   font-size: 15px;
   font-weight: 600;
-  color: var(--bk-muted, #5a5478);
+  color: var(--bk-ui-muted);
 }
 
 /* ---- everyone: Share with and Done, a search, the rows scrolling under them */
@@ -148,7 +148,7 @@
   border-radius: 10px;
   font-size: 16px;
   font-weight: 600;
-  color: var(--bk-muted, #5a5478);
+  color: var(--bk-ui-muted);
   cursor: pointer;
 }
 .bk-assign-search {
@@ -158,15 +158,15 @@
   margin: 2px 6px 8px;
   padding: 0 14px;
   min-height: 44px;
-  border: 2px solid var(--bk-ink);
-  border-radius: 22px;
+  border: var(--bk-ui-border);
+  border-radius: var(--bk-ui-key-r);
 }
 .bk-assign-search svg {
   flex: none;
   width: 20px;
   height: 20px;
   fill: none;
-  stroke: var(--bk-ink);
+  stroke: currentColor;
   stroke-width: 2;
   stroke-linecap: round;
 }
@@ -180,19 +180,19 @@
   user-select: text;
 }
 .bk-assign-search input::placeholder {
-  color: var(--bk-muted, #5a5478);
+  color: var(--bk-ui-muted);
 }
 .bk-assign-rows {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
-  border-top: 1.5px solid var(--bk-edge);
+  border-top: 1.5px solid var(--bk-ui-line);
   padding-top: 4px;
 }
 .bk-assign-none {
   margin: 12px 14px;
-  color: var(--bk-muted, #5a5478);
+  color: var(--bk-ui-muted);
 }
 
 @keyframes bk-assign-in {

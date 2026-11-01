@@ -32,6 +32,7 @@ function played(now: number, job: number, start: number, merged: number, version
     left_ms: 30 * MIN,
     eta: merged,
     held: merged + HOUR,
+    safe: merged + HOUR,
     finish: merged,
     deadline: null,
     aim: null,

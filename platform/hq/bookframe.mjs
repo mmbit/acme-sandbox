@@ -2,7 +2,7 @@
 // pair.js's card; Ink's folder): one object under a strong shadow, its controls
 // floating over its paper with the book's own tooltips; the cover's edge let go where it was dragged, never sliding
 // back first; the book opening straight onto its page, no cover, in well under a second (a crossfade with reduced
-// motion); and the "Draw from your phone" card whole at the book's widest and narrowest; on a laptop-height window,
+// motion); and the Devices card whole at the book's widest and narrowest; on a laptop-height window,
 // every control whole (a second column). Each asserts what the board sees: boxes, pixels, words. (the short window)
 import assert from 'node:assert/strict';
 import { shutBook } from './bookchrome.mjs';
@@ -24,7 +24,7 @@ export function frameStories(c) {
     "the cover's edge let go stays where it was let go: no slide back to where it began": browser => letGo(browser, c),
     'opening the book: straight onto its page, no cover, in well under a second; reduced motion, a crossfade':
       browser => opening(browser, c),
-    '"Draw from your phone" whole at any book width: its code field and Join never clipped': browser =>
+    'the Devices card whole at any book width: its QR, its words and Close never clipped': browser =>
       pairCard(browser, c),
     "a laptop-height window: every control in the book's islands whole, Undo and Redo at their foot among them":
       browser => shortWindow(browser, c),
@@ -143,11 +143,14 @@ async function opening(browser, c) {
 async function pairCard(browser, c) {
   const { page, errors, done } = await onDesk(browser, c);
   try {
-    // (no coordinator in dev mode: a code of the store's shape, and its stream kept open)
-    await page.route(/\/api\/pair$/, r => r.fulfill({ json: { pair: 'p1', key: 'k', side: 'a', code: '915183' } }));
-    await page.route(/\/api\/pair\/live/, () => {});
-    // (the phone with the book's controls)
-    await page.locator('#book').getByRole('button', { name: 'Draw from your phone' }).click();
+    // (no coordinator in dev mode: a code of the store's shape)
+    await page.route(/\/api\/notebooks\/pair$/, r =>
+      r.fulfill({ json: { code: '915183', expires: Date.now() + 60_000 } }),
+    );
+    // (Devices is on the overview's island)
+    await page.getByRole('button', { name: "The overview: the notebook's pages, and the Shelf", exact: true }).click();
+    await page.waitForTimeout(c.settle);
+    await page.locator('#book').getByRole('button', { name: 'Devices', exact: true }).click();
     await whole(page, 'at its open width');
     await c.shot('book-frame-pair', page);
     // the spine dragged right to the book's narrowest
@@ -210,26 +213,29 @@ async function shortWindow(browser, c) {
     }
   }
 }
-// The pairing card on the paper, its QR, its digits, its field and Join inside it, none cut off
+// The pairing card on the paper: its head, its QR showing, its words beside or under the QR, and Close, all inside it
 async function whole(page, when) {
-  const card = page.getByRole('region', { name: 'Another screen' }),
-    field = card.getByRole('textbox', { name: 'A code from the other screen' }),
-    join = card.getByRole('button', { name: 'Join' });
-  await field.waitFor({ timeout: 3000 });
+  const card = page.getByRole('region', { name: 'Sign in another device' }),
+    qr = card.getByRole('img', { name: 'Scan to sign in' }),
+    close = card.getByRole('button', { name: 'Close', exact: true });
+  await close.waitFor({ timeout: 3000 });
   const paper = await box(page, '#book section > div'),
     k = await card.boundingBox(),
-    f = await field.boundingBox(),
-    j = await join.boundingBox();
+    q = await qr.boundingBox(),
+    parts = {
+      head: await card.locator('.pair-head').boundingBox(),
+      QR: q,
+      words: await card.locator('.pair-words').boundingBox(),
+      Close: await close.boundingBox(),
+    };
   const inside = (a, b) =>
     a.x >= b.x - 1 && a.y >= b.y - 1 && a.x + a.width <= b.x + b.width + 1 && a.y + a.height <= b.y + b.height + 1;
   assert.ok(inside(k, paper), `${when}: the card ${JSON.stringify(k)} off the paper ${JSON.stringify(paper)}`);
-  assert.ok(
-    inside(f, k) && inside(j, k),
-    `${when}: the field ${JSON.stringify(f)} or Join ${JSON.stringify(j)} cut off`,
-  );
-  assert.ok(f.width >= 90, `${when}: a field ${f.width} px wide`);
-  assert.ok(j.x >= f.x + f.width, `${when}: Join over the field`);
-  assert.ok(await card.getByRole('img', { name: 'A code to scan' }).isVisible(), `${when}: the QR shows`);
+  for (const [name, part] of Object.entries(parts))
+    assert.ok(part && inside(part, k), `${when}: its ${name} ${JSON.stringify(part)} cut off the card`);
+  const w = parts.words;
+  assert.ok(w.x >= q.x + q.width - 1 || w.y >= q.y + q.height - 1, `${when}: the words over the QR`);
+  assert.ok(await qr.isVisible(), `${when}: the QR shows`);
 }
 
 // ---- helpers

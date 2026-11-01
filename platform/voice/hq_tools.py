@@ -54,12 +54,18 @@ GOALS = {'type': 'string', 'minLength': 1, 'maxLength': GOAL,
          'The team judges the work, and any rule made from it, against this'}
 # a promise's time, for work new or already under way (a review, a running job): the board's own with its date and
 # no zone, as windows.ts reads it
+# The time to tell the board is live four times in five.
 WHEN = {'type': 'string', 'pattern': DEADLINE.pattern, 'description': 'when you told the board it will be done, at our '
         'pace: 2h, 90m or 1h30m from now; the board\'s own time as it said it, with its date and no zone (2026-10-26 '
         "09:00, on the company's clock); a time with Z, or a time of day alone (14:30), is UTC. Give "
         'it whenever you tell the board a time, also for work already under way (a review, a running job): with job, '
         "the promise is that work\'s, and its deliverable takes the time at once; the job tool\'s with its item takes it as "
-        "it\'s queued"}
+        "it\'s queued. The time you tell is the one eta or when gives to tell the board (live four times in five), never a "
+        'planned finish. It is ours: its slips are never news to the board, unless board_set'}
+# whether the board set that time itself: only such a time's miss is told to it, once
+BOARD_SET = {'type': 'boolean', 'description': 'with deadline: true only when the board named this time itself or '
+             "asked for the work by it ('I need it by Tuesday'). A time you gave or offered, even one it took, is ours: "
+             'leave it out'}
 SIZE = {'type': 'string', 'description': 'your task work estimate of agent time, from clean past jobs: 90m, 2h or 1h30m'}
 TOOLS = [
     {'name': 'job', 'description': "Put work on a colleague's list as a separate job. "
@@ -128,6 +134,7 @@ TOOLS = [
          'what': LINE,
          'goal': GOALS,
          'deadline': WHEN,
+         'board_set': BOARD_SET,
          # (askwindow.ts: the board's ask takes its window as it's queued, not after the call.)
          'job': {'type': 'integer', 'minimum': 1, 'description': "the owner's job already queued or running that the "
                  'promise is about (its number, from your briefing or the job tool), with deadline: the promise is '
@@ -151,7 +158,8 @@ TOOLS = [
          'goal': {**GOALS, 'description': f"{GOALS['description']}. Why the board wants it now: the earlier "
                   'reason if it still holds'},
          'deadline': {**WHEN, 'description': 'a new time, if the board changed it or you told it one (as for promise); '
-                      "without one, the earlier item\'s time stays"}}}},
+                      "without one, the earlier item\'s time stays"},
+         'board_set': BOARD_SET}}},
 ]
 # Adding to a job the call queued (hq extend on a call: call.ts addToJob), when the board adds or corrects something
 # after the job tool answered: into its brief while it hasn't started, else to its running session at its next step.
@@ -232,10 +240,10 @@ TOOLS += [
          'query': {'type': 'string', 'minLength': 1, 'maxLength': 500,
                    'description': "a day, days, a day's hours, or words"}}}},
     # (a deliverable past its window, or when past by, answers with what to check first: worker/hq deadlines.ts lateLines)
-    # (a window puts a deliverable first)
+    # The safe live time is the one to tell the board.
     {'name': 'eta', 'description': 'Where planned work stands now, before you tell the board when it will be done: for '
      "a project or a deliverable by its name or a few words ('The checkout', 'the game's levels'), each open deliverable's "
-     'ETA (its calculated merge time), the agent time it has left, its deadline and aim, with its planned live finish and the slack '
+     'ETA (its calculated merge time), the agent time it has left, its deadline and aim, with its planned live finish, the time to tell the board, and the slack '
      'that leaves or by how much it misses, what it waits on (a card as "the board: <its title>") and what goes on next, '
      'all by name, live from the plan HQ plays, in a second. With no query, what is going on right now, fresh each '
      "time: everyone HQ counts at work (the board's number), each on its job or review with its seat, deliverable and "
@@ -257,9 +265,9 @@ TOOLS += [
          'agent': ID}}},
     {'name': 'when', 'description': 'Before you tell the board when work will be done: use estimate to compare clean past jobs, '
      'choose the task work estimate as size, then it plays that size into the plan as it stands, every seat and window counted, in a '
-     'few seconds: the earliest planned live finish without making any window miss, and a proposed window. With by (the '
+     'few seconds: the earliest planned live finish without making any window miss, a proposed window, and the time to tell the board (live four times in five). With by (the '
      "board's time), whether it makes that time, and only if not, what would: windows giving or one more seat. "
-     'Give the board the time it says, but a finish past by comes with what to check and do first: do it. '
+     'Give the board its time to tell the board, but a finish past by comes with what to check and do first: do it. '
      'With extra_seat (5x or 20x), omit what and its flags to replay the whole '
      'existing plan before and after an added Claude Max seat, with every window and capacity confidence. '
      'Use this whenever the board asks whether another seat would help, even if no deadline misses. Nothing changes.',
@@ -415,8 +423,10 @@ TOOLS += [
 WORDS = {'type': 'string', 'minLength': 1, 'maxLength': WHAT_MOST}
 TOOLS += [
     {'name': 'ask_to_see', 'description': "Ask the board to show you its screen, naming the one thing you want to see "
-     "(\"the pricing page\"). HQ shows your ask with Show and Not now; it blocks nothing, so carry on talking: their "
-     'answer comes with a later turn, and once they tap Show their screen comes with each turn.',
+     "(\"the pricing page\"): use it as soon as they talk about something on their screen that you can't see. This "
+     'one step is the asking, and they answer yes or no (HQ shows your ask with Show and Not now), so never tell them '
+     'which button to tap. It blocks nothing, so carry on talking: their answer comes with a later turn, and once they '
+     'say yes their screen comes with each turn.',
      'inputSchema': {'type': 'object', 'required': ['what'], 'additionalProperties': False, 'properties': {
          'what': {**WORDS, 'description': 'the one thing you want to see, in a few words'}}}},
     # (aimed from the picture, drawn where aimed.)
@@ -472,8 +482,9 @@ TOOLS += [
 # through the line too (the coordinator's Ink store cuts each scrap and puts it on the page). A change about what the
 # board shows comes with its crop by default.
 TOOLS += [
-    {'name': 'scrap', 'description': "Put one change the board asked for on the call's notes page in its Notebook: a "
-     'plain note, your words alone on a post-it, or a scrap, the same with a focused crop of what the board drew or '
+    {'name': 'scrap', 'description': "Put one change the board asked for or agreed to on the call's notes page in its "
+     'Notebook (something you noticed on your own, ask about first: "I see X, is that on your screen too?"): a plain '
+     'note, your words alone on a post-it, or a scrap, the same with a focused crop of what the board drew or '
      'showed for it. A change about something the board is showing on a screen other than the notes page (a slide, an '
      'app, a page of HQ), or drew on in one of its notes, comes with a crop of that part by default, so whoever reads '
      'it sees exactly what the board meant; ring the spot in it with mark_page where that helps. A plain note (leave '
@@ -830,13 +841,17 @@ def hq(waits, name, a):
     deadline = a.get('deadline')
     if refused := readable(deadline):
         return False, refused
+    board_set = a.get('board_set') is True
+    if board_set and not deadline:
+        return False, 'board_set goes with deadline: the time the board set'
     work, deliverable = (a.get('job'), a.get('deliverable')) if name == 'promise' else (None, None)
     if work is not None and (type(work) is not int or work < 1 or not deadline):
         return False, 'job is a job number, like 123, and goes with deadline'
     if deliverable is not None and (work is None or not (type(deliverable) is str and DELIVERABLE.fullmatch(deliverable))):
         return False, 'deliverable goes with job, and is one of the open deliverables, like shop/launch-deck'
     # (the words, as the agent gave them, are the quote: the follow-up has the call's own around them)
-    flags = ['--goal', '-', *(['--deadline', deadline] if deadline else []), *(['--job', str(work)] if work else []),
+    flags = ['--goal', '-', *(['--deadline', deadline] if deadline else []), *(['--board-set'] if board_set else []),
+             *(['--job', str(work)] if work else []),
              *(['--deliverable', deliverable] if deliverable else [])]
     args = ['item', 'add', 'promise', owner] if name == 'promise' else ['item', 'replace', str(item)]
     r = run(waits, [*args, what, '-', *flags], on_stdin(goal, what))

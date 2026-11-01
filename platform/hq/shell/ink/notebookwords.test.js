@@ -1,22 +1,7 @@
-// node --test platform/hq/shell/ink/notebookwords.test.js
+// node --test platform/hq/shell/ink/notebookwords.test.js   (the guest words a guest reads, in every language; no DOM)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { words, refusal } from './notebookwords.js';
-
-test('invitation counts use the singular only for one in each guest language', () => {
-  for (const [lang, singular, plural] of [
-    ['en', 'invitation left', 'invitations left'],
-    ['nl', 'uitnodiging over', 'uitnodigingen over'],
-    ['de', 'Einladung übrig', 'Einladungen übrig'],
-  ]) {
-    for (const count of [0, 1, 2, 3]) {
-      assert.equal(
-        words[lang].invitations('example.org', count).split(' · ')[1],
-        `${count} ${count === 1 ? singular : plural}`,
-      );
-    }
-  }
-});
 
 test('guest limit messages quote the supplied server limits in every language', () => {
   for (const [lang, text] of Object.entries(words)) {
@@ -32,4 +17,30 @@ test('guest limit messages quote the supplied server limits in every language', 
       assert.equal(refusal(lang, 'noteLong', limits), text.refusals.noteLong(limits));
     }
   }
+});
+
+// Every word with its key path ('refusals.signIn'), the nested lists (refusals, round) walked
+const entries = (table, at = '') =>
+  Object.entries(table).flatMap(([key, said]) =>
+    typeof said === 'object' ? entries(said, `${at}${key}.`) : [[`${at}${key}`, said]],
+  );
+const english = new Map(entries(words.en));
+const places = said => (said.match(/\{\w+\}/g) ?? []).sort();
+
+test('Dutch and German hold every English key, and no other', () => {
+  for (const lang of ['nl', 'de'])
+    assert.deepEqual([...new Map(entries(words[lang])).keys()].sort(), [...english.keys()].sort(), lang);
+});
+
+test('each word in Dutch and German is said the way its English is: a function, or words with the same places to fill', () => {
+  for (const lang of ['nl', 'de'])
+    for (const [key, said] of entries(words[lang])) {
+      const en = english.get(key);
+      assert.equal(typeof said, typeof en, `${lang} ${key}`);
+      if (typeof en === 'function') assert.equal(said.length, en.length, `${lang} ${key}: the same arguments`);
+      else {
+        assert.ok(said.trim(), `${lang} ${key}`);
+        assert.deepEqual(places(said), places(en), `${lang} ${key}`);
+      }
+    }
 });

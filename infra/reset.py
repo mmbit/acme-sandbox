@@ -29,6 +29,7 @@ FOUNDATION = {'.github', '.gitignore', 'CODE_STYLE.md', 'PLAN.md', 'docs', 'infr
 ALWAYS_KEPT = ['company/infra.env']   # the server's names: the server is kept
 MAX_AGE_S = 3 * 86400   # a marker this old is history (a new server, a restored backup), not the board's wish now
 GITHUB_WEB = 'noreply@github.com'   # GitHub's own commits: a merged pull request, an edit in the browser
+HQ = 'hq@noreply.invalid'   # HQ's own commits: revert.py's reverts, fresh-dated, of anything on main
 
 STATE = os.environ.get('RESET_STATE') or f"/var/lib/{INFRA['SERVER_NAME']}"
 # What stays in the coordinator's data volume (platform/coordinator/src: secrets.ts, memory.ts, guests.ts,
@@ -151,6 +152,8 @@ def not_the_boards(root):
         return f'{commit} is an agent\'s'
     if committer.lower() == GITHUB_WEB:
         return f'{commit} was made on GitHub (a merged pull request or an edit in the browser), not by the board\'s Claude Code'
+    if HQ in (author.lower(), committer.lower()):
+        return f'{commit} is HQ\'s (a revert), not the board\'s Claude Code'
     if time.time() - int(at) > MAX_AGE_S:
         return f'{commit} is more than {MAX_AGE_S // 86400} days old: a new reset needs a new id'
     return None

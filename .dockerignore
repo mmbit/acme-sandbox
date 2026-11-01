@@ -14,6 +14,8 @@
 !platform/hq/shell/questions.js
 # HQ's sign letters, which a company's print pages draw with
 !platform/hq/renderers/brownstone/iso.js
+# Slate's colourways, which the signed-out pages wear (platform/coordinator/src/pages.ts)
+!platform/hq/renderers/wire/colourways.js
 !platform/hq/util.js
 # the book's shapes and highlighter, which a call's agent draws on its page with (platform/coordinator/src/ink/callpage.ts)
 !platform/hq/shell/ink/bookinkmath.js
@@ -49,6 +51,8 @@
 !shared/watchalong/mirrorpage.ts
 # and the pen's ink that page reads and draws, with shared/review/ink.js below
 !shared/watchalong/strokes.js
+# and what the page showed over everything, which the replay shows too
+!shared/watchalong/toplayer.js
 # the one headless Chromium driver, which the mirror and a company's print renders start.
 !shared/chromium/chromium.ts
 # the platform's formats, which a company's kits may import
@@ -113,6 +117,8 @@
 # a note group's parts as one (joined, shifted, a lasso's picks, typed boxes), which the store and its play share
 # (notebookparts.js)
 !platform/hq/shell/ink/notebookparts.js
+# a guest scope's routes, which the guest room answers by and the shell asks by (platform/coordinator/src/notebookguestroom.ts)
+!platform/hq/shell/ink/bookroutes.js
 # a reply's frame on a try's version, which the store keeps and its play shares, and the overlap it reads with
 # (bookversionframes.js, bookgroupmath.js)
 !platform/hq/shell/ink/bookversionframes.js

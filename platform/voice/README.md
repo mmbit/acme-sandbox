@@ -27,7 +27,11 @@ Live calls with the team, streamed both ways (`server.py`). One call is one WebS
   and what the microphone made while reconnecting, none of it dropped. The resumed connection's `call` event says what
   the line has, and HQ sends the rest first, with a ping from when each half second of it was made: the baseline stays
   across connections (the same two clocks), so it reads as late and the line answers everything the board said once it
-  is in, as after a burst. Each reconnect is logged (`call: ada reconnected`). HQ's call screen says "Weak connection"
+  is in, as after a burst. Each reconnect is logged (`call: ada reconnected`). A page that reloaded or left mid-call
+  calls back into the call when the board calls the same agent again within `HOLD` (30 s): its first message is
+  `{resume, back: true}`, its `call` event carries the transcript so far (`said`), and the agent hears the board dropped
+  out and is back with its next turn, or in a turn of its own once the line is quiet (`BACK_WORDS`, `Call.came_back`;
+  logged `call: ada called back in`). HQ's call screen says "Weak connection"
   while the line hears the board over 1.5 s late, nothing has come back from it for 4 s (its reply's audio counts: the
   pongs come behind it) or HQ's own frames wait unsent, and its timeline has each spell (`lagging`, `caught up`). At
   hang-up the line logs how late the board's audio came at most and how many answers waited (`call: ada line: ...`). A

@@ -3,7 +3,7 @@
 // a version picked (bookanswer.ts answerForm and tickAnswer, bookpick.ts pick), the open list (bookanswer.ts
 // openList) and a card under a group answered on the desk phone, with the coordinator's answers and refusals. The runs
 // an answer comes from aren't played: a seeded group (or play.asking and play.trying) says where they are.
-//   - group.asking: its owner's quick run going, { by, spot, reason? } (bookslips.ts comingOf); an answer on the group
+//   - group.asking: its owner's quick run going, { by, reason? } (bookslips.ts comingOf); an answer on the group
 //     ends it.
 //   - group.tried: its try run, { by, expect, going, said? } (booktry.ts): going while it makes versions, said its last
 //     line once it ended (groupanswers.ts endedEmpty).
@@ -13,7 +13,7 @@ import { refuse } from './notebookplaychecks.js';
 // What an answer is unless it says otherwise (bookslips.ts slipOf)
 const SLIP = { note: null, grp: null, text: '', picture: null, link: null, preview: null, now: null, now_at: null };
 Object.assign(SLIP, { ticked: null, face: null, style: 'text', ink: null, form: null, form_answer: null });
-Object.assign(SLIP, { version: null, patch: false, spot: null, picked: null, source: null, branch: null });
+Object.assign(SLIP, { version: null, patch: false, picked: null, source: null, branch: null });
 Object.assign(SLIP, { crossed: null, cleared: null, branch_failed: null });
 export const slipRow = (s, x) => ({ ...SLIP, ...x, name: x.name ?? s.name(x.by) });
 
@@ -47,10 +47,9 @@ export function answersOf(s, g, replies) {
     asks: [...notes.flatMap(n => s.asks.filter(a => a.note === n)), ...s.asks.filter(a => a.group === g.id)],
   };
 }
-const comingOf = (s, { by, spot, reason }) => ({
+const comingOf = (s, { by, reason }) => ({
   by,
   name: s.name(by),
-  spot: spot ?? null,
   style: 'text',
   ...(reason && { reason }),
 });
@@ -152,7 +151,11 @@ function answerAsk(s, b) {
   if (!a) refuse(404);
   if ((a.questions ?? []).some((q, k) => !q.optional && !String(b.answers?.[k] ?? '').trim()))
     refuse(400, 'a question still needs its answer');
-  Object.assign(a, { status: 'answered', answer: String(b.answer ?? ''), answered: s.stamp() });
+  // A drawing of the board's goes as a picture with it, shown under the card's tick (bookasks.ts askOf).
+  Object.assign(a, {
+    ...{ status: 'answered', answer: String(b.answer ?? ''), answered: s.stamp() },
+    ...(b.pictures?.length && { pictures: b.pictures.map(Number) }),
+  });
   const g = s.groups.find(x => (a.group ? x.id === a.group : x.note === a.note));
   if (g) s.changed(s.page(g.page).notebook, g.page);
   return { ok: true };

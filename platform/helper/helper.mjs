@@ -37,13 +37,15 @@ const FILES_MAX_BYTES = 200 * 1024 * 1024;
 const CALL_MS = 60_000;
 // A bundle's download and a run's uploads (a push's tests carry the whole repo: a few hundred MB)
 const TRANSFER_MS = 15 * 60_000;
-// How long a run's output and files are sent again while HQ can't be reached: as long as a deploy waits for HQ to
+// How long a run's bundle and result transfers recover while HQ can't be reached: as long as a deploy waits for HQ to
 // answer (infra/hq-up.sh's HQ_UP_S).
 const HQ_RETRY_MS = Number(process.env.HQ_RETRY_MS ?? 10 * 60_000);
 // A run's exit code when its time ran out, as timeout(1) gives
 const TIMED_OUT = 124;
 const KILL_STEP_MS = 100;
 const KILL_WAIT_MS = 5_000;
+
+class HqUnavailableError extends Error {}
 
 // Runs a command as the runs' user with no network: a seccomp filter refuses every socket but a Unix one, connecting
 // and io_uring before the command starts. The filter goes on while the process is still the helper's user, and only
@@ -190,9 +192,8 @@ async function carryOut(run) {
   const beats = [];
   const beat = setInterval(() => beats.push(beatFor(run, command, lifetime.signal)), BEAT_MS);
   try {
-    const bundle = await callHq('GET', `/api/helper/runs/${run.id}/bundle`, { timeoutMs: TRANSFER_MS });
+    const bundle = await transfer('GET', `/api/helper/runs/${run.id}/bundle`);
     if (command.stopped) return;
-    if (bundle.status !== 200) throw new Error(`no bundle (HTTP ${bundle.status})`);
     const unpacked = await asTask(
       ['sh', '-c', 'mkdir "$1" && mkdir "$1/tree" "$1/home" && tar -xzf - -C "$1/tree"', 'sh', workspace],
       {
@@ -205,10 +206,13 @@ async function carryOut(run) {
     if (command.stopped) return;
     const files = run.bring.length ? await packFiles(run, workspace) : { output: Buffer.alloc(0), problem: '' };
     const output = Buffer.concat([ended.output, Buffer.from(files.problem)]);
-    await upload(`/api/helper/runs/${run.id}/output`, output, {});
-    await upload(`/api/helper/runs/${run.id}/finish`, files.output, {
-      'x-run-exit': String(ended.exitCode),
-      'x-run-timed-out': ended.timedOut ? '1' : '0',
+    await transfer('POST', `/api/helper/runs/${run.id}/output`, { body: output });
+    await transfer('POST', `/api/helper/runs/${run.id}/finish`, {
+      body: files.output,
+      headers: {
+        'x-run-exit': String(ended.exitCode),
+        'x-run-timed-out': ended.timedOut ? '1' : '0',
+      },
     });
     console.log(`Run ${run.id}: ended with ${ended.exitCode}`);
   } finally {
@@ -484,19 +488,22 @@ function gpuUse() {
   );
 }
 
-// A run's output or files to HQ, tried again while HQ restarts (fetch's TypeError: no connection, or one lost mid-way)
-// for up to HQ_RETRY_MS: both are safe to send twice, and the beats go on meanwhile, so HQ doesn't take the run back as
-// quiet.
-async function upload(path, body, headers) {
+// A run's immutable bundle and idempotent uploads stay with the active attempt through a broken connection. Fetch's
+// TypeError includes a response body cut off mid-transfer. Caddy returns 503 while the coordinator is unavailable.
+// Beats continue through HQ_RETRY_MS (ten minutes by default). A take request or the run's command is never repeated.
+async function transfer(method, path, { body, headers = {} } = {}) {
   const since = Date.now();
+  const endpoint = path.split('/').pop();
   for (let wait = 1000; ; wait = Math.min(wait * 2, 30_000)) {
     try {
-      const answer = await callHq('POST', path, { body, headers, timeoutMs: TRANSFER_MS });
-      if (answer.status !== 200) throw new Error(`${path.split('/').pop()}: HTTP ${answer.status}`);
-      return;
+      const answer = await callHq(method, path, { body, headers, timeoutMs: TRANSFER_MS });
+      if (answer.status === 503) throw new HqUnavailableError(`${endpoint}: HTTP 503`);
+      if (answer.status !== 200) throw new Error(`${endpoint}: HTTP ${answer.status}`);
+      return answer;
     } catch (error) {
-      if (!(error instanceof TypeError) || Date.now() - since >= HQ_RETRY_MS) throw error;
-      console.error(`${path.split('/').pop()}: HQ not reached (${error.message}), tried again in ${wait / 1000} s`);
+      const unavailable = error instanceof TypeError || error instanceof HqUnavailableError;
+      if (!unavailable || Date.now() - since >= HQ_RETRY_MS) throw error;
+      console.error(`${endpoint}: HQ not reached (${error.message}), tried again in ${wait / 1000} s`);
     }
     await sleep(wait);
   }

@@ -5,8 +5,9 @@
 // key, and in "at work first" the keys slide into their new places like a slide puzzle. Drawn in the DOM, which scrolls
 // natively; the shell's canvas lies under it, empty, and the page hands its taps to the shell (shell.tap), which asks
 // hit() what's there.
-import { esc, store, rgb, mix, roleHtml } from '../../util.js';
+import { esc, store, rgb, roleHtml } from '../../util.js';
 import { contrastChannels } from '/contrast.js'; // WCAG's contrast ratio (shared/contrast/contrast.js)
+import { WAY, colourways, pickColourway, darkGround, inlineLogo } from './colourways.js';
 import { EMOTES, fade } from '../../world/emotes.js';
 import { companyFormats } from '../../world/clock.js';
 import { makeLook, spriteFrame, catFrame, penguinFrame } from '../brownstone/sprites.js';
@@ -140,7 +141,7 @@ export function createScene({ canvas, world: w, shell: s, settings }) {
       dark.removeEventListener('change', appear);
       watch.disconnect();
       document.body.classList.remove('wire-dark', 'keys');
-      for (const k of [...WAY, 'font', 'tick']) document.body.style.removeProperty(`--k-${kebab(k)}`);
+      for (const k of [...WAY, 'font', 'tick']) document.documentElement.style.removeProperty(`--k-${kebab(k)}`);
       root.remove();
     },
     dev: { S: () => S, focus },
@@ -185,30 +186,9 @@ function hud() {
     shell.sound.weather(0, 0, 0);
   };
 }
-// The logo inline, when it has a part in the accent: its parts drawn in the first colourway's accent, side and ink
-// (theme/hq.yaml) take the colourway in use. Any other logo stays the picture it is.
-async function logo(plate) {
-  const img = plate?.querySelector('img'),
-    [first] = ways(),
-    text = img
-      ? await fetch(img.src).then(
-          r => (r.ok ? r.text() : ''),
-          () => '',
-        )
-      : '',
-    svg = new DOMParser().parseFromString(text, 'image/svg+xml').documentElement;
-  if (svg?.nodeName !== 'svg' || !img.isConnected) return null;
-  for (const el of svg.querySelectorAll('script, foreignObject')) el.remove();
-  for (const el of svg.querySelectorAll('[fill]')) {
-    const part = ['accent', 'side', 'ink'].find(k => el.getAttribute('fill').toLowerCase() === first[k].toLowerCase());
-    if (part) el.setAttribute('class', `logo-${part}`);
-  }
-  if (!svg.querySelector('.logo-accent')) return null;
-  svg.setAttribute('class', 'logo');
-  img.hidden = true;
-  img.after(svg);
-  return svg;
-}
+// The logo inline, when it has a part in the accent, in the colourway in use (colourways.js). Any other logo stays the
+// picture it is.
+const logo = plate => inlineLogo(plate?.querySelector('img'), ways()[0]);
 // the next colourway on, the logo's accent part pressed down
 function recolour(plate) {
   const all = ways();
@@ -256,69 +236,22 @@ function rainfall(dt) {
 // Wire's own face (skin.css --font) where the company names none, on a <link> of its own that the change of look doesn't
 // wait for: a blocked font leaves the fallback
 const FACE = 'https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&display=swap';
-// The company's colourways (theme/hq.yaml wire.colourways: id, name, ground, ink, muted, panel, accent, side,
-// onAccent, as #hex; wire.font: family, href on Google Fonts), or a light and a dark one of Wire's own. Auto: the first
-// light one, or the first dark one when the device is dark. And the keys' order: the org chart's, or everyone at work
-// first. Each is kept on this device.
-const WAY = ['ground', 'ink', 'muted', 'panel', 'accent', 'side', 'onAccent'];
-const HEX = /^#[0-9a-f]{3,8}$/i;
-const WIRE_WAYS = [
-  {
-    id: 'day',
-    name: 'Day',
-    ground: '#ece6da',
-    ink: '#1d1b17',
-    muted: '#5c554a',
-    panel: '#f7f3ec',
-    accent: '#d6ea3c',
-    side: '#8f9f14',
-    onAccent: '#1d1b17',
-  },
-  {
-    id: 'night',
-    name: 'Night',
-    ground: '#15171c',
-    ink: '#ece8e0',
-    muted: '#a39e94',
-    panel: '#20232a',
-    accent: '#d6ea3c',
-    side: '#7d8c10',
-    onAccent: '#15171c',
-  },
-];
-// A colourway that sets no accent of its own wears the brand's colour (brand.yaml colour, its logo's): its lip a shade
-// darker, its letters black or white, whichever reads on it. The coordinator serves it only as #rrggbb
-const branded = w => {
-  const c = brand.colour;
-  if (w?.accent !== undefined || c === undefined) return w;
-  const on = contrastChannels(rgb(c), [0, 0, 0]) > contrastChannels(rgb(c), [255, 255, 255]) ? '#000000' : '#ffffff';
-  return { side: mix(c, '#000000', 0.3), onAccent: on, ...w, accent: c };
-};
-const ways = () => {
-  const own = (theme.wire?.colourways ?? []).map(branded).filter(w => w?.id && WAY.every(k => HEX.test(w[k] ?? '')));
-  return own.length ? own : WIRE_WAYS;
-};
+// The company's colourways (colourways.js, with wire.font: family, href on Google Fonts), and the keys' order: the org
+// chart's, or everyone at work first. Each is kept on this device. The coordinator serves the brand's colour only as
+// #rrggbb.
+const ways = () => colourways(theme, brand.colour);
 const kebab = k => k.replace(/[A-Z]/g, c => `-${c.toLowerCase()}`);
-// a ground dark enough for light letters (its relative luminance)
-const darkGround = hex => {
-  const [r, g, b] = (hex.length < 7 ? [...hex.slice(1, 4)].map(c => c + c) : hex.slice(1, 7).match(/../g)).map(
-    c => parseInt(c, 16) / 255,
-  );
-  return 0.2126 * r + 0.7152 * g + 0.0722 * b < 0.4;
-};
-function colourway() {
-  const all = ways(),
-    pick = store.get('wire.colourway', 'auto'),
-    dark = matchMedia('(prefers-color-scheme: dark)').matches;
-  return (pick !== 'auto' && all.find(w => w.id === pick)) || all.find(w => darkGround(w.ground) === dark) || all[0];
-}
+const colourway = () =>
+  pickColourway(ways(), store.get('wire.colourway', 'auto'), matchMedia('(prefers-color-scheme: dark)').matches);
 function appear() {
+  // (the colourway on the document, so the Notebook beside HQ's page wears it too: skin.css.)
   const body = document.body,
+    html = document.documentElement,
     way = colourway(),
     font = theme.wire?.font;
-  for (const k of WAY) body.style.setProperty(`--k-${kebab(k)}`, way[k]);
-  body.style.setProperty('--k-tick', tickOn(way.onAccent));
-  if (font?.family) body.style.setProperty('--k-font', `'${String(font.family).replace(/['"\\]/g, '')}'`);
+  for (const k of WAY) html.style.setProperty(`--k-${kebab(k)}`, way[k]);
+  html.style.setProperty('--k-tick', tickOn(way.onAccent));
+  if (font?.family) html.style.setProperty('--k-font', `'${String(font.family).replace(/['"\\]/g, '')}'`);
   const href = font?.family ? font.href : FACE;
   if (/^https:\/\/fonts\.googleapis\.com\//.test(href ?? '') && !document.querySelector('link[data-wire-font]')) {
     const link = Object.assign(document.createElement('link'), { rel: 'stylesheet', href });

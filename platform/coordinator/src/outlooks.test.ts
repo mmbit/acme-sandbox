@@ -36,9 +36,9 @@ const thread = (slug: string, project = 'game') => {
 };
 const queued = (thread: string, o: Record<string, unknown> = {}) =>
   jobs.createJob({ agent: 'bolt', title: 'A step', prompt: 'x', queuedBy: 'wren', thread, word: 'STEP', ...o }).id;
-// A window on the thread, given by its owner
-const windowed = (id: string, deadline: number, aim = deadline) =>
-  windows.set(projects.findThread(id)!, { deadline, aim }, 'wren');
+// A window on the thread, given by its owner unless `by` says who (windows.BOARD: the board set it itself)
+const windowed = (id: string, deadline: number, aim = deadline, by = 'wren') =>
+  windows.set(projects.findThread(id)!, { deadline, aim }, by);
 const reportRoom = () =>
   h.worker('room', {
     capacity: {
@@ -145,7 +145,7 @@ test("each thread's window and slack: one that gives, one that misses, one witho
     none = thread('none');
   for (const id of [gives, misses, none]) queued(id);
   windowed(gives, T + 2 * 24 * HOUR, T + MINUTE);
-  windowed(misses, T + MINUTE);
+  windowed(misses, T + MINUTE, T + MINUTE, windows.BOARD);
   const board = await h.board('/api/projects');
   const shown = (id: string) =>
     board.body.projects.find((p: any) => p.id === 'game').threads.find((t: any) => t.id === id).outlook;
@@ -168,9 +168,12 @@ test("each thread's window and slack: one that gives, one that misses, one witho
   const line = (id: string) => listed.out.split('\n').find(l => l.startsWith(`${id}  `)) ?? '';
   assert.match(
     line(gives),
-    /; planned finish .* UTC; window aim .* UTC, deadline .* UTC: gives \d.* \d.* of slack; next #/,
+    /; planned finish .* UTC; window aim .* UTC, deadline .* UTC \(our own time: a miss is never news to the board\): gives \d.* \d.* of slack; next #/,
   );
-  assert.match(line(misses), /; planned finish .* UTC; MISSES its deadline .* UTC by \d.*; next #/);
+  assert.match(
+    line(misses),
+    /; the time to tell the board: live by .* UTC, four times in five; planned finish .* UTC; MISSES its deadline .* UTC \(the board's own time\) by \d.*; next #/,
+  );
   assert.match(
     line(none),
     /^game\/none {2}The none \(wren\): ETA .* UTC, 30 min of agent time left;.* no deadline set; next #/,
@@ -209,6 +212,27 @@ test("each thread's window and slack: one that gives, one that misses, one witho
     window.out,
     /\nMisses The game's The misses: [^]*RED FLAG, not news for the board: The game's The misses misses its deadline\./,
   );
+  // a time we gave ourselves misses with no word for the board, on a call too
+  windowed(misses, T + MINUTE);
+  const ours = await h.hq({ ...lead, call: true }, 'thread', misses);
+  assert.match(ours.out, /MISSES its deadline .* \(our own time: a miss is never news to the board\)/);
+  assert.doesNotMatch(ours.out, /RED FLAG/);
+  const oursQueued = await h.hq(
+    { ...lead, call: true },
+    'job',
+    'bolt',
+    'A third step',
+    '--thread',
+    none,
+    '--new',
+    '--code',
+    'OURS',
+  );
+  assert.match(
+    oursQueued.out,
+    /- The game's The misses: deadline .* \(our own time, given by wren\); done about .* past it/,
+  );
+  assert.doesNotMatch(oursQueued.out, /RED FLAG/);
 });
 
 test('the view and hq read its jobs: the chain that sets its ETA, each job sized, and the one next', async () => {
@@ -254,7 +278,7 @@ test('a thread nothing finishes says why, and misses its window', async () => {
   const listed = await h.hq(lead, 'projects');
   assert.match(
     listed.out,
-    /^game\/levels {2}.*: no ETA \(No claude seat.*\).*; MISSES its deadline .* UTC: no finish in sight/m,
+    /^game\/levels {2}.*: no ETA \(No claude seat.*\).*; MISSES its deadline .* UTC \(our own time: a miss is never news to the board\): no finish in sight/m,
   );
 });
 

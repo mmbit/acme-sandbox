@@ -287,7 +287,7 @@ function rowHtml(item, named = false, q = '') {
   const n = rows.push(item) - 1;
   const sub = [named && nameOf(item.category), item.sub].filter(Boolean).join(' · ');
   const code = codeOf(item, q);
-  return `<li id="finder-row-${n}" role="option" data-row="${n}"><b>${esc(item.title)}</b>${code ? `<code>${esc(code)}</code>` : ''}${sub ? `<small>${esc(sub)}</small>` : ''}</li>`;
+  return `<li id="finder-row-${n}" role="option" data-row="${n}"${item.private ? ' data-private' : ''}><b>${esc(item.title)}</b>${code ? `<code>${esc(code)}</code>` : ''}${sub ? `<small>${esc(sub)}</small>` : ''}</li>`;
 }
 // The code a row shows: the one the words start (a look's name on Look), else its first
 const codeOf = ({ codes = [] }, q) => (q && codes.find(c => findable(c).startsWith(q))) || codes[0];

@@ -7,6 +7,7 @@ export type ItemFlags = {
   replaces?: string;
   call?: string;
   deadline?: string;
+  boardSet?: boolean;
   lands?: string;
   job?: string;
   goal?: string;
@@ -14,7 +15,8 @@ export type ItemFlags = {
 
 // --item, --replaces and --call <number> (hq items), --lands <job> (hq job: the failed job whose saved work it lands),
 // --job <job> (hq item add on a live call: the work under way a promise is about),
-// --deadline <when> (hq item add, replace: the item's time; hq job refuses it), and --goal - (hq item add and replace,
+// --deadline <when> (hq item add, replace: the item's time; hq job refuses it), --board-set (with it: the board set that
+// time itself), and --goal - (hq item add and replace,
 // and hq job on a call: why the board wants it, on stdin with the words). hq job's --goal.
 export function takeItemFlags(given: string[], command: 'job' | 'item') {
   const flags: ItemFlags = {};
@@ -36,6 +38,8 @@ export function takeItemFlags(given: string[], command: 'job' | 'item') {
         stop("Nothing recorded: --deadline needs a time (2h, 90m, 2026-10-26 09:00 on the company's clock, 14:30 UTC)");
       flags.deadline = value;
       i++;
+    } else if (flag === '--board-set' && command === 'item') {
+      flags.boardSet = true;
     } else if (flag === '--goal') {
       if (value !== '-') {
         stop(
