@@ -18,7 +18,6 @@
 //   - The transcript and notes are kept 12 months after the call, then blanked (callsweep.ts); the row stays. They stay
 //     with the call: the follow-up's brief has neither, it reads them with hq phone call. The board reads them on the
 //     call's card once it has ended (callcard.ts).
-//   - A job that holds a customer's details files no call (house rule 7), as it files no email draft (outbox.ts).
 //   - A link may name a preview the board shared (shares.ts, --share): a walk-through. Its page shows that preview in a
 //     frame under the call, and its people get the same link on their share's door. The guest's own page records what it
 //     shows only once they say so (watchalong.ts), and the recording ends with the call, or goes with it when the call
@@ -31,7 +30,7 @@ import { ORIGIN } from './config.ts';
 import { publish } from './events.ts';
 import { secret, serverKey } from './secrets.ts';
 import { ceo, timeZone } from './company.ts';
-import { boardId, closeRequest, createJob, createRequest, findAgent, holdsCustomerData } from './jobs.ts';
+import { boardId, closeRequest, createJob, createRequest, findAgent } from './jobs.ts';
 import { atTime, dialable, hoursText } from './callrules.ts';
 import * as words from './callwords.ts';
 import { codeOf } from './jobcodes.ts';
@@ -129,17 +128,11 @@ type Filing = {
   number: string | null;
   share: number | null;
 };
-// An agent in org.yaml, from a job that holds no customer's details, at most CALLS_PER_HOUR an hour
+// An agent in org.yaml, at most CALLS_PER_HOUR an hour
 function rules(agent: string, job: number): Refusal | null {
   const caller = findAgent(agent);
   if (!caller || caller.temp || boardId(agent))
     return [403, "a call out is in the voice of an agent in org.yaml: file it from your lead's job, as your lead"];
-  if (holdsCustomerData(job))
-    return [
-      403,
-      "this job holds a customer's own details (it read or was handed them), and nothing of it goes to an " +
-        'outside party. Hand the call to a job that holds none, with only what the call may say',
-    ];
   const since = new Date(Date.now() - HOUR).toISOString();
   if (
     (db.prepare('select count(*) n from callouts where job = ? and created > ?').get(job, since) as { n: number }).n >=

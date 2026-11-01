@@ -166,6 +166,146 @@ class Shell(unittest.TestCase):
         self.assertEqual(post({'action': 'logs', 'service': 'x; id'}, f'Bearer {token()}')[0], 400)
         server.shutdown()
 
+    def limited(self, caddy, check):
+        """check(post) against a shell whose Caddy is at these addresses (or its lookup, a function), on a clock the test
+        moves (post's clock). post answers its status, and keeps its text in post.text."""
+        os.environ.update(REPO=REPO, SHELL_AUDIENCE=AUD)
+        shell.asked.clear()
+        monotonic, addresses = shell.time.monotonic, shell.caddy_addresses
+        clock = [1000.0]
+        shell.time.monotonic = lambda: clock[0]
+        shell.caddy_addresses = caddy if callable(caddy) else lambda: set(caddy)
+        shell.caddy.update(at=None, failed=None)
+        server = shell.ThreadingHTTPServer(('127.0.0.1', 0), shell.Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        def post(client):
+            req = urllib.request.Request(f'http://127.0.0.1:{server.server_port}/__shell', b'{}',
+                                         {'authorization': 'Bearer x.y.z', 'x-forwarded-for': client})
+            try:
+                with urllib.request.urlopen(req) as res:
+                    post.text = res.read().decode()
+                    return res.status
+            except urllib.error.HTTPError as e:
+                post.text = e.read().decode()
+                return e.code
+        post.clock = clock
+        try:
+            check(post)
+        finally:
+            server.shutdown()
+            shell.time.monotonic, shell.caddy_addresses = monotonic, addresses
+            shell.caddy.update(at=None, failed=None)
+            shell.asked.clear()
+
+    def test_each_client_gets_a_few_requests_a_minute_before_any_token_is_checked(self):
+        def check(post):
+            self.assertEqual([post('203.0.113.7') for _ in range(shell.ASKS_PER_WINDOW)], [403] * shell.ASKS_PER_WINDOW)
+            self.assertEqual(post('203.0.113.7'), 429)
+            self.assertEqual(post('198.51.100.2'), 403, 'another client has its own')
+            post.clock[0] += shell.WINDOW_S
+            self.assertEqual(post('203.0.113.7'), 403, 'a minute on')
+        self.limited({'127.0.0.1'}, check)
+
+    def test_a_forwarded_address_from_anyone_but_caddy_counts_under_its_peer(self):
+        def check(post):
+            forged = [f'203.0.113.{n}' for n in range(shell.ASKS_PER_WINDOW + 1)]
+            self.assertEqual([post(f) for f in forged], [403] * shell.ASKS_PER_WINDOW + [429])
+            self.assertEqual(list(shell.asked), ['127.0.0.1'])
+        self.limited({'172.17.0.5'}, check)
+
+    def test_a_caddy_lookup_that_fails_is_answered_503_and_never_kept(self):
+        lookup, docker = ['fails'], shell.caddy_addresses
+        def caddy():
+            if lookup[0] == 'fails':
+                return docker()   # compose is `false` here: it exits 1
+            if lookup[0] == 'times out':
+                raise subprocess.TimeoutExpired(['docker', 'inspect'], 10)
+            return {'127.0.0.1'}
+        def check(post):
+            self.assertEqual([post('203.0.113.7') for _ in range(shell.ASKS_PER_WINDOW + 1)],
+                             [503] * (shell.ASKS_PER_WINDOW + 1), 'never counted under Caddy, the peer')
+            self.assertNotIn('false', post.text, "Docker's command line and stderr stay in the log")
+            lookup[0] = 'times out'
+            self.assertEqual(post('203.0.113.7'), 503)
+            lookup[0] = 'answers'
+            self.assertEqual(post('203.0.113.7'), 403, 'looked up again at once, its client counted')
+        compose, shell.COMPOSE = shell.COMPOSE, ['false']
+        try:
+            self.limited(caddy, check)
+        finally:
+            shell.COMPOSE = compose
+
+    def test_caddy_is_looked_up_again_after_a_minute_or_5_s_after_another_peer_forwards(self):
+        addrs, lookups = [{'127.0.0.1'}], []
+        def caddy():
+            lookups.append(1)
+            return addrs[0]
+        def check(post):
+            def at(seconds, client='203.0.113.7'):
+                post.clock[0] = 1000.0 + seconds
+                self.assertEqual(post(client), 403)
+                return len(lookups)
+            self.assertEqual([at(0), at(59), at(60)], [1, 1, 2], 'kept for a minute')
+            addrs[0] = {'172.17.0.5'}   # Caddy restarted with a new address
+            self.assertEqual([at(120), at(124)], [3, 3], 'another peer: kept for 5 s')
+            self.assertEqual(list(shell.asked), ['127.0.0.1'], 'counted under its peer meanwhile')
+            addrs[0] = {'127.0.0.1'}
+            self.assertEqual(at(125, '198.51.100.2'), 4, 'and looked up again after them')
+            self.assertIn('198.51.100.2', shell.asked)
+        self.limited(caddy, check)
+
+    def test_requests_that_waited_on_a_failed_lookup_fail_with_it_rather_than_each_look_again(self):
+        entered, release, lookups, clock = threading.Event(), threading.Event(), [], {}
+        def caddy():
+            lookups.append(1)
+            entered.set()
+            release.wait(10)
+            clock['now'][0] += 10   # the lookup took 10 s
+            raise subprocess.TimeoutExpired(['docker', 'inspect'], 10)
+        def check(post):
+            clock['now'] = post.clock
+            reads, fake = [], shell.time.monotonic
+            shell.time.monotonic = lambda: reads.append(1) or fake()
+            codes = []
+            first = threading.Thread(target=lambda: codes.append(post('203.0.113.7')))
+            first.start()
+            entered.wait(10)
+            seen = len(reads)
+            waiting = [threading.Thread(target=lambda: codes.append(post(f'198.51.100.{n}'))) for n in range(3)]
+            for thread in waiting:
+                thread.start()
+            while len(reads) < seen + len(waiting):   # each has read the clock it came at
+                time.sleep(0.01)
+            release.set()
+            for thread in [first, *waiting]:
+                thread.join(10)
+            self.assertEqual(codes, [503] * 4)
+            self.assertEqual(len(lookups), 1, 'one lookup for all four')
+            lookups.clear()
+            self.assertEqual(post('203.0.113.7'), 503, 'a request that came after it looks up again')
+            self.assertEqual(len(lookups), 1)
+        self.limited(caddy, check)
+
+    def test_a_request_that_waited_on_a_failed_lookup_but_needs_none_is_answered_from_the_cache(self):
+        lookups = []
+        def check(post):
+            reads, fake = [], shell.time.monotonic
+            shell.time.monotonic = lambda: reads.append(1) or fake()
+            shell.caddy.update(addrs={'127.0.0.1'}, at=post.clock[0])   # Caddy's address, just looked up
+            codes = []
+            with shell.caddy_lock:   # another peer's lookup holds the lock
+                waiter = threading.Thread(target=lambda: codes.append(post('203.0.113.7')))
+                waiter.start()
+                while not reads:   # it has read the clock it came at
+                    time.sleep(0.01)
+                post.clock[0] += 10
+                shell.caddy['failed'] = (post.clock[0], subprocess.TimeoutExpired(['docker', 'inspect'], 10))
+            waiter.join(10)
+            self.assertEqual(codes, [403], 'counted under its client, past the failure')
+            self.assertEqual(lookups, [])
+            self.assertIn('203.0.113.7', shell.asked)
+        self.limited(lambda: lookups.append(1) or {'127.0.0.1'}, check)
+
     def test_output_cuts_key_shaped_words_and_keeps_the_rest(self):
         out, code = shell.run([['echo', 'key sk_live_0123456789abcdef and ok'], ['false']])
         self.assertEqual(code, 1)

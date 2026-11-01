@@ -250,7 +250,8 @@ compose="docker compose -f $root/infra/compose.yaml -f $root/infra/generated/pro
     console.log('== review/check run wall time, last 14 days (started to finished; includes pauses, excludes jobs without a start)');
     console.table(db.prepare(\"select substr(finished, 1, 10) day, kind, engine, count(*) runs, round(avg((julianday(finished) - julianday(started)) * 1440), 1) mean_min, round(max((julianday(finished) - julianday(started)) * 1440), 1) max_min from jobs indexed by jobs_report where kind in ('review', 'consolidate') and status = 'done' and started is not null and finished >= date('now', '-13 days') group by day, kind, engine order by day desc, kind, engine\").all());
     // The reviewers' time on what the pipeline runs once for them (the worker's gates and tests): each step of a review
-    // or a check, from its own log (log.ts, 14 days), lasts until the job's next step. Steps stand in for tokens. A step
+    // or a check, from its own log (log.ts, 14 days), lasts until the job's next step. Steps stand in for tokens. A step's
+    // command is the board's line of it (board), read here for the totals only. A step
     // counts as running them when its command names a runner with what it runs, so a sed or cat of a test file mostly
     // stays out, but a grep or sed that also names a runner still counts (a rough match). A Codex step loses its shell
     // wrapper (bash -lc) first, once: inside a subquery SQLite repeats the two replace() calls at every like test. An hour
@@ -259,7 +260,7 @@ compose="docker compose -f $root/infra/compose.yaml -f $root/infra/generated/pro
     const stepKind = \"case when l.text not like '\$ %' then 'other' when l.text like '%npm ci%' or l.text like '%npm install%' or l.text like '%npm i %' or l.text like '%pip install%' or l.text like '%-m venv%' then 'install' when l.text like '%node %check.mjs%' then 'pages' when l.text like '%node --test%' or l.text like '%npm run gates%' or l.text like '%npm run tests%' or l.text like '%npm test%' or l.text like '%node %gates/gates.ts%' or l.text like '%node %gates/tests.ts%' or l.text like '%prettier -%' or l.text like '%npx eslint%' or l.text like '%eslint -%' or l.text like '%npx tsc%' or l.text like '%tsc -%' or l.text like '%unittest%' or l.text like '%pytest%' or l.text like '%python% %test_%.py%' or l.text like '%sh %test_%.sh%' or l.text like '%./test_%.sh%' or l.text like '%node %.test.%' then 'tests' else 'other' end\";
     console.log('== reviews\\' time on installs, gates and tests, last 14 days (per UTC day and engine; a review or check\\'s logged steps, each until its next one; pages: *check.mjs walks, which stay the reviewers\\')');
     db.exec('pragma temp_store = memory; create temp table steps (job, engine, day, k, m)');
-    const stepsIn = db.prepare(\"with l as materialized (select l.id, l.job, l.ts, j.engine, replace(replace(l.text, '/bin/bash -lc ', ''), 'bash -lc ', '') text \"
+    const stepsIn = db.prepare(\"with l as materialized (select l.id, l.job, l.ts, j.engine, replace(replace(coalesce(l.board, l.text), '/bin/bash -lc ', ''), 'bash -lc ', '') text \"
       + \"from job_log l cross join jobs j indexed by jobs_report on j.id = l.job where l.ts >= ? and l.ts < ? and j.kind in ('review', 'consolidate')) insert into temp.steps \"
       + \"select l.job, l.engine, substr(l.ts, 1, 10), \" + stepKind + \", (julianday((select n.ts from job_log n where n.job = l.job and n.id > l.id order by n.id limit 1)) - julianday(l.ts)) * 1440 from l\");
     const oldestStep = db.prepare('select min(ts) ts from job_log').get().ts, hourMs = 3600e3;

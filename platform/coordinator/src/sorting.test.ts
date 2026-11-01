@@ -3,13 +3,14 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
+import { sizedTime } from './testwords.ts';
 import { harness, type Running } from './harness.ts';
 
 const h = await harness('sorting', {
   before: repo =>
     writeFileSync(`${repo}/company/projects.yaml`, 'projects:\n  - { id: game, name: The game, owner: wren }\n'),
 });
-const scope = { size: '30m', why: 'Test scope judgment without a comparable completed job' };
+const scope = { size: sizedTime('30m'), why: 'Test scope judgment without a comparable completed job' };
 const { db } = h;
 const proposals = await import('./proposals.ts');
 const projects = await import('./projects.ts');
@@ -218,7 +219,7 @@ test('a later message joining a sorted job that has not started holds it for its
   proposals.accept(first.id, 'wren', { ...scope, title: 'Draw the door', code: 'DOOR' });
   assert.equal(held(job), undefined);
   const sizes = await import('./sizes.ts');
-  const revised = sizes.setSize(job, '55m', 'The door also needs its frame', 'juno');
+  const revised = sizes.setSize(job, sizedTime('55m'), 'The door also needs its frame', 'juno');
   assert.ok(!Array.isArray(revised));
   const saved = sizes.history(job);
   const again = await say(bolt, 'kit', 'And a window beside it.');
@@ -290,7 +291,7 @@ test("an ordinary proposal takes the accepter's title when given one", async () 
   const made = await h.agent('proposals', bolt.token, { title: 'Doors', brief: 'Doors everywhere.', project: 'game' });
   const accepted = proposals.accept(made.body.id, 'wren', {
     title: 'Doors on every level',
-    size: '30m',
+    size: sizedTime('30m'),
     why: 'Add the same door interaction to each level',
     code: 'EVERY',
     thread: 'game/world',

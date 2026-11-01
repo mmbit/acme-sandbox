@@ -5,7 +5,6 @@
 import { execFileSync } from 'node:child_process';
 import { db } from './db.ts';
 import * as jobs from './jobs.ts';
-import * as memory from './memory.ts';
 import { agreements, oneLine } from './agreements.ts';
 import { checkUnderWay, LONG_LINE, SAID_MAX } from './followthrough.ts';
 import { ceo, roles } from './company.ts';
@@ -55,7 +54,7 @@ export function requeue(checkJob: number, failed: number, said: string) {
     return `job #${failed}'s item #${ended.id} was ${ended.status}: queue its remaining work separately with hq job`;
   const taker = takerOf(job, items);
   if (typeof taker === 'string') return taker;
-  const { carried, on, calls, agent } = taker;
+  const { carried, on, agent } = taker;
   const { id } = jobs.createJob({
     agent,
     title: job.title,
@@ -67,7 +66,6 @@ export function requeue(checkJob: number, failed: number, said: string) {
     queuedBy: ceo(),
     prompt: brief(job, { line, on, carried: carried.id, agent }),
   });
-  if (calls.some(memory.customerCall)) jobs.handedCustomerData(id);
   return { ok: true, id, agent };
 }
 
@@ -75,11 +73,11 @@ export function requeue(checkJob: number, failed: number, said: string) {
 // job landing them replaces it, carrying its call and item. Its agent is the failed job's own, who worked for
 // that call already; only that agent, whoever queued the failed job, the CEO or the process role queues it. Work with a
 // pull request goes on there (review.ts decide), unless a thread task saved nothing of its own. The answer supplies
-// its original brief, the saved branch if any, and whether the new job holds a customer's details.
+// its original brief and the saved branch if any.
 export function landing(failed: number, agent: string, by: string) {
   const job = db
     .prepare(
-      `select agent, queued_by, coalesce(branch, 'job/' || id) branch, call, prompt, thread, pr, started, finished from jobs
+      `select agent, queued_by, coalesce(branch, 'job/' || id) branch, prompt, thread, pr, started, finished from jobs
       where id = ? and kind = 'work' and status in ('failed', 'stopped')`,
     )
     .get(failed) as LandingJob | undefined;
@@ -100,15 +98,13 @@ export function landing(failed: number, agent: string, by: string) {
     return `job #${failed} is ${job.agent}'s, and so is the job landing its work: it carries their call and item`;
   if (![job.agent, job.queued_by, ceo(), roles().process].includes(by))
     return `only ${job.agent}, whoever queued #${failed}, the CEO or the process role lands its work`;
-  const customers = jobs.holdsCustomerData(failed) || (job.call != null && memory.customerCall(job.call));
-  return { branch: empty ? null : job.branch, customers, prompt: job.prompt };
+  return { branch: empty ? null : job.branch, prompt: job.prompt };
 }
 
 type LandingJob = {
   agent: string;
   queued_by: string | null;
   branch: string;
-  call: number | null;
   prompt: string;
   thread: string | null;
   pr: number | null;
@@ -171,7 +167,7 @@ function takerOf(job: Failed, items: Item[]) {
     return `job #${job.id}'s work is on calls ${calls.map(c => `#${c}`).join(', ')}${agents.length > 1 ? ` of ${agents.join(' and ')}` : ''}, more than one job works for: queue each call's agent a job (hq job) with what you found`;
   if (!jobs.findAgent(agents[0]))
     return `call #${on}'s agent ${agents[0]} isn't on the staff: queue the item's owner a job (hq job) with what you found`;
-  return { carried, on, calls, agent: agents[0] };
+  return { carried, on, agent: agents[0] };
 }
 
 function brief(job: Failed, to: { line: string; on: number; carried: number; agent: string }) {

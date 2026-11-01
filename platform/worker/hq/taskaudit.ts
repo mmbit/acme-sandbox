@@ -1,4 +1,5 @@
 // The first saved work estimate beside its own runs and attributed whole-task cost.
+import { budgetLine, confidenceLine } from './costs.ts';
 import type { TaskAudit } from '../../coordinator/src/taskaudit.ts';
 import type { TaskTimingFlag } from '../../coordinator/src/tasktime.ts';
 import { workDuration, TASK_TIMING_REASONS } from './comparisons.ts';
@@ -24,8 +25,33 @@ export function printTaskAudit(audit: TaskAudit) {
     `Own-work timing reasons: ${countWords(coverage.timing_reasons)}.`,
     `Whole-task timing reasons: ${countWords(coverage.whole_timing_reasons, true)}.`,
   );
+  print(`Confidence coverage: ${coverage.missing_confidence} original tasks without stated confidence.`);
+  printConfidence(audit);
   print(carryLine(audit.carry_checks));
+  print(
+    `Token coverage: ${audit.token_cost.missing_estimates} without a first token estimate, ${audit.token_cost.incomplete_actuals} with incomplete actuals.`,
+  );
+  for (const [phase, score] of Object.entries(audit.token_cost.phases))
+    print(`Token ${phase}: ${score.count ? spreadWords(score) : 'no eligible estimates'}`);
+  print(
+    'Token scores use work, reviews and fixes through the task window. Feedback belongs to the separate through-approval feature budget. Missing reports and unfinished totals are unscored.',
+  );
   for (const task of audit.rows) printTask(task);
+}
+
+function printConfidence(audit: TaskAudit) {
+  for (const score of audit.confidence) {
+    print(
+      `Confidence ${score.level}, work time: ${score.work_size.count ? spreadWords(score.work_size) : 'no eligible estimates'}`,
+    );
+    for (const [phase, spread] of Object.entries(score.token_cost.phases))
+      print(
+        `Confidence ${score.level}, token ${phase}: ${spread.count ? spreadWords(spread) : 'no eligible estimates'}`,
+      );
+    print(
+      `  Token coverage: ${score.token_cost.missing_estimates} missing estimates, ${score.token_cost.incomplete_actuals} incomplete actuals.`,
+    );
+  }
 }
 
 function printTask(task: Task) {
@@ -42,8 +68,18 @@ function printTask(task: Task) {
     `  Own work ${task.actual_work_minutes === null ? 'unmeasured' : workDuration(task.actual_work_minutes, task.origin)}, work-size miss ${miss}; whole task ${workDuration(task.whole.agent_minutes, task.origin)} (${task.whole.complete ? 'complete' : 'incomplete'}), overhead ${duration(task.overhead_minutes)}.`,
     `  Phases: work ${workDuration(task.whole.split.work, task.origin)}, ${phaseWords(task.whole.split)}${quality}${wholeQuality}`,
   );
+  print(`  ${budgetLine(estimate?.token_budget)}`, `  ${confidenceLine(estimate?.confidence)}`);
+  const cost = task.whole.cost;
+  print(
+    `  Recorded task tokens: ${Math.round(cost.total.tokens)} (${Object.entries(cost.split)
+      .map(([phase, spend]) => `${phase} ${Math.round(spend.tokens)}`)
+      .join(', ')}). Missing reports: ${cost.missing_usage}.`,
+  );
   if (task.revisions.length)
-    for (const revision of task.revisions) print(`  Later revision: ${estimateWords(revision, task.origin)}`);
+    for (const revision of task.revisions)
+      print(
+        `  Later revision: ${estimateWords(revision, task.origin)}. ${budgetLine(revision.token_budget)} ${confidenceLine(revision.confidence)}`,
+      );
   if (task.prediction && estimate?.source !== 'prediction')
     print(
       `  Default prediction: ${workDuration(task.prediction.agent_ms / 60_000, task.origin)}, ${task.prediction.made} (${task.prediction.timing}, separate from caller size)`,

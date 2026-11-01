@@ -1,18 +1,21 @@
 // Task estimates saved when queued, their evidence, and the CEO's explicit revisions.
 // The scheduler's terms and their relationships are defined at the top of eta.ts.
+import { readBudget, readSizing, type TokenBudget } from './tokenbudget.ts';
 import { createHash } from 'node:crypto';
-import { columnsOf, db, once, redacted } from './db.ts';
+import { readConfidence, type Confidence } from './confidence.ts';
+import { columnsOf, db, once, redacted, redactedJson } from './db.ts';
 import { ceo } from './company.ts';
+import { publish } from './events.ts';
 import { ORIGIN, cleanPastJobs, pastJobs, type JobOrigin } from './matching.ts';
 import { MODEL as SIZER } from './smallmodel.ts';
 import { duration } from '../../worker/hq/waits.ts';
 
 // by: the sizer's model ('haiku') or an agent's id. low_ms and high_ms: none for an agent's one number. brief: the hash
-// of the prompt it sized (briefOf), kept as evidence when the brief changes. revised: the CEO's revision of a job under
-// way (setSize), made with its progress in view, not a guess at queue time.
+// of the prompt it sized (briefOf), kept as evidence when the brief changes. revised: a revision of a job under way
+// (setSize), by the agent running it or the CEO, made with its progress in view, not a guess at queue time.
 db.exec(`create table if not exists sizes (id integer primary key, job integer not null, at text not null, by text not null,
   agent_ms real not null, low_ms real, high_ms real, refs text not null, why text not null, brief text not null,
-  revised integer not null default 0);
+  revised integer not null default 0, token_budget text, confidence text);
   create index if not exists sizes_job on sizes (job)`);
 redacted('sizes', 'why');
 once('2026-10-26-sizes-revised', () => {
@@ -21,6 +24,17 @@ once('2026-10-26-sizes-revised', () => {
   // (before it, only setSize gave a job a second size)
   db.exec('update sizes set revised = 1 where id not in (select min(id) from sizes group by job)');
 });
+
+once('2026-11-01-size-tokens', () => {
+  if (columnsOf('sizes').includes('token_budget')) return;
+  db.exec('alter table sizes add column token_budget text');
+});
+
+once('2026-11-01-size-confidence', () => {
+  if (columnsOf('sizes').includes('confidence')) return;
+  db.exec('alter table sizes add column confidence text');
+});
+redactedJson('sizes', 'confidence');
 
 export type GivenSize = {
   job: number;
@@ -33,17 +47,41 @@ export type GivenSize = {
   why: string;
   brief: string;
   revised?: boolean;
+  token_budget?: TokenBudget | null;
+  confidence?: Confidence | null;
 };
-type Row = Omit<GivenSize, 'refs' | 'revised'> & { refs: string; revised: number };
+type Row = Omit<GivenSize, 'refs' | 'revised' | 'token_budget' | 'confidence'> & {
+  refs: string;
+  revised: number;
+  token_budget: string | null;
+  confidence: string | null;
+};
 
 export const briefOf = (prompt: string) => createHash('sha256').update(prompt).digest('hex').slice(0, 16);
 
-export type QueuedSize = { agent_ms: number; refs: number[]; why: string };
-export function readQueuedSize(given: { size?: unknown; refs?: unknown; why?: unknown }): QueuedSize | string {
-  if (typeof given.size !== 'string')
-    return 'inspect hq estimate for comparable scopes, then give --size and --why when queueing the work';
-  const agentMs = readSize(given.size);
+export type QueuedSize = {
+  agent_ms: number;
+  refs: number[];
+  why: string;
+  token_budget?: TokenBudget | null;
+  confidence?: Confidence | null;
+};
+export function readQueuedSize(given: {
+  size?: unknown;
+  refs?: unknown;
+  why?: unknown;
+  tokens?: unknown;
+  feedback_rounds?: unknown;
+  confidence?: unknown;
+}): QueuedSize | string {
+  const sizing = readSizing(given.size);
+  if (typeof sizing === 'string') return sizing;
+  const agentMs = readSize(sizing.time);
   if (typeof agentMs === 'string') return agentMs;
+  const budget = sizing.budget ?? readBudget(given);
+  if (typeof budget === 'string') return budget;
+  const confidence = sizing.confidence ?? readConfidence(given.confidence);
+  if (typeof confidence === 'string') return confidence;
   if (typeof given.why !== 'string' || !given.why.trim())
     return 'give --why: how the scope compares with the past jobs, or why none is comparable';
   const refs = given.refs ?? [];
@@ -59,7 +97,7 @@ export function readQueuedSize(given: { size?: unknown; refs?: unknown; why?: un
   );
   if (refs.some(id => !clean.has(id)))
     return 'each estimate reference must be done model-agent work with clean recorded time';
-  return { agent_ms: agentMs, refs: [...new Set(refs)], why: given.why.trim() };
+  return { agent_ms: agentMs, refs: [...new Set(refs)], why: given.why.trim(), token_budget: budget, confidence };
 }
 
 export function recordQueued(job: number, by: string, prompt: string, size: QueuedSize) {
@@ -68,7 +106,7 @@ export function recordQueued(job: number, by: string, prompt: string, size: Queu
 
 export function record(size: Omit<GivenSize, 'at'>, now = Date.now()) {
   db.prepare(
-    'insert into sizes (job, at, by, agent_ms, low_ms, high_ms, refs, why, brief, revised) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    'insert into sizes (job, at, by, agent_ms, low_ms, high_ms, refs, why, brief, revised, token_budget, confidence) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
   ).run(
     size.job,
     new Date(now).toISOString(),
@@ -80,6 +118,8 @@ export function record(size: Omit<GivenSize, 'at'>, now = Date.now()) {
     size.why,
     size.brief,
     size.revised ? 1 : 0,
+    size.token_budget ? JSON.stringify(size.token_budget) : null,
+    size.confidence ? JSON.stringify(size.confidence) : null,
   );
 }
 
@@ -119,39 +159,63 @@ const shown = ({ id: _id, ...row }: Row & { id?: number }): GivenSize => ({
   ...row,
   refs: JSON.parse(row.refs) as number[],
   revised: !!row.revised,
+  token_budget: row.token_budget ? JSON.parse(row.token_budget) : null,
+  confidence: row.confidence ? JSON.parse(row.confidence) : null,
 });
 
-// Only the CEO revises a saved estimate when a task slips. Earlier estimates remain in history.
+// A saved estimate is revised by whoever knows: the agent running the job, which knows first that it's bigger, and the
+// CEO, for any queued or running planned work or HQ's fix and merge rounds. Each
+// revision says why, on the feed and in the CEO's summary (threats.ts resized). HQ's other jobs (a notice, the board's
+// answer) and carry checks play from history: a size would make one planned work (matching.ts ORIGIN). Earlier
+// estimates remain in history.
 const WHY_MAX = 300,
-  MOST_MS = 48 * 3_600_000;
+  MOST_MS = 48 * 3_600_000,
+  REVISED = ['work', 'fix', 'merge'];
 export function setSize(job: number, time: string, why: string, by: string, now = Date.now()) {
-  const agentMs = readSize(time);
+  const sizing = readSizing(time);
+  if (typeof sizing === 'string') return refused(400, sizing);
+  const agentMs = readSize(sizing.time);
   if (typeof agentMs === 'string') return refused(400, agentMs);
   const found = db
     .prepare(
-      `select j.id, j.agent, j.status, j.queued_by, j.thread, j.prompt, ${ORIGIN} origin from jobs j where j.id = ?
-      and j.kind = 'work'`,
+      `select j.id, j.agent, j.status, j.prompt, ${ORIGIN} origin from jobs j where j.id = ? and j.kind = 'work'`,
     )
-    .get(job) as
-    | {
-        id: number;
-        agent: string;
-        status: string;
-        queued_by: string | null;
-        thread: string | null;
-        prompt: string;
-        origin: string;
-      }
-    | undefined;
+    .get(job) as { id: number; agent: string; status: string; prompt: string; origin: string } | undefined;
   if (!found) return refused(404, `there's no work job #${job}`);
   if (found.status !== 'queued' && found.status !== 'running')
     return refused(409, `job #${job} is ${found.status}: only a queued or running job is re-sized`);
-  if (found.origin !== 'work')
-    return refused(409, `job #${job} is HQ's own (a fix or a merge): the play sizes it from history`);
-  if (by !== ceo()) return refused(403, 'only the CEO changes a saved estimate when work slips');
+  if (!REVISED.includes(found.origin))
+    return refused(
+      409,
+      `job #${job} is HQ's own (a notice, an answer or a carry check): the play sizes it from history`,
+    );
+  const byRunningAgent = found.status === 'running' && by === found.agent;
+  if (!byRunningAgent && by !== ceo())
+    return refused(
+      403,
+      `the agent running job #${job} or the CEO re-sizes it: tell ${found.agent} what you know (hq say)`,
+    );
   if (!why.trim()) return refused(400, 'give the reason the saved estimate needs changing');
-  const size = { job, by, agent_ms: agentMs, low_ms: null, high_ms: agentMs, refs: [], why: oneLine(why, WHY_MAX) };
+  if (!sizing.budget) return refused(400, 'give time, tokens, feedback_rounds and confidence as JSON');
+  const before = latestOf(job)?.agent_ms ?? null;
+  const size = {
+    token_budget: sizing.budget,
+    confidence: sizing.confidence,
+    job,
+    by,
+    agent_ms: agentMs,
+    low_ms: null,
+    high_ms: agentMs,
+    refs: [],
+    why: oneLine(why, WHY_MAX),
+  };
   record({ ...size, brief: briefOf(found.prompt), revised: true }, now);
+  const was = before === null ? '' : ` from ${duration(before / 60_000)}`;
+  publish({
+    type: 'log',
+    agent: by,
+    text: `Re-sized #${job}${was} to ${duration(agentMs / 60_000)} of agent time: ${size.why}`,
+  });
   return size;
 }
 

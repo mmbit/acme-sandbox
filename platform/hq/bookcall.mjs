@@ -63,10 +63,13 @@ export async function playLine(context) {
       return out.stream;
     };
   });
-  const line = { ws: null, said: [] };
+  const line = { ws: null, said: [], audioBytes: 0 };
   await context.routeWebSocket(/\/voice\/ws$/, ws =>
     ws.onMessage(m => {
-      if (typeof m !== 'string') return; // (the microphone)
+      if (typeof m !== 'string') {
+        line.audioBytes += m.length;
+        return;
+      }
       const e = JSON.parse(m);
       if (e.agent) {
         line.ws = ws;
@@ -303,7 +306,7 @@ async function lostAtTheEnd(s) {
 async function drawnAfterTheLoss(s, undo) {
   const { page } = s,
     sent = [];
-  await page.evaluate(() => document.querySelector('#btn-intercom').click()); // (it closed with the last call)
+  await page.evaluate(() => document.querySelector('#btn-intercom').click());
   await page.click('#call');
   await page.waitForFunction(() => !document.querySelector('#call-screenshare')?.disabled);
   const count = q =>

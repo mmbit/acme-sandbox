@@ -1,6 +1,10 @@
 // hq when: when new work could be done, played into the plan as it stands (the coordinator's when.ts): the earliest
 // without making any window miss, or with --by whether its planned live finish meets that time, and only if not, what
 // would.
+import { TOKEN_ESTIMATE_GUIDANCE } from './estimating.ts';
+import { budgetLine, confidenceLine } from './costs.ts';
+import type { Confidence } from '../../coordinator/src/confidence.ts';
+import type { TokenBudget } from '../../coordinator/src/tokenbudget.ts';
 import * as seatreplay from './seatreplay.ts';
 import * as api from './api.ts';
 import { deadlineLines, type Deadline } from './deadlines.ts';
@@ -23,6 +27,8 @@ type Give = { thread: string; project: string; name: string; deadline: number; p
 type Answer = {
   work: { title: string; agent: string; engine: string };
   size: {
+    token_budget: TokenBudget;
+    confidence: Confidence;
     agent_minutes: number;
     given: boolean;
     compared: number;
@@ -48,7 +54,7 @@ type Answer = {
   played: { plays: number; ms: number };
 };
 
-const USAGE = 'usage: hq when "what the work is" --size <90m> [--agent <id>] [--after <job>] [--by <time>]';
+const USAGE = 'usage: hq when "what the work is" --size <JSON> [--agent <id>] [--after <job>] [--by <time>]';
 
 // --by names the board's time. --size supplies the task's work estimate.
 export const when = {
@@ -56,17 +62,18 @@ export const when = {
    hq when --extra-seat 5x|20x                       replay the live plan with one hypothetical Claude Max seat, at
                                                      any time: every project, deliverable and window before and after,
                                                      measured capacity and confidence. Nothing changes.
-   hq when "what the work is" --size <90m> [--agent <id>] [--after <job>] [--by <time>]
+   hq when "what the work is" --size <JSON> [--agent <id>] [--after <job>] [--by <time>]
                                                      when new work could be done (merged and deployed), played into the
                                                      plan as it stands: use hq estimate to compare clean past jobs, then
-                                                     give your task work estimate as --size
-                                                     (90m, 2h, 1h30m), as --agent's work (yours by default), after
+                                                     give your task time and tokens as --size JSON, as --agent's work (yours by default), after
                                                      --after's job. The earliest it can be done without making any
                                                      window miss, and a proposed window for it (hq window). With --by
                                                      (2h, 90m, 2026-10-26 09:00 on the company's clock, 14:30 UTC),
                                                      whether its planned live finish meets that time, and only
                                                      if not, what would, each as played: the windows that would give
-                                                     and by how much, and one more seat`,
+                                                     and by how much, and one more seat
+
+${TOKEN_ESTIMATE_GUIDANCE}`,
 
   async run(given: string[]) {
     const flags: Record<string, string> = {};
@@ -90,7 +97,7 @@ export const when = {
     const found: Answer = JSON.parse(
       await api.orStop(api.get(`when?${query}`), "Couldn't play the work into the plan."),
     );
-    print(sizeLine(found), '');
+    print(sizeLine(found), budgetLine(found.size.token_budget), confidenceLine(found.size.confidence), '');
     print(...(found.by ? byLines(found.by, found.work.engine) : earliestLines(found)), ...unpricedLines(found));
     print(...safeLines(found));
     print('', ...agreedLines(found));

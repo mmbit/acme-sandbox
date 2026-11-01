@@ -66,7 +66,12 @@ WHEN = {'type': 'string', 'pattern': DEADLINE.pattern, 'description': 'when you 
 BOARD_SET = {'type': 'boolean', 'description': 'with deadline: true only when the board named this time itself or '
              "asked for the work by it ('I need it by Tuesday'). A time you gave or offered, even one it took, is ours: "
              'leave it out'}
-SIZE = {'type': 'string', 'description': 'your task work estimate of agent time, from clean past jobs: 90m, 2h or 1h30m'}
+SIZE = {'type': 'string', 'description': 'your estimate as a JSON string, for example '
+        '{"time":"35m","tokens":{"work":1000000,"reviews":200000,"fixes":100000,"feedback":0},"feedback_rounds":0,"confidence":{"level":"medium","why":"Two similar scopes, but limited feedback history"}}. '
+        'These numbers illustrate the format, not defaults. Reason from the closest clean scopes and token splits '
+        'from estimate, never averages. Include review, fix and expected feedback tokens. Visible experience, feel '
+        'and performance normally need feedback rounds, backend work and refactoring normally do not. Give the '
+        'token total and split beside the time you tell the board. Unknown historical seat meters stay unknown. State confidence (low, medium or high) and why in the JSON, based on how many past examples fit and how close they are. This is your judgment, not a tool score.'}
 TOOLS = [
     {'name': 'job', 'description': "Put work on a colleague's list as a separate job. "
      "Queue it only once the board agrees the direction on this call. Until it does, say what you'd do and ask. A "
@@ -259,7 +264,7 @@ TOOLS += [
                    'description': "the project's or deliverable's name, or a few words; leave it out for what's going on "
                    'right now'},
          'extra_seat': {'type': 'string', 'enum': ['5x', '20x']}}}},
-    {'name': 'estimate', 'description': 'Find clean past jobs with briefs, reports, changed files and whole task agent times split into work, shared reviews and fixes. Size covers the work split only. The forecast adds review and fix rounds once per deliverable. Queue and other waits are excluded. Compare their scope yourself before supplying size, refs and why to job, or size to when. Search ranking is only a candidate list, never an estimate.',
+    {'name': 'estimate', 'description': 'Find clean past jobs with briefs, reports, changed files and whole task agent times split into work, shared reviews and fixes. Size.time covers the work split only. The raw whole.cost token split and feature_cost feedback totals accompany the times. The forecast adds review and fix rounds once per deliverable. Queue and other waits are excluded. Compare their scope yourself before supplying size, refs and why to job, or size to when. Search ranking is only a candidate list, never an estimate.',
      'inputSchema': {'type': 'object', 'required': ['query'], 'additionalProperties': False, 'properties': {
          'query': {'type': 'string', 'minLength': 1, 'maxLength': 500, 'description': 'the scope of work to compare'},
          'agent': ID}}},
@@ -751,7 +756,7 @@ def when(waits, a):
     if not isinstance(agent, str) or (agent and not re.fullmatch(r'[a-z][a-z0-9-]{0,31}', agent)):
         return False, "agent is an agent's id, like ada"
     if not valid_size(size):
-        return False, 'size is agent time: 90m, 2h or 1h30m'
+        return False, 'size is JSON with time, tokens, feedback_rounds and confidence'
     if not isinstance(by, str) or (by and not re.fullmatch(r'[0-9:TZ -]{4,20}', by)):
         return False, ("by is the board's own time with its date and no zone (2026-10-26 09:00, on the company's "
                        'clock), or a UTC time: 14:30 or 2026-10-26T08:00Z')
@@ -892,7 +897,7 @@ def job(waits, a):
         return False, 'after is a job number, like 123'
     size, refs, why = a.get('size'), a.get('refs'), a.get('why')
     if not valid_size(size):
-        return False, 'size is required agent time: 90m, 2h or 1h30m'
+        return False, 'size is required JSON with time, tokens, feedback_rounds and confidence'
     if not isinstance(refs, list) or any(type(ref) is not int or ref < 1 for ref in refs):
         return False, 'refs must list the clean past job numbers, or [] when none fits'
     if not isinstance(why, str) or not why.strip():
@@ -936,8 +941,13 @@ def drawn_words(drawn):
 
 
 def valid_size(size):
-    """Agent time uses positive hours and minutes, checked before they enter argv."""
-    return isinstance(size, str) and bool(re.fullmatch(r'(\d+h)?(\d+m)?', size)) and any(c in '123456789' for c in size)
+    """The coordinator validates the time, token and confidence fields in this JSON argument."""
+    if not isinstance(size, str):
+        return False
+    try:
+        return isinstance(json.loads(size), dict)
+    except ValueError:
+        return False
 
 
 def add(waits, a):

@@ -8,12 +8,12 @@
 // words back), but for nearest()'s ids, which HQ's search matches to its own lists.
 //
 // Who sees what. The company's files (below) are everyone's, and so are the board's calls with every agent (#1877), each
-// with its summary: the report of the job that heard it, and the intercom, a document a day (intercom.ts: a line about a
-// customer, or one that came of a call about a card for keys, as its placeholder).
+// with its summary: the report of the job that heard it, and the intercom, a document a day (intercom.ts: a line that
+// came of a call about a card for keys as its placeholder).
 // Everything else is its own agent's only: its jobs' reports, its desk phone requests and the board's answers (no job or
-// request is summarised across agents but through a call). A customer's own details (charter rule 7) go only to the job
-// working on them and org.yaml's roles.customerData (jobs.ts Reader): a job's report that holds them, a customer card and a call about a customer are left out for any
-// other job, its own agent's included.
+// request is summarised across agents but through a call). A job's report, a card and a call marked before 31 Oct as
+// holding a customer's own details go only to the jobs working on them and org.yaml's roles.customerData (jobs.ts
+// holdsCustomerData), and are left out for any other job, its own agent's included.
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { Worker } from 'node:worker_threads';
@@ -93,23 +93,26 @@ const FILES: [string, string, RegExp][] = [
 // A call still live (the call ledger makes its row when it starts: ledger.ts) has no transcript yet. Once it has ENDED,
 // every agent reads it (search, hq call), since what the board said on it may be anyone's to act on (the CEO couldn't
 // find the earlier call). But a call about a card for keys (own_only) is its own agent's: the board may read a key out
-// on it, and speech-to-text writes it down in a form the mask can't match (secrets.ts redact()). And a call about a
-// customer goes only to the jobs working on it (readsCall): one about a customer card (customer_card), or one whose
-// follow-up holds a customer's own details (customer_data, so its summary does too). Its summary is the report of the
-// job that heard it (calls.job: its follow-up, or for a call about a request the job that heard it, jobs.ts tell()),
-// once that job is done. The CEO's intercom chat job hears calls too: its last message is a reply in a conversation,
-// not a report, and never a summary. A call that carried on from a customer call (calls.resumes: its briefing had that
-// call's transcript) is about the customer too, from its start (customer_before), and so is a call a look-up on it
-// handed a customer's details (customer_read: jobs.ts readerHanded). One that
+// on it, and speech-to-text writes it down in a form the mask can't match (secrets.ts redact()). And a call marked
+// before 31 Oct as about a customer goes only to the jobs working on it (readsCall): one about a customer card
+// (customer_card), one whose follow-up holds a customer's own details (customer_data, so its summary does too), one a
+// look-up on it handed them (customer_read), or one that carried on from such a call (customer_before: its briefing had
+// that call's transcript). Nothing marks a call now: its look-ups say where a case is in care (jobs.ts
+// holdsCustomerData). Its summary is the report of the job that heard it (calls.job: its follow-up, or for a call about
+// a request the job that heard it, jobs.ts tell()), once that job is done. The CEO's intercom chat job hears calls too:
+// its last message is a reply in a conversation, not a report, and never a summary. One that
 // carried on from a card for keys is its own agent's too, through any further call that carried on from it (own_only).
 //
+// Any follow-up a call has had (jobs.call) was marked, not only the one calls.job names now: a retry or the board's
+// added item links a new one, and the call stays as closed as it was.
+const FOLLOWED_MARKED = (c: string) => `exists (select 1 from jobs pj where pj.call = ${c}.id and pj.customers)`;
 const CALLS = `select *, customer_card or customer_data or customer_read or customer_before customer from (select c.id, c.ts, c.agent, c.request, c.lines, c.job, c.status = 'live' live,
   ${keysCondition()} own_only,
   coalesce(r.customers, 0) customer_card, c.customers customer_read,
-  sj.agent heard_by, sj.kind heard_kind, sj.status heard_status, sj.result summary, coalesce(sj.customers, 0) customer_data,
+  sj.agent heard_by, sj.kind heard_kind, sj.status heard_status, sj.result summary, coalesce(sj.customers, 0) or ${FOLLOWED_MARKED('c')} customer_data,
   coalesce(sj.kind = 'work' and sj.status = 'done' and coalesce(sj.result, '') != '', 0) reported,
   exists (select 1 from json_each(c.resumes) e join calls ec on ec.id = e.value left join requests er on er.id = ec.request
-    left join jobs ej on ej.id = ec.job where coalesce(er.customers, 0) or coalesce(ej.customers, 0) or ec.customers) customer_before   --
+    left join jobs ej on ej.id = ec.job where coalesce(er.customers, 0) or coalesce(ej.customers, 0) or ec.customers or ${FOLLOWED_MARKED('ec')}) customer_before   --
   from calls c left join requests r on r.id = c.request left join jobs sj on sj.id = c.job)`;
 const ENDED = 'not live';
 // Kind work only: reviews are the panel's, and the CEO's intercom chat is a conversation with the board, not a report.
@@ -430,8 +433,8 @@ export function start(every = 120_000) {
 
 // Still what the index says it is, for the reader: a file, a row of its agent's own, or a call that's over (its own
 // agent's only, if it's about a card for keys), and its summary while it's still that job's. Each query takes the row's
-// id, its agent, the reader's agent and, for a summary, its job. And nothing about a customer the reader wasn't handed
-// (readsDoc).
+// id, its agent, the reader's agent and, for a summary, its job. And nothing marked as a customer's that the reader
+// doesn't work on (readsDoc).
 const LIVE: Record<string, string> = {
   job: `select 1 from (${JOBS}) where id = ? and agent = ? and agent = ?`,
   request: `select 1 from (${REQUESTS}) where id = ? and agent = ? and agent = ?`,
@@ -531,7 +534,6 @@ export async function search(q: unknown, reader: Reader, limit?: unknown) {
   const query = String(q ?? '').trim();
   if (!query) return 400;
   const { hits, terms, words } = await ranked(query, reader, clamp(limit, 8));
-  if (hits.some(h => aboutCustomer(h.doc))) jobs.readerHanded(reader);
   if (hits.some(h => aboutKeys(h.doc))) jobs.handedKeys(reader.id);
   return { ...(words ? { words } : {}), hits: hits.map(h => ({ source: h.source, title: h.title, pointer: h.pointer, snippet: snippet(h.body, terms),
     score: Number(h.score.toFixed(4)), ...(h.source === ARCHIVE ? { archived: true, note: h.note } : {}) })) };
@@ -553,7 +555,7 @@ export async function searchIntercom(q: unknown, reader: Reader, limit?: unknown
 
 // hq history: the token's agent's own jobs (status, PR, report), requests (body, answer), calls and meetings, newest first; with
 // a query, the ones it matches ('#35': that number, 'HQ-COVERS': the jobs of the task with that code). "Know where to look it up", for jobs and calls alike. A report or
-// card about a customer the reader wasn't handed shows by its title, with why the rest is left out.
+// card marked as a customer's that the reader doesn't work on shows by its title, with why the rest is left out.
 //
 const PR = "(select number || ' ' || status from prs where branch = coalesce(j.branch, 'job/' || j.id) order by number desc limit 1)";
 export async function history(reader: Reader, q: unknown, limit?: unknown) {
@@ -575,7 +577,6 @@ export async function history(reader: Reader, q: unknown, limit?: unknown) {
     left join jobs j on j.id = r.job where coalesce(j.agent, r.agent) = ? and r.kind != 'login'${where('request', 'r.id')} order by r.id desc limit ?`).all(agent, n) as any[];
   const calls = db.prepare(`${CALLS} where agent = ? and not live${where('call', 'id')} order by id desc limit ?`).all(agent, n) as any[];
   const reportShown = (j: { id: number; customers: number }) => jobs.readsReport(j, reader), cardShown = (r: { id: number }) => jobs.readsCard(r.id, reader);
-  if (done.some(j => j.customers && reportShown(j)) || requests.some(r => r.customers && cardShown(r))) jobs.readerHanded(reader);   // (a call here is only its number)
   if (done.some(j => j.report && reportShown(j) && keysReport(j.id))) jobs.handedKeys(reader.id);
   return { agent,
     // (a review loop's job by its full name, its step and round with the work's title: nameOf.)
@@ -595,7 +596,6 @@ export async function history(reader: Reader, q: unknown, limit?: unknown) {
 export function call(id: unknown, reader: Reader) {
   const c = callRow(Number(id) || 0), access = canRead(c, reader);
   if (access !== true) return access;
-  if (c.customer) jobs.readerHanded(reader);
   if (c.own_only) jobs.handedKeys(reader.id);
   const base = { id: c.id, ts: c.ts, agent: c.agent, request: c.request, job: c.job };
   const by = c.heard_by && `job #${c.job}, ${who(c.heard_by)}'s`;
@@ -607,7 +607,7 @@ export function call(id: unknown, reader: Reader) {
 }
 
 // Whether a reader may read a call's lines (hq call, the call's pictures: pictures.ts): true, 404 (no such call, still
-// going on, or about a card for keys and another agent's), or a refusal that says why (about a customer, not handed it).
+// going on, or about a card for keys and another agent's), or a refusal that says why (marked as about a customer).
 // A job working on the call (ledger.ts mine) reads it whatever it's about.
 export const callAccess = (id: number, reader: Reader) => canRead(callRow(id), reader);
 // A call every job reads (canRead for any reader): ended, not about a customer, not a card for keys's.
@@ -624,14 +624,12 @@ function canRead(c: any, reader: Reader): true | 404 | [403, string] {
 }
 const working = (call: number, reader: Reader) => !!reader.id && ledger.mine(reader.id, call);
 // A call about a customer: the jobs working on it (ledger.ts mine) and roles.customerData.
-const readsCustomerCall = (call: number, reader: Reader) => working(call, reader) || jobs.readsCustomerData(reader.agent);
+const readsCustomerCall = (call: number, reader: Reader) => working(call, reader) || jobs.readsCustomerData(reader);
 const customerCallRefused = (c: any, reader: Reader) => `call #${c.id} is about a customer, so it goes only to the jobs working on it (its \
 follow-up${c.job ? `, job #${c.job}` : ''}, and the jobs handed out for its items) and to org.yaml's roles.customerData: \
 ${c.agent === reader.agent ? 'work from what its follow-up left (its pull request, the jobs it handed out)' : `ask ${who(c.agent)} for what you need from it (hq say ${c.agent})`}`;
 
-// A customer's own details may be in the report of a job handed them, in a customer card, and in a call about one or
-// followed up by such a job. Only the job working on them reads them (readsDoc, and jobs.ts Reader), and holds them from
-// then on, so they go no further (jobs.ts holdsCustomerData).
+// A call marked before as about a customer (CALLS customer): only the jobs working on it read it (readsDoc).
 export const customerCall = (id: number) => !!db.prepare(`select 1 from (${CALLS}) where id = ? and customer`).get(id);
 // A call about a card for keys (own_only): its own agent's alone
 export const keysCall = (id: number) => !!db.prepare(`select 1 from (${CALLS}) where id = ? and own_only`).get(id);
@@ -639,12 +637,6 @@ export const keysCall = (id: number) => !!db.prepare(`select 1 from (${CALLS}) w
 export const keysAgent = (id: number) =>
   keysCall(id) ? (db.prepare('select agent from calls where id = ?').get(id) as { agent: string }).agent : null;
 const readsCall = (id: number, reader: Reader) => !customerCall(id) || readsCustomerCall(id, reader);
-function aboutCustomer(doc: string) {
-  const [kind, id] = doc.split(':'), n = Number(id);
-  if (kind === 'job') return jobs.holdsCustomerData(n);
-  if (kind === 'request') return jobs.customerCard(n);
-  return (kind === 'call' || kind === 'summary') && customerCall(n);
-}
 // A call about a card for keys, its summary, and the report of the job that heard it (its follow-up): their reader holds
 // keys (jobs.ts holdsKeys)
 const keysReport = (job: number) => !!db.prepare(`select 1 from calls c where c.job = ? and ${keysCondition()}`).get(job);

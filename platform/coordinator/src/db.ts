@@ -139,7 +139,7 @@ const born = (db.prepare("select name from sqlite_master where type = 'table' an
 // - queued_by: the agent or board who queued it (null: unattributed or automatic work).
 //   Board assignments take normal queued-work permissions for additions, cancellation and waits.
 //   A non-null queuer does not grant an agent permission to act as the board.
-// - customers: it was handed a customer's own details (charter rule 7), never spread.
+// - customers: it was handed a customer's own details (charter rule 7), set before 31 Oct only (jobs.ts holdsCustomerData).
 // - downtime: maintenance on spare capacity only.
 // - cut: what a stop of the worker's container cut in its last run, for the next run's prompt.
 // - model, effort: a scheduled entry's own (schedule.ts).
@@ -169,7 +169,7 @@ const born = (db.prepare("select name from sqlite_master where type = 'table' an
 // - photos, documents, zips, questions: what it asks for beside its answer box (each JSON).
 //   Their readers are photos.ts, documents.ts, zips.ts and hq/shell/questions.js.
 // - address: its four keys are one delivery address (secrets.ts addressKeys).
-// - customers: a tool wrote it about one customer.
+// - customers: a tool wrote it about one customer, set before 31 Oct only.
 // - answered: when it left the desk phone.
 // - changed: when its open text last changed (shown as new again).
 // - closing: HQ's line on a card whose matter ended by itself (endRequest).
@@ -193,7 +193,8 @@ const born = (db.prepare("select name from sqlite_master where type = 'table' an
 //
 // chat: the intercom (chat.ts).
 // - shown: the line shown for a call (the CEO hears the whole transcript, text).
-// - about_customer, about_keys: the line came from a job that holds a customer's details or heard a call about keys.
+// - about_customer: the line came from a job that held a customer's details (set before 31 Oct only); about_keys: from
+//   one that heard a call about keys.
 //   Only the board and the CEO's session see it.
 // - card: a card the CEO put on its reply (hq intake, chat.ts card), as JSON.
 // A database from before these columns moved into their tables' creates (a company that last ran the platform before
@@ -362,14 +363,6 @@ db.exec(`create index if not exists jobs_agent_work on jobs (agent, id) where ki
 // Whom an agent queued work for lately (jobs.ts inFlight, at each work or chat job's claim): without it the read walks
 // every job's brief and output, seconds when they're off the disk. That query names it with `indexed by`.
 db.exec('create index if not exists jobs_queued_for on jobs (queued_by, created, agent)');
-// Done work as matching.ts pastJobs reads it, every column it takes from a job: without it the read walks every done
-// job's brief and output, seconds when they're off the disk (the claim's plan, sizing a job just queued). That query
-// names it with `indexed by`. Its own filter's columns too: SQLite reads the row for a term the index's where implies.
-// It replaced jobs_past, dropped here: no other line may create that again, or every start drops and rebuilds it (seconds
-// of HQ's start, and a crash loop on a nearly full disk).
-db.exec(`create index if not exists jobs_history on jobs (id, agent, title, engine, created, finished, stage, round,
-  queued_by, pr, branch, thread, customers, about_keys, kind, status) where kind = 'work' and status = 'done';
-  drop index if exists jobs_done_work; drop index if exists jobs_past`);
 // Every jobs column the status report (infra/report.sh) reads beside usage and the step log, and for the reviews' run
 // times: from the rows, its reads went through every job's brief and report, seconds off a cold disk, and HQ's writes
 // waited for them (a 2.9 s stall). Those queries name it with `indexed by`: any jobs columns they add belong here too.
@@ -777,6 +770,18 @@ once('2026-10-20-jobs-code', () => lacks('jobs', 'code') && db.exec('alter table
 once('2026-10-21-jobs-landing', () => lacks('jobs', 'landing') && db.exec('alter table jobs add column landing text'));
 once('2026-10-27-jobs-carry', () => lacks('jobs', 'carry') && db.exec('alter table jobs add column carry text'));
 db.exec('create index if not exists jobs_carry on jobs (carry) where carry is not null');
+// Done work as matching.ts pastJobs reads it, every column it takes from a job: without it the read walks every done
+// job's brief and output, seconds when they're off the disk (the claim's plan, sizing a job just queued). That query
+// names it with `indexed by`. Its own filter's columns too: SQLite reads the row for a term the index's where implies.
+// It replaced jobs_past and jobs_history, dropped here: no other line may create those again, or every start drops and
+// rebuilds it (seconds of HQ's start, and a crash loop on a nearly full disk). A column a reader adds goes in under a new
+// name: `create index if not exists` skips an existing one, and a read of a column the index lacks takes every done
+// job's row.
+// (here, after the carry column's migration; its readers name it: matching, calibration, taskaudit, accuracy, landings)
+db.exec(`create index if not exists jobs_done on jobs (id, agent, title, engine, created, finished, stage, round,
+  queued_by, pr, branch, thread, customers, about_keys, carry, item, is_check, kind, status)
+  where kind = 'work' and status = 'done';
+  drop index if exists jobs_history; drop index if exists jobs_done_work; drop index if exists jobs_past`);
 // A job its queuer put on a lighter model (jobs.light: hq job --model), and its hand-up to its agent's own model (jobs.up:
 // JSON, the lighter model and the run's note; jobs.ts handUp).
 once('2026-10-28-jobs-light', () => {
@@ -879,7 +884,6 @@ once('2026-10-21-calls-reply', () => {
 // call_items.goal, redacted once it's there.
 once('2026-10-24-call-items-goal', () => lacks('call_items', 'goal') && db.exec('alter table call_items add column goal text'));
 redacted('call_items', 'goal');
-// A live call handed a customer's details by a look-up (jobs.ts readerHanded).
 // A pause's condition wakes its owner rather than lifting it (pauses.ts wake)
 once('2026-10-25-pauses-wake', () => {
   if (lacks('pauses', 'until_time')) db.exec('alter table pauses add column until_time text');
@@ -898,6 +902,7 @@ once('2026-10-26-threads-judge', () => lacks('threads', 'judge') && db.exec('alt
 once('2026-10-31-due-board', () => lacks('call_items', 'due_board') && db.exec('alter table call_items add column due_board integer not null default 0'));
 once('2026-10-30-deadline-from', () => lacks('threads', 'deadline_from') && db.exec('alter table threads add column deadline_from text'));
 db.exec('create index if not exists threads_judge on threads (judge) where judge is not null');
+// A live call handed a customer's details by a look-up, set before 31 Oct only (memory.ts CALLS customer_read).
 once('2026-10-24-calls-customers', () => {
   if (lacks('calls', 'customers')) db.exec('alter table calls add column customers integer not null default 0');
 });

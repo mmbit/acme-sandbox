@@ -7,6 +7,7 @@ import { isTask, taskTimes, type TaskTime } from './tasktime.ts';
 import { INVALID_RUN, REBUILT_RUN, timingFlags } from './timing.ts';
 import { spread, fractionalMinutes } from './arithmetic.ts';
 import type { Turn } from './latency.ts';
+import { levels } from './confidence.ts';
 
 const DAY_MS = 24 * 60 * 60_000;
 export type AuditAsk = { days?: unknown; until?: unknown };
@@ -107,7 +108,7 @@ const CANDIDATES = `select j.id, ${ORIGIN} origin, j.agent, j.title, j.created, 
   (select min(p.merged_at) from prs p where p.branch = ${workBranch('j')}
     and p.status = 'merged' and p.merged_at >= j.finished) merged_at,
   exists(select 1 from job_replacement_links l where l.job = j.id) replacement
-  from jobs j indexed by jobs_history where j.kind = 'work' and j.status = 'done'
+  from jobs j indexed by jobs_done where j.kind = 'work' and j.status = 'done'
     and j.finished >= ? and j.finished < ? order by j.id`;
 
 function readTask(job: Candidate, measureTask: ReturnType<typeof taskTimes>, until: string): AuditRow {
@@ -169,6 +170,7 @@ function savedEstimates(job: Candidate, runs: Run[]) {
   const tool: Estimate[] = prediction
     ? [
         {
+          confidence: null,
           source: 'prediction',
           at: prediction.made,
           by: 'tool',
@@ -223,6 +225,7 @@ function summarize(candidates: Candidate[], rows: AuditRow[]) {
       followup_views: rows.length - originals.length,
       private_tasks: candidates.length - rows.length,
       missing_estimates: originals.filter(row => !row.first_estimate).length,
+      missing_confidence: originals.filter(row => !row.first_estimate?.confidence).length,
       missing_runs: originals.filter(row => row.timing_quality.includes('missing_runs')).length,
       incomplete_totals: originals.filter(row => !row.whole.complete).length,
       unmerged_tasks: originals.filter(row => row.unmerged).length,
@@ -232,6 +235,8 @@ function summarize(candidates: Candidate[], rows: AuditRow[]) {
       whole_timing_reasons: counts(originals.flatMap(row => row.whole.flags)),
       estimate_timing: counts(originals.map(row => row.first_estimate?.timing ?? 'missing')),
     },
+    token_cost: tokenScores(originals, agents),
+    confidence: confidenceScores(agents),
     work_size: spread(agents.map(row => [row.first_estimate!.agent_ms, row.actual_work_ms!])),
     carry_checks: spread(
       carries.map(row => [row.first_estimate!.agent_ms, row.actual_work_ms!]),
@@ -247,3 +252,33 @@ function summarize(candidates: Candidate[], rows: AuditRow[]) {
 
 const counts = (reasons: string[]) =>
   Object.fromEntries([...Map.groupBy(reasons, reason => reason)].map(([reason, rows]) => [reason, rows.length]));
+
+function tokenScores(originals: AuditRow[], agents: AuditRow[]) {
+  const estimated = agents.filter(row => row.first_estimate?.token_budget);
+  const complete = estimated.filter(row => row.whole.complete && !row.unmerged && !row.whole.cost.missing_usage);
+  const phases = Object.fromEntries(
+    (['work', 'reviews', 'fixes'] as const).map(phase => [
+      phase,
+      spread(
+        complete.map(row => [row.first_estimate!.token_budget!.tokens[phase], row.whole.cost.split[phase].tokens]),
+        1,
+      ),
+    ]),
+  );
+  return {
+    missing_estimates: originals.filter(row => !row.first_estimate?.token_budget).length,
+    incomplete_actuals: estimated.length - complete.length,
+    phases,
+  };
+}
+
+function confidenceScores(agents: AuditRow[]) {
+  return levels.map(level => {
+    const rows = agents.filter(row => row.first_estimate!.confidence?.level === level);
+    return {
+      level,
+      work_size: spread(rows.map(row => [row.first_estimate!.agent_ms, row.actual_work_ms!])),
+      token_cost: tokenScores(rows, rows),
+    };
+  });
+}

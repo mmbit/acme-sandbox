@@ -11,7 +11,7 @@
 import { columnsOf, db, meetingChanges, meetingProjects, once, redacted, takeBack } from './db.ts';
 import { publish } from './events.ts';
 import { ceo } from './company.ts';
-import { createJob, holdsCustomerData, noSeat } from './jobs.ts';
+import { createJob, noSeat } from './jobs.ts';
 import { claim, codeOf, STANDING } from './jobcodes.ts';
 import * as messages from './messages.ts';
 import { oneLine } from './agreements.ts';
@@ -116,13 +116,6 @@ export const agenda = (a: Ask) =>
   `${a.agent} asked to meet ${(JSON.parse(a.agents) as string[]).join(', ')}: ${a.topic}`;
 export const asksOf = (id: number) =>
   db.prepare('select * from meeting_asks where meeting = ? order by id').all(id) as Ask[];
-// What a job says reaches a meeting (an ask, a topic, a line, what it changed) only while it holds no customer's own
-// details (house rule 7): every seat and every transcript reader would get them, with no check on who may.
-export const holdsCustomers = (job: number) =>
-  holdsCustomerData(job)
-    ? `job #${job} holds a customer's own details, and what it says in a meeting reaches every seat and the transcript: ` +
-      'they stay in this job. Ask, say or leave from a job that holds none, without them'
-    : null;
 
 // ---- asking
 
@@ -134,8 +127,6 @@ export function ask(
   mayTake: (agent: string) => boolean,
   now = Date.now(),
 ) {
-  const customers = holdsCustomers(from.job);
-  if (customers) return customers;
   const topic = oneLine(String(o.topic ?? ''));
   if (!topic) return 'say what to settle';
   const named = Array.isArray(o.with) ? [...new Set(o.with.map(String))].filter(a => a !== from.agent) : [];
@@ -234,7 +225,7 @@ export function set(
   by: { agent: string; job: number; code: unknown },
   now = Date.now(),
 ) {
-  const refused = onlyCeo(by.agent) ?? holdsCustomers(by.job);
+  const refused = onlyCeo(by.agent);
   if (refused) return refused;
   const list = Array.isArray(ids) ? [...new Set(ids.map(Number))] : [];
   if (!list.length) return 'name the asks it settles: hq meeting set <ask>... "topic"';
@@ -335,7 +326,7 @@ export function join(id: number, askId: number, by: string) {
 
 // hq meeting drop: the CEO drops an ask, why in a line, which the asker's job hears while it runs.
 export function drop(id: number, why: unknown, by: { agent: string; job: number }) {
-  const refused = onlyCeo(by.agent) ?? holdsCustomers(by.job);
+  const refused = onlyCeo(by.agent);
   if (refused) return refused;
   const a = openAsk(id);
   if (typeof a === 'string') return a;

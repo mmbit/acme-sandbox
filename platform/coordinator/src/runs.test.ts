@@ -15,6 +15,7 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -33,6 +34,8 @@ const h = await harness('runs', {
 });
 const secrets = await import('./secrets.ts');
 const runs = await import('./runs.ts');
+const storage = await import('./storage.ts');
+storage.FLOOR.bytes = 0; // (bundles are taken whatever this machine's disk has free: a test that wants the floor sets it)
 const events = await import('./events.ts');
 const HQ = new URL('../../worker/bin/hq', import.meta.url).pathname;
 const HELPER = new URL('../../helper/helper.mjs', import.meta.url).pathname;
@@ -760,6 +763,53 @@ test("a job's runs waiting for a helper are four at most: each holds its bundle 
   assert.equal((await sendRun(other.token, { command: 'true' })).status, 200, "another job's aren't counted");
   await h.finish(job);
   await h.finish(other);
+});
+
+test("the bundles of every job's runs on HQ's volume stay under one total, and none comes in while the disk is low", async () => {
+  await lendOne();
+  const job = await h.start({ agent: 'bolt' });
+  const other = await h.start({ agent: 'chime' });
+  const first = await sendRun(job.token, { command: 'true' });
+  assert.equal(first.status, 200, first.text);
+  // (the runs of the tests before that still wait count too)
+  const bundleOf = (id: number) =>
+    statSync(`${process.env.DATA_DIR}/runs/${id}/bundle.tar.gz`, { throwIfNoEntry: false })?.size ?? 0;
+  const open = h.db.prepare("select id from helper_runs where state in ('waiting', 'running')").all() as {
+    id: number;
+  }[];
+  const held = open.reduce((bytes, { id }) => bytes + bundleOf(id), 0);
+  const total = runs.BUNDLES.maxBytes;
+  runs.BUNDLES.maxBytes = held + Math.round(bundleOf(first.json.id) / 2);
+  try {
+    const refused = await sendRun(other.token, { command: 'true' });
+    assert.equal(refused.status, 429);
+    assert.match(refused.json.error, /bundles already: send this one once some are taken/);
+    await h.finish(job);
+    assert.equal((await asHelper('/api/helper/take', {})).status, 204);
+    assert.equal(stateOf(first.json.id), 'withdrawn');
+    storage.FLOOR.bytes = Number.MAX_SAFE_INTEGER;
+    const low = await sendRun(other.token, { command: 'true' });
+    assert.equal(low.status, 429);
+    assert.match(low.json.error, /HQ's disk is low/);
+    storage.FLOOR.bytes = 0;
+    assert.equal(
+      (await sendRun(other.token, { command: 'true' })).status,
+      200,
+      "an ended run's bundle is no longer held",
+    );
+  } finally {
+    runs.BUNDLES.maxBytes = total;
+    storage.FLOOR.bytes = 0;
+  }
+  await h.finish(other);
+});
+
+test('an upload a restart cut off is swept when the runs start', t => {
+  const left = `${process.env.DATA_DIR}/runs/incoming-${'0'.repeat(8)}.tar.gz`;
+  writeFileSync(left, 'half a bundle');
+  t.mock.timers.enable({ apis: ['setInterval'] });
+  runs.start();
+  assert.equal(existsSync(left), false);
 });
 
 const TWO_KINDS = `

@@ -9,12 +9,12 @@ import { db, once, setting, remember, redactedJson } from './db.ts';
 import { WAITING, ANSWERED, WITH_CEO, NEXT_TURN, OFFERED } from './chatstates.ts';
 import { redactJson } from './secrets.ts'; // (and redactedJson: the intake's cards.)
 import { publish } from './events.ts';
-import { createJob, findAgent, preview, holdsCustomerData, handedCustomerData, holdsKeys, handedKeys, callSeat, workerQuiet } from './jobs.ts';   // (customer data; paused)
+import { createJob, findAgent, preview, holdsKeys, handedKeys, callSeat, workerQuiet } from './jobs.ts';   // (paused)
 import { STANDING } from './jobcodes.ts';
 import { ceo, roles, unstaffed } from './company.ts';
 import * as pictures from './pictures.ts';
 import * as tips from './tips.ts';
-import { DEFAULT_ESTIMATE_SCALE } from '../../worker/src/estimating.ts';
+import { DEFAULT_ESTIMATE_SCALE, TOKEN_ESTIMATE_GUIDANCE } from '../../worker/hq/estimating.ts';
 import { isIntercom, quickRunEnded } from './quickruns.ts';
 
 // A calls row named c carries keys if it or any call it resumed concerns a credential card.
@@ -75,10 +75,11 @@ Fixes to how the company itself works (calls and the voice line, hand-offs, orch
 the coordinator) are the Process team's to build: hand them to ${findAgent(fixer)?.name ?? fixer} with \`hq job\` and the full brief. Never suggest
 the board's own Claude Code for them; that's for quick fixes the board chooses to make itself.
 Before queueing work, read \`hq estimate "..."\` for clean past-job scopes and actual times. Judge the scope yourself,
-then queue with \`--size <time> --refs <job,job> --why "scope comparison"\`. With no comparable job, omit refs and explain
+then queue with \`--size <JSON> --refs <job,job> --why "scope comparison"\`. With no comparable job, omit refs and explain
 why. ${DEFAULT_ESTIMATE_SCALE}
+${TOKEN_ESTIMATE_GUIDANCE}
 The estimate is saved once. Only the CEO changes it when work slips. Use that same size for
-\`hq when "..." --size <time>\` before telling the board when something will be done (\`--by\` the
+\`hq when "..." --size <JSON>\` before telling the board when something will be done (\`--by\` the
 board's time: whether it makes it, and only if not, what would). Give one plain time: its time to tell the board
 (live four times in five), never a "done about" or a planned finish. A time you give is ours, even one the board takes:
 its slips are ours to plan with, and the board hears nothing of them. Only a time the board named itself, or asked for
@@ -213,8 +214,8 @@ export function answered(job: { id: number; title?: string }, status: string, re
     : heard ? "Sorry, I can't answer right now. Nothing you said is lost: I'll hear all of it with your next message."
     : 'Sorry, something went wrong on my side there.';
   // (and its card.)
-  db.prepare(`insert into chat (ts, who, text, sent, about_customer, about_keys, card) values (?, ?, ?, ${ANSWERED}, ?, ?, ?)`).run(new Date().toISOString(), ceo(), text,
-    Number(holdsCustomerData(job.id)), Number(holdsKeys(job.id)), done && card ? JSON.stringify(card) : null);
+  db.prepare(`insert into chat (ts, who, text, sent, about_keys, card) values (?, ?, ?, ${ANSWERED}, ?, ?)`).run(new Date().toISOString(), ceo(), text,
+    Number(holdsKeys(job.id)), done && card ? JSON.stringify(card) : null);
   publish({ type: 'chat', agent: ceo(), to: 'board', text: preview(text, 160) });   // (a bubble; the intercom has it all)
   if (again) start(AGAIN, job.id);
   else if (done && db.prepare(`select 1 from chat where who in ${HEARD} and sent = ${WAITING}`).get()) deliver(job.id); // (HEARD)
@@ -252,9 +253,9 @@ const line = (m: ReturnType<typeof lines>[number]) => m.who === 'call' ? `(${m.t
   : `${m.who === 'board' ? 'Board' : ceoName()}: ${withPictures(m.text.slice(0, 1000), m.pictures)}`;
 
 // A line as it's shown outside the session that heard it (a call's prompt, a fresh session's recap, the intercom's
-// record: intercom.ts): a call as its one-line title (its transcript is the call's own), a line about a customer as a
-// placeholder (about_customer), a line that came of a call about a card for keys as another (about_keys). Its three
-// parameters are shownAs()'s.
+// record: intercom.ts): a call as its one-line title (its transcript is the call's own), a line marked before 31 Oct as
+// holding a customer's details as a placeholder (about_customer: nothing marks a line now), a line that came of a call
+// about a card for keys as another (about_keys). Its three parameters are shownAs()'s.
 export const SHOWN = "iif(who = 'call', coalesce(shown, ?1), iif(about_customer, ?2, iif(about_keys, ?3, text)))";
 export const shownAs = () => [`Call with ${ceoName()}`, "(a reply that holds a customer's details: the board read it in the intercom)",
   '(a reply about a call on a card for keys: the board read it in the intercom)'];
@@ -286,18 +287,17 @@ export function hear(text: string, shown: string, call?: number) {
 // A call's line was in a turn that ended done (answered()), so the intercom has heard the call (ledger.ts finished()).
 export const heard = (call: number) => !!db.prepare(`select 1 from chat where call = ? and who = 'call' and sent = ${ANSWERED}`).get(call);
 
-type Line = { id: number; who: string; text: string; about_customer: number; about_keys: number; call: number | null };
+type Line = { id: number; who: string; text: string; about_keys: number; call: number | null };
 const lineText = (m: Line) => [m.text, pictures.mention(pictures.ofLine(m.id), m.who === 'guest')].filter(Boolean).join('\n\n');
 // Every HEARD line in state from becomes to; how many moved.
 const move = (from: number, to: number) => db.prepare(`update chat set sent = ? where who in ${HEARD} and sent = ?`).run(to, from).changes; // (HEARD)
 
-// The lines waiting in the given states, handed over to a job: it holds what they are about (customer data, keys), and they
+// The lines waiting in the given states, handed over to a job: it holds what they are about (keys), and they
 // move to to, up to the last of them. deliver() and take() hand over the same way.
 function handOver(job: number, states: number[], to: number) {
-  const lines = db.prepare(`select id, who, text, about_customer, about_keys, call from chat where who in ${HEARD} and sent in (${states.join(', ')}) order by id`)
+  const lines = db.prepare(`select id, who, text, about_keys, call from chat where who in ${HEARD} and sent in (${states.join(', ')}) order by id`)
     .all() as Line[];
   if (!lines.length) return lines;
-  if (lines.some(m => m.about_customer)) handedCustomerData(job);
   if (lines.some(m => m.about_keys || (m.call && carriesKeys(m.call)))) handedKeys(job);
   db.prepare(`update chat set sent = ? where who in ${HEARD} and sent in (${states.join(', ')}) and id <= ?`).run(to, lines.at(-1)!.id); // (HEARD)
   return lines;
@@ -341,7 +341,7 @@ export function take(job: number) {
 export function ack(job: number, ids: unknown) {
   if (!Array.isArray(ids)) return 400;
   if (current()?.id !== job) return;   // (the turn has ended: answered() put them back)
-  const taken = db.prepare(`select id, who, text, about_customer, about_keys, call from chat where who in ${HEARD} and sent = ? and id = ?`);
+  const taken = db.prepare(`select id, who, text, about_keys, call from chat where who in ${HEARD} and sent = ? and id = ?`);
   const lines = [...new Set(ids.map(Number))].flatMap(id => taken.all(OFFERED, id) as Line[]);
   for (const m of lines) db.prepare('update chat set sent = ? where id = ?').run(WITH_CEO, m.id);
   if (lines.length) db.prepare("update jobs set note = coalesce(note || char(10) || char(10), '') || ? where id = ?").run(lines.map(lineText).join('\n\n'), job);
@@ -351,10 +351,9 @@ export function ack(job: number, ids: unknown) {
 // the call, and the next turn hears them (without one starting just for that), so the CEO's session knows what was done.
 export function callNotes(call: number, job: number, notes: string, mins: number) {
   const ts = new Date().toISOString();
-  const about = Number(holdsCustomerData(job));   // a follow-up of a call about a customer card (ledger.ts)
   const keys = Number(carriesKeys(call));
-  db.prepare(`insert into chat (ts, who, text, shown, sent, about_customer, about_keys, call) values (?, 'call', ?, ?, ${NEXT_TURN}, ?, ?, ?)`).run(ts, `We had a call (call #${call}). Your follow-up job #${job} went through it, recorded what I asked for and handed out the work; these are its notes, which I read here as your reply:\n\n${notes}`, `Call with ${ceoName()} · about ${mins} min`, about, keys, call);
-  db.prepare(`insert into chat (ts, who, text, sent, about_customer, about_keys) values (?, ?, ?, ${ANSWERED}, ?, ?)`).run(ts, ceo(), notes, about, keys);
+  db.prepare(`insert into chat (ts, who, text, shown, sent, about_keys, call) values (?, 'call', ?, ?, ${NEXT_TURN}, ?, ?)`).run(ts, `We had a call (call #${call}). Your follow-up job #${job} went through it, recorded what I asked for and handed out the work; these are its notes, which I read here as your reply:\n\n${notes}`, `Call with ${ceoName()} · about ${mins} min`, keys, call);
+  db.prepare(`insert into chat (ts, who, text, sent, about_keys) values (?, ?, ?, ${ANSWERED}, ?)`).run(ts, ceo(), notes, keys);
   publish({ type: 'chat', agent: ceo(), to: 'board', text: preview(notes, 160) });
 }
 

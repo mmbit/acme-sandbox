@@ -1,6 +1,6 @@
 // Reads the company from the repo: the org chart, its brand, the newsletter's posts, and the Library
 // (handbook, playbooks, notes).
-import { readFileSync, readdirSync, existsSync, statSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { parse, parseDocument, isAlias, isMap, isScalar, Scalar, type Pair } from 'yaml';
 import { marked } from 'marked';
 import { REPO_DIR } from './config.ts';
@@ -12,6 +12,7 @@ import { TYPES, typeOf } from './types.ts';
 import { formats } from '../../../shared/format/format.js';
 import { contrastChannels } from '../../../shared/contrast/contrast.js';
 import { momentIn, zoneOf } from './clock.ts';
+import { brand, optional, parsed } from './companyfiles.ts';
 
 export function org() {
   const o = orgChart();
@@ -34,28 +35,10 @@ export function org() {
   }
   return o;
 }
-// org.yaml, parsed again only when its text changes: every lookup of an agent reads it (jobs.ts findAgent), and parsing it
-// takes tens of milliseconds. A copy each time, as org() adds to it. A missing or broken one throws.
-const orgChart = () => structuredClone(readOnce(`${REPO_DIR}/company/org.yaml`, text => parse(text)));
-// HQ's look: the company's brand and its HQ theme, {} for a file it doesn't have or that doesn't parse (HQ then runs on
-// the foundation's defaults, platform/hq/shell/brand.js). The job queue reads the brand's mascots (jobs.ts boardId), so
-// a typo in it is logged once, never thrown; each file is parsed again only when it changes.
-const read = new Map<string, { stamp: string; value: any }>();
-function optional(path: string, shape = (v: any) => v) {
-  const file = `${REPO_DIR}/${path}`, s = statSync(file, { throwIfNoEntry: false });
-  const stamp = s ? `${s.mtimeMs} ${s.size}` : '';
-  if (read.get(path)?.stamp === stamp) return read.get(path)!.value;
-  let value = {};
-  try {
-    const v = s && parse(readFileSync(file, 'utf8'));
-    if (v && typeof v === 'object' && !Array.isArray(v)) value = shape(v);
-  } catch (err) { console.error(`${path} doesn't parse, so HQ reads it as empty:`, (err as Error).message); }
-  read.set(path, { stamp, value });
-  return value;
-}
-// A mascot is a map with its id: mascots that aren't a list of them read as none
-export const brand = () => optional('company/brand.yaml', b => b.mascots === undefined ? b
-  : { ...b, mascots: Array.isArray(b.mascots) ? b.mascots.filter((m: unknown) => m && typeof m === 'object') : [] });
+// org.yaml, parsed only when it changes (tens of ms), once for roles() and every agent lookup (jobs.ts findAgent). A copy
+// each time, as org() adds to it. A missing or broken one, or one that isn't a map, throws.
+const orgChart = () => { const { value, error } = parsed('company/org.yaml'); if (error) throw error; return structuredClone(value); };
+export { brand };
 // The brand as HQ and the guest page wear it: its one colour (brand.yaml colour, its logo's) is the title bar's
 // (app.themeColour) and the guest page's accent, with black or white letters on it, whichever reads, where they name
 // none of their own (Wire's colourways take it in scene.js, which trusts it's #rrggbb). One that isn't throws, so what
@@ -170,8 +153,8 @@ export const unstaffed = () => (org().departments ?? []).every((d: any) => (d.ag
 // And who reads what HQ otherwise hands only to the job working on it (server.ts). Left out, nobody does.
 //
 // - businessMail: mail to the company's business addresses (mail.ts business)
-// - customerData: a customer's own details wherever HQ holds them: their mail, a call about them, a
-//   customer card, and the report of a job that holds them (jobs.ts readsCustomerData)
+// - customerData: a customer's own details wherever HQ holds them: their mail, and a call, a card or a job's report
+//   marked before as about a customer (jobs.ts readsCustomerData)
 // - customerMail: a customer's mail alone (server.ts mayReadMail), for whoever routes what comes in: their cards, calls
 //   and other jobs' reports stay with customerData
 // - orders: the order ids that open a customer's order on a product's site (hq orders)
@@ -179,7 +162,6 @@ export const unstaffed = () => (org().departments ?? []).every((d: any) => (d.ag
 // - triage: who triages every kind the daily error scan finds (triage.ts); left out, an app's owner and the process role
 //   for Care's
 // - asks: who sees that every ended call's items have work and close, except customer or keys calls (server.ts keepsAsks)
-//   Left out, only the jobs working for a call
 //   Left out, only the jobs working for a call
 // - foundation: the foundation keeper, who runs the weekly foundation sweep (shared/routines/foundation-sweep.md)
 // - readability: the reader of readability and structure a first review round chooses unless its triage says why not
@@ -243,8 +225,6 @@ export function infra(): Record<string, string> {
       .filter(l => l && !l.startsWith('#') && l.includes('=')).map(l => [l.slice(0, l.indexOf('=')), l.slice(l.indexOf('=') + 1)]));
   } catch { return {}; } // a checkout without one: nothing named
 }
-// (No department's work is marked for dealing with customers any more: a customer's details are kept where they came in,
-// jobs.ts holdsCustomerData.)
 export function frontmatter(src: string) {
   const m = src.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
   if (!m) return { meta: {}, body: src };

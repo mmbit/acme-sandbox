@@ -59,6 +59,18 @@ test("only a batch of rrweb events is kept, within its size and the session's ro
   assert.equal(store.add(kept, id, key, batch(event(2, 1))), 507);
 });
 
+test('a batch takes its room as it inflates, however small it gzips', () => {
+  const { id, key } = store.start(kept, 'call', '12', 'shown');
+  const repeated = batch(...Array.from({ length: 2000 }, () => event(3, 1, { text: 'a'.repeat(4000) })));
+  assert.equal(store.add(kept, id, key, repeated), 200);
+  assert.ok(store.find(kept, id)!.bytes > repeated.length, String(store.find(kept, id)!.bytes));
+  assert.equal(store.read(kept, id)!.events.length, 2000);
+  kept.db
+    .prepare('update watchalong_sessions set bytes = ? where id = ?')
+    .run(store.SESSION_BYTES - repeated.length, id);
+  assert.equal(store.add(kept, id, key, repeated), 507);
+});
+
 test('a session ends with its thing: its page hears 409, its recording stays until forgotten or past its days', () => {
   const first = store.start(kept, 'call', '10', 'shown');
   const second = store.start(kept, 'call', '10', 'shown');

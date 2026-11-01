@@ -172,7 +172,6 @@ function jobFor(s: Sheet, notes: Note[], kept: ReturnType<typeof keep>[], wrote:
               title: `The board's notes on ${place}`.slice(0, 200),
               prompt: taskBrief(texts, outsiders, onPreviews(notes)),
             }),
-        customers: outsiders.length > 0,
       }).id;
     } catch (err) {
       if (!(err instanceof jobs.NoSeat)) throw err;

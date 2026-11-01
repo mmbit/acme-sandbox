@@ -7,7 +7,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { harness, type Running } from './harness.ts';
 
 const h = await harness('redact');
-const { board, agent, worker } = h;
+const { board, agent } = h;
 const { scrubOnStart, remember } = await import('./db.ts');   // (scrubOnStart: what the server's start runs)
 const memory = await import('./memory.ts');                     // (refresh: the search index's next pass)
 const secrets = await import('./secrets.ts');
@@ -21,7 +21,6 @@ const save = async (lead: Running, name: string, value: string) => {
   const id = await h.ask(lead, { kind: 'credential', title: name, body: 'Paste the key.', secrets: name });
   const r = await h.answer(id, '', { secrets: { [name]: value } }); assert.equal(r.status, 200, JSON.stringify(r.body));
 };
-const holds = async (job: number) => (await worker('customers', { job })).body.customers as boolean;
 
 test('a key said before it was saved leaves the text once the board saves it, and one said after never lands', async () => {
   const before = await say(`it's ${KEY}, I think`);
@@ -50,26 +49,34 @@ test('only values of 12 characters or more, and each long line of a key on sever
   assert.equal(await line(await say(`a${TEST}b`)), 'a[STRIPE_TEST_SECRET_KEY]b');
 });
 
-test('the board reads every card in the Answered list whole, and a customer card stays with the job that filed it in hq requests', async () => {
+test("a public value stays as written: the shops' line and a key brand.yaml's publicKeys names, never a partner key or the board's number", async () => {
+  const LINE = '+31 20 123 4567', BOARDS = '+31 6 1234 5678', BOOKS = 'books@example.com';
+  const before = await say(`call us on ${LINE}`);
+  await save(bolt, 'TWILIO_PHONE_NUMBER', LINE);
+  await save(bolt, 'BOARD_PHONE_NUMBER', BOARDS);
+  assert.equal(await line(before), `call us on ${LINE}`);
+  assert.equal(await line(await say(`${LINE}, not ${BOARDS}`)), `${LINE}, not [BOARD_PHONE_NUMBER]`);
+  writeFileSync(`${process.env.REPO_DIR}/company/brand.yaml`, 'publicKeys: [MAIL_FORWARD_TO, STRIPE_TEST_SECRET_KEY]\n', { flag: 'a' });
+  await save(bolt, 'MAIL_FORWARD_TO', BOOKS);
+  assert.equal(await line(await say(`<a href="mailto:${BOOKS}">, ${TEST}`)), `<a href="mailto:${BOOKS}">, [STRIPE_TEST_SECRET_KEY]`);
+});
+
+test('the board reads every card in the Answered list whole, and a card marked before as a customer\'s stays with the job that filed it in hq requests', async () => {
   const vera = await h.start({ agent: 'vera' });
   const guest = await h.ask(vera, { title: "Sam's answers", body: 'Testco B.V., one VAT number' });
   await h.answer(guest, 'Thanks');
   const shown = (await board('/api/requests/archive')).body.cards.find((c: any) => c.id === guest);
   assert.deepEqual([shown.body, shown.left_out], ['Testco B.V., one VAT number', undefined]);
   const mine = await h.start({ agent: 'wren' });
-  // a customer card is a gated tool's (Care's), filed for the job working on the case
-  const care = (h.jobs.createRequest({ kind: 'decision', title: 'A refund for case C-12?', body: 'Jan Jansen, jan@example.com', agent: 'wren', job: mine.id, customers: true } as any) as { id: number }).id;
+  const care = (h.jobs.createRequest({ kind: 'decision', title: 'A refund for case C-12?', body: 'Jan Jansen, jan@example.com', agent: 'wren', job: mine.id }) as { id: number }).id;
+  h.db.prepare('update requests set customers = 1 where id = ?').run(care);
   const read = async (job: Running) => (await agent(`requests?id=${care}`, job.token)).body[0];
   for (const other of [await h.start({ agent: 'dex' }), await h.start({ agent: 'wren' })]) {
     const r = await read(other);
     assert.deepEqual([r.body, r.title], [null, 'A refund for case C-12?'], other.agent);
     assert.match(r.left_out, /roles\.customerData/);
-    assert.ok(!await holds(other.id));
   }
   assert.equal((await read(mine)).body, 'Jan Jansen, jan@example.com');
-  assert.ok(await holds(mine.id));
-  const queued = await agent('job', mine.token, { agent: 'penny', title: 'Refund done', prompt: 'book it' });
-  assert.ok(!await holds(queued.body.id), 'what that job queues carries nothing');
 });
 
 test('a saved key never reaches the live feed or the status map, whoever publishes the text', async () => {
@@ -92,19 +99,6 @@ test('a key with a quote and a backslash leaves a call\'s lines and what search 
   assert.deepEqual((await agent(`call?id=${ctx.call}`, penny.token)).body.lines, ['Board: the wallabyline token is [TWILIO_AUTH_TOKEN]']);
   const shown = await snippet();
   assert.ok(!shown.includes(TOKEN) && shown.includes('[TWILIO_AUTH_TOKEN]'), shown);
-});
-
-test('a job handed a customer job\'s whole report (org.yaml\'s roles.customerData), or a call about a customer card, holds those details too', async () => {
-  const care = await h.start({ agent: 'wren', title: 'A refund', customers: true });
-  const role = h.queue({ agent: 'vera', title: 'Then', after: care.id }), mine = h.queue({ agent: 'wren', title: 'Then too', after: care.id });
-  await h.finish(care, { status: 'failed', result: 'Refunded Jan Jansen' });
-  assert.ok(await holds(role));
-  assert.ok(!await holds(mine), "its own agent's next job hears only that it failed");
-  const card = (h.jobs.createRequest({ kind: 'decision', title: 'A refund for case C-13?', body: 'Jan Jansen', agent: 'wren', customers: true } as any) as { id: number }).id;
-  const ctx = (await h.voice(`call-context?agent=wren&request=${card}`)).body;
-  await h.voice('call-end', { agent: 'wren', lines: ['Board: refund Jan.'], request: card, token: ctx.token });
-  const followUp = Math.max(...(h.jobs.listJobs() as any[]).filter(j => j.agent === 'wren').map(j => j.id));
-  assert.ok(await holds(followUp));
 });
 
 test('a start goes over old text again only when the key store or redact()\'s rules changed since the last pass, so a write past the triggers waits for that', async () => {

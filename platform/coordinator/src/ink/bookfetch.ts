@@ -58,6 +58,20 @@ export async function fetchPicture(res: ServerResponse, address: string, reachab
   res.end(got.bytes);
 }
 
+// The guests whose picture from the web is on its way, by name: one each at a time, as each holds up to MAX_BYTES here
+const fetching = new Set<string>();
+// A signed-in guest's fetch, as fetchPicture's: another of theirs asked meanwhile is 429
+export async function fetchGuestPicture(guest: string, res: ServerResponse, address: string, reachable = onTheWeb) {
+  if (fetching.has(guest))
+    return reply(res, 429, { error: 'one picture from the web at a time: the last is still coming' });
+  fetching.add(guest);
+  try {
+    await fetchPicture(res, address, reachable);
+  } finally {
+    fetching.delete(guest);
+  }
+}
+
 // The picture at an address, through the site's redirects, each address checked again
 async function pictureAt(address: string, reachable: (address: string) => boolean): Promise<Fetched | Refusal> {
   const signal = AbortSignal.timeout(WAIT_MS);

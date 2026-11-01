@@ -34,3 +34,10 @@ export function duration(minutes: number) {
   if (whole < 60) return `${whole} min`;
   return `${Math.floor(whole / 60)} h${whole % 60 ? ` ${whole % 60} min` : ''}`;
 }
+
+// How long ago or how long waiting, roughly: minutes, hours, then days.
+export function age(ms: number) {
+  const minutes = ms / 60_000;
+  if (minutes < 60) return `${Math.round(minutes)} min`;
+  return minutes < 48 * 60 ? `${Math.round(minutes / 60)} h` : `${Math.round(minutes / (24 * 60))} d`;
+}

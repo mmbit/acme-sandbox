@@ -151,11 +151,16 @@
   outline: 2px solid var(--bk-cloth);
   outline-offset: 2px;
 }
-/* the board's drawing it answered with, under the tick: the picture that went, at its own px, narrower only when the
-   card is */
+/* the board's drawing it answered with, under the tick: the picture that went, at its own px, as wide as the slip's
+   room it was drawn in (bookslipreply.css .bk-slip-room) and narrower only when the card is. Its paper's room round
+   the ink (--pad) is pulled out so the ink sits at the words, and clipped off, the paper left under the ink multiplied
+   away, so only the ink shows, as an answer's slip draws it (bookanswers.css .bk-slip-ink). */
 #book .ask-drawn {
   display: block;
-  margin: 8px 40px 0 0;
-  max-width: calc(100% - 40px);
+  margin: calc(8px - var(--pad)) 0 calc(0px - var(--pad)) calc(0px - var(--pad));
+  max-width: calc(100% + 8px + 2 * var(--pad));
   height: auto;
+  clip-path: inset(var(--pad));
+  mix-blend-mode: multiply;
+  pointer-events: none;
 }

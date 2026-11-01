@@ -102,3 +102,17 @@ test("a seat takes work as claim does: its engine's on its CLI, else its agent's
   assert.equal((pick({ id: 4, agent: 'bolt', fallsBack: true }) as { id: string }).id, 'codex-1');
   assert.deepEqual(pick({ id: 5, agent: 'wren' }), { on: 'seats', engine: 'claude', until: now + HOUR });
 });
+
+test('the play keeps a tight seat to one job and prefers a peer with room below its own stop', () => {
+  const input = snapshot();
+  input.seats[0] = { ...input.seats[0], id: 'claude-1', week: 0.78, stop: 0.8 };
+  input.seats.push({ ...input.seats[0], id: 'claude-3', week: 0.88, stop: 0.99 });
+  const seats = seatsOf(input);
+  const order = { id: 1, board: 0, latestStart: null };
+  const row = { id: 1, agent: 'bolt', engine: 'claude', for_seat: null, downtime: 0 };
+  const pick = (busy = new Map<string, number>(), pinned: string | null = null) =>
+    choices(at(seats, now), busy, {})({ ...row, for_seat: pinned }, order).seat;
+  assert.equal((pick() as { id: string }).id, 'claude-3');
+  assert.deepEqual(pick(new Map([['claude-1', 1]]), 'claude-1'), { on: 'queue', engine: 'claude', minutes: 0 });
+  assert.equal((pick(new Map(), 'claude-1') as { id: string }).id, 'claude-1');
+});

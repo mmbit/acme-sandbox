@@ -149,7 +149,7 @@ test('a call is filed as a card the board can read, with the number only as its 
   assert.equal(await cardOf(f.request), undefined);
 });
 
-test("refused: our own number, no number, a bad language, more than three an hour, a job that holds a customer's details", async () => {
+test('refused: our own number, no number, a bad language, more than three an hour', async () => {
   const wren = await h.start({ agent: 'wren' });
   const refused = async (pattern: RegExp, ...more: string[]) => {
     const r = await fileCall(wren, ...more);
@@ -177,10 +177,6 @@ test("refused: our own number, no number, a bad language, more than three an hou
   assert.equal(toBoard.code, 0, toBoard.out);
   assert.equal(row(filed(toBoard.out).id).number, '+31612345678');
   assert.doesNotMatch(toBoard.out, /12345678/);
-  const juno = await h.start({ agent: 'juno' });
-  db.prepare('update jobs set customers = 1 where id = ?').run(juno.id);
-  const r = await fileCall(juno, '--link');
-  assert.match(r.out, /holds a customer's own details/);
 });
 
 test('Call dials once through Twilio with the stream, its ticket and a signed callback; busy ends it missed with one follow-up', async () => {

@@ -3,7 +3,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import * as guests from './guests.ts';
 import { voice } from './feedback.ts';
 import * as handwriting from './handwriting.ts';
-import { fetchPicture } from './ink/bookfetch.ts';
+import { fetchGuestPicture } from './ink/bookfetch.ts';
 import * as files from './notebookguestfiles.ts';
 import * as notebooks from './notebookguests.ts';
 import * as members from './notebookmembers.ts';
@@ -75,7 +75,8 @@ const room = routes({
   [`GET ${API}/book/picture`]: ({ req, res, url }) => PICTURES.bookPicture(req, res, url, nameOf(req)),
   [`GET ${API}/book/slip/picture`]: ({ req, res, url }) => PICTURES.slipPicture(req, res, url, nameOf(req)),
   [`GET ${API}/book/slip/now`]: ({ req, res, url }) => PICTURES.slipNow(req, res, url, nameOf(req)),
-  [`GET ${API}/book/fetch`]: ({ res, url }) => fetchPicture(res, url.searchParams.get('url') ?? ''),
+  [`GET ${API}/book/fetch`]: ({ req, res, url }) =>
+    fetchGuestPicture(nameOf(req).toLowerCase(), res, url.searchParams.get('url') ?? ''),
   [`POST ${API}/voice`]: voiceNote,
   [`POST ${API}/pictures`]: uploadPicture,
   [`POST ${API}/book/read`]: write(readHandwriting),

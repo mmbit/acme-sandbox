@@ -12,18 +12,7 @@ import { listThreads } from './projects.ts';
 import { oneLine } from './agreements.ts';
 import { OFFER_AGAIN } from './messages.ts';
 import { endedEmpty } from './threadends.ts';
-import {
-  agenda,
-  asksOf,
-  holdsCustomers,
-  meeting,
-  seatOfJob,
-  seats,
-  stillIn,
-  type Line,
-  type Meeting,
-  type Seat,
-} from './meetings.ts';
+import { agenda, asksOf, meeting, seatOfJob, seats, stillIn, type Line, type Meeting, type Seat } from './meetings.ts';
 
 import { until, letGo, restUntil } from './meetingroom.ts';
 export { HOLD_MS, REST_MS } from './meetingroom.ts';
@@ -169,8 +158,6 @@ ${plans.length ? plans.join('\n') : '(none of them owns a project)'}${s.agent ==
 const liveSeat = (job: number): (Seat & { m: Meeting }) | string => {
   const s = seatOfJob(job);
   if (!s) return "this job isn't a seat in a meeting";
-  const customers = holdsCustomers(job);
-  if (customers) return customers;
   const m = meeting(s.meeting)!;
   if (m.status !== 'live') return `meeting #${m.id} is ${m.status}`;
   return { ...s, m };

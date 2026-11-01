@@ -2,6 +2,7 @@
 // and planned finish against its window (windows.ts) with the slack it has, the agent time its open work has left, what
 // it waits on and the chain of jobs that sets its finish.
 // (its messages say deliverable, the board's word for a thread)
+import { featureCosts } from './featurecost.ts';
 import { db } from './db.ts';
 import { findThread, ownerOf, type Thread } from './projects.ts';
 import { findAgent, findJob, isOpenJob, nameOf } from './jobs.ts';
@@ -14,6 +15,7 @@ import { alike, scores, wordsOf } from './matching.ts';
 import { readyOf } from './threadjudge.ts';
 import { oneTask } from './made.ts';
 import { servedWindow } from './askwindow.ts';
+import { heldThrough, throughWords } from './boardheld.ts';
 import { BOARD } from './windows.ts';
 
 // A thread's outlook: its two numbers, its planned finish against its window and the slack that leaves, where it stands
@@ -118,6 +120,7 @@ const estimateOf = (job: number, f: Forecast) => {
 // hq projects: every open thread, by project, with its owner (its project's), its
 // outlook, the job that goes on next, and whether it's ready to judge (threadjudge.ts).
 export function lines(f: Forecast) {
+  const costs = featureCosts();
   const threads = db
     .prepare(
       "select id, project, name, goal, status, judge from threads where status = 'open' order by project, created",
@@ -126,19 +129,22 @@ export function lines(f: Forecast) {
   return threads.map(t => {
     const outlook = outlookOf(t.id, f);
     const next = outlook?.next == null ? null : jobLine(outlook.next, f);
-    return { ...t, owner: ownerOf(t), outlook, next, ready: readyOf(t) };
+    return { ...t, cost: costs.report(t.id), owner: ownerOf(t), outlook, next, ready: readyOf(t) };
   });
 }
 
 // hq thread <id>: the thread, its outlook, and each of its open work jobs by its name (nameOf) with its size, what it has
-// left, when it starts and merges in the play, and what it waits on.
+// left, when it starts and merges in the play, and what it waits on; and the needs edge it's held only through, when
+// it waits on the board that way (boardheld.ts).
 export function detail(id: string, f: Forecast) {
   const t = findThread(id);
   if (!t) return undefined;
   // (a moved thread found by its old id: its new one)
   const outlook = outlookOf(t.id, f);
   const jobs = (outlook?.jobs ?? []).map(job => jobLine(job, f));
-  return { ...t, owner: ownerOf(t), outlook, jobs, ready: readyOf(t) };
+  const held = heldThrough(t.id, f);
+  const through = held && throughWords(t.id, held, f.now);
+  return { ...t, cost: featureCosts().report(t.id), owner: ownerOf(t), outlook, jobs, ready: readyOf(t), through };
 }
 
 function jobLine(id: number, f: Forecast) {
@@ -181,6 +187,7 @@ export function findOutlooks(words: string, f: Forecast) {
   const taken = new Set(saidPositions.flat());
   const picked = new Set(pickedOut(threads, [...new Set(asked.filter((_, i) => !taken.has(i)))]));
   const found = threads.filter((t, i) => picked.has(t) || saidPositions[i].length > 0);
+  const costs = featureCosts();
   const projectsOf = new Map<string, { id: string; name: string; owner: string; threads: unknown[] }>();
   for (const t of found) {
     const name = t.project_name;
@@ -191,6 +198,7 @@ export function findOutlooks(words: string, f: Forecast) {
     const waits = (outlook?.waits ?? []).map(w => namedWait(w, f));
     project.threads.push({
       id: t.id,
+      cost: costs.report(t.id),
       name: t.name,
       owner: project.owner,
       outlook: outlook && { ...outlook, waits },

@@ -26,6 +26,7 @@ const { followThroughSweep } = await import('./followthrough.ts');
 const forecast = await import('./forecast.ts');
 const threats = await import('./threats.ts');
 const { clock } = await import('./windows.ts');
+(await import('./storage.ts')).FLOOR.bytes = 0; // (runs' bundles are taken whatever this machine's disk has free)
 const { MIN, HOUR, t0, reset, agreed, checks, startCheck } = await followthroughFixture(h);
 
 // The summary's threats now, those that name `words`
@@ -246,11 +247,12 @@ test("finished since the last check: threads done and the board's items, once th
   const priced = h.dueThread();
   const onThread = await h.start({ agent: 'kit', title: 'The price list', thread: priced });
   const alone = await h.start({ agent: 'moss', title: 'The shop banner' });
-  // (calls about a customer, their follow-ups handed their details: their words stay with hq call, charter rule 7)
-  const aboutCustomer = (what: string, job: number) =>
-    agreed({ kind: 'task', what, status: 'handled', job }, now, undefined, {
-      job: h.queue({ agent: 'juno', title: 'The call about a customer', customers: true }),
-    });
+  // (calls marked before as about a customer, by their follow-ups: their words stay with hq call, charter rule 7)
+  const aboutCustomer = (what: string, job: number) => {
+    const heard = h.queue({ agent: 'juno', title: 'The call about a customer' });
+    db.prepare('update jobs set customers = 1 where id = ?').run(heard);
+    return agreed({ kind: 'task', what, status: 'handled', job }, now, undefined, { job: heard });
+  };
   const item = aboutCustomer('The price list for Ms Jansen of Kerkstraat 4', onThread.id);
   const other = aboutCustomer('A banner for Ms Jansen', alone.id);
   const plain = agreed({ kind: 'task', what: 'A sign for the shop door', status: 'handled', job: alone.id }, now);
@@ -547,6 +549,22 @@ test('a running job past its size by 15 minutes, with the agent time it ran and 
   assert.deepEqual(threatsNaming(`#${job.id} `, start + 24 * MIN), [], '14 minutes past it is no news');
   assert.deepEqual(threatsNaming(`#${job.id} `, start + 26 * MIN), [
     `#${job.id} (bolt: The shop deck) has run 26 min of agent time, 16 min past its size of 10 min`,
+  ]);
+});
+
+test('a size the running agent revised, with what it was and why', async () => {
+  reset();
+  const start = held();
+  const job = await h.start({
+    agent: 'bolt',
+    title: 'The map deck',
+    queuedBy: 'juno',
+    size: { agent_ms: 10 * MIN, refs: [], why: 'A deck like the last' },
+  });
+  const revised = await h.agent('sizes', job.token, { job: job.id, time: '40m', why: 'The deck needs its films too' });
+  assert.equal(revised.status, 200, JSON.stringify(revised.body));
+  assert.deepEqual(threatsNaming(`#${job.id} `, start + MIN), [
+    `#${job.id} (bolt: The map deck) was re-sized by its agent from 10 min to 40 min: The deck needs its films too`,
   ]);
 });
 

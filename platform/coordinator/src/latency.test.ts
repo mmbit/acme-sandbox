@@ -1,4 +1,5 @@
 // node --test src/latency.test.ts: each /api request's time is kept, a minute at a time, for infra/report.sh's section on
+import { sizedTime } from './testwords.ts';
 // HQ's speed (which reads route_times itself).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -162,7 +163,7 @@ test('stalls make one queued job, of any cause, on spare room; a started job hol
     proposal: number;
   };
   const accepted = proposals.accept(proposal, ceo(), {
-    size: '30m',
+    size: sizedTime('30m'),
     why: 'Test scope judgment without a comparable completed job',
     title: 'Make HQ quick',
     code: 'HQFAST',

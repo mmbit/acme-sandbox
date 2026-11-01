@@ -9,9 +9,8 @@ import { db } from './db.ts';
 import { REPO_DIR } from './config.ts';
 import * as chat from './chat.ts';
 import * as intercom from './intercom.ts';
-import { findAgent, nameOf, boardId, callModel, callSeat, readsReport, readsCard, REPORT_LEFT_OUT, extendJob, handedCustomerData, readerHanded } from './jobs.ts';
+import { findAgent, nameOf, boardId, callModel, callSeat, readsReport, readsCard, REPORT_LEFT_OUT, extendJob } from './jobs.ts';
 import * as messages from './messages.ts';
-import { customerCall } from './memory.ts';
 import * as ledger from './ledger.ts';
 import * as review from './review.ts';   // (reach)
 import * as pictures from './pictures.ts';
@@ -23,7 +22,7 @@ import * as goals from './goals.ts';
 import { pad } from './pad.ts';
 import { org, ceo, names, roles, timeZone, unstaffed, companyTime, titleOf, respellings } from './company.ts';
 import { LANGUAGES, type BoardLanguage } from './language.ts';
-import { DEFAULT_ESTIMATE_SCALE } from '../../worker/src/estimating.ts';
+import { DEFAULT_ESTIMATE_SCALE } from '../../worker/hq/estimating.ts';
 import { PAUSE_FOR, WINDOW_FIRST } from '../../worker/hq/levels.ts';
 
 // The streaming voice line (platform/voice) asks for the prompt, and hands the transcript over the same way.
@@ -172,8 +171,7 @@ export function notTheirs(to: string, id: number): [number, string] | undefined 
 // (jobs.extendJob), signed as added on the call. One that has (running, or paused to resume in its session) gets it as a
 // message for that job alone (messages.send, only), which its session reads at its next step; a job that waits for the
 // board or runs on Codex can't take one mid-job, so it's a job for its agent then, as for hq say. Only this call's own
-// jobs: any other is the follow-up's, from the transcript. On a customer's call, the job that gets the words holds their
-// details, as does a job the message becomes (messages.toJob). A refusal is [status, why], or a bare status from send.
+// jobs: any other is the follow-up's, from the transcript. A refusal is [status, why], or a bare status from send.
 type Added = { job: number; agent: string; added: 'brief' | 'message' | 'job'; message?: number; became?: number };
 export function addToJob(me: { agent: string; callId?: number }, id: number, text: string): Added | [number, string] | number {
   text = text.trim();
@@ -183,17 +181,13 @@ export function addToJob(me: { agent: string; callId?: number }, id: number, tex
   if (!call || !queuedHere(call, id))
     return [409, `job #${id} wasn't queued on this call: only a job you queued on it takes an addition now. The call's follow-up adds to any other from the transcript`];
   const job = db.prepare('select agent, title, status from jobs where id = ?').get(id) as { agent: string; title: string; status: string };
-  const customers = customerCall(call);
-  if (extendJob(id, `${me.agent}, on a call with the board`, text) !== 404) {
-    if (customers) handedCustomerData(id);
-    return { job: id, agent: job.agent, added: 'brief' };
-  }
+  if (extendJob(id, `${me.agent}, on a call with the board`, text) !== 404) return { job: id, agent: job.agent, added: 'brief' };
   if (['done', 'failed', 'stopped', 'cancelled'].includes(job.status))
     return [409, `job #${id} has ${job.status === 'done' ? 'finished' : `been ${job.status === 'cancelled' ? 'cancelled' : 'stopped'}`}. If the board still wants it, queue it as a new job with the whole brief`];
   const message = `An addition to your job #${id} (${job.title}), from ${me.agent}'s call with the board (call #${call}), where it was queued. `
     + `It's part of the brief: act on it with the rest.\n\n${text}`;
   if (message.length > messages.MAX) return [413, `too long for a job that has started (${text.length.toLocaleString('en')} characters, and the note around it counts): keep the addition short; the follow-up has the whole call`];
-  const sent = messages.send({ agent: me.agent, job: null, call, customers }, job.agent, message, id);
+  const sent = messages.send({ agent: me.agent, job: null, call }, job.agent, message, id);
   if (sent === 429) return [429, `this call has added ${messages.PER_HOUR} times in the past hour: put the rest in one addition, or leave it to the call's follow-up`];
   if (typeof sent === 'number') return sent;
   if (sent.state === 'queued') return { job: id, agent: job.agent, added: 'message', message: sent.id };
@@ -213,7 +207,6 @@ export function reach(me: { agent: string; callId?: number }, to: string, id: nu
   if (!text) return [400, 'say what the job needs to know'];
   if (!ledger.oneLine(what, ledger.WHAT)) return [400, `what needs one plain line of at most ${ledger.WHAT} characters: the board reads it`];
   if (!ledger.oneLine(goal, ledger.GOAL)) return [400, `goal needs one plain line of at most ${ledger.GOAL} characters: why the board wants it, in its own terms`];
-  if (customerCall(call)) return [409, "a call about a customer's details passes nothing on mid-call: the follow-up does, from the call"];
   if (queuedHere(call, id)) return [409, `job #${id} was queued on this call: put the board's word into it with add`];
   const job = db.prepare('select id, agent, title, step, status, kind, engine, session, pr, round, branch from jobs where id = ?').get(id) as
     ReachedJob | undefined;
@@ -235,7 +228,7 @@ export function reach(me: { agent: string; callId?: number }, to: string, id: nu
     + `this work as it stands now, in ${me.agent}'s words. Weigh it with your brief, as the board's. The call's follow-up checks it against `
     + `the call's transcript, and tells you if it was misheard.\n\nWhy the board wants this: ${goal}\n\n${text}`;
   if (message.length > messages.MAX) return [413, `too long (${text.length.toLocaleString('en')} characters, and the note around it counts): keep it to what the job needs now`];
-  const sent = messages.send({ agent: me.agent, job: null, call, customers: false }, to, message, id);
+  const sent = messages.send({ agent: me.agent, job: null, call }, to, message, id);
   if (typeof sent === 'number') return [sent, sent === 429 ? `this call has sent ${messages.PER_HOUR} messages in the past hour` : 'HQ refused it'];
   const item = ledger.reached(call, { owner: to, what, goal, words: text, job: id, ref: `sent on call #${call} as message #${sent.id}` });
   return { job: id, agent: to, item, message: sent.id };
@@ -493,14 +486,12 @@ function clockChange(zone: string, now: number) {
 }
 
 // Their own recent work, so a call about something they did finds it: jobs finished, the rest of the last day by title,
-// and their latest desk phone requests. A report or card about a customer stays with the job working on it (jobs.ts
-// Reader): the call has no job. One shown to an agent that reads them (roles.customerData) makes `call` a call about a
-// customer (readerHanded).
+// and their latest desk phone requests. A report or card marked before as a customer's stays with the job working on it
+// (jobs.ts holdsCustomerData): the call has no job.
 function recentWork(agent: string, call: number) {
   const caller = { id: 0, agent, callId: call };
   const report = (j: Record<string, any>) => {
     if (!readsReport({ id: j.id, customers: j.customers }, caller)) return `(${REPORT_LEFT_OUT})`;
-    if (j.customers && j.result) readerHanded(caller);
     return cut(j.result, 500) || 'no report';
   };
   const done = (db.prepare(`select j.id, j.title, j.step, j.round, j.status, j.result, j.customers, (select number from prs
@@ -516,10 +507,9 @@ function recentWork(agent: string, call: number) {
     + (today.length > 40 ? '\n- …and more: history lists them all' : '');
   const answer = (r: Record<string, any>) => {
     if (!r.answer || !readsCard(r.id, caller)) return '';
-    if (r.customers) readerHanded(caller);
     return `. The board answered: ${cut(r.answer, 1500)}`;
   };
-  const asked = (db.prepare(`select r.id, r.title, r.status, r.answer, r.customers from requests r left join jobs j on j.id = r.job
+  const asked = (db.prepare(`select r.id, r.title, r.status, r.answer from requests r left join jobs j on j.id = r.job
     where coalesce(j.agent, r.agent) = ? and r.kind != 'login' order by r.id desc limit 5`).all(agent) as Record<string, any>[])
     .map(r => `- #${r.id}, ${r.title} (${r.status})${answer(r)}`).join('\n') || '- none';
   return `## Your own recent work

@@ -2,6 +2,7 @@
 // ETA from the queue played forward on the seats (a queued job's, and new work's: hq when), and hq estimate --accuracy.
 import { mock, test } from 'node:test';
 import assert from 'node:assert/strict';
+import { sizedTime } from './testwords.ts';
 import { harness } from './harness.ts';
 
 const h = await harness('eta');
@@ -47,7 +48,10 @@ const harbour = { q: 'paint the harbour map', agent: 'kit' };
 // New work played into the plan as if queued now (hq when): with no window, its start, merge and waits.
 const when = async (query: Record<string, string>) => {
   await reportCapacity();
-  const r = await h.agent(`when?${new URLSearchParams({ size: '40m', ...query })}`, (await reader()).token);
+  const r = await h.agent(
+    `when?${new URLSearchParams({ ...query, size: sizedTime(query.size ?? '40m') })}`,
+    (await reader()).token,
+  );
   assert.equal(r.status, 200, JSON.stringify(r.body));
   const merged = r.body.free.finish === null ? null : r.body.free.finish - deployLag();
   return { ...r.body.free, merged };

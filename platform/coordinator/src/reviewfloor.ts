@@ -9,10 +9,13 @@ type StaffEntry = { id: string };
 
 // What decides a merge (the review loop, who reads and rules, which findings reach the author, the holds and approvals
 // a merge waits on, the board's merge answers, GitHub's merges and the diff that lets records merge unreviewed), CI, the
-// server, the worker's checks and the agents' own config. A change here can weaken the review that judges it, or reach
-// every job after it, so it takes the authority matrix's 2 Claude + 2 Codex, as the gates' do.
+// server and the worker's checks. A change here can weaken the review that judges it, or reach every job after it, so it
+// takes the authority matrix's 2 Claude + 2 Codex, as the gates' and the agents' own config do.
 const GATED =
-  /^(\.github|infra)\/|^platform\/coordinator\/src\/(review[^/]*|panel(capacity)?|rulingjobs|findings|trust|decisions|visualapproval|boardmerges|github)\.ts$|^platform\/worker\/src\/(safety|verdict|git)\.ts$|(^|\/)\.(claude|codex|agents)\/|(^|\/)\.mcp\.json$/;
+  /^(\.github|infra)\/|^platform\/coordinator\/src\/(review[^/]*|panel(capacity)?|rulingjobs|findings|trust|decisions|visualapproval|boardmerges|github)\.ts$|^platform\/worker\/src\/(safety|verdict|git)\.ts$/;
+// The agents' own config, which every job runs under (what a ruling never touches up either: review.ts)
+export const AGENT_CONFIG =
+  /(^|\/)(\.(claude|codex|agents?|gemini|vibe)|_agents?)\/|(^|\/)\.mcp\.json$|(^|\/)\.?codeium\.ya?ml$|^company\/infra\.env$/i;
 // The gates' scripts and root config, whose change can weaken every check after it (what a ruling never touches up:
 // review.ts)
 export const GATES_CONFIG =
@@ -25,7 +28,7 @@ const WRITING = /\.(md|png|jpe?g|gif|webp)$/i;
 const INSTRUCTIONS = /(^|\/)(AGENTS|CLAUDE)(\.override|\.local)?\.md$|^company\/(CHARTER|AUTHORITY)\.md$/;
 
 const keyed = (file: string) => KEYS.test(file) && !WRITING.test(file);
-const gated = (file: string) => GATED.test(file) || GATES_CONFIG.test(file) || keyed(file);
+const gated = (file: string) => GATED.test(file) || GATES_CONFIG.test(file) || AGENT_CONFIG.test(file) || keyed(file);
 
 // What each of a round's files needs, never more readers of an engine than the staff eligible to read. On a fix round a
 // gated file keeps the playbook's 2 Claude + 1 Codex, unless it's about sign-in, payments, secrets or approvals.
@@ -50,10 +53,10 @@ export function needed(files: string[], fixRound: boolean, eligible: (agent: str
 
 export function brief(floor: Floor) {
   if (!floor.length) return '';
-  const asks = [...Map.groupBy(floor, ({ readers }) => readersText(readers))].map(
-    ([text, held]) => `${text} for ${held.map(({ file }) => file).join(', ')}`,
+  const wanted = [...Map.groupBy(floor, ({ readers }) => readersText(readers))].map(
+    ([readers, entries]) => `${readers} for ${entries.map(({ file }) => file).join(', ')}`,
   );
-  return `\nThe review's floor: name at least ${asks.join('; ')}, each among the readers given that file (after the
+  return `\nThe review's floor: name at least ${wanted.join('; ')}, each among the readers given that file (after the
 engine constraints move files). Readers of other files don't count, and none of it is ever throwaway. HQ refuses a
 selection below the floor. Judge who reads, and add more where the change needs them.`;
 }

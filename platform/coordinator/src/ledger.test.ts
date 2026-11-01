@@ -13,7 +13,6 @@ const { db, jobs } = h;
 const call = await import('./call.ts');
 const ledger = await import('./ledger.ts');
 const { ceo, roles } = await import('./company.ts');
-const memory = await import('./memory.ts');
 const wakes = await import('./wakes.ts');
 const agent = h.agent, voice = (route: string, body?: unknown) => h.voice(route, body);
 
@@ -22,6 +21,8 @@ const job = (id: number) => db.prepare('select * from jobs where id = ?').get(id
 const callRow = (id: number) => db.prepare('select * from calls where id = ?').get(id) as any;
 const lastCall = () => db.prepare('select * from calls order by id desc limit 1').get() as any;
 const item = (id: number) => db.prepare('select * from call_items where id = ?').get(id) as any;
+// A card marked before as holding a customer's details (nothing marks one now): its column, set by hand.
+const marked = <T extends { id: number }>(card: T) => { db.prepare('update requests set customers = 1 where id = ?').run(card.id); return card; };
 // The worker claims this job (on an engine of its own, so nothing else is taken) and gets its token.
 const tokens = new Map<number, string>();
 async function claim(id: number) {
@@ -186,7 +187,7 @@ test("roles.asks links and hands out an item of a call it doesn't follow up, dro
   const followUpToken = await claim(callRow(ordinaryCall.id).job);
   const add = async (token: string, what: string) => (await agent('item', token, { kind: 'task', owner: 'kit', goal: 'g', what, lines: '1', ...quote(TALK[0]) })).body.id as number;
   const [pageItemId, headlineItemId] = [await add(followUpToken, 'Build the coming-soon page'), await add(followUpToken, 'Use the second headline')];
-  const customerCard = jobs.createRequest({ kind: 'decision', title: 'Refund case C-32?', body: 'Jan Jansen, cracked mug', agent: 'kit', customers: true }) as { id: number };
+  const customerCard = marked(jobs.createRequest({ kind: 'decision', title: 'Refund case C-32?', body: 'Jan Jansen, cracked mug', agent: 'kit' }) as { id: number });
   const customerCall = await aCall('kit', ['Board: refund Jan Jansen in full.'], customerCard.id);
   await customerCall.end();
   const customerItemId = await add(await claim(callRow(customerCall.id).job), 'Refund the mug');
@@ -219,7 +220,6 @@ test("roles.asks links and hands out an item of a call it doesn't follow up, dro
       assert.equal((await agent('job', keeperToken, { agent: 'kit', title: 'Follow up', prompt: 'x', item: itemId })).status, 409);
     }
     assert.ok(!jobs.holdsKeys(keeperJobId));
-    assert.ok(!jobs.holdsCustomerData(keeperJobId));
     assert.equal((await link(unrelatedToken, pageItemId)).status, 404, "another agent's job still isn't");
   } finally {
     writeFileSync(orgPath, orgContent);
@@ -280,16 +280,15 @@ test("linking someone else's job records the evidence, but only the caller's own
   assert.deepEqual([job(bolts).status, job(kits).status], ['queued', 'cancelled']);
 });
 
-// A job linked to an item of a call about a customer card reads that call (hq items, hq call), so it holds their details:
-// marked when it's linked, and when it reads the items.
-test("a job linked to a customer call's item, and one reading its items, holds the customer's details: no guest checklists", async () => {
-  const guests = await import('./guests.ts');
-  const card = jobs.createRequest({ kind: 'decision', title: 'Refund case C-31?', body: 'Jan Jansen, cracked mug', agent: 'kit', customers: true }) as { id: number };
+// An item of a call about a customer card: its goal, quote and a stop's why go only to who may read that call (the jobs
+// working on it, roles.customerData).
+test("a customer call's item: its goal, quote and a stop's why only for who may read the call", async () => {
+  const card = marked(jobs.createRequest({ kind: 'decision', title: 'Refund case C-31?', body: 'Jan Jansen, cracked mug', agent: 'kit' }) as { id: number });
   const c = await aCall('kit', ['Board: refund Jan Jansen in full.'], card.id);
   await c.end();
   const t = await claim(callRow(c.id).job);
   const it = (await agent('item', t, { kind: 'task', owner: 'rivet', goal: 'Make it right for Jan Jansen', what: 'Refund the mug', quote: 'Board: refund Jan Jansen in full.' })).body.id;
-  // hq items, the open list: the goal goes only to who may read the call (roles.customerData here), and marks it
+  // hq items, the open list: the goal goes only to who may read the call (roles.customerData here)
   const goalFor = async (token: string) => ((await agent('items', token)).body as any[]).find(i => i.id === it);
   const { id: unrelated } = jobs.createJob({ agent: 'rivet', title: 'Unrelated', prompt: 'x' });
   const { id: penny } = jobs.createJob({ agent: 'penny', title: 'Customer care', prompt: 'x' });
@@ -298,21 +297,12 @@ test("a job linked to a customer call's item, and one reading its items, holds t
   assert.equal(unrelatedItem.id, it);
   assert.equal(unrelatedItem.goal, undefined);
   assert.equal(unrelatedItem.quote, undefined);
-  assert.ok(!jobs.holdsCustomerData(unrelated), 'nothing of the customer reached it');
   assert.equal((await goalFor(pt)).goal, 'Make it right for Jan Jansen');
-  assert.ok(jobs.holdsCustomerData(penny), 'read: it holds them');
   const { id: linked } = jobs.createJob({ agent: 'rivet', title: 'Refunds', prompt: 'x', queuedBy: 'kit' });
-  assert.ok(!jobs.holdsCustomerData(linked));
   assert.equal((await agent('item-link', t, { id: it, to: { job: linked } })).status, 200);
-  assert.ok(jobs.holdsCustomerData(linked), 'linked: it reads the call from now on');
-  db.prepare('update jobs set customers = 0 where id = ?').run(linked);   // (as if linked before this rule)
   const lt = await claim(linked);
   assert.match((await agent(`items?call=${c.id}`, lt)).body[0].quote, /Jan Jansen/);
-  assert.ok(jobs.holdsCustomerData(linked), 'read: it holds them');
-  db.prepare('update jobs set customers = 0 where id = ?').run(linked);
   assert.equal((await goalFor(lt)).goal, 'Make it right for Jan Jansen', 'it works for the call: the goal is its own');
-  assert.ok(jobs.holdsCustomerData(linked), 'and reading it marks it');
-  assert.equal((guests.write({ id: linked, agent: 'rivet' } as any, 'Sam', 'Your refund', {}) as unknown[])[0], 403);   // (its result's type includes the files)
 
   const why = 'Customer Aster withdrew the refund';
   assert.equal((await agent('stop', lt, { id: linked, why })).status, 200);
@@ -322,64 +312,14 @@ test("a job linked to a customer call's item, and one reading its items, holds t
   assert.equal(returned.why, undefined);
   assert.doesNotMatch(JSON.stringify(returned), /Aster|Jan Jansen/);
   assert.equal((await agent(`items?call=${c.id}`, ut)).status, 404);
-  assert.ok(!jobs.holdsCustomerData(unrelated));
   const chief = await h.start({ agent: 'juno', title: 'Check the returned item' });
   for (const route of ['items', 'summary', 'followthrough']) {
     const response = await agent(route, chief.token);
     assert.equal(response.status, 200);
     assert.doesNotMatch(JSON.stringify(response.body), /Customer Aster/);
   }
-  assert.ok(!jobs.holdsCustomerData(chief.id));
-  db.prepare('update jobs set customers = 0 where id = ?').run(callRow(c.id).job);
   const full = (await agent(`items?call=${c.id}`, t)).body.find((i: { id: number }) => i.id === it);
   assert.equal(full.why, `stopped: rivet: ${why}`);
-  assert.ok(jobs.holdsCustomerData(callRow(c.id).job), 'reading the reason marks the authorized reader');
-});
-
-// A job refused its deliverable (it holds a customer's details) doesn't handle its item by ending done: the item stays open
-// and the board hears it, unless the job handed it on, as the refusal asks: then that job's ending done is the evidence.
-test('a job refused the draft its item promised ends done: the item stays open and the board hears it, unless a job carries it on', async () => {
-  const c = await aCall('kit', TALK);
-  await c.end();
-  const t = await claim(callRow(c.id).job);
-  const add = async (what: string) => (await agent('item', t, { kind: 'promise', owner: 'juno', goal: 'g', what, ...quote(TALK[1]) })).body.id as number;
-  const kept = await add('Draft the reply to the printer'), passed = await add('Draft the note to the courier'), fine = await add('Draft the thanks');
-  const handOut = async (it: number) => (await agent('job', t, { agent: 'juno', title: `Item ${it}`, prompt: 'Draft it', item: it })).body.id as number;
-  const [a, b, d] = [await handOut(kept), await handOut(passed), await handOut(fine)];
-  const mail = { to: ['ops@printer.example'], subject: 'Your test order', why: 'Our reply', text: 'Dear Anna,' };
-  const events = () => (db.prepare("select text from events where type = 'log' and text like 'Call with Kit on %'").all() as { text: string }[]).map(e => e.text);
-  const before = events().length;
-
-  // refused its draft for good, nothing carries it on: open, and the board hears it in a line without the item's words
-  const ta = await claim(a);
-  jobs.handedCustomerData(a);
-  const refused = await agent('outbox', ta, mail);
-  assert.equal(refused.status, 403);
-  await finish(a, { status: 'done', result: 'Could not file it' });
-  assert.equal(item(kept).status, 'open');
-  assert.equal(events().length, before + 1);
-  assert.match(events().at(-1)!, /^Call with Kit on .*Juno .*HQ refused an email draft/);
-  assert.doesNotMatch(events().at(-1)!, /printer/);
-  assert.equal((await agent('job', t, { agent: 'kit', title: 'Again', prompt: 'Draft it', item: kept })).status, 200, 'handed out again');
-
-  // refused, then handed on to a job that carries the item: that job's ending done handles it
-  const tb = await claim(b);
-  jobs.handedCustomerData(b);
-  assert.equal((await agent('outbox', tb, mail)).status, 403);
-  const next = (await agent('job', tb, { agent: 'kit', title: 'File the draft', prompt: 'Only what the email may say' })).body.id as number;
-  assert.equal(job(next).item, passed);
-  await finish(b, { status: 'done', result: 'Handed on' });
-  assert.deepEqual([item(passed).status, item(passed).job, events().length], ['open', next, before + 1]);
-  const tn = await claim(next);
-  assert.equal((await agent('outbox', tn, mail)).status, 200);
-  await finish(next, { status: 'done', result: 'Filed' });
-  assert.equal(item(passed).status, 'ready');
-
-  // a job never refused: handled as before; a 400 (a typo to fix) isn't a refusal
-  const td = await claim(d);
-  assert.equal((await agent('outbox', td, { ...mail, to: ['not an address'] })).status, 400);
-  await finish(d, { status: 'done', result: 'Filed' });
-  assert.equal(item(fine).status, 'ready');
 });
 
 // Work linked to an item while it's under way hears why the board wants it, once: in its brief if it hasn't started, as a
@@ -448,25 +388,35 @@ test("evidence that becomes the item's carrier keeps the goal it already heard",
   assert.equal(db.prepare('select count(*) n from goal_told where job = ? and item = ?').get(evidence, x)!.n, 1);
 });
 
-test("linked evidence hears a customer call's goal only where its agent may read the call, and holds it", async () => {
+test("linked evidence hears a customer call's goal only where its agent may read the call", async () => {
   const link = async (token: string, it: number, j: number) => (await agent('item-link', token, { id: it, to: { job: j } })).body;
-  const card = jobs.createRequest({ kind: 'decision', title: 'Refund case C-32?', body: 'Jan Jansen, cracked mug', agent: 'kit', customers: true }) as { id: number };
+  const card = marked(jobs.createRequest({ kind: 'decision', title: 'Refund case C-32?', body: 'Jan Jansen, cracked mug', agent: 'kit' }) as { id: number });
   const cc = await aCall('kit', ['Board: refund Jan Jansen in full.'], card.id);
   await cc.end();
   const ct = await claim(callRow(cc.id).job);
   const r = (await agent('item', ct, { kind: 'task', owner: 'rivet', goal: 'Make it right for Jan Jansen', what: 'Refund the mug', quote: 'Board: refund Jan Jansen in full.' })).body.id;
   const { id: rivets } = jobs.createJob({ agent: 'rivet', title: 'Refunds', prompt: 'x', queuedBy: 'rivet' });
   assert.equal((await link(ct, r, rivets)).goalReached, 'withheld');
-  assert.deepEqual([job(rivets).prompt, jobs.holdsCustomerData(rivets)], ['x', false]);
+  assert.equal(job(rivets).prompt, 'x');
   const { id: pennys } = jobs.createJob({ agent: 'penny', title: 'Care', prompt: 'x', queuedBy: 'penny' });
   assert.equal((await link(ct, r, pennys)).goalReached, 'brief');
-  assert.ok(job(pennys).prompt.includes('Make it right for Jan Jansen') && jobs.holdsCustomerData(pennys));
+  // (the goal stays with the call: the brief names it, and the job reads it with hq items. company: job #17552)
+  assert.ok(job(pennys).prompt.includes(`\`hq items ${cc.id}\` has it`) && !job(pennys).prompt.includes('Jan Jansen'));
+  const pt = await claim(pennys);
+  assert.equal(((await agent('items', pt)).body as any[]).find(i => i.id === r).goal, 'Make it right for Jan Jansen', 'it reads it at the source');
+  await finish(pennys, { status: 'done', result: 'Refunded' });
+  const { id: unrelated } = jobs.createJob({ agent: 'moss', title: 'Unrelated', prompt: 'x' });
+  const shown = await agent(`estimate?q=%23${pennys}`, await claim(unrelated));
+  assert.ok(!JSON.stringify(shown.body).includes('Jan Jansen'), 'an estimate shows no copy of it');
+  const h2 = (await agent('item', ct, { kind: 'task', owner: 'penny', goal: 'Keep Jan Jansen as a customer', what: 'Send a note', quote: 'Board: refund Jan Jansen in full.' })).body.id;
+  const handed = (await agent('job', ct, { agent: 'penny', title: 'Note', prompt: 'x', item: h2 })).body.id;
+  assert.ok(job(handed).prompt.includes(`\`hq items ${cc.id}\` has it`) && !job(handed).prompt.includes('Jan Jansen'), 'nor a hand-out');
 });
 
 test("linked goals stay in the recipient's message and out of events, including customer goals", async () => {
   for (const customers of [false, true]) {
     const goal = customers ? 'Resolve the invented customer case C-privacy' : 'Free capacity for the engine';
-    const card = customers ? jobs.createRequest({ kind: 'decision', title: 'Invented case C-privacy', body: 'Test case', agent: 'kit', customers: true }) as { id: number } : undefined;
+    const card = customers ? marked(jobs.createRequest({ kind: 'decision', title: 'Invented case C-privacy', body: 'Test case', agent: 'kit' }) as { id: number }) : undefined;
     const c = await aCall('kit', TALK, card?.id);
     await c.end();
     const token = await claim(callRow(c.id).job);
@@ -477,7 +427,7 @@ test("linked goals stay in the recipient's message and out of events, including 
     const linked = await agent('item-link', token, { id: it, to: { job: recipient } });
     assert.equal(linked.body.goalReached, 'message');
     const message = db.prepare('select text from messages where job = ?').get(recipient) as { text: string };
-    assert.ok(message.text.includes(goal));
+    assert.equal(message.text.includes(goal), !customers, "a customer call's goal is named, not copied");
     const events = db.prepare('select text from events').all() as { text: string | null }[];
     assert.ok(events.every(e => !e.text?.includes(goal)), 'goal text stays out of the shared event log');
   }
@@ -1152,7 +1102,7 @@ test("the intercom: a turn that ended before the call's line reached it hasn't h
   assert.equal((await agent('item', t, { kind: 'task', owner: 'kit', goal: 'g', what: 'x', quote: 'y', call: c.id })).status, 401, "the old session's token is spent");
 });
 
-test("a job carries one item: linking a second to the caller's own job is refused, so dropping it can't miss that job", async () => {
+test("a job carries the items its brief covers: a second linked to the caller's own job is its work too, so dropping either reaches it", async () => {
   const c = await aCall('moss', ['Board: Make A2.', 'Board: And D.']);
   await c.end();
   const t = await claim(callRow(c.id).job);
@@ -1160,12 +1110,40 @@ test("a job carries one item: linking a second to the caller's own job is refuse
   const d = (await agent('item', t, { kind: 'task', owner: 'moss', goal: 'g', what: 'Film D', lines: '2', quote: 'Board: And D.' })).body.id;
   const j = (await agent('job', t, { agent: 'moss', title: 'Film A2', prompt: 'x', item: a })).body.id;
   const second = await agent('item-link', t, { id: d, to: { job: j } });
-  assert.deepEqual([second.status, second.body.error], [400, `job #${j} carries item #${a} already, and a job carries one: hand item #${d} out as its own job (hq job --item ${d} ...)`]);
-  assert.deepEqual([item(d).job, job(j).item], [null, a]);
+  assert.equal(second.status, 200, JSON.stringify(second.body));
+  assert.deepEqual([item(d).job, job(j).item], [j, a]);
+  assert.match(job(j).prompt, new RegExp(`carries item #${d} from now on`), 'it hears the second goal in its brief');
   assert.equal((await agent('item-link', t, { id: a, to: { job: j } })).status, 200, 'its own item again is fine');
-  const own = (await agent('job', t, { agent: 'moss', title: 'Film D', prompt: 'x', item: d })).body.id;
-  assert.deepEqual((await agent('item-drop', t, { id: d, why: 'Only A2' })).body, { ok: true, cancelled: [own], told: [], running: [] });
-  assert.equal(job(j).status, 'queued');
+  // a job it queues carries both on
+  const tj = await claim(j);
+  const next = (await agent('job', tj, { agent: 'moss', title: 'Film the rest', prompt: 'x' })).body.id;
+  assert.deepEqual([job(next).item, ledger.givenTo(next).map(i => i.id)], [a, [d]]);
+  // dropping one leaves the job the other: it goes on and hears it; dropping both cancels the queued one
+  const dropped = (await agent('item-drop', t, { id: d, why: 'Only A2' })).body;
+  assert.deepEqual([dropped.cancelled, dropped.told.map((m: { job: number }) => m.job)], [[], [j, next]]);
+  assert.equal(job(next).status, 'queued');
+  assert.deepEqual((await agent('item-drop', t, { id: a, why: 'Neither' })).body.cancelled, [next]);
+});
+
+test("a job whose carried item is dropped hands out the other it was given, and never the dropped one", async () => {
+  const c = await aCall('moss', ['Board: Make A2.', 'Board: And D.']);
+  await c.end();
+  const t = await claim(callRow(c.id).job);
+  const a = (await agent('item', t, { kind: 'task', owner: 'moss', goal: 'g', what: 'Film A2', lines: '1', quote: 'Board: Make A2.' })).body.id;
+  const d = (await agent('item', t, { kind: 'task', owner: 'moss', goal: 'g', what: 'Film D', lines: '2', quote: 'Board: And D.' })).body.id;
+  const j = (await agent('job', t, { agent: 'moss', title: 'Film A2 and D', prompt: 'x', item: a })).body.id;
+  assert.equal((await agent('item-link', t, { id: d, to: { job: j } })).status, 200);
+  const tj = await claim(j);
+  assert.deepEqual((await agent('item-drop', t, { id: a, why: 'Only D' })).body.cancelled, []);
+  // carry A, link B, drop A, then hand out B: the work it has left goes on with B (by its number, B is already this job's)
+  const named = await agent('job', tj, { agent: 'moss', title: 'Film D', prompt: 'x', item: d });
+  assert.deepEqual([named.status, named.body.error], [409, `item #${d} already has job #${j} (running): it isn't handed out twice (to go through it, hq item link ${d} job:${j})`]);
+  const unnamed = await agent('job', tj, { agent: 'moss', title: 'Film D, the cut', prompt: 'x' });
+  assert.equal(unnamed.status, 200, JSON.stringify(unnamed.body));
+  assert.deepEqual([job(unnamed.body.id).item, ledger.givenTo(unnamed.body.id).map(i => i.id)], [null, [d]]);
+  // and with D dropped too, it queues nothing more
+  await agent('item-drop', t, { id: d, why: 'Neither' });
+  assert.equal((await agent('job', tj, { agent: 'moss', title: 'Film more', prompt: 'x' })).status, 409);
 });
 
 test("the call agent hears what's still open from earlier calls, one line each", async () => {
@@ -1193,7 +1171,7 @@ printf 'Build the page with the second headline.' > brief
 items=$(hq items ${c.id})
 ids=$(printf '%s\\n' "$items" | grep -o '^#[0-9]*' | tr -d '#')
 for id in $ids; do
-  hq job --item "$id" --new kit "Item $id" brief --size 30m --why "One call item with its recorded scope" --code "I$(echo "$id" | tr 0-9 A-J)" || echo "refused: $id"
+  hq job --item "$id" --new kit "Item $id" brief --size '{"time":"30m","tokens":{"work":1000,"reviews":200,"fixes":100,"feedback":0},"feedback_rounds":0,"confidence":{"level":"medium","why":"Two similar scopes, but limited feedback history"}}' --why "One call item with its recorded scope" --code "I$(echo "$id" | tr 0-9 A-J)" || echo "refused: $id"
   if [ -n "\${DIE:-}" ]; then kill -9 $$; fi
 done
 exit 0
@@ -1633,6 +1611,35 @@ test('"we missed something" needs HQ\'s Origin and the session, takes one line, 
   assert.ok(!text.includes(TALK[0]) && !('quote' in row.items[0]));
 });
 
+// On a call marked before as about a customer, the board's added words stay with the call: the briefs and briefings HQ
+// writes name the item, and the jobs working on the call read it with hq items.
+test('"we missed something" on a customer call: briefs, hand-outs and other calls name the item, never its words', async () => {
+  const card = marked(jobs.createRequest({ kind: 'decision', title: 'Delivery case C-33?', body: 'Test case', agent: 'kit' }) as { id: number });
+  const c = await aCall('kit', ['Board: send the replacement mug.'], card.id);
+  await c.end();
+  const f = callRow(c.id).job, t = await claim(f);
+  const x = (await agent('item', t, { kind: 'task', owner: 'kit', goal: 'g', what: 'Send the replacement mug', lines: '1', quote: 'Board: send the replacement mug.' })).body.id;
+  await agent('item/link', t, { id: x, ref: 'answered on the call' });
+  await finish(f, { status: 'done', result: 'Sent it' });
+  const words = 'Deliver it to Jan Jansen, Keizersgracht 1 Amsterdam';
+  const r = await board({ call: c.id, what: words });
+  assert.equal(r.status, 200);
+  const follow = job(r.body.job).prompt;
+  assert.ok(follow.includes(`- #${r.body.id}: what the board added`) && !follow.includes('Jan Jansen'), 'its own follow-up names it');
+  const other = await aCall('wren', ['Board: Wren, pick the softer tick.']);
+  await other.end();
+  assert.ok(!job(callRow(other.id).job).prompt.includes('Jan Jansen'), "another call's follow-up doesn't copy it");
+  assert.ok(ledger.stillOpen().text.includes(`#${r.body.id}: what the board added`) && !ledger.stillOpen().text.includes('Jan Jansen'), 'nor does a call briefing');
+  const { id: unrelated } = jobs.createJob({ agent: 'rivet', title: 'Unrelated', prompt: 'x' });
+  assert.ok(!JSON.stringify((await agent('items', await claim(unrelated))).body).includes('Jan Jansen'), 'nor the open list');
+
+  const t2 = await claim(r.body.job);
+  assert.ok(JSON.stringify((await agent(`items?call=${c.id}`, t2)).body).includes(words), 'the follow-up reads it with hq items');
+  const handed = (await agent('job', t2, { agent: 'kit', title: 'Deliver the mug', prompt: 'x', item: r.body.id })).body.id;
+  assert.ok(job(handed).prompt.includes(`\`hq items ${c.id}\` has them`) && !job(handed).prompt.includes('Jan Jansen'), 'the hand-out names it');
+  assert.ok(JSON.stringify((await agent(`items?call=${c.id}`, await claim(handed))).body).includes(words), 'and its job reads it there');
+});
+
 test('"we missed something" while the follow-up still runs: no second job; if it ends without the item, the sweep sends it', async () => {
   const c = await aCall('wren', ['Board: Wren, pick the softer tick.']);
   await c.end();
@@ -1975,23 +1982,6 @@ test('an earlier call comes whole while the phone line has room, and past it kee
   assert.ok(Buffer.byteLength(past) <= 120_000 && !past.endsWith('Search for the rest.)'), 'the rest of the briefing whole');
 });
 
-test("a call that carried on from one about a customer is about that customer too: its follow-up holds their details", async () => {
-  const card = jobs.createRequest({ kind: 'decision', title: 'Refund the tuiparcel?', body: 'Jan Jansen, Kerkstraat 1.', agent: 'penny', customers: true }) as { id: number };
-  const first = await aCall('penny', ['Board: refund the tuiparcel.'], card.id);
-  await first.end();
-  const second = await aCall('penny', ['Board: and add a note to it.'], 0, { carry: true });
-  // while it's live: a job handed out for one of its items holds their details too
-  assert.equal(memory.customerCall(second.id), true);
-  const noted = (await agent('item', second.token, { kind: 'promise', owner: 'penny', goal: 'g', what: 'Add a note to the refund', quote: 'Penny: I will.' })).body.id;
-  const out = await agent('job', second.token, { agent: 'penny', title: 'Add a note to the refund', prompt: 'Add the note.', item: noted });
-  assert.equal(out.status, 200);
-  assert.equal(jobs.holdsCustomerData(out.body.id), true);
-  await second.end();
-  assert.deepEqual(JSON.parse(callRow(second.id).resumes), [first.id]);
-  assert.equal(jobs.holdsCustomerData(callRow(second.id).job), true);
-  assert.equal(memory.customerCall(second.id), true);
-});
-
 const replyOf = async (id: number) => ((await h.board('/api/calls')).body as { id: number; reply: string | null }[]).find(x => x.id === id)!.reply;
 
 test("a follow-up that ends without the board's reply hasn't followed the call up: it's said, sent again, and Calls never shows its report", async () => {
@@ -2066,117 +2056,20 @@ test("a call about a card the intercom filed: the turn's final message is the re
   assert.equal((await history()).messages.at(-1).text, 'The second headline it is. 🙂');
 });
 
-// A call's token manages the company's work as its agent's jobs do (server.ts MANAGE_ROUTES), but on a call about a
-// customer's details it makes no change that carries words, which reach HQ's feed and colleagues who don't hold them
-// (CUSTOMER_CALL_SHUT); one that only names the job, a cancel without a why, goes ahead.
-test("a call manages work as off it; a customer's call reads, and changes nothing with its words", async () => {
-  const card = jobs.createRequest({ kind: 'decision', title: 'Refund case C-33?', body: 'Jan Jansen, cracked mug', agent: ceo(), customers: true }) as { id: number };
-  const plain = await aCall(ceo(), []), about = await aCall(ceo(), [], card.id);
-  const queued = (await agent('job', plain.token, { agent: 'kit', title: 'Mug photos', prompt: 'x' })).body.id;
+// A call's token manages the company's work as its agent's jobs do (server.ts MANAGE_ROUTES).
+test("a call manages work as off it", async () => {
+  const plain = await aCall(ceo(), []);
   const other = (await agent('job', plain.token, { agent: 'kit', title: 'Mug box', prompt: 'x' })).body.id;
-  const before = JSON.stringify(await h.feed());
-  for (const [route, body] of [['cancel', { id: queued, why: 'Jan Jansen refunded' }], ['plan/drop', { id: queued, why: 'Jan Jansen' }],
-    ['pauses', { project: 'office', why: 'Jan Jansen', byHand: true }], ['decisions', { name: 'Refund Jan Jansen?', blocks: ['office'] }],
-    ['proposals/drop', { id: 1, why: 'Jan Jansen' }], ['meetings/set', { asks: [1], topic: 'Jan Jansen' }],
-    ['owed-close', { slug: 'x', why: 'Jan Jansen' }]] as const) {
-    assert.equal((await agent(route, about.token, body)).status, 409, route);
-  }
-  assert.equal(h.job(queued).status, 'queued');
-  assert.equal(JSON.stringify(await h.feed()), before, "nothing of the customer's in HQ's feed");
-  for (const route of ['meetings/asks', 'jobs', 'owed', 'proposals']) assert.equal((await agent(route, about.token)).status, 200, `reads stay open: ${route}`);
-  // a change that only names the job carries no words of the customer's, and goes ahead
-  assert.equal((await agent('cancel', about.token, { id: queued, why: ' ' })).status, 200, 'a cancel without a why');
-  assert.equal(h.job(queued).status, 'cancelled');
-  assert.equal((await agent('cancel', plain.token, { id: other, why: 'the board dropped it' })).status, 200, 'another call cancels with a why');
+  assert.equal((await agent('cancel', plain.token, { id: other, why: 'the board dropped it' })).status, 200, 'a call cancels with a why');
   assert.equal(h.job(other).status, 'cancelled');
   for (const route of ['event', 'reply', 'followthrough-verdict', 'item-drop']) {
     assert.equal((await agent(route, plain.token, { text: 'x', verdict: 'ok' })).status, 403, `a call has no job to speak as: ${route}`);
   }
-  await about.end();
   await plain.end();
 });
 
-// A call that isn't about a customer, by an agent who reads their details (roles.customerData), is about one once a
-// look-up hands it them: its changes with words are refused from then on, a call carrying on from it is about the
-// customer too, and its follow-up holds their details.
-test("a call that reads a customer's card is about the customer from then on", async () => {
-  const reader = roles().customerData![0];
-  const card = jobs.createRequest({ kind: 'decision', title: 'Refund case C-34?', body: 'Piet Pieters, bent fork', agent: ceo(), customers: true }) as { id: number };
-  const first = await aCall(reader, ['Board: What did Piet ask for?', 'Board: A new fork, I think.']);
-  const queued = (await agent('job', first.token, { agent: 'kit', title: 'Fork photos', prompt: 'x' })).body.id;
-  assert.ok(!memory.customerCall(first.id), 'not about a customer at its start');
-  const read = await agent(`requests?id=${card.id}`, first.token);
-  assert.equal(read.body[0]?.body, 'Piet Pieters, bent fork', 'the card in full: its reader reads customer data');
-  assert.ok(memory.customerCall(first.id), 'about the customer from then on');
-  const before = JSON.stringify(await h.feed());
-  assert.equal((await agent('cancel', first.token, { id: queued, why: 'Piet Pieters refunded' })).status, 409, 'a cancel with a why');
-  assert.equal(h.job(queued).status, 'queued');
-  assert.equal(JSON.stringify(await h.feed()), before, "nothing of the customer's in HQ's feed");
-  await first.end();
-  assert.ok(jobs.holdsCustomerData(callRow(first.id).job), 'its follow-up holds their details');
-  const next = await aCall(reader, ['Board: Hello again.'], 0, { carry: true });
-  assert.deepEqual(JSON.parse(callRow(next.id).resumes), [first.id]);
-  assert.ok(memory.customerCall(next.id), 'a call carrying on from it is about the customer too');
-  await next.end();
-});
-
-// The same for what a call's briefing shows its agent (call.ts recentWork): a customer's report among its finished jobs,
-// at its start, or a customer card's answer among its requests, at a restart once one has come in.
-test("a call whose briefing shows a customer's report or card answer is about the customer", async () => {
-  const [reader, other] = roles().customerData!;
-  const { id: done } = jobs.createJob({ agent: reader, title: 'Refund case C-35', prompt: 'x' });
-  db.prepare("update jobs set status = 'done', result = 'Refunded Klaas Klaassen in full', customers = 1, finished = ? where id = ?").run(new Date().toISOString(), done);
-  const first = await aCall(reader, ['Board: How did the refund go?']);
-  assert.match(first.prompt, /Refunded Klaas Klaassen in full/, 'the report in its briefing: its agent reads customer data');
-  assert.ok(memory.customerCall(first.id), 'about the customer from its start');
-  const queued = (await agent('job', first.token, { agent: 'kit', title: 'Spoon photos', prompt: 'x' })).body.id;
-  const before = JSON.stringify(await h.feed());
-  assert.equal((await agent('cancel', first.token, { id: queued, why: 'Klaas Klaassen refunded' })).status, 409, 'a cancel with a why');
-  assert.equal(h.job(queued).status, 'queued');
-  assert.equal(JSON.stringify(await h.feed()), before, "nothing of the customer's in HQ's feed");
-  await first.end();
-  assert.ok(jobs.holdsCustomerData(callRow(first.id).job), 'its follow-up holds their details');
-  const next = await aCall(reader, ['Board: Hello again.'], 0, { carry: true });
-  assert.ok(memory.customerCall(next.id), 'a call carrying on from it is about the customer too');
-  await next.end();
-
-  const second = await aCall(other, ['Board: Anything from the desk phone?']);
-  assert.ok(!memory.customerCall(second.id), 'not about a customer at its start');
-  const card = jobs.createRequest({ kind: 'decision', title: 'Refund case C-36?', body: 'Joke Jansen, chipped bowl', agent: other, customers: true }) as { id: number };
-  db.prepare("update requests set status = 'answered', answer = 'Refund Joke Jansen in full' where id = ?").run(card.id);
-  const again = await voice('call-context', { agent: other, lang: 'en', request: 0, token: second.token });
-  assert.match(again.body.prompt, /Refund Joke Jansen in full/, "the card's answer in the restarted briefing");
-  assert.ok(memory.customerCall(second.id), 'about the customer from the restart');
-  const kept = (await agent('job', second.token, { agent: 'kit', title: 'Bowl photos', prompt: 'x' })).body.id;
-  assert.equal((await agent('cancel', second.token, { id: kept, why: 'Joke Jansen refunded' })).status, 409, 'a cancel with a why');
-  assert.equal(h.job(kept).status, 'queued');
-  await second.end();
-  assert.ok(jobs.holdsCustomerData(callRow(second.id).job), 'its follow-up holds their details');
-});
-
-// (These two leave customer work in a reader's history: after the two calls above, which start with a reader's clean one.)
-// A customer's goal a job sent is marked as theirs: the job it reaches holds their details, and so does the job it becomes
-// when its recipient ends without reading it.
-test("a customer call's goal sent as a message marks its reader, and the job it becomes when it went unread", async () => {
-  const card = jobs.createRequest({ kind: 'decision', title: 'Refund case C-33?', body: 'Jan Jansen, cracked mug', agent: 'kit', customers: true }) as { id: number };
-  const c = await aCall('kit', ['Board: refund Jan Jansen in full.'], card.id);
-  await c.end();
-  const t = await claim(callRow(c.id).job);
-  const it = (await agent('item', t, { kind: 'task', owner: 'penny', goal: 'Make it right for Jan Jansen', what: 'Refund the mug', quote: 'Board: refund Jan Jansen in full.' })).body.id;
-  const { id: care } = jobs.createJob({ agent: 'penny', title: 'Care', prompt: 'x', queuedBy: 'penny' });
-  await claim(care);
-  db.prepare("update jobs set engine = 'claude' where id = ?").run(care);
-  assert.equal((await agent('item-link', t, { id: it, to: { job: care } })).body.goalReached, 'message');
-  assert.ok(jobs.holdsCustomerData(care));
-  await finish(care, { status: 'done', result: 'ok' });   // without reading it
-  const m = db.prepare('select became, customers from messages where job = ?').get(care) as { became: number; customers: number };
-  assert.equal(m.customers, 1);
-  assert.match(job(m.became).prompt, /Make it right for Jan Jansen/);
-  assert.ok(jobs.holdsCustomerData(m.became), 'the job it became holds their details');
-});
-
 // A correction from a call its job may not read (a customer's, a card for keys) says only that its item changed; one
-// its job may read (roles.customerData) says it all, and marks it.
+// its job may read (roles.customerData) says its line, and names its goal (hq items).
 test("a correction from a customer's or keys call reaches a job on an ordinary call without that call's line or goal", async () => {
   for (const [kind, who] of [['customer', 'rivet'], ['keys', 'rivet'], ['customer', 'penny']] as const) {
     const first = await aCall('moss', ['Board: Print the poster.']);
@@ -2189,7 +2082,7 @@ test("a correction from a customer's or keys call reaches a job on an ordinary c
     db.prepare("update jobs set engine = 'claude' where id = ?").run(b);
     const told = () => db.prepare('select * from messages where job = ?').all(b) as any[];
     const card = kind === 'customer'
-      ? jobs.createRequest({ kind: 'decision', title: 'Refund case C-34?', body: 'Jan Jansen, cracked mug', agent: 'kit', customers: true }) as { id: number }
+      ? marked(jobs.createRequest({ kind: 'decision', title: 'Refund case C-34?', body: 'Jan Jansen, cracked mug', agent: 'kit' }) as { id: number })
       : jobs.createRequest({ kind: 'credential', title: 'Keys for the weta bank', body: 'Enter them.', agent: 'kit', secrets: 'STRIPE_TEST_WETA_KEY' }) as { id: number };
     const second = await aCall('kit', ['Board: hold the poster, refund Jan Jansen first.'], card.id);
     await second.end();
@@ -2198,7 +2091,7 @@ test("a correction from a customer's or keys call reaches a job on an ordinary c
     assert.deepEqual(y.told.map((m: any) => m.job), [b]);
     const text = told()[0].text as string, shown = who === 'penny';
     assert.match(text, new RegExp(`item #${x} \\(call #\\d+\\) was replaced on call #${second.id} by item #${y.id}[^]*Stop or change course at your next step`));
-    assert.deepEqual([text.includes('Jan Jansen'), text.includes('Refund Jan first'), jobs.holdsCustomerData(b)], [shown, shown, shown && kind === 'customer']);
+    assert.deepEqual([text.includes('Make it right'), text.includes('Refund Jan first')], [false, shown], 'a customer call keeps its goal');
     await finish(b, { status: 'done', result: 'ok' });
   }
 });

@@ -1,6 +1,10 @@
 // Sizing work (the coordinator's estimates.ts): its agent time and projected merge time, the past jobs it comes
 // from, and what the seats have left of their week; or how well past estimates held (--accuracy). When new work
 // could be done is hq when's (when.ts).
+import { TOKEN_ESTIMATE_GUIDANCE } from './estimating.ts';
+import { budgetLine, confidenceLine } from './costs.ts';
+import type { Confidence } from '../../coordinator/src/confidence.ts';
+import type { TokenBudget } from '../../coordinator/src/tokenbudget.ts';
 import { writeFileSync } from 'node:fs';
 import type { TaskAudit } from '../../coordinator/src/taskaudit.ts';
 import * as api from './api.ts';
@@ -21,14 +25,15 @@ import { duration, waitWords as wordsOf, type Wait } from './waits.ts';
 
 export { duration, type Wait };
 
+// (set's help)
 export const estimate = {
   help: `
    hq estimate ["what the work is" | '#<job>'] [--agent <id>] [--path <folder/>] [--limit n]
                                                      inspect clean past jobs found by agent and title words. Judge
                                                      scope yourself from their briefs, reports and changed files, then
-                                                     queue with --size <90m> --refs <job,job> --why "scope comparison".
+                                                     queue with --size <JSON> --refs <job,job> --why "scope comparison".
                                                      Whole task time includes shared reviews and fixes, split by kind.
-                                                     --size covers the work split only. The forecast adds shared review
+                                                     --size.time covers the work split only. The forecast adds shared review
                                                      and fix rounds once per deliverable. Queue and other waits stay out.
                                                      The quality audit says how many done jobs were excluded and why.
                                                      A queued job (#n) shows its saved task estimate, projected merge time
@@ -54,9 +59,13 @@ export const estimate = {
                                                      time held. --save writes the snapshots with what landed, for
                                                      platform/coordinator/scripts/backtest.ts to score a branch's play
                                                      beside main's
-   hq estimate set <job> <time> ["why"]              re-size a queued or running job: its agent time (90m, 2h, 1h30m)
+   hq estimate set <job> <JSON> "why"                re-size a queued or running job: its agent time (90m, 2h, 1h30m)
                                                      changes the saved task estimate and names the deliverables whose
-                                                     ETA moved. Only the CEO may change it after work slips`,
+                                                     ETA moved. Your own running job, once you know it's bigger or
+                                                     smaller (the why goes on the feed and to the CEO); the CEO any
+                                                     job, HQ's fix and merge rounds included
+
+${TOKEN_ESTIMATE_GUIDANCE}`,
 
   async run(given: string[]) {
     if (given[0] === 'set') return setSize(given.slice(1));
@@ -142,6 +151,8 @@ type Sized = {
   high_minutes: number | null;
   refs: number[];
   why: string;
+  token_budget?: TokenBudget | null;
+  confidence?: Confidence | null;
 };
 
 // ---- estimates
@@ -153,6 +164,7 @@ function printEstimate({ estimate, outlook, sizes }: Found, words: string) {
   const unit = workUnit(e.origin);
   if (saved) print(sizedLine(saved, (sizes?.length ?? 1) - 1, e.origin));
   else print(`The saved estimate: ${workDuration(e.agent_minutes, e.origin)} of ${unit}.`);
+  print(budgetLine(saved?.token_budget), confidenceLine(saved?.confidence));
   if (outlook) print(outlookLine(outlook, words, e.origin));
   print('');
 }
@@ -274,6 +286,7 @@ async function setSize([target, time, why = '', ...rest]: string[]) {
   const set = api.parseOrNull(answer.body);
   if (set?.ok !== true) stop(`Couldn't re-size #${job}: ${api.errorIn(answer.body, 'no answer')}`);
   print(`Job #${job} is sized at ${duration(set.size.agent_ms / 60_000)} of agent time now.`);
+  print(budgetLine(set.size.token_budget), confidenceLine(set.size.confidence));
   if (set.moves) print(...changeLines(set, 'the new size'));
 }
 

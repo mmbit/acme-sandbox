@@ -11,7 +11,8 @@ export const outsidersOn = (notes: { by: string }[]) => [...new Set(notes.flatMa
 export const outsideBrief = (outsiders: string[]) =>
   outsiders.length
     ? `\nNot every note is the board's own: ${listed(outsiders)}, invited by the board to a preview it shared, wrote the \
-notes marked "By: …, an outside reviewer". These notes keep their authorship when a notebook page is sent. A note of theirs you \
+notes marked "By: …, an outside reviewer": read each with \`hq note <id>\`, which only this job does (their words and \
+address stay with the note). These notes keep their authorship when a notebook page is sent. A note of theirs you \
 fixed: mark it too, in a line, \`hq note <id> fixed "what didn't work, and what changed"\`, and once your fix is live its \
 writer sees a small thank-you on the preview. ${outsideWords(outsiders)}\n`
     : '';

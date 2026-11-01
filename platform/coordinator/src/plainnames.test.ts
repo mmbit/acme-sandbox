@@ -21,6 +21,8 @@ const inbox = await import('./reviewinbox.ts');
 const projectdone = await import('./projectdone.ts');
 
 const MIN = 60_000;
+// a job marked before as holding a customer's details
+const marked = (job: number) => h.db.prepare('update jobs set customers = 1 where id = ?').run(job);
 mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-10-22T12:00:00Z') });
 test.after(() => mock.timers.reset());
 
@@ -73,8 +75,8 @@ test("a new task's board title comes from the model's route, its brief read, and
     title: 'Help customer Sample Person',
     thread: thread.id,
     prompt: 'Customer-only details',
-    customers: true,
   });
+  marked(customer);
   const job = h.queue({
     agent: 'kit',
     title: words,
@@ -166,14 +168,15 @@ test("the model being down blocks nothing: the board reads the agent's words, wh
   assert.equal(titleOf(job), 'Profile the CPQ seat path');
 });
 
-test('work finished before it was named, done threads and done projects get plain names too, never customer work', async () => {
+test("work finished before it was named, done threads and done projects get plain names too, never work marked as a customer's", async () => {
   await nameAll();
   const ship = projects.createThread({ project: 'game', name: 'Ship it', goal: 'The build is out', slug: 'ship' }) as {
     id: string;
   };
   const run = await h.start({ agent: 'ivy', title: 'Cut the RC build', thread: ship.id });
   await h.finish(run);
-  const customer = await h.start({ agent: 'ivy', title: 'Answer Sample Person', thread: ship.id, customers: true });
+  const customer = await h.start({ agent: 'ivy', title: 'Answer Sample Person', thread: ship.id });
+  marked(customer.id);
   await h.finish(customer);
   const ended = projects.createThread({ project: 'game', name: 'Old idea', goal: 'Tried', slug: 'old' }) as {
     id: string;
@@ -387,7 +390,8 @@ test("a finished task's card says what it did in a few plain sentences, written 
   assert.ok(!refs(open).includes(`did:${run.id}`), 'nothing to say while it runs');
   await answer(open, Object.fromEntries(open.names!.map(n => [`${n.kind}:${n.id}`, n.words])));
   await h.finish(run, { result: report });
-  const customer = await h.start({ agent: 'ivy', title: 'Answer Sample Person', thread: 'game/tags', customers: true });
+  const customer = await h.start({ agent: 'ivy', title: 'Answer Sample Person', thread: 'game/tags' });
+  marked(customer.id);
   await h.finish(customer, { result: 'Told Sample Person their parcel ships Monday' });
   const next = h.queue({ agent: 'ivy', title: 'Tag gift cards too', thread: 'game/tags' }); // (it keeps the thread open)
   // (the judges its owner was woken with as each task ended with nothing to merge, each cancelled as the next task

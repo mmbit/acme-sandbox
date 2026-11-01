@@ -41,9 +41,9 @@ test('answered and closed cards, newest first, with what the board answered; ope
   assert.equal((await fetch(`${h.base}/api/requests/archive`)).status, 401, "the board's session only");
 });
 
-test("every card comes whole, a customer card and its photos too; a key's value never", async () => {
-  // a customer card is a gated tool's (Care's), written about one customer
-  const customer = (jobs.createRequest({ kind: 'decision', agent: 'kit', title: 'A refund', body: 'Jane Doe, order 1234', customers: true, photos: ['The parcel'] } as any) as { id: number }).id;
+test("every card comes whole, one marked before as a customer's and its photos too; a key's value never", async () => {
+  const customer = (jobs.createRequest({ kind: 'decision', agent: 'kit', title: 'A refund', body: 'Jane Doe, order 1234', photos: ['The parcel'] } as any) as { id: number }).id;
+  h.db.prepare('update requests set customers = 1 where id = ?').run(customer);
   const keys = await ask({ kind: 'credential', title: 'Stripe keys', body: 'Paste them', secrets: 'STRIPE_TEST_KEY' });
   const plain = await ask({ title: 'Test print', body: 'Two posters', photos: ['Ava'] });
   for (const id of [customer, plain]) await upload(id);

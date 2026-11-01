@@ -7,8 +7,6 @@
 //   - A link is /guest/<token>: an HMAC of the request and its nonce under a key only the server holds, so the card can
 //     show it again while the database keeps only its sha256. A new nonce (the board's New link) ends the old one.
 //   - A verified guest gets a cookie for /guest/ (30 days) that opens their own requests only, nothing else of the company.
-//   - No customer's own details go to a guest: a job that holds them (jobs.ts holdsCustomerData) neither writes a request
-//     nor answers one.
 //   - A closed request is read-only, and its link opens nothing KEEP_DAYS after it closed.
 //   - A request opens only once the board shares it from its card (released): a guest is known by name, so a new request
 //     for an Anna already known would otherwise open on her page at once. The card shows the masked address it goes to.
@@ -29,7 +27,7 @@ import { publish } from './events.ts';
 import { ORIGIN, PUBLIC_HOST, REPO_DIR } from './config.ts';
 import { brand, brandLook, ceo, companyFormats, names } from './company.ts';
 import { LANGUAGES, type BoardLanguage } from './language.ts';
-import { createRequest, closeRequest, findAgent, holdsCustomerData } from './jobs.ts';
+import { createRequest, closeRequest, findAgent } from './jobs.ts';
 import { clientOf } from './auth.ts';
 import * as guestkeys from './guestkeys.ts';
 import { inside } from './files.ts';
@@ -201,8 +199,6 @@ function legendOf(r: Request, all: Person[], list: Item[]) {
 
 // ---------------------------------------------------------------- the agents (hq guest)
 type Me = { id: number; agent: string };
-const CUSTOMER = "this job holds a customer's own details (it read or was handed them), and nothing of it goes to a guest. " +
-  "Write from a job that doesn't, with only what the guest may read";
 
 // The request's file (hq guest's help has its shape): its checks, worded for the agent to fix, or the clean request.
 const line = (v: unknown, max: number) => typeof v === 'string' && v.trim() && v.length <= max && !/[\r\n]/.test(v) ? v.trim() : null;
@@ -247,7 +243,6 @@ function parse(spec: any, before = { count: 0, size: 0 }) {
 // hq guest <name> "title" <file>: a request, and the board's card for it (asking for the address the first time).
 export function write(me: Me, name: unknown, title: unknown, spec: unknown) {
   const n = String(name ?? '').trim(), t = String(title ?? '').trim(), p = parse(spec);
-  if (holdsCustomerData(me.id)) return [403, CUSTOMER];
   if (!NAME.test(n)) return [400, 'a guest is named by their first name or full name, capitalised (up to 60 letters)'];
   if (!line(t, MAX_TITLE)) return [400, `a title is one line of up to ${MAX_TITLE} characters`];
   if (typeof p === 'string') return [400, p];
@@ -277,7 +272,6 @@ export function write(me: Me, name: unknown, title: unknown, spec: unknown) {
 export function add(me: Me, id: number, spec: any) {
   const r = request(id);
   if (!r || r.agent !== me.agent) return 404;
-  if (holdsCustomerData(me.id)) return [403, CUSTOMER];
   const out = shutOut(r);
   if (out) return [403, out.refused];
   if (r.status !== 'open') return [409, `request #${id} is closed: write a new one`];
@@ -358,12 +352,11 @@ const readMessage = (r: Request, m: Message) => m.who === 'guest' ? { from: m.pe
   : { from: m.who, text: m.text, ts: m.ts, ...(m.pictures ? { pictures: picturesOf(m) } : {}) };   // (pictures)
 
 // hq guest reply <request> <item> <file> [--picture <path>]…: the agent's answer on one item, with pictures from the repo
-// under it if it likes. Only the request's agent, from a job that holds no customer's own details.
+// under it if it likes. Only the request's agent.
 export function reply(me: Me, id: number, n: number, text: unknown, pictures?: unknown) {
   const r = request(id), t = String(text ?? '').trim();
   if (!r || r.agent !== me.agent) return 404;
   if (!items(id).some(i => i.n === n)) return [404, `request #${id} has no item ${n}`];
-  if (holdsCustomerData(me.id)) return [403, CUSTOMER];
   const out = shutOut(r);
   if (out) return [403, out.refused];
   if (r.status !== 'open') return [409, `request #${id} is closed`];

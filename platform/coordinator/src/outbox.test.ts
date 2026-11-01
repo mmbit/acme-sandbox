@@ -234,7 +234,7 @@ const inbound = async (o: { from: string; to?: string; subject: string; text: st
 const answerJobs = (seen: number[] = []) => (h.jobs.listJobs() as unknown as { id: number; agent: string; title: string }[])
   .filter(j => j.title.startsWith('The answer') && !seen.includes(j.id)).reverse();
 
-test("an answer threaded to a sent email is one job for its drafter, who may read it and draft the reply (a partner's mail isn't a customer's); unrelated mail is nothing", async () => {
+test("an answer threaded to a sent email is one job for its drafter, who may read it and draft the reply; unrelated mail is nothing", async () => {
   const juno = await running('juno');
   const filed = await draft(juno, 'Kennismaking Testco', '--signed', 'juno', '--lang', 'nl', '--reply-to', 'documents');
   assert.equal(filed.code, 0, filed.out);
@@ -252,9 +252,7 @@ test("an answer threaded to a sent email is one job for its drafter, who may rea
   await inbound({ from: 'sam@partner.example', subject: 'Verwerkersovereenkomst', text: 'Signed, attached.' });
   assert.deepEqual(answerJobs(before), []);
 
-  // the answer, threaded to it: one job for Juno, who reads it without the business mail role. A partner's answer to a
-  // business address, from where the email went, holds no customer's details (outbox.ts fromPartner): the job can draft
-  // the reply
+  // the answer, threaded to it: one job for Juno, who reads it without the business mail role, and can draft the reply
   const answer = await inbound({ from: 'sam@partner.example', subject: 'Re: Kennismaking', text: 'Graag! 20% korting op testorders.',
     headers: ['Message-ID: <a1@partner.example>', `In-Reply-To: ${messageId}`, `References: ${messageId}`] });
   let made = answerJobs(before);
@@ -263,7 +261,6 @@ test("an answer threaded to a sent email is one job for its drafter, who may rea
   const read = await hq(reader, 'mail', String(answer));
   assert.equal(read.code, 0, read.out);
   assert.match(read.out, /20% korting op testorders/);
-  assert.equal(h.jobs.holdsCustomerData(reader.id), false);
   assert.equal((await draft(reader, 'Re: Kennismaking Testco')).code, 0);
   assert.ok(await card('Re: Kennismaking Testco'));
   assert.equal((await hq(reader, 'mail', String(answer - 1))).code, 1);   // the unrelated one isn't theirs
@@ -383,65 +380,17 @@ test('a reply drafted --answers <mail> goes with that mail\'s In-Reply-To and Re
   await heard('penny');
 });
 
-// The mark follows what was read: a partner's business mail (an answer to a sent email, from where it went) leaves a job
-// free; anyone else's, threaded or from the partner's domain, marks it, in a listing too.
-test("a partner's answer leaves its reader unmarked; a stranger's, one threaded from elsewhere, a partner's domain's other mail, a late one, or a listing with any marks it", async () => {
-  const filer = await running('vera');
-  assert.equal((await draft(filer, 'Our parcel insert', '--to', 'ops@printer.example', '--reply-to', 'documents')).code, 0);
-  await h.finish(filer);
-  assert.equal((await board('/api/outbox/send', { id: (await card('Our parcel insert')).id })).status, 200);
-  await heard('vera');
-  const thread = [`In-Reply-To: ${taken.at(-1).headers['Message-ID']}`];
-  const stranger = await inbound({ from: 'jan@elsewhere.example', subject: 'My order', text: 'Jan Jansen, Dorpsstraat 1.' });
-  const forwarded = await inbound({ from: 'jan@elsewhere.example', subject: 'Re: Our parcel insert', text: 'My order too.', headers: thread });
-  const atCase = await inbound({ from: 'anna@printer.example', to: 'hello@testco.example', subject: 'Hello', text: 'Hi.' });
-  const sameDomain = await inbound({ from: 'anna@printer.example', subject: 'Your test order', text: 'Shipped today.' });
-  const sent = h.db.prepare("select decided from outbox where subject = 'Our parcel insert'").get() as { decided: string };
-  h.db.prepare("update outbox set decided = '2020-01-01T00:00:00.000Z' where subject = 'Our parcel insert'").run();
-  const late = await inbound({ from: 'anna@printer.example', subject: 'Re: Our parcel insert', text: 'Months later.' });
-  h.db.prepare("update outbox set decided = ? where subject = 'Our parcel insert'").run(sent.decided);
-  const partner = await inbound({ from: 'anna@printer.example', subject: 'Re: Our parcel insert', text: 'Shipped today.', headers: thread });
-  const unthreaded = await inbound({ from: 'support@mail.printer.example', subject: 'Re: Our parcel insert', text: 'Attached.' });
-  const read = async (...paths: string[]) => {
-    const j = await running('penny');
-    for (const path of paths) assert.equal((await h.agent(path, j.token)).status, 200, path);
-    return j;
-  };
-  const free = await read(`mail?id=${partner}`, `mail?id=${unthreaded}`, 'mail?limit=2', `mail-raw?id=${partner}`);
-  assert.equal(h.jobs.holdsCustomerData(free.id), false, "a partner's answers, and a listing of only those");
-  assert.equal((await draft(free, 'Re: Our parcel insert', '--to', 'anna@printer.example')).code, 0, 'so it drafts the reply');
-  for (const [paths, why] of [[[`mail?id=${stranger}`], "a stranger's mail to a business address"],
-    [[`mail?id=${forwarded}`], 'an answer threaded to the email, from an address it never went to'],
-    [[`mail?id=${atCase}`], "a customer's address, whoever wrote"], [[`mail?id=${sameDomain}`], "the partner's domain, but no answer"],
-    [[`mail?id=${late}`], `an unthreaded answer more than its days after the email`], [['mail?limit=3'], 'a listing with a late one in it']] as [string[], string][]) {
-    const j = await read(...paths);
-    assert.equal(h.jobs.holdsCustomerData(j.id), true, why);
-    assert.equal((await draft(j, 'Re: anything', '--to', 'anna@printer.example')).code, 1, why);
-  }
-});
-
-// A partner brand.yaml names (mail.partnersFrom) isn't a customer: its own mail to a business address, an answer to no
-// email of ours, leaves its reader free to draft the reply on its thread; the same partner at a customer's address, or a
-// look-alike domain, marks it
-test("a listed partner's own mail leaves its reader unmarked and is answered from here; at a customer's address, or from a look-alike, it marks", async () => {
+// A partner brand.yaml names (mail.partnersFrom): its own mail to a business address, an answer to no email of ours, is
+// answered on its thread
+test("a listed partner's own mail is answered from here", async () => {
   const own = await inbound({ from: 'alex@press.example', subject: 'Our design file', text: 'Could you send the design file?',
     headers: ['Message-ID: <c1@press.example>'] });
   const reader = await running('penny');
   for (const path of [`mail?id=${own}`, 'mail?limit=1']) assert.equal((await h.agent(path, reader.token)).status, 200, path);
-  assert.equal(h.jobs.holdsCustomerData(reader.id), false, "a listed partner's mail, and a listing of only that");
   const reply = await draft(reader, 'Re: Our design file', '--to', 'alex@press.example', '--answers', String(own));
   assert.equal(reply.code, 0, reply.out);
   assert.equal((await card('Re: Our design file')).mail.answers, own);
   await h.finish(reader);
-  const atHello = await inbound({ from: 'alex@press.example', to: 'hello@testco.example', subject: 'Hello', text: 'Hi.' });
-  const lookAlike = await inbound({ from: 'alex@press.example.net', subject: 'Our design file', text: 'The file, please.' });
-  for (const [id, why] of [[atHello, "a customer's address, whoever wrote"], [lookAlike, 'a domain that only starts like the partner\'s']] as [number, string][]) {
-    const j = await running('penny');
-    assert.equal((await h.agent(`mail?id=${id}`, j.token)).status, 200, why);
-    assert.equal(h.jobs.holdsCustomerData(j.id), true, why);
-    assert.equal((await draft(j, 'Re: anything', '--to', 'alex@press.example')).code, 1, why);
-    await h.finish(j);
-  }
 });
 
 test('hq close withdraws the drafter\'s own open draft unsent, saying nothing of the board; never one being sent, another\'s or a sent one', async () => {

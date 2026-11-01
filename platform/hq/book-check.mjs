@@ -93,6 +93,8 @@ import { underStories } from './bookunder.mjs';
 import { bodyStories } from './bookbody.mjs';
 import { inkStory, nothingDrawn } from './bookink.mjs';
 import { shareStories } from './bookshare.mjs';
+import { callDropStories } from './bookcalldrop.mjs';
+import { downloadStories } from './bookdownloads.mjs';
 import { longShareStories } from './booksharelong.mjs';
 import { pinStory, pinScreensStory } from './bookpin.mjs'; // (pinScreensStory: job #20358)
 import { tipsStory } from './booktips.mjs';
@@ -136,6 +138,9 @@ import { moveStories } from './bookmove.mjs';
 import { nativeStories } from './booknative.mjs';
 import { newestStories } from './booknewest.mjs';
 import { callSizesStories } from './bookcallsizes.mjs';
+import { overlayStories } from './bookoverlays.mjs';
+import { pictureStories } from './bookpicture.mjs';
+import { bubbleDropStories } from './bookbubbledrop.mjs';
 import { scrapStories, savedScrap } from './bookscrap.mjs'; // (the pin flow)
 import { talked, voiceLine, hush, SAID } from './bookvoice.mjs';
 import { DESKTOP, MINI, UPRIGHT, pressAlong, ui, bookAtRest } from './bookkit.mjs';
@@ -414,7 +419,11 @@ function penOnOpen() {
 // HQ held like an iPad mini in a browser, its coordinator and voice line played. more: the context's options (pen:
 // penOnOpen's; the microphone allowed unless they say otherwise), and notebooks, the Notebook's seed (notebookplay.js;
 // none: My journal with one blank page), played on context.notebook.
-async function hqIn(browser, viewport = IPAD_MINI.viewport, { notebooks, pen = true, ...more } = {}) {
+async function hqIn(
+  browser,
+  viewport = IPAD_MINI.viewport,
+  { notebooks, pen = true, openReview = true, ...more } = {},
+) {
   const context = await browser.newContext({
     ...IPAD_MINI,
     permissions: ['microphone'],
@@ -426,10 +435,10 @@ async function hqIn(browser, viewport = IPAD_MINI.viewport, { notebooks, pen = t
   // review mode's closed shadow root opened, and a recorder for the microphone (the browser's own stand-in, once
   // allowed): Safari has MediaRecorder, Linux's headless WebKit doesn't (the words come over the live line, the clip is
   // only its fallback)
-  await context.addInitScript(() => {
+  await context.addInitScript(openReview => {
     const a = Element.prototype.attachShadow;
     Element.prototype.attachShadow = function (o) {
-      return a.call(this, { ...o, mode: 'open' });
+      return a.call(this, openReview ? { ...o, mode: 'open' } : o);
     };
     window.MediaRecorder ??= class {
       static isTypeSupported = type => type === 'audio/webm';
@@ -446,7 +455,7 @@ async function hqIn(browser, viewport = IPAD_MINI.viewport, { notebooks, pen = t
         });
       }
     };
-  });
+  }, openReview);
   await context.routeWebSocket(/\/__review\/dictate(\?.*)?$/, voiceLine);
   await context.route(`${base}/__review/**`, r => {
     const path = new URL(r.request().url()).pathname;
@@ -665,6 +674,9 @@ function STORIES() {
     ...notesPageStories({ hqIn, base, shot, settled, noErrorsIn, MINI, DESKTOP, PHONE }),
     // (the test call at a phone both ways, an iPad mini on its side and a desktop)
     ...callSizesStories({ hqIn, base, shot, noErrorsIn }),
+    ...bubbleDropStories({ hqIn, base, shot, noErrorsIn }),
+    ...overlayStories({ hqIn, base, shot, noErrorsIn, shots }),
+    ...pictureStories({ hqIn, base, shot, noErrorsIn, shots }),
     ...agentPageStories({ hqIn, base, shot, settled, noErrorsIn, DESKTOP }),
     // (the drawing tools: the eraser, shapes, Select, Undo and Redo, with a mouse and the Pencil.)
     ...drawStories({ hqIn, base, store, pages, notebook, shot, settled, settle: SETTLE_MS }),
@@ -1225,6 +1237,8 @@ function STORIES() {
     // (handwriting read into type, bookwritten.mjs)
     // (a page shared by its corner, the paper's feel)
     ...shareStories({ hqIn, base, store, pages, notebook, shot, settled, noErrorsIn, SNIP }),
+    ...downloadStories({ hqIn, base, settled, shot, noErrorsIn, SNIP }),
+    ...callDropStories({ hqIn, base, settled, shot, noErrorsIn, SNIP }),
     ...longShareStories({
       hqIn,
       base,
@@ -1949,12 +1963,7 @@ async function besideTheBook(browser) {
   // the spread covers HQ's page, the pin with it (the spine let go with HQ narrower than a phone)
   await drag(page, await spineAt(page), 320 - (await spineAt(page)), 14, undefined, HOLD_MS);
   await settled(page, 'spread');
-  l = await layer();
-  assert.equal(
-    await page.evaluate(([x, y]) => !!document.elementFromPoint(x, y)?.closest('#book'), [l.fab.x, l.fab.y]),
-    true,
-    'the spread book covers the pin with the page',
-  );
+  assert.equal(await page.locator(ui('.fab')).isHidden(), true, 'the spread book hides the page pin');
   noErrors();
 }
 // (HQ's world captures the pointer of every pointerdown, and so does the book's paper: a scripted one has no pointer to

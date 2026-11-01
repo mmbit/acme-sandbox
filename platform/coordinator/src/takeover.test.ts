@@ -119,14 +119,13 @@ test("a call followed up and its job failed: the check hands the work to the cal
   assert.equal((await h.agent('followthrough-requeue', check.token, { job: failedAgain.id, said })).status, 400);
 });
 
-test("a failed job's work on calls of more than one agent, or a customer's, goes only to a job working for each", async () => {
+test("a failed job's work on calls of more than one agent goes only to a job working for each", async () => {
   reset();
   const followUp = await h.start({ agent: 'bolt', title: 'A customer call follow-up' });
   await h.finish(followUp);
   const customer = agreed({ kind: 'task', quote: 'Refund the customer at the old address' }, t0, 'bolt', {
     job: followUp.id,
   });
-  db.prepare('update jobs set customers = 1 where id = ?').run(followUp.id);
   const theirs = agreed({ kind: 'task', quote: 'Wire the shop key in' }, t0, 'chime');
   // the failed job carries chime's call's item and was handed bolt's customer call's
   const failed = await h.start({ agent: 'kit', item: theirs.item, title: 'Wire the key' });
@@ -144,14 +143,14 @@ test("a failed job's work on calls of more than one agent, or a customer's, goes
   assert.doesNotMatch(refused.body.error, /Refund|shop key/);
   assert.deepEqual(state(), before);
 
-  // the customer call's item alone: bolt's job takes it, and holds the customer's details from then on
+  // the customer call's item alone: bolt's job takes it
   db.prepare('update call_items set job = null where id = ?').run(theirs.item);
   db.prepare('update jobs set item = ? where id = ?').run(customer.item, failed.id);
   const taken = await h.agent('followthrough-requeue', check.token, { job: failed.id, said: 'The refund step failed' });
   assert.equal(taken.status, 200, JSON.stringify(taken.body));
   assert.deepEqual(
-    { ...(db.prepare('select agent, call, item, customers from jobs where id = ?').get(taken.body.id) as object) },
-    { agent: 'bolt', call: customer.call, item: customer.item, customers: 1 },
+    { ...(db.prepare('select agent, call, item from jobs where id = ?').get(taken.body.id) as object) },
+    { agent: 'bolt', call: customer.call, item: customer.item },
   );
 });
 

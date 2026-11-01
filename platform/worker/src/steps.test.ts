@@ -1,51 +1,52 @@
 // node --test src/steps.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { detailOf, stepOf, shown, guard, memberReturned, memberOf, writtenTokens } from './steps.ts';
+import { detailOf, stepOf, memberReturned, memberOf, writtenTokens } from './steps.ts';
 
-test('a tool call reads as a line in plain words', () => {
+test('a tool call reads as a line in plain words: its kind and what it names for agents, the line itself for the board', () => {
   assert.deepEqual(stepOf('Read', { file_path: '/repo/platform/hq/shell/hud.js' }), { text: 'Reading hud.js' });
   assert.deepEqual(stepOf('Edit', { file_path: 'a/b.ts', old_string: 'x', new_string: 'y' }), { text: 'Editing b.ts' });
   assert.deepEqual(stepOf('MultiEdit', { file_path: 'b.ts', edits: [] }), { text: 'Editing b.ts' });
   assert.deepEqual(stepOf('Write', { file_path: 'n.md', content: 'one' }), { text: 'Writing n.md' });
-  assert.equal(
-    stepOf('Bash', { command: 'npm test', description: 'Run the schedule tests' })?.text,
-    'Run the schedule tests',
-  );
-  assert.equal(stepOf('Bash', { command: 'ls -la' })?.text, 'Running ls -la');
-  assert.equal(stepOf('Grep', { pattern: 'updateStatus' })?.text, 'Searching for “updateStatus”');
-  assert.equal(stepOf('WebFetch', { url: 'https://example.com/a?b' })?.text, 'Reading example.com');
+  assert.deepEqual(stepOf('Bash', { command: 'hq care 12', description: 'Read case 12' }), {
+    text: 'Running a command',
+    board: 'Read case 12',
+  });
+  assert.equal(stepOf('Bash', { command: 'ls -la' })?.board, 'Running ls -la');
+  assert.deepEqual(stepOf('Grep', { pattern: 'jan@example.org' }), {
+    text: 'Searching the files',
+    board: 'Searching for “jan@example.org”',
+  });
+  assert.deepEqual(stepOf('WebSearch', { query: 'Jan Jansen' }), {
+    text: 'Searching the web',
+    board: 'Searching the web for “Jan Jansen”',
+  });
+  assert.deepEqual(stepOf('WebFetch', { url: 'https://example.com/a?b' }), { text: 'Reading example.com' });
   assert.equal(stepOf('mcp__github__get_file')?.text, 'Using github');
   assert.equal(stepOf('SendMessage', { to: 'x' }), null);
 });
 
-test('a job holding a customer’s details shows only the kind of step: no paths, searches or commands', () => {
-  for (const [name, input] of [
-    ['Read', { file_path: 'cases/ada-jansen.md' }],
-    ['Grep', { pattern: 'ada@example.nl' }],
-    ['Bash', { command: 'cat x', description: 'Read Ada’s order' }],
-  ] as const) {
-    const text = stepOf(name, input, true)!.text;
-    assert.doesNotMatch(text, /ada/i, `${name}: ${text}`);
-  }
-  assert.deepEqual(stepOf('Edit', { file_path: 'c.md', old_string: 'a', new_string: 'b' }, true), {
-    text: 'Editing a file',
+test('the job’s log has each call as it was made for the board, and its kind for agents', () => {
+  assert.deepEqual(detailOf('Bash', { command: 'hq care reply 12 "Dear Jan"', description: 'Reply' }), {
+    text: 'Running a command',
+    board: '$ hq care reply 12 "Dear Jan"',
   });
-});
-
-test('the job’s log has each call as it was made; a job holding a customer’s details only its plain line', () => {
-  assert.equal(
-    detailOf('Bash', { command: 'npm test -- --grep till', description: 'Run the tests' }),
-    '$ npm test -- --grep till',
-  );
-  assert.equal(detailOf('Edit', { file_path: 'platform/hq/a.js' }), 'Edit platform/hq/a.js');
-  assert.equal(detailOf('Grep', { pattern: 'until', path: 'src', glob: '*.ts' }), 'Grep “until” in src (*.ts)');
-  assert.equal(
-    detailOf('TodoWrite', { todos: [{ content: 'a', status: 'completed' }, { content: 'b' }] }),
-    'Plan: ✓ a · b',
-  );
-  assert.equal(detailOf('Bash', { command: 'cat cases/ada.md' }, true), 'Running a command');
-  assert.equal(detailOf('Read', { file_path: 'cases/ada.md' }, true), 'Reading a file');
+  assert.deepEqual(detailOf('Edit', { file_path: 'platform/hq/a.js' }), {
+    text: 'Editing a.js',
+    board: 'Edit platform/hq/a.js',
+  });
+  assert.deepEqual(detailOf('Grep', { pattern: 'until', path: 'src', glob: '*.ts' }), {
+    text: 'Searching the files',
+    board: 'Grep “until” in src (*.ts)',
+  });
+  assert.deepEqual(detailOf('TodoWrite', { todos: [{ content: 'a', status: 'completed' }, { content: 'b' }] }), {
+    text: 'Updating its plan',
+    board: 'Plan: ✓ a · b',
+  });
+  assert.deepEqual(detailOf('SendMessage', { to: 'kit', message: 'Jan wants a refund' }), {
+    text: 'To kit',
+    board: 'To kit: Jan wants a refund',
+  });
 });
 
 test("a team member is done when its Agent call comes back with its work or fails, not when it's sent to the background", () => {
@@ -82,62 +83,4 @@ test('what a step wrote counts in tokens, about four characters each, whichever 
     writtenTokens({ type: 'user', message: { content: [{ type: 'tool_result', content: 'long output' }] } }),
     0,
   );
-});
-
-test('a job holding a customer’s details: its line itself goes as board, for the board’s own HQ alone', () => {
-  const bash = { command: 'hq parcel 12 again', description: 'Place the order again' };
-  assert.deepEqual(
-    shown(true, g => stepOf('Bash', bash, g)?.text),
-    { text: 'Running a command', board: 'Place the order again' },
-  );
-  assert.deepEqual(
-    shown(true, g => detailOf('Bash', bash, g)),
-    { text: 'Running a command', board: '$ hq parcel 12 again' },
-  );
-  // what its agent says between steps: only the board's
-  assert.deepEqual(
-    shown(true, g => (g ? null : 'Found it.')),
-    { text: null, board: 'Found it.' },
-  );
-  // a line with nothing to hide, and any job's line otherwise: as it is, no board copy
-  assert.deepEqual(
-    shown(true, g => stepOf('TodoWrite', {}, g)?.text),
-    { text: 'Updating its plan' },
-  );
-  assert.deepEqual(
-    shown(false, g => stepOf('Bash', bash, g)?.text),
-    { text: 'Place the order again' },
-  );
-  assert.deepEqual(
-    shown(false, g => (g ? null : 'Found it.')),
-    { text: 'Found it.' },
-  );
-  assert.equal(
-    shown(true, g => stepOf('SendMessage', { to: 'x' }, g)?.text),
-    null,
-  );
-});
-
-test('a job handed a customer’s details mid-run: its lines go out guarded from the coordinator’s answer that says so', async () => {
-  const answer = (body: unknown, status = 200) => Promise.resolve(new Response(JSON.stringify(body), { status }));
-  const g = guard(false);
-  const bash = { command: 'grep -i refund mail.txt', description: 'Find the refund mail' };
-  await g.follow(answer({ ok: true, customers: false }));
-  assert.deepEqual(
-    shown(g.on, gd => stepOf('Bash', bash, gd)?.text),
-    { text: 'Find the refund mail' },
-  );
-  // an answer HQ couldn't give, or none at all (the post failed), changes nothing
-  await g.follow(answer({ error: 'down' }, 502));
-  await g.follow(Promise.resolve());
-  assert.equal(g.on, false);
-  await g.follow(answer({ ok: true, customers: true }));
-  assert.deepEqual(
-    shown(g.on, gd => stepOf('Bash', bash, gd)?.text),
-    { text: 'Running a command', board: 'Find the refund mail' },
-  );
-  // and it stays guarded: a mark is never lifted mid-run
-  await g.follow(answer({ ok: true }));
-  assert.equal(g.on, true);
-  assert.equal(guard(true).on, true);
 });

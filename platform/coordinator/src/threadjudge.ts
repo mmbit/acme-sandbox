@@ -2,7 +2,7 @@
 // judge (threadends.ts settled, runEnded): it stays open, ready to judge, and HQ queues its owner a job with the
 // thread's "done when" and its tasks' reports. They close it (hq plan done) or draw its next task: a merge says the
 // work landed, not that the thread did what it was for. Each report is its agent's words, so the brief quotes it as
-// data (a JSON string), and only one its owner may read (jobs.ts readsReport). With them, how often it was judged before,
+// data (a JSON string), but for one marked before as a customer's, which stays with its job. With them, how often it was judged before,
 // its deadline and its agent time against its first size, so ending it is as easy to see as feeding it. A judge that
 // ends done closes each deliverable it left open with nothing drawn in it. A failed judge wakes its owner again (ended).
 // (its messages say deliverable, the board's word for a thread)
@@ -48,12 +48,9 @@ export function wake(id: string, t = Date.now()) {
       )
       .get(owner) as { id: number } | undefined;
     const judged = [...(waiting ? judgedBy(waiting.id) : []).filter(other => other.id !== thread.id), thread];
-    const { prompt, customers } = judgeBrief(judged, { id: waiting?.id ?? 0, agent: owner });
-    const brief = { title: titleOf(judged), prompt };
-    if (waiting) {
+    const brief = { title: titleOf(judged), prompt: judgeBrief(judged, { id: waiting?.id ?? 0, agent: owner }) };
+    if (waiting)
       db.prepare('update jobs set title = ?, prompt = ? where id = ?').run(brief.title, brief.prompt, waiting.id);
-      if (customers) jobs.handedCustomerData(waiting.id);
-    }
     const job =
       waiting?.id ??
       made(
@@ -63,7 +60,6 @@ export function wake(id: string, t = Date.now()) {
           agent: owner,
           code: madeCode('alarms', 'hq', STANDING.threadMerged),
           ...brief,
-          customers,
           effort: 'medium',
         }),
         projects().made.alarms?.hq ? { asap: t } : undefined,
@@ -98,8 +94,11 @@ export function release(thread: string) {
   db.prepare('delete from judgings where thread = ? and job = ?').run(thread, judge.id);
   const judged = judgedBy(judge.id);
   if (!judged.length) return void cancelJob(judge.id, `${thread} has new work in it, so there's nothing left to judge`);
-  const { prompt } = judgeBrief(judged, judge);
-  db.prepare('update jobs set title = ?, prompt = ? where id = ?').run(titleOf(judged), prompt, judge.id);
+  db.prepare('update jobs set title = ?, prompt = ? where id = ?').run(
+    titleOf(judged),
+    judgeBrief(judged, judge),
+    judge.id,
+  );
 }
 
 // Whether a thread's tasks are in, none open or still to merge (db.ts mergePending), as one that failed or whose pull
@@ -126,20 +125,17 @@ const titleOf = (judged: Thread[]) =>
 
 // What the woken owner reads: each thread's "done when", how each of its tasks ended with its report, and the ways on.
 // A report is a model's words, so the brief quotes it as a JSON string that nothing in it can end, and says outside it
-// what it is. One that holds a customer's own details goes only to an owner who may read it (readsReport), whose judge
-// then holds them too (customers).
+// what it is. One marked before as holding a customer's own details stays with its job, as its reference: a brief is a new
+// record, whoever reads it.
 function judgeBrief(judged: Thread[], reader: jobs.Reader) {
   const reports = db.prepare('select result, customers from jobs where id = ?');
-  let customers = false;
   const threadLines = judged.map(thread => {
     const tasks = tasksOf(thread.id).map(task => {
       const row = reports.get(task.id) as { result: string | null; customers: number };
       const report = (row.result ?? '').trim();
-      const read = jobs.readsReport({ id: task.id, customers: row.customers }, reader);
-      if (read && row.customers && report) customers = true;
       const quoted = !report
         ? 'none'
-        : !read
+        : row.customers
           ? `(${jobs.REPORT_LEFT_OUT})`
           : report.length > REPORT_MAX
             ? `${JSON.stringify(report.slice(0, REPORT_MAX))} (cut: the rest is in hq history)`
@@ -161,7 +157,7 @@ function judgeBrief(judged: Thread[], reader: jobs.Reader) {
     `- Only the board can judge it: one card on the desk phone, and the step that acts on its answer drawn as its next task, queued after the card (\`hq job --after request:<id> ... --deliverable <deliverable>\`).`,
     `A deliverable you leave open with nothing drawn in it closes as your job ends, as \`hq plan done\` would: to keep one open, draw its next task. Say in your report which you did for each and why.`,
   ].join('\n\n');
-  return { prompt, customers };
+  return prompt;
 }
 
 // What a thread has had, for its judge (`job`, 0 for one not made yet): the judges before it, its deadline and how far

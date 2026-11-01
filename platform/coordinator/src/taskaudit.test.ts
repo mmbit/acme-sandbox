@@ -207,3 +207,84 @@ test('carry audit exports and printers retain subminute estimates, revisions, pr
     assert.match(cli.out, /Default prediction: 30 sec/);
   }
 });
+
+test('weekly token scores keep the original split, exclude missing usage, and export raw phase costs', async t => {
+  const { recordUsage } = await import('./usage.ts');
+  const budget = { tokens: { work: 200, reviews: 50, fixes: 0, feedback: 600 }, feedback_rounds: 1 };
+  const tasks = [true, false].map(reported => {
+    const job = h.pastJob({
+      title: `Token comparison ${reported}`,
+      created: T + 510 * MINUTE,
+      run: run(520, 10),
+      merged: T + 560 * MINUTE,
+    });
+    sizes.record(
+      {
+        job,
+        by: 'juno',
+        agent_ms: 10 * MINUTE,
+        low_ms: null,
+        high_ms: null,
+        refs: [],
+        why: 'A matching scope',
+        brief: 'tokens',
+        token_budget: budget,
+        confidence: { level: 'high', why: 'Three close examples' },
+      },
+      T + 510 * MINUTE,
+    );
+    sizes.record(
+      {
+        job,
+        by: 'juno',
+        agent_ms: 20 * MINUTE,
+        low_ms: null,
+        high_ms: null,
+        refs: [],
+        why: 'Progress revised',
+        brief: 'tokens',
+        revised: true,
+        confidence: { level: 'low', why: 'Scope grew beyond the examples' },
+        token_budget: { ...budget, tokens: { ...budget.tokens, work: 9000 } },
+      },
+      T + 525 * MINUTE,
+    );
+    if (reported) {
+      t.mock.timers.enable({ apis: ['Date'], now: T + 530 * MINUTE });
+      recordUsage({ job, engine: 'claude', usage: { models: { model: { input: 100 } } } });
+      t.mock.timers.reset();
+    }
+    return job;
+  });
+  h.pastJob({ title: 'Legacy estimate without confidence', run: run(530, 1), sized: MINUTE });
+  const audit = await ask();
+  const rows = audit.rows.filter((row: { id: number }) => tasks.includes(row.id));
+  assert.equal(rows.length, 2);
+  assert.deepEqual(rows[0].first_estimate.token_budget, budget);
+  assert.deepEqual(rows[0].first_estimate.confidence, { level: 'high', why: 'Three close examples' });
+  assert.equal(rows[0].revisions[0].confidence.level, 'low');
+  assert.ok(audit.coverage.missing_confidence > 0);
+  assert.equal(rows[0].whole.cost.split.work.tokens, 100);
+  assert.equal(rows[1].whole.cost.missing_usage, 1);
+  assert.equal(audit.token_cost.phases.work.count, 1);
+  assert.equal(audit.token_cost.phases.work.sum_ratio, 2);
+  assert.equal(audit.token_cost.incomplete_actuals, 1);
+  const high = audit.confidence.find((score: any) => score.level === 'high');
+  assert.equal(high.work_size.count, 2);
+  assert.equal(high.work_size.sum_ratio, 1);
+  assert.equal(high.token_cost.phases.work.count, 1);
+  assert.equal(high.token_cost.phases.work.sum_ratio, 2);
+  assert.equal(high.token_cost.incomplete_actuals, 1);
+  assert.equal(audit.confidence.find((score: any) => score.level === 'low').work_size.count, 0);
+  assert.deepEqual((await ask('calibration')).confidence, audit.confidence);
+  assert.deepEqual((await ask('calibration')).token_cost, audit.token_cost);
+  const output = await h.hq(reader, 'estimate', '--accuracy', '--days', '1', '--until', until);
+  assert.equal(output.code, 0, output.out);
+  assert.match(output.out, /Token work: .*together 2 of what they took/);
+  assert.match(output.out, /feedback 600 tokens/);
+  assert.match(output.out, /Estimate confidence: high. Three close examples/);
+  assert.match(output.out, /Later revision: .*Estimate confidence: low/);
+  assert.match(output.out, /Estimate confidence: not recorded/);
+  assert.match(output.out, /Confidence high, work time: .*together 1 of what they took/);
+  assert.match(output.out, /Confidence high, token work: .*together 2 of what they took/);
+});

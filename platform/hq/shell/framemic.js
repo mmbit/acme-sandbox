@@ -15,6 +15,8 @@
 // taken: it was meant for what was under it.
 // A page that offers hears nothing back until the board taps the key, so it never learns whether HQ's microphone is
 // allowed; a held pen there never listens (shared/review/pentouch.js).
+// The page picks where the key sits, so while the key listens and writes, the viewer's bar names the host the words go
+// to, on HQ's own page where the frame can't reach.
 import { dictateLive } from './dictate.js';
 
 const LEVEL_MS = 100; // the key and the post-it's mic breathe with the voice at this pace
@@ -23,12 +25,13 @@ const MOVED_PX = 8; // (moved this far: armed again)
 // (review mode's own mic, base.js MIC, so the key looks as the post-it's does)
 const MIC =
   '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="2.5" width="6" height="12" rx="3" fill="currentColor"/><path d="M5.5 11a6.5 6.5 0 0013 0M12 17.5V21M8.5 21h7" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></svg>';
-// the open offer: { doc, lang, frame, key, at, armed, tell, follow, rec, level, writing, gone }
+// the open offer: { doc, lang, frame, key, to, at, armed, tell, follow, rec, level, writing, gone }
 let on = null;
 
 // A post-it open in the frame: HQ's key over its mic, waiting for the board's tap. doc: the offering page's own number
-// (review.js), line: the port it came with, lang: the board's, frame: the viewer's, at: the mic's box in the frame's px
-export function frameMic(doc, line, lang, frame, at) {
+// (review.js), line: the port it came with, lang: the board's, frame: the viewer's, at: the mic's box in the frame's px,
+// host: the offering page's
+export function frameMic(doc, line, lang, frame, at, host) {
   stopFrameMic();
   const key = Object.assign(document.createElement('button'), {
     type: 'button',
@@ -36,7 +39,12 @@ export function frameMic(doc, line, lang, frame, at) {
     innerHTML: MIC,
   });
   key.dataset.noInk = ''; // (review mode's Pencil on HQ leaves it to the pen's tap: pentouch.js theirs)
-  const v = (on = { doc, lang, frame, key, armed: 0, tell: mic => line.postMessage({ mic }) });
+  const to = Object.assign(document.createElement('span'), {
+    className: 'micto',
+    textContent: `To ${host}`,
+    title: `Your words go to ${host}`,
+  });
+  const v = (on = { doc, lang, frame, key, to, armed: 0, tell: mic => line.postMessage({ mic }) });
   line.onmessage = e => fromPage(v, e.data?.mic, e.data?.at);
   key.onclick = e => e.isTrusted && tapped(v); // (a tap of HQ's window, never one a script made)
   frame.closest('#viewer').append(key);
@@ -78,6 +86,7 @@ export function stopFrameMic() {
   v.rec?.cancel();
   v.unfollow();
   v.key.remove();
+  v.to.remove();
   v.tell({ dropped: true });
 }
 
@@ -153,9 +162,12 @@ async function stop(v, byKey) {
   v.tell(end);
 }
 
-// The key: ready (the mic, as the post-it's own), live (red) or busy (writing the words)
+// The key: ready (the mic, as the post-it's own), live (red) or busy (writing the words), the bar naming where the
+// words go while it's live or busy
 function paint(v, phase) {
   const { key } = v;
+  if (phase === 'ready') v.to.remove();
+  else v.frame.closest('#viewer').querySelector('.bar .where').after(v.to);
   key.dataset.phase = phase;
   key.disabled = phase === 'busy';
   key.style.setProperty('--lvl', 0);

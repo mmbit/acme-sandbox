@@ -21,9 +21,10 @@
 //   - A walk-through (a card's Walk me through it) has the call's notes page as any call does, one page a call.
 //   - The call's notes page (the coordinator's ink/callnotes.ts) is open from pickup: the book turns to it if it's open,
 //     with a page brought by its folded corner on it first (bookshare.js), and the agent's scraps land there one by
-//     one (asked at pickup, and again while the call is on until the store is reached; a card says so if it couldn't be
-//     opened). The first to land opens the book there, beside HQ's page, on a screen wider than it is tall (booklayout.js
-//     initial). On one taller than it is wide (an upright phone or iPad, half a split screen) it stays shut. Hung up, the
+//     one. HQ asks for it at pickup, and again while the call is on until the store is reached. A card says so if the
+//     store couldn't open it. The first scrap to land opens the book there, beside HQ's page, on a screen wider than it
+//     is tall (booklayout.js initial). On one taller than it is wide (an upright phone or iPad, half a split screen)
+//     the book stays shut. Hung up, the
 //     page goes in as it is and stays in My journal, and nothing on it goes to anyone (its call's follow-up hands it
 //     out), so the book offers no Send on it (bookcontrols.js). (opens)
 import { esc } from '../../util.js';
@@ -98,8 +99,8 @@ function openOnFirstNote(c) {
   return () => document.removeEventListener('book:notebook', heard);
 }
 // The call's notes page, made as the call is picked up (with the page brought to it, c.brought), and the book turned to
-// it if it's open. Asked again while the call is on if the store wasn't reached: an ask the network dropped, or the
-// proxy's 503 while the coordinator is away. Any other failure, the board hears of on a card.
+// it if it's open. HQ asks again while the call is on if the store wasn't reached: an ask the network dropped, or the
+// proxy's 503 while the coordinator is away. The board hears of any other failure on a card.
 async function notesPage(c) {
   const ask = () => post('/api/notebooks/call', { call: c.call, ...(c.brought ? { page: c.brought } : {}) });
   try {
@@ -114,8 +115,8 @@ async function notesPage(c) {
     if (!c.over) notesCard(c);
   }
 }
-// An ask's answer once the store is reached, asked again a second later, then a second more each time, at most every
-// 5 s, until the call is over: then the last answer, or the network's error
+// An ask's answer once the store is reached. It asks again a second later, then a second more each time, at most every
+// 5 s, until the call is over. Then it hands back the last answer, or the network's error.
 async function reached(ask, c) {
   for (let tries = 1; ; tries++) {
     try {

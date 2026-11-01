@@ -25,7 +25,7 @@ import { stripJpeg, stripPng } from './photos.ts';
 import { readBody } from '../../../shared/routes/routes.ts';
 import { keepFile, refuse, reply } from './uploads.ts';
 import * as memory from './memory.ts';
-import { cardAccess, customerCard, handedCustomerData, takesPictures, type Reader } from './jobs.ts';
+import { cardAccess, takesPictures, type Reader } from './jobs.ts';
 
 export const DIR = `${DATA_DIR}/pictures`;
 // 3.5 MB stays under the model's 5 MB per picture once base64-encoded (a call sends it that way). HQ redraws a picture
@@ -255,7 +255,7 @@ export function forVoice(id: number, call: number) {
 //   - A card answer's, once it's sent: whoever hq photos shows that card's photos to (jobs.ts cardAccess: the agent who
 //     asked, a job queued after the card; a customer card's, its reader, refused with why).
 //   - A call's: whoever hq call shows the call's lines to (memory.ts callAccess: the jobs that work for the call, and
-//     not while it's live). One about a customer the job wasn't handed is refused with why, as hq call is.
+//     not while it's live). One marked before as about a customer is refused with why, as hq call is.
 //   - An intercom line's, once it's sent: any job.
 // Anything else is 404, the same as a picture that doesn't exist.
 export function forWorker(id: number, me: Reader) {
@@ -265,15 +265,12 @@ export function forWorker(id: number, me: Reader) {
   if (!p.call) return p.chat != null ? saved(p) : 404;
   const access = memory.callAccess(p.call, me);
   if (access !== true) return access;
-  // a customer call's picture: its reader holds their details
-  if (memory.customerCall(p.call)) handedCustomerData(me.id);
   return saved(p);
 }
-// A card answer's picture: a customer card's reader holds their details from then on
+// A card answer's picture
 function fromCard(p: Picture, card: number, me: Reader) {
   const access = cardAccess(card, me);
   if (access !== true) return access;
-  if (customerCard(card)) handedCustomerData(me.id);
   return saved(p);
 }
 const saved = (p: Picture) => ({

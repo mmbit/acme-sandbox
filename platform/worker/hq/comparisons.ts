@@ -1,4 +1,5 @@
 // Past jobs and timing exclusions shown before a queuer judges scope.
+import { costLines, type FeatureCost } from './costs.ts';
 import type { TaskTime, TaskTimingFlag } from '../../coordinator/src/tasktime.ts';
 import { duration } from './waits.ts';
 import { minute, plural, print } from './output.ts';
@@ -11,6 +12,7 @@ export type Job = {
   finished: string;
   agent_minutes: number;
   whole: TaskTime;
+  feature_cost?: FeatureCost | null;
   wall_minutes: number | null;
   runs: number;
   rebuilt: boolean;
@@ -36,7 +38,7 @@ export function printJobs({ job, jobs, typical }: { job?: Job; jobs: Job[]; typi
     `Clean past jobs found for ${words ? `"${words}"` : 'that'}, search matches first. Compare their scope before choosing a size.`,
   );
   print('Whole time includes reviews, fixes, re-syncs and previews. Queue, seat, deploy and card waits are out.');
-  print('--size covers the work split only. The forecast adds review and fix rounds once per deliverable.');
+  print('--size.time covers the work split only. The forecast adds review and fix rounds once per deliverable.');
   print(
     'Shared follow-up time is divided equally among the tasks on the branch. A shared preview is divided by branch first.',
   );
@@ -63,6 +65,15 @@ function jobLines(j: Job) {
     `  ${j.rebuilt ? '≈' : ''}${workDuration(j.agent_minutes, j.origin)} of ${workUnit(j.origin)} in ${plural(j.runs, 'run')}${wall}; ${spent}${pr}`,
   ];
   lines.push(wholeLine(j.whole, j.origin));
+  if (j.whole.cost) {
+    const cost = j.whole.cost;
+    lines.push(
+      `  Whole-task tokens: ${Math.round(cost.total.tokens).toLocaleString('en-GB')} (${Object.entries(cost.split)
+        .map(([phase, spend]) => `${phase} ${Math.round(spend.tokens)}`)
+        .join(', ')}). Missing reports: ${cost.missing_usage}.`,
+    );
+  }
+  lines.push(...costLines(j.feature_cost));
   if (j.tool_bound)
     lines.push('  Mostly waiting on tools that use no tokens (renders, test suites): its hours cost the seats little.');
   if (j.changed_files?.length) lines.push(`  Files: ${j.changed_files.join(', ')}`);

@@ -1,13 +1,14 @@
 // The book's pages as agents and calls read them (book.ts keeps them): any job lists and saves one (hq sketches, hq
 // sketch), and a board call's agent asks for one by number or label words (the voice line's sketch tool). A call's page
-// reads like any other, but a call about a card for keys keeps its pages to itself (callRead).
+// reads like any other, but a call about a card for keys keeps its pages to itself, and a customer call's go to its
+// readers (callRead).
 import { readFileSync } from 'node:fs';
 import sharp from 'sharp';
 import { db } from '../db.ts';
 import { BOARD, COLUMNS, row, summary, type Page } from './book.ts';
 import { pictureOf } from './bookpicture.ts';
 import type { Refused } from '../pagechecks.ts';
-import { readerHanded, readsCustomerData, type Reader } from '../jobs.ts';
+import { readsCustomerData, type Reader } from '../jobs.ts';
 import { callAccess, customerCall, keysCall } from '../memory.ts';
 import { DIR } from '../pagescraps.ts';
 import { ownerOf } from './sketchpeople.ts';
@@ -27,7 +28,7 @@ export const listForAgent = (archived: boolean, reader: Reader) => ({
 export async function getForAgent(id: number, reader: Reader) {
   const p = row(id, null);
   if (!p || !readsPage(p, reader)) return 404;
-  const access = callRead(p, reader);
+  const access = pageRead(p, reader, callRead(p, reader));
   if (access !== true) return access;
   const file = await pictureOf(p);
   if (!file) return 404; // (deleted while it was drawn)
@@ -36,26 +37,21 @@ export async function getForAgent(id: number, reader: Reader) {
 }
 // An invited person's own page carries their notes, name and what their screenshots caught (on a tester's checkout,
 // what they typed in), like an outside reviewer's note (feedback.ts readsOutside): read only by roles.customerData and
-// the jobs it went to (a sheet of it, or its review round's Advice: notebookrounds.ts), who hold those details from
-// then on.
+// the jobs it went to (a sheet of it, or its review round's Advice: notebookrounds.ts).
 const SENT_TO = `select 1 from book_notes n join book_sheets s on s.id = n.sheet where n.page = ?1 and s.job = ?2
   union all select 1 from notebook_guests g join notebook_rounds r on r.notebook = g.notebook where g.page = ?1 and r.advice = ?2`;
+const sentTo = (p: Page, reader: Reader) => !!reader.id && !!db.prepare(SENT_TO).get(p.id, reader.id);
 function readsPage(p: Page, reader: Reader) {
   if (p.who === BOARD) return true;
-  const sentTo = !!reader.id && !!db.prepare(SENT_TO).get(p.id, reader.id);
-  if (!sentTo && !readsCustomerData(reader.agent)) return false;
-  readerHanded(reader);
-  return true;
+  return sentTo(p, reader) || readsCustomerData(reader);
 }
-// A page as a job reads it. A customer call's page is the board's like any other, but its summary is the follow-up's
-// account of the call (calls.reply), with the customer's details in it: only the call's own readers (callAccess) get it,
-// and hold those details from then on.
+// A page as a job reads it. A customer call's summary is the follow-up's account of the call (calls.reply), with the
+// customer's details in it: only the call's own readers (callAccess) get it, not a job only a sheet of the page went
+// to.
 function shownTo(p: Page, reader: Reader) {
   const shown = summary(p, false);
   if (p.kind !== 'call' || p.call == null || !shown.summary || !customerCall(p.call)) return shown;
-  if (callAccess(p.call, reader) !== true) return { ...shown, summary: null };
-  readerHanded(reader);
-  return shown;
+  return callAccess(p.call, reader) === true ? shown : { ...shown, summary: null };
 }
 
 // ---------------------------------------------------------------- the voice line's: a call's sketch tool
@@ -128,18 +124,26 @@ const listed = (who: string) =>
 
 // A call's page (its notes page, ink/callnotes.ts, what the board drew on it, or a try's versions page from its note:
 // booktry.ts) reads like any page, by every job. Only a call about a card for keys (memory.ts keysCall) keeps its pages
-// as it keeps its lines, for its own agent (charter rule 8). A call's own pages are its own (own: a live call reading).
+// as it keeps its lines, for its own agent (charter rule 8), and a call about a customer (memory.ts customerCall) its
+// pages as its lines: the scrap tool put crops of the customer's screen on them, and the agent's notes on those
+// (pageRead). A call's own pages are its own (own: a live call reading).
 function callRead(p: Page, reader: Reader, own?: number): true | 404 | [403, string] {
-  if (p.call == null || p.call === own || !keysCall(p.call)) return true;
+  if (p.call == null || p.call === own || !(keysCall(p.call) || customerCall(p.call))) return true;
   return callAccess(p.call, reader);
+}
+// A customer call's page reads for the call's readers (callAccess) and the jobs a sheet of it went to (as an invited
+// person's page: readsPage).
+function pageRead(p: Page, reader: Reader, call: ReturnType<typeof callRead>, own?: number) {
+  if (p.call == null || p.call === own || !customerCall(p.call)) return call;
+  return sentTo(p, reader) || call;
 }
 // (each call read once)
 function readable(pages: Page[], reader: Reader, own?: number) {
-  const read = new Map<number, boolean>();
+  const read = new Map<number, ReturnType<typeof callRead>>();
   return pages.filter(p => {
     if (!readsPage(p, reader)) return false;
     if (p.call == null) return true;
-    if (!read.has(p.call)) read.set(p.call, callRead(p, reader, own) === true);
-    return read.get(p.call)!;
+    if (!read.has(p.call)) read.set(p.call, callRead(p, reader, own));
+    return pageRead(p, reader, read.get(p.call)!, own) === true;
   });
 }

@@ -15,7 +15,7 @@
 //   { phase: 'shown', id, canvas, strokes, left, top, halo }  a canvas of dry ink drawn again (ink.js shown): what it
 //                                                  shows now takes the place of the document's finished strokes (a
 //                                                  note's lines, fewer after an undo, none once sent). A canvas whose
-//                                                  own pictures are recorded (a sketch's page) says none: its finished
+//                                                  own pictures are recorded (a sketch's page) omits strokes: its finished
 //                                                  strokes stay until its next picture (rrweb's canvas mutation).
 // n numbers a document's strokes; id is rrweb's id of the document drawn on (a frame's, made the framing page's by
 // rrweb on the way up: a custom event's top-level `id` is), so a frame's strokes are placed over its frame. left and
@@ -72,7 +72,7 @@ export class Inks {
   redrawn(ink, at) {
     const finished = [...this.strokes.values()].filter(s => s.id === ink.id && s.end !== undefined);
     const strokes = Array.isArray(ink.strokes) ? ink.strokes : [];
-    if (!strokes.length && ink.canvas != null) {
+    if (!Array.isArray(ink.strokes) && ink.canvas >= 0) {
       this.pictured.set(ink.canvas, [...(this.pictured.get(ink.canvas) ?? []), ...finished.map(s => s.key)]);
       return;
     }
@@ -202,7 +202,7 @@ const drawn = stroke => ({ ...stroke, points: stroke.points.map(point => [...poi
 function shown(record, id, { canvas, strokes, halo }) {
   const r = canvas.getBoundingClientRect();
   const ink = { phase: 'shown', id, canvas: record.mirror.getId(canvas), left: r.left, top: r.top, halo: !!halo };
-  return { ...ink, strokes: (strokes ?? []).map(drawn) };
+  return strokes === undefined ? ink : { ...ink, strokes: strokes.map(drawn) };
 }
 // Where a stroke's ink is on the screen, in CSS px of this page's viewport
 function boxOf(stroke, { left, top }) {

@@ -485,6 +485,104 @@ test("on a call, a thread names each card it waits on as the board's: through th
   assert.match(said.out, /- The art: .*the board: "Approve the game plan"/);
 });
 
+test('a needs edge onto work held by a card is said where drawn, passed over by the default chain, and named as the hold', async () => {
+  db.exec('delete from pauses; delete from thread_needs; delete from requests; delete from request_waits');
+  const image = thread('image');
+  const card = Number(
+    db
+      .prepare("insert into requests (created, kind, title, body) values (?, 'decision', 'The image digest', 'x')")
+      .run(new Date(T - 3 * 24 * HOUR).toISOString()).lastInsertRowid,
+  );
+  db.prepare('insert into request_waits (job, request) values (?, ?)').run(queued(image), card);
+  const draw = (name: string, needs?: string[]) =>
+    newThread({ project: 'game', name, goal: 'It runs', needs }, { agent: 'wren' }) as any;
+  const cardHold = `it waits for the board's answer on card #${card}, open 3 d`;
+  const held = `game/image is held (${cardHold})`;
+  try {
+    const quiet = draw('Quiet');
+    assert.deepEqual(quiet.needs, [], 'the newest under way waits on the card: passed over');
+    assert.ok(quiet.chain.startsWith(`${held}, and was passed over: `), quiet.chain);
+    queued(quiet.id);
+    const live = draw('Live', [image]);
+    assert.deepEqual(live.needs, [image], 'a named edge is drawn: it can be real');
+    assert.ok(live.chain.includes(`${held}, and everything chained after it waits on the board too`), live.chain);
+    assert.match(live.chain, /keep this edge only if the work really can't start without it/);
+    queued(live.id);
+    const next = draw('Next');
+    assert.deepEqual(next.needs, [quiet.id], 'never the work chained after the card');
+    assert.match(
+      next.chain,
+      new RegExp(`game/live waits for game/image, held \\(it waits for the board's answer on card #${card}`),
+    );
+    const named = plan.need(quiet.id, image, 'wren') as { held?: string };
+    assert.ok(named.held?.startsWith(held), named.held);
+    plan.unneed(quiet.id, image, 'wren', 'its work is its own');
+    const pause = thread('paused');
+    queued(pause);
+    db.prepare("insert into pauses (project, thread, why, by, at) values ('game', ?, 'Waits', 'juno', ?)").run(
+      pause,
+      new Date(T - 2 * HOUR).toISOString(),
+    );
+    const onPause = plan.need(quiet.id, pause, 'wren') as { held?: string };
+    assert.match(
+      String(onPause.held),
+      /^game\/paused is held \(game\/paused is paused for 2 h\), and everything chained after it waits for the pause too/,
+    );
+    plan.unneed(quiet.id, pause, 'wren', 'its work is its own');
+    // where idle work is read: hq deliverable and the summary name the edge, not the card alone
+    const edge = `its needs edge on game/image, which is held (${cardHold}): if its work can start without it, hq plan unneed game/live game/image "why"`;
+    const threats = await import('./threats.ts');
+    const f = forecast.refresh();
+    assert.ok(threats.lines(f).includes(`deliverable game/live (Live, wren's) is held only through ${edge}`));
+    assert.ok(!threats.lines(f).some(l => l.startsWith('deliverable game/image (') && l.includes('held only')));
+    const lead = await h.start({ agent: 'juno' });
+    const shown = await h.hq(lead, 'deliverable', live.id);
+    assert.equal(shown.code, 0, shown.out);
+    assert.ok(shown.out.includes(`Held only through ${edge}.`), shown.out);
+    windowed(live.id, T + HOUR);
+    const late = threats.lines(forecast.refresh()).find(l => l.startsWith('deliverable game/live ('));
+    assert.ok(late?.includes(`Held by: ${edge}.`), late);
+    // through a deliverable with no work of its own: the edge drawn is named, with the held one it leads to
+    const empty = draw('Empty', [image]);
+    const top = draw('Top', [empty.id]);
+    queued(top.id);
+    const below = `its needs edge on game/empty, which waits for game/image, held (${cardHold}): if its work can start without it, hq plan unneed game/top game/empty "why"`;
+    const shownTop = threats.lines(forecast.refresh());
+    assert.ok(
+      shownTop.includes(`deliverable game/top (Top, wren's) is held only through ${below}`),
+      shownTop.join('\n'),
+    );
+    // a pause a decision of the board's holds with its card: the card is named
+    const decided = thread('decided');
+    queued(decided);
+    const made = await h.hq(lead, 'decision', 'The decided way', '--blocks', decided);
+    assert.equal(made.code, 0, made.out);
+    const decides = Number(/^Decision #(\d+)/.exec(made.out)![1]);
+    const asked = await h.ask(lead, { title: 'Which way?', decides });
+    const after = draw('After', [decided]);
+    assert.match(
+      after.chain,
+      new RegExp(
+        `game/decided is held \\(it waits for the board's answer on card #${asked}, open \\d+ min\\), and everything chained after it waits on the board too`,
+      ),
+    );
+    queued(after.id);
+    const f2 = forecast.refresh();
+    assert.ok(
+      threats
+        .lines(f2)
+        .some(l =>
+          l.startsWith(
+            `deliverable game/after (After, wren's) is held only through its needs edge on game/decided, which is held (it waits for the board's answer on card #${asked}, open`,
+          ),
+        ),
+      threats.lines(f2).join('\n'),
+    );
+  } finally {
+    db.exec('delete from thread_needs; delete from pauses; delete from decisions');
+  }
+});
+
 test('missing deadlines show once for a deliverable, excluding served windows and loose tasks', async () => {
   const none = thread('undated');
   const serving = thread('serving');

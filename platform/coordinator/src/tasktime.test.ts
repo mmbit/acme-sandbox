@@ -73,7 +73,6 @@ test('shared rounds are allocated once across all initial tasks, even when only 
   assert.equal(a.whole.share, 0.5);
   const cli = await h.hq(reader, 'estimate', 'Shared harbour first');
   assert.equal(cli.code, 0, cli.out);
-  assert.match(cli.out, /--size covers the work split only/);
   assert.match(cli.out, /forecast adds review and fix rounds once per deliverable/);
   assert.match(cli.out, /Shared rounds: 1\/2/);
 });

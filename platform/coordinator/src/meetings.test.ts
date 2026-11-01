@@ -742,27 +742,6 @@ test('the agenda is every ask set or joined, and one joined to a live meeting is
     );
 });
 
-test("a job holding a customer's own details can't ask for a meeting, or say or hand in anything in one", async () => {
-  const { meeting } = await setMeeting();
-  const marked = await h.start({ agent: 'kit', title: 'A customer mail' });
-  h.jobs.handedCustomerData(marked.id);
-  const asked = await h.agent('meetings/ask', marked.token, { topic: 'About a customer', with: ['bolt'] });
-  assert.equal(asked.status, 400);
-  const { wren: a } = await startSeats(3);
-  h.jobs.handedCustomerData(a.id);
-  for (const [route, body] of [
-    ['meetings/say', { text: 'The customer wrote…' }],
-    ['meetings/hand-in', { changed: 'nothing' }],
-  ] as const) {
-    const r = await h.agent(route, a.token, body);
-    assert.equal(r.status, 400, route);
-  }
-  assert.equal(
-    (db.prepare('select count(*) n from meeting_lines where meeting = ?').get(meeting) as { n: number }).n,
-    0,
-  );
-});
-
 test("the chair's instructions carry the company's own meeting guidance when it has a playbook for it, and only then", () => {
   const file = `${process.env.REPO_DIR}/${chair.MEETINGS}`;
   rmSync(file, { force: true });

@@ -443,10 +443,12 @@ export function serial<T>(key: string, run: () => Promise<T>): Promise<T> {
   queues.set(key, next);
   return next.finally(() => { if (queues.get(key) === next) queues.delete(key); });
 }
-// (exported: a company's own sale opens its checkout here)
-export const checkout = (c: Caller, b: any) => serial(`${c.slug}:${c.mode}:${String(b?.reference ?? '')}`, () => openCheckout(c, b));
+// (exported: a company's own sale opens its checkout here, on an hour's budget of its own when it names one, so its
+// checkouts and the product's can't use up each other's.)
+export type Budget = { name: string; perHour: number };
+export const checkout = (c: Caller, b: any, budget?: Budget) => serial(`${c.slug}:${c.mode}:${String(b?.reference ?? '')}`, () => openCheckout(c, b, budget));
 
-async function openCheckout(c: Caller, b: any) {
+async function openCheckout(c: Caller, b: any, budget?: Budget) {
   const amount = b.amount, currency = String(b.currency ?? '').toLowerCase(), reference = String(b.reference ?? '');
   const description = String(b.description ?? '').replace(/[\p{C}]/gu, ' ').replace(/\s+/g, ' ').trim();
   const success = returnUrl(b.success_url, c.slug), cancel = returnUrl(b.cancel_url, c.slug);
@@ -465,7 +467,7 @@ async function openCheckout(c: Caller, b: any) {
   // kind: what the sale is, in the payment's metadata for the books (a gift card's is no turnover)
   const kind = b.kind == null ? null : String(b.kind);
   if (kind !== null && !/^[a-z_]{1,30}$/.test(kind)) return [400, 'kind: 1-30 lowercase letters or _'];
-  const opened = await openSession(c, { reference, amount, currency, items: [{ name: description, amount }], success, cancel, locale, email, territory, kind });
+  const opened = await openSession(c, { reference, amount, currency, items: [{ name: description, amount }], success, cancel, locale, email, territory, kind, budget });
   return Array.isArray(opened) ? opened : { ...opened, countries: territory?.split(',') ?? null };
 }
 // A territory as a payments row keeps it: its countries sorted and comma-joined, null for none, false when malformed.
@@ -480,7 +482,7 @@ function territoryOf(countries: unknown) {
 // gets a new session; created: written in the same step as the session's row (a basket's lines).
 type Ask = { reference: string; amount: number; currency: string; items: { name: string; amount: number }[]; success: string;
   cancel: string; locale: string; email: string | null; basket?: { id: string; shape: string; created: (session: string) => void };
-  territory?: string | null; kind?: string | null };
+  territory?: string | null; kind?: string | null; budget?: Budget };
 // How long a create's idempotency key is reused, and how long its session stays open after the attempt's minute
 const ATTEMPT_MINUTES = 25, SESSION_LIFE_S = 3660;
 async function openSession(c: Caller, a: Ask) {
@@ -512,7 +514,7 @@ async function openSession(c: Caller, a: Ask) {
     if (row.amount === amount && asked && ownCurrency && s.metadata?.methods === policy && (row.shape ?? null) === shape && (row.territory ?? null) === territory && s.url) return { id: s.id, url: s.url, expires_at: s.expires_at };
     view(row, await stripe(c.mode, 'POST', `/v1/checkout/sessions/${row.id}/expire`));
   }
-  if (!countCheckout(c)) return [429, 'too many checkouts this hour'];
+  if (!countCheckout(c, a.budget)) return [429, 'too many checkouts this hour'];
   const meta = { product: c.slug, reference, ...(a.kind ? { kind: a.kind } : {}) };
   // The idempotency key names this attempt (the order, its amount, how many sessions it had, the minute it started), and
   // expires_at follows that minute. The attempt is stored before Stripe is asked, so a retry of a create whose answer got
@@ -552,12 +554,13 @@ async function openSession(c: Caller, a: Ask) {
   return { id: s.id, url: s.url, expires_at: s.expires_at };
 }
 
-// A checkout counted against the product's hour, or false once it has had PER_HOUR. One budget per mode: test checkouts
-// (the preview's token never rotates) can't use up a live shop's hour. (exported for plans.ts's checkouts)
-export function countCheckout(c: Caller) {
-  const budget = `${c.slug}:${c.mode}`, times = (opened.get(budget) ?? []).filter(t => t > Date.now() - 36e5);
-  if (times.length >= PER_HOUR) return false;
-  opened.set(budget, [...times, Date.now()]);
+// A checkout counted against the product's hour, or false once it has had PER_HOUR (a named budget: its perHour). One
+// budget per mode: test checkouts (the preview's token never rotates) can't use up a live shop's hour. (exported for
+// plans.ts's checkouts.: the named budget)
+export function countCheckout(c: Caller, budget: Budget = { name: '', perHour: PER_HOUR }) {
+  const key = `${c.slug}:${c.mode}:${budget.name}`, times = (opened.get(key) ?? []).filter(t => t > Date.now() - 36e5);
+  if (times.length >= budget.perHour) return false;
+  opened.set(key, [...times, Date.now()]);
   return true;
 }
 

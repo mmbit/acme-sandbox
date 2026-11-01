@@ -30,10 +30,10 @@ export type Recording = { session: Session; events: RecordedEvent[]; clockMs: nu
 
 // A batch: twenty times HQ's full snapshot with a canvas frame (0.4 MB at 744 × 1133, measured), so a bigger page of
 // ours still fits; the page never posts more at once (watchalong.js). A session: a call's longest, 3 hours
-// (coordinator call.ts CALL_MS), of HQ with canvas frames at 0.5 a second, 1.9 MB a minute as stored (measured), with
-// some to spare.
+// (coordinator call.ts CALL_MS), of HQ with canvas frames at 0.5 a second, 2.9 MB a minute as posted (measured), with
+// some to spare. It counts its batches as read() inflates them, so a batch that gzips small takes its full room.
 export const BATCH_BYTES = 8 << 20,
-  SESSION_BYTES = 400 << 20;
+  SESSION_BYTES = 640 << 20;
 export const KEEP_DAYS = 90;
 const DAY_MS = 86_400_000;
 const EVENT_TYPES = 7;
@@ -80,9 +80,9 @@ export function add(store: Store, id: number, key: string, body: Buffer) {
   if (!events) return 400;
   if (!events.length) return 200;
   const at = Date.now();
-  const line = gzipSync(`${JSON.stringify({ at, events })}\n`);
+  const line = Buffer.from(`${JSON.stringify({ at, events })}\n`);
   if (session.bytes + line.length > SESSION_BYTES) return 507;
-  appendFileSync(fileOf(store, id), line, { mode: 0o600 });
+  appendFileSync(fileOf(store, id), gzipSync(line), { mode: 0o600 });
   store.db.prepare('update watchalong_sessions set bytes = bytes + ? where id = ?').run(line.length, id);
   store.heard?.(id, events, at);
   return 200;
@@ -102,7 +102,9 @@ export function end({ db }: Store, purpose: string, ref: string) {
 export function read(store: Store, id: number): Recording | undefined {
   const session = find(store, id);
   if (!session) return undefined;
-  const batches = session.bytes ? lines(gunzipSync(readFileSync(fileOf(store, id)))) : [];
+  // (no more than a session's room inflates, whatever its row counts: a larger file fails rather than fill the memory)
+  const inflated = { maxOutputLength: SESSION_BYTES };
+  const batches = session.bytes ? lines(gunzipSync(readFileSync(fileOf(store, id)), inflated)) : [];
   const events = batches.flatMap(batch => batch.events);
   const gaps = batches.filter(batch => batch.events.length).map(batch => batch.at - batch.events.at(-1)!.timestamp);
   return { session, events, clockMs: gaps.length ? Math.min(...gaps) : 0 };
@@ -162,12 +164,17 @@ const isEvent = (event: unknown) => {
   );
 };
 
-const lines = (text: Buffer) =>
-  text
-    .toString('utf8')
-    .split('\n')
-    .filter(Boolean)
-    .map(line => JSON.parse(line) as { at: number; events: RecordedEvent[] });
+// The batches, a line each, decoded one by one: a whole session may pass the longest string V8 makes (512 MiB)
+function lines(text: Buffer) {
+  const batches: { at: number; events: RecordedEvent[] }[] = [];
+  for (let start = 0; start < text.length;) {
+    const newline = text.indexOf('\n', start),
+      end = newline < 0 ? text.length : newline;
+    if (end > start) batches.push(JSON.parse(text.toString('utf8', start, end)));
+    start = end + 1;
+  }
+  return batches;
+}
 
 const hash = (key: string) => createHash('sha256').update(key).digest('base64url');
 const sameKey = (stored: string, key: string) => {

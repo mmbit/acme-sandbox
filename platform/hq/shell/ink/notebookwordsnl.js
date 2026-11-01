@@ -118,6 +118,7 @@ export const nl = {
   sentAt: 'Verstuurd {time}',
   micBlocked: 'De microfoon is hier geblokkeerd',
   micFirstTap: 'Tik één keer op een microfoon om spraaknotities aan te zetten',
+  micIntercom: 'Open de Intercom en tik op de microfoon om spraaknotities toe te staan',
   micFailed: 'De microfoon startte niet',
   transcriberAway: 'Uitschrijven lukt nu even niet',
   noWordsHeard: 'Er kwamen geen woorden door',

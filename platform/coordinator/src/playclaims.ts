@@ -36,10 +36,11 @@ export function take<T extends Claim>(
   let picked = queue.runs[queue.next];
   const { seat: available, roomSeat } = choose(picked.row, picked.order);
   const seat = !('id' in available) && available.on === 'queue' ? roomSeat : available;
-  if ('id' in seat && reviewroom.shared(limits[seat.engine] ?? Infinity)) {
+  const limit = 'id' in seat ? (limits[seat.engine] ?? Infinity) : Infinity;
+  if ('id' in seat && reviewroom.shared(limit)) {
     const order = reviewroom.claimOrder(
       occupants(seat.id),
-      limits[seat.engine],
+      limit,
       queue.base,
       row => queue.orders.get(row.id)!.latestStart !== null,
     );
@@ -58,7 +59,7 @@ export function take<T extends Claim>(
 function groupsOn<T extends Claim>(
   queue: Queue<T>,
   seat: capacity.Seat,
-  { now, seats }: capacity.Moment,
+  moment: capacity.Moment,
   limits: Record<string, number>,
 ) {
   const cached = queue.groups.get(seat.id);
@@ -66,12 +67,11 @@ function groupsOn<T extends Claim>(
   // (by kind, then the board's and spare standing; in the order they first come up)
   const groups = new Map<string, Group<T>[]>(),
     indexed: Group<T>[] = [];
-  // (pacing as the seat alone has it, a fallback by all the moment's seats)
-  const alone = capacity.at([seat], now);
-  if (!capacity.available(seat, now)) return [];
+  const { now, seats } = moment;
+  if (!capacity.available(seat, now, seats)) return [];
   for (const run of queue.runs) {
     if (!queue.pending.has(run)) continue;
-    if ((limits[seat.engine] ?? Infinity) <= 0 || !capacity.takes(seat, run.row, run.order, alone, seats)) continue;
+    if ((limits[seat.engine] ?? Infinity) <= 0 || !capacity.takes(seat, run.row, run.order, moment)) continue;
     const spare = spareOnly(run.row, run.order);
     let kind = groups.get(run.row.kind);
     if (!kind) groups.set(run.row.kind, (kind = []));

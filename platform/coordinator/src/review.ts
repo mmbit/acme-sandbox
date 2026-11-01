@@ -6,7 +6,7 @@ import { publish, KEYS } from './events.ts';
 import * as secrets from './secrets.ts';
 import { markMerged } from './work.ts';
 import * as threadends from './threadends.ts';
-import { createJob, createRequest, findAgent, inProcess, failedNote, holdsCustomerData, isOpenJob, replacementOf, stillHolds, OPEN_PRS } from './jobs.ts';   // (failedNote) (holdsCustomerData) (stillHolds)
+import { createJob, createRequest, findAgent, inProcess, failedNote, isOpenJob, replacementOf, stillHolds, OPEN_PRS } from './jobs.ts';   // (failedNote) (stillHolds)
 import { mergePullRequest, closePullRequest, pullRequestState, landed, pullRequestDiff } from './github.ts';
 import * as ledger from './ledger.ts';
 import * as pauses from './pauses.ts';
@@ -37,7 +37,7 @@ import * as reviewpushes from './reviewpushes.ts';
 import * as boardmerges from './boardmerges.ts';
 import * as mergeorder from './mergeorder.ts';
 import * as rulingjobs from './rulingjobs.ts';
-import { GATES_CONFIG } from './reviewfloor.ts';
+import { AGENT_CONFIG, GATES_CONFIG } from './reviewfloor.ts';
 
 // A pull request merged: marked so, what its reviews left into its author's separate follow-up deliverable before
 // the threads whose work it held let go of its branch (threadends.ts merged), and the visual hold it was still in, when
@@ -619,7 +619,7 @@ function changedFrom(pr: number, sha: string, files: string[]) {
 function queueTriage(pr: number, branch: string, sha: string, round: number, files: string[], links: string[], note = '', fixesFrom: string | null = null, retry?: Run) {
   if (!retry) db.prepare("update prs set panel = 'triage', review_class = 'triage', fixes_from = ? where number = ?").run(fixesFrom, pr);
   const made = roundJob({ pr, round, sha, judges: files, stage: 'triage', step: 'Choosing the reviewers',
-    ...(retry && { insteadOf: retry.id, queuedBy: retry.queued_by ?? undefined, customers: holdsCustomerData(retry.id) }),
+    ...(retry && { insteadOf: retry.id, queuedBy: retry.queued_by ?? undefined }),
     prompt: reviewtriage.brief(pr, branch, files, links, fixesFrom) + note + boardWords(branch, 'triage') });
   triagebriefs.keep(made.id, links, note);
   return made;
@@ -818,9 +818,8 @@ type Run = { id: number; agent: string; kind: 'review' | 'consolidate' | 'work';
   downtime: number; title: string; step: string | null; prompt: string; stage: Stage | null; note: string | null; writes: string | null;
   for_seat: string | null; cli: string | null; queued_by: string | null; judges: string | null; model: string | null; engine: string };   // (note; for_seat: a retry stays on its Codex seat, unless its claim had moved it to its agent's fallback; cli: and on its CLI, the one a security read was made for too; judges)
 const run = (id: number) => db.prepare('select * from jobs where id = ?').get(id) as Run;
-// the run it stands in for gives it the message that run started with (the board's answer, say), if it had one, and
-// with the same words it holds what that run held of a customer's details. It replaces that run (jobs.ts replacements):
-// a failed job's call item goes on with it.
+// the run it stands in for gives it the message that run started with (the board's answer, say), if it had one. It
+// replaces that run (jobs.ts replacements): a failed job's call item goes on with it.
 // A fix follows the PR's current owner. Seat and CLI restrictions belong to the previous agent only, and not to a work
 // run its claim moved to the agent's fallback (jobs.ts moveToSeat; reviews never fall back): that one is made again on
 // the agent's own model, which the claim moves again while that model's seats are out. A review keeps the CLI it was
@@ -838,7 +837,7 @@ function again(j: Run, delay = RETRY_MS, agent = j.agent) {
   const prompt = j.prompt + (j.kind === 'consolidate' ? visualapproval.reviewStep(j.round, j.stage) : '') + (reason ? `\n\nYour previous answer (job #${j.id}) was refused: ${reason}\n` : '')
     + (j.prompt.includes(recorded) ? '' : recorded);
   const { id } = j.stage === 'triage' ? retriage(j, prompt.slice(j.prompt.length)) : createJob({ agent, kind: j.kind, pr: j.pr, round: j.round, branch: j.branch, sha: j.sha ?? undefined, insteadOf: j.id, queuedBy: j.queued_by ?? undefined,
-    downtime: !!j.downtime, stage: j.stage ?? undefined, step: j.step ?? undefined, title: j.title, prompt, customers: holdsCustomerData(j.id),
+    downtime: !!j.downtime, stage: j.stage ?? undefined, step: j.step ?? undefined, title: j.title, prompt,
     writes: j.writes ? JSON.parse(j.writes) : undefined, forSeat: keeps ? j.for_seat : null, cli: keeps ? j.cli ?? undefined : undefined,
     model: keeps ? j.model ?? undefined : undefined, judges: j.judges ? JSON.parse(j.judges) : undefined });   // (judges)
   reviewinbox.copyTask(j.id, id);
@@ -1900,7 +1899,6 @@ function endedShort(pr: Pr, job: { id: number; stage?: string | null }) {
 // once a push waits for the ruling: the branch has moved on from the ruled commit.
 const PROTECTED = /^company\/(CHARTER|AUTHORITY)\.md$/;
 const SETTINGS = /^company\/[^/]+\.(env|ya?ml|json)$/;
-const AGENT_CONFIG = /(^|\/)(\.(claude|codex|agents?|gemini|vibe)|_agents?)\/|(^|\/)\.mcp\.json$|(^|\/)\.?codeium\.ya?ml$|^company\/infra\.env$/i;
 const AGENT_NOTES = /(^|\/)(CLAUDE|AGENTS|GEMINI)\.md$/;
 const PROFILES_AND_WORKFLOWS = /^(company\/people|\.github|\.hq)\//;
 const someonesCall = (f: string) => PROTECTED.test(f) || SETTINGS.test(f) || PROFILES_AND_WORKFLOWS.test(f);

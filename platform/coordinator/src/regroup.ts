@@ -3,6 +3,7 @@
 // findThread). Also a task out of its thread, as the CEO expedites it (hq expedite).
 // (the work's owner: its thread's project's, projects.ts ownerOf)
 // (its messages say deliverable, the board's word for a thread)
+import { moveFeature } from './featureplan.ts';
 import { db, inOneStep, planChange } from './db.ts';
 import { ceo } from './company.ts';
 import { oneLine } from './agreements.ts';
@@ -51,6 +52,7 @@ export function moveThread(id: string, to: string, agent: string, why = ''): Thr
 export function newId(from: string, to: string, project: string) {
   inOneStep(() => {
     db.prepare('update threads set id = ?, project = ? where id = ?').run(to, project, from);
+    moveFeature(from, to);
     predictionlog.write(); // (the plays' rows not written yet, so they move too)
     for (const table of ['jobs', 'proposals', 'prediction_log', 'review_inbox'])
       db.prepare(`update ${table} set thread = ? where thread = ?`).run(to, from);
@@ -68,9 +70,10 @@ export function newId(from: string, to: string, project: string) {
   });
 }
 
-// hq job move <job> <project>/<slug>: work still going on, its review loop with it (the lead job on its branch, the
-// reviews and fix rounds, which later rounds inherit), onto another open thread, from one or from none. The thread and the
-// jobs it moved, or why not.
+// hq job move <job> <project>/<slug>: work, its review loop with it (the lead job on its branch, the reviews and fix
+// rounds, which later rounds inherit), onto another open thread, from one or from none. Ended work too (finished, or
+// dropped), filed in the wrong deliverable: its owner or the CEO moves it with a why, the record's correction.
+// The thread and the jobs it moved, or why not.
 export function moveJob(
   job: number,
   to: string,
@@ -84,15 +87,15 @@ export function moveJob(
   if (!row) return `there's no job #${job}`;
   const lead = db.prepare('select agent from jobs where id = ?').get(row.lead) as { agent: string };
   // (dropped: failed, cancelled, or its pull request closed unmerged.)
-  if (dropped(row.lead) || finished(row.lead))
-    return `job #${row.lead}'s work has ended: only work still going on moves`;
+  if ((dropped(row.lead) || finished(row.lead)) && !why)
+    return `job #${row.lead}'s work has ended: say why it belongs in ${to} (--why "...")`;
   const thread = findThread(to);
   if (thread?.status !== 'open') return `${to} isn't an open deliverable (hq deliverable list)`;
   const had = row.thread ? findThread(row.thread) : undefined;
   if (had?.id === thread.id) return `job #${job} is on ${thread.id} already`;
   const owner = had && ownerOf(had);
   if (!mayMove(agent, owner, lead.agent))
-    return `only ${[lead.agent, owner].filter(Boolean).join(', ')}, the CEO or the process team can move job #${job}`;
+    return `only ${[...new Set([lead.agent, owner].filter(Boolean))].join(', ')}, the CEO or the process team can move job #${job}`;
   const loop = { job, lead: row.lead, branch: `job/${row.lead}` };
   // (in no thread: what the desk's pause holds, jobs.ts deskLets.)
   const on = db

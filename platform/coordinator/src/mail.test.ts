@@ -689,8 +689,8 @@ test('the Worker\'s token counts only as the Email workflow commits it: not from
 
 // The job a hand-off made (mail.ts forward), as the board's route made it, and claimed: the route gives it no engine of its own,
 // so it gets one here, the only way to claim that job and no other (calls.test.ts does the same)
-const forwardJob = (job: number) => db.prepare('select agent, title, prompt, customers from jobs where id = ?').get(job) as
-  { agent: string, title: string, prompt: string, customers: number };
+const forwardJob = (job: number) => db.prepare('select agent, title, prompt from jobs where id = ?').get(job) as
+  { agent: string, title: string, prompt: string };
 const claimForwarded = async (job: number) => {
   db.prepare('update jobs set engine = ? where id = ?').run(`engine-forward-${job}`, job);
   const claimed = await h.claim(`engine-forward-${job}`);
@@ -698,13 +698,10 @@ const claimForwarded = async (job: number) => {
   return { ...claimed!, agent: 'wren', tmp: JOB_TMP, get: (path: string) => h.agent(path, claimed!.token) };
 };
 const forward = (mailId: number) => h.board('/api/mail/forward', { id: mailId });
-const sendTo = (from: string, address: string, subject: string) => fetch(`${base}/api/mail/inbound`, { method: 'POST',
-  body: Buffer.from([`From: <${from}>`, `To: ${address}`, `Subject: ${subject}`, 'Content-Type: text/plain', '', 'Please book the stand for 12 May.', ''].join('\r\n')),
-  headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'message/rfc822', 'x-mail-from': from, 'x-mail-to': address } }).then(r => r.json()).then(r => r.id as number);
 const HANDING = 'boardOnly: [board, vendor], partnersFrom: [partner.example], forwardTo: wren, notices: [{ to: vendor, from: partner.example, subject: Fault }]';
 
-// HQ's Mail's Send to the team: a board-only mail becomes a job for brand.yaml's mail.forwardTo, its brief the mail, and that
-// job alone reads it, whatever its agent's roles; once a mail.
+// HQ's Mail's Send to the team: a board-only mail becomes a job for brand.yaml's mail.forwardTo, its brief naming the mail, and
+// that job alone reads it, whatever its agent's roles; once a mail.
 test("the board hands one of its own mails to the team: one job for mail.forwardTo, the only one that reads it", async () => {
   withBrandMail(HANDING);
   try {
@@ -714,11 +711,9 @@ test("the board hands one of its own mails to the team: one job for mail.forward
     assert.equal(first.status, 200); assert.equal(first.body.already, false);
     const job = forwardJob(first.body.job);
     assert.equal(job.agent, 'wren'); assert.equal(job.title, `From the board's mail #${id}`, 'the log never holds a subject');
-    const json = JSON.parse(job.prompt.slice(job.prompt.indexOf('{')));
-    assert.deepEqual({ ...json, received: undefined }, { from: 'board@example.com', to: 'board@testco.example', received: undefined, subject: 'Signed DPA',
-      attachments: ['Verwerkersövereenkomst (signed).pdf', '../../etc/passwd'], text: 'Here is the signed agreement.' }, 'the mail as JSON, nothing after it');
-    for (const part of [`Mail #${id}`, `hq mail ${id}`, 'charter rule 9', 'no note']) assert.ok(job.prompt.includes(part), part);
-    assert.equal(job.customers, 1, 'the mail is in its brief: the job holds what a customer may have written');
+    for (const words of ['board@example.com', 'Signed DPA', 'Verwerkers', 'Here is the signed agreement'])
+      assert.ok(!job.prompt.includes(words), `its brief names the mail, it doesn't copy it: ${words}`);
+    for (const part of [`mail #${id}`, `hq mail ${id}`, 'charter rule 9', 'no note']) assert.ok(job.prompt.includes(part), part);
     assert.deepEqual((await forward(id)).body, { job: first.body.job, already: true }, 'a second click: the first job');
     assert.equal((await h.board('/api/mail')).body.find((m: { id: number }) => m.id === id).forwarded, first.body.job, 'Mail shows it went');
 
@@ -726,7 +721,6 @@ test("the board hands one of its own mails to the team: one job for mail.forward
     const handed = await claimForwarded(first.body.job);
     assert.equal((await handed.get(`mail?id=${id}`)).body.id, id);
     assert.equal((await handed.get(`mail-file?id=${id}&n=0`)).status, 200); assert.equal((await handed.get(`mail-raw?id=${id}`)).status, 200);
-    assert.equal((await h.worker('customers', { job: handed.id })).body.customers, true);
     for (const path of [`mail?id=${hello}`, 'mail']) assert.equal((await handed.get(path)).status, 403, path);
     assert.equal((await handed.get(`mail?id=${await to('board@testco.example')}`)).status, 404, "the board's other mail: as for any job");
     for (const path of [`mail?id=${id}`, `mail-file?id=${id}&n=0`, `mail-raw?id=${id}`]) assert.equal((await read(path)).status, 404, path);
@@ -740,31 +734,15 @@ test("the board hands one of its own mails to the team: one job for mail.forward
   } finally { withBrandMail('invoicesFrom: [bounce.billing.example]'); }
 });
 
-// A partner's mail to the board's own address, handed on, leaves the job free of a customer's details, unless it went to the
-// sign-in whose notices carry them (a vendor's other mail at vendor@)
-test("a partner's mail the board hands on marks no job, but one to a notices address does", async () => {
-  withBrandMail(HANDING);
-  try {
-    const partner = await sendTo('anna@partner.example', 'board@testco.example', 'Our stand'), made = (await forward(partner)).body.job;
-    assert.equal(forwardJob(made).customers, 0);
-    const handed = await claimForwarded(made);
-    assert.equal((await handed.get(`mail?id=${partner}`)).body.id, partner);
-    assert.equal((await h.worker('customers', { job: handed.id })).body.customers, false, "a partner's mail: no customer's details");
-    const atVendor = await sendTo('ops@partner.example', 'vendor@testco.example', 'Your order 1234');
-    assert.equal(forwardJob((await forward(atVendor)).body.job).customers, 1);
-  } finally { withBrandMail('invoicesFrom: [bounce.billing.example]'); }
-});
-
 // HQ hands a customer's mail only to org.yaml's roles.customerData, business mail (invoices@, documents@, brand.yaml's
-// mail.business) only to roles.businessMail, and anyone else's job is refused, with how to get it. Any mail read marks the
-// job: a customer can write to invoices@ too. The fixture: Dex reads business mail, Penny both, Wren neither.
+// mail.business) only to roles.businessMail, and anyone else's job is refused, with how to get it. The fixture: Dex reads business mail, Penny both, Wren neither.
 //
-test("a job reads the inbox by its agent's role, and any mail it reads marks it; anyone else's is refused with why", async () => {
+test("a job reads the inbox by its agent's role; anyone else's is refused with why", async () => {
   withBrandMail('business: [ads]');
   try {
     const running = async (agent: string) => {
       const job = await h.start({ agent, title: 'Read the inbox' });
-      return { ...job, tmp: JOB_TMP, get: (path: string) => h.agent(path, job.token), marked: async () => (await h.worker('customers', { job: job.id })).body.customers as boolean };
+      return { ...job, tmp: JOB_TMP, get: (path: string) => h.agent(path, job.token) };
     };
     const invoice = await to('invoices@testco.example'), ads = await to('ads@testco.example'), hello = await to('hello@testco.example');
     const other = await to('info@testco.example'), filed = await to('case-e7@testco.example');
@@ -776,27 +754,21 @@ test("a job reads the inbox by its agent's role, and any mail it reads marks it;
       const r = await wren.get(path);
       assert.equal(r.status, 403, path); assert.match(r.body.error, /org\.yaml's roles\.(customerData|businessMail|orders)/, path);
     }
-    assert.equal(await wren.marked(), false, 'a refused read holds nothing');
 
     const dex = await running('dex');
     // (mail-raw check)
     for (const path of [`mail?id=${hello}`, `mail?id=${filed}`, 'mail?to=hello%40', `mail-file?id=${hello}&n=0`, `mail-raw?id=${hello}`, 'orders'])
       assert.equal((await dex.get(path)).status, 403, path);
     assert.equal((await dex.get('mail?id=999999')).status, 404, 'no such mail: as before');
-    assert.equal(await dex.marked(), false);
     assert.equal((await dex.get(`mail?id=${invoice}`)).body.id, invoice);
-    assert.equal(await dex.marked(), true, 'mail to invoices@ may be a customer\'s too');
     assert.equal((await dex.get(`mail-file?id=${invoice}&n=0`)).status, 200);
-    const rawReader = await running('dex');
-    assert.equal((await rawReader.get(`mail-raw?id=${invoice}`)).status, 200);
-    assert.equal(await rawReader.marked(), true, 'its raw copy marks the job like its text');
+    assert.equal((await dex.get(`mail-raw?id=${invoice}`)).status, 200);
     assert.deepEqual((await dex.get('mail?to=ads%40')).body.map((m: any) => m.id), [ads]);
     const listed = (await dex.get('mail?limit=200')).body.map((m: any) => m.id);
     assert.ok(listed.includes(invoice) && listed.includes(ads) && !listed.includes(hello) && !listed.includes(other), 'business mail only');
 
     const penny = await running('penny');
     assert.equal((await penny.get(`mail?id=${hello}`)).body.id, hello);
-    assert.equal(await penny.marked(), true, "a customer's mail: the job holds their details");
     const both = (await penny.get('mail?limit=200')).body.map((m: any) => m.id);
     assert.ok([invoice, ads, hello, other, filed].every(id => both.includes(id)), 'both kinds');
 
@@ -805,9 +777,7 @@ test("a job reads the inbox by its agent's role, and any mail it reads marks it;
     try {
       const kit = await running('kit');
       assert.equal((await kit.get(`mail?id=${invoice}`)).status, 403, 'business mail stays businessMail\'s');
-      assert.equal(await kit.marked(), false);
       assert.equal((await kit.get(`mail?id=${hello}`)).body.id, hello);
-      assert.equal(await kit.marked(), true, "a customer's mail: the job holds their details");
       const routed = (await kit.get('mail?limit=200')).body.map((m: any) => m.id);
       assert.ok(routed.includes(hello) && routed.includes(other) && !routed.includes(invoice) && !routed.includes(ads), "customers' mail only");
     } finally { writeFileSync(ORG, ORG_TEXT); }

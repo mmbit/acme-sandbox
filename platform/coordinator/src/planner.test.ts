@@ -1,7 +1,7 @@
 // node --test src/planner.test.ts   (uses a throwaway DATA_DIR)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { inspect, play, type QueuedJob, type Snapshot } from './eta.ts';
+import { inspect, play, startPlan, type QueuedJob, type Snapshot } from './eta.ts';
 import { memoryReport } from './memory.fixture.ts';
 import { DEADLINE_PAUSE_MS, PAUSE_MS } from './planner.ts';
 import { extraClaude } from './seatcapacity.ts';
@@ -62,6 +62,88 @@ const snapshot = (jobs: QueuedJob[], extra: Partial<Snapshot> = {}): Snapshot =>
 });
 const sizes = (entries: [number, number][]) =>
   new Map(entries.map(([id, minutes]) => [id, { agent_ms: minutes * MINUTE }]));
+
+test('a pinned Codex run preserves its remaining work at a configured stop until reset, except on credits', () => {
+  const input = snapshot([work(1, { for_seat: 'codex' })]);
+  const reset = 24 * 60 * MINUTE;
+  Object.assign(input.seats[0], { week: 0.79, stop: 0.8, weekResets: reset });
+  input.rates = { codex: { five: { codex: 0 }, week: 0.1 } };
+  const sized = sizes([[1, 60]]);
+  const account = inspect(input, sized);
+  const seen = account.outlooks.get(1)!;
+  const events = account.seats.find(s => s.seat === 'codex')!.events;
+  assert.equal(events.find(e => e.type === 'exhaustion')!.running_continues, false);
+  assert.equal(events.find(e => e.type === 'resume')!.at, reset);
+  assert.equal(seen.start, 0);
+  assert.ok(Math.abs(seen.done! - (reset + 54 * MINUTE)) < 2);
+  assert.ok(seen.waits.some(wait => wait.on === 'seats' && wait.until === reset));
+  input.seats[0].credits = true;
+  const credited = play(input, sized).get(1)!;
+  assert.equal(credited.done, 60 * MINUTE);
+  assert.deepEqual(credited.waits, []);
+});
+
+test('a near-stop seat keeps its configured review preference and pauses work within its single admission place', () => {
+  const input = snapshot([work(1), work(2, { kind: 'review' })], {
+    slots: { codex: 4 },
+    seatRuns: { codex: 4 },
+    room: 4,
+  });
+  Object.assign(input.seats[0], { week: 0.85, stop: 0.9 });
+  const sized = sizes([
+    [1, 10],
+    [2, 10],
+  ]);
+  const starts = startPlan(input, sized);
+  assert.equal(starts.get(2), 0);
+  assert.equal(starts.get(1), 10 * MINUTE);
+  input.jobs[0] = work(1, { status: 'running', seat: 'codex' });
+  const paused = startPlan(input, sized);
+  assert.equal(paused.get(2), PAUSE_MS);
+  // A review already occupying the only admission place keeps it until completion.
+  input.jobs = [work(1, { status: 'running', seat: 'codex', kind: 'review' }), work(2, { kind: 'review' })];
+  assert.equal(startPlan(input, sized).get(2), 10 * MINUTE);
+  // A default seat uses its peer's reserve for review admission as well as work admission.
+  input.jobs = [work(1, { for_seat: 'codex' }), work(2, { kind: 'review', for_seat: 'codex' })];
+  input.pacing = true;
+  Object.assign(input.seats[0], { stopConfigured: false, weekResets: 24.5 * 60 * MINUTE });
+  input.seats.push({ ...input.seats[0], id: 'codex-peer', week: 0.2 });
+  assert.equal(startPlan(input, sized).get(2), 0);
+});
+
+test('default reserve relaxation and Codex continuation stay distinct from configured stops in the play', () => {
+  const HOUR = 60 * MINUTE;
+  const input = snapshot([work(1, { for_seat: 'codex' })]);
+  Object.assign(input.seats[0], { week: 0.95, stop: 0.9, stopConfigured: false, weekResets: 20 * HOUR });
+  const sized = sizes([[1, 60]]);
+  const relaxed = play(input, sized).get(1)!;
+  assert.ok(Math.abs(relaxed.start! - 8 * HOUR) < 2);
+  input.seats[0].stopConfigured = true;
+  assert.equal(play(input, sized).get(1)!.start, 20 * HOUR);
+  Object.assign(input.seats[0], { week: 0.89, weekResets: 48 * HOUR, stopConfigured: false });
+  input.rates = { codex: { five: { codex: 0 }, week: 0.1 } };
+  const continued = inspect(input, sized);
+  assert.equal(continued.outlooks.get(1)!.done, HOUR);
+  assert.equal(
+    continued.seats.find(s => s.seat === 'codex')!.events.find(e => e.type === 'exhaustion')!.running_continues,
+    true,
+  );
+});
+
+test('paused Claude work resumes on recovery reads as its default weekly reserve relaxes', () => {
+  const HOUR = 60 * MINUTE;
+  const input = snapshot([work(1, { engine: 'claude', for_seat: 'claude' })]);
+  Object.assign(input.seats[1], { week: 0.95, stop: 0.9, stopConfigured: false, weekResets: 20 * HOUR });
+  input.rates = { claude: { five: { claude: 0 }, week: 0.02 } };
+  const seen = inspect(input, sizes([[1, 60]]));
+  const forecast = seen.outlooks.get(1)!;
+  assert.ok(Math.abs(forecast.start! - 8 * HOUR) < 2);
+  assert.ok(forecast.done! >= 12.8 * HOUR && forecast.done! < 13 * HOUR);
+  const events = seen.seats.find(seat => seat.seat === 'claude')!.events;
+  const resumes = events.filter(event => event.type === 'resume');
+  assert.ok(resumes.length > 0);
+  for (const event of resumes) assert.ok(Math.round(event.idle_ms!) >= 10 * MINUTE, String(event.idle_ms));
+});
 
 test('a retained placeholder loop stalls its work while independent work still plays in both forecasts', () => {
   const input = snapshot([
@@ -352,6 +434,8 @@ for (const weekly of [false, true])
   test(`a reported ${weekly ? 'week' : 'five-hour'} reset renews the window after it fills again`, () => {
     const input = snapshot([work(1, { notBefore: 30 * MINUTE }), work(2, { after: 1 })]);
     const seat = input.seats.find(s => s.id === 'codex')!;
+    // Default Codex holds admit no new work while the current run finishes.
+    Object.assign(seat, { stop: 0.9, stopConfigured: false });
     if (weekly) {
       seat.week = seat.stop;
       seat.weekResets = 10 * MINUTE;
@@ -554,7 +638,7 @@ test("a paced seat takes the board's word and work due to start before its weekl
     [3, 10],
   ]);
   const seen = play(input, sized),
-    lifts = paceChange({ week: 0.8, weekResets: reset }, 0.9, 0)!;
+    lifts = paceChange({ week: 0.8, weekResets: reset, drainAt: 0.9 }, 0.9, 0)!;
   assert.equal(seen.get(3)!.start, 0);
   assert.equal(seen.get(2)!.start, 10 * MINUTE);
   assert.ok(lifts > 10 * MINUTE && lifts < reset, 'its pacing lifts before the reset');
@@ -606,17 +690,20 @@ test('the week the play spends paces a seat as it goes: work after the spending 
   assert.ok(seen.get(2)!.waits.some(w => w.on === 'seats'));
 });
 
-test('an idle queue starts when another seat can keep the reserve again', () => {
+test('a peer near reset cannot lift a seat past the pace of its configured stop', () => {
   const HOUR = 60 * MINUTE,
     input = snapshot([work(1, { for_seat: 'codex' })], { pacing: true });
   const a = input.seats.find(s => s.id === 'codex')!;
   Object.assign(a, { week: 0.76, weekResets: 48 * HOUR, stop: 0.9 });
   input.seats.push({ ...a, id: 'codex-b', week: 0.95, weekResets: 24 * HOUR });
   const start = play(input, sizes([[1, 10]])).get(1)!.start!;
-  assert.ok(start > 12 * HOUR && start < 12 * HOUR + 1000, `the reserve frees it after 12 hours (${start / HOUR} h)`);
+  assert.ok(
+    start > 22.5 * HOUR && start < 22.5 * HOUR + 1000,
+    `its own pacing lifts after 22.5 hours (${start / HOUR} h)`,
+  );
 });
 
-test("a seat the play fills to its stop level hands the reserve back: the other seat's pacing aims lower from then on", () => {
+test('a seat keeps pacing toward its own stop while another seat fills to its stop', () => {
   const HOUR = 60 * MINUTE,
     resets = 96 * HOUR;
   const input = snapshot([
@@ -639,9 +726,8 @@ test("a seat the play fills to its stop level hands the reserve back: the other 
       [2, 10],
     ]),
   ).get(2)!.start!;
-  // (both aim at their limit at first, each with the other under its stop level; once the running job takes codex-b to
-  // its stop, codex keeps the reserve and paces toward its own)
-  const lifts = pacingLifts({ week: 0.4, weekResets: resets }, 0.9, HOUR);
+  // Each configured stop keeps its own pacing target, including while the peer fills.
+  const lifts = pacingLifts({ week: 0.4, weekResets: resets, drainAt: 0.9 }, 0.9, HOUR);
   assert.ok(lifts > 2 * HOUR, 'aiming at its stop level, codex is paced when the work is ready');
   assert.ok(Math.abs(start - lifts) <= 1000, `the work waits till that pacing lifts (${start / HOUR} h)`);
 });
@@ -967,10 +1053,17 @@ test('an empty sleeping Codex seat records its hold as idle time', () => {
   assert.equal(idle.idle_ms, 3 * HOUR);
 });
 
-test('a Codex hold moves its return to a window that binds while work continues', () => {
+test('a default-stop Codex hold moves its return to a window that binds while work continues', () => {
   const HOUR = 60 * MINUTE;
   const busy = snapshot([work(1), work(2)]);
-  Object.assign(busy.seats[0], { fiveHour: 0.9, week: 0.8, stop: 1, fiveHourResets: 4 * HOUR, weekResets: 6 * HOUR });
+  Object.assign(busy.seats[0], {
+    fiveHour: 0.8,
+    week: 0.7,
+    stop: 0.9,
+    stopConfigured: false,
+    fiveHourResets: 4 * HOUR,
+    weekResets: 48 * HOUR,
+  });
   busy.rates = { codex: { five: { codex: 0.1 }, week: { codex: 0.1 } } };
   const seen = inspect(
     busy,
@@ -989,11 +1082,11 @@ test('a Codex hold moves its return to a window that binds while work continues'
   );
   assert.ok(Math.abs(hold.running![0].remaining_ms - 4 * HOUR) < 2);
   assert.equal(hold.quota, 'week');
-  assert.equal(hold.until, 6 * HOUR);
+  assert.equal(hold.until, 48 * HOUR);
   assert.equal(hold.running_continues, true);
-  assert.ok(Math.abs(hold.idle_ms! - HOUR) < 2, 'work finishes an hour before the extended return');
-  assert.equal(events.find(event => event.type === 'release')!.at, 6 * HOUR);
-  assert.equal(seen.outlooks.get(2)!.start, 6 * HOUR);
+  assert.ok(Math.abs(hold.idle_ms! - 43 * HOUR) < 2, 'work finishes before the extended return');
+  assert.equal(events.find(event => event.type === 'release')!.at, 48 * HOUR);
+  assert.equal(seen.outlooks.get(2)!.start, 48 * HOUR);
 });
 
 test('an overlapping hold with no known return leaves exhaustion and idle open', () => {
@@ -1083,7 +1176,7 @@ test('a held Codex seat becomes idle only after its last concurrent run finishes
       work(2, { status: 'running', seat: 'codex' }),
       work(3),
     ]);
-    Object.assign(input.seats[0], { state: 'draining', until: 3 * HOUR });
+    Object.assign(input.seats[0], { state: 'draining', until: 3 * HOUR, stopConfigured: false });
     input.slots.codex = 2;
     input.seatRuns!.codex = 2;
     const seen = inspect(
@@ -1241,11 +1334,12 @@ for (const [memoryMb, codexSlots, start] of [
       {
         slots: { claude: 3, codex: codexSlots },
         seatRuns: { claude: 3, codex: codexSlots },
-        rates: { claude: { five: { claude: 0.6 }, week: 0 } },
+        rates: { claude: { five: { claude: 18 }, week: 0 } },
         memory: memoryReport({ runningMb: { 1: 300, 2: 100, 4: 300 } }),
       },
     );
-    Object.assign(input.seats[1], { fiveHour: 0.845, fiveHourResets: 240 * MINUTE });
+    // The seat starts outside the approach band, then fills during the bounded pause.
+    Object.assign(input.seats[1], { fiveHour: 0.7, fiveHourResets: 240 * MINUTE });
     for (const pace of ['usual', 'slow'] as const) {
       const seen = play(
         input,

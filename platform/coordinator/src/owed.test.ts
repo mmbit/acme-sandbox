@@ -1,4 +1,5 @@
 // node --test src/owed.test.ts   (the harness's test company; products hello (Bolt's) and yarn (Wren's))
+import { sizedTime } from './testwords.ts';
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -44,7 +45,7 @@ function sort(id: number, title: string, code: string) {
     'it brings a product back to the board, so it runs: give it its title (hq inbox accept)',
   );
   const accepted = proposals.accept(proposal, ceo(), {
-    size: '30m',
+    size: sizedTime('30m'),
     why: 'Test scope judgment without a comparable completed job',
     title,
     code,

@@ -1,5 +1,6 @@
 // The board's projects view (GET /api/projects and /api/projects/thread): the projects with their threads and jobs, from
 // projects.ts, which re-exports it. (Its own module)
+import { featureCosts } from './featurecost.ts';
 import { db, prepared } from './db.ts';
 import { coverOf, projects, type Project } from './company.ts';
 import { deskName } from './wherework.ts';
@@ -34,6 +35,7 @@ import { oneTask, oneTasks } from './made.ts';
 // Its projects', sentences', threads' and jobs' names are the board's (boardnames.ts).
 // The CEO's page (pad.ts) comes with it, at the view's top, and a project the CEO marked a goal says so (goals.ts).
 export function listProjectBoard(t = Date.now()) {
+  const costs = featureCosts();
   const threads = db.prepare('select * from threads order by created').all() as Thread[];
   const pending = pendingThreads();
   const rows = boardRows(pending, t);
@@ -50,6 +52,7 @@ export function listProjectBoard(t = Date.now()) {
     const own = threads.filter(th => th.project === project.id);
     return {
       ...names.project(project),
+      cost: costs.project(project.id),
       ...coverOf(project),
       ...(schedules.has(project.id) && { schedule: schedules.get(project.id) }),
       ...(isGoal(project.id) && { goal: true }),
@@ -58,18 +61,31 @@ export function listProjectBoard(t = Date.now()) {
         : null,
       threads: own.filter(ongoing).map(th => ({
         ...shownThread(th, counted, names, single),
+        cost: costs.report(th.id),
         owner: project.owner,
         jobs: jobsOf(th.id),
       })),
       done: own
         .filter(th => !ongoing(th))
-        .map(th => ({ ...named(th, names, single), owner: project.owner, ...counted.tally(th) })),
+        .map(th => ({
+          ...named(th, names, single),
+          cost: costs.report(th.id),
+          owner: project.owner,
+          ...counted.tally(th),
+        })),
     };
   });
-  const completed = completedProjects(threads, counted, names, single),
-    placed = new Set([...listed, ...completed].map(p => p.id));
-  const known = new Set(threads.filter(th => placed.has(th.project)).map(th => th.id));
-  const loose = [...rows.filter(j => isOpenJob(j) && !(j.thread && known.has(j.thread))), ...recentLoose(known, t)];
+  const completed = completedProjects(threads, counted, names, single, costs);
+  const loose = looseRows(rows, threads, [...listed, ...completed], t);
+  return projectBoardView(listed, completed, loose, t);
+}
+
+function projectBoardView<P extends { id: string }, C>(
+  listed: P[],
+  completed: C[],
+  loose: ReturnType<typeof looseRows>,
+  t: number,
+) {
   const page = pad();
   return {
     page: page && { text: page.text, at: page.at },
@@ -119,7 +135,13 @@ const pendingThreads = () =>
   );
 
 // The projects done (hq project done), the latest first, each with when and its threads (all done) with their tallies.
-const completedProjects = (threads: Thread[], counted: Tallies, names: BoardNames, single: Set<string>) =>
+const completedProjects = (
+  threads: Thread[],
+  counted: Tallies,
+  names: BoardNames,
+  single: Set<string>,
+  costs: ReturnType<typeof featureCosts>,
+) =>
   (
     db
       .prepare(
@@ -128,9 +150,10 @@ const completedProjects = (threads: Thread[], counted: Tallies, names: BoardName
       .all() as (Project & { done: string })[]
   ).map(p => ({
     ...names.project(Object.fromEntries(Object.entries(p).filter(([, v]) => v !== null)) as Project & { done: string }),
+    cost: costs.project(p.id),
     threads: threads
       .filter(th => th.project === p.id)
-      .map(th => ({ ...named(th, names, single), owner: p.owner, ...counted.tally(th) })),
+      .map(th => ({ ...named(th, names, single), cost: costs.report(th.id), owner: p.owner, ...counted.tally(th) })),
   }));
 
 // The latest RECENT finished jobs outside known threads, newest first, but for meetings' seats (meetingSeats has
@@ -162,6 +185,7 @@ export function getThread(id: string, t = Date.now()) {
   );
   return {
     ...boardThread(thread),
+    cost: featureCosts().report(thread.id),
     ...wrapper(oneTask(thread.id)),
     owner: ownerOf(thread),
     lines: linesOf(thread.id),
@@ -188,3 +212,9 @@ export const needsOf = (thread: string) =>
   (prepared('select needs from thread_needs where thread = ? order by needs').all(thread) as { needs: string }[]).map(
     n => n.needs,
   );
+
+function looseRows(rows: ReturnType<typeof boardRows>, threads: Thread[], projects: { id: string }[], t: number) {
+  const placed = new Set(projects.map(project => project.id));
+  const known = new Set(threads.filter(thread => placed.has(thread.project)).map(thread => thread.id));
+  return [...rows.filter(job => isOpenJob(job) && !(job.thread && known.has(job.thread))), ...recentLoose(known, t)];
+}

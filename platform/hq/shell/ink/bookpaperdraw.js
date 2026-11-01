@@ -35,7 +35,7 @@ export async function pagePicture(page) {
 // Strokes on their own as a picture to send with a desk-phone card's answer (bookasks.js), as the store draws a reply's
 // snip (bookrender.ts): on the paper, a little room round the ink (SNIP_PAD, page px), at twice its px. A PNG Blob, or
 // null for no ink.
-const SNIP_PAD = 24;
+export const SNIP_PAD = 24;
 export async function inkPicture(strokes) {
   const box = inkBox(strokes);
   if (!box) return null;

@@ -25,7 +25,9 @@ for (const { agent, allowed } of [
     assert.equal(addition.status, 200);
     const saved = h.db.prepare('select prompt from jobs where id = ?').get(id) as { prompt: string };
     assert.match(saved.prompt, /Check the harbour too/);
-    assert.equal((await h.agent('extend', caller.token, { id: automatic, text: 'More work' })).status, 404);
+    // (HQ's own job: its agent and the CEO add to it)
+    const toAutomatic = await h.agent('extend', caller.token, { id: automatic, text: 'More work' });
+    assert.equal(toAutomatic.status, ['kit', 'juno'].includes(agent) ? 200 : 403);
 
     const wait = await h.agent('waits', caller.token, { id, to: prior });
     assert.equal(wait.status, allowed ? 200 : 409);

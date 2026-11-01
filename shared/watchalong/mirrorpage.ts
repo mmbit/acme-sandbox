@@ -36,6 +36,14 @@ const MIRROR = `window.process = { env: {} }; // (replay.js reads process.env in
     UNSAFE_replayCanvas: true, skipInactive: false, speed: 1, useVirtualDom: false };
   let replayer = null;
   const frames = () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  // Shadow trees and framed documents own their animations and pictures. The outer document doesn't list them.
+  function* roots(root) {
+    yield root;
+    for (const element of root.querySelectorAll('*')) {
+      if (element.shadowRoot) yield* roots(element.shadowRoot);
+      if (element.contentDocument) yield* roots(element.contentDocument);
+    }
+  }
   window.mirror = {
     async live(events) {
       replayer = new Replayer([], { ...OPTIONS, liveMode: true });
@@ -74,7 +82,8 @@ const MIRROR = `window.process = { env: {} }; // (replay.js reads process.env in
       raise(replayer, tops);
       // (what was coming in or going shown as it ends: rrweb holds the page's CSS animations where they start, so an
       // overlay that fades in, HQ's intercom say, stayed invisible. One that never ends stays.)
-      for (const motion of iframe.contentDocument.getAnimations())
+      const trees = [...roots(iframe.contentDocument)];
+      for (const tree of trees) for (const motion of tree.getAnimations())
         if (motion.effect && motion.effect.getComputedTiming().endTime !== Infinity) motion.finish();
       this.ink();
       if (ring) {
@@ -89,7 +98,7 @@ const MIRROR = `window.process = { env: {} }; // (replay.js reads process.env in
         const r = image.getBoundingClientRect();
         return r.width > 0 && r.height > 0 && r.bottom > 0 && r.right > 0 && r.top < height && r.left < width;
       };
-      await Promise.all([...iframe.contentDocument.images].filter(shown).map(image => image.decode().catch(() => {})));
+      await Promise.all(trees.flatMap(tree => [...tree.querySelectorAll('img')]).filter(shown).map(image => image.decode().catch(() => {})));
       await frames();
       return { width, height };
     },

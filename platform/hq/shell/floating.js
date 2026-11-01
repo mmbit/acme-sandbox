@@ -8,17 +8,18 @@ const SIDEWAYS = 3;
 
 // The room a call's floating parts have: the visible viewport (an on-screen keyboard, a phone's bars) off the safe areas
 // and, unless whole, within the page (HQ's narrows beside its book)
-export function room({ whole = false } = {}) {
+// margin: automatic placements leave room around the edge. A manual drop can reach the safe screen edge.
+export function room({ whole = false, margin = MARGIN_PX } = {}) {
   const vv = visualViewport,
     safe = safeArea();
   const x0 = vv?.offsetLeft ?? 0,
     y0 = vv?.offsetTop ?? 0,
     right = x0 + (vv?.width ?? innerWidth);
   return {
-    left: x0 + MARGIN_PX + safe.left,
-    top: y0 + MARGIN_PX + safe.top,
-    right: (whole ? right : Math.min(right, document.body.clientWidth)) - MARGIN_PX - safe.right,
-    bottom: y0 + (vv?.height ?? innerHeight) - MARGIN_PX - safe.bottom,
+    left: x0 + margin + safe.left,
+    top: y0 + margin + safe.top,
+    right: (whole ? right : Math.min(right, document.body.clientWidth)) - margin - safe.right,
+    bottom: y0 + (vv?.height ?? innerHeight) - margin - safe.bottom,
   };
 }
 

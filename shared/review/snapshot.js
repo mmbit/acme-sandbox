@@ -112,6 +112,7 @@ const MASKED = '[data-private], [data-watchalong-hide]',
   MASK = '#8c8c8c';
 function masks(root = document, boxes = []) {
   for (const el of root.querySelectorAll('*')) {
+    if (el.hasAttribute('data-review-ui')) continue;
     if (el.shadowRoot) masks(el.shadowRoot, boxes);
     if (el.matches(MASKED)) covered(el, boxes);
   }

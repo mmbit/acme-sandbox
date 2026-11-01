@@ -46,6 +46,7 @@ export type PastJobFields = {
   sized?: number;
   slowSized?: number | null;
   fixFor?: number;
+  followupFor?: number;
   previewFor?: number[];
   [column: string]: unknown;
 };
@@ -76,6 +77,7 @@ export function recordedPastJobs(
     sized,
     slowSized,
     fixFor,
+    followupFor,
     previewFor,
     created,
     finished,
@@ -98,16 +100,13 @@ export function recordedPastJobs(
     const id = Number(lastInsertRowid);
     storeRuns(db, id, runs);
     storeFollowups(db, id, fixFor, previewFor);
+    if (followupFor !== undefined) storeReviewFollowup(db, id, followupFor);
     if (merged !== undefined) {
       const number = Number(columns.pr ?? ++prs);
       storedPr(number, id, 'merged', files, review);
       mergedPr(number, merged);
     }
-    if (sized !== undefined)
-      db.prepare(
-        `insert into predictions (job, made, agent_ms, picks, basis, slow_agent_ms)
-        values (?, ?, ?, '[]', '{"kind":"work","agent":null,"words":[]}', ?)`,
-      ).run(id, String(row.created), sized, slowSized === undefined ? sized : slowSized);
+    storePrediction(db, id, String(row.created), sized, slowSized);
     return id;
   };
 }
@@ -144,4 +143,22 @@ function storePreview(db: DatabaseSync, job: number, prs: number[]) {
     );
     db.prepare('insert into card_merges (job, pr) values (?, ?)').run(job, pr);
   }
+}
+
+function storeReviewFollowup(db: DatabaseSync, job: number, pr: number) {
+  const finding = db
+    .prepare(
+      `insert into findings (created, pr, round, ruling, kind, issue, by)
+    values (?, ?, 1, 0, 'changed', 'Review repair', '[]')`,
+    )
+    .run(at(Date.now()), pr).lastInsertRowid;
+  db.prepare('insert into review_followup_jobs values (?, ?)').run(finding, job);
+}
+
+function storePrediction(db: DatabaseSync, job: number, created: string, sized?: number, slowSized?: number | null) {
+  if (sized === undefined) return;
+  db.prepare(
+    `insert into predictions (job, made, agent_ms, picks, basis, slow_agent_ms)
+    values (?, ?, ?, '[]', '{"kind":"work","agent":null,"words":[]}', ?)`,
+  ).run(job, created, sized, slowSized === undefined ? sized : slowSized);
 }

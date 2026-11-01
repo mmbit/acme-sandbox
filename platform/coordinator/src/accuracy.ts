@@ -72,13 +72,13 @@ type Kept = {
 };
 // Work that ended done since then, with its prediction, its ended runs and its latest pull request. Each job's runs are
 // summed in a subquery: joined to every job's sums, the planner scans them all again per job. The jobs are read through
-// db.ts jobs_history, never their rows, which hold the briefs.
+// db.ts jobs_done, never their rows, which hold the briefs.
 const KEPT = `select * from (select p.*, ${ORIGIN} origin, j.agent, j.title, j.finished,
     (select min(started) from runs where job = j.id and ended is not null) started,
     (select sum((julianday(ended) - julianday(started)) * 86400000) from runs where job = j.id and ended is not null)
       spent_ms,
     pr.merged_at, pr.number pr
-  from predictions p cross join jobs j indexed by jobs_history on j.id = p.job
+  from predictions p cross join jobs j indexed by jobs_done on j.id = p.job
   left join prs pr on pr.number = (select max(number) from prs where branch = ${workBranch('j')})
   where j.kind = 'work' and j.status = 'done' and j.finished >= ? and j.finished < ? and p.made <= j.finished
     and not ${PRIVATE}) where started is not null`;

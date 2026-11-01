@@ -22,8 +22,7 @@ export const care = {
                                                      to investigate (their words, the conversation, the facts and the
                                                      address the reply goes to). org.yaml's roles.care reads any customer
                                                      waiting on a person while the card is open, with its draft now.
-                                                     The job then holds a customer's details. Keep it out of the repo
-                                                     and reports
+                                                     Keep the customer's details out of the repo and reports
    hq care orders <case>                            a customer waiting on a person: the live orders placed with the
                                                      card's address (Stripe's and HQ's records, looked up as you ask),
                                                      for a job that may read the card
@@ -119,7 +118,7 @@ async function listOpen() {
       const app = c.app ? `, ${text(c.app)}` : '';
       return `${text(c.case)}  ${text(c.kind)}${app}, ${status}, language ${text(c.lang)}, came ${minute(c.created)}, last line ${minute(c.last)}, ${c.draft ? 'a draft on it' : 'no draft'}${sent}`;
     }),
-    "Read one with hq care <case> (the job then holds a customer's details); a draft goes on one waiting for the board.",
+    'Read one with hq care <case> (keep its details out of the repo and reports); a draft goes on one waiting for the board.',
   );
 }
 

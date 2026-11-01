@@ -112,8 +112,8 @@ function shoot(r, mark) {
   pol.classList.add('busy');
   img.textContent = '';
   r.exposure = null;
-  // (on a call the snip goes to the call's agent: masked.)
-  return snapshot(r, { masked: onCall(r) }).then(
+  // The polaroid itself can be recorded during a later share, so its pixels keep the same privacy masks.
+  return snapshot(r, { masked: true }).then(
     taken => {
       if (r.mark !== mark) return taken;
       pol.classList.remove('busy');
@@ -156,13 +156,13 @@ export function towards(r, mark) {
 // The polaroid, framed on the mark: the page as it was with every line drawn so far
 export function develop(r) {
   if (!r.exposure) return;
-  const img = r.$('.polaroid .img'),
-    c = img.querySelector('canvas') ?? img.appendChild(document.createElement('canvas'));
-  expose(r, r.exposure, r.mark, c);
+  const box = r.$('.polaroid .img'),
+    picture = box.querySelector('img') ?? box.appendChild(document.createElement('img'));
+  picture.src = expose(r, r.exposure, r.mark).toDataURL('image/jpeg', 0.85);
   const placement = frameMark(onScreen(r.mark), 3 / 4);
-  c.className = placement ? 'framed' : '';
-  c.removeAttribute('style');
-  if (placement) Object.assign(c.style, placement);
+  picture.className = placement ? 'framed' : '';
+  picture.removeAttribute('style');
+  if (placement) Object.assign(picture.style, placement);
 }
 // A general note: the same sheet, pinned to nothing and without a photo, saved with the page it's written on
 function general(r) {

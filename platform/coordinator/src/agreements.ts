@@ -5,7 +5,7 @@ import * as jobs from './jobs.ts';
 import * as redraws from './redraws.ts';
 import * as memory from './memory.ts';
 import { ceo } from './company.ts';
-import * as threats from './threats.ts';
+import { age } from '../../worker/hq/waits.ts';
 
 const QUOTE_MAX = 600;
 
@@ -100,19 +100,18 @@ export function agreedPart(open: OpenByID, reader: jobs.Reader, now = Date.now()
 // An item's status, and a ready one's wait for the board's yes since its work ended (hq item done records it)
 export const readyFor = (a: Pick<Agreement, 'status' | 'ready_at'>, now: number) =>
   a.status === 'ready' && a.ready_at
-    ? `ready ${threats.age(now - Date.parse(a.ready_at))}, open until the board says yes (hq item done)`
+    ? `ready ${age(now - Date.parse(a.ready_at))}, open until the board says yes (hq item done)`
     : a.status;
 
 // Whether hq call would show a call to the CEO's job `reader` (memory.ts callAccess: not a live call's, one carried from
-// a card for keys or one about a customer it may not read), each call read once however many items it has; a customer
-// call's reader holds their details from then on.
+// a card for keys or one marked as about a customer that it may not read), each call read once however many items it
+// has.
 function callsShown(reader: jobs.Reader) {
   const shown = new Map<number, boolean>();
   return (call: number) => {
     let ok = shown.get(call);
     if (ok === undefined) {
       ok = memory.callAccess(call, reader) === true;
-      if (ok && memory.customerCall(call)) jobs.readerHanded(reader);
       shown.set(call, ok);
     }
     return ok;

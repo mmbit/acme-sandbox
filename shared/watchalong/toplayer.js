@@ -55,24 +55,24 @@ export function hearTopLayer(record) {
 }
 
 // A recorded event's top layer, if it's a `top` moment: rrweb's ids, its document's then the layer's from the bottom up
-export const topOf = event =>
+export const topLayerIds = event =>
   event.type === CUSTOM && event.data?.tag === 'top' && Array.isArray(event.data.payload?.id)
     ? event.data.payload.id
     : null;
 // The top layers as the events come: each document's (the page's, a frame's), last recorded last. A new page on top (its
 // full snapshot; a frame's comes as a change) starts afresh.
 export class Layers {
-  of = new Map(); // a document's id → its top layer's ids from the bottom up
+  byDocument = new Map(); // a document's id → its top layer's ids from the bottom up
   add(event) {
-    if (event.type === FULL_SNAPSHOT) return this.of.clear();
-    const [doc, ...ids] = topOf(event) ?? [];
+    if (event.type === FULL_SNAPSHOT) return this.byDocument.clear();
+    const [doc, ...ids] = topLayerIds(event) ?? [];
     if (doc === undefined) return;
-    this.of.delete(doc);
-    this.of.set(doc, ids);
+    this.byDocument.delete(doc);
+    this.byDocument.set(doc, ids);
   }
 }
 // The events Layers reads (what the player keeps of a recording for it)
-export const told = event => event.type === FULL_SNAPSHOT || !!topOf(event);
+export const changesLayers = event => event.type === FULL_SNAPSHOT || !!topLayerIds(event);
 // The top layers as they were at a time in a recording
 export function topAt(events, time) {
   const layers = new Layers();
@@ -91,11 +91,11 @@ export function topAt(events, time) {
 const raised = new WeakMap(); // a replay's document → the elements last put in its top layer
 export function raise(replayer, layers) {
   const mirror = replayer.getMirror(),
-    where = placer(replayer),
+    placeOf = placer(replayer),
     done = new Set();
-  for (const [id, ids] of [...layers.of].reverse()) {
+  for (const [id, ids] of [...layers.byDocument].reverse()) {
     const doc = mirror.getNode(id);
-    if (!where(id) || done.has(doc)) continue;
+    if (!placeOf(id) || done.has(doc)) continue;
     done.add(doc);
     const want = ids.map(el => {
       const node = mirror.getNode(el);

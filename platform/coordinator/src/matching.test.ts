@@ -201,3 +201,29 @@ test("a pool's first jobs ranked on the whole pool's index rank as they would al
   for (let n = 0; n <= pool.length; n++)
     assert.deepEqual(ids(rankedFirst(pool, n, ['board', 'page'])), ids(ranked(pool.slice(0, n), ['board', 'page'])));
 });
+
+// A column of jobs the read takes that the index lacks reads every done job's row, brief and report: seconds off a cold
+// disk at HQ's size. The pool is the same either way, so only the plan of the statements pastJobs runs tells: read whole
+// (a note on any job's rows) and read by job.
+test("the done work is read from db.ts jobs_done alone, never a job's row", () => {
+  const prepare = mock.method(db, 'prepare');
+  try {
+    db.exec('insert into past_changes (job) values (null)');
+    matching.pastJobs();
+    matching.pastJobs([1]);
+  } finally {
+    prepare.mock.restore();
+  }
+  const reads = prepare.mock.calls.map(c => c.arguments[0] as string).filter(sql => sql.includes('jobs_done'));
+  assert.ok(reads.some(sql => sql.includes(':only')) && reads.some(sql => !sql.includes(':only')), 'both reads ran');
+  for (const sql of reads) {
+    const params: Record<string, string> = sql.includes(':only') ? { only: '[]' } : {};
+    const plan = db
+      .prepare(`explain query plan ${sql}`)
+      .all(params)
+      .map(r => String(r.detail));
+    const done = plan.filter(d => d.includes('jobs_done'));
+    assert.ok(done.length, plan.join('\n'));
+    for (const detail of done) assert.match(detail, /COVERING INDEX jobs_done/);
+  }
+});

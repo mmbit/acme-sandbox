@@ -247,7 +247,7 @@ The call agent's tools (`hq_tools.py`), each of which puts something on a list a
   read, and every later round. The number must be the named colleague's, and it goes on the call's
   list as a message item, handled, so the follow-up doesn't send it again: it checks the words against the
   transcript, and corrects or withdraws them if they were misheard. A job this call queued takes `add`; one not
-  running, on Codex, or on a customer's call is the follow-up's.
+  running or on Codex is the follow-up's.
 - `manage(command)`: run one of hq's management commands as its words (`["cancel", "123", "why"]`).
   `hq_tools.py`'s `MANAGE` defines the commands and subcommands. Others are refused before hq runs.
   The coordinator opens their routes to the call token (`server.ts` `MANAGE_ROUTES`) and applies its
@@ -256,12 +256,8 @@ The call agent's tools (`hq_tools.py`), each of which puts something on a list a
   which is what its follow-up reads in the transcript; the briefing tells it to act on the call, never leave it to the
   follow-up. A change whose answer is lost (no answer, a server error, an answer that isn't JSON) stops hq with exit 3
   (`api.ts` `change`), which the tool answers as not confirmed, to check before doing it again; exit 1 is a refusal
-  or a wrong command, 6 and 7 reached no HQ. On a call about a customer's details (its card, or a look-up on the call
-  that handed it them) a change carrying the agent's words (a why, a name, a title, a topic) is refused (`server.ts`
-  `CUSTOMER_CALL_SHUT`): they would reach HQ's feed and colleagues who don't hold them. One that only names what's
-  there or sets a number or a time goes ahead. What's left
-  out of `MANAGE` speaks as a job a call doesn't have, needs a job's folder, would pass by the marking of who holds a
-  customer's details, or (a card's rewrite, an Overseer note) would carry misheard words or have no run to release it.
+  or a wrong command, 6 and 7 reached no HQ. What's left out of `MANAGE` speaks as a job a call doesn't have, needs a
+  job's folder, or (a card's rewrite, an Overseer note) would carry misheard words or have no run to release it.
 - `screen(at?, region?, since?)`: on a walk-through, the caller's screen through the voice line (above), on the board's
   calls and a partner's: now (1568 px), at a past moment (`at`: `-20s`, `17:03:12` or `#12`), a `region` zoomed (`x`,
   `y`, `width`, `height` as fractions of the screen), or the moment list `since` a time. A picture comes with its
@@ -277,7 +273,11 @@ The call agent's tools (`hq_tools.py`), each of which puts something on a list a
   then each open desk phone card with the work that waits on it. Read-only.
 - `estimate(query, agent?)`: clean past jobs, their actual agent time, briefs, reports and changed files. Search only
   finds candidates. The queuer judges scope from those candidates and supplies the estimate when queuing.
-- `when(what, size, agent?, after?, by?)`: plays the chosen agent time into the plan and returns its live finish.
+- `when(what, size, agent?, after?, by?)`: plays the chosen agent time into the plan and returns its live finish with
+  the supplied token estimate. `size` is a JSON string with `time`, `tokens` (work, reviews, fixes, feedback) and
+  `feedback_rounds` plus `confidence: {level, why}`, as for `job`. Judge confidence as low, medium or high from
+  the number and closeness of examples, and explain gaps. Judge time and tokens from the raw comparisons. The time reaches first feedback, while the
+  cost includes expected feedback after delivery.
 - `waiting()`: every tool above waits for the coordinator's real answer while the coordinator is alive, never a fixed
   cutoff (board, call 127: a slow coordinator is still there, and a cutoff left hand-offs unconfirmed that had gone
   through); `hq` itself waits too (`api.ts` request: no time-out unless a command gives one). While `hq` waits,
@@ -558,8 +558,8 @@ Trust (`guard.py`, tested by `test_guard.py`): the line holds `VOICE_TOKEN`, whi
 until call-end revokes it for `hq job` (and the look-ups below), hq's management commands (`manage`) and for putting a
 promise or a correction of an open item on its own call's list (`POST /api/agent/item`), nothing else of a job's (what
 speaks as the job a call doesn't have: status, cards filed or waited for, a follow-up's items and reply): it reads no call's items (every call's open items, one line each, as its briefing has them), and earlier calls as its agent
-does (`memory.ts`): any ended call, but one about a card for keys only if it is its own agent's and one about a customer
-only for org.yaml's `roles.customerData`. The call agent runs as the same uid as the line, so
+does (`memory.ts`): any ended call, but one about a card for keys only if it is its own agent's, and none marked before
+31 Oct as about a customer, whose number it is told instead (`roles.customerData` reads those in its jobs). The call agent runs as the same uid as the line, so
 the line makes itself non-dumpable (its environment and memory in /proc become root's) and hands the agent an
 allowlisted environment. The container sees one Claude seat's token (`/seat`, kept by the worker's keeper), the
 server's checkout of main (`/repo`, read only) and its own `/data`; no other seat, no job's files. The agent's Read,
@@ -593,8 +593,8 @@ rest starts (`from`), never cut. `manage` also takes the reads a job has: `hq ov
 
 What stays shut, each for a named risk: the shell, since the uid reads `/seat` and a command steered by any text the
 agent reads could send the seat's sign-in anywhere (below); a customer's details (mail, care cases, orders, photos:
-charter rule 7), since a call's transcript and summary are read by every agent and a call can't be marked as holding
-them, as a job reading them is; everything of the company's on a call out (rule 9, below); the line's own folders and
+charter rule 7), since a call's transcript and summary are read by every agent: they stay at their source (`hq care`,
+`hq mail`), and a call's look-ups say where a case is; everything of the company's on a call out (rule 9, below); the line's own folders and
 `/proc` to Read, Grep and Glob.
 A chat bubble reaches nobody: on a call, `hq say` only reaches one job under way by its number (`reach`).
 A call out's token opens no coordinator route (`server.ts` `PARTNER_ROUTES` is empty): its agent has only the partner

@@ -1,7 +1,7 @@
 // Downtime jobs, the worker's side (the coordinator's rule is in its jobs.ts): reading a Codex seat's windows, when a
 // seat drains, and which downtime jobs stop when their heartbeats say yield.
 import { spawn } from 'node:child_process';
-import { full, reserveElsewhere, windowUsed, type Windows } from './pace.ts';
+import { compareStopRoom, full, hasConfiguredStop, reserveElsewhere, type Windows } from './pace.ts';
 import { cliOf, type SeatProvider } from './providers.ts';
 import { spendCredits } from './seatlist.ts';
 
@@ -160,12 +160,11 @@ export const keepsToPlan = (s: { hasCredits?: boolean; credits?: boolean }) => !
 export const reserveFor = <S extends Windows & { engine: string; state: string; hasCredits?: boolean }>(seat: S, seats: S[], now = Date.now()) =>
   !keepsToPlan(seat) && reserveElsewhere(seat, seats, now);
 // How a seat drains now (the worker's drain): until when it takes no new jobs (0: it doesn't), and the jobs running on it
-// that stop at their next step: a ready seat's as it starts draining, and those of a seat that keepsToPlan whenever it's
-// held (a run already going when its credits reading came in, or when the board took its leave back).
+// that stop at their next step. Every reading asks again so runs admitted before a hold arrived also stop.
 type Draining = Windows & { id: string; engine: string; state: string; hasCredits?: boolean };
 export function drainOf<S extends Draining>(seat: S, seats: S[], running: Iterable<[string, { seat: string; job: number }]>, keep: string, now = Date.now()) {
   const until = reserveFor(seat, seats, now) ? 0 : drainUntil(seat, now);
-  return { until, pause: until && (seat.state === 'ready' || keepsToPlan(seat)) ? drainPauses(seat, running, keep) : [] };
+  return { until, pause: until ? drainPauses(seat, running, keep) : [] };
 }
 
 // Whether a held Codex seat lets a job through now (the worker's checkSeat). Its readings come from a log its jobs can
@@ -173,16 +172,17 @@ export function drainOf<S extends Draining>(seat: S, seats: S[], running: Iterab
 // Codex seat takes one job every DRAIN_RECHECK, whose own run's reading keeps the hold or lifts it, and whose limit puts
 // the seat back to sleep. (Claude seats have the worker's recheckLoop: their readings come from the CLI's own events.)
 // checked: when the hold began, a job last went through, or the worker last read the account.
-// A seat that keepsToPlan takes no job, which could run into its credits: the worker reads its account itself on the
+// A configured Codex stop or a seat that keepsToPlan takes no checking job: the worker reads its account on the
 // hour instead (readDue: codexLimits), and that read's windows and credits replace the log's. confirmed: the seat's
 // reading is that read's, which alone makes its hold the last word (a job's reading of credits and a full window
 // counts for one DRAIN_RECHECK at most).
-type Held = { engine: string; state: string; until: number; checked?: number; hasCredits?: boolean; credits?: boolean; confirmed?: boolean };
+type Held = { engine: string; cli?: string; state: string; until: number; checked?: number; hasCredits?: boolean; credits?: boolean; confirmed?: boolean; drainAt?: number };
+export const readsAccount = (s: Held) => keepsToPlan(s) || hasConfiguredStop(s) && cliOf(s) === 'codex';
 const held = (s: Held, now: number) =>
-  s.engine === 'codex' && (s.state === 'draining' || s.state === 'sleeping') && s.until > now && !(keepsToPlan(s) && s.confirmed);
+  s.engine === 'codex' && (s.state === 'draining' || s.state === 'sleeping') && s.until > now && !(readsAccount(s) && s.confirmed);
 const due = (s: Held, now: number) => held(s, now) && (s.checked ?? 0) + DRAIN_RECHECK <= now;
-export const checkDue = (s: Held, now = Date.now()) => due(s, now) && !keepsToPlan(s);
-export const readDue = (s: Held, now = Date.now()) => due(s, now) && keepsToPlan(s);
+export const checkDue = (s: Held, now = Date.now()) => due(s, now) && !readsAccount(s);
+export const readDue = (s: Held, now = Date.now()) => due(s, now) && readsAccount(s);
 
 // The `until` the coordinator gets for a seat: a held Codex seat's next check, not the end of its hold (that goes in the
 // seat's note). The panel counts a Codex seat as out until its `until` (codexSeatOut in review.ts) and starts a normal
@@ -205,12 +205,12 @@ export const firstToWake = <S extends { state: string; until: number }>(seats: S
   seats.filter(s => s.state === 'sleeping').sort((a, b) => a.until - b.until)[0];
 
 // The healthiest seat of an engine (the worker's pickSeat, once it has woken the seats whose sleep or drain is over): ready,
-// least used by the fuller of its windows (none measured counts as full). board: the board's own work (the intercom, the
+// most room below its own stop across both windows (none measured comes last). board: the board's own work (the intercom, the
 // voice line) may take a draining seat too, the reserve kept for it.
 type Pickable = Windows & { engine: string; state: string };
 export const healthiest = <S extends Pickable>(seats: S[], engine: string, board = false, not?: S, now = Date.now()) =>
   seats.filter(s => s.engine === engine && (s.state === 'ready' || board && s.state === 'draining') && s !== not)
-    .sort((a, b) => (windowUsed(a, now) ?? 1) - (windowUsed(b, now) ?? 1))[0];
+    .sort((a, b) => compareStopRoom(a, b, now))[0];
 
 // The seat a slot claiming for Codex takes: each ready Codex seat in turn (the one whose last claim is the oldest), not the least used. Every
 // Codex job is for one seat, which alone claims it (the coordinator's codexShare: the seats share the work evenly, and an
@@ -240,11 +240,12 @@ export const lineSeat = <S extends Pickable & { until: number }>(seats: S[], now
   healthiest(seats, 'claude', true, undefined, now) ?? firstToWake(seats.filter(s => s.engine === 'claude'));
 
 // The jobs a Claude seat stops at their next step when it starts draining, so they don't spend the board's reserve: every
-// one running on it but the board's own (keep: the intercom's slot). A Codex seat's run on: a held Codex seat takes one
+// one running on it but the board's own (keep: the intercom's slot). A configured stop pauses Codex runs too.
+// A Codex seat without a configured stop runs on: a held Codex seat takes one
 // job an hour anyway (checkDue). But not on a seat that keepsToPlan, whose runs would go on into its credits (for a
 // reading a job planted, until the worker's read lifts its hold: readDue).
-export const drainPauses = (seat: { id: string; engine: string; hasCredits?: boolean; credits?: boolean }, running: Iterable<[string, { seat: string; job: number }]>, keep: string) =>
-  seat.engine === 'claude' || keepsToPlan(seat) ? [...running].filter(([slot, r]) => r.seat === seat.id && slot !== keep).map(([, r]) => r.job) : [];
+export const drainPauses = (seat: { id: string; engine: string; hasCredits?: boolean; credits?: boolean; drainAt?: number }, running: Iterable<[string, { seat: string; job: number }]>, keep: string) =>
+  seat.engine === 'claude' || hasConfiguredStop(seat) || keepsToPlan(seat) ? [...running].filter(([slot, r]) => r.seat === seat.id && slot !== keep).map(([, r]) => r.job) : [];
 
 // Until when a seat that hit its limit sleeps: the limit's own reset (limitReset: often only a backoff of 30 minutes
 // and up, when the CLI's message names no time), but never before a drain its windows already call for. A run that

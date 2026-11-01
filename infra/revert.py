@@ -83,11 +83,12 @@ def requests(folder, repo):
         except (Refused, ValueError, KeyError, TypeError) as why:
             answer = {'ok': False, 'said': str(why)}
         # (written whole, and the data folder's owner's, as HQ removes it: deploys.py's records)
-        part = done + '.part'
-        with open(part, 'w') as f:
+        fd, part = tempfile.mkstemp(dir=folder, prefix='.part-')
+        with os.fdopen(fd, 'w') as f:
             json.dump(answer, f)
-        data = os.stat(folder)
-        os.chown(part, data.st_uid, data.st_gid)
+            data = os.stat(folder)
+            os.fchown(f.fileno(), data.st_uid, data.st_gid)
+            os.fchmod(f.fileno(), 0o644)
         os.replace(part, done)
         print(f"revert request {name}: {answer['said']}")
 

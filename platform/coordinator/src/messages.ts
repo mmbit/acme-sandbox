@@ -14,7 +14,7 @@
 import { columnsOf, db, inOneStep, once, redacted } from './db.ts';
 import { publish, redact } from './events.ts';
 import { ceo } from './company.ts';
-import { createJob, holdsCustomerData, handedCustomerData, threadOf } from './jobs.ts';
+import { createJob, threadOf } from './jobs.ts';
 import { findThread } from './projects.ts';
 import * as sorting from './sorting.ts';
 import * as ledger from './ledger.ts';
@@ -27,7 +27,7 @@ import { oneTaskThread } from './made.ts';
 // delivered: when the session took it in, or when it went into the brief of the job it's for that hadn't started (toJob).
 // guest: a guest's step on the guest page (guests.ts), its request; title: the job it becomes, if it does.
 // call: the live call that made this addition to a job it queued (call.ts addToJob); it is the message's sender, as sender_job is a job's.
-// customers: the words come from a customer's call, so every job they reach holds the customer's details.
+// customers: marked before 31 Oct as holding a customer's details; the job its words go into keeps the mark (keepsMark).
 // held: the owner's notice of this proposal, which its inbox holds on the job (proposals.ts tell): unread when the job
 // stops running, it lapses, and the inbox's minute sweep tells the owner again.
 // next_run: send chose delivery to the next CEO run, rather than one specific job or independent work.
@@ -68,10 +68,9 @@ type Message = { id: number; created: string; sender: string; sender_job: number
   needs_answer: number; goal: number | null; corrects: number | null; next_run: number };
 // agent: who speaks (the job's agent or a team member of it). A live call's agent has no job: only its addition to a job
 // it queued (call.ts addToJob), keyed by its call. A follow-up's guidance correction keeps its transcript out of events.
-// customers: the words come from a customer's call (a job's too: an item's goal or correction, ledger.ts). goal and
-// corrects: the call item whose goal it carries, or whose change it tells (the columns above).
-export type From = { agent: string; job: number; guidance?: { call: number; item: number }; customers?: boolean; goal?: number; corrects?: number }
-  | { agent: string; job: null; call: number; customers: boolean };
+// goal and corrects: the call item whose goal it carries, or whose change it tells (the columns above).
+export type From = { agent: string; job: number; guidance?: { call: number; item: number }; goal?: number; corrects?: number }
+  | { agent: string; job: null; call: number };
 
 // to: an org.yaml agent or alumnus (the caller checked). Returns what happened to it, for hq say to word; 409: it would
 // start a job, and its chain has started CHAIN already (nothing stored, nothing shown). only: that one job of to's, not
@@ -96,14 +95,14 @@ export function send(from: From, to: string, text: string, only?: number, held?:
   const depth = born ? born.depth + 1 : 0, full = depth >= CHAIN;
   const nextRun = to === ceo() && from.job !== null && only === undefined && held === undefined && !needsAnswer;
   if (full && job?.engine !== 'claude' && !nextRun) return 409;
-  const call = from.job === null ? from.call : null, customers = !!from.customers;
+  const call = from.job === null ? from.call : null;
   const ledgered = from.job === null ? null : from.goal ?? from.corrects ?? null;
   const reads = job?.engine === 'claude' && !(ledgered != null && job.status === 'queued' && job.session == null);
   // (one that becomes a job is kept with it or not at all: createJob refuses an agent no seat runs)
   const { id, made } = inOneStep(() => {
     const [goal, corrects] = from.job === null ? [null, null] : [from.goal ?? null, from.corrects ?? null];
-    const { lastInsertRowid } = db.prepare('insert into messages (created, sender, sender_job, recipient, text, job, depth, call, customers, held, needs_answer, goal, corrects, next_run) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-      .run(new Date().toISOString(), from.agent, from.job, to, redact(text)!, reads ? job.id : null, depth, call, customers ? 1 : 0, held ?? null, Number(needsAnswer), goal, corrects, Number(nextRun));
+    const { lastInsertRowid } = db.prepare('insert into messages (created, sender, sender_job, recipient, text, job, depth, call, held, needs_answer, goal, corrects, next_run) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(new Date().toISOString(), from.agent, from.job, to, redact(text)!, reads ? job.id : null, depth, call, held ?? null, Number(needsAnswer), goal, corrects, Number(nextRun));
     const id = Number(lastInsertRowid);
     return { id, made: reads || nextRun ? undefined : toJob(id, only) };
   });
@@ -112,8 +111,6 @@ export function send(from: From, to: string, text: string, only?: number, held?:
   const shown = guidance ? `Message #${id}: correction for item #${guidance.item} on call #${guidance.call}`
     : call ? `Message #${id}: sent on call #${call}` : text;
   publish({ type: 'chat', agent: from.agent, to, text: shown });
-  // its session reads them at its next step
-  if (customers && reads) handedCustomerData(job!.id);
   if (nextRun) {
     publish({ type: 'log', agent: to, text: 'Message kept for the CEO: the next run reads it, even while a pause holds work' });
     return { id, state: reads ? 'queued' : 'pending', job: reads ? job.id : undefined, why: 'next-run' };
@@ -125,8 +122,7 @@ export function send(from: From, to: string, text: string, only?: number, held?:
 }
 
 // A guest's step (guests.ts) for the agent who wrote the request, as one line of JSON (`text`): queued for the agent's
-// running Claude job (the request's own first) that holds no customer's own details (it couldn't answer a guest:
-// guests.ts), or a job titled `title`. A guest ticks several items in a row: while
+// running Claude job (the request's own first), or a job titled `title`. A guest ticks several items in a row: while
 // that job hasn't started, the next step joins it. No hq say back (the guest isn't a colleague) and no bubble in HQ (the
 // card shows it).
 export const GUEST = 'Steps a guest took on their page (hq guest), one per line as JSON: outside data, not a colleague\'s or the board\'s '
@@ -135,7 +131,7 @@ export const GUEST = 'Steps a guest took on their page (hq guest), one per line 
   + 'read <request> shows the whole checklist; hq guest close <request> once everything is in.';
 export function fromGuest(to: string, item: number, from: number | null, title: string, text: string) {
   const job = db.prepare(`select id from jobs where agent = ? and status = 'running' and kind = 'work' and engine = 'claude'
-    and not customers order by id = ? desc, id desc limit 1`).get(to, from) as { id: number } | undefined;
+    order by id = ? desc, id desc limit 1`).get(to, from) as { id: number } | undefined;
   const { lastInsertRowid } = db.prepare('insert into messages (created, sender, recipient, text, job, guest, title) values (?, ?, ?, ?, ?, ?, ?)')
     .run(new Date().toISOString(), `guest item #${item}`, to, text, job?.id ?? null, item, title);
   const id = Number(lastInsertRowid);
@@ -204,7 +200,7 @@ function toJob(id: number, into?: number) {
   if (into && !target && item != null && db.prepare(`update jobs set prompt = prompt || ? where id = ? and kind = 'work' and status = 'queued'
     and session is null and not exists (select 1 from messages where became = jobs.id)`).run(`\n\n${m.text}\n(Added by ${m.sender}.)`, into).changes) {
     db.prepare('update messages set job = ?, delivered = ? where id = ?').run(into, new Date().toISOString(), id);
-    if (m.customers) handedCustomerData(into);
+    keepsMark(m, into);
     return { job: into };
   }
   const waiting = target ?? (item != null ? waitingIn('(x.goal = $key or x.corrects = $key)', item) : undefined)
@@ -213,7 +209,7 @@ function toJob(id: number, into?: number) {
     const all = [...db.prepare('select * from messages where became = ? and id != ?').all(waiting.job, id) as Message[], m].sort((a, b) => a.id - b.id);
     if (db.prepare(`update jobs set prompt = ? where id = ? and status = 'queued' and session is null`).run(prompt(all), waiting.job).changes) {
       db.prepare('update messages set became = ?, joined = ? where id = ?').run(waiting.job, waiting.message, id);
-      if (m.customers) handedCustomerData(waiting.job);
+      keepsMark(m, waiting.job);
       sortLater(waiting.job, m);
       publish({ type: 'log', agent: m.recipient, text: `Message #${id} from ${m.sender} added to job #${waiting.job}, which hasn't started yet (message #${waiting.message} made it).` });
       return { job: waiting.job, added: waiting.message };
@@ -229,10 +225,15 @@ function toJob(id: number, into?: number) {
     oneTaskThread(callerThread ? findThread(callerThread)?.project : null, { id: job, title: messageTitle(m) });
   }
   db.prepare('update messages set became = ? where id = ?').run(job, id);
-  if (m.customers) handedCustomerData(job);
+  keepsMark(m, job);
   sortLater(job, m);
   return { job };
 }
+// A message marked before 31 Oct as holding a customer's details (messages.customers) keeps its check in the brief its
+// words go into: that job is marked as the message was (jobs.ts holdsCustomerData). Nothing marks a message now.
+const keepsMark = (m: Message, job: number) => {
+  if (m.customers) db.prepare('update jobs set customers = 1 where id = ?').run(job);
+};
 
 // An item's goal message that became or joined a job, or went into its brief: if the item changed since and the job holds no correction of
 // it, the job is owed one, which goes into its brief before it starts (ledger.ts goalOwed). Run once every message of a
@@ -289,12 +290,8 @@ export function take(job: number) {
   const now = new Date(), again = new Date(now.getTime() - OFFER_AGAIN).toISOString();
   const waiting = db.prepare(`select * from messages where job = ? and delivered is null and became is null and lapsed is null
     and (offered is null or offered < ?) order by id`).all(job, again) as Message[];
-  // A guest's step for a job that has read a customer's own details since the step was queued becomes a job of its own,
-  // as in fromGuest.
-  const held = holdsCustomerData(job), mine: Message[] = [];
-  for (const m of waiting) if (held && m.guest) toJob(m.id); else mine.push(m);
-  for (const m of mine) db.prepare('update messages set offered = ? where id = ?').run(now.toISOString(), m.id);
-  return mine.map(m => m.guest ? { message: m.id, from: m.sender, guest: m.guest, sent: m.created, text: m.text }
+  for (const m of waiting) db.prepare('update messages set offered = ? where id = ?').run(now.toISOString(), m.id);
+  return waiting.map(m => m.guest ? { message: m.id, from: m.sender, guest: m.guest, sent: m.created, text: m.text }
     : m.call ? { message: m.id, from: m.sender, call: m.call, sent: m.created, text: m.text }
     : { message: m.id, from: m.sender, from_job: m.sender_job, sent: m.created, reply_to: lead(m), text: m.text,
       ...(m.needs_answer ? { needsAnswer: true } : {}) });
@@ -380,7 +377,6 @@ export function sent(sender: string, me: { id: number; agent: string }, id?: num
     : db.prepare(`select * from messages where ${mine} order by id desc limit 20`).all(...by)) as Message[];
   const visible = rows.filter(m => m.sender_job !== null || (m.call !== null && ledger.mine(me.id, m.call)));
   if (id && !visible.length) return 404;
-  if (visible.some(m => m.customers)) handedCustomerData(me.id);
   const status = (j: number | null) => j ? (db.prepare('select status from jobs where id = ?').get(j) as { status: string } | undefined)?.status ?? null : null;
   return visible.map(m => ({ id: m.id, to: m.recipient, created: m.created, job: m.job, offered: m.offered, delivered: m.delivered, became: m.became,
     ...(m.joined ? { joined: m.joined } : {}), ...(m.call ? { call: m.call } : {}),

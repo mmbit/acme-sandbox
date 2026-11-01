@@ -45,10 +45,16 @@ marks.
 recorder hears each stroke's `ink:stroke` events and marks `ink` moments (a stroke's start and end whole, its moves as
 the points since the last, at most one every 100 ms; the end with where it is on screen and what's under it, named as
 a tap's target is), in a frame too, on the document it was drawn on. A canvas of dry ink drawn again (a note's lines,
-fewer after an undo, none once sent) says what it shows now (ink.js `shown`). The ink's canvases are
+fewer after an undo, none once sent) says what it shows now (ink.js `shown`). An explicit empty stroke list clears the
+finished ink at once. Only an omitted list waits for a canvas picture. The ink's canvases are
 `data-watchalong-hide`; the Sketchbook's page keeps its own canvas pictures, so its finished strokes stay drawn until
 its next picture. `strokes.js` reads the events back: the strokes on screen at any time (`Inks`, `inkAt`), and draws
 them over a replay in each document's place (`paint`, `placer`), as the mirror and the player do.
+**Review mode's UI** uses open shadow roots so the recorder sees its post-it, typed words, refusal and thank-you.
+Input is recorded as it happens: a shadow root's change event never crosses its host. The post-it's finished picture
+is an image, and lifted ink is SVG, so they remain visible without sampling the preview's canvases. Review hosts
+mark themselves `data-review-ui`: their own note snapshots skip them before copying or collecting privacy masks.
+
 **The top layer** (`toplayer.js`): what a page shows over everything, a popover or a modal dialog (HQ's small call
 and its cards, a picture opened large), is there by a call (`showPopover`, `showModal`), not by anything in the DOM, so
 rrweb alone records it hidden. The recorder, a framed page's too (a preview's popover), marks a `top` moment as it
@@ -107,7 +113,7 @@ Agents can't watch video, so a session reaches one as lines and pictures.
 - `moments.ts` folds the stream into moments as it comes (`add`, `settle(now)` on the page's clock): a page change, a
   tap (its label and role), a scroll and typing once they settle (`SCROLL_MS`, `TYPING_MS`; typing says how much and
   in which field, never what), a pen stroke (`ink`, its `end`: its shape and what's under it, `circled "Add to basket"
-  (button)`), a dwell (`DWELL_MS` still on a screen that changed),
+(button)`), a dwell (`DWELL_MS` still on a screen that changed),
   paused and resumed, the screen resized. Each is its own moment, numbered from 1; `lines()` writes them with their
   times, the same words in a row as one line, counted (`#4–6 … (×3)`).
 - `mirror.ts` keeps a live session replayed in headless Chromium (`shared/chromium`, the one driver over the DevTools
@@ -159,10 +165,11 @@ to a file: `17:03:12`, `#14`, or `+2m10s` from the call's start). Both on exactl
 coordinator's `GET /api/agent/call` with `view`, `watchalong.ts timeline` and `screenAt`). The lines line up because
 the voice line keeps when each was said (`calls.line_times`: a turn's start, the board's words from their first sound,
 the agent's reply from when it was first heard); a call from before they were kept has none, and lists only its moments.
+
 ## Checking it
 
 - `node --test shared/watchalong/store.test.ts shared/watchalong/moments.test.ts shared/watchalong/shown.test.ts
-  shared/watchalong/mirror.test.ts` (the mirror's needs `CHROMIUM_PATH`), and the coordinator's
+shared/watchalong/mirror.test.ts` (the mirror's needs `CHROMIUM_PATH`), and the coordinator's
   `src/watchalong.test.ts`, `src/watchtimes.test.ts` and `src/callviews.test.ts` (hq call's views; their pictures need
   `CHROMIUM_PATH`). `walk.test.json.gz` is a walk-through recorded with
   watchalong.js in Chromium (moments.test.ts says what's in it).
@@ -172,6 +179,7 @@ the agent's reply from when it was first heard); a call from before they were ke
   folder). It needs the coordinator's `node_modules` (`npm ci` there).
 - `node platform/hq/private-check.mjs`: HQ as the board's call records it (Care, Mail, the desk phone's email, address,
   key and guest cards, typed into), with none of the mock customers' details or that typing in the stream.
+
 ## Watching it back
 
 `player.js` replays a recording in any page of ours, with nothing of the page
@@ -182,7 +190,16 @@ under it), the pen's ink drawn over it as it was drawn (`strokes.js`, on a canva
 
 ```js
 import { Player } from '/shared/watchalong/player.js';
-const player = new Player(box, { replay: '/shared/watchalong/replay.html', ink, moments, start, end, side, icons, sound });
+const player = new Player(box, {
+  replay: '/shared/watchalong/replay.html',
+  ink,
+  moments,
+  start,
+  end,
+  side,
+  icons,
+  sound,
+});
 player.add(events); // as they load, in order: it shows the screen once a snapshot is in
 player.destroy();
 ```

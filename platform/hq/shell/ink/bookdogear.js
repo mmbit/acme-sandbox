@@ -13,7 +13,7 @@ import { callAbout, downloaded, filesOf, mountTargets } from './bookshare.js';
 import { askedFirst, openAsks, submit } from './bookpagesend.js';
 import { shut } from './booksave.js';
 import { islands } from './bookui.js';
-import { callWindowAt, lightCall } from '../calldrop.js';
+import { callWindowAt, holdCall, lightCall } from '../calldrop.js';
 
 // how far a press moves before the page comes off (less: a tap, the menu), the copy's width held, and its corner
 // turned down (bookshare.css's)
@@ -92,6 +92,7 @@ function held(corner, down) {
 // The page comes off the paper as a small copy held by its corner (the pointer at its top-right), torn out at the spine
 // as it shrinks into the hand, the targets over the paper, its files started so they're ready as it's let go
 function lift(corner, v, e) {
+  holdCall(true);
   const desk = corner.book.desk,
     shownBox = desk.getBoundingClientRect(),
     k = HELD_PX / shownBox.width;
@@ -150,6 +151,7 @@ async function drop(corner, { layer, v }, target) {
   delete corner.ear.dataset.lifted;
   lightCall(false);
   const box = target?.getBoundingClientRect();
+  holdCall(false);
   if (target?.dataset.share !== 'submit') corner.targets.hide();
   if (target) return went(corner, target.dataset.share ?? 'call', box, layer, v);
   const home = corner.ear.getBoundingClientRect(),

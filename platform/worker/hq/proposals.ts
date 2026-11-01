@@ -1,5 +1,6 @@
 // New work proposed to a project's owner instead of queued (hq propose), and the owner's inbox of it (hq inbox): the
 // coordinator's proposals.ts.
+import { TOKEN_ESTIMATE_GUIDANCE } from './estimating.ts';
 import * as api from './api.ts';
 import { readTextOrStdin } from './files.ts';
 import { deliverableFlag, takeThread, takeValues } from './flags.ts';
@@ -81,7 +82,7 @@ export const inbox = {
                                                      for the CEO what no owner has), then what became of your own
                                                      proposals; <id>: one proposal's brief; --all: the CEO's view of
                                                      every open proposal, whoever's it is
-   hq inbox accept <id> --code WORD --size <90m> --why "scope comparison" [--refs <job,job>] [--title "..."] [--for <agent>] [--deliverable <project>/<slug> | --deliverable new:<project> "name" "done when" [--needs <deliverable>]...]
+   hq inbox accept <id> --code WORD --size <JSON> --why "scope comparison" [--refs <job,job>] [--title "..."] [--for <agent>] [--deliverable <project>/<slug> | --deliverable new:<project> "name" "done when" [--needs <deliverable>]...]
                                                      its project's owner (or the CEO) queues it as a job with its
                                                      proposer's brief, in a deliverable of their plan: the one named, else the
                                                      one proposed, else the proposer's job's when it's in that project.
@@ -96,7 +97,9 @@ export const inbox = {
                                                      they're under more than one); a closed item: --for and --deliverable
                                                      draw replacement work and move its waits. --thread, the old name of
                                                      --deliverable, still works
-   hq inbox drop <id> "why"                          its owner (or the CEO) drops it, why in a line the proposer hears${messageInbox.help}`,
+   hq inbox drop <id> "why"                          its owner (or the CEO) drops it, why in a line the proposer hears${messageInbox.help}
+
+${TOKEN_ESTIMATE_GUIDANCE}`,
 
   async run(given: string[]) {
     const [command, ...rest] = given;

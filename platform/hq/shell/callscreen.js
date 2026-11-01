@@ -198,7 +198,7 @@ function newBubble(c) {
     },
     icons: { eye: icon('eye'), hangUp: icon('hangup') },
     face,
-    keep: 'callCorner',
+    keep: 'callPosition',
     onPause: () => pauseWatch(c, true),
     onResume: () => pauseWatch(c, false),
     onHangUp: () => c.hangUp(),

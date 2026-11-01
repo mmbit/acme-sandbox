@@ -243,7 +243,6 @@ type NewJob = {
   sha?: string;
   queuedBy?: string;
   plannedBy?: string;
-  customers?: boolean;
   call?: number;
   item?: number;
   downtime?: boolean;
@@ -327,7 +326,9 @@ const onlyOf = (job: number) =>
   (db.prepare('select engine_only from jobs where id = ?').get(job) as { engine_only: string | null } | undefined)
     ?.engine_only;
 
-// The job's row: a replacement (insteadOf) keeps the call and item of the work it replaces, unless it names its own.
+// The job's row: a replacement (insteadOf) keeps the call and item of the work it replaces, unless it names its own, and
+// a mark set before 31 Oct on that work (customers): its brief comes with it (a retry's, a landing's), so the copy keeps
+// the row's check (holdsCustomerData).
 function insertJob(
   j: NewJob,
   thread: string | null,
@@ -335,7 +336,6 @@ function insertJob(
 ) {
   const primary = Array.isArray(j.insteadOf) ? j.insteadOf[0] : j.insteadOf;
   const replaced = primary ? replacedWork(primary) : undefined;
-  // customers: a tool put a customer's own details in its prompt (handedCustomerData, below)
   const { lastInsertRowid } = db
     .prepare(
       'insert into jobs (created, agent, title, prompt, engine, kind, pr, round, branch, after, sha, queued_by, customers, call, item, downtime, model, effort, stage, step, writes, for_seat, cli, thread, is_check, instead_of, code, engine_only, judges, expedite, carry, light, incident) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
@@ -353,7 +353,7 @@ function insertJob(
       j.after ?? null,
       j.sha ?? null,
       j.queuedBy ?? null,
-      j.customers ? 1 : 0,
+      replaced?.customers ?? 0,
       j.call ?? replaced?.call ?? null,
       j.item ?? replaced?.item ?? null,
       j.downtime ? 1 : 0,
@@ -399,8 +399,8 @@ function taskAdded(id: number, j: { title: string; queuedBy?: string; plannedBy?
 // job taking over failed work (takeover.ts). It carries the failed job's call and its item, so the item's work goes on
 // with it (its thread's deadline goes on by itself: threadFrom). A replacement that's cancelled hands the work back.
 const replacedWork = (id: number) =>
-  db.prepare('select call, item from jobs where id = ?').get(id) as
-    { call: number | null; item: number | null } | undefined;
+  db.prepare('select call, item, customers from jobs where id = ?').get(id) as
+    { call: number | null; item: number | null; customers: number } | undefined;
 // (kept prepared: the follow-through read asks it for each ended job carrying the board's items).
 export const replacementOf = (job: number) =>
   (
@@ -526,25 +526,17 @@ export const startedOf = (job: number) =>
   (prepared('select started from jobs where id = ?').get(job) as { started: string | null } | undefined)?.started ??
   undefined;
 
-// A customer's own details (charter rule 7) stay where they came in, and only there (the board, 2026-10-06: the topic,
-// the job, its title and its outcome aren't secret, and the board sees everything). A job holds them when a tool puts
-// them in its prompt (createJob customers) or it reads them (hq mail, hq orders, a Care case, a customer card's text or
-// photos: handedCustomerData); a card holds them when the tool that writes it says so (createRequest customers). It
-// doesn't pass to the work a job hands on, and it never hides a title.
+// Nothing marks a job, a call or a card as holding a customer's own details: they stay at their source (hq care, hq
+// mail <id>, hq sketch), and a job reads them only there. Rows marked before 31 Oct (customers) keep their text with
+// them: a marked job's brief and report, a marked card's text and a marked call's lines (memory.ts callAccess) go only
+// to the jobs working on them and to org.yaml's roles.customerData in its jobs (never a live call), and reading one
+// marks nobody. A new row that copies a marked one's words (a replacement's brief: insertJob; a message's: messages.ts
+// keepsMark) keeps its mark, and a new brief quotes a marked report only by its job.
 export const holdsCustomerData = (job?: number | null) =>
   !!(
     job &&
     (db.prepare('select customers from jobs where id = ?').get(job) as { customers: number } | undefined)?.customers
   );
-export const handedCustomerData = (job?: number | null) => {
-  if (job) db.prepare('update jobs set customers = 1 where id = ?').run(job);
-};
-// A reader handed them: its job, or a live call's token (no job) its call, which is about a customer from then on
-// (memory.ts customerCall), so what it changes with words is refused (server.ts).
-export const readerHanded = (reader: Reader) => {
-  if (reader.id) handedCustomerData(reader.id);
-  else if (reader.callId) db.prepare('update calls set customers = 1 where id = ?').run(reader.callId);
-};
 // A job holds keys once it heard a call about a card for keys: the call itself, its summary or its follow-up's report
 // (hq call, search, history), or its line on the intercom (chat.ts). The board may read a key out on such a call in a form
 // the mask can't match, so the intercom keeps that session's replies to itself.
@@ -555,18 +547,18 @@ export const handedKeys = (job?: number | null) => {
 };
 export const customerCard = (id: number) =>
   !!(db.prepare('select customers from requests where id = ?').get(id) as { customers: number } | undefined)?.customers;
-// Who reads them: the job working on them, and org.yaml's roles.customerData. Any other job, the same agent's included,
-// is refused or finds them left out, so a bad package in a job reads only what the job was handed (company/DECISIONS.md,
-// 2026-10-08, jobs #7744 and #7844). A live call reads as a reader with no job (id 0).
-export type Reader = { id: number; agent: string; callId?: number }; // (callId: a live call's token, with no job)
-export const readsCustomerData = (agent: string) => reads(agent, 'customerData');
-// A report that holds them: its own job's.
+// A reader: a job, or a live call's token (no job: id 0, callId the call).
+export type Reader = { id: number; agent: string; callId?: number };
+// org.yaml's roles.customerData reads a customer's own details in its jobs. A live call (no job) is told where they are,
+// never handed them: what's said on it becomes a transcript other jobs read.
+export const readsCustomerData = (reader: Reader) => !!reader.id && reads(reader.agent, 'customerData');
+// A report marked before: its own job's.
 export const readsReport = (job: { id: number; customers: number | boolean }, reader: Reader) =>
-  !job.customers || job.id === reader.id || readsCustomerData(reader.agent);
-// A customer card: the job that filed it, and a job working on a call about it (the call's follow-up HQ handed the card,
+  !job.customers || job.id === reader.id || readsCustomerData(reader);
+// A card marked before: the job that filed it, and a job working on a call about it (the call's follow-up HQ handed the card,
 // a job handed out for one of its items: ledger.ts mine).
 export function readsCard(id: number, reader: Reader) {
-  if (!customerCard(id) || readsCustomerData(reader.agent)) return true;
+  if (!customerCard(id) || readsCustomerData(reader)) return true;
   if (!reader.id) return false;
   if (db.prepare('select 1 from requests where id = ? and job = ?').get(id, reader.id)) return true;
   return (db.prepare('select id from calls where request = ?').all(id) as { id: number }[]).some(c =>
@@ -737,21 +729,55 @@ covers it, extend it (\`hq extend\`, before it starts) or wait on it (\`--after\
 adding a parallel one.`;
 }
 
-// hq extend: more for a job that hasn't started yet, instead of a second job beside it. Only work that has never
-// run (a started job's session has read its prompt already: wait on it with --after instead), and only work an agent
-// or the board queued. The coordinator's own jobs (the board's answers, its directives) take nothing added.
+// More for a job that hasn't started yet, instead of a second job beside it. Only work that has never run (a started
+// job's session has read its prompt already: wait on it with --after instead), and only work an agent or the board
+// queued: HQ's own jobs (the board's answers, its directives, a review's fix round) take nothing from HQ's own modules.
 // The signature goes after the text, like hq job's "(Assigned by ...)", so a sign-off inside the text is never the last word.
 export function extendJob(id: number, by: string, text: string) {
   text = text.trim();
   if (!text) return 400;
-  const r = db
+  return addToBrief(id, by, text, 'and queued_by is not null') ? { ok: true } : 404;
+}
+// The text, signed, at the end of a work job's brief its session hasn't read yet (and only: more conditions on the
+// row), and HQ's line that it was added; whether it was.
+function addToBrief(id: number, by: string, text: string, only = '') {
+  const added = db
     .prepare(
-      `update jobs set prompt = prompt || ? where id = ? and kind = 'work' and status = 'queued' and session is null
-    and queued_by is not null`,
+      `update jobs set prompt = prompt || ? where id = ? and kind = 'work' and status = 'queued' and session is null ${only}`,
     )
-    .run(`\n\n${text}\n(Added by ${by}.)`, id);
-  if (!r.changes) return 404;
-  publish({ type: 'log', agent: by, text: `Added to job #${id}` });
+    .run(`\n\n${text}\n(Added by ${by}.)`, id).changes;
+  if (added) publish({ type: 'log', agent: by, text: `Added to job #${id}` });
+  return added > 0;
+}
+
+// hq extend: an agent adds to a job that hasn't started yet. One an agent queued (an accepted proposal included) takes
+// it from anyone, as extendJob does; one HQ made (a fix round, the board's answer's job, a return) from those who know
+// what it needs: its agent, its deliverable's owner (owner) and the CEO. Each
+// refusal says why.
+export function extendAsAllowed(
+  id: number,
+  by: string,
+  text: string,
+  owner?: string,
+): ReturnType<typeof extendJob> | [number, string] {
+  text = text.trim();
+  if (!text) return [400, 'give the text to add'];
+  const job = db
+    .prepare("select agent, status, session, queued_by from jobs where id = ? and kind = 'work'")
+    .get(id) as { agent: string; status: string; session: string | null; queued_by: string | null } | undefined;
+  if (!job) return [404, `there's no work job #${id}`];
+  if (job.status !== 'queued' || job.session !== null)
+    return [
+      409,
+      `job #${id} has started (${job.status}): its session read its brief already. Tell ${job.agent} (hq say ${job.agent} "...") or wait on it (hq job --after ${id} ... --new)`,
+    ];
+  const may = [job.agent, owner, ceo()].filter((a): a is string => !!a);
+  if (job.queued_by === null && !may.includes(by))
+    return [
+      403,
+      `job #${id} is HQ's own: ${[...new Set(may)].join(', ')} can add to it. Tell ${job.agent} (hq say ${job.agent} "...")`,
+    ];
+  addToBrief(id, by, text);
   return { ok: true };
 }
 
@@ -1050,8 +1076,8 @@ export const queuedAfterCard = (job: number, request: number) =>
 export const takesPictures = (r: { secrets: string | null; kind: string }) =>
   !r.secrets && r.kind !== 'credential' && r.kind !== 'mail';
 // Who may read what came with a card's answer (hq photos, the board's pictures: server.ts seePhotos, pictures.ts): the
-// agent who asked and a job queued after the card; a customer card's go to whoever reads its text (readsCard), refused
-// with why for anyone else. true, 404 or the refusal; the caller marks a customer card's reader (handedCustomerData).
+// agent who asked and a job queued after the card; a card marked as a customer's go to whoever reads its text
+// (readsCard), refused with why for anyone else. true, 404 or the refusal.
 export function cardAccess(id: number, reader: Reader): true | 404 | [403, string] {
   if (customerCard(id)) return readsCard(id, reader) ? true : [403, CARD_REFUSED];
   return askedBy(id, reader.agent) || queuedAfterCard(reader.id, id) ? true : 404;
@@ -2660,10 +2686,9 @@ function handOn(job: Job, r: RunEnd) {
 export const preview = (t: string, n: number) => (t.length > n ? `${t.slice(0, n).trimEnd()}… (cut)` : t);
 
 // A job waiting for this one (hq job --after) starts once it ends, failed or not (READY): a failure is news it needs,
-// so it starts with the report as its note. Any agent can wait on any job, though. A report that holds a customer's own
-// details stays with its job (readsReport): a waiting job hears that it failed, and whose it is. So does another agent's
-// job waiting on the CEO's intercom chat job: its last message is a reply to the board, not a report. A waiting job
-// handed the whole of a customer's report (roles.customerData) holds those details too.
+// so it starts with the report as its note. Any agent can wait on any job, though. A report marked before as holding a
+// customer's own details stays with its job, whoever waits: a waiting job hears that it failed, and whose it is. So does
+// another agent's job waiting on the CEO's intercom chat job: its last message is a reply to the board, not a report.
 //
 function failedAfter(job: Job, result?: string) {
   const owner = String(findAgent(job.agent)?.name ?? job.agent),
@@ -2684,13 +2709,11 @@ function failedAfter(job: Job, result?: string) {
         : own
           ? `${failed}. Its last message is a reply in the intercom that holds a customer's own details, so it stays in that conversation: check the intercom before you build on it.`
           : `${failed}. Its report is a reply in the intercom, so it stays with ${owner}: ask them what it left before you build on it (hq say ${job.agent}).`;
-    const handed =
-      readsReport({ id: job.id, customers: customer }, w) && (job.kind === 'work' || w.agent === job.agent);
+    const handed = !customer && (job.kind === 'work' || w.agent === job.agent);
     db.prepare("update jobs set note = ? || coalesce(char(10) || char(10) || note, '') where id = ?").run(
       handed ? whole : kept,
       w.id,
     );
-    if (handed && customer) handedCustomerData(w.id);
   }
 }
 
@@ -2892,7 +2915,6 @@ type NewCard = {
   photos?: unknown;
   documents?: unknown;
   zips?: unknown;
-  customers?: boolean;
   products?: unknown;
   back?: unknown;
   topic?: unknown;
@@ -3002,11 +3024,10 @@ function insertCard(
   hiddenUntil: string | null,
   box: NonNullable<ReturnType<typeof answerBox>>,
 ) {
-  // r.customers: a card a gated tool writes about one customer, with their details in it (customerCard)
   const { lastInsertRowid } = db
     .prepare(
-      `insert into requests (created, agent, job, kind, title, body, urgency, seat, secrets, pr, approves, photos, documents, zips, customers, topic, hidden_until, address, questions, walk, note, page)
-    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `insert into requests (created, agent, job, kind, title, body, urgency, seat, secrets, pr, approves, photos, documents, zips, topic, hidden_until, address, questions, walk, note, page)
+    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       new Date().toISOString(),
@@ -3023,7 +3044,6 @@ function insertCard(
       box.photos,
       box.documents,
       box.zips,
-      r.customers ? 1 : 0,
       topic,
       hiddenUntil,
       r.address === true ? 1 : null,
@@ -3693,9 +3713,8 @@ export function liftPlainKeyCards() {
 // Agents read the answers to their own job's requests only.
 // hq photos: a request's photos are for the agent who asked, or whose job asked (a team member asks under its own name).
 // hq requests [id]: what's on the board's desk phone, every card whole (from requestRows, its Share part included). A
-// customer card (customerCard: a tool wrote one customer's details in it) shows its text only to the job working on it
-// (readsCard), which holds those details from then on (handedCustomerData). Anyone else gets its title, which is no
-// secret, and why the text is left out.
+// card marked before as a customer's (customerCard) shows its text only to the job working on it (readsCard). Anyone
+// else gets its title, which is no secret, and why the text is left out.
 // A card for later says until when (hidden_until, still ahead), a held one for what work (held).
 export const openRequests = (me: Reader, id?: number) =>
   requestRows('open', true)
@@ -3713,9 +3732,7 @@ export const openRequests = (me: Reader, id?: number) =>
         ...(later.heldFor(r.id) ? { held: later.heldFor(r.id) } : {}),
       };
       const asked = r.questions ? { questions: r.questions } : {};
-      if (!r.customers) return { ...shown, body: r.body, ...asked };
-      if (!readsCard(r.id, me)) return { ...shown, body: null, left_out: CARD_REFUSED };
-      readerHanded(me);
+      if (r.customers && !readsCard(r.id, me)) return { ...shown, body: null, left_out: CARD_REFUSED };
       return { ...shown, body: r.body, ...asked };
     });
 

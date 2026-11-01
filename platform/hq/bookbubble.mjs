@@ -1,7 +1,7 @@
 // book-check.mjs's call story's small call under the pen (bookcall.mjs, shell/callbubble.js, shared/review/pencil.js).
-// The minimised call is no page to write on: the pen drags it to another corner and taps it open, never inking, and in
-// a corner it keeps clear of HQ's zoom buttons. The pen tells the line it's down and lifted only while the screen is
-// shown, and never for the bubble.
+// The minimised call is no page to write on: the pen drops it anywhere and taps it open, never inking. Its first
+// position keeps clear of HQ's zoom buttons.
+// The pen tells the line it's down and lifted only while the screen is shown, and never for the bubble.
 import assert from 'node:assert/strict';
 
 const notes = s => s.posts.filter(p => p.path === '/api/book/note').length;
@@ -12,9 +12,9 @@ export async function penOnTheBubble(s) {
   const { page } = s,
     before = notes(s);
   assert.deepEqual(pens(s), [], 'before Show the pen told the line nothing');
-  assert.equal(await clear(page), true, "the bubble's corner is clear of the zoom buttons");
+  assert.equal(await clear(page), true, "the bubble's first position is clear of the zoom buttons");
   const [w, h] = await page.evaluate(() => [innerWidth, innerHeight]);
-  assert.equal(await dragTo(s, [60, 60]), 'top-left', 'the pen drags the bubble');
+  await dragTo(s, [60, 60]);
   await page.waitForTimeout(2000); // (a mark would have gone in by now: callnotes.js)
   assert.equal(notes(s), before, 'no ink on the bubble');
   assert.deepEqual(pens(s), [], 'a pen on the bubble is no drawing');
@@ -23,8 +23,8 @@ export async function penOnTheBubble(s) {
   await page.waitForSelector('#call-layer', { state: 'visible', timeout: 3000 });
   await page.click('#call-min');
   await page.waitForSelector('#call-layer', { state: 'hidden', timeout: 3000 });
-  assert.equal(await dragTo(s, [w - 60, h - 60]), 'bottom-right');
-  assert.equal(await clear(page), true, 'back in its corner, clear of the zoom buttons');
+  await page.waitForTimeout(600);
+  await dragTo(s, [w - 60, h - 60]);
   await penHeard(s, w, before);
 }
 
@@ -46,11 +46,18 @@ const clear = page =>
       z = document.querySelector('#zoom').getBoundingClientRect();
     return !(a.left < z.right && z.left < a.right && a.top < z.bottom && z.top < a.bottom);
   });
-// The pen from the bubble's face to there, then its spring: the corner it settled in
+// The pen from the bubble's face to there: it keeps the drop, bounded only by the screen.
 async function dragTo(s, [x, y]) {
+  const bubble = await s.page.locator('.callbubble').boundingBox();
   const b = await s.page.locator('.callbubble .cb-face').boundingBox(),
     [x0, y0] = [b.x + b.width / 2, b.y + b.height / 2];
   await s.pen(Array.from({ length: 16 }, (_, i) => [x0 + ((x - x0) * i) / 15, y0 + ((y - y0) * i) / 15]));
   await s.page.waitForTimeout(1000);
-  return s.page.evaluate(() => localStorage.getItem('callCorner'));
+  const placed = await s.page.locator('.callbubble').boundingBox();
+  const [w, h] = await s.page.evaluate(() => [innerWidth, innerHeight]);
+  const expected = [
+    Math.max(0, Math.min(w - bubble.width, bubble.x + x - x0)),
+    Math.max(0, Math.min(h - bubble.height, bubble.y + y - y0)),
+  ];
+  assert.ok(Math.hypot(placed.x - expected[0], placed.y - expected[1]) < 1, 'the pen leaves the bubble where dropped');
 }

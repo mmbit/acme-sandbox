@@ -323,8 +323,9 @@ test("a call about Juno's key request is heard by a fresh chat job, and a later 
 // around it reach the board and the next call's briefing whole.
 test("a call about a customer card and the intercom's lines reach the board and a call's briefing whole", async () => {
   fresh();
-  const asker = await h.start({ agent: 'kit', title: 'Refund for a customer', customers: true });
-  const req = jobs.createRequest({ kind: 'decision', title: 'Refund the koala mug?', body: 'It arrived cracked.', agent: 'kit', job: asker.id, customers: true }) as { id: number };
+  const asker = await h.start({ agent: 'kit', title: 'Refund for a customer' });
+  const req = jobs.createRequest({ kind: 'decision', title: 'Refund the koala mug?', body: 'It arrived cracked.', agent: 'kit', job: asker.id }) as { id: number };
+  db.prepare('update requests set customers = 1 where id = ?').run(req.id);   // (marked before as a customer's)
   const ctx = await context('kit', { request: req.id });
   await hangUp('kit', ['Board: yes, refund the koala mug in full.'], { request: req.id, token: ctx.token });
   const follow = await run((await calls())[0].job);
@@ -336,30 +337,6 @@ test("a call about a customer card and the intercom's lines reach the board and 
   const next = await context('bolt');
   assert.match(next.prompt, /Board: Did Kit refund the koala mug\?/);
   assert.match(next.prompt, /#\d+: Refund the koala mug in full \(kit\)/, 'and so does every call briefing');
-});
-
-// A customer's details stay with the jobs that hold them (charter rule 7): the notes of the CEO's call about a customer card,
-// and the replies of a chat job that heard them, reach the board's intercom whole and other calls' briefings as a
-// placeholder.
-test("the notes of a call about a customer card, and the CEO's replies after hearing them, stay out of other calls' briefings", async () => {
-  fresh();
-  const card = jobs.createRequest({ kind: 'decision', title: 'Refund case C-21?', body: 'Jan Jansen, cracked mug', agent: 'juno', customers: true }) as { id: number };
-  const ctx = await context('juno', { request: card.id });
-  await hangUp('juno', ['Board: refund Jan Jansen.'], { request: card.id, token: ctx.token });
-  const follow = await run((await calls())[0].job);
-  await h.agent('item', follow.token, { call: ctx.call, kind: 'decision', owner: 'juno', goal: 'g', what: 'Refund Jan in full', quote: 'Board: refund Jan Jansen.' });
-  await h.agent('reply', follow.token, { text: 'Refunded Jan Jansen in full.' }); // (its reply)
-  await h.finish(follow, { status: 'done', result: 'Refunded Jan Jansen in full.' });
-  await say('Thanks. Anything else?');
-  const asker = chatJobs().at(-1)!;
-  assert.deepEqual((await h.worker('customers', { job: asker.id })).body, { customers: true }, 'the chat job heard the notes');
-  await turn(asker.id, { status: 'done', result: 'Jan Jansen also asked for a new mug.' });
-  assert.deepEqual((await messages()).slice(-3).map(m => m.text),
-    ['Refunded Jan Jansen in full.', 'Thanks. Anything else?', 'Jan Jansen also asked for a new mug.'], 'the board reads them whole');
-  const other = await context('penny');
-  assert.doesNotMatch(other.prompt, /Jan Jansen/);
-  assert.match(other.prompt, /Board: Thanks\. Anything else\?/);
-  assert.match(other.prompt, /Juno: \(a reply that holds a customer's details/);
 });
 
 test("a call with the CEO has its heartbeat at hand, its page and our goals; a colleague's call doesn't", async () => {
@@ -456,12 +433,12 @@ test('a job queued on a call waits for the call to end, with what the call added
 });
 
 // What the board adds on a call to a job the call queued goes into that job (call.ts addToJob): a paused one
-// reads it when it resumes, one parked on the board gets it as a job for its agent, and on a call about a customer card
-// wherever it lands holds their details. A restarted call agent still adds to what the call queued.
+// reads it when it resumes, and one parked on the board gets it as a job for its agent. A restarted call agent still adds
+// to what the call queued.
 test('what the board adds on a call reaches the job the call queued, wherever that job is', async () => {
   fresh();
-  const asker = await h.start({ agent: 'kit', title: 'Refund for a customer', customers: true });
-  const req = jobs.createRequest({ kind: 'decision', title: 'Refund the koala mug?', body: 'It arrived cracked.', agent: 'kit', job: asker.id, customers: true }) as { id: number };
+  const asker = await h.start({ agent: 'kit', title: 'Refund for a customer' });
+  const req = jobs.createRequest({ kind: 'decision', title: 'Refund the koala mug?', body: 'It arrived cracked.', agent: 'kit', job: asker.id }) as { id: number };
   db.prepare("update jobs set status = 'done' where id = ?").run(asker.id);
   const ctx = await context('kit', { request: req.id });
   const queue = async (title: string) => (await h.agent('job', ctx.token, { agent: 'moss', title, prompt: 'Make the refund note.' })).body.id as number;
@@ -478,11 +455,10 @@ test('what the board adds on a call reaches the job the call queued, wherever th
   assert.equal(h.job(toParked.became).agent, 'moss');
   assert.match((db.prepare('select prompt from jobs where id = ?').get(toParked.became) as { prompt: string }).prompt, /An addition to your job #\d+ \(Parked\), from kit's call with the board[\s\S]*And a voucher\./);
   assert.equal((await add(waiting, 'In Dutch.')).body.added, 'brief');
-  for (const id of [toParked.became, waiting]) assert.equal(jobs.holdsCustomerData(id), true, `#${id} holds the customer's details`);
   assert.equal((await add(asker.id, 'Not this call’s')).status, 409, 'only what this call queued');
   assert.equal((await add(waiting, ' ')).status, 400);
   const outside = await h.start({ agent: 'bolt', title: 'Elsewhere' });
-  assert.equal((await h.agent('extend', outside.token, { id: paused, text: 'x' })).status, 404, "a job's hq extend still takes only work that never ran");
+  assert.equal((await h.agent('extend', outside.token, { id: paused, text: 'x' })).status, 409, "a job's hq extend still takes only work that never ran");
 });
 
 // A call that recorded nothing is deleted, by its hang-up or by the sweep after its line dropped, and its number comes
@@ -513,15 +489,15 @@ test("what the board adds on an ordinary call isn't kept in the events log", asy
 });
 
 // A call's additions have the call as their sender, as an hq say has its job: a second one for a job that can't take it
-// mid-job joins the job the first became, a looping call agent stops at the hourly cap, and on a customer's call one
-// that waited for a running job that ended unread becomes a job holding their details, with no words in the events log.
-test("a call's additions join one job, stop at the hourly cap, and hold a customer's details wherever they end up", async () => {
+// mid-job joins the job the first became, a looping call agent stops at the hourly cap, and one that waited for a running
+// job that ended unread becomes a job, with no words in the events log.
+test("a call's additions join one job and stop at the hourly cap", async () => {
   fresh();
   db.exec('delete from messages');   // (a call's number comes again once fresh() has emptied calls)
   const { jobEnded, PER_HOUR } = await import('./messages.ts');
   const before = (db.prepare('select coalesce(max(id), 0) id from events').get() as { id: number }).id;
-  const asker = await h.start({ agent: 'kit', title: 'Refund for a customer', customers: true });
-  const req = jobs.createRequest({ kind: 'decision', title: 'Refund the koala mug?', body: 'It arrived cracked.', agent: 'kit', job: asker.id, customers: true }) as { id: number };
+  const asker = await h.start({ agent: 'kit', title: 'Refund for a customer' });
+  const req = jobs.createRequest({ kind: 'decision', title: 'Refund the koala mug?', body: 'It arrived cracked.', agent: 'kit', job: asker.id }) as { id: number };
   db.prepare("update jobs set status = 'done' where id = ?").run(asker.id);
   const ctx = await context('kit', { request: req.id });
   const queue = async (agent: string, title: string) => (await h.agent('job', ctx.token, { agent, title, prompt: 'Make the refund note.' })).body.id as number;
@@ -542,7 +518,6 @@ test("a call's additions join one job, stop at the hourly cap, and hold a custom
   jobEnded(running);
   const became = (db.prepare('select became from messages where id = ?').get(unread.message) as { became: number }).became;
   assert.equal(h.job(became).agent, 'bolt');
-  for (const id of [first.became, became]) assert.equal(jobs.holdsCustomerData(id), true, `#${id} holds the customer's details`);
   assert.equal((db.prepare("select count(*) n from events where id > ? and (text like '%voucher%' or text like '%ten euros%' or text like '%sorry%')").get(before) as { n: number }).n, 0,
     'the events log has their numbers only');
 
@@ -553,15 +528,12 @@ test("a call's additions join one job, stop at the hourly cap, and hold a custom
   const unrelated = await h.start({ agent: 'kit', title: 'Unrelated work' });
   assert.equal((await h.agent(`sent?id=${first.message}`, unrelated.token)).status, 404);
   assert.deepEqual((await h.agent('sent', unrelated.token)).body, []);
-  assert.equal(jobs.holdsCustomerData(unrelated.id), false);
   await hangUp('kit', ['Board: add a voucher.'], { token: ctx.token });
   const followUp = (db.prepare('select job from calls where id = ?').get(ctx.call) as { job: number }).job;
   const authorized = await h.start({ agent: 'kit', call: ctx.call, title: 'Work on the call' });
-  assert.equal(jobs.holdsCustomerData(authorized.id), false);
   const received = await h.agent(`sent?id=${first.message}`, authorized.token);
   assert.equal(received.status, 200);
   assert.match(received.body[0].text, /And a voucher/);
-  assert.equal(jobs.holdsCustomerData(authorized.id), true, 'reading the call message marks its reader');
   const { sent } = await import('./messages.ts');
   assert.notEqual(sent('kit', { id: followUp, agent: 'kit' }, first.message), 404, 'the follow-up also sees delivery');
 });
@@ -569,7 +541,7 @@ test("a call's additions join one job, stop at the hourly cap, and hold a custom
 // The board's settled word to work under way (call.ts reach, hq say on a call), as often as it needs: a running Claude job's
 // session reads it at its next step, and it's on the call's list, handled, so the follow-up sees it went (and hq sent
 // what became of it). A job the call queued takes add; one that isn't running, runs on Codex or isn't the named
-// colleague's is refused, and so is anything on a customer's call.
+// colleague's is refused.
 test('the call reaches a running job, as often as it needs, by its number and its agent; each goes on the call\'s list, handled', async () => {
   fresh();
   db.exec('delete from messages');
@@ -639,19 +611,6 @@ test('the call reaches a running job, as often as it needs, by its number and it
   const dropped = (await h.agent('item-drop', follow.token, { id: fixed.id, why: 'The board took it back' })).body;
   assert.match(told(dropped), /is withdrawn: The board took it back\. Don't go by it any more\./);
   assert.match((await h.agent('item-drop', follow.token, { id: fixed.id, why: 'Again' })).body.error, /isn't open/, 'once');
-});
-
-test("a customer's call reaches no running job: their details stay with its follow-up", async () => {
-  fresh();
-  const running = await h.start({ agent: 'moss', title: 'The site' });
-  db.prepare("update jobs set engine = 'claude' where id = ?").run(running.id);
-  const asker = await h.start({ agent: 'kit', title: 'Refund for a customer', customers: true });
-  const req = jobs.createRequest({ kind: 'decision', title: 'Refund the koala mug?', body: 'It arrived cracked.', agent: 'kit', job: asker.id, customers: true }) as { id: number };
-  db.prepare("update jobs set status = 'done' where id = ?").run(asker.id);
-  const ctx = await context('kit', { request: req.id });
-  const r = await h.agent('message', ctx.token, { to: 'moss', job: running.id, goal: 'g', what: 'x', text: 'The customer is Ann.' });
-  assert.equal(r.status, 409);
-  assert.match(r.body.error, /passes nothing on mid-call/);
 });
 
 test("the board's language: one setting, offered only as the languages that work end to end, for calls and jobs", async () => {

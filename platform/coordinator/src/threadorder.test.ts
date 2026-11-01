@@ -1,4 +1,5 @@
 // Queue-time estimate contract fixtures.
+import { sizedTime } from './testwords.ts';
 // node --test src/threadorder.test.ts   (throwaway DATA_DIR and the test company): threads in order, how the platform
 // plans: a task after the one before it is done, a thread's first task after the threads it needs merge, the thread's
 // branch, its one pull request opened by a push with no next task ready to start (else held for that task's push), the
@@ -587,7 +588,7 @@ const sized = (thread: string, minutes: number) =>
     size: { agent_ms: minutes * MIN, refs: [], why: 'scope' },
   }).id;
 const revised = (job: number, minutes: number) =>
-  assert.ok(!Array.isArray(sizes.setSize(job, `${minutes}m`, 'it slipped', 'juno')), 'the CEO re-sizes it');
+  assert.ok(!Array.isArray(sizes.setSize(job, sizedTime(`${minutes}m`), 'it slipped', 'juno')), 'the CEO re-sizes it');
 
 test("a judge's brief counts its deliverable's judgments, its deadline and agent time against its first size", async () => {
   const engine = thread('engine');
@@ -701,42 +702,36 @@ test('a failed task landed before its woken judge starts takes its deliverable o
   assert.equal(judgeOf(sound), null);
 });
 
-// A task that ended with a report, its pull request merged into its thread's (customers: it holds a customer's details)
+// A task that ended with a report, its pull request merged into its thread's (customers: marked before as holding a
+// customer's details)
+const marked = (job: number) => h.db.prepare('update jobs set customers = 1 where id = ?').run(job);
 const reported = (t: string, pr: number, report: string, customers = false) => {
-  const id = h.ended({ agent: 'bolt', thread: t, result: report, customers });
+  const id = h.ended({ agent: 'bolt', thread: t, result: report });
+  if (customers) marked(id);
   h.storedPr(pr, id, 'merged');
   threadends.merged(pr);
   return id;
 };
-const holds = (job: number) => h.jobs.holdsCustomerData(job);
 const CUSTOMER = 'Refunded Ada Example, 12 Quay Lane, ada@example.com';
 
-test("a customer's report reaches only a judge whose owner may read it, which holds it from then on", async () => {
+test("a report marked before as a customer's reaches a judge by its job only, whoever its owner is", async () => {
   reported(thread('refund'), 9208, CUSTOMER, true);
   const wren = judgeRow(judgeOf('game/refund')!);
   assert.ok(!wren.prompt.includes('Ada Example'), "wren isn't roles.customerData");
   assert.ok(wren.prompt.includes(h.jobs.REPORT_LEFT_OUT));
-  assert.equal(holds(wren.id), false);
   reported(thread('refund', 'books'), 9209, CUSTOMER, true);
   const penny = judgeRow(judgeOf('books/refund')!);
-  assert.ok(penny.prompt.includes(JSON.stringify(CUSTOMER)), 'penny is');
-  assert.equal(holds(penny.id), true, 'a judge made with it holds it');
-});
-
-test("a judge that hasn't started holds a customer's details once a later thread brings them in", async () => {
-  reported(thread('plain', 'books'), 9210, 'Balanced the ledger.');
-  const judge = judgeOf('books/plain')!;
-  assert.equal(holds(judge), false);
-  reported(thread('refund', 'books'), 9211, CUSTOMER, true);
-  assert.equal(judgeOf('books/refund'), judge, 'the same judge, its prompt replaced');
-  assert.ok(judgeRow(judge).prompt.includes(JSON.stringify(CUSTOMER)));
-  assert.equal(holds(judge), true);
+  assert.ok(
+    !penny.prompt.includes('Ada Example') && penny.prompt.includes(h.jobs.REPORT_LEFT_OUT),
+    'nor penny: a brief is a new record',
+  );
 });
 
 test("a reused judge omits even its owner's customer report from another job", () => {
   reported(thread('plain'), 9214, 'Ordinary progress.');
   const judge = judgeOf('game/plain')!;
-  const source = h.ended({ agent: 'wren', thread: thread('private'), result: CUSTOMER, customers: true });
+  const source = h.ended({ agent: 'wren', thread: thread('private'), result: CUSTOMER });
+  marked(source);
   h.storedPr(9215, source, 'merged');
   threadends.merged(9215);
   assert.equal(judgeOf('game/private'), judge);
@@ -744,7 +739,6 @@ test("a reused judge omits even its owner's customer report from another job", (
   assert.ok(prompt.includes('Ordinary progress.'));
   assert.ok(!prompt.includes(CUSTOMER));
   assert.ok(prompt.includes(h.jobs.REPORT_LEFT_OUT));
-  assert.equal(holds(judge), false);
 });
 
 test("a task's report reaches its judge as quoted data, which nothing in it can end", async () => {

@@ -5,9 +5,9 @@ import * as secrets from './secrets.ts';
 
 // lines: the lines an agent's job changes so far (add, del); tokens: the tokens it has written so far (total). Both to HQ
 // only, kept on its status but not in the events table (tokens: the last TOKENS_KEPT_MS of readings, [ms, total], for
-// Wire's chart of the work); a log line's tests: the tests a step passed (work.ts). board: a log line of a job holding
-// a customer's details, the step itself (the worker's steps.ts shown), for the board's own HQ session alone: the feed
-// gives it to HQ's pages, while the events table keeps text, the kind of step, like everything agents can read.
+// Wire's chart of the work); a log line's tests: the tests a step passed (work.ts). board: a log or chat line's whole
+// words (the worker's steps.ts: the command, the search, what the agent said), for the board's own HQ session alone:
+// the feed gives it to HQ's pages, while the events table keeps text, the kind of step, like everything agents can read.
 export type Event = {
   // (studio: the photo studio's darkroom, studio.ts office(), not kept in the events table either. book: a slip clipped
   // onto a note in the board's book, ticked or opened again, so HQ reads the book again now (bookslips.ts): agent, who

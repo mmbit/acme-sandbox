@@ -84,7 +84,8 @@ export function settle() {
 export const template = (proposal: number) =>
   db.prepare('insert or ignore into sorts (proposal) values (?)').run(proposal);
 
-// What a held job's proposal says in place of a brief that holds a customer's own details (feedback.ts markOutsideJobs too).
+// What a held job's proposal says in place of a brief marked before as holding a customer's own details (feedback.ts
+// markOutsideJobs too).
 export const PRIVATE_BRIEF = "Its brief holds a customer's own details, so it stays with the job.";
 
 // job, made by `from` (a colleague, or hq) under a template name or holding several things, waits until the owner of
@@ -98,7 +99,7 @@ export function hold(job: number, o: { from: string; project: string | null; why
     `insert into wakes (job, kind, arg, since) values (?, 'sorted', '', ?)
     on conflict (job, kind, arg) do update set met = null`,
   ).run(job, Date.now());
-  // (a customer's own details stay with the job: jobs.ts holdsCustomerData)
+  // (a brief marked before as a customer's stays with the job: jobs.ts holdsCustomerData)
   const brief = `${o.why} Job #${job}, ${row.agent}'s, waits until you sort it.\n\n${
     row.customers ? PRIVATE_BRIEF : row.prompt
   }`.slice(0, BRIEF_MAX);
@@ -144,7 +145,7 @@ export function holdLoose() {
 export function accept(p: { id: number }, job: number, by: string, ask: Ask) {
   const saved = sizes.latestOf(job);
   if (saved && ask.size != null)
-    return `job #${job} already has a saved estimate: omit --size to accept it. Only the CEO changes it with hq estimate set`;
+    return `job #${job} already has a saved estimate: omit --size to accept it. The agent running it, or the CEO, re-sizes it with hq estimate set`;
   const size = saved ? undefined : sizes.readQueuedSize(ask);
   if (typeof size === 'string') return size;
   const title = oneLine(String(ask.title ?? ''));

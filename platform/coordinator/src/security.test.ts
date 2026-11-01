@@ -484,8 +484,8 @@ test('Voice line: too long from a call is refused with the reason, never cut, an
 });
 
 test("A call shows the agent its own recent work; a desk phone answer tells the job the board isn't in the session", async () => {
-  const finished = async (who: string, title: string, result: string, more: Record<string, unknown> = {}, fields: Record<string, unknown> = {}) => {
-    const j = await h.start({ agent: who, title, ...fields });
+  const finished = async (who: string, title: string, result: string, more: Record<string, unknown> = {}) => {
+    const j = await h.start({ agent: who, title });
     await h.finish(j, { result, ...more });
     return j.id;
   };
@@ -522,9 +522,10 @@ test("A call shows the agent its own recent work; a desk phone answer tells the 
   const day = later.slice(later.indexOf('Also finished in the last day'), later.indexOf('Your latest desk phone requests'));
   assert.ok(day.includes('Record the seat decision'));
   assert.doesNotMatch(day, /Two days ago|Old news|Recorded the board's call/);   // titles only, and only the last day
-  // a job that read a customer's details: its report stays with that job, so the call has its title only; a plain
-  // card's answer shows like any
-  await finished('poppy', 'Answer a customer', 'Refunded Jan at Kerkstraat 1.', {}, { customers: true });
+  // a job marked before as holding a customer's details: its report stays with that job, so the call has its title only;
+  // a plain card's answer shows like any
+  const marked = await finished('poppy', 'Answer a customer', 'Refunded Jan at Kerkstraat 1.');
+  db.prepare('update jobs set customers = 1 where id = ?').run(marked);
   const poppy = await running('poppy');
   await h.answer(await h.ask(poppy, { title: 'Approve a refund?', body: 'Order 12.' }), 'Yes, refund the order.');
   const care = (await h.voice('call-context?agent=poppy')).body.prompt as string;
@@ -981,31 +982,4 @@ test('hq photos: a request\'s photos are readable on the agent API only by the a
   assert.equal((await agent(`photos?id=${id}`, theirs.token)).status, 404);          // another agent's request
   assert.equal((await agent(`photo?id=${id}&field=0`, theirs.token)).status, 404);
   assert.equal((await call(`/api/worker/photos?id=${id}`, WORKER_TOKEN)).status, 404);   // not on the worker API
-});
-
-// A look-up on a call has no job to mark. A customer call's goal (hq items) or recording (hq call's moments) read by
-// the call's agent as org.yaml's roles.customerData makes the call itself about the customer (jobs.ts readerHanded), so
-// its transcript goes to its follow-up, not to every agent (charter rule 7).
-test("A call that reads a customer call's goal or recording is about the customer from then on: its transcript stays with its follow-up", async () => {
-  const { customerCall } = await import('./memory.ts');
-  const followUp = (id: number) => (db.prepare('select job from calls where id = ?').get(id) as { job: number }).job;
-  const card = jobs.createRequest({ kind: 'decision', title: 'Refund case C-41?', body: 'Jan Jansen, cracked mug', agent: 'moss', customers: true }) as { id: number };
-  const about = (await h.voice(`call-context?agent=moss&request=${card.id}`)).body;
-  await h.voice('call-end', { agent: 'moss', lines: ['Board: refund Jan Jansen in full.'], request: card.id, token: about.token });
-  // (Moss: no job of theirs runs. The follow-up on an engine of its own, as ledger.test.ts claims: others' work is queued ahead)
-  db.prepare("update jobs set engine = 'customer-call', not_before = 0 where id = ?").run(followUp(about.call));
-  const t = (await worker('claim', { seat: 'customer-call', engine: 'customer-call' })).body.token as string;
-  const it = (await agent('item', t, { kind: 'task', owner: 'rivet', goal: 'Make it right for Jan Jansen', what: 'Refund the mug', quote: 'Board: refund Jan Jansen in full.' })).body.id;
-  const wren = await running('wren');
-  for (const read of ['items', `call?id=${about.call}&view=moments`]) {
-    db.prepare("update calls set ts = '2026-01-01T00:00:00.000Z' where agent = 'vera'").run();   // (no carrying on from the last)
-    const on = (await h.voice('call-context?agent=vera')).body;   // (Vera: roles.customerData in the fixture)
-    assert.ok(!customerCall(on.call), read);
-    const r = await agent(read, on.token);
-    if (read === 'items') assert.equal((r.body as any[]).find(i => i.id === it).goal, 'Make it right for Jan Jansen');
-    assert.ok(customerCall(on.call), `${read}: about the customer from then on`);
-    await h.voice('call-end', { agent: 'vera', lines: ['Board: What did the customer ask for?'], request: 0, token: on.token });
-    assert.equal((await agent(`call?id=${on.call}`, wren.token)).status, 403, `${read}: its transcript isn't every agent's`);
-    assert.ok(jobs.holdsCustomerData(followUp(on.call)), `${read}: its follow-up holds their details`);
-  }
 });

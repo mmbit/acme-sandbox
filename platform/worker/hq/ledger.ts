@@ -75,7 +75,7 @@ const LINK_USAGE =
 const DROP_USAGE = 'usage: hq item drop <item> "why"';
 const DONE_USAGE = 'usage: hq item done <item> "what the board said"';
 
-// (an item's time becomes its work's thread's window; --deadline's forms)
+// (an item's time becomes its work's thread's window; --deadline's forms.)
 export const item = {
   help: `
    hq item add <kind> <owner> "what" - [a-b] --goal - [--call <id>] [--replaces <item>] [--deadline <when> [--job <id>
@@ -117,8 +117,8 @@ export const item = {
                                                      stays open (a question: handled now).
                                                      The call's follow-up, the job that carries the item, or a job of
                                                      roles.asks. The CEO also links with --why "reason", shown on the feed.
-                                                     A job of yours carries one item, so it takes no second
-                                                     (hand that one out).
+                                                     A job of yours carries every item its brief covers: link each
+                                                     one to it (hand out only work it doesn't cover).
                                                      A job linked while it's queued or running hears the item's goal.
                                                      An item already handled (or dropped, replaced): the call's follow-up
                                                      links it to note it went through it; nothing about it changes.

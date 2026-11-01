@@ -51,7 +51,7 @@ test("the board's decision binds until a later call replaces or drops it, howeve
   assert.equal(checks().length, 1);
 });
 
-test("the board's words show only from a call hq call shows the check: not a live call's, nor a customer call's", async () => {
+test("the board's words show only from a call hq call shows the check: not a live call's, nor one marked before as a customer call's", async () => {
   reset();
   const fixture = await h.start({ agent: ceo(), title: 'A customer call follow-up' });
   await h.finish(fixture);
@@ -67,16 +67,12 @@ test("the board's words show only from a call hq call shows the check: not a liv
   assert.match(text, /The board's words: "Hold the game work tonight"/);
   assert.doesNotMatch(text, /Refund the customer|Carry on with that customer|Say nothing yet/);
   assert.equal((text.match(/The board's words: left out/g) ?? []).length, 3);
-  const customers = (id: number) =>
-    (db.prepare('select customers from jobs where id = ?').get(id) as { customers: number }).customers;
-  assert.equal(customers(check.id), 0);
-  // a job working on the call reads it, and holds the customer's details from then on
+  // a job working on the call reads it
   const helper = h.queue({ agent: ceo(), item: followedUp.item });
   assert.match(read({ id: helper, agent: ceo() }), /"Refund the customer at the old address"/);
-  assert.equal(customers(helper), 1);
 });
 
-test('handled customer summaries stay with jobs allowed to read their call, including non-decision items', async () => {
+test("handled summaries of a call marked before as a customer's stay with jobs allowed to read it, including non-decision items", async () => {
   reset();
   const fixture = await h.start({ agent: ceo() });
   await h.finish(fixture);
@@ -89,10 +85,6 @@ test('handled customer summaries stay with jobs allowed to read their call, incl
   followThroughSweep(Date.now());
   const check = await startCheck();
   assert.doesNotMatch(read(check), /Private customer/);
-  const customers = (id: number) =>
-    (db.prepare('select customers from jobs where id = ?').get(id) as { customers: number }).customers;
-  assert.equal(customers(check.id), 0);
   const helper = h.queue({ agent: ceo(), item: task.item });
   assert.match(read({ id: helper, agent: ceo() }), /Private customer task/);
-  assert.equal(customers(helper), 1);
 });

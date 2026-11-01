@@ -22,6 +22,7 @@ import { noProject, placeOf, taskClash } from './names.ts';
 import { oneTaskSql } from './made.ts';
 import { refusal } from './threadorder.ts';
 import { waitsUntil } from './wakes.ts';
+import { boardHold, cardHeld, drawnWords, holdAndAge } from './boardheld.ts';
 import { SIDE_BY_SIDE } from '../../worker/hq/levels.ts';
 
 // hq plan thread: a new thread in the project, owned by its owner, with the threads it needs: those named, else the one
@@ -55,7 +56,10 @@ export function newThread(
   if (typeof made === 'string') return made;
   planChange({ project: project.id, thread: made.id, what: `deliverable drawn: ${made.name}`, by: by.agent });
   for (const n of needs) addNeed(made, n, by.agent);
-  return { ...made, needs, place: placeOf(made), chain: chainWords(made.id, chained) };
+  // (a need named onto work held by the board, said)
+  const held = named.length ? heldWords(made.id, needs) : [];
+  const chain = [chainWords(made.id, chained), ...held].filter(Boolean).join(' ') || undefined;
+  return { ...made, needs, place: placeOf(made), chain };
 }
 
 // The thread a new one in the project chains after when it names none, in two steps: the thread under way it most
@@ -64,8 +68,10 @@ export function newThread(
 // not merged yet. HQ's one-task wrapper for a job of its own is passed over, and so is a paused one, so new work isn't
 // held by a pause it was never part of: that one is named (paused) for the drawer to judge. A thread whose open work all
 // waits for a time still to come (hq job --when <time>, a week's read), with no pull request open, is passed over too,
-// with every thread that needs it at any depth, so ready work never queues behind it: the one the chain would end on
-// without that is named (booked), with the thread it waits for, for the drawer to judge.
+// and so is one whose open work all waits for an open card of the board's (boardheld.ts: its answer's expected time
+// keeps sliding while nobody answers), each with every thread that needs it at any depth, so ready work never queues
+// behind it: the one the chain would end on without that is named (passed), with what holds it, for the drawer to
+// judge. (the card)
 function chainedAfter(project: string, job: number | undefined): Chain {
   const own = job ? threadOf(job) : null;
   const openJob = (t: string, which = 'true') =>
@@ -76,13 +82,16 @@ function chainedAfter(project: string, job: number | undefined): Chain {
   const ready = (t: string) =>
     `(${openJob(t, `not (j.status = 'queued' and ${waitsUntil('j.id')} > ${Date.now()})`)} or ${openPr(t)})`;
   const bookedOnly = (t: string) => `(${openJob(t)} and not ${ready(t)})`;
-  // the open threads whose work is all booked for later, and every thread that needs one of them
+  // the open threads whose work is all booked for later or held by a card ($cards), and every thread that needs one
   const held = `(with recursive held(id) as (select b.id from threads b where b.status = 'open' and ${bookedOnly('b.id')}
+    union select value from json_each($cards)
     union select n.thread from thread_needs n join held h on n.needs = h.id) select id from held)`;
+  const cards = JSON.stringify(cardHeld());
   // The newest thread chained from the start, where `going` holds for the start and no thread on the way is in `over`
   // (paused ones left out unless paused)
   const lastIn = ({ going, over, paused = false }: { going: Going; over?: string; paused?: boolean }) => {
-    const newest = (where: string, at: Record<string, string>) => newestOpen(project, where, at, paused);
+    const newest = (where: string, at: Record<string, string>) =>
+      newestOpen(project, where, over ? { ...at, cards } : at, paused);
     const starts = going('t.id') + (over ? ` and t.id not in ${over}` : '');
     const start = (own && newest(`t.id = $own and ${starts}`, { own })) || newest(starts, {});
     const chained = `t.id in (with recursive chained(id) as (select $start
@@ -92,25 +101,47 @@ function chainedAfter(project: string, job: number | undefined): Chain {
   };
   const after = lastIn({ going: ready, over: held }),
     paused = lastIn({ going: ready, over: held, paused: true }),
-    booked = lastIn({ going: underWay });
+    passed = lastIn({ going: underWay });
   return {
     after: after?.id,
     paused: paused?.paused ? paused.id : undefined,
-    booked: booked && booked.id !== after?.id ? { thread: booked.id, waits: heldBy(booked.id, bookedOnly) } : undefined,
+    passed: passed && passed.id !== after?.id ? passedWords(passed.id, bookedOnly) : undefined,
   };
 }
 type Going = (thread: string) => string;
-type Chain = { after?: string; paused?: string; booked?: { thread: string; waits: string } };
+type Chain = { after?: string; paused?: string; passed?: { thread: string; why: string } };
 
-// The thread `thread` waits for, at any depth or itself, whose work is all booked for later
-function heldBy(thread: string, bookedOnly: Going) {
-  const row = db
-    .prepare(
-      `with recursive needed(id) as (select ? union select n.needs from thread_needs n join needed d on n.thread = d.id)
-      select d.id from needed d where ${bookedOnly('d.id')} limit 1`,
-    )
-    .get(thread) as { id: string };
-  return row.id;
+// What holds a thread the chain passed over: the thread it waits for at any depth, or itself, whose work is all booked
+// for later, else one held by a card, one it needs first
+function passedWords(thread: string, bookedOnly: Going): Chain['passed'] {
+  const needed = (
+    db
+      .prepare(
+        `with recursive needed(id) as (select ? union select n.needs from thread_needs n join needed d on n.thread = d.id)
+        select d.id, ${bookedOnly('d.id')} booked from needed d`,
+      )
+      .all(thread) as { id: string; booked: number }[]
+  ).map(n => ({ ...n, card: n.booked ? null : boardHold(n.id) }));
+  const booked = needed.find(n => n.booked);
+  if (booked)
+    return {
+      thread,
+      why: booked.id === thread ? 'waits for a time booked ahead' : `waits for ${booked.id}, booked for a time ahead,`,
+    };
+  // (its work waits with the card of a thread it needs: that one is named)
+  const carded =
+    needed.find(n => n.id !== thread && n.card && 'card' in n.card) ?? needed.find(n => n.card && 'card' in n.card);
+  if (!carded) return undefined;
+  const words = `held (${holdAndAge(carded.card!)}),`;
+  return { thread, why: carded.id === thread ? `is ${words}` : `waits for ${carded.id}, ${words}` };
+}
+
+// The line said for each need named onto a thread whose work all waits on the board
+function heldWords(thread: string, needs: string[]) {
+  return needs.flatMap(n => {
+    const hold = boardHold(n);
+    return hold ? [drawnWords(thread, n, hold)] : [];
+  });
 }
 
 // The project's newest open thread where `where` holds (its paused ones left out unless pausedToo), never a one-task
@@ -128,15 +159,12 @@ function newestOpen(project: string, where: string, at: Record<string, string>, 
 
 // What a drawn thread's needs mean for its work, said where it's drawn (hq plan deliverable, hq job and hq inbox accept
 // with --deliverable new:): one deliverable after another, and when and how it may run beside them instead; and a
-// paused one its chain passed over, or one waiting for a time booked ahead.
-function chainWords(thread: string, { paused, booked }: Chain): string | undefined {
+// paused one its chain passed over, or one waiting for a time booked ahead or for the board.
+function chainWords(thread: string, { paused, passed: held }: Chain): string | undefined {
   const over = (other: string, why: string) =>
     `${other} ${why} and was passed over: if this work changes its files, hq plan need ${thread} ${other}.`;
-  const waits = (b: NonNullable<Chain['booked']>) =>
-    b.waits === b.thread ? 'waits for a time booked ahead' : `waits for ${b.waits}, booked for a time ahead,`;
   const passed =
-    [paused && over(paused, 'is paused'), booked && over(booked.thread, waits(booked))].filter(Boolean).join(' ') ||
-    undefined;
+    [paused && over(paused, 'is paused'), held && over(held.thread, held.why)].filter(Boolean).join(' ') || undefined;
   const needs = needsOf(thread);
   if (!needs.length) return passed;
   const after = needs.join(' and ');

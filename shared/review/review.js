@@ -3,7 +3,7 @@
 // else gets only the watch-along's answer to HQ's frame (shared/watchalong/framed.js, which it serves after this file
 // for the board too), so it never runs for customers. Tap the pin (or draw on the page with a pen), then tap
 // anything or draw on it, say or type the note, and it goes to HQ with a screenshot of the screen as it was and the last
-// few things the board did here (the trail). The UI lives in a closed shadow root: product styles can't touch it.
+// few things the board did here (the trail). The UI lives in an open shadow root: product styles can't touch it.
 // Its parts are modules beside it (tool.js puts them together), behind the same gate.
 (() => {
   // In a frame it runs only directly inside HQ's preview viewer, where the board opens most demos: the coordinator

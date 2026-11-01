@@ -18,6 +18,40 @@ const report = (seat: string, windows: Record<string, unknown>) =>
     ...windows,
   });
 
+test('the snapshot preserves an unset stop beside an explicitly configured default for pacing and drain policy', async () => {
+  const { addSeat, stopSeat } = await import('./seats.ts');
+  const { at, available, seatEvent, seatsOf } = await import('./playseats.ts');
+  const { paceTo, pacedUntil, reserveElsewhere } = await import('../../worker/src/pace.ts');
+  addSeat({ id: 'claude-default', provider: 'anthropic' });
+  addSeat({ id: 'claude-explicit', provider: 'anthropic' });
+  stopSeat('claude-explicit', 90);
+  const reset = T0 + 24.5 * HOUR;
+  for (const id of ['claude-default', 'claude-explicit', 'claude-peer'])
+    await report(id, { week: id === 'claude-peer' ? 0.2 : 0.85, weekResets: reset });
+  const input = snapshot(T0);
+  input.pacing = true;
+  const seats = seatsOf(input);
+  const moment = at(seats, T0);
+  const defaultSeat = seats.find(s => s.id === 'claude-default')!;
+  const explicitSeat = seats.find(s => s.id === 'claude-explicit')!;
+  const worker = { engine: 'claude', state: 'ready', week: 0.85, weekResets: reset, resets: 0 };
+  const peer = { ...worker, week: 0.2 };
+  const target = paceTo(worker, true, reserveElsewhere(worker, [worker, peer], T0));
+  assert.equal(moment.aims.get(defaultSeat), target);
+  assert.equal(moment.paced.get(defaultSeat), pacedUntil(worker, target, T0));
+  assert.equal(moment.aims.get(explicitSeat), 0.9);
+  assert.equal(moment.paced.get(explicitSeat), reset);
+  for (const seat of [defaultSeat, explicitSeat]) {
+    seat.week = 0.95;
+    seat.weekResets = T0 + 20 * HOUR;
+    seat.pacing = false;
+  }
+  assert.equal(available(defaultSeat, T0, seats), true, 'a peer can keep the default reserve');
+  assert.equal(available(explicitSeat, T0, seats), false, 'a configured stop keeps its own reserve');
+  assert.ok(seatEvent(defaultSeat, [defaultSeat], T0, 0) < defaultSeat.weekResets!);
+  assert.equal(seatEvent(explicitSeat, [explicitSeat], T0, 0), explicitSeat.weekResets);
+});
+
 test('a missing weekly reading retains the earlier measured paced usage with its original age', async () => {
   mock.timers.setTime(T0);
   await report('claude-prior', { util: 0.2, resets: T0 + 5 * HOUR, week: 0.92, weekResets: T0 + 24 * HOUR });

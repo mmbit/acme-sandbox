@@ -83,14 +83,15 @@ export function found(sel, doc) {
   return el;
 }
 
-// Whether an element is private: [data-private] on it or around it, through shadow roots' hosts
+// Whether an element is private: [data-private] or [data-watchalong-hide] on it or around it, through shadow roots' hosts
 export function isPrivate(el) {
-  for (let e = el; e; e = e.getRootNode?.()?.host) if (e.closest?.('[data-private]')) return true;
+  for (let e = el; e; e = e.getRootNode?.()?.host)
+    if (e.closest?.('[data-private], [data-watchalong-hide]')) return true;
   return false;
 }
-// An element's words for a note, unless it's private
+// An element's words for a note, unless they include a private part.
 export function textOf(el) {
-  if (isPrivate(el)) return '';
+  if (isPrivate(el) || el.querySelector?.('[data-private], [data-watchalong-hide]')) return '';
   const words = el.innerText || el.getAttribute?.('aria-label') || el.getAttribute?.('alt') || '';
   return words.replace(/\s+/g, ' ').trim().slice(0, TEXT_MAX);
 }

@@ -22,9 +22,10 @@ export const HIDE = '[data-watchalong-hide]';
 // them leave the page masked, for the board's own calls too, their elements keep only the attributes the replay draws
 // them by, and their pictures (a style's too) go as empty boxes
 export const PRIVATE = '[data-private]';
-// rrweb's own (rr_width, _cssText...; never rr_dataURL, a picture's pixels), the layout's, and the mark itself
+// rrweb's own (rr_width, _cssText...; never rr_dataURL, a picture's pixels), the layout's, the mark itself, and a
+// popover's, which the replay shows it by (toplayer.js)
 const DRAWN =
-  /^(rr_(?!dataURL)\w+|_cssText|class|style|id|type|role|width|height|colspan|rowspan|dir|hidden|open|data-private)$/;
+  /^(rr_(?!dataURL)\w+|_cssText|class|style|id|type|role|width|height|colspan|rowspan|dir|hidden|open|popover|data-private)$/;
 // A frame in it goes as a box too, its page being outside the mark, and so does a marked part of a drawing (lettering
 // as paths, a line of Budling's label).
 const PRIVATE_PICTURES = ['img', 'picture', 'video', 'canvas', 'svg', 'iframe']
@@ -215,7 +216,8 @@ const settings = typed => ({
   // a page's title too: a page may put a person's words in it (a customer's name on their case)
   maskTextSelector: typed === 'shown' ? `${PRIVATE}, title` : `${PRIVATE}, title, [contenteditable]`,
   slimDOMOptions: 'all',
-  sampling: { mousemove: 100, scroll: 150, input: 'last' },
+  // A shadow root's change event does not cross its host. Input does, including words still being typed.
+  sampling: { mousemove: 100, scroll: 150, input: 'all' },
   plugins: [{ name: 'watchalong/address', eventProcessor: withoutSecrets }],
 });
 // A password (rrweb marks one a page has turned to plain text), a hidden field, or a field in a private part

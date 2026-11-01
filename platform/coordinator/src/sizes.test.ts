@@ -2,6 +2,7 @@
 import { mock, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
+import { sizedTime, testBudget, testConfidence } from './testwords.ts';
 import { harness } from './harness.ts';
 import { git } from './fixture.ts';
 import { recordedWorkEvidence, type WorkEvidence } from './pastjobs.fixture.ts';
@@ -42,7 +43,7 @@ const request = {
   title: 'Paint the harbour map in spring',
   prompt: 'Paint 60 tiles and check them',
   by: 'none',
-  size: '1h',
+  size: sizedTime('1h'),
   refs: [harbour[0], harbour[2]],
   why: 'Twice the first map, with ten more tiles than the last',
 };
@@ -53,6 +54,11 @@ test('the queuer saves scope references once and every play keeps that estimate'
   assert.equal(response.status, 200, JSON.stringify(response.body));
   const job = response.body.id;
   const before = sizes.history(job);
+  assert.deepEqual(before[0].token_budget, testBudget);
+  assert.deepEqual(before[0].confidence, testConfidence);
+  assert.deepEqual((await estimate(job)).sizes[0].confidence, testConfidence);
+  assert.deepEqual((await estimate(job)).sizes[0].token_budget, testBudget);
+  assert.match((await h.hq(planner, 'estimate', `#${job}`)).out, /Token estimate: 1,300 tokens/);
   predictions.sweep();
   const firstOutlook = h.db.prepare('select start, done, eta, outlook_saved from predictions where job = ?').get(job)!;
   assert.equal(firstOutlook.outlook_saved, 1);
@@ -97,12 +103,26 @@ test('missing estimates and invalid references queue nothing', async () => {
   assert.equal(h.db.prepare('select count(*) n from jobs').get()!.n, before);
 });
 
-test('only the CEO changes a saved size and its reason stays in history', async () => {
+test('the CEO and the agent running it change a saved size, and its reason stays in history', async () => {
   const job = (await h.agent('job', planner.token, request)).body.id;
   for (const agent of ['kit', 'wren', 'moss']) {
     const actor = await h.start({ agent, title: 'Checking size', kind: 'chat' });
     assert.equal((await h.agent('sizes', actor.token, { job, time: '2h', why: 'Scope grew' })).status, 403);
   }
+  // (kit's own job, queued, isn't running yet: kit tells the CEO; once running, kit re-sizes it)
+  const running = await h.start({
+    agent: 'kit',
+    title: request.title,
+    plannedBy: 'juno',
+    size: { agent_ms: 30 * MIN, refs: [], why: request.why },
+  });
+  const wren = await h.start({ agent: 'wren', title: 'Checking size', kind: 'chat' });
+  assert.equal((await h.agent('sizes', wren.token, { job: running.id, time: '2h', why: 'Scope grew' })).status, 403);
+  assert.equal((await h.agent('sizes', running.token, { job: running.id, time: '2h', why: '' })).status, 400);
+  const own = await h.agent('sizes', running.token, { job: running.id, time: '2h', why: 'Two maps, not one' });
+  assert.equal(own.status, 200, JSON.stringify(own.body));
+  assert.equal(predictions.latest(running.id)!.agent_ms, 120 * MIN);
+  assert.equal(sizes.latestOf(running.id)!.by, 'kit');
   assert.equal((await h.agent('sizes', planner.token, { job, time: '2h', why: '' })).status, 400);
   assert.equal((await h.agent('sizes', planner.token, { job, time: '2h', why: 'Scope grew' })).status, 200);
   assert.equal(predictions.latest(job)!.agent_ms, 120 * MIN);
@@ -216,7 +236,8 @@ for (const evidence of [{ proposal: 'accepted' }, { sheet: 'sent', owner: 'kit' 
       const job = h.jobs.createJob({ agent: 'kit', title: request.title, prompt: request.prompt, ...change }).id;
       recordedWorkEvidence(h.db, job, evidence);
       assert.equal((await estimate(job)).estimate.origin, origin);
-      assert.equal((await h.agent('sizes', planner.token, { job, time: '45m', why: request.why })).status, 409);
+      const revised = await h.agent('sizes', planner.token, { job, time: '45m', why: request.why });
+      assert.equal(revised.status, origin === 'carry' ? 409 : 200, `${origin}: ${JSON.stringify(revised.body)}`);
     }
   });
 }
@@ -251,17 +272,18 @@ test('recorded scope makes completed work available as a work comparison on the 
 });
 
 const repairScope = { plannedBy: 'juno', size: { agent_ms: 45 * MIN, refs: [], why: request.why } };
-for (const { source, assignment } of [
-  { source: 'automatic job', assignment: {} },
-  { source: 'board feedback', assignment: { ...repairScope, stage: 'feedback' } },
-  { source: 'review fix', assignment: { ...repairScope, stage: 'fix', round: 1 } },
-  { source: 'merge repair', assignment: { ...repairScope, stage: 'fix' } },
-  { source: 'carry check', assignment: { ...repairScope, carry: 'abc' } },
+for (const { source, assignment, status } of [
+  { source: 'automatic job', assignment: {}, status: 409 },
+  { source: 'board feedback', assignment: { ...repairScope, stage: 'feedback' }, status: 200 },
+  { source: 'review fix', assignment: { ...repairScope, stage: 'fix', round: 1 }, status: 200 },
+  { source: 'merge repair', assignment: { ...repairScope, stage: 'fix' }, status: 200 },
+  { source: 'carry check', assignment: { ...repairScope, carry: 'abc' }, status: 409 },
 ]) {
-  test(`${source} refuses a CEO work-size revision`, async () => {
+  test(`${source} ${status === 200 ? 'takes' : 'refuses'} a CEO work-size revision`, async () => {
     const job = h.jobs.createJob({ agent: 'kit', title: request.title, prompt: request.prompt, ...assignment }).id;
-    const revised = await h.agent('sizes', planner.token, { job, time: '55m', why: 'Attempted revision' });
-    assert.equal(revised.status, 409, JSON.stringify(revised.body));
+    const revised = await h.agent('sizes', planner.token, { job, time: '55m', why: 'The round is bigger' });
+    assert.equal(revised.status, status, JSON.stringify(revised.body));
+    if (status === 200) assert.equal(predictions.latest(job)!.agent_ms, 55 * MIN);
   });
 }
 
@@ -361,3 +383,74 @@ async function promiseOn(token: string) {
   assert.equal(response.status, 200, JSON.stringify(response.body));
   return response.body.id;
 }
+
+test('raw new work and quotes require token counts while old recorded estimates stay unknown', async () => {
+  const raw = (body: unknown) => h.send('/api/agent/job', { authorization: `Bearer ${planner.token}` }, body);
+  for (const size of [
+    '1h',
+    JSON.stringify({ time: '1h', tokens: { work: 100 } }),
+    JSON.stringify({ time: '1h', ...testBudget, feedback_rounds: -1 }),
+    JSON.stringify({ time: '1h', ...testBudget, tokens: { ...testBudget.tokens, reviews: '200' } }),
+  ]) {
+    assert.equal((await raw({ ...request, size, code: 'TOKENS' })).status, 400);
+  }
+  const quote = await h.agent('when?q=Paint&size=1h', planner.token);
+  assert.equal(quote.status, 400);
+  const legacy = h.queue({ agent: 'kit', title: 'Legacy task' });
+  assert.equal((await estimate(legacy)).sizes.at(-1).token_budget, null);
+  assert.equal((await estimate(legacy)).sizes.at(-1).confidence, null);
+});
+
+test('a CEO revision retains the original token split and saves the new split', async () => {
+  const job = (await h.agent('job', planner.token, request)).body.id;
+  const revised = { tokens: { work: 4000, reviews: 300, fixes: 500, feedback: 600 }, feedback_rounds: 1 };
+  const answer = await h.agent('sizes', planner.token, {
+    job,
+    time: JSON.stringify({ time: '2h', ...revised, confidence: { level: 'low', why: 'No close larger scope' } }),
+    why: 'More interactions and a visible feedback round',
+  });
+  assert.equal(answer.status, 200, JSON.stringify(answer.body));
+  assert.deepEqual(
+    sizes.history(job).map(size => size.token_budget),
+    [revised, testBudget],
+  );
+  assert.deepEqual(
+    sizes.history(job).map(size => size.confidence),
+    [{ level: 'low', why: 'No close larger scope' }, testConfidence],
+  );
+});
+
+test('new estimates require stated confidence and preserve it in quotes and revisions', async () => {
+  const raw = (body: unknown) => h.send('/api/agent/job', { authorization: `Bearer ${planner.token}` }, body);
+  const count = () => h.db.prepare('select count(*) n from jobs').get()!.n;
+  const before = count();
+  for (const confidence of [
+    undefined,
+    null,
+    'high',
+    { level: 'certain', why: 'Many examples' },
+    { level: ['high'], why: 'Many examples' },
+    { level: 'high', why: ' ' },
+  ]) {
+    const size = JSON.stringify({ time: '1h', ...testBudget, confidence });
+    assert.equal((await raw({ ...request, size, code: 'SURE' })).status, 400);
+    assert.equal((await h.agent(`when?q=Paint&size=${encodeURIComponent(size)}`, planner.token)).status, 400);
+  }
+  assert.equal(count(), before);
+  const quote = await h.agent(`when?q=Paint&size=${encodeURIComponent(sizedTime('1h'))}`, planner.token);
+  assert.equal(quote.status, 200, JSON.stringify(quote.body));
+  assert.deepEqual(quote.body.size.confidence, testConfidence);
+  const response = await raw({ ...request, size: '1h', ...testBudget, confidence: testConfidence, code: 'SURE' });
+  assert.equal(response.status, 200, JSON.stringify(response.json));
+  assert.deepEqual(sizes.history(response.json.id)[0].confidence, testConfidence);
+  const revision = await h.agent('sizes', planner.token, {
+    job: response.json.id,
+    time: JSON.stringify({ time: '2h', ...testBudget }),
+    why: 'Scope grew',
+  });
+  assert.equal(revision.status, 400);
+  assert.equal(sizes.history(response.json.id).length, 1);
+  const cli = await h.hq(planner, 'estimate', `#${response.json.id}`);
+  assert.match(cli.out, /Estimate confidence: medium/);
+  assert.ok(cli.out.includes(testConfidence.why));
+});

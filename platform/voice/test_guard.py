@@ -15,7 +15,12 @@ from guard import CALL_TOOLS, HQ_TOOLS, PARTNER, PARTNER_TOOLS, TOOLS, agent_env
 HERE = str(Path(__file__).parent)
 HQ = str(Path(HERE).parent / 'worker' / 'bin' / 'hq')
 SEAT = 'sk-ant-oat01-' + os.urandom(8).hex()  # a stand-in for the seat's sign-in
-ESTIMATE = {'size': '30m', 'refs': [], 'why': 'Small tooling change with no comparable completed scope'}
+def sized_time(time):
+    return json.dumps({'time': time, 'tokens': {'work': 1000, 'reviews': 200, 'fixes': 100, 'feedback': 0},
+                       'feedback_rounds': 0, 'confidence': {'level': 'low', 'why': 'No close completed scope'}})
+
+
+ESTIMATE = {'size': sized_time('30m'), 'refs': [], 'why': 'Small tooling change with no comparable completed scope'}
 SIGN_IN_FD = 3  # where the CLI would read it (sign_in_pipe), for what runs no CLI.
 # The call agent's HOME and CLI config (agent_env's work and cli_config) in the tests: their own, never the line's
 FILES = tempfile.TemporaryDirectory(prefix='call-files-')
@@ -264,12 +269,12 @@ class HqTools(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             url = coordinator(self)
             base = {'goal': 'g', 'agent': 'bolt', 'code': 'LOGS', 'title': 'Logs', 'brief': 'Check the logs.'}
-            out = self.call(('job', {**base, 'size': '45m', 'refs': [11, 29], 'why': 'Between a small read and a full transport fix'}),
+            out = self.call(('job', {**base, 'size': sized_time('45m'), 'refs': [11, 29], 'why': 'Between a small read and a full transport fix'}),
                             ('job', base), ('job', {**base, **ESTIMATE, 'refs': ['11']}),
-                            ('when', {'what': 'Logs'}), env=self.env(d, url))
+                            ('when', {'what': 'Logs'}), ('when', {'what': 'Logs', 'size': '45m'}), env=self.env(d, url))
         self.assertEqual(len(Coordinator.seen), 1)
         self.assertEqual({k: Coordinator.seen[0][3][k] for k in ('size', 'refs', 'why')},
-                         {'size': '45m', 'refs': [11, 29], 'why': 'Between a small read and a full transport fix'})
+                         {'size': sized_time('45m'), 'refs': [11, 29], 'why': 'Between a small read and a full transport fix'})
         self.assertFalse(out[1]['result']['isError'])
         self.assertTrue(all(entry['result']['isError'] for entry in out[2:]))
 
@@ -877,11 +882,11 @@ class HqTools(unittest.TestCase):
             env = {**fake_hq(d), **agent_env({'PATH': fake_hq(d)['PATH']}, 'http://127.0.0.1:9', SIGN_IN_FD, 'call-token', 'juno', **FOLDERS)}
             q = "Penny's request #35; $(cat /seat/token) `id`"
             out = self.call(('search', {'query': q}), ('history', {'query': '#35'}), ('history', {}),
-                            ('when', {'what': q, 'size': '1h30m', 'agent': 'bolt', 'after': 123, 'by': '2026-10-06T14:30Z'}),
+                            ('when', {'what': q, 'size': sized_time('1h30m'), 'agent': 'bolt', 'after': 123, 'by': '2026-10-06T14:30Z'}),
                             ('intercom', {'query': q}), ('eta', {'query': q}), env=env)
             log = Path(d, 'hq.log').read_text()
         self.assertIn(f'ARG search\nARG {q}\nARG 5\n', log)  # (as typed: nothing expanded)
-        self.assertIn(f'ARG when\nARG {q}\nARG --size\nARG 1h30m\nARG --agent\nARG bolt\nARG --after\nARG 123\nARG --by\nARG 2026-10-06T14:30Z\n', log)
+        self.assertIn(f'ARG when\nARG {q}\nARG --size\nARG {sized_time("1h30m")}\nARG --agent\nARG bolt\nARG --after\nARG 123\nARG --by\nARG 2026-10-06T14:30Z\n', log)
         self.assertIn(f'ARG intercom\nARG {q}\n', log)
         self.assertIn(f'ARG projects\nARG {q}\n', log)  # (eta)
         self.assertIn('ARG history\nARG #35\n', log)

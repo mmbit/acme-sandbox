@@ -9,9 +9,11 @@ import { transcriber } from './bookvoice.mjs';
 const KEY = '#viewer > .framemic';
 // The post-it's mic in HQ's viewer, whose frame has no microphone: HQ's own key lies over it as the post-it opens and
 // records nothing by itself; one tap on it records at once, shows it's listening, and the words come into the post-it
-// as they're said; tapped again it stops, ready for another go
+// as they're said; tapped again it stops, ready for another go. While it listens, the viewer's bar names the page's host
+// the words go to.
 export async function talkedInViewer({ page, shot, named }, frame, sheet) {
   const key = page.locator(KEY),
+    to = page.locator('#viewer .bar .micto'),
     mic = sheet.locator('.mic'),
     asked = () => counted(page, 'micsAsked'),
     said = () => sheet.locator('textarea').inputValue(),
@@ -26,6 +28,7 @@ export async function talkedInViewer({ page, shot, named }, frame, sheet) {
   assert.equal(await asked(), from, 'nothing records before the tap');
   await key.click();
   assert.equal(await key.getAttribute('data-phase'), 'live', "one tap: HQ's key is listening");
+  assert.ok((await to.innerText()).includes(new URL(frame.url()).host), 'the bar names the host that gets the words');
   await until(async () => (await asked()) === from + 1, "HQ's key recording");
   await shot(named('viewer-talk'), page);
   await heard(/^Make this$/, 'the words coming into the post-it as they’re said');
@@ -33,6 +36,7 @@ export async function talkedInViewer({ page, shot, named }, frame, sheet) {
   await until(async () => /^Check the words/.test(await sheet.locator('.msg').innerText()), 'the words to check');
   assert.equal(await said(), 'Make this headline shorter', 'stopped at the key, the words stay');
   assert.equal(await key.getAttribute('data-phase'), 'ready', 'the key ready for another go');
+  assert.equal(await to.count(), 0, 'nothing named once it stops listening');
   assert.equal(await counted(frame, '__micHeard'), 0, "HQ answers on the offer's line alone, never the window");
 }
 // The page's own code offering HQ its mic's place, as review mode does: with a line for the answers (window.__ask, its

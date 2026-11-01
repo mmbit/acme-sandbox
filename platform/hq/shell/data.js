@@ -14,7 +14,7 @@ export async function get(url) {
 
 // Mock data only when HQ runs locally. On the real site a failed request (say, mid-deploy) is retried
 // with backoff, so the board never sees a fake company. Every endpoint below follows the same `dev` flag.
-const local = ['localhost', '127.0.0.1', ''].includes(location.hostname);
+export const local = ['localhost', '127.0.0.1', ''].includes(location.hostname);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 async function retry(fn) {
   for (let wait = 2000; ; wait = Math.min(wait * 2, 30000)) { try { return await fn(); } catch (e) { console.info('[hq] retrying:', e.message); await sleep(wait); } }

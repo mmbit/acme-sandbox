@@ -1,5 +1,6 @@
 // Seat headroom and per-seat usage gained per agent-hour, measured between worker readings.
 import { db } from './db.ts';
+import { recordSeatCost } from './seatcost.ts';
 import {
   recordWindowObservations,
   windowReadings,
@@ -41,6 +42,7 @@ const seatRows = (id?: string) =>
 
 export function recordSeatReading(seat: string, times: import('./seatobservations.ts').ObservationTimes = {}) {
   recordWindowObservations(seat, times);
+  recordSeatCost(seat, times.weekObservedAt);
   db.prepare(
     `insert into seat_readings (seat, minute, at, util, resets, week, week_resets)
     select id, updated / 60000, updated, util, resets, week, week_resets from seats where id = ?

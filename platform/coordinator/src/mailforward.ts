@@ -3,7 +3,8 @@
 //   domains, including what a billing sender or an account's receipt rule filed at invoices@ (mail.ts filedTo) and what
 //   the board filed from the desk phone. Never the board's own mail or a case's.
 // - Where: the server key MAIL_FORWARD_TO, which the board types on a desk-phone card (secrets.ts): never in the repo,
-//   a log line or a job.
+//   a log line or a job's brief. A company whose address is a business one names it in brand.yaml's publicKeys, so
+//   text that has it keeps it.
 // - How: each mail goes once, through the email service (mailout.ts): its text under a line saying what it is, and its
 //   attachments byte for byte. The mail stays in HQ as before. What a pass finds due goes together, in as few emails as
 //   the service's size allows, so the mail already in when the key is saved arrives as one email, or a few.

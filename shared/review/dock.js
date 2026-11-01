@@ -281,9 +281,13 @@ function covering(r) {
   addEventListener('review:cover', e => {
     r.covered = !!e.detail;
     if (r.covered) stopMic(r);
-    r.host.style.display = r.covered ? 'none' : 'block';
+    if (r.book) r.host.toggleAttribute('data-covered', r.covered);
+    else r.host.style.display = r.covered ? 'none' : 'block';
   });
-  if (r.covered) r.host.style.display = 'none'; // (covered while it loaded)
+  if (r.covered) {
+    if (r.book) r.host.setAttribute('data-covered', '');
+    else r.host.style.display = 'none';
+  }
   // (away, there's no pin to show)
   if (r.summoned) addEventListener('review:pin', e => !r.covered && !r.away && !r.fab.hidden && (e.detail.pin = r.fab));
 }

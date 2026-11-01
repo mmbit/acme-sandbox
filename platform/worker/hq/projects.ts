@@ -1,5 +1,6 @@
 // The company's projects and their deliverables (hq deliverable, hq project): HQ's projects view groups every job by
 // them.
+import * as featurecost from './featurecost.ts';
 import * as api from './api.ts';
 import { companyLevels } from './files.ts';
 import { takeValues } from './flags.ts';
@@ -15,9 +16,10 @@ export const deliverable = {
    hq deliverable move <project>/<slug> <project>    move the deliverable to another project, as <project>/<slug> there,
                                                      with its jobs, reviews, pause and estimates (its owner, the CEO or
                                                      Process). The old id keeps working. Out of a pause: its owner or
-                                                     the CEO, with --why "reason", shown on the feed${outlooks.help}${pauses.help('thread')}`,
+                                                     the CEO, with --why "reason", shown on the feed${outlooks.help}${pauses.help('thread')}${featurecost.help}`,
 
   async run([action, ...args]: string[]) {
+    if (['feature', 'feedback', 'cost', 'milestone'].includes(action)) return featurecost.record(action, args);
     if (action === 'pause') return pauses.pause('thread', args);
     if (action === 'resume') return pauses.resume('thread', args);
     if (action?.includes('/') && !args.length) return outlooks.thread(action);

@@ -2,8 +2,8 @@
 // version, and what a finished task did, written by a small model from the agent's words (plainnames.ts). The agent's words stay on their row for the
 // agents, and a plain version stands only while the words it was made from do. Until it's made, or once they change,
 // the board reads the agent's own words, and the plain version replaces them when it comes; why a naming failed stays
-// on its row, for the agents. Review seats and tasks holding customer details aren't named: HQ's or the agent's own
-// title is theirs.
+// on its row, for the agents. Review seats and tasks marked before as holding customer details aren't named: HQ's or
+// the agent's own title is theirs.
 import { db, prepared, redacted } from './db.ts';
 
 // (meeting: its topic, by its id; did: what a finished task did, by its job's id, from its report.)
@@ -17,8 +17,8 @@ db.exec(`create table if not exists board_names (kind text not null, id text not
 // (a key saved later leaves a report's copy and its summary too, as it leaves the report: db.ts scrub())
 redacted('board_names', 'words', 'plain', 'error');
 
-// The tasks the model names, of the jobs as `j`: work, never a review's seats (HQ names those) nor one holding customer
-// details (house rule 7)
+// The tasks the model names, of the jobs as `j`: work, never a review's seats (HQ names those) nor one marked before as
+// holding customer details (house rule 7)
 export const namedTask = (j: string) => `(${j}.kind = 'work' and ${j}.customers = 0)`;
 
 // What the board reads for the agent's words: their plain version, or the words themselves while there's none

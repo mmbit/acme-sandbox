@@ -14,9 +14,11 @@ import {
   createWriteStream,
   existsSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   renameSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -29,6 +31,7 @@ import { db, remember, setting } from './db.ts';
 import * as jobs from './jobs.ts';
 import * as machines from './machines.ts';
 import { secret } from './secrets.ts';
+import * as storage from './storage.ts';
 import { reply } from './uploads.ts';
 
 type RunState = 'waiting' | 'running' | 'done' | 'withdrawn' | 'stopped' | 'lost';
@@ -114,6 +117,11 @@ const BRING_MAX = 100;
 // takes it
 const WAITING_MAX = 4;
 const receiving = new Map<number, number>();
+// The bundles of every job's runs not ended yet, those still coming in counted, on the volume the database and mail
+// share. A run's is a few hundred MB, so dozens of jobs' runs fit under it at once, and a few jobs' four 1 GiB bundles
+// can't fill the disk. (An object, so a test can lower it.)
+export const BUNDLES = { maxBytes: 16 * 2 ** 30 };
+let receivingBytes = 0;
 // A faster machine that asked for work this recently, and has no run, takes the next on its next ask
 const READY_MS = 20_000;
 // The board's HQ hears of the machines at most this often
@@ -277,6 +285,8 @@ export const routeTable: RouteTable = {
 };
 
 export function start() {
+  // the uploads a restart cut off (none is under way yet).
+  for (const name of readdirSync(DIR)) if (name.startsWith('incoming-')) rmSync(`${DIR}/${name}`, { force: true });
   publishKinds();
   publishHolds();
   setInterval(() => {
@@ -333,26 +343,15 @@ async function createRun(job: Job, spec: any, body: IncomingMessage) {
   if (problem) return new Refusal(400, problem);
   const kind = kindNamed(spec.kind);
   if (kind instanceof Refusal) return kind;
-  const waiting = db
-    .prepare("select count(*) as n from helper_runs where job = ? and state = 'waiting'")
-    .get(job.id) as {
-    n: number;
-  };
-  if (waiting.n + (receiving.get(job.id) ?? 0) >= WAITING_MAX)
-    return new Refusal(
-      429,
-      `${WAITING_MAX} of this job's runs wait for a helper already: send this one once one is taken`,
-    );
-  receiving.set(job.id, (receiving.get(job.id) ?? 0) + 1);
+  const room = roomForBundle(job, body);
+  if (room instanceof Refusal) return room;
   // (received in full before the run is there for a helper to take)
   const incoming = `${DIR}/incoming-${randomUUID()}.tar.gz`;
   let received: boolean;
   try {
     received = await receive(body, incoming, BUNDLE_MAX_BYTES);
   } finally {
-    const left = receiving.get(job.id)! - 1;
-    if (left) receiving.set(job.id, left);
-    else receiving.delete(job.id);
+    room.release();
   }
   if (!received)
     return new Refusal(413, `the bundle is over ${BUNDLE_MAX_BYTES / 2 ** 20} MB: name only the folders the run needs`);
@@ -375,6 +374,49 @@ async function createRun(job: Job, spec: any, body: IncomingMessage) {
   mkdirSync(`${DIR}/${id}`, { recursive: true });
   renameSync(incoming, `${DIR}/${id}/bundle.tar.gz`);
   return { id, kind: kind.name, helper: kindHelper(kind.name) };
+}
+
+// Room for a job's run's bundle on HQ's volume: under the job's WAITING_MAX, the total of all runs' and the disk's floor
+// (storage.ts), held until release, when the bundle is in and the disk counts its file. A body that gives no length is
+// charged the most a bundle may be.
+function roomForBundle(job: Job, body: IncomingMessage) {
+  const waiting = db
+    .prepare("select count(*) as n from helper_runs where job = ? and state = 'waiting'")
+    .get(job.id) as {
+    n: number;
+  };
+  if (waiting.n + (receiving.get(job.id) ?? 0) >= WAITING_MAX)
+    return new Refusal(
+      429,
+      `${WAITING_MAX} of this job's runs wait for a helper already: send this one once one is taken`,
+    );
+  const size = Math.min(Number(body.headers['content-length']) || BUNDLE_MAX_BYTES, BUNDLE_MAX_BYTES);
+  if (bundlesHeld() + size > BUNDLES.maxBytes)
+    return new Refusal(
+      429,
+      `the runs waiting on HQ hold ${Math.round(BUNDLES.maxBytes / 2 ** 30)} GB of bundles already: send this one once some are taken`,
+    );
+  const writes = { files: [size], folders: 1 };
+  if (!storage.room(writes)) return new Refusal(429, "HQ's disk is low: send this run again later");
+  const disk = storage.reserve(writes);
+  receiving.set(job.id, (receiving.get(job.id) ?? 0) + 1);
+  receivingBytes += size;
+  return {
+    release: () => {
+      const left = receiving.get(job.id)! - 1;
+      if (left) receiving.set(job.id, left);
+      else receiving.delete(job.id);
+      receivingBytes -= size;
+      disk.release();
+    },
+  };
+}
+
+// The bytes of the bundles HQ holds for runs not ended, and of those coming in
+function bundlesHeld() {
+  const open = db.prepare("select id from helper_runs where state in ('waiting', 'running')").all() as { id: number }[];
+  const sizeOf = (id: number) => statSync(`${DIR}/${id}/bundle.tar.gz`, { throwIfNoEntry: false })?.size ?? 0;
+  return open.reduce((bytes, { id }) => bytes + sizeOf(id), receivingBytes);
 }
 
 function specProblem(spec: any) {

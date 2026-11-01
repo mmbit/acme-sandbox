@@ -13,6 +13,8 @@ import * as seatreplay from './seatreplay.ts';
 import { db } from './db.ts';
 import { findAgent } from './jobs.ts';
 import * as predictions from './predictions.ts';
+import type { Confidence } from './confidence.ts';
+import { readSizing, type TokenBudget } from './tokenbudget.ts';
 import { readSize } from './sizes.ts';
 import { corrected } from './sizerbias.ts';
 import { agreed, type Deadline } from './deadlines.ts';
@@ -29,7 +31,15 @@ const STEP_MS = 5 * MINUTE_MS;
 const PLANNED = -1;
 
 export type Ask = { q?: unknown; size?: unknown; agent?: unknown; after?: unknown; by?: unknown; extra_seat?: unknown };
-type Given = { title: string; agent: string; size: number | null; after?: number; by?: number };
+type Given = {
+  title: string;
+  agent: string;
+  size: number | null;
+  token_budget: TokenBudget;
+  confidence: Confidence;
+  after?: number;
+  by?: number;
+};
 // A window against the work's play: the thread, how far past its deadline it ends (null: no finish in sight then).
 export type Give = { thread: string; project: string; name: string; deadline: number; past_ms: number | null };
 // unpriced: seats without measured window prices. Their exhaustion times remain unknown.
@@ -81,21 +91,27 @@ export async function when(ask: Ask, asker: string, now = Date.now()) {
       : given.by!;
   return {
     work: { title: given.title, agent: given.agent, engine: planned.engine },
-    size: {
-      agent_minutes: minutes(planned.size.agent_ms),
-      given: given.size !== null,
-      // (the size as given, and the asker's bias it plays at)
-      given_minutes: minutes(given.size!),
-      bias: planned.bias && { by: asker, ...planned.bias },
-      compared: 0,
-      basis: { kind: 'work', agent: given.agent, words: [] },
-      guessed: false,
-    },
+    size: quotedSize(given, planned, asker),
     free,
     ...answer,
     safe: await safeFinish(due),
     horizon_days: HORIZON_DAYS,
     played: { plays: plays(), ms: Math.round(performance.now() - t0) },
+  };
+}
+
+function quotedSize(given: Given, planned: ReturnType<typeof plannedWork>, asker: string) {
+  return {
+    agent_minutes: minutes(planned.size.agent_ms),
+    given: given.size !== null,
+    // (the size as given, and the asker's bias it plays at)
+    given_minutes: minutes(given.size!),
+    bias: planned.bias && { by: asker, ...planned.bias },
+    compared: 0,
+    basis: { kind: 'work', agent: given.agent, words: [] },
+    guessed: false,
+    confidence: given.confidence,
+    token_budget: given.token_budget,
   };
 }
 
@@ -127,13 +143,11 @@ function readAsk(ask: Ask, asker: string, now: number): Given | string {
   const agent = String(ask.agent ?? '').trim() || asker;
   if (!title) return 'say what the work is: hq when "what"';
   if (!findAgent(agent)) return `there's no agent ${agent.slice(0, 40)}`;
-  let size: number | null = null;
-  if (ask.size !== undefined && ask.size !== '') {
-    const read = readSize(String(ask.size), 'size');
-    if (typeof read === 'string') return read;
-    size = read;
-  }
-  if (size === null) return 'judge the comparable scopes with hq estimate, then give your estimate with --size';
+  const sizing = readSizing(ask.size);
+  if (typeof sizing === 'string') return sizing;
+  const size = readSize(sizing.time, 'size');
+  if (typeof size === 'string') return size;
+  if (!sizing.budget) return 'give --size as JSON with time, tokens, feedback_rounds and confidence';
   let after: number | undefined;
   if (ask.after !== undefined && ask.after !== '') {
     after = Number(String(ask.after).replace(/^#/, ''));
@@ -147,7 +161,7 @@ function readAsk(ask: Ask, asker: string, now: number): Given | string {
     if (typeof at === 'string') return at;
     by = at;
   }
-  return { title, agent, size, after, by };
+  return { title, agent, size, token_budget: sizing.budget, confidence: sizing.confidence!, after, by };
 }
 
 // The work as a job queued now, by the size given, played at what the asker's sizes have lately come to
