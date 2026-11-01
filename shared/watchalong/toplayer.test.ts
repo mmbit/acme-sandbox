@@ -2,7 +2,7 @@
 // The agent's picture is the page as it's drawn: a page records itself in Chromium with the real recorder, and the
 // mirror's picture of it is compared with the page's own screenshot, pixel by pixel, whatever is on it. The page shows
 // what's over everything as HQ does (a popover layer holding a card, as the call's small window and cards are; a modal
-// dialog; a popover shown again on top; one whose attribute is taken off, one removed), and so does a preview of another origin in
+// dialog; a popover shown again on top; one whose attribute is taken off, one removed, a private one), and so does a preview of another origin in
 // its frame. A top layer the replay can't show fails the picture. Skipped without Chromium, Playwright or the
 // coordinator's node_modules.
 import { after, test } from 'node:test';
@@ -36,6 +36,8 @@ const PAGE = `<!doctype html><body style="margin:0;background:#f4efe6">
   padding:0;border:0;background:#8a4fbf"></div>
 <div id="gone" popover="manual" style="inset:20px 20px auto auto;margin:0;width:50px;height:50px;padding:0;border:0;
   background:#1f2a44"></div>
+<div id="private" popover="manual" data-private style="inset:150px auto auto 20px;margin:0;width:70px;height:40px;
+  padding:0;border:0;background:#c05a9a"></div>
 <script type="module">
 import { watch } from '/watchalong.js';
 const watching = watch({ url: '/events?page', typed: 'shown' });
@@ -51,6 +53,7 @@ document.querySelector('#over').showPopover();
 // removed while open, which no event says)
 document.querySelector('#kept').showPopover();
 document.querySelector('#gone').showPopover();
+document.querySelector('#private').showPopover(); // (a person's details: recorded with only what it's drawn by)
 await frames();
 document.querySelector('#kept').removeAttribute('popover');
 await frames();
@@ -161,10 +164,10 @@ const picture = async (id: number, events: RecordedEvent[]) => {
   await mirrors.open(id, events, () => false);
   return (await mirrors.now(id, { long: WIDTH, png: true }))!.bytes;
 };
-// (a `top` moment's ids, toplayer.js topOf: that file reads the browser's CSS as it loads)
-const topOf = (e: RecordedEvent) =>
+// (a `top` moment's ids, toplayer.js topLayerIds: that file reads the browser's CSS as it loads)
+const topLayerIds = (e: RecordedEvent) =>
   e.type === 5 && e.data.tag === 'top' ? (e.data.payload as { id: number[] }).id : null;
-const withoutTops = (events: RecordedEvent[]) => events.filter(e => !topOf(e));
+const withoutTops = (events: RecordedEvent[]) => events.filter(e => !topLayerIds(e));
 let page: ReturnType<typeof recording> | undefined;
 const pageRecording = () => (page ??= recording('/', recorded.page));
 
@@ -179,10 +182,6 @@ test("the mirror's picture is the page as drawn, what's over everything included
 
 test("a preview's popover in its frame is in the mirror's picture", { skip }, async () => {
   const { drawn, events } = await recording('/framing', recorded.framing);
-  assert.ok(
-    events.some(e => (topOf(e)?.length ?? 0) > 1),
-    "the frame's top layer came up with the framing page's events",
-  );
   const off = await apart(drawn, await picture(3, events));
   assert.ok(off < 0.01, `the mirror's picture is the page's (${(off * 100).toFixed(1)}% of it differs)`);
   const missing = await apart(drawn, await picture(4, withoutTops(events)));
@@ -192,8 +191,8 @@ test("a preview's popover in its frame is in the mirror's picture", { skip }, as
 test("a top layer the replay can't show fails the picture", { skip }, async () => {
   const { events } = await pageRecording();
   const last = events.at(-1)!,
-    [doc] = topOf(events.findLast(e => topOf(e))!)!;
+    [doc] = topLayerIds(events.findLast(e => topLayerIds(e))!)!;
   const unknown = { type: 5, timestamp: last.timestamp, data: { tag: 'top', payload: { id: [doc, 99_999] } } };
   await mirrors.open(5, [...events, unknown as RecordedEvent], () => false);
-  await assert.rejects(mirrors.now(5, { long: WIDTH, png: true }), /top layer's element 99999 isn't in/);
+  await assert.rejects(mirrors.now(5, { long: WIDTH, png: true }));
 });

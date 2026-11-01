@@ -878,34 +878,46 @@ test("the board's first mark on a call, before the notes page is asked for, is o
   assert.equal(myNotebook().archived, 0, 'My journal stays on the shelf');
 });
 
-test("a call's pages read like any page, a customer call's too (its summary only by its readers), but a keys call's pages stay its agent's", async () => {
+test("a call's pages read like any page, but a customer call's go to its readers and the jobs a sheet went to (its summary only to its readers), and a keys call's stay its agent's", async () => {
   const sketches = async (token: string) =>
     ((await h.agent('sketches', token)).body.sketches as { id: number }[]).map(p => p.id);
-  const holds = async (job: number) => (await h.worker('customers', { job })).body.customers as boolean;
   const kit = await h.start({ agent: 'kit' });
+  const plain = await h.liveCall('juno');
+  const open = (await h.board('/api/notebooks/call', { call: plain.call })).body.page.id as number;
+  assert.equal((await h.voice('scrap', { call: plain.call, words: 'Warmer colours', goal: GOAL })).status, 200);
+  await h.voice('call-end', { agent: 'juno', lines: ['Board: that line.'], token: plain.token });
+  await wentIn(open);
+  assert.ok((await sketches(kit.token)).includes(open), 'a call that is about no customer: any job');
+  assert.equal((await h.agent(`sketch?id=${open}`, kit.token)).status, 200);
+
   const { call, token } = await h.liveCall('juno');
-  jobs.readerHanded({ id: 0, agent: 'juno', callId: call }); // (a look-up on the call handed it a customer's details)
+  h.db.prepare('update calls set customers = 1 where id = ?').run(call);
   const page = (await h.board('/api/notebooks/call', { call })).body.page.id as number;
   await h.board('/api/book/note', { page, anchor, words: 'the colours here', said: 'spoken' });
   // (the agent's own note keeps the page: the board's scribble alone doesn't go in.)
   assert.equal((await h.voice('scrap', { call, words: 'Warmer colours', goal: GOAL })).status, 200);
   await h.voice('call-end', { agent: 'juno', lines: ['Board: that line.'], token });
   await wentIn(page);
-  assert.ok((await sketches(kit.token)).includes(page));
-  assert.equal((await h.agent(`sketch?id=${page}`, kit.token)).status, 200);
-  assert.equal(await holds(kit.id), false, 'and nothing marked');
-  // but the follow-up's summary of it carries the customer's details: only the call's readers get it, marked
+  // its scraps may be crops of the customer's screen: another job neither lists nor reads it
+  assert.ok(!(await sketches(kit.token)).includes(page));
+  assert.equal((await h.agent(`sketch?id=${page}`, kit.token)).status, 403);
+  // a job a sheet of it went to reads it, but not the follow-up's summary
+  const pip = await h.start({ agent: 'lark' });
+  const sheet = db
+    .prepare("insert into book_sheets (created, job, page) values (datetime('now'), ?, ?)")
+    .run(pip.id, page).lastInsertRowid;
+  db.prepare(
+    "insert into book_notes (sheet, page, n, by, anchor, created, updated) values (?, ?, 1, 'board', '{}', datetime('now'), datetime('now'))",
+  ).run(sheet, page);
   db.prepare('update calls set reply = ? where id = ?').run("Ada's parcel goes to her neighbour", call);
   const summaryOf = async (token: string) =>
     ((await h.agent('sketches', token)).body.sketches as { id: number; summary: string | null }[]).find(
       p => p.id === page,
     )!.summary;
-  assert.equal(await summaryOf(kit.token), null);
-  assert.equal((await h.agent(`sketch?id=${page}`, kit.token)).body.summary, null);
-  assert.equal(await holds(kit.id), false, 'still nothing marked');
+  assert.equal((await h.agent(`sketch?id=${page}`, pip.token)).status, 200);
+  assert.equal(await summaryOf(pip.token), null);
   const vera = await h.start({ agent: 'vera' });
   assert.equal(await summaryOf(vera.token), "Ada's parcel goes to her neighbour", "roles.customerData's");
-  assert.equal(await holds(vera.id), true, 'and its reader holds them');
 
   const card = jobs.createRequest({
     kind: 'credential',

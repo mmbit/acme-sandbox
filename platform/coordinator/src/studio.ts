@@ -601,7 +601,7 @@ export function listForAgent() {
 }
 
 // hq studio add: a desk-phone card's product shots (one field, or every saved one) into the studio, for an open
-// request. Never a customer's card: its photos hold their details, and the studio sends them to the image model. The
+// request. Never a card marked before as a customer's (jobs.customerCard): the studio sends photos to the image model. The
 // keeper may add any other card's; anyone else the cards they could read anyway.
 export function addFromCard(b: any, me: Me) {
   const card = Number(b.card),

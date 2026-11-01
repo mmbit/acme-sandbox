@@ -10,7 +10,7 @@
 //     still waiting.
 //   - Any job reads every page (hq sketches, hq sketch <id>), and a board call's agent one by number or label words
 //     (bookreads.ts): the board shares its book with the whole team, a call's pages too (but a call about a card for
-//     keys: its own). An invited person's are theirs, outside text.
+//     keys: its own; about a customer: its readers'). An invited person's are theirs, outside text.
 //   (HQ's Sketchbook app, which drew on the free pages, is gone)
 import { existsSync, mkdirSync, rmSync, utimesSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';

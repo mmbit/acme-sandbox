@@ -118,6 +118,7 @@ export const de = {
   sentAt: 'Gesendet {time}',
   micBlocked: 'Das Mikrofon ist hier blockiert',
   micFirstTap: 'Tippe einmal auf ein Mikrofon, um Sprachnotizen einzuschalten',
+  micIntercom: 'Öffne die Gegensprechanlage und tippe auf ihr Mikrofon, um Sprachnotizen zu erlauben',
   micFailed: 'Das Mikrofon ist nicht angegangen',
   transcriberAway: 'Die Transkription ist gerade nicht verfügbar',
   noWordsHeard: 'Es kamen keine Wörter an',

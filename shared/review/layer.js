@@ -1,20 +1,22 @@
-// Review mode's own element over the page: a closed shadow root (product styles can't touch it) at the page's end, and
-// above the page's popups.
-// On HQ's own pages (r.book) the page is <body>, beside the book (platform/hq/shell/ink/book.js; Ink's folder): the host lives in it, and its layout containment fits the host's fixed box to the
-// page, so the Pencil never draws over the book's paper or rail, and the book's spread covers it with the page. In the
-// top layer (over one of HQ's dialogs) the host leaves the book's room itself, and its own layout containment keeps the
-// fixed .ui in its box.
-const homeOf = r => (r.book ? document.body : document.documentElement);
+// Review mode's controls and ink above the page, including its overlays.
+// HQ's controls leave room for the Notebook. Its ink spans the viewport so an overlay above the Notebook can be marked too.
 
 // The host and its shadow root, with css and the markup in it: r.host, r.root
 export function makeHost(r, css, html) {
   const host = (r.host = document.createElement('review-mode'));
+  host.setAttribute('data-review-ui', '');
   host.setAttribute(
     'style',
     `all:initial;position:fixed;inset:0;z-index:2147483647;pointer-events:none;display:block${r.book ? ';contain:layout' : ''}`,
   );
-  const root = (r.root = host.attachShadow({ mode: 'closed' }));
+  const root = (r.root = host.attachShadow({ mode: 'open' }));
   root.innerHTML = html;
+  if (r.book)
+    css += `
+    .ui { right: var(--book-room, 0px); }
+    .halo, .ink, .wet { width: 100vw; height: 100dvh; }
+    :host([data-spread]) .dock, :host([data-covered]) .dock { display: none; }
+  `;
   // (a stylesheet of its own rather than a <style>, so a page whose CSP admits no inline style, like HQ's, still draws it)
   try {
     const sheet = new CSSStyleSheet();
@@ -23,7 +25,7 @@ export function makeHost(r, css, html) {
   } catch {
     root.prepend(Object.assign(document.createElement('style'), { textContent: css }));
   }
-  homeOf(r).append(host);
+  document.documentElement.append(host);
 }
 
 // Above the page's popups: a modal dialog (showModal) or a popover sits in the browser's top layer, over any z-index,
@@ -53,15 +55,15 @@ function opening(r, el) {
 // reshow: a popup opened or closed, so the host joins the top layer again, after it
 function liftHost(r, reshow) {
   const { host } = r;
+  host.toggleAttribute('data-spread', r.book && document.documentElement.dataset.book === 'spread');
   r.popups = r.popups.filter(e => e.isConnected);
-  // (not into a popup marked data-no-ink, no page to write on: a call's floating parts over HQ's spread book, which
-  // would lift the ink over the book with them.)
+  // Floating controls own their pen events and their lifetime, so the ink stays outside their layer.
   const modal = activeModal(r),
     topmost = openPopups(r).findLast(e => (!modal || modal.contains(e)) && !e.matches('[data-no-ink]'));
   if (!topmost) {
-    if (host.parentNode !== homeOf(r)) homeOf(r).append(host);
-    host.removeAttribute('popover');
-    host.style.right = '0';
+    if (host.parentNode !== document.documentElement) document.documentElement.append(host);
+    if (r.book) showHost(host, reshow);
+    else host.removeAttribute('popover');
     return;
   }
   let showAgain = reshow;
@@ -69,10 +71,11 @@ function liftHost(r, reshow) {
     topmost.append(host);
     showAgain = true;
   } // (out of the document, a popover is hidden)
+  showHost(host, showAgain);
+}
+function showHost(host, again) {
   host.popover = 'manual';
-  // (the top layer is placed by the window: on HQ's pages it leaves the book's room, as HQ's own dialogs do.)
-  if (r.book) host.style.right = 'var(--book-room, 0px)';
-  if (showAgain && host.matches(':popover-open')) host.hidePopover();
+  if (again && host.matches(':popover-open')) host.hidePopover();
   if (!host.matches(':popover-open')) host.showPopover();
 }
 // the dialogs whose open attribute changed, in order; true when there was one
@@ -85,22 +88,23 @@ function dialogsChanged(r, records) {
 export function followPopups(r) {
   r.popups = [];
   if (!('showPopover' in r.host && CSS.supports('selector(:modal)'))) return;
-  r.popups = [...document.querySelectorAll('dialog[open], [popover]')].filter(inTopLayer);
+  r.popups = [...document.querySelectorAll('dialog[open], [popover]')].filter(el => el !== r.host && inTopLayer(el));
   const modal = activeModal(r);
   if (modal) r.popups = [...r.popups.filter(e => !modal.contains(e)), ...r.popups.filter(e => modal.contains(e))];
   const watch = new MutationObserver(records => {
+    r.host.toggleAttribute('data-spread', r.book && document.documentElement.dataset.book === 'spread');
     const changed = dialogsChanged(r, records);
     // (or a popup, or the host in it, taken out)
     if (changed || !r.host.isConnected || r.popups.some(e => !e.isConnected)) liftHost(r, changed);
   });
-  watch.observe(document, { attributes: true, attributeFilter: ['open'], childList: true, subtree: true });
+  watch.observe(document, { attributes: true, attributeFilter: ['open', 'data-book'], childList: true, subtree: true });
   addEventListener(
     'beforetoggle',
     e => {
       if (e.target === r.host || !e.target.hasAttribute?.('popover') || e.newState !== 'open') return;
       const changed = dialogsChanged(r, watch.takeRecords());
       opening(r, e.target);
-      if (changed) liftHost(r, true);
+      if (changed) queueMicrotask(() => liftHost(r, true));
     },
     true,
   );

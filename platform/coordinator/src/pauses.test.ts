@@ -151,7 +151,7 @@ test("--until wakes the pause's owner once its jobs have all merged or ended, an
   );
   await merge(first, 71);
   await h.finish(second, { status: 'done', pr: 72, branch: `job/${second.id}` });
-  h.jobs.handedCustomerData(second.id);
+  db.prepare('update jobs set customers = 1 where id = ?').run(second.id); // (marked before as holding a customer's details)
   assert.equal(pauses.open()[0].until[1].state, 'in review (PR #72)');
   pausewake.sweep();
   assert.equal(pauses.open()[0].woken, null, 'one still in review: nothing wakes yet');
@@ -187,7 +187,7 @@ test("--until wakes the pause's owner once its jobs have all merged or ended, an
   assert.match(
     woke.prompt,
     new RegExp(`#${second.id} moss: .*It ended done without merged work[.]\\n {2}Its report: \\(it holds a customer's`),
-    "a report with a customer's details stays with its job",
+    "a report marked before as holding a customer's details stays with its job",
   );
   assert.match(woke.prompt, /nothing lifts it but a resume/);
   assert.match(woke.prompt, /Delivered means what the board asked for is in its hands: the thing itself/);
@@ -657,7 +657,7 @@ test('a handled item linked to a pause acknowledges its call follow-up', async (
   assert.ok(followed.processed_at, 'the follow-up processed its call');
 });
 
-test('a pause keeps customer item summaries and quotes with jobs allowed to read their call', async () => {
+test("a pause keeps the item summaries and quotes of a call marked before as a customer's with jobs allowed to read it", async () => {
   reset();
   thread('levels');
   const followup = await h.start({ agent: ceo() });
@@ -675,14 +675,10 @@ test('a pause keeps customer item summaries and quotes with jobs allowed to read
   const shown = await h.hq(check, 'followthrough');
   assert.equal(shown.code, 0, shown.out);
   assert.doesNotMatch(shown.out, /Private customer/);
-  const customers = (id: number) =>
-    (db.prepare('select customers from jobs where id = ?').get(id) as { customers: number }).customers;
-  assert.equal(customers(check.id), 0);
   const helper = h.queue({ agent: ceo(), item });
   const permitted = read({ id: helper, agent: ceo() });
   assert.match(permitted, /Private customer hold/);
   assert.match(permitted, /Private customer instruction/);
-  assert.equal(customers(helper), 1);
 });
 
 test('work the pause waits for, closed with its commits on main already, wakes its owner; a redraw carries the wait', async () => {

@@ -321,6 +321,9 @@ body.touring #zoom, body.touring #status, body.touring #hint { display: none; }
 #viewer .bar .where i { flex: none; margin-left: 6px; font-style: normal; color: var(--gold); }
 #viewer .bar .pin { background: var(--red); color: #fff; }
 #viewer .bar .pin svg { width: 16px; height: 16px; fill: currentColor; }
+/* Where the words go while HQ's mic key listens for the page (framemic.js), in the address's place. */
+#viewer .bar .where:has(+ .micto) { display: none; }
+#viewer .bar .micto { flex: 1; min-width: 0; padding: 0 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--red); font-weight: 600; }
 /* HQ's own mic key over the post-it's mic of a page in the viewer, looking as that one does (shared/review/dictation.js
    .mic): only its tap records, at once, red and breathing with the voice while it does (framemic.js, which places it). */
 #viewer > .framemic { position: fixed; z-index: 2; display: grid; place-items: center; padding: 0; border: 0; border-radius: 50%;
@@ -814,7 +817,7 @@ body.touring #zoom, body.touring #status, body.touring #hint { display: none; }
 /* a picture or a page over the call's window, to let go there (shell/calldrop.js): its screen or bubble lit, ringed in
    the call's accent */
 #call-layer .device[data-drop], .callbubble[data-drop] { outline: 4px dashed var(--gold); outline-offset: 6px; box-shadow: 0 0 0 12px color-mix(in srgb, var(--gold) 30%, transparent), var(--shadow-xl); }
-.callbubble[data-drop] { outline-color: var(--cb-accent); scale: 1.12; }
+.callbubble[data-drop] { outline-color: var(--cb-accent); }
 .callbubble .cb-face { position: relative; display: grid; place-items: end center; height: 84px; padding: 0; overflow: hidden; cursor: inherit; font: inherit;
   background: var(--scr-bg); border: var(--bw) solid var(--scr-frame); border-radius: var(--r); } /* (the bob says it speaks: no ring.) */
 .callbubble .cb-face > img { width: 36px; height: 72px; image-rendering: pixelated; transform-origin: 50% 100%; -webkit-touch-callout: none; }

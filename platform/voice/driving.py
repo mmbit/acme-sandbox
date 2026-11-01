@@ -7,7 +7,8 @@ fresh look before the next ring (drawing.py moved). Both tools ask through the l
 draw does. HQ shows the suggestion as a card with Open and Not now, which blocks nothing, and moves the board's screen;
 the board can scroll, draw or take over at any moment, as HQ never blocks its own touch. HQ answers both on the call's
 WebSocket (server.py app_call: 'opened', 'driven')."""
-import itertools, re
+import itertools, os, re
+from urllib.parse import urlsplit
 
 from answers import Answers
 from drawing import WHAT_MOST, one_line, refused, spot_asked, what_asked
@@ -15,6 +16,10 @@ from drawing import WHAT_MOST, one_line, refused, spot_asked, what_asked
 # What the agent may open: a preview page (HQ's own PREVIEW in platform/hq/shell/desk.js, whose viewer opens it) or one
 # of HQ's screens as its deep link (main.js's tools: /?open=jobs&job=<id> and the like). Nothing else reaches HQ.
 PREVIEW = re.compile(r'https://[a-z0-9-]+\.preview\.[a-z0-9.-]+(/\S*)?')
+# Of the previews, only the company's own: the host <slug>.preview.<zone>, on the zone HQ's host is on (the line's
+# ORIGIN, https://hq.<zone>: the coordinator's ZONE). The line holds a suggestion to it (open_tool); the call agent's
+# tools (hq_tools.py) have no ORIGIN, so they check the shape alone.
+OWN_PREVIEWS = 'preview.' + (urlsplit(os.environ.get('ORIGIN', '')).hostname or '').partition('.')[2]
 HQ_SCREEN = re.compile(r'/\?open=(phone|jobs|projects|book|computer|gazette|intercom)(&\S*)?')
 # How the agent scrolls a screen at a time, or to an end of the page
 BY = ('down', 'up', 'top', 'bottom')
@@ -78,6 +83,11 @@ def work_asked(work):
     return {'what': what, 'address': address}
 
 
+def ours(address):
+    """Whether an address work_asked took is one of HQ's screens or a preview on the company's own zone."""
+    return not PREVIEW.fullmatch(address) or urlsplit(address).hostname.partition('.')[2] == OWN_PREVIEWS
+
+
 def move_asked(drive):
     """A move of the board's screen the agent asks for (exactly one of to, by and point), cleaned, or None if it isn't
     one."""
@@ -106,7 +116,7 @@ class Driving:
         answers at once. Refused where the line can't drive (drawing.refused), and with a suggestion still waiting."""
         if refusal := refused(self.call, OPEN_WORDS):
             return {'error': refusal}
-        if not (work := work_asked(asked.get('open_work'))):
+        if not (work := work_asked(asked.get('open_work'))) or not ours(work['address']):
             return {'error': OPEN_WORDS['shape']}
         if self.waiting:
             return {'error': OPEN_WORDS['waiting'].format(what=self.waiting['what'])}

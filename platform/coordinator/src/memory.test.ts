@@ -15,10 +15,11 @@ const memory = await import('./memory.ts');
 const q = encodeURIComponent;
 
 const running = (agent: string) => h.start({ agent, title: `test job for ${agent}` });
-// A job of the agent's that ran and ended with this report (customers: a tool handed it a customer's details)
+// A job of the agent's that ran and ended with this report (customers: marked before as holding a customer's details)
 async function finished(agent: string, title: string, result: string, { customers = false, pr = 0, before }: { customers?: boolean; pr?: number;
   before?: (j: Running) => Promise<unknown> } = {}) {
-  const j = await h.start({ agent, title, customers });
+  const j = await h.start({ agent, title });
+  if (customers) db.prepare('update jobs set customers = 1 where id = ?').run(j.id);
   await before?.(j);
   assert.equal((await h.finish(j, { result, ...(pr ? { pr, branch: `job/${j.id}`, sha: 'abc' } : {}) })).status, 200);
   return j.id;
@@ -38,10 +39,9 @@ async function call(agent: string, lines: string[], report: string, request?: nu
   return { id: ctx.call as number, follow };
 }
 const hits = async (token: string, s: string) => (await agent(`search?q=${q(s)}&limit=30`, token)).body.hits.map((x: any) => x.pointer) as string[];
-const holds = async (j: { id: number }) => (await h.worker('customers', { job: j.id })).body.customers as boolean;
 
-// Penny's own work (a job with a PR, the requests it asked, one for keys, a call), Wren's, and Poppy's (handed a customer's
-// details). Job ids ahead of request ids (an earlier job of someone else's first), so a '#n' names one of them.
+// Penny's own work (a job with a PR, the requests it asked, one for keys, a call), Wren's, and Poppy's (marked before as
+// holding a customer's details). Job ids ahead of request ids (an earlier job of someone else's first), so a '#n' names one of them.
 await finished('kit', 'An earlier job', 'Done.');
 const wrens = await finished('wren', 'Wren ships the wobblecart', 'The wobblecart job is done.');
 const poppys = await finished('poppy', 'Answer a customer', 'Replied to the customer about the platypusorder refund.', { customers: true });
@@ -81,10 +81,9 @@ test("An agent's jobs and requests are its own, a key request's too, and a custo
   assert.deepEqual((await hits(wren.token, 'quokkaseat')).filter(p => p.startsWith('hq ')), []);
   assert.ok((await hits(wren.token, 'ferretledger')).includes(`hq call ${callId}`), "Penny's call with the board is shared (#1877)");
   assert.ok((await hits(wren.token, 'wobblecart')).includes(`hq history '#${wrens}'`));
-  // Poppy's job was handed a customer's details: nobody finds it, not even Poppy's next job (charter rule 7)
+  // Poppy's job holds a customer's details: nobody finds it, not even Poppy's next job (charter rule 7)
   assert.deepEqual(await hits(poppy.token, 'platypusorder'), []);
   assert.deepEqual(await hits(penny.token, 'platypusorder'), []);
-  assert.equal(await holds(poppy), false, 'left out, so nothing to hold');
   // a key request is its agent's like any other: a key's value never reaches its text (db.ts redacted())
   assert.ok((await hits(penny.token, 'narwhalbank')).includes(`hq history '#${keys}'`));
   assert.deepEqual(await hits(wren.token, 'narwhalbank'), []);
@@ -127,28 +126,21 @@ test("History shows its own agent what it did: a key request's text; a customer-
     assert.deepEqual((await agent(`history?q=${q(query)}`, wren.token)).body.jobs.filter((j: any) => j.id === poppys), [], query);
   }
   assert.deepEqual((await agent(`history?q=${q('platypusorder refund')}`, poppy.token)).body.jobs, [], 'its words find nothing');
-  assert.equal(await holds(poppy), false);
 });
 
-test("A customer's details reach only the job working on them: hq call refuses its agent's next job with why, and the role's reader holds them once it reads, so it can't write to a guest", async () => {
-  // a card a tool wrote a customer's details on (as the remedies kit does), and the board's call about it (with Dex: no
-  // job runs as Poppy, on api, to follow it up)
-  const card = h.jobs.createRequest({ kind: 'decision', title: 'Refund the walrusmug?', body: 'Mrs Jansen, Kerkstraat 1, wants a refund.', agent: 'dex', customers: true });
+test("A customer's details reach only the job working on them: hq call refuses its agent's next job with why, and the role's reader reads them", async () => {
+  // a card marked before as holding a customer's details, and the board's call about it (with Dex: no job runs as Poppy,
+  // on api, to follow it up)
+  const card = h.jobs.createRequest({ kind: 'decision', title: 'Refund the walrusmug?', body: 'Mrs Jansen, Kerkstraat 1, wants a refund.', agent: 'dex' }) as { id: number };
+  db.prepare('update requests set customers = 1 where id = ?').run(card.id);
   const about = await call('dex', ['Board: yes, refund Mrs Jansen.'], 'Refunded the walrusmug.', card.id);
   const dex = await running('dex');
   const refused = await agent(`call?id=${about.id}`, dex.token);
   assert.equal(refused.status, 403);
   assert.match(refused.body.error, new RegExp(`call #${about.id} is about a customer, .*job #${about.follow.id}.*roles\\.customerData`));
-  assert.equal(await holds(dex), false, 'a refused read holds nothing');
-  // org.yaml's roles.customerData (Vera, in the fixture) reads it, and holds it from then on
+  // org.yaml's roles.customerData (Vera, in the fixture) reads it
   const vera = await running('vera');
   assert.deepEqual((await agent(`call?id=${about.id}`, vera.token)).body.lines, ['Board: yes, refund Mrs Jansen.']);
-  assert.equal(await holds(vera), true);
-  assert.equal((await agent('guest', vera.token, { guest: 'Sam', title: 'Hi', spec: '{}' })).status, 403);
-  // the rest of its own history is no customer's
-  await agent(`history?q=${q(`#${wrens}`)}`, dex.token);
-  await agent(`call?id=${callId}`, dex.token);
-  assert.equal(await holds(dex), false);
 });
 
 test('The worker and voice tokens get 401 on search, history and call, and the board\'s HQ has none of them', async () => {
@@ -485,7 +477,7 @@ test('By meaning: a word no file has finds the charter through a synonym; with n
   memory.setEmbedder(null);
 });
 
-test("By meaning: another agent's work is never found, and a call that comes to be about a customer while the question embeds is out (checked after the await)", async () => {
+test("By meaning: another agent's work is never found", async () => {
   const flumph = await finished('wren', 'Paint the flumph', 'Painted the flumph teal.');
   // Penny's calls about it, their follow-ups still at work
   const one = await call('penny', ['Board: what colour is the flumph?'], ''), two = await call('penny', ['Board: and how big is the flumph?'], '');
@@ -500,13 +492,6 @@ test("By meaning: another agent's work is never found, and a call that comes to 
   assert.deepEqual((await agent('history?q=blorptastic', wren.token)).body.jobs.map((j: any) => j.id), [flumph], 'only what is near');
   const callHit = (c: { id: number }) => async () => (await search(dex.token, 'blorptastic')).hits.some(x => x.pointer === `hq call ${c.id}`);
   assert.ok(await callHit(one)() && await callHit(two)(), 'Dex finds the calls by meaning');
-  // a follow-up is handed a customer's details (what hq mail's route does as it reads) while the question is being
-  // embedded: still in the index, but out of the hits
-  memory.setEmbedder(fake({ during: async () => h.jobs.handedCustomerData(one.follow.id) }), 'fake-1');
-  assert.ok(!await callHit(one)());
-  // and an index pass that runs meanwhile (and drops it) changes nothing either
-  memory.setEmbedder(fake({ during: async () => { h.jobs.handedCustomerData(two.follow.id); await memory.refresh(); } }), 'fake-1');
-  assert.ok(!await callHit(two)());
   memory.setEmbedder(null);
   for (const c of [one, two]) await h.finish(c.follow);
 });
@@ -589,7 +574,7 @@ test('By meaning, with the vectors kept from one search to the next: a chunk emb
 test('A request said on the intercom 20+ lines back is found on a call by the intercom tool (by words and by its day) and by search', async () => {
   assert.equal((await h.board('/api/chat', { text: 'Please give the gerbilboard a dark mode by Friday.' })).status, 200);
   const line = db.prepare('insert into chat (ts, who, text, sent, about_customer) values (?, ?, ?, 1, ?)');
-  line.run(new Date().toISOString(), 'juno', 'Jan Jansen wants the koalamug refunded.', 1);   // (a reply that holds a customer's details)
+  line.run(new Date().toISOString(), 'juno', 'Jan Jansen wants the koalamug refunded.', 1);   // (a reply marked before 31 Oct as holding a customer's details)
   for (let i = 1; i <= 24; i++) line.run(new Date().toISOString(), i % 2 ? 'juno' : 'board', `Small talk, line ${i}.`, 0);
   await memory.refresh();
   const onCall = (await voice('call-context?agent=penny')).body.token as string;
@@ -603,7 +588,7 @@ test('A request said on the intercom 20+ lines back is found on a call by the in
   assert.deepEqual((await agent(`intercom?q=${day}`, onCall)).body, read.body);
   const lines = read.body.days.find((d: any) => d.day === day).lines as string[];
   assert.ok(lines.some(l => /^\d\d:\d\d Board: Please give the gerbilboard/.test(l)) && lines.some(l => / Board: Small talk, line 24\.$/.test(l)));
-  assert.ok(!lines.some(l => l.includes('Jan Jansen')), 'a line about a customer stays a placeholder');
+  assert.ok(!lines.some(l => l.includes('Jan Jansen')), 'an old line marked about a customer stays a placeholder');
   assert.ok((await hits(onCall, 'gerbilboard dark mode')).includes(`hq intercom ${day}`), 'search finds it too');
   assert.ok(!(await hits(onCall, 'koalamug')).some(p => p.startsWith('hq intercom')));
   for (const bad of ['2026-13-01', '2026-10-16..2026-10-01', '2026-10-01..2026-10-30', 'yesterday']) assert.equal((await agent(`intercom?day=${q(bad)}`, onCall)).status, 400, bad);

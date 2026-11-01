@@ -166,15 +166,6 @@ test("a note a run cut off left held isn't let out by the job's next run", async
   assert.ok(!overseer.list().notes.some(n => n.text.includes('may have had a helper')));
 });
 
-test("a CEO's job that holds a customer's details sends nothing: the notes go outside the company", async () => {
-  const juno = await h.start({ agent: 'juno', customers: true });
-  const r = await send(juno, 'Jane Doe, order 1234.');
-  assert.notEqual(r.code, 0);
-  assert.match(r.out, /holds a customer's details/);
-  await end(juno, ALONE);
-  assert.doesNotMatch(outbox(), /Jane Doe/);
-});
-
 test('more than 20 notes all reach the Overseer, and stay there after later sends', async () => {
   const juno = await h.start({ agent: 'juno' });
   for (let index = 0; index < 21; index++) {

@@ -11,6 +11,7 @@ const h = await harness('away', {
 });
 const { awayCheck } = await import('./away.ts'); // (what the server runs each minute: here with a time of the test's)
 const machines = await import('./machines.ts');
+(await import('./storage.ts')).FLOOR.bytes = 0; // (runs' bundles are taken whatever this machine's disk has free)
 
 test('one alarm for the CEO once a lent machine that took work is away half an hour, with its kinds and the runs that went without it, shown in hq summary until it asks again', async () => {
   const M = 60_000;

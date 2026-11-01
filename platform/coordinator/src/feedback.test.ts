@@ -333,7 +333,9 @@ test("hq notes: the notes hq note would give a job, newest first, one line each;
   assert.equal(feedback.noteFor(outside, { id: unrelated, agent: 'bolt' }), 404);
   assert.notEqual(feedback.noteFor(sentFirst, { id: unrelated, agent: 'bolt' }), 404, "the board's notes stay the agent's");
   assert.equal(feedback.noteFor(sentFirst, { id: other, agent: 'wren' }), 404);
-  assert.notEqual(feedback.noteFor(outside, { id: 0, agent: 'vera' }), 404, "and roles.customerData's");
+  const veras = createJob({ agent: 'vera', title: 'Care', prompt: 'x' }).id;
+  assert.notEqual(feedback.noteFor(outside, { id: veras, agent: 'vera' }), 404, "and roles.customerData's jobs'");
+  assert.equal(feedback.noteFor(outside, { id: 0, agent: 'vera' }), 404, 'never on a live call');
 });
 
 test("hq note <id> fixed: the job a board's note went to marks it, and HQ shows it fixed once that's live", async () => {

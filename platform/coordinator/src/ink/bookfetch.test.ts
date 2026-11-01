@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import sharp from 'sharp';
-import { MAX_BYTES, fetchPicture } from './bookfetch.ts';
+import { MAX_BYTES, fetchGuestPicture, fetchPicture } from './bookfetch.ts';
 
 const RED = await sharp({ create: { width: 30, height: 20, channels: 3, background: '#ff0000' } })
   .png()
@@ -18,11 +18,15 @@ const SITE: Record<string, [string, Buffer | string, Record<string, string>?]> =
   '/fake.png': ['image/png', 'not a picture at all'],
   '/huge.png': ['image/png', '', { 'content-length': String(MAX_BYTES + 1) }],
 };
-// the web's stand-in: its pictures and pages, and a redirect to wherever ?to= says
+// the web's stand-in: its pictures and pages, a redirect to wherever ?to= says, and a picture that comes only once let
+// go (slow.png)
+const slow: ((value: void) => void)[] = [];
 const web = http.createServer((req, res) => {
   const url = new URL(req.url ?? '/', 'http://x'),
     to = url.searchParams.get('to');
   if (to) return res.writeHead(302, { location: to }).end();
+  if (url.pathname === '/slow.png')
+    return slow.push(() => res.writeHead(200, { 'content-type': 'image/png' }).end(RED));
   const [type, body, headers] = SITE[url.pathname] ?? ['text/plain', 'not found'];
   if (headers) return res.writeHead(200, { 'content-type': type, ...headers }).end();
   res.writeHead(SITE[url.pathname] ? 200 : 404, { 'content-type': type }).end(body);
@@ -37,12 +41,19 @@ const listening = async (server: http.Server) => {
   await new Promise<void>(r => server.listen(0, '127.0.0.1', r));
   return `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 };
+// a guest's route as notebookguestroom.ts serves it, the guest named by ?guest=
+const guestRoute = (reachable: (address: string) => boolean) =>
+  http.createServer((req, res) => {
+    const query = new URL(req.url ?? '/', 'http://x').searchParams;
+    return fetchGuestPicture(query.get('guest') ?? '', res, query.get('url') ?? '', reachable);
+  });
 const site = await listening(web),
   // (the stand-in's own address counts as the open web here, and no other inside one)
   standIn = route(a => a === '127.0.0.1'),
-  guarded = route();
-const hq = { standIn: await listening(standIn), guarded: await listening(guarded) };
-after(() => [web, standIn, guarded].forEach(s => s.close()));
+  guarded = route(),
+  guests = guestRoute(a => a === '127.0.0.1');
+const hq = { standIn: await listening(standIn), guarded: await listening(guarded), guests: await listening(guests) };
+after(() => [web, standIn, guarded, guests].forEach(s => s.close()));
 const fetched = (via: string, url: string) => fetch(`${via}/?url=${encodeURIComponent(url)}`);
 const why = async (r: Response) => {
   const { error, page } = (await r.json()) as { error: string; page?: true };
@@ -101,4 +112,16 @@ test('only http and https addresses, without a login in them', async () => {
     `http://me:pw@${site.slice(7)}/red.png`,
   ])
     assert.equal((await fetched(hq.standIn, url)).status, 400, url);
+});
+
+test('a guest fetches one picture at a time: another meanwhile is refused, and other guests fetch on', async () => {
+  const asked = (guest: string, path: string) =>
+    fetch(`${hq.guests}/?guest=${guest}&url=${encodeURIComponent(`${site}${path}`)}`);
+  const first = asked('ada', '/slow.png');
+  while (!slow.length) await new Promise(r => setTimeout(r, 10));
+  assert.equal((await asked('ada', '/red.png')).status, 429);
+  assert.equal((await asked('bo', '/red.png')).status, 200);
+  slow.shift()!();
+  assert.equal((await first).status, 200);
+  assert.equal((await asked('ada', '/red.png')).status, 200);
 });

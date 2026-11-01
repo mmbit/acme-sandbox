@@ -53,15 +53,13 @@ function wake(p: Row, t: number) {
   const owner = p.item != null ? ceo() : p.by;
   const name = jobs.pauseName(targetOf(p));
   inOneStep(() => {
-    const brief = wakeBrief(p, t, owner);
     const { id } = jobs.createJob({
       agent: owner,
       code: madeCode('alarms', 'hq', STANDING.pauseMet),
       title: `Judge the pause on ${name}: what it waited for is met`,
-      prompt: brief.text,
+      prompt: wakeBrief(p, t, owner),
       effort: 'medium',
     });
-    if (brief.customers) jobs.handedCustomerData(id);
     made('alarms', 'hq', { id }, projects().made.alarms?.hq ? { asap: t } : undefined);
     db.prepare(
       "update settings set value = json_set(value, '$.allow', json_insert(coalesce(json_extract(value, '$.allow'), json('[]')), '$[#]', ?)) where key = 'company.paused'",
@@ -77,8 +75,8 @@ function wake(p: Row, t: number) {
 }
 
 // What the woken owner reads: the pause, what was met, each job it waited for as it ended (its report, and whether its
-// work is on main), what counts as delivered (company.ts deliveredWords) and the three ways on. A report with a customer's details only for an owner who reads it (jobs.readsReport),
-// and then the wake job holds them too (`customers`).
+// work is on main), what counts as delivered (company.ts deliveredWords) and the three ways on. A report marked before
+// as holding a customer's details stays with its job, as its reference: a brief is a new record, whoever reads it.
 function wakeBrief(p: Row, t: number, owner: string) {
   const name = jobs.pauseName(targetOf(p));
   const kind = p.thread ? 'deliverable' : 'project';
@@ -90,13 +88,12 @@ function wakeBrief(p: Row, t: number, owner: string) {
         .all(JSON.stringify(until.map(u => u.id))) as { id: number; result: string | null; customers: number }[]
     ).map(r => [r.id, r]),
   );
-  const shown = [...reports.values()].filter(r => jobs.readsReport(r, { id: 0, agent: owner }));
   const at = (iso: string) => `${iso.slice(0, 16).replace('T', ' ')} UTC`;
   const jobsMet = until.map(u => {
     const r = reports.get(u.id)!;
     const report = (r.result ?? '').trim();
     const cut = report.length > REPORT_MAX ? `${report.slice(0, REPORT_MAX)}… (the rest: hq history)` : report;
-    const said = shown.includes(r) ? cut || 'none' : `(${jobs.REPORT_LEFT_OUT})`;
+    const said = r.customers ? `(${jobs.REPORT_LEFT_OUT})` : cut || 'none';
     return `- #${u.id} ${u.agent}: ${u.title}. It ended ${u.state}.\n  Its report: ${said}`;
   });
   const text = [
@@ -113,7 +110,7 @@ function wakeBrief(p: Row, t: number, owner: string) {
   ]
     .filter(Boolean)
     .join('\n\n');
-  return { text, customers: shown.some(r => !!r.customers) };
+  return text;
 }
 // How a pause waits for the board (decisions.ts create, and the card that asks it): the woken owner's third way and the
 // hourly check's (followthrough.ts)

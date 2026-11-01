@@ -309,6 +309,24 @@ test('a move with no needing thread adds no notice or owner message', async () =
   assert.deepEqual((await h.agent('sent', mover.token)).body, []);
 });
 
+test('ended work moves with a why, by its owner or the CEO', async () => {
+  reset();
+  const [old, next] = [started('old'), started('next')];
+  const lead = await h.start({ agent: 'wren', thread: old });
+  await h.finish(lead, { status: 'done', pr: 64, branch: `job/${lead.id}` });
+  h.storedPr(64, lead.id, 'merged');
+  const review = h.queue({ agent: 'bolt', kind: 'review', pr: 64, branch: `job/${lead.id}`, thread: old });
+  const ceo = await h.start({ agent: 'juno' });
+  const bare = await h.hq(ceo, 'job', 'move', String(lead.id), next);
+  assert.notEqual(bare.code, 0, bare.out);
+  assert.match(bare.out, /has ended: say why it belongs in/);
+  const other = await h.start({ agent: 'moss' });
+  assert.match(String(regroup.moveJob(lead.id, next, other.agent, other.id, 'Filed wrong')), /only wren, the CEO/);
+  const moved = await h.hq(ceo, 'job', 'move', String(lead.id), next, '--why', 'It delivers the next one');
+  assert.equal(moved.code, 0, moved.out);
+  assert.deepEqual([lead.id, review].map(threadOf), [next, next], 'its review loop with it');
+});
+
 test('several tasks moved in one review group send one line per needing thread', async () => {
   reset();
   const [old, next, first, second] = [

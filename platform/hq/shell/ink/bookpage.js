@@ -67,17 +67,24 @@ export function pageView(page, held = false) {
 
 // A page's dry ink and pictures, one canvas per unit at its place (bookunits.js), each drawing only its own elements
 // in its own px: a unit 'id' → { canvas, id }. Held (the book shut out of sight), nothing is painted: what changed
-// meanwhile is painted once it shows. A unit's canvas is let go when the unit goes.
+// meanwhile is painted once it shows. A unit's canvas is let go when the unit goes, and every canvas when another page
+// shows: the book keeps a view of each of a notebook's pages, and an iPad's tab holds few canvases
 function unitInk(el, page, held) {
-  const st = { el, page, units: new Map(), held, stale: false };
+  const st = { el, page, units: new Map(), held, shown: false, stale: false };
   const paintAll = () => {
-    if (st.held) return void (st.stale = true);
+    if (st.held || !st.shown) return void (st.stale = true);
     const places = new Map((page.places ?? []).map(p => [p.id, p]));
     for (const [id, u] of st.units) if (!places.has(id)) drop(u.canvas, st.units, id);
     for (const p of places.values()) paint(st, p);
   };
   const tiles = {
-    show: () => st.units.size || paintAll(),
+    show(box) {
+      const shown = Boolean(box);
+      if (shown === st.shown) return;
+      st.shown = shown;
+      if (shown) paintAll();
+      else tiles.drop();
+    },
     // A stroke just dried, a stroke undone, a picture loaded: the units drawn again
     addInk: () => paintAll(),
     redraw: () => paintAll(),

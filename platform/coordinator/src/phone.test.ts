@@ -132,6 +132,16 @@ test('unsigned requests to the public webhook never push Twilio\'s own rows out'
   assert.ok(count("answer like '403, %'") <= 20);
 });
 
+test('unsigned posts write nothing: their refusals wait in memory and reach the table with Twilio\'s next request, in order', async () => {
+  await twilio('/api/twilio/voice', { From: BOARD });   // (the refusals of the tests before, written now)
+  const since = (h.db.prepare('select coalesce(max(rowid), 0) n from phone_asks').get() as { n: number }).n;
+  const rows = () => h.db.prepare('select step, answer from phone_asks where rowid > ? order by rowid').all(since).map(r => ({ ...r }));
+  for (let i = 0; i < 3; i++) assert.equal((await fetch(h.base + '/api/twilio/voice', { method: 'POST', body: new URLSearchParams({ From: '+31612345678' }) })).status, 403);
+  assert.deepEqual(rows(), []);
+  await twilio('/api/twilio/voice', { From: BOARD });
+  assert.deepEqual(rows(), [...Array(3).fill({ step: 'voice', answer: '403, not signed' }), { step: 'voice', answer: 'the board: PIN prompt' }]);
+});
+
 test('five wrong PINs shut the team line for an hour, even with the right PIN', async () => {
   // the board hears of wrong PINs
   const told = async () => (await h.feed()).filter(e => (e as any).to === 'board' && /wrong PIN/.test(e.text)).map(e => e.text);

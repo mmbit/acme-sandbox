@@ -333,6 +333,11 @@ test("the review's floor asks one reader of each engine for the charter, and goe
   );
   assert.deepEqual(needed('platform/coordinator/src/reviewtriage.ts'), { claude: 2, codex: 2 });
   assert.deepEqual(needed('.claude/settings.json'), { claude: 2, codex: 2 });
+  assert.deepEqual(
+    needed('.gemini/settings.json'),
+    { claude: 2, codex: 2 },
+    "the agents' config as review.ts reads it",
+  );
   assert.deepEqual(needed('CLAUDE.local.md'), { claude: 1, codex: 1 });
   assert.deepEqual(needed('shared/gates/gates.ts', true), { claude: 2, codex: 1 }, "a fix round's 2 + 1");
   assert.deepEqual(needed('kits/payments/basket.ts', true), { claude: 2, codex: 2 }, 'fixes to payments keep 2 + 2');
@@ -829,8 +834,8 @@ test('a triage briefed before a change to who may rule runs again briefed and ru
     assert.equal(first.agent, 'quill');
     // one queued before its brief was kept
     if (legacy) db.prepare('delete from triage_briefs where job = ?').run(first.id);
-    // it was queued by someone and handles a customer's details, which its replacement keeps
-    db.prepare("update jobs set queued_by = 'juno', customers = 1 where id = ?").run(first.id);
+    // it was queued by someone, which its replacement keeps
+    db.prepare("update jobs set queued_by = 'juno' where id = ?").run(first.id);
     // The consolidator roster changes while an invalid reader makes the running triage retry.
     writeFileSync(file, before.replace('consolidator: [quill, tally, nib]', 'consolidator: [tally, nib]'));
     try {
@@ -843,14 +848,10 @@ test('a triage briefed before a change to who may rule runs again briefed and ru
       assert.equal(prompt(retry.id).includes(prompt(first.id)), legacy, 'the old brief only as background');
       const row = (job: number) =>
         ({
-          ...db.prepare('select instead_of, queued_by, customers, round, sha, judges from jobs where id = ?').get(job),
-        }) as { instead_of: number | null; queued_by: string | null; customers: number };
+          ...db.prepare('select instead_of, queued_by, round, sha, judges from jobs where id = ?').get(job),
+        }) as { instead_of: number | null; queued_by: string | null };
       assert.deepEqual(row(retry.id), { ...row(first.id), instead_of: first.id }, 'in place of the run it repeats');
-      assert.deepEqual(
-        [row(retry.id).queued_by, row(retry.id).customers],
-        ['juno', 1],
-        'who queued it, and its customer data',
-      );
+      assert.equal(row(retry.id).queued_by, 'juno', 'who queued it');
       retryNow(db, retry.id);
       await finish(pr, 'triage', { ...selection([reader('rook')]), consolidator: 'tally' });
       await until(() => readers(pr).length === 1, 'retried triage dispatch');

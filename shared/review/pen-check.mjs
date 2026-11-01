@@ -396,7 +396,7 @@ async function writingArea() {
   await page.waitForFunction(
     () => {
       const r = document.querySelector('review-mode').shadowRoot;
-      return !r.querySelector('.sheet').hidden && r.querySelector('.polaroid:not(.busy) canvas.framed');
+      return !r.querySelector('.sheet').hidden && r.querySelector('.polaroid:not(.busy) .framed');
     },
     null,
     { timeout: 10_000 },

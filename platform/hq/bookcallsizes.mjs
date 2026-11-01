@@ -154,7 +154,8 @@ async function pickedUp(p) {
 }
 
 // A call whose notes page couldn't be opened, drawn on: hung up, its page (in no notebook) is offered to throw away,
-// and one tap does (calldraw.js pageCard)
+// and one tap does (calldraw.js pageCard). The store's 404 leaves the call's page unopened, and HQ doesn't ask for it
+// again.
 async function thrownAway(p, c, { name, shot, clear }) {
   await p.route(`${c.base}/api/notebooks/call`, r =>
     r.fulfill({ status: 404, json: { error: 'no live call of yours by that number' } }),

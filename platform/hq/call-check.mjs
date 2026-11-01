@@ -1215,7 +1215,7 @@ async function reachesNobody(context) {
   await context.route(`${base}/api/watchalong/events?**`, r => r.fulfill({ json: { ok: true, seen: false } }));
 }
 
-// The intercom's Call key once a call is over: the intercom closed with it (call.js callAgent), so it opens again first
+// The intercom's Call key once a call is over: the intercom closed with it (call.js callAgent), so it opens again first.
 async function dialCeo(page) {
   await page.click('#btn-intercom');
   await page.click('#call');

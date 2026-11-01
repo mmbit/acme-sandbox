@@ -1,5 +1,6 @@
 // node --test src/memory-shared.test.ts   (#1877, #934 follow-up 1: the board's calls findable by every agent, with their
-// summaries, and a failed job's report for the jobs waiting on it; a customer's details only for the job working on them).
+// summaries, and a failed job's report for the jobs waiting on it; a customer's details marked before only for the job
+// working on them).
 // Everything goes through the routes the data really takes: the voice line's call-context and call-end, the worker's
 // claim and finish, and /api/agent/*. In the fixture, Penny and Vera are org.yaml's roles.customerData.
 import { test } from 'node:test';
@@ -7,12 +8,8 @@ import assert from 'node:assert/strict';
 import { harness, type Running } from './harness.ts';
 
 const h = await harness('memory-shared');
-const { jobs, voice, worker, agent } = h;
+const { jobs, voice, agent } = h;
 const memory = await import('./memory.ts');
-const ledger = await import('./ledger.ts');
-// A customer's mail in the inbox: a job that lists it holds their details (server.ts readMailAs; an empty inbox marks nothing).
-h.db.prepare("insert into mail (received, sender, recipient, subject, body) values (?, 'jan@example.com', 'hello@testco.example', 'My order', 'Hi')")
-  .run(new Date().toISOString());
 const q = encodeURIComponent;
 
 // A job the queue already has (a call's follow-up, one queued with hq job) runs: the worker claims it on its engine. What
@@ -25,9 +22,8 @@ async function run(id: number): Promise<Running> {
 const done = (j: Running, result = 'ok', status = 'done') => h.finish(j, { status, result });
 // An agent at work, to search and read with: a job of its own, running.
 const at = (agent: string) => h.start({ agent, title: `Looking things up (${agent})` });
-// A call's briefing shows its agent's last eight finished jobs (call.ts recentWork), and one whose report holds a
-// customer's details makes the call about the customer from its start: eight plain ones push it out.
-const briefedPlain = async (agent: string) => { for (let i = 0; i < 8; i++) await done(await at(agent)); };
+// A card or job marked before as holding a customer's details (nothing marks one now): its column, set by hand.
+const mark = (table: 'requests' | 'jobs', id: number) => h.db.prepare(`update ${table} set customers = 1 where id = ?`).run(id);
 // A call with the board, as the voice line has it: its context (and the call's token), then the transcript at the end;
 // during: what happens while it's on (a picture shared). Its number and its follow-up, as HQ's Calls lists them. The
 // agent's earlier calls not followed up yet ended a day ago: it doesn't carry on from them (call.ts carriedOn), unless
@@ -41,8 +37,6 @@ async function call(agent: string, lines: string[], request?: number, o: { carry
 }
 const hits = async (token: string, s: string) => ((await agent(`search?q=${q(s)}&limit=30`, token)).body.hits as any[])
   .filter(x => x.pointer.startsWith('hq ')).map(x => `${x.source} ${x.pointer}`);
-// whether the worker treats a job as holding a customer's details (its Claude memory then gives nothing back)
-const holds = async (j: { id: number }) => (await worker('customers', { job: j.id })).body.customers as boolean;
 
 test("A board call is every agent's: search finds its words and its summary, and hq call (and the call tool) reads both", async () => {
   // Juno couldn't find the call where the board explained the support chat's human contact
@@ -76,14 +70,15 @@ test("A call about a card for keys is its own agent's, transcript and report; on
   const keyReq = jobs.createRequest({ kind: 'credential', title: 'Keys for the weta bank', body: 'Enter the weta bank keys.', agent: 'penny', secrets: 'STRIPE_TEST_WETA_KEY' }) as { id: number };
   const keyed = await call('penny', ['Board: the wetabank key is sk-weta-1.'], keyReq.id);
   await done(await run(keyed.job), 'The wetabank key is in.');
-  // Kit's call about a customer card (a tool wrote one customer's details on it, as the remedies kit does)
-  const card = jobs.createRequest({ kind: 'decision', title: 'Refund the moaparcel?', body: 'Jan Jansen, Kerkstraat 1.', agent: 'kit', customers: true }) as { id: number };
+  // Kit's call about a customer card (marked before as holding one customer's details)
+  const card = jobs.createRequest({ kind: 'decision', title: 'Refund the moaparcel?', body: 'Jan Jansen, Kerkstraat 1.', agent: 'kit' }) as { id: number };
+  mark('requests', card.id);
   const cust = await call('kit', ['Board: refund the moaparcel.'], card.id);
   const heard = await run(cust.job);
-  // its follow-up is the job HQ handed the card: it reads the call and the card, and holds the customer's details
+  // its follow-up is the job HQ handed the card: it reads the call and the card
   assert.equal((await agent(`call?id=${cust.id}`, heard.token)).status, 200);
   assert.equal((await agent(`requests?id=${card.id}`, heard.token)).body[0].body, 'Jan Jansen, Kerkstraat 1.');
-  // Kit's call about a plain request that job asks: shared whole, though the asking job holds a customer's details
+  // Kit's call about a plain request that job asks: shared whole
   const asked = await h.ask(heard, { urgency: 'today', title: 'The hihiparcel', body: 'Which box?' });
   await done(heard, 'Refunded the moaparcel.');
   const plain = await call('kit', ['Board: the hihiparcel goes in the small box.'], asked);
@@ -98,15 +93,21 @@ test("A call about a card for keys is its own agent's, transcript and report; on
   // the customer card's call: no other job finds or reads it, Kit's next one included, and hq call says why
   const kit = await at('kit');
   for (const reader of [bolt, kit]) {
-    assert.deepEqual(await hits(reader.token, 'moaparcel'), [], 'moaparcel');
+    assert.deepEqual((await hits(reader.token, 'moaparcel')).filter(x => !x.startsWith('job ')), [], 'moaparcel');   // (its follow-up is Kit's own work)
     const refused = await agent(`call?id=${cust.id}`, reader.token);
     assert.equal(refused.status, 403);
     assert.match(refused.body.error, new RegExp(`^call #${cust.id} is about a customer, so it goes only to the jobs working on it \\(its follow-up, job #${cust.job},`));
   }
-  assert.equal(await holds(bolt), false);
   const vera = await at('vera');
   assert.deepEqual((await hits(vera.token, 'moaparcel')).sort(), [`call hq call ${cust.id}`, `summary hq call ${cust.id}`], 'org.yaml\'s roles.customerData finds it');
-  await done(vera);
+  await done(vera, 'Refunded Jan Jansen at Kerkstraat 1.');
+  mark('jobs', vera.id);
+  // on a live call, Vera is told where it is, never handed it: what's said there becomes a transcript other jobs read
+  const live = (await voice('call-context?agent=vera')).body;
+  assert.equal((await agent(`call?id=${cust.id}`, live.token)).status, 403);
+  assert.deepEqual((await hits(live.token, 'moaparcel')).filter(x => !x.startsWith('job ')), []);
+  assert.ok(!live.prompt.includes('Jan Jansen') && live.prompt.includes(`Job #${vera.id}`), 'her briefing names the job, not its report');
+  assert.equal((await voice('call-end', { agent: 'vera', lines: ['Board: nothing more.'], token: live.token })).status, 200);
   assert.deepEqual(await hits(bolt.token, 'hihiparcel'), [`call hq call ${plain.id}`]);
   assert.equal((await agent(`call?id=${plain.id}`, bolt.token)).status, 200);
   await run(plain.job).then(j => done(j));
@@ -146,27 +147,17 @@ test("A call about a card for keys is its own agent's, transcript and report; on
   await done(penny2);
 });
 
-test("A summary is its job's whole report: shared unless that job was handed a customer's details; then the call is the jobs' working on it", async () => {
+test("A summary is its job's whole report, shared", async () => {
   const wren = await at('wren');
-  // Penny's call, and its follow-up, which reads the company inbox before it ends
+  // Penny's call, and its follow-up
   const c = await call('penny', ['Board: the pukeko budget is 60.']);
   const follow = await run(c.job);
   await memory.refresh();
   assert.deepEqual(await hits(wren.token, 'pukeko'), [`call hq call ${c.id}`], 'no summary before the job is done');
   assert.ok((await agent(`call?id=${c.id}`, wren.token)).body.summary_left_out);
-  await agent('mail', follow.token);
-  assert.deepEqual(await hits(wren.token, 'pukeko'), [], 'out at once, before the index catches up');
-  await done(follow, 'Pukeko budget set to 60, and the takahebank refund for Jan Jansen is done.');
-  await memory.refresh();
-  assert.deepEqual(await hits(wren.token, 'takahebank'), [], 'its summary is left out');
-  assert.deepEqual(await hits(wren.token, 'pukeko'), [], 'and the transcript');
-  assert.equal((await agent(`call?id=${c.id}`, wren.token)).status, 403);
-  assert.match((await h.hq(wren, 'call', String(c.id))).out, /ask Penny for what you need from it \(hq say penny\)\n$/);
-  const penny = await at('penny');   // (org.yaml's roles.customerData)
-  assert.equal((await agent(`call?id=${c.id}`, penny.token)).body.summary, 'Pukeko budget set to 60, and the takahebank refund for Jan Jansen is done.');
+  await done(follow, 'Pukeko budget set to 60.');
 
   // A follow-up that asks for keys itself is shared as any other: a key's value never reaches its report (db.ts redacted())
-  await briefedPlain('penny');
   const third = await call('penny', ['Board: the weka payroll runs on the 25th.']);
   const weka = await run(third.job);
   await h.ask(weka, { kind: 'credential', urgency: 'today', title: 'The weka bank key', body: 'Enter it.', secrets: 'STRIPE_TEST_WEKA_KEY' });
@@ -175,39 +166,12 @@ test("A summary is its job's whole report: shared unless that job was handed a c
   assert.deepEqual(await hits(wren.token, 'moreporkledger'), [`summary hq call ${third.id}`]);
 });
 
-// a picture the board shares on a live call (HQ uploads it with the call's key)
-const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAIAAAAmkwkpAAAAF0lEQVQI12P8z4AALKsZQrFzGBkYEAoBe+gECZtuXNMAAAAASUVORK5CYII=', 'base64');
-const { ORIGIN } = await import('./config.ts');
-
-test("A call stays about a customer when its follow-up that read their details fails and the sweep hands it a new one", async () => {
-  const wren = await at('wren');
-  let picture = 0;
-  const c = await call('penny', ['Board: the tieketin needs a bigger box.'], undefined, { during: async ctx => {
-    const r = await fetch(`${h.base}/api/pictures?call=${ctx.call}&key=${q(ctx.key)}`, { method: 'POST', body: PNG,
-      headers: { cookie: h.boardCookie, origin: ORIGIN, 'content-type': 'image/png' } });
-    picture = (await r.json()).id;
-  } });
-  const first = await run(c.job);
-  await agent('mail', first.token);   // (Penny is roles.customerData: the follow-up now holds a customer's details)
-  await done(first, 'Lost the line.', 'failed');
-  ledger.sweep(Date.now() + 11 * 60_000);   // (ten minutes on: no route moves the clock)
-  const again = (await h.board('/api/calls')).body.find((x: any) => x.id === c.id).job;
-  assert.notEqual(again, c.job, 'the sweep handed the call a new follow-up');
-  assert.equal(await holds({ id: again }), true);
-  await memory.refresh();
-  assert.equal((await agent(`call?id=${c.id}`, wren.token)).status, 403);
-  assert.deepEqual(await hits(wren.token, 'tieketin'), []);
-  assert.equal((await agent(`picture?id=${picture}`, wren.token)).status, 403);
-  assert.equal(await holds(wren), false);
-  await done(wren);
-  await run(again).then(j => done(j));
-});
-
 test("A failed job's report reaches the jobs waiting on it (hq job --after) unless the job holds a customer's details, its own agent's included", async () => {
   for (const m of ['none', 'customers', 'keys'] as const) {
     const word = `kokako${m}`;
-    // customers: a tool put a customer's details in its prompt
-    const f = await h.start({ agent: 'lark', title: `Build the ${word}`, customers: m === 'customers' });
+    // customers: marked before as holding a customer's details
+    const f = await h.start({ agent: 'lark', title: `Build the ${word}` });
+    if (m === 'customers') mark('jobs', f.id);
     const own = (await agent('job', f.token, { agent: 'lark', title: `After the ${word}`, prompt: 'Build on it.', after: f.id })).body.id;
     const theirs = (await agent('job', f.token, { agent: 'wren', title: `Use the ${word}`, prompt: 'Use it.', after: f.id })).body.id;
     if (m === 'keys') await h.ask(f, { kind: 'credential', urgency: 'today', title: `The ${word} key`, body: 'Enter it.', secrets: 'STRIPE_TEST_KOKAKO_KEY' });
@@ -221,52 +185,9 @@ test("A failed job's report reaches the jobs waiting on it (hq job --after) unle
   }
 });
 
-test("The worker reads whether a job holds a customer's details as it's claimed and again as its run ends (its Claude memory then gives nothing back)", async () => {
-  const care = await h.start({ agent: 'dex', title: 'Answer the crate question', customers: true });
-  assert.equal(care.customers, 1, 'made with a customer\'s details in its prompt');
-  const penny = await h.start({ agent: 'penny', title: 'Check the invoices' });
-  assert.equal(penny.customers, 0);
-  assert.equal(await holds(penny), false);
-  await agent('mail', penny.token);
-  assert.equal(await holds(penny), true);
-  assert.equal((await worker('customers', { job: 999_999 })).status, 404);
-  await done(care); await done(penny);
-});
-
-test("A job handed out for a customer call's item holds their details once it reads the transcript, as any reader of hq call does", async () => {
-  const card = jobs.createRequest({ kind: 'decision', title: 'Refund the kakaparcel?', body: 'Jan Jansen, Kerkstraat 1.', agent: 'kit', customers: true }) as { id: number };
-  for (const [lines, request, customers] of [[['Board: the kiwiparcel goes in the small box.'], undefined, false],
-    [['Board: refund the kakaparcel.'], card.id, true]] as const) {
-    const heard = await call('kit', [...lines], request);
-    await done(await run(heard.job), 'Handed out the parcel work.');
-    // a job for one of the call's items: it reads the ledger's transcript, not memory.ts's
-    const item = await h.start({ agent: 'dex', title: 'Pack the parcel', call: heard.id });
-    assert.equal(await holds(item), false);
-    assert.equal((await agent(`call?id=${heard.id}`, item.token)).status, 200);
-    assert.equal(await holds(item), customers, `call #${heard.id}`);
-    await done(item);
-  }
-});
-
-test("A job handed a customer call's item holds their details from the start: the words from the call are in its prompt", async () => {
-  const card = jobs.createRequest({ kind: 'decision', title: 'Refund the moaparcel?', body: 'Jan Jansen, Kerkstraat 1.', agent: 'kit', customers: true }) as { id: number };
-  for (const [line, request, customers] of [['Board: the wekaparcel goes in the small box.', undefined, false],
-    ['Board: refund the moaparcel.', card.id, true]] as const) {
-    const heard = await call('kit', [line], request);
-    const follow = await run(heard.job);
-    const it = (await agent('item', follow.token, { kind: 'task', owner: 'dex', goal: 'g', what: 'Pack the parcel', quote: line })).body.id;
-    const handed = await agent('job', follow.token, { agent: 'dex', title: 'Pack the parcel', prompt: 'Pack it.', item: it });
-    assert.equal(handed.status, 200);
-    assert.equal(await holds(handed.body), customers, `call #${heard.id}`);
-    await done(follow, 'Handed out the parcel work.');
-    await run(handed.body.id).then(j => done(j));
-  }
-});
-
 // Search by meaning (#1878) compares the shared calls too, under the same rules as their words. A fake model: "grumblebox"
 // and "quibbleport" are one made-up concept, so only meaning finds the call by the word it doesn't have.
-test("By meaning, too: another agent's call is found through a synonym, and not once its follow-up holds a customer's details", async () => {
-  await briefedPlain('penny');
+test("By meaning, too: another agent's call is found through a synonym", async () => {
   const c = await call('penny', ['Board: complaints go to the grumblebox from now on.', 'Penny: the grumblebox, noted.']);
   const follow = await run(c.job);
   const vec = (t: string, kind: 'query' | 'passage') => {
@@ -279,16 +200,15 @@ test("By meaning, too: another agent's call is found through a synonym, and not 
   await memory.embedAll();
   const juno = await at('juno');
   assert.deepEqual(await hits(juno.token, 'quibbleport'), [`call hq call ${c.id}`]);
-  await agent('mail', follow.token);   // (Penny is roles.customerData)
-  assert.deepEqual(await hits(juno.token, 'quibbleport'), [], 'out at once, before the index catches up');
   memory.setEmbedder(null);
   await done(juno); await done(follow, 'Set up the grumblebox.');
 });
 
-test("A customer card is the job's that filed it: its text, photos and history entry; its agent's next job and the CEO's get its title and why, and hold nothing", async () => {
+test("A customer card is the job's that filed it: its text, photos and history entry; its agent's next job and the CEO's get its title and why", async () => {
   const filer = await at('lark');
   const card = jobs.createRequest({ kind: 'decision', title: 'Refund the tuiparcel?', body: 'Jan Jansen sent the tuiparcel back.', agent: 'lark',
-    job: filer.id, customers: true, photos: ['The parcel'] }) as { id: number };
+    job: filer.id, photos: ['The parcel'] }) as { id: number };
+  mark('requests', card.id);
   const later = await at('lark'), ceo = await at('juno');
   assert.equal((await agent(`requests?id=${card.id}`, filer.token)).body[0].body, 'Jan Jansen sent the tuiparcel back.');
   assert.equal((await agent(`photos?id=${card.id}`, filer.token)).status, 200);
@@ -308,22 +228,52 @@ test("A customer card is the job's that filed it: its text, photos and history e
   const vera = await at('vera');
   for (const reader of [handed, vera]) {
     assert.equal((await agent(`photos?id=${card.id}`, reader.token)).status, 200);
-    assert.equal(await holds(reader), true);
     await done(reader);
   }
   const history = (await agent(`history?q=${q(`#${card.id}`)}`, later.token)).body.requests[0];
   assert.deepEqual([history.title, history.body, history.answer, !!history.left_out], ['Refund the tuiparcel?', null, null, true]);
   await memory.refresh();
-  assert.deepEqual(await hits(later.token, 'tuiparcel'), []);
-  assert.deepEqual([await holds(later), await holds(ceo), await holds(filer)], [false, false, true]);
+  assert.deepEqual((await hits(later.token, 'tuiparcel')).filter(x => !x.startsWith('job ')), []);   // (the call's follow-up is Lark's own work)
   for (const j of [filer, later, ceo]) await done(j);
 });
 
 test("A call's briefing lists its agent's own recent work, but a report that holds a customer's details only by its title", async () => {
-  await done(await h.start({ agent: 'moss', title: 'Answer the moreporkmug question', customers: true }), 'Told Jan Jansen the moreporkmug ships Friday.');
+  const care = await h.start({ agent: 'moss', title: 'Answer the moreporkmug question' });
+  mark('jobs', care.id);
+  await done(care, 'Told Jan Jansen the moreporkmug ships Friday.');
   await done(await at('moss'), 'Painted the kererushelf.');
   const prompt = (await voice('call-context?agent=moss')).body.prompt as string;
   assert.match(prompt, /Painted the kererushelf\./);
   assert.match(prompt, /Answer the moreporkmug question/);
   assert.doesNotMatch(prompt, /Jan Jansen/);
+});
+
+test("A call private only through its follow-up stays so when a retry links a new follow-up", async () => {
+  const bolt = await at('bolt');
+  const old = await call('kit', ['Board: the kererubox goes to the shop.']);
+  mark('jobs', old.job);   // (its follow-up was marked before as holding a customer's details)
+  assert.equal((await agent(`call?id=${old.id}`, bolt.token)).status, 403);
+  // a retry links a new follow-up, which nothing marks (ledger.ts followUp)
+  const retry = jobs.createJob({ agent: 'kit', title: 'Follow up on your call with the board (attempt 2)', prompt: 'x', call: old.id }).id;
+  h.db.prepare('update calls set job = ? where id = ?').run(retry, old.id);
+  assert.equal((await agent(`call?id=${old.id}`, bolt.token)).status, 403);
+  assert.ok(memory.customerCall(old.id));
+  // and a call that carried on from it is private from its start too
+  const next = await call('kit', ['Board: and the kererubox lid.'], undefined, { carry: true });
+  assert.ok(memory.customerCall(next.id));
+  await done(bolt);
+});
+
+test("A private call's retried follow-up names its transcript, never copies it, and reads it with hq call", async () => {
+  const ledger = await import('./ledger.ts');
+  const old = await call('kit', ['Board: send the weta lamp to Jan Jansen, Kerkstraat 1.']);
+  mark('jobs', old.job);   // (its follow-up was marked before as holding a customer's details)
+  const retry = ledger.followUp(old.id)!;
+  const { prompt } = h.db.prepare('select prompt from jobs where id = ?').get(retry) as { prompt: string };
+  assert.doesNotMatch(prompt, /Kerkstraat|Jan Jansen/);
+  assert.match(prompt, new RegExp(`The transcript: read it with \`hq call ${old.id}\``));
+  const follow = await run(retry);
+  const read = await agent(`call?id=${old.id}`, follow.token);
+  assert.deepEqual([read.status, read.body.text], [200, '[1] Board: send the weta lamp to Jan Jansen, Kerkstraat 1.']);
+  await done(follow);
 });

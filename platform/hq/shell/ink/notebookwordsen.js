@@ -118,6 +118,7 @@ export const en = {
   sentAt: 'Sent {time}',
   micBlocked: 'The microphone is blocked here',
   micFirstTap: 'Tap a mic once to turn on voice notes',
+  micIntercom: 'Open the Intercom and tap its microphone to allow voice notes',
   micFailed: 'The microphone didn’t start',
   transcriberAway: 'The transcriber isn’t available right now',
   noWordsHeard: 'No words came through',

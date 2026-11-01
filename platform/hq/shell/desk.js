@@ -11,7 +11,7 @@ import { endTip, loadRequests, loadLater, snoozeRequest, loadArchive, archivePho
   loadChat, sendChat, loadCalls, addCallItem, loadMail, loadMailOne, forwardMail, transcribe, pushKey,
   uploadPhoto, uploadDocument, sendZipChunk, loadZipField, pictureUrl, guestEmail, guestLang, guestRelease, guestRevoke, guestAdd, outboxSend, outboxDiscard, outboxPreview,
   calloutApprove, calloutDecline, calloutNumber,
-  loadShares, makeShare, removeFromShare, endShare, setShareCap, loadPeople, setPersonTitle, guestColleagues, loadLanguage, setLanguage } from './data.js';
+  loadShares, makeShare, removeFromShare, endShare, setShareCap, loadPeople, setPersonTitle, guestColleagues, loadLanguage, setLanguage, local } from './data.js';
 import { peopleHtml, wirePeople, refusalWords, dot, sameName } from './people.js';
 import { sfx, hush } from './audio.js';
 import { callAgent, inCall, callInFront, minimiseCall } from './call.js';   // (a call, over whatever is open).
@@ -54,6 +54,7 @@ import * as notebook from './ink/notebooklink.js';
 import { mountStage } from './viewer.js';   // (the viewer's frames)
 import { mountPin, pinOn, setPin, tellPin } from './pinsetting.js';   // (Settings › Pin on HQ.)
 import { mountTips } from './booktips.js';   // (the tips book)
+import { previewsOn } from './previews.js';
 import { frameMic, helloFrom, stopFrameMic } from './framemic.js';   // (review mode's mic for the viewer's page; helloFrom)
 import { tipHtml, cardAbout, wireTip, tipSettings, tipsSummary } from './tipcard.js';
 import { voiceSettings, voicesSummary } from './voices.js';
@@ -145,7 +146,8 @@ function show(kind, html, force = false) {
 // What's open on HQ's page told on the document (hq:open: { open, app }), for a second screen to follow (pair.js).
 const opened = kind => document.dispatchEvent(new CustomEvent('hq:open', { detail: { open: kind, ...(kind === 'computer' && { app: tab }) } }));
 export const toolOpen = () => !!open;
-export const PREVIEW = /^https:\/\/[a-z0-9-]+\.preview\.[a-z0-9.-]+(\/|$)/;   // (exported for calldrive.js)
+const previews = previewsOn(location.hostname, local);
+export const PREVIEW = previews.page;   // (exported for calldrive.js)
 // The origin of the page in the viewer while review mode runs there (it said hello), or none: what calldrive.js sends to
 // and hears from, and no other page the frame may have gone on to.
 export const viewerOrigin = () => viewing?.review ?? null;
@@ -434,7 +436,7 @@ function fromViewer(e) {
     else if (d.bye && me.review === e.origin) { me.review = null; stopFrameMic(); }
     // (its post-it open: HQ's own mic key over the post-it's, the frame having no microphone, and only its tap records;
     // the offer's line, e.ports, carries the rest: framemic.js.)
-    else if (d.mic === 'offer' && Number.isInteger(d.doc) && e.ports[0]) frameMic(d.doc, e.ports[0], voiceLang(), frame, d.at);
+    else if (d.mic === 'offer' && Number.isInteger(d.doc) && e.ports[0]) frameMic(d.doc, e.ports[0], voiceLang(), frame, d.at, new URL(e.origin).host);
     // (the board's note saved there as a scrap in its Notebook: the book lands it, booklanding.js.)
     else if (d.scrap && Number.isInteger(d.scrap.id) && Number.isInteger(d.scrap.page))
       document.dispatchEvent(new CustomEvent('book:scrap', { detail: { id: d.scrap.id, page: d.scrap.page } }));
@@ -449,9 +451,9 @@ function fromViewer(e) {
     paintPin();
   } else if (tag === 'backdrop') {
     frame.style.background = backdropOf(d) ?? '';
-  } else if (tag === 'deck' && e.origin.startsWith('https://cycles.preview.') && typeof d.open === 'string' && PREVIEW.test(d.open)) { // decks only, not product pages
+  } else if (tag === 'deck' && previews.deck.test(e.origin) && typeof d.open === 'string' && PREVIEW.test(d.open)) { // decks only, not product pages
     sfx.blip(); openViewer(d.open, backTo(d.back, e.origin) ?? me.url);
-  } else if (tag === 'deck' && d.hello && e.origin.startsWith('https://cycles.preview.') && dressed) { // a deck wears the look (its slides.css)
+  } else if (tag === 'deck' && d.hello && previews.deck.test(e.origin) && dressed) { // a deck wears the look (its slides.css)
     const to = e.source, name = look;
     fetch(`renderers/${name}/slides.css`).then(r => r.ok ? r.text() : null)
       .then(css => { if (css && viewing === me) to.postMessage({ [old ? 'onlyonery' : 'hq']: 'hq-look', look: name, css }, e.origin); })
@@ -1040,8 +1042,10 @@ function wireGuest(el, r) {
 // (Signed by and its hint)
 // (Answers: the mail a reply goes on the thread of.)
 // (the answered card shows who it went to: its answer has the text)
-const mailtoLine = (label, v) => v?.length ? `<dt>${label}</dt><dd>${esc([v].flat().join(', '))}</dd>` : '';
-const mailtoHtml = m => `<dl class="mailto" data-private>${mailtoLine('To', m.to)}${mailtoLine('Cc', m.cc)}${mailtoLine('From', m.from)}${mailtoLine('Replies to', m.replyTo)}${mailtoLine('Signed by', m.signed && `${m.signed}, an AI agent`)}${mailtoLine('Answers', m.answers && `mail #${m.answers}`)}</dl>`;
+// Only who it goes to is marked private: our own address, the signature and the
+// mail it answers are ours to show, so a call's agent reads them on the board's screen.
+const mailtoLine = (label, v, mark = '') => v?.length ? `<dt>${label}</dt><dd${mark}>${esc([v].flat().join(', '))}</dd>` : '';
+const mailtoHtml = m => `<dl class="mailto">${mailtoLine('To', m.to, ' data-private')}${mailtoLine('Cc', m.cc, ' data-private')}${mailtoLine('From', m.from)}${mailtoLine('Replies to', m.replyTo)}${mailtoLine('Signed by', m.signed && `${m.signed}, an AI agent`)}${mailtoLine('Answers', m.answers && `mail #${m.answers}`)}</dl>`;
 // its attachments under the text: each picture (a tap shows it big), a PDF by its name
 function mailFilesHtml(r, m) {
   const files = (m.attachments ?? []).map(f => ({ ...f, src: world.dev ? f.src : `/api/outbox/file?id=${Number(r.id)}&n=${Number(f.n)}` }));
@@ -2036,6 +2040,7 @@ export function openIntercom() {
   });
   device.addEventListener('dragover', e => { if (!inCall() && e.dataTransfer?.types.includes('Files')) e.preventDefault(); });
   device.addEventListener('drop', e => { if (inCall() || !e.dataTransfer?.files.length) return; e.preventDefault(); intercomTray.add(e.dataTransfer.files); });
+  // (the call closes the intercom)
   $('#call')?.addEventListener('click', () => callAgent(world.company.ceo, ceoName()));
   // (a first load that fails says so under the input while the loader stays, and the next poll tries again; a later one
   // keeps what's shown)
@@ -2579,9 +2584,9 @@ export function watchCall(agent, since, id) {
   setTimeout(check, 30e3);
 }
 // The company inbox (read-only): mail to any address at the company's domain (brand.yaml's mail.domain). Tap a message to read it.
-// What shows a person's details (Mail's rows, an email card, a delivery address, people's emails, a call out's number) is
-// marked data-private and a card's keys data-watchalong-hide, which a walk-through call's recording keeps out
-// (shared/watchalong).
+// What shows a person's details (Mail's rows, an email card's recipients and text, a delivery address, people's emails,
+// a call out's number; the card's split) is marked data-private and a card's
+// keys data-watchalong-hide, which a walk-through call's recording keeps out (shared/watchalong).
 // A company app can open it at one message (openComputer's opts.mail: mailWanted; here and at the end of inbox)
 let mailWanted = null;
 // The 15 s refresh leaves a message that's open as it is: new mail goes in above it.

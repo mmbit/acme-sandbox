@@ -744,12 +744,7 @@ test('a guest opens only their own requests; a revoked guest or link opens nothi
   await end(kit);
 });
 
-test("a job that holds a customer's own details neither writes to a guest nor answers one, and a request is its own agent's", async () => {
-  const held = await running('wren', { customers: true });
-  const w = await hq(held, 'guest', 'Sam', 'An order', file(note('About order 1234 of Mrs Jansen')));
-  assert.equal(w.code, 1);
-  assert.equal(await card('For Sam: An order'), undefined);
-  // a request written before its job read the company inbox: the job can't answer the guest any more
+test("a request is its own agent's: another job can't read or answer it, nor put a guest card on the desk phone", async () => {
   const vera = await running('vera'),
     { id } = await shared(vera, 'Max', 'The lease', 'max@example.com');
   const moss = await running('moss');
@@ -759,30 +754,9 @@ test("a job that holds a customer's own details neither writes to a guest nor an
     (await agent('guest-reply', vera.token, { item: id, n: 1, text: 'The lease runs to June' })).status,
     200,
   );
-  h.jobs.handedCustomerData(vera.id); // (it reads a customer's mail: an empty inbox marks nothing)
-  assert.equal(
-    (await agent('guest-reply', vera.token, { item: id, n: 1, text: 'Here is what a customer wrote' })).status,
-    403,
-  );
-  assert.equal((await agent('guest-add', vera.token, { item: id, spec: note('one more') })).status, 403);
   // an agent can't put a guest card on the desk phone with hq ask
   assert.equal((await agent('request', moss.token, { kind: 'guest', title: 'For Max: hi', body: 'x' })).status, 400);
-  for (const j of [held, vera, moss]) await end(j);
-});
-
-test("a guest's step skips a running job that holds a customer's own details (it couldn't answer): it becomes a job of its own", async () => {
-  const vera = await running('vera'),
-    { path } = await shared(vera, 'Noor', 'The keys', 'noor@example.com', note('Bring both keys'));
-  const { cookie } = await signIn(path, '192.0.2.32');
-  const ask = (text: string) => guest(`${path}/ask`, { cookie, form: { n: '1', text } });
-  assert.equal((await ask('Where do I leave them?')).status, 303); // queued for Vera's job
-  h.jobs.handedCustomerData(vera.id); // which then reads a customer's mail
-  assert.equal((await ask('And the spare one?')).status, 303);
-  assert.deepEqual((await agent('inbox', vera.token, {})).body, []);
-  const made = (h.jobs.listJobs() as any[]).filter(j => j.agent === 'vera' && j.status === 'queued');
-  assert.equal(made.length, 1);
-  assert.equal(h.jobs.holdsCustomerData(made[0].id), false);
-  await end(vera);
+  for (const j of [vera, moss]) await end(j);
 });
 
 test("hq guest add puts more items after the ones a request has, with the same checks, on its own agent's open request only", async () => {

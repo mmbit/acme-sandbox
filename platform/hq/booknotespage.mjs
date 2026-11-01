@@ -3,9 +3,9 @@
 // notes land on it one by one. On a screen wider than it is tall the first opens the book there, beside HQ's page, and
 // the next lands with it open; shut by the board, it stays shut as the last lands. On one taller than it is wide (an
 // upright phone or iPad) it stays shut (shell/ink/booklayout.js initial.). Hung
-// up, nothing asks about the page (the store sends it). One the store can't be reached for is asked for again until it
-// is, with no card; one that fails there (the coordinator's 500) is told on a card at once, and the call's page a
-// notebook has since asks nothing. (opens)
+// up, nothing asks about the page (the store sends it). A page the store can't be reached for is asked for again until
+// it is, with no card. One that fails there (the coordinator's 500) is told on a card at once. If the call's page is in
+// a notebook by hang-up, HQ asks no hang-up question about it. (opens)
 import assert from 'node:assert/strict';
 import { playLine } from './bookcall.mjs';
 

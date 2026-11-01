@@ -179,9 +179,14 @@ it's read (`projects.ts ownerOf`), so `hq project owner` hands on every delivera
   the board reads it: its product, project, name and "done when", then the names of the project's other open deliverables.
   With no `--needs` it needs the last one chained from the deliverable under way it most likely continues (the drawing
   job's, else the project's newest), so draws in a row run as one chain. A paused one is passed over, and so is one whose
-  open work is all booked for a later time (`hq job --when` a time) with no pull request open, with what waits for it:
-  each is named in the answer, for the drawer to `hq plan need` when the work shares its files, so ready work never
-  queues behind a read days away.
+  open work is all booked for a later time (`hq job --when` a time) or waits for an open card of the board's, with no
+  pull request open, with what waits for it: each is named in the answer, for the drawer to `hq plan need` when the
+  work shares its files, so ready work never queues behind a read days away or a card nobody has answered. A needs edge
+  drawn by hand (`--needs`, `hq plan need`) onto a deliverable whose work all waits on the board or a pause is drawn,
+  and the answer says so in a line: the card and how long it's been open (a decision's pause names its card), and that
+  what's chained after it waits too. A deliverable held only through such an edge names it as its hold in
+  `hq deliverable` and the CEO's summary (`boardheld.ts`), also when the held one lies further down, through a
+  deliverable with no task drawn.
 - `hq plan rename <deliverable> "name" ["done when"] [--slug <slug>]` renames an open deliverable, read back the same way; a new
   slug makes it `<project>/<slug>` and its old id keeps resolving, as `hq deliverable move` does. `hq plan title <job>
   "title"` gives a task still to start a new title.

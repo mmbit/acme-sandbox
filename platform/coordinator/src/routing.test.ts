@@ -3,6 +3,7 @@
 import { afterEach, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync } from 'node:fs';
+import { sizedTime } from './testwords.ts';
 import { harness, type Running } from './harness.ts';
 
 // (loom and felt each in a project of their own)
@@ -379,7 +380,7 @@ test("notes on two products become tasks in each product's threads, and their re
     )
     .get(back) as { proposal: number };
   const sorted = (await import('./proposals.ts')).accept(proposal, 'juno', {
-    size: '30m',
+    size: sizedTime('30m'),
     refs: [],
     why: 'Test scope judgment without a comparable completed job',
     title: "Show the board felt's darker type",

@@ -49,6 +49,9 @@ await page.waitForSelector('#mail-text');
 
 // who it goes to and where the answer comes in; the subject and text to edit, with the sign-off under them; no answer box
 assert.match(await page.textContent('.mailto'), /legal@partner\.example, dpo@partner\.example.*counsel@partner\.example.*hello@testco\.example.*privacy@testco\.example/s);
+// only who it goes to is painted over on a call; our own address and the rest show
+assert.deepEqual(await page.$$eval('.mailto [data-private]', els => els.map(e => e.previousElementSibling.textContent)), ['To', 'Cc']);
+assert.equal(await page.locator('.mailto[data-private]').count(), 0);
 assert.equal(await page.inputValue('#mail-subject'), 'Our transfer assessment');
 assert.equal(await page.textContent('.mail-sign'), 'Ada Board\nTestco');
 assert.equal(await page.locator('#answer').count(), 0);

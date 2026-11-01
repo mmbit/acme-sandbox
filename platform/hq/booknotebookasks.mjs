@@ -8,9 +8,10 @@
 //   - a desktop, a mouse: the card with choices answered with a click. (A card for a key, an upload or built work never
 //     comes to the book: bookasks.test.ts.)
 //   - a phone, an iPad mini and a desktop: no field under the card to type in; its room pulled out by the handle and
-//     drawn in, an arrow's shaft, a rest, its head: both kept, nothing sent, till the room's Send; then, the upload slow,
-//     a stroke then isn't taken, and the whole drawing goes as a PNG of it uploaded for the card and sent with the
-//     answer on the desk phone's route, the slip then answered with the drawing, as the page read again shows it.
+//     drawn in, an arrow across its width, its shaft, a rest, its head: both kept, nothing sent, till the room's Send;
+//     then, the upload slow, a stroke then isn't taken, and the whole drawing goes as a PNG of it uploaded for the card
+//     and sent with the answer on the desk phone's route, the slip then answered with the drawing, as the page read
+//     again shows it.
 import assert from 'node:assert/strict';
 import { open } from './booknotebook.mjs';
 import { turnTo, where } from './booknotebookscreen.mjs';
@@ -157,14 +158,15 @@ async function drawnAnswer(browser, c, { viewport, ...more }) {
   }
 }
 
-// An arrow drawn in the room in two strokes, a rest after each: both kept, nothing sent, till the room's Send (tapped
-// with a touch); then, its upload held, a stroke isn't taken. The room's scale on the screen, k
+// An arrow drawn across the room in two strokes, a rest after each: both kept, nothing sent, till the room's Send
+// (tapped with a touch); then, its upload held, a stroke isn't taken. The room's scale on the screen, k
 async function drawnAndSent(page, room, desk, touch) {
   const box = await room.boundingBox(),
-    wet = room.locator('.bk-reply-wet path');
-  await stroke(page, box, SHAFT);
+    wet = room.locator('.bk-reply-wet path'),
+    { shaft, head } = arrow(box.width);
+  await stroke(page, box, shaft);
   await page.waitForTimeout(1500);
-  await stroke(page, box, HEAD);
+  await stroke(page, box, head);
   await page.waitForTimeout(1500);
   assert.equal(desk.answered.length, 0, 'nothing sent while the pen rests');
   assert.equal(await wet.count(), 2, 'both strokes kept in the room');
@@ -174,7 +176,7 @@ async function drawnAndSent(page, room, desk, touch) {
   await (touch ? send.tap() : send.click());
   await upload.started;
   // (a stroke while it goes isn't taken: what was drawn is what goes)
-  const later = SHAFT.map(([x, y]) => [x + 120, y]);
+  const later = shaft.map(([x, y]) => [x, y - 20]);
   await stroke(page, box, later);
   assert.equal(await wet.count(), 2, 'no stroke taken while it goes');
   upload.release();
@@ -189,7 +191,8 @@ async function drawnShown(slip, desk, k) {
   assert.equal(shown, own, 'the drawing shown at its own px');
   // (the uploaded PNG, in Chromium: from the head's top to the shaft's foot in page px, with the pen's width, 3, and
   // the paper round it, 24 a side)
-  const span = (SHAFT[0][1] - HEAD[0][1]) / k + 3 + 2 * 24;
+  const { shaft, head } = arrow(0),
+    span = (shaft[0][1] - head[0][1]) / k + 3 + 2 * 24;
   if (desk.picture.bytes) assert.ok(Math.abs(tall - span) <= 2, `${tall} px, not ${span}: the head and the shaft`);
 }
 // The card on the page turned to, once: WebKit's turn draws the page twice till it's done, so once, and still once a
@@ -199,17 +202,20 @@ const once = (page, slip) =>
     async () => (await slip.count()) === 1 && (await page.waitForTimeout(400), await slip.count()) === 1,
     'the page turned to, its card once',
   );
-// An arrow drawn in the room in two strokes, its shaft and its head, in px from the room's corner
-const SHAFT = [
-    [24, 80],
-    [70, 60],
-    [130, 40],
+// An arrow drawn across the room in two strokes, its shaft and its head, in px from the room's corner: from near its
+// left edge to its tip near its right one (w: the room's width on the screen)
+const arrow = w => ({
+  shaft: [
+    [10, 80],
+    [w / 2, 60],
+    [w - 10, 40],
   ],
-  HEAD = [
-    [110, 30],
-    [130, 40],
-    [118, 60],
-  ];
+  head: [
+    [w - 30, 30],
+    [w - 10, 40],
+    [w - 22, 60],
+  ],
+});
 // A stroke through points drawn in the room (r: its box)
 async function stroke(page, r, points) {
   const [[x, y], ...rest] = points;

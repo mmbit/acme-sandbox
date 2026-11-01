@@ -187,11 +187,13 @@ async function newPage(browser, c) {
     await button(page, 'New page', true).click();
     await button(page, new RegExp(`Untitled page, ${+n + 1} of ${+n + 1}$`)).waitFor();
     assert.match(await where(page), new RegExp(`Untitled page, ${+n + 1} of ${+n + 1}$`));
+    assert.equal(await hiddenCanvases(page), 0, 'the inked page turned past holds no canvas');
     assert.equal(await inkPixels(page), 0, 'a blank page');
     await button(page, /^The notebook's pages/).click();
     await page.getByRole('menuitem').first().click();
     await page.waitForTimeout(c.settle);
     assert.match(await where(page), new RegExp(`, 1 of ${+n + 1}$`), 'back at the first');
+    assert.equal(await hiddenCanvases(page), 0, 'nor do the pages turned past');
     assert.ok((await inkPixels(page)) > 0, 'with its ink');
     assert.deepEqual(errors, []);
   } finally {
@@ -207,6 +209,8 @@ const percent = async page => {
   return (await chip.isVisible()) ? (await chip.textContent()).trim() : '100%';
 };
 const where = page => button(page, /^The notebook's pages/).getAttribute('aria-label');
+// (the ink canvases the pages not shown still hold: bookpage.js lets them go)
+const hiddenCanvases = page => page.locator('#book .bk-page[hidden] canvas.bk-ink').count();
 const paperBox = page => page.locator('#book .bk-desk').boundingBox();
 const originAt = page => page.locator('#book .bk-page:not([hidden])').boundingBox();
 async function drag(page, [x, y], [dx, dy], which) {

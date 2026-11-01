@@ -40,8 +40,6 @@ const jobFor = (agent: string, extra: Record<string, unknown> = {}) => h.start({
 const fetchAs = (token: string, id: number) => agent(`picture?id=${id}`, token);
 // The intercom's turn, as the worker takes it (its note: what the board said), ended done or failed
 const turn = async (status = 'done') => { const t = (await h.claim('claude', { kind: 'chat' }))!; await h.finish(t, { status }); return t; };
-// Whether a job holds a customer's details, as the worker asks before it lets anything of it out
-const holds = async (job: Running) => (await h.worker('customers', { job: job.id })).body.customers;
 // a call as the voice line starts and ends it, and the query HQ's call screen uploads its pictures with. The agent's
 // earlier calls not followed up yet ended a day ago: a new call doesn't carry on from them (call.ts carriedOn; no route
 // moves the clock).
@@ -148,24 +146,22 @@ test('a card\'s answer takes pictures: they wait for that card apart from the in
   assert.equal((await upload(PNG, 'image/png', `?request=${keys}`)).status, 409);
 });
 
-test('a customer card\'s answer pictures: only whoever reads the card, refused with why to anyone else, and its reader holds their details', async () => {
+test('a card marked before as a customer\'s: its answer pictures only for whoever reads the card, refused with why to anyone else', async () => {
   const asker = await jobFor('kit');
-  const card = (jobs.createRequest({ kind: 'decision', title: 'Refund the kea mug?', body: 'Their photo.', agent: 'kit', job: asker.id, customers: true }) as { id: number }).id;
+  const card = (jobs.createRequest({ kind: 'decision', title: 'Refund the kea mug?', body: 'Their photo.', agent: 'kit', job: asker.id }) as { id: number }).id;
+  h.db.prepare('update requests set customers = 1 where id = ?').run(card);
   const id = (await upload(PNG, 'image/png', `?request=${card}`)).body.id;
   assert.equal((await h.answer(card, 'refund', { pictures: [id] })).status, 200);
   for (const job of [await jobFor('juno'), await jobFor('kit')]) {   // an unrelated job, and the same agent's other job
     const r = await fetchAs(job.token, id);
     assert.equal(r.status, 403);
     assert.equal(r.body.error, jobs.CARD_REFUSED);
-    assert.equal(await holds(job), false);
   }
-  for (const job of [asker, await jobFor('vera')]) {   // the job that filed it, and org.yaml's roles.customerData
+  for (const job of [asker, await jobFor('vera')])   // the job that filed it, and org.yaml's roles.customerData
     assert.equal((await fetchAs(job.token, id)).status, 200);
-    assert.equal(await holds(job), true);
-  }
 });
 
-test('a call\'s pictures: the voice line gets them only for that live call; afterwards whoever hq call shows it to, and a customer call\'s only to the jobs working on it', async () => {
+test('a call\'s pictures: the voice line gets them only for that live call; afterwards whoever hq call shows it to, and one marked before as a customer call\'s only to the jobs working on it', async () => {
   const ctx = await startCall('wren');
   const id = (await upload(PNG, 'image/png', onCall(ctx))).body.id;
   assert.equal(await onVoice(id, ctx.call), 200);
@@ -183,18 +179,12 @@ test('a call\'s pictures: the voice line gets them only for that live call; afte
   assert.match(followUp.prompt, /one they don't name was never sent to it/);
   const kit = await jobFor('kit');
   assert.equal((await fetchAs(kit.token, id)).status, 200);
-  assert.equal(await holds(kit), false, 'an ordinary call\'s picture');
-  // once the call is about a customer (here: its follow-up was handed their details, as reading them does), a job not
-  // working on it is refused with why, and the one that saves its picture holds them
-  jobs.handedCustomerData(followUp.id);
-  for (const job of [await jobFor('juno'), await jobFor('wren')]) {
+  // a call marked before as about a customer: a job not working on it is refused with why
+  h.db.prepare('update calls set customers = 1 where id = ?').run(ctx.call);
+  for (const job of [await jobFor('juno'), await jobFor('wren')])
     assert.equal((await fetchAs(job.token, id)).status, 403);
-    assert.equal(await holds(job), false);
-  }
-  for (const job of [await jobFor('dex', { call: ctx.call }), await jobFor('vera')]) {   // a job handed out for the call, and org.yaml's roles.customerData
+  for (const job of [await jobFor('dex', { call: ctx.call }), await jobFor('vera')])   // a job handed out for the call, and org.yaml's roles.customerData
     assert.equal((await fetchAs(job.token, id)).status, 200);
-    assert.equal(await holds(job), true);
-  }
 });
 
 test('a call whose line dropped before the hand-over: its follow-up lists its pictures, and doesn\'t say which reached the call agent', async () => {

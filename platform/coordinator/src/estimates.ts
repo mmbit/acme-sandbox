@@ -15,6 +15,7 @@ import {
   type Work,
 } from './matching.ts';
 import { median, fractionalMinutes } from './arithmetic.ts';
+import { featureCosts } from './featurecost.ts';
 import { taskTimes } from './tasktime.ts';
 import { seatHeadroom } from './headroom.ts';
 import * as predictions from './predictions.ts';
@@ -52,14 +53,11 @@ export function estimate(ask: Ask) {
   const { q, agent, path, limit } = asked;
   const inFolder = (j: PastJob) => !path || (JSON.parse(j.files) as string[]).some(f => f.startsWith(path));
   const past = pastJobs();
-  const measureTask = taskTimes();
+  const measurements = { time: taskTimes(), costs: featureCosts() };
   const quality = audit(past);
   const pool = cleanPastJobs(past).filter(inFolder);
   const like = q.match(/^#(\d+)$/)?.[1];
-  if (!q) {
-    const latest = pool.filter(j => !agent || j.agent === agent).sort((a, b) => b.id - a.id);
-    return { jobs: latest.slice(0, limit).map(j => shown(j, pool, measureTask)), quality, seats: seatHeadroom() };
-  }
+  if (!q) return recentComparisons(pool, agent, limit, measurements, quality);
   const job = like ? jobOf(Number(like)) : undefined;
   if (like && !job) return 404;
   const work: Work = job ?? { title: q, origin: 'work', agent: agent || undefined };
@@ -77,8 +75,8 @@ export function estimate(ask: Ask) {
   );
   return {
     quality,
-    ...(own ? { job: shown(own, pool, measureTask) } : {}),
-    jobs: compared.slice(0, limit).map(j => shown(j, pool, measureTask)),
+    ...(own ? { job: shown(own, pool, measurements) } : {}),
+    jobs: compared.slice(0, limit).map(j => shown(j, pool, measurements)),
     ...(job?.open
       ? {
           estimate: {
@@ -141,11 +139,17 @@ const shownSize = (s: ReturnType<typeof predictions.sizeHistory>[number]) => ({
   high_minutes: s.high_ms === null ? null : fractionalMinutes(s.high_ms),
   refs: s.refs,
   why: s.why,
+  confidence: s.confidence ?? null,
+  token_budget: s.token_budget ?? null,
 });
 
 // A job whose seat spend per agent hour is under a third of its engine's usual took its hours mostly waiting on tools
 // that use no tokens (renders, long test suites): its hours and its spend are judged apart.
-function shown(j: PastJob, pool: PastJob[], measureTask: ReturnType<typeof taskTimes>) {
+function shown(
+  j: PastJob,
+  pool: PastJob[],
+  measurements: { time: ReturnType<typeof taskTimes>; costs: ReturnType<typeof featureCosts> },
+) {
   const scope = db.prepare('select prompt, result, customers from jobs where id = ?').get(j.id) as {
     prompt: string;
     result: string | null;
@@ -166,14 +170,15 @@ function shown(j: PastJob, pool: PastJob[], measureTask: ReturnType<typeof taskT
     origin: j.origin,
     finished: j.finished,
     agent_minutes: fractionalMinutes(j.agent_ms),
-    whole: measureTask(j),
+    whole: measurements.time(j),
+    feature_cost: j.thread ? measurements.costs.report(j.thread) : null,
     wall_minutes: j.wall_ms === null ? null : fractionalMinutes(j.wall_ms),
     runs: j.runs,
     rebuilt: j.rebuilt > 0,
     spend: j.spend === null ? null : Math.round(j.spend * 100) / 100,
     unit: j.unit,
     files,
-    // Customer details and credential-call scopes never become comparison material.
+    // A job marked before as holding customer details, and a credential call's scope, never become comparison material.
     brief: scope.customers || j.about_keys ? null : scope.prompt,
     report: scope.customers || j.about_keys ? null : scope.result,
     changed_files: JSON.parse(j.files) as string[],
@@ -199,4 +204,15 @@ function typical(jobs: PastJob[]) {
   const units = new Set(reported.map(j => j.unit));
   const spend = units.size === 1 ? median(reported.map(j => j.spend)) : null;
   return { agent_minutes: at(0.5), low: at(0.25), high: at(0.75), spend, unit: spend === null ? null : [...units][0] };
+}
+
+function recentComparisons(
+  pool: PastJob[],
+  agent: string,
+  limit: number,
+  measurements: { time: ReturnType<typeof taskTimes>; costs: ReturnType<typeof featureCosts> },
+  quality: ReturnType<typeof audit>,
+) {
+  const latest = pool.filter(job => !agent || job.agent === agent).sort((a, b) => b.id - a.id);
+  return { jobs: latest.slice(0, limit).map(job => shown(job, pool, measurements)), quality, seats: seatHeadroom() };
 }

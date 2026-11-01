@@ -75,6 +75,7 @@ export function observedSeats(now: number, stopDefault: number): SeatNow[] {
       weekSource: windows.week.source,
       latestReportedAt: s.updated !== null && s.updated <= now ? s.updated : null,
       stop: (s.stop ?? stopDefault) / 100,
+      stopConfigured: s.stop !== null,
       credits: s.credits === 1,
     };
   });

@@ -18,10 +18,14 @@ export const canRecord = TRANSCRIBER && !!(window.isSecureContext && navigator.m
 const LANGS = { en: 'en-US', nl: 'nl-NL', de: 'de-DE' };
 
 // One recording. `ready` resolves once the microphone is live (after a permission prompt, the first time).
-export function record({ lang = 'en', onPreview, onSegment } = {}) {
+// stream: a recorder-owned copy of an already live microphone.
+export function record({ lang = 'en', onPreview, onSegment, stream } = {}) {
   const s = { chunks: [], t0: 0, done: false };
   const release = () => { s.cut?.close(); s.meter?.close(); s.stream?.getTracks().forEach(t => t.stop()); try { s.sr?.abort(); } catch { /* not started */ } };
-  s.ready = navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 } }).then(stream => {
+  const microphone = stream
+    ? Promise.resolve(stream)
+    : navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 } });
+  s.ready = microphone.then(stream => {
     s.stream = stream; gotStream();
     if (s.done) { release(); throw new DOMException('Cancelled', 'AbortError'); }
     const type = TYPES.find(t => MediaRecorder.isTypeSupported?.(t));

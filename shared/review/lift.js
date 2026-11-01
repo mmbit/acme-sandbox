@@ -1,6 +1,6 @@
 // The lift: a mark's ink, once its note is in the book, rising off the page as one layer and drifting into the book,
 // shrinking into where the note lands there.
-import { draw } from './ink.js';
+import { svg } from './ink.js';
 import { boxOfLines } from './mark.js';
 
 // The flight: picked up for its first part (a rise, a tilt, its shadow under it), then an arc into the landing rect, the
@@ -59,44 +59,35 @@ function landed(layer, ask) {
 }
 
 // The ink as one layer of its own over everything (the page may clip what's in it, and the book is outside it): a host
-// at the ink's box, its shadow and its ink as two canvases in a closed shadow root
+// at the ink's box, its shadow and its ink as SVG in an open shadow root
 function layerOf(strokes, from) {
   const host = document.createElement('review-lift'),
     w = from.w + 2 * PAD,
     h = from.h + 2 * PAD;
+  host.setAttribute('data-review-ui', '');
   host.setAttribute(
     'style',
     `all:initial;position:fixed;left:${from.x - PAD}px;top:${from.y - PAD}px;width:${w}px;height:${h}px;` +
       'z-index:2147483647;pointer-events:none;display:block;will-change:transform,opacity',
   );
-  const root = host.attachShadow({ mode: 'closed' });
-  const canvas = (css = '') => {
-    const c = document.createElement('canvas');
-    c.setAttribute('style', `position:absolute;left:0;top:0;width:${w}px;height:${h}px;${css}`);
-    return root.appendChild(c);
-  };
-  const shadow = canvas('filter:blur(3px);opacity:0'),
-    ink = canvas();
+  const root = host.attachShadow({ mode: 'open' });
   document.documentElement.append(host);
   const here = strokes.map(s => ({
     ...s,
     points: s.points.map(([x, y, ...rest]) => [x - from.x + PAD, y - from.y + PAD, ...rest]),
   }));
-  draw(fitted(ink, w, h), here, { halo: true });
-  draw(
-    fitted(shadow, w, h),
+  const picture = (lines, css = '', halo = false) => {
+    const part = document.createElement('div');
+    part.style.cssText = `position:absolute;inset:0;${css}`;
+    part.innerHTML = svg(lines, w, h, { halo });
+    return root.appendChild(part);
+  };
+  const shadow = picture(
     here.map(s => ({ ...s, color: '#1d1a2f', alpha: 0.5 })),
+    'filter:blur(3px);opacity:0',
   );
+  picture(here, '', true);
   return { host, box: host, shadow };
-}
-// A canvas in device px for a CSS size (ink.js's fit, without waiting for a layout to measure)
-function fitted(c, w, h) {
-  const k = devicePixelRatio || 1;
-  c.width = Math.ceil(w * k);
-  c.height = Math.ceil(h * k);
-  const g = c.getContext('2d');
-  g.setTransform(k, 0, 0, k, 0, 0);
-  return g;
 }
 
 // The flight to a rect: the host along its arc, its shadow under it while it's held up. aim(): asked again as it flies,

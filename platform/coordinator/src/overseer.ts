@@ -2,7 +2,6 @@
 //
 import { db, redacted } from './db.ts';
 import { ceo } from './company.ts';
-import * as jobs from './jobs.ts';
 import { hasTeam } from './team.ts';
 
 const SHOWN_NOTES = 20;
@@ -102,11 +101,6 @@ function refusal(text: string, me: { id: number }, who: string | undefined): [nu
     return [
       403,
       'this run has started team members, who hold its token too: only the CEO writes to the Overseer, so send it from a job without a team',
-    ];
-  if (jobs.holdsCustomerData(me.id))
-    return [
-      403,
-      "this job holds a customer's details, and the Overseer's notes go outside the company: send it from a job without them",
     ];
   if (!text.trim()) return [400, 'the note is empty'];
   if (text.length > MAX_NOTE_CHARACTERS) return [413, `a note is ${MAX_NOTE_CHARACTERS} characters at most`];

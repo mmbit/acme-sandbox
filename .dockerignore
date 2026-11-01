@@ -61,8 +61,8 @@
 !shared/contrast/contrast.js
 # the rule for what a commit's lines changed count, which HQ's daily lines read (platform/coordinator/src/commitlines.ts)
 !platform/worker/src/countedlines.ts
-# The fallback estimate scale shared by work, intercom and call prompts.
-!platform/worker/src/estimating.ts
+# Shared time and token estimating guidance for CLI and prompts.
+!platform/worker/hq/estimating.ts
 # Disk-accounting failure reasons shared by the worker and coordinator receipts.
 !platform/worker/src/accounting.ts
 # Pure admission calculations reused for recorded notice evidence.

@@ -1,5 +1,6 @@
 // Whole-task agent time, read from the run ledger and the recorded review relationships.
 import { db } from './db.ts';
+import { emptyCost, addSpend, jobSpend, type Cost } from './costspend.ts';
 import { workBranch, type Named } from './jobs.ts';
 import { REBUILT_RUN, INVALID_RUN } from './timing.ts';
 
@@ -27,8 +28,9 @@ export type TaskTime = {
   allocation: Allocation;
   tasks: number[];
   share: number;
+  cost: Cost;
 };
-type Contribution = { phase: Phase; attributed_ms: number; flags: TaskTimingFlag[] };
+type Contribution = { phase: Phase; attributed_ms: number; flags: TaskTimingFlag[]; cost: Cost };
 type PullRequest = { number: number; status: string; merged_at: string | null };
 type Family = { members: Member[]; prs: PullRequest[] };
 type WindowJob = Pick<Member, 'id' | 'created' | 'finished'>;
@@ -87,7 +89,20 @@ function measureTask(job: TimedTask, getFamily: (branch: string) => Family, asOf
     allocation: sharesRounds ? 'equal_task_share' : 'followup',
     tasks: tasks.map(task => task.id),
     share: 1 / count,
+    cost: taskCost(contributions),
   };
+}
+
+function taskCost(contributions: Map<number, Contribution>) {
+  const cost = emptyCost();
+  for (const entry of contributions.values()) {
+    addSpend(cost.total, entry.cost.total);
+    const phase =
+      entry.phase === 'work' ? 'work' : entry.phase === 'reviews' || entry.phase === 'previews' ? 'reviews' : 'fixes';
+    addSpend(cost.split[phase], entry.cost.total);
+    cost.missing_usage += entry.cost.missing_usage;
+  }
+  return cost;
 }
 
 function tasksInWindow(members: Member[], { from, until }: Window) {
@@ -231,6 +246,7 @@ function measured(member: Member, phase: Phase, share: number, { from, until }: 
   }
   return {
     phase,
+    cost: contributionCost(member.id, share, { from, until }, runs.length > 0),
     attributed_ms: agentMs * share,
     flags: [...new Set(flags)],
   };
@@ -260,3 +276,11 @@ function unlinkedPreviews({ from, until }: Window) {
     .get(created, Number.isFinite(until) ? new Date(until).toISOString() : '9999-12-31');
 }
 const toMinutes = (ms: number) => Math.round(ms / 600) / 100;
+
+function contributionCost(job: number, share: number, { from, until }: Window, ran: boolean) {
+  const recorded = jobSpend(job, from, until);
+  const cost = emptyCost();
+  addSpend(cost.total, recorded.spend, share);
+  cost.missing_usage = !recorded.reported && ran ? share : 0;
+  return cost;
+}

@@ -9,8 +9,14 @@ import { settleSoon } from './settle.js';
 import { holdMs } from './prefs.js';
 
 // (offPage, theirs and free)
-// A touch beside HQ's page, on the book (outside <body>, platform/hq/shell/ink/book.js; Ink's folder): the book's, never the page's ink.
-export const offPage = e => !e.composedPath().includes(document.body);
+// A surface with its own pen handling owns its events. Other surfaces, wherever mounted, take HQ's pen.
+export function offPage(e) {
+  for (const el of e.composedPath()) {
+    if (el.hasAttribute?.('data-no-ink')) return true;
+    if (el.matches?.('dialog, [popover], [role="dialog"], [role="menu"]')) return false;
+  }
+  return false;
+}
 // Where a pen's touch belongs to the page or the browser, not the ink: review mode's own UI, the book, text fields
 // (Scribble writes in them) and what the page marks data-no-ink (a floating control the pen works as a finger does)
 export function theirs(r, e) {
@@ -18,15 +24,14 @@ export function theirs(r, e) {
   if (path.includes(r.host) || offPage(e)) return true;
   const t = path[0];
   return !!(
-    t instanceof Element &&
-    t.closest('input, textarea, select, [contenteditable=""], [contenteditable="true"], [data-no-ink]')
+    t instanceof Element && t.closest('input, textarea, select, [contenteditable=""], [contenteditable="true"]')
   );
 }
 // The pen may draw now: on the page, nothing of review mode's over it (a mouse's marking has its own veil), while the
 // last mark goes in too (settle.js).
 // On HQ the post-it of a mark being made leaves the page to the pen, so its lines go on joining it.
 export const free = r =>
-  !r.covered &&
+  (!r.covered || r.book) &&
   r.veil.hidden &&
   (r.sheet.hidden || (r.book && r.mark && r.mark.kind !== 'general')) &&
   (r.mode === 'idle' || r.mode === 'note' || r.mode === 'sending');
@@ -69,6 +74,8 @@ const fresh = r => r.mode === 'idle' || (r.mode === 'sending' && !r.nextLines.le
 const penDown = (r, p, begin) => e => {
   if (e.pointerType !== 'pen' || !e.isPrimary || !free(r) || theirs(r, e)) return;
   r.penSeen = true;
+  e.preventDefault(); // Native text selection must not take the pen away from the drawing.
+  e.stopPropagation(); // The page must not start a swipe or pan while the pen owns the gesture.
   Object.assign(p, { down: e, drawing: false, reach: 0 });
   // (a pen held this still this long starts a note: the device's own hold, prefs.js. It does where the note listens, on
   // a call, or where nothing records and the note is typed.)

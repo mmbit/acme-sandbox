@@ -98,7 +98,7 @@ function queuedHow(ids: number[]) {
           and m.started <= j.created and (m.ended is null or m.ended >= j.created)) then 'meeting'
         when j.id in (select accepted from proposals where accepted is not null) then 'inbox'
         when j.queued_by is null then 'hq' else 'agent' end how
-      from jobs j indexed by jobs_history where j.kind = 'work' and j.status = 'done'
+      from jobs j indexed by jobs_done where j.kind = 'work' and j.status = 'done'
         and j.id in (select value from json_each(?))`,
     )
     .all(JSON.stringify(ids)) as { id: number; how: QueuedHow }[];

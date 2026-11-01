@@ -11,7 +11,7 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { ORIGIN } from './config.ts';
-import { columnsOf, db, lacks, once } from './db.ts';
+import { columnsOf, db, inOneStep, lacks, once } from './db.ts';
 import { secret, serverKey } from './secrets.ts';
 import { rememberAccount } from './calls.ts';
 import { ceo, brand, names, respellings, yamlFile, voiceOf } from './company.ts';
@@ -44,12 +44,31 @@ db.exec('create table if not exists phone_asks (ts integer not null, step text n
 const keepLatest = (which: string, n: number) =>
   db.prepare(`delete from phone_asks where ${which} and rowid not in (select rowid from phone_asks where ${which} order by rowid desc limit ${n})`).run();
 export const answered = (step: string, answer: string) => {   // (callouts.ts: Twilio's word on a call out)
+  writeRefusals();
   db.prepare('insert into phone_asks (ts, step, answer) values (?, ?, ?)').run(Date.now(), step, answer);
   db.prepare('delete from phone_asks where ts < ?').run(Date.now() - KEPT_MS);
-  keepLatest(REFUSAL, KEPT_REFUSALS);
   keepLatest(`not ${REFUSAL}`, KEPT_ASKS);
   console.log(`phone: Twilio asked /api/twilio/${step}, HQ answered: ${answer}`);
 };
+// A refusal waits in memory, the latest KEPT_REFUSALS of them, and reaches the table with Twilio's next request or a
+// minute after the first, so a flood of unsigned posts costs one write a minute, not three a post. A restart loses at
+// most that minute's.
+const REFUSALS_MS = 60_000;
+let refusals: { ts: number, step: string, answer: string }[] = [];
+let writing: NodeJS.Timeout | undefined;
+const keepRefusal = (step: string, why: string) => {
+  refusals = [...refusals, { ts: Date.now(), step, answer: `403, ${why}` }].slice(-KEPT_REFUSALS);
+  writing ??= setTimeout(writeRefusals, REFUSALS_MS).unref();
+  console.log(`phone: Twilio asked /api/twilio/${step}, HQ answered: 403, ${why}`);
+};
+function writeRefusals() {
+  clearTimeout(writing);
+  writing = undefined;
+  if (!refusals.length) return;
+  const insert = db.prepare('insert into phone_asks (ts, step, answer) values (?, ?, ?)');
+  inOneStep(() => { for (const r of refusals) insert.run(r.ts, r.step, r.answer); keepLatest(REFUSAL, KEPT_REFUSALS); });
+  refusals = [];
+}
 
 async function readForm(req: IncomingMessage) {
   let body = '';
@@ -60,7 +79,7 @@ async function readForm(req: IncomingMessage) {
 // A form from Twilio for another of HQ's webhooks (callouts.ts status), or null once refused (logged as the line's own are)
 export async function signedForm(req: IncomingMessage, step: string) {
   const form = await readForm(req), refused = refusalReason(req, form);
-  if (refused) { answered(step, `403, ${refused}`); return null; }
+  if (refused) { keepRefusal(step, refused); return null; }
   rememberAccount(form.get('AccountSid'));
   return form;
 }
@@ -257,7 +276,7 @@ function afterAgent(res: ServerResponse, call: string, lineIndex: number) {
 // line a call came in on travels in the query (?line=) from one step to the next, under Twilio's signature.
 export async function webhook(req: IncomingMessage, res: ServerResponse, step: 'voice' | 'pin' | 'after') {
   const form = await readForm(req), from = form.get('From') ?? '', refused = refusalReason(req, form);
-  if (refused) { answered(step, `403, ${refused}`); res.writeHead(403); return res.end(); }
+  if (refused) { keepRefusal(step, refused); res.writeHead(403); return res.end(); }
   rememberAccount(form.get('AccountSid'));
   const asked = new URL(req.url ?? '/', 'http://x').searchParams.get('line'), named = asked !== null && /^\d{1,3}$/.test(asked) ? Number(asked) : -1;
   // the line this call is for: the one named, while it still lets the caller in, else by the number dialled

@@ -1,7 +1,7 @@
 // node --test src/downtime.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { checkDue, codexLimits, codexLogLine, codexReading, codexTokens, drainPauses, drainUntil, firstToWake, healthiest, heard, inTurn, limitsReading, lineSeat, reportedUntil, sleepUntil, DRAIN_RECHECK, type Asked } from './downtime.ts';
+import { checkDue, codexLimits, codexLogLine, codexReading, codexTokens, drainOf, drainPauses, drainUntil, firstToWake, healthiest, heard, inTurn, limitsReading, lineSeat, readDue, reportedUntil, sleepUntil, DRAIN_RECHECK, type Asked } from './downtime.ts';
 import { drainLevel, drainLifts, paceChange, pacedUntil, paceTo, reserveElsewhere, windowUsed } from './pace.ts';
 import { limitReset } from './outcome.ts';
 
@@ -73,9 +73,9 @@ test("a seat's own drain level, and a week's reserve that shrinks in its last da
   // a big plan's seat runs to its own level (SEATS' claude-1:claude:95)
   assert.equal(drainUntil({ util: 0.2, resets: NOW + H, week: 0.92, weekResets: NOW + 50 * H, drainAt: 0.95 }, NOW), 0);
   assert.equal(drainUntil({ util: 0.2, resets: NOW + H, week: 0.95, weekResets: NOW + 50 * H, drainAt: 0.95 }, NOW), NOW + 50 * H);
-  // the week's last day: with 12 hours left half the reserve is kept, at the reset none
+  // The default reserve halves with 12 hours left. A configured stop stays fixed.
   assert.equal(drainLevel({ weekResets: NOW + 12 * H }, true, NOW), 0.95);
-  assert.equal(drainLevel({ weekResets: NOW + 12 * H, drainAt: 0.95 }, true, NOW), 0.975);
+  assert.equal(drainLevel({ weekResets: NOW + 12 * H, drainAt: 0.95 }, true, NOW), 0.95);
   assert.equal(drainUntil({ resets: 0, week: 0.93, weekResets: NOW + 12 * H }, NOW), 0, 'the board, 14 Oct: the last 10% may go');
   assert.equal(drainUntil({ resets: 0, week: 0.96, weekResets: NOW + 12 * H }, NOW), NOW + 12 * H);
   // the 5-hour window keeps its level: it resets soon anyway
@@ -93,16 +93,19 @@ test("a seat ahead of its week's pace is paced until its weekly reset, once it w
   // a busy start that a quiet day evens out: 54% after four days is paced; 62% a day later, not
   assert.equal(at(0.54, 3), NOW + 3 * D);
   assert.equal(at(0.62, 2), undefined);
-  // the week's last hours: 95% used with nine hours remaining on a 95% seat
-  assert.equal(pacedUntil({ week: 0.95, weekResets: NOW + 9 * H }, 0.95, NOW), NOW + 9 * H);
+  // A configured 95% stop stays fixed with nine hours remaining.
+  assert.equal(pacedUntil({ week: 0.95, weekResets: NOW + 9 * H, drainAt: 0.95 }, 0.95, NOW), NOW + 9 * H);
+  // Only a default pacing target relaxes near the weekly reset.
+  assert.equal(pacedUntil({ week: 0.9, weekResets: NOW + 9 * H }, 0.9, NOW), undefined);
+  assert.equal(pacedUntil({ week: 0.9, weekResets: NOW + 9 * H, drainAt: 0.9 }, 0.9, NOW), NOW + 9 * H);
   // a seat that runs to its limit while another keeps the reserve paces to its limit, not to 90%
   assert.equal(pacedUntil({ week: 0.85, weekResets: NOW + 24.5 * H }, 0.9, NOW), NOW + 24.5 * H);
   assert.equal(pacedUntil({ week: 0.85, weekResets: NOW + 24.5 * H }, 1, NOW), undefined);
   assert.equal(pacedUntil({ weekResets: NOW + 3 * D }, 0.9, NOW), undefined, 'the week not measured');
-  // what it aims for: its drain level, its limit while another seat keeps the reserve, the same on credits, nothing off
+  // A configured target stays at its stop beside a reserve peer and on credits. Pacing off has no target.
   const seat = { resets: 0, week: 0.7, weekResets: NOW + 3 * D, drainAt: 0.95 };
   assert.deepEqual([paceTo(seat, true, false), paceTo(seat, true, true), paceTo({ ...seat, credits: true }, true, false), paceTo(seat, false, false)],
-    [0.95, 1, 0.95, undefined]);
+    [0.95, 0.95, 0.95, undefined]);
 });
 
 test("a paced seat's pacing lifts as an idle week goes on, before its reset, when the time left meets the stop its pace leads to", () => {
@@ -416,4 +419,30 @@ test('a deadline heartbeat requests an immediate stop and can withdraw it when t
   assert.equal(asked.get(8)?.at, 10);
   heard(asked, 8, {}, {}, 30);
   assert.equal(asked.has(8), false);
+});
+
+test('a configured stop holds beside a ready peer and throughout the last day', () => {
+  const H = 3600_000;
+  const stopped = { id: 'claude-1', engine: 'claude', state: 'ready', drainAt: 0.8,
+    util: 0.2, resets: NOW + H, week: 0.8, weekResets: NOW + 12 * H };
+  const peer = { ...stopped, id: 'claude-3', drainAt: 0.99, week: 0.9 };
+  const runs = new Map([['slot1', { seat: stopped.id, job: 1 }], ['chat', { seat: stopped.id, job: 2 }]]);
+  assert.equal(reserveElsewhere(stopped, [stopped, peer], NOW), false);
+  assert.equal(paceTo(stopped, true, true), 0.8);
+  assert.equal(drainLifts(stopped, NOW), undefined);
+  assert.deepEqual(drainOf(stopped, [stopped, peer], runs, 'chat', NOW), { until: stopped.weekResets, pause: [1] });
+  assert.deepEqual(drainOf({ ...stopped, engine: 'codex' }, [{ ...stopped, engine: 'codex' }], runs, 'chat', NOW).pause, [1]);
+  const held = { ...stopped, engine: 'codex', state: 'draining', until: stopped.weekResets, checked: NOW - H };
+  assert.deepEqual([checkDue(held, NOW), readDue(held, NOW)], [false, true], 'a configured stop is checked without spending a job');
+  stopped.state = 'draining';
+  assert.deepEqual(drainOf(stopped, [stopped, peer], runs, 'chat', NOW).pause, [1]);
+});
+
+test('ordinary seat choice prefers room below each stop over a lower absolute percentage', () => {
+  const tight = { id: 'claude-1', engine: 'claude', state: 'ready', util: 0.2, resets: 0,
+    week: 0.78, weekResets: 0, drainAt: 0.8 };
+  const roomy = { ...tight, id: 'claude-3', week: 0.88, drainAt: 0.99 };
+  assert.equal(healthiest([tight, roomy], 'claude', false, undefined, NOW)?.id, roomy.id);
+  const credited = { ...roomy, week: 1, credits: true };
+  assert.equal(healthiest([credited, tight], 'claude', false, undefined, NOW)?.id, tight.id, 'plan room comes before credit overage');
 });

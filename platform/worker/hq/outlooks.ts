@@ -2,6 +2,7 @@
 // forecast.ts and outlooks.ts), in a few lines: its ETA, the agent time its open work has left, what it waits on, its
 // planned finish against its window and the slack that leaves, and its jobs. Agents and the CEO read these instead of
 // the status report.
+import { costLines, type FeatureCost } from './costs.ts';
 import { when } from './when.ts';
 import * as api from './api.ts';
 import { lateLines, missWords } from './deadlines.ts';
@@ -45,6 +46,7 @@ type Job = {
 // (ready: its work is in with nothing open, for its owner to judge: the coordinator's threadjudge.ts)
 type Ready = { since: number | null; judge: number | null };
 type Line = {
+  cost?: FeatureCost;
   id: string;
   name: string;
   owner: string;
@@ -57,6 +59,8 @@ type Detail = Line & {
   status: string;
   jobs: Job[];
   pause?: (Lift & { target: string; why: string }) | null;
+  // the needs edge it waits on the board through, in words
+  through?: string | null;
 };
 
 export const projectsHelp = `
@@ -88,7 +92,10 @@ export async function projects(args: string[]) {
   if (args.length) return printOutlooks(args.join(' '));
   const threads: Line[] = JSON.parse(await api.orStop(api.get('projects'), "Couldn't read the deliverables."));
   if (!threads.length) return print('No open deliverables.');
-  print(...threads.map(projectLine), ...missLines(threads.filter(t => boardMisses(t.outlook)).map(t => t.id)));
+  print(
+    ...threads.flatMap(t => [projectLine(t), ...costLines(t.cost)]),
+    ...missLines(threads.filter(t => boardMisses(t.outlook)).map(t => t.id)),
+  );
 }
 
 // What to do about threads that miss a time the board set itself (deadlines.ts lateLines: on a call only). A miss of our
@@ -162,6 +169,7 @@ export async function thread(id: string) {
   const o = t.outlook;
   print(`${text(t.id)}  ${text(t.name)} (${text(t.owner)}, ${text(t.status)}), done when ${text(t.goal)}`);
   print(t.ready ? readyWords(t, t.ready) : outlookWords(o, t.id));
+  print(...costLines(t.cost));
   print(...missLines(boardMisses(o) ? [t.id] : []));
   if (t.pause)
     print(
@@ -178,6 +186,7 @@ export async function thread(id: string) {
         })
         .join(' after ')}`,
     );
+  if (t.through) print(`Held only through ${text(t.through)}.`);
   print('', 'Its open jobs:');
   for (const j of t.jobs) {
     const size = j.size_ms === null ? '' : `sized ${duration(j.size_ms / 60_000)}, `;
@@ -208,7 +217,14 @@ type OutlookMatches = {
   projects: {
     name: string;
     owner: string;
-    threads: { id: string; name: string; owner: string; outlook: Outlook | null; next: NamedJob | null }[];
+    threads: {
+      id: string;
+      name: string;
+      owner: string;
+      outlook: Outlook | null;
+      next: NamedJob | null;
+      cost?: FeatureCost;
+    }[];
   }[];
   known: string[];
 };
@@ -224,6 +240,7 @@ async function printOutlooks(words: string) {
     for (const t of p.threads) {
       const next = t.next ? `; next ${namedWork(t.next, t.name)} (${statusWord(t.next.status!)})` : '';
       print(`- ${text(t.name)}: ${outlookWords(t.outlook, t.name, namedWaitWords)}${next}`);
+      print(...costLines(t.cost));
     }
   }
   const threads = f.projects.flatMap(p => p.threads);

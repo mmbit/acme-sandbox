@@ -4,6 +4,7 @@
 import { writeFileSync } from 'node:fs';
 import { mock, test } from 'node:test';
 import assert from 'node:assert/strict';
+import { sizedTime } from './testwords.ts';
 import { harness } from './harness.ts';
 
 const h = await harness('when');
@@ -79,7 +80,10 @@ test.afterEach(async () => {
 });
 
 const ask = async (query: Record<string, string>) =>
-  h.agent(`when?${new URLSearchParams({ agent: 'kit', size: '40m', ...query })}`, (await reader()).token);
+  h.agent(
+    `when?${new URLSearchParams({ agent: 'kit', ...query, size: sizedTime(query.size ?? '40m') })}`,
+    (await reader()).token,
+  );
 // Spring: kit's queued work on its own thread, alone done (merged and deployed) at T0 + 90 min, with `slack` minutes past
 // that to its deadline: its thread's id. Anything queued before is cancelled. held: minutes it doesn't start before
 // (a time it waits for: hq job --when), which its deadline counts.
@@ -109,6 +113,9 @@ test('the earliest without making any window miss: ahead of work whose window ca
   spring(5 * 60);
   const loose = (await ask({ q: 'paint the harbour map' })).body;
   assert.deepEqual([loose.size.agent_minutes, loose.size.given, loose.size.compared], [40, true, 0]);
+  assert.equal(loose.size.token_budget.tokens.work, 1000);
+  assert.equal(loose.size.confidence.level, 'medium');
+  assert.match(await hqWhen(), /Token estimate: 1,300 tokens/);
   const time = loose.earliest.time;
   assert.equal(time.work_ms, 40 * MIN);
   assert.ok(time.review_ms > 0);
@@ -475,7 +482,7 @@ test('a 5x added seat exhausts its measured weekly allowance and waits for its o
   const thread = h.dueThread({ deadline: T0 + 2 * 24 * HOUR });
   const job = h.queue({ agent: 'kit', title: 'Paint the harbour map', engine: 'claude', queuedBy: 'juno', thread });
   const sizes = await import('./sizes.ts');
-  sizes.setSize(job, '15h', 'A measured long run', 'juno');
+  sizes.setSize(job, sizedTime('15h'), 'A measured long run', 'juno');
   const replay = async (plan: string) => (await h.agent(`when?extra_seat=${plan}`, (await reader()).token)).body;
   const small = await replay('5x');
   const large = await replay('20x');

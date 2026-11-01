@@ -1,6 +1,7 @@
 // node --test src/sizerbias.test.ts (uses a throwaway DATA_DIR).
 import { mock, test } from 'node:test';
 import assert from 'node:assert/strict';
+import { sizedTime } from './testwords.ts';
 import { harness } from './harness.ts';
 
 const h = await harness('sizerbias');
@@ -66,14 +67,20 @@ test("the play counts a queued job's given size at its sizer's bias, the tool's 
   // the saved estimate stays as given
   assert.equal(sizes.latestOf(queued.body.id)?.agent_ms, 90 * MIN);
   // the CEO's re-size of work under way plays as given
-  assert.ok(!Array.isArray(sizes.setSize(queued.body.id, '2h', 'it slipped', 'juno')), 'the CEO may re-size it');
+  assert.ok(
+    !Array.isArray(sizes.setSize(queued.body.id, sizedTime('2h'), 'it slipped', 'juno')),
+    'the CEO may re-size it',
+  );
   const { sizes: revised } = predictions.prepared(Date.now());
   assert.equal(revised.usual.get(queued.body.id)?.agent_ms, 2 * HOUR);
 });
 
 test('hq when plays the size it was given at the asker’s bias, and says so', async () => {
   const planner = await h.start({ agent: 'juno', title: 'Planning again', kind: 'chat' });
-  const answer = await h.agent('when?q=Paint%20the%20harbour%20at%20night&size=90m&agent=kit', planner.token);
+  const answer = await h.agent(
+    `when?q=Paint%20the%20harbour%20at%20night&size=${encodeURIComponent(sizedTime('90m'))}&agent=kit`,
+    planner.token,
+  );
   assert.equal(answer.status, 200, JSON.stringify(answer.body));
   assert.equal(answer.body.size.given_minutes, 90);
   assert.equal(answer.body.size.agent_minutes, Math.round(bias.corrected(90 * MIN, 'juno').agent_ms / MIN));

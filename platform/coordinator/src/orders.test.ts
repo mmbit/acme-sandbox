@@ -271,14 +271,6 @@ test("a cancellation that fails to read leaves the order due: the next sync read
   assert.equal((await listed()).error, null);
 });
 
-test("the job that reads hq orders holds customer data: an order's id opens it on the product's site", async () => {
-  const job = await h.start({ agent: 'penny' });
-  assert.equal(jobs.holdsCustomerData(job.id), false);
-  assert.equal((await h.call('/api/agent/orders', job.token)).status, 200);
-  assert.equal(jobs.holdsCustomerData(job.id), true);
-  await h.finish(job);
-});
-
 // a company's own tool that places live orders answers for its own ids
 const sample = { status: 'waiting', price: null as number | null };
 ownOrders.registerOrders(id => id === 'pf-sample-1' ? { shop: 'pebbleford', ours: { from: 'sample run', status: sample.status, amount: sample.price, currency: 'eur' } } : null);

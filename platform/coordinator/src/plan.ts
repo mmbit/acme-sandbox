@@ -10,6 +10,7 @@ import { oneTask } from './made.ts';
 import { ceo, projects, type Project } from './company.ts';
 import { findProject, findThread, listThreads, needsOf, SLUG, slugRefusal, type Thread } from './projects.ts';
 import { addNeed, newThread } from './newthread.ts';
+import { boardHold, drawnWords } from './boardheld.ts';
 import { checkThreadName, noProject, placeOf, projectClash, taskClash, threadClash } from './names.ts';
 import { newId } from './regroup.ts';
 import { DESK, OPEN_JOBS, OPEN_PRS, nameOf, type Named } from './jobs.ts';
@@ -101,6 +102,7 @@ export function renameProject(id: string, to: unknown, agent: string) {
 export { projectDone } from './projectdone.ts';
 
 // hq plan need | unneed: a thread waits for another's merge, or no longer. A loop is refused at any depth, across projects.
+// One onto work that waits on the board says so (boardheld.ts), for the drawer to judge.
 export function need(id: string, needs: string, agent: string) {
   const own = ownThread(id, agent);
   if (typeof own === 'string') return own;
@@ -112,7 +114,9 @@ export function need(id: string, needs: string, agent: string) {
   if (reaches(to, from)) return `${to} needs ${from} already (or through others): that would be a loop`;
   const added = redraws.withoutLoop(from, () => addNeed(own.thread, to, agent));
   if (typeof added === 'string') return added;
-  return { ok: true as const };
+  // (onto work that waits on the board, said)
+  const hold = boardHold(to);
+  return { ok: true as const, ...(hold && { held: drawnWords(from, to, hold) }) };
 }
 // hq plan unneed: the later step that puts a thread beside one it was chained after, with why, kept in the plan's changes
 // (newthread.ts chainWords).

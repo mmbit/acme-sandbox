@@ -60,7 +60,7 @@ function earlierFeedback(before: { job: number; text: string }[]) {
       .filter(piece => piece.job === earlierJob)
       .map(piece => piece.text)
       .join('\n\n');
-    // a report holding a customer's own details stays with its job (jobs.ts holdsCustomerData)
+    // a report marked before as holding a customer's own details stays with its job (jobs.ts holdsCustomerData)
     return `### Job #${earlierJob} (${row?.status ?? 'gone'}) had this${jobs.holdsCustomerData(earlierJob) ? '' : opening(row?.result)}\n\n${words}`;
   });
 }

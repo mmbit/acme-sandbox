@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { sizedTime } from './testwords.ts';
 import { harness } from './harness.ts';
 
 const h = await harness('noseat');
@@ -48,7 +49,7 @@ test("a call agent's job tool hears the refusal while the board is on the line",
         '--code',
         'SUPPORT',
         '--size',
-        '30m',
+        sizedTime('30m'),
         '--why',
         'Check all support paths',
       ],

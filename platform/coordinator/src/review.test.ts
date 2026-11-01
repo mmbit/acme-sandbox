@@ -87,7 +87,7 @@ setInterval(async () => {
 // ---- a job's life, through the worker's routes
 type Listed = { id: number; agent: string; kind: string; stage: string | null; step: string | null; status: string; pr: number; round: number; title: string;
   engine: string; until: number | null; ready: number; after: number | null; waits: { id: number }[] };
-type Run = Running & Listed & { seat: string; sha: string | null; prompt: string; note: string | null; customers: number; writes: string | null; landing: string | null };
+type Run = Running & Listed & { seat: string; sha: string | null; prompt: string; note: string | null; writes: string | null; landing: string | null };
 // What HQ lists as queued for pull request n, oldest first: its review runs and its author's jobs on it
 const queued = (n: number) => (h.jobs.listJobs() as unknown as Listed[]).filter(j => j.pr === n && j.status === 'queued').reverse();
 const reviewers = (n: number) => queued(n).filter(j => j.kind === 'review').map(j => j.agent);
@@ -2943,23 +2943,20 @@ test("an author's fix job from an earlier round that fails after a newer push st
   assert.ok(queued(n).some(job => job.kind === 'consolidate'), "round 2's ruling is still queued");
 });
 
-test("an author's job that fails runs again holding what it held of a customer's details, with the message it started with, by itself and by hq review", async () => {
+test("an author's job that fails runs again with the message it started with, by itself and by hq review", async () => {
   const n = 993;
   await submit(n); await decide(n, 'board');
   await boardSays(n, 'Make the tagline shorter');
   const [notes] = await claim(n);
-  h.jobs.handedCustomerData(notes.id);   // a tool handed it a customer's details (a Care case, hq mail)
   await h.answer(await h.park(notes, { title: 'Which tagline?' }), 'keep the old tagline after all');
   await end((await claim(n))[0], FAILED);
   later(n);
   const [retry] = await claim(n);
-  assert.equal(retry.customers, 1, 'like the run it stands in for');
   assert.match(retry.note ?? '', /failed before it ended[\s\S]*keep the old tagline after all/);
   await end(retry, FAILED);
   assert.deepEqual(prs(n), { round: 0, status: 'stuck' });
   assert.equal((await hqReview(n)).status, 200);
   const [again] = await claim(n);
-  assert.equal(again.customers, 1, "and so does hq review's");
   assert.match(again.note ?? '', /keep the old tagline after all/);
   assert.equal(again.note?.match(/failed before it ended/g)?.length, 1, 'said once, not once per failure');
 });

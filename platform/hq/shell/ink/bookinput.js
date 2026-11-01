@@ -11,6 +11,7 @@ import { stylesheet } from '../../util.js';
 import { prefs, holdMs } from '/__review/prefs.js';
 import { isTap, wandered } from '/__review/tap.js';
 import { canRecord } from '../voice.js';
+import { callMicrophone } from '../callmic.js';
 import { micAllowed, micBlocked } from '/__review/micallowed.js';
 import { scrapAt } from './bookscrap.js';
 import { listen, cantListen } from './bookvoice.js';
@@ -58,7 +59,7 @@ function kindOf(input, e) {
   if (e.target instanceof Element && e.target.closest(NOT_PAPER)) return null;
   const at = book.at(e.clientX, e.clientY);
   if (!at?.view.page.ink || scrapAt(at.view.page.scraps, [at.x, at.y]) >= 0) return null;
-  if (mouse) return input.mic ? 'voice' : null;
+  if (mouse) return input.mic || callMicrophone() ? 'voice' : null;
   if (doubled(input, e)) return canRecord ? 'voice' : null;
   return prefs().radial ? 'radial' : null;
 }
@@ -118,7 +119,7 @@ function held(input) {
   unmake(book.desk, down);
   if (firstTap) book.tools?.undot?.(firstTap.stepAtPress);
   navigator.vibrate?.(8);
-  if (kind === 'voice') return micAllowed() ? listen(book, down) : cantListen(down, micBlocked());
+  if (kind === 'voice') return callMicrophone() || micAllowed() ? listen(book, down) : cantListen(down, micBlocked());
   const tools = Object.entries(book.tools?.buttons?.() ?? {})
     .filter(([, b]) => b.offsetParent)
     .map(([mode, b]) => ({ mode, label: b.getAttribute('aria-label'), icon: b.innerHTML }));

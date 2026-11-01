@@ -53,9 +53,12 @@ final class Pen: NSObject, PKCanvasViewDelegate, UIGestureRecognizerDelegate {
 
   // The page's word on its pen (booknative.js): the paper's rectangle in its px, the tool, the ink's colour, width
   // and alpha, all of them always there; nil when the Pencil is the page's (another tool, the book folded, another
-  // page).
+  // page), as is a word missing any of them.
   func set(_ pen: [String: Any]?) {
-    guard let pen else {
+    guard let pen, let paper = pen["paper"] as? [Double], paper.count == 4, let tool = pen["tool"] as? String,
+      let ink = Self.inks[tool], let hex = pen["color"] as? String, let color = Self.color(hex),
+      let alpha = pen["alpha"] as? Double, let size = pen["size"] as? Double
+    else {
       canvas.drawingGestureRecognizer.isEnabled = false
       gate.isEnabled = false
       // (clear the ink left, unacknowledged strokes too, so it can't cover another page or tool)
@@ -64,14 +67,12 @@ final class Pen: NSObject, PKCanvasViewDelegate, UIGestureRecognizerDelegate {
       painted = []
       return
     }
-    let paper = pen["paper"] as! [Double]
     let rect = CGRect(x: paper[0], y: paper[1], width: paper[2], height: paper[3])
     if canvas.frame != rect {
       canvas.frame = rect
       gate.paper = rect
     }
-    let color = Self.color(pen["color"] as! String).withAlphaComponent(pen["alpha"] as! Double)
-    canvas.tool = PKInkingTool(Self.inks[pen["tool"] as! String]!, color: color, width: pen["size"] as! Double)
+    canvas.tool = PKInkingTool(ink, color: color.withAlphaComponent(alpha), width: size)
     canvas.drawingGestureRecognizer.isEnabled = true
     gate.isEnabled = true
   }
@@ -157,8 +158,8 @@ final class Pen: NSObject, PKCanvasViewDelegate, UIGestureRecognizerDelegate {
   private static func round(_ n: CGFloat) -> Double { (Double(n) * 100).rounded() / 100 }
 
   // "#rrggbb", the page's inks' way (shared/review/ink.js)
-  private static func color(_ hex: String) -> UIColor {
-    let rgb = Int(hex.dropFirst(), radix: 16)!
+  private static func color(_ hex: String) -> UIColor? {
+    guard let rgb = Int(hex.dropFirst(), radix: 16) else { return nil }
     return UIColor(
       red: CGFloat((rgb >> 16) & 0xff) / 255, green: CGFloat((rgb >> 8) & 0xff) / 255,
       blue: CGFloat(rgb & 0xff) / 255, alpha: 1)

@@ -8,7 +8,7 @@ import { transcribe } from './data.js';
 import { liveLine } from '/__review/liveline.js';
 
 export const SHORT = 0.6;
-export function dictate({ lang = 'en', api, onWords }) {
+export function dictate({ lang = 'en', api, onWords, stream }) {
   const parts = [],
     pending = [];
   let failed = false,
@@ -16,6 +16,7 @@ export function dictate({ lang = 'en', api, onWords }) {
   const words = () => parts.filter(Boolean).join(' ').trim();
   const rec = record({
     lang,
+    stream,
     onSegment: clip => {
       const i = parts.push('') - 1;
       pending.push(

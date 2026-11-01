@@ -103,7 +103,7 @@ test("an open job's line says where it is, what it waits for, downtime and the p
   ] as [Partial<OpenJob>, string][]) assert.equal(jobs.openLine({ ...open, ...j } as OpenJob), line);
 });
 
-test('hq extend: adds to a job an agent queued that has not started, signed last; never to a started, finished, review or coordinator job', async () => {
+test("hq extend: adds to a job an agent queued that has not started, signed last; to HQ's own from its agent, owner or the CEO; never to a started or review job", async () => {
   reset();
   const me = await h.start({ agent: 'bolt' });
   const id = queue('pylon', 'Calls: no silent truncation', { queuedBy: 'juno', engine: 'extend' });
@@ -116,9 +116,21 @@ test('hq extend: adds to a job an agent queued that has not started, signed last
   await h.finish(paused, { status: 'limited', session: 'sess' });   // requeued after a limit: its session read the prompt
   const running = await h.start({ agent: 'pylon', title: 'Running', queuedBy: 'juno' });
   const review = jobs.createJob({ agent: 'rook', title: 'Review PR #1', prompt: 'x', engine: 'idle', kind: 'review', pr: 1 }).id;
-  const board = queue('juno', 'The board on: the brand');   // the coordinator's own (queued_by null)
-  for (const other of [paused.id, running.id, review, board, 99999]) assert.equal((await h.agent('extend', me.token, { id: other, text: 'more' })).status, 404, String(other));
+  for (const other of [paused.id, running.id]) assert.equal((await h.agent('extend', me.token, { id: other, text: 'more' })).status, 409, String(other));
+  for (const other of [review, 99999]) assert.equal((await h.agent('extend', me.token, { id: other, text: 'more' })).status, 404, String(other));
   assert.equal((await h.agent('extend', me.token, { id, text: 'x', as: 'juno' })).status, 403);   // nobody signs as a colleague
+  // HQ's own (queued_by null): a fix round takes it from its agent, not from a colleague
+  const fix = queue('pylon', 'Fixing review notes', { stage: 'fix', round: 1, engine: 'fix' });
+  const colleague = await h.agent('extend', me.token, { id: fix, text: 'Also the say tool.' });
+  assert.equal(colleague.status, 403, JSON.stringify(colleague.body));
+  assert.match(colleague.body.error, /pylon/);
+  const pylon = await h.start({ agent: 'pylon', title: 'Elsewhere', queuedBy: 'juno' });
+  assert.equal((await h.agent('extend', pylon.token, { id: fix, text: 'Also the say tool.' })).status, 200);
+  assert.match((await h.claim('fix'))!.prompt, /Also the say tool\.\n\(Added by pylon\.\)$/);
+  // and the board's answer's job from the CEO
+  const board = queue('bolt', 'The board on: the brand');
+  const ceo = await h.start({ agent: 'juno', title: 'Planning', kind: 'chat' });
+  assert.equal((await h.agent('extend', ceo.token, { id: board, text: 'Read card #3 first.' })).status, 200);
 });
 
 // (it lists them as hq jobs does: the call manages work as off it, board call 122.)
@@ -407,7 +419,8 @@ test('a card wait: a queued job of yours that never started, on an open card the
   const open = await card('Which name?'), answered = await card('Old question'), dropped = await card('Not needed');
   await h.answer(answered, 'Done.');
   const review = (jobs.createRequest({ kind: 'review', title: 'PR #3', body: 'x', pr: 3 }) as { id: number }).id;
-  const customer = (jobs.createRequest({ kind: 'decision', title: 'A refund', body: 'x', agent: 'lark', customers: true }) as { id: number }).id;
+  const customer = (jobs.createRequest({ kind: 'decision', title: 'A refund', body: 'x', agent: 'lark' }) as { id: number }).id;
+  db.prepare('update requests set customers = 1 where id = ?').run(customer);   // (marked before as a customer's)
   const foreign = (jobs.createRequest({ kind: 'decision', title: 'Private', body: 'x', agent: 'bolt' }) as { id: number }).id;
   const next = queue('kit', 'Publish', { queuedBy: 'lark', engine: 'card-wait' });
   const paused = await h.start({ agent: 'kit', title: 'Paused mid-run', queuedBy: 'lark' });

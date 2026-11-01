@@ -336,7 +336,8 @@ test('two guest pages stay private and mark done or undo until the board closes;
   assert.deepEqual([closed.state, closed.archived, closed.pages.length], ['closed', false, 2]);
   assert.equal((await bela(`${api}/pages/undo`, { id: second })).status, 409);
   const advice = await h.claimJob(rounds.roundOf(round.id)!.advice!);
-  assert.ok(advice.prompt.includes('I will make it clearer.'));
+  assert.ok(!advice.prompt.includes('I will make it clearer.'), "a guest's words stay on their page");
+  assert.ok(advice.prompt.includes(`pages: ${first}, ${second}`));
   assert.ok(advice.prompt.includes(`hq advice ${round.id}`));
   const read = await h.agent(`sketch?id=${first}`, advice.token);
   assert.equal(read.status, 200);
@@ -347,7 +348,6 @@ test('two guest pages stay private and mark done or undo until the board closes;
   assert.equal((await h.agent(`sketch?id=${first}`, other.token)).status, 404);
   const listed = (await h.agent('sketches', other.token)).body.sketches.map((p: { id: number }) => p.id);
   assert.ok(!listed.includes(first) && !listed.includes(second));
-  assert.equal((await h.worker('customers', { job: other.id })).body.customers, false);
   const saved = await h.hq({ ...advice, tmp: tmpdir() }, 'sketch', String(first));
   assert.equal(saved.code, 0, saved.out);
   // (nothing to hand back before a page is written)

@@ -10,6 +10,8 @@ import { esc } from '../util.js';
 import { loadLanguage } from './data.js';
 import { hush, cue, cueRepeating, cueInto } from './audio.js';
 import { CallAudio } from './callaudio.js';
+import { shareCallMicrophone } from './callmic.js';
+import { gotStream } from '/__review/micallowed.js';
 import * as world from '../world/world.js';
 import { toast } from './hud.js';
 import { names } from './brand.js';
@@ -33,6 +35,7 @@ import { ceoName, closeTool, openIntercom, openComputer, intercomOpen, notesComi
 const $ = s => document.querySelector(s);
 let call = null;
 export const inCall = () => !!call;
+shareCallMicrophone(() => call?.audio.stream);
 // The call open over HQ, its screen in front: Escape makes it small (desk.js)
 export const callInFront = () => !!call && !call.small;
 export const minimiseCall = () => call && minimise(call);
@@ -73,6 +76,7 @@ export async function callAgent(
   ring(c);
   try {
     await c.audio.start();
+    gotStream();
   } catch {
     return endCall(`The microphone didn’t start. Check ${names.hq}’s microphone permission.`);
   }

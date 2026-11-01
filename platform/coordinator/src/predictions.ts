@@ -363,6 +363,8 @@ export function sizeHistory(job: number) {
       high_ms: tool.slow.agent_ms,
       refs: tool.picks,
       why: '',
+      confidence: null,
+      token_budget: null,
     },
   ];
 }

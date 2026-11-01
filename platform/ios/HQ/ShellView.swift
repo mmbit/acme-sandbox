@@ -24,7 +24,9 @@ struct ShellView: UIViewRepresentable {
     web.uiDelegate = context.coordinator
     web.navigationDelegate = context.coordinator
     web.scrollView.contentInsetAdjustmentBehavior = .never
-    web.isInspectable = true  // (Safari's Develop menu on a Mac shows the page's console)
+    #if DEBUG
+      web.isInspectable = true  // (Safari's Develop menu on a Mac shows the page's console)
+    #endif
     context.coordinator.pen = Pen(over: web)
     web.load(URLRequest(url: Self.home))
     return web
@@ -47,7 +49,7 @@ final class Bridge: NSObject, WKScriptMessageHandler, WKUIDelegate, WKNavigation
       if live { call.start() } else { call.end() }
     }
     // (false: the Pencil the page's)
-    if let said = body["pen"] { pen.set(said as? Bool == false ? nil : (said as! [String: Any])) }
+    if let said = body["pen"] { pen.set(said as? [String: Any]) }
   }
 
   // HQ's own pages get the microphone without the web view asking at every call.
@@ -60,12 +62,18 @@ final class Bridge: NSObject, WKScriptMessageHandler, WKUIDelegate, WKNavigation
   }
 
   // A passkey works in an app only when Apple ties the app to HQ's domain, which takes a paid developer account. So
-  // the sign-in page gives way to HQ's one-time code from a device already signed in (/pair).
+  // the sign-in page gives way to HQ's one-time code from a device already signed in (/pair). Another site's page
+  // opens in the browser: the shell, with its microphone and its messages, is HQ's alone.
   func webView(
     _ webView: WKWebView, decidePolicyFor action: WKNavigationAction,
     decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
   ) {
     let url = action.request.url
+    if action.targetFrame?.isMainFrame == true, let url, url.host != ShellView.home.host, Self.web(url) {
+      decisionHandler(.cancel)
+      UIApplication.shared.open(url)
+      return
+    }
     guard action.targetFrame?.isMainFrame == true, url?.host == ShellView.home.host, url?.path == "/login" else {
       return decisionHandler(.allow)
     }
@@ -113,12 +121,14 @@ final class Bridge: NSObject, WKScriptMessageHandler, WKUIDelegate, WKNavigation
     webView.reload()
   }
 
-  // A link that opens a new window opens in the browser.
+  // A link that opens a new window opens in the browser, a web page's only (no other app's scheme).
   func webView(
     _ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
     for action: WKNavigationAction, windowFeatures: WKWindowFeatures
   ) -> WKWebView? {
-    if let url = action.request.url { UIApplication.shared.open(url) }
+    if let url = action.request.url, Self.web(url) { UIApplication.shared.open(url) }
     return nil
   }
+
+  private static func web(_ url: URL) -> Bool { ["http", "https"].contains(url.scheme?.lowercased()) }
 }

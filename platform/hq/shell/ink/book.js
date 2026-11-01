@@ -107,12 +107,12 @@ function mountRoot() {
   root = document.createElement('div');
   root.id = 'book';
   root.style.cssText = PAPER;
-  root.innerHTML = `<div class="bk-table"></div><div class="bk-edge" role="separator" aria-orientation="vertical"
+  root.innerHTML = `<div class="bk-table" data-no-ink></div><div class="bk-edge" data-no-ink role="separator" aria-orientation="vertical"
     aria-label="${word('notebookEdge')}"></div>
-    <section class="bk-leaf" aria-label="${word('theNotebook')}"><div class="bk-paper"></div><div class="bk-stack"></div><nav class="bk-rail" aria-label="${word(
+    <section class="bk-leaf" aria-label="${word('theNotebook')}"><div class="bk-paper" data-no-ink></div><div class="bk-stack" data-no-ink></div><nav class="bk-rail" aria-label="${word(
       'notebookControls',
     )}"></nav></section>
-    <button class="bk-lip" aria-label="${word('notebookLip')}" data-keep-clear></button>`;
+    <button class="bk-lip" aria-label="${word('notebookLip')}" data-keep-clear data-no-ink></button>`;
   document.documentElement.append(root);
   parts = Object.fromEntries(
     ['table', 'edge', 'leaf', 'paper', 'stack', 'rail', 'lip'].map(k => [k, root.querySelector(`.bk-${k}`)]),

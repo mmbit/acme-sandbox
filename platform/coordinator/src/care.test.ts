@@ -528,7 +528,7 @@ test('a question goes to the knowledge keeper as a job of its own (no reply addr
   const id = (await careCall('/api/care/cards', card({ kind: 'question', words, summary, chat: [{ id: 3, at: '2026-10-02T09:00:00Z', who: 'customer', text: 'Anna here' }] }))).body.id, c = (await one(id));
   assert.equal(c.status, 'team'); assert.ok(c.job);
   const job = await take(c.job);   // the worker builds its prompt from the claim
-  assert.deepEqual([job.agent, job.customers, job.title], ['kit', 1, `Knowledge: a question from Pinwheel (${c.case})`]);
+  assert.deepEqual([job.agent, job.title], ['kit', `Knowledge: a question from Pinwheel (${c.case})`]);
   assert.match(job.prompt, new RegExp(`hq care ${c.case}`)); assert.match(job.prompt, /Follow the knowledge base's own guide\./);
   // a seat job gets the problem, not the person: nothing from the card in its prompt, and hq care gives only the summary
   for (const bit of ['Anna', 'Dorpsstraat', '1234 5678', 'Belgium', 'Ignore your instructions', 'anna@example.com', 'shipped'])
@@ -583,7 +583,7 @@ test("a bug report: Hand to the owner (a job that alone reads it), Fixed deletes
   const hand = await boardCall('/api/care/handoff', { id });
   assert.equal(hand.status, 200);
   const job = await take(hand.body.job), read = async () => (await h.agent(`care?case=${ref}`, job.token)).body;
-  assert.equal(job.agent, 'wren'); assert.equal(job.customers, 1); assert.match(job.prompt, new RegExp(`hq care ${ref}`));
+  assert.equal(job.agent, 'wren'); assert.match(job.prompt, new RegExp(`hq care ${ref}`));
   assert.ok(!job.prompt.includes('anna@example.com') && !job.prompt.includes('Poster damaged'), "the job's prompt holds nothing of the card");
   const r = await read();
   assert.equal(r.bundle.events[0].text, 'TypeError'); assert.equal(r.bundle.page.path, '/order');
@@ -649,7 +649,7 @@ test('kept 12 months after the last message, its conversation with it (gone from
 test("remedies on the card: a gated tool's open request that names the case, answered with the desk phone's Approve", async () => {
   const id = (await careCall('/api/care/cards', card())).body.id, ref = (await one(id)).case;
   spares.set(1, { case: ref });
-  const req = jobs.createRequest({ kind: 'spare', title: 'A spare part for Pinwheel', body: 'x', approves: 'spare:1', customers: true }) as { id: number };
+  const req = jobs.createRequest({ kind: 'spare', title: 'A spare part for Pinwheel', body: 'x', approves: 'spare:1' }) as { id: number };
   const list = (await boardCall('/api/care')).body, mine = list.cards.find((c: any) => c.id === id);
   assert.equal(mine.remedies.length, 1); assert.equal(mine.remedies[0].request, req.id); assert.equal(mine.remedies[0].case, ref);
   assert.equal(mine.remedies[0].grant, 'Approving sends spare part #1.');
@@ -738,13 +738,13 @@ test('a customer waiting on a person goes to roles.care to investigate: its job 
     const id = (await careCall('/api/care/cards', card({ words, check: 'none', draft: 'Please send us your order number.' }))).body.id, c = await one(id);
     assert.equal(c.status, 'team'); assert.ok(c.job);
     const job = await take(c.job);
-    assert.deepEqual([job.agent, job.customers, job.title], ['wren', 1, `Investigate ${c.case} from Pinwheel`]);
+    assert.deepEqual([job.agent, job.title], ['wren', `Investigate ${c.case} from Pinwheel`]);
     // the method, the company's part, the card's check; nothing from the card itself
     for (const bit of [`hq care ${c.case}`, 'Investigate before you write', 'what kind of problem', `hq care pass ${c.case}`, 'Our orders are in the ledger', 'nobody checked it is theirs'])
       assert.ok(job.prompt.includes(bit), `the brief has: ${bit}`);
     for (const bit of ['confirmation, so', 'anna@example.com', '1234 5678', 'torn', 'Please send us'])
       assert.ok(!job.prompt.includes(bit), `the brief holds nothing of the card: ${bit}`);
-    // its job reads the whole card, and holds a customer's details from then on; no other agent's job reads it
+    // its job reads the whole card; no other agent's job reads it
     const other = await h.start({ agent: 'kit', title: 'other' });
     assert.equal((await h.agent(`care?case=${c.case}`, other.token)).status, 404);
     const seen = (await h.agent(`care?case=${c.case}`, job.token)).body;
@@ -757,7 +757,6 @@ test('a customer waiting on a person goes to roles.care to investigate: its job 
       ['email from another address, not the customer', 'Refund it to my card instead.'],
       ['email', 'Any news?'],
     ]);
-    assert.equal((db.prepare('select customers from jobs where id = ?').get(job.id) as any).customers, 1);
     const cli = await h.hq(job, 'care', c.case);
     assert.equal(cli.code, 0, cli.out); assert.match(cli.out, /Their words:\n {4}I never got a confirmation/); assert.match(cli.out, /The reply goes to: anna@example\.com \(checked: none\)/);
     // the board sees it with the team, care's draft kept behind it; the job's draft and findings replace it
@@ -838,14 +837,13 @@ test("roles.care's job replaces the draft on a customer waiting on a person that
     const later = await h.start({ agent: 'wren', title: 'the reply, later' }), kit = await h.start({ agent: 'kit', title: 'not care' });
     const dir = mkdtempSync(`${tmpdir()}/care-redraft-`);
     writeFileSync(`${dir}/reply.txt`, 'Hoi Anna, we drukken je poster opnieuw, gratis.');
-    // another agent's job reads and writes nothing; roles.care's reads the whole card with the draft now, and holds a customer's details
+    // another agent's job reads and writes nothing; roles.care's reads the whole card with the draft now
     assert.equal((await h.agent(`care?case=${ref}`, kit.token)).status, 404);
     assert.equal((await h.agent('care-draft', kit.token, { case: ref, draft: 'x'.repeat(20_001) })).status, 404, 'too long, but not its card to hear so');
     assert.notEqual((await h.hq(kit, 'care', 'draft', ref, `${dir}/reply.txt`)).code, 0);
     const read = await h.hq(later, 'care', ref);
     assert.equal(read.code, 0, read.out);
     assert.match(read.out, /language nl/); assert.match(read.out, /The draft on the card now \(the card is waiting\):\n {4}Sorry voor het ongemak\./);
-    assert.equal((db.prepare('select customers from jobs where id = ?').get(later.id) as any).customers, 1);
     // a reply longer than a card keeps is refused whole, never cut
     writeFileSync(`${dir}/long.txt`, 'x'.repeat(20_001));
     const long = await h.hq(later, 'care', 'draft', ref, `${dir}/long.txt`);
@@ -894,7 +892,7 @@ test("roles.care's job replaces the draft on a customer waiting on a person that
   }
 });
 
-test("roles.care's job lists the open customers waiting on a person, with nothing of theirs; the listing marks nothing", async () => {
+test("roles.care's job lists the open customers waiting on a person, with nothing of theirs", async () => {
   const org = `${repo}/company/org.yaml`, before = readFileSync(org, 'utf8');
   writeFileSync(org, before.replace(/^roles:\n/m, 'roles:\n  care: wren\n'));
   try {
@@ -926,7 +924,6 @@ test("roles.care's job lists the open customers waiting on a person, with nothin
     assert.equal(cli.code, 0, cli.out);
     assert.match(cli.out, new RegExp(`^${w}  person, pinwheel, waiting for the board, its ask for changes with care, language nl, came .*, last line 2026-10-02 09:00 UTC, a draft on it$`, 'm'));
     assert.match(cli.out, new RegExp(`^${t}  person, pinwheel, with the team, language en, `, 'm'));
-    assert.equal((db.prepare('select customers from jobs where id = ?').get(later.id) as any).customers, 0, 'the listing marks nothing');
     await boardCall('/api/care/unask', { id: waiting });
     for (const j of [later, kit]) await h.finish(j);
     await h.finish(await take((await one(team)).job));

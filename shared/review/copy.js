@@ -12,6 +12,7 @@ export function copy(r, node, waits, v) {
   if (
     node.nodeType !== 1 ||
     node === r.host ||
+    node.hasAttribute('data-review-ui') ||
     SKIP.test(node.localName) ||
     (node !== v.popup && r.popups.includes(node) && inTopLayer(node))
   )

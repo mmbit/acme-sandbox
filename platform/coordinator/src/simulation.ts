@@ -132,7 +132,7 @@ function simulate(
     for (const seat of play.seats) {
       if (account) ledger.reset(account, seat, now);
       capacity.reset(seat, now);
-      if (account) ledger.release(account, seat, now);
+      if (account) ledger.release(account, seat, play.seats, now);
     }
     events.drain(play, now);
     start(play, now);

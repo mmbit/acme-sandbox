@@ -1,10 +1,12 @@
 // An agent's steps as HQ shows them: a short line in plain words for each tool call, written here from the call itself
 // (no model is asked). (The lines a job changes come from its clone: git.ts branchLines. The tests it passed come from
 // HQ's test results:)
-// A job that holds a customer's own details shows only what kind of step it takes: no paths, searches or commands. The
-// board's own view in HQ (the live feed and a job's log as HQ shows it) gets the step itself all the same (shown).
+// Each line goes out twice: text, what anything agents can read keeps (the coordinator's events and job_log tables, the
+// reports drawn from them), is the kind of step and what it names (a file, a host), never its arguments: a command or a
+// search can carry a customer's details the job is rightly working with (charter rule 7). board is the line itself, for
+// the board's own HQ session alone, which sees everything anyway.
 
-export type Step = { text: string };
+export type Step = { text: string; board?: string };
 
 const file = (p: unknown) =>
   String(p ?? '')
@@ -18,28 +20,26 @@ const quote = (s: unknown, n = 60) => {
 };
 
 // What a Claude Code tool call does, in a line. Null for a call HQ shows otherwise (team members, messages) or not at all.
-export function stepOf(name: string, input: any = {}, guarded = false): Step | null {
+export function stepOf(name: string, input: any = {}): Step | null {
   switch (name) {
     case 'Read':
-      return { text: guarded ? 'Reading a file' : `Reading ${file(input.file_path)}` };
+      return { text: `Reading ${file(input.file_path)}` };
     case 'Write':
-      return { text: guarded ? 'Writing a file' : `Writing ${file(input.file_path)}` };
+      return { text: `Writing ${file(input.file_path)}` };
     case 'Edit':
     case 'MultiEdit':
-      return { text: guarded ? 'Editing a file' : `Editing ${file(input.file_path)}` };
+      return { text: `Editing ${file(input.file_path)}` };
     case 'NotebookEdit':
-      return { text: guarded ? 'Editing a notebook' : `Editing ${file(input.notebook_path)}` };
+      return { text: `Editing ${file(input.notebook_path)}` };
     case 'Grep':
-      return { text: guarded ? 'Searching the files' : `Searching for “${quote(input.pattern, 40)}”` };
+      return { text: 'Searching the files', board: `Searching for “${quote(input.pattern, 40)}”` };
     case 'Glob':
-      return { text: guarded ? 'Looking for files' : `Looking for ${quote(input.pattern, 40)}` };
+      return { text: 'Looking for files', board: `Looking for ${quote(input.pattern, 40)}` };
     // Claude Code asks for a few words on what each command does: the best line there is
     case 'Bash':
-      return {
-        text: guarded ? 'Running a command' : quote(input.description) || `Running ${quote(input.command, 50)}`,
-      };
+      return { text: 'Running a command', board: quote(input.description) || `Running ${quote(input.command, 50)}` };
     case 'WebSearch':
-      return { text: guarded ? 'Searching the web' : `Searching the web for “${quote(input.query, 40)}”` };
+      return { text: 'Searching the web', board: `Searching the web for “${quote(input.query, 40)}”` };
     case 'WebFetch': {
       let host = '';
       try {
@@ -47,7 +47,7 @@ export function stepOf(name: string, input: any = {}, guarded = false): Step | n
       } catch {
         /* (no host to show) */
       }
-      return { text: guarded || !host ? 'Reading a web page' : `Reading ${host}` };
+      return { text: host ? `Reading ${host}` : 'Reading a web page' };
     }
     case 'TodoWrite':
       return { text: 'Updating its plan' };
@@ -60,11 +60,19 @@ export function stepOf(name: string, input: any = {}, guarded = false): Step | n
   }
 }
 
-// The same call as the job's log in HQ's projects view shows it (the coordinator's log.ts): as it was made, the
-// command, the file, the search, cut at a readable length. A job holding a customer's details logs only its plain
-// line (stepOf).
-export function detailOf(name: string, input: any = {}, guarded = false): string | null {
-  if (guarded) return stepOf(name, input, true)?.text ?? null;
+// The same call as the job's log in HQ's projects view shows it (the coordinator's log.ts): for the board, as it was
+// made, the command, the file, the search, cut at a readable length; for agents, its kind and what it names (stepOf).
+export function detailOf(name: string, input: any = {}): Step {
+  const made = madeAs(name, input);
+  const kind =
+    name === 'Agent' || name === 'Task'
+      ? 'Starting a team member'
+      : name === 'SendMessage'
+        ? `To ${quote(input.to, 40)}`
+        : stepOf(name, input)!.text;
+  return made === kind ? { text: kind } : { text: kind, board: made };
+}
+function madeAs(name: string, input: any) {
   const s = (v: unknown, n = 300) => quote(v, n);
   switch (name) {
     case 'Bash':
@@ -94,36 +102,6 @@ export function detailOf(name: string, input: any = {}, guarded = false): string
     default:
       return `${name} ${s(JSON.stringify(input), 300)}`;
   }
-}
-
-// A line as it goes out: text, what anything agents can read keeps (the coordinator's events and job_log tables, the
-// reports drawn from them); board, for a job holding a customer's details only, the line itself, for the board's own
-// HQ session alone, which sees everything anyway (events.ts publish, log.ts logStep). A line agents can't read at all
-// (what such a job's agent says between steps) has no text.
-export type Shown = { text: string | null; board?: string };
-export const shown = (guarded: boolean, line: (guarded: boolean) => string | null | undefined): Shown | null => {
-  const full = line(false) ?? null;
-  if (!guarded) return full === null ? null : { text: full };
-  const kindOnly = line(true) ?? null;
-  if (full === null || full === kindOnly) return kindOnly === null ? null : { text: kindOnly };
-  return { text: kindOnly, board: full };
-};
-
-// Whether a job's lines go out guarded (shown): from its claim if it held a customer's details then, or from the
-// coordinator's answer to one of its lines that says it holds them now (handed them mid-run: hq mail, a customer card).
-// What was on its way before, the coordinator keeps for the board alone (server.ts kept).
-export function guard(customers: boolean) {
-  const g = {
-    on: customers,
-    follow: (sent: Promise<Response | void>) =>
-      sent
-        .then(r => (r?.ok ? r.json() : undefined))
-        .then(a => {
-          if (a?.customers) g.on = true;
-        })
-        .catch(() => {}),
-  };
-  return g;
 }
 
 // Whether the Agent call that started a team member came back with its work done, or failed. The tool's own output

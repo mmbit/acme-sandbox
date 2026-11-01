@@ -4,7 +4,6 @@
 // of HQ's projects view. Every version is kept, with its time and the job that wrote it.
 import { db, redacted } from './db.ts';
 import { ceo } from './company.ts';
-import { holdsCustomerData } from './jobs.ts';
 
 db.exec(
   'create table if not exists pad_versions (id integer primary key, text text not null, by text not null, job integer, at text not null)',
@@ -24,9 +23,6 @@ export const padHistory = () => db.prepare('select * from pad_versions order by 
 // because it's read every hour.
 export function writePad(text: unknown, writer: { agent: string; job: number }) {
   if (writer.agent !== ceo()) return "the page is the CEO's: only its jobs rewrite it";
-  // every job reads the page (house rule 7): one holding a customer's own details leaves it to a job that holds none
-  if (holdsCustomerData(writer.job))
-    return "this job holds a customer's own details, and the page is read by every job: they stay in this job. Rewrite the page from a job that holds none";
   const page = String(text ?? '').trim();
   if (!page) return 'the page is empty: give it whole on stdin (hq pad write - < page.md)';
   if (page === pad()?.text) return 'the page reads that already';

@@ -25,6 +25,9 @@ where it suffices.
   `company/brand.yaml` `names: book` names the board's book on its tips book's cover and title page, over Tips and
   in the line under it; left out, both read Tips alone.
   Its `screens` names the screens the board reads on, which a try's versions are shot at; left out, a desktop's.
+  Its `publicKeys` names the server's own keys whose value is public (an address it gives out): redact() leaves those as
+  written, beside the phone line's number and the backups' age recipient, which are public at every company; every
+  other value in the key store is masked (`secrets.ts`).
 - **Memory inspections**: `company/infra.env`'s `MEMORY_INSPECTION_BUDGET_MS` is the separately authorized
   observation budget in integer milliseconds. Missing or zero refuses arming. Positive values must fit Node's timer
   range, at most 2,147,483,647 ms. The Process arm must record absolute bounds exactly that far apart. This setting

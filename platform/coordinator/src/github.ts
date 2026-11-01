@@ -49,9 +49,9 @@ export type PullRequestFile = {
 const PAGE = 100,
   MOST_FILES = 3000;
 // The lines a pull request adds, from GitHub's own diff of it (the review loop's look for keys in what merges unreviewed:
-// review.ts mergeOffice), each file's patch by its name, and the files whose earlier lines it removes or changes (altered:
-// GitHub's deletions, a changed line counted as one); undefined when GitHub can't tell. A file it lists with added lines but no patch (it leaves out a
-// big file's) throws: those lines can't be read, so nothing may merge on them. Every page of the list is read, and one
+// review.ts mergeOffice), each file's patch by its name, and the files whose earlier lines it removes or changes
+// (altered: GitHub's deletions, a changed line counted as one); undefined when GitHub can't tell. A file it lists with
+// added lines but no patch (it leaves out a big file's) throws: those lines can't be read, so nothing may merge on them. Every page of the list is read, and one
 // as long as GitHub's longest list (it shows no more) throws too: the files after it can't be read. (altered; every page)
 export async function pullRequestDiff(
   pr: number,

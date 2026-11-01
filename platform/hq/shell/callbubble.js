@@ -1,35 +1,17 @@
-// A minimised call: a bubble floating over the page with the agent's face, alive with its voice, the live eye while
-// the page is watched along, Pause, hang up and open. Dragged anywhere, it settles into the nearest corner on a spring.
-// HQ's call (callscreen.js) and the join link's page (joinpage.js) both use it; each styles `.callbubble` in its own look.
-//   words      { call, pause, resume, hangUp, open, watched, paused }: the buttons' and the eye's words
-//   face       the element drawn in the bubble (a portrait image, an svg)
-//   icons      { eye, hangUp }: the page's own drawings of them, as markup (else simple ones of this file's)
-//   keep       a localStorage key for the corner it last settled in, or none
-//   onPause, onResume, onHangUp, onOpen, onSound(name): name is 'settle' as it lands in a corner
-// A watch-along records it as the board sees it.
-// It has one form for the whole call, the face, so the board always knows what it's looking at.
-// It's no page to write on: marked data-no-ink, a pen drags and taps it as a finger does (review mode's pencil.js), so
-// it always comes back with one tap. It floats over everything on the page, in the top layer, and its corner steps clear
-// of the page's own controls marked data-keep-clear (HQ's tools, its zoom keys, the open desk, the book's tabs and rail),
-// to where it covers the least of what the board reads there, marked data-keep-in-sight (the book's page heading, dates
-// and scraps).
+// A minimised call floats over the page. Its first position keeps clear of controls and readable content.
+// A pen or finger can then put it anywhere. The chosen position survives layout changes, clamped to the visible screen.
+// HQ and the join page supply their face, words, icons and callbacks, and can keep the position in localStorage.
 import { clearSpot, floating, inSight, keptClear, room } from './floating.js';
 
-// The spring that carries it to a corner: stiff enough to land in about 0.4 s, damped to settle with one small overshoot
-const STIFFNESS = 380,
-  DAMPING = 30;
-// A drag shorter than this is a tap; a throw projects the bubble this far ahead along its speed, as iOS's picture in picture does
-const DRAG_PX = 6,
-  THROW_S = 0.18;
-const CORNERS = ['top-left', 'top-right', 'bottom-left', 'bottom-right'];
+// A shorter movement is a tap, so opening the call never competes with dragging it.
+const DRAG_PX = 6;
 
 export class CallBubble {
   constructor({ words, face, icons = {}, keep = '', onPause, onResume, onHangUp, onOpen, onSound = () => {} }) {
     this.words = words;
     this.keep = keep;
     this.onSound = onSound;
-    this.corner = (keep && localStorage.getItem(keep)) || 'bottom-right';
-    if (!CORNERS.includes(this.corner)) this.corner = 'bottom-right';
+    this.position = readPosition(keep);
     this.reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
     const el = (this.el = document.createElement('div'));
     el.className = 'callbubble';
@@ -49,7 +31,7 @@ export class CallBubble {
     el.querySelector('.cb-hangup').onclick = () => onHangUp?.();
     this.onOpen = onOpen;
     this.wireDrag();
-    this.fit = () => this.settle(false);
+    this.fit = () => this.settle();
     // (the page's own size too: HQ's narrows beside its book.)
     this.fitting = new ResizeObserver(this.fit);
     addEventListener('resize', this.fit);
@@ -57,7 +39,7 @@ export class CallBubble {
     // (and what it keeps clear of moved: a tool opened or closed, a swing ended)
     this.refit = () => {
       cancelAnimationFrame(this.refitting);
-      this.refitting = requestAnimationFrame(() => this.moveIfCrowded());
+      this.refitting = requestAnimationFrame(() => this.settle());
     };
     this.changes = new MutationObserver(this.refit);
     for (const event of ['transitionend', 'animationend']) document.addEventListener(event, this.refit);
@@ -110,7 +92,6 @@ export class CallBubble {
   }
 
   close() {
-    cancelAnimationFrame(this.frame);
     cancelAnimationFrame(this.refitting);
     this.fitting.disconnect();
     this.changes.disconnect();
@@ -144,8 +125,7 @@ export class CallBubble {
     this.el.dataset.state = state;
   }
 
-  // ---- dragging: the bubble follows the finger, then springs to the corner nearest where the throw would carry it
-  // (followed on the window while held: a quick drag leaves the bubble before it catches up)
+  // The pointer stays on the window while held, including when it crosses between HQ and the notebook.
   wireDrag() {
     let grab = null;
     const move = e => {
@@ -155,14 +135,12 @@ export class CallBubble {
         grab.moved = true;
         this.el.classList.add('held');
       }
-      const x = e.clientX - grab.dx,
-        y = e.clientY - grab.dy;
-      this.place(x, y);
-      grab.trail = [...grab.trail.filter(p => e.timeStamp - p.t < 100), { x, y, t: e.timeStamp }];
+      this.place(e.clientX - grab.dx, e.clientY - grab.dy, grab.bounds);
     };
     const drop = e => {
       if (e.pointerId !== grab.id) return;
-      const { moved, trail, onFace } = grab;
+      if (e.type === 'pointerup') move(e);
+      const { moved, onFace } = grab;
       grab = null;
       removeEventListener('pointermove', move);
       removeEventListener('pointerup', drop);
@@ -172,110 +150,68 @@ export class CallBubble {
         if (e.type === 'pointerup' && onFace) this.onOpen?.();
         return;
       }
-      const first = trail[0],
-        last = trail.at(-1),
-        dt = Math.max(1, last.t - first.t) / 1000;
-      this.throwTo((last.x - first.x) / dt, (last.y - first.y) / dt);
+      this.position = { ...this.at };
+      if (this.keep) localStorage.setItem(this.keep, JSON.stringify(this.position));
+      this.settle();
+      this.onSound('settle');
     };
     this.el.addEventListener('pointerdown', e => {
       if (grab || e.button || e.target.closest('.cb-keys button')) return;
-      cancelAnimationFrame(this.frame);
       const box = this.el.getBoundingClientRect();
       grab = { id: e.pointerId, dx: e.clientX - box.left, dy: e.clientY - box.top, x0: e.clientX, y0: e.clientY };
-      grab.trail = [{ x: box.left, y: box.top, t: e.timeStamp }];
+      grab.bounds = this.bounds();
       grab.moved = false;
       grab.onFace = !!e.target.closest('.cb-face');
       addEventListener('pointermove', move);
       addEventListener('pointerup', drop);
       addEventListener('pointercancel', drop);
     });
-    // the face opens the call by keyboard too; by pointer, only a tap that didn't drag (drop) does
+    // A pointer tap opens in drop. A keyboard activation has no pointer detail.
     this.el.querySelector('.cb-face').addEventListener('click', e => !e.detail && this.onOpen?.());
   }
 
-  throwTo(vx, vy) {
-    const { x, y } = this.at;
-    const box = room();
-    const ahead = { x: x + vx * THROW_S, y: y + vy * THROW_S };
-    const right = ahead.x + this.size().w / 2 > (box.left + box.right) / 2,
-      bottom = ahead.y + this.size().h / 2 > (box.top + box.bottom) / 2;
-    this.corner = `${bottom ? 'bottom' : 'top'}-${right ? 'right' : 'left'}`;
-    if (this.keep) localStorage.setItem(this.keep, this.corner);
-    this.spring({ vx, vy });
+  // A page carried toward the call must keep the target it saw when it was picked up.
+  holdPosition(held) {
+    this.placementHeld = held;
+    if (!held) this.settle();
   }
 
-  // To its corner: on the spring, or at once (a resize, reduced motion)
-  settle(animated = true) {
-    if (!this.el.isConnected) return;
-    if (!animated || this.reduced) {
-      cancelAnimationFrame(this.frame);
-      const home = (this.target = this.home());
-      return this.place(home.x, home.y);
-    }
-    this.spring({ vx: 0, vy: 0 });
-  }
-
-  // To a new home when what it keeps clear of moved onto or off its way (not while held: the drop decides then)
-  moveIfCrowded() {
-    if (!this.el.isConnected || this.el.classList.contains('held') || !this.target) return;
+  settle() {
+    if (this.placementHeld || !this.el.isConnected || this.el.classList.contains('held')) return;
     const home = this.home();
-    if (Math.hypot(home.x - this.target.x, home.y - this.target.y) > 1) this.settle();
+    this.place(home.x, home.y);
   }
 
-  spring(v) {
-    cancelAnimationFrame(this.frame);
-    if (this.reduced) return this.settle(false);
-    let { x, y } = this.at,
-      { vx, vy } = v,
-      last = performance.now(),
-      landed = false;
-    const home = (this.target = this.home());
-    const step = now => {
-      const dt = Math.min(0.032, (now - last) / 1000);
-      last = now;
-      const ax = STIFFNESS * (home.x - x) - DAMPING * vx,
-        ay = STIFFNESS * (home.y - y) - DAMPING * vy;
-      vx += ax * dt;
-      vy += ay * dt;
-      x += vx * dt;
-      y += vy * dt;
-      if (!landed && Math.hypot(home.x - x, home.y - y) < 8) {
-        landed = true;
-        this.onSound('settle');
-      }
-      const resting = Math.hypot(home.x - x, home.y - y) < 0.5 && Math.hypot(vx, vy) < 5;
-      this.place(resting ? home.x : x, resting ? home.y : y);
-      if (!resting) this.frame = requestAnimationFrame(step);
-    };
-    this.frame = requestAnimationFrame(step);
-  }
-
-  // Where its corner is now: inside the visible viewport (an on-screen keyboard, a phone's bars) and the page (HQ's
-  // narrows beside its book), off the safe areas, clear of the page's own controls and over as little as can be of what
-  // the board reads. With no room clear of the controls there, the nearest clear spot on the whole screen; with none
-  // there either, the corner itself.
+  // Automatic placement is only for a call the board has not placed yet.
   home() {
+    if (this.position) return this.position;
     const size = this.size(),
-      places = [room(), room({ whole: true })].map(box => ({ room: box, at: this.cornerOf(box, size) }));
+      places = [room(), room({ whole: true })].map(box => ({
+        room: box,
+        at: { x: box.right - size.w, y: box.bottom - size.h },
+      }));
     return clearSpot(size, places, keptClear(this.el), inSight()) ?? places[0].at;
-  }
-
-  cornerOf(box, { w, h }) {
-    return {
-      x: this.corner.endsWith('left') ? box.left : box.right - w,
-      y: this.corner.startsWith('top') ? box.top : box.bottom - h,
-    };
   }
 
   size() {
     return { w: this.el.offsetWidth, h: this.el.offsetHeight };
   }
 
-  place(x, y) {
+  bounds() {
+    return { box: room({ whole: true, margin: 0 }), ...this.size() };
+  }
+
+  place(x, y, { box, w, h } = this.bounds()) {
+    x = Math.max(box.left, Math.min(x, box.right - w));
+    y = Math.max(box.top, Math.min(y, box.bottom - h));
     this.at = { x, y };
-    this.el.style.transform = `translate3d(${x.toFixed(1)}px, ${y.toFixed(1)}px, 0)`;
+    const transform = `translate3d(${x.toFixed(1)}px, ${y.toFixed(1)}px, 0px)`;
+    if (this.el.style.transform !== transform) this.el.style.transform = transform;
   }
 }
+
+// (JSON.parse(null) is null: nothing dropped yet)
+const readPosition = key => (key ? JSON.parse(localStorage.getItem(key)) : null);
 
 const attr = text => String(text).replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`);
 // The live eye, open, its pupil looking around (the look animates .cb-pupil)

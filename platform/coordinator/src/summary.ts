@@ -22,6 +22,7 @@ import * as goals from './goals.ts';
 import * as kits from './kits.ts';
 import { closedSince } from './meetingchair.ts';
 import type { Forecast } from './forecast.ts';
+import { age } from '../../worker/hq/waits.ts';
 
 const HOUR_MS = 3_600_000;
 // The queue's growth is counted over this many hours.
@@ -66,10 +67,10 @@ export function read(f: Forecast) {
 // standing rule, not a wait), the
 // cards the board answered whose work is still open, the products that owe the board a return after its feedback
 // (owed.ts), the board's notes on a pull request still being worked in, and its sent notes a routing check ended without
-// routing (routing.ts). A customer's card stays out (house rule 7).
+// routing (routing.ts). A card marked before as a customer's stays out (house rule 7).
 // (The cards' jobs' status and branch from db.ts jobs_state, not their rows.)
 function asked(now: number) {
-  const since = (iso: string) => threats.age(now - Date.parse(iso));
+  const since = (iso: string) => age(now - Date.parse(iso));
   const items = agreements()
     .filter(a => a.status === 'open' || a.kind !== 'decision')
     .map(a => {

@@ -94,10 +94,11 @@ function roomVictims(
   room: memory.Room,
   reservations: Map<Run, capacity.Seat>,
 ) {
-  const limit = play.snapshot.seatRuns?.[seat.engine] ?? Infinity;
+  const limits = play.snapshot.seatRuns ?? {};
+  const limit = limits[seat.engine] ?? Infinity;
   const needsReview = reviewroom.needsRoom(waiting.standing, reviewOccupants(running, seat.id), limit);
   const candidates = running.filter(r => r.state === 'running');
-  const seatFull = running.filter(r => r.seat?.id === seat.id).length >= limit;
+  const seatFull = running.filter(r => r.seat?.id === seat.id).length >= capacity.runLimit(seat, limits, now);
   const engineFull =
     running.filter(r => r.row.engine === waiting.row.engine).length >= (play.snapshot.slots[waiting.row.engine] ?? 0);
   const victims = reviewroom.pauseGroup(
@@ -116,7 +117,7 @@ function roomVictims(
       );
       return victim && play.runs.get(victim.id);
     },
-    selected => fitsAfterPauses(play, waiting, running, seat, room, selected, reservations),
+    selected => fitsAfterPauses(play, waiting, running, seat, room, selected, reservations, now),
   );
   return { victims: victims.map(r => r.standing), needsReview };
 }
@@ -129,6 +130,7 @@ function fitsAfterPauses(
   room: memory.Room,
   selected: Run[],
   reservations: Map<Run, capacity.Seat>,
+  now: number,
 ) {
   const pausing = running.filter(r => r.state === 'pausing');
   const released = [...pausing, ...selected];
@@ -146,7 +148,7 @@ function fitsAfterPauses(
     if (reservedSeat.id === seat.id) onSeat++;
   }
   const engineSlots = play.snapshot.slots[waiting.row.engine] ?? 0;
-  const seatRuns = play.snapshot.seatRuns?.[seat.engine] ?? Infinity;
+  const seatRuns = capacity.runLimit(seat, play.snapshot.seatRuns ?? {}, now);
   return memory.canStart(available, waiting.row) && onEngine < engineSlots && onSeat < seatRuns;
 }
 

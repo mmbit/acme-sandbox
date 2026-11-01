@@ -3,8 +3,13 @@ import type { MixRate } from './workmix.ts';
 import type { QueuedJob, SeatNow, Snapshot, Wait } from './eta.ts';
 import { pacedTakes, spareOnly, type Order } from './planner.ts';
 import {
+  CLAUDE_RECHECK_MS,
   drainLifts,
-  windowUsed,
+  compareStopRoom,
+  full,
+  drainLevel,
+  hasConfiguredStop,
+  seatRunLimit,
   nextWindowReset,
   paceChange,
   pacedUntil,
@@ -15,6 +20,7 @@ import {
 const HOUR_MS = 3_600_000;
 // (pacing: the board's switch, as the snapshot has it.)
 export type Seat = SeatNow & {
+  drainReadAt: number | null;
   fiveRate: number | null;
   weekRate: number | null;
   pacing: boolean;
@@ -27,6 +33,7 @@ export function seatsOf(snapshot: Snapshot) {
     const weekRate = typeof rate?.week === 'object' && rate.week !== null ? rate.week[row.id] : rate?.week;
     return {
       ...row,
+      drainReadAt: null as number | null,
       fiveRate: rate?.five[row.id] ?? null,
       weekRate: weekRate ?? null,
       pacing: !!snapshot.pacing,
@@ -40,13 +47,12 @@ export function reset(seat: Seat, now: number) {
     seat.fiveHour = 0;
   }
   if (seat.weekResets !== null && seat.weekResets <= now) {
+    seat.drainReadAt = null;
     seat.week = 0;
     seat.weekResets = nextWindowReset(seat.weekResets, now, true);
   }
   if (['sleeping', 'draining'].includes(seat.state) && seat.until !== null && seat.until <= now) seat.state = 'ready';
 }
-
-const week = (seat: Seat) => ({ week: seat.week ?? undefined, weekResets: seat.weekResets ?? 0 });
 
 // The seats at one moment of the play, with whether each is paced and until when, as the worker paces it (pace.ts): by
 // its week as the play has used it so far, toward the level the worker aims it at with the seats as the play has them
@@ -55,7 +61,7 @@ export type Moment = ReturnType<typeof at>;
 export function at(seats: Seat[], now: number) {
   const windows = seats.map(windowsOf);
   const aims = new Map(seats.map((s, i) => [s, aim(s, windows, i, now)]));
-  const paced = new Map(seats.map(s => [s, pacedUntil(week(s), aims.get(s), now)]));
+  const paced = new Map(seats.map((s, i) => [s, pacedUntil(windows[i]!, aims.get(s), now)]));
   return { seats, now, aims, paced };
 }
 
@@ -76,17 +82,18 @@ export const windowsOf = (s: Seat) => ({
   week: s.week ?? undefined,
   weekResets: s.weekResets ?? 0,
   credits: s.credits,
-  drainAt: s.stop,
+  drainAt: s.stopConfigured === false ? undefined : s.stop,
 });
 
-export function available(seat: Seat, now: number) {
+export const runLimit = (seat: Seat, limits: Record<string, number>, now: number) =>
+  seatRunLimit(windowsOf(seat), limits[seat.engine], now);
+
+export function available(seat: Seat, now: number, seats = [seat]) {
   return (
     seat.state === 'ready' &&
+    (seat.drainReadAt === null || seat.drainReadAt <= now) &&
     (seat.until === null || seat.until <= now) &&
-    (seat.credits ||
-      (knownWindows(seat) &&
-        (seat.fiveHour === null || seat.fiveHour < seat.stop) &&
-        (seat.week === null || seat.week < seat.stop)))
+    (seat.credits || (knownWindows(seat) && !quotaHolds(seat, seats, now).length))
   );
 }
 
@@ -94,24 +101,40 @@ function knownWindows(seat: Seat) {
   return !(seat.fiveHour === null && seat.fiveHourResets !== null) && !(seat.week === null && seat.weekResets !== null);
 }
 
-export function holding(seat: Seat, now: number) {
+export function holding(seat: Seat, now: number, seats = [seat]) {
   const holds: { quota: 'fiveHour' | 'week' | 'reported'; until: number | null }[] = [];
-  if (!seat.credits) {
-    if (seat.week !== null && seat.week >= seat.stop) holds.push({ quota: 'week', until: seat.weekResets });
-    if (seat.fiveHour !== null && seat.fiveHour >= seat.stop)
-      holds.push({ quota: 'fiveHour', until: seat.fiveHourResets });
-  }
+  if (seat.drainReadAt !== null && seat.drainReadAt > now) holds.push({ quota: 'week', until: seat.drainReadAt });
+  for (const [, reset, weekly] of quotaHolds(seat, seats, now))
+    holds.push({ quota: weekly ? 'week' : 'fiveHour', until: reset || null });
   if (['draining', 'sleeping'].includes(seat.state) && (seat.until === null || seat.until > now))
     holds.push({ quota: 'reported', until: seat.until });
   return holds.sort((a, b) => (b.until ?? Infinity) - (a.until ?? Infinity))[0] ?? null;
 }
 
-export function binding(seat: Seat, now: number) {
-  return holding(seat, now)?.quota ?? null;
+function quotaHolds(seat: Seat, seats: Seat[], now: number) {
+  const own = windowsOf(seat);
+  if (seat.credits) return [];
+  if (hasConfiguredStop(own)) return full(own, now);
+  const windows = seats.map(s => (s === seat ? own : windowsOf(s)));
+  return reserveElsewhere(own, windows, now) ? [] : full(own, now);
 }
 
-export function drained(seat: Seat, now: number) {
-  return binding(seat, now) !== null;
+export const pausesAtStop = (seat: Seat) => seat.engine === 'claude' || hasConfiguredStop(windowsOf(seat));
+
+// A relaxed reserve releases paused work when its next recovery read sees room.
+export function awaitDrainRead(seat: Seat, now: number) {
+  if (seat.engine !== 'claude' || seat.credits) return;
+  const lifts = drainLifts(windowsOf(seat), now);
+  if (lifts === undefined) return;
+  seat.drainReadAt = now + Math.ceil((lifts - now) / CLAUDE_RECHECK_MS) * CLAUDE_RECHECK_MS;
+}
+
+export function binding(seat: Seat, now: number, seats = [seat]) {
+  return holding(seat, now, seats)?.quota ?? null;
+}
+
+export function drained(seat: Seat, now: number, seats = [seat]) {
+  return binding(seat, now, seats) !== null;
 }
 
 // What a seat's claim reads of a job (jobs.ts claimable).
@@ -133,7 +156,7 @@ export function choose(
   for (const seat of seats) {
     if (!takes(seat, row, order, moment)) continue;
     eligible = true;
-    if (spare || (busy.get(seat.id) ?? 0) >= (limits[seat.engine] ?? Infinity)) continue;
+    if (spare || (busy.get(seat.id) ?? 0) >= runLimit(seat, limits, now)) continue;
     if (!picked || compareSeats(seat, picked, now) < 0) picked = seat;
   }
   if (picked) return picked;
@@ -143,7 +166,9 @@ export function choose(
   const own = seats.filter(s => fits(s, row) || fallsBackOnto(s, row));
   const returns = own
     .flatMap(s =>
-      available(s, now) ? [pacingLifts(week(s), moment.aims.get(s)!, now)] : [s.until, s.fiveHourResets, s.weekResets],
+      available(s, now, seats)
+        ? [pacingLifts(windowsOf(s), moment.aims.get(s)!, now)]
+        : [s.until, s.fiveHourResets, s.weekResets, s.drainReadAt],
     )
     .filter((t): t is number => t !== null && t > now);
   if (returns.length) return { on: 'seats', engine: row.engine, until: Math.min(...returns) };
@@ -153,12 +178,12 @@ export function choose(
   };
 }
 
-// seats: those whose readiness decides a fallback, the moment's unless it's one seat's alone (playclaims.ts groupsOn).
+// These seats decide reserve sharing and fallback availability for the claim.
 export function takes(seat: Seat, row: Claimed, order: Order, moment: Moment, seats = moment.seats) {
-  const ownOut = () => !seats.some(s => fits(s, row) && available(s, moment.now));
+  const ownOut = () => !seats.some(s => fits(s, row) && available(s, moment.now, seats));
   return (
     (fits(seat, row) || (fallsBackOnto(seat, row) && ownOut())) &&
-    available(seat, moment.now) &&
+    available(seat, moment.now, seats) &&
     pacedTakes(order, moment.paced.get(seat))
   );
 }
@@ -172,7 +197,7 @@ const fits = (seat: Seat, row: Claimed) =>
 const fallsBackOnto = (seat: Seat, row: Claimed) => !!row.fallsBack && !!seat.fallbacks?.includes(row.agent);
 
 const compareSeats = (a: Seat, b: Seat, now: number) =>
-  (windowUsed(windowsOf(a), now) ?? 1) - (windowUsed(windowsOf(b), now) ?? 1) || a.id.localeCompare(b.id);
+  compareStopRoom(windowsOf(a), windowsOf(b), now) || a.id.localeCompare(b.id);
 
 // A full room holds its occupancy for the rest of the moment, as the seats' occupancy holds between two claims that
 // start. Claims with the same engine, seat binding, paced seats open to them and spare standing (with others waiting)
@@ -243,20 +268,27 @@ export function seatEvent(
     seat.fiveHourResets = nextWindowReset(seat.fiveHourResets, now, false);
     windows[index] = windowsOf(seat);
   }
-  const events = [seat.until, seat.fiveHourResets, seat.weekResets].filter((t): t is number => t !== null && t > now);
-  for (const change of [paceChange(week(seat), aim(seat, windows, index, now), now), drainLifts(windows[index]!, now)])
+  const events = [seat.until, seat.fiveHourResets, seat.weekResets, seat.drainReadAt].filter(
+    (t): t is number => t !== null && t > now,
+  );
+  for (const change of [
+    paceChange(windows[index]!, aim(seat, windows, index, now), now),
+    drainLifts(windows[index]!, now),
+  ])
     if (change !== undefined) events.push(change);
-  if (count && available(seat, now) && !seat.credits) {
+  if (count && available(seat, now, seats) && !seat.credits) {
     const rates =
       typeof running === 'number'
         ? [{ five: seat.fiveRate, week: seat.weekRate, count: running }]
         : running.map(row => ({ ...burnRates(seat, row), count: 1 }));
-    for (const [used, window] of [
-      [seat.fiveHour, 'five'],
-      [seat.week, 'week'],
+    for (const [used, window, weekly] of [
+      [seat.fiveHour, 'five', false],
+      [seat.week, 'week', true],
     ] as const) {
       const rate = rates.reduce((sum, price) => sum + (price[window] ?? 0) * price.count, 0);
-      if (used !== null && rate > 0) events.push(Math.max(now + 1, now + ((seat.stop - used) * HOUR_MS) / rate));
+      const stop = drainLevel(windows[index]!, weekly, now);
+      if (used !== null && used < stop && rate > 0)
+        events.push(Math.max(now + 1, now + ((stop - used) * HOUR_MS) / rate));
     }
   }
   return Math.min(...events);

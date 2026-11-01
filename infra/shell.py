@@ -45,6 +45,18 @@ KEYS = re.compile(r'\b(sk|rk|pk)_(live|test)_[A-Za-z0-9]{8,}|\bgh[pousr]_[A-Za-z
 
 seen = {}  # a token's id → its expiry: each is taken once
 lock = threading.Lock()
+# Requests a client may send a minute: anyone can send one, and a token naming a known key costs an openssl run as root.
+# A run of the overseer workflow sends a few. A client is Caddy's X-Forwarded-For (its own word on who connected to it),
+# believed only from Caddy's own addresses: the worker, which runs agents' code, reaches the bridge too, and anything
+# else is counted under the address it connects from.
+ASKS_PER_WINDOW, WINDOW_S = 20, 60
+asked = {}  # a client's address → its requests' times in the last WINDOW_S
+asked_lock = threading.Lock()
+# Caddy's addresses, from Docker: looked up again after a minute, or after 5 seconds when a forwarded request comes from
+# somewhere else (Caddy may have restarted with a new address), as the coordinator's fromCaddy does (auth.ts). A lookup
+# that fails isn't kept: its request is answered 503, as are those that waited for it, and the next looks up again.
+caddy = {'addrs': set(), 'at': None, 'failed': None}  # failed: (when, why) of the last lookup, if it failed
+caddy_lock = threading.Lock()
 
 
 def b64(text):
@@ -138,6 +150,53 @@ def verified(token, repo, audience, now=None, keys=None):
     return claims, ''
 
 
+def allowed(client):
+    """Whether a client's request is under ASKS_PER_WINDOW in the last WINDOW_S, counting it."""
+    now = time.monotonic()
+    with asked_lock:
+        for c in [c for c, times in asked.items() if now - times[-1] >= WINDOW_S]:
+            del asked[c]
+        times = [t for t in asked.get(client, []) if now - t < WINDOW_S]
+        if len(times) >= ASKS_PER_WINDOW:
+            return False
+        asked[client] = times + [now]
+        return True
+
+
+def caddy_addresses():
+    """The addresses Caddy's container has on its networks, where it connects to the shell from: none when it isn't
+    running. A Docker that fails or doesn't answer in time raises (CalledProcessError, TimeoutExpired)."""
+    look = {'cwd': os.environ.get('SHELL_CWD', '/'), 'capture_output': True, 'text': True, 'timeout': 10, 'check': True}
+    ids = subprocess.run([*COMPOSE, 'ps', '-q', 'caddy'], **look).stdout.split()
+    if not ids:
+        return set()
+    return set(subprocess.run(['docker', 'inspect', '-f', '{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}',
+                               *ids], **look).stdout.split())
+
+
+def client_of(peer, forwarded):
+    """Who a request counts under: the last X-Forwarded-For entry when Caddy sent it (its own), else the peer. A lookup
+    that failed while this request waited for the lock fails it too when it needs one itself, rather than each waiter
+    asking Docker in turn."""
+    if not forwarded:
+        return peer
+    came = time.monotonic()
+    with caddy_lock:
+        now = time.monotonic()
+        age = None if caddy['at'] is None else now - caddy['at']
+        if age is None or age >= 60 or (peer not in caddy['addrs'] and age >= 5):
+            if caddy['failed'] and caddy['failed'][0] > came:
+                raise caddy['failed'][1]
+            try:
+                caddy['addrs'], caddy['at'], caddy['failed'] = caddy_addresses(), now, None
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+                caddy['failed'] = (time.monotonic(), e)
+                raise
+        if peer not in caddy['addrs']:
+            return peer
+    return forwarded.split(',')[-1].strip() or peer
+
+
 def services():
     """The services compose knows here: the only names logs and restart take."""
     done = subprocess.run([*COMPOSE, 'config', '--services'], cwd=os.environ.get('SHELL_CWD', '/'), capture_output=True,
@@ -195,6 +254,16 @@ def run(lines):
 
 class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
+        try:
+            client = client_of(self.client_address[0], self.headers.get('x-forwarded-for', ''))
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+            why = f"Caddy's addresses from Docker: {e}"
+            if isinstance(e, subprocess.CalledProcessError):   # a timeout's output is bytes even with text=True
+                why += f' {e.stderr.strip()}'.rstrip()
+            print(why, flush=True)
+            return self.answer(503, "Caddy's addresses: Docker couldn't give them (the shell's log has why)")
+        if not allowed(client):
+            return self.answer(429, f'too many requests: {ASKS_PER_WINDOW} a minute')
         auth = self.headers.get('authorization', '')
         size = int(self.headers.get('content-length') or 0)
         if not auth.startswith('Bearer ') or size > BODY_MAX:

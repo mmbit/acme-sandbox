@@ -205,7 +205,7 @@ test("a promise on a live call about its owner's work under way is linked to it,
   assert.equal(thread(list).deadline, new Date(named.body.deadline).getTime());
 
   // refused before anything is recorded: a misheard number (someone else's job), a time missing, work in no thread
-  // without one, a thread for work the call didn't queue, and a job that carries another item (its link)
+  // without one, and a thread for work the call didn't queue
   const bolts = await h.start({ agent: 'bolt', title: 'The phone logs', thread: opened() });
   const loose = await h.start({ agent: 'wren', title: 'Loose', thread: null });
   const first = await h.agent('item', call, {
@@ -227,7 +227,6 @@ test("a promise on a live call about its owner's work under way is linked to it,
     [{ job: work.id }, 400, /goes with --deadline/],
     [{ deadline: '40m', job: loose.id }, 409, /in no deliverable: note the promise without it/],
     [{ deadline: '40m', job: loose.id, thread: opened() }, 409, /wasn't queued on this call/],
-    [{ deadline: '40m', job: carrying.body.id }, 409, /carries item #\d+ already/],
   ] as const) {
     const before = items();
     const refused = await h.agent('item', call, {
@@ -241,6 +240,17 @@ test("a promise on a live call about its owner's work under way is linked to it,
     assert.match(refused.body.error, error);
     assert.equal(items(), before, 'nothing recorded');
   }
+  // a job that carries another item takes this one too: its brief covers both
+  const both = await h.agent('item', call, {
+    kind: 'promise',
+    goal: 'The board wants it on time.',
+    owner: 'wren',
+    what: 'The names, spelled out',
+    deadline: '40m',
+    job: carrying.body.id,
+  });
+  assert.equal(both.status, 200, JSON.stringify(both.body));
+  assert.equal(both.body.job, carrying.body.id);
 });
 
 test('work a timed thread with no task yet needs takes its window: the claim gives it a latest start', async () => {

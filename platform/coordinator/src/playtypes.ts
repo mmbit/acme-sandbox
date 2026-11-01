@@ -124,6 +124,8 @@ export type SeatNow = {
   weekResets: number | null;
   // the share of a window it stops at
   stop: number;
+  // Older snapshots treated their numeric stop as configured.
+  stopConfigured?: boolean;
   // may run on credits past its stop level and limits (worker/src/seatlist.ts spendCredits): the play keeps it available
   // there (playseats.ts). Not that it runs on them now: its windows say that.
   credits?: boolean;

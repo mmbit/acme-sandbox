@@ -1,5 +1,6 @@
 # Review mode
 
+
 Review mode is Ink's marks on any page: Ink is the pen platform as a whole, its HQ side in
 `platform/hq/shell/ink/` and its store in `platform/coordinator/src/ink/`.
 
@@ -66,8 +67,9 @@ and the mark being made (below), `penwords.js`, `penedit.js` and `postitpen.js` 
 `slip.js` the answers on notes, `paper.js` the book's paper, `prefs.js` Ink's preferences on this device, `base.js` what
 they share. The coordinator serves
 each at `/__review/<name>.js` behind the same gate as the real `review.js`; only `anchor.js`, `frame.js`, `ink.js` with
-`inklive.js` and `inkshape.js` (which it imports), `paper.js`, `tap.js` and `micallowed.js` are open on every host. Its UI lives in a closed shadow root, so product styles can't touch it, and it never logs or
-photographs itself. `frame.js` frames a note's screenshot on its mark (the circle, or the pinned element and the pin's
+`inklive.js` and `inkshape.js` (which it imports), `paper.js`, `tap.js` and `micallowed.js` are open on every host.
+Its UI lives in an open shadow root, so the watch-along records it while product styles can't touch it
+, and it never logs or photographs itself. `frame.js` frames a note's screenshot on its mark (the circle, or the pinned element and the pin's
 head), for review mode's polaroid and HQ's note thumbnails alike; `anchor.js` finds a mark's element again on any width
 (`node --test shared/review/frame.test.js shared/review/anchor.test.js`).
 

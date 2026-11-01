@@ -15,7 +15,7 @@ import { pictureUrl, uploadPicture } from '../data.js';
 import { answerAsk } from './notebookdata.js';
 import { openSpot } from './bookaskspot.js';
 import { ROOM, roomHtml, wireRoom } from './bookslipreply.js';
-import { inkPicture } from './bookpaperdraw.js';
+import { SNIP_PAD, inkPicture } from './bookpaperdraw.js';
 
 // The desk phone's name, the company's (brand.js), told by the board's book (book.js): a guest's page has no HQ brand
 // to read, and shows no asks of the board's
@@ -75,10 +75,14 @@ const answerHtml = (words, drawn) =>
   `${words || !drawn ? `<p class="ask-answer">${esc(words || 'Got it')}</p>` : ''}${drawn}`;
 
 // The drawings a card was answered with, the pictures that went: at their own px (each drawn at twice it, bookpaperdraw.js
-// inkPicture), the same as it answers and once the page reads it again
+// inkPicture), the same as it answers and once the page reads it again. Their paper's room round the ink (--pad) is
+// clipped off, so the ink sits as an answer's slip draws it (bookasks.css).
 const drawnHtml = (pictures, dev) =>
   (pictures ?? [])
-    .map(id => `<img class="ask-drawn" srcset="${esc(pictureUrl(dev, id))} 2x" alt="Your drawing">`)
+    .map(
+      id =>
+        `<img class="ask-drawn" srcset="${esc(pictureUrl(dev, id))} 2x" style="--pad:${SNIP_PAD}px" alt="Your drawing">`,
+    )
     .join('');
 
 // Where an ask's thing is, as a tap that opens it there: the page's name and the thing's selector

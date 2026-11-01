@@ -31,6 +31,8 @@ export function stopDrop(c) {
 
 // The call's window under a point on the screen, or null (no call, or not over it)
 export const callWindowAt = (x, y) => call && windowOf(call, document.elementFromPoint(x, y));
+// Keep the call in place for the whole page carry, before its copy or targets change the layout.
+export const holdCall = held => call?.bubble?.holdPosition(held);
 // The call's window lit as a place to let go, or not, until the carry says otherwise: a pointer carry sends no moves
 // while it's held still
 export const lightCall = on => call && light(call, on);

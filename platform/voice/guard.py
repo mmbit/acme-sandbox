@@ -46,7 +46,7 @@ def cli_tools(names, builtin, tool_set=None):
 #   command steered by any text it reads (a web page, a misheard word) could send that anywhere. Its reads are tools
 #   that run hq and git from argument lists they build, so no word of the agent's becomes a command.
 # - no customer's details (mail, care cases, orders, photos: charter rule 7): a call's transcript and summary are
-#   read by every agent, and a call can't be marked as holding them as a job is (server.ts CALL_ROUTES).
+#   read by every agent, so they stay at their source (server.ts CALL_ROUTES).
 # - the line's own folders and /proc are off limits to its Read, Grep and Glob: the OS keeps the server's token from
 #   it, this is a second fence.
 # If hq_tools.py won't start, the CLI still does (MCP servers are optional): calls work, without its tools.

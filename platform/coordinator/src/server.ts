@@ -170,6 +170,7 @@ import * as pauses from './pauses.ts';
 import * as pausewake from './pausewake.ts';
 import { jobThread } from './newthread.ts';
 import * as regroup from './regroup.ts';
+import * as featureplan from './featureplan.ts';
 import * as backup from './backup.ts';
 import * as watch from './watch.ts';   // the watch on live apps
 import * as spend from './spend.ts';
@@ -281,19 +282,6 @@ const inBook = (who: unknown, then: (who: string) => unknown, none: () => unknow
   const found = bookFor(who);
   return found ? then(found) : none();
 };
-// What HQ refuses a job that holds a customer's details for good (outbox.ts file, guests.ts write): recorded, so the job's
-// ending done doesn't handle a call item it carries (ledger.ts withheld).
-const refusedDeliverable = (me: Me, what: string, r: unknown) => {
-  if (Array.isArray(r) && r[0] === 403 && jobs.holdsCustomerData(me.id)) ledger.refused(me.id, what, "the job held a customer's details");
-  return refusal(r);
-};
-// hq item link to a job: one that now carries an item of a customer call reads that call (ledger.mine), so it holds their
-// details from here on, as one handed out for it does.
-const linked = (item: number, job: number | undefined, r: unknown) => {
-  const call = ledger.itemCall(item);
-  if (job && (r as { ok?: boolean })?.ok && call != null && ledger.mine(job, call) && memory.customerCall(call)) jobs.handedCustomerData(job);
-  return refusal(r);
-};
 // The CEO's job, on an item ready for the board's yes (ledger.ts done)
 const ceoOnReady = (me: Me, id: number) => !me.call && me.agent === ceo() && ledger.item(id)?.status === 'ready';
 // A job reads a call and corrects its items when it works for it (ledger.mine), or follows up a call that carried on from
@@ -306,15 +294,13 @@ const works = (me: Me, call: number) => ledger.mine(me.id, call) || ledger.resum
 const keepsAsks = (me: Me, call: number) => !me.call && !!me.id && me.agent === roles().asks
   && !memory.customerCall(call) && !memory.keysCall(call) && memory.callAccess(call, me) === true;
 // hq items: what's open on every call. An item's goal comes from what was said on its call, so it goes only to a reader
-// who may read that call (one that works for it, or memory.ts callAccess: not a live call, a card for keys or a
-// customer's), and a customer call's marks its reader, as hq call does: its job, or on a call the call itself (jobs.ts
-// readerHanded), whose transcript then goes only to its follow-up.
+// who may read that call (one that works for it, or memory.ts callAccess: not a live call, a card for keys or one marked
+// as a customer's). So does the line the board added to a call marked as a customer's (ledger.lineOf).
 function openItemsFor(me: Me) {
   const reads = new Map<number, boolean>();
   const readable = (call: number) => reads.get(call) ?? reads.set(call, works(me, call) || memory.callAccess(call, me) === true).get(call)!;
-  const list = ledger.openItems().map(({ goal, ...i }) => goal != null && readable(i.call) ? { ...i, goal } : i);
-  if (list.some(i => 'goal' in i && memory.customerCall(i.call))) jobs.readerHanded(me);
-  return list;
+  return ledger.openItems().map(({ goal, what, ...i }) => !readable(i.call) ? { ...i, what: ledger.lineOf({ ...i, what }) }
+    : { ...i, what, ...(goal != null ? { goal } : {}) });
 }
 const send = (res: ServerResponse, code: number, body: unknown, type = 'application/json') => {
   res.writeHead(code, { 'content-type': type });
@@ -626,9 +612,7 @@ const worker: Record<string, (b: any) => unknown> = {
   'POST /api/worker/heartbeat': b => !jobs.runsOn(Number(b.job), b.seat) ? 409 : jobs.heartbeat(Number(b.job), {
     util: b.util === undefined ? undefined : util(b.util), probe: b.probe === true, reined: reins.heldFor(Number(b.job)) > 0,
     short: b.short === true, capped: Array.isArray(b.capped) ? b.capped.filter((e: unknown) => typeof e === 'string') : [] }),
-  // Whether a job was handed a customer's own details, as its run ends: its memory copy stays with it (worker copyback.ts).
-  // And the worker's own text before it goes back to the company (the memory copy, a pull request's body), keys masked.
-  'POST /api/worker/customers': b => jobs.jobAgent(Number(b.job)) ? { customers: jobs.holdsCustomerData(Number(b.job)) } : 404,
+  // The worker's own text before it goes back to the company (the memory copy, a pull request's body), keys masked.
   'POST /api/worker/redact': b => typeof b.text !== 'string' ? 400 : b.text.length > REDACT_MAX ? 413 : { text: redact(b.text) },
   // solo: the run started no one else who holds its token, so the CEO's notes to the Overseer it held go out (overseer.ts)
   'POST /api/worker/finish': b => {
@@ -720,16 +704,11 @@ const unseenProblem = (b: any, me: Me) => {
     "and the desk phone shows a card's pictures from main: commit them in this job and hold the card until it's live " +
     '(hq ask ... --when deployed:<this job>), or file it once they are merged' : null;
 };
-// hq photos: for the agent who asked, and a job it queued after the card (jobs.ts cardAccess). A customer card's
-// photos are a customer's details: they go to whoever reads its text (jobs.ts readsCard: the job working on the card,
-// its own agent's or not, and roles.customerData), refused with why for anyone else, and the job that reads them holds
-// customer data from then on. (No job waits for a customer card.)
+// hq photos: for the agent who asked, and a job it queued after the card (jobs.ts cardAccess). A card marked as a
+// customer's: whoever reads its text (jobs.ts readsCard), refused with why for anyone else.
 const seePhotos = (id: number, me: Me, read: () => unknown) => {
   const access = jobs.cardAccess(id, me);
-  if (access !== true) return refusal(access);
-  const r = read();
-  if (r !== 404 && jobs.customerCard(id)) jobs.handedCustomerData(me.id);
-  return r;
+  return access !== true ? refusal(access) : read();
 };
 // Work goes to an org.yaml agent or an alumnus (a lead brings one back), never to the board.
 const assignable = (id: string) => staff(id) || jobs.alumnus(id);
@@ -741,6 +720,15 @@ function threadFor(b: any, me: Me) {
   const { chain, ...thread } = found;
   return { thread, chain };
 }
+// The item a job queued by an agent passes on, if it's still current. One dropped or replaced is passed on to nothing,
+// and the job queues nothing more unless it has other work still current (ledger.ts goesOn, what keeps it from being
+// cancelled) or is the call's follow-up handing out an item.
+function carriedOn(b: any, me: Me) {
+  const own = me.call ? undefined : ledger.carried(me.id);
+  if (!own || (own.status !== 'dropped' && own.status !== 'replaced')) return own;
+  if (ledger.goesOn(me.id, own.id) || (b.item != null && ledger.followsUp(me.id))) return undefined;
+  return new Refused(409, `this job's item #${own.id} (call #${own.call}) was ${own.status}: ${own.why}. If the board changed it, the call's follow-up hands out the new item`);
+}
 function jobOrigin(b: any, me: Me) {
   const title = String(b.title ?? '').trim(), brief = me.call ? String(b.prompt ?? '').trim() : b.prompt;
   if (!b.agent || !title) return new Refused(400, 'a job needs an agent and a title');
@@ -751,9 +739,8 @@ function jobOrigin(b: any, me: Me) {
   const refused = me.call && callRefusal(title, brief);
   if (refused) return refused;
   let from: { call: number; item: number; words?: string; due?: number } | undefined;
-  const own = me.call ? undefined : ledger.carried(me.id);
-  if ((own?.status === 'dropped' || own?.status === 'replaced') && !(b.item != null && ledger.followsUp(me.id)))
-    return new Refused(409, `this job's item #${own.id} (call #${own.call}) was ${own.status}: ${own.why}. If the board changed it, the call's follow-up hands out the new item`);
+  const carries = carriedOn(b, me);
+  if (carries instanceof Refused) return carries;
   const failedJobId = b.lands == null ? undefined : Number(b.lands);
   const landingSource = failedJobId === undefined ? undefined
     : !Number.isSafeInteger(failedJobId) ? '--lands names a job by its number'
@@ -764,11 +751,13 @@ function jobOrigin(b: any, me: Me) {
     const h = ledger.handOut(Number(b.item), c => me.call ? c === me.callId : ledger.mine(me.id, c) || keepsAsks(me, c));
     if (typeof h === 'string') return new Refused(409, h);
     from = h;
-  } else if (own && !landingSource) from = { call: own.call, item: own.id, words: ledger.goalLine(own) };
-  // (a job queued off a call with no item named: no --item, none its queuer carries, no landing's. A job given items
-  // passes them on, as one carrying an item does.)
-  const noItemNamed = !me.call && b.item == null && !own && !landingSource;
-  const sheet = noItemNamed ? ledger.givenTo(me.id) : [];
+  } else if (carries && !landingSource) from = { call: carries.call, item: carries.id, words: ledger.goalLine(carries) };
+  // (a job queued off a call with no item named: no --item, no landing's, and none current its queuer carries. A job
+  // given items passes on those still current, as one carrying an item does, and one carrying an item passes on the
+  // others it has too.)
+  const unnamed = !me.call && b.item == null && !landingSource;
+  const noItemNamed = unnamed && !carries;
+  const sheet = unnamed ? ledger.givenTo(me.id) : [];
   // (one whose asks were all dropped or replaced, and nothing more, queues nothing more)
   const withdrawn = noItemNamed && !sheet.length ? ledger.withdrawnFrom(me.id) : undefined;
   if (withdrawn) return new Refused(409, `this job's asks (call #${withdrawn.call}) were all dropped or replaced. If the board changed them, the call's follow-up hands out the new items`);
@@ -894,11 +883,11 @@ function jobDeadline(job: number, placement: Exclude<ReturnType<typeof jobPlacem
     : deliverable?.deadline != null ? { deadline: new Date(deliverable.deadline).toISOString() } : {};
 }
 // The board's ask queued in no deliverable with no --by (askwindow.ts): on a live call its agent judges the time itself or leaves it
-// untimed, never asking the board; a run's (a follow-up of another agent's call handing out its item) asks the CEO,
-// unless the call is a customer's, whose details stay with its agent. (The CEO's own run was refused: jobPlacement.)
-function askedForTime(me: Me, job: { id: number; agent: string; title: string }, source: askwindow.AskSource, from?: { call: number }) {
+// untimed, never asking the board; a run's (a follow-up of another agent's call handing out its item) asks the CEO.
+// (The CEO's own run was refused: jobPlacement.)
+function askedForTime(me: Me, job: { id: number; agent: string; title: string }, source: askwindow.AskSource) {
   const told = { untimed: askwindow.untimedLine(job.id, !!me.call) };
-  if (me.call || me.agent === ceo() || (from && memory.customerCall(from.call))) return told;
+  if (me.call || me.agent === ceo()) return told;
   const sent = askwindow.askCeo({ agent: me.agent, job: me.id }, job, source);
   return typeof sent === 'object' ? { askedCeo: ceo() } : told;
 }
@@ -963,17 +952,10 @@ const MAIL_REFUSED: Record<MailKind, string> = {
   business: "mail to the business addresses goes only to the agents whose work needs it (org.yaml's roles.businessMail): ask one of them, or the agent in org.yaml's roles.process to add you",
 };
 const NO_RAW_MAIL = new Refused(410, 'HQ has no raw copy of that mail: none was stored, or retention cleared it. hq mail <id> shows what HQ kept');
-// A job's read of mail of that kind: refused, or read, and the job holds customer data from then on unless every mail it
-// read is a partner's business mail (outbox.ts fromPartner: an answer to an email the board sent, from where it went, or
-// mail from a partner brand.yaml names).
-// Other business mail can hold a customer's details too (a customer can write to invoices@). null: no such mail, so
-// nothing to refuse or mark. An answer to an email the job's agent drafted (outbox.ts answerFor) it reads without the role.
+// A job's read of mail of that kind: refused, or read. null: no such mail, so nothing to refuse. An answer to an email the job's agent drafted (outbox.ts answerFor) it reads without the role.
 // A mail of the board's own it handed to this job (mail.ts forward) it reads whatever its roles, and only it.
 function readMailAs(me: Me, access: MailAccess, kind: MailKind | null, read: () => unknown, id?: number) {
-  if (kind && !mayRead(me, access, kind, id)) return new Refused(403, MAIL_REFUSED[kind]);
-  const r = read(), mails = id ? [id] : Array.isArray(r) ? r.map(m => Number(m.id)) : [];
-  if (kind && !mails.every(outbox.fromPartner)) jobs.handedCustomerData(me.id);
-  return r;
+  return kind && !mayRead(me, access, kind, id) ? new Refused(403, MAIL_REFUSED[kind]) : read();
 }
 // What a job's agent may read: mail of a kind its roles allow, or an answer to an email it drafted (outbox.ts answerFor)
 // (or the board's own mail it handed this job, or an account's notice it was handed: notices.ts)
@@ -984,14 +966,6 @@ const mayReadOne = (me: Me) => (id: number) => {
   const kind = mail.mailKind(id, me.id);
   return !!kind && mayRead(me, mayReadMail(me), kind, id);
 };
-// A line of the job's own log or feed as it's kept: one the worker didn't guard (guarded: shown as a job holding a
-// customer's details shows it, steps.ts) from a job that holds them now (handed them mid-run, the line on its way or
-// sent before the worker heard) goes to the board's own HQ session alone, with nothing for agents to read. The answer
-// carries the job's mark, which the worker's guard follows from then on.
-function kept(me: Me, b: any, text: string | undefined, board: string | undefined) {
-  const customers = jobs.holdsCustomerData(me.id);
-  return customers && b.guarded !== true ? { text: '', board: board ?? text, customers } : { text, board, customers };
-}
 const RENDER_SEND_MAX = 200 * 1024 * 1024;   // (GET /api/agent/render: a film is tens of MB)
 const agentApi: Record<string, (b: any, me: Me) => unknown> = {
   'POST /api/agent/review-output': (b, me) => ({ error: review.outputProblem(me.id, b.output) ?? null }),
@@ -1015,9 +989,8 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
     const agent = speaker(b.as, me);
     if (!agent) return 403;
     if (typeof b.text !== 'string') return 400;
-    const line = kept(me, b, b.text, str(b.board));
-    logStep(me.id, agent, line.text ?? '', line.board);
-    return { ok: true, customers: line.customers };
+    logStep(me.id, agent, b.text, str(b.board));
+    return { ok: true };
   },
   // hq preview: a view-only pass to a product's preview for this run, or its test player's (preview.ts createPass).
   // (player)
@@ -1044,12 +1017,12 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
       work.count({ tokens: n(b.grew, 'tokens') });
       return { ok: true };
     }
-    // board: a job holding a customer's details, the step itself, for the board's own HQ session alone (events.ts)
-    const line = b.type === 'log' ? kept(me, b, str(b.text), str(b.board)) : { text: str(b.text), board: undefined, customers: jobs.holdsCustomerData(me.id) };
     // (since: the agent's own status counts from its job's start, a team member's from its words.)
     const since = b.type === 'status' && agent === me.agent && !me.call ? jobs.startedOf(me.id) : undefined;
-    publish({ type: b.type, agent, job: me.id, to: str(b.to), text: line.text, state: str(b.state), since, board: line.board }, 'agent'); // (job)
-    return { ok: true, customers: line.customers };
+    // board: a line's whole words (its command, search or what the agent said), for the board's own HQ session alone
+    // (events.ts); text is what agents read (the worker's steps.ts)
+    publish({ type: b.type, agent, job: me.id, to: str(b.to), text: str(b.text), state: str(b.state), since, board: b.type === 'status' ? undefined : str(b.board) }, 'agent'); // (job)
+    return { ok: true };
   },
   // An agent's job is plain work (reviews and merges are the coordinator's own); the answer is its id, which anyone can check.
   // With an item (hq job --item), the job carries it, its call and the words on the call (ledger.ts). Without one, a job
@@ -1096,13 +1069,11 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
     const untilEnd = me.callId && b.now !== true ? [{ kind: 'ended' as const, arg: String(me.callId) }] : [];
     wakes.hold(job.id, [...when, ...untilEnd]);
     if (me.callId) call.queuedOn(me.callId, job.id);   // (its agent may add to it while the call goes on: call.ts addToJob)
-    if (carried && memory.customerCall(carried.call)) jobs.handedCustomerData(job.id);   // a customer call's item: its job holds their details
-    if (landingSource?.customers) jobs.handedCustomerData(job.id);
     // (a correction handed out: the replaced item's running jobs hear it now, and the answer says which weren't told)
     // (a job on a paused thread is queued, and told it's held: pauses.ts)
     // (an item's time: the board's when it set it itself, ledger.ts dueBy)
     const deadline = jobDeadline(job.id, placement, ownThread, byCall ? ledger.dueBy(carried!.item) : me.agent);
-    const ask = untimed ? askedForTime(me, { id: job.id, agent: String(b.agent), title }, untimed, carried) : source ? servesOther(job.id) : {};
+    const ask = untimed ? askedForTime(me, { id: job.id, agent: String(b.agent), title }, untimed) : source ? servesOther(job.id) : {};
     const due = { ...deadline, ...ask, ...untilEnd.length && { untilCall: me.callId }, ...shownThread(job.id, { newThread: b.newThread, ownThread }), ...followOn, ...pauses.heldBy(job.id), ...moves.since(earlier), ...lighter && { lighter: lighter.name }, chain };  // (chain)
     return b.item != null || noted ? { ...job, ...due, ...ledger.handedOut(carried!.item, job.id, me.call ? null : me.id) } : { ...job, ...due };
   }),
@@ -1163,6 +1134,21 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
   // hq now, the call's eta tool with no query: who's at work and what each open card holds up (goingon.ts).
   'GET /api/agent/now': () => ({ text: goingon.words(forecast.current()) }),
   // hq thread move and hq job move: work regrouped by the CEO, the process team or its owner (regroup.ts).
+  'POST /api/agent/threads/feature': (b, me) => {
+    const agent = speaker(b.as, me);
+    if (!agent) return 403;
+    if (b.feedback !== false && (typeof b.round !== 'string' || !b.round.trim()))
+      return new Refused(400, 'a feedback round needs its board label');
+    return refusal(featureplan.linkFeedback(String(b.id ?? ''), String(b.feature ?? ''), agent, b.feedback === false ? '' : b.round, b.feedback !== false));
+  },
+  'POST /api/agent/threads/cost': (b, me) => {
+    const agent = speaker(b.as, me);
+    return agent ? refusal(featureplan.saveFeatureEstimate(String(b.id ?? ''), b.expected, agent)) : 403;
+  },
+  'POST /api/agent/threads/milestone': (b, me) => {
+    const agent = speaker(b.as, me);
+    return agent ? refusal(featureplan.recordMilestone(String(b.id ?? ''), String(b.milestone ?? ''), b.at, b.evidence, agent)) : 403;
+  },
   'POST /api/agent/threads/move': (b, me) => {
     const agent = speaker(b.as, me);
     return agent ? refusal(regroup.moveThread(String(b.id ?? ''), String(b.project ?? ''), agent, String(b.why ?? ''))) : 403;
@@ -1316,12 +1302,9 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
   // The call ledger (ledger.ts), for a job that works for the call only (charter rule 7: not every agent): its items in
   // full (hq items <call>) and its transcript, numbered (hq call <id> [a-b]). hq items alone: what's open on every
   // call, one plain line each (no words from any call), and its goal where the reader may read that call (openItemsFor).
-  // A customer call's items hold their details: reading them marks the reader, as hq call does.
   'GET /api/agent/items': (b, me) => {
     if (!b.call) return openItemsFor(me);
-    if (!works(me, Number(b.call))) return 404;
-    if (memory.customerCall(Number(b.call))) jobs.handedCustomerData(me.id);
-    return ledger.items(Number(b.call));
+    return works(me, Number(b.call)) ? ledger.items(Number(b.call)) : 404;
   },
   // hq item add: on the call this job follows up (or the one it names, if it works for it); hq item replace: the same,
   // with the earlier item's kind and owner. Only a call's follow-up replaces an item (that drops it and cancels its jobs
@@ -1361,7 +1344,6 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
         if (typeof added !== 'object') return added;
         const link = ledger.link(added.id, work, me.agent, me.id);
         if (typeof link === 'string') throw new Refused(409, link);   // (the item with it: inOneStep rolls it back)
-        linked(added.id, work.job, link);   // (a customer call's: it holds their details, as item-link marks it)
         return { ...added, job: work.job, ...'deadline' in link && { deadline: link.deadline, thread: link.thread } };
       }));
     } catch (err) {
@@ -1386,7 +1368,7 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
     if (typeof pause === 'string') return new Refused(409, pause);
     const link = ledger.link(Number(b.id), { job: Number(b.to?.job) || undefined, request: Number(b.to?.request) || undefined, pause, ref: b.to?.ref, thread: str(b.thread) }, me.agent, me.id);
     if (typeof link !== 'string' && why) publish({ type: 'log', agent: me.agent, text: `Linked call item: ${why}` });
-    return linked(Number(b.id), Number(b.to?.job) || undefined, link);
+    return refusal(link);
   },
   // (a ready item, its work ended without the board's yes: the CEO's too, as hq item done is)
   'POST /api/agent/item-drop': (b, me) => ceoOnReady(me, Number(b.id)) ? refusal(ledger.drop(Number(b.id), b.why, me.id))
@@ -1531,12 +1513,15 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
   // queued, started or not (call.ts addToJob).
   'POST /api/agent/extend': (b, me) => {
     if (me.call) return refusal(call.addToJob(me, Number(b.id), String(b.text ?? '')));
-    const agent = speaker(b.as, me); return agent ? jobs.extendJob(Number(b.id), agent, String(b.text ?? '')) : 403;
+    // (who may add to HQ's own: its deliverable's owner among them.)
+    const agent = speaker(b.as, me), id = Number(b.id), thread = jobs.threadOf(id);
+    const deliverable = thread ? projects.findThread(thread) : undefined;
+    return agent ? refusal(jobs.extendAsAllowed(id, agent, String(b.text ?? ''), deliverable && projects.ownerOf(deliverable))) : 403;
   },
   'GET /api/agent/requests': (b, me) => jobs.openRequests(me, Number(b.id) || undefined),
   // hq mail: the company inbox, by what each mail is (mail.ts business): business mail for org.yaml's roles.businessMail,
   // a customer's mail for roles.customerData or roles.customerMail. Anyone else's job is refused, with how to get it: a bad
-  // package in a job can't read what the job was never handed. The job that reads it holds customer data (jobs.ts).
+  // package in a job can't read what the job was never handed.
   //
   // A listing says which mail answers an email HQ sent (outbox.ts markAnswers)
   'GET /api/agent/mail': (b, me) => {
@@ -1657,15 +1642,13 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
   'GET /api/agent/estimate/snapshots': b => backtest.saved(b),
   // hq call <id> [a-b]: a call this job works for (the call ledger: its follow-up, or a job handed out for one of its
   // items) is its numbered transcript; otherwise any call memory.ts shows this agent, every line and its summary. A call
-  // about a customer goes only to the jobs working on it (memory.ts callAccess), and marks its reader as holding their
-  // details (on a call, the call: jobs.ts readerHanded, its moments and screen too);
-  // one about a card for keys marks it as holding keys (jobs.ts holdsKeys).
+  // marked as about a customer goes only to the jobs working on it (memory.ts callAccess); one about a card for keys
+  // marks its reader as holding keys (jobs.ts holdsKeys).
   // hq call <id> moments | screen <time> (view): its recording on the same access, an ended call's (callviews.ts).
   'GET /api/agent/call': async (b, me) => {
     const id = Number(b.id), working = !!me.id && (ledger.mine(me.id, id) || ledger.resumed(me.id, id));
     const access = working || memory.callAccess(id, me);
     if (access !== true) return refusal(access);
-    if (memory.customerCall(id)) jobs.readerHanded(me);
     if (chat.carriesKeys(id)) jobs.handedKeys(me.id);
     if (b.view === 'moments') return refusal(callviews.timeline(id));
     if (b.view === 'screen') return refusal(await callviews.screenAt(id, str(b.at)));
@@ -1674,23 +1657,27 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
   },
   // hq orders [since|all]: our live Print API orders as HQ last read them (orders.ts), for checking Print API's invoice. Only
   // what that check needs is kept (no address, names or text), but an order's id opens and cancels it on a product's
-  // site (a shop's /api/orders/<id>): only org.yaml's roles.orders read them, and their job holds customer data, as
-  // hq mail's does.
+  // site (a shop's /api/orders/<id>): only org.yaml's roles.orders read them.
   'GET /api/agent/orders': (b, me) => {
     if (!reads(me.agent, 'orders')) return new Refused(403, orders.REFUSED);
-    jobs.handedCustomerData(me.id);
     const r = orders.list(str(b.since));
     return typeof r === 'string' ? new Refused(400, r) : r;
   },
   // hq numbers [<slug>]: the apps' counts and orders per day, as HQ's Numbers shows them (metrics.ts). Numbers per day
   // only, nothing about a customer, so a call may read it too.
   'GET /api/agent/numbers': b => { const r = metrics.numbers(b); return Array.isArray(r) ? new Refused(r[0], r[1]) : withChat(r); },   // (Care › Numbers, and the company's parts')
-  // hq spend <slug> <day> <euros>: a day's ad spend on an app, for the watch (spend.ts)
-  'POST /api/agent/spend': (b, me) => { const r = spend.recordSpend(b, me.agent); return typeof r === 'string' ? new Refused(400, r) : r; },
+  // hq spend <slug> <day> <euros>: a day's ad spend on an app, for the watch (spend.ts). Recorded by the app's owner or
+  // org.yaml's roles.finance only: the money swings and the watch's alarms read it.
+  'POST /api/agent/spend': (b, me) => {
+    if (me.agent !== roles().finance && me.agent !== owed.ownerOf(String(b.app ?? '')).agent)
+      return new Refused(403, "an app's ad spend is recorded by its owner or Finance (org.yaml's roles.finance)");
+    const r = spend.recordSpend(b, me.agent);
+    return typeof r === 'string' ? new Refused(400, r) : r;
+  },
   // hq care <case>, hq care draft <case> <file> (care.ts): the one card HQ handed this job (a question for the knowledge
   // keeper, a bug report for the app's owner), never another, except org.yaml's roles.care's job, which also reads any open
-  // customer waiting on a person; the job that reads it holds customer data
-  'GET /api/agent/care': (b, me) => { const r = care.forJob(String(b.case ?? ''), me.id, me.agent); if (r !== 404) jobs.handedCustomerData(me.id); return r; },
+  // customer waiting on a person
+  'GET /api/agent/care': (b, me) => care.forJob(String(b.case ?? ''), me.id, me.agent),
   // hq care: the open cases roles.care's job may read, one line each with nothing of the customer's
   'GET /api/agent/care-open': (b, me) => care.openForJob(me.agent),
   // hq care orders <case>: the live orders placed with an investigated card's address, for a job that may read the card;
@@ -1698,7 +1685,6 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
   'GET /api/agent/care-orders': async (b, me) => {
     let r;
     try { r = await care.ordersForJob(String(b.case ?? ''), me.id, me.agent); } catch (err) { if (err instanceof payments.StripeError) return new Refused(err.status, err.message); throw err; }
-    if (r !== 404) jobs.handedCustomerData(me.id);
     return typeof r === 'string' ? new Refused(409, r) : r;
   },
   // (with what an investigating job found, and its pass to the job that drafts from the board's answer)
@@ -1707,14 +1693,14 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
   'POST /api/agent/care-pass': (b, me) => care.passFromJob(String(b.case ?? ''), b.job, me.id),
   // hq mail draft (outbox.ts): an email to an outside party, for the board to send from HQ, and one of the agent's own
   // drafts as it stands. The job's agent or its team member, never a call. --answers: a mail the job's agent may read
-  'POST /api/agent/outbox': (b, me) => { const agent = speaker(b.as, me); return agent ? refusedDeliverable(me, 'an email draft', outbox.file(agent, me.id, b, mayReadOne(me))) : 403; },
+  'POST /api/agent/outbox': (b, me) => { const agent = speaker(b.as, me); return agent ? refusal(outbox.file(agent, me.id, b, mayReadOne(me))) : 403; },
   'GET /api/agent/outbox': (b, me) => { const agent = speaker(b.as, me); return agent ? outbox.forAgent(Number(b.id), agent) : 403; },
   // hq phone call (callouts.ts): a call out to a partner, for the board to approve, and one of the agent's own
   'POST /api/agent/callout': (b, me) => { const agent = speaker(b.as, me); return agent ? refusal(callouts.file(agent, me.id, b)) : 403; },
   'GET /api/agent/callout': (b, me) => { const agent = speaker(b.as, me); return agent ? callouts.forAgent(Number(b.id), agent, me.id) : 403; },
   // hq guest (guests.ts): a checklist for a named outside colleague, the board's card for it, and the answers on its items.
   // The job's agent only, never from a call.
-  'POST /api/agent/guest': (b, me) => refusedDeliverable(me, "a guest's checklist", guests.write(me, b.guest, b.title, b.spec)),
+  'POST /api/agent/guest': (b, me) => refusal(guests.write(me, b.guest, b.title, b.spec)),
   'GET /api/agent/guest': (b, me) => b.item ? guests.read(me, Number(b.item)) : guests.open(me),
   'POST /api/agent/guest-reply': (b, me) => refusal(guests.reply(me, Number(b.item), Number(b.n), b.text, b.pictures)),   // (pictures)
   'POST /api/agent/guest-add': (b, me) => refusal(guests.add(me, Number(b.item), b.spec)),
@@ -1735,19 +1721,10 @@ const digest = (s: string) => createHash('sha256').update(s).digest();
 const PARTNER_ROUTES = new Set<string>();
 // Routes for the voice line's manage tool (hq_tools.py MANAGE), with each route's own rules on who may
 // (speaker, me.agent). A call has no job to speak as. Its follow-up links and drops its items.
-// On a call about a customer's details (memory.ts customerCall: its card, its follow-up's, or a look-up on the call that
-// handed it them, jobs.ts readerHanded) a change that carries the agent's own words is refused (CUSTOMER_CALL_SHUT,
-// WORDS): a why, a name, a goal, a title, a topic, a note's text, a new slug or code go into HQ's feed and to
-// colleagues' jobs, which don't hold the customer's details, and a call can't mark those jobs as holding them (jobs.ts
-// handedCustomerData) the way a job working on the customer is marked. The call's follow-up, a job that holds them,
-// makes those. A change that only names records already there (a job, a thread, a card by its number or slug) or sets
-// a number or a time (a window, a place) carries none, and goes ahead: a cancel without a why, a window, a move, waits,
-// a resume, a thread or project done, a project's owner, a meeting joined, a decision linked or settled on the board's word. A stop, a pause, a plan,
-// meeting or proposal drop and an owed close each need a why, which reaches the feed and colleagues: those stay with
-// the follow-up. Its reads stay open.
 const MANAGE_ROUTES = ['POST /api/agent/cancel', 'POST /api/agent/stop', 'POST /api/agent/waits', 'POST /api/agent/window',
   'POST /api/agent/review', 'POST /api/agent/jobs/move', 'GET /api/agent/plan', 'POST /api/agent/plan/thread', 'POST /api/agent/plan/need',
   'POST /api/agent/plan/move', 'POST /api/agent/plan/drop', 'POST /api/agent/plan/done', 'POST /api/agent/plan/rename', 'POST /api/agent/plan/title',
+  'POST /api/agent/threads/feature', 'POST /api/agent/threads/cost', 'POST /api/agent/threads/milestone',
   'GET /api/agent/threads', 'GET /api/agent/thread', 'POST /api/agent/threads/move', 'POST /api/agent/pauses', 'POST /api/agent/pauses/resume',
   'GET /api/agent/projects', 'POST /api/agent/project-notes', 'POST /api/agent/projects/new', 'POST /api/agent/projects/code',
   'POST /api/agent/projects/owner', 'POST /api/agent/projects/rename', 'POST /api/agent/projects/done', 'POST /api/agent/decisions',
@@ -1756,9 +1733,6 @@ const MANAGE_ROUTES = ['POST /api/agent/cancel', 'POST /api/agent/stop', 'POST /
   'POST /api/agent/meetings/join', 'POST /api/agent/meetings/drop', 'GET /api/agent/jobs', 'GET /api/agent/room', 'GET /api/agent/requests',
   'POST /api/agent/request-close', 'POST /api/agent/request-topic', 'GET /api/agent/summary', 'GET /api/agent/followthrough',
   'POST /api/agent/sizes', 'GET /api/agent/owed', 'POST /api/agent/owed-close'];
-const CUSTOMER_CALL_SHUT = new Set(MANAGE_ROUTES.filter(route => route.startsWith('POST ')));
-const WORDS = ['why', 'name', 'goal', 'title', 'topic', 'text', 'blocks', 'business', 'newThread', 'slug', 'code'];
-const carriesWords = (b: Record<string, unknown>) => WORDS.some(k => typeof b[k] === 'string' ? !!(b[k] as string).trim() : b[k] != null);
 // The reads a job has, the board's call agent's too: the status report (its report tool), the notes to the Overseer,
 // the notes routed to jobs, every call's open items as one line each (never one call's items: those are its
 // follow-up's, rule 7), the estimates' checks (its manage tool).
@@ -1892,10 +1866,8 @@ const forAgent: Wrap<(b: any, me: Me) => unknown> = (key, handle) => request => 
   // (a call's agent repeats the refusal to the board, so it says why.)
   if (me.call && !CALL_ROUTES.has(key)) return send(request.res, 403, { error: "a call can't do this, as none of the call's tools reaches it: the call's follow-up does it" });
   if (me.callout && !PARTNER_ROUTES.has(key)) return send(request.res, 403, { error: ERRORS[403] });
-  const shut = (b: Record<string, unknown>) => me.call && CUSTOMER_CALL_SHUT.has(key) && carriesWords(b) && memory.customerCall(me.callId!);
   // (a card's files come in its JSON: cardfiles.ts JSON_MAX)
-  return answered(request, b => shut(b) ? new Refused(409, "this call is about a customer's details, and this change's words would reach HQ's feed and colleagues who don't hold them: make it without them where the command takes none (a cancel's why), or the call's follow-up makes it")
-    : handle(b, me), FILE_ROUTES.has(key) ? cardFiles.JSON_MAX : undefined, () => me.id || undefined);
+  return answered(request, b => handle(b, me), FILE_ROUTES.has(key) ? cardFiles.JSON_MAX : undefined, () => me.id || undefined);
 };
 // A job's token, a live call's (call.ts) or a call out's (callline.ts)
 function agentOf(token: string): Me | undefined {

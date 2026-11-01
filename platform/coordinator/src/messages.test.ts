@@ -1,4 +1,5 @@
 // node --test src/messages.test.ts   (hq say: a message is stored, delivered to the recipient's running job or made a job)
+import { sizedTime } from './testwords.ts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { chownSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -33,7 +34,7 @@ test.beforeEach(clear);
 function sort(job: number, title: string, code: string) {
   const { proposal } = db.prepare('select proposal from sorts where job = ?').get(job) as { proposal: number };
   const accepted = proposals.accept(proposal, ceo(), {
-    size: '30m',
+    size: sizedTime('30m'),
     why: 'Test scope judgment without a comparable completed job',
     title,
     code,
@@ -181,13 +182,6 @@ test("a second message to an idle colleague goes into the job the first became w
   // hq sent says where each went
   assert.deepEqual(((await h.agent('sent', lark.token)).body as any[]).filter(m => m.to === 'rivet').map(m => [m.id, m.became, m.joined ?? null]),
     [[second.body.id, made, first.body.id], [first.body.id, made, null]]);
-  // a sender that read a customer's details: HQ shows its words like any message's, and the job it joins isn't flagged
-  jobs.handedCustomerData(lark.id);   // (as hq mail or hq orders mark it)
-  const since = lastEventId();
-  const third = await say(lark, 'rivet', 'And the customer asked for it by Friday.');
-  assert.equal(third.body.job, made);
-  assert.deepEqual((await h.worker('customers', { job: made })).body, { customers: false });
-  assert.ok(events(since).some(e => e.type === 'chat' && e.agent === 'lark' && e.text === 'And the customer asked for it by Friday.'));
   // another sender job's message is a job of its own; so is one after the job started
   const theirs = await say(other, 'rivet', 'Separate thing.');
   assert.notEqual(theirs.body.job, made);

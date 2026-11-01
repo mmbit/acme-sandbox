@@ -12,7 +12,7 @@
 import { createServer } from 'node:http';
 import { readFileSync, writeFileSync, readdirSync, existsSync, mkdtempSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { resolve, dirname, extname, relative, join, basename } from 'node:path';
+import { resolve, dirname, extname, relative, join, basename, sep } from 'node:path';
 import { args, playwright } from '../demo/core.mjs';
 import { createRequire } from 'node:module';
 import { deflateSync, crc32 } from 'node:zlib';
@@ -38,9 +38,10 @@ const server = createServer((req, res) => {
   const f = resolve(root, '.' + decodeURIComponent(new URL(req.url, 'http://x').pathname));
   if (req.url === '/brand.json') { res.writeHead(200, { 'content-type': 'application/json' }).end(brand); return; }
   if (req.url === '/') { res.writeHead(200, { 'content-type': 'text/html' }).end('<!doctype html>'); return; }
-  if (!f.startsWith(root) || !existsSync(f)) { res.writeHead(404).end(); return; }
+  if (!f.startsWith(root + sep) || !existsSync(f)) { res.writeHead(404).end(); return; }
   res.writeHead(200, { 'content-type': types[extname(f)] ?? 'application/octet-stream' }).end(readFileSync(f));
-}).listen(0);
+});
+await new Promise(done => server.listen(0, '127.0.0.1', done));
 const port = server.address().port;
 
 const browser = await playwright().chromium.launch();
@@ -49,7 +50,7 @@ page.on('pageerror', e => console.error(e.message));
 const drawn = []; // (each cover at 1x, for the sheet)
 for (const f of files) {
   const src = relative(root, resolve(f));
-  await page.goto(`http://localhost:${port}/shared/covers/page.html?src=${encodeURIComponent(src)}`);
+  await page.goto(`http://127.0.0.1:${port}/shared/covers/page.html?src=${encodeURIComponent(src)}`);
   const png = await page.waitForFunction(() => window.done, null, { timeout: 10000 }).then(h => h.jsonValue());
   drawn.push(png);
   const out = a.out ? join(resolve(a.out), basename(src).replace(/\.js$/, '.png')) : resolve(root, src.replace(/\.js$/, '.png'));
@@ -117,7 +118,7 @@ function recent(count) {
 // The covers just drawn first, each at 3x, three a row on HQ's ink; with others after them (the feed's last few: does
 // the new one repeat their set-up?), the new ones framed in gold
 async function sheet(mine, others) {
-  await page.goto(`http://localhost:${port}/`);
+  await page.goto(`http://127.0.0.1:${port}/`);
   const png = await page.evaluate(async ({ mine, others }) => {
     const all = [...mine, ...others], S = 3, PAD = 6, cols = 3, w = 128 * S, h = 72 * S;
     const c = document.createElement('canvas');

@@ -11,7 +11,7 @@ export const orders = {
                                                      say. Placed since the date (Dutch time), the last 90 days by default.
                                                      No customer data: no addresses, names or text (their own reasons).
                                                      An order's id opens it on a product's site: only org.yaml's
-                                                     roles.orders read them, and the job then holds customer data.`,
+                                                     roles.orders read them.`,
 
   async run(args: string[]) {
     let since = '';

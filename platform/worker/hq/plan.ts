@@ -66,6 +66,7 @@ hq plan done <deliverable>, hq plan rename <deliverable> "name" ["done when"] [-
 // (help reads the company's levels when it's shown)
 // (a feature's pieces chained with need)
 // (the deliverable line's booked-for-later sentence)
+// (a card's hold and need's line)
 export const plan = {
   get help() {
     const own = companyLevels();
@@ -81,13 +82,15 @@ export const plan = {
                                                      chained from the one under way it most likely continues (the
                                                      drawing job's, else the project's newest), so draws in a row run
                                                      as one chain. One whose open work is all booked for later (--when
-                                                     a time), with no pull request open, isn't under way: it and what
-                                                     waits for it are passed over and named, so ready work plays now.
-                                                     Its tasks: hq job --deliverable <project>/<slug> --code WORD. hq
+                                                     a time) or waits for an open card of the board's, with no pull
+                                                     request open, isn't under way: it and what waits for it are passed
+                                                     over and named, so ready work plays now. A deliverable named that
+                                                     waits on the board or a pause is said so. Its tasks: hq job --deliverable <project>/<slug> --code WORD. hq
                                                      plan thread, the old name, still works
    hq plan need <deliverable> <deliverable>          the first deliverable starts once the second is done and merged (a
                                                      loop is refused, at any depth): how a feature's pieces that go
-                                                     live separately are chained, one merging at a time
+                                                     live separately are chained, one merging at a time. A second whose
+                                                     work all waits on the board or a pause is said so
    hq plan unneed <deliverable> <deliverable> "why"  the first runs beside the second from now, for the reason given:
                                                      only for work on other files, as work on the same files stays
                                                      chained (side by side it collides and is merged by hand)
@@ -243,6 +246,7 @@ async function need(action: 'need' | 'unneed', args: string[]) {
       : `${thread} starts once ${needs} is done and merged.`,
   );
   const moved = api.parseOrNull(answer.body);
+  if (present(moved?.held)) print(text(moved.held));
   if (moved?.moves) print(...changeLines(moved));
 }
 

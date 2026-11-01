@@ -1,5 +1,6 @@
 // Work handed on as jobs (hq job), and the queue around it: open jobs, adding to one, cancelling one, and sending a
 // stuck pull request back to review.
+import { TOKEN_ESTIMATE_GUIDANCE } from './estimating.ts';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import * as api from './api.ts';
 import { changeLines, lateLines, missWords, moveWords, threadWords, type Deadline, type Move } from './deadlines.ts';
@@ -32,19 +33,22 @@ export const code = {
   },
 };
 
+// (--size's re-size line)
 export const job = {
   // (the title's step alone; a feature's later piece chained)
   // (--deliverable new:'s booked-for-later words)
+  // (and its card's)
   // (--needs, and the drawn deliverable's chain)
   help: `
    hq job [--after <job id> | --after request:<id>]... <agent> "title" [file | -] --code WORD [--downtime] [--when <event>]... [--deliverable <project>/<slug> | --deliverable new:<project> "name" "done when" [--needs <deliverable>]...] [--check]
           [--item <item> | --lands <job>] [--findings <id,id,...>] [--notes <id,id,...>] [--now] [--only <id>]
-          [--by <when | project/slug | none>] [--model <lighter model>] --size <90m> [--refs <job,job>] --why "scope comparison"
+          [--by <when | project/slug | none>] [--model <lighter model>] --size <JSON> [--refs <job,job>] --why "scope comparison"
                                                      first inspect hq estimate for clean past jobs and judge their scope.
-                                                     --size is your estimate of agent time (90m, 2h, 1h30m), --refs names
+                                                     --size gives time and token expectations as JSON, --refs names
                                                      the past jobs you leaned on, and --why explains the comparison or
                                                      why no past job fits. This estimate is saved when queued and stays
-                                                     fixed. Only the CEO changes it later when work slips.
+                                                     fixed. The agent running it, or the CEO, re-sizes it
+                                                     with a why (hq estimate set).
                                                      hand work to someone as a separate job, with the brief in the file
                                                      (- : on stdin); prints the job number. The title is what the board
                                                      reads in its projects view: plain words for the work, no job, card,
@@ -80,12 +84,13 @@ export const job = {
                                                      one for it in the project's plan, as hq plan deliverable does (its
                                                      owner or the CEO), chained after the deliverables it needs: those
                                                      named, else the last one chained from the one under way it most
-                                                     likely continues (one whose work is all booked for later, with no
-                                                     pull request open, passed over and named). Related work joins the
-                                                     open deliverable it belongs to. --thread, the old name, still
-                                                     works. With requireThread enabled in company/projects.yaml, a job
-                                                     with no deliverable to inherit must name one. --check: QA, audits,
-                                                     security and compliance reads, which fold in the projects view.
+                                                     likely continues (one whose work is all booked for later or waits
+                                                     for an open card, with no pull request open, passed over and
+                                                     named). Related work joins the open deliverable it belongs to.
+                                                     --thread, the old name, still works. With requireThread enabled in
+                                                     company/projects.yaml, a job with no deliverable to inherit must
+                                                     name one. --check: QA, audits, security and compliance reads,
+                                                     which fold in the projects view.
                                                      --item <item>: the job
                                                      carries an item from a call (hq items), with the words from the call;
                                                      the item is handled when the job ends done. One open job per item.
@@ -130,7 +135,9 @@ ${asHelp(ONE_DEADLINE)}
                                                      request's reviews and fix rounds with it (its agent, its
                                                      deliverable's owner, the CEO or Process), naming deliverables that
                                                      need the old one for their owners to decide.
-                                                     Out of a pause: its owner or the CEO, with --why "reason" on the feed`,
+                                                     Out of a pause: its owner or the CEO, with --why "reason" on the feed
+
+${TOKEN_ESTIMATE_GUIDANCE}`,
   // (--when; move: --now)
 
   async run(given: string[]) {
@@ -695,16 +702,21 @@ export const jobs = {
 
 export const extend = {
   help: `
-   hq extend <job id> "text" [file]                  add to a job that hasn't started yet (the text, or the file's), instead of a second job`,
+   hq extend <job id> "text" [file]                  add to a job that hasn't started yet (the text, then the file's), instead of a second job:
+                                                     any agent's queued job, or one HQ made (a fix round, an answer's
+                                                     job) if it's yours, your deliverable's or you're the CEO`,
 
   async run([id, words, file]: string[]) {
     if (!/^[0-9]+$/.test(id ?? '') || !words) stop('usage: hq extend <job id> "text" [file]');
     if (process.env.HQ_CALL) return addOnCall(id, words, file);
-    const refusal = `Couldn't add to #${id}: only a job an agent queued that hasn't started yet can be extended. Wait on it instead (hq job --after ${id} ... --new).`;
     const filePath = file || '/dev/null';
-    if (!isReadable(filePath)) stop(refusal);
+    if (!isReadable(filePath))
+      stop(`Nothing was added to #${id}: can't read the file ${file} (give a path to a file, not -).`);
     const added = [words, readText(filePath)].filter(part => part !== '').join('\n\n');
-    await api.orStop(api.post('extend', api.withSpeaker({ id: Number(id), text: added })), refusal);
+    // (HQ's refusal says why: the job has started, or it's HQ's own and not yours to add to)
+    const answer = await api.change('extend', { body: api.withSpeaker({ id: Number(id), text: added }) });
+    if (!api.isSuccess(answer.status))
+      stop(`Nothing was added to #${id}: ${api.errorIn(answer.body, 'HQ refused it')}.`);
     print(`Added to job #${id}.`);
   },
 };

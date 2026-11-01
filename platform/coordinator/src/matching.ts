@@ -62,7 +62,7 @@ export const RUN_COLUMNS = 's.id entry, s.routine, s.slot',
 // Done work with its runs: agent time, start to finish (waits included), its seat spend (the API-equivalent price
 // where the engine reports one, tokens where it doesn't; none where no usage was reported) and its latest pull request.
 // (made at its first use: jobs.ts, whose workBranch it reads, imports the deadline clock that reads this)
-// The runs summed by job first, then each one's job by its id through db.ts jobs_history: `cross join` keeps that order
+// The runs summed by job first, then each one's job by its id through db.ts jobs_done: `cross join` keeps that order
 // whatever the planner's statistics say. Without it, with stale statistics (pragma optimize reads a table again only
 // once it grew tenfold), the planner scans every done job and sums the runs again for each, for minutes, and a
 // just-queued job is sized on the spot (predictions.ts recordQueued).
@@ -71,7 +71,7 @@ export const RUN_COLUMNS = 's.id entry, s.routine, s.slot',
 // runs and usage of done work only.
 // Whether a job replaces another is read from the replacement links as one set (`in`), so no job's row is fetched for it..
 // (the done work: past() sums its runs and usage, readPastAhead lists it)
-const DONE_WORK = `select id from jobs indexed by jobs_history where kind = 'work' and status = 'done'`;
+const DONE_WORK = `select id from jobs indexed by jobs_done where kind = 'work' and status = 'done'`;
 const past = (only = false) => {
   const of = only ? 'where job in (select value from json_each(:only))' : `where job in (${DONE_WORK})`;
   return `select j.id, j.agent, j.title, j.engine, ${ORIGIN} origin, j.created, coalesce(j.finished, r.last) finished,
@@ -85,7 +85,7 @@ const past = (only = false) => {
     group_concat(distinct coalesce(ended_as, 'unknown')) outcomes, sum(seat is null) unknown_seats,
     sum(${INVALID_RUN}) invalid_runs
     from runs ${of} group by job) r
-  cross join jobs j indexed by jobs_history on j.id = r.job
+  cross join jobs j indexed by jobs_done on j.id = r.job
   left join (select job, sum(cost) cost, sum(input + cache_write + cache_read + output) tokens from usage ${of} group by job) u
     on u.job = j.id
   left join (select branch, max(number) number from prs group by branch) b on b.branch = ${workBranch('j')}

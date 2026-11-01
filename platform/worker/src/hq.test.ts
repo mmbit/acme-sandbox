@@ -152,7 +152,7 @@ const server = createServer((req, res) => {
     }
     if (u === '/api/agent/request-topic') return res.end(JSON.stringify({ ok: true, topic: JSON.parse(b).topic.trim() }));
     if (u === '/api/agent/waits') { res.statusCode = JSON.parse(b).id === 9 ? 409 : 200; return res.end(res.statusCode === 200 ? '{"ok":true}' : '{"error":"job #9 isn\'t a queued job of yours"}'); }
-    if (u === '/api/agent/extend') { res.statusCode = extendStatus; return res.end(extendStatus === 200 ? '{"ok":true}' : '{"error":"not found"}'); }
+    if (u === '/api/agent/extend') { res.statusCode = extendStatus; return res.end(extendStatus === 200 ? '{"ok":true}' : JSON.stringify({ error: 'job #7 has started (running): its session read its brief already. Tell kit (hq say kit "...") or wait on it (hq job --after 7 ... --new)' })); }
     if (u === '/api/agent/meetings/listen') return res.end(JSON.stringify(heard.shift() ?? { meeting: 3, status: 'live', you: { agent: 'wren', chair: false, handed: false }, lines: [], seats: [{ agent: 'wren', chair: false, handed: false, changed: null }, { agent: 'juno', chair: true, handed: false, changed: null }] }));
     if (u === '/api/agent/meetings/ask') {
       const ok = !JSON.parse(b).with.includes('nobody'); res.statusCode = ok ? 200 : 404;
@@ -542,11 +542,12 @@ test('jobs lists open work, all or one agent\'s; extend adds to a job, or says w
   assert.deepEqual(last().body, { id: 7, text: 'Also the German page.\n\nPlease decide.' });
   await hq('--as', 'rivet', 'extend', '7', 'Mine too');
   assert.deepEqual(last().body, { id: 7, text: 'Mine too', as: 'rivet' });
-  extendStatus = 404;
+  // HQ's refusal says why, passed on as it is
+  extendStatus = 409;
   try {
     const r = await new Promise<{ code: number; err: string }>(resolve =>
       execFile('bash', [HQ, 'extend', '7', 'late'], { env }, (e, _o, err) => resolve({ code: (e as any)?.code ?? 0, err })));
-    assert.equal(r.code, 1); assert.match(r.err, /hasn't started yet.*--after 7/);
+    assert.equal(r.code, 1); assert.match(r.err, /Nothing was added to #7: job #7 has started.*--after 7/);
   } finally { extendStatus = 200; }
 });
 

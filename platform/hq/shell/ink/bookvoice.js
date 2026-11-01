@@ -6,6 +6,7 @@
 // The recording is dictate.js's (pieces cut at the pauses, each transcribed as the board talks; the whole clip
 // the fallback).
 import { dictate } from '../dictate.js';
+import { callMicrophone } from '../callmic.js';
 import { loadLanguage } from '../data.js';
 import { sfx } from '../audio.js';
 import { scope, word } from './bookscope.js';
@@ -61,12 +62,12 @@ export function listen(book, down) {
 // A held press before the microphone is allowed here: the slip says how to allow it, or that it's blocked, and goes.
 // Only a tap on a mic may bring up the browser's question, so the hold never asks.
 export function cantListen(down, blocked) {
-  say({ el: slip(down) }, word(blocked ? 'micBlocked' : 'micFirstTap'));
+  say({ el: slip(down) }, word(blocked ? 'micBlocked' : scope ? 'micFirstTap' : 'micIntercom'));
 }
 
 // The microphone on, in the board's language: each piece heard transcribed as it comes and shown in the slip
 function recording(v, code) {
-  v.rec = dictate({ lang: code, api: v.api, onWords: text => shown(v, text) });
+  v.rec = dictate({ lang: code, api: v.api, stream: callMicrophone()?.clone(), onWords: text => shown(v, text) });
   v.rec.ready.catch(err => {
     if (v.done) return;
     v.stop();

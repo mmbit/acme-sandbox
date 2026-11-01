@@ -66,7 +66,8 @@
     );
     const w = WORDS[langs.find(l => Object.hasOwn(WORDS, l))] ?? WORDS.en;
     const host = document.createElement('div'),
-      root = host.attachShadow({ mode: 'closed' });
+      root = host.attachShadow({ mode: 'open' });
+    host.setAttribute('data-review-ui', '');
     root.innerHTML = CARD;
     const $ = s => root.querySelector(s),
       n = FIXED.ids.length;

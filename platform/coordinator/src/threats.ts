@@ -1,21 +1,22 @@
 // What threatens the plan, for the CEO's summary (summary.ts): the windows missed and the threads giving, from the
 // minute's forecast, then what makes work slip before it does (a job past its size, what's stuck, tests failing or slow,
 // runs that timed out, the worker's room, a seat near its stop), then the owners' plans (a thread held by a need that
-// misses, an inbox or a meeting ask left waiting, a project growing faster than it finishes). Most serious first, each
-// line naming its cause.
+// misses, or only through a need on work that waits on the board, an inbox or a meeting ask left waiting, a project
+// growing faster than it finishes). Most serious first, each line naming its cause.
 // (its messages say deliverable, the board's word for a thread)
 import { db } from './db.ts';
 import { ceo } from './company.ts';
 import * as jobs from './jobs.ts';
 import { stalled } from './stalls.ts';
 import { getRoom, plannerCapacity } from './room.ts';
-import { ownerOf } from './projects.ts';
-import { findProject } from './projects.ts';
+import { findProject, ownerOf } from './projects.ts';
 import { BOARD, clock } from './windows.ts';
 import { outlookOf } from './outlooks.ts';
 import { standing, undrawnWords, type Forecast, type ThreadOutlook } from './forecast.ts';
 import { ORIGIN } from './matching.ts';
-import { duration, waitWords } from '../../worker/hq/waits.ts';
+import { age, duration, waitWords } from '../../worker/hq/waits.ts';
+import { heldThrough, throughWords } from './boardheld.ts';
+import { movedWords, prMoved, threadMoved } from './moved.ts';
 
 const MINUTE_MS = 60_000,
   HOUR_MS = 60 * MINUTE_MS,
@@ -39,12 +40,19 @@ const SPRAWL_SLACK = 3;
 export function lines(f: Forecast) {
   const open = openThreads(f);
   return [
-    ...missed(open, f.now),
+    ...missed(open, f),
     ...giving(open, f.now),
     ...[...stalled(), ...[getRoom().line ?? []].flat(), ...roomLow(f.now), ...seatsNear(f)],
-    ...[...tests(f.now), ...timedOut(f.now), ...pastSize(f)],
+    ...[...tests(f.now), ...timedOut(f.now), ...pastSize(f), ...resized(f.now)],
     ...[...stuckPrs(f.now), ...seatless(f), ...failed(f.now)],
-    ...[...heldByNeeds(open, f.now), ...undated(open, f), ...inboxes(f.now), ...meetingAsks(f.now), ...sprawl(f.now)],
+    ...[
+      ...heldByNeeds(open, f.now),
+      ...heldThroughNeeds(open, f),
+      ...undated(open, f),
+      ...inboxes(f.now),
+      ...meetingAsks(f.now),
+      ...sprawl(f.now),
+    ],
   ];
 }
 
@@ -74,7 +82,8 @@ function undated(open: OpenThread[], f: Forecast) {
 // Threads whose planned finish is past their deadline, or with none in sight, the furthest past first: by how much,
 // who gave the time, and what holds them. Only a time the board set itself is news to it, once; our own is ours to plan
 // with.
-function missed(open: OpenThread[], now: number) {
+function missed(open: OpenThread[], f: Forecast) {
+  const now = f.now;
   const late = open.filter(t => standing(t.outlook) === 'misses');
   // (none in sight is the furthest)
   const slack = (t: OpenThread) => t.outlook.slack ?? -Number.MAX_VALUE;
@@ -92,15 +101,19 @@ function missed(open: OpenThread[], now: number) {
         o.finish === null
           ? `no finish in sight for ${deadline}`
           : `finish ${clock(o.finish, now)}, ${span(-o.slack!)} past ${deadline}`;
-      return `${threadName(t)}: ${where}. Held by: ${causeOf(o, now)}. Judge the slip: why, and what to change to meet the deadline. ${told} ${movedWords(threadMoved(t.id), now)}`;
+      return `${threadName(t)}: ${where}. Held by: ${causeOf(o, f)}. Judge the slip: why, and what to change to meet the deadline. ${told} ${movedWords(threadMoved(t.id), now)}`;
     });
 }
 
-// What holds a thread first: no task drawn, the earliest cause along the chain
-// that sets its finish, else a wait on another thread's job, else nothing but its own work.
-function causeOf(o: ThreadOutlook, now: number) {
+// What holds a thread first: no task drawn, the needs edge it waits on the board through alone (the card would read as
+// its own), the earliest cause along the chain that sets its finish, else a wait
+// on another thread's job, else nothing but its own work.
+function causeOf(o: ThreadOutlook, f: Forecast) {
+  const now = f.now;
   const undrawn = undrawnWords(o);
   if (undrawn) return undrawn;
+  const through = heldThrough(o.thread, f);
+  if (through) return throughWords(o.thread, through, now);
   const link = [...o.chain].reverse().find(l => l.causes.length);
   if (link) return `${waitWords(link.causes[0], ms => clock(ms, now))} (at #${link.job})`;
   const other = o.waits.find(w => w.on === 'job');
@@ -204,6 +217,26 @@ function pastSize(f: Forecast) {
   });
 }
 
+// The sizes the agents running their jobs revised since the last check (sizes.ts setSize), each with its why: the play
+// runs on them now, and the CEO judges whether the work behind them needs anything.
+function resized(now: number) {
+  const rows = db
+    .prepare(
+      `select s.job, j.agent, j.title, j.step, j.round, s.agent_ms, s.why, (select p.agent_ms from sizes p where p.job = s.job
+        and p.id < s.id order by p.id desc limit 1) before, (select agent_ms from predictions where job = s.job) tool
+      from sizes s join jobs j on j.id = s.job where s.revised = 1 and s.by = j.agent and s.by != ? and s.at > ?
+      order by s.id`,
+    )
+    .all(ceo(), iso(lastCheck(now))) as (jobs.Named &
+    Record<'job' | 'agent_ms', number> &
+    Record<'agent' | 'why', string> &
+    Record<'before' | 'tool', number | null>)[];
+  return rows.map(r => {
+    const was = r.before ?? r.tool;
+    return `#${r.job} (${r.agent}: ${jobs.nameOf(r)}) was re-sized by its agent${was === null ? '' : ` from ${span(was)}`} to ${span(r.agent_ms)}: ${r.why}`;
+  });
+}
+
 function stuckPrs(now: number) {
   const prs = db.prepare("select number, author, round, why from prs where status = 'stuck' order by number").all() as {
     number: number;
@@ -223,35 +256,6 @@ function seatless(f: Forecast) {
     .filter(j => f.usual.get(j.id)?.waits.some(w => w.on === 'stalled' && w.job === j.id))
     .map(j => `#${j.id} (${j.agent}: ${jobs.nameOf(j)}) is stuck: no ${j.engine} seat takes it, whatever comes back`);
 }
-
-// When work last moved, for the hourly check to tell work that moved since the last check from work only acted on: a new
-// commit pushed, a review round opened or its panel or ruling asked (a run that isn't a re-run of one), a ruling given,
-// the merge and its deploy. A job queued, started, re-sent or ended with no push or ruling moves nothing. A thread's
-// work is its tasks' pull requests'. Their review loops' jobs from db.ts jobs_pr_loop.
-const threadMoved = (thread: string) =>
-  latestMove(
-    "select number from prs where branch in (select coalesce(branch, 'job/' || id) from jobs where thread = $thread)",
-    { thread },
-  );
-const prMoved = (pr: number) => latestMove('select $pr', { pr });
-const latestMove = (prs: string, args: Record<string, string | number>) =>
-  (
-    db
-      .prepare(
-        `select max(at) at from (select at from pushes where pr in (${prs})
-        union all select min(created) from jobs indexed by jobs_pr_loop where pr in (${prs}) and kind in ('review', 'consolidate')
-          group by pr, round, sha, kind, coalesce(stage, '')
-        union all select finished from jobs indexed by jobs_pr_loop where pr in (${prs}) and kind = 'consolidate'
-          and coalesce(stage, '') != 'triage' and status = 'done' and voided is null
-          and id in (select ruling from finding_rulings)
-        union all select merged_at from prs where number in (${prs})
-        union all select (select min(finished) from deploys where ok = 1 and fetched > p.merged_at) from prs p
-          where number in (${prs}))`,
-      )
-      .get(args) as { at: string | null }
-  ).at;
-const movedWords = (at: string | null, now: number) =>
-  at ? `Last moved ${age(now - Date.parse(at))} ago` : 'Nothing on it has moved yet (no push, round, merge or deploy)';
 
 // Work that failed lately with nothing in its place.
 function failed(now: number) {
@@ -291,6 +295,16 @@ function heldByNeeds(open: OpenThread[], now: number) {
       `${threadName(held)} needs deliverable ${need.id}, which misses its deadline ${clock(o.deadline!, now)}: ${finish}`,
     ];
   });
+}
+
+// Open threads whose work waits on the board only through a needs edge, said once: a missed one names it as its cause.
+function heldThroughNeeds(open: OpenThread[], f: Forecast) {
+  return open
+    .filter(t => standing(t.outlook) !== 'misses')
+    .flatMap(t => {
+      const through = heldThrough(t.id, f);
+      return through ? [`${threadName(t)} is held only through ${throughWords(t.id, through, f.now)}`] : [];
+    });
 }
 
 // (a thread waiting on its needs may have no open work yet)
@@ -367,14 +381,6 @@ function sprawl(now: number) {
 const threadName = (t: Pick<OpenThread, 'id' | 'name' | 'project'>) =>
   `deliverable ${t.id} (${t.name}, ${ownerOf(t)}'s)`;
 const span = (ms: number) => duration(ms / MINUTE_MS);
-
-// How long ago or how long waiting, roughly: minutes, hours, then days. (summary.ts too)
-export const age = (ms: number) =>
-  ms < HOUR_MS
-    ? `${Math.round(ms / MINUTE_MS)} min`
-    : ms < 2 * DAY_MS
-      ? `${Math.round(ms / HOUR_MS)} h`
-      : `${Math.round(ms / DAY_MS)} d`;
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 const percent = (share: number) => `${Math.round(share * 100)}%`;

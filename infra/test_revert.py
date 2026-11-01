@@ -97,6 +97,20 @@ class Revert(unittest.TestCase):
         with open(f'{folder}/8.done') as f:
             self.assertEqual(json.load(f), {'ok': False, 'said': 'a request names commits by their ids'})
 
+    def test_an_answer_is_a_new_file_never_through_a_link_left_in_the_folder(self):
+        folder, victim = f'{self.dir.name}/reverts', f'{self.dir.name}/victim'
+        os.makedirs(folder)
+        write(self.dir.name, 'victim', 'root\'s own\n')
+        write(folder, '9.json', json.dumps({'why': 'x', 'commits': ['nope']}))
+        os.symlink(victim, f'{folder}/9.done.part')
+        code, _ = self.run_revert('--requests', folder, self.repo)
+        self.assertEqual(code, 0)
+        with open(victim) as f:
+            self.assertEqual(f.read(), "root's own\n")
+        self.assertFalse(os.path.islink(f'{folder}/9.done'))
+        with open(f'{folder}/9.done') as f:
+            self.assertEqual(json.load(f), {'ok': False, 'said': 'a request names commits by their ids'})
+
     def test_a_commit_main_doesnt_have_is_refused(self):
         git(self.repo, 'commit', '-q', '--allow-empty', '-m', 'local only')
         code, said = self.run_revert(self.repo, 'why', git(self.repo, 'rev-parse', 'HEAD'))

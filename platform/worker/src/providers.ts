@@ -26,7 +26,7 @@ export function modelFor(seat: SeatProvider, model: string | undefined) {
 }
 
 // The CLI a seat runs
-export const cliOf = (seat: SeatProvider) => seat.cli ?? seat.engine;
+export const cliOf = (seat: Pick<SeatProvider, 'engine' | 'cli'>) => seat.cli ?? seat.engine;
 
 // The file in the seat's folder that holds its sign-in: Codex keeps a key in its auth.json as it keeps a login, and the
 // other CLIs keep theirs where they would in a home (clis.ts credentials), the seat's folder being one.

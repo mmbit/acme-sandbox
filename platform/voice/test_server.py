@@ -4199,7 +4199,7 @@ class BoardCallNotes(Juno):
 
 
 # The agent driving a piece of work on the board's screen
-TEACUP_PAGE = 'https://teacups.preview.onlyonery.com/'
+TEACUP_PAGE = 'https://teacups.preview.test/'  # (on ORIGIN's zone: hq.test)
 
 
 @unittest.skipIf(np is None, 'numpy is not installed (see the docstring)')
@@ -4253,14 +4253,17 @@ class BoardDriving(Juno):
                                             'suggestion to open the teacup page.)\n\nNot now.'])
 
     async def test_only_a_preview_page_or_one_of_hqs_screens_reaches_hq(self):
-        for address in (TEACUP_PAGE, 'https://teacups.preview.onlyonery.com', 'https://teacups.preview.onlyonery.com/p/2?x=1',
+        for address in (TEACUP_PAGE, 'https://teacups.preview.test', 'https://teacups.preview.test/p/2?x=1',
                         '/?open=phone&card=31', '/?open=book&owner=juno', '/?open=projects', '/?open=computer',
                         '/?open=gazette', '/?open=intercom'):
             self.assertIn('ok', await self.suggest('it', address), address)
             self.call.driving.opened({'type': 'opened', 'id': self.told('open')[-1]['id'], 'answer': 'not now'})
-        for work in ({'what': 'it', 'address': 'https://onlyonery.com/'}, {'what': 'it', 'address': 'http://teacups.preview.onlyonery.com/'},
-                     {'what': 'it', 'address': 'https://teacups.preview.onlyonery.com.evil.example@x/'},
-                     {'what': 'it', 'address': 'https://teacups.preview.onlyonery.com/ x'}, {'what': 'it', 'address': '/?open=settings'},
+        for work in ({'what': 'it', 'address': 'https://onlyonery.com/'}, {'what': 'it', 'address': 'http://teacups.preview.test/'},
+                     {'what': 'it', 'address': 'https://teacups.preview.test.evil.example@x/'},
+                     # (a preview on another zone than HQ's)
+                     {'what': 'it', 'address': 'https://teacups.preview.example.org/'},
+                     {'what': 'it', 'address': 'https://teacups.preview.test.evil.example/'},
+                     {'what': 'it', 'address': 'https://teacups.preview.test/ x'}, {'what': 'it', 'address': '/?open=settings'},
                      {'what': 'it', 'address': '/jobs'}, {'what': 'it', 'address': 'javascript:alert(1)'}, {'what': 'it', 'address': 3},
                      {'what': ' ', 'address': TEACUP_PAGE}, {'what': 'x' * 121, 'address': TEACUP_PAGE}, {'what': 'it'},
                      {'what': 'it', 'address': TEACUP_PAGE, 'colour': 'red'}, 'it'):

@@ -4,6 +4,7 @@
 import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { DATA_DIR } from './config.ts';
+import { brand } from './companyfiles.ts';
 
 export const DIR = process.env.SECRETS_DIR ?? `${DATA_DIR}/secrets`;
 // Partner keys only (<PARTNER>_<TEST|LIVE>_<FIELD>). Agents choose the names and a test key reaches every job as an
@@ -185,22 +186,29 @@ export const dropAddress = (id: number) => { rmSync(`${DIR}/${saved(id)}`, { for
 // which one it is. Each also as JSON writes it inside a string (a call's lines are a JSON array), so a
 // key holding a quote or a backslash goes too.
 const LONG = 12;
-// Every value in the key store is masked, the phone numbers too: the board's own is private, so the company's public line
-// goes with it. The store is written only through saveSecrets, keepMadeKey and forget (and the saved addresses'), which reset `held`.
+// What the store holds is masked but for a public value, a setting the board types on the desk phone rather than a key:
+// the shops' own phone line (on the Imprint pages, hq phone), the backups' age recipient (a public key), and the server's
+// own keys a company's brand.yaml names in publicKeys (an address it gives out). Those stay as written in text, files,
+// cards and memory; credentials and the board's private details (its number, its saved addresses) are masked.
+const PUBLIC = ['TWILIO_PHONE_NUMBER', 'BACKUP_AGE_RECIPIENT'];
+// (only the server's own: a partner key's value is a credential, and a test one reaches every job)
+const publicKeys = () => new Set([...PUBLIC, ...((brand().publicKeys ?? []) as string[]).filter(n => Object.hasOwn(OWN, n))]);
+const masked = () => { const shown = publicKeys(); return readdirSync(DIR).filter(n => !shown.has(n)); };
+// The store is written only through saveSecrets, keepMadeKey and forget (and the saved addresses'), which reset `held`.
 let held: [string, string][] | null = null;   // [value, name], longest first; null: read the key store again
 export function redact<T>(text: T): T {
   if (typeof text !== 'string' || text.length < LONG) return text;
-  held ??= readdirSync(DIR).flatMap(n => forms(secret(n)).map(x => [x, n] as [string, string]))
+  held ??= masked().flatMap(n => forms(secret(n)).map(x => [x, n] as [string, string]))
     .filter(([v]) => v.length >= LONG).sort((a, b) => b[0].length - a[0].length);
   let out: string = text;
   for (const [v, n] of held) if (out.includes(v)) out = out.split(v).join(`[${n}]`);
   return out as T;
 }
-// What redact() masks as of now, without a value: each key's name, size and time, and the rules' own source below (db.ts
-// scrub() keeps a hash of both), so a deploy that changes LONG, forms() or redact() goes over old text again with no
-// version to bump.
+// What redact() masks as of now, without a value: each masked key's name, size and time, and the rules' own source below
+// (db.ts scrub() keeps a hash of both), so a deploy that changes LONG, forms() or redact(), or masks a key that was
+// public, goes over old text again with no version to bump.
 export function keysStamp() {
-  const lines = readdirSync(DIR).sort().map(keyStamp);
+  const lines = masked().sort().map(keyStamp);
   return lines.join('\n');
 }
 function keyStamp(name: string) {

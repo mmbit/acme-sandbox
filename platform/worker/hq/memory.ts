@@ -50,7 +50,7 @@ export const history = {
                                                      the board's answers), calls and the meetings you sat in (what each
                                                      seat changed, the chair's summary), newest first; a query narrows
                                                      it, '#35' to that number, a job's code (TOMAK) to that job. A report
-                                                     or card about a customer shows only to the job working on it`,
+                                                     or card marked as a customer's shows only to the job working on it`,
 
   async run([query = '']: string[]) {
     const past = JSON.parse(await api.get(`history?q=${api.uri(query)}`));
@@ -140,7 +140,7 @@ const seatLine = ({ agent, chair, changed }: PastMeeting['seats'][number]) =>
 export const call = {
   help: `
    hq call <id> [a-b]                                a call with the board, yours or a colleague's, every line and its
-                                                     summary (one about a customer: only to the jobs working on it); for a
+                                                     summary (one marked as a customer's: only to the jobs on it); for a
                                                      call your job works for, its numbered transcript, as above
    hq call <id> moments                              a walk-through call's recording (its screen was shown): what was done
                                                      (#14 tapped "Add to basket" (button)) and its transcript's lines
@@ -214,7 +214,7 @@ export const intercom = {
                                                      company's clock) and who said it: a day (2026-10-16), days
                                                      (2026-10-14..2026-10-16) or a day's hours (2026-10-16 09:00-12:00) in
                                                      full, or the lines nearest some words or their meaning, best first.
-                                                     A line about a customer or a call for keys shows as a placeholder,
+                                                     A line about a call for keys shows as a placeholder,
                                                      pictures by number`,
 
   async run(args: string[]) {
