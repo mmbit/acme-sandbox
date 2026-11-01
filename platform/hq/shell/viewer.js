@@ -37,6 +37,8 @@ export function mountStage(v, url) {
     closed: false,
   };
   v.querySelector('.bar .pin').before(me.choices);
+  // (its QR signs a device in as the board: never in a call's recording, shared/watchalong.)
+  me.qrCard.setAttribute('data-watchalong-hide', '');
   v.append(me.qrCard);
   me.choices.addEventListener('click', e => choose(me, e.target.closest('button')));
   me.stage.querySelector('.head').addEventListener('click', e => tapHead(me, e.target.closest('button')));

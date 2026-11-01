@@ -4,6 +4,7 @@
 import { rng, pick, mix, clamp, lerp, canvas, trim } from '../../util.js';
 import { FH, SLAB, CORE, PLAZA, ENTRANCE, INK, F, disc, sprite, SX, SY, top, wallY, wallX, box, ellipse, text, textW, namePlate } from './iso.js';
 import { today, season, holidays, darkness } from '../../world/clock.js';
+import { lampAlong, LAMP } from './layout.js';
 // the calendar and the weather are the world's; the rest of the brownstone still imports them from here
 export { today, season, holidays, darkness };
 export { pickWeather, weatherAt } from '../../world/weather.js';
@@ -155,7 +156,7 @@ export function buildIsland(L, sea = season()) {
     if (sea !== 'winter') for (let i = 0; i < 6; i++) disc(gc, Math.round(cw / 2 - 3 + rr() * 4), Math.round(chh / 2 - 2 + rr() * 3), 2, mix(pal[0], '#ffffff', 0.25));
     add(trunk, x, y, { canopy, cx: SX(x, y) - cw / 2, cy: SY(x, y) - 18 - chh, phase: rr() * 6, name: 'tree', at: { x, y }, leaves: sea === 'autumn' ? pal : null });
   };
-  const lamp = (x, y) => { add(sprite(x - 0.1, y - 0.1, x + 0.1, y + 0.1, 0, 34, g => { const sx = SX(x, y), sy = SY(x, y); F(g, sx, sy - 30, 1, 30, '#3b3355'); F(g, sx - 1, sy - 2, 3, 2, '#3b3355'); F(g, sx - 2, sy - 33, 5, 3, '#3b3355'); F(g, sx - 1, sy - 31, 3, 1, '#fff3b0'); }), x, y, { name: 'lamp' }, 0.06); out.lamps.push({ x, y, z: 30 }); };
+  const lamp = (x, y) => { add(sprite(x - 0.1, y - 0.1, x + 0.1, y + 0.1, 0, LAMP.h + 1, g => { const sx = SX(x, y), sy = SY(x, y); F(g, sx, sy - LAMP.h + 3, 1, LAMP.h - 3, '#3b3355'); F(g, sx - 1, sy - 2, 3, 2, '#3b3355'); F(g, sx - (LAMP.w >> 1), sy - LAMP.h, LAMP.w, 3, '#3b3355'); F(g, sx - 1, sy - LAMP.h + 2, 3, 1, '#fff3b0'); }), x, y, { name: 'lamp' }, 0.06); out.lamps.push({ x, y, z: 30 }); };
   // a park bench, along x or along y: u runs along it, v across it
   const bench = (x, y, alongX) => {
     add(sprite(x - 0.5, y - 0.5, x + 0.5, y + 0.5, 0, 14, g => {
@@ -180,9 +181,10 @@ export function buildIsland(L, sea = season()) {
     }), x, y, { name: 'pumpkin' }, 0.18);
     out.pumpkins.push({ x, y, z: h - 1 });
   };
-  // along the sidewalk: lamps, a mailbox, a bike
-  for (let x = 5; x < X1 - 0.5; x += 5) lamp(x, C + 0.88);
-  for (let y = 5.5; y < Y1 - 0.5; y += 5) lamp(C + 0.88, y);
+  // along the sidewalk: lamps, a mailbox, a bike. The lamps stand every 5 tiles, stepped clear of a ground-floor meeting
+  // room's people (lampAlong).
+  for (let x = 5; x < X1 - 0.5; x += 5) lamp(lampAlong(L, 'x', x, C + 0.88), C + 0.88);
+  for (let y = 5.5; y < Y1 - 0.5; y += 5) lamp(C + 0.88, lampAlong(L, 'y', y, C + 0.88));
   const mb = { x: X1 - 1.3, y: C + 0.8 };
   add(sprite(mb.x - 0.2, mb.y - 0.2, mb.x + 0.2, mb.y + 0.2, 0, 16, g => { box(g, mb.x - 0.13, mb.y - 0.1, 0, mb.x + 0.13, mb.y + 0.1, 3, '#3b3355'); box(g, mb.x - 0.15, mb.y - 0.12, 3, mb.x + 0.15, mb.y + 0.12, 14, ['#ff7a82', '#e8505b', '#b8404f']); F(g, SX(mb.x, mb.y) - 2, SY(mb.x, mb.y, 11), 3, 1, INK); }), mb.x, mb.y, { name: 'mailbox' });
   out.mailbox = { x: mb.x - 0.4, y: PLAZA.y, level: 0 };

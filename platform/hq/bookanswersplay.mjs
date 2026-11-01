@@ -1,25 +1,14 @@
 // The Notebook for book-check's answers stories (bookanswers.mjs): a story's own seed of the store, a page with the
 // board's groups and the agents' answers on them, played by HQ's one stand-in (notebookroute.mjs on a notebookPlay(),
-// hqIn's notebooks) and changed mid-story through that play; HQ opened on it; an element of the answers' layer measured
-// in its page's px; a stroke as Safari hands a pen's over; the four symbols; a note tried in versions.
-import { answerSpot } from '../coordinator/src/ink/answerspot.ts';
+// hqIn's notebooks) and changed mid-story through that play; HQ opened on it; what hangs under a note's unit measured
+// against it; a stroke as Safari hands a pen's over; a note tried in versions.
+import assert from 'node:assert/strict';
 import { boxOf } from './shell/ink/notebookstack.js';
 
 // How long a story waits on what the store brings (a face, an answer, a reply drawn) or the pen writes in: HQ reads
 // its page again only once the store's event reaches it, and on a loaded machine under the 3D scene that read comes
 // seconds late, not missing. A bound for something broken, never a pace: a story waits on the state itself.
 export const FEED_MS = 20_000;
-// The paper a desktop's book spread wide shows, as the store places answers for it (answerspot.ts)
-const WIDE = { x: 0, w: 1200 };
-// Where the store places an answer holding a (answerspot.ts Contents) on group g: clear of the page's groups, beside it
-// on a wide book, with its narrow spot (right of the tool strip) where the book is narrower
-export const placed = (nb, g, a) =>
-  answerSpot(
-    g.box,
-    a,
-    nb.groups.map(x => x.box),
-    WIDE,
-  );
 
 // ---- the story's Notebook: My journal with one page (p, numbered clear of the old book's; page: its own columns, a
 // call's kind and label), the board's typed groups on it and the agents' answers, as the store keeps them
@@ -38,7 +27,7 @@ export function notebookOn(c, page = {}) {
     names: { [ceo]: name },
   };
   // (a group's box as the store reads it from its parts: notebookstack.js boxOf. Seeded as a unit already, h its
-  // parts' foot, so the store keeps them where the story wrote them: the answers layer reads that box in its page's px)
+  // parts' foot, so the store keeps them where the story wrote them)
   const typed = (id, words, x, y) => ({
     ...{ id, page: p.id, kind: 'drawing', ink: [], texts: [{ x, y, w: 260, color: '#2b2230', text: words }] },
     ...{ words, said: 'typed', created: T, updated: T },
@@ -49,23 +38,28 @@ export function notebookOn(c, page = {}) {
       return Math.ceil(this.box.y + this.box.h);
     },
   });
-  // An agent's answer on group g, without an id. A seeded answer gives its own ({ id, ...answer(…) }), and play.answer
-  // gives one to an answer that lands mid-story.
+  // An agent's answer on group g, without an id, as the store keeps one: no spot, slipped under its note. A seeded
+  // answer gives its own ({ id, ...answer(…) }), and play.answer gives one to an answer that lands mid-story.
   let made = 0;
-  const answer = (g, style, text, spot, more = {}) => ({
+  const answer = (g, style, text, more = {}) => ({
     grp: g.id,
     by: ceo,
     style,
     text,
-    spot,
     created: new Date(at + ++made).toISOString(),
     ...more,
   });
   return { p, ceo, name, seed, groups: seed.groups, typed, answer };
 }
-// HQ on the story's Notebook at a size, the book open on its page; play: the store it's opened on
-export async function opened(browser, c, viewport, nb, options = {}) {
+// HQ on the story's Notebook at a size, the book open on its page; play: the store it's opened on. book: a desktop's
+// book spread this wide (CSS px) beside HQ's page, its columns side by side
+export async function opened(browser, c, viewport, nb, { book, ...options } = {}) {
   const context = await c.hqIn(browser, viewport, { ...options, notebooks: nb.seed });
+  if (book)
+    await context.addInitScript(
+      w => localStorage.setItem('hq.book.wide', JSON.stringify({ mode: 'open', book: w })),
+      book,
+    );
   const page = await context.newPage(),
     errors = [];
   page.on('pageerror', e => errors.push(e.message));
@@ -94,33 +88,62 @@ export async function opened(browser, c, viewport, nb, options = {}) {
 export const childrenOf = (play, g) =>
   play.route('/api/notebooks/pages/groups', { page: g.page }).groups.find(x => x.id === g.id).children;
 export const layer = page => page.locator('#book .bk-answers');
-// An element of the answers' layer in its page's px (its page's layer sits at the page's origin, scaled with it)
-export const pagePx = (page, selector) =>
-  page.evaluate(sel => {
-    const el = document.querySelector(`#book .bk-answers ${sel}`),
-      root = el?.closest('.bk-answers');
-    if (!el || !root) return null;
-    const r = el.getBoundingClientRect(),
-      o = root.getBoundingClientRect(),
-      k = root.offsetWidth ? o.width / root.offsetWidth : 1;
-    return { x: (r.left - o.left) / k, y: (r.top - o.top) / k, w: r.width / k, h: r.height / k };
-  }, selector);
-// An element of the answers' layer on screen, with the paper the book shows, the controls' islands floating at its
-// right edge and the tool strip over its left
-export const onScreen = (page, selector) =>
-  page.evaluate(sel => {
-    const box = el => {
-      const r = el.getBoundingClientRect();
-      return { x: r.left, y: r.top, w: r.width, h: r.height };
-    };
-    const el = document.querySelector(`#book .bk-answers ${sel}`);
-    return {
-      at: el && box(el),
-      paper: box(document.querySelector('#book .bk-desk')),
-      rail: [...document.querySelectorAll('#book .bk-column .bk-island')].filter(i => i.offsetWidth).map(box),
-      strip: box(document.querySelector('#book .bk-strip')),
-    };
-  }, selector);
+// What hangs under group g's unit (selector, in its .bk-under) as the page draws it on the screen, settled: its box the
+// same two frames running, the page done laying it out. With its unit's box and what it must keep clear of: every other
+// unit and what hangs under each.
+export async function underUnit(page, g, selector) {
+  const sel = `#book .bk-under[data-g="${g.id}"] ${selector}`;
+  await page.waitForFunction(
+    sel => {
+      const box = () => JSON.stringify(document.querySelector(sel)?.getBoundingClientRect());
+      const before = box();
+      return new Promise(go => requestAnimationFrame(() => requestAnimationFrame(() => go(box() === before))));
+    },
+    sel,
+    { timeout: FEED_MS },
+  );
+  return page.evaluate(
+    ([id, sel]) => {
+      const box = el => {
+          const r = el.getBoundingClientRect();
+          return { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
+        },
+        unit = document.querySelector(`#book .bk-unit[data-unit="${id}"]`),
+        at = document.querySelector(sel);
+      const others = [...unit.closest('.bk-page').querySelectorAll('.bk-unit[data-unit], .bk-under[data-g]')]
+        .filter(el => (el.dataset.unit ?? el.dataset.g) !== String(id))
+        .map(el => ({ id: el.dataset.unit ?? el.dataset.g, ...box(el) }));
+      return { at: at && box(at), unit: box(unit), others };
+    },
+    [g.id, sel],
+  );
+}
+// Two boxes on the screen that share some of it
+const overlapping = (a, b) => a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+// What hangs under group g's unit (selector, in its .bk-under) where the board reads it at every width: under the unit
+// and in its column (a slip's half-degree tilt aside), clear of every other unit and what hangs under it, and on the
+// paper left of the tools
+export async function underItsNote(page, g, selector) {
+  const { at, unit, others } = await underUnit(page, g, selector),
+    shown = JSON.stringify({ at, unit });
+  assert.ok(at.top >= unit.bottom, `under its note's unit: ${shown}`);
+  assert.ok(at.left >= unit.left - TILT && at.right <= unit.right + TILT, `in its unit's column: ${shown}`);
+  for (const o of others) assert.ok(!overlapping(at, o), `clear of ${o.id} at ${JSON.stringify(o)}: ${shown}`);
+  await clearOfTools(page, `.bk-under[data-g="${g.id}"] ${selector}`);
+}
+// (how far past its column a slip's tilt takes its corners, screen px: shared/review/slip.js rotates it half a degree)
+const TILT = 3;
+// Every element at selector in the book left of the tools floating at the paper's right, the islands' stack and the
+// tool strip beside it
+export async function clearOfTools(page, selector) {
+  const tools = await page
+      .locator('#book .bk-column .bk-island')
+      .evaluateAll(els => Math.min(...els.filter(el => el.offsetWidth).map(el => el.getBoundingClientRect().left))),
+    rights = await page
+      .locator(`#book ${selector}`)
+      .evaluateAll(els => els.map(el => el.getBoundingClientRect().right));
+  assert.ok(rights.length && rights.every(x => x <= tools), `clear of the tools: ${JSON.stringify([rights, tools])}`);
+}
 // A stroke in screen px, as Safari hands a pen's over (or a mouse's, on a desktop); pace: ms between its points, as a
 // hand draws it (0, at once)
 export async function stroke(page, points, type = 'pen', pace = 0) {
@@ -151,35 +174,6 @@ export async function stroke(page, points, type = 'pen', pace = 0) {
     [points, type, pace],
   );
 }
-// The four symbols, drawn in a box (x, y: its top-left, s: its size), screen px
-export const SYMBOLS = {
-  tick: (x, y, s) => [
-    [x, y + s * 0.55],
-    [x + s * 0.2, y + s * 0.75],
-    [x + s * 0.35, y + s * 0.95],
-    [x + s * 0.6, y + s * 0.5],
-    [x + s, y],
-  ],
-  krul: (x, y, s) =>
-    Array.from({ length: 24 }, (_, i) => {
-      const t = i / 23,
-        a = t * Math.PI * 3;
-      return [x + t * s + Math.cos(a) * s * 0.15, y + s * 0.5 - Math.sin(a) * s * 0.3 - t * s * 0.3];
-    }),
-  cross: (x, y, s) => [
-    [x, y],
-    [x + s * 0.5, y + s * 0.5],
-    [x + s, y + s],
-  ],
-  question: (x, y, s) => [
-    [x + s * 0.2, y + s * 0.25],
-    [x + s * 0.5, y],
-    [x + s * 0.8, y + s * 0.25],
-    [x + s * 0.5, y + s * 0.55],
-    [x + s * 0.5, y + s * 0.75],
-  ],
-};
-
 // (a version's frame: an 8 × 6 picture, as the try run shoots them)
 const RED =
   'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAgAAAAGCAIAAABxZ0isAAAAEUlEQVR4nGN4ZmODFTEMpAQAW3NBof5buBkAAAAASUVORK5CYII=';
@@ -193,7 +187,7 @@ export function triedNote(c, page = {}) {
   warmer.tried = { by: nb.ceo, expect: 3, going: true };
   const version = (name, picture = RED) => {
     const slug = name.toLowerCase().replace(/\W+/g, '-');
-    return nb.answer(warmer, 'version', `${name}, as it would look`, null, {
+    return nb.answer(warmer, 'version', `${name}, as it would look`, {
       ...{ version: name, picture, link: `https://try-${slug}.preview.example.com/`, branch: `try/${slug}` },
     });
   };

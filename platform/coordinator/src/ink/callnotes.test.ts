@@ -170,7 +170,10 @@ test("a call's notes page: open as the call starts, the agent's scraps landing o
   assert.equal((await refused({ words: '' }))[0], 400);
   assert.equal((await refused({ owner: 'nobody' }))[0], 400);
   assert.equal((await refused({ goal: '' }))[0], 400, 'an ask on the call has the board’s why');
-  assert.deepEqual(await refused({ from: '-20s' }), [404, 'No screen is being shown on this call.']);
+  assert.deepEqual(await refused({ from: '-20s' }), [
+    404,
+    "Their screen isn't shown to you: ask to see it with ask_to_see, and they answer yes or no.",
+  ]);
 
   // Its title, a short topic after the call's date and time; what the agent records on the call, written on the page
   assert.equal((await h.voice('title', { call, title: 'Shop page: price, basket, banner' })).status, 400);
@@ -875,7 +878,7 @@ test("the board's first mark on a call, before the notes page is asked for, is o
   assert.equal(myNotebook().archived, 0, 'My journal stays on the shelf');
 });
 
-test("a call's pages read like any page, a customer call's too, but a keys call's pages stay its agent's", async () => {
+test("a call's pages read like any page, a customer call's too (its summary only by its readers), but a keys call's pages stay its agent's", async () => {
   const sketches = async (token: string) =>
     ((await h.agent('sketches', token)).body.sketches as { id: number }[]).map(p => p.id);
   const holds = async (job: number) => (await h.worker('customers', { job })).body.customers as boolean;
@@ -891,6 +894,18 @@ test("a call's pages read like any page, a customer call's too, but a keys call'
   assert.ok((await sketches(kit.token)).includes(page));
   assert.equal((await h.agent(`sketch?id=${page}`, kit.token)).status, 200);
   assert.equal(await holds(kit.id), false, 'and nothing marked');
+  // but the follow-up's summary of it carries the customer's details: only the call's readers get it, marked
+  db.prepare('update calls set reply = ? where id = ?').run("Ada's parcel goes to her neighbour", call);
+  const summaryOf = async (token: string) =>
+    ((await h.agent('sketches', token)).body.sketches as { id: number; summary: string | null }[]).find(
+      p => p.id === page,
+    )!.summary;
+  assert.equal(await summaryOf(kit.token), null);
+  assert.equal((await h.agent(`sketch?id=${page}`, kit.token)).body.summary, null);
+  assert.equal(await holds(kit.id), false, 'still nothing marked');
+  const vera = await h.start({ agent: 'vera' });
+  assert.equal(await summaryOf(vera.token), "Ada's parcel goes to her neighbour", "roles.customerData's");
+  assert.equal(await holds(vera.id), true, 'and its reader holds them');
 
   const card = jobs.createRequest({
     kind: 'credential',

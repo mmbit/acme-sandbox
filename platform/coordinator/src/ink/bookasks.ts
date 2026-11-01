@@ -17,6 +17,7 @@ import { ceo } from '../company.ts';
 import { endRequest, findAgent, jobAgent } from '../jobs.ts';
 import { productsOf } from '../owed.ts';
 import * as cardFiles from '../cardfiles.ts';
+import { mention } from '../pictures.ts';
 import { BOARD } from './book.ts';
 import { parseCard } from '../../../hq/shell/card.js';
 import { SHOWN } from '../shown.ts';
@@ -111,8 +112,18 @@ export function askDeleted(request: number) {
 }
 // Undo of that delete, once its card is gone: the scrap stays gone with it
 export const ASK_GONE: Refused = [409, 'this ask left the desk phone with its card when it was deleted', 'askGone'];
-// A card as the book shows it: its text for card.js to read, its questions for questions.js
+// A card as the book shows it: its text for card.js to read, its questions for questions.js; answered, the pictures
+// that went with the answer (the board's drawing, bookasks.js), the line telling the agent how to read them left out
+// of its words
 function askOf(r: Row) {
+  const pictures =
+    r.status === 'answered'
+      ? (
+          db.prepare('select id from pictures where request = ? and answered = 1 order by id').all(r.id) as {
+            id: number;
+          }[]
+        ).map(p => p.id)
+      : [];
   return {
     id: r.id,
     agent: r.agent,
@@ -123,8 +134,9 @@ function askOf(r: Row) {
     questions: r.questions ? JSON.parse(r.questions) : null,
     page: r.page,
     status: r.status,
-    answer: r.status === 'answered' ? r.answer : null,
+    answer: r.status === 'answered' ? (r.answer ?? '').replace(mention(pictures), '').trim() : null,
     answered: r.status === 'answered' ? r.answered : null,
+    pictures,
   };
 }
 // What on a card keeps it off the book, as the agent would name it, or null: hq ask --book refuses such a card

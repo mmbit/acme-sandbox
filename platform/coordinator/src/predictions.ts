@@ -203,13 +203,16 @@ export function prepared(
 }
 
 // The time a promise holds to, as the summary's late line gives it (windows.ts) and hq estimate shows it: the slow play's
-// merge, never sooner than the usual one's, on the next five minutes. None while the usual play doesn't merge it.
+// merge, never sooner than the usual one's, on the next five minutes. None while either play doesn't merge it: the usual
+// play's merge is as likely late as early, so it never stands in for the slow one's.
 const ROUND_TO_MS = 5 * 60_000;
 export function heldTo(usual: Outlook, slow: Outlook) {
-  if (usual.merged === null) return null;
-  const merged = Math.max(slow.merged ?? usual.merged, usual.merged);
+  if (usual.merged === null || slow.merged === null) return null;
+  const merged = Math.max(slow.merged, usual.merged);
   return Math.ceil(merged / ROUND_TO_MS) * ROUND_TO_MS;
 }
+// The time to tell the board: live four times in five, the held time plus the deploy. None without a held time
+export const safeOf = (held: number | null, deployLagMs: number) => (held === null ? null : held + deployLagMs);
 
 // Each play reads saved task sizes and measured review times. Legacy tasks without a prediction get one persisted
 // default at first use. Drawn threads have no task yet, so their provisional sizes are made once for each pool of done

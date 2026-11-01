@@ -11,7 +11,7 @@ import { stalled } from './stalls.ts';
 import { getRoom, plannerCapacity } from './room.ts';
 import { ownerOf } from './projects.ts';
 import { findProject } from './projects.ts';
-import { clock } from './windows.ts';
+import { BOARD, clock } from './windows.ts';
 import { outlookOf } from './outlooks.ts';
 import { standing, undrawnWords, type Forecast, type ThreadOutlook } from './forecast.ts';
 import { ORIGIN } from './matching.ts';
@@ -72,7 +72,8 @@ function undated(open: OpenThread[], f: Forecast) {
 }
 
 // Threads whose planned finish is past their deadline, or with none in sight, the furthest past first: by how much,
-// who gave the time, and what holds them.
+// who gave the time, and what holds them. Only a time the board set itself is news to it, once; our own is ours to plan
+// with.
 function missed(open: OpenThread[], now: number) {
   const late = open.filter(t => standing(t.outlook) === 'misses');
   // (none in sight is the furthest)
@@ -81,13 +82,17 @@ function missed(open: OpenThread[], now: number) {
     .sort((a, b) => slack(a) - slack(b))
     .map(t => {
       const o = t.outlook;
-      const setBy = t.deadline_by === ceo() ? 'you' : t.deadline_by;
+      const board = t.deadline_by === BOARD;
+      const setBy = board ? 'the board' : t.deadline_by === ceo() ? 'you' : t.deadline_by;
       const deadline = `its deadline ${clock(o.deadline!, now)}${setBy ? `, set by ${setBy}` : ''}`;
+      const told = board
+        ? "It's the board's own time: when nothing brings the finish back, tell it once, with the time live four in five (hq deliverable), and set that as the window (hq window): it's our time then. If the board heard of this miss on a call or the intercom already, only set the new window."
+        : "It's our own time, not the board's: plan with it; the board hears nothing of it, no card and no correction.";
       const where =
         o.finish === null
           ? `no finish in sight for ${deadline}`
           : `finish ${clock(o.finish, now)}, ${span(-o.slack!)} past ${deadline}`;
-      return `${threadName(t)}: ${where}. Held by: ${causeOf(o, now)}. Judge the slip: why, and what to change to meet the deadline. ${movedWords(threadMoved(t.id), now)}`;
+      return `${threadName(t)}: ${where}. Held by: ${causeOf(o, now)}. Judge the slip: why, and what to change to meet the deadline. ${told} ${movedWords(threadMoved(t.id), now)}`;
     });
 }
 

@@ -3,8 +3,9 @@
 @import url('../controls.css');
 #panel-close { top: 10px; right: 10px; width: 38px; height: 38px; font-size: 24px; border-radius: var(--r); }
 .cards > .card { box-shadow: var(--shadow); } /* (a post stays glass, with no deep lip) */
-/* on body, under the brand's :root: the look's surfaces, lines and lettering (the brand's accents stay its own) */
-body {
+/* on body, under the brand's :root, and on the Notebook beside it (its controls are HQ's: shell/ink/bookui.css): the
+   look's surfaces, lines and lettering (the brand's accents stay its own). */
+body, #book {
   --font: 'Rajdhani', 'DejaVu Sans', 'Segoe UI', sans-serif;
   --ink: #dcf8ff; --cream: rgba(16, 48, 62, .6); --paper: rgba(5, 20, 28, .84); --muted: #8cc0cf;
   --line: rgba(110, 225, 255, .5); --bw: 1px; --bw-lg: 1px; --r-sm: 2px; --r: 3px; --r-lg: 4px; --r-xl: 6px;
@@ -20,8 +21,8 @@ body {
   --tint-gold: color-mix(in srgb, var(--gold) 15%, transparent); --tint-green: color-mix(in srgb, var(--green) 18%, transparent); --tint-red: color-mix(in srgb, var(--red) 18%, transparent);
   --scr: #80eaff; --scr-hi: #effcff; --scr-cap: #bff4ff; --scr-soft: #a4dcea; --scr-dim: #5fa3b8; --scr-ink: #021016; --scr-frame: transparent;
   --scr-bg: rgba(2, 12, 18, .7) repeating-linear-gradient(0deg, rgba(110, 225, 255, .05) 0 1px, transparent 1px 3px); --scr-glow: 0 0 6px rgba(128, 234, 255, .45);
-  font-weight: 500;
 }
+body { font-weight: 500; }
 /* (#status > span: the throughput's chips, not the words in them) */
 .brand, .tools button, .tools a.desk, #zoom button, #status > span, .toast, #panel, .device, .bubble, #namecard, #card, #hint {
   -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
@@ -59,8 +60,13 @@ body {
 .back, .tag, .req .body a, .req .steps a, .req .rec a, .req .doc-link, .post .html a, .intercom summary { color: color-mix(in srgb, var(--blue) 50%, #9ff0ff); }
 .brand img { content: var(--logo-dark); } /* the brand's logo for dark grounds (main.js brandApp) */
 #card { background: rgba(5, 20, 28, .75); }
-/* the shared controls (controls.css) in the deck's cyan */
-body { --cy: var(--scr); --cy-hi: var(--scr-hi); --cy-fill: rgba(110, 225, 255, .14); --cy-glow: 0 0 12px rgba(110, 225, 255, .45);
+/* the shared controls (controls.css) in the deck's cyan, the Notebook's too: its pressed tool and the one to press lit in it,
+   its cards and islands on a solid deck panel, since nothing blurs the paper under them (body ~ #book always matches: an id and a type, to outweigh bookui.css's #book whichever sheet loads first) */
+body ~ #book { --bk-ui-bg: #0a2a36; --bk-ui-lit: var(--cy); --bk-ui-on-lit: var(--scr-ink); }
+/* and the board's view of a guest's Notebook (shell/ink/notebookguest.css) the same (body .ng-book outweighs its own
+   .ng-book.) */
+body .ng-book { --cream: #0a2a36; --ng-lit: var(--cy); --ng-on-lit: var(--scr-ink); }
+body, #book { --cy: var(--scr); --cy-hi: var(--scr-hi); --cy-fill: rgba(110, 225, 255, .14); --cy-glow: 0 0 12px rgba(110, 225, 255, .45);
   --glass: rgba(6, 26, 36, .62); --alarm: #ff6b7a; --alarm-ink: #ffd6db; --alarm-fill: rgba(255, 107, 122, .16);
   --cy-on: rgba(110, 225, 255, .24); --cy-on-inset: inset 0 0 12px rgba(110, 225, 255, .25); --cy-tint: rgba(110, 225, 255, .18); --cy-pale: #bff4ff;
   --cy-soft: rgba(110, 225, 255, .35); --cy-mark: rgba(110, 225, 255, .3); --field: rgba(2, 12, 18, .6); --hint-bg: rgba(4, 18, 26, .72);

@@ -72,6 +72,32 @@ test('gathering readiness charges the first claim and every subsequent held seat
   assert.equal(reserve.gathering(available), 5);
   const taken = reserve.take();
   assert.equal(reserve.gathering(available), 3, 'an in-flight claim keeps its full startup allowance');
+  assert.equal(reserve.reading.gathering(available), 5, "the worker's reading leaves the claim still out");
   reserve.keepsHold('one', 'claude-1', taken, { held: true });
   assert.equal(reserve.gathering(available), 4, 'the held seat has its own reservation');
+});
+
+test("idle slots asking together hold their room against each other, not in the worker's reading of it", () => {
+  const reserve = reservations<string>(() => 0);
+  const available = 6900;
+  const out = [];
+  for (let slot = 1; slot <= 15; slot++) if (reserve.room(available)) out.push(reserve.take());
+  assert.equal(out.length, 7, 'as many claims as starts fit go out at once');
+  assert.equal(reserve.room(available), false);
+  assert.equal(reserve.reading.room(available), true);
+  assert.equal(reserve.reading.starts(available), 7);
+  reserve.started(out[0]);
+  for (const t of out.slice(1)) reserve.giveBack(t);
+  assert.equal(reserve.reading.starts(available), 6, 'the claim that found a job keeps its start');
+  assert.equal(reserve.starts(available), 6);
+  assert.deepEqual(reserve.startupReservations(), [{ until: 60_000, mb: JOB_MB }]);
+});
+
+test('a claim whose request failed holds its room only as long as a start', () => {
+  let now = 0;
+  const reserve = reservations<string>(() => now);
+  reserve.take();
+  assert.equal(reserve.room(FREE_MB + JOB_MB), false);
+  now = 60_000;
+  assert.equal(reserve.room(FREE_MB + JOB_MB), true);
 });

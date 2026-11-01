@@ -6,7 +6,7 @@
 // on, and the chain of jobs that sets its ETA with the cause at each link. Never a sum of hours read as a time.
 import * as latency from './latency.ts';
 import * as predictions from './predictions.ts';
-import { heldTo } from './predictions.ts';
+import { heldTo, safeOf } from './predictions.ts';
 import { onPublish } from './events.ts';
 import { priceAhead } from './headroom.ts';
 import { readPastAhead } from './matching.ts';
@@ -51,6 +51,9 @@ export type ThreadOutlook = {
   slack: number | null;
   // the time a promise holds to: the slow play's (predictions.heldTo)
   held: number | null;
+  // the time to tell the board: live four times in five, held plus the deploy; none while the slow play doesn't merge
+  // it within the horizon
+  safe: number | null;
   // what its jobs wait on, together: the board's cards, the seats, jobs in other threads (named with their thread)
   waits: ThreadWait[];
   cards: { request: number; at: number }[];
@@ -206,6 +209,12 @@ export function playSoon() {
 
 // ---- threads
 
+// The time a thread's promise holds to: its last job's, none while one of its jobs has none.
+function threadHeld(seen: { usual: Outlook; slow?: Outlook }[]) {
+  const helds = seen.map(s => (s.slow ? heldTo(s.usual, s.slow) : s.usual.merged));
+  return helds.includes(null) ? null : Math.max(...(helds as number[]));
+}
+
 // Every thread with open work, from the plays: its jobs' numbers added up and the chain that sets its ETA.
 export function threadOutlooks(
   snapshot: Snapshot,
@@ -227,7 +236,7 @@ export function threadOutlooks(
     const undrawn = undrawnBy.get(thread) ?? [];
     const stalled = undrawn.length > 0 || seen.some(s => s.usual.merged === null);
     const eta = stalled ? null : Math.max(...seen.map(s => s.usual.merged!));
-    const held = stalled ? null : Math.max(...seen.map(s => (s.slow ? heldTo(s.usual, s.slow) : s.usual.merged)!));
+    const held = stalled ? null : threadHeld(seen);
     const runLeft = runs.reduce((sum, r) => sum + Math.max((sizes.get(r.id)?.agent_ms ?? 0) - r.spentMs, 0), 0);
     const last = seen.reduce((a, b) => (later(b.usual, a.usual) ? b : a));
     const window = snapshot.windows?.[thread],
@@ -244,6 +253,7 @@ export function threadOutlooks(
       aim: window?.aim ?? null,
       slack: finish === null || window?.deadline == null ? null : window.deadline - finish,
       held,
+      safe: safeOf(held, snapshot.deployLagMs),
       waits: threadWaits(thread, seen, byId),
       cards: [...new Map(seen.flatMap(s => s.usual.cards).map(c => [c.request, c])).values()].sort(
         (a, b) => a.request - b.request,

@@ -27,6 +27,7 @@
 // laptop window or on a short phone, upright or on its side, under the note that the screen isn't reaching the agent they
 // all show without scrolling.
 // With an artifact open mid-call on the iPad mini, the agent's face stays drawn on its little screen and in the bubble.
+// A page reloaded mid-call rejoins it by calling again within the line's 30 s hold, its transcript shown again.
 //   node platform/hq/call-check.mjs <frames.json>          (BROWSER=webkit for Safari's engine)
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -301,9 +302,9 @@ function jpegWidth(jpeg) {
 }
 await picturesInOrder();
 
-// The call screen's status and its ON AIR sign. A call the line drops says so where
-// the intercom's messages go, as an error; the next call starts without it, and hanging up (the board or the agent) adds
-// no line of its own. The sign lights
+// The call screen's status and its ON AIR sign. The intercom closes as its call opens, so minimising leaves only the
+// bubble, and it isn't open after the call, even one the board opened while it was small; a call the line drops says so
+// in the toast. The sign lights
 // while someone speaks: the board (the microphone, a tone here, loud), or the agent (its voice playing), never the line's
 // tick, nor the quiet in between, nor while the call's audio doesn't run.
 async function callScreen() {
@@ -326,6 +327,7 @@ async function callScreen() {
   const tone = seconds => Array.from({ length: seconds * 50 }, (_, f) => Buffer.from(Int16Array.from({ length: 320 }, (_, i) => Math.sin(2 * Math.PI * 300 * (f * 320 + i) / 16000) * 8000).buffer));
   const lit = () => page.evaluate(() => document.querySelector('.intercom header').classList.contains('on-air') && getComputedStyle(document.querySelector('.intercom .onair')).backgroundColor);
   const message = () => page.textContent('#dir-msg');
+  const intercom = () => page.evaluate(() => !!document.querySelector('#chat'));
   const seen = {};
   await page.goto(`${base}/?intro=0&open=intercom`);
   // a line that doesn't go through (the coordinator answers 404) says so as an error, gone once the board types again
@@ -336,13 +338,12 @@ async function callScreen() {
   seen.typed = [await message(), await page.evaluate(() => document.querySelector('#dir-msg .alert') !== null)];
   await page.fill('#dir-title', '');
   await page.click('#call');
+  seen.calling = await intercom();
   while (!line) await page.waitForTimeout(50);
   line.close({ code: 4000 }); line = null; // (the line drops the call)
   await page.waitForSelector('#call-screen', { state: 'hidden' });
-  seen.dropped = await message();
-  seen.droppedError = await page.evaluate(() => document.querySelector('#dir-msg .alert.problem svg') !== null);
-  await page.click('#call');
-  seen.next = await message();
+  seen.dropped = [await intercom(), await page.evaluate(() => !!document.querySelector('#toasts .toast:last-child br'))];
+  await dialCeo(page);
   while (!line) await page.waitForTimeout(50);
   await page.waitForTimeout(600);
   seen.quiet = await lit();
@@ -387,26 +388,31 @@ async function callScreen() {
   seen.moving = await lit();
   await page.evaluate(() => window.talk(false));
   await page.click('#call-end');
-  seen.hungUp = [await message(), await lit()];
-  // the agent hangs up: nothing is left under the intercom either
+  seen.hungUp = await intercom();
+  // minimised, only the bubble is left; the intercom the board opens then goes as the agent hangs up
   line = null;
-  await page.click('#call');
+  await dialCeo(page);
   while (!line) await page.waitForTimeout(50);
-  line.send(JSON.stringify({ type: 'hangup' }));
+  await page.click('#call-min');
   await page.waitForSelector('#call-screen', { state: 'hidden' });
-  seen.agentHungUp = await message();
+  seen.small = [await intercom(), await page.isVisible('.callbubble')];
+  await page.click('#btn-intercom');
+  line.send(JSON.stringify({ type: 'hangup' }));
+  await page.waitForSelector('.callbubble', { state: 'detached' });
+  seen.agentHungUp = await intercom();
   await context.close();
   assert.deepEqual(errors, []);
-  assert.ok(seen.dropped && seen.droppedError, 'a dropped call says so, as an error');
   assert.deepEqual(seen.typed, ['', false], 'a failed line\'s error goes once the board types');
-  assert.equal(seen.next, '', 'a new call starts without the last one\'s status');
+  assert.equal(seen.calling, false, 'the intercom stays open under its call');
+  assert.deepEqual(seen.dropped, [false, true], 'a dropped call leaves the intercom open, or its toast doesn\'t say why');
   assert.deepEqual([seen.quiet, seen.after, seen.done, seen.tick], [false, false, false, false], `the sign lit with nobody speaking: ${JSON.stringify(seen)}`);
   assert.ok(seen.board && seen.agent && seen.board !== 'rgba(0, 0, 0, 0)', `the sign didn't light for the board or the agent: ${JSON.stringify(seen)}`);
   assert.ok(seen.beforeSuspend && !seen.suspended && seen.resumed, `the sign stayed lit with the call's audio suspended: ${JSON.stringify(seen)}`);
   assert.ok(!seen.stuck && seen.moving, `the sign stayed lit with the call's audio clock stuck: ${JSON.stringify(seen)}`);
-  assert.deepEqual(seen.hungUp, ['', false], 'hanging up adds no line, and the sign goes dark');
-  assert.equal(seen.agentHungUp, '', 'the agent hanging up adds no line');
-  console.log('ok: a new call clears the last status; ON AIR lights for the board\'s voice and the agent\'s, not the tick or quiet');
+  assert.equal(seen.hungUp, false, 'the intercom is open after hanging up');
+  assert.deepEqual(seen.small, [false, true], 'minimising leaves more than the bubble');
+  assert.equal(seen.agentHungUp, false, 'the intercom opened on a small call stays open after it');
+  console.log('ok: the intercom closes with its call, minimised or ended; ON AIR lights for the board\'s voice and the agent\'s, not the tick or quiet');
 }
 await callScreen();
 
@@ -490,7 +496,7 @@ async function ringing() {
   await page.evaluate(() => (window.micWait = 0));
   line = null;
   const second = await now();
-  await page.click('#call');
+  await dialCeo(page);
   while (!line) await page.waitForTimeout(50);
   await page.waitForTimeout(500);
   await page.click('#call-end');
@@ -499,7 +505,7 @@ async function ringing() {
   // a microphone that doesn't start: the call ends, and its ring is cut
   await page.evaluate(() => Object.assign(window, { micWait: 1000, micRefused: true }));
   const third = await now();
-  await page.click('#call');
+  await dialCeo(page);
   await page.waitForTimeout(2500);
   const refused = (await after(third)).filter(([what]) => what !== 'kit'), ended = await page.isHidden('#call-screen');
   await context.close();
@@ -570,7 +576,7 @@ async function switchedOnAndOff() {
   line.send(JSON.stringify({ type: 'hangup' }));
   await page.waitForSelector('#call-layer', { state: 'detached' });
   line = null;
-  await page.click('#call');
+  await dialCeo(page);
   while (!line) await page.waitForTimeout(50);
   line.send(JSON.stringify({ type: 'call', id: 'line', call: 10 }));
   await shows(true);
@@ -586,12 +592,13 @@ async function switchedOnAndOff() {
   [seen.hungUp, seen.ended] = await page.evaluate(() => [window.hungUp, window.ended]);
   // (and hangs up and calls again at once: the layers the new call leaves)
   line = null;
-  await page.click('#call');
+  await dialCeo(page);
   while (!line) await page.waitForTimeout(50);
   line.send(JSON.stringify({ type: 'call', id: 'line', call: 11 }));
   await shows(true);
   seen.layers = await page.evaluate(() => {
     document.querySelector('#call-end').click();
+    document.querySelector('#btn-intercom').click();
     document.querySelector('#call').click();
     return document.querySelectorAll('#call-layer').length;
   });
@@ -806,6 +813,35 @@ async function askFailed() {
   console.log("ok: a share the agent asked for that fails to start says so on its card, and the line hears Show only once it's shown");
 }
 await askFailed();
+
+// The agent asks to see a screen the board shows already, by its own key, or as that start is still coming up: no
+// card, and the line hears it was shown already
+async function askShownAlready() {
+  const { context, page, errors } = await callPage();
+  let line = null, starts = 0, started;
+  const asked = [], going = new Promise(go => { started = go; });
+  await context.route(`${base}/api/watchalong/start`, async r => { if (++starts === 1) await going; await r.fulfill({ json: { id: 1, events: null } }); });
+  await pickUp(context, ws => { line = ws; }, e => { if (e.type === 'asked') asked.push(e.answer); });
+  const card = page.locator('#call-cards [data-card="ask"]');
+  await page.goto(`${base}/?intro=0&open=intercom`);
+  await page.click('#call');
+  while (!line) await page.waitForTimeout(50);
+  await page.waitForTimeout(500);
+  await page.click('#call-screenshare'); await page.waitForTimeout(200);
+  line.send(JSON.stringify({ type: 'ask', id: 1, what: 'the last note' }));
+  await page.waitForTimeout(300);
+  const starting = { card: await card.count(), asked: [...asked] };
+  started(); await page.waitForTimeout(300);
+  line.send(JSON.stringify({ type: 'ask', id: 2, what: 'the page' }));
+  await page.waitForTimeout(300);
+  const seen = { starts, card: await card.count(), asked: [...asked] };
+  await context.close();
+  assert.deepEqual(errors, []);
+  assert.deepEqual(starting, { card: 0, asked: [] }, `an ask while the board's own start came up showed a card or was answered early: ${JSON.stringify(starting)}`);
+  assert.deepEqual(seen, { starts: 1, card: 0, asked: ['already', 'already'] }, `an ask with the screen shown already showed a card: ${JSON.stringify(seen)}`);
+  console.log('ok: an ask to see a screen shown already, or coming up by the board\'s own key, shows no card, and the line hears it was shown');
+}
+await askShownAlready();
 
 // The call's screen as the board sees it: the agent's little screen at its top,
 // its figure moving while it speaks and still while it's quiet, over the transcript: the board's lines and the agent's
@@ -1179,6 +1215,11 @@ async function reachesNobody(context) {
   await context.route(`${base}/api/watchalong/events?**`, r => r.fulfill({ json: { ok: true, seen: false } }));
 }
 
+// The intercom's Call key once a call is over: the intercom closed with it (call.js callAgent), so it opens again first
+async function dialCeo(page) {
+  await page.click('#btn-intercom');
+  await page.click('#call');
+}
 async function callPage(viewport = { width: 420, height: 912 }) {
   const opened = await openPage(browser, { viewport, permissions: ['microphone'] }),
     notebook = notebookPlay();
@@ -1329,6 +1370,61 @@ async function reconnect() {
   console.log(`ok: a dropped connection loses none of the board's words: ${heard.length - second.from} frames sent again or after, all ${heard.length} heard once, in order`);
 }
 await reconnect();
+
+// The page reloads mid-call (a refresh, a link that left HQ): calling the same agent again within the line's 30 s hold
+// rejoins that call, its transcript shown again. A try whose connection fails before pickup keeps it to try again. Later
+// than that, once the line says the call is gone, or after a hang-up, the call is a new one.
+async function calledBack() {
+  const { context, page, errors } = await callPage();
+  const hellos = [];
+  await context.routeWebSocket(/\/voice\/ws$/, ws => ws.onMessage(m => {
+    if (typeof m !== 'string') return;
+    const e = JSON.parse(m);
+    if (!e.agent && !e.resume) return;
+    hellos.push(e);
+    if (hellos.length === 3) return ws.close({ code: 1001 }); // (the network failed, not the call)
+    if (hellos.length === 6) return ws.close({ code: 4000, reason: 'gone' }); // (its hold ran out just now)
+    const said = e.back ? [{ who: 'board', text: 'This is the shop.' }, { who: 'agent', text: 'Nice shop.' }] : undefined;
+    ws.send(JSON.stringify({ type: 'call', id: `line${hellos.length}`, call: 9, heard: 0, said }));
+    ws.send(JSON.stringify({ type: 'state', state: 'listening' }));
+  }));
+  const dial = async (n, again = false) => {
+    await (again ? dialCeo(page) : page.click('#call'));
+    while (hellos.length < n) await page.waitForTimeout(50);
+    await page.waitForTimeout(500);
+  };
+  const open = () => page.goto(`${base}/?intro=0&open=intercom`); // (a reload: HQ's page leaves, and comes back new)
+  await open();
+  await dial(1);
+  await open();
+  await dial(2);
+  const shown = await page.locator('#call-lines li').allTextContents();
+  await open();
+  await dial(3);
+  await page.waitForTimeout(500);
+  const failed = hellos.length;
+  await dial(4, true);
+  await open();
+  await page.evaluate(() => {
+    const now = Date.now; // (31 s on: the hold is over)
+    Date.now = () => now() + 31000;
+  });
+  await dial(5);
+  await open();
+  await dial(7);
+  await page.click('#call-end');
+  await dial(8, true);
+  await context.close();
+  assert.deepEqual(errors, []);
+  const kinds = hellos.map(e => (e.back ? `back to ${e.resume}` : e.agent ? 'new' : JSON.stringify(e)));
+  assert.equal(failed, 3, 'a failed try to rejoin starts no new call');
+  const calls = ['new', 'back to line1', 'back to line2', 'back to line2', 'new', 'back to line5', 'new', 'new'];
+  assert.deepEqual(kinds, calls, `the calls after a reload: ${kinds}`);
+  const transcript = shown.length === 2 && shown[0] === 'YouThis is the shop.' && shown[1].endsWith('Nice shop.');
+  assert.ok(transcript, `the rejoined call's transcript: ${JSON.stringify(shown)}`);
+  console.log('ok: a call left by a reload is rejoined by calling again within 30 s, its transcript shown, and a failed try keeps it; later, gone or hung up, a call is new');
+}
+await calledBack();
 
 // Dialling from an iOS home-screen app back from the background: its microphone can come muted, or live but giving
 // only exact silence, and the call's audio may not run, all with no prompt and no error. The call replaces a muted

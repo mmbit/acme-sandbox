@@ -36,7 +36,7 @@ const PROJECTS = readFileSync(`${h.repo}/company/projects.yaml`, 'utf8').replace
 writeFileSync(`${h.repo}/company/projects.yaml`, PROJECTS);
 const PIXEL = 'platform/hq/renderers/brownstone/rooms.js',
   OTHER = 'platform/hq/shell/panel.js',
-  CRITICAL = 'platform/coordinator/src/review.ts';
+  CODE = 'platform/coordinator/src/ledger.ts';
 const sha = (c: string) => c.repeat(40);
 afterEach(() => db.prepare("update jobs set status = 'cancelled' where status = 'queued'").run());
 
@@ -91,12 +91,12 @@ test("a Codex run's push of pixel work goes back to be redone on Opus until a pu
 
 test('a mixed pull request keeps its Codex reviewers on Codex for the rest, and its pixel work is judged on Opus', async () => {
   const run = await h.start({ agent: 'bolt', engine: 'claude', branch: 'job/mixed' });
-  await h.finish(run, { pr: 502, branch: 'job/mixed', files: [PIXEL, CRITICAL, 'qa/job-mixed.md'], sha: sha('d') });
+  await h.finish(run, { pr: 502, branch: 'job/mixed', files: [PIXEL, CODE, 'qa/job-mixed.md'], sha: sha('d') });
   const reviews = onPr(502).filter(j => j.kind === 'review');
   const codex = reviews.filter(j => j.engine === 'codex');
   assert.ok(codex.length, JSON.stringify(reviews));
   assert.ok(
-    codex.every(j => judges(j).includes(CRITICAL) && !judges(j).includes(PIXEL)),
+    codex.every(j => judges(j).includes(CODE) && !judges(j).includes(PIXEL)),
     JSON.stringify(reviews),
   );
   const pixel = reviews.filter(j => judges(j).includes(PIXEL));

@@ -45,41 +45,40 @@ test('a line is on the slip that holds its middle', () => {
   assert.equal(slipUnder(from([250, 104], [260, 110], [290, 106]), slips), null, 'between them: neither');
 });
 
+// a reader's words by their key, each place after it
+const keyed = (key, places = {}) => [key, ...Object.values(places)].join(' ');
+
 test('now is the preview for something new, else a cut kept from before, else nothing: the snip alone', () => {
   const preview = {
     name: 'Inkbath',
     open: 'https://inkbath.preview.example',
     picture: '/api/artifacts/picture?id=inkbath',
   };
-  assert.deepEqual(nowOf({ preview, now: '/cut.jpg' }), {
+  assert.deepEqual(nowOf({ preview, now: '/cut.jpg' }, keyed), {
     src: preview.picture,
     href: preview.open,
-    label: 'Now · Inkbath',
-    empty: 'Running',
+    label: 'slipNowOf Inkbath',
+    empty: 'slipRunning',
   });
-  assert.equal(nowOf({ preview: { pending: true } }).empty, 'Its preview shows here once it runs');
-  assert.deepEqual(nowOf({ preview: null, now: '/cut.jpg' }), { src: '/cut.jpg', label: 'Now' });
-  assert.equal(nowOf({}), null, 'nothing cuts the place again (rule zero)');
+  assert.equal(nowOf({ preview: { pending: true } }, keyed).empty, 'slipPreviewPending');
+  assert.deepEqual(nowOf({ preview: null, now: '/cut.jpg' }, keyed), { src: '/cut.jpg', label: 'slipNow' });
+  assert.equal(nowOf({}, keyed), null, 'nothing cuts the place again (rule zero)');
 });
 
 test("a slip in the reader's words, its agent's name marked as an AI's", () => {
   const dutch = {
-    "{name}'s answer": 'Antwoord van {name}',
-    'Tick it: done': 'Afvinken: klaar',
-    'Reply to {name}': 'Antwoord aan {name}',
-    'Write under it to reply': 'Schrijf eronder om te antwoorden',
+    slipAnswer: 'Antwoord van {name}',
+    slipTick: 'Afvinken: klaar',
   };
-  const say = (en, places = {}) => (dutch[en] ?? en).replace(/\{(\w+)\}/g, (_, k) => places[k]);
+  const say = (key, places = {}) => (dutch[key] ?? key).replace(/\{(\w+)\}/g, (_, k) => places[k]);
   // each word on its own element, whatever the order of the markup around it
   const tag = (html, name) => html.match(new RegExp(`<${name}\\b[^>]*>`))[0];
   const html = slipHtml({ id: 1, name: 'Vera', text: 'Klaar' }, {}, { say, mark: 'AI-agent' });
   assert.match(tag(html, 'section'), /aria-label="Antwoord van Vera · AI-agent"/);
   assert.match(html, /<b class="slip-by">Vera · AI-agent<\/b>/);
   assert.match(tag(html, 'button'), /aria-label="Afvinken: klaar"/);
-  assert.match(tag(html, 'textarea'), /aria-label="Antwoord aan Vera"/);
-  assert.match(tag(html, 'textarea'), /placeholder="Schrijf eronder om te antwoorden"/);
-  const english = slipHtml({ id: 1, name: 'Vera', text: 'Done' }, {});
-  assert.match(english, /<b class="slip-by">Vera<\/b>/);
-  assert.match(tag(english, 'textarea'), /aria-label="Reply to Vera"/);
-  assert.match(tag(english, 'textarea'), /placeholder="Write under it to reply"/);
+  const unmarked = slipHtml({ id: 1, name: 'Vera', text: 'Done' }, {}, { say });
+  assert.match(unmarked, /<b class="slip-by">Vera<\/b>/);
+  // (no field to type a reply in: the reader answers in its own room, drawn.)
+  assert.doesNotMatch(unmarked + html, /<(textarea|input)\b/);
 });

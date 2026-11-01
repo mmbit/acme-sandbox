@@ -1,6 +1,6 @@
 // An agent's answer on the board's notebook: on a group (sent or not, `grp`) or on a note (the old book's, or the one a
 // group went as). The judge (bookjudge.ts) asks for one when a note calls for words: answerNow starts the owner's quick
-// run (chat.ts), and while it goes the group shows the owner's face and pencil dots at the spot the answer will take.
+// run (chat.ts), and while it goes the group shows the owner's face and pencil dots under it, where the answer will slip
 // What an answer holds is its style: 'text' (words, a picture or a preview's link), 'drawing' (ink), 'form' (questions,
 // questions.js's, the board fills in), 'question' (the agent asks the board), 'version' (a try run's frame of the thing
 // changed, with its patch: booktry.ts). It slips under the scrap it's on. The
@@ -307,7 +307,8 @@ export function tickAnswer(b: any, who = BOARD) {
   const g = groupOn(slip);
   const p = g && pageRow(rootOf(g).page, who);
   if (p) changed(p.notebook, p.id);
-  publish({ type: 'book', agent: slip.by, text: 'slip' });
+  // (a book note's slip: the page its note is on, read again)
+  publish({ type: 'book', agent: slip.by, text: 'slip', ...(slip.note === null ? {} : notePage(slip.note)) });
   return {
     answer: slipOf(slipRow(slip.id, who)!),
     ...(slip.note !== null && !g ? { note: shown(note(slip.note)!) } : {}),

@@ -78,8 +78,8 @@ test("a slip clipped on, ticked or opened again is a 'book' event, with none of 
     [{ type: 'book', agent: 'kit', text: 'slip', ts: heard[0].e.ts }],
   );
   assert.doesNotMatch(JSON.stringify(heard), /shipping/i, 'no words of the answer or the note');
-  await h.board('/api/book/slip/tick', { id: slip.id, ticked: true });
-  await h.board('/api/book/slip/tick', { id: slip.id, ticked: false });
+  await h.board('/api/notebooks/answers/tick', { id: slip.id, ticked: true });
+  await h.board('/api/notebooks/answers/tick', { id: slip.id, ticked: false });
   assert.deepEqual(
     heard.map(h => [h.e.type, h.e.agent, h.e.text]),
     [

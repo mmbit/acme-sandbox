@@ -821,7 +821,8 @@ export const COPY = {
 // POST has passed server.ts's Origin check. A token that's wrong, of a closed-off guest, of a guest without an address, of
 // a request the board hasn't shared yet or of a request closed long ago gets the
 // same page.
-const hex = (v: unknown) => typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v) ? v : null;
+// A #rrggbb colour, or null
+export const hex = (v: unknown) => typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v) ? v : null;
 // the page's accent, as look() and brand.yaml's guest colours make it (the first person's colour)
 const accent = () => { const b = brandLook(); return hex(b.guest?.colours?.accent) ?? hex(b.colours?.blue) ?? '#3a63c8'; };
 
@@ -834,13 +835,20 @@ const TYPE: Record<string, string> = { svg: 'image/svg+xml', png: 'image/png', w
 const themeFile = (name: string) => inside(THEME, name, REPO_DIR);
 const COLOURS = { background: '--bg', card: '--card', ink: '--ink', muted: '--muted', line: '--line', accent: '--accent', onAccent: '--on' };
 type Look = ReturnType<typeof look>;
+const file = (v: unknown) => typeof v === 'string' && FILE.test(v) && themeFile(v) ? v : null;
+// The guest section's logos and whether it has a dark side, read from brand.yaml itself: none of them hangs on its colour
+// (brandLook), so the sign-in pages' logo (logoHtml) stands where the colour is wrong.
+const logoPicks = (g: any = brand().guest ?? {}) => {
+  const dark = g.dark !== false;
+  return { dark, logo: file(g.logo), logoDark: dark ? file(g.logoDark) : null };
+};
 // (the join link's page wears it too: joinpage.ts)
 export function look() {
-  const b = brandLook(), g = b.guest ?? {}, file = (v: unknown) => typeof v === 'string' && FILE.test(v) && themeFile(v) ? v : null;
+  const b = brandLook(), g = b.guest ?? {};
   const fonts = (Array.isArray(g.font?.files) ? g.font.files : []).filter((f: any) => file(f?.file) && f.file.endsWith('.woff2'))
     .map((f: any) => ({ file: f.file, weight: /^[1-9]00$/.test(String(f.weight)) ? f.weight : 400, style: f.style === 'italic' ? 'italic' : 'normal' }));
   const family = fonts.length && typeof g.font?.family === 'string' && /^[\w ]{1,60}$/.test(g.font.family) ? g.font.family : null;
-  const dark = g.dark !== false, light = file(g.logo), night = dark ? file(g.logoDark) : null, favicon = file(g.favicon);
+  const { dark, logo: light, logoDark: night } = logoPicks(g), favicon = file(g.favicon);
   return { dark, logo: light, logoDark: night, favicon, files: new Set([light, night, favicon, ...fonts.map((f: any) => f.file)].filter(Boolean)),
     accent: hex(b.colours?.blue) ?? '#3a63c8', logoHeight: Number.isInteger(g.logoHeight) && g.logoHeight >= 12 && g.logoHeight <= 120 ? g.logoHeight : 28,
     pixelated: g.pixelated === true, family: family ? `'${family}',` : '',
@@ -853,12 +861,27 @@ export const palette = (at = ':root', l: Look = look()) => `${at}{--accent:${l.a
 ${at}{${l.vars}}${l.dark ? `
 @media (prefers-color-scheme:dark){${at}{--bg:#111318;--card:#1b1e25;--ink:#e9ecf2;--muted:#a1a9b8;--line:#2c313b;--warn:#3a321f;--shadow:0 1px 2px rgb(0 0 0/.3),0 8px 24px rgb(0 0 0/.35);--link:color-mix(in srgb,var(--accent) 60%,#fff)}}
 ` : ''}`;
-const style = (l: Look, pct: number, legend: Legend = []) => `${palette(':root', l)}:root{interpolate-size:allow-keywords}
-${l.fonts}
+// The guest pages' ground, which the board's own sign-in pages stand on too (signInCss): the colours, the font, a
+// heading, a field, a button and a link.
+const baseCss = (l: Look) => `${palette(':root', l)}${l.fonts}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:1rem/1.55 ${l.family}system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
-header,main{max-width:640px;margin:auto;padding:0 16px}header{padding-top:24px;padding-bottom:4px}header img{height:${l.logoHeight}px;width:auto${l.pixelated ? ';image-rendering:pixelated' : ''}}main{padding-bottom:48px}
+h1{font-size:1.45rem;line-height:1.25;letter-spacing:-.01em;margin:0 0 6px}a{color:var(--link)}
+input,textarea{width:100%;font:inherit;color:var(--ink);background:var(--bg);border:1.5px solid var(--line);border-radius:12px;padding:9px 12px;transition:border-color .15s}
+input:focus,textarea:focus{border-color:var(--accent);outline:0}button:focus-visible,summary:focus-visible{outline:3px solid color-mix(in srgb,var(--accent) 45%,transparent);outline-offset:2px}
+button,a.button{font:inherit;font-weight:600;border:0;border-radius:var(--btn-r);cursor:pointer;background:var(--accent);color:var(--on);transition:transform .15s,filter .15s,background .15s}
+button:hover,a.button:hover{filter:brightness(1.07)}button:active,a.button:active{transform:scale(.97)}`;
+// The board's own sign-in pages (pages.ts shell) in the same look: before HQ knows who's there, the default with the
+// company's colours, as a guest sees it, the logo over the heading on a card.
+export const signInCss = (l: Look = look()) => `${baseCss(l)}
+body{min-height:100vh;display:grid;place-items:center;text-align:center}
+main{width:min(440px,calc(100% - 32px));margin:24px 0;padding:28px 24px;background:var(--card);border-radius:18px;box-shadow:var(--shadow)}${logoCss('main', l)}main img{display:block;margin:0 auto 12px}
+h1{margin-bottom:12px}p{margin:0 0 14px}label{display:block;color:var(--muted);font-size:.9rem}
+input{display:block;width:9em;margin:6px auto 16px;padding:8px 12px;font-size:1.4rem;letter-spacing:.3em;text-align:center}
+button{padding:10px 20px;min-height:44px}a{display:inline-block;margin-top:14px;font-size:.9rem}#msg{min-height:1.5em;color:#c2410c}`;
+const style = (l: Look, pct: number, legend: Legend = []) => `${baseCss(l)}:root{interpolate-size:allow-keywords}
+header,main{max-width:640px;margin:auto;padding:0 16px}header{padding-top:24px;padding-bottom:4px}${logoCss('header', l)}main{padding-bottom:48px}
 @media (min-width:900px){html{font-size:17.5px}header,main{max-width:700px}}
-.card{background:var(--card);border-radius:18px;box-shadow:var(--shadow);padding:22px;margin:14px 0}h1{font-size:1.45rem;line-height:1.25;letter-spacing:-.01em;margin:0 0 6px}
+.card{background:var(--card);border-radius:18px;box-shadow:var(--shadow);padding:22px;margin:14px 0}
 h2{font-size:.8rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:30px 4px 8px}.meta,.note{color:var(--muted);font-size:.88rem}.note{margin:24px 4px}
 .before{display:inline-block;margin-top:10px;padding:3px 10px;border-radius:99px;background:var(--soft);font-size:.88rem;font-weight:600}.intro{white-space:pre-wrap;margin:14px 0 0}
 .steps{margin:14px 0 0;padding:0;list-style:none;counter-reset:step}.steps li{counter-increment:step;position:relative;padding-left:38px;margin-top:12px}
@@ -877,11 +900,9 @@ ul.items{list-style:none;margin:0;padding:0}.item{background:var(--card);border-
 .what{flex:1;min-width:0}.what b{display:block;font-weight:600;overflow-wrap:anywhere}.done .what b,.na .what b{color:var(--muted)}.detail{color:var(--muted);font-size:.9rem;margin-top:2px}
 .state{display:inline-block;margin-top:6px;font-size:.88rem;font-weight:600;color:var(--link)}.acts .state{margin:0 4px 0 0}.said{margin-top:6px;white-space:pre-wrap;overflow-wrap:anywhere}
 form{margin:0}.acts{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:12px}
-button,a.button{font:inherit;font-weight:600;font-size:.92rem;border:0;border-radius:var(--btn-r);padding:9px 16px;min-height:40px;cursor:pointer;background:var(--accent);color:var(--on);transition:transform .15s,filter .15s,background .15s}
-a.button{display:inline-flex;align-items:center;text-decoration:none}button:hover,a.button:hover{filter:brightness(1.07)}button:active,a.button:active{transform:scale(.97)}button.soft,a.button.soft{background:var(--soft);color:var(--ink)}/* (a.button.soft) */button.link{background:none;color:var(--muted);padding:9px 4px;font-weight:500}
+button,a.button{font-size:.92rem;padding:9px 16px;min-height:40px}
+a.button{display:inline-flex;align-items:center;text-decoration:none}button.soft,a.button.soft{background:var(--soft);color:var(--ink)}/* (a.button.soft) */button.link{background:none;color:var(--muted);padding:9px 4px;font-weight:500}
 button.chip{background:var(--card);color:var(--ink);box-shadow:inset 0 0 0 1.5px var(--line)}button.chip.on{background:var(--accent);color:var(--on);box-shadow:none}
-input,textarea{width:100%;font:inherit;color:var(--ink);background:var(--bg);border:1.5px solid var(--line);border-radius:12px;padding:9px 12px;transition:border-color .15s}
-input:focus,textarea:focus{border-color:var(--accent);outline:0}button:focus-visible,summary:focus-visible{outline:3px solid color-mix(in srgb,var(--accent) 45%,transparent);outline-offset:2px}
 .answer{display:flex;gap:8px;margin-top:12px}.answer input{flex:1}.num{flex:1;display:flex;align-items:center;gap:8px}.num input{max-width:10em}.num .unit{color:var(--muted);font-weight:600}label.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
 details{margin-top:6px}summary{display:inline-block;cursor:pointer;color:var(--link);font-size:.9rem;font-weight:600;list-style:none;padding:4px 0}summary::-webkit-details-marker{display:none}
 details::details-content{height:0;overflow:clip;transition:height .3s ease,content-visibility .3s allow-discrete}details[open]::details-content{height:auto}
@@ -895,7 +916,7 @@ a.file:hover{filter:brightness(.97)}a.file:active{transform:scale(.97)}a.file sv
 #invite>p:first-child{margin-top:0}.inviting{display:grid;gap:8px;margin:12px 0 8px}.inviting button{justify-self:start}
 @media (min-width:560px){.inviting{grid-template-columns:1fr 1.5fr auto}}.sent{font-weight:600;color:var(--link)}
 details textarea{margin-top:8px}details button{margin-top:8px}.alert{background:var(--warn);border-radius:12px;padding:10px 14px;margin:12px 0}.closed{background:var(--soft)}
-pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:.88rem;margin:6px 0 0}ul.more{padding-left:20px}a{color:var(--link)}input.code{font-size:1.4rem;letter-spacing:.3em;max-width:11ch}
+pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:.88rem;margin:6px 0 0}ul.more{padding-left:20px}input.code{font-size:1.4rem;letter-spacing:.3em;max-width:11ch}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after,::details-content{animation:none!important;transition:none!important}}${legend.length ? `
 ${legend.map((p, k) => `.w${k}{--who:${p.colour}}`).join('')}.people{display:flex;flex-wrap:wrap;gap:4px 16px;list-style:none;margin:16px 0 0;padding:0;font-size:.88rem}
 .people li,.by{display:inline-flex;align-items:center;gap:6px}.people i,.by i{flex:none;width:10px;height:10px;border-radius:50%;background:var(--who)}.people .me{color:var(--muted)}
@@ -918,7 +939,7 @@ export const passkeyCss = `.passkey-prompt{margin:24px 0;padding:20px 24px;borde
 export function logoHtml() {
   const b = brand(),
     n = names().name,
-    l = look();
+    l = logoPicks();
   const src = l.logo ? `/guest/theme/${l.logo}` : `/${esc(logo(b))}`,
     darkSrc = l.logo ? l.logoDark && `/guest/theme/${l.logoDark}` : l.dark && `/${esc(darkLogo(b))}`;
   return `<picture>${darkSrc ? `<source srcset="${darkSrc}" media="(prefers-color-scheme: dark)">` : ''}<img src="${src}" alt="${esc(b.logo?.alt ?? n)}"></picture>`;

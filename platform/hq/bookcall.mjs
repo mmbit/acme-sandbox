@@ -303,6 +303,7 @@ async function lostAtTheEnd(s) {
 async function drawnAfterTheLoss(s, undo) {
   const { page } = s,
     sent = [];
+  await page.evaluate(() => document.querySelector('#btn-intercom').click()); // (it closed with the last call)
   await page.click('#call');
   await page.waitForFunction(() => !document.querySelector('#call-screenshare')?.disabled);
   const count = q =>

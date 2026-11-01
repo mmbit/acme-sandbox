@@ -14,7 +14,6 @@ export async function watchGuestBook(notebook) {
   dialog.showModal();
   const stop = mountNotebook(dialog.querySelector('.bi-watch'), {
     api: '/api/notebooks/guests',
-    watch: true,
     notebook,
   });
   dialog.addEventListener(

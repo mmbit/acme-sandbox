@@ -138,7 +138,7 @@ test('holds and young starts reduce admission but shortage uses the unreserved r
   const start = memory.take();
   memory.keepsHold('slot1', 'seat1', start, { held: true });
   assert.equal(memory.room(), true);
-  memory.take();
+  memory.started(memory.take());
   assert.deepEqual(memory.startupReservations(), [{ until: STARTING_MS, mb: JOB_MB }]);
   assert.equal(memory.room(), false);
   assert.equal(memory.room(false), true);

@@ -69,7 +69,7 @@ async function invited(name: string) {
 async function copyFor(guest: Awaited<ReturnType<typeof invited>>['guest'], notebook: number) {
   const pages = (await guest(`${api}/pages?notebook=${notebook}`)).body.pages;
   const asks = pages.find((p: any) => p.kind === 'asks');
-  return (await guest(`${api}/groups?page=${asks.id}`)).body.groups.at(-1);
+  return (await guest(`${api}/pages/groups?page=${asks.id}`)).body.groups.at(-1);
 }
 // A note of the board's on its own notebook's current page, as the board's screen writes it
 async function boardNote(text: string) {
@@ -102,12 +102,12 @@ test('a scrap handed to a guest lands on their Asks page, and what either side w
   const pages = (await guest(`${api}/pages?notebook=${notebook}`)).body.pages;
   const asks = pages.find((p: any) => p.kind === 'asks');
   assert.ok(asks, `an Asks page among ${JSON.stringify(pages.map((p: any) => p.kind))}`);
-  const [copy] = (await guest(`${api}/groups?page=${asks.id}`)).body.groups;
+  const [copy] = (await guest(`${api}/pages/groups?page=${asks.id}`)).body.groups;
   assert.equal(textOf(copy), 'Tagline OK?');
   assert.ok((await groupsOn(original.page)).some((g: any) => g.id === original.id));
 
   // their answer, written on the copy, shows on the board's scrap, with a tick on their tag
-  const answered = await guest(`${api}/edit`, { id: copy.id, since: copy.updated, ink: [stroke] });
+  const answered = await guest(`${api}/groups/edit`, { id: copy.id, since: copy.updated, ink: [stroke] });
   assert.equal(answered.status, 200, JSON.stringify(answered.body));
   const mirrored = (await groupsOn(original.page)).find((g: any) => g.id === original.id);
   assert.equal(mirrored.ink.length, 1);
@@ -121,7 +121,7 @@ test('a scrap handed to a guest lands on their Asks page, and what either side w
     texts: typed('Tagline OK? Shorter?'),
   });
   assert.equal(edited.status, 200, JSON.stringify(edited.body));
-  const [kept] = (await guest(`${api}/groups?page=${asks.id}`)).body.groups;
+  const [kept] = (await guest(`${api}/pages/groups?page=${asks.id}`)).body.groups;
   assert.equal(textOf(kept), 'Tagline OK? Shorter?');
   assert.equal(kept.ink.length, 1, 'their own ink stays on theirs');
 });
@@ -139,16 +139,20 @@ test('two guests handed one scrap, writing one after the other, both keep their 
 
   const red = { ...stroke, color: '#c0392b' },
     blue = { ...stroke, color: '#2457a6' };
-  assert.equal((await a.guest(`${api}/edit`, { id: copyA.id, since: copyA.updated, ink: [red] })).status, 200);
+  assert.equal((await a.guest(`${api}/groups/edit`, { id: copyA.id, since: copyA.updated, ink: [red] })).status, 200);
   // B wrote on the copy as it read it before A's answer reached it: read it again
-  const stale = await b.guest(`${api}/edit`, { id: copyB.id, since: copyB.updated, ink: [blue] });
+  const stale = await b.guest(`${api}/groups/edit`, { id: copyB.id, since: copyB.updated, ink: [blue] });
   assert.equal(stale.status, 409, JSON.stringify(stale.body));
   const fresh = await copyFor(b.guest, b.notebook);
   assert.deepEqual(
     fresh.ink.map((s: any) => s.color),
     [red.color],
   );
-  const answered = await b.guest(`${api}/edit`, { id: copyB.id, since: fresh.updated, ink: [...fresh.ink, blue] });
+  const answered = await b.guest(`${api}/groups/edit`, {
+    id: copyB.id,
+    since: fresh.updated,
+    ink: [...fresh.ink, blue],
+  });
   assert.equal(answered.status, 200, JSON.stringify(answered.body));
 
   const board = (await groupsOn(original.page)).find((g: any) => g.id === original.id);
@@ -182,7 +186,7 @@ test("a picture added, moved, replaced or removed on a guest's copy is on the bo
   const boardSide = async () => (await groupsOn(original.page)).find((g: any) => g.id === original.id);
   const edit = async (pictures: unknown[]) => {
     const copy = await copyFor(guest, notebook);
-    const edited = await guest(`${api}/edit`, { id: copy.id, since: copy.updated, pictures });
+    const edited = await guest(`${api}/groups/edit`, { id: copy.id, since: copy.updated, pictures });
     assert.equal(edited.status, 200, JSON.stringify(edited.body));
   };
 

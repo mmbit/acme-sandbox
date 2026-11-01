@@ -59,7 +59,7 @@ test("only the board, from HQ's own page, on the book's routes", async () => {
   const posts = [
     ...['page/new', 'page/save', 'page/label', 'page/archive', 'page/delete', 'page/send', 'scrap', 'note'],
     ...['note/edit', 'note/move', 'note/delete', 'note/restore', 'note/link', 'sheet/order', 'send', 'undo'],
-    ...['slip/tick', 'slip/reply'],
+    ...['slip/reply'],
   ].map(p => `/api/book/${p}`);
   for (const path of posts) {
     const body = JSON.stringify({ id, kind: 'free', w: 800, h: 600 });

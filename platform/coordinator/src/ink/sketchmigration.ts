@@ -12,6 +12,7 @@ import * as notebook from '../notebook.ts';
 import * as groups from '../notebookgroups.ts';
 import { type Parts } from '../notebookgroups.ts';
 import * as guests from '../notebookguests.ts';
+import * as members from '../notebookmembers.ts';
 import { managedPage } from '../notebookaccess.ts';
 import { keepPicture } from '../notebookpictures.ts';
 import { joined } from '../../../hq/shell/ink/notebookparts.js';
@@ -48,7 +49,7 @@ export function inventory() {
           texts: source.texts.length,
           pictures: source.pictures.length,
           migrated: moved.find(m => m.source === p.id)?.target ?? null,
-          targets: guests.forGuest(people.ownerOf(p.who)!).map(m => ({ notebook: m.notebook, page: m.page })),
+          targets: members.forGuest(people.ownerOf(p.who)!).map(m => ({ notebook: m.notebook, page: m.page })),
         },
       ];
     });
@@ -62,7 +63,7 @@ export function migrateSketch(sourceId: number, targetId: number) {
       throw new Error('Choose a legacy guest sketch as the source.');
     const owner = people.ownerOf(source.who)!;
     const member = guests.pageMember(targetId, owner);
-    if (!target || !member || target.who !== source.who || guests.whoOf(member) !== source.who)
+    if (!target || !member || target.who !== source.who || members.whoOf(member) !== source.who)
       throw new Error('Choose an active managed page belonging to the same guest grant.');
     const original = sourceParts(sourceId);
     const fingerprint = createHash('sha256').update(JSON.stringify(original)).digest('hex');

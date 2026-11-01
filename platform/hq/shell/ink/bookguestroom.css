@@ -1,0 +1,77 @@
+/* The guest's room around their book (notebookguestfiles.ts servePage): its logo, heading, footer and a refusal's card
+   (.bk-guest-ended). The company's colours, fonts and logo come inline before it, with --guest-font. */
+:root {
+  --cream: var(--card);
+  --bw: 1px;
+  --r: 12px;
+  --sat: env(safe-area-inset-top, 0px);
+}
+#toasts {
+  z-index: 90;
+  color: var(--ink);
+  font: 16px/1.5 var(--guest-font);
+}
+* {
+  box-sizing: border-box;
+}
+html {
+  min-height: 100%;
+  background: var(--bg);
+}
+body {
+  margin: 0;
+  margin-right: var(--book-room, 0px);
+  padding: 32px 24px;
+  font: 16px/1.5 var(--guest-font);
+  color: var(--ink);
+  background: var(--bg);
+}
+.guest-logo img {
+  max-width: 100%;
+}
+main {
+  max-width: 520px;
+  margin: 48px auto;
+}
+h1 {
+  font-size: 1.8rem;
+}
+footer {
+  max-width: 520px;
+  margin: 24px auto;
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+button {
+  font: inherit;
+  cursor: pointer;
+  border: 0;
+  border-radius: 99px;
+  padding: 10px 18px;
+  background: var(--accent);
+  color: var(--on);
+}
+button.link {
+  background: transparent;
+  color: var(--link);
+}
+.bk-guest-status {
+  position: absolute;
+  top: 10px;
+  right: 22px;
+  margin: 0;
+  color: var(--bk-night);
+  font: 12px/1.4 var(--bk-font);
+  max-width: calc(100% - 80px);
+  pointer-events: none;
+}
+.bk-guest-ended {
+  margin: 24px 0;
+  padding: 20px 24px;
+  border-radius: var(--r);
+  background: var(--warn);
+  font-weight: 600;
+}
+[hidden] {
+  display: none !important;
+}

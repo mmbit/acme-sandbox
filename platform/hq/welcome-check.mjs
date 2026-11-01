@@ -78,8 +78,9 @@ assert.deepEqual(
   'the intercom opens by itself on the languages, each in itself',
 );
 // the template's colourways, Day on a light device and Night on a dark one (scene.js colourway()), each lit in the
-// brand's colour (scene.js branded().)
-const worn = () => page.evaluate(() => ['--k-ground', '--k-accent'].map(k => document.body.style.getPropertyValue(k)));
+// brand's colour (colourways.js branded().)
+const worn = () =>
+  page.evaluate(() => ['--k-ground', '--k-accent'].map(k => document.documentElement.style.getPropertyValue(k)));
 if (shots) mkdirSync(shots, { recursive: true });
 for (const [scheme, way] of [
   ['light', 'day'],

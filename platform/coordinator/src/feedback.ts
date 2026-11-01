@@ -39,9 +39,6 @@ import { isAuthed } from './auth.ts';
 import * as owed from './owed.ts';
 import * as guests from './guests.ts';
 import * as shares from './shares.ts';
-import { invitedPeople } from './notebookguests.ts';
-import { syncReviewNotebook } from './notebookreviews.ts';
-import { shelfLink } from './notebookguestshelf.ts';
 import * as pricing from './pricing.ts';
 import { FRONT } from './approvals.ts';   // the front's door
 import { deployed } from './wakes.ts';
@@ -54,7 +51,7 @@ import * as sorting from './sorting.ts';
 import { productProject } from './made.ts';
 import * as watchalong from './watchalong.ts';   // (the recorder).
 import { DIR as BOOK_DIR } from './pagescraps.ts';   // a book note's snip (fromBook).
-import { reviewMember } from './notebookguests.ts';
+import { invitedPeople, reviewMember, shelfLink } from './notebookmembers.ts';
 import * as sketchPeople from './ink/sketchpeople.ts';   // invited people's identity and ink colour.
 
 const SHOTS = `${DATA_DIR}/review`;
@@ -180,10 +177,14 @@ const framedAnswer = async () =>
   (await readFile(`${REPO_DIR}/shared/watchalong/framed.js`, 'utf8')).replace('{{HQ_ORIGIN}}', ORIGIN) +
   (await readFile(`${REPO_DIR}/shared/watchalong/scrolllink.js`, 'utf8'));
 
-// An outsider's tool draws in their colour (INK), the one their book has (sketchpeople.ts give: everyone invited).
+// An outsider's tool draws in their colour (INK), the one their book has (sketchpeople.ts give: everyone invited), and
+// its caption links back to their page in that book (BACK).
 const inBook = (tool: string, share: shares.Session) => {
   const g = sketchPeople.grantOf(share.guest);
-  return tool.replace('{{INK}}', g ? sketchPeople.colourOf(g) : '');
+  const member = reviewMember(share.id, share.guest);
+  return tool
+    .replace('{{INK}}', g ? sketchPeople.colourOf(g) : '')
+    .replace('{{BACK}}', member ? `${ORIGIN}/guest/notebooks/?notebook=${member.notebook}` : '');
 };
 
 // /__review/* on a product host (no HQ session here).
@@ -220,9 +221,9 @@ export async function product(req: IncomingMessage, res: ServerResponse) {
   // the watch-along's recorder, for a page HQ shows in its viewer while a call watches along: library code, for anyone
   if (path === '/__review/watchalong.js' && req.method === 'GET')
     return reply(res, 200, await readFile(`${REPO_DIR}/shared/watchalong/watchalong.js`), 'text/javascript; charset=utf-8');
-  // (its pen strokes' kind, which it imports)
-  if (path === '/__review/strokes.js' && req.method === 'GET')
-    return reply(res, 200, await readFile(`${REPO_DIR}/shared/watchalong/strokes.js`), 'text/javascript; charset=utf-8');
+  // (its pen strokes' kind and the top layer's, which it imports)
+  if ((path === '/__review/strokes.js' || path === '/__review/toplayer.js') && req.method === 'GET')
+    return reply(res, 200, await readFile(`${REPO_DIR}/shared/watchalong/${path.slice(10)}`), 'text/javascript; charset=utf-8');
   if (path === '/__review/vendor/rrweb-record.js' && req.method === 'GET')
     return reply(res, 200, await readFile(watchalong.RECORDER), 'text/javascript; charset=utf-8');
   if (path === '/__review/profile' && req.method === 'POST') return profiled(req, res);
@@ -264,7 +265,7 @@ async function profiled(req: IncomingMessage, res: ServerResponse) {
 // An invited reviewer's note into their Notebook page: theirs as 'guest:<grant>', and whether it may still
 // go in at each step past an await (the body's, the snip's cut), as an attacker's would be checked: their session still
 // signed in on the share, and the grant still the one the request began with (the board can take it back meanwhile).
-type IntoBook = { by: string; page?: number; open: () => Refusal | null };
+export type IntoBook = { by: string; page?: number; open: () => Refusal | null };
 const intoBook = (req: IncomingMessage, host: string, g: sketchPeople.Grant, share: shares.Session): IntoBook => {
   const member = reviewMember(share.id, share.guest);
   return {
@@ -419,7 +420,7 @@ export const urlOf = (host: string, base: string, page: string) => `https://${ho
 export async function saveNote(slug: string, host: string, b: any, base = '', book: IntoBook | null = null): Promise<Refusal | { ok: true; id: number }> {
   forgetOld();
   const { toBook } = await import('./ink/bookreview.ts');
-  return !book ? toBook(slug, host, base, b) : book.open() ?? toBook(slug, host, base, b, book.by, book.open, book.page);
+  return book?.open() ?? toBook(slug, host, base, b, book);
 }
 // The screenshots and pictures of notes sent more than SHOT_DAYS ago go, as each new note comes
 const forgetOld = () => {
@@ -724,7 +725,7 @@ export function inviteToShare(b: any) {
   const s = open ?? shares.create(scope!, linkedFrom(scope!), days, kind);
   if (kind === 'tester' && cap !== null && !found && !open) shares.setCap(s.id, cap);
   shares.invite(s.id, who.name);
-  syncReviewNotebook(s);
+  changedShare(s);
   const what = { lasting: 'as a lasting guest on', notes: 'to leave outside notes on', view: 'to view', tester: 'to try out, notes and one order,' }[shares.kindOf(s)];
   // (until, on the board's clock)
   const until = s.lasting ? 'till the board ends it' : `until ${companyTime(Date.parse(s.ends))}`;
@@ -751,11 +752,16 @@ export function setShareCap(b: any) {
   return shareRow(shares.byId(s.id)!);
 }
 
+// What else follows a share as the board changes it, invites, removes or ends (notebookreviews.ts: the share's notebook)
+const followers: ((share: shares.Share) => void)[] = [];
+export const onShareChange = (follow: (share: shares.Share) => void) => { followers.push(follow); };
+const changedShare = (share: shares.Share) => { for (const follow of followers) follow(share); };
+
 // The board's Remove: their link stops; the notes they left stay, on the board's sheets.
 export function removeFromShare(b: any) {
   const s = shares.byId(Number(b?.id)), name = String(b?.name ?? '');
   if (!s || s.ended || !shares.remove(s.id, name)) return 404;
-  syncReviewNotebook(s);
+  changedShare(s);
   publish({ type: 'log', agent: owed.ownerOf(s.about).agent, text: `The board removed ${name} from the outside notes on ${s.about}` });
   return shareRow(shares.byId(s.id)!);
 }
@@ -764,7 +770,7 @@ export function removeFromShare(b: any) {
 export function endShare(b: any) {
   const id = Number(b?.id);
   if (!shares.end(id)) return 404;
-  syncReviewNotebook(shares.byId(id)!);
+  changedShare(shares.byId(id)!);
   return shareRow(shares.byId(id)!);
 }
 
@@ -800,7 +806,7 @@ function shareRow(s: shares.Share) {
 export function endDue() {
   const expired = shares.list().filter(share => !share.ended && Date.parse(share.ends) <= Date.now());
   shares.endExpired();
-  for (const share of expired) syncReviewNotebook(shares.byId(share.id)!);
+  for (const share of expired) changedShare(shares.byId(share.id)!);
   for (const { share } of db.prepare("select distinct share from review_notes where status = 'outside'").all() as { share: number }[]) {
     try { leftOver(share); } catch (err) { console.error(`Could not hand share #${share}'s unsent outside notes on:`, err); }
   }

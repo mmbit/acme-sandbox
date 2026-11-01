@@ -13,8 +13,8 @@ const ICONS = {
 export function mountRail(node, on) {
   node.append(islands());
   const rail = island('tools'),
-    undo = button({ icon: ICONS.undo, label: word('Undo'), keys: `${MOD}+Z`, onClick: on.undo }),
-    redo = button({ icon: ICONS.redo, label: word('Redo'), keys: `${MOD}+Shift+Z`, onClick: on.redo });
+    undo = button({ icon: ICONS.undo, label: word('undo'), keys: `${MOD}+Z`, onClick: on.undo }),
+    redo = button({ icon: ICONS.redo, label: word('redo'), keys: `${MOD}+Shift+Z`, onClick: on.redo });
   undo.classList.add('bk-undo');
   redo.classList.add('bk-redo');
   rail.append(undo, redo);

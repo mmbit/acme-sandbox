@@ -1764,6 +1764,33 @@ test("a promise's time, noted on the call, becomes the deadline of the thread of
   const newer = deadlineOf(running).deadline;
   await agent('item-link', t, { id: late.body.id, to: { job: open } });
   assert.equal(deadlineOf(running).deadline, newer);
+  // a time the board set, replaced with ours by hq window after its miss: linking more of that work takes ours, never the
+  // board's old one
+  const boards = h.dueThread();
+  const first = jobs.createJob({ agent: 'bolt', title: 'The board asked', prompt: 'x', queuedBy: 'juno', thread: boards }).id;
+  const asked = (await agent('item', t, { kind: 'task', owner: 'bolt', goal: 'g', what: "By the board's time", lines: '1', quote: 'Board: When is the share link live?', deadline: past, board_set: true })).body.id;
+  await agent('item-link', t, { id: asked, to: { job: first } });
+  assert.equal(deadlineOf(boards).deadline_by, 'board');
+  assert.equal((await agent('window', t, { job: first, deadline: '2h' })).status, 200);
+  const ours = deadlineOf(boards);
+  assert.notEqual(ours.deadline_by, 'board');
+  const second = jobs.createJob({ agent: 'bolt', title: 'More of it', prompt: 'x', queuedBy: 'juno', thread: boards }).id;
+  assert.equal((await agent('item-link', t, { id: asked, to: { job: second } })).status, 200);
+  assert.deepEqual(deadlineOf(boards), ours);
+  // the same for an item ready for the board's yes (its work ended done, its pull request still in review): a correction
+  // that gives no time keeps ours
+  const readies = h.dueThread();
+  const ended = await h.start({ agent: 'bolt', title: 'Done, in review', queuedBy: 'juno', thread: readies });
+  await h.finish(ended, { pr: 9203, branch: `job/${ended.id}`, sha: 'e'.repeat(40) });
+  const reviewed = (await agent('item', t, { kind: 'task', owner: 'bolt', goal: 'g', what: 'In review by the board\'s time', lines: '1', quote: 'Board: When is the share link live?', deadline: past, board_set: true })).body.id;
+  await agent('item-link', t, { id: reviewed, to: { job: ended.id } });
+  assert.deepEqual([item(reviewed).status, deadlineOf(readies).deadline_by], ['ready', 'board']);
+  assert.equal((await agent('window', t, { job: ended.id, deadline: '2h' })).status, 200);
+  const replaced = deadlineOf(readies);
+  const corrected = (await agent('item', t, { kind: 'task', owner: 'bolt', goal: 'g', what: 'Live by the time', lines: '1', quote: 'Board: When is the share link live?', replaces: reviewed })).body.id;
+  const further = jobs.createJob({ agent: 'bolt', title: 'Further work', prompt: 'x', queuedBy: 'juno', thread: readies }).id;
+  assert.equal((await agent('item-link', t, { id: corrected, to: { job: further } })).status, 200);
+  assert.deepEqual(deadlineOf(readies), replaced);
   // open work in no thread has nowhere to take the time: the link is refused, and nothing about the item changes
   const loose = jobs.createJob({ agent: 'bolt', title: 'Loose work', prompt: 'x', queuedBy: 'juno', thread: null }).id;
   const byLoose = (await agent('item', t, { kind: 'promise', owner: 'bolt', goal: 'g', what: 'Loose by six', lines: '3-4', quote: 'Juno: Wren has it to you by six.', deadline: six })).body.id;

@@ -12,6 +12,8 @@ export function initPair() {
   card.className = 'pair-card bk-card';
   card.hidden = true;
   card.setAttribute('aria-label', 'Sign in another device');
+  // its code signs a device in as the board: never in a call's recording (shared/watchalong).
+  card.setAttribute('data-watchalong-hide', '');
   leaf.append(card);
   const shortcut = button({
     text: 'Devices',

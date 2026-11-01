@@ -5,7 +5,7 @@
 #book .bk-answer-form {
   margin: 8px 0 0;
   font: 14px/1.35 var(--bk-font);
-  color: var(--bk-ink, #2a2352);
+  color: var(--bk-ink);
   pointer-events: auto;
 }
 #book .bk-answer-q {
@@ -28,14 +28,17 @@
 #book .bk-answer-form .chip {
   all: unset;
   padding: 4px 11px;
-  border-radius: 999px;
-  border: 1.5px solid color-mix(in srgb, var(--ink) 45%, transparent);
+  border-radius: var(--bk-ui-key-r);
+  border: var(--bk-ui-border);
+  background: var(--bk-ui-bg);
+  color: var(--bk-ui-ink);
+  box-shadow: var(--bk-ui-shadow);
   cursor: pointer;
 }
+/* (a picked choice and Send in the look's own lit fill: bookui.css.) */
 #book .bk-answer-form .chip.on {
-  background: var(--ink);
-  border-color: var(--ink);
-  color: #fff;
+  background: var(--bk-ui-lit);
+  color: var(--bk-ui-on-lit);
 }
 #book .bk-answer-form input {
   box-sizing: border-box;
@@ -45,11 +48,11 @@
   border-bottom: 1.5px solid var(--bk-rule);
   background: transparent;
   font: 22px/1.1 var(--bk-hand);
-  color: var(--bk-ink, #2a2352);
+  color: var(--bk-ink);
 }
 #book .bk-answer-form input:focus {
   outline: none;
-  border-bottom-color: var(--ink);
+  border-bottom-color: var(--bk-ink);
 }
 #book .bk-answer-foot {
   display: flex;
@@ -65,9 +68,11 @@
 #book .bk-answer-send {
   all: unset;
   padding: 5px 14px;
-  border-radius: 999px;
-  background: var(--ink);
-  color: #fff;
+  border: var(--bk-ui-border);
+  border-radius: var(--bk-ui-key-r);
+  background: var(--bk-ui-lit);
+  color: var(--bk-ui-on-lit);
+  box-shadow: var(--bk-ui-shadow);
   font-weight: 600;
   cursor: pointer;
 }
@@ -76,7 +81,7 @@
 }
 #book .bk-answer-send:focus-visible,
 #book .bk-answer-form .chip:focus-visible {
-  outline: 2px solid var(--bk-ink, #2a2352);
+  outline: 2px solid var(--bk-ink);
   outline-offset: 2px;
 }
 #book dl.bk-answer-form dt {

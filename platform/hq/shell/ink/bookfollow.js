@@ -1,8 +1,9 @@
 // A horizontal drag on an element, the book's cover's edge's and its pull tab's (book.js, bookswing.js). (out of book.js:
 
-// A press that moves less than this is a tap; a flick's speed is read over its last moves, this long
-const TAP_PX = 8,
-  FLICK_MS = 100;
+// A press that moves less than this is a tap (bookhandle.js's touches too); a flick's speed is read over its last moves,
+// this long.
+export const TAP_PX = 8;
+const FLICK_MS = 100;
 
 // A horizontal drag on an element: start(dx) once it's held past TAP_PX, move(dx) while it is, end(dx, v) as it's let go
 // (v in px per ms, over its last FLICK_MS: a flick is how fast it was going as it left, whatever came before). A press

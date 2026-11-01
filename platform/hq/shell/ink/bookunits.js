@@ -1,7 +1,7 @@
 // A notebook page as the deck draws it: paper-wide, scrolling down only, its scrap units laid as a masonry
 // (masonry.js) at the page's width, each a sticky note at its place with its room to write under its body and a
 // handle at its foot to drag that room taller or shorter. The page's title is at its top, a day's date across every
-// column where its units start.
+// column where its units start. (The cards, title and dates drawn: bookunitcards.js.)
 //
 // The page's lists (page.ink, page.scraps, page.texts: what the tools work on) hold each unit's elements at its place
 // on the page, in the page's px: a unit's own scrap px moved by its origin (page.origins: id → { x, y }). The store
@@ -9,20 +9,17 @@
 // A stroke goes to the unit it starts on, else to the board's own drawing it comes near (strokes close together are one
 // drawing: a word's letters, a shape's sides); else it's a new unit of its own (page.pending, made in the store by
 // booksave.js with `after` the unit above it, or with the column it's drawn in where none is above), at the place the
-// masonry gives it, so its ink stays where it was drawn.
+// masonry gives it, so its ink stays where it was drawn. Never so that the board's drawing already on the page moves (an
+// agent's card under it makes room, its ink with it): a drawing that would grow into one under it, or a new unit that
+// would push one, gives way to the next choice, down to a new unit as the page's last in its column.
 // A unit grows to hold whatever goes past its foot (scrapunit.js heightFor), and its canvas reaches its ink wherever
 // that goes (bookpage.js): nothing drawn is cut. The board's own drawings are ink on the page, no paper under them; an
 // agent's scrap is a card.
 import { GAP, MARGIN, layout, placeAt } from './masonry.js';
-import { UNIT_W, bodyOf, resized } from './scrapunit.js';
-import { ask } from './notebookdata.js';
-import { nameOf } from './bookhead.js';
-import { esc } from '../../util.js';
-// (bookLang and companyFormats write a page's day in the book's language)
-import { bookLang, word } from './bookscope.js';
-import { companyFormats } from '../../world/clock.js';
+import { UNIT_W, bodyOf } from './scrapunit.js';
 import { boxOf as inkBox } from './bookrow.js';
 import { scrapBox, union } from './bookselectmath.js';
+import { underOf } from './bookunder.js';
 
 // the page's px above its grid, for its title
 export const TITLE_H = 72;
@@ -35,6 +32,9 @@ const PAD = 12;
 // how near (page px) a stroke comes to the board's own drawing to be part of it
 const NEAR = 64;
 const LISTS = { ink: 'ink', texts: 'texts', pictures: 'scraps' };
+
+// A unit's page origin, at the top-left before it is laid
+const originOf = (page, id) => page.origins?.get(id) ?? { x: 0, y: 0 };
 
 // A page's units in their order: its top-level groups by pos, and the units drawn here not yet in the store right
 // after the unit they were drawn under. [{ id, h, day, follows, column }], h in its scrap px as the page draws it.
@@ -52,7 +52,7 @@ export function unitsOf(page) {
     units.splice(
       at < 0 ? units.length : at + 1,
       0,
-      at < 0 ? { id: p.id, day: units.at(-1)?.day ?? today(), column: p.column } : { id: p.id, follows: true },
+      at < 0 ? { id: p.id, day: today(), column: p.column } : { id: p.id, follows: true },
     );
   }
   if (units.length) units[0].follows = false;
@@ -68,18 +68,18 @@ const placing = (drawn, column) => (!drawn ? {} : column == null ? { follows: tr
 // A unit's height in its scrap px: as the store or a drag set it, and never shorter than what's on it reaches
 export function heightOf(page, id) {
   const set = page.resizing?.id === id ? page.resizing.h : (page.groups?.get(id)?.h ?? 0),
-    o = page.origins?.get(id) ?? { x: 0, y: 0 };
+    o = originOf(page, id);
   let foot = 0;
   for (const [kind, list] of Object.entries(LISTS))
     for (const el of page[list] ?? []) if (el.g === id) foot = Math.max(foot, bottomOf(kind, el) - o.y);
   return Math.max(set + wordsOf(page, id), Math.ceil(foot));
 }
 // How tall a scrap's post-it words are, drawn in its body under its picture (page px; 0 for none)
-const wordsOf = (page, id) => page.words?.get(id) ?? 0;
+export const wordsOf = (page, id) => page.words?.get(id) ?? 0;
 // How far down the page (its px) what's on a unit reaches: its picture, words and ink, its post-it words too; its top
 // when it has nothing
 export function footOf(page, id) {
-  const o = page.origins?.get(id) ?? { x: 0, y: 0 };
+  const o = originOf(page, id);
   let foot = o.y + bodyIn(page, id) + wordsOf(page, id);
   for (const [kind, list] of Object.entries(LISTS))
     for (const el of page[list] ?? []) if (el.g === id) foot = Math.max(foot, bottomOf(kind, el));
@@ -87,19 +87,24 @@ export function footOf(page, id) {
 }
 // A unit's body, where an agent's picture or words end (its room to write is below it), in its scrap px: its picture,
 // or with none its first typed words (a promise); words the board writes later are in the room, never the body
-function bodyIn(page, id) {
-  const parts = { ink: [], texts: [], pictures: [] };
-  for (const [kind, list] of Object.entries(LISTS))
-    for (const el of page[list] ?? []) if (el.g === id) parts[kind].push(localOf(page, kind, el));
+export function bodyIn(page, id) {
+  const parts = partsOf(page, id);
   if (parts.pictures.length) parts.texts = [];
   else parts.texts.splice(1);
   return page.groups?.has(id) && page.groups.get(id).kind !== 'drawing' ? bodyOf(parts) : 0;
+}
+// What's on a unit as the store keeps it, by kind ({ ink, texts, pictures }), in its own px
+export function partsOf(page, id) {
+  const parts = { ink: [], texts: [], pictures: [] };
+  for (const [kind, list] of Object.entries(LISTS))
+    for (const el of page[list] ?? []) if (el.g === id) parts[kind].push(localOf(page, kind, el));
+  return parts;
 }
 // (a day as the board's clock has it, sortable: YYYY-MM-DD)
 const dayOf = iso => (iso ? new Date(iso).toLocaleDateString('sv-SE') : undefined),
   today = () => dayOf(new Date().toISOString());
 
-// The page laid at its width (CSS px): every unit's place, its elements moved with it, its cards drawn; the page's box
+// The page laid at its width (CSS px): every unit's place, its elements moved with it; the page's box
 // and scale as the view shows them. Returns whether anything moved (its ink then wants drawing again).
 export function layUnits(view, width) {
   const page = view.page;
@@ -124,7 +129,7 @@ export function layUnits(view, width) {
   let moved = page.scale !== s;
   for (const [kind, list] of Object.entries(LISTS))
     for (const el of page[list] ?? []) {
-      const was = page.origins.get(el.g) ?? { x: 0, y: 0 },
+      const was = originOf(page, el.g),
         now = origins.get(el.g);
       if (now && (now.x !== was.x || now.y !== was.y)) {
         shift(kind, el, now.x - was.x, now.y - was.y);
@@ -141,7 +146,6 @@ export function layUnits(view, width) {
   page.headers = l.headers.map(h => ({ day: h.day, y: h.y / s + TITLE_H })).filter(h => !inkedOver(page, h.y));
   page.columns = l.columns;
   Object.assign(page, { x: 0, y: 0, w: width / s, h: l.height / s + TITLE_H, scale: s });
-  drawCards(view);
   return moved;
 }
 // Whether the board's own writing, kept where drawn (above its unit too), crosses the words of a day's date at y (the
@@ -177,9 +181,13 @@ export const pointUnit = (page, x, y) => unitFor(page, [x, y], { x0: x, y0: y, x
 // The unit at a point on the page (its px), or undefined in the space between units
 export const unitAt = (page, x, y) => (page.places ? placeAt(page.places, x, y)?.id : undefined);
 function unitFor(page, [x, y], box) {
-  return unitAt(page, x, y) ?? nearDrawing(page, box) ?? newUnit(page, box, y);
+  const on = unitAt(page, x, y);
+  // (a scrap's paper takes what starts on it; the board's drawing, no paper, only what moves nothing)
+  if (on !== undefined && (!drawing(page, on) || takes(page, on, box))) return on;
+  return nearDrawing(page, box) ?? newUnit(page, box, y);
 }
-// The board's own drawing nearest a box, within NEAR of what's drawn on it; undefined when none is that near
+// The board's own drawing nearest a box, within NEAR of what's drawn on it, that takes it with nothing moved; undefined
+// when none is that near
 function nearDrawing(page, box) {
   let best,
     gap = NEAR;
@@ -187,9 +195,25 @@ function nearDrawing(page, box) {
     if (!drawing(page, p.id)) continue;
     const r = reachOn(page, p),
       d = Math.max(0, r.x0 - box.x1, box.x0 - r.x1) + Math.max(0, r.y0 - box.y1, box.y0 - r.y1);
-    if (d <= gap) [best, gap] = [p.id, d];
+    if (d <= gap && takes(page, p.id, box)) [best, gap] = [p.id, d];
   }
   return best;
+}
+// Whether a unit takes what's drawn in a box (page px) with none of the board's drawings moved: grown to the box's foot,
+// it pushes none after it
+function takes(page, id, box) {
+  const o = page.origins.get(id);
+  return movesNone(
+    page,
+    page.laid.units.map(u => (u.id === id ? { ...u, h: Math.max(u.h, Math.ceil(box.y1 - o.y)) } : u)),
+  );
+}
+// Whether the page's units laid so (page.laid's, one grown or put among them) leave the board's drawings where they are
+function movesNone(page, units) {
+  const now = new Map(layout(units, page.laid.width).places.map(p => [p.id, p]));
+  return layout(page.laid.units, page.laid.width)
+    .places.filter(p => drawing(page, p.id))
+    .every(p => now.get(p.id).x === p.x && now.get(p.id).y === p.y);
 }
 // Whether a unit is the board's own drawing (a stroke's unit not yet in the store too): ink on the page, no paper card
 export const drawing = (page, id) => id < 0 || page.groups?.get(id)?.kind === 'drawing';
@@ -201,22 +225,29 @@ export function reachOn(page, p) {
   return r;
 }
 // A new unit for what's drawn in a box between units, started at height y: right after the unit above that in its
-// column, which it follows; where none is above, the page's last, kept in the column it's drawn in. At the place the
-// masonry gives it, as layUnits lays it, so what's drawn stays where it was (above the unit's top, where it's drawn
-// higher). On a page not laid yet, just above what's drawn.
+// column, which it follows; where none is above, or that would push the board's drawing, the page's last, today's, kept
+// in the column it's drawn in. At the place the masonry gives it, as layUnits lays it, so what's drawn stays where it
+// was (above the unit's top, where it's drawn higher). On a page not laid yet, just above what's drawn.
 function newUnit(page, box, y) {
   const id = (page.temp = (page.temp ?? 0) - 1),
     column = columnAt(page, (box.x0 + box.x1) / 2),
     above = (page.places ?? [])
       .filter(p => columnAt(page, p.x + p.w / 2) === column && p.y + p.h <= y)
-      .sort((a, b) => b.y - a.y)[0];
-  (page.pending ??= []).push(above ? { id, after: above.id } : { id, after: null, column });
-  const units = page.laid?.units ?? [],
-    at = units.findIndex(u => u.id === above?.id) + 1 || units.length, // (right after the unit above, else last)
-    unit = above ? { id, h: 0, follows: true } : { id, h: 0, day: units.at(-1)?.day ?? today(), column },
-    place = placeAmong(page, unit, at);
+      .sort((a, b) => b.y - a.y)[0],
+    units = page.laid?.units ?? [],
+    at = units.findIndex(u => u.id === above?.id) + 1,
+    under = { id, h: 0, follows: true },
+    follows = at > 0 && staysAmong(page, under, at, box),
+    place = follows ? placeAmong(page, under, at) : placeAmong(page, { id, h: 0, day: today(), column }, units.length);
+  (page.pending ??= []).push(follows ? { id, after: above.id } : { id, after: null, column });
   page.origins.set(id, place ?? { x: 0, y: Math.max(TITLE_H, box.y0 - PAD) });
   return id;
+}
+// Whether a unit put among the page's laid units at an index, what's drawn in a box (page px) on it, moves none of the
+// board's drawings
+function staysAmong(page, unit, at, box) {
+  const place = placeAmong(page, unit, at);
+  return movesNone(page, page.laid.units.toSpliced(at, 0, { ...unit, h: Math.max(0, Math.ceil(box.y1 - place.y)) }));
 }
 // The masonry's column under an x on the page (its px), the nearest where it's beside the grid
 function columnAt(page, x) {
@@ -272,129 +303,3 @@ const typedHeight = t =>
   ) *
     25.2 +
   8;
-// How tall what hangs under a unit is (its words, answers and replies: bookgroups.js .bk-under), in the page's px
-function underOf(view, id) {
-  const el = view.el.querySelector(`:scope > .bk-groups > .bk-under[data-g="${id}"]`);
-  return el ? el.offsetHeight + 10 : 0;
-}
-
-// ---- the cards
-
-// Words the board reads (a heading, a date), marked so a minimised call covers as little of them as it can: by their own
-// box, not the page-wide line.
-const seen = words => `<span data-keep-in-sight>${esc(words)}</span>`;
-// The page's title, its days' dates, and a card for every unit (the scrap's paper, its room to write and the handle
-// at its foot), what hangs under each moved to its foot
-function drawCards(view) {
-  const page = view.page;
-  let layer = view.el.querySelector(':scope > .bk-units'),
-    handles = view.el.querySelector(':scope > .bk-handles');
-  if (!layer) {
-    layer = document.createElement('div');
-    layer.className = 'bk-units';
-    view.el.prepend(layer);
-  }
-  // (the handles over the page, where a press reaches them: the cards' layer is behind the paper's own box.)
-  if (!handles) {
-    handles = document.createElement('div');
-    handles.className = 'bk-handles';
-    view.el.append(handles);
-    dragged(view, handles);
-  }
-  const open = !(page.sending || page.sent || page.readonly);
-  layer.style.height = `${page.h}px`;
-  layer.innerHTML = `<h2 class="bk-page-title" style="width:${page.w}px">${seen(nameOf(page))}</h2>${page.headers
-    .map(h => `<p class="bk-day" style="top:${h.y}px;width:${page.w}px">${seen(dayWords(h.day))}</p>`)
-    .join('')}${page.places
-    .map(p => {
-      const body = bodyIn(page, p.id) + wordsOf(page, p.id),
-        room = body > 0 && p.h - body > 8 ? `<div class="bk-room" style="top:${body}px"></div>` : '',
-        // (the board's own drawing is ink on the page: no paper.)
-        ink = drawing(page, p.id);
-      // (what the board reads: a minimised call covers as little of it as it can.)
-      return `<div class="bk-unit"${ink ? ' data-drawing' : ''} data-keep-in-sight data-unit="${p.id}" style="left:${p.x}px;top:${p.y}px;width:${p.w}px;height:${p.h}px">${room}</div>`;
-    })
-    .join('')}`;
-  // (no room to drag on the board's own drawing)
-  placeHandles(handles, open ? page.places.filter(p => !drawing(page, p.id)) : []);
-  for (const p of page.places) {
-    const words = view.el.querySelector(`:scope > .bk-groups > .bk-words[data-g="${p.id}"]`);
-    if (words) Object.assign(words.style, { left: `${p.x}px`, top: `${p.y + bodyIn(page, p.id)}px` });
-    const under = view.el.querySelector(`:scope > .bk-groups > .bk-under[data-g="${p.id}"]`);
-    if (under) Object.assign(under.style, { left: `${p.x}px`, top: `${p.y + p.h + 10}px` });
-    // (whom it went to, at its corner: bookassignlist.js.)
-    const tags = view.el.querySelector(`:scope > .bk-groups > .bk-tags[data-g="${p.id}"]`);
-    if (tags) Object.assign(tags.style, { left: `${p.x + p.w}px`, top: `${p.y + p.h}px` });
-  }
-}
-// A handle at every unit's foot, each kept as the page is laid again (the one held keeps its pointer)
-function placeHandles(layer, places) {
-  const had = new Map([...layer.children].map(b => [b.dataset.unit, b]));
-  for (const p of places) {
-    let b = had.get(String(p.id));
-    had.delete(String(p.id));
-    if (!b) {
-      b = Object.assign(document.createElement('button'), { type: 'button', className: 'bk-room-handle' });
-      b.dataset.unit = p.id;
-      b.setAttribute('aria-label', word('Make the room to write taller or shorter'));
-      b.setAttribute('data-keep-clear', ''); // (a minimised call keeps clear of it.)
-      layer.append(b);
-    }
-    Object.assign(b.style, { left: `${p.x + p.w / 2}px`, top: `${p.y + p.h}px` });
-  }
-  for (const b of had.values()) b.remove();
-}
-// A page's day in the book's language, no comma: "Sat 31 Oct", "za 31 okt"
-const dayWords = day => companyFormats().day(day, bookLang(), { weekday: true, short: true }).replace(',', '');
-
-// A unit's handle dragged: its height follows (never into what's drawn: resized), the masonry laid again as it goes,
-// and saved as it's let go (/api/notebooks/groups/resize)
-function dragged(view, layer) {
-  layer.addEventListener('pointerdown', e => {
-    const b = e.target.closest('.bk-room-handle');
-    if (!b) return;
-    e.stopPropagation();
-    e.preventDefault();
-    const page = view.page,
-      id = Number(b.dataset.unit),
-      g = page.groups.get(id);
-    if (!g) return;
-    const from = heightOf(page, id),
-      y0 = e.clientY,
-      pointer = e.pointerId;
-    b.setPointerCapture(pointer);
-    const parts = () => {
-      const p = { ink: [], texts: [], pictures: [] };
-      for (const [kind, list] of Object.entries(LISTS))
-        for (const el of page[list]) if (el.g === id) p[kind].push(localOf(page, kind, el));
-      return p;
-    };
-    const move = m => {
-      if (m.pointerId !== pointer) return;
-      // (in the store's terms: the words drawn in its body aside)
-      const h = resized(parts(), from + (m.clientY - y0) / (page.scale ?? 1)) - wordsOf(page, id);
-      page.resizing = { id, h: Math.max(1, h) };
-      view.relay?.();
-    };
-    const up = async u => {
-      if (u.pointerId !== pointer) return;
-      removeEventListener('pointermove', move);
-      removeEventListener('pointerup', up);
-      removeEventListener('pointercancel', up);
-      const h = page.resizing?.h;
-      if (h === undefined) return;
-      try {
-        const done = await ask(view.dev, '/api/notebooks/groups/resize', null, { id, since: g.updated, h });
-        Object.assign(g, { h: done.h ?? h, updated: done.updated ?? g.updated });
-      } catch (err) {
-        view.refuse?.(err.message);
-      }
-      page.resizing = null;
-      view.relay?.();
-    };
-    // (followed on the window, wherever the pointer is as the masonry's laid again under it. job #15978)
-    addEventListener('pointermove', move);
-    addEventListener('pointerup', up);
-    addEventListener('pointercancel', up);
-  });
-}

@@ -2,6 +2,7 @@
 // support chat) and anyone can watch it back. README.md has the design.
 import { record } from './vendor/rrweb-record.js';
 import { hearInk } from './strokes.js';
+import { hearTopLayer } from './toplayer.js';
 
 // A batch goes once a second, or sooner once this many events wait (a full snapshot is one big event)
 const FLUSH_MS = 1000,
@@ -103,10 +104,12 @@ function recordPage(typed, canvasFps, emit) {
   const stopTaps = taps();
   const stopPages = pages();
   const stopInks = hearInk(record, named);
+  const stopTop = hearTopLayer(record); // (what's shown over everything: toplayer.js)
   askFrames({ watchalong: 'start', typed });
   return () => {
     stopped = true;
     stopCanvases?.();
+    stopTop();
     stopInks();
     stopPages();
     stopTaps();
@@ -186,7 +189,9 @@ export function watchFrame({ typed = 'hidden' } = {}) {
   const stopTaps = taps();
   const stopPages = pages();
   const stopInks = hearInk(record, named);
+  const stopTop = hearTopLayer(record); // (its own top layer, a preview's popovers: toplayer.js)
   return () => {
+    stopTop();
     stopInks();
     stopPages();
     stopTaps();

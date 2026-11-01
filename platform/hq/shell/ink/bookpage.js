@@ -11,6 +11,7 @@ import { landing } from './bookgroupmath.js';
 import { mountAnswers } from './bookanswers.js';
 import { nameOf } from './bookhead.js';
 import { layUnits, reachOn } from './bookunits.js';
+import { drawCards } from './bookunitcards.js';
 
 // The page record (bookpages.js): { id (null while it waits blank), kind ('free' | 'sheet' | 'call' | 'guest'), owner,
 // label, x, y, w, h (its box: bookrow.js), ink (null until read), scraps: [{ file, url, x, y, w, h, tilt }], texts, error }.
@@ -29,8 +30,7 @@ export function pageView(page, held = false) {
     tiles = unitInk(el, page, held);
   refusal.textContent = page.error;
   refusal.hidden = !page.error;
-  mountAnswers(el.querySelector('.bk-answers'), page);
-  return {
+  const view = {
     el,
     page,
     // its units laid at the paper's width (CSS px: bookunits.js), the element as big as the page they make, its ink
@@ -38,6 +38,7 @@ export function pageView(page, held = false) {
     place(width) {
       if (width) this.width = width;
       const moved = layUnits(this, this.width);
+      if (page.laid) drawCards(this);
       Object.assign(el.style, { width: `${page.w}px`, height: `${page.h}px` });
       tiles.redraw();
       return moved;
@@ -59,6 +60,9 @@ export function pageView(page, held = false) {
       refusal.hidden = !words;
     },
   };
+  // (a try's versions given room under their unit: bookanswers.js.)
+  mountAnswers(el.querySelector('.bk-answers'), page, () => view.relay?.());
+  return view;
 }
 
 // A page's dry ink and pictures, one canvas per unit at its place (bookunits.js), each drawing only its own elements

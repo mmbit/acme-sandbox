@@ -1,15 +1,4 @@
 /* The shared toast and tap covers for words that hold job links. */
-.toast {
-  -webkit-user-select: none;
-  user-select: none;
-  -webkit-touch-callout: none;
-}
-.toast {
-  background: var(--cream);
-  border: var(--bw) solid var(--line);
-  box-shadow: var(--shadow);
-  border-radius: var(--r);
-}
 #toasts {
   position: fixed;
   top: calc(70px + var(--sat));
@@ -21,6 +10,13 @@
   width: min(92cqw, 420px);
 }
 .toast {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  background: var(--cream);
+  border: var(--bw) solid var(--line);
+  box-shadow: var(--shadow);
+  border-radius: var(--r);
   padding: 8px 12px;
   text-align: left;
   animation: drop 0.35s var(--ease, steps(4));

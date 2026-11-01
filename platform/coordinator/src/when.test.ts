@@ -84,9 +84,9 @@ const ask = async (query: Record<string, string>) =>
 // that to its deadline: its thread's id. Anything queued before is cancelled. held: minutes it doesn't start before
 // (a time it waits for: hq job --when), which its deadline counts.
 const SPRING_DONE = T0 + 90 * MIN;
-const spring = (slack: number, held = 0) => {
+const spring = (slack: number, held = 0, by?: string) => {
   clear();
-  const thread = h.dueThread({ deadline: SPRING_DONE + (held + slack) * MIN });
+  const thread = h.dueThread({ deadline: SPRING_DONE + (held + slack) * MIN, by });
   const job = h.queue({
     agent: 'kit',
     title: 'Paint the harbour map for spring',
@@ -166,8 +166,11 @@ test("each agreed deadline as the answer's play leaves it, against the plan with
   const out = await hqWhen();
   assert.match(
     out,
-    /\nAgreed deadlines \(deliverable windows\):\n- .*: deadline .* UTC \(given by juno\); done about .* UTC, [\d hmin]+ of slack \(the work takes [\d hmin]+\)\.\nA planned finish past an agreed deadline is a slip to judge: find why and what would bring the finish back\. The board hears of it when nothing does or it asks\. A tight or shrinking margin is yours to plan with/,
+    /\nAgreed deadlines \(deliverable windows\):\n- .*: deadline .* UTC \(our own time, given by juno\); done about .* UTC, [\d hmin]+ of slack \(the work takes [\d hmin]+\)\.\nA planned finish past an agreed deadline is a slip to judge: find why and what would bring the finish back\. Our own times [^\n]*the board hears nothing when they slip[^\n]*Only a time the board set itself is news[^\n]*tell it once/,
   );
+  // the time to tell the board: live four times in five, never sooner than the planned finish
+  assert.ok(earliest.found && (await ask({ q: 'paint the harbour map' })).body.safe >= earliest.finish);
+  assert.match(out, /\nThe time to tell the board: live by .* UTC, four times in five\./);
   assert.doesNotMatch(out, /\b(safe|tight|moving):/, 'the facts, never a verdict');
 });
 
@@ -288,7 +291,23 @@ test('--by: whether it makes the time, and only if not, what would, as played: w
   );
   assert.doesNotMatch(await hqWhen('--by', utc(T0 + 20 * MIN)), /RED FLAG/);
   // on a call, a finish past the board's time comes with what to check and do before the board hears it: one
-  // instruction with the agreed deadline the play misses
+  // instruction with the agreed deadline the play misses, when the board set that deadline itself
+  const ours = await h.hq(
+    { ...(await reader()), call: true },
+    'when',
+    'paint the harbour map',
+    '--agent',
+    'kit',
+    '--size',
+    '40m',
+    '--by',
+    utc(T0 + 20 * MIN),
+  );
+  assert.match(
+    ours.out,
+    /RED FLAG, not news for the board: this work lands \d.* past the time asked for \([^)]*\)\. Before/,
+  );
+  spring(0, 0, 'board');
   const onCall = await h.hq(
     { ...(await reader()), call: true },
     'when',

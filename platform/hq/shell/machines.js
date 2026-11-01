@@ -185,8 +185,9 @@ function setupBox(install) {
   return `<div class="seat-signin machine-setup"><p>On the machine, with Docker running, paste this once. It holds the machine’s key, and HQ shows it only now:</p>
     ${copyBlock(install)}<p class="dim">From then on the machine keeps its helpers in step with HQ by itself. They ask for work within a minute or two, and the machine shows here as Taking runs.</p></div>`;
 }
+// (its key never in a call's recording: shared/watchalong.)
 const copyBlock = text =>
-  `<div class="machine-cmd"><code>${esc(text)}</code><button type="button" class="act" data-copy="${esc(text)}">Copy</button></div>`;
+  `<div class="machine-cmd" data-watchalong-hide><code>${esc(text)}</code><button type="button" class="act" data-copy="${esc(text)}">Copy</button></div>`;
 // a machine's settings, as Settings' rows: Pause, Rename, its helpers' commands, Remove (which asks first, in place)
 function settingsOf(m) {
   const id = esc(m.id),

@@ -54,8 +54,8 @@ test("a scrap's picture as wide as it was cut, at most the stack's width; a tall
 test("what's slipped under a group: a reply matched only by the answer it answers, never by its own id", () => {
   const children = [
     { id: 7, kind: 'answer' },
-    { id: 8, kind: 'answer', spot: { dx: 0, dy: 0, w: 200 } },
-    { id: 9, kind: 'answer', style: 'version' },
+    { id: 8, kind: 'answer', style: 'version' },
+    { id: 9, kind: 'answer' },
     { id: 8, kind: 'reply', answers: 7 },
     { id: 30, kind: 'reply', answers: 8 },
     { id: 31, kind: 'reply', answers: 9 },
@@ -63,7 +63,7 @@ test("what's slipped under a group: a reply matched only by the answer it answer
   ];
   assert.deepEqual(
     slipsUnder(children).map(c => `${c.kind} ${c.id}`),
-    ['answer 7', 'reply 8', 'reply 32'],
-    "the slipped answer, its reply (whose id is a placed answer's) and a loose reply; not what's written in",
+    ['answer 7', 'answer 9', 'reply 8', 'reply 31', 'reply 32'],
+    "every answer but a version, their replies (one's id a version's) and a loose reply",
   );
 });

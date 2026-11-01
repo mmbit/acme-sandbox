@@ -15,9 +15,10 @@ scoped pages. (HQ's Sketchbook app on the computer, `sketch*`, is gone: the book
   `bookrail.js` Undo and Redo, `bookshelf*.js` the overview and the Shelf, `booksearch*.js` Search. `notebook*.js` read
   and write the Notebook's routes (`notebookdata.js`), and play them in dev mode and book-check (`notebookplay*.js`).
   (the Notebook's groups and the sheets gone)
-- `bookanswers*.js` draw the agents' answers on a notebook page: the bulb and the face, the words written in by a small
-  pen in a hand (`fonts/`, Caveat under the OFL: `fonts/OFL.txt`; `--bk-hand` sets another), drawings, pictures, forms,
-  the strip the board writes its reply on. `bookshelfopen.js` lists the open forms and questions in the overview.
+- `bookanswers*.js` draw a try's versions on a notebook page and what the board writes on them, and a slip's form
+  (`bookanswerreply.js`); the answers themselves are slips under their note (`bookgroups.js`), the agent's face and
+  pencil dots there while one comes. The book's hand: `fonts/`, Caveat under the OFL (`fonts/OFL.txt`; `--bk-hand` sets
+  another). `bookshelfopen.js` lists the open forms and questions in the overview.
 - `bookversions.js` draws a try's versions under the board's scrap, one self-contained block (its API at its top): a frame
   per version with its live preview, pencil dots while one is coming, why a try ended empty. The board's pen on a frame
   goes as a reply on that version (`bookversionframes.js` `frameUnder`: where, never what shape), and a pick is stamped CHOSEN.
@@ -72,14 +73,18 @@ under Calls, shut at hang-up and stamped Sent once the call's follow-up has hand
 
 ## Guest notebooks
 
-The Shelf's Invite control opens `bookinvites.js`. It creates a `round` with one page per guest or a permanent
-`invited` notebook for one person, exposes their individual invitation links, revokes access, and opens a read-only
-live view. The same `notebookguest.js` renders the guest room and the board's watcher. It reads the scoped Notebook
-routes, keeps the active draft during refreshes, sends pages and replies, and shows agent attribution and answers.
-`notebookpen.js` draws with Ink's shared stroke renderer. Typed notes can be edited and deleted with Undo.
+Guests are invited from the work itself (Share, `desk.js`): a review round from Reviews, or a lasting invitation
+from the work's Share control. A guest's book on the Shelf opens `bookinvites.js`, the board's read-only live view
+(`notebookguest.js`), which shows their pages with agent attribution and answers.
 
-An opted-in review round lets its guests make invitation links for up to three same-domain colleagues. Guests see
-only their own pages. The board can watch retained pages after revocation. Guest passkeys use the separate guest
+Foundation carry: remove `bookguestinvites.js`, `notebookpen.js`, `notebookshellwords.js`,
+`notebookshellwords.test.js` and the coordinator's `notebookguestactions.ts` when carrying this change.
+
+A guest writes in the board's own book shell (`bookguest.js`), under a scope (`bookscope.js`). Each Notebook route
+keeps its board name below the scope's api (`bookroutes.js`): the shell's `/api/notebooks/groups/create` is the
+guest's `/guest/notebooks/api/groups/create`, and the coordinator answers it by that name in one route table
+(`notebookguestroom.ts`): each page write names how its page is found and whether a closed round still takes it (an
+answer to an agent). Guests see only their own pages. The board can watch retained pages after revocation. Guest passkeys use the separate guest
 session, never the board's. Existing email codes remain available.
 
 Run `hq run --kind render --bring .data/guest-shots -- node platform/hq/book-check.mjs --stories 'guest notebooks'

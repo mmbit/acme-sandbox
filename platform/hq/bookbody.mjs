@@ -3,10 +3,10 @@
 // it at its own width, tapped open and shut, and a mark landing in it showing its snip; the cover's edge let go
 // anywhere staying there, with HQ at a phone's width beside it, and never closing the book; the table where the book
 // moves off it in HQ's own ground; the book opening straight onto its page, HQ's page fading into its room; on
-// a phone the book over HQ, its tab in reach; a page turned forward and back by one turn played either way. Each
+// a phone the book over HQ, its tab in reach; a touch on the tab taken from the browser's swipe between pages; a page turned forward and back by one turn played either way. Each
 // asserts what the board sees: boxes, frames, words. (the hardcover's tab and edge)
 import assert from 'node:assert/strict';
-import { MINI, pixelsIn } from './bookkit.mjs';
+import { MINI, middleOf, pixelsIn, touchOf } from './bookkit.mjs';
 
 // (longer than a flick's reading of the last moves, booklayout.js: let go where it is)
 const HOLD_MS = 200;
@@ -17,6 +17,8 @@ export function bodyStories(c) {
     "the book's body: pulled by its tab, the book comes with it at its own width and opens at that width": browser =>
       pulledIn(browser, c),
     "the book's body: the pull tab's tap shuts the open book and opens it again": browser => tapped(browser, c),
+    "the book's body: a touch on the pull tab is the tab's alone, never the browser's swipe, and still taps and pulls":
+      browser => touched(browser, c),
     "the book's body: a mark landing in the shut book shows its snip on the tab, and the tap opens the book": browser =>
       landing(browser, c),
     "the book's body: the cover's edge let go stays there, HQ a phone's width beside it; it never closes the book":
@@ -86,6 +88,45 @@ async function tapped(browser, c) {
     assert.match(await tab.getAttribute('aria-label'), /open/);
     await tab.click();
     await c.settled(page, 'open');
+    noErrors(errors);
+  } finally {
+    await done();
+  }
+}
+
+// Shut, the tab is at the screen's edge, where Safari's swipe between pages starts: every touch on it is taken from the
+// browser (its touchstart's default prevented), its tap opens the book once, and a finger's pull still pulls it (in
+// Chromium, whose touches a story can play).
+async function touched(browser, c) {
+  const { page, errors, done } = await c.hq(browser, MINI, { hasTouch: true, deviceScaleFactor: 1 });
+  try {
+    await c.settled(page, 'open');
+    await page.evaluate(() => {
+      window.taken = [];
+      addEventListener('touchstart', e => window.taken.push(e.defaultPrevented), { passive: true });
+    });
+    const tab = page.locator('#book .bk-lip'),
+      centre = async () => middleOf(await tab.boundingBox());
+    await page.touchscreen.tap(...(await centre()));
+    await c.settled(page, 'folded');
+    await page.touchscreen.tap(...(await centre()));
+    await c.settled(page, 'open');
+    await page.waitForTimeout(600);
+    assert.equal(await page.evaluate(() => document.documentElement.dataset.book), 'open', 'a tap opened it once');
+    // (a finger's pull: Chromium's own touch events, which WebKit has none of to play)
+    const pulled = page.context().browser().browserType().name() === 'chromium';
+    if (pulled) {
+      await putAway(page, c);
+      const [x, y] = await centre();
+      await touchOf(await page.context().newCDPSession(page)).stroke([[x, y]], [[x - 480, y]]);
+      await c.settled(page, 'open');
+    }
+    const taken = await page.evaluate(() => window.taken);
+    assert.deepEqual(
+      taken,
+      [true, true, ...(pulled ? [true] : [])],
+      `which touches were taken from the browser: ${taken}`,
+    );
     noErrors(errors);
   } finally {
     await done();

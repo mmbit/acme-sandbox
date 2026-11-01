@@ -1,6 +1,4 @@
-"""Local stand-ins for the voice line's checks, each on a free port: care's phone port (CareService), and a JSON
-service of the check's own (JsonHandler, served by serve).
-"""
+"""Local stand-ins for the voice line's checks, each on a free port."""
 import json, select, socket, threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 

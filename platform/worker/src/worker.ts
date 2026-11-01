@@ -243,7 +243,7 @@ function readPressure(watch: RoomWatch, jobs: SlotJob[], uses: Map<number, JobUs
     const reading = {
       freeMb: freeMb(false),
       uses: new Map(jobs.map(j => [j.job.id, uses.get(j.uid)?.memoryMb ?? 0])),
-      room: room(),
+      room: reserve.reading.room(),
     };
     return { short, reading };
   });
@@ -320,10 +320,10 @@ async function reportRoom(watch: RoomWatch, jobs: SlotJob[], uses: Map<number, J
 }
 function gatheringRoom() {
   const occupied = [...inSlot.keys()].filter(slot => slot !== CHAT_SLOT).length;
-  return Math.max(0, Math.min(reserve.gathering(), WORK_SLOTS.length - occupied - holding.size));
+  return Math.max(0, Math.min(reserve.reading.gathering(), WORK_SLOTS.length - occupied - holding.size));
 }
 function plannerCapacity(shares: { job: number; mb: number }[], at: number) {
-  const starts = reserve.starts(),
+  const starts = reserve.reading.starts(),
     occupied = [...inSlot.keys()].filter(slot => slot !== CHAT_SLOT).length;
   const slots = Object.fromEntries(ENGINES.map(engine => [engine, WORK_SLOTS.length]));
   const room = Math.min(WORK_SLOTS.length - holding.size, occupied + starts);
@@ -2736,7 +2736,7 @@ async function slotLoop(slot: string, kind?: string, adopted?: RunRecord) {
           if (!claimKind && room === undefined) turns.found(engine, !!job);
           if (!claimKind && !held && !check && engine === 'claude') claimAnswered(pacedEmpty, picked, claimed.pacedUntil !== undefined, !!job);
           if (!job) { if (check) picked.checked = 0; reserve.giveBack(t); await sleep(kind === 'chat' ? CHAT_POLL_MS : 15_000); return; }
-          reserve.started();
+          reserve.started(t);
           log(`${slot} on ${picked.id}: job #${job.id} ${job.title}${check ? ` (held ${picked.state}: its check)` : ''}`);
           if (check) reportSeat(picked);   // (its next check)
           await runJob(picked, job, slot, probe);

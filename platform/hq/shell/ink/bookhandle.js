@@ -6,6 +6,7 @@
 // (the dot for an answer gone with the sheets it read)
 import { tip } from './bookui.js';
 import * as link from './notebooklink.js';
+import { TAP_PX } from './bookfollow.js';
 
 // How long a landed snip shows on the handle
 const SNIP_MS = 2600;
@@ -28,6 +29,7 @@ export function mountHandle(node, on) {
     else if (landed) on.openOn(landed);
     else on.open();
   });
+  takeTouches(handle);
   document.addEventListener('book:landed', e => land(e.detail));
   // (opened, the book is where the note landed or the board's moved on: the tap's note is spent)
   document.addEventListener('book:layout', e => {
@@ -35,6 +37,23 @@ export function mountHandle(node, on) {
     draw();
   });
   draw();
+}
+
+// Shut, the tab is at the screen's edge, where Safari's swipe to the page before or after starts on a touch, the pen's
+// too: the tab takes each touch for itself (its start's default), so a pull never leaves HQ. That takes the touch's
+// click too, so a touch let go where it came down clicks the tab here. Its pull goes on in pointer events (bookswing.js).
+function takeTouches(node) {
+  let x0 = 0;
+  const x = e => e.changedTouches[0].clientX;
+  node.addEventListener(
+    'touchstart',
+    e => {
+      e.preventDefault();
+      x0 = x(e);
+    },
+    { passive: false },
+  );
+  node.addEventListener('touchend', e => Math.abs(x(e) - x0) < TAP_PX && node.click());
 }
 
 // What a tap does, said

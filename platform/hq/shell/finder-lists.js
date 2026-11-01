@@ -137,6 +137,8 @@ async function mail() {
     key: String(m.id),
     title: m.subject || '(no subject)',
     sub: m.sender,
+    // (who wrote and about what, as Mail's own rows: never in a call's recording.)
+    private: true,
     at: m.received,
     open: () => openComputer('mail', { mail: m.id }),
   }));

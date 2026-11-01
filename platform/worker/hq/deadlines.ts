@@ -16,6 +16,9 @@ export type Deadline = {
   deadline: number;
   aim: number | null;
   by: string | null;
+  // The board set the time itself, the only kind whose miss is news to it: the coordinator's deadlines.ts Deadline.board,
+  // read for the flag below and each line's who.
+  board: boolean;
   finish: number | null;
   slack_ms: number | null;
   before?: number | null;
@@ -34,12 +37,14 @@ export function changeLines(
       : 'It moves no other deliverable.',
   ];
 }
-// Said once after the facts. A forecast changes the outlook, not the agreed deadline.
+// Said once after the facts. A forecast changes the outlook, not the agreed deadline. Only a time the board set itself is
+// news to it when missed, and once.
 const JUDGED =
   'A planned finish past an agreed deadline is a slip to judge: find why and what would bring the finish back. ' +
-  'The board hears of it when nothing does or it ' +
-  "asks. A tight or shrinking margin is yours to plan with, and other deliverables' shifts are not news for the board " +
-  'unless it asks.';
+  'Our own times (a planned finish we gave, a time we offered) are ours to plan with: the board hears nothing when ' +
+  'they slip, no card and no correction. Only a time the board set itself is news when nothing brings it back: tell ' +
+  'it once, with the four-in-five time, and set that as the window (hq window, ours now). A tight or shrinking ' +
+  "margin is yours to plan with, and other deliverables' shifts are not news for the board unless it asks.";
 function movesWords(moves: Move[]) {
   const named = moves.slice(0, MOVES_SHOWN).map(moveWords).join(', ');
   return named + (moves.length > MOVES_SHOWN ? ` and ${plural(moves.length - MOVES_SHOWN, 'more deliverable')}` : '');
@@ -50,7 +55,8 @@ function movesWords(moves: Move[]) {
 export function deadlineLines(deadlines: Deadline[], it: string, late: string[] = []) {
   const flag = lateLines([
     ...late,
-    ...missWords(deadlines.filter(d => d.finish === null || d.finish > d.deadline).map(threadWords)),
+    // d.board.
+    ...missWords(deadlines.filter(d => d.board && (d.finish === null || d.finish > d.deadline)).map(threadWords)),
   ]);
   if (!deadlines.length) return ['No deliverable has an agreed deadline.', ...flag];
   return ['Agreed deadlines (deliverable windows):', ...deadlines.map(d => deadlineLine(d, it)), JUDGED, ...flag];
@@ -64,6 +70,7 @@ export const missWords = (threads: string[]) =>
 // On a call (the voice line sets HQ_CALL), a finish past the board's time or a window's deadline comes with what to do
 // about it, at the moment it matters. An instruction for the agent's judgment, never a refusal: the board may name two
 // times or a soft preference.
+// A reported board-set miss takes our replacement window.
 export function lateLines(late: string[]) {
   if (!process.env.HQ_CALL || !late.length) return [];
   return [
@@ -76,12 +83,14 @@ export function lateLines(late: string[]) {
     'If one moves it forward, do that now, on the call, and check again. If none does, tell the board plainly what you ' +
       "looked at and that the time can't be made, and ask whether that's acceptable or whether to look further after the call. " +
       "If the board has already heard of this miss (this call, an earlier one or the intercom) and it hasn't moved, it isn't " +
-      "news: don't raise it again.",
+      "news: don't raise it again. For a missed time the board set itself, set the four-in-five time as its new window " +
+      "(manage's window, without --board-set): it is ours from then on. If the board heard of this miss already, only set the new window.",
   ];
 }
 function deadlineLine(d: Deadline, it: string) {
   const aim = d.aim !== null && d.aim !== d.deadline ? `, aim ${at(d.aim)}` : '';
-  const by = d.by ? ` (given by ${d.by})` : '';
+  // d.board.
+  const by = d.board ? " (the board's own time)" : d.by ? ` (our own time, given by ${d.by})` : ' (our own time)';
   const done = d.finish === null ? 'no finish in sight' : `done about ${at(d.finish)}, ${slackWords(d.slack_ms)}`;
   const trend = d.trend.map(t => `${t.hours === 24 ? 'a day' : `${t.hours} h`} ago ${slackWords(t.slack_ms)}`);
   const then = trend.length ? ` Then: ${trend.join('; ')}.` : '';

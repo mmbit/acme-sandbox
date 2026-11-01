@@ -5,21 +5,22 @@
    --their-bg, --meter-off, --meter-glow, --copy-bg, --tick-lit, --alarm, --alarm-ink, --alarm-fill.
    A new icon is drawn once per style (icons/<style>/<name>.svg, shell/icons.js), and new HQ work is checked in a smooth
    look as well as the brownstone (screens-check.mjs wire). */
-/* lit: what a card or a screen is for (send, approve, call someone, sign in, make the key, pin a note, Talk while it
-   waits for the board's tap) */
+/* lit: what a card or a screen is for (send, approve, call someone, sign in, make the key, pin a note, invite a guest,
+   Talk while it waits for the board's tap.) */
 .device .send,
 .req .btns button:is(.send:not(.later), .approve),
 .call-agent,
 .signin,
 .req .agekey .make,
-#viewer .bar .pin {
+#viewer .bar .pin,
+#viewer .sharebox .invite button {
   background: var(--cy);
   color: var(--scr-ink);
   border: 1px solid var(--cy);
   box-shadow: var(--cy-glow);
   text-shadow: none;
 }
-/* line: everything else you can tap (the viewer bar's glyphs and Share stay bare, in the bar's own colour) */
+/* line: everything else you can tap (the viewer bar's keys among them.) */
 .device .x,
 .computer .home,
 .req .btns button:is(.later, .talk, .mic),
@@ -33,7 +34,7 @@
 .req .agekey .make.again,
 .req .agekey .secret .copy,
 .intercom .call .row button,
-#viewer .bar button:not(.pin, .glyph, .share),
+#viewer .bar button:not(.pin),
 .req .photo .act,
 .gz-tabs button,
 #panel-close,
@@ -84,11 +85,15 @@
     transform: var(--hover-button);
   }
 }
-/* on: a pressed HUD button (sound, music, the tour, walls), a picked option or tab, a chosen card */
+/* on: a pressed HUD button (sound, music, the tour, walls), a picked option or tab (the viewer's too, and Share's kind.), a chosen card */
 .tools button[aria-pressed='true'],
 .pic-keys button[aria-pressed='true'],
 .req .opts button.on,
-.gz-tabs button[aria-selected='true'] {
+.gz-tabs button[aria-selected='true'],
+#viewer :is(.bar .seg button, .bar .qr, .stage .head .link)[aria-pressed='true'],
+#viewer .bar .qr[aria-expanded='true'],
+#viewer .stage .head .tabs [aria-selected='true'],
+#viewer .sharebox .seg button[aria-pressed='true'] {
   background: var(--cy-on);
   color: var(--cy-hi);
   border-color: var(--cy);
@@ -481,21 +486,10 @@ mark {
 #viewer .bar {
   border-bottom: 1px solid var(--rule);
 }
-/* the slim bar: the address's ↗ cyan; Send N, next to the lit pin, a cyan line
-   on a cyan tint with its count lit */
+/* the slim bar: the address's ↗ cyan */
 #viewer .bar .where i,
 #viewer .bar .where.flash {
   color: var(--cy);
-}
-#viewer .bar button.send {
-  background: var(--cy-fill);
-  color: var(--cy-hi);
-  border-color: var(--cy);
-  box-shadow: var(--cy-glow);
-}
-#viewer .bar .send i {
-  background: var(--cy);
-  color: var(--scr-ink);
 }
 
 /* ---- the icons' sizes on the board's devices (each look draws its own icons: shell/icons.js). */

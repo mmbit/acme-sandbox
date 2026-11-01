@@ -6,6 +6,7 @@
 import { findProject, findThread } from './projects.ts';
 import { threadAt } from './predictionlog.ts';
 import type { ThreadOutlook } from './forecast.ts';
+import { BOARD } from './windows.ts';
 
 // The slack's trend: how it stood this many hours ago.
 const TREND_HOURS = [6, 24];
@@ -13,7 +14,8 @@ const HOUR_MS = 3_600_000;
 
 // finish: merged and deployed with the change (null: no finish in sight). before: without it (null: none in sight;
 // left out: the thread had no open work then, or there's no play before). trend: its slack then, the latest each has in
-// the log (null: no finish in sight then; a point is left out when the log has nothing that old).
+// the log (null: no finish in sight then; a point is left out when the log has nothing that old). board: the board set
+// that time itself, the only kind whose miss is news to it (windows.ts BOARD).
 export type Deadline = {
   thread: string;
   project: string;
@@ -21,6 +23,7 @@ export type Deadline = {
   deadline: number;
   aim: number | null;
   by: string | null;
+  board: boolean;
   finish: number | null;
   slack_ms: number | null;
   before?: number | null;
@@ -42,7 +45,8 @@ export function agreed(
       return [
         {
           ...{ thread: o.thread, project: findProject(thread.project)?.name ?? thread.project, name: thread.name },
-          ...{ deadline: o.deadline, aim: o.aim, by: thread.deadline_by, finish: o.finish, slack_ms: o.slack },
+          ...{ deadline: o.deadline, aim: o.aim, by: thread.deadline_by, board: thread.deadline_by === BOARD },
+          ...{ finish: o.finish, slack_ms: o.slack },
           ...before,
           trend: trend(o.thread, o.deadline, deployLagMs, now),
         },

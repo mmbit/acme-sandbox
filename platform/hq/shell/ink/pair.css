@@ -1,5 +1,5 @@
-/* Another device's sign-in (pair.js): the card over the book's paper with the one-time code. In the book's own look
-   (booklook.css). */
+/* Another device's sign-in (pair.js): the card over the book's paper with the one-time code, one of the look's panels
+   (bookui.css .bk-card). */
 /* the card: a .bk-card (bookui.css) floating over the paper beside the book's island, laid out to fit any book's width:
    its head, the QR beside the words (the words under it on a narrow book) and Close, never clipped. */
 #book .pair-card {
@@ -15,8 +15,7 @@
   align-items: center;
   gap: 10px 14px;
   padding: 14px 16px 16px;
-  font: 400 14px/1.4 var(--bk-font);
-  color: var(--bk-night);
+  font: 400 14px/1.4 var(--bk-ui-font);
   animation: pair-in 0.16s ease-out;
 }
 #book .pair-card[hidden] {
@@ -42,10 +41,14 @@
   flex: 1 1 150px;
   min-width: 0;
   margin: 0;
-  color: var(--bk-muted);
+  color: var(--bk-ui-muted);
+}
+/* (the address in the look's ink, readable on its panel whether light or dark) */
+#book .pair-card a {
+  color: var(--bk-ui-ink);
 }
 #book .pair-digits {
   white-space: nowrap;
   letter-spacing: 0.06em;
-  color: var(--bk-night);
+  color: var(--bk-ui-ink);
 }

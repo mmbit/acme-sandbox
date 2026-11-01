@@ -605,7 +605,7 @@ test("M2/M4: the board's merge sends the reviewed sha; a moved branch is refused
   assert.deepEqual([h.github.pr(103).merged, h.github.pr(103).mergedSha], [true, SHA]);
   await reviewed(104, SHA, 'board');
   h.github.refuse.push({ status: 409, message: 'Head branch was modified. Review and try the merge again.' });
-  await h.answer((await open()).find(c => c.kind === 'review' && c.pr === 104).id, 'merge it'); await settle();
+  await h.answer((await open()).find(c => c.kind === 'review' && c.pr === 104).id, 'Merge.'); await settle();
   assert.equal(h.github.pr(104).merged, false);
 });
 

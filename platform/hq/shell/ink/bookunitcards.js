@@ -1,0 +1,124 @@
+// A notebook page's cards as bookunits.js lays them: the page's title, its days' dates, and a card for every unit (the
+// scrap's paper, its room to write and the handle at its foot to drag that room taller or shorter), what hangs under
+// each moved to its foot. The board's own drawings get no paper and no handle.
+import { bodyIn, drawing, heightOf, partsOf, wordsOf } from './bookunits.js';
+import { resized } from './scrapunit.js';
+import { ask } from './notebookdata.js';
+import { nameOf } from './bookhead.js';
+import { esc } from '../../util.js';
+// (bookLang and companyFormats write a page's day in the book's language)
+import { bookLang, word } from './bookscope.js';
+import { companyFormats } from '../../world/clock.js';
+import { hangUnder } from './bookunder.js';
+
+// Words the board reads (a heading, a date), marked so a minimised call covers as little of them as it can: by their own
+// box, not the page-wide line.
+const seen = words => `<span data-keep-in-sight>${esc(words)}</span>`;
+// The page's title, its days' dates, and a card for every unit (the scrap's paper, its room to write and the handle
+// at its foot), what hangs under each moved to its foot
+export function drawCards(view) {
+  const page = view.page;
+  let layer = view.el.querySelector(':scope > .bk-units'),
+    handles = view.el.querySelector(':scope > .bk-handles');
+  if (!layer) {
+    layer = document.createElement('div');
+    layer.className = 'bk-units';
+    view.el.prepend(layer);
+  }
+  // (the handles over the page, where a press reaches them: the cards' layer is behind the paper's own box.)
+  if (!handles) {
+    handles = document.createElement('div');
+    handles.className = 'bk-handles';
+    view.el.append(handles);
+    dragged(view, handles);
+  }
+  const open = !(page.sending || page.sent || page.readonly);
+  layer.style.height = `${page.h}px`;
+  layer.innerHTML = `<h2 class="bk-page-title" style="width:${page.w}px">${seen(nameOf(page))}</h2>${page.headers
+    .map(h => `<p class="bk-day" style="top:${h.y}px;width:${page.w}px">${seen(dayWords(h.day))}</p>`)
+    .join('')}${page.places
+    .map(p => {
+      const body = bodyIn(page, p.id) + wordsOf(page, p.id),
+        room = body > 0 && p.h - body > 8 ? `<div class="bk-room" style="top:${body}px"></div>` : '',
+        // (the board's own drawing is ink on the page: no paper.)
+        ink = drawing(page, p.id);
+      // (what the board reads: a minimised call covers as little of it as it can.)
+      return `<div class="bk-unit"${ink ? ' data-drawing' : ''} data-keep-in-sight data-unit="${p.id}" style="left:${p.x}px;top:${p.y}px;width:${p.w}px;height:${p.h}px">${room}</div>`;
+    })
+    .join('')}`;
+  // (no room to drag on the board's own drawing)
+  placeHandles(handles, open ? page.places.filter(p => !drawing(page, p.id)) : []);
+  for (const p of page.places) {
+    const words = view.el.querySelector(`:scope > .bk-groups > .bk-words[data-g="${p.id}"]`);
+    if (words) Object.assign(words.style, { left: `${p.x}px`, top: `${p.y + bodyIn(page, p.id)}px` });
+    hangUnder(view, p);
+    // (whom it went to, at its corner: bookassignlist.js.)
+    const tags = view.el.querySelector(`:scope > .bk-groups > .bk-tags[data-g="${p.id}"]`);
+    if (tags) Object.assign(tags.style, { left: `${p.x + p.w}px`, top: `${p.y + p.h}px` });
+  }
+}
+// A handle at every unit's foot, each kept as the page is laid again (the one held keeps its pointer)
+function placeHandles(layer, places) {
+  const had = new Map([...layer.children].map(b => [b.dataset.unit, b]));
+  for (const p of places) {
+    let b = had.get(String(p.id));
+    had.delete(String(p.id));
+    if (!b) {
+      b = Object.assign(document.createElement('button'), { type: 'button', className: 'bk-room-handle' });
+      b.dataset.unit = p.id;
+      b.setAttribute('aria-label', word('roomHandle'));
+      b.setAttribute('data-keep-clear', ''); // (a minimised call keeps clear of it.)
+      layer.append(b);
+    }
+    Object.assign(b.style, { left: `${p.x + p.w / 2}px`, top: `${p.y + p.h}px` });
+  }
+  for (const b of had.values()) b.remove();
+}
+// A page's day in the book's language, no comma: "Sat 31 Oct", "za 31 okt"
+const dayWords = day => companyFormats().day(day, bookLang(), { weekday: true, short: true }).replace(',', '');
+
+// A unit's handle dragged: its height follows (never into what's drawn: resized), the masonry laid again as it goes,
+// and saved as it's let go (/api/notebooks/groups/resize)
+function dragged(view, layer) {
+  layer.addEventListener('pointerdown', e => {
+    const b = e.target.closest('.bk-room-handle');
+    if (!b) return;
+    e.stopPropagation();
+    e.preventDefault();
+    const page = view.page,
+      id = Number(b.dataset.unit),
+      g = page.groups.get(id);
+    if (!g) return;
+    const from = heightOf(page, id),
+      y0 = e.clientY,
+      pointer = e.pointerId;
+    b.setPointerCapture(pointer);
+    const move = m => {
+      if (m.pointerId !== pointer) return;
+      // (in the store's terms: the words drawn in its body aside)
+      const h = resized(partsOf(page, id), from + (m.clientY - y0) / (page.scale ?? 1)) - wordsOf(page, id);
+      page.resizing = { id, h: Math.max(1, h) };
+      view.relay?.();
+    };
+    const up = async u => {
+      if (u.pointerId !== pointer) return;
+      removeEventListener('pointermove', move);
+      removeEventListener('pointerup', up);
+      removeEventListener('pointercancel', up);
+      const h = page.resizing?.h;
+      if (h === undefined) return;
+      try {
+        const done = await ask(view.dev, '/api/notebooks/groups/resize', null, { id, since: g.updated, h });
+        Object.assign(g, { h: done.h ?? h, updated: done.updated ?? g.updated });
+      } catch (err) {
+        view.refuse?.(err.message);
+      }
+      page.resizing = null;
+      view.relay?.();
+    };
+    // (followed on the window, wherever the pointer is as the masonry's laid again under it)
+    addEventListener('pointermove', move);
+    addEventListener('pointerup', up);
+    addEventListener('pointercancel', up);
+  });
+}

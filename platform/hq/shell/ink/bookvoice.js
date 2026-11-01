@@ -8,7 +8,7 @@
 import { dictate } from '../dictate.js';
 import { loadLanguage } from '../data.js';
 import { sfx } from '../audio.js';
-import { word } from './bookscope.js';
+import { scope, word } from './bookscope.js';
 
 // a message (nothing heard, the microphone blocked) shows this long
 const SAID_MS = 2200;
@@ -21,13 +21,13 @@ export function listen(book, down) {
   if (!at) return null;
   const desk = book.desk.getBoundingClientRect(),
     right = book.at(desk.right - 16, down.clientY)?.x ?? at.x + 360;
-  lang ??= book.scope
+  lang ??= scope
     ? Promise.resolve(document.documentElement.lang)
     : loadLanguage(book.dev).then(
         l => l?.lang || 'en',
         () => 'en',
       );
-  const v = { done: false, el: slip(down), api: book.scope ? `${book.scope.api}/voice` : undefined };
+  const v = { done: false, el: slip(down), api: scope ? `${scope.api}/voice` : undefined };
   sfx.micOn();
   lang.then(code => !v.done && recording(v, code));
   // let go: the words land
@@ -61,7 +61,7 @@ export function listen(book, down) {
 // A held press before the microphone is allowed here: the slip says how to allow it, or that it's blocked, and goes.
 // Only a tap on a mic may bring up the browser's question, so the hold never asks.
 export function cantListen(down, blocked) {
-  say({ el: slip(down) }, word(blocked ? 'The microphone is blocked here' : 'Tap a mic once to turn on voice notes'));
+  say({ el: slip(down) }, word(blocked ? 'micBlocked' : 'micFirstTap'));
 }
 
 // The microphone on, in the board's language: each piece heard transcribed as it comes and shown in the slip
@@ -70,7 +70,7 @@ function recording(v, code) {
   v.rec.ready.catch(err => {
     if (v.done) return;
     v.stop();
-    say(v, word(err?.name === 'NotAllowedError' ? 'The microphone is blocked here' : 'The microphone didn’t start'));
+    say(v, word(err?.name === 'NotAllowedError' ? 'micBlocked' : 'micFailed'));
   });
   pulse(v);
 }
@@ -83,9 +83,9 @@ async function landed(book, v, at, right) {
   try {
     ({ text } = await v.rec.stop());
   } catch {
-    return say(v, word('The transcriber isn’t available right now'));
+    return say(v, word('transcriberAway'));
   }
-  if (!text) return say(v, word('No words came through'));
+  if (!text) return say(v, word('noWordsHeard'));
   v.el.remove();
   book.tools?.put?.(at, text, right);
 }

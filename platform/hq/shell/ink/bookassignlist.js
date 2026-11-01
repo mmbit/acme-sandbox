@@ -7,6 +7,8 @@
 import { esc } from '../../util.js';
 import { scope, word } from './bookscope.js';
 
+// what a person is, by their kind
+const KIND_WORDS = { guest: 'kindGuest', agent: 'kindAgent' };
 // a card stands this far (px) from the paper's edges and from what it's beside
 const EDGE_PX = 8,
   BESIDE_PX = 16;
@@ -19,22 +21,22 @@ const LOOK =
 // The short list for people (the store's recent), then More… with the count of everyone: a card in the book, not yet
 // placed
 export function shortList(people, total) {
-  const card = cardOf('bk-assign-short', word('Assign to'));
-  card.innerHTML = `<p class="bk-assign-head">${word('Recent')}</p>${people.map(rowHtml).join('')}<button type="button"
+  const card = cardOf('bk-assign-short', word('assignTo'));
+  card.innerHTML = `<p class="bk-assign-head">${word('recent')}</p>${people.map(rowHtml).join('')}<button type="button"
     class="bk-person bk-assign-more" role="menuitem" data-more style="--i:${people.length}"><span class="bk-face" aria-hidden="true">
-    <i></i><i></i><i></i></span><span class="bk-name">${word('More…')} <small>${word('all {n}', { n: total })}</small>
+    <i></i><i></i><i></i></span><span class="bk-name">${word('morePeople')} <small>${word('allPeople', { n: total })}</small>
     </span></button>`;
   return card;
 }
 
 // Everyone, A to Z, in a sheet: Share with, Done, a search over them and their rows, which scroll
 export function everyoneSheet(people) {
-  const card = cardOf('bk-assign-all', word('Share with'));
-  card.innerHTML = `<div class="bk-assign-top"><b>${word('Share with')}</b><button type="button" class="bk-assign-done"
-    >${word('Done')}</button></div><label class="bk-assign-search">${LOOK}<input type="search" autocomplete="off"
-    placeholder="${esc(word('Search {n} people', { n: people.length }))}" aria-label="${esc(word('Search people'))}"
+  const card = cardOf('bk-assign-all', word('shareWith'));
+  card.innerHTML = `<div class="bk-assign-top"><b>${word('shareWith')}</b><button type="button" class="bk-assign-done"
+    >${word('done')}</button></div><label class="bk-assign-search">${LOOK}<input type="search" autocomplete="off"
+    placeholder="${esc(word('searchPeopleCount', { n: people.length }))}" aria-label="${esc(word('searchPeople'))}"
     ></label><div class="bk-assign-rows">${people.map(p => rowHtml(p, 0)).join('')}<p class="bk-assign-none" hidden>${word(
-      'Nobody by that name',
+      'nobodyByName',
     )}</p></div>`;
   const field = card.querySelector('input');
   field.addEventListener('input', () => {
@@ -50,7 +52,7 @@ export function everyoneSheet(people) {
 const rowHtml = (p, i) =>
   `<button type="button" class="bk-person" role="menuitem" data-to="${esc(p.to)}" style="--i:${i}"><span
     class="bk-face" aria-hidden="true">${esc(initial(p.name))}</span><span class="bk-name">${esc(p.name)}</span><span
-    class="bk-kind">${word(p.kind)}</span></button>`;
+    class="bk-kind">${word(KIND_WORDS[p.kind])}</span></button>`;
 function cardOf(kind, label) {
   const card = document.createElement('div');
   card.className = `bk-card bk-assign ${kind}`;
@@ -118,7 +120,7 @@ export const freshTag = (g, to, at) => (given = { g, to, at });
 export function tagsHtml(g) {
   if (scope || !g.assigned?.length) return '';
   const tags = g.assigned.map(p => {
-    const label = p.answered ? word('{name} answered', { name: p.name }) : word('Assigned to {name}', { name: p.name });
+    const label = p.answered ? word('nameAnswered', { name: p.name }) : word('assignedTo', { name: p.name });
     const fresh = popping(g, p) ? ` data-new style="--wait:${Math.round(given.at - performance.now())}ms"` : '';
     return `<span class="bk-tag" title="${esc(label)}" aria-label="${esc(label)}"${fresh}>${p.answered ? TICK : ''}<span
       class="bk-face">${esc(initial(p.name))}</span></span>`;

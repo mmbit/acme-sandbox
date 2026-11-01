@@ -1,6 +1,6 @@
-/* The agents' answers on a notebook page (bookanswers*.js): written on the paper in the agent's ink, in a hand, with a
-   hand-drawn bulb and the agent's face; a light ruled strip under each for the board's reply; a drawing, a picture
-   taped in, a form; an answer still coming as a face and pencil dots (a note's versions: bookversions.css). The hand is a setting (--bk-hand): an OFL face shipped here, then the system's own hands.
+/* The agents' answers on a notebook page: the agent's face, an answer still coming as that face and pencil dots under
+   its note (bookgroups.js), a drawing answer's strokes on its slip, and a reply's ink on a version (a note's versions:
+   bookversions.css). The book's hand is a setting (--bk-hand): an OFL face shipped here, then the system's own hands.
  */
 
 @font-face {
@@ -37,48 +37,7 @@
   pointer-events: none;
 }
 
-/* ---- an answer */
-#book .bk-answer {
-  position: absolute;
-  box-sizing: border-box;
-  padding: 2px 4px 0;
-  color: var(--ink);
-  font-family: var(--bk-hand);
-}
-#book .bk-answer-head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  height: 26px;
-  font: 600 13px/1 var(--bk-font);
-  letter-spacing: 0.01em;
-}
-#book .bk-answer-bulb {
-  display: flex;
-  flex: none;
-}
-#book .bk-answer-bulb svg {
-  width: 19px;
-  height: 22px;
-  overflow: visible;
-  fill: none;
-  stroke: var(--bk-ink, #2a2352);
-  stroke-width: 1.35;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-#book .bk-answer-bulb .bk-bulb-glow {
-  fill: var(--bk-lamp, #ffd966);
-  fill-opacity: 0.55;
-  stroke: none;
-}
-#book .bk-answer-bulb .bk-bulb-sketch {
-  stroke-width: 0.7;
-  stroke-opacity: 0.5;
-}
-#book .bk-answer-bulb .bk-bulb-wire {
-  stroke-width: 1;
-}
+/* ---- an agent's face (an answer still coming, a try's versions) */
 #book .bk-answer-face {
   flex: none;
   display: grid;
@@ -94,137 +53,8 @@
   font: 700 11px/1 var(--bk-font);
   font-style: normal;
 }
-#book .bk-answer-name {
-  color: var(--ink);
-}
-#book .bk-answer-words {
-  position: relative;
-  margin: 2px 0 0;
-  font-size: 23px;
-  line-height: 26px;
-  font-weight: 500;
-  overflow-wrap: anywhere;
-  white-space: pre-wrap;
-}
-#book .bk-answer-words .bk-rest {
-  visibility: hidden;
-}
-#book .bk-caret {
-  display: inline-block;
-  width: 0;
-  height: 1em;
-  vertical-align: baseline;
-}
-#book .bk-answer-pen {
-  position: absolute;
-  left: 0;
-  top: 0;
-  width: 18px;
-  height: 26px;
-  overflow: visible;
-  pointer-events: none;
-  filter: drop-shadow(1px 2px 1.5px rgba(29, 26, 47, 0.25));
-}
-#book .bk-nib {
-  fill: #2b2533;
-}
-#book .bk-nib-slit {
-  stroke: #d8cfb8;
-  stroke-width: 0.7;
-}
-#book .bk-nib-hole {
-  fill: #d8cfb8;
-}
-#book .bk-answer-fade {
-  animation: bk-answer-fade 0.24s ease-out both;
-}
-@keyframes bk-answer-fade {
-  from {
-    opacity: 0;
-  }
-}
 
-/* a drawing: its strokes from the answer's top-left, the room under the words reaching down to their foot */
-#book .bk-answer-ink {
-  position: absolute;
-  left: 0;
-  top: 0;
-  overflow: visible;
-  pointer-events: none;
-}
-
-/* closed with a tick: it steps back a little */
-#book .bk-answer[data-ticked] {
-  opacity: 0.72;
-}
-
-/* a picture, taped in, a touch askew */
-#book .bk-answer-picture {
-  position: relative;
-  margin: 10px 6px 4px;
-  padding: 5px;
-  background: #fff;
-  box-shadow:
-    0 1px 2px rgba(29, 26, 47, 0.18),
-    0 6px 14px -8px rgba(29, 26, 47, 0.35);
-  rotate: -0.8deg;
-}
-#book .bk-answer-picture img {
-  display: block;
-  width: 100%;
-  height: auto;
-}
-/* where a picture's numbers came from: a quiet line under it */
-#book .bk-answer-source {
-  margin-top: 4px;
-  font: 11px/1.3 var(--bk-font);
-  color: var(--bk-graphite);
-}
-#book .bk-answer-picture::before {
-  content: '';
-  position: absolute;
-  top: -9px;
-  left: calc(50% - 34px);
-  width: 68px;
-  height: 18px;
-  background: rgba(222, 210, 178, 0.82);
-  rotate: 2deg;
-  mix-blend-mode: multiply;
-}
-
-/* a question the agent asks: a soft wash of its ink behind it */
-#book .bk-answer[data-style='question'] {
-  padding: 6px 10px 2px;
-  border-radius: 3px 14px 4px 12px;
-  background: color-mix(in srgb, var(--ink) 9%, transparent);
-}
-
-/* the strip under an answer the board writes its reply on: two faint rules, a pencilled word till it's used */
-#book .bk-answer-reply {
-  position: relative;
-  min-height: 50px;
-  margin: 6px 0 0;
-  pointer-events: auto;
-  touch-action: none;
-  cursor: crosshair;
-  background: repeating-linear-gradient(to bottom, transparent 0 23px, var(--bk-rule) 23px 24px);
-}
-#book .bk-answer-reply::after {
-  content: attr(data-hint);
-  position: absolute;
-  right: 2px;
-  bottom: 3px;
-  font: 15px/1 var(--bk-hand);
-  color: var(--bk-graphite);
-  opacity: 0.6;
-}
-#book .bk-answer-reply[data-sending]::after {
-  content: 'sending…';
-}
-#book .bk-answer-reply[data-refused]::after {
-  content: attr(data-refused);
-  color: #b0412f;
-}
+/* a reply written on a version: its ink in the page's px */
 #book .bk-reply-ink {
   position: absolute;
   left: 0;
@@ -235,13 +65,24 @@
   pointer-events: none;
 }
 
+/* a drawing answer's strokes on its slip, under its words: at their own px, narrower when the slip is
+ */
+#book .bk-slip-ink {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+#book .answer-slip .bk-slip-ink {
+  margin-top: 8px;
+}
+
 /* ---- an answer still coming: the agent's face and three pencil dots, one after another */
 #book .bk-answer-waiting {
-  position: absolute;
   display: flex;
   align-items: center;
   gap: 8px;
-  height: 30px;
+  min-height: 30px;
+  margin: 8px 0 0;
   --dot: 0.9s;
 }
 #book .bk-answer-dots {

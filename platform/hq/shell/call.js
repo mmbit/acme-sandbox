@@ -25,9 +25,10 @@ import {
 } from './callscreen.js';
 import { startPictures, picturesLive, pictureState, showPictures, stopPictures } from './callpictures.js';
 import { startDrop, stopDrop } from './calldrop.js';
+import { forgetHeard, heldCall, holdCall, letCallGo, lostCall, rejoined, resend, sendFrame } from './callheld.js';
 import { FROM_LINE as DRAWING, reconnected, startDrawing, stopDrawing } from './ink/calldraw.js'; // (Ink's folder)
 import { FROM_LINE as DRIVING, stopDriving, wiped } from './calldrive.js';
-import { ceoName, openIntercom, openComputer, intercomOpen, notesComing, say, tell, watchCall } from './desk.js';
+import { ceoName, closeTool, openIntercom, openComputer, intercomOpen, notesComing, tell, watchCall } from './desk.js';
 
 const $ = s => document.querySelector(s);
 let call = null;
@@ -38,27 +39,28 @@ export const minimiseCall = () => call && minimise(call);
 // Whom the call on is with (its name), or null with none
 export const callName = () => call?.name ?? null;
 
-// Call someone: the call opens over whatever is on screen (their panel, a card, Reviews, the intercom), which is there
-// again when it ends. request: the card it's about. onIntercom: started from the intercom, which shows why it ended, if
-// not by hanging up.
+// Call someone: the call opens over whatever is on screen (their panel, a card, Reviews), which is there again when it
+// ends. The intercom closes instead, at the call's start and its end: the call's screen takes its place, so minimising
+// leaves only the bubble, and a call over leaves no chat behind. request:
+// the card it's about.
 // walk: from a card's Walk me through it (calldraw.js). pictures: Files (or promises of them, or a promise of their
 // list: callpictures.js showPictures) the agent is shown once the line picks up,
 // a page of the Notebook shared by its corner (bookshare.js); with a call already on, they go into that one. page: that page's id, brought to the call's notes page as its first scrap (calldraw.js). (request and the rest named; pictures)
 export async function callAgent(
   agent = world.company.ceo,
   name = ceoName(),
-  { request = 0, onIntercom = false, walk = false, pictures = [], page = 0 } = {},
+  { request = 0, walk = false, pictures = [], page = 0 } = {},
 ) {
+  if (intercomOpen()) closeTool();
   if (call) {
     expand(call);
     return showPictures(call, pictures);
   }
-  const c = (call = { agent, name, request, onIntercom, walk, brought: page, voiced: [], kept: [], keptFrom: 0 });
+  const c = (call = { agent, name, request, walk, brought: page, voiced: [], kept: [], keptFrom: 0 });
   c.hangUp = () => endCall();
   c.audio = audioOf(c);
   openLayer(c);
   hush(true, 'call');
-  if (onIntercom) say(''); // (the last call's "the line dropped" goes)
   // (the board interrupts by speaking: the line clears the voice, FROM_LINE.clear.)
   $('#call-end').onclick = () => endCall();
   startPictures(c);
@@ -78,14 +80,20 @@ export async function callAgent(
   if (call !== c) return;
   if (!l) return endCall('The language can’t be read right now. Try again in a moment.');
   // (until the line picks up and says it listens: FROM_LINE.state.)
-  callSay('Dialling…');
+  const held = heldCall(agent, request);
+  if (held) c.request = held.request;
+  callSay(held ? 'Rejoining…' : 'Dialling…');
   // never stuck: if nobody picks up, say so
   c.ring = setTimeout(() => {
     if (call === c && !c.live) endCall(`${name} didn’t pick up. Try again in a moment.`);
   }, 30000);
   // (walk)
-  connect(c, { agent, lang: l.lang, request, ...(walk && request ? { walk } : {}) });
+  c.dial = { agent, lang: l.lang, request: c.request, ...(walk && c.request ? { walk } : {}) };
+  connect(c, held ? { resume: held.id, back: true } : c.dial);
 }
+
+// (a page that leaves mid-call can call back into it: callheld.js)
+addEventListener('pagehide', () => call?.id && lostCall(call));
 
 // A call's microphone and voice: its frames sent on the line, a microphone lost ends it, and each tick keeps its screen
 function audioOf(c) {
@@ -126,8 +134,11 @@ function connect(c, hello) {
   };
   ws.onclose = e => {
     if (call !== c || c.ws !== ws) return;
+    if (hello.back && !c.id && e.code === 4000) return connect(c, c.dial); // (the call it would rejoin is over)
     // the call waits 30 s on the other end: keep trying to get back to it
-    if (c.id && e.code !== 4000 && (c.tries = (c.tries ?? 0) + 1) <= 12) {
+    const lost = c.id && e.code !== 4000;
+    if (lost && !c.tries) lostCall(c); // (from the first try on)
+    if (lost && (c.tries = (c.tries ?? 0) + 1) <= 12) {
       c.live = false;
       reconnected(c);
       c.audio.mark('reconnecting');
@@ -152,18 +163,20 @@ const FROM_LINE = {
     forgetHeard(c, ev.heard);
   },
   call(c, ev) {
+    if (ev.said) rejoined(c, ev);
     c.t0 ??= performance.now();
     c.id = ev.id || c.id;
     c.call = Number(ev.call) || c.call;
     c.key = String(ev.key ?? '') || c.key;
     c.live = true;
     c.tries = 0;
+    holdCall(c);
     if (c.stopRinging) {
       c.stopRinging();
       c.stopRinging = null;
       cue('pickUp');
     }
-    resend(c, ev.heard);
+    resend(c, ev.heard, PING_MS);
     c.face.lit(true); // (the agent's little screen switches on)
     picturesLive(c);
     shareKey(c); // (Show my screen, once picked up)
@@ -221,37 +234,6 @@ const FROM_LINE = {
   // the agent hung up once the board had said goodbye: as the Hang up button does
   hangup: () => endCall(),
 };
-// The board's words outlast a dropped connection. From pickup on, each microphone frame (FRAME samples) is kept until
-// the line says it has it (`heard`: its samples so far, all call, with each pong): what was still queued in a socket
-// that dropped, and what the microphone made while reconnecting. None is dropped unheard: the pongs clear it twice a
-// second while connected, it grows only as the socket's own queue does on a weak uplink, and a reconnect ends within
-// the line's 30 s hold. The line's `call` on the new connection says what it has; the rest goes first, with a ping
-// from when it was made every PING_MS, so the line reads it as late and waits for all of it before it answers
-// (platform/voice, LATE). (An older line says nothing: none is kept.).
-const FRAME = 320;
-function sendFrame(c, frame) {
-  if (!c.id) return; // (not picked up yet: nobody hears it)
-  c.kept.push({ frame, at: performance.now() });
-  if (c.ws?.readyState === 1 && c.live) c.ws.send(frame);
-}
-function forgetHeard(c, heard) {
-  const n = Number.isFinite(heard) ? Math.min(c.kept.length, Math.floor((heard - c.keptFrom) / FRAME)) : c.kept.length;
-  if (n > 0) {
-    c.kept.splice(0, n);
-    c.keptFrom += n * FRAME;
-  }
-}
-function resend(c, heard) {
-  forgetHeard(c, heard);
-  let pinged = -Infinity;
-  for (const { frame, at } of c.kept) {
-    if (at - pinged >= PING_MS) {
-      pinged = at;
-      c.ws.send(JSON.stringify({ type: 'ping', t: Math.round(at) }));
-    }
-    c.ws.send(frame);
-  }
-}
 // the agent's voice as it plays, the line's tick apart, for the ON AIR sign
 function play(c, buf) {
   const at = c.audio.play(new Int16Array(buf)),
@@ -371,6 +353,7 @@ function endCall(why) {
   // (how the voice played here, numbers only, and its timeline in seconds after the line picked up)
   const { played, timeline } = c.audio.report(c.t0);
   if (c.ws?.readyState === 1) c.ws.send(JSON.stringify({ type: 'bye', played, timeline }));
+  if (!why) letCallGo(); // (hung up: the line hears 'bye', or ends it once it's held long enough)
   c.ws?.close();
   c.voiced = [];
   stopPictures(c);
@@ -383,11 +366,10 @@ function endCall(why) {
   hush(false, 'call');
   for (const header of document.querySelectorAll('.intercom header')) header.classList.remove('on-air');
   closeLayer(c);
+  if (intercomOpen()) closeTool(); // (opened by the board while the call was small)
   if (c.agent === world.company.ceo && !c.request && c.id) notesComing(); // the transcript reaches the chat in a moment
   if (c.live || c.id) watchCall(c.agent, Date.now(), c.call);
-  // (a call from the intercom, still open under it, says why it ended there, if not by hanging up: the chat says the
-  // notes are coming. Elsewhere a toast's tap goes where they appear.)
-  if (c.onIntercom && intercomOpen()) return say(why ?? '', true);
+  // (a toast's tap goes where the notes appear)
   toast(
     `<b>Call with ${esc(c.name)} ended</b>${why ? `<br>${esc(why)}` : ''}`,
     c.agent === world.company.ceo && !c.request ? openIntercom : () => openComputer('calls'),

@@ -41,15 +41,19 @@ export function admission<Seat>(now = Date.now, measure = workerMemory, meminfo 
     return value;
   };
   const availableMb = () => use('availableMb', false, available => available);
+  const measured = (room: typeof reserve.reading) => ({
+    freeMb: (young = true) => use('freeMb', young, available => room.freeMb(available, young)),
+    claimMb: (young = true) => use('claimMb', young, available => room.claimMb(available, young)),
+    gathering: () => use('gathering', true, available => room.gathering(available)),
+    starts: (young = true) => use('starts', young, available => room.starts(available, young)),
+    room: (young = true) => use('room', young, available => room.room(available, young)),
+  });
   return {
     ...reserve,
     availableMb,
     inspect: inspection.inspect,
-    freeMb: (young = true) => use('freeMb', young, available => reserve.freeMb(available, young)),
-    claimMb: (young = true) => use('claimMb', young, available => reserve.claimMb(available, young)),
-    gathering: () => use('gathering', true, available => reserve.gathering(available)),
-    starts: (young = true) => use('starts', young, available => reserve.starts(available, young)),
-    room: (young = true) => use('room', young, available => reserve.room(available, young)),
+    ...measured(reserve),
+    reading: measured(reserve.reading),
   };
 }
 

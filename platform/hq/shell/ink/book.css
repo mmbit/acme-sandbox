@@ -13,9 +13,8 @@
   --bk-red: #ff5a5f;
   --bk-rail: #f3e6d0;
   /* the rail of controls at the paper's right edge, by the spine (bookstrip.css): a 44 px control and its margins, and
-     a phone's notch on its side clear; nothing floats over the paper's edge besides (bookui.js clearOf). */
+     a phone's notch on its side clear; nothing floats over the paper's edge besides. */
   --bk-rail-width: calc(52px + env(safe-area-inset-right, 0px));
-  --bk-controls-width: 0px;
   --bk-table: #3a3148;
   /* the black cover showing round the pages at their head and foot (the cover's edge is its outer side: .bk-edge), and
      the page block's edge showing past the paper on its left, the outer side (.bk-paper's leaves) */

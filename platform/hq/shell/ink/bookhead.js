@@ -15,7 +15,7 @@ export function titleOf(page) {
   if (page.kind === 'call') return page.agent ? `Call with ${name(page.agent)}, ${clockWhen(page.started)}` : 'Call';
   return page.label;
 }
-export const untitledPage = () => word('Untitled page');
+export const untitledPage = () => word('untitledPage');
 // A page's name where pages are listed (the pages control, a group's Move to page…): its title, or Untitled page when
 // it has none
 export const nameOf = page => titleOf(page) || untitledPage();

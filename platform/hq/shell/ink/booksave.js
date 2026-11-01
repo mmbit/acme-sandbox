@@ -220,12 +220,12 @@ export function named(book, page, title) {
   book.controls?.update();
 }
 // (the page's own saves come back as the store's change too: nothing new in them, nothing's drawn again. Its answers,
-// the agents' cards under it and who it was handed to are new too.)
+// one coming, the agents' cards under it and who it was handed to are new too.)
 const unchanged = (page, groups) =>
   groups.length === page.groups.size &&
   groups.every(g => {
     const had = page.groups.get(g.id),
-      around = x => JSON.stringify([x.children, x.asks, x.assigned]);
+      around = x => JSON.stringify([x.children, x.waiting, x.asks, x.assigned]);
     return had?.updated === g.updated && around(had) === around(g);
   });
 // (the store's elements where their units are laid on the page, a unit new to it in its own px until the page lays it:

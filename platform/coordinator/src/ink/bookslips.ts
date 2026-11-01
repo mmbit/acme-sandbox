@@ -2,7 +2,7 @@
 //   - A note the judge says calls for an answer (bookjudge.ts) gets one within seconds from its owner's quick run
 //     (bookanswer.ts answerNow), clipped on as a slip, wherever it was written (//     the judge, not a question mark).
 //   - A slip: an agent's answer on a note (hq answer), with a picture or a preview's link if it has one. A tick closes
-//     it; anything written under it is a reply, a new note on the owner's sheet, anchored where the note was.
+//     it (bookanswer.ts tickAnswer); anything written under it is a reply, a new note on the owner's sheet, anchored where the note was.
 //   - A slip can name an artifact (hq answer --artifact): what it made that runs, shown on the slip as artifacts.ts lists
 //     it, its running preview and its cover, once it's there (merged and running). And "now": a cut of the note's place
 //     from the live page, kept from before rule zero (HQ cut it while the note's hairline showed there; nothing of a
@@ -17,7 +17,7 @@ import { ceo } from '../company.ts';
 import { findAgent, jobAgent, notePage } from '../jobs.ts';
 import { keepFile } from '../uploads.ts';
 import { BOARD } from './book.ts';
-import { addNote, note, sheetRow, shown } from './booknotes.ts';
+import { addNote, note, sheetRow } from './booknotes.ts';
 import { type Refused } from '../pagechecks.ts';
 import { DIR, notFound, serveFile } from '../pagescraps.ts';
 import * as artifacts from '../artifacts.ts';
@@ -29,14 +29,14 @@ export const SLIP_MAX = 4000,
 // the board ticked it. artifact: the id of what it made that runs, as artifacts.ts lists it. now, now_at: the note's
 // place cut again from the live page, its file and when. Its
 // style ('text' | 'drawing' | 'form' | 'question' | 'version'), a version's two-word name and kept patch file, its ink
-// (JSON ink.js strokes from its own top-left), a form (JSON questions.js questions) and the board's answers to it, its
-// spot (JSON {dx, dy, w, h} from its group's box, answerspot.ts) and when the board picked it (a version). bookanswer.ts.
+// (JSON ink.js strokes from its own top-left), a form (JSON questions.js questions) and the board's answers to it, and
+// when the board picked it (a version). bookanswer.ts. (no spot: it slips under its group's unit, notebookunits.ts;
 // source: where a picture's numbers came from (a chart). A version's branch (trybranch.ts branchVersion), when the board
 // crossed it out, and when its branch and preview were cleared (bookpick.ts).
 // base: the commit its branch was made on, which its preview serves with its patch (trypreview.ts.). branch_failed: why GitHub refused its branch (trybranch.ts.)
 const SLIPS = `create table if not exists book_slips (id integer primary key autoincrement, note integer, by text not null,
   job integer, text text not null, picture text, link text, created text not null, ticked text, artifact text, now text,
-  now_at text, grp integer, style text, version text, patch text, ink text, form text, form_answer text, spot text,
+  now_at text, grp integer, style text, version text, patch text, ink text, form text, form_answer text,
   picked text, source text, branch text, crossed text, cleared text, base text, branch_failed text)`;
 db.exec(`${SLIPS}; create index if not exists book_slips_note on book_slips (note)`);
 once('2026-10-26-book-slips-previews', () => {
@@ -54,7 +54,7 @@ once('2026-10-28-book-slips-answers', () => {
   }
   for (const column of ['grp integer', 'style text', 'version text', 'patch text', 'ink text', 'form text'])
     if (lacks('book_slips', column.split(' ')[0])) db.exec(`alter table book_slips add column ${column}`);
-  for (const column of ['form_answer', 'spot', 'picked'])
+  for (const column of ['form_answer', 'picked'])
     if (lacks('book_slips', column)) db.exec(`alter table book_slips add column ${column} text`);
 });
 once('2026-10-30-book-slips-versions', () => {
@@ -85,7 +85,6 @@ export type Slip = {
   ink: string | null;
   form: string | null;
   form_answer: string | null;
-  spot: string | null;
   picked: string | null;
   source: string | null;
   branch: string | null;
@@ -104,14 +103,14 @@ export const ARTIFACT = /^[A-Za-z0-9._/:-]{1,200}$/;
 // POST /api/agent/answer (hq answer): bookanswer.ts answer (moved there, with an
 // answer on a group, its ink, form, versions and who may answer)
 // (more: an answer's picture, link and artifact, and the rest of an answer's,
-// bookanswer.ts: its group, style, version, patch file, ink, form and spot as stored, JSON as JSON text)
-type Stored = 'grp' | 'style' | 'version' | 'patch' | 'ink' | 'form' | 'spot' | 'source';
+// bookanswer.ts: its group, style, version, patch file, ink, form and source as stored, JSON as JSON text)
+type Stored = 'grp' | 'style' | 'version' | 'patch' | 'ink' | 'form' | 'source';
 export type More = {
   picture?: { type: string; clean: Buffer } | null;
   link?: string | null;
   artifact?: string | null;
 } & Partial<Record<Stored, string | number | null>>;
-const STORED: Stored[] = ['grp', 'style', 'version', 'patch', 'ink', 'form', 'spot', 'source'];
+const STORED: Stored[] = ['grp', 'style', 'version', 'patch', 'ink', 'form', 'source'];
 export function addSlip(noteId: number | null, by: string, job: number | null, text: string, more: More = {}) {
   const id = Number(
     db
@@ -137,20 +136,6 @@ export function keepPicture(name: string, picture: { type: string; clean: Buffer
   const file = `${name}-${randomBytes(4).toString('hex')}.${picture.type === 'image/png' ? 'png' : 'jpg'}`;
   keepFile(`${DIR}/${file}`, picture.clean);
   return file;
-}
-// POST /api/book/slip/tick { id, ticked }: a tick closes the slip's note (false: open again)
-export function tick(b: any, who = BOARD) {
-  const slip = slipRow(Number(b?.id), who);
-  if (!slip || slip.note === null) return 404; // (a group's, bookanswer.ts tick)
-  if (typeof b.ticked !== 'boolean') return [400, 'ticked is true or false'] as Refused;
-  db.prepare('update book_slips set ticked = ? where id = ?').run(b.ticked ? new Date().toISOString() : null, slip.id);
-  const open = db.prepare('select 1 from book_slips where note = ? and ticked is null').get(slip.note);
-  db.prepare(`update book_notes set status = ? where id = ? and status != 'open'`).run(
-    open ? 'sent' : 'closed',
-    slip.note,
-  );
-  publish({ type: 'book', agent: slip.by, text: 'slip', ...notePage(slip.note) });
-  return { slip: slipOf(slipRow(slip.id, who)!), note: shown(note(slip.note)!) };
 }
 // POST /api/book/slip/reply { id, words, said? }: writing under a slip, a new note on the owner's open sheet, anchored
 // where the note was (a question asks now)
@@ -226,7 +211,6 @@ export const slipOf = (s: Slip, listed = listedOnce()) => ({
   form_answer: s.form_answer ? JSON.parse(s.form_answer) : null,
   version: s.version,
   patch: !!s.patch,
-  spot: s.spot ? JSON.parse(s.spot) : null,
   picked: s.picked,
   source: s.source,
   branch: s.branch,
@@ -243,7 +227,7 @@ function previewOf(id: string, listed: artifacts.Artifact[]) {
 
 // ---------------------------------------------------------------- a notebook group's answers
 // The answers on groups by their grp (sent or not), and a group's answer still
-// coming: its quick run's (notebook_groups.asked, bookanswer.ts) at the spot it will take, while it goes and hasn't
+// coming: its quick run's (notebook_groups.asked, bookanswer.ts) while it goes and hasn't
 // answered, and why none came once it has ended without one (until the thread moves on: bookanswer.ts movedOn).
 export const answersOnGroups = (ids: number[], listed = listedOnce()) =>
   ids.length
@@ -259,7 +243,7 @@ const byOf = (job: number) => {
   const by = jobAgent(job) ?? ceo();
   return { by, name: findAgent(by)?.name ?? by };
 };
-type Asking = { asked?: number | null; asked_spot?: string | null };
+type Asking = { asked?: number | null };
 // The face a group shows for an answer not on it yet: the one coming, else why its ended ask brought none (quickruns.ts
 // whyMissed)
 export function waitingOf(g: Asking) {
@@ -277,12 +261,11 @@ export function comingOf(g: Asking) {
 // The group's ask, unless its run has clipped its answer
 const unanswered = (g: Asking) =>
   g.asked && !db.prepare('select 1 from book_slips where job = ?').get(g.asked) ? g.asked : null;
-// Who answers, at the spot the answer will take, with why it hasn't come where there's a reason
+// Who answers, with why it hasn't come where there's a reason
 function askedFace(g: Asking, job: number) {
   const reason = whyMissed(job);
   return {
     ...byOf(job),
-    spot: g.asked_spot ? JSON.parse(g.asked_spot) : null,
     style: 'text' as const,
     ...(reason && { reason }),
   };

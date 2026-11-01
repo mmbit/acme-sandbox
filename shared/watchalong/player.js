@@ -7,6 +7,7 @@
 //     from where the replay is; only a seek back rebuilds it from the page's snapshot.
 //   - The ink is drawn on a canvas over the replay, in device pixels, so it stays crisp at any scale.
 import { inkAt, paint, placer } from './strokes.js';
+import { raise, told, topAt } from './toplayer.js';
 import { Scrubber, clock } from './scrubber.js';
 
 export const SPEEDS = [1, 2, 4];
@@ -51,6 +52,7 @@ export class Player {
     this.playing = false;
     this.speed = SPEEDS[0];
     this.inkEvents = []; // (what the ink needs of the events: snapshots, ink, canvas pictures without their pixels)
+    this.tops = []; // (the recording's top layers as they changed, snapshots without their pages: toplayer.js)
     this.waiting = []; // events come before the replayer is built
     this.reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
     this.build(replay, side);
@@ -149,6 +151,7 @@ export class Player {
     for (const event of events) {
       const light = inkPart(event);
       if (light) this.inkEvents.push(light);
+      if (told(event)) this.tops.push(light ?? event);
     }
     this.inked ||= this.inkEvents.some(e => e.type === CUSTOM);
     if (!events.length) return;
@@ -302,6 +305,7 @@ export class Player {
     if (text !== this.time.textContent) this.time.textContent = text;
     this.follow();
     this.drawInk();
+    if (this.replayer) raise(this.replayer, topAt(this.tops, this.at)); // (what the page showed over everything)
   }
   // The moment the replay is at, marked and kept in view (unless the viewer scrolled the list just now)
   follow() {

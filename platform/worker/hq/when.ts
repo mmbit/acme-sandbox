@@ -42,6 +42,8 @@ type Answer = {
     widen?: Give[];
     seat?: (Trial & { makes: boolean; due: number | null }) | null;
   };
+  // live four times in five with the answer's window: the time to tell the board
+  safe: number | null;
   horizon_days: number;
   played: { plays: number; ms: number };
 };
@@ -90,6 +92,7 @@ export const when = {
     );
     print(sizeLine(found), '');
     print(...(found.by ? byLines(found.by, found.work.engine) : earliestLines(found)), ...unpricedLines(found));
+    print(...safeLines(found));
     print('', ...agreedLines(found));
     print(
       '',
@@ -100,6 +103,19 @@ export const when = {
 
 const past = ({ finish, at: by }: NonNullable<Answer['by']>) =>
   finish === null ? 'with no finish in sight before' : `${duration((finish - by) / 60_000)} past`;
+
+// The time to tell the board, never the "done about" above: that's as likely late as early
+// None while the slow play doesn't finish it within the horizon.
+const safeLines = ({ safe, horizon_days }: Answer) =>
+  safe === null
+    ? [
+        `No time to tell the board: nothing finishes it four times in five within the next ${horizon_days} days. ` +
+          'Give it no time from this, never a "done about".',
+      ]
+    : [
+        `The time to tell the board: live by ${at(safe)}, four times in five. ` +
+          'Any time it hears is this one, never a "done about"; a window you set for it is ours to plan with.',
+      ];
 
 function sizeLine({ work, size }: Answer) {
   const on = size.given

@@ -1,5 +1,5 @@
 // book-check.mjs's story of the Notebook's page on a phone (the seeded Notebook, booknotebook.mjs open): the sent page's
-// scrap with its words, its answer under it, a reply written, a new answer there within seconds
+// scrap with its words, its answer under it, a reply drawn in the room pulled out under it, a new answer there within seconds
 import assert from 'node:assert/strict';
 import { stamp, turnTo } from './booknotebookscreen.mjs';
 import { group, open } from './booknotebook.mjs';
@@ -11,7 +11,7 @@ const SENT = 1;
 // c: book-check.mjs's hqIn, base, settled, shot, noErrorsIn, shots
 export function notebookPhoneStories(c) {
   return {
-    'the Notebook on a phone: the sent page whole, its answer under its scrap, a reply written (kept as another answer comes) and taken back, a new answer there within seconds, ticked':
+    'the Notebook on a phone: the sent page whole, its answer under its scrap, a reply drawn under it in two strokes (kept as another answer comes) sent whole and taken back, a new answer there within seconds, ticked':
       browser => onPhone(browser, c),
   };
 }
@@ -33,26 +33,7 @@ async function onPhone(browser, c) {
     assert.match(await asked.innerText(), /Moss asks[\s\S]*The wave/, "an agent's card under its group");
     await slip.scrollIntoViewIfNeeded();
     await c.shot('notebook-phone-answer', page);
-    const replies = () => group(play, 3).children.filter(r => r.kind === 'reply').length;
-    const had = replies();
-    await slip.locator('.slip-reply').tap();
-    await page.keyboard.type('Lovely: one more in the teal, please');
-    // (another answer comes meanwhile: the reply being written stays, unsent, till it's sent.)
-    const slips = page.locator('#book .bk-under[data-g="3"] .answer-slip'),
-      shown = await slips.count();
-    play.answer(3, { by: 'moss', text: 'Teal is on its way' });
-    await page.waitForTimeout(1500);
-    assert.equal(replies(), had, 'nothing sent while the reply is written');
-    assert.equal(
-      await slip.locator('.slip-reply').inputValue(),
-      'Lovely: one more in the teal, please',
-      'the reply being written kept',
-    );
-    await page.keyboard.press('Enter');
-    await until(() => replies() === had + 1, 'the reply in the store');
-    await until(async () => (await slips.count()) === shown + 1, 'the answer that came meanwhile drawn once it went');
-    const undo = page.locator('#book .bk-unreply').first();
-    await undo.waitFor();
+    const { undo, replies, had } = await drawnReply(page, play, slip);
     await c.shot('notebook-phone-replied', page);
     // (its own click, in its seconds: on a loaded machine a tap waits seconds for frames, and review mode's pin at the
     // foot may be over it till it steps off, dock.js)
@@ -65,11 +46,58 @@ async function onPhone(browser, c) {
   }
 }
 
+// A reply drawn under the slip: no field to type in there, the room pulled out, the reply drawn in it in two strokes
+// with a rest between them (kept, unsent, as another answer comes meanwhile), gone whole with the room's Send and shown
+// under the slip as drawn.
+async function drawnReply(page, play, slip) {
+  const replies = () => group(play, 3).children.filter(r => r.kind === 'reply').length;
+  const had = replies();
+  assert.equal(await slip.locator('textarea, input').count(), 0, 'no field under the answer');
+  await slip.locator('.bk-slip-room-pull').tap();
+  const room = slip.locator('.bk-slip-room-paper');
+  await until(async () => (await room.boundingBox())?.height > 60, 'the room pulled out');
+  await room.scrollIntoViewIfNeeded();
+  const r = await room.boundingBox();
+  await page.mouse.move(r.x + 30, r.y + 30);
+  await page.mouse.down();
+  for (const [dx, dy] of [
+    [60, 20],
+    [110, 50],
+    [70, 70],
+    [30, 30],
+  ])
+    await page.mouse.move(r.x + dx, r.y + dy);
+  await page.mouse.up();
+  // (another answer comes as the pen rests: the reply being drawn stays, unsent, till its Send.)
+  const slips = page.locator('#book .bk-under[data-g="3"] .answer-slip'),
+    shown = await slips.count();
+  play.answer(3, { by: 'moss', text: 'Teal is on its way' });
+  await page.waitForTimeout(1500);
+  assert.equal(replies(), had, 'nothing sent while the pen rests');
+  const wet = room.locator('.bk-reply-wet path');
+  assert.equal(await wet.count(), 1, 'the reply being drawn kept');
+  await page.mouse.move(r.x + 140, r.y + 30);
+  await page.mouse.down();
+  await page.mouse.move(r.x + 170, r.y + 70, { steps: 4 });
+  await page.mouse.up();
+  assert.equal(await wet.count(), 2, 'its second stroke kept with it');
+  await room.locator('.bk-slip-room-send').tap();
+  await until(() => replies() === had + 1, 'the reply in the store');
+  const drawn = page.locator('#book .bk-reply .bk-slip-ink').first();
+  await drawn.waitFor();
+  assert.equal(await drawn.locator('path').count(), 2, 'the reply drawn whole');
+  await until(async () => (await slips.count()) === shown + 1, 'the answer that came meanwhile drawn once it went');
+  const undo = page.locator('#book .bk-unreply').first();
+  await undo.waitFor();
+  await drawn.scrollIntoViewIfNeeded();
+  return { undo, replies, had };
+}
+
 // A new answer from the store under its group within seconds (the store's event, not a read on a timer), with a
-// picture of what was made and its link; its box ticks it
+// picture of what was made and its link; its box ticks it, on the answers' route
 async function answered(page, play, c) {
   const ticks = [];
-  await page.route('**/api/book/slip/tick', r => {
+  await page.route('**/api/notebooks/answers/tick', r => {
     ticks.push(r.request().postDataJSON());
     return r.fulfill({ json: { ok: true } });
   });

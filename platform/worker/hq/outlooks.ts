@@ -21,7 +21,9 @@ type Outlook = {
   slack: number | null;
   standing: 'misses' | 'gives' | 'holds' | null;
   undated: boolean;
+  board: boolean;
   held: number | null;
+  safe: number | null;
   left_ms: number;
   waits: ThreadWait[];
   chain: Link[];
@@ -86,13 +88,12 @@ export async function projects(args: string[]) {
   if (args.length) return printOutlooks(args.join(' '));
   const threads: Line[] = JSON.parse(await api.orStop(api.get('projects'), "Couldn't read the deliverables."));
   if (!threads.length) return print('No open deliverables.');
-  print(
-    ...threads.map(projectLine),
-    ...missLines(threads.filter(t => t.outlook?.standing === 'misses').map(t => t.id)),
-  );
+  print(...threads.map(projectLine), ...missLines(threads.filter(t => boardMisses(t.outlook)).map(t => t.id)));
 }
 
-// What to do about threads that miss their deadlines (deadlines.ts lateLines: on a call only).
+// What to do about threads that miss a time the board set itself (deadlines.ts lateLines: on a call only). A miss of our
+// own time is ours to plan with, never news to the board.
+const boardMisses = (o: Outlook | null) => o?.standing === 'misses' && o.board;
 const missLines = (missing: string[]) => lateLines(missWords(missing.map(text)));
 
 export async function now(args: string[]) {
@@ -123,14 +124,24 @@ function outlookWords(o: Outlook | null, thread: string, said = threadWait) {
   const waits = o.waits.filter(w => w.on !== 'horizon' && w.on !== 'stalled');
   const on = waits.length ? `; waits on ${waits.map(w => said(w, thread)).join(', ')}` : '';
   const window = windowWords(o);
-  return `${eta}, ${duration(o.left_ms / 60_000)} of agent time left${on}${window ? `; ${window}` : ''}`;
+  const safe = safeWords(o);
+  return `${eta}, ${duration(o.left_ms / 60_000)} of agent time left${on}${safe}${window ? `; ${window}` : ''}`;
+}
+
+// The time to tell the board: live four times in five (forecast.ts safe), never the planned finish, which is as likely
+// late as early; none while the slow play doesn't finish it within the horizon.
+function safeWords(o: Outlook) {
+  if (o.eta === null) return '';
+  return o.safe === null
+    ? "; no time to tell the board: nothing finishes it four times in five within the forecast's horizon"
+    : `; the time to tell the board: live by ${at(o.safe)}, four times in five`;
 }
 
 // Its planned finish against its window: by how much it misses the deadline, or what it gives of its aim and the slack
 // left to its deadline.
 function windowWords(o: Outlook) {
   if (o.standing === null) return o.undated ? 'no deadline set' : '';
-  const deadline = `deadline ${at(o.deadline!)}`;
+  const deadline = `deadline ${at(o.deadline!)} (${o.board ? "the board's own time" : 'our own time: a miss is never news to the board'})`;
   if (o.finish === null) return `MISSES its ${deadline}: no finish in sight`;
   const finish = `planned finish ${at(o.finish)}`;
   const minutes = (ms: number) => duration(ms / 60_000);
@@ -151,13 +162,12 @@ export async function thread(id: string) {
   const o = t.outlook;
   print(`${text(t.id)}  ${text(t.name)} (${text(t.owner)}, ${text(t.status)}), done when ${text(t.goal)}`);
   print(t.ready ? readyWords(t, t.ready) : outlookWords(o, t.id));
-  print(...missLines(o?.standing === 'misses' ? [t.id] : []));
+  print(...missLines(boardMisses(o) ? [t.id] : []));
   if (t.pause)
     print(
       `Paused${t.pause.target === t.id ? '' : ` with ${text(t.pause.target)}`} (${text(t.pause.why)}) until ${liftWords(t.pause)}.`,
     );
   if (!o) return;
-  if (o.held && o.eta !== null && o.held > o.eta) print(`by ${at(o.held)} four times in five`);
   if (o.chain.length)
     print(
       `What sets its ETA: ${o.chain
@@ -217,7 +227,7 @@ async function printOutlooks(words: string) {
     }
   }
   const threads = f.projects.flatMap(p => p.threads);
-  print(...missLines(threads.filter(t => t.outlook?.standing === 'misses').map(t => t.name)));
+  print(...missLines(threads.filter(t => boardMisses(t.outlook)).map(t => t.name)));
 }
 
 function namedWaitWords(w: NamedWait, own: string) {

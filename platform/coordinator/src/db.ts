@@ -472,7 +472,7 @@ db.exec('create table if not exists call_jobs (call integer not null, job intege
 db.exec(`create table if not exists call_items (id integer primary key, call integer not null, kind text not null, owner text not null,
   what text not null, quote text not null, lines text, status text not null default 'open', job integer, request integer, ref text,
   why text, replaces integer, ts text not null, closed_at text, by integer, acted_at text, board integer, due integer, goal text,
-  ready_at text, said text)`);
+  ready_at text, said text, due_board integer not null default 0)`);
 // (the open ones and their jobs, which the queue's every read asks for: jobs.ts BOARD_CALL)
 db.exec('create index if not exists call_items_open on call_items (status, job)');
 // The open pull requests' branches, whose jobs carry a board item on until it merges (jobs.ts BOARD_CALL; the statuses
@@ -894,6 +894,8 @@ once('2026-10-26-pause-wakes', () =>
 );
 // A thread's last merge wakes its owner to judge it (threadjudge.ts)
 once('2026-10-26-threads-judge', () => lacks('threads', 'judge') && db.exec('alter table threads add column judge integer'));
+// An item's time the board set itself, not one it was given (ledger.ts add; windows.ts BOARD)
+once('2026-10-31-due-board', () => lacks('call_items', 'due_board') && db.exec('alter table call_items add column due_board integer not null default 0'));
 once('2026-10-30-deadline-from', () => lacks('threads', 'deadline_from') && db.exec('alter table threads add column deadline_from text'));
 db.exec('create index if not exists threads_judge on threads (judge) where judge is not null');
 once('2026-10-24-calls-customers', () => {

@@ -3,13 +3,14 @@
 The board draws with the Pencil on HQ's pages, and each note it draws comes to the line as it lifts the Pencil
 (server.py Call.note: the agent gets it as it gets a shared picture, the page around the note as its picture and the
 note's words in front of the board's). It's for the agent, which makes a scrap of it only if it judges it worth keeping,
-and HQ keeps its ink drawn until the agent's turn on it is done (server.py Call.scribbled; the board, call 161.). The agent asks to see the board's screen (ask_to_see) and draws a ring in its own
-ink on the board's screen (draw), aimed from its picture of that screen: it says where on the picture, and HQ draws the
-ring exactly there, never choosing a target itself (the AI decides, not an algorithm). Both
-tools ask through the line's screen socket, as the sketch tool does, and only on the board's own calls. HQ shows the ask
-as a card with Show and Not now, which blocks nothing, and draws the ring; it answers both on the call's WebSocket
-(server.py app_call: 'asked', 'inked'). A ring only catches the board's eye: it follows what it's on as the board
-scrolls and goes with it, and with the call; it's never kept."""
+and HQ keeps its ink drawn until the agent's turn on it is done (server.py Call.scribbled). The agent asks to see the
+board's screen (ask_to_see) and draws a ring in its own ink on the board's screen (draw), aimed from its picture of that
+screen: it says where on the picture, and HQ draws the ring exactly there, never choosing a target itself (the AI
+decides, not an algorithm). Both tools ask through the line's screen socket, as the sketch tool does, and only on the
+board's own calls. HQ shows the ask as a card with Show and Not now, which blocks nothing (none when the screen is shown
+already: HQ answers for the board), and draws the ring; it answers both on the call's WebSocket (server.py app_call:
+'asked', 'inked'). A ring only catches the board's eye: it follows what it's on as the board scrolls and goes with it,
+and with the call; it's never kept."""
 import itertools
 
 from answers import Answers
@@ -38,10 +39,12 @@ NOTE_WORDS = {
 # What the agent hears about its asks to see the board's screen: the tool's answer, its refusals, and the board's tap,
 # in front of the agent's next turn (or in a turn of its own once the line is quiet)
 ASK_WORDS = {
-    'asked': ('Asked: HQ shows the board your ask to see {what}, with Show and Not now. Carry on talking: their answer '
-              'comes with a later turn.'),
+    'asked': ('Asked: HQ shows the board your ask to see {what}, with Show and Not now (none if their screen is shown '
+              'already). Carry on talking: their answer comes with a later turn.'),
     'show': '(They tapped Show on your ask to see {what}: their screen comes with their turns from now.)',
     'not now': '(They tapped Not now on your ask to see {what}.)',
+    # (HQ answers for the board when its screen was shown already: it saw no card)
+    'already': '(Their screen was shown already as you asked to see {what}: it comes with their turns.)',
     'none': "You can ask to see the screen only on the board's own calls in HQ.",
     'shown': ('Their screen is shown already: it comes with each of their turns, and the screen tool looks closer. '
               'Ask only once they stop showing it.'),
@@ -179,9 +182,10 @@ class Drawing:
         return {'ok': ASK_WORDS['asked'].format(what=what)}
 
     def asked(self, ask_id, answer):
-        """The board tapped Show or Not now on the ask: the agent hears it with its next turn, or in a turn of its own
-        once the line is quiet. An answer to an ask that isn't waiting is let be (HQ's resend of one already had)."""
-        if not self.waiting or self.waiting['id'] != ask_id or answer not in ('show', 'not now'):
+        """The board tapped Show or Not now on the ask, or HQ answered it was shown already: the agent hears it with its
+        next turn, or in a turn of its own once the line is quiet. An answer to an ask that isn't waiting is let be (HQ's
+        resend of one already had)."""
+        if not self.waiting or self.waiting['id'] != ask_id or answer not in ('show', 'not now', 'already'):
             return
         self.answered.append(ASK_WORDS[answer].format(what=self.waiting['what']))
         self.waiting = None

@@ -13,7 +13,13 @@ import { word } from './bookscope.js';
 import { chaptersOf } from './notebookchapters.js';
 import { loadPages } from './notebookdata.js';
 
-const TITLES = { sketch: 'Sketch', asks: 'Asks', calls: 'Calls', guests: 'Guests', advice: 'Advice' };
+const TITLES = {
+  sketch: 'chapterSketch',
+  asks: 'chapterAsks',
+  calls: 'chapterCalls',
+  guests: 'chapterGuests',
+  advice: 'chapterAdvice',
+};
 // circle marks on a 16 px square: nothing yet, some notes, done
 const MARKS = {
   none: '<circle cx="8" cy="8" r="6.5"/>',
@@ -31,7 +37,7 @@ export function mountBookmarks(leaf, pages) {
   const s = { pages, book: null, list: [], notebook: null, asked: 0, timer: 0 };
   leaf.closest('#book').classList.add('bk-marked');
   s.nav = Object.assign(document.createElement('nav'), { className: 'bk-marks' });
-  s.nav.setAttribute('aria-label', word('Chapters'));
+  s.nav.setAttribute('aria-label', word('chapters'));
   s.nav.setAttribute('data-keep-clear', ''); // (a minimised call keeps clear of the tabs.)
   s.panel = Object.assign(document.createElement('div'), { className: 'bk-mk-guests', hidden: true });
   s.blank = Object.assign(document.createElement('div'), { className: 'bk-mk-blank', hidden: true });
@@ -79,19 +85,29 @@ function draw(s) {
   if (!s.book) return;
   const shown = s.pages.page(),
     { round } = s.book;
-  s.nav.innerHTML = chaptersOf(s.book.kind)
-    .filter(c => c !== 'advice' || round?.state === 'done')
-    .map(c => tab(s, c, s.empty ? s.empty.chapter === c : shown?.chapter === c))
-    .join('');
+  drawn(
+    s.nav,
+    chaptersOf(s.book.kind)
+      .filter(c => c !== 'advice' || round?.state === 'done')
+      .map(c => tab(s, c, s.empty ? s.empty.chapter === c : shown?.chapter === c))
+      .join(''),
+  );
   if (!round) return void (s.panel.hidden = true);
-  s.panel.innerHTML = round.guests.length
-    ? round.guests.map(guestLine).join('')
-    : `<p class="bk-mk-empty">${esc(word('No guests yet'))}</p>`;
+  drawn(
+    s.panel,
+    round.guests.length ? round.guests.map(guestLine).join('') : `<p class="bk-mk-empty">${esc(word('noGuests'))}</p>`,
+  );
+}
+// el's markup made html, unless it's that already: the tabs are drawn again whenever anything in the book is shown or
+// hidden (a page saved writes its refusal line's hidden), and a tab made anew between a tap's press and its release
+// loses the tap
+function drawn(el, html) {
+  if (el.html !== html) el.innerHTML = el.html = html;
 }
 function tab(s, chapter, current) {
   const open = chapter === 'asks' ? (s.book.round?.asksOpen ?? s.book.asks?.open ?? 0) : 0;
   const count = open > 0 ? `<b class="bk-mk-count">${open}</b>` : '';
-  const label = count ? `${word('Asks')}, ${word('{n} open', { n: open })}` : word(TITLES[chapter]);
+  const label = count ? `${word('chapterAsks')}, ${word('openCount', { n: open })}` : word(TITLES[chapter]);
   const empty = !firstOf(s, chapter) && chapter !== 'guests';
   return `<button type="button" data-chapter="${chapter}" aria-label="${esc(label)}"${
     current ? ' aria-current="page"' : ''
@@ -126,11 +142,11 @@ function chose(s, line) {
 function guestLine(g) {
   const state = g.done ? 'done' : g.notes > 0 ? 'some' : 'none';
   const said = {
-    done: () => word('done'),
-    some: () => (g.notes === 1 ? word('1 note') : word('{n} notes', { n: g.notes })),
-    none: () => word('nothing yet'),
+    done: () => word('guestDone'),
+    some: () => (g.notes === 1 ? word('guestOneNote') : word('guestNotes', { n: g.notes })),
+    none: () => word('guestNothingYet'),
   }[state]();
-  const name = g.name || word('A guest');
+  const name = g.name || word('aGuest');
   return `<button type="button" class="bk-mk-guest" data-page="${Number(g.page) || ''}" data-name="${esc(name)}">
     <span class="bk-mk-initial" aria-hidden="true">${esc([...name][0].toLocaleUpperCase())}</span>
     <span class="bk-mk-name">${esc(name)}</span>

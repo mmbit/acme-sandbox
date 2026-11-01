@@ -96,12 +96,13 @@ test("A company's tip films are the films and stills in its theme/hq/films, none
 });
 
 test('HQ\'s pages name the company before any script runs: index.html, the manifest, the login page and its logo', async () => {
-  writeFileSync(`${repo}/platform/hq/acme-dark.svg`, '<svg xmlns="http://www.w3.org/2000/svg"/>');
-  writeFileSync(`${repo}/company/brand.yaml`, `name: Acme
+  for (const file of ['acme.svg', 'acme-dark.svg']) writeFileSync(`${repo}/platform/hq/${file}`, '<svg xmlns="http://www.w3.org/2000/svg"/>');
+  const acme = `name: Acme
 names: { hq: Studio }
 app: { title: Acme Studio, description: 'Acme <live>', themeColour: '#102030' }
 logo: { svg: acme.svg, svgDark: acme-dark.svg, alt: Acme }
-`);
+`;
+  writeFileSync(`${repo}/company/brand.yaml`, acme);
   const index = await (await page('/', h.boardCookie)).text();
   assert.match(index, /<meta name="theme-color" content="#102030">/);
   assert.match(index, /<meta name="description" content="Acme &#60;live&#62;">/);
@@ -110,10 +111,12 @@ logo: { svg: acme.svg, svgDark: acme-dark.svg, alt: Acme }
   const manifest = await (await page('/manifest.webmanifest')).json();
   assert.equal(manifest.name, 'Acme Studio');
   assert.equal(manifest.theme_color, '#102030');
-  // (both logos: the light one on a light look's card, the dark on Holo's)
   assert.match(await (await page('/login')).text(),
-    /<h1><img class="day" src="\/acme.svg" alt="Acme"[^>]*><img class="night" src="\/acme-dark.svg" alt="Acme"[^>]*> Studio<\/h1>/);
-  assert.equal((await page('/acme-dark.svg')).status, 200);   // the login page's logo, so it's public
+    /<h1><picture><source srcset="\/acme-dark.svg" media="\(prefers-color-scheme: dark\)"><img src="\/acme.svg" alt="Acme"><\/picture>\s*Studio<\/h1>/);
+  assert.equal((await page('/acme.svg')).status, 200);        // the login page's logos, so they're public
+  assert.equal((await page('/acme-dark.svg')).status, 200);
+  writeFileSync(`${repo}/company/brand.yaml`, `${acme}guest: { dark: false }\n`);   // a guest look that stays light in the dark: the light logo alone
+  assert.match(await (await page('/login')).text(), /<h1><picture><img src="\/acme.svg" alt="Acme"><\/picture>/);
   writeFileSync(`${repo}/company/brand.yaml`, 'logo: { svgDark: api/org }\n');
   assert.equal((await page('/api/org')).status, 401);          // and only a logo is
   writeFileSync(`${repo}/company/brand.yaml`, 'name: [\n');
@@ -135,10 +138,14 @@ test("the brand's colour is the title bar's and the guest page's accent, with re
 
 test("a brand colour that isn't #rrggbb fails HQ's look loudly, naming it, and empties nothing else of brand.yaml", async t => {
   const said = t.mock.method(console, 'error', () => {});
-  writeFileSync(`${repo}/company/brand.yaml`, "name: Acme\ncolour: '#47f'\nmail: { domain: example.com, boardOnly: [board] }\n");
+  writeFileSync(`${repo}/company/brand.yaml`, "name: Acme\ncolour: '#47f'\nlogo: { svg: acme.svg, svgDark: acme-dark.svg, alt: Acme }\nmail: { domain: example.com, boardOnly: [board] }\n");
   assert.equal((await get()).status, 500);
   assert.match(said.mock.calls.map(c => String(c.arguments[0]?.message ?? c.arguments[0])).join('\n'), /company\/brand\.yaml's colour "#47f" isn't #rrggbb/);
-  assert.equal((await page('/login')).status, 200);
+  // the sign-in page still opens, with the guest pages' logo light and dark; its look fails with the colour
+  const login = await page('/login');
+  assert.equal(login.status, 200);
+  assert.match(await login.text(), /<h1><picture><source srcset="\/acme-dark.svg" media="\(prefers-color-scheme: dark\)"><img src="\/acme.svg" alt="Acme"><\/picture>/);
+  assert.equal((await page('/pair/look.css')).status, 500);
   // mail, jobs, care and calls read the file as it is (the board's own mail stays its own: mail.test.ts)
   const { brand, mailDomains } = await import('./company.ts');
   assert.deepEqual(brand().mail.boardOnly, ['board']);

@@ -76,9 +76,14 @@ export const assignGroup = (dev, id, to) => ask(dev, '/api/notebooks/groups/assi
 export const reply = (dev, answer, words) => ask(dev, '/api/notebooks/groups/reply', null, { answer, words });
 export const deleteReply = (dev, id) => ask(dev, '/api/notebooks/replies/delete', null, { id });
 // An agent's desk-phone card under a group answered, through the desk phone's own route: one answer closes both.
-// answers: its questions' (questions.js).
-export const answerAsk = (dev, id, answer, answers) =>
-  ask(dev, '/api/requests/answer', null, { id, answer, secrets: {}, ...(answers && { answers }) });
+// answers: its questions' (questions.js); pictures: the ones uploaded for it to go with the answer (a drawing of the
+// board's: bookasks.js.).
+export const answerAsk = (dev, id, answer, answers, pictures) =>
+  ask(dev, '/api/requests/answer', null, {
+    ...{ id, answer, secrets: {} },
+    ...(answers && { answers }),
+    ...(pictures && { pictures }),
+  });
 
 // A picture for a group on a page: { file, url }
 export async function keepPicture(dev, page, blob) {

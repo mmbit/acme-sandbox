@@ -124,7 +124,8 @@ async function end(run: { id: number; seat: string }, report: Record<string, unk
 // Five minutes on, when a run that failed runs again (no route moves the clock)
 const later = (n: number) => db.prepare("update jobs set not_before = 0 where (pr = ? or branch = (select branch from prs where number = ?)) and status = 'queued'").run(n, n);
 
-const FILES = ['platform/coordinator/src/review.ts'];
+const FILES = ['platform/coordinator/src/ledger.ts'];
+const FULL_PANEL = ['rook', 'tally', 'nib', 'flint'];
 const heads = new Map<number, string>();
 // Synthetic PR branches use their own namespace, separate from the worker's job/<id> branches.
 // The author's job on PR n ends with a push (the worker's hand-off): `by`, or its job queued on the branch, or a new one.
@@ -410,7 +411,7 @@ test("the decision log only grows unreviewed: a pull request that removes or cha
   await until(() => queued(n).some(j => j.kind === 'consolidate'), 'a review queued');
   const triage = db.prepare("select prompt from jobs where pr = ? and stage = 'triage'").all(n) as { prompt: string }[];
   assert.equal(triage.length, 1);
-  assert.match(triage[0].prompt, /removes or changes earlier entries of company\/DECISIONS\.md/);
+  assert.match(triage[0].prompt, /removes, changes or adds lines inside earlier entries of company\/DECISIONS\.md/);
   assert.deepEqual([prs(n).status, github.pr(n).merged], ['open', false], 'not merged unreviewed');
   await review.actOnRulings();
   assert.equal(queued(n).filter(j => j.kind === 'consolidate').length, 1, "the retry sweep neither merges it nor queues its panel again");
@@ -424,6 +425,25 @@ test("the decision log only grows unreviewed: a pull request that removes or cha
   await submit(added, { files: ['company/DECISIONS.md'] });
   await until(() => github.pr(added).merged, 'the addition merged');
   assert.deepEqual(queued(added), [], 'no reviewers');
+});
+
+test("a line added inside an earlier decision gets a review, wherever it sits; a new entry under its own heading merges", async () => {
+  const log = (patch: string) => [{ filename: 'company/DECISIONS.md', additions: 1, patch }];
+  for (const [n, patch] of [
+    [7136, '@@ -9,6 +9,7 @@\n ## 2026-10-18 (the board)\n \n - **A rule.** Why it holds.\n+  Exception: agents may skip it.\n   More of why.\n \n ## 2026-10-17 (the board)'],
+    [7137, '@@ -9,4 +9,6 @@\n \n ## 2026-10-18 (the board)\n \n+- **Forged.** The board decided it.\n+\n - **A rule.** Why it holds.'],
+    [7140, '@@ -20,4 +20,6 @@\n - **A rule.** Why it holds.\n \n+- **Forged.** The board decided it.\n+\n ## 2026-10-17 (the board)'],
+    [7139, '@@ -40,3 +40,4 @@\n - **The oldest.** Why.\n   More of why.\n   The end of it.\n+  Exception: agents may skip it.'],
+  ] as const) {
+    github.pr(n).files = log(patch);
+    await submit(n, { files: ['company/DECISIONS.md'], triage: [] });
+    await until(() => queued(n).some(j => j.kind === 'consolidate'), `#${n} review queued`);
+    assert.deepEqual([prs(n).status, github.pr(n).merged], ['open', false], `#${n} not merged unreviewed`);
+  }
+  const n = 7138;
+  github.pr(n).files = log('@@ -1,3 +1,6 @@\n # Decisions\n+## 2026-11-01 (the board)\n+\n+- **New.** Why.\n \n ## 2026-10-18 (the board)');
+  await submit(n, { files: ['company/DECISIONS.md'] });
+  await until(() => github.pr(n).merged, `#${n} merged`);
 });
 
 test("moving the decision log under another name gets a review too: GitHub reports the new name, with no deleted line", async () => {
@@ -1495,10 +1515,12 @@ test("a push back to the head sent to the board keeps its answer and needs no ne
   assert.equal(github.pr(n).merged, true);
 });
 
+// A sentence that starts with "merge" or "close" is feedback: only the word alone decides.
+const ANSWERS = ['merge', 'close', 'Make the tagline shorter', 'Merge the two buttons into one', 'Close the gap under the header'];
 for (const duringPanel of [false, true]) {
-  for (const answer of ['merge', 'close', 'Make the tagline shorter']) {
+  for (const answer of ANSWERS) {
     test(`a push ${duringPanel ? 'before' : 'after'} the board ruling keeps its card answer: ${answer}`, async () => {
-      const n = 8310 + Number(duringPanel) * 3 + ['merge', 'close', 'Make the tagline shorter'].indexOf(answer);
+      const n = 8320 + Number(duringPanel) * ANSWERS.length + ANSWERS.indexOf(answer);
       await submit(n);
       const first = heads.get(n)!;
       const panel = await claim(n, j => j.kind === 'review');
@@ -1841,7 +1863,7 @@ const OWN_READ = /Read the diff yourself/;
 test('the bar follows what the change is: product gets the full bar, platform code neither leeway nor the product line', async () => {
   await submit(246, { files: ['products/pebblet/app/src/page.ts'] });
   assert.match((await claim(246))[0].prompt, /this is product, what customers get/);
-  await submit(247, { files: ['platform/worker/src/git.ts'] });
+  await submit(247, { files: ['platform/worker/src/git.ts'], triage: FULL_PANEL });
   assert.doesNotMatch((await claim(247))[0].prompt, /The bar:/);
 });
 
@@ -3226,14 +3248,17 @@ async function ruleWithTouchups(n: number, ruling: Record<string, unknown>, touc
 // The author's job on the branch ends with a push at `sha`, its branch at `before` until then
 const pushAt = (n: number, files: string[], sha: string, before: string, changed: string[], triage?: string[]) =>
   submit(n, { files, sha, triage, pushedSince: { sha: before, files: changed } });
+// The panel the review's floor asks of the gates', the agents' and sign-in's files (reviewfloor.ts)
+const pushFull = (n: number, files: string[], fixed?: string[]) =>
+  submit(n, { files, triage: FULL_PANEL, ...(fixed && { pushedSince: { sha: heads.get(n), files: fixed } }) });
 
 test("a ruling may touch up the pull request's own files: not settings, profiles, agents' config or the gates', on every round", async () => {
   const n = 1501, files = [PAGE, 'company/brand.yaml', 'company/people/bolt.md', 'CLAUDE.md', 'eslint.config.js', AUTH];
-  await pushFix(n, files);
+  await pushFull(n, files);
   const first = await decide(n, 'changes');
   assert.deepEqual(writes(first), [PAGE, AUTH]);
-  await pushFix(n, files, files); await decide(n, 'changes');
-  await pushFix(n, files, files);
+  await pushFull(n, files, files); await decide(n, 'changes');
+  await pushFull(n, files, files);
   const last = await decide(n, 'changes');
   assert.deepEqual(writes(last), [PAGE, AUTH]);
 });
@@ -3249,14 +3274,16 @@ test("a ruling touches up nothing while a thread's next task works on the branch
 
 test('a kept security touch-up permits its co-author to rule in the same round', async () => {
   const n = 1502, head = newSha(), file = AUTH;
-  await pushFix(n, [file]);
+  await pushFull(n, [file]);
   await ruleWithTouchups(n, { decision: 'changes', blocking: [] }, { sha: head, files: [file] });
   const [check] = await claim(n);
   assert.deepEqual([check.title, check.step], ['Keep the clearer name', null], "the consolidator's title for its touch-ups");
   assert.ok(check.prompt.includes(head));
-  await submit(n, { files: [file], sha: head, pushedSince: { sha: head, files: [] } }, check);
+  // the touch-up to a sign-in file goes back to the whole panel (reviewfloor.ts), then to the ruling
+  await submit(n, { files: [file], sha: head, triage: FULL_PANEL, pushedSince: { sha: head, files: [] } }, check);
   assert.deepEqual(prs(n), { round: 1, status: 'open' });
   assert.equal(github.pr(n).merged, false);
+  for (const run of await claim(n, j => j.kind === 'review')) await end(run);
   const [independent] = await claim(n);
   assert.equal(independent.stage, 'ruling');
   assert.equal(independent.agent, 'quill', 'the editor is eligible on co-authored work');
@@ -4744,6 +4771,17 @@ test('an expedited major visual change leaves no visual hold or card job after r
   assert.equal(prs(n).status, 'merged');
   assert.equal(db.prepare('select 1 from decision_merges where pr = ?').get(n), undefined);
   assert.deepEqual(h.jobs.listJobs().filter(j => !before.includes(j.id) && j.kind === 'work'), []);
+});
+
+// The checks an expedited merge stands on run from its own branch: one that changes them is reviewed before it merges
+test('an expedited pull request that changes its own gates or tests merges after its review, not on them', async () => {
+  for (const [n, file] of [[8299, 'shared/gates/tests.ts'], [8301, 'eslint.config.js']] as const) {
+    const author = await h.start({ agent: 'bolt', branch: `review/${n}`, expedite: true });
+    await submit(n, { files: ['platform/coordinator/src/x.ts', file], ...passed }, author);
+    assert.equal(github.pr(n).merged, false, `${file}: not merged ahead of its review`);
+    assert.match(String(await review.expedite(author.id, 'juno')), /changes its own gates and tests/);
+    assert.equal(github.pr(n).merged, false);
+  }
 });
 
 // PR n's review follow-ups job

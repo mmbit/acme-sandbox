@@ -1,6 +1,6 @@
 // A guest's shelf (Ink 1.1, the deck's Guests chapter): one book per project they have something in, its first page the
 // work shared with them from it, and their own journal for anything loose. One place to come back to: every guest has
-// one link of their own (shelfLink), the same for every share, which the board's Share sends; signed in once, with a
+// one link of their own (notebookmembers.ts shelfLink), the same for every share, which the board's Share sends; signed in once, with a
 // passkey after, it opens their shelf (/guest/notebooks/).
 //   - A share of a piece of work (shares.ts) is a lasting guest's or a review round's; each person on it has their own
 //     page in its notebook (notebookreviews.ts), where the notes they pin on the work land, and asks for them wait.
@@ -14,10 +14,11 @@ import { ownerOf } from './owed.ts';
 import { timeZone } from './company.ts';
 import { makeNotebook, changed } from './notebook.ts';
 import { BOARD } from './ink/book.ts';
-import { addMember, forGuest, whoOf, type Membership } from './notebookguests.ts';
+import { addMember } from './notebookguests.ts';
+import { forGuest, whoOf, type Membership } from './notebookmembers.ts';
 
-// The guest's one link, as the board's Share sends it: their door on the guest desk, opening their shelf
-export const shelfLink = (name: string) => guests.doorLink(`shelf:${name.toLowerCase()}`).url;
+// The guest's one link (notebookmembers.ts shelfLink), as the board's Share sends it: their door on the guest desk,
+// opening their shelf
 const doorWords = {
   en: { title: 'Your shelf', text: 'Everything we share with you, one book per project.', button: 'Open your shelf' },
   nl: {
@@ -116,7 +117,6 @@ const asksFor = (m: Membership) =>
 // them, with no work linked
 function makeJournal(name: string) {
   const id = makeNotebook(BOARD, 'invited', name);
-  db.prepare('insert into notebook_colleagues (notebook, allowed) values (?, 0)').run(id);
   addMember(id, name, null);
   changed(id, null);
   return forGuest(name).find(m => m.notebook === id)!;

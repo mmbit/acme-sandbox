@@ -534,10 +534,10 @@ test('an answer clips onto its note, a tick closes it, and writing under it is a
   await h.finish(job);
   await h.finish(other);
 
-  const ticked = (await h.board('/api/book/slip/tick', { id: slip.id, ticked: true })).body;
+  const ticked = (await h.board('/api/notebooks/answers/tick', { id: slip.id, ticked: true })).body;
   assert.equal(ticked.note.status, 'closed');
-  assert.ok(ticked.slip.ticked);
-  assert.equal((await h.board('/api/book/slip/tick', { id: slip.id, ticked: false })).body.note.status, 'sent');
+  assert.ok(ticked.answer.ticked);
+  assert.equal((await h.board('/api/notebooks/answers/tick', { id: slip.id, ticked: false })).body.note.status, 'sent');
   const reply = (await h.board('/api/book/slip/reply', { id: slip.id, words: 'And the week before?' })).body;
   assert.equal(reply.sheet.owner, 'kit');
   assert.equal(reply.note.answers, slip.id);

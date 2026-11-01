@@ -122,7 +122,6 @@ async function watch(state, board, notebook) {
     await board.locator(`#book .bk-tile[data-book="${notebook.id}"] .bk-tile-open`).click();
   }
   await board.waitForFunction(name => document.querySelector('.bi-watch h1')?.textContent === name, notebook.name);
-  assert.equal(await board.locator('.bi-watch .ng-compose').isVisible(), false);
 }
 const stopWatching = async board => {
   await board.locator('dialog.bi-dialog [data-close]').click();
@@ -342,8 +341,8 @@ async function languageStory(state, job, [lang, name, intro, open, label]) {
   await drawNote(state, page, book.pages[0].id);
   await selectionAndPrefs(page);
   await sendPage(page);
-  // the shell's own words in theirs: Send's toast, and below an agent's name marked as an AI's and the reply prompt
-  const toastWords = await named(page, '<b>Sent.</b> It goes in 10 seconds: tap to undo');
+  // the shell's own words in theirs: Send's toast, and below an agent's name marked as an AI's and the room to answer in
+  const toastWords = await named(page, 'sentToast');
   await until(page, '#toasts .toast', new RegExp(RegExp.escape(toastWords.replace(/<\/?b>/g, ''))));
   await page.waitForFunction(() => document.querySelectorAll('#book .bk-page').length === 2);
   await untitledPage(page);

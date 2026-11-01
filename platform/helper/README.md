@@ -39,6 +39,12 @@ package installation, stay on the lent machine, and return the command's exit co
    code. Then it kills every process of the runs' user and removes all it left (below). `hq run` prints the output,
    unpacks the files into the tree and exits with the run's code (124 past its limit).
 
+
+The immutable bundle download and the result uploads share the existing HQ recovery window. A broken connection,
+including a response cut off after its headers, repeats that transfer while the same attempt keeps beating. The
+helper starts the command only after the complete bundle arrives. It does not re-take the run or repeat its command.
+HQ’s temporary 503 response uses that same window. Other HTTP refusals and transfer timeouts still fail.
+
 **The fastest machine first.** Machines differ a lot, so each helper times a short fixed piece of integer work as it
 starts (the same code everywhere, a fraction of a second on a recent core). HQ keeps a machine's **speed** for each
 kind: that timing on one core times the cores the kind's runs get there. A lent machine's helper takes a waiting run of

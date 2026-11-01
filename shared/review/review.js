@@ -17,6 +17,9 @@
   // Their notes become scraps on their review page, drawn in their own colour (INK, #rrggbb).
   const THEIRS = '{{INK}}',
     INK = outside && /^#[0-9a-f]{6}$/i.test(THEIRS) ? THEIRS : null;
+  // ...and the address of their page in the Notebook, which their caption links back to
+  const THEIR_PAGE = '{{BACK}}',
+    BACK = outside && THEIR_PAGE ? THEIR_PAGE : null;
   if (window.__reviewMode || (framed && window.parent !== window.top)) return;
   window.__reviewMode = true;
   // its notes go next to the script: /<slug>/__review/ for a shelf on the front's preview door (infra/products.py)
@@ -59,6 +62,7 @@
     OUTSIDE,
     outside,
     INK,
+    BACK,
     ROUTE,
     summoned,
     book,

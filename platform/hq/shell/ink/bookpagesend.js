@@ -123,7 +123,7 @@ export async function sendShown(book, hooks) {
   keep(book.steps, s => s.page !== page);
   book.steps.push(step);
   went(book, page, answer);
-  toast(word('<b>Sent.</b> It goes in 10 seconds: tap to undo'), () => {
+  toast(word('sentToast'), () => {
     if (book.steps.includes(step)) keep(book.steps, s => s !== step);
     step.undo();
   });
@@ -174,8 +174,8 @@ export function stamped(book, page, fresh = false, el = book.views.find(x => x.p
   node.classList.toggle('bk-stamp-wet', !page.sent);
   if (!fresh && node.firstChild && node.dataset.when === when) return;
   node.dataset.when = when;
-  const label = time ? word('Sent {time}', { time }) : word('Sent');
-  const words = `${word('Sent').toLocaleUpperCase()} ${when}`.trim(),
+  const label = time ? word('sentAt', { time }) : word('sent');
+  const words = `${word('sent').toLocaleUpperCase()} ${when}`.trim(),
     w = 30 + words.length * 15;
   node.innerHTML = `<svg viewBox="0 0 ${w} 48" width="${Math.round((w * 38) / 48)}" height="38" role="img" aria-label="${esc(label)}"><rect x="2" y="2" width="${w - 4}" height="44" rx="7"/><text x="${w / 2}" y="32" text-anchor="middle">${esc(words)}</text></svg>`;
   node.classList.add('bk-stamped');

@@ -10,6 +10,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 process.env.DATA_DIR = mkdtempSync(`${tmpdir()}/plan-test-`);
 const { threadOutlooks, standing, undrawnWords } = await import('./forecast.ts');
+const { heldTo } = await import('./predictions.ts');
 const MINUTE = 60_000;
 const work = (id: number, extra: Partial<QueuedJob> = {}): QueuedJob => ({
   id,
@@ -439,6 +440,23 @@ test('a windowed thread with no task drawn misses its window, and a thread it ne
   assert.equal(undrawnWords(ui), 'it needs project/bare, with no task drawn: nobody is building it');
   assert.deepEqual([needed.eta, needed.finish, standing(needed)], [null, null, null]);
   assert.equal(undrawnWords(needed), 'no task drawn: nobody is building it');
+});
+
+test("a slow play that doesn't merge within the horizon leaves no time to tell the board, for the job and its thread", () => {
+  const input = snapshot([work(1, { thread: 'project/thread' }), work(2, { thread: 'project/thread' })]);
+  const sized = sizes([
+      [1, 10],
+      [2, 10],
+    ]),
+    usual = play(input, sized);
+  const slow = new Map([...usual].map(([id, o]) => [id, id === 2 ? { ...o, merged: null } : o]));
+  assert.ok(usual.get(2)!.merged !== null);
+  assert.equal(heldTo(usual.get(2)!, slow.get(2)!), null, 'never the usual play merge');
+  const thread = threadOutlooks(input, usual, slow, sized).get('project/thread')!;
+  assert.ok(thread.eta !== null);
+  assert.deepEqual([thread.held, thread.safe], [null, null]);
+  const both = threadOutlooks(input, usual, usual, sized).get('project/thread')!;
+  assert.equal(both.safe, both.held! + input.deployLagMs);
 });
 
 test('a thread with no task drawn and no window at stake keeps its placeholder finish', () => {

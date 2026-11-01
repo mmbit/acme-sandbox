@@ -287,12 +287,20 @@ test("the helper its setup command starts, on the key its key command saved, tak
   await h.finish(job);
 });
 
-test('a helper whose output and files reach HQ while it restarts sends them again, and the run is done where it ran', async t => {
+test('an interrupted bundle or upload keeps the same attempt and completes the command once', async t => {
   await lendNone();
   const job = await h.start({ agent: 'bolt' });
-  // HQ restarting: the connection of each upload's first try dropped, as the coordinator is recreated
+  // Cut the bundle after headers and one byte, then return a temporary 503. Drop each upload's first connection.
   const dropped: string[] = [];
+  const attempts = new Set<string>();
   const proxy = createServer((req, res) => {
+    const attempt = /^\/api\/helper\/runs\/([^/]+)\//.exec(req.url!)?.[1];
+    if (attempt) attempts.add(attempt);
+    if (req.url!.endsWith('/bundle') && dropped.includes('bundle') && !dropped.includes('unavailable')) {
+      dropped.push('unavailable');
+      res.writeHead(503);
+      return res.end();
+    }
     const upload = req.method === 'POST' && /\/(output|finish)$/.exec(req.url!)?.[1];
     if (upload && !dropped.includes(upload)) {
       dropped.push(upload);
@@ -300,6 +308,15 @@ test('a helper whose output and files reach HQ while it restarts sends them agai
     }
     const onward = request(`${h.base}${req.url}`, { method: req.method, headers: req.headers }, answer => {
       res.writeHead(answer.statusCode!, answer.headers);
+      if (req.url!.endsWith('/bundle') && !dropped.includes('bundle')) {
+        dropped.push('bundle');
+        answer.once('data', chunk => {
+          res.write(chunk.subarray(0, 1));
+          setTimeout(() => res.destroy(), 10);
+          answer.destroy();
+        });
+        return;
+      }
       answer.pipe(res);
     });
     req.pipe(onward);
@@ -310,8 +327,10 @@ test('a helper whose output and files reach HQ while it restarts sends them agai
   const ran = await hqIn(`${jobTree()}/sim`, job, 'run', '--', 'sh', '-c', 'echo ran once');
   assert.equal(ran.code, 0, ran.out);
   assert.match(ran.out, /ran once/);
-  assert.deepEqual(dropped, ['output', 'finish']);
+  assert.deepEqual(dropped, ['bundle', 'unavailable', 'output', 'finish']);
   assert.equal(stateOf(lastRun()), 'done');
+  assert.equal(attempts.size, 1, 'all transfers and beats stay with the same attempt');
+  assert.equal(ran.out.match(/ran once/g)?.length, 1);
   await h.finish(job);
 });
 

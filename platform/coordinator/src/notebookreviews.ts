@@ -7,17 +7,9 @@ import { syncReviewer } from './notebookguests.ts';
 import { BOARD } from './ink/book.ts';
 import { ownerOf } from './owed.ts';
 import { companyTime } from './company.ts';
-export function reviewAccess(m: { notebook: number; guest: string }) {
-  const linked = db.prepare('select share from notebook_reviews where notebook = ?').get(m.notebook) as
-    { share: number } | undefined;
-  if (!linked) return true;
-  const share = shares.byId(linked.share)!;
-  return (
-    shares.isOpen(share) &&
-    shares.people(share.id).some(person => shares.onIt(person) && person.guest.toLowerCase() === m.guest.toLowerCase())
-  );
-}
-db.exec('create table if not exists notebook_reviews (share integer primary key, notebook integer not null unique)');
+import { onShareChange } from './feedback.ts';
+
+onShareChange(syncReviewNotebook);
 
 // Reviews owns the round's invitation and expiry. Its notebook is made once, at the first invite. A lasting share's is
 // an invited notebook, no round: it never closes, and each guest's page in it is theirs for good.

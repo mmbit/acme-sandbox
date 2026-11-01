@@ -48,7 +48,7 @@ const tipsFor = ({ phone, intercom }) => [
     when: 'the first artifact comes in',
     title: 'Your first artifact is in: share it for notes',
     lines: () =>
-      'Invite anyone to leave notes on it, each on a link of their own. Each person writes on their own page in the round notebook on your Shelf; their notes reach the team when they send it.',
+      'Invite anyone to leave notes on it, each on a link of their own. Each person writes on their own page in the round notebook on your Shelf. Their notes reach the team when they send it.',
     opens: { app: 'artifacts' },
     steps: [
       { at: '#tool .applist a.open', say: 'Open your artifact' },

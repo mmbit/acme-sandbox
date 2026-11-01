@@ -457,6 +457,22 @@ test("the CEO's summary names a thread whose planned finish is past its deadline
     new RegExp(`^deliverable ${due} \\(.*\\): finish .*, .* past its deadline .*, set by kit\\. Held by: `),
   );
   assert.match(line, /Judge the slip: why, and what to change to meet the deadline/);
+  // a time we gave is ours: the board hears nothing of its slip; one the board set is told once, then it's ours
+  assert.match(
+    line,
+    /It's our own time, not the board's: plan with it; the board hears nothing of it, no card and no correction\./,
+  );
+  windows.set(
+    windows.threadOf({ thread: due }) as any,
+    { deadline: T + 10 * MINUTE, aim: T + 10 * MINUTE },
+    windows.BOARD,
+  );
+  const [boards] = threats.lines(forecast.refresh(T)).filter(l => l.includes(due));
+  assert.match(boards, /, set by the board\. Held by: /);
+  assert.match(
+    boards,
+    /It's the board's own time: when nothing brings the finish back, tell it once, with the time live four in five/,
+  );
   windows.set(windows.threadOf({ thread: due }) as any, { deadline: T + 10 * HOUR, aim: T + 10 * HOUR }, 'juno');
   assert.deepEqual(
     threats.lines(forecast.refresh(T)).filter(l => l.includes(due)),
@@ -545,7 +561,7 @@ test("hq window --try saves nothing: the thread's row, the latest forecast and t
   assert.match(
     cli.out,
     new RegExp(
-      `^Tried ${second}: deadline .* UTC, aim .* UTC\\.\nNothing was saved\\.\n(Moves The shop's Shop work \\d+ by [-+].*\\.\n){2}Misses The shop's Shop work \\d+: deadline .* UTC, planned finish .* UTC\\.\n$`,
+      `^Tried ${second}: deadline .* UTC, aim .* UTC, our own time: its misses are ours to plan with, never news to the board\\.\nNothing was saved\\.\n(Moves The shop's Shop work \\d+ by [-+].*\\.\n){2}Misses The shop's Shop work \\d+: deadline .* UTC, planned finish .* UTC\\.\n$`,
     ),
   );
   assert.deepEqual(thread(second), row);

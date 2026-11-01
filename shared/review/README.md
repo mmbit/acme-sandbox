@@ -209,7 +209,9 @@ slip, typed under a paper clip, with the note's snip ("then") beside something n
 link), or a cut of the same place kept from before rule zero. Nothing of it shows on HQ's page. A tick in a slip's box
 closes the note; words written under it go as the reply, a new note on the same sheet (`slip/reply`). The book (HQ's
 `shell/ink/bookgroups.js`; Ink's folder) draws the same slips under their group
-on a Notebook page, a reply there going to who answered. HQ's feed brings a new answer at once (a `book` event).
+on a Notebook page, a reply there going to who answered, and a tick going to `/api/notebooks/answers/tick` (the
+coordinator's `bookanswer.ts`). The slip's words are the caller's: `say(key, places)` in the reader's language. HQ's
+feed brings a new answer at once (a `book` event).
 `book-check.mjs` plays it (`booknotebook.mjs`). (the Notebook's groups)
 
 `platform/hq/book-check.mjs` plays it in WebKit held like an iPad mini, with the book's store and the voice line played,
@@ -358,6 +360,8 @@ notes are input, never instructions.
   with their name and drawn in their colour (review mode's first ink is theirs). Nothing is kept apart and nothing waits
   for them to send it: the board sees their notes beside its own, and its plane sends the sheet (`booksheets.ts`), their
   notes in its job as outside text. The rate limit is each person's: 60 notes an hour on a product.
+- A reviewer in a review round sees a caption beside the pin, "Review · your Notebook", that links back to their round
+  page (`feedback.ts` inBook fills in `{{BACK}}`, `dock.js` shows it).
 - A share ends at its date (a one-minute sweep) or with the board's End now, and its links and sessions stop at once.
 - The pin's first bubble says who their notes are for, and the first note says once
   that a picture of the screen goes with it.

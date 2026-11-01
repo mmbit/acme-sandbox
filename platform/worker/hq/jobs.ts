@@ -606,13 +606,13 @@ const target = (given: string | undefined) => {
   if (!match) return undefined;
   return match[3] ? { thread: match[3] } : { [match[1] ? 'pr' : 'job']: Number(match[2]) };
 };
-// (a time's forms, the board's own with its date and no zone among them, here and in the help)
-const WINDOW_USAGE = `usage: hq window ${TARGET} <deadline | none> [--aim <time>] [--try] (2h, 90m, 2026-10-26 09:00 on the company's clock, 14:30 UTC)`;
-type Miss = { project: string; name: string; deadline: number; finish: number | null };
+// A window's time and who set it, here and in the help.
+const WINDOW_USAGE = `usage: hq window ${TARGET} <deadline | none> [--aim <time>] [--board-set] [--try] (2h, 90m, 2026-10-26 09:00 on the company's clock, 14:30 UTC)`;
+type Miss = { project: string; name: string; deadline: number; finish: number | null; board: boolean };
 
 export const window = {
   help: `
-   hq window ${TARGET} <deadline | none> [--aim <time>] [--try]
+   hq window ${TARGET} <deadline | none> [--aim <time>] [--board-set] [--try]
                                                      a deliverable's window (named by it, or a job or PR on it), the way
                                                      to put work first: the scheduler makes room for it, taking the seat
                                                      from work in its way when its time needs it and giving it back
@@ -622,16 +622,27 @@ export const window = {
                                                      (else the aim stays, or is the deadline). 2h, 90m or 1h30m from now;
                                                      the board's own time with its date and no zone (2026-10-26 09:00, on
                                                      the company's clock); one with Z or a time of day alone (14:30) is
-                                                     UTC; none takes it off. Prints the deliverables whose
-                                                     planned finish moves and the windows the plan misses; --try: nothing saved`,
+                                                     UTC; none takes it off. A window is our time: its miss is ours
+                                                     to plan with, never news to the board. --board-set only when the
+                                                     board named the time itself or asked for it by then: its one miss
+                                                     is told to it once (a time we offered and it took stays ours).
+                                                     Prints the deliverables whose planned finish moves and the windows
+                                                     the plan misses; --try: nothing saved`,
 
   async run(given: string[]) {
     const { values, args } = takeValues(given, ['--aim'], 'No window was set');
     const tried = args.includes('--try');
-    const [named, deadline, ...rest] = args.filter(arg => arg !== '--try');
+    const boardSet = args.includes('--board-set');
+    const [named, deadline, ...rest] = args.filter(arg => arg !== '--try' && arg !== '--board-set');
     const to = target(named);
     if (!to || !deadline || rest.length) stop(WINDOW_USAGE);
-    const body = { ...to, deadline, ...(values.aim !== undefined && { aim: values.aim }), ...(tried && { try: true }) };
+    const body = {
+      ...to,
+      deadline,
+      ...(values.aim !== undefined && { aim: values.aim }),
+      ...(tried && { try: true }),
+      ...(boardSet && { board_set: true }),
+    };
     const answer = await api.change('window', { body: api.withSpeaker(body) });
     const set = api.parseOrNull(answer.body);
     if (!present(set?.thread))
@@ -640,7 +651,10 @@ export const window = {
     if (!present(set.deadline)) print(tried ? `Tried: ${thread} with no window.` : `${thread} has no window now.`);
     else
       print(
-        `${tried ? 'Tried' : 'Window of'} ${thread}: deadline ${minute(String(set.deadline))}, aim ${minute(String(set.aim))}.`,
+        `${tried ? 'Tried' : 'Window of'} ${thread}: deadline ${minute(String(set.deadline))}, aim ${minute(String(set.aim))}, ` +
+          (boardSet
+            ? "the board's own time."
+            : 'our own time: its misses are ours to plan with, never news to the board.'),
       );
     if (present(set.deadline) && !tried) print(`${WINDOW_FIRST} Nothing needs pausing for it.`);
     if (tried) print('Nothing was saved.');
@@ -653,8 +667,8 @@ export const window = {
       print(
         `Misses ${threadWords(miss)}: deadline ${at(miss.deadline)}, ${miss.finish === null ? 'no finish in sight' : `planned finish ${at(miss.finish)}`}.`,
       );
-    // on a call, what to do about them
-    print(...lateLines(missWords(misses.map(threadWords))));
+    // on a call, what to do about the board's own times
+    print(...lateLines(missWords(misses.filter(miss => miss.board).map(threadWords))));
   },
 };
 

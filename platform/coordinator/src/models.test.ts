@@ -188,7 +188,7 @@ test("a Codex reviewer's security read is made again on Codex's own CLI, whateve
   const review = await import('./review.ts');
   assert.equal((await pick('nib', 'mistral-medium-3.5')).status, 200);
   try {
-    review.startReview(9702, 'job/9702', 'bolt', ['platform/coordinator/src/review.ts'], 'c'.repeat(40));
+    review.startReview(9702, 'job/9702', 'bolt', ['platform/coordinator/src/ledger.ts'], 'c'.repeat(40));
     await completeTriage(h, 9702, ['nib'], null, ['nib']);
     const read = h.db.prepare("select id from jobs where pr = 9702 and kind = 'review'").get() as { id: number };
     assert.equal(jobOf(read.id).cli, 'codex', 'made for Codex, not Vibe');

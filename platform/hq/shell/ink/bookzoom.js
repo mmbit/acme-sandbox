@@ -6,6 +6,7 @@
 // overview (only its button and the keys do: bookpages.js). To and from the Shelf, the view zooms instead (bookflip.js),
 // into the notebook's own tile there and back out to it.
 import { mountScreens } from './bookshelf.js';
+import { scope } from './bookscope.js';
 
 // the views, nearest first: the page itself (bookpages.js), the notebook's pages, the Shelf
 const LEVELS = ['page', 'pages', 'shelf'];
@@ -24,7 +25,7 @@ const WHEEL_STEP = 50,
 // midway, dir, at): the same swap with the view zooming out (dir -1) or in (dir 1), at() the notebook's tile on the
 // Shelf it zooms round. changed(level): the overview opened,
 // stepped or closed.
-export function mountZoom(paper, { desk, dev, notebook, page, saved, open, turn, zoom, changed, scope = null }) {
+export function mountZoom(paper, { desk, dev, notebook, page, saved, open, turn, zoom, changed }) {
   const far = document.createElement('div');
   far.className = 'bk-far';
   far.hidden = true;
@@ -44,7 +45,6 @@ export function mountZoom(paper, { desk, dev, notebook, page, saved, open, turn,
   Object.assign(z, { touches: new Map(), wheel: 0, rest: 0 });
   z.screens = mountScreens(far, {
     dev,
-    scope,
     current: notebook,
     page,
     saved,

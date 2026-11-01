@@ -207,7 +207,7 @@ test('the recorded triage decision chooses the readers, independent of paths or 
 
 test('triage rejects a panel that leaves part of its assigned diff unread', async () => {
   const pr = 102,
-    checkout = 'kits/payments/checkout.ts',
+    checkout = 'kits/shop/checkout.ts',
     readme = 'README.md';
   await push(pr, sha(), { files: [checkout, readme] });
   const first = await finish(pr, 'triage', selection([{ ...reader('rook'), files: [readme] }]));
@@ -233,6 +233,120 @@ test('triage rejects a panel that leaves part of its assigned diff unread', asyn
   const entry = JSON.parse(report.split('\n').find(line => line.startsWith('{') && JSON.parse(line).pr === pr)!);
   assert.deepEqual(entry, { job: first.id, pr, round: 1, stage: 'triage', reason });
   assert.ok(!reviewrefusals.report(db, Date.now() + 86_400_001).includes(reason), 'only the last day is listed');
+});
+
+test("the review's floor refuses the consolidator alone, throwaway work and a thin panel on the server and instructions", async () => {
+  const pr = 1867,
+    sync = 'infra/sync.sh',
+    agents = 'AGENTS.md';
+  await push(pr, sha(), { files: [sync, agents] });
+  const queued = pending(pr).find(job => job.stage === 'triage')!;
+  const { prompt } = db.prepare('select prompt from jobs where id = ?').get(queued.id) as { prompt: string };
+  assert.match(
+    prompt,
+    /The review's floor: name at least 2 Claude and 2 Codex readers for infra\/sync\.sh; 1 Claude and 1 Codex reader for AGENTS\.md/,
+  );
+  const run = await h.claim(queued.engine, { seat: `${queued.engine}-1` });
+  const check = async (output: object) =>
+    (await h.agent('review-output', run!.token, { output: JSON.stringify(output) })).body.error;
+  const of = (paths: string[]) => (agent: string) => ({ ...reader(agent), files: paths });
+  const both = of([sync, agents]);
+  const floor = "the review's floor (infra/sync.sh, AGENTS.md)";
+  assert.equal(await check(selection([])), `${floor} needs its own readers, not the consolidator alone`);
+  const light = { ...selection([{ ...both('nib'), security: true }]), throwaway: true };
+  assert.equal(await check(light), `${floor} is never throwaway work`);
+  const thinSync =
+    "the review's floor needs at least 2 Claude and 2 Codex readers given infra/sync.sh among their files";
+  assert.equal(await check(selection([both('rook'), both('nib')])), thinSync);
+  const elsewhere = selection([...['rook', 'tally', 'nib'].map(both), { ...reader('flint'), files: ['README.md'] }]);
+  assert.equal(await check(elsewhere), thinSync, "a reader of none of its files doesn't count");
+  const aside = selection([...['rook', 'tally', 'nib'].map(both), of([agents])('flint')]);
+  assert.equal(await check(aside), thinSync, "a reader of the instructions doesn't count for the server");
+  const split = selection([of([sync])('rook'), of([agents])('tally'), of([sync])('nib'), of([agents])('flint')]);
+  assert.equal(await check(split), thinSync, 'a split panel gives the server one reader of each engine');
+  const serverOnly = selection(['rook', 'tally', 'nib', 'flint'].map(of([sync])));
+  assert.equal(
+    await check(serverOnly),
+    "the review's floor needs at least 1 Claude and 1 Codex reader given AGENTS.md among their files",
+    "the server's readers don't count for the instructions",
+  );
+  const full = selection(['rook', 'tally', 'nib', 'flint'].map(both));
+  assert.equal(await check(full), null);
+  await h.finish(run!, { output: JSON.stringify(full) });
+  await until(() => readers(pr).length === 4, 'the full panel dispatches');
+});
+
+test("the review's floor holds what decides a merge and the gates' root config", async () => {
+  const gated = [
+    'platform/coordinator/src/boardmerges.ts',
+    'platform/coordinator/src/panel.ts',
+    'platform/coordinator/src/panelcapacity.ts',
+    'platform/coordinator/src/rulingjobs.ts',
+    'platform/coordinator/src/findings.ts',
+    'platform/coordinator/src/trust.ts',
+    'platform/coordinator/src/decisions.ts',
+    'platform/coordinator/src/visualapproval.ts',
+    'platform/coordinator/src/github.ts',
+    'eslint.config.js',
+    'tsconfig.json',
+    'package.json',
+  ];
+  for (const [i, file] of gated.entries()) {
+    const pr = 1870 + i;
+    await push(pr, sha(), { files: [file] });
+    const run = await h.claimJob(pending(pr).find(job => job.stage === 'triage')!.id);
+    const check = async (output: object) =>
+      (await h.agent('review-output', run.token, { output: JSON.stringify(output) })).body.error;
+    const on = (agent: string) => ({ ...reader(agent), files: [file] });
+    const floor = `the review's floor (${file})`;
+    assert.equal(await check(selection([])), `${floor} needs its own readers, not the consolidator alone`, file);
+    const light = { ...selection([{ ...on('nib'), security: true }]), throwaway: true };
+    assert.equal(await check(light), `${floor} is never throwaway work`, file);
+    const full = selection(['rook', 'tally', 'nib', 'flint'].map(on));
+    assert.equal(await check(full), null, file);
+    await h.finish(run, { output: JSON.stringify(full) });
+  }
+});
+
+test("the review's floor asks one reader of each engine for the charter, and goes by what a path is", async () => {
+  const pr = 1868,
+    charter = 'company/CHARTER.md';
+  await push(pr, sha(), { files: [charter] });
+  const queued = pending(pr).find(job => job.stage === 'triage')!;
+  const run = await h.claim(queued.engine, { seat: `${queued.engine}-1` });
+  const check = async (output: object) =>
+    (await h.agent('review-output', run!.token, { output: JSON.stringify(output) })).body.error;
+  const on = (agent: string) => ({ ...reader(agent), files: [charter] });
+  const thin = selection([on('rook'), on('tally')]);
+  assert.equal(
+    await check(thin),
+    `the review's floor needs at least 1 Claude and 1 Codex reader given ${charter} among their files`,
+  );
+  await h.finish(run!, { output: JSON.stringify(selection([on('rook'), on('nib')])) });
+  await until(() => readers(pr).length === 2, 'one reader of each engine dispatches');
+  const floor = await import('./reviewfloor.ts');
+  const needed = (path: string, fixRound = false, eligible = (_agent: string) => true) =>
+    floor.needed([path], fixRound, eligible)[0]?.readers;
+  assert.deepEqual(
+    floor.needed(['knowledge/notes/payments.md', 'platform/coordinator/src/authors.ts', files[0]], false, () => true),
+    [],
+  );
+  assert.deepEqual(needed('platform/coordinator/src/reviewtriage.ts'), { claude: 2, codex: 2 });
+  assert.deepEqual(needed('.claude/settings.json'), { claude: 2, codex: 2 });
+  assert.deepEqual(needed('CLAUDE.local.md'), { claude: 1, codex: 1 });
+  assert.deepEqual(needed('shared/gates/gates.ts', true), { claude: 2, codex: 1 }, "a fix round's 2 + 1");
+  assert.deepEqual(needed('kits/payments/basket.ts', true), { claude: 2, codex: 2 }, 'fixes to payments keep 2 + 2');
+  assert.deepEqual(
+    floor.needed(['kits/payments/basket.ts', 'infra/sync.sh'], true, () => true).map(({ readers }) => readers.codex),
+    [2, 1],
+    'each file its own floor on a fix round',
+  );
+  assert.equal(needed('platform/coordinator/src/merged.ts'), undefined, 'sizing merged work decides no merge');
+  assert.deepEqual(
+    needed('infra/sync.sh', false, agent => agent !== 'flint'),
+    { claude: 2, codex: 1 },
+    'the staff there is',
+  );
 });
 
 test('the looker follows visual files moved by engine constraints, and each reader keeps their lens', async () => {

@@ -121,6 +121,9 @@ export const people = (id: number) =>
 const person = (id: number, name: string) =>
   db.prepare('select * from review_share_people where share = ? and guest = ?').get(id, name) as Person | undefined;
 export const onIt = (p: Person) => !p.removed;
+// The person whose door this is (their own link)
+export const personAt = (link: string) =>
+  db.prepare('select * from review_share_people where link = ?').get(link) as Person | undefined;
 // Everyone the board shared with in the last REMEMBER_DAYS, counted from their latest share, the latest first: HQ's box
 // offers them again (feedback.ts listPeople). Their names only, from the shares themselves.
 const REMEMBER_DAYS = 21;
@@ -661,7 +664,7 @@ const TALK = {
   de: (agent: string) => `Sprich es mit ${agent} durch`,
 };
 guests.addDoor(link => {
-  const p = db.prepare('select * from review_share_people where link = ?').get(link) as Person | undefined;
+  const p = personAt(link);
   const s = p && byId(p.share);
   if (!p || !s) return undefined;
   return {

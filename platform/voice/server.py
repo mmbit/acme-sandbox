@@ -168,6 +168,16 @@ SKETCH_WORDS = {
 # words before then keep the call open. HQ hangs up as its own button does (or the line ends the call itself after
 # HANG_UP_WAIT_SECONDS).
 HANG_UP_TOOL = 'mcp__hq__hang_up'
+# What the agent hears when the board calls back into a call that dropped (a page left or reloaded, the connection
+# lost) within HOLD: with its next words, or in a turn of its own once the line is quiet.
+BACK_WORDS = ("(The call dropped out on the board's side just now, and they've called back into it: this is the same "
+              'call. What you said as it dropped may not have reached them. Welcome them back.)')
+# The marks the transcript puts after a reply the board talked over or the session cut short; a page that calls back
+# shows the reply without them (Call.said_so_far).
+INTERRUPTED = ' (interrupted)'
+CUT_OFF = ' (cut off)'
+AGENT_STOPPED = ' (cut off: the call agent stopped)'
+CUT_MARKS = (INTERRUPTED, CUT_OFF, AGENT_STOPPED)
 GOODBYE_QUIET_SECONDS = 1.5
 HANG_UP_WAIT_SECONDS = 5.0
 # after the hang-up tone, so the hang-up doesn't cut it (browser start delay, Bluetooth lag)
@@ -1195,8 +1205,9 @@ class Call:
         self.screen_key = ''  # the session's key on the line's screen socket (SCREENS)
         # The board drawing on its HQ call (drawing.py): its notes go with the
         # pictures above (note), with entries of their own ('note'), and the agent's asks and rings wait here. On the
-        # last screen-turn the screen was on (screen['on']); away: HQ's connection dropped and it hasn't come back yet.
-        self.screen['on'], self.away = False, False
+        # last screen-turn the screen was on (screen['on']); away: HQ's connection dropped and it hasn't come back yet;
+        # back: the board called back into the call, which the agent hasn't heard yet (came_back)
+        self.screen['on'], self.away, self.back = False, False, False
         self.drawing = Drawing(self)
         # The agent driving a piece of work on the board's screen (driving.py)
         self.driving = Driving(self)
@@ -1358,7 +1369,7 @@ class Call:
             self.noticed = None
             await self.send_event({'type': 'notice', 'text': ''})
         if said and not turn['back']:
-            self.write(f'{self.agent.capitalize()}: {said}' + (' (interrupted)' if stop.is_set() else ''), self.heard_at(turn))
+            self.write(f'{self.agent.capitalize()}: {said}' + (INTERRUPTED if stop.is_set() else ''), self.heard_at(turn))
         self.keep()
         if not stop.is_set():
             await self.send_event({'type': 'state', 'state': 'listening'})
@@ -1390,7 +1401,7 @@ class Call:
         words = self.brain.opening
         print(f'call: {self.agent} said the opening on call out {self.callout}', flush=True)
         await self.say(words, stop, turn)
-        self.write(f'{self.agent.capitalize()}: {words}' + (' (interrupted)' if stop.is_set() else ''), self.heard_at(turn))
+        self.write(f'{self.agent.capitalize()}: {words}' + (INTERRUPTED if stop.is_set() else ''), self.heard_at(turn))
         self.keep()
         answered = f' They picked up and said: "{greeting}"' if greeting else ' They picked up'
         over = ', and they talked over it' if stop.is_set() else ''
@@ -1416,7 +1427,7 @@ class Call:
                 await self.say(words[lang][key], stop, turn, lang, keep=True)
                 if not stop.is_set():  # (its audio goes out ahead of playback: heard whole once that has played)
                     turn['ends'][(lang, key)] = self.until
-        cut = ' (interrupted)' if stop.is_set() else ''
+        cut = INTERRUPTED if stop.is_set() else ''
         self.write(f'{self.agent.capitalize()}: ' + ' '.join(said) + cut)
         if not stop.is_set():
             await self.send_event({'type': 'state', 'state': 'listening'})
@@ -1474,7 +1485,7 @@ class Call:
                     if not stop.is_set():
                         turn['ends'][(lang, key)] = self.until
             self.write(f'{self.agent.capitalize()}: ' + ' '.join(self.brain.words[lang][key] for lang, key in missed)
-                       + (' (interrupted)' if stop.is_set() else ''))
+                       + (INTERRUPTED if stop.is_set() else ''))
         while not stop.is_set() and not self.ended and self.wiring.monotonic() < self.until:  # (heard: played out)
             await asyncio.sleep(0.05)
         if stop.is_set() or self.ended or missing():
@@ -1774,6 +1785,33 @@ class Call:
         pings from when it was said, so it reads as late and the answer waits for all of it (behind, owed)."""
         self.until, self.away = 0, False  # (away)
 
+    # (a page that left mid-call calls back into it)
+    def came_back(self):
+        """The board called back into this call after it dropped (its page reloaded or left): the transcript says so, and
+        the agent hears it with its next turn (BACK_WORDS). HQ's new page counts its timeline from now."""
+        self.back, self.live_at = True, None
+        self.write(f'({self.them} dropped out of the call and called back in.)')
+        self.nudge()
+
+    def said_so_far(self):
+        """The call's words so far, for the screen of a page that called back into it: whose ('board' or 'agent') and
+        what, without the line's notes in brackets. The board's side is everyone the line heard, as HQ showed it live:
+        the board's lines without its name, another voice's with theirs (heard_lines). A reply the board talked over or
+        the session cut short shows as far as it was said, without the line's mark (CUT_MARKS)."""
+        agent, them = f'{self.agent.capitalize()}: ', f'{self.them}: '
+        said = []
+        for line in self.lines:
+            who, text = ('agent', line[len(agent):]) if line.startswith(agent) else ('board', line.removeprefix(them))
+            if text.startswith('('):
+                continue
+            if who == 'agent':
+                for mark in CUT_MARKS:
+                    if text.endswith(mark):
+                        text = text.removesuffix(mark)
+                        break
+            said.append({'who': who, 'text': text})
+        return said
+
     # ---- pictures the board shares on HQ's call screen
     async def show(self, picture_id):
         """A picture the board just shared: fetched from the coordinator, it waits for the board's next words. HQ hears
@@ -1881,7 +1919,7 @@ class Call:
 
     def answers(self):
         """Whether the board has answered the agent's asks or suggestions since its last turn (drawing.py, driving.py.)."""
-        return bool(self.drawing.answered or self.driving.answered)
+        return bool(self.back or self.drawing.answered or self.driving.answered)
 
     def idle(self):
         """Nothing going on. The board's words count until it has been quiet for a second: its last words may still be
@@ -2157,7 +2195,8 @@ class Call:
         # (driving)
         ask = '\n\n'.join(filter(None, ('\n'.join(map(note_said, notes)), ask)))
         # (and the reminder to title the call's page: callnotes.py.)
-        answered = '\n'.join(filter(None, (self.drawing.told(), self.driving.told(), self.page.told(),
+        back, self.back = BACK_WORDS if self.back else '', False
+        answered = '\n'.join(filter(None, (back, self.drawing.told(), self.driving.told(), self.page.told(),
                                             self.voices and self.voices.told())))
         delivered = False  # the model has the message: its first request started
         earlier = self.lines[:turn['n']]  # (the call so far, for a fresh session: this message goes as its own)
@@ -2241,7 +2280,7 @@ class Call:
                         await self.restart(earlier, pictures, resent=pictures)
                         continue
                     if said.strip() and not turn['back']:
-                        self.write(f'{self.agent.capitalize()}: {said.strip()} (cut off)', self.heard_at(turn))
+                        self.write(f'{self.agent.capitalize()}: {said.strip()}' + CUT_OFF, self.heard_at(turn))
                     buf, said = '', ''
                     if not stop.is_set():
                         await self.unanswered(err.why, err.until, stop, turn)
@@ -2250,7 +2289,7 @@ class Call:
             step['on'] = False
             turn['bye'] = False
             if said.strip() and not turn['back']:  # what the board already heard stays in the transcript, marked
-                self.write(f'{self.agent.capitalize()}: {said.strip()} (cut off: the call agent stopped)', self.heard_at(turn))
+                self.write(f'{self.agent.capitalize()}: {said.strip()}' + AGENT_STOPPED, self.heard_at(turn))
             buf, said = '', ''
             # (not renewed: the line said why, and the turn ends as any does)
             renewed = await self.renew('the reply', err, stop, turn, shown)
@@ -2586,7 +2625,8 @@ def hand_over(file, hq):
 
 # ---- HQ's call screen: JSON events and 16 kHz PCM16 frames both ways ----
 # A call outlives its connection: when the phone switches networks, the app reconnects to the same call (its id)
-# within HOLD seconds and carries on. Hanging up says so ('bye'); otherwise the call ends once HOLD runs out.
+# within HOLD seconds and carries on, and a page that reloaded or left calls back into it ('back': came_back). Hanging
+# up says so ('bye'); otherwise the call ends once HOLD runs out.
 HOLD = 30
 CALLS = {}  # call id -> {'call', 'line', 'timer'}
 
@@ -2709,7 +2749,9 @@ async def app_call(ws, make_call=Call, wiring=Wiring()):
             asyncio.create_task(old.close())
         call, line = e['call'], e['line']
         call.reconnected()
-        print(f'call: {call.agent} reconnected', flush=True)
+        if first.get('back') is True:  # (the board called again: HQ's page is a new one)
+            call.came_back()
+        print(f'call: {call.agent} {"called back in" if first.get("back") is True else "reconnected"}', flush=True)
     else:
         t0 = time.monotonic()
         agent, lang = re.sub(r'[^a-z0-9-]', '', str(first.get('agent') or '')), language(first.get('lang'))
@@ -2748,7 +2790,10 @@ async def app_call(ws, make_call=Call, wiring=Wiring()):
     bye = False
     # (from the id on: HQ may hang up while the line rang, and the call must be ended or held then as at any drop)
     try:
-        await ws.send(json.dumps({'type': 'call', 'id': cid, 'call': call.brain.call, 'key': call.brain.key, 'heard': call.got}))
+        picked_up = {'type': 'call', 'id': cid, 'call': call.brain.call, 'key': call.brain.key, 'heard': call.got}
+        if first.get('back') is True:
+            picked_up['said'] = call.said_so_far()
+        await ws.send(json.dumps(picked_up))
         await call.retell()  # (what happened to its pictures while HQ was away)
         if not first.get('resume'):
             await call.greet()

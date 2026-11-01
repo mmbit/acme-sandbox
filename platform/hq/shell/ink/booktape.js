@@ -104,7 +104,7 @@ function held(tape) {
 function offerPaste(tape, [x, y]) {
   tape.bubble?.remove();
   const box = tape.paper.getBoundingClientRect();
-  const bubble = Object.assign(document.createElement('button'), { className: 'bk-paste', textContent: word('Paste') });
+  const bubble = Object.assign(document.createElement('button'), { className: 'bk-paste', textContent: word('paste') });
   Object.assign(bubble.style, { left: `${x - box.left}px`, top: `${y - box.top}px` });
   tape.paper.append((tape.bubble = bubble));
   sfx.tick();

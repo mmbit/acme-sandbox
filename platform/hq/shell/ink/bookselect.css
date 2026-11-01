@@ -65,7 +65,7 @@
   border-radius: 50%;
   background: #fff;
   box-shadow:
-    0 0 0 1.5px var(--bk-ink, #2a2352),
+    0 0 0 1.5px var(--bk-ink),
     0 2px 5px rgb(42 35 82 / 30%);
   pointer-events: auto;
   translate: -50% -50%;
@@ -109,7 +109,7 @@
 }
 
 /* ---- the bar: Cut, Copy, Duplicate, Delete under the frame (over it when the paper has no room under it), in more rows
-   when the paper is narrower than it (bookselect.js framed) */
+   when the paper is narrower than it (bookselect.js framed), a panel of the look's (bookui.css.) */
 .bk-sel-bar {
   position: absolute;
   z-index: 7;
@@ -119,9 +119,10 @@
   width: max-content;
   gap: 2px;
   padding: 4px;
-  border-radius: 12px;
-  background: var(--bk-paper, #fffaf0);
-  box-shadow: var(--bk-lift, 0 6px 20px rgb(42 35 82 / 22%));
+  border: var(--bk-ui-border);
+  border-radius: var(--r-lg, 12px);
+  background: var(--bk-ui-bg);
+  box-shadow: var(--shadow-sm, var(--bk-lift));
   white-space: nowrap;
   transform-origin: 0 0;
   transform: scale(calc(1 / var(--bk-scale, 1))) translate(-50%, 16px);
@@ -139,14 +140,16 @@
   height: 34px;
   padding: 0 12px;
   background: transparent;
+  border: 0;
   box-shadow: none;
-  color: var(--bk-ink, #2a2352);
+  color: var(--bk-ui-ink);
   font-weight: 600;
 }
 @media (hover: hover) {
   .bk-sel-bar .bk-btn.bk-text:hover {
-    background: var(--bk-ink-soft, rgb(42 35 82 / 8%));
-    color: var(--bk-ink, #2a2352);
+    background: var(--bk-ui-wash);
+    color: var(--bk-ui-ink);
+    filter: none;
   }
 }
 

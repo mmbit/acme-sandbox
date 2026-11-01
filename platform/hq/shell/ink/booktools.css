@@ -90,7 +90,7 @@
   padding: 1em;
 }
 /* the keys a Pencil has no keyboard for (delete a letter, a space), under its right end while it's typed in, their
-   size on screen at any zoom. */
+   size on screen at any zoom, on an island of the look's (bookui.css.) */
 .bk-typed-keys {
   position: absolute;
   top: 100%;
@@ -99,9 +99,10 @@
   gap: 2px;
   padding: 2px;
   margin-top: 6px;
-  border-radius: 11px;
-  background: var(--bk-paper, #fffaf0);
-  box-shadow: var(--bk-lift, 0 6px 20px rgb(42 35 82 / 22%));
+  border: var(--bk-ui-border);
+  border-radius: var(--r-lg, 11px);
+  background: var(--bk-ui-bg);
+  box-shadow: var(--shadow-sm, var(--bk-lift));
   transform-origin: 100% 0;
   scale: calc(1 / var(--bk-scale, 1));
 }

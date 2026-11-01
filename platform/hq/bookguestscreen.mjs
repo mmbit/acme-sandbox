@@ -3,10 +3,10 @@ import assert from 'node:assert/strict';
 import { until } from '../../shared/browser/browser.mjs';
 import { pen } from './booknotebookscreen.mjs';
 import { until as waitFor } from './bookkit.mjs';
-import { shell } from './shell/ink/notebookshellwords.js';
+import { words } from './shell/ink/notebookwords.js';
 
-// A control of the book by its English name, as the guest's page says it (notebookshellwords.js)
-export const named = async (page, en) => shell[await page.locator('html').getAttribute('lang')]?.[en] ?? en;
+// A control of the book by its key in the guest words, as the guest's page says it
+export const named = async (page, key) => words[await page.locator('html').getAttribute('lang')][key];
 
 export async function readyNotebook(page) {
   await page.locator('#book .bk-desk').waitFor({ state: 'attached' });
@@ -20,7 +20,7 @@ export async function readyNotebook(page) {
 export async function addNote(page, words) {
   await page
     .locator('#book')
-    .getByRole('button', { name: await named(page, 'Text'), exact: true })
+    .getByRole('button', { name: await named(page, 'toolText'), exact: true })
     .click();
   const [x, y] = await pointOnPaper(page, 0.3, 0.3);
   await page.mouse.click(x, y);
@@ -52,7 +52,7 @@ export async function firstPage(page) {
 export async function drawNote(state, page, pageId) {
   await page
     .locator('#book')
-    .getByRole('button', { name: await named(page, 'Pen'), exact: true })
+    .getByRole('button', { name: await named(page, 'toolPen'), exact: true })
     .click();
   // (under what's written: the page is as tall as what's on it, so a point down the paper can land on the typed note.
   const below = await underWords(page);
@@ -103,22 +103,22 @@ const underWords = page =>
 // The select tool's bar round the lassoed note and lines, and the cog's card, in the guest's words
 export async function selectionAndPrefs(page) {
   const book = page.locator('#book');
-  await book.getByRole('button', { name: await named(page, 'Select'), exact: true }).click();
+  await book.getByRole('button', { name: await named(page, 'toolSelect'), exact: true }).click();
   const [from, to] = await aroundUnits(page);
   await page.mouse.move(...from);
   await page.mouse.down();
   await page.mouse.move(...to, { steps: 12 });
   await page.mouse.up();
-  const bar = page.getByRole('toolbar', { name: await named(page, 'Selection'), exact: true });
+  const bar = page.getByRole('toolbar', { name: await named(page, 'selection'), exact: true });
   await bar.waitFor();
-  const acts = await Promise.all(['Cut', 'Copy', 'Duplicate', 'Delete'].map(en => named(page, en)));
+  const acts = await Promise.all(['cut', 'copy', 'duplicate', 'delete'].map(key => named(page, key)));
   assert.deepEqual(await bar.locator('button:not([hidden])').allInnerTexts(), acts);
   await page.keyboard.press('Escape');
-  const cog = await named(page, 'Preferences on this device');
+  const cog = await named(page, 'preferences');
   await book.getByRole('button', { name: cog, exact: true }).click();
   const card = await page.getByRole('dialog', { name: cog, exact: true }).innerText();
-  for (const en of ['On this device', 'When pen is active, touch always pans', 'Voice note hold time', 'Short', 'Long'])
-    assert.ok(card.includes(await named(page, en)), `${en} in ${card}`);
+  for (const key of ['onThisDevice', 'penPans', 'voiceHold', 'holdShort', 'holdLong'])
+    assert.ok(card.includes(await named(page, key)), `${key} in ${card}`);
   await page.keyboard.press('Escape');
 }
 
@@ -137,16 +137,16 @@ const aroundUnits = page =>
 
 // The new page after a send, untitled: its name in the bar and the pages menu, and the title field, in the guest's words
 export async function untitledPage(page) {
-  const untitled = await named(page, 'Untitled page');
+  const untitled = await named(page, 'untitledPage');
   // (the rail's page button shows where it is, its name is in its label.)
   await page.waitForFunction(
     name => document.querySelector('#book .bk-where')?.getAttribute('aria-label').includes(name),
     untitled,
   );
   await page.locator('#book .bk-where').click();
-  const field = page.getByRole('textbox', { name: await named(page, 'Page title'), exact: true });
+  const field = page.getByRole('textbox', { name: await named(page, 'pageTitle'), exact: true });
   assert.equal(await field.getAttribute('placeholder'), untitled);
-  await page.getByRole('menu', { name: await named(page, 'Pages'), exact: true }).waitFor();
+  await page.getByRole('menu', { name: await named(page, 'pages'), exact: true }).waitFor();
   assert.ok((await page.locator('#book .bk-pages-menu').innerText()).includes(untitled));
   await field.press('Escape');
 }

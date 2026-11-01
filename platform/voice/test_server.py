@@ -2753,6 +2753,39 @@ class Restart(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events[0]['type'], 'call')
         self.assertEqual([e for e in events if e['type'] == 'picture'], [{'type': 'picture', 'id': 17, 'state': 'failed', 'why': 'lost'}])
 
+    async def test_a_board_that_calls_back_into_a_dropped_call_rejoins_it_and_the_agent_hears_so(self):
+        """A page that reloaded or left mid-call calls the same agent again within HOLD: HQ's new page is shown the
+        transcript so far, and the agent hears the board dropped out and is back with its next turn."""
+        self.procs = [Proc(['Nice shop.', 'Welcome back.'])]
+        call = self.call(lambda e: line.send(json.dumps(e)))
+        line = server.Line(Socket([]))
+        await call.start()
+        await call.answer('This is the shop.', None)
+        # (another voice in the room is the board's side under its name; a reply talked over has no mark)
+        call.write('Voice 2: Hi there.')
+        call.write('Board: (shared picture #3 on screen)')
+        call.write(f'{call.agent.capitalize()}: Hello' + server.INTERRUPTED)
+        line.ws.closed = True  # (the page reloaded)
+        call.away, call.live_at = True, 1.0
+        server.CALLS['c1'] = {'call': call, 'line': line, 'timer': None}
+        back = Socket([json.dumps({'resume': 'c1', 'back': True})])
+        try:
+            await server.app_call(back)
+            picked_up = json.loads(back.sent[0])
+            self.assertEqual(picked_up['said'], [{'who': 'board', 'text': 'This is the shop.'},
+                                                 {'who': 'agent', 'text': 'Nice shop.'},
+                                                 {'who': 'board', 'text': 'Voice 2: Hi there.'},
+                                                 {'who': 'agent', 'text': 'Hello'}])
+            self.assertIn('(Board dropped out of the call and called back in.)', call.lines)
+            await call.answer('Sorry, I dropped.', None)
+            told = self.started[0].heard_messages[1]['content'][-1]['text']
+            self.assertTrue(told.startswith(server.BACK_WORDS), told)
+            self.assertFalse(call.back, 'heard once')
+        finally:
+            if timer := server.CALLS.pop('c1')['timer']:
+                timer.cancel()
+            call.end()
+
     async def picked_up(self, call):
         """Once the line has picked up and the agent's hello (Call.hello) has gone out."""
         for _ in range(300):
@@ -3899,6 +3932,11 @@ class BoardDrawing(Juno):
         await self.quiet_turn()  # (nothing said: its own turn once the line is quiet)
         self.assertEqual(self.brain.asked[1:], ['(They tapped Not now on your ask to see the basket.)'])
         self.assertEqual(self.told('ask'), [{'id': 1, 'what': "the pricing page"}, {'id': 2, 'what': 'the basket'}])
+        # (shown by the board's own key before the line heard it: HQ shows no card and answers for it)
+        self.assertIn('ok', await self.call.drawing.ask_tool({'ask_to_see': 'the cart'}))
+        self.call.drawing.asked(3, 'already')
+        await self.quiet_turn()
+        self.assertEqual(self.brain.asked[2:], ['(Their screen was shown already as you asked to see the cart: it comes with their turns.)'])
 
     async def test_no_ask_while_the_screen_is_shown_or_hq_is_away(self):
         self.screen_on = True

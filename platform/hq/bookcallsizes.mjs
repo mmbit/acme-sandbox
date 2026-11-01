@@ -156,7 +156,9 @@ async function pickedUp(p) {
 // A call whose notes page couldn't be opened, drawn on: hung up, its page (in no notebook) is offered to throw away,
 // and one tap does (calldraw.js pageCard)
 async function thrownAway(p, c, { name, shot, clear }) {
-  await p.route(`${c.base}/api/notebooks/call`, r => r.abort('failed'));
+  await p.route(`${c.base}/api/notebooks/call`, r =>
+    r.fulfill({ status: 404, json: { error: 'no live call of yours by that number' } }),
+  );
   const mark = { id: 9001, day: '2026-10-31', kind: 'call', call: 9, notebook: null, strokes: 1, pictures: 0 },
     deleted = [];
   await p.route(`${c.base}/api/book`, r =>

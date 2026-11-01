@@ -196,8 +196,9 @@ function signIn(s) {
   if (si.status !== 'open') return Date.now() - si.at < SAID_MS ? said('done', `✓ ${si.words || 'Signed in.'}`) : '';
   const claude = (s.cli ?? s.engine) === 'claude';
   const link = /^https:\/\//.test(si.url ?? '') ? `<a class="seat-link" href="${esc(si.url)}" target="_blank" rel="noopener">Open the sign-in page ↗</a>` : '';
-  if (si.asks === 'nothing') return `<div class="seat-signin">${link}<p>Type this code there:</p><b class="seat-code">${esc(si.code)}</b>${said('moving', 'Waiting for you')}</div>`;
-  return `<div class="seat-signin">${claude ? '<p>Use an account no other seat uses.</p>' : ''}${link}
+  // (a sign-in's link and code never in a call's recording: shared/watchalong.)
+  if (si.asks === 'nothing') return `<div class="seat-signin" data-watchalong-hide>${link}<p>Type this code there:</p><b class="seat-code">${esc(si.code)}</b>${said('moving', 'Waiting for you')}</div>`;
+  return `<div class="seat-signin" data-watchalong-hide>${claude ? '<p>Use an account no other seat uses.</p>' : ''}${link}
     <form class="seat-inline" data-code-form><label>Code from the page<input name="code-${id}" data-keep autocomplete="off" autocapitalize="off" spellcheck="false"></label><button class="cta"${ui.sending.has(s.id) ? ' disabled' : ''}>Send</button></form>
     ${claude ? '<p class="dim">Blank page? Sign in at claude.ai first.</p>' : ''}</div>`;
 }

@@ -7,7 +7,7 @@
 //   - The line says when the agent's turn on a note is done, or that it couldn't take it ({ type: 'note', id, state:
 //     'done' or 'failed' }): its ink goes from the screen (review mode's callnotes.js, 'call:had'), so the board
 //     circles afresh. Nothing the Pencil draws on a call goes into the notebook by itself: the agent makes a scrap of
-//     what it judges worth keeping (the board, call 161.)
+//     what it judges worth keeping.
 //   - The agent asks to see something by name: a card with Show and Not now, no countdown, blocking nothing, until it's
 //     tapped. Show starts the watch-along as Show my screen does.
 //   - The agent's ink comes down the call's own socket ({ type: 'ink', at }): a ring where it aimed on its picture of the
@@ -21,9 +21,9 @@
 //   - A walk-through (a card's Walk me through it) has the call's notes page as any call does, one page a call.
 //   - The call's notes page (the coordinator's ink/callnotes.ts) is open from pickup: the book turns to it if it's open,
 //     with a page brought by its folded corner on it first (bookshare.js), and the agent's scraps land there one by
-//     one (asked twice at pickup, and a card says so if it couldn't be opened). The first to land opens the book there,
-//     beside HQ's page, on a screen wider than it is tall (booklayout.js initial). On one taller than it is wide (an
-//     upright phone or iPad, half a split screen) it stays shut. Hung up, the
+//     one (asked at pickup, and again while the call is on until the store is reached; a card says so if it couldn't be
+//     opened). The first to land opens the book there, beside HQ's page, on a screen wider than it is tall (booklayout.js
+//     initial). On one taller than it is wide (an upright phone or iPad, half a split screen) it stays shut. Hung up, the
 //     page goes in as it is and stays in My journal, and nothing on it goes to anyone (its call's follow-up hands it
 //     out), so the book offers no Send on it (bookcontrols.js). (opens)
 import { esc } from '../../util.js';
@@ -38,6 +38,9 @@ const $ = s => document.querySelector(s);
 const event = (name, detail = null) => document.dispatchEvent(new CustomEvent(name, { detail }));
 // How long a hang-up waits for the mark still settling to go into the book
 const FILED_WAIT_MS = 10_000;
+// The notes page asked for again a second later, then a second more each time, at most every 5 s
+const ASK_AGAIN_MS = 1000,
+  ASK_AGAIN_MOST_MS = 5000;
 
 // From pickup: the Pencil hears the call is on, and the call hears the Pencil
 export function startDrawing(c) {
@@ -95,12 +98,12 @@ function openOnFirstNote(c) {
   return () => document.removeEventListener('book:notebook', heard);
 }
 // The call's notes page, made as the call is picked up (with the page brought to it, c.brought), and the book turned to
-// it if it's open. Asked once more if the network dropped the ask; one the store still can't make, the board hears of
-// on a card.
+// it if it's open. Asked again while the call is on if the store wasn't reached: an ask the network dropped, or the
+// proxy's 503 while the coordinator is away. Any other failure, the board hears of on a card.
 async function notesPage(c) {
   const ask = () => post('/api/notebooks/call', { call: c.call, ...(c.brought ? { page: c.brought } : {}) });
   try {
-    const r = await ask().catch(ask);
+    const r = await reached(ask, c);
     if (!r.ok) throw new Error(`the store answered ${r.status}`);
     const { page, notebook } = await r.json();
     c.notesPage = { id: page.id, notebook };
@@ -109,6 +112,19 @@ async function notesPage(c) {
   } catch (err) {
     console.error('[hq] the call’s notes page wasn’t opened:', err);
     if (!c.over) notesCard(c);
+  }
+}
+// An ask's answer once the store is reached, asked again a second later, then a second more each time, at most every
+// 5 s, until the call is over: then the last answer, or the network's error
+async function reached(ask, c) {
+  for (let tries = 1; ; tries++) {
+    try {
+      const r = await ask();
+      if (r.status !== 503 || c.over) return r;
+    } catch (err) {
+      if (c.over) throw err;
+    }
+    await new Promise(go => setTimeout(go, Math.min(ASK_AGAIN_MS * tries, ASK_AGAIN_MOST_MS)));
   }
 }
 // Whether the call's agent has a note on the page (a group of its own: a scrap or its typed words)
@@ -153,18 +169,24 @@ export const FROM_LINE = {
   },
 };
 
-// ---- the agent's ask to see: one card at a time, the newest, until it's tapped
-function askCard(c, ev) {
+// ---- the agent's ask to see: one card at a time, the newest, until it's tapped. With the screen shown already (or a
+// start the board pressed itself coming up) there's no card: the line hears it was shown, and the pictures keep
+// coming.
+async function askCard(c, ev) {
   if (c.asked?.id === ev.id) return; // (sent again on a new connection)
   c.asked = { id: ev.id };
-  const card = cardOf(c, 'ask');
-  card.innerHTML = `<p>${esc(c.name)} asks to see <b>${esc(ev.what ?? 'your screen')}</b></p>
-    <div class="row"><button type="button" data-show>Show</button><button type="button" data-not>Not now</button></div>`;
+  let card = null;
   const answer = word => {
-    card.remove();
+    card?.remove();
     if (c.asked?.id === ev.id) c.asked = null;
     c.ws?.send(JSON.stringify({ type: 'asked', id: ev.id, answer: word }));
   };
+  if (c.watchStarting) await c.watchStarting;
+  if (c.over || c.asked?.id !== ev.id) return;
+  if (shown(c)) return answer('already');
+  card = cardOf(c, 'ask');
+  card.innerHTML = `<p>${esc(c.name)} asks to see <b>${esc(ev.what ?? 'your screen')}</b></p>
+    <div class="row"><button type="button" data-show>Show</button><button type="button" data-not>Not now</button></div>`;
   // (a share that doesn't start leaves the ask waiting, the card saying so: the agent hears Show only once it's shown)
   // (both buttons wait while it starts, so the ask is answered once)
   const show = card.querySelector('[data-show]');

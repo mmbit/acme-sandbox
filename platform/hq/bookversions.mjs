@@ -5,7 +5,7 @@
 // why in their place.
 import assert from 'node:assert/strict';
 import { inStory } from './bookanswers.mjs';
-import { FEED_MS, layer, pagePx, triedNote } from './bookanswersplay.mjs';
+import { FEED_MS, clearOfTools, layer, triedNote } from './bookanswersplay.mjs';
 
 // c: book-check's { hqIn, base, store, pages, posts, org, shot, settled, settle, MINI, PHONE, DESKTOP }
 export function versionStories(c) {
@@ -56,20 +56,22 @@ async function endedEmpty(browser, c) {
     await c.shot('answers-versions-empty', page);
   });
 }
-// The versions under their note, never over it, and wholly on the paper left of the tools floating at its right
+// The versions under their note's unit as the page draws them on the screen, never over it nor out of its column, and
+// wholly on the paper left of the tools floating at its right.
 async function under(page, g) {
-  const at = await pagePx(page, '.bk-versions');
-  assert.ok(at && at.y >= g.box.y + g.box.h, `under the note: ${JSON.stringify([at, g.box])}`);
+  const [at, unit] = await page.evaluate(id => {
+    const box = el => {
+      const r = el?.getBoundingClientRect();
+      return r && { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
+    };
+    return [
+      box(document.querySelector('#book .bk-answers .bk-versions')),
+      box(document.querySelector(`#book .bk-unit[data-unit="${id}"]`)),
+    ];
+  }, g.id);
+  assert.ok(
+    at && unit && at.top >= unit.bottom && at.left >= unit.left - 1 && at.right <= unit.right + 1,
+    `under the note's unit: ${JSON.stringify([at, unit])}`,
+  );
   await clearOfTools(page, '.bk-versions');
-}
-// Every element at selector left of the tools floating at the paper's right, the islands' stack and the tool strip
-// beside it (exported for bookpicks.mjs)
-export async function clearOfTools(page, selector) {
-  const tools = await page
-      .locator('#book .bk-column .bk-island')
-      .evaluateAll(els => Math.min(...els.filter(el => el.offsetWidth).map(el => el.getBoundingClientRect().left))),
-    rights = await layer(page)
-      .locator(selector)
-      .evaluateAll(els => els.map(el => el.getBoundingClientRect().right));
-  assert.ok(rights.length && rights.every(x => x <= tools), `clear of the tools: ${JSON.stringify([rights, tools])}`);
 }

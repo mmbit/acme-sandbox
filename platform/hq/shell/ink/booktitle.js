@@ -88,12 +88,12 @@ function mountField(within, was) {
   field.placeholder = untitledPage();
   field.autocomplete = 'off';
   field.enterKeyHint = 'done';
-  field.setAttribute('aria-label', word('Page title'));
+  field.setAttribute('aria-label', word('pageTitle'));
   error.className = 'bk-title-error';
   error.setAttribute('role', 'status');
   error.append(
     document.createElement('span'),
-    Object.assign(document.createElement('span'), { textContent: word('Tap here to keep the title as it was') }),
+    Object.assign(document.createElement('span'), { textContent: word('keepTitle') }),
   );
   error.hidden = true;
   box.append(field, error);

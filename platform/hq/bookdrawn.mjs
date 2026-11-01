@@ -16,6 +16,13 @@ export function drawnPageStories(c) {
           await drawnAt(browser, c, name, size).catch(e => failed.push(e.message));
         assert.deepEqual(failed, [], failed.join('\n'));
       },
+    // (each size draws among the earlier sizes' drawings without moving them)
+    "the board's own drawing on a crowded page: WHY and three rectangles drawn again at each size on one page, the iPad mini's over two columns of them, each as ink where drawn":
+      async browser => {
+        freePage(c);
+        for (const name of ['phone-upright', 'phone-sideways', 'ipad-mini-upright'])
+          await drawnAt(browser, c, `crowded-${name}`, DRAWN_SIZES[name], { crowded: true });
+      },
   };
 }
 
@@ -30,10 +37,11 @@ const DRAWN_SIZES = {
 // On My journal's blank page, the word WHY written with the pen and three rectangles pulled out (one from its foot's
 // right corner up): every corner of each rectangle and every end of the letters inked where it was drawn (nothing cut
 // off, nothing moved), no paper scrap under any of it, and no arrows for stepping through scraps. Shot as drawn. Then
-// the Asks tab, its chapter empty: its own empty page.
-async function drawnAt(browser, c, name, size) {
+// the Asks tab, its chapter empty: its own empty page. crowded: on the page the sizes before drew on, its ends checked
+// where this size drew them, and no Asks tab
+async function drawnAt(browser, c, name, size, { crowded = false } = {}) {
   // (a blank page of its own at each size, not the one the size before drew on)
-  freePage(c);
+  if (!crowded) freePage(c);
   const { context, page, errors } = await blankBook(browser, c, size);
   try {
     const { letters, rects } = await written(page);
@@ -54,6 +62,7 @@ async function drawnAt(browser, c, name, size) {
       arrows: [...document.querySelectorAll('#book .bk-for-you-count')].some(e => e.checkVisibility()),
     }));
     assert.deepEqual(shown, { scraps: 0, arrows: false }, `${name}: no paper scrap under the drawing, no arrows`);
+    if (crowded) return c.noErrorsIn(errors);
     // (Asks, a chapter with no pages yet: its own empty page, its tab lit)
     await page.locator('#book .bk-marks [data-chapter="asks"]').click();
     await page.waitForTimeout(500);

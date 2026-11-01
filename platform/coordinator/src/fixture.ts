@@ -229,6 +229,7 @@ export async function fakeLettermint() {
   });
   await new Promise<void>(resolve => service.listen(0, resolve));
   const { port } = service.address() as AddressInfo;
+  service.unref();
   after(() => service.close());
   return fake;
 }

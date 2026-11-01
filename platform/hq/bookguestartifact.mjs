@@ -1,12 +1,14 @@
 // Guest artifact marks through review mode and the real coordinator, with a synthetic artifact page.
 import assert from 'node:assert/strict';
-import { fulfilResponse } from './bookguestserver.mjs';
 import { readyNotebook, snapshot } from './bookguestscreen.mjs';
+import { serveWork } from './guestpath.mjs';
 
 const artifactPage = `<!doctype html><meta name="viewport" content="width=device-width"><title>Basket</title>
 <body style="margin:0;background:#fffaf0;color:#2a2352;font:18px system-ui,sans-serif">
 <main style="padding:32px"><h1>Your basket</h1><p>Two jars of plum jam, gift-wrapped, ready by Friday.</p>
-<button style="font:inherit;padding:16px">Collect the order</button></main><script src="/__review/review.js"></script>`;
+<button style="font:inherit;padding:16px">Collect the order</button></main>
+<a class="pay" href="#pay" style="position:fixed;left:50%;bottom:16px;width:240px;margin-left:-120px;padding:14px 0;text-align:center;background:#2a2352;color:#fff">Pay now</a>
+<script src="/__review/review.js"></script>`;
 
 export async function artifactScrap(state, visitor, invitation, pageId, screen) {
   console.log(`Guest browser: artifact ${screen} opening`);
@@ -14,11 +16,12 @@ export async function artifactScrap(state, visitor, invitation, pageId, screen) 
   const notebookUrl = page.url();
   const host = `hello${state.preview}`;
   const artifactOrigin = `https://${host}`;
-  await serveArtifact(state, context, host);
+  await serveWork(state, context, host, artifactPage);
   await page.goto(state.origin + new URL(invitation).pathname);
   await page.locator('a[href$="/go"]').click();
   await page.waitForURL(`${artifactOrigin}/**`);
   await page.locator('review-mode .fab').waitFor({ state: 'attached' });
+  await payClear(page);
   await page.locator('review-mode .fab').dispatchEvent('click');
   await page.locator('review-mode .veil:not([hidden])').waitFor();
   await drawMark(page);
@@ -44,7 +47,10 @@ export async function artifactScrap(state, visitor, invitation, pageId, screen) 
     groups.some(group => group.kind === 'scrap' && group.words === `Say when it ships, ${screen}`),
     'the artifact scrap lands on this reviewer’s page',
   );
-  await page.goto(notebookUrl);
+  // (the preview's caption is the way back to the reviewer's round page)
+  const roundBook = new URL(notebookUrl).searchParams.get('notebook');
+  await page.locator('review-mode a.back').click();
+  await page.waitForURL(url => url.pathname === '/guest/notebooks/' && url.searchParams.get('notebook') === roundBook);
   await readyNotebook(page);
   await page
     .locator('#book .bk-words')
@@ -52,6 +58,17 @@ export async function artifactScrap(state, visitor, invitation, pageId, screen) 
     .waitFor();
   await snapshot(state, `reviewer-notebook-${screen}`, page);
   console.log(`Guest browser: artifact ${screen} visible in notebook`);
+}
+
+// The page's own bottom button stays tappable: the pin and its caption step up clear of it
+function payClear(page) {
+  return page.waitForFunction(() => {
+    const pay = document.querySelector('.pay'),
+      b = pay.getBoundingClientRect();
+    return [0.05, 0.25, 0.5, 0.75, 0.95].every(f =>
+      pay.contains(document.elementFromPoint(b.left + b.width * f, b.top + b.height / 2)),
+    );
+  });
 }
 
 async function drawMark(page) {
@@ -64,22 +81,4 @@ async function drawMark(page) {
   await page.mouse.down();
   for (const point of loop.slice(1)) await page.mouse.move(...point);
   await page.mouse.up();
-}
-
-async function serveArtifact(state, context, host) {
-  const artifactOrigin = `https://${host}`;
-  await context.route(`${artifactOrigin}/**`, async route => {
-    const request = route.request();
-    const url = new URL(request.url());
-    if (!url.pathname.startsWith('/__review/') && url.pathname !== '/__preview') {
-      return route.fulfill({ contentType: 'text/html', body: artifactPage });
-    }
-    const response = await route.fetch({
-      url: state.h.base + url.pathname + url.search,
-      headers: { ...request.headers(), host },
-      maxRedirects: 0,
-      timeout: 30_000,
-    });
-    return fulfilResponse(route, response);
-  });
 }
