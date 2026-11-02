@@ -13,6 +13,7 @@ import { nameOf } from './bookhead.js';
 import { shut } from './booksave.js';
 import { editTitle } from './booktitle.js';
 import { mountForYou } from './bookforyou.js';
+import { indexesIn } from './notebookchapters.js';
 
 const ICONS = {
   // (the notebook's pages laid out: four leaves in a grid, as far apart top to bottom as side to side.)
@@ -38,7 +39,7 @@ export function mountControls(book, act) {
   const pages = island('pages'),
     over = button({
       icon: ICONS.overview,
-      label: scope ? word('notebookPages') : "The overview: the notebook's pages, and the Shelf",
+      label: word('allPages'),
       onClick: () => act.overview(),
       pressed: false,
     }),
@@ -50,6 +51,7 @@ export function mountControls(book, act) {
     rule = document.createElement('hr');
   // (a one-page book has no overview or New page: none on its rail, where a control hidden keeps its slot.)
   pages.append(before, after, name, rule, ...(scope?.singlePage ? [] : [over, add]), cog);
+  titleTaps(book, act, name);
   // (the asks still open on the page, counted by its title; in a guest's book, the scraps handed to them.)
   const forYou = mountForYou(book);
   const send = scope ? sendKey(act) : null,
@@ -57,8 +59,7 @@ export function mountControls(book, act) {
   return {
     update() {
       const far = act.level() !== 'page',
-        page = book.views[book.cur]?.page,
-        n = book.views.length;
+        page = book.views[book.cur]?.page;
       setPressed(over, far);
       // (the overview open: only its own button, pressed, to come back by)
       for (const el of [before, name, after, rule]) el.hidden = far;
@@ -66,18 +67,24 @@ export function mountControls(book, act) {
       cog.hidden = far;
       if (send) send.hidden = far || !page || shut(page) || page.kind === 'call';
       locked?.(!far && !!page && shut(page) && (page.sent || page.sending ? 'Sent, locked' : 'Locked'));
-      before.disabled = book.cur <= 0;
-      after.disabled = book.cur >= n - 1;
+      before.disabled = mate(book, -1) < 0;
+      after.disabled = mate(book, 1) < 0;
       name.disabled = !page;
       // (the title being written goes when its page does, a save still out landing on its page alone)
       if (titling && (far || titling.page !== page)) titling.end(false);
       forYou?.update(far);
       if (!page) return;
-      // (where it is in its chapter, its bookmark's pages)
-      const mates = book.views.filter(v => v.page.chapter === page.chapter);
-      named(name, page, mates.findIndex(v => v.page === page) + 1, mates.length);
+      const mates = matesOf(book);
+      named(name, page, mates.indexOf(book.cur) + 1, mates.length);
     },
   };
+}
+// The page's title tapped in its head: the pages open with it to write in
+function titleTaps(book, act, name) {
+  book.paper.addEventListener(
+    'click',
+    e => e.target.closest('.bk-title-tap') && !name.disabled && menu(book, act, name, true),
+  );
 }
 // Where the page is in its chapter on the rail ("2/8"), its name in the label (and the tooltip)
 function named(name, page, at, n) {
@@ -92,8 +99,8 @@ function named(name, page, at, n) {
 // More takes last, .bk-rare first: bookui.js)
 function pageButtons(book, act) {
   const name = button({ label: word('notebookPages'), onClick: () => menu(book, act, name) }),
-    before = button({ icon: ICONS.before, label: word('pageBefore'), onClick: () => act.turnTo(book.cur - 1) }),
-    after = button({ icon: ICONS.after, label: word('pageAfter'), onClick: () => act.turnTo(book.cur + 1) }),
+    before = button({ icon: ICONS.before, label: word('pageBefore'), onClick: () => turnOn(book, act, -1) }),
+    after = button({ icon: ICONS.after, label: word('pageAfter'), onClick: () => turnOn(book, act, 1) }),
     add = button({
       icon: ICONS.page,
       label: word('newPage'),
@@ -105,6 +112,16 @@ function pageButtons(book, act) {
   for (const b of [before, name, after]) b.classList.add('bk-turns');
   add.classList.add('bk-rare');
   return { before, after, name, add };
+}
+// The page before or after in the shown page's chapter (its index in book.views, -1 at the chapter's end): the arrows
+// stay within the tab, never turning on into the next one (board, call 178.)
+function mate(book, step) {
+  const mates = matesOf(book);
+  return mates[mates.indexOf(book.cur) + step] ?? -1;
+}
+function turnOn(book, act, step) {
+  const i = mate(book, step);
+  if (i >= 0) act.turnTo(i);
 }
 // An invited person's Send, its own island on the rail
 function sendKey(act) {
@@ -134,13 +151,14 @@ function lockLine() {
   };
 }
 
-// The notebook's pages by name, in order, the one shown marked; a choice turns to it once the title is through. The
-// shown page's title is written in place of its name meanwhile (booktitle.js): the pages close as it ends or its save
-// is refused, and it lasts until it's saved or let go, or its page goes.
+// The pages of the shown page's tab by name, in order, the one shown marked; a choice turns to it once the title is
+// through. The shown page's title is written in place of its name meanwhile (booktitle.js): the pages close as it ends
+// or its save is refused, and it lasts until it's saved or let go, or its page goes. Their control tapped again closes
+// them as a tap away does, the title saved (board, call 178); write: opened from the page's title, to write it in.
 let open = null,
   titling = null;
-function menu(book, act, from) {
-  if (open) return close();
+function menu(book, act, from, write = false) {
+  if (open) return write ? writeIn() : titling ? titling.end(true) : close();
   const card = document.createElement('div');
   card.className = 'bk-card bk-pages-menu';
   card.setAttribute('role', 'menu');
@@ -157,17 +175,21 @@ function menu(book, act, from) {
     close();
     titling.end(true).then(saved => saved && act.turnTo(Number(b.dataset.i)));
   });
-  // (a tap away closes the pages and saves the title, booktitle.js; Escape is the title's: letting it go closes them)
-  const away = e => ![card, titling.box].some(el => el.contains(e.target)) && close();
+  // (a tap away closes the pages and saves the title, booktitle.js; Escape is the title's: letting it go closes them. A
+  // tap on their control is its click's.)
+  const away = e => ![card, titling.box, from].some(el => el.contains(e.target)) && close();
   addEventListener('pointerdown', away, true);
   from.setAttribute('aria-expanded', 'true');
   open = { card, from, shut: () => removeEventListener('pointerdown', away, true) };
   // (a touch screen raises its keyboard over the pages for a focused field: there the shown page's row has the focus,
-  // and a tap on the title writes)
-  if (matchMedia('(pointer: fine)').matches) {
-    titling.field.focus({ preventScroll: true });
-    titling.field.select();
-  } else card.querySelector('[aria-current]')?.focus({ preventScroll: true });
+  // and a tap on the title writes, unless it's the title that was tapped)
+  if (write || matchMedia('(pointer: fine)').matches) writeIn();
+  else card.querySelector('[aria-current]')?.focus({ preventScroll: true });
+}
+// The title's field focused to write in, what's there chosen
+function writeIn() {
+  titling.field.focus({ preventScroll: true });
+  titling.field.select();
 }
 // The pages closed, the title left as it is
 function close() {
@@ -178,14 +200,22 @@ function close() {
   open = null;
 }
 
-// The menu's rows: the notebook's pages
+// The menu's rows: the shown page's chapter, numbered as the counter shows them ("2/8": 2), each turning to its index
+// in book.views (board, call 178.)
 function menuOf(book) {
-  return `<ul class="bk-menu">${book.views
+  return `<ul class="bk-menu">${matesOf(book)
     .map(
-      (v, i) =>
-        `<li><button role="menuitem" data-i="${i}"${i === book.cur ? ' aria-current="page"' : ''}><small>${i + 1}</small>${esc(
-          nameOf(v.page),
+      (i, at) =>
+        `<li><button role="menuitem" data-i="${i}"${i === book.cur ? ' aria-current="page"' : ''}><small>${at + 1}</small>${esc(
+          nameOf(book.views[i].page),
         )}</button></li>`,
     )
     .join('')}</ul>`;
 }
+// The shown page's chapter, its bookmark's pages (their indexes in book.views): what the arrows turn within, the
+// counter counts ("2/8") and the page list lists, numbered alike
+const matesOf = book =>
+  indexesIn(
+    book.views.map(v => v.page),
+    book.views[book.cur]?.page.chapter,
+  );

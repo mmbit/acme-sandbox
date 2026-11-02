@@ -4,7 +4,7 @@
 // page Untitled page. A save that's refused says why quietly over the field, which keeps what was written: Enter or
 // a tap away tries again, Escape or a tap on the note lets it go. While a save is out, the field can't be written in.
 import { titlePage } from './notebookdata.js';
-import { untitledPage } from './bookhead.js';
+import { PENCIL, untitledPage } from './bookhead.js';
 import { word } from './bookscope.js';
 import { named, said } from './booksave.js';
 
@@ -28,12 +28,16 @@ export function editTitle(name, book, within, answered) {
   });
   // (a tap away saves, and tries again after a refusal, for as long as the edit lasts, the field focused or not; the
   // focus moved on by the keys does too. A blur to nowhere, as a Safari tap on a page's row, leaves it to the tap.)
-  edit.away = e => !box.contains(e.target) && !within.contains(e.target) && end(true);
+  // The rail's control is the pages' own: a tap on it again closes them (bookcontrols.js.).
+  edit.away = e => ![box, within, name].some(el => el.contains(e.target)) && end(true);
   addEventListener('pointerdown', edit.away, true);
   // (Escape lets it go wherever the focus is, for as long as the edit lasts: the field's own keys stop at the field)
   edit.escape = e => e.key === 'Escape' && end(false);
   addEventListener('keydown', edit.escape);
-  field.addEventListener('blur', e => e.relatedTarget && !within.contains(e.relatedTarget) && end(true));
+  field.addEventListener(
+    'blur',
+    e => e.relatedTarget && ![within, name].some(el => el.contains(e.relatedTarget)) && end(true),
+  );
   error.addEventListener('click', () => end(false));
   return { page, box, field, end };
 }
@@ -96,7 +100,11 @@ function mountField(within, was) {
     Object.assign(document.createElement('span'), { textContent: word('keepTitle') }),
   );
   error.hidden = true;
-  box.append(field, error);
+  box.append(
+    field,
+    Object.assign(document.createElement('span'), { className: 'bk-title-pencil', innerHTML: PENCIL }),
+    error,
+  );
   const fit = () => (box.dataset.value = field.value || untitledPage());
   fit();
   field.addEventListener('input', () => {

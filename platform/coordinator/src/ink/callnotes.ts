@@ -45,7 +45,7 @@ import { throwAway } from './bookcalls.ts';
 import { GOAL, WHAT, onCallPage, oneLine } from '../ledger.ts';
 import { asked, saidAtEnd, takenOff } from './callasks.ts';
 import { replaced } from './callpage.ts';
-import { isRefused, labelOf, type Anchor, type Refused } from '../pagechecks.ts';
+import { isRefused, labelOf, refusableStep, RefusedError, type Anchor, type Refused } from '../pagechecks.ts';
 import { pictureSize } from '../../../../shared/pictures/size.ts';
 
 // The most characters of a call page's topic, after its date and time: "28 Sept, 22:55, iPad mini walkthrough" is whole
@@ -151,21 +151,16 @@ export async function writeDown(b: any) {
   const listed = toList(call, item, onCall(c), false);
   if (isRefused(listed)) return listed;
   // (its item first, so a refused one leaves nothing in the notes; a note that can't go in takes its item back with it)
-  try {
-    return inOneStep(() => {
-      const added = listed();
-      if (isRefused(added)) return added;
-      const g = cut
-        ? place(p, c.agent, cut.picture, { words, anchor: cut.anchor, owner })
-        : addWords(p, c.agent, words, { owner });
-      if (isRefused(g)) throw new UnwrittenError(g);
-      asked(g.id, { id: added.id, what: words });
-      return { ok: writtenDown(g, !!cut, added.id, words), id: g.id };
-    });
-  } catch (err) {
-    if (err instanceof UnwrittenError) return err.refused;
-    throw err;
-  }
+  return refusableStep(() => {
+    const added = listed();
+    if (isRefused(added)) return added;
+    const g = cut
+      ? place(p, c.agent, cut.picture, { words, anchor: cut.anchor, owner })
+      : addWords(p, c.agent, words, { owner });
+    if (isRefused(g)) throw new RefusedError(g);
+    asked(g.id, { id: added.id, what: words });
+    return { ok: writtenDown(g, !!cut, added.id, words), id: g.id };
+  });
 }
 // A note's words, goal and owner (none: the follow-up decides), or why not
 function noteOf(b: any, call: number) {
@@ -197,14 +192,6 @@ function writtenDown(g: Group, pictured: boolean, item: number, words: string) {
     : `Written down (${listedAs}), your words alone with no picture`;
   const circle = box ? ' Circle the spot on it with mark_notes where that helps.' : '';
   return `${what}, appearing as the board watches: “${words}”.${circle}`;
-}
-// A note that couldn't go in the call's notes, with why: its item goes with it
-class UnwrittenError extends Error {
-  refused: Refused;
-  constructor(refused: Refused) {
-    super(refused[1]);
-    this.refused = refused;
-  }
 }
 // A group's box as the agent reads it, read_notes and write_down alike: x, y, width and height in the page's px
 export const boxWords = (box: { x: number; y: number; w: number; h: number }) =>

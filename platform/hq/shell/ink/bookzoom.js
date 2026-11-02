@@ -21,11 +21,12 @@ const WHEEL_STEP = 50,
 // from the Shelf. dev: on mock data. notebook(): the notebook the book shows now
 // (its id, or a promise of it; null: none on the Shelf); page(): the page it shows (its id); saved(): what's drawn
 // saved in the store, a promise. open(page, notebook): that page shown, of that notebook (notebookdata.js's page).
+// archived(): a page archived or brought back from the grid.
 // turn(dir, midway): a leaf turned over the paper, midway() swapping what's under it (bookflip.js). zoom(coming,
 // midway, dir, at): the same swap with the view zooming out (dir -1) or in (dir 1), at() the notebook's tile on the
 // Shelf it zooms round. changed(level): the overview opened,
 // stepped or closed.
-export function mountZoom(paper, { desk, dev, notebook, page, saved, open, turn, zoom, changed }) {
+export function mountZoom(paper, { desk, dev, notebook, page, saved, open, archived, turn, zoom, changed }) {
   const far = document.createElement('div');
   far.className = 'bk-far';
   far.hidden = true;
@@ -51,6 +52,7 @@ export function mountZoom(paper, { desk, dev, notebook, page, saved, open, turn,
     open: (page, id) => back(z, { page, id }),
     shelf: () => go(z, 2),
     notebook: id => go(z, 1, id),
+    archived,
   });
   pinches(paper, z);
   return {

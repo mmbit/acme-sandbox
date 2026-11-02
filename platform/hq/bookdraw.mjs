@@ -7,6 +7,7 @@
 import assert from 'node:assert/strict';
 import { colourIn, freePage, line, onDesk, paperBox, pasteGreen, pick, savedWhere, GREEN } from './bookmouse.mjs';
 import { MINI, pressAlong } from './bookkit.mjs';
+import { WIDTHS } from './shell/ink/bookinkmath.js';
 
 const NIGHT = [42, 35, 82],
   PAPER = [255, 250, 240];
@@ -73,8 +74,12 @@ async function erases(page, c, free, [x, y]) {
   );
   await c.shot('book-draw-erased', page);
 }
-// An ellipse filled, a rectangle outlined, an arrow, under the lines
+// An ellipse filled, a rectangle outlined, an arrow, under the lines: each in the pen's own ink, the Pencil picked
+// in the pen's card before
 async function shapes(page, c, free, [x, y]) {
+  await pick(page, 'Pen');
+  await card(page, 'Pencil');
+  await page.keyboard.press('Escape');
   await pick(page, 'Shapes: rectangle');
   await card(page, 'Ellipse');
   await card(page, 'Filled', { keep: true });
@@ -93,6 +98,11 @@ async function shapes(page, c, free, [x, y]) {
     drawn.ink.slice(4).map(s => !!s.fill),
     [true, false, false],
     'the ellipse filled, the rectangle and the arrow not',
+  );
+  assert.deepEqual(
+    drawn.ink.slice(4).map(s => [s.size, s.alpha]),
+    Array(3).fill([WIDTHS.pen[1], undefined]),
+    "each shape at the pen's middle width, never see-through",
   );
   await page.waitForTimeout(300);
   assert.deepEqual(await pixel(page, x + 55, y + 225), NIGHT, "the filled ellipse's middle is ink");

@@ -111,6 +111,34 @@
   color: var(--bk-ink, #2a2352);
   letter-spacing: 0.01em;
 }
+/* (the title a button over the paper with the handles, a pencil after it saying it can be changed: a tap opens it to
+   write in, bookunitcards.js.) */
+#book .bk-title-tap {
+  all: unset;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4em;
+  max-width: 100%;
+  pointer-events: auto;
+  cursor: text;
+  -webkit-tap-highlight-color: transparent;
+}
+#book .bk-title-tap > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#book .bk-title-tap svg {
+  flex: none;
+  width: 0.75em;
+  height: 0.75em;
+  color: var(--bk-muted, #8a849c);
+}
+#book .bk-title-tap:focus-visible {
+  border-radius: 4px;
+  outline: 2px solid var(--bk-ink, #2a2352);
+  outline-offset: 2px;
+}
 #book:has(.bk-for-you-count:not([hidden], .bk-turn-picture *)) .bk-page-title {
   padding-right: calc((var(--bk-count-at) + var(--bk-count-w) + 8px) / var(--bk-scale));
 }

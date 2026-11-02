@@ -10,10 +10,15 @@
   /* (its paper's colours, dots and gold are review mode's paper.js, shared with the post-it: book.js) */
   --bk-lamp: #ffd966;
   --bk-red: #ff5a5f;
-  /* the rail of controls floating over the paper's right margin (bookstrip.css): its toolbar, a 40 px control in it,
-     this far in from the paper's edges, and a phone's notch on its side clear. What's written ends left of it (the
-     rail's width with its margins); nothing floats over the paper's edge besides. */
-  --bk-rail-slim: 48px;
+  /* the rail of controls floating over the paper's right margin (bookstrip.css): its toolbar, a control in it (its
+     key, the press it takes across, the icon on it and a word key's type), this far in from the paper's edges, and a
+     phone's notch on its side clear. What's written ends left of it (the rail's width with its margins); nothing
+     floats over the paper's edge besides. */
+  --bk-key: 40px;
+  --bk-touch: 44px;
+  --bk-key-icon: 22px;
+  --bk-key-words: 11px;
+  --bk-rail-slim: calc(var(--bk-key) + 8px);
   --bk-rail-gap: 6px;
   --bk-rail-width: calc(var(--bk-rail-slim) + 2 * var(--bk-rail-gap) + env(safe-area-inset-right, 0px));
   --bk-table: #3a3148;
@@ -57,6 +62,17 @@
 @media (max-width: 600px) and (orientation: landscape) {
   #book {
     --bk-gap: 16px;
+  }
+}
+/* a phone, either way up (a touch screen 600 px or less on its short side): the rail slimmer, its keys 44 px to the
+   touch across still, so the narrow screen keeps more of its page; full size on a tablet and a big screen. By the
+   device, never the page: one layout on a device (board, the Ink 1.1 deck.) */
+@media (pointer: coarse) and (max-width: 600px), (pointer: coarse) and (max-height: 600px) {
+  #book {
+    --bk-key: 36px;
+    --bk-key-icon: 20px;
+    --bk-key-words: 10px;
+    --bk-rail-gap: 4px;
   }
 }
 /* the table under the book, where the page has given up its room, the screen's whole height: the left side's own

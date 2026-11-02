@@ -26,6 +26,16 @@ globalThis.CustomEvent ??= class {
   }
 };
 globalThis.document = { dispatchEvent() {}, createElement: () => canvas() };
+// (the browser's frames, one when frame() says: what a frame's events left waiting is painted then)
+const frames = new Map();
+let frameId = 0;
+globalThis.requestAnimationFrame = f => (frames.set(++frameId, f), frameId);
+globalThis.cancelAnimationFrame = id => frames.delete(id);
+function frame() {
+  const due = [...frames.values()];
+  frames.clear();
+  due.forEach(f => f());
+}
 const box = () => ({ left: 0, top: 0, width: 400, height: 300 });
 function canvas() {
   const c = { style: {}, width: 0, height: 0, fills: [], getBoundingClientRect: box };
@@ -144,8 +154,8 @@ function winding(ring, x, y) {
 }
 // A line drawn with pen() from these events (the first a pointerdown, the last a pointerup): the stroke it ended with,
 // and the shapes filled on the wet canvas and the under one as it was drawn. each(): what's on screen after each event
-// ({ e, wet, under, stroke }, the line as far as it went)
-function live(events, ink = RED, { halo = false, each } = {}) {
+// ({ e, wet, under, stroke }, the line as far as it went); a frame comes after every perFrame events
+function live(events, ink = RED, { halo = false, each, perFrame = 1 } = {}) {
   const on = {},
     surface = {
       getBoundingClientRect: box,
@@ -164,6 +174,7 @@ function live(events, ink = RED, { halo = false, each } = {}) {
       preventDefault() {},
       ...e,
     });
+    if ((n + 1) % perFrame === 0) frame(); // (the screen as it is then)
     each?.({ e, wet, under, stroke: { ...drawing, points: [...drawing.points] } });
   });
   return { stroke, wet: wet.fills, under: under.fills, underOpacity: under.style.opacity };
@@ -226,6 +237,12 @@ for (const [name, events] of Object.entries(HANDS)) {
     assert.equal(Number(underOpacity), 0.9);
   });
 }
+
+test("a Pencil's four events a frame are painted once a frame, and the lift at once: the same line", () => {
+  const { stroke, wet } = live(HANDS.pen, RED, { perFrame: 4 });
+  assert.deepEqual(union(wet), new Set(shapes(inkjs.outline(stroke))));
+  assert.equal(wet.length, Math.floor((HANDS.pen.length - 1) / 4) + 1);
+});
 
 test('a pen lifting with pressure 0 ends the line as a lift with its last pressure would', () => {
   const events = HANDS.pen,
@@ -326,11 +343,9 @@ test("a highlighter's live line has no white edge", () => {
   assert.deepEqual(union(wet), new Set(shapes(inkjs.outline(stroke))));
 });
 
-// The pin's strip offers four of the notebook's pens (HQ's bookpalette.js reads PENS), red first: a call's only ink
-// (a few of the twelve, on a small strip)
-test("the strip's inks are the notebook's pens, red first", () => {
+// Each pen on the pin's strip is one of the notebook's (HQ's bookpalette.js reads PENS), red first: a call's only ink
+test("the strip's pens are among the notebook's, red first", () => {
   const pens = inkjs.INKS.filter(k => !(k.alpha < 1));
-  assert.equal(pens.length, 4);
   for (const k of pens)
     assert.ok(
       inkjs.PENS.some(p => p.color === k.color && p.name === k.name),

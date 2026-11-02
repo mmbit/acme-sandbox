@@ -17,7 +17,7 @@ import { loginPage, enrollPage, pairPage, csp, checkoutCsp, hqIndex, hqManifest,
 import { brand, brandLook, theme, gazette, watchGazette, ceo, roles, reads } from './company.ts';
 import { library, unshelvedProblem } from './library.ts';
 import { TYPES } from './types.ts';
-import { attachment, findFile, inside, HQ_DIR, THEME_DIR, hqDir } from './files.ts';
+import { attachment, findFile, inside, rangeOf, HQ_DIR, THEME_DIR, hqDir } from './files.ts';
 import { subscribe, publish, endAll } from './events.ts';
 import { db, companyOnce, scrubOnStart, optimize, inOneStep } from './db.ts'; // (db: the artifact's tip.)
 import * as jobs from './jobs.ts';
@@ -128,9 +128,11 @@ import * as notebookrounds from './notebookrounds.ts';
 import * as viewmarks from './viewmarks.ts';
 import * as notebook from './notebook.ts';   // the Notebook: notebooks and their pages
 import * as notebookgroups from './notebookgroups.ts';   // and the groups on its pages
+import * as notebooktidy from './notebooktidy.ts';   // and its blank pages let go once left
 import './notebookunits.ts';   // the groups from before scrap units carried into them, once
 import { createScrap } from './notebookscraps.ts';   // a scrap stacked on one
 import * as trypreview from './ink/trypreview.ts';
+import * as earlierVersions from './earlier.ts';
 import * as notebooksend from './notebooksend.ts';   // and a page sent in, a reply under an answer
 import * as bookanswer from './ink/bookanswer.ts';   // the agents' answers there, a call's agent's too
 import * as notebookpictures from './notebookpictures.ts';   // and a group's pictures
@@ -320,18 +322,14 @@ const FILE_ROUTES = new Set(['POST /api/agent/request', 'POST /api/agent/guest',
 async function sendFile(req: IncomingMessage, res: ServerResponse, dir: string, path: string, scripts = true) {
   const found = findFile(dir, path);
   if (!found) return send(res, 404, 'not found', 'text/plain');
-  const { real, size, modifiedMs } = found, m = /^bytes=(\d*)-(\d*)$/.exec(String(req.headers.range ?? ''));
+  const { real, size, modifiedMs } = found;
   const tag = `W/"${size.toString(36)}-${Math.trunc(modifiedMs).toString(36)}"`;
   res.setHeader('etag', tag);
   if (String(req.headers['if-none-match'] ?? '').split(/\s*,\s*/).includes(tag)) { res.writeHead(304); return res.end(); }
   const type = !scripts && found.type === TYPES['.js'] ? 'text/plain; charset=utf-8' : found.type;
-  let start = 0, end = size - 1;
-  if (m && (m[1] || m[2])) {
-    start = m[1] ? Number(m[1]) : Math.max(0, size - Number(m[2]));
-    end = m[1] && m[2] ? Math.min(Number(m[2]), size - 1) : size - 1;
-    if (start > end) { res.writeHead(416, { 'content-range': `bytes */${size}` }); return res.end(); }
-  }
-  const partial = end - start + 1 < size;
+  const range = rangeOf(req.headers.range, size);
+  if (!range) { res.writeHead(416, { 'content-range': `bytes */${size}` }); return res.end(); }
+  const { start, end, partial } = range;
   res.writeHead(partial ? 206 : 200, { 'content-type': type, 'content-length': end - start + 1, 'accept-ranges': 'bytes',
     ...(partial ? { 'content-range': `bytes ${start}-${end}/${size}` } : {}) });
   if (req.method === 'HEAD' || size === 0) return res.end();
@@ -488,6 +486,7 @@ const api: Record<string, BoardRoute> = {
   'POST /api/notebooks/pages/create': (q, s, b) => refusal(notebookguests.boardCreatePage(b)),
   'POST /api/notebooks/pages/order': (q, s, b) => refusal(notebook.orderPages(b)),
   'POST /api/notebooks/pages/archive': (q, s, b) => refusal(notebook.archivePage(b)),
+  'POST /api/notebooks/pages/tidy': (q, s, b) => refusal(notebooktidy.tidyPages(b)),
   'POST /api/notebooks/pages/title': (q, s, b) => refusal(notebook.titlePage(b)),
   'POST /api/notebooks/pages/zoom': (q, s, b) => refusal(notebook.zoomPage(b)),
   // (at once, never undone: the board's Undo of a send gone.)
@@ -571,6 +570,7 @@ const api: Record<string, BoardRoute> = {
   'GET /api/numbers': q => { const r = metrics.numbers({ days: new URL(q.url ?? '/', 'http://x').searchParams.get('days') }); return Array.isArray(r) ? new Refused(r[0], r[1]) : kits.numbers(r); },
   'GET /api/apps': () => apps.list(),   // HQ-OS › Numbers' apps
   'GET /api/artifacts': () => artifacts.list(),   // HQ-OS › Artifacts
+  'GET /api/artifacts/earlier-versions': (q, s, b) => URL.canParse(String(b.url)) ? earlierVersions.listEarlierVersions(String(b.url)) : new Refused(400, 'url is not an address'),   // the viewer's earlier versions
 };
 
 // Workers (platform/worker) authenticate with a shared token and never see the board's session. Only the worker
@@ -1413,15 +1413,15 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
     return inspection.readInspection(b.id) ?? 404;
   },
   'GET /api/agent/room': () => room.getRoom(),   // (hq jobs: the same, naming the job by its number)
-  // hq followthrough: the CEO's read of what the board agreed against the work under way; ok | acted "line": the
-  // running check's verdict; requeue <job> "line": a failed job's agreed work back to its call's agent (followthrough.ts,
+  // hq followthrough: the CEO's read of what the board agreed against the work under way; ok [--next <when>] | acted
+  // "line": the running check's verdict (its next look); requeue <job> "line": a failed job's agreed work back to its call's agent (followthrough.ts,
   // takeover.ts)
   'GET /api/agent/followthrough': (b, me) => (me.agent === ceo() ? { text: followthrough.read(me) } : 403),
   // hq summary: the CEO's picture of what the board waits for, what's late or stuck, and the queue (summary.ts)
   'GET /api/agent/summary': (b, me) => (me.agent === ceo() ? { text: summary.read(forecast.current()).text } : 403),
   'POST /api/agent/followthrough-verdict': (b, me) =>
     b.verdict !== 'ok' && b.verdict !== 'acted' ? 400
-      : refusal(followthrough.recordVerdict(me.id, b.verdict, String(b.said ?? ''))),
+      : refusal(followthrough.recordVerdict(me.id, b.verdict, String(b.said ?? ''), String(b.next ?? ''))),
   // (hq complete work: a check's session ends only with its verdict in)
   'GET /api/agent/followthrough-owed': (b, me) => ({ owed: followthrough.checkUnderWay(me.id) }),
   'POST /api/agent/followthrough-requeue': (b, me) =>
@@ -1742,6 +1742,8 @@ const voice: Record<string, (b: any) => unknown> = {
   'POST /api/voice/page': async b => refusal(await callpage.read(b)),
   'POST /api/voice/mark': b => refusal(callpage.mark(b)),
   'POST /api/voice/change': b => refusal(callpage.change(b)),
+  // (a drawing of its own, as a picture in the company's look: drawing.ts.)
+  'POST /api/voice/drawing': async b => refusal(await callpage.drawing(b)),
   // (its versions to pick from)
   'POST /api/voice/try': b => refusal(callpage.versions(b)),
   // (the voices the board's calls recognise by name, and what to tell a person before saving theirs: voiceprints.ts.)
@@ -1764,6 +1766,9 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
   // A try's version on its own preview host: its files alone, past the preview login's own two
   const version = trypreview.versionAt(String(req.headers.host ?? ''));
   if (version !== null && path !== '/api/preview/check' && path !== '/__preview') return trypreview.serveTry(req, res, version);
+  // An earlier version of a cycles page, the same way
+  const back = earlierVersions.backAt(String(req.headers.host ?? ''));
+  if (back !== null && path !== '/api/preview/check' && path !== '/__preview') return earlierVersions.serveEarlier(req, res, back);
   res.setHeader('content-security-policy', PAGE_CSP[path] ?? (/^\/(knowledge|cycles)\//.test(path) ? 'sandbox'
     : path.startsWith('/pay/imitation/') ? checkoutCsp : HQ_CSP)); // the test checkout: its own inline style, and Pay redirects to the product
   return anyHost(req, res, url);
@@ -1877,7 +1882,11 @@ const anyHost = routes({
   // Product previews: Caddy's forward_auth check and the key hand-off run without the board session.
   '* /api/preview/check': ({ req, res }) => preview.check(req, res),
   // ...and whether a try host is a version's, before Caddy gets it a certificate
-  'GET /api/preview/try-host': ({ res, url }) => send(res, trypreview.tryHost(url.searchParams.get('domain') ?? ''), {}),
+  // (an earlier version's host too)
+  'GET /api/preview/try-host': ({ res, url }) => {
+    const domain = url.searchParams.get('domain') ?? '';
+    return send(res, earlierVersions.backAt(domain) !== null ? 200 : trypreview.tryHost(domain), {});
+  },
   '* /__preview': ({ req, res }) => preview.accept(req, res),
   // ...and a page's link for another device, from the page's own origin
   'POST /__preview/handoff': async ({ req, res, jsonBody }) => preview.handOn(req, res, await jsonBody()),

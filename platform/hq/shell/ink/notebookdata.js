@@ -41,6 +41,8 @@ export const archiveNotebook = (dev, id, archived) => ask(dev, '/api/notebooks/a
 export const createPage = (dev, notebook) => ask(dev, '/api/notebooks/pages/create', null, { notebook });
 export const orderPages = (dev, notebook, pages) => ask(dev, '/api/notebooks/pages/order', null, { notebook, pages });
 export const archivePage = (dev, id, archived) => ask(dev, '/api/notebooks/pages/archive', null, { id, archived });
+// { gone }: the notebook's blank pages but the one shown let go (notebooktidy.ts.)
+export const tidyPages = (dev, notebook, keep) => ask(dev, '/api/notebooks/pages/tidy', null, { notebook, keep });
 export const titlePage = (dev, id, title) => ask(dev, '/api/notebooks/pages/title', null, { id, title });
 export const zoomPage = (dev, id, shape, zoom) => ask(dev, '/api/notebooks/pages/zoom', null, { id, shape, zoom });
 // A page sent: the board's at once (aside: the groups with asks still open, moved to a new page first), an invited
@@ -66,7 +68,8 @@ export const editGroup = (dev, id, since, parts) =>
   ask(dev, '/api/notebooks/groups/edit', null, { id, since, ...parts });
 // To the page's end, or right after unit after there ('start': its first).
 export const moveGroup = (dev, id, page, after) => ask(dev, '/api/notebooks/groups/move', null, { id, page, after });
-export const deleteGroup = (dev, id) => ask(dev, '/api/notebooks/groups/delete', null, { id });
+// since: as edit's, so a screen deletes only what it has seen.
+export const deleteGroup = (dev, id, since) => ask(dev, '/api/notebooks/groups/delete', null, { id, since });
 export const restoreGroup = (dev, id) => ask(dev, '/api/notebooks/groups/restore', null, { id });
 // Whom a scrap can be handed to: { recent, everyone }, each person { to, name, kind } (bookassign.js)
 export const loadPeople = dev => ask(dev, '/api/notebooks/people');

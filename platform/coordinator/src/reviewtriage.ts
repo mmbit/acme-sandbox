@@ -191,7 +191,7 @@ function seated(
   eligible: (agent: string) => boolean,
 ) {
   const assigned = constrained(pr, throwaway ? reviewers.filter(reader => reader.security) : reviewers);
-  const short = floor.problem(floor.needed(files, !!fixesFrom(pr), eligible), assigned, throwaway);
+  const short = floor.problem(floor.needed(files, findings.fixRound(pr), eligible), assigned, throwaway);
   if (short) return short;
   const covered = throwaway || files.every(file => assigned.some(reader => reader.files.includes(file)));
   if (assigned.length && !covered) return 'reviewers must cover every assigned file';
@@ -220,7 +220,7 @@ function readersOf(pr: number, report: any, eligible: (agent: unknown) => boolea
   )
     return 'exceptions need an agent and reason';
   const defaults = finders(pr, files);
-  if (report.reviewers === undefined && !fixesFrom(pr)) return 'a first read needs an explicit panel';
+  if (report.reviewers === undefined && !findings.fixRound(pr)) return 'a first read needs an explicit panel';
   const reviewers = report.reviewers === undefined ? defaults : report.reviewers;
   if (!Array.isArray(reviewers)) return 'reviewers must be a list';
   const problem = readerProblem(reviewers, eligible);
@@ -247,11 +247,8 @@ function omissionProblem(pr: number, report: any, assigned: Read[], files: strin
 // The readability reader a first read chooses unless excepted: none on a re-review, or when they may not read
 function readabilityReader(pr: number) {
   const agent = roles().readability;
-  return agent && !fixesFrom(pr) && eligibleFor(pr)(agent) ? agent : undefined;
+  return agent && !findings.fixRound(pr) && eligibleFor(pr)(agent) ? agent : undefined;
 }
-
-const fixesFrom = (pr: number) =>
-  (db.prepare('select fixes_from from prs where number = ?').get(pr) as { fixes_from: string | null }).fixes_from;
 
 // A reader's files as paths: a folder (ending in /) or a glob reads as the round's files it matches, a path as itself.
 function matching(entries: string[], files: string[]) {
@@ -312,10 +309,11 @@ export function record(
   );
 }
 
+// What a round reads: a fix round only the fixes, against every finding still open, nonblocking ones included
 export function scope(pr: number, base: string | null) {
   return `${
     base
-      ? `\nReview only git diff ${base}..HEAD against these blocking findings. Do not re-review the rest.
+      ? `\nReview only git diff ${base}..HEAD against the findings below. Do not re-review the rest.
 Changes brought in by merging origin/main are not the author's fixes. Check git log --merges ${base}..HEAD.
 If there is such a merge, compare git diff origin/main...${base} with git diff origin/main...HEAD to isolate the fixes.
 A new blocking finding must be a regression caused by that fix. Include the concrete changed line in "caused_by".
@@ -345,8 +343,7 @@ export function selections(pr: number): Selection[] {
 export const recorded = (job: number) => !!db.prepare('select 1 from review_triage where job = ?').get(job);
 
 export function rulingProblem(pr: number, blocking: unknown) {
-  const row = db.prepare('select fixes_from from prs where number = ?').get(pr) as { fixes_from: string | null };
-  if (!row.fixes_from || !Array.isArray(blocking)) return;
+  if (!findings.fixRound(pr) || !Array.isArray(blocking)) return;
   if (
     !db
       .prepare(

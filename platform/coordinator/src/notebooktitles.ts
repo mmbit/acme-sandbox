@@ -1,7 +1,7 @@
 // Short titles for the board's untitled pages, through the worker's existing Haiku queue.
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { companyDay } from './company.ts';
+import { dayAllowance } from './dayallowance.ts';
 import { db } from './db.ts';
 import { BOARD } from './ink/book.ts';
 import { pictureOf } from './ink/bookpicture.ts';
@@ -17,7 +17,8 @@ const REST_MS = 5000;
 // can take in a day, under the ink's READS_A_DAY (ink/inkread.ts) and the judge's JUDGES_A_DAY. A day of the board's new pages is a
 // handful to a few dozen.
 export const TITLES_A_DAY = 100;
-db.exec('create table if not exists page_titles (day text primary key, titles integer not null)');
+// One more title today, unless today's are used
+const takeOne = dayAllowance('page_titles', 'titles', TITLES_A_DAY);
 const pending = new Map<number, { timer: ReturnType<typeof setTimeout>; updated: string }>();
 const naming = new Set<number>();
 const eligible = (p: NotebookPage | undefined): p is NotebookPage =>
@@ -44,7 +45,7 @@ async function namePage(id: number) {
   if (!groups.length) return;
   const titleSeen = titleSeenOf(groups);
   if (titleSeen === p.title_seen) return;
-  if (!counted()) {
+  if (!takeOne()) {
     console.error(`The page title writer: ${TITLES_A_DAY} pages titled today, page ${id} not`);
     return;
   }
@@ -72,19 +73,6 @@ async function namePage(id: number) {
     const now = pageRow(id, null);
     if (eligible(now) && titleSeenOf(contentOf(id)) !== titleSeen) titleLater(id);
   }
-}
-
-// One more title today, unless today's are used
-function counted() {
-  const day = companyDay(Date.now());
-  const done = (db.prepare('select titles from page_titles where day = ?').get(day) as { titles: number } | undefined)
-    ?.titles;
-  if ((done ?? 0) >= TITLES_A_DAY) return false;
-  db.prepare(
-    'insert into page_titles (day, titles) values (?, 1) on conflict (day) do update set titles = titles + 1',
-  ).run(day);
-  db.prepare('delete from page_titles where day < ?').run(companyDay(Date.now() - 7 * 864e5));
-  return true;
 }
 
 type Content = { ink: string; texts: string; pictures: string; words: string };

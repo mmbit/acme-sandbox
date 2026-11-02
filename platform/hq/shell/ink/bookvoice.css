@@ -1,10 +1,16 @@
-/* A held press's parts (bookinput.js): the voice note's listening slip at the press (bookvoice.js) and the radial
-   menu round the pen (bookradial.js). Both are the moment's only: gone once it's over. */
+/* The voice note's parts (bookvoice.js): the mic on the rail, red and ringed with the voice while it listens, and the
+   listening slip beside it. The slip is the moment's only: gone once it's over. */
 
-/* ---- the listening slip: a small pill beside the press, a red dot with its ripples and a few bars that move with the
+.bk-btn.bk-mic[aria-pressed='true'] {
+  background: #d0443a;
+  color: #fff;
+  box-shadow: 0 0 0 calc(2px + 5px * var(--lvl, 0)) rgba(208, 68, 58, 0.3);
+  transition: box-shadow 0.08s;
+}
+
+/* ---- the listening slip: a small pill left of the mic, a red dot with its ripples and a few bars that move with the
    voice, the words as they're heard after them. Its own size and place: the book's own parts fill the screen's height
-   (book.css's #book > *), which made it a tall box shifted off the screen; bookvoice.js keeps it on screen (--dx, and
-   data-below where there's no room above the press). */
+   (book.css's #book > *), which made it a tall box. */
 #book > .bk-voice {
   height: auto;
 }
@@ -16,21 +22,17 @@
   gap: 8px;
   box-sizing: border-box;
   width: max-content;
-  max-width: min(320px, calc(100vw - 16px));
+  max-width: min(320px, calc(100vw - 96px));
   padding: 8px 14px 8px 12px;
   border-radius: 20px;
   background: var(--bk-paper, #fffaf0);
   color: var(--bk-ink, #2a2352);
   box-shadow: var(--bk-lift);
   font: 600 14px/1.3 var(--bk-font, system-ui, sans-serif);
-  translate: calc(-18px + var(--dx, 0px)) calc(-100% - 22px);
-  transform-origin: 18px 100%;
+  translate: calc(-100% - 12px) -50%;
+  transform-origin: 100% 50%;
   pointer-events: none;
   animation: bk-voice-in 0.22s cubic-bezier(0.3, 1.5, 0.5, 1);
-}
-.bk-voice[data-below] {
-  translate: calc(-18px + var(--dx, 0px)) 26px;
-  transform-origin: 18px 0;
 }
 .bk-voice span {
   overflow: hidden;
@@ -137,75 +139,11 @@
   }
 }
 
-/* ---- the radial menu: the tools in a ring round the pen, the one it points at inked */
-.bk-radial {
-  position: fixed;
-  z-index: 61;
-  width: 0;
-  height: 0;
-}
-.bk-radial::before {
-  content: '';
-  position: absolute;
-  left: -96px;
-  top: -96px;
-  width: 192px;
-  height: 192px;
-  border-radius: 50%;
-  background: rgba(255, 250, 240, 0.72);
-  box-shadow: var(--bk-lift);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
-  animation: bk-radial-in 0.14s ease-out;
-}
-.bk-radial .bk-btn {
-  position: absolute;
-  left: 0;
-  top: 0;
-  translate: calc(var(--dx) - 50%) calc(var(--dy) - 50%);
-  background: var(--bk-paper, #fffaf0);
-  box-shadow: 0 0 0 1px var(--bk-edge);
-  animation: bk-radial-in 0.14s ease-out;
-}
-.bk-radial .bk-btn[aria-checked='true'] {
-  box-shadow: inset 0 0 0 2px var(--bk-ink, #2a2352);
-  color: var(--bk-ink, #2a2352);
-}
-.bk-radial .bk-btn[data-sliding] {
-  background: var(--bk-ink, #2a2352);
-  color: var(--bk-paper, #fffaf0);
-}
-/* the tool's name under the one pointed at */
-.bk-radial-name {
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 50%;
-  translate: -50% 0;
-  padding: 2px 7px;
-  border-radius: 6px;
-  background: var(--bk-ink, #2a2352);
-  color: var(--bk-paper, #fffaf0);
-  font: 600 12px/1.25 var(--bk-font, system-ui, sans-serif);
-  white-space: nowrap;
-  opacity: 0;
-  pointer-events: none;
-}
-.bk-radial .bk-btn[data-sliding] .bk-radial-name {
-  opacity: 1;
-}
-@keyframes bk-radial-in {
-  from {
-    opacity: 0;
-    scale: 0.85;
-  }
-}
 @media (prefers-reduced-motion: reduce) {
   .bk-voice,
   .bk-voice-dot::before,
   .bk-voice-dot::after,
-  .bk-voice-wave b,
-  .bk-radial::before,
-  .bk-radial .bk-btn {
+  .bk-voice-wave b {
     animation: none;
   }
 }

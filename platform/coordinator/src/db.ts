@@ -389,6 +389,9 @@ db.exec('create table if not exists pushes (pr integer not null, sha text not nu
 // by record (visual.ts).
 db.exec('create table if not exists engine_redo (pr integer primary key, files text not null, since text)');
 db.exec('create table if not exists previews_owed (pr integer primary key, files text not null)');
+// What each pushed commit's screens check found (screens.ts): the board's screens it changes against main, as JSON (`[]`:
+// none), or null when the check couldn't run, so its ruling renders them itself.
+db.exec('create table if not exists screens_shown (pr integer not null, sha text not null, changed text, primary key (pr, sha))');
 // The review findings that reached an author (a ruling's "changes"), with what became of each as the next ruling judged
 // it, and the pre-existing ones the consolidator confirmed (findings.ts). `by`: the reviewers who reported it, with
 // their engines (JSON).
@@ -488,9 +491,10 @@ db.exec('create table if not exists untold (job integer not null, item integer n
 // reads it (ledger.ts askReplies).
 db.exec('create table if not exists reply_asks (job integer primary key)');
 // The CEO's hourly follow-through checks (followthrough.ts), one per hour slot: the job, and the verdict it recorded
-// with its one line.
+// with its one line; the summary's lines as it was queued (seen, JSON), the next look its verdict named (next), and the
+// last hour slot the summary was compared with them while that look waited (compared).
 db.exec(`create table if not exists followthrough_checks (slot text primary key, job integer not null, created text not null,
-  verdict text, said text, at text)`);
+  verdict text, said text, at text, seen text, next text, compared text)`);
 redacted('followthrough_checks', 'said');
 // (by job: the queue's every read asks whether a job is one, jobs.ts FOLLOW_THROUGH)
 db.exec('create index if not exists followthrough_checks_job on followthrough_checks (job)');
@@ -619,12 +623,16 @@ db.exec(`create view if not exists thread_windows as
 // A company's plans (plan.ts), here rather than in that module: company.ts reads the projects, and the claim will read
 // the needs and the order. projects: each a line of work with one owner, in the order made (by: the agent who made it,
 // or projects.yaml for one lifted from its old `projects:` list). done: when hq project done closed it. thread_needs: a
-// thread starts once every thread it needs is done and merged. plan_changes: every change to a plan, who made it and the
-// meeting it came from. code: the prefix of its tasks' codes (jobcodes.ts),
+// thread starts once every thread it needs is done and merged. need_spells: each edge's spell, from when it was drawn
+// (newthread.ts addNeed; null: before the recording) until hq plan unneed dropped it (null: in force), for hq estimate
+// --calibration's waiting (threadwaits.ts). plan_changes: every change to a plan,
+// who made it and the meeting it came from. code: the prefix of its tasks' codes (jobcodes.ts),
 // two or three capitals, unique. goal: when the CEO marked it one of the company's goals (goals.ts), else null
 db.exec(`create table if not exists projects (id text primary key, name text not null, owner text not null, business text,
     product text, status text not null default 'open', created text not null, by text not null, done text, code text, goal text);
   create table if not exists thread_needs (thread text not null, needs text not null, primary key (thread, needs));
+  create table if not exists need_spells (thread text not null, needs text not null, drawn text, dropped text);
+  create index if not exists need_spells_thread on need_spells (thread, needs);
   create table if not exists plan_changes (id integer primary key, at text not null, project text not null, thread text,
     what text not null, by text not null, meeting integer)`);
 redacted('plan_changes', 'what');
@@ -987,4 +995,9 @@ once('2026-11-02-requests-settled', () => lacks('requests', 'settled') && db.exe
 once('2026-10-31-jobs-work-branch-thread', () => {
   db.exec(`drop index if exists jobs_work_branch;
     create index jobs_work_branch on jobs (coalesce(branch, 'job/' || id), kind, thread) where kind = 'work'`);
+});
+// The follow-through check's next look: followthrough_checks seen, next and compared, above.
+once('2026-11-02-followthrough-next-look', () => {
+  for (const column of ['seen', 'next', 'compared'])
+    if (lacks('followthrough_checks', column)) db.exec(`alter table followthrough_checks add column ${column} text`);
 });

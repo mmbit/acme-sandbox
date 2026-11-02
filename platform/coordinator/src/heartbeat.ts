@@ -27,6 +27,7 @@ judge it. Start from it.
 // (causes fixed by judgment, not band-aid rules)
 // (a pause that only reorders is off track: a window instead)
 // (a new time reaches the board only for a time it set itself, once)
+// (the next look the CEO names)
 const STEPS = `1. Read the summary below and \`hq followthrough\`. The summary: what the board asked for and how long it has waited,
    our goals with each bet's window and next step, the numbers the company steers by, the meetings closed since the
    last check, what finished since then (deliverables done and the board's items, merged and deployed: whether the board
@@ -131,11 +132,17 @@ the number now, what is the target and by when, what moves it next, and is that 
 9. The verdict, last. On track only when everything the board waits for is with it and delivered as that says, or on
    its way to it in time on real state (a ready item the board has been shown, until it answers), every goal is fine on
    facts, and nothing in the summary needs you since the last check: \`hq followthrough
-   ok\`, and stop. No report, no message, no card. Otherwise \`hq followthrough acted "what was off and what you did,
-   in one line"\`: the next check reads it. After a note to the Overseer, end the run at once after that line: your
-   notes go out when it ends.
+   ok --next <when>\`, and stop. No report, no message, no card. The next look is your judgment: HQ queues that check
+   then, or sooner once a new line comes into the summary (a board ask, an alarm, a threat, a decision held, a
+   proposal), so the time you give weighs only the slips no new line shows: a ready job left idle, a proposal or a pull
+   request going stale, a bet drifting. Hourly (\`--next 1h\`) while the board waits on something due within hours, or
+   a read, a deploy or a result it waits for is about to land; a few hours (\`--next 4h\`) on a quiet night with nothing
+   due before morning; never past the first time the board, a goal's window or your page waits for. Without it, the
+   next check comes in an hour. Otherwise \`hq followthrough acted "what was off and what you did, in one line"\`: the
+   next hour's check reads it. After a note to the Overseer, end the run at once after that line: your notes go out
+   when it ends.
 
-Keep it short: it runs every hour, so it spends little when all is on track.`;
+Keep it short: it runs up to every hour, so it spends little when all is on track.`;
 
 // The check's whole text: the foundation's, with org.yaml's followThrough.delivered (else the platform's own), then
 // org.yaml's followThrough.prompt (what the check is for to the company's board and how far it goes), then the CEO's page.

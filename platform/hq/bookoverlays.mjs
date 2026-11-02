@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { writeFile } from 'node:fs/promises';
 import { recording, cross, screen, sameInk } from './bookpicture.mjs';
 import { playLine } from './bookcall.mjs';
-import { MINI, UPRIGHT, DESKTOP, middleOf, until, bookOpen } from './bookkit.mjs';
+import { MINI, UPRIGHT, DESKTOP, PREFERENCES, middleOf, until, bookOpen } from './bookkit.mjs';
 import { minimiseCall } from './bookcallview.mjs';
 
 export function overlayStories(c) {
@@ -103,7 +103,7 @@ async function overlays(browser, c, viewport) {
     await page.waitForTimeout(450); // Let the pen tap's native click finish before the next finger tap.
     await page.keyboard.press('Escape');
     await page.waitForSelector('.tb', { state: 'detached' });
-    await rail(s, line, 'Preferences on this device', '.bk-prefs', 'preferences');
+    await rail(s, line, PREFERENCES, '.bk-prefs', 'preferences');
     await rail(s, line, 'Pen', '.bk-palette', 'colours');
     await bookOpen(page, false);
     await pageOverlays(s, line);

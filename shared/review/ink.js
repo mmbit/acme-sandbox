@@ -9,13 +9,12 @@
 
 // The stroke's shapes are inkshape.js's, and the live line's repaints and its tail inklive.js's, which draws with the
 // same shapes: neither imports this file back
-import { HALO, HALO_ALPHA, outline } from './inkshape.js';
-import { ahead, dropTail, samples, show } from './inklive.js';
+import { HALO, HALO_ALPHA, fills, outline } from './inkshape.js';
+import { ahead, dropTail, samples, show, stop } from './inklive.js';
 export { outline }; // (the book's page picture draws with it)
 
-// The pens' colours, the notebook's (HQ's bookpalette.js) and the pin's strip's alike, so a colour picked in one is found
-// in the other (the board, call 161.) Two rows of six in the notebook: the darks and the warm ones, then the cool ones
-// (the eight after the first four)
+// The notebook's pens' colours (HQ's bookpalette.js), in two rows of six: the darks and the warm ones, then the cool
+// ones. The pin's strip offers four of them (INKS), so each colour on it is found in the notebook too. (this note:
 export const PENS = [
   { name: 'Night', color: '#2a2352' },
   { name: 'Graphite', color: '#6b6875' },
@@ -57,24 +56,50 @@ export function draw(g, strokes, { halo = false, until = Infinity } = {}) {
     for (const s of shown)
       if (!(s.alpha < 1)) {
         g.globalAlpha = HALO_ALPHA;
-        g.fill(new Path2D(outline(s, HALO)));
+        g.fill(pathOf(s, HALO));
       }
   }
-  for (const s of shown) {
+  // (a see-through stroke's pieces filled as one: inkshape.js fills.)
+  for (const [s, ...more] of fills(shown)) {
     g.globalAlpha = s.alpha ?? 1;
     g.fillStyle = s.color;
-    g.fill(new Path2D(outline(s)));
+    if (!more.length) g.fill(pathOf(s, 0));
+    else {
+      const all = new Path2D();
+      for (const piece of [s, ...more]) all.addPath(pathOf(piece, 0));
+      g.fill(all);
+    }
   }
   g.restore();
 }
-
-// The strokes as an SVG picture of the given size (an agent's or the Sketchbook's copy)
-export function svg(strokes, w, h, { halo = false } = {}) {
-  const path = (s, grow, fill, alpha) =>
-    `<path d="${outline(s, grow)}" fill="${fill}"${alpha < 1 ? ` fill-opacity="${alpha}"` : ''}/>`;
-  const halos = halo ? strokes.filter(s => !(s.alpha < 1)).map(s => path(s, HALO, '#fff', HALO_ALPHA)) : [];
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">${halos.join('')}${strokes.map(s => path(s, 0, s.color, s.alpha ?? 1)).join('')}</svg>`;
+// A stroke's shape as a Path2D, made once for its points: a page is painted again often (under the eraser, every
+// frame), and spelling out a marker's thousands of discs and bands is most of a paint. A changed stroke has new points
+// (HQ's bookedit.js), and a line still being drawn only grows, so the points and their count are the key.
+const paths = new WeakMap();
+function pathOf(s, grow) {
+  const key = `${s.points.length} ${s.size} ${Boolean(s.fill)}`,
+    held = paths.get(s.points) ?? new Map(), // (grow → { key, path }: a pen's halo and its ink)
+    made = held.get(grow);
+  if (made?.key === key) return made.path;
+  const path = new Path2D(outline(s, grow));
+  held.set(grow, { key, path });
+  paths.set(s.points, held);
+  return path;
 }
+
+// The strokes as an SVG picture of the given size, with a white halo round a pen's ink when asked. The ink is drawn as
+// svgInk draws it.
+export function svg(strokes, w, h, { halo = false } = {}) {
+  const halos = halo ? strokes.filter(s => !(s.alpha < 1)).map(s => svgPath([s], HALO, '#fff', HALO_ALPHA)) : [];
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">${halos.join('')}${svgInk(strokes)}</svg>`;
+}
+// The strokes' ink as SVG paths in their own px, filled as draw fills them
+export const svgInk = strokes =>
+  fills(strokes)
+    .map(all => svgPath(all, 0, all[0].color, all[0].alpha ?? 1))
+    .join('');
+const svgPath = (all, grow, fill, alpha) =>
+  `<path d="${all.map(s => outline(s, grow)).join('')}" fill="${fill}"${alpha < 1 ? ` fill-opacity="${alpha}"` : ''}/>`;
 
 // A canvas the size of its box, in device pixels, cleared and drawn in CSS px
 export function fit(canvas) {
@@ -125,14 +150,13 @@ export function pen(surface, wet, opts) {
   }
   const move = e => {
     if (!line || e.pointerId !== line.id) return;
-    // (the tail, and its timeout)
-    show(line, follow(line, e, 'move'), ahead(line, e));
+    show(line, follow(line, e, 'move'), ahead(line, e)); // (and its tail, gone if the pen stops)
     dropTail(line, () => line);
     tell('move', line);
   };
   function finish(e) {
     if (!line || e.pointerId !== line.id) return;
-    show(line, follow(line, e, 'end'), null); // (no tail)
+    show(line, follow(line, e, 'end'), null, true); // (no tail, and all of it now: the dry ink takes it from here)
     tell('end', line);
     const done = line.stroke;
     line = null;
@@ -141,6 +165,7 @@ export function pen(surface, wet, opts) {
   const cancel = e => {
     if (!line || (e && e.pointerId !== line.id)) return;
     tell('cancel', line);
+    stop(line);
     line = null;
     clear();
     opts.cancel?.();

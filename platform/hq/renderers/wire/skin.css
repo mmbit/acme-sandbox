@@ -355,12 +355,13 @@ body.touring #card {
   }
 }
 /* a preview on HQ's own ground, its bar's and head's keys Slate's: a picked choice latched down in its own face, Share's
-   picked kind too, Note lit as the one to press */
+   picked kind too, Note lit as the one to press, and the head's choice of what's beside staging a key too */
 #viewer {
   --on-deep: var(--k-ink);
   background: var(--k-ground);
 }
-#viewer :is(.bar, .stage .head) button {
+#viewer :is(.bar, .stage .head) button,
+#viewer .stage .head .pick {
   height: 38px;
   background: var(--key-bg);
   color: var(--key-ink);
@@ -369,7 +370,8 @@ body.touring #card {
   box-shadow: var(--key-lip);
 }
 /* (the head's keys short enough for their lip and press in its 40 px row: shell/viewerfit.js HEAD) */
-#viewer .stage .head button {
+#viewer .stage .head button,
+#viewer .stage .head .pick {
   height: 28px;
 }
 #viewer :is(.bar, .stage .head) button:is(:active, .down) {

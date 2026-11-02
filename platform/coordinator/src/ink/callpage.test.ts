@@ -2,8 +2,11 @@
 // line). A call's agent working its notes page as the board does (callpage.ts), and its plain note (callnotes.ts scrap).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import sharp from 'sharp';
 import { harness } from '../harness.ts';
 import { boxOf } from '../../../hq/shell/ink/notebookstack.js';
+import { UNIT_W, WORDS_IN } from '../../../hq/shell/ink/scrapunit.js';
 
 const h = await harness('callpage');
 const { db } = h;
@@ -229,10 +232,33 @@ test('the agent changes its own scrap’s words and its item’s, moves and dele
   );
   // (the agent's mark on it after leaves the board's line the board's)
   said(await h.voice('mark', { call, mark: 'ellipse', around: note }));
-  assert.equal((await h.voice('change', { call, id: note, words: 'Make it small' })).status, 409);
+  said(await h.voice('change', { call, id: note, words: 'Make it small' }));
+  const typedOver = (await groups(page)).find(g => g.id === note);
+  assert.deepEqual(
+    typedOver.texts.map((t: any) => t.text),
+    ['Make it small', 'and the font'],
+  );
   assert.deepEqual(
     ledger.items(call).map(i => i.what),
-    ['Make the price much smaller', 'Move Send elsewhere'],
+    ['Make it small', 'Move Send elsewhere'],
+  );
+  // (one the board took the agent's words out of stays as the board left it)
+  const typedOut = (await groups(page)).find(g => g.id === note);
+  said(
+    await h.board('/api/notebooks/groups/edit', {
+      id: note,
+      since: typedOut.updated,
+      texts: typedOut.texts.filter((t: any) => t.id === 'b0a2d0000000'),
+    }),
+  );
+  assert.equal((await h.voice('change', { call, id: note, words: 'Make it tiny' })).status, 409);
+  assert.deepEqual(
+    (await groups(page)).find(g => g.id === note).texts.map((t: any) => t.text),
+    ['and the font'],
+  );
+  assert.deepEqual(
+    ledger.items(call).map(i => i.what),
+    ['Make it small', 'Move Send elsewhere'],
   );
   const mine = 'Mine, and long enough to need more than a short line of words. '.repeat(4).trim();
   const board = said(
@@ -253,6 +279,54 @@ test('the agent changes its own scrap’s words and its item’s, moves and dele
   said(await h.board('/api/notebooks/groups/restore', { id: note }));
   assert.equal(groupRow(note).deleted, null);
   assert.equal((await h.voice('change', { call, id: note, words: 'x', delete: true })).status, 400);
+});
+
+test('a screen deletes only the note it has read: one the agent reworded since stays, as it says now', async () => {
+  const { call, page } = await callPage();
+  const note = said(await h.voice('write-down', { call, words: 'Projects hold milestones', goal: GOAL })).id as number;
+  const read = (await groups(page)).find(g => g.id === note);
+  // (typed where HQ's page lays words, so the board's screen has nothing of its own to save over it.)
+  assert.deepEqual([read.texts[0].x, read.texts[0].w], [WORDS_IN, UNIT_W - 2 * WORDS_IN]);
+  said(await h.voice('change', { call, id: note, words: 'Projects hold milestones, which replace deliverables' }));
+  const reworded = (await groups(page)).find(g => g.id === note);
+  assert.equal(reworded.texts[0].x, WORDS_IN, 'typed again where it stood');
+  const gone = await h.board('/api/notebooks/groups/delete', { id: note, since: read.updated });
+  assert.equal(gone.status, 409);
+  assert.equal(
+    (await groups(page))
+      .find(g => g.id === note)
+      ?.texts.map((t: any) => t.text)
+      .join(''),
+    'Projects hold milestones, which replace deliverables',
+  );
+  said(await h.board('/api/notebooks/groups/delete', { id: note, since: reworded.updated }));
+});
+
+test('a note the board moved in its unit is typed again where the board put it when the agent rewords it', async () => {
+  const { call, page } = await callPage();
+  const note = said(await h.voice('write-down', { call, words: 'Projects hold milestones', goal: GOAL })).id as number;
+  const read = (await groups(page)).find(g => g.id === note);
+  const moved = read.texts.map((t: any) => ({ ...t, x: 60, y: t.y + 30, w: UNIT_W - WORDS_IN - 60 }));
+  said(await h.board('/api/notebooks/groups/edit', { id: note, since: read.updated, texts: moved }));
+  said(await h.voice('change', { call, id: note, words: 'Projects hold milestones, which replace deliverables' }));
+  const [line] = (await groups(page)).find(g => g.id === note).texts;
+  // (as wide as the unit leaves it there, so HQ's page has nothing to lay anew.)
+  assert.deepEqual([line.x, line.y, line.w], [60, moved[0].y, UNIT_W - WORDS_IN - 60]);
+});
+
+test("the agent's note joined with another keeps its words and both items'", async () => {
+  const { call, page } = await callPage();
+  const note = said(await h.voice('write-down', { call, words: 'Make the price smaller', goal: GOAL })).id as number;
+  const other = said(await h.voice('write-down', { call, words: 'Move Send elsewhere', goal: GOAL })).id as number;
+  // (the board's join: one note holding both asks)
+  db.prepare('update call_asks set grp = ? where grp = ?').run(note, other);
+  const before = (await groups(page)).find(g => g.id === note);
+  assert.equal((await h.voice('change', { call, id: note, words: 'Make it smaller still' })).status, 409);
+  assert.deepEqual((await groups(page)).find(g => g.id === note).texts, before.texts);
+  assert.deepEqual(
+    ledger.items(call).map(i => i.what),
+    ['Make the price smaller', 'Move Send elsewhere'],
+  );
 });
 
 test("after the board's Undo of the agent's new words, each of its notes is still its own", async () => {
@@ -342,6 +416,36 @@ test("the agent starts a try on a scrap: its owner's try run, once; a scrap on a
   assert.equal((await h.voice('try', { call, id: note, why: ' ' })).status, 400);
   h.cancelQueued();
 });
+
+test(
+  "the agent's drawing goes in the call's notes as a picture in the company's look, and it sees what went in",
+  {
+    skip: !process.env.CHROMIUM_PATH && 'needs CHROMIUM_PATH',
+  },
+  async () => {
+    const { call, page } = await callPage();
+    mkdirSync(`${h.repo}/kits/look`, { recursive: true });
+    writeFileSync(`${h.repo}/kits/look/drawing.css`, 'main { background: #00ff00; }');
+    appendFileSync(`${h.repo}/theme/hq.yaml`, 'drawing: kits/look/drawing.css\n');
+    // (a script in it never runs)
+    const svg = `<svg viewBox="0 0 640 320"><rect x="40" y="40" width="200" height="120" class="accent"/>
+    <text x="300" y="100">Milestones</text><script>document.querySelector('main').style.background = '#ff0000'</script></svg>`;
+    const drawn = said(await h.voice('drawing', { call, svg }));
+    assert.match(drawn.ok, new RegExp(`^Your drawing is in the call's notes \\(#${drawn.id}\\)`));
+    const seen = await sharp(Buffer.from(drawn.picture.data, 'base64')).metadata();
+    assert.deepEqual([drawn.picture.type, seen.width], ['image/jpeg', 640], 'the agent sees it at half its size');
+    const g = (await groups(page)).at(-1);
+    assert.deepEqual([g.id, g.kind, g.by, g.words ?? ''], [drawn.id, 'scrap', 'juno', ''], 'a picture of its own');
+    const file = decodeURIComponent(/file=([^&]+)/.exec(g.pictures[0].url)![1]);
+    const corner = await sharp(readFileSync(`${h.dataDir}/book/${file}`))
+      .extract({ left: 2, top: 2, width: 1, height: 1 })
+      .raw()
+      .toBuffer();
+    assert.deepEqual([...corner.subarray(0, 3)], [0, 255, 0], "the company's ground, untouched by the script");
+    for (const notOne of ['a box and an arrow', '<svg viewBox="0 0 640 320"></svg>'])
+      assert.equal((await h.voice('drawing', { call, svg: notOne })).status, 400, notOne);
+  },
+);
 
 // (last in the file: it uses up the day's readings, and nothing after it may need one.)
 test("the board's ink read on a call is one of the day's handwriting readings, none past them", async () => {

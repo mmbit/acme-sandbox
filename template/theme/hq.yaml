@@ -6,6 +6,11 @@
 # Agents are told the style and its craft note, and styleNote's note of the company's own drawing rules, which the
 # founding writes (company/playbooks/intake.md).
 # styleNote: knowledge/notes/design/drawing.md
+# A call agent's drawings (a diagram or chart it puts on the call's notes page as a picture) wear the plain look: one
+# black line, a system sans. drawing names a stylesheet of the company's under kits/ or theme/ that dresses them in its
+# own, styling the SVG's shapes and words and the classes the agent is given: accent, shade, arrow, thin and muted
+# (platform/coordinator/src/drawing.ts).
+# drawing: kits/<kit>/drawing.css
 renderer: wire
 wire:
   colourways:

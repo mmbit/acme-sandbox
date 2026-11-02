@@ -14,6 +14,7 @@ registerHooks({
 });
 const { SHAPE_P, shape } = await import('./bookinkmath.js');
 const { cut, inside, radius, rub } = await import('./bookstrokes.js');
+const { fills } = await import('/__review/inkshape.js');
 
 const INK = { color: '#2a2352', size: 4 };
 const line = (pts, more = {}) => ({ ...INK, ...more, points: pts.map(([x, y], i) => [x, y, 0.5, i * 10]) });
@@ -90,7 +91,7 @@ test('the eraser cuts a line where it passes, in two, and leaves the rest as it 
     [0, 0],
     [200, 0],
   ]);
-  const pieces = cut(s, [100, -50], [100, 50], 10);
+  const { pieces } = cut(s, [100, -50], [100, 50], 10);
   assert.equal(pieces.length, 2);
   const [left, right] = pieces;
   const gap = right.points[0][0] - left.points.at(-1)[0];
@@ -109,20 +110,20 @@ test('a pass over the end of a line shortens it; over all of it, takes it', () =
     [0, 0],
     [40, 0],
   ]);
-  const shorter = cut(s, [40, -20], [40, 20], 8);
+  const shorter = cut(s, [40, -20], [40, 20], 8).pieces;
   assert.equal(shorter.length, 1);
   assert.ok(shorter[0].points.at(-1)[0] < 40 - 8);
-  assert.deepEqual(cut(s, [-20, 0], [60, 0], 8), []);
+  assert.deepEqual(cut(s, [-20, 0], [60, 0], 8).pieces, []);
 });
 
 test('a filled shape the eraser touches goes whole, by its line or its inside; an outlined one is cut', () => {
   const box = shape('rect', [0, 0], [100, 100], INK, { fill: true });
-  assert.deepEqual(cut(box, [50, 50], [52, 50], 5), [], 'inside');
-  assert.deepEqual(cut(box, [-3, 50], [-3, 52], 5), [], 'its line');
+  assert.deepEqual(cut(box, [50, 50], [52, 50], 5).pieces, [], 'inside');
+  assert.deepEqual(cut(box, [-3, 50], [-3, 52], 5).pieces, [], 'its line');
   assert.equal(cut(box, [150, 50], [160, 50], 5), null);
   const ring = shape('rect', [0, 0], [100, 100], INK);
   assert.equal(cut(ring, [50, 50], [52, 50], 5), null, "an outline's inside is paper");
-  assert.equal(cut(ring, [50, -20], [50, 20], 5).length, 1, 'cut open: one line round');
+  assert.equal(cut(ring, [50, -20], [50, 20], 5).pieces.length, 1, 'cut open: one line round');
 });
 
 test('a rub over a page: only what it touched changes, and says where', () => {
@@ -142,8 +143,46 @@ test('a rub over a page: only what it touched changes, and says where', () => {
     done.ink.slice(0, 2).map(piece => [a, piece]),
     'each piece kept with the line it was cut from (for Undo)',
   );
-  assert.ok(done.box.y1 < 50 && done.box.x0 <= 0);
+  assert.ok(done.box.y1 < 50 && done.box.x0 <= 0, 'the line given points along all of it: its whole box');
   assert.equal(rub([a, b], [50, 100], [60, 100], 6), null);
+});
+
+test("a rub through a Pencil's line says only round the pass changed, holding all it took", () => {
+  // (a point every 2 px, as a Pencil reports a line; on a page of overlapping ink a cut line's whole box is most of it)
+  const a = line(Array.from({ length: 101 }, (_, i) => [i * 2, 0])),
+    done = rub([a], [100, -20], [100, 20], 6);
+  assert.ok(done.box.x0 > 60 && done.box.x1 < 140 && done.box.y1 < 40, JSON.stringify(done.box));
+  const kept = new Set(done.ink.flatMap(piece => piece.points.map(p => p.join())));
+  const gone = a.points.filter(p => !kept.has(p.join())),
+    added = done.ink.flatMap(piece => piece.points).filter(p => !a.points.some(q => q.join() === p.join()));
+  assert.ok(gone.length > 3);
+  for (const [x, y] of [...gone, ...added])
+    assert.ok(x > done.box.x0 && x < done.box.x1 && y > done.box.y0 && y < done.box.y1, `${x}, ${y} in its box`);
+});
+
+test("a marker's scribble cut by the eraser stays one even colour: its pieces are filled as one", () => {
+  // (a back-and-forth fill: its two pieces meet all along, where the one line laid its colour once)
+  const pts = [
+      ...Array.from({ length: 51 }, (_, i) => [i * 2, 0]),
+      ...Array.from({ length: 50 }, (_, i) => [98 - i * 2, 3]),
+    ],
+    marker = line(pts, { color: '#ffd23f', size: 20, alpha: 0.42 }),
+    done = rub([marker], [100, -20], [100, 20], 6);
+  assert.equal(done.ink.length, 2);
+  const [a, b] = done.ink;
+  assert.ok(Number.isInteger(a.cut) && a.cut === b.cut, 'one number on both pieces');
+  assert.deepEqual(fills(done.ink), [[a, b]], 'filled as one');
+  assert.ok(done.box.x0 >= 50, `only round the pass changed: ${JSON.stringify(done.box)}`);
+  // (cut again, a piece keeps the number: all of the scribble still one fill)
+  const again = rub(done.ink, [30, -20], [30, 20], 6);
+  assert.equal(new Set(again.ink.map(s => s.cut)).size, 1);
+  assert.equal(fills(again.ink).length, 1);
+  // (another scribble of the same marker, and a pen's line, each a fill of their own: a pen's pieces need no number)
+  const other = rub([line(pts, { color: '#ffd23f', size: 20, alpha: 0.42 })], [100, -20], [100, 20], 6).ink;
+  assert.equal(fills([...done.ink, ...other]).length, 2);
+  const pen = rub([line(pts)], [100, -20], [100, 20], 6).ink;
+  assert.ok(pen.every(s => s.cut === undefined));
+  assert.equal(fills(pen).length, 2);
 });
 
 test("a point is inside a closed run of points or it isn't", () => {

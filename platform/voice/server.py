@@ -35,7 +35,8 @@ from urllib.request import Request, urlopen
 from aloud import DAYS, aloud, number, respelt
 from drawing import ASK_WORDS, INK_SECONDS, INK_WORDS, Drawing, note_said, notes_lost, one_line
 from driving import DRIVE_WORDS, OPEN_WORDS, Driving
-from callnotes import CHANGE_WORDS, MARK_WORDS, PAGE_WORDS, TITLE_WORDS_SAID, TRY_WORDS, WRITE_DOWN_WORDS, CallNotes
+from callnotes import (CHANGE_WORDS, DRAW_WORDS, MARK_WORDS, PAGE_WORDS, TITLE_WORDS_SAID, TRY_WORDS, WRITE_DOWN_WORDS,
+                       CallNotes)
 from echo import Echo
 from endpoint import Endpoint
 from guard import PARTNER, TOOLS, agent_env, hq_tools_work, sign_in_pipe, take_token
@@ -446,10 +447,11 @@ async def serve_screens(path):
 
 # Each tool's ask on the line's socket, by the key it carries (the screen tool's has none of these), and the tool's words
 # (ask_to_see and draw; open_work and drive)
-# (write_down and title_notes: the call's notes; read_notes, mark_notes, change_note and try: the agent working it. try:
+# (write_down and title_notes: the call's notes; read_notes, mark_notes, change_note, draw_picture and try: the agent
+# working it. try:
 ASKED_WORDS = {'sketch': SKETCH_WORDS, 'ask_to_see': ASK_WORDS, 'draw': INK_WORDS, 'open_work': OPEN_WORDS, 'drive': DRIVE_WORDS,
                'write_down': WRITE_DOWN_WORDS, 'title_notes': TITLE_WORDS_SAID, 'read_notes': PAGE_WORDS, 'mark_notes': MARK_WORDS,
-               'change_note': CHANGE_WORDS, 'try': TRY_WORDS, 'name_voice': VOICE_WORDS}
+               'change_note': CHANGE_WORDS, 'try': TRY_WORDS, 'draw_picture': DRAW_WORDS, 'name_voice': VOICE_WORDS}
 ASKED_WORDS |= {'save_voice': ENROL_WORDS, 'forget_voice': FORGET_WORDS}
 
 
@@ -464,7 +466,8 @@ async def screen_asked(reader, writer):
                          'drive': call.driving.drive_tool, 'write_down': call.page.write_down_tool,
                          'title_notes': call.page.title_tool, 'read_notes': call.page.page_tool,
                          'mark_notes': call.page.mark_tool, 'change_note': call.page.change_tool,
-                         'try': call.page.try_tool, 'name_voice': call.voice_tool,
+                         'try': call.page.try_tool, 'draw_picture': call.page.drawing_tool,
+                         'name_voice': call.voice_tool,
                          'save_voice': call.enrol_tool, 'forget_voice': call.forget_tool}[kind]
         answer = await tool(asked) if tool else {'error': ASKED_WORDS.get(kind, SCREEN_WORDS)['gone']}
     except Exception as err:  # (the coordinator failed, or a request of another shape: the agent hears so)
@@ -1211,7 +1214,7 @@ class Call:
         self.drawing = Drawing(self)
         # The agent driving a piece of work on the board's screen (driving.py)
         self.driving = Driving(self)
-        # The call's notes page in the board's Notebook (callnotes.py): the agent's scraps and its title.
+        # The call's notes page in the board's Notebook (callnotes.py): the agent's notes and its title.
         self.page = CallNotes(self)
         # A stranger's call answered by care: care keeps the words, so the line keeps no transcript file. The opening is
         # said at pickup (care_opening); the caller's first words are kept here (first) until they have heard its notice
@@ -1378,7 +1381,7 @@ class Call:
 
     async def scribbled(self):
         """The agent's turn is done, not talked over: the board's notes it had go from the board's screen (HQ's
-        callnotes.js), so it circles afresh. Nothing of them is in the notebook unless the agent made a scrap of one
+        callnotes.js), so it circles afresh. Nothing of them is in the notebook unless the agent made a note of one
         (the board, call 161). A turn the board talked over keeps them for the next."""
         done, self.scribbles = self.scribbles, []
         for note_id in done:

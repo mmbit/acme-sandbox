@@ -35,6 +35,16 @@ export function inside(dir: string, name: string, base = dir) {
   return fileStat?.isFile() ? { real: path, size: fileStat.size, modifiedMs: fileStat.mtimeMs } : null;
 }
 
+// The bytes a Range header asks of a body size bytes long: one range, as Safari asks to play a video, or the whole where
+// it asks none; null where it can't be had (a 416).
+export function rangeOf(header: string | undefined, size: number) {
+  const m = /^bytes=(\d*)-(\d*)$/.exec(header ?? '');
+  if (!m || !(m[1] || m[2])) return { start: 0, end: size - 1, partial: false };
+  const start = m[1] ? Number(m[1]) : Math.max(0, size - Number(m[2]));
+  const end = m[1] && m[2] ? Math.min(Number(m[2]), size - 1) : size - 1;
+  return start > end ? null : { start, end, partial: end - start + 1 < size };
+}
+
 // The Content-Disposition of a download by its file's name (RFC 6266): a plain ASCII name for old browsers, and the whole
 // name in UTF-8 (RFC 5987, which leaves ' ( ) * encoded too). Mail's attachments and a card's files.
 export const attachment = (name: string) =>

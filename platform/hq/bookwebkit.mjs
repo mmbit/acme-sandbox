@@ -1,16 +1,17 @@
 // book-check.mjs's story of the board's controls on an iPad mini in WebKit, the iPad's engine (--stories "in WebKit"
 // --webkit): the Pencil and a finger as Safari hands them over (pointer events on what's under them), the strip slid
-// along to a tool, the Pencil writing and a finger after it drawing nothing (it pans, by default), a double tap held a voice note whose words land where it held, and
-// the radial menu on a long press. Chromium's trusted touch and pen: bookstrip.mjs.
+// along to a tool, the Pencil writing and a finger after it drawing nothing (it pans, by default), the Pencil held still
+// only ink, and its tap on the rail's mic a voice note whose words land under the line it wrote. Chromium's trusted
+// touch and pen: bookstrip.mjs.
 import assert from 'node:assert/strict';
 import { freePage, paperBox, savedWhere } from './bookmouse.mjs';
-import { pressed, stored } from './bookstrip.mjs';
-import { HEARD, MINI, QUIET_MS, heard, middleOf, until, wordsHeard } from './bookkit.mjs';
+import { dictated, pressed, stillFor, stored } from './bookstrip.mjs';
+import { MINI, QUIET_MS, heard, middleOf, until } from './bookkit.mjs';
 
 // c: book-check.mjs's played store and helpers
 export function webkitStories(c) {
   return {
-    'controls on an iPad mini in WebKit: the strip slid, the Pencil drawing and a finger not, a double tap held, the radial menu':
+    'controls on an iPad mini in WebKit: the strip slid, the Pencil drawing and a finger not, the Pencil held still, its tap on the mic':
       browser => webkit(browser, c),
   };
 }
@@ -29,8 +30,12 @@ async function webkit(browser, c) {
     const paper = await paperBox(page),
       mid = middleOf(paper);
     await slidAndDrawn(page, c, free, mid);
-    await voiceAndRing(page, c, free, mid);
-    assert.deepEqual(errors, []);
+    await voice(page, c, free, mid);
+    // (a made-up pointer can't be captured in WebKit, as a real one can: the other WebKit stories leave it out too)
+    assert.deepEqual(
+      errors.filter(e => !/can not be found here/.test(e)),
+      [],
+    );
   } finally {
     await context.close();
   }
@@ -55,44 +60,36 @@ async function slidAndDrawn(page, c, free, mid) {
   await page.waitForTimeout(QUIET_MS);
   assert.equal(stored(c, free).ink.length, 1, 'the finger drew nothing');
 }
-// A double tap held: a voice note, its words where it held, the first tap's dot taken off; then the radial menu on, a
-// long press opens the ring, and a slide to the highlighter and a lift take it
-async function voiceAndRing(page, c, free, mid) {
-  const at = [mid[0] - 40, mid[1] + 60];
-  await safari(page, 'pen', 'pointerdown', at);
-  await safari(page, 'pen', 'pointerup', at);
-  await page.waitForTimeout(120);
-  await safari(page, 'pen', 'pointerdown', at);
-  await page.locator('#book .bk-voice').waitFor({ timeout: 2000 });
-  await wordsHeard(page);
-  await c.shot('book-voice-webkit', page);
-  await safari(page, 'pen', 'pointerup', at);
-  const saved = await savedWhere(c, free.id, p => p.texts.length === 1);
-  assert.equal(saved.texts[0].text, HEARD);
-  await page.waitForTimeout(QUIET_MS);
-  assert.equal(stored(c, free).ink.length, 1, "the double tap's dot taken off");
-  // the radial menu on: a long press opens the ring, a slide to the highlighter and a lift take it
-  await page.evaluate(() => localStorage.setItem('ink.prefs', JSON.stringify({ radial: true })));
-  const ring = [mid[0] + 40, mid[1] + 160];
-  await safari(page, 'pen', 'pointerdown', ring);
-  await page.locator('#book .bk-radial [role=menuitemradio]').first().waitFor({ timeout: 2000 });
-  const lit = middleOf(
-    await page.locator('#book .bk-radial').getByRole('menuitemradio', { name: 'Marker' }).boundingBox(),
+// The Pencil held still: a dot, nothing listening or opening; then a line written, and the Pencil's tap on the mic
+// and another: its words under that line
+async function voice(page, c, free, mid) {
+  const at = [mid[0] + 60, mid[1] + 180];
+  await stillFor(
+    page,
+    at,
+    p => safari(page, 'pen', 'pointerdown', p),
+    p => safari(page, 'pen', 'pointerup', p),
   );
-  await safari(page, 'pen', 'pointermove', lit);
-  await c.shot('book-radial-webkit', page);
-  await safari(page, 'pen', 'pointerup', lit);
-  await until(async () => (await pressed(page)) === 'Marker', 'the highlighter picked from the ring');
+  await savedWhere(c, free.id, p => p.ink.length === 2);
+  await safariLine(page, 'pen', [mid[0] - 120, mid[1] + 40], [mid[0] + 40, mid[1] + 50]);
+  await savedWhere(c, free.id, p => p.ink.length === 3);
+  const tap = async name => {
+    const on = middleOf(await page.locator('#book .bk-strip').getByRole('button', { name, exact: true }).boundingBox());
+    await safari(page, 'pen', 'pointerdown', on);
+    await safari(page, 'pen', 'pointerup', on);
+    await safari(page, 'pen', 'click', on);
+  };
+  await dictated(page, c, free, tap, 'book-voice-webkit');
 }
 
 // ---- helpers
 
-// A pointer event as Safari hands over the Pencil's or a finger's, on what's at the point
+// A pointer event as Safari hands over the Pencil's or a finger's, on what's at the point (a click, a tap's last)
 const safari = (page, kind, type, [x, y]) =>
   page.evaluate(
     ([kind, type, x, y]) =>
       (document.elementFromPoint(x, y) ?? document.body).dispatchEvent(
-        new PointerEvent(type, {
+        new (type === 'click' ? MouseEvent : PointerEvent)(type, {
           pointerId: kind === 'pen' ? 7 : 11,
           pointerType: kind,
           isPrimary: true,

@@ -3,11 +3,32 @@
 // (masonry.js) and never holds a mark of its own, so a unit's ink moves with it wherever the page reflows it.
 // Pure: parts and numbers in, no DB, no DOM. The store (coordinator's notebookgroups.ts) and HQ's page share it.
 import { boxOf, typedHigh } from './notebookstack.js';
-import { joined, shifted } from './notebookparts.js';
+import { joined, shifted, typedBoxes } from './notebookparts.js';
 import { LINE } from './bookinkmath.js';
 
 // Every unit is this wide in its scrap px: a column's width at scale 1, wide enough for a line of handwriting.
 export const UNIT_W = 320;
+// Typed words keep this far in from their unit's sides (its scrap px): where the store types a note and HQ's page lays
+// any words (bookunits.js), so a note's words read the same on both.
+export const WORDS_IN = 12;
+// Where a typed note's words sit on its unit, in the post-it's ink (shared/review/postit.js)
+export const NOTE_TEXT = { x: WORDS_IN, w: UNIT_W - 2 * WORDS_IN, color: '#1d1a2f' };
+// A note's lines with its own (mine: some of them, a call's agent's) typed again in new words where they stood: from
+// their x, no nearer the unit's sides than HQ's page lays words and as wide as the unit leaves them, so the page has
+// nothing to lay anew and save as the board's; the lines under them moved by the difference in height. lined: a new
+// line as the store keeps it (its id). → { put: the new lines, texts: the note's }. The store's change of a call agent's
+// words (ink/callpage.ts newWords) and its play (notebookplaygroups.js) type them here.
+export function retypedNote(texts, mine, words, lined = t => t) {
+  const was = boxOf({ ink: [], texts: mine, pictures: [] }) ?? { x: WORDS_IN, y: 0, w: 0, h: 0 },
+    x = Math.max(was.x, WORDS_IN);
+  const put = typedBoxes(words, { ...NOTE_TEXT, x, w: UNIT_W - WORDS_IN - x }).map(t =>
+    lined({ ...t, y: t.y + was.y }),
+  );
+  const grown = boxOf({ ink: [], texts: put, pictures: [] }).h - was.h,
+    bottom = was.y + was.h;
+  const rest = texts.filter(t => !mine.includes(t)).map(t => (t.y >= bottom ? { ...t, y: t.y + grown } : t));
+  return { put, texts: [...put, ...rest] };
+}
 // The room to write under what an agent puts on a page, at first: a line of handwriting and its space
 export const ROOM = 96;
 // The room under a unit: ROOM under what someone put on a person's page, none under their own drawing

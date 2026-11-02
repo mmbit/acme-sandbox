@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { notebookPlay } from './notebookplay.js';
 import { CHANGED } from './notebookplaygroups.js';
-import { ROOM, UNIT_W } from './scrapunit.js';
+import { ROOM, UNIT_W, WORDS_IN } from './scrapunit.js';
 
 // A play on a story's clock, with the events it sends
 function played(seed) {
@@ -380,7 +380,10 @@ test('a scrap is a unit at its own top-left with room under it; a note typed is 
     [typed.kind, typed.page, typed.words, typed.said, typed.owner, typed.pictures],
     ['note', page, '', 'typed', 'moss', []],
   );
-  assert.deepEqual(typed.texts, [{ x: 0, y: 0, w: UNIT_W, text: 'Same everywhere', color: '#1d1a2f' }]);
+  // (in from its sides, as HQ's page lays words: bookunits.js)
+  assert.deepEqual(typed.texts, [
+    { x: WORDS_IN, y: 0, w: UNIT_W - 2 * WORDS_IN, text: 'Same everywhere', color: '#1d1a2f' },
+  ]);
   assert.ok(typed.h >= typed.box.h + ROOM);
   assert.deepEqual(
     groups().map(x => x.id),
@@ -508,5 +511,15 @@ test("a book's cover given from the shelf, read back with it; anything but a pic
   assert.throws(
     () => play.route('/api/notebooks/cover', {}, { id: mine.id, picture: 'data:text/plain;base64,aGk=' }),
     refusal(400, 'the picture is a PNG or JPEG data URL'),
+  );
+});
+
+test("a marker's pieces cut by the eraser keep their number, as the coordinator keeps it; a bad one is refused", () => {
+  const { post, page } = played();
+  const piece = { ...stroke(10, 10), color: '#ffd23f', alpha: 0.42, cut: 7 };
+  assert.equal(post('groups/create', { page, ink: [piece] }).ink[0].cut, 7);
+  assert.throws(
+    () => post('groups/create', { page, ink: [{ ...piece, cut: 0.5 }] }),
+    e => e.status === 400,
   );
 });

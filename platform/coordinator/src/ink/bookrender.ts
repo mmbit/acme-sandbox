@@ -1,12 +1,13 @@
 // A page of the book as one picture, drawn here, with no browser: the paper, its scraps taped on (each in a white border
-// with a strip of tape, turned by its tilt), its ink on top, ink.js's own outline() as an SVG path (a highlighter's
+// with a strip of tape, turned by its tilt), its ink on top, ink.js's own shapes as SVG paths (a highlighter's
 // under the rest), the words typed on it, each scrap's words on a post-it under it, the agents' answers and the board's
 // replies slipped under their groups or written at their spots, set by sharp's text (Pango, wrapping each box at its
 // width as the book does), all rasterised with sharp. The book (HQ), the agents (hq sketch) and calls (the voice line's
 // sketch tool) all see a page through this.
 import { readFileSync } from 'node:fs';
 import sharp, { type OverlayOptions } from 'sharp';
-import { outline } from '../../../../shared/review/ink.js';
+import { svgInk } from '../../../../shared/review/ink.js';
+import { layered } from '../../../../shared/review/inkshape.js';
 import { pathsOf } from '../../../hq/shell/ink/bookanswerart.js';
 import type { Stroke, Typed } from '../pagechecks.ts';
 import type { Scrap } from '../pagescraps.ts';
@@ -60,12 +61,14 @@ export type Drawn = {
   y?: number;
   w: number;
   h: number;
-  ink: Stroke[];
+  ink: Inked[];
   scraps: Scrap[];
   texts?: Typed[];
   under?: Under[];
   answers?: Answer[];
 };
+// A stroke, with the unit it's in on a page of units (its group's id)
+export type Inked = Stroke & { unit?: number };
 // What's under a group (bookgroups.js .bk-under), from x, y, w wide: a scrap's words on a post-it (text, '': none), then
 // its answers and replies slipped under it in the order they came, the agents' cards clipped under it (asks), and a
 // try's versions. A reply is the board's (name null); picture: a file in the page's dir. (asks, tried)
@@ -113,21 +116,20 @@ async function drawn(page: Drawn, dir: string, k: number, again: boolean): Promi
 }
 
 const scaleOf = ({ w, h }: Drawn) => Math.min(2, PICTURE.side / w, Math.sqrt(PICTURE.pixels / (w * h)));
-// The strokes at the picture's size: the page's units in its viewBox
-// (a highlighter's strokes first, so they lie under the ink as the book draws them.)
+// The page's ink as an SVG picture of the picture's size, showing the page's box from its corner. Each unit's ink is
+// one layer, its highlighter under the rest and the pieces the eraser cut from one see-through stroke filled as one
+// (ink.js svgInk). The book stacks its units' canvases with each one over the units after it (bookpage.js paint), so
+// the layers go last unit first.
 const inkSvg = (
-  ink: Stroke[],
+  ink: Inked[],
   at: { x: number; y: number },
   { w, h }: { w: number; h: number },
   W: number,
   H: number,
-) =>
-  `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="${at.x} ${at.y} ${w} ${h}">${[
-    ...ink.filter(s => (s.alpha ?? 1) < 1),
-    ...ink.filter(s => (s.alpha ?? 1) >= 1),
-  ]
-    .map(s => `<path d="${outline(s)}" fill="${s.color}"${(s.alpha ?? 1) < 1 ? ` fill-opacity="${s.alpha}"` : ''}/>`)
-    .join('')}</svg>`;
+) => {
+  const paths = [...Map.groupBy(ink, s => s.unit).values()].reverse().map(strokes => svgInk(layered(strokes)));
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="${at.x} ${at.y} ${w} ${h}">${paths.join('')}</svg>`;
+};
 
 // A box of typed words at its place on the picture (k picture px a page px), wrapped at its width, in its colour
 async function typed(t: Typed, k: number): Promise<Layer> {

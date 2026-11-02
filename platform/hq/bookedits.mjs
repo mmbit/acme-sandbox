@@ -26,8 +26,6 @@ export function editStories(c) {
 
 async function withMouse(browser, c) {
   const free = wordsPage(c);
-  // No microphone allowed here. With it, a mouse pressed on the paper and held still is a voice note
-  // (shell/ink/bookinput.js). On a loaded worker Playwright's moves can come that late, and the line would be lost.
   const { page, errors, done } = await onDesk(browser, c, { permissions: [] });
   try {
     // a drag along the middle of "teal", from inside the box: the line once struck the word out

@@ -51,8 +51,10 @@ export async function callStory(c) {
 
 // The call's microphone (a quiet tone: Linux's headless WebKit has none) and its voice line: what HQ sends it, kept
 export async function playLine(context) {
+  // (on MediaDevices' prototype: WebKit may let the page's navigator.mediaDevices go and make it again, without what was
+  // set on it, when nothing in the page holds it)
   await context.addInitScript(() => {
-    navigator.mediaDevices.getUserMedia = async () => {
+    MediaDevices.prototype.getUserMedia = async () => {
       const ac = new AudioContext(),
         tone = ac.createOscillator(),
         gain = ac.createGain(),

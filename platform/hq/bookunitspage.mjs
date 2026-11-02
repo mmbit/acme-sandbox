@@ -363,7 +363,6 @@ async function still(page) {
 async function line(page, x, y, len) {
   await page.mouse.move(x, y);
   await page.mouse.down();
-  // (moving at once, so a press held still, a voice note, never takes it)
   for (let k = 1; k <= 12; k++) await page.mouse.move(x + 24 + (len * k) / 12, y + Math.sin(k / 2) * 8);
   await page.mouse.up();
   await page.waitForTimeout(250);

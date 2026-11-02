@@ -198,10 +198,13 @@ time the coordinator keeps in front; every third turn until it has, a line befor
 to. The agent works the page as the board does
 too: `read_notes` lists what's on it, `mark_notes` draws a rectangle, ellipse, line, arrow, pen line or highlight, and
 `change_note` changes its own note's words, or moves or deletes anything there, none of it a step the board's Undo
-takes back: that takes back only the board's own (board, call 174). `try` has a few versions of something there made for the board to pick from, when it asks to see them: its owner's
+takes back: that takes back only the board's own (board, call 174). `draw_picture` puts a drawing of the agent's own
+there, a diagram or a chart it writes as SVG, which the coordinator draws in the company's look (`drawing.ts`, theme/hq.yaml
+`drawing`) and lays at the page's end as a picture the board can draw on; the picture comes back to the agent with its
+line, so it sees what the board sees. `try` has a few versions of something there made for the board to pick from, when it asks to see them: its owner's
 try run builds each and it lands under it (`ink/booktry.ts`). All go through the
 screen socket to the coordinator's Ink store (`POST write-down`, `POST title`: `ink/callnotes.ts`; `POST page`, `POST mark`,
-`POST change`, `POST try`: `ink/callpage.ts`), never to
+`POST change`, `POST drawing`, `POST try`: `ink/callpage.ts`), never to
 HQ's socket: the store tells the board's screens. Refused on a call out, on the phone and
 once the call is over. The line's drawing and driving halves import nothing of it (test_server's split test).
 The transcript is written to the line's volume as the call goes, the board's words as each piece is heard, even ones

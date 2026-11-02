@@ -1,9 +1,10 @@
-// HQ's viewer's stage: staging (the preview the viewer opened) beside the same page live, at a device's size, their
-// scroll linked; tabs where both don't fit; the notebook over the frames or beside them; and a QR code that opens the
+// HQ's viewer's stage: staging (the preview the viewer opened) beside the same page live or an earlier version of it, at
+// a device's size, their scroll linked; tabs where both don't fit; the notebook over the frames or beside them; and a QR code that opens the
 // same view on a phone or tablet. desk.js keeps the bar and the staging frame's review mode.
 import { store } from '../util.js';
+import { dayTime } from '../world/clock.js';
 import * as world from '../world/world.js';
-import { loadArtifacts } from './data.js';
+import { loadArtifacts, loadEarlierVersions } from './data.js';
 import { sfx } from './audio.js';
 import { DEVICES, GAP, HEAD, devicesFor, fit, chosen, bookChoice } from './viewerfit.js';
 import { shapeOf } from './ink/booklayout.js';
@@ -13,7 +14,6 @@ import { pairLink, qrSvg } from './ink/pair.js';
 // A frame that scrolled leads for this long after its last scroll: the other's scrolls meanwhile are its own following
 // (or stopping short at its end), never passed back
 const LEAD_MS = 300;
-const SIDES = { live: 'Live', after: 'Staging' };
 const LINK = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.7 0l3.6-3.6a4 4 0 0 0-5.7-5.7L12 6.3M14 10a4 4 0 0 0-5.7 0l-3.6 3.6a4 4 0 0 0 5.7 5.7l1.6-1.6"/></svg>`;
 const QR = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h2v2h-2zM18 18h2v2h-2zM14 18h2v2h-2zM18 14h2v2h-2z"/></svg>`;
 const shape = () => shapeOf(innerWidth, innerHeight);
@@ -29,7 +29,11 @@ export function mountStage(v, url) {
     qrCard: Object.assign(document.createElement('div'), { className: 'qrcard', hidden: true }),
     picked: recalled(),
     shape: shape(),
-    live: null,
+    befores: [],
+    unlisted: 0,
+    before: null,
+    stagingY: 0,
+    painted: '',
     tab: 'after',
     linked: true,
     leader: null,
@@ -41,8 +45,8 @@ export function mountStage(v, url) {
   me.qrCard.setAttribute('data-watchalong-hide', '');
   v.append(me.qrCard);
   me.choices.addEventListener('click', e => choose(me, e.target.closest('button')));
-  me.stage.querySelector('.head').addEventListener('click', e => tapHead(me, e.target.closest('button')));
-  addLive(me);
+  listenToHead(me);
+  addBefore(me);
   const sized = new ResizeObserver(() => lay(me)),
     turned = () => turn(me),
     scrolled = e => linkScroll(me, e);
@@ -121,17 +125,63 @@ function turn(me) {
   lay(me);
 }
 
-// The live frame, once HQ knows the page's live address: after staging's, drawn first, on the left (style.css)
-async function addLive(me) {
-  const live = await liveOf(me.url);
-  if (me.closed || !live) return;
-  me.live = live;
-  const pane = Object.assign(document.createElement('div'), { className: 'pane live' });
-  pane.dataset.side = 'live';
-  pane.innerHTML = `<div class="sized"><iframe title="Live" allow="fullscreen" referrerpolicy="no-referrer"
-    sandbox="allow-scripts allow-same-origin allow-forms allow-popups"></iframe></div>`;
-  me.stage.querySelector('.frames').append(pane);
-  pane.querySelector('iframe').src = live;
+// What can go beside staging, once HQ knows: the page live (on the left, style.css), where the product's live, and the
+// page's earlier versions (the coordinator's earlier.ts), each { id, label, open, earlier }, and how many older changes
+// it has past those. Live goes beside it to begin with, or nothing where it isn't live.
+async function addBefore(me) {
+  const [live, earlier] = await Promise.all([liveOf(me.url), loadEarlierVersions(world.dev, me.url)]);
+  if (me.closed) return;
+  const versions = earlier.versions.map(e => ({
+    id: `earlier-${e.back}`,
+    label: `Earlier, ${dayTime(e.at)}`,
+    day: dayTime(e.at),
+    open: e.open,
+    earlier: true,
+  }));
+  me.befores = [...(live ? [{ id: 'live', label: 'Live', open: live, earlier: false }] : []), ...versions];
+  me.unlisted = earlier.unlisted;
+  me.before = live ? 'live' : null;
+  paintChoices(me);
+  showBefore(me);
+}
+const beside = me => me.befores.find(b => b.id === me.before) ?? null;
+// One picked on the head's choice ('' for staging alone): its tab to the front where the two take turns
+function pickBefore(me, id) {
+  sfx.blip();
+  me.before = id || null;
+  me.tab = me.before ? 'before' : 'after';
+  showBefore(me);
+}
+// The choice tapped where it's the left tab: what it shows comes to the front, the head left as it is so the choice
+// stays open
+function toFront(me) {
+  if (!beside(me) || me.tab === 'before') return;
+  me.tab = 'before';
+  lay(me);
+}
+// The frame beside staging, for what's picked (its pane's made the first time, and goes with staging alone)
+function showBefore(me) {
+  const b = beside(me);
+  let pane = me.stage.querySelector('.pane.before');
+  if (!b) pane?.remove();
+  else if (!pane) {
+    pane = Object.assign(document.createElement('div'), { className: 'pane before' });
+    pane.dataset.side = 'before';
+    pane.innerHTML = `<div class="sized"><iframe allow="fullscreen" referrerpolicy="no-referrer"
+      sandbox="allow-scripts allow-same-origin allow-forms allow-popups"></iframe></div>`;
+    me.stage.querySelector('.frames').append(pane);
+  }
+  const frame = pane?.querySelector('iframe');
+  if (b && frame.src !== b.open) {
+    frame.title = b.label;
+    frame.src = b.open;
+    // (a page newly beside staging opens at its top: it goes where staging is, as the scroll link would take it)
+    frame.addEventListener(
+      'load',
+      () => me.linked && frame.contentWindow?.postMessage({ hq: 'hq', scrollTo: me.stagingY }, '*'),
+      { once: true },
+    );
+  }
   lay(me);
 }
 // The same page live: a product's public address with the preview's path, where the product is live; else null. The
@@ -151,7 +201,7 @@ export async function liveOf(url) {
 // Laid out for the stage's size now: the frames' widths and scale, side by side or as tabs
 function lay(me) {
   if (me.closed) return;
-  const f = fit(me.stage.clientWidth, me.stage.clientHeight, me.picked.device, !!me.live);
+  const f = fit(me.stage.clientWidth, me.stage.clientHeight, me.picked.device, !!beside(me), pickable(me));
   me.stage.dataset.mode = f.columns ? 'columns' : 'tabs';
   me.stage.classList.toggle('headed', f.head);
   for (const [name, px] of Object.entries({
@@ -173,24 +223,54 @@ function lay(me) {
   }
   paintHead(me, f);
 }
-// The head row: each side's name over its column, or the tabs that take turns, and the link between them
+// Whether there's an earlier version to pick, in the head row: then it's there with staging alone too
+const pickable = me => me.befores.some(b => b.earlier);
+// The head row: each side's name over its column, or the tabs that take turns, and the link between them. Where there's
+// an earlier version, the left side's name is the choice of what's beside staging, and with tabs it's the left tab.
+// It's painted only when it changes, so a choice open stays open, and which tab is in front is marked after.
 function paintHead(me, f) {
   const head = me.stage.querySelector('.head'),
-    two = !!me.live,
-    names = two ? ['live', 'after'] : ['after'],
-    link = two
+    b = beside(me),
+    pick = pickable(me) ? choiceOf(me, f.columns ? '' : 'before') : '',
+    tab = (side, label) => `<button type="button" role="tab" data-tab="${side}">${label}</button>`,
+    link = b
       ? `<button type="button" class="link" aria-pressed="${me.linked}" aria-label="Scroll both together">${LINK}<span>${me.linked ? 'Linked scroll' : 'Not linked'}</span></button>`
       : '';
+  const html = !b
+    ? pick || '<b data-side="after">Staging</b>'
+    : f.columns
+      ? `${pick ? `<span class="side">${pick}</span>` : `<b data-side="before">${b.label}</b>`}<b data-side="after">Staging</b>${link}`
+      : `<div class="tabs" role="tablist">${pick || tab('before', b.label)}${tab('after', 'Staging')}</div>${link}`;
   head.dataset.mode = f.columns ? 'columns' : 'tabs';
-  head.innerHTML =
-    f.columns || !two
-      ? `${names.map(n => `<b data-side="${n}">${SIDES[n]}</b>`).join('')}${link}`
-      : `<div class="tabs" role="tablist">${names
-          .map(
-            n =>
-              `<button type="button" role="tab" data-tab="${n}" aria-selected="${me.tab === n}">${SIDES[n]}</button>`,
-          )
-          .join('')}</div>${link}`;
+  if (me.painted !== html) head.innerHTML = me.painted = html;
+  for (const t of head.querySelectorAll('[data-tab]'))
+    t.setAttribute('aria-selected', String(me.tab === t.dataset.tab));
+}
+// The choice of what's beside staging: its picked one's label shown, over the device's own list of them (side: the tab
+// it is, with tabs). An earlier version's 'Earlier' gives way on a short row (style.css), its date never.
+function choiceOf(me, side) {
+  const b = beside(me),
+    picked = b?.earlier ? `<span class="earlier">Earlier, </span>${b.day}` : (b?.label ?? 'Staging alone');
+  return `<label class="pick"${side ? ` data-tab="${side}"` : ''}><span>${picked}</span><select class="beside" aria-label="Beside staging">${optionsOf(me)}</select></label>`;
+}
+// Its options: 'Staging alone' where the page isn't live, then what can go beside it, and how many older changes it
+// doesn't list
+function optionsOf(me) {
+  const live = me.befores.some(b => b.id === 'live'),
+    options = [...(live ? [] : [{ id: '', label: 'Staging alone' }]), ...me.befores],
+    older = me.unlisted === 1 ? '1 older change' : `${me.unlisted} older changes`;
+  return (
+    options
+      .map(o => `<option value="${o.id}"${o.id === (me.before ?? '') ? ' selected' : ''}>${o.label}</option>`)
+      .join('') + (me.unlisted ? `<option disabled>${older}, not listed</option>` : '')
+  );
+}
+// The head row's taps: a tab, the link, and the choice of what's beside staging, picked or tapped as the left tab
+function listenToHead(me) {
+  const head = me.stage.querySelector('.head');
+  head.addEventListener('click', e => tapHead(me, e.target.closest('button')));
+  head.addEventListener('change', e => pickBefore(me, e.target.value));
+  head.addEventListener('focusin', e => e.target.matches('.beside') && toFront(me));
 }
 function tapHead(me, button) {
   if (!button) return;
@@ -206,6 +286,7 @@ function linkScroll(me, e) {
     from = frames.find(f => f.contentWindow === e.source),
     y = e.data?.y;
   if (!from || e.data?.hq !== 'scroll' || !Number.isFinite(y)) return;
+  if (from.closest('.pane.after')) me.stagingY = y;
   const now = performance.now();
   if (me.leader && me.leader !== from && now - me.ledAt < LEAD_MS) return;
   me.leader = from;

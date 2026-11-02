@@ -370,3 +370,18 @@ test('held preview shares propagate through their reviews and separate fix branc
   const comparison = await h.agent(`estimate?q=%23${a}`, reader.token);
   assert.deepEqual(comparison.body.job.whole.cost.split, costs[0].used.split);
 });
+
+// Every thread, estimate and projects list builds the book once and answers each report from it; hq-speed/book.ts
+// measures its time on HQ-sized data
+test('one cost book answers each thread and the project as their own reads do', async () => {
+  const { featureCosts } = await import('./featurecost.ts');
+  const root = thread('read-once');
+  const work = past({ thread: root }, 10);
+  h.storedPr(690, work, 'open');
+  past({ previewFor: [690] }, 5);
+  const costs = featureCosts();
+  assert.equal(costs.report(root).used.total.tokens, 15);
+  assert.deepEqual(costs.report(root), await read(root));
+  const board = (await h.board('/api/projects')).body;
+  assert.deepEqual(costs.project('game').used, board.projects.find((project: any) => project.id === 'game').cost.used);
+});

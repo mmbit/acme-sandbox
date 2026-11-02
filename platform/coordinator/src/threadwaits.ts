@@ -4,16 +4,25 @@
 // - line: a job of the thread was ready and waiting for a start, the machine's line (the worker's memory admission, its
 //   slots, the seats), review steps and choosing the panel inside it (line_review: only review steps were waiting);
 // - order: a task waited for the task before it in its thread (threadorder.ts), or for an --after on its own branch;
+// - needs: its thread's next task to start waited for a deliverable it needs, still to merge (threadorder.ts needs.);
 // - after: a job waited for another branch's job and its review and merge (--after, hq waits);
 // - card_or_time: a card it waited for (--after request:, or parked on one), or a time or an event (--when);
+// - paused: a pause of its deliverable or project (pauses.ts), from the pause until its resume or its decision's answer
+//;
 // - fix_drawn: nothing was queued, and the thread's next job was a fix on its pull request (its owner drawing it);
 // - other: nothing was queued otherwise (a push held for its thread, the merge itself, a task not drawn yet).
 // A minute two of these held counts once, for the first in that order: a thread with a job ready waits for the machine.
 // The line (and the review steps' line) splits again by what stood in the way of its ready jobs then (startholds.ts):
 // - seats: no seat of their engines was ready to take work (draining, at a limit, paced for its week, signed out, paused);
 // - memory: a seat was ready, but the worker was short of memory for a start (room.ts);
-// - slots: neither, so every slot was taken (or the claim's order put other work first);
+// - slots: every one of the worker's work slots was taken (startholds.ts slotsReported);
+// - downtime: none of these, and every ready job was downtime work, which waits for a seat with spare room (jobs.ts
+//   DOWNTIME_UNDER, how full a seat's window was then isn't recorded; downtime work a window puts first, the play's
+//   latest start, isn't told apart here);
+// - unexplained: none of these, so it didn't start for a reason not recorded (a seat's run cap, a seat limit holding one
+//   job, the company paused, a lent machine's run holding its agent, the worker restarting);
 // - unrecorded: before the seats and the room were recorded.
+// (slots only from the worker's report, downtime and unexplained)
 // Also the side-by-side question: the tasks held by order or by another job, and of them those whose pull request shares
 // no file with the holder's (apart: nothing says one needed the other's work). One on the holder's own pull request
 // can't be told apart by files (one_pr).
@@ -23,11 +32,23 @@ import { metAt, sortedSpans, type WakeRow } from './wakes.ts';
 import type { Span } from './playtime.ts';
 import { firstMergeAfter, spanOf, type Group, type Job, type Merge } from './threadgroups.ts';
 import { spellsOver, type Spells } from './startholds.ts';
+import { pauseCovers, pauseLets } from './jobs.ts';
+import { needSpansReader } from './threadneeds.ts';
 
-const PARTS = ['line', 'line_review', 'order', 'after', 'card_or_time', 'fix_drawn', 'other'] as const;
+const PARTS = [
+  'line',
+  'line_review',
+  'order',
+  'needs',
+  'after',
+  'card_or_time',
+  'paused',
+  'fix_drawn',
+  'other',
+] as const;
 type Part = (typeof PARTS)[number];
-type HoldPart = 'order' | 'after' | 'card_or_time';
-const LINE_HOLDS = ['seats', 'memory', 'slots', 'unrecorded'] as const;
+type HoldPart = 'order' | 'needs' | 'after' | 'card_or_time' | 'paused';
+const LINE_HOLDS = ['seats', 'memory', 'slots', 'downtime', 'unexplained', 'unrecorded'] as const;
 type LineHold = (typeof LINE_HOLDS)[number];
 type LinePart = 'line' | 'line_review';
 // What held a job from `from` until `until` (Infinity: until it started), and the job it waited for
@@ -41,7 +62,7 @@ export function waitingSplit(groups: Group[], runs: Map<number, Span[]>, merges:
   const spans = groups.map(spanOf);
   const spells = spans.length
     ? spellsOver(Math.min(...spans.map(s => s.start)), Math.max(...spans.map(s => s.end)))
-    : { recorded: null, seats: [], short: [] };
+    : { recorded: null, seats: [], short: [], full: [] };
   const inLine = { line: new Map<LineHold, number>(), line_review: new Map<LineHold, number>() };
   for (const g of groups) {
     const each = threadWaits(g, runs, holds, spells);
@@ -103,19 +124,27 @@ function threadWaits(g: Group, runs: Map<number, Span[]>, holds: Map<number, Hol
     parts.set(part, (parts.get(part) ?? 0) + to - from);
     if (part !== 'line' && part !== 'line_review') continue;
     const ready = states.filter(s => !s.hold && (part === 'line_review' || s.j.kind === 'work'));
-    for (const [hold, ms] of lineHolds(spells, new Set(ready.map(s => s.j.engine)), from, to))
+    for (const [hold, ms] of lineHolds(
+      spells,
+      ready.map(s => s.j),
+      from,
+      to,
+    ))
       inLine[part].set(hold, (inLine[part].get(hold) ?? 0) + ms);
   }
   return { parts, inLine, held: [...held.values()] };
 }
 
-// What stood in the way of these engines' ready jobs from `from` to `to`, cut where a seat's or the room's spell changed
-function lineHolds(spells: Spells, engines: Set<string>, from: number, to: number) {
+// What stood in the way of these ready jobs from `from` to `to`, cut where a seat's, the room's or the slots' spell changed
+function lineHolds(spells: Spells, ready: Job[], from: number, to: number) {
   const over = <T extends { began: number; ended: number }>(list: T[]) =>
     list.filter(s => s.began < to && s.ended > from);
+  const engines = new Set(ready.map(j => j.engine));
   const seats = over(spells.seats).filter(s => engines.has(s.engine)),
-    short = over(spells.short);
-  const cuts = [from, to, spells.recorded ?? to, ...[...seats, ...short].flatMap(s => [s.began, s.ended])];
+    short = over(spells.short),
+    full = over(spells.full);
+  const spare = ready.every(j => j.downtime);
+  const cuts = [from, to, spells.recorded ?? to, ...[...seats, ...short, ...full].flatMap(s => [s.began, s.ended])];
   const edges = [...new Set(cuts.filter(t => t >= from && t <= to))].sort((a, b) => a - b);
   const during = (s: { began: number; ended: number }, t: number) => s.began <= t && s.ended > t;
   const holds = new Map<LineHold, number>();
@@ -128,7 +157,11 @@ function lineHolds(spells: Spells, engines: Set<string>, from: number, to: numbe
           ? 'seats'
           : short.some(s => during(s, t))
             ? 'memory'
-            : 'slots';
+            : full.some(s => during(s, t))
+              ? 'slots'
+              : spare
+                ? 'downtime'
+                : 'unexplained';
     holds.set(hold, (holds.get(hold) ?? 0) + edges[i]! - t);
   }
   return holds;
@@ -153,7 +186,7 @@ function partOf(states: { j: Job; hold: Hold | undefined }[], jobs: Job[], to: n
   const ready = states.filter(s => !s.hold);
   if (ready.some(s => s.j.kind === 'work')) return 'line';
   if (ready.length) return 'line_review';
-  for (const part of ['order', 'after', 'card_or_time'] as const)
+  for (const part of ['order', 'needs', 'after', 'card_or_time', 'paused'] as const)
     if (states.some(s => s.hold?.part === part)) return part;
   const next = jobs.filter(j => j.created >= to).sort((a, b) => a.created - b.created)[0];
   return next?.kind === 'work' && next.pr !== null ? 'fix_drawn' : 'other';
@@ -194,6 +227,14 @@ function holdsOf(jobs: Job[], groups: Group[], merges: Map<string, Merge[]>, run
   for (const c of cardsOf(ids))
     add(c.job, { part: 'card_or_time', from: c.from ?? byId.get(c.job)!.created, until: c.until });
   for (const w of wakes) add(w.job, { part: 'card_or_time', from: w.from ?? byId.get(w.job)!.created, until: w.until });
+  for (const p of pausesOf(ids))
+    add(p.job, { part: 'paused', from: Math.max(p.from, byId.get(p.job)!.created), until: p.until });
+  const needs = needSpansReader((branch, at) => mergeAfter(merges, branch, at));
+  for (const g of groups)
+    for (const t of g.tasks) {
+      const order = holds.get(t.id)!.filter(h => h.part === 'order');
+      for (const spell of needs(t, order)) add(t.id, { part: 'needs', ...spell });
+    }
   return holds;
 }
 
@@ -241,6 +282,31 @@ function cardsOf(ids: string) {
     from: r.from === null ? null : Date.parse(r.from),
     until: r.until === null ? Infinity : Date.parse(r.until),
   }));
+}
+
+// The pauses that held each job: its thread's or its project's (the desk's for a
+// job in no thread), as the claim reads them (jobs.ts pauseCovers), never for a job no pause holds (pauseLets) or an
+// expedited one, each from the pause until it was resumed or the board answered or let go the decision it waited for
+// (jobs.ts pauseHolds)
+function pausesOf(ids: string) {
+  const rows = db
+    .prepare(
+      `select j.id job, p.at, p.resumed, d.answered, d.released from jobs j indexed by jobs_listed
+        join pauses p on ${pauseCovers('p', 'j.thread')} left join decisions d on d.id = p.decision
+      where j.id in (select value from json_each($ids)) and j.expedite = 0
+        and not ${pauseLets('j')}`,
+    )
+    .all({ ids }) as {
+    job: number;
+    at: string;
+    resumed: string | null;
+    answered: string | null;
+    released: string | null;
+  }[];
+  return rows.map(r => {
+    const ends = [r.resumed, r.answered, r.released].flatMap(t => (t === null ? [] : [Date.parse(t)]));
+    return { job: r.job, from: Date.parse(r.at), until: Math.min(Infinity, ...ends) };
+  });
 }
 
 // The times and events each waited for, each until wakes.ts met it (until the job started where no record dates that),

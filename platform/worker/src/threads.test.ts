@@ -29,6 +29,7 @@ const git = (...args: string[]) =>
     encoding: 'utf8',
     env: { ...process.env, ...id },
     stdio: ['ignore', 'pipe', 'pipe'],
+    maxBuffer: 1 << 26,
   }).trim();
 const remoteRef = (b: string) => {
   try {
@@ -461,6 +462,18 @@ test("a profile branch's repair goes back as one commit on main's head, and chan
     () => rebuildProfile(agent, fix, { base: 'main', paths, message: 'm', author: ana }),
     /more than the agent's profile/,
   );
+});
+
+test("an archive past Node's 1 MiB output buffer still goes to main whole, with the task's line", async () => {
+  // (ENOBUFS at the push before: the profile split reads each file whole, job #18718)
+  const old = `# Ana, archived\n${'- an old line of the track record, kept\n'.repeat(40_000)}`;
+  onMain({ [archive]: old });
+  await firstTask(260, { 'notes/nine.md': 'nine\n' });
+  const dir = task(261, 'job/260', { [archive]: `${old}- moved here\n` });
+  commit(dir);
+  const sha = (await publish(dir, 261))!;
+  assert.equal(`${onGitHub(sha, archive)}\n`, `${old}- moved here\n`);
+  assert.equal((await agent.push(dir, 'job/260')).files.includes(archive), false);
 });
 
 test("a task's briefing has it build and check what the board's agreed sketches or deck draw", () => {

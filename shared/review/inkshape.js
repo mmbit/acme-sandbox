@@ -21,6 +21,25 @@ export function outline(stroke, grow = 0) {
   }
   return stroke.fill ? d + inside(pts) : d;
 }
+// The strokes as they're filled, in order: the pieces the eraser cut from one see-through stroke (its `cut`, HQ's
+// bookstrokes.js) one fill where the first of them was, as the stroke was, so where they overlap its colour isn't laid
+// twice; every other stroke a fill of its own.
+export function fills(strokes) {
+  const out = [],
+    whole = new Map();
+  for (const s of strokes) {
+    const key = s.cut && s.alpha < 1 ? `${s.cut} ${s.color} ${s.alpha}` : null,
+      at = key && whole.get(key);
+    if (at) at.push(s);
+    else {
+      out.push([s]);
+      if (key) whole.set(key, out.at(-1));
+    }
+  }
+  return out;
+}
+// A unit's strokes in the order they're laid: a highlighter's under the ink, as on paper, each in its own order
+export const layered = strokes => [...strokes.filter(s => s.alpha < 1), ...strokes.filter(s => !(s.alpha < 1))];
 // A filled shape's inside: its points as one polygon, turned clockwise on screen like the discs and bands, so the
 // nonzero rule adds it to them and never cuts a hole where they overlap
 function inside(pts) {

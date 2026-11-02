@@ -20,7 +20,7 @@
 // (bookpage.js): nothing drawn is cut. The board's own drawings are ink on the
 // page, no paper under them; an agent's scrap is a card.
 import { GAP, MARGIN, columnsOf, layout, placeAt } from './masonry.js';
-import { UNIT_W, bodyOf } from './scrapunit.js';
+import { UNIT_W, WORDS_IN, bodyOf } from './scrapunit.js';
 import { boxOf as inkBox } from './bookrow.js';
 import { scrapBox, union } from './bookselectmath.js';
 import { underOf } from './bookunder.js';
@@ -30,8 +30,7 @@ export const TITLE_H = 72;
 // kept off the paper's left and right edges besides the masonry's margin (the close-swipe strip on the left takes
 // 28 px: book.css), in CSS px
 const INSET = 8;
-// typed words keep this far in from their unit's sides; a new unit on a page not laid yet starts this far above its
-// first stroke
+// a new unit on a page not laid yet starts this far above its first stroke
 const PAD = 12;
 // how near (page px) a stroke comes to the board's own drawing to be part of it
 const NEAR = 64;
@@ -170,11 +169,11 @@ function placeAmong(page, unit, at) {
 }
 // A place in the masonry's px as the page's own, at the layout's scale
 const onPage = (p, s) => ({ x: (p.x + INSET) / s, y: p.y / s + TITLE_H });
-// Typed words kept inside their unit, PAD in from its sides: a box moved past its right side slides back in at its own
-// width, never squeezed to a sliver (a box's grip, board call 176.)
+// Typed words kept inside their unit, WORDS_IN from its sides: a box moved past
+// its right side slides back in at its own width, never squeezed to a sliver (a box's grip, board call 176.)
 function inside(el, o) {
-  el.w = Math.max(40, Math.min(el.w, UNIT_W - 2 * PAD));
-  el.x = Math.max(o.x + PAD, Math.min(el.x, o.x + UNIT_W - PAD - el.w));
+  el.w = Math.max(40, Math.min(el.w, UNIT_W - 2 * WORDS_IN));
+  el.x = Math.max(o.x + WORDS_IN, Math.min(el.x, o.x + UNIT_W - WORDS_IN - el.w));
 }
 // Whether an element is in a unit the page knows (the store's, or one drawn here)
 const homed = (page, el) => page.groups.has(el.g) || page.gone?.has(el.g) || page.pending?.some(p => p.id === el.g);

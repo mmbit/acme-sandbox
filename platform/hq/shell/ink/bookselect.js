@@ -7,8 +7,8 @@
 // and resize bookselectlift.js's; Assign in the bar and a Pencil's loop out of one scrap, bookassign.js's. Post-its
 // keep their own order on their sheet and are never picked (booktools.js sends their presses elsewhere).
 //
-// booktools.js mounts it and calls press(e) for a mouse's or a Pencil's press on the page in select mode, and settle()
-// before Undo or Redo and when the tool changes. Every change is one step through hooks.begin(view) (bookedit.js).
+// booktools.js mounts it and calls press(e) for a press on the page in select mode, and settle() before Undo or Redo
+// and when the tool changes. Every change is one step through hooks.begin(view) (bookedit.js).
 import { stylesheet } from '../../util.js';
 import { sfx } from '../audio.js';
 import { grownTo } from './bookrow.js';
@@ -71,7 +71,7 @@ function press(sel, e) {
     at = book.at(e.clientX, e.clientY);
   if (!at?.view.page.ink) return false;
   e.preventDefault();
-  sel.clip.away();
+  sel.clip.settle();
   if (!current(sel) || sel.view !== at.view) letGo(sel);
   const target = e.target instanceof Element ? e.target : null;
   // (the bar's own, between its buttons)
@@ -118,8 +118,8 @@ const onFrame = (sel, p) => {
 };
 
 // A loop drawn on bare paper, shown as it's drawn (a box once it runs straight from corner to corner, a lasso once it
-// strays); let go, what's in it is picked (with Shift, added). A click lets go, and a Pencil's tap offers Paste. A
-// Pencil that slides off the screen's edge and comes back carries on with the same loop (comingBack). (the edge)
+// strays); let go, what's in it is picked (with Shift, added). A click lets go, a tap offers Paste. A Pencil that slides
+// off the screen's edge and comes back carries on with the same loop (comingBack). (the edge)
 function lasso(sel, e, at) {
   const svg = document.createElementNS(LASSO, 'svg');
   svg.setAttribute('class', 'bk-lasso');
@@ -150,7 +150,7 @@ function follow(sel, loop, e, lifted = () => {}) {
     if (u.type === 'pointercancel' && !away) return;
     if (!loop.far) {
       if (!loop.down.shiftKey) letGo(sel);
-      if (u.pointerType === 'pen') sel.clip.offer([loop.down.clientX, loop.down.clientY]);
+      if (u.pointerType !== 'mouse') sel.clip.offer([loop.down.clientX, loop.down.clientY]);
       return;
     }
     pickIn(sel, loop);

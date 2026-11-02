@@ -915,7 +915,8 @@ if zone:   # (they wait for a domain too)
 ''')
 
 # A try's versions (the coordinator's ink/trypreview.ts): each at try-<n>.preview.<zone>, behind the preview login,
-# served by the coordinator from the version's own files. Versions come and go between deploys, so the one site takes
+# served by the coordinator from the version's own files, and a cycles page's earlier versions at earlier-<n> the same way
+# (earlier.ts). Versions come and go between deploys, so the one site takes
 # every host no other site names and gets a host's certificate when it's first asked for, once the coordinator says it's
 # a version that's there (the Caddyfile's on_demand_tls ask); any other host gets none, as before. It's the catch-all,
 # never *.preview.<zone>: Caddy gets no certificate of its own for a host a wildcard site covers, so every named preview

@@ -1,5 +1,7 @@
-// Merge precedence survives the author's re-sync and its merge check.
+// Which older pull request sharing files holds this one: a saved place survives re-syncs, and one waiting on its own
+// work holds nobody.
 import * as rulingjobs from './rulingjobs.ts';
+import * as authorwork from './authorwork.ts';
 import * as boardmerges from './boardmerges.ts';
 import { db } from './db.ts';
 import { OPEN_JOBS, OPEN_PRS } from './jobs.ts';
@@ -8,7 +10,7 @@ import * as panel from './panel.ts';
 import { findThread, needsOf } from './projects.ts';
 
 type Pull = { number: number; branch: string; files: string; status?: string };
-type Current = Pull & { round: number; sha: string | null };
+type ReviewedPull = Pull & { round: number; sha: string | null };
 type Precedence = 'retain' | 'release' | 'boardAnswer';
 type Place = { at: string; id: number };
 
@@ -18,7 +20,7 @@ type Place = { at: string; id: number };
 export function predecessor(pr: Pull, precedence: (job: rulingjobs.Ruling) => Precedence | undefined) {
   const pulls = db
     .prepare(`select number, branch, files, status, round, sha from prs where status in ${OPEN_PRS}`)
-    .all() as Current[];
+    .all() as ReviewedPull[];
   const files = new Set(JSON.parse(pr.files) as string[]);
   const related = pulls.filter(pull => pull.number === pr.number || shares(pull, files));
   const numbers = new Set(related.map(pull => pull.number));
@@ -50,29 +52,30 @@ export function predecessor(pr: Pull, precedence: (job: rulingjobs.Ruling) => Pr
         return false;
       const thread = panel.threadOfBranch(pull.branch);
       if (!thread || findThread(thread)?.deadline == null) return false;
-      return ready(pull, precedence) && !neededBy(pull, pulls);
+      return holdsPlace(pull, thread, precedence) && !neededBy(pull, pulls);
     })
     .sort((a, b) => compare(places.get(a.number)!, places.get(b.number)!))[0]?.number;
 }
 
 // A retained place survives re-syncs, but only a current merge ruling with no own wait holds shared files.
-function ready(pull: Current, precedence: (job: rulingjobs.Ruling) => Precedence | undefined) {
+function holdsPlace(
+  pull: ReviewedPull,
+  thread: string,
+  precedence: (job: rulingjobs.Ruling) => Precedence | undefined,
+) {
   if (!pull.sha || visualapproval.waitReason(pull.number)) return false;
   const ruling = rulingjobs.latest(pull.number, pull.round, pull.sha);
   if (!ruling) return false;
   const outcome = precedence(ruling);
   if (outcome !== 'retain' && outcome !== 'boardAnswer') return false;
   if ((pull.status === 'board' || outcome === 'boardAnswer') && !boardmerges.authorization(pull.number)) return false;
-  const thread = panel.threadOfBranch(pull.branch);
-  // An ended author job after the ruling also holds its replay until it pushes. Unstarted deliverable tasks
-  // still have no branch, so they must be read through their deliverable too.
-  return !db
-    .prepare(
-      `select 1 from jobs where (pr = ? and status in ${OPEN_JOBS}) or kind = 'work' and (
-    branch = ? and (id > ? or status in ${OPEN_JOBS})
-    or thread = ? and branch is null and status in ${OPEN_JOBS})`,
-    )
-    .get(pull.number, pull.branch, ruling.id, thread ?? null);
+  const pullRequestWait = db.prepare(`select 1 from jobs where pr = ? and status in ${OPEN_JOBS}`).get(pull.number);
+  const authorWait = authorwork.since(pull.branch, ruling.id);
+  // Unstarted deliverable tasks still have no branch, so they must be read through their deliverable too.
+  const unstartedTaskWait = db
+    .prepare(`select 1 from jobs where kind = 'work' and thread = ? and branch is null and status in ${OPEN_JOBS}`)
+    .get(thread);
+  return !pullRequestWait && !authorWait && !unstartedTaskWait;
 }
 
 // The open pull request sharing a file with `pr` of a deliverable `pr`'s own needs.

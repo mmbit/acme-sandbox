@@ -42,9 +42,10 @@ function filled() {
   card.className = 'bk-card bk-prefs';
   card.setAttribute('role', 'dialog');
   card.setAttribute('aria-label', word('preferences'));
+  // (whether a finger always scrolls, and how long the pen held still outside the book takes to start a voice note:
+  // review mode's, pentouch.js. Nothing in the book waits on a hold.)
   card.innerHTML = `<p class="bk-prefs-head">${word('onThisDevice')}</p>
     <label><input type="checkbox" name="penPans"${p.penPans ? ' checked' : ''}> ${word('penPans')}</label>
-    <label><input type="checkbox" name="radial"${p.radial ? ' checked' : ''}> ${word('radialMenu')}</label>
     <fieldset><legend>${word('voiceHold')}</legend>${Object.entries(HOLDS)
       .map(
         ([k, ms]) =>

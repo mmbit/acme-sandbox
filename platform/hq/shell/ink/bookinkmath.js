@@ -1,7 +1,8 @@
 // The book's ink as plain numbers, for its tools and the store alike: a shape as ink.js's stroke (an ellipse, a
-// rectangle, a line, an arrow, outlined or filled), and the highlighter's colours, widths and alpha. No DOM and no
-// imports, so node tests it (bookstrokes.test.js) and the coordinator draws a call's agent's shapes and highlights with
-// it (ink/callpage.ts). bookshapes.js and bookpalette.js use it.
+// rectangle, a line, an arrow, outlined or filled), the marker's colours, each ink's widths and the see-through inks'
+// alpha. No DOM and no imports, so node tests it (bookstrokes.test.js) and the
+// coordinator draws a call's agent's shapes and highlights with it (ink/callpage.ts). bookshapes.js and bookpalette.js
+// use it.
 //
 // A stroke is ink.js's { color, size, alpha?, fill?, points: [[x, y, pressure, t], ...] } in its page's px. A shape's
 // line is even: every point at SHAPE_P, which ink.js draws exactly `size` wide.

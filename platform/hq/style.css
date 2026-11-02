@@ -310,7 +310,7 @@ body.touring #zoom, body.touring #status, body.touring #hint { display: none; }
    the brownstone's here, Slate's keys in its skin). The address is the link that opens the page in the browser; Note
    wears review mode's red, and a picked choice is pressed in the HUD's gold. */
 #viewer .bar { display: flex; align-items: center; gap: 8px; height: 48px; padding: 2px 8px 4px; color: var(--on-deep); font-size: 15px; }
-#viewer .bar button, #viewer .stage .head button { flex: none; display: flex; align-items: center; justify-content: center; gap: 6px; height: 36px; min-width: 36px; padding: 0 12px;
+#viewer .bar button, #viewer .stage .head button, #viewer .stage .head .pick { flex: none; display: flex; align-items: center; justify-content: center; gap: 6px; height: 36px; min-width: 36px; padding: 0 12px;
   font: inherit; white-space: nowrap; background: var(--cream); color: var(--ink); border: var(--bw) solid var(--line); border-radius: var(--r); box-shadow: var(--shadow-sm); }
 #viewer .bar button[hidden] { display: none; }
 #viewer :is(.bar, .stage .head) button:active { transform: var(--press); box-shadow: var(--shadow-press); }
@@ -337,23 +337,37 @@ body.touring #zoom, body.touring #status, body.touring #hint { display: none; }
 #viewer > .framemic[data-phase=busy] { background: conic-gradient(#ff5a5f, #2b2230); animation: framemic-busy 1s linear infinite; }
 @keyframes framemic-busy { to { transform: rotate(1turn) } }
 @media (prefers-reduced-motion: reduce) { #viewer > .framemic[data-phase=busy] { animation: none; } }
-/* The stage: staging, and the same page live beside it on the left, each in its column at the picked device's size, or
-   taking turns as tabs where both don't fit (shell/viewer.js). This device alone fills the stage edge to edge. A device's
-   page keeps its own width, drawn smaller where its column is narrower (--scale). */
+/* The stage: staging, and the same page live or an earlier version beside it on the left, each in its column at the
+   picked device's size, or taking turns as tabs where both don't fit (shell/viewer.js). This device alone fills the stage
+   edge to edge. A device's page keeps its own width, drawn smaller where its column is narrower (--scale). */
 #viewer .stage { flex: 1; min-height: 0; display: flex; flex-direction: column; position: relative; }
 #viewer .stage .head { flex: none; height: var(--head, 0px); display: flex; align-items: center; justify-content: center; gap: var(--gap); padding: 0 max(var(--pad), 8px); position: relative; color: var(--on-deep); font-size: 15px; }
 #viewer .stage:not(.headed) .head { display: none; }
 #viewer .stage .head b { width: var(--column); text-align: center; font-weight: 600; }
-#viewer .stage .head b[data-side=live] { order: -1; }
+#viewer .stage .head b[data-side=before] { order: -1; }
+/* What's beside staging, where there's an earlier version: the left side's name as a choice, and with tabs the left tab.
+   It shows the picked one's label whole; the device's own list opens from the select over it. */
+#viewer .stage .head .side { width: var(--column); display: flex; justify-content: center; order: -1; }
+#viewer .stage .head .pick { position: relative; max-width: 100%; padding-right: 28px; }
+#viewer .stage .head .pick > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+#viewer .stage .head .pick::after { content: ""; position: absolute; right: 10px; top: 50%; width: 10px; height: 6px; translate: 0 -50%;
+  background: currentColor; clip-path: polygon(0 0, 100% 0, 50% 100%); pointer-events: none; }
+/* (16 px, so iOS doesn't zoom in on it) */
+#viewer .stage .head .beside { appearance: none; position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; font-size: 16px; cursor: pointer; }
+#viewer .stage .head .pick:has(.beside:focus-visible) { outline: 2px solid var(--gold); outline-offset: 2px; }
+/* Where the row is short, the link is its icon alone (its name is its label), and an earlier version's choice its date
+   (its list keeps the whole label) */
+#viewer .stage .head { container-type: inline-size; }
+@container (max-width: 560px) { #viewer .stage .head :is(.link span, .pick .earlier) { display: none; } }
 #viewer .stage .head[data-mode=tabs] { justify-content: space-between; }
-#viewer .stage .head .tabs { display: flex; gap: 6px; }
-#viewer .stage .head button { height: 32px; font-size: 14px; }
+#viewer .stage .head .tabs { display: flex; align-items: center; gap: 6px; }
+#viewer .stage .head button, #viewer .stage .head .pick { height: 32px; font-size: 14px; }
 #viewer .stage .head[data-mode=columns] .link { position: absolute; left: 50%; translate: -50% 0; }
 #viewer .stage .head .link svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
 #viewer .stage .frames { flex: 1; min-height: 0; display: flex; justify-content: center; gap: var(--gap); padding: 0 var(--pad) calc(var(--pad) / 2); position: relative; }
 #viewer .stage .pane { flex: none; width: var(--column); display: flex; justify-content: center; }
 #viewer .stage:not(.headed) .pane { flex: 1; width: auto; }
-#viewer .stage .pane.live { order: -1; }
+#viewer .stage .pane.before { order: -1; }
 #viewer .stage[data-mode=tabs] .pane { position: absolute; inset: 0 var(--pad) calc(var(--pad) / 2); width: auto; }
 #viewer .stage .pane.behind { visibility: hidden; }
 #viewer .stage .sized { flex: none; height: 100%; overflow: hidden; background: #fff; }

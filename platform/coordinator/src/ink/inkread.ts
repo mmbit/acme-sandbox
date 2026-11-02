@@ -7,8 +7,7 @@
 // makes the call (smallmodel.ts smallCall); the pictures live in memory for its length.
 import sharp from 'sharp';
 import { outline } from '../../../../shared/review/ink.js';
-import { db } from '../db.ts';
-import { companyDay } from '../company.ts';
+import { dayAllowance } from '../dayallowance.ts';
 import { answerOf, smallCall } from '../smallmodel.ts';
 import { isRefused, type Refused, type Stroke } from '../pagechecks.ts';
 
@@ -22,7 +21,8 @@ const WAIT_MS = 10_000,
 // page read again and again (or a client gone wrong) can take in a day. A day's reading at the board's pace is a few
 // dozen.
 export const READS_A_DAY = 300;
-db.exec('create table if not exists handwriting_reads (day text primary key, reads integer not null)');
+// One more reading today, unless today's are used
+const takeOne = dayAllowance('handwriting_reads', 'reads', READS_A_DAY);
 // A reading's longest field, and how many readings are kept
 const SAID_MAX = 600,
   KEPT_MAX = 300;
@@ -53,8 +53,9 @@ const SCHEMA = {
           marks: {
             type: 'string',
             maxLength: SAID_MAX,
+            // (everyday words, "circle" never "ring")
             description:
-              "the drawn marks, plainly (a ring round …, an arrow from … to …, a tick, a sketch of …); '' for none",
+              "the drawn marks, plainly (a circle round …, an arrow from … to …, a tick, a sketch of …); '' for none",
           },
           unsure: {
             type: 'string',
@@ -117,15 +118,7 @@ export async function readInk(groups: Inked[], page: string): Promise<Map<number
 }
 // One reading of the board's ink counted against today's READS_A_DAY: the refusal once today's are used
 export function counted(): Refused | undefined {
-  const day = companyDay(Date.now());
-  const { reads } = (db.prepare('select reads from handwriting_reads where day = ?').get(day) as { reads: number }) ?? {
-    reads: 0,
-  };
-  if (reads >= READS_A_DAY) return [429, `handwriting is read ${READS_A_DAY} times a day, and today's are used`];
-  db.prepare(
-    'insert into handwriting_reads (day, reads) values (?, 1) on conflict (day) do update set reads = reads + 1',
-  ).run(day);
-  db.prepare('delete from handwriting_reads where day < ?').run(companyDay(Date.now() - 7 * 864e5));
+  if (!takeOne()) return [429, `handwriting is read ${READS_A_DAY} times a day, and today's are used`];
 }
 // The groups' ink put to the model with the page, each reading kept as it comes
 function readNow(unread: Inked[], page: string) {

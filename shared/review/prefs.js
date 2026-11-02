@@ -1,15 +1,15 @@
 // Ink's preferences, per device (this browser's own, never synced: a desk's mouse and an iPad's Pencil want different
 // things): whether a finger always pans (off on a new device, so a finger draws; on by itself the first time a pen is
-// used on a page that loads this file, penUsed(), and after that only the board's), whether the pen's long press opens
-// the radial menu, and how long a hold takes to start a voice note. The Notebook's cog sets them
-// (platform/hq/shell/ink/bookprefs.js). Review mode's pen reads the hold (pentouch.js), its finger whether it pans
-// (surface.js). No imports, so the book loads it alone.
+// used on a page that loads this file, penUsed(), and after that only the board's), and how long review mode's pen held
+// still takes to start a voice note (pentouch.js). The Notebook's cog sets them (platform/hq/shell/ink/bookprefs.js);
+// review mode's finger reads whether it pans too (surface.js). No imports, so
+// the book loads it alone.
 
 const KEY = 'ink.prefs';
-// The voice note's hold, as the board named them
+// Review mode's voice note hold, as the board named them
 export const HOLDS = { short: 500, medium: 750, long: 1000 };
 // (only what was set kept; penPans off till a pen is used)
-export const DEFAULTS = { penPans: false, radial: false, hold: 'medium' };
+export const DEFAULTS = { penPans: false, hold: 'medium' };
 // (the last set, for a browser that keeps nothing: private mode)
 let here = {};
 
@@ -26,7 +26,6 @@ export function prefs() {
   const saved = kept();
   return {
     penPans: typeof saved.penPans === 'boolean' ? saved.penPans : DEFAULTS.penPans,
-    radial: typeof saved.radial === 'boolean' ? saved.radial : DEFAULTS.radial,
     hold: saved.hold in HOLDS ? saved.hold : DEFAULTS.hold,
   };
 }

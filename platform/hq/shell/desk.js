@@ -17,7 +17,7 @@ import { sfx, hush } from './audio.js';
 import { callAgent, inCall, callInFront, minimiseCall } from './call.js';   // (a call, over whatever is open).
 import * as world from '../world/world.js';
 import { ago, companyFormats, dayTime, timeOf } from '../world/clock.js';
-import { scene, look, pick, lookName, looks, dressed, cover } from './stage.js';   // (cover; looks)
+import { scene, look, pick, lookName, looks, dressed, cover, ease, REST_FPS } from './stage.js';   // (cover; looks; ease)
 import { toast, flyTo, visitMascot } from './hud.js';
 import { openLibraryDoc } from './news.js';   // (Team's Gazette and Library buttons gone)
 import { onDirective } from './events.js';
@@ -146,8 +146,9 @@ function show(kind, html, force = false) {
   opened(kind);
   return true;
 }
-// What's open on HQ's page told on the document (hq:open: { open, app }), for a second screen to follow (pair.js).
-const opened = kind => document.dispatchEvent(new CustomEvent('hq:open', { detail: { open: kind, ...(kind === 'computer' && { app: tab }) } }));
+// What's open on HQ's page told on the document (hq:open: { open, app }), for a second screen to follow (pair.js). A tool
+// open lies over most of the stage, which draws at its resting rate meanwhile.
+const opened = kind => { ease(kind ? REST_FPS : null, 'tool'); document.dispatchEvent(new CustomEvent('hq:open', { detail: { open: kind, ...(kind === 'computer' && { app: tab }) } })); };
 export const toolOpen = () => !!open;
 const previews = previewsOn(location.hostname, local);
 const trusts = origin => PREVIEW.test(`${origin}/`);

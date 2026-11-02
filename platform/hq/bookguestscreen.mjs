@@ -128,8 +128,7 @@ export async function selectionAndPrefs(page) {
   const cog = await named(page, 'preferences');
   await book.getByRole('button', { name: cog, exact: true }).click();
   const card = await page.getByRole('dialog', { name: cog, exact: true }).innerText();
-  for (const key of ['onThisDevice', 'penPans', 'voiceHold', 'holdShort', 'holdLong'])
-    assert.ok(card.includes(await named(page, key)), `${key} in ${card}`);
+  for (const key of ['onThisDevice', 'penPans']) assert.ok(card.includes(await named(page, key)), `${key} in ${card}`);
   await page.keyboard.press('Escape');
 }
 

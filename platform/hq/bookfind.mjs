@@ -6,7 +6,7 @@
 // (the Notebook's groups)
 import assert from 'node:assert/strict';
 import { errorsOf } from '../../shared/browser/browser.mjs';
-import { until } from './bookkit.mjs';
+import { OVERVIEW, until } from './bookkit.mjs';
 
 // c: book-check's { hqIn, base, inBook, shot, noErrorsIn, viewport, settle }
 export async function findStory(browser, c) {
@@ -23,10 +23,7 @@ export async function findStory(browser, c) {
 // The line to write on, the Pencil's; the finds as the words are written, a note's said words and an answer's
 async function written(page, c) {
   // (Search in the overview)
-  await page
-    .locator('#book')
-    .getByRole('button', { name: /^The overview/ })
-    .click();
+  await page.locator('#book').getByRole('button', { name: OVERVIEW, exact: true }).click();
   const field = page.getByRole('searchbox', { name: 'Search the book' });
   await field.waitFor();
   assert.ok(await c.inBook(page, field), 'the line to write on is on the book');
@@ -116,7 +113,7 @@ function seeded() {
 export async function keptStory(browser, c) {
   const { page, errors, done } = await searchable(browser, c, c.desktop, { hasTouch: false });
   try {
-    const overview = page.locator('#book').getByRole('button', { name: /^The overview/ }),
+    const overview = page.locator('#book').getByRole('button', { name: OVERVIEW, exact: true }),
       field = page.getByRole('searchbox', { name: 'Search the book' });
     await overview.click();
     await field.click();

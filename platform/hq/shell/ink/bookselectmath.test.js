@@ -43,6 +43,35 @@ test('a point is inside a polygon, outside it, and inside a concave one only whe
   assert.equal(inside(vee, [50, 80]), true);
 });
 
+test('a loop of many points takes in what it goes round, between its teeth and along its level edges too', () => {
+  // a comb: a back from y 80 to 100 and ten teeth 10 wide up to y 0, each side walked in steps of 2 as a Pencil goes
+  const walk = (from, to) => {
+    const steps = Math.hypot(to[0] - from[0], to[1] - from[1]) / 2;
+    return Array.from({ length: steps }, (_, i) => [
+      from[0] + ((to[0] - from[0]) * i) / steps,
+      from[1] + ((to[1] - from[1]) * i) / steps,
+    ]);
+  };
+  const corners = [
+    [0, 100],
+    [0, 0],
+    [10, 0],
+    [10, 80],
+  ];
+  for (let x = 20; x < 200; x += 20) corners.push([x, 80], [x, 0], [x + 10, 0], [x + 10, 80]);
+  corners.push([200, 80], [200, 100]);
+  const comb = corners.flatMap((c, i) => walk(c, corners[(i + 1) % corners.length]));
+  const isComb = ([x, y]) =>
+    (y > 80 && y < 100 && x > 0 && x < 200) || (y > 0 && y < 80 && x > 0 && x < 200 && x % 20 < 10);
+  const ink = [];
+  for (let x = -5.5; x < 210; x += 3) for (let y = -5.5; y < 110; y += 3) ink.push(line([[x, y]]));
+  const got = picked(comb, { ink, scraps: [], texts: [] }, boxOfText);
+  assert.deepEqual(
+    got.ink,
+    ink.filter(s => isComb(s.points[0])),
+  );
+});
+
 test('a drag roughly straight from corner to corner is a box from its start to its end', () => {
   const path = [
     [10, 10],

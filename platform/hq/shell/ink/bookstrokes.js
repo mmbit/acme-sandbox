@@ -4,10 +4,15 @@
 // A stroke is ink.js's { color, size, alpha?, fill?, points: [[x, y, pressure, t], ...] } in its page's px.
 // (review mode's eraser reaches by the same distances)
 import { fromSegment, segmentsApart } from '/__review/eraser.js';
+import { boxOf } from './bookrow.js';
+import { meets } from './bookselectmath.js';
 
 // ink.js's line: a point's radius at its pressure (inkshape.js's radius)
 export const radius = (size, p) => (size * (0.3 + 1.2 * Math.min(1, Math.max(0.05, p)))) / 2;
 const round = n => Math.round(n * 100) / 100;
+// A new number for the pieces of one see-through stroke (`cut`): any whole number to 2^31 - 1, so a page's two are as
+// good as never the same
+export const newCut = () => 1 + Math.floor(Math.random() * (2 ** 31 - 1));
 
 // ---- the eraser
 
@@ -15,31 +20,38 @@ const round = n => Math.round(n * 100) / 100;
 // cut where it passed (the pieces either side kept as strokes of their own), and a filled shape it touches goes whole
 // (its inside is one thing). Returns null when it touched nothing, else { ink: the page's strokes now (those it didn't
 // touch the same objects), box: what changed on the page, made: [stroke, piece] for each piece cut from a stroke }.
+// A line cut changes the page only round the pass and the bits of it given more points, so that's the box, never the
+// whole line's: where its pieces overlap they look as it did (a see-through one's filled as one, below).
 export function rub(strokes, a, b, r) {
   let touched = false;
   const ink = [],
     made = [],
     box = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };
   for (const s of strokes) {
-    const pieces = cut(s, a, b, r);
-    if (!pieces) {
+    const done = cut(s, a, b, r);
+    if (!done) {
       ink.push(s);
       continue;
     }
+    const { pieces } = done;
     touched = true;
-    grow(box, reachOf(s));
+    grow(box, done.box);
     ink.push(...pieces);
     made.push(...pieces.map(piece => [s, piece]));
   }
   return touched ? { ink, box, made } : null;
 }
-// A stroke's pieces after the eraser's pass, or null when it isn't touched
+// A stroke after the eraser's pass, or null when it isn't touched: { pieces, box: where its ink changed on the page }
 export function cut(s, a, b, r) {
   const reach = radius(s.size, 1);
-  if (!meets(reachOf(s), capsule(a, b, r + reach))) return null;
-  if (s.fill) return touches(s, a, b, r) || inside(s.points, a) || inside(s.points, b) ? [] : null;
-  // (the points near the pass made closer together, so the cut is as clean as the eraser's edge)
-  const pts = closer(s, a, b, r),
+  if (!meets(boxOf(s), capsule(a, b, r + reach))) return null;
+  if (s.fill)
+    return touches(s, a, b, r) || inside(s.points, a) || inside(s.points, b) ? { pieces: [], box: boxOf(s) } : null;
+  // (the points near the pass made closer together, so the cut is as clean as the eraser's edge. What it took lies
+  // within its radius, twice the line's widest half and a step of those points of the pass; what was given points,
+  // within the line's half of those bits)
+  const box = capsule(a, b, r + 2 * reach + Math.max(1, r / 4) + 1),
+    pts = closer(s, a, b, r, box),
     out = p => fromSegment(p, a, b) >= r + radius(s.size, p[2]);
   if (pts.every(out)) return null;
   const pieces = [];
@@ -55,7 +67,10 @@ export function cut(s, a, b, r) {
   // (a closed line, an outlined shape, cut open is one line round from the cut: its last piece and its first joined)
   const closed = pts.length > 2 && pts[0][0] === pts.at(-1)[0] && pts[0][1] === pts.at(-1)[1];
   if (closed && pieces.length > 1 && out(pts[0])) pieces[0] = [...pieces.pop(), ...pieces[0].slice(1)];
-  return pieces.map(points => ({ ...s, points }));
+  // (a see-through stroke's pieces share a number, so they're filled as one, as it was: inkshape.js fills.)
+  const whole = s.alpha < 1 ? { cut: s.cut ?? newCut() } : {},
+    made = pieces.map(points => ({ ...s, ...whole, points }));
+  return { pieces: made, box };
 }
 // Whether the pass comes within reach of a stroke's line
 function touches(s, a, b, r) {
@@ -68,10 +83,12 @@ function touches(s, a, b, r) {
   return false;
 }
 // The stroke's points, with points added between two where the pass comes near them: spaced a quarter of the
-// eraser's radius or a px, whichever is more, the pressure and time between theirs
-function closer(s, a, b, r) {
+// eraser's radius or a px, whichever is more, the pressure and time between theirs. box: grown to hold each bit of the
+// line given points, with its widest half round it
+function closer(s, a, b, r, box) {
   const pts = s.points,
     step = Math.max(1, r / 4),
+    reach = radius(s.size, 1) + 1,
     near = r + radius(s.size, 1) + step,
     out = [pts[0]];
   for (let i = 1; i < pts.length; i++) {
@@ -79,6 +96,7 @@ function closer(s, a, b, r) {
       q = pts[i],
       len = Math.hypot(q[0] - p[0], q[1] - p[1]);
     if (len > step && segmentsApart(p, q, a, b) < near) {
+      grow(box, capsule(p, q, reach));
       const n = Math.ceil(len / step);
       for (let k = 1; k < n; k++) {
         const t = k / n;
@@ -97,13 +115,6 @@ function closer(s, a, b, r) {
 
 // ---- geometry
 
-// A stroke's box with its widest line round it
-export function reachOf(s) {
-  const r = radius(s.size, 1) + 1,
-    box = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };
-  for (const [x, y] of s.points) grow(box, { x0: x - r, y0: y - r, x1: x + r, y1: y + r });
-  return box;
-}
 const capsule = (a, b, r) => ({
   x0: Math.min(a[0], b[0]) - r,
   y0: Math.min(a[1], b[1]) - r,
@@ -116,7 +127,6 @@ function grow(box, by) {
   box.x1 = Math.max(box.x1, by.x1);
   box.y1 = Math.max(box.y1, by.y1);
 }
-const meets = (p, q) => p.x0 <= q.x1 && q.x0 <= p.x1 && p.y0 <= q.y1 && q.y0 <= p.y1;
 // Whether a point is inside a closed run of points (even-odd)
 export function inside(pts, [x, y]) {
   let yes = false;

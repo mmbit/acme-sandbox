@@ -61,14 +61,6 @@ export function ownLines(grp: number, item: number) {
     .texts.map(t => t.id)
     .filter((id): id is string => id !== undefined && wrote.includes(id));
 }
-// Whether a group is one note of the agent's, every line of it its ask's: not one the board typed in, whose lines a
-// change of words would take off the page (callpage.ts newWords)
-export function oneNote(grp: number) {
-  const asks = asksOf(grp);
-  if (asks.length !== 1) return false;
-  const ids = (JSON.parse(asks[0].wrote) as Writing).texts.map(t => t.id);
-  return writingOf(groupRow(grp)).texts.every(t => t.id !== undefined && ids.includes(t.id));
-}
 export const asksOf = (grp: number) =>
   db.prepare('select * from call_asks where grp = ? order by item').all(grp) as Ask[];
 const askOf = (grp: number, item: number) =>

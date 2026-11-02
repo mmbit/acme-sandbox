@@ -8,7 +8,7 @@
 import assert from 'node:assert/strict';
 import { onDesk as onLiveDesk } from './bookmouse.mjs';
 import { button, namedNotebook } from './bookchrome.mjs';
-import { DESKTOP } from './bookkit.mjs';
+import { DESKTOP, OVERVIEW } from './bookkit.mjs';
 
 // the book's paper colour (paper.js --bk-paper), and how far a patch of the paper may be from it (its dots)
 const PAPER = [255, 250, 240],
@@ -38,9 +38,9 @@ async function overview(browser, c) {
   const { page, errors, done } = await onDesk(browser, c);
   try {
     const pages = (await c.storedPages(page)).length;
-    await button(page, /^The overview/).click();
+    await button(page, OVERVIEW, true).click();
     await page.waitForTimeout(c.settle);
-    assert.equal(await button(page, /^The overview/).getAttribute('aria-pressed'), 'true');
+    assert.equal(await button(page, OVERVIEW, true).getAttribute('aria-pressed'), 'true');
     // (the notebook's pages)
     const frames = page.getByRole('list', { name: 'The overview' }).locator('.bk-tile[data-id] .bk-tile-open');
     assert.equal(await frames.count(), pages, "every page of the notebook's in the overview");
@@ -68,7 +68,7 @@ async function unread(browser, c) {
   const overview = page.getByRole('list', { name: 'The overview' }),
     lost = overview.locator('.bk-far-lost');
   try {
-    await button(page, /^The overview/).click();
+    await button(page, OVERVIEW, true).click();
     await lost.waitFor();
     assert.equal(await lost.textContent(), 'This notebook can’t be read. Tap to try again.', 'why, over the paper');
     await c.shot('desk-unread', page);
@@ -78,7 +78,7 @@ async function unread(browser, c) {
     await overview.getByRole('button', { name: 'Untitled page', exact: true }).click();
     await overview.waitFor({ state: 'hidden' });
     await button(page, /^The notebook's pages: Untitled page, 2 of 2$/).waitFor();
-    await button(page, /^The overview/).click();
+    await button(page, OVERVIEW, true).click();
     await overview.locator('[data-new]').click();
     await button(page, /^The notebook's pages: Untitled page, 3 of 3$/).waitFor();
     await page.waitForFunction(() => !document.querySelector('#book .bk-turn-picture, #book .bk-turn-leaf'));
@@ -133,7 +133,7 @@ async function zoom(browser, c) {
 
 // Ctrl and − over the paper, again and again: under 100%, and past its least zoom, the overview
 async function outToOverview(page, c) {
-  const pressed = async () => (await button(page, /^The overview/).getAttribute('aria-pressed')) === 'true',
+  const pressed = async () => (await button(page, OVERVIEW, true).getAttribute('aria-pressed')) === 'true',
     seen = [];
   for (let i = 0; i < 8 && !(await pressed()); i++) {
     seen.push(await percent(page));
@@ -191,8 +191,10 @@ async function newPage(browser, c) {
     assert.equal(await inkPixels(page), 0, 'a blank page');
     await button(page, /^The notebook's pages/).click();
     await page.getByRole('menuitem').first().click();
+    // (the blank page left goes: booktidy.js.)
+    await button(page, new RegExp(`, 1 of ${n}$`)).waitFor();
     await page.waitForTimeout(c.settle);
-    assert.match(await where(page), new RegExp(`, 1 of ${+n + 1}$`), 'back at the first');
+    assert.match(await where(page), new RegExp(`, 1 of ${n}$`), 'back at the first, the blank page left gone');
     assert.equal(await hiddenCanvases(page), 0, 'nor do the pages turned past');
     assert.ok((await inkPixels(page)) > 0, 'with its ink');
     assert.deepEqual(errors, []);

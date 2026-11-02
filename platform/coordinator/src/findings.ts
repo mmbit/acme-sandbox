@@ -117,7 +117,8 @@ export const CLASS_AGAIN = `Another place of a mistake the verdict already names
 const SENT = "kind in ('blocking', 'nonblocking')";
 
 // The findings still open on a pull request: sent to its author, and not yet judged fixed, kept, or wrong. One the
-// author disputed that stands is still theirs to fix.
+// author disputed that stands is still theirs to fix. Every ruling, a fix round's too, judges them, so a merged pull
+// request's follow-up job gets only what's still open
 const openOn = (pr: number) =>
   (
     db
@@ -128,21 +129,18 @@ const openOn = (pr: number) =>
       .all(pr) as Sent[]
   ).filter(f => !settled(f.outcome, f.right));
 
-function openForReview(pr: number) {
-  const { fixes_from } = db.prepare('select fixes_from from prs where number = ?').get(pr) as {
-    fixes_from: string | null;
-  };
-  return openOn(pr).filter(finding => !fixes_from || finding.kind === 'blocking');
-}
+// A round back from a "changes" ruling (prs.fixes_from)
+export const fixRound = (pr: number) =>
+  !!(db.prepare('select fixes_from from prs where number = ?').get(pr) as { fixes_from: string | null }).fixes_from;
 
 // The field a ruling judges them in, before anything else it writes; none while nothing is open
 export const OUTCOMES_FIELD = `"outcomes": [{"finding": 0, "outcome": "fixed" | "not fixed" | "disputed" | "kept", "right": "author" | "reviewer" (only when disputed)}], `;
-export const outcomesField = (pr: number) => (openForReview(pr).length ? OUTCOMES_FIELD : '');
+export const outcomesField = (pr: number) => (openOn(pr).length ? OUTCOMES_FIELD : '');
 
 // What a ruling after the author's fixes is told about them: each open finding by its number, and the author's report
-// from the job that answered them
+// from the job that answered them. A nonblocking one left as it was holds nothing.
 export function earlierNote(pr: number, branch: string, author: string, reports?: string) {
-  const open = openForReview(pr);
+  const open = openOn(pr);
   if (!open.length) return '';
   const report = reports ?? authorReport(branch, Math.max(...open.map(f => f.ruling)));
   const list = open.map(
@@ -158,14 +156,14 @@ Judge each against the code as it is now, first, in "outcomes": "fixed"; "not fi
 places); "disputed" (the author says it's wrong: "right" is "author" when they are, so the finding was a mistake, or
 "reviewer" when it stands); or "kept" (left as it is on purpose, for a reason you accept: it didn't matter, or the
 behaviour is meant). One that still blocks, or another place of its mistake, goes in "blocking" with "earlier": its
-number. It's the same finding, never a new one.`;
+number. It's the same finding, never a new one. A nonblocking one still there is "not fixed" and holds nothing.`;
 }
 
 // What a consolidation run again is told of the open findings its round's refused answer recorded (review.ts again: a
 // "changes" refused after it was acted on, whose fix task couldn't be drawn): each by its number, to judge and repeat
 // as that finding. Nothing was fixed since.
 export function recordedNote(pr: number, round: number) {
-  const recorded = openForReview(pr).filter(f => f.round === round);
+  const recorded = openOn(pr).filter(f => f.round === round);
   if (!recorded.length) return '';
   const list = recorded.map(f => `#${f.id} (${f.kind}) ${f.file ?? ''}${f.line ? `:${f.line}` : ''}: ${f.issue}`);
   return `
@@ -295,9 +293,9 @@ export function sent(ruling: Ruling, verdict: Verdict) {
   });
 }
 
-// What's wrong with a ruling's outcomes, model output read before it is acted on (review.ts misjudged): each earlier
-// finding in scope needs judgment. A merge must settle every blocker an earlier ruling sent (finding_rulings),
-// a finding it repeats by its "earlier" id included. Accepted rulings already judged their findings, so replay can name settled ones.
+// What's wrong with a ruling's outcomes, model output read before it is acted on (review.ts misjudged): a first round
+// judges every earlier finding, a fix round each blocker an earlier ruling sent (finding_rulings), by its "earlier" id
+// too, and a merge settles them. A replayed accepted ruling may name settled ones
 export function misjudged(ruling: Pick<Ruling, 'id' | 'pr'>, outcomes: unknown, decision: string | undefined) {
   if (accepted(ruling.id)) return;
   if (outcomes !== undefined && !Array.isArray(outcomes)) return '"outcomes" is no list';
@@ -317,7 +315,10 @@ export function misjudged(ruling: Pick<Ruling, 'id' | 'pr'>, outcomes: unknown, 
       return `finding #${id} is a blocker this merge leaves open: settle it ("fixed", "kept", or "disputed" with "right": "author") or decide "changes"`;
     judged.add(id);
   }
-  const left = openForReview(ruling.pr).filter(f => f.ruling < ruling.id && !judged.has(f.id));
+  const fix = fixRound(ruling.pr);
+  const left = openOn(ruling.pr).filter(
+    f => f.ruling < ruling.id && !judged.has(f.id) && (!fix || f.kind === 'blocking' || sentBlockers.has(f.id)),
+  );
   return left.length ? `findings ${left.map(f => `#${f.id}`).join(', ')} have no outcome` : undefined;
 }
 

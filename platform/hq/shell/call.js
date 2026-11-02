@@ -35,7 +35,13 @@ import { ceoName, closeTool, openIntercom, openComputer, intercomOpen, notesComi
 const $ = s => document.querySelector(s);
 let call = null;
 export const inCall = () => !!call;
-shareCallMicrophone(() => call?.audio.stream);
+// (once the call's microphone has started; none if it didn't, the call ending.)
+shareCallMicrophone(() =>
+  call?.started.then(
+    () => call?.audio.stream,
+    () => null,
+  ),
+);
 // The call open over HQ, its screen in front: Escape makes it small (desk.js)
 export const callInFront = () => !!call && !call.small;
 export const minimiseCall = () => call && minimise(call);
@@ -75,7 +81,7 @@ export async function callAgent(
   c.audio.open();
   ring(c);
   try {
-    await c.audio.start();
+    await (c.started = c.audio.start());
     gotStream();
   } catch {
     return endCall(`The microphone didn’t start. Check ${names.hq}’s microphone permission.`);

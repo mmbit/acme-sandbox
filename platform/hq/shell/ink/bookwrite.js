@@ -93,8 +93,8 @@ export function dried(book, stroke, hooks) {
     points: stroke.points.map(([x, y, p, t]) => [round(x / s + pan.x), round(y / s + pan.y), p, t]),
   };
   // Only the pen edits content. A highlighter, a pencil or a brush always leaves ink. (no line over words reads or
-  // strikes them: they stay ink; the pencil and the brush: job #17195)
-  if (!(line.alpha < 1) && (book.tools?.gestures?.() ?? true)) {
+  // strikes them: they stay ink; the tools say which line may)
+  if (book.tools?.gestures() ?? true) {
     // A scratch-out deletes its group without keeping the gesture as ink.
     if (book.groups?.scratch(v, line)) return book.ink.clear();
     // A stroke that circled a scrap and was lifted on the list it opened handed the scrap over (bookassign.js).

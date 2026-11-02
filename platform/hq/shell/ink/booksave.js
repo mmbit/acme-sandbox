@@ -14,6 +14,7 @@ import { arrive } from './bookarrive.js';
 import { laidOf, localOf, madeUnit } from './bookunits.js';
 import { nameOf } from './bookhead.js';
 import { forget } from './bookedit.js';
+import { retitle } from './bookunitcards.js';
 
 // a page is saved this long after its last stroke, so a burst of writing is one save
 const SAVE_MS = 600;
@@ -91,7 +92,7 @@ async function put(book, page) {
     }
   }
   for (const id of deletes) {
-    await deleteGroup(dev, id);
+    await deleteGroup(dev, id, page.groups.get(id).updated);
     page.gone.set(id, page.groups.get(id));
     page.groups.delete(id);
   }
@@ -159,18 +160,28 @@ export async function readPage(book, page) {
   return read;
 }
 // A page the store changed while it's open (another screen, an answer clipped on), read again once any save under way
-// is done, unless something on it is being typed in: then after the next save.
+// is done. While the board types in a box the read waits, and comes as the box is left (boxLeft); a caret
+// alone, from a click on a note, gives way to it.
 export function readAgain(book, page) {
   if (!page.groups) return Promise.resolve();
   // (a save before it that failed is tried again first: one that fails again is said, and the read waits for the next)
   page.saving = saved(book, page).then(() => readNow(book, page).catch(e => said(book, page, e.message)));
   return page.saving.catch(() => {});
 }
+// A box typed in left: what the store changed meanwhile on any page, read now.
+export function boxLeft(book) {
+  for (const { page } of book.views)
+    if (page.unread) {
+      page.unread = false;
+      readAgain(book, page);
+    }
+}
 async function readNow(book, page) {
   const read = await loadGroups(book.dev, page.id);
   named(book, page, read.title);
   if (unchanged(page, read.groups)) return;
-  if (book.tools?.editing?.()) return changed(book, page);
+  if (book.tools?.typing()) return void (page.unread = true);
+  const back = book.tools?.leave();
   // (what came in a group new to the page, and wasn't on it before, arrives: not the board's own things regrouped)
   const had = new Set([...page.groups.keys(), ...(page.gone?.keys() ?? [])]),
     keys = new Set(elementsOf(page).map(x => keyOf(x.el)));
@@ -180,6 +191,7 @@ async function readNow(book, page) {
   // (what's drawn and not yet in a group, and words typed, kept, are saved again)
   if (elementsOf(page).some(x => !(x.el.g > 0)) || page.typed?.size) changed(book, page);
   drawn(book, page);
+  back?.();
   const view = book.views.find(v => v.page === page);
   if (view)
     arrive(
@@ -203,7 +215,11 @@ function drawn(book, page) {
 export function named(book, page, title) {
   page.label = title;
   const view = book.views.find(v => v.page === page);
-  if (view) view.el.ariaLabel = nameOf(page);
+  if (view) {
+    view.el.ariaLabel = nameOf(page);
+    // (and in its head.)
+    retitle(view);
+  }
   book.controls?.update();
 }
 // (the page's own saves come back as the store's change too: nothing new in them, nothing's drawn again. Its answers,

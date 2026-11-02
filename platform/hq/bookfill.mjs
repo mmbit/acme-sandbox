@@ -40,17 +40,17 @@ export function fillStories(c) {
       async browser => {
         // (both ways up shot and checked, the failures told together)
         const failed = [];
-        for (const [name, viewport] of [
-          ['sideways', MINI],
-          ['upright', UPRIGHT],
+        for (const [name, viewport, columns] of [
+          ['sideways', MINI, 0],
+          ['upright', UPRIGHT, 2],
         ])
-          await byHand(browser, c, name, viewport).catch(e => failed.push(`${name}: ${e.message}`));
+          await byHand(browser, c, name, viewport, columns).catch(e => failed.push(`${name}: ${e.message}`));
         assert.deepEqual(failed, [], failed.join('\n'));
       },
   };
 }
 
-async function byHand(browser, c, name, viewport) {
+async function byHand(browser, c, name, viewport, columns) {
   const context = await c.hqIn(browser, viewport, {
     notebooks: structuredClone(LONG),
     hasTouch: true,
@@ -72,6 +72,7 @@ async function byHand(browser, c, name, viewport) {
     await c.shot(`fill-${name}-1-open`, page);
     await fillsHeight(page);
     await fillsWidth(page);
+    if (columns) await scrapColumns(page, columns);
     await tabsOnTop(page, hand);
     await railFloats(page);
     await picksByHand(page, hand);
@@ -134,6 +135,12 @@ async function fillsWidth(page) {
     [left, right].every(side => side >= 0 && side < fifth),
     `the scraps across the page: ${Math.round(left)} px beside them on the left, ${Math.round(right)} on the right, between 0 and ${Math.round(fifth)} wanted`,
   );
+}
+
+// The scraps in this many columns, two on an iPad mini upright (board, the Ink 1.1 deck: "Columns that fit the width".
+async function scrapColumns(page, columns) {
+  const found = new Set((await units(page)).map(u => Math.round(u.x))).size;
+  assert.equal(found, columns, `${columns} columns of scraps`);
 }
 
 // The Pencil's line in the first scrap's room: saved as that scrap's ink

@@ -1,10 +1,11 @@
 // book-check.mjs's story of the two cards over the tool rail (shell/ink/bookprefs.js, bookpalette.js): the page bar's
 // cog's preferences and the pen's colours (the pen in use pressed again) open whole on the iPad mini upright, on its
 // side and on a short screen (a finger's tap and the Pencil's), and on a desktop (a mouse), the rail never scrolling;
-// and what's picked in them takes; and each left open while the iPad turns on its side and its screen gets shorter.
+// and what's picked in them takes; a tooltip goes with its card; and each left open while the iPad turns on its side and
+// its screen gets shorter.
 import assert from 'node:assert/strict';
 import { onDesk } from './bookmouse.mjs';
-import { MINI, UPRIGHT, middleOf, mini } from './bookkit.mjs';
+import { MINI, PREFERENCES, UPRIGHT, middleOf, mini } from './bookkit.mjs';
 
 const SHORT = { width: MINI.width, height: 560 };
 
@@ -22,11 +23,12 @@ async function cards(browser, c) {
   for (const viewport of [UPRIGHT, MINI, SHORT]) await onIPad(browser, c, viewport);
   const { page, errors, done } = await onDesk(browser, c);
   try {
-    await strip(page, 'Preferences on this device').click();
+    await strip(page, PREFERENCES).click();
     await whole(page, '.bk-prefs', 'the preferences on a desktop');
     await page.keyboard.press('Escape');
     await strip(page, 'Pen').click();
     await whole(page, '.bk-palette', 'the colours on a desktop');
+    await tipGoes(page);
     assert.deepEqual(errors, []);
   } finally {
     await done();
@@ -52,7 +54,7 @@ async function onIPad(browser, c, viewport) {
 // Each card opened upright and left open while the iPad turns on its side, then while its screen gets shorter
 async function turned(browser, c) {
   for (const [name, selector] of [
-    ['Preferences on this device', '.bk-prefs'],
+    [PREFERENCES, '.bk-prefs'],
     ['Pen', '.bk-palette'],
   ]) {
     const { page, touch, errors, done } = await mini(browser, c, { viewport: UPRIGHT });
@@ -74,14 +76,13 @@ async function turned(browser, c) {
 }
 // The cog's card opened by a finger and by the Pencil, a hold time picked by the finger
 async function preferencesTapped({ page, pen, touch }, size) {
-  const COG = 'Preferences on this device',
-    long = () => page.locator('#book .bk-prefs').getByLabel('Long');
-  await tapped(touch, await at(page, COG));
+  const long = () => page.locator('#book .bk-prefs').getByLabel('Long');
+  await tapped(touch, await at(page, PREFERENCES));
   await whole(page, '.bk-prefs', `the preferences at ${size}, a finger's tap`);
   await tapped(touch, middleOf(await long().boundingBox()));
   assert.equal(await long().isChecked(), true, 'Long picked by a finger');
-  await tapped(touch, await at(page, COG));
-  await pen.tap(await at(page, COG));
+  await tapped(touch, await at(page, PREFERENCES));
+  await pen.tap(await at(page, PREFERENCES));
   await whole(page, '.bk-prefs', `the preferences at ${size}, the Pencil's tap`);
 }
 // The colours opened by the Pencil and by a finger (the pen's in hand: penOnOpen), each picking one
@@ -95,6 +96,16 @@ async function coloursTapped({ page, pen, touch }, size) {
   assert.equal(await ink(page, 'Red').getAttribute('aria-pressed'), 'true', 'Red picked by the Pencil');
   await tapped(touch, middleOf(await ink(page, 'Blue').boundingBox()));
   assert.equal(await ink(page, 'Blue').getAttribute('aria-pressed'), 'true', 'Blue picked by a finger');
+}
+
+// A colour's tooltip, shown under the mouse, goes with the card when a tool's key puts the card away (Escape and a press
+// on the paper hide it on their own)
+async function tipGoes(page) {
+  await ink(page, 'Blue').hover();
+  await page.locator('#bk-tip').waitFor();
+  await page.keyboard.press('e');
+  assert.equal(await page.locator('#book .bk-palette').count(), 0, 'the card put away by the eraser');
+  assert.equal(await page.locator('#bk-tip').isHidden(), true, "the colour's tooltip gone with its card");
 }
 
 // (a button of the rail's or the page bar's)

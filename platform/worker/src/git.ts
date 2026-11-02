@@ -147,6 +147,7 @@ export const pinnedGitEnv = Object.fromEntries([
 ]);
 
 // Runs a command as an agent's uid with its env (its hooks may run; they get nothing that uid doesn't have).
+// Its output may be a file read whole (threads.ts reads a profile's archive, past Node's 1 MiB default).
 export const runAs = (agent: Agent, cmd: string, args: string[], input?: string) => {
   assertOwned();
   return execFileSync(cmd, args, {
@@ -156,6 +157,7 @@ export const runAs = (agent: Agent, cmd: string, args: string[], input?: string)
     gid: agent.gid,
     input,
     stdio: ['pipe', 'pipe', 'pipe'],
+    maxBuffer: 1 << 26,
   });
 };
 

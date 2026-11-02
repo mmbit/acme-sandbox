@@ -8,9 +8,10 @@ HQ_TOOLS = [sys.executable, str(Path(__file__).with_name('hq_tools.py'))]
 # (write_down and title_notes: the call's notes, callnotes.py; change_note, mark_notes, read_notes and try: the
 # agent working it.) (try) (write_down is also how a promise goes on the
 # call's list)
+# (draw_picture: a drawing of the agent's own in the call's notes, callnotes.py.)
 # (name_voice: voices.py)
 # (save_voice, forget_voice: voices.py's saved voices)
-CALL_TOOLS = ['add', 'ask_to_see', 'call', 'change_note', 'draw', 'drive', 'estimate', 'eta', 'expedite',
+CALL_TOOLS = ['add', 'ask_to_see', 'call', 'change_note', 'draw', 'draw_picture', 'drive', 'estimate', 'eta', 'expedite',
               'forget_voice', 'git', 'hang_up', 'history', 'intercom', 'job', 'manage', 'mark_notes', 'name_voice',
               'open_work', 'reach', 'read_notes', 'replace', 'report', 'save_voice', 'screen',
               'search', 'sketch', 'title_notes', 'try', 'waiting', 'when', 'write_down']

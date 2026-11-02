@@ -1,14 +1,18 @@
 // A call's notes page as its agent works it, the way the board does: it reads
 // what's on the page (read), draws on it (mark: a rectangle, an ellipse, a line, an arrow, a pen line or a highlight)
-// and changes what's there (change: its own note's or scrap's words, anything moved or deleted), and has versions of
-// something on it made to pick from (versions: booktry.ts.). Its notes and
+// and changes what's there (change: its own note's or scrap's words, anything moved or deleted), puts a drawing of its
+// own on it as a picture (drawing: drawing.ts), and has versions of something on it made to pick from (versions:
+// booktry.ts.). Its notes and
 // scraps are callnotes.ts scrap. The page is its scrap units in order (scrapunit.js): the agent reads each in its own
 // px, and a mark goes on the scrap it's about or is a drawing of its own. Each goes through the notebook's own routes
 // (notebookgroups.ts) as the agent's: every screen showing the page reads it as it does another screen's change, and
 // the board's Undo never takes it back (only the board's own steps: the board, call 174), the board deletes or changes
 // it as it would its own.
 // What it draws asks for nothing: it stays on the page as sent, unless the board changes it.
+import sharp from 'sharp';
 import { db } from '../db.ts';
+import { drawn } from '../drawing.ts';
+import { exclude } from '../latency.ts';
 import { findAgent } from '../jobs.ts';
 import { BOARD } from './book.ts';
 import { shut } from '../notebook.ts';
@@ -22,16 +26,16 @@ import {
   row,
   type Group,
 } from '../notebookgroups.ts';
-import { emptyGroup, shifted } from '../../../hq/shell/ink/notebookparts.js';
+import { emptyGroup } from '../../../hq/shell/ink/notebookparts.js';
 import { boxOf } from '../../../hq/shell/ink/notebookstack.js';
-import { typedNote } from '../notebookscraps.ts';
+import { addPicture, lineId } from '../notebookscraps.ts';
 import { isRefused, type Refused, type Stroke, type Typed } from '../pagechecks.ts';
 import { boxWords, liveCall, pageFor } from './callnotes.ts';
-import { asksOf, oneNote, ownLines, rewrote } from './callasks.ts';
+import { asksOf, ownLines, rewrote } from './callasks.ts';
 import { WHAT } from '../ledger.ts';
 import { MARKERS, MARKER_ALPHA, WIDTHS, shape } from '../../../hq/shell/ink/bookinkmath.js';
 import { inkOf } from '../../../hq/shell/ink/agentink.js';
-import { UNIT_W, unitOf } from '../../../hq/shell/ink/scrapunit.js';
+import { UNIT_W, retypedNote, unitOf } from '../../../hq/shell/ink/scrapunit.js';
 import { tryNow } from './booktry.ts';
 import { readInk, type Reading } from './inkread.ts';
 
@@ -171,6 +175,33 @@ const pointsOf = (v: unknown) =>
     ? (v as [number, number][])
     : null;
 
+// POST /api/voice/drawing { call, svg }: a drawing of the agent's own (a diagram, a chart) drawn as a picture in the
+// company's look (drawing.ts) and put on the page as its last scrap, for the board to draw on as on any picture. It
+// asks for nothing. Its answer carries the picture at half its size, for the agent to see what the board sees.
+export async function drawing(b: any) {
+  const live = callPage(b);
+  if (isRefused(live)) return live;
+  // (drawn in Chromium, outside HQ's thread)
+  const picture = await exclude(drawn(typeof b.svg === 'string' ? b.svg : ''));
+  if (isRefused(picture)) return picture;
+  // (the call may have ended while it was drawn)
+  const at = callPage(b);
+  if (isRefused(at)) return at;
+  const g = addPicture(at.page, at.agent, { type: 'image/png', clean: picture.png }, NOTHING_SAID);
+  if (isRefused(g)) return g;
+  const seen = await sharp(picture.png)
+    .resize({ width: picture.width >> 1 })
+    .jpeg({ quality: 85 })
+    .toBuffer();
+  return {
+    ok: `Your drawing is in the call's notes (#${g.id}), its picture at ${boxWords(boxOf(partsOf(g))!)}, appearing as \
+the board watches. Here it is as the board sees it: if words overlap or run off it, delete it and draw it again.`,
+    id: g.id,
+    picture: { type: 'image/jpeg', data: seen.toString('base64') },
+  };
+}
+const NOTHING_SAID = { words: '', said: null, owner: null };
+
 // POST /api/voice/try { call, id, why }: versions of something on the call's page to pick from (a scrap, a note, the
 // board's drawing), each the real thing made by its owner in a try run (booktry.ts tryNow); why: the board's words asking
 // for them. A try already going on it hears the ask instead.
@@ -229,40 +260,34 @@ export function change(b: any) {
   const how = b.delete === true ? 'is deleted' : b.after !== undefined ? 'has moved' : 'says it now';
   return { ok: `#${g.id} ${how}.` };
 }
+// The agent's own note or scrap retyped with new words while its one ask is open and its lines are still in it
 function newWords(g: Group, words: unknown, agent: string) {
   if (g.by !== agent || !['scrap', 'note'].includes(g.kind))
     return [409, 'only the words of your own notes change: draw beside the rest, or move or delete it'] as Refused;
   const said = typeof words === 'string' ? words.replace(/\s+/g, ' ').trim() : '';
   if (!said || [...said].length > WHAT) return [400, `words: one line of at most ${WHAT} characters`] as Refused;
-  if (asksOf(g.id).some(a => !open(a.item)))
+  const asks = asksOf(g.id);
+  if (asks.some(a => !open(a.item)))
     return [409, 'its ask has gone to its work already: pass the change on with add or reach'] as Refused;
-  if (!oneNote(g.id))
-    return [409, "it's more than your one note now (the board typed in it): add one of your own instead"] as Refused;
-  return retyped(g, said, agent, asksOf(g.id)[0].item);
+  if (asks.length !== 1) return [409, 'the board joined it with another note: add one of your own instead'] as Refused;
+  if (!retypable(g, asks[0].item))
+    return [409, 'none of your words are in it now (the board took them out): add one of your own instead'] as Refused;
+  return retyped(g, said, agent, asks[0].item);
 }
+// Whether a note of the agent's can be typed again: a scrap always (its words are its post-it's), a note while its ask's
+// own lines are still in it
+const retypable = (g: Group, item: number) => g.kind === 'scrap' || ownLines(g.id, item).length > 0;
 // A note of the agent's typed again with new words where its ask's own lines stood (a scrap's are its post-it's), the
 // board's own lines in it kept, its ask's item's line with them
 function retyped(g: Group, said: string, agent: string, item: number) {
-  const texts = typedNote(said);
-  if (isRefused(texts)) return texts;
-  const edit =
-    g.kind === 'note'
-      ? { texts: swapped(partsOf(g).texts as Typed[], ownLines(g.id, item), texts) }
-      : { words: said, said: 'typed' };
+  const texts = partsOf(g).texts as Typed[],
+    own = g.kind === 'note' ? ownLines(g.id, item) : null,
+    mine = own && texts.filter(t => t.id !== undefined && own.includes(t.id)),
+    note = mine && retypedNote(texts, mine, said, (t: Typed) => ({ ...t, id: lineId() }));
+  const edit = note ? { texts: note.texts } : { words: said, said: 'typed' };
   const done = editGroup({ id: g.id, since: g.updated, ...edit }, BOARD, agent);
-  if (!isRefused(done)) rewrote(g.id, item, said, g.kind === 'note' ? texts.map(t => t.id!) : []);
+  if (!isRefused(done)) rewrote(g.id, item, said, note ? note.put.map((t: Typed) => t.id!) : []);
   return done;
-}
-// A typed note's lines with its ask's own (own: their ids) swapped for new ones where they stood, and the lines under
-// them moved by the difference in height
-function swapped(texts: Typed[], own: string[], typed: Typed[]) {
-  const mine = texts.filter(t => t.id !== undefined && own.includes(t.id)),
-    was = boxOf({ ...emptyGroup, texts: mine }) ?? { x: 0, y: 0, w: 0, h: 0 };
-  const put = shifted({ ...emptyGroup, texts: typed }, was.x, was.y).texts as Typed[];
-  const grown = boxOf({ ...emptyGroup, texts: put })!.h - was.h,
-    bottom = was.y + was.h;
-  const rest = texts.filter(t => !mine.includes(t)).map(t => (t.y >= bottom ? { ...t, y: t.y + grown } : t));
-  return [...put, ...rest];
 }
 // The live call's correction of something it wrote down (the replace tool: ledger.ts add): its ask is the new item's,
 // and its note says the new words where the old ones stood, as change's do, the board's own lines in it kept. One whose
@@ -278,7 +303,7 @@ export function replaced(call: number, was: number, item: { id: number; what: st
   if (!c || !on) return;
   db.prepare('update call_asks set item = ? where grp = ? and item = ?').run(item.id, on.grp, was);
   const g = row(on.grp)!;
-  if (g.kind === 'scrap' || ownLines(g.id, item.id).length) retyped(g, item.what, c.agent, item.id);
+  if (retypable(g, item.id)) retyped(g, item.what, c.agent, item.id);
 }
 const open = (item: number) =>
   !!db.prepare("select 1 from call_items where id = ? and status = 'open' and job is null").get(item);

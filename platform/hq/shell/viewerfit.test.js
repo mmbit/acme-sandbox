@@ -27,6 +27,12 @@ test('staging alone on this device fills the stage, no head row, as the viewer a
   assert.deepEqual(drawn(f), { width: 800, height: 700 });
 });
 
+test('staging alone with an earlier version to pick: the head row over it for the choice, the frame below it', () => {
+  const f = fit(800, 700, 'here', false, true);
+  assert.equal(f.head, true);
+  assert.deepEqual(drawn(f), { width: 800, height: 660 });
+});
+
 test('an iPad mini on its side, the book shut, phone picked: live and staging side by side at full size', () => {
   const f = fit(1133, 704, 'phone', true);
   assert.equal(f.columns, true);

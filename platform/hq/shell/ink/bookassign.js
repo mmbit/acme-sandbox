@@ -122,8 +122,8 @@ function inking(as, down) {
   as.claim = false;
   const { book } = as.sel,
     at = book.at(down.clientX, down.clientY);
-  // (the Pen's alone: a highlighter's, a pencil's or a brush's stroke is always ink)
-  if (scope || down.pointerType !== 'pen' || !at || !(book.tools?.gestures?.() ?? true)) return;
+  // (the Pen's alone: a highlighter's, a pencil's or a brush's stroke is always ink.)
+  if (scope || down.pointerType !== 'pen' || !at || !(book.tools?.gestures() ?? true)) return;
   const loop = { view: at.view, path: [pageOf(book, down)], kind: 'lasso', down, svg: null };
   followPress(down, {
     move: m => {

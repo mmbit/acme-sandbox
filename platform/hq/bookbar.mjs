@@ -1,15 +1,15 @@
 // book-check.mjs's story of the rail floating by the paper's right edge (shell/ink/bookui.js, bookstrip.js,
 // bookcontrols.js): on a phone and an iPad mini both ways and a desktop with the notebook wide and narrow, every
-// control the page has on the floating toolbars just in from the paper's right edge, nothing scrolling and no other island over
-// the page; the tools
-// first, the pen one tool (the marker beside it only where the rail has room), each 40 px wide or more; the page's
-// scroll area ending left of the rail, so no control sits over what's written; the cog's and the pen's cards whole on
-// the screen beside it. Press and slide: a press on Select slid down to Text picks Text the moment it lifts, with no
-// hold (the mouse, and in Chromium a finger). Run with --webkit for the same in the iPad's engine.
+// control the page has on the floating toolbars just in from the paper's right edge, nothing scrolling and no other
+// island over the page; the tools first, the pen one tool (the marker beside it only where the rail has room), each
+// 44 px to the touch across; the page's scroll area ending left of the rail, so no control sits over what's written;
+// the cog's and the pen's cards whole on the screen beside it. Press and slide: a press on Select slid down to Text
+// picks Text the moment it lifts, with no hold (the mouse, and in Chromium a finger). No long press: a tool held picks
+// it and opens nothing, its card a second tap away. Run with --webkit for the same in the iPad's engine.
 // (the rail at the right edge, floating: board, call 174)
 import assert from 'node:assert/strict';
 import { freePage } from './bookmouse.mjs';
-import { OVERVIEW, touchOf, until } from './bookkit.mjs';
+import { OVERVIEW, PREFERENCES, touchOf, until } from './bookkit.mjs';
 
 const SIZES = [
   { name: 'phone', viewport: { width: 390, height: 844 }, touch: true },
@@ -21,6 +21,8 @@ const SIZES = [
 ];
 // the rail's tools, top to bottom (the ink not in use, Marker, only where the rail is roomy)
 const TOOLS = ['Select', 'Pen', 'Eraser', /^Shapes/, 'Text', 'Undo', 'Redo'];
+// a rail key's reach to the touch across, the narrowest a finger needs (px; book.css --bk-touch.)
+const TOUCH_PX = 44;
 // a slide's lift picks its tool this soon (ms)
 const PICK_MS = 100;
 
@@ -57,6 +59,7 @@ async function atSize(browser, c, size) {
     await keysStay(page, size);
     await cards(page, c, size);
     await slides(page, size, browser);
+    await noHold(page);
     assert.deepEqual(errors, []);
   } finally {
     await context.close();
@@ -110,7 +113,7 @@ export async function press(page, name) {
 // The cog's preferences and the pen's card (the pen in use pressed again) open beside the rail, whole on the screen
 async function cards(page, c, size) {
   for (const [name, selector] of [
-    ['Preferences on this device', '.bk-prefs'],
+    [PREFERENCES, '.bk-prefs'],
     ['Pen', '.bk-palette'],
   ]) {
     await press(page, name);
@@ -174,7 +177,7 @@ async function keysStay(page, size) {
     await stays(`${name} in use`);
   }
   for (const [name, key, selector] of [
-    ['Preferences', "[aria-label='Preferences on this device']", '.bk-prefs'],
+    [PREFERENCES, `[aria-label='${PREFERENCES}']`, '.bk-prefs'],
     ['Pen', "[data-island=tools] [data-mode='pen']", '.bk-palette'],
     ['Pages', '.bk-where', '.bk-pages-menu'],
     ['More', '.bk-more', '.bk-more-card'],
@@ -215,7 +218,7 @@ async function refitted(page) {
 
 // Where the rail and the page are, and what's on the rail (the screen's px)
 const measured = page =>
-  page.evaluate(() => {
+  page.evaluate(touchPx => {
     const box = el => el && el.getBoundingClientRect().toJSON(),
       column = document.querySelector('#book .bk-column');
     return {
@@ -224,19 +227,29 @@ const measured = page =>
       desk: box(document.querySelector('#book .bk-pages .bk-desk')),
       column: box(column),
       scrolls: column.scrollHeight > column.clientHeight + 1 || column.scrollWidth > column.clientWidth + 1,
+      // (reach: a press 44 px across, centred on the key, lands on it. A disabled key, such as The page before on the
+      // first page, needs no reach.)
       buttons: [...column.querySelectorAll('.bk-btn')]
         .filter(b => b.checkVisibility({ visibilityProperty: true }))
-        .map(b => ({ name: b.getAttribute('aria-label'), ...box(b) })),
+        .map(b => {
+          const r = b.getBoundingClientRect(),
+            on = dx => document.elementFromPoint(r.x + r.width / 2 + dx, r.y + r.height / 2)?.closest('.bk-btn') === b;
+          return {
+            name: b.getAttribute('aria-label'),
+            reach: b.disabled || (on(1 - touchPx / 2) && on(touchPx / 2 - 1)),
+            ...box(b),
+          };
+        }),
       // (the overview's own tools are in its head)
       floating: [...document.querySelectorAll('#book .bk-island')]
         .filter(el => el.getBoundingClientRect().width && !el.closest('.bk-column, .bk-far-head'))
         .map(el => el.dataset.island),
     };
-  });
+  }, TOUCH_PX);
 
-// Every control on the column, one above the other, whole on the screen and 40 px wide or more; the column floating
-// just in from the paper's right edge, scrolling nothing; the tools first in their order, the pen one tool; the page's scroll area
-// ending left of it; no control anywhere else over the page
+// Every control on the column, one above the other, whole on the screen and 44 px to the touch across; the column
+// floating just in from the paper's right edge, scrolling nothing; the tools first in their order, the pen one tool;
+// the page's scroll area ending left of it; no control anywhere else over the page
 async function fits(page) {
   const m = await measured(page),
     view = page.viewportSize(),
@@ -250,7 +263,7 @@ async function fits(page) {
   );
   for (const b of m.buttons) {
     assert.ok(Math.abs(mid(b) - mid(m.column)) < 2, `${b.name} on the rail's one column: ${mid(b)} ${mid(m.column)}`);
-    assert.ok(b.width >= 40 && b.height >= 36, `${b.name} big enough to tap: ${b.width}x${b.height}`);
+    assert.ok(b.height >= 32 && b.reach, `${b.name} big enough to tap: ${b.width}x${b.height}, ${TOUCH_PX} px across`);
     assert.ok(b.top >= 0 && b.bottom <= view.height && b.right <= view.width, `${b.name} on the screen`);
   }
   m.buttons.slice(1).forEach((b, i) => assert.ok(b.top >= m.buttons[i].bottom - 1, `${b.name} under the one above`));
@@ -314,4 +327,14 @@ async function slides(page, size, browser) {
   );
   await touch.up();
   await picked('a finger');
+}
+
+// No long press on the rail (board, the Ink 1.1 deck: "One rail, no scrolling"): the eraser held well past a long
+// press picks it and opens no card.
+async function noHold(page) {
+  const eraser = page.locator('#book [data-island=tools] [data-mode=eraser]'),
+    cards = page.locator('#book .bk-palette');
+  await eraser.click({ delay: 900 });
+  await until(async () => (await eraser.getAttribute('aria-pressed')) === 'true', 'the eraser picked by a held press');
+  assert.equal(await cards.count(), 0, 'a held tool opens no card');
 }

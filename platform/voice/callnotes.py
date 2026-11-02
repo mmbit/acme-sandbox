@@ -6,9 +6,10 @@ or of its shown screen at a moment, that the change is about. The coordinator's 
 note in the call's notes (ink/callnotes.ts), where the board sees it appear as it's written, and on the call's list;
 the call's follow-up hands it out. A note with no picture is the agent's words alone on a post-it. The agent works the
 notes as the board does too: reads them (read_notes), draws on them (mark_notes) and changes, moves or deletes what's
-there (change_note), none of it a step the board's Undo takes back (only the board's own are), and has versions of a
-note made for the board to pick from (try). title_notes names their topic, after the call's date and time, and the
-agent is reminded every few turns until it has. Only on the board's own HQ call.
+there (change_note), none of it a step the board's Undo takes back (only the board's own are), puts a drawing of its own
+in them as a picture (draw_picture), and has versions of a note made for the board to pick from (try). title_notes
+names their topic, after the call's date and time, and the agent is reminded every few turns until it has. Only on the
+board's own HQ call.
 The call engine's halves (drawing.py, driving.py, the screen tool) know nothing of the notes: this reads them, never the
 other way round."""
 import asyncio
@@ -52,7 +53,7 @@ TITLE_REMINDER = ("(The call's notes have no title yet: once it's clear what thi
                   'title_notes.)')
 
 
-def written_asked(a):
+def note_asked(a):
     """A note the agent writes down ({from?, region?, words, goal, owner?, deadline?, board_set?, job?, deliverable?}: a
     crop from and region both, or a plain note with neither; its time and the work it's about as hq_tools checks them),
     cleaned, or None if it isn't one."""
@@ -113,6 +114,23 @@ TRY_WORDS = {
     'gone': WRITE_DOWN_WORDS['gone'],
     'failed': "The try couldn't be started just now",
 }
+
+# A drawing of the agent's own (a diagram, a chart) put on the page as a picture in the company's look (the coordinator's
+# drawing.ts), and that picture back for the agent to check
+DRAW_WORDS = {
+    'shape': 'draw_picture takes svg: one drawing, from <svg viewBox="0 0 640 480"> to its </svg>',
+    'none': WRITE_DOWN_WORDS['none'],
+    'gone': WRITE_DOWN_WORDS['gone'],
+    'failed': "The drawing couldn't be put in the notes just now",
+}
+
+
+def drawing_asked(a):
+    """The drawing the agent gives ({svg}), as the coordinator takes it, or None if it isn't one."""
+    if not isinstance(a, dict) or set(a) != {'svg'} or not isinstance(a['svg'], str):
+        return None
+    svg = a['svg'].strip()
+    return {'svg': svg} if svg.startswith('<svg') and svg.endswith('</svg>') else None
 
 
 def number(v):
@@ -179,7 +197,7 @@ def said_back(err):
 
 
 class CallNotes:
-    """A call's notes page, as the agent adds to it: its scraps and its title, each straight to the coordinator.
+    """A call's notes page, as the agent adds to it: its notes and its title, each straight to the coordinator.
     turns: the board's turns while the page has no topic of the agent's; titled: it has one."""
     def __init__(self, call):
         self.call = call
@@ -203,20 +221,24 @@ class CallNotes:
 
     async def ask(self, route, body, words, whole=False):
         """The coordinator's answer to one of the page's asks, {ok} in a line (whole: its lines kept), or {error}."""
+        got = await self.answer(route, body, words)
+        return got if 'error' in got else {'ok': str(got['ok']) if whole else one_line(got['ok'])}
+
+    async def answer(self, route, body, words):
+        """The coordinator's whole answer to one of the page's asks, or {error}."""
         try:
-            got = await asyncio.to_thread(self.call.wiring.hq, 'POST', route, {'call': self.call.brain.call, **body})
+            return await asyncio.to_thread(self.call.wiring.hq, 'POST', route, {'call': self.call.brain.call, **body})
         except HTTPError as err:
             # (429: the day's ink readings used, its words saying so.)
             if err.code not in (400, 404, 409, 429):
                 raise
             return {'error': said_back(err) or f"{words['failed']}."}
-        return {'ok': str(got['ok']) if whole else one_line(got['ok'])}
 
     async def write_down_tool(self, asked):
         """The agent's write_down tool (hq_tools.py, through the line's socket): one change in the call's notes."""
         if refusal := self.refused(WRITE_DOWN_WORDS):
             return {'error': refusal}
-        if not (note := written_asked(asked.get('write_down'))):
+        if not (note := note_asked(asked.get('write_down'))):
             return {'error': WRITE_DOWN_WORDS['shape']}
         return await self.ask('write-down', note, WRITE_DOWN_WORDS)
 
@@ -241,6 +263,16 @@ class CallNotes:
         if not (change := change_asked(asked.get('change_note'))):
             return {'error': CHANGE_WORDS['shape']}
         return await self.ask('change', change, CHANGE_WORDS)
+
+    async def drawing_tool(self, asked):
+        """The agent's draw_picture tool: its drawing put in the call's notes as a picture, and the picture back with
+        its line."""
+        if refusal := self.refused(DRAW_WORDS):
+            return {'error': refusal}
+        if not (drawing := drawing_asked(asked.get('draw_picture'))):
+            return {'error': DRAW_WORDS['shape']}
+        got = await self.answer('drawing', drawing, DRAW_WORDS)
+        return got if 'error' in got else {'line': one_line(got['ok']), 'picture': got['picture']}
 
     async def try_tool(self, asked):
         """The agent's try tool: versions of something on the call's notes page, made for the board to pick from."""

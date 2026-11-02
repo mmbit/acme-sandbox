@@ -21,7 +21,8 @@ export function penStories(c) {
       offTheEdge(browser, c),
     'with the Pencil: a picture taped in is drawn on and scales by its frame at once, the pen tool still in hand':
       browser => picture(browser, c),
-    'with the Pencil: Copy, then Paste from the bar and from a tap on the paper': browser => copyPaste(browser, c),
+    'with the Pencil: Copy, then Paste from the bar and from a tap on the paper, the Pencil’s or a finger’s, of the clip or words copied elsewhere':
+      browser => copyPaste(browser, c),
     'with the Pencil: a box of words moved by Select draws nothing, a line beside it with the text tool makes no box, new boxes add':
       browser => boxes(browser, c),
     'with the Pencil on an iPad mini: a box of words moves by its grip straight away with the pen, clear of its words and its bin':
@@ -129,6 +130,8 @@ async function picture(browser, c) {
 async function copyPaste(browser, c) {
   const free = freePage(c);
   const { page, pen, errors, done } = await onMini(browser, c);
+  // (the Paste bubble reads the clipboard, as Safari lets a tap do)
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write'], { origin: c.base });
   try {
     // (its select box starting right of the tool strip down the paper's left)
     const paper = await paperBox(page),
@@ -153,6 +156,15 @@ async function copyPaste(browser, c) {
     await bubble.waitFor({ timeout: 2000 });
     await pen.tap(middleOf(await bubble.boundingBox()));
     await savedWhere(c, free.id, p => p.ink.length === 3);
+    // words copied in another app since: a finger's tap (one that pans, a pen having been used) offers Paste, and
+    // they land, not the clip
+    await page.evaluate(() => navigator.clipboard.writeText('copied elsewhere'));
+    await page.touchscreen.tap(x + 120, y + 420);
+    await bubble.waitFor({ timeout: 2000 });
+    await page.touchscreen.tap(...middleOf(await bubble.boundingBox()));
+    const words = await savedWhere(c, free.id, p => p.texts.length === 1);
+    assert.equal(words.texts[0].text, 'copied elsewhere', 'the clipboard’s words pasted');
+    assert.equal(words.ink.length, 3, 'the clip not pasted again');
     assert.deepEqual(errors, []);
   } finally {
     await done();

@@ -152,7 +152,7 @@ test('each round gets the briefing of its stage, and what the reviews leave goes
     ruling,
     json({
       blocking: [at(3, 'the score adds the bonus twice')],
-      nonblocking: [at(7, 'a name that says nothing'), at(30, 'a long function')],
+      nonblocking: [at(7, 'a name that says nothing'), at(30, 'a long function'), at(40, 'a stray log')],
       pre_existing: [
         at(9, 'the ship is drawn twice', 'kits/art/ship.ts'),
         at(2, 'an old loop', 'products/game/old.ts'),
@@ -161,8 +161,11 @@ test('each round gets the briefing of its stage, and what the reviews leave goes
       summary: 'one',
     }),
   );
-  const [bonus, name, long] = findingsOf(n).filter(f => f.kind !== 'pre-existing');
-  assert.deepEqual([bonus.kind, name.kind, long.kind], ['blocking', 'nonblocking', 'nonblocking']);
+  const [bonus, name, long, log] = findingsOf(n).filter(f => f.kind !== 'pre-existing');
+  assert.deepEqual(
+    [bonus.kind, name.kind, long.kind, log.kind],
+    ['blocking', 'nonblocking', 'nonblocking', 'nonblocking'],
+  );
   assert.match(fixPrompt(n), /Fix or answer each nonblocking one too/);
   assert.equal(await h.claim('next-piece'), null, 'blocking fixes still hold the next piece');
 
@@ -174,10 +177,12 @@ test('each round gets the briefing of its stage, and what the reviews leave goes
   assert.match(check.prompt, /a change that doesn't do what the board asked/);
   assert.match(check.prompt, /"nonblocking": \[the same shape\]/);
   assert.match(check.prompt, /With no\s+blocking finding, decide "merge"/);
+  // the fix round judges the nonblocking findings the author was told to fix or answer, as well as the blocking one
+  for (const f of [bonus, name, long, log]) assert.ok(check.prompt.includes(`#${f.id} (round 1, ${f.kind})`), f.issue);
   const refused = await h.agent('review-output', check.token, {
     output: JSON.stringify({
       major_visual: false,
-      outcomes: [bonus, name, long].map(f => ({ finding: f.id, outcome: 'fixed' })),
+      outcomes: [bonus, name, long, log].map(f => ({ finding: f.id, outcome: 'fixed' })),
       decision: 'changes',
       blocking: [],
       nonblocking: [at(12, 'tidy')],
@@ -191,6 +196,7 @@ test('each round gets the briefing of its stage, and what the reviews leave goes
         { finding: bonus.id, outcome: 'not fixed' },
         { finding: name.id, outcome: 'not fixed' },
         { finding: long.id, outcome: 'not fixed' },
+        { finding: log.id, outcome: 'fixed' },
       ],
       blocking: [{ ...at(4, 'the bonus still counts twice'), earlier: bonus.id }],
       nonblocking: [
@@ -205,13 +211,14 @@ test('each round gets the briefing of its stage, and what the reviews leave goes
   assert.match(fixPrompt(n), /Fix only the blocking findings/);
   assert.match(fixPrompt(n), /Leave the nonblocking findings/);
 
-  // round 3 merges: its own nonblocking finding and the one the author left open go with the rest
+  // round 3 merges: its own nonblocking finding and the ones the author left open go with the rest. Only blockers
+  // must be judged: a nonblocking one with no outcome stays open.
   await push(n);
   const [last] = await claim(n);
+  assert.ok(!last.prompt.includes(`#${log.id} `), 'a nonblocking finding judged fixed is settled');
   const mergeRuling = json({
     outcomes: [
       { finding: bonus.id, outcome: 'fixed' },
-      { finding: name.id, outcome: 'not fixed' },
       { finding: long.id, outcome: 'not fixed' },
     ],
     blocking: [],
@@ -244,6 +251,7 @@ test('each round gets the briefing of its stage, and what the reviews leave goes
   ])
     assert.ok(job.prompt.includes(issue), issue);
   assert.ok(!job.prompt.includes('the bonus'), 'what blocked is fixed on the pull request');
+  assert.ok(!job.prompt.includes('a stray log'), "a nonblocking finding the fix round judged fixed isn't followed up");
   assert.deepEqual(
     findingsOf(n)
       .filter(f => f.issue.includes('long'))
@@ -399,4 +407,44 @@ test('a ruling from the upstream round on whose job was never asked what went wr
   await push(n);
   const [next] = await claim(n);
   assert.deepEqual([next.round, next.stage], [7, 'ruling'], 'round 6 stays ruled once pushed past');
+});
+
+test('a fix round that makes a nonblocking finding a blocker by its earlier id must judge it before a merge', async () => {
+  const n = 605;
+  projects.createThread({ project: 'game', name: 'Doors open', goal: 'Every door can open', slug: 'doors' });
+  await push(n, 'game/doors');
+  for (const run of await claim(n, 'review')) await end(run);
+  const [ruling] = await claim(n, 'consolidate');
+  await end(
+    ruling,
+    json({
+      blocking: [at(3, 'the door never opens')],
+      nonblocking: [at(9, 'the key is checked twice')],
+      decision: 'changes',
+      summary: 'one',
+    }),
+  );
+  const [door, key] = findingsOf(n);
+  await push(n);
+  const [check] = await claim(n);
+  await end(
+    check,
+    json({
+      outcomes: [
+        { finding: door.id, outcome: 'fixed' },
+        { finding: key.id, outcome: 'not fixed' },
+      ],
+      blocking: [{ ...at(9, 'the key check now locks the door'), earlier: key.id, caused_by: { file: FILE, line: 9 } }],
+      decision: 'changes',
+      summary: 'the key',
+    }),
+  );
+  assert.equal(findingsOf(n).find(f => f.id === key.id)?.kind, 'nonblocking', 'its stored kind stays as first sent');
+  await push(n);
+  const [last] = await claim(n);
+  const merge = (outcomes: object[]) => json({ outcomes, blocking: [], decision: 'merge', summary: 'fixed' });
+  const refused = await h.agent('review-output', last.token, merge([]));
+  assert.match(String(refused.body.error), new RegExp(`findings #${key.id} have no outcome`));
+  await end(last, merge([{ finding: key.id, outcome: 'fixed' }]));
+  await until(() => h.github.pr(n).merged, 'merged once the promoted blocker is judged');
 });

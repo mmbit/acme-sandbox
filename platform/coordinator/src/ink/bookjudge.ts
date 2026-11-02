@@ -13,7 +13,7 @@
 // old book's pages (note), or a box typed on one (page + text: booktyped.ts). Only the board's own: a guest's note is
 // outside text (charter rule 9) and waits for the board's plane. Judging runs after the board's request has answered.
 import { db, lacks, once, redacted } from '../db.ts';
-import { companyDay } from '../company.ts';
+import { dayAllowance } from '../dayallowance.ts';
 import { answerOf, smallCall } from '../smallmodel.ts';
 import { isRefused } from '../pagechecks.ts';
 import { BOARD } from './book.ts';
@@ -23,6 +23,8 @@ import { answeredOf, seenOf, type Seen } from './bookseen.ts';
 // page or a client gone wrong can take in a day, as the ink's READS_A_DAY does (inkread.ts). It's the judge's only limit: a day
 // of the board's notes is a few dozen to a hundred or two.
 export const JUDGES_A_DAY = 400;
+// One more judging today, unless today's are used
+const takeOne = dayAllowance('ink_judges', 'judges', JUDGES_A_DAY);
 // How long a verdict may take: nobody waits on it, the worker's small calls take their turn (a seat's slow minute too)
 const WAIT_MS = 10 * 60_000;
 const WHY_MAX = 300;
@@ -35,8 +37,7 @@ db.exec(`create table if not exists ink_verdicts (id integer primary key autoinc
   page integer, reply text not null, why text not null, words text not null, created text not null, wiped text,
   saved text, job integer);
   create index if not exists ink_verdicts_grp on ink_verdicts (grp) where grp is not null;
-  create index if not exists ink_verdicts_note on ink_verdicts (note) where note is not null;
-  create table if not exists ink_judges (day text primary key, judges integer not null)`);
+  create index if not exists ink_verdicts_note on ink_verdicts (note) where note is not null`);
 redacted('ink_verdicts', 'why', 'words');
 once('2026-10-28-ink-verdicts-runs', () => {
   for (const column of ['saved text', 'job integer'])
@@ -79,9 +80,10 @@ export const schemaOf = (onVersion: boolean) => ({
   additionalProperties: false,
 });
 // (its examples name no company's agents; handwriting read in the picture)
+// (everyday words, "circle" never "ring")
 const PROMPT = `You read one note the board (the person who runs the company) just made in its book in HQ, and decide \
 whether an agent replies to it right away, and how. A note is a mark on a page: words typed or said aloud, or \
-written by hand, often with a ring, an arrow or a scribble on the page around it. The picture shows the ink, the \
+written by hand, often with a circle, an arrow or a scribble on the page around it. The picture shows the ink, the \
 handwriting too: read it there. Every note reaches its agent with its sheet later in any case: a reply now comes on top of that.
 
 - answer: the board asks or doubts something, and a few words from an agent settle it: what something on the page \
@@ -89,7 +91,7 @@ means, whether something is done or live, why something is the way it is. An age
 - try: the board asks for a change to something it can see, or wonders about one, and seeing a few versions side by \
 side would help it decide: a colour, a size, a picture, a layout, words it isn't sure of. An agent makes a few versions.
 - pick: only for a note on one of an agent's versions (it replies to a version): the board chooses that version. A \
-ring drawn round it, a tick on it, an arrow at it with "deze", "this one" or "ja". \
+circle drawn round it, a tick on it, an arrow at it with "deze", "this one" or "ja". \
 The picture shows the version's frame with the board's ink over it. A note on a version that asks for more ("this, but \
 softer") is a try, a doubt about it an answer.
 - cross: only for a note on one of an agent's versions: the board rules that version out. A cross or a line through \
@@ -105,22 +107,22 @@ costs little, a doubt left hanging costs more. Choose try only when versions wou
 why: one short line for whoever checks the verdicts later: what the note asks for, and so this reply.
 
 Notes and their verdicts:
-- "what does reach count here" (handwritten, a ring round a figure on HQ's Gazette page) -> answer: asks what a figure means; a sentence settles it.
+- "what does reach count here" (handwritten, a circle round a figure on HQ's Gazette page) -> answer: asks what a figure means; a sentence settles it.
 - "is this live yet" (typed, on a shop's product page) -> answer: asks whether it has shipped.
 - "waarom?" (handwritten, an arrow at a paused project in HQ) -> answer: asks why it's paused; the agent can say.
 - "ik snap niet waar dit getal vandaan komt" (said, on an invoice page) -> answer: a doubt about where a number comes from, no question mark needed.
-- "warmer?" (handwritten, a ring round an app's header) -> try: wonders about a colour; versions show it.
-- "try this bigger" (handwritten, a ring round a logo) -> try: a visible change whose right size is a matter of looking.
+- "warmer?" (handwritten, a circle round an app's header) -> try: wonders about a colour; versions show it.
+- "try this bigger" (handwritten, a circle round a logo) -> try: a visible change whose right size is a matter of looking.
 - "misschien hier een foto" (said, on a landing page's opening) -> try: wonders about a picture there; a few to choose from.
-- "swap" (handwritten, a ring and an arrow between two cards) -> try: a layout change best judged by seeing it.
-- "fix the typo" (handwritten, a ring round "recieve") -> none: clear work, done when the sheet goes.
+- "swap" (handwritten, a circle and an arrow between two cards) -> try: a layout change best judged by seeing it.
+- "fix the typo" (handwritten, a circle round "recieve") -> none: clear work, done when the sheet goes.
 - "Can you make the button blue?" (typed, on HQ's settings page) -> none: a clear request, work to do, not a question to answer.
 - "vrijdag Ada over de facturen" (handwritten, on a free page) -> none: a reminder to self.
-- no words, a ring round a button (handwritten) -> none: a mark with nothing asked; it goes with its sheet.
+- no words, a circle round a button (handwritten) -> none: a mark with nothing asked; it goes with its sheet.
 - "mooi ✔" (handwritten, on a film's still) -> none: a reaction.
 - "and last week?" (handwritten, replying to the answer "Reach counts unique readers over 7 days.") -> answer: asks for one more figure.
 - "ok doe maar" (handwritten, replying to an answer suggesting a fix) -> none: a go-ahead, the work follows.
-- no words, a ring round the whole frame (handwritten, on version 2 of 3, "Brick red") -> pick: rings one version to choose it.
+- no words, a circle round the whole frame (handwritten, on version 2 of 3, "Brick red") -> pick: circles one version to choose it.
 - "✔" (handwritten, on version 1 of 3, "Sand and honey") -> pick: ticks the version it likes.
 - "this, but softer" (handwritten, on version 3 of 3, "Late sun") -> try: wants one more round from that version.
 - a cross over the frame (handwritten, on version 1 of 2, "Bold") -> cross: rules that one out.
@@ -143,7 +145,7 @@ export async function judge(t: Target, via?: Partial<Routes>): Promise<Verdict |
     if (!seen || seen.by !== BOARD) return null;
     const key = `${keyOf(t)}:${seen.words}`;
     if (judging.has(key) || verdictOf(t)?.words === seen.words) return null;
-    if (!counted()) {
+    if (!takeOne()) {
       console.error(`The book's judge: ${JUDGES_A_DAY} notes judged today, ${keyOf(t)} not`);
       return unjudged(t, 'day');
     }
@@ -252,18 +254,6 @@ function verdictAnswer(result: unknown, onVersion: boolean): { reply: Reply; why
   const why = typeof a.why === 'string' ? a.why.replace(/\s+/g, ' ').trim().slice(0, WHY_MAX) : '';
   if (!why) return 'a verdict without its why';
   return { reply: a.reply as Reply, why };
-}
-// One more judging today, unless today's are used
-function counted() {
-  const day = companyDay(Date.now());
-  const done = (db.prepare('select judges from ink_judges where day = ?').get(day) as { judges: number } | undefined)
-    ?.judges;
-  if ((done ?? 0) >= JUDGES_A_DAY) return false;
-  db.prepare(
-    'insert into ink_judges (day, judges) values (?, 1) on conflict (day) do update set judges = judges + 1',
-  ).run(day);
-  db.prepare('delete from ink_judges where day < ?').run(companyDay(Date.now() - 7 * 864e5));
-  return true;
 }
 function keep(t: Target, v: { reply: Reply; why: string }, seen: Seen): Verdict {
   const id = Number(

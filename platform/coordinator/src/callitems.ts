@@ -1,12 +1,11 @@
 // An item on a call's list with its time and the work under way it names, checked whole before anything is recorded:
 // hq item add and replace, and on a live call what its agent writes down (ink/callnotes.ts writeDown).
-import { inOneStep } from './db.ts';
 import * as call from './call.ts';
 import * as jobs from './jobs.ts';
 import * as ledger from './ledger.ts';
 import * as projects from './projects.ts';
 import * as windows from './windows.ts';
-import { isRefused, type Refused } from './pagechecks.ts';
+import { isRefused, refusableStep, RefusedError, type Refused } from './pagechecks.ts';
 
 // Who records the item: a job (its id), or a live call's agent on its own call (id 0, callId the call)
 export type Recorder = { id: number; agent: string; call?: boolean; callId?: number };
@@ -40,21 +39,15 @@ export function toList(on: number, b: any, by: Recorder, onPage = true): Refused
     fields = { ...b, owner: String(b.owner), quote, due, dueBoard: b.board_set === true };
   const add = () => added(on, ledger.add(on, fields, by.call ? null : by.id, onPage));
   if (!work) return add;
-  return () => {
-    try {
-      return inOneStep(() => {
-        const item = add();
-        if (isRefused(item)) return item;
-        const link = ledger.link(item.id, work, by.agent, by.id);
-        // (the item with it: inOneStep rolls it back)
-        if (typeof link === 'string') throw new UnlinkedError(link);
-        return { ...item, job: work.job, ...('deadline' in link && { deadline: link.deadline, thread: link.thread }) };
-      });
-    } catch (err) {
-      if (err instanceof UnlinkedError) return [409, err.message] as Refused;
-      throw err;
-    }
-  };
+  return () =>
+    refusableStep(() => {
+      const item = add();
+      if (isRefused(item)) return item;
+      const link = ledger.link(item.id, work, by.agent, by.id);
+      // (the item with it: the step takes it back)
+      if (typeof link === 'string') throw new RefusedError([409, link]);
+      return { ...item, job: work.job, ...('deadline' in link && { deadline: link.deadline, thread: link.thread }) };
+    });
 }
 // The work under way that a note written on a live call names (write_down's job, hq item add --job), checked before
 // anything is recorded: its owner's (a misheard number names someone else's: call.ts reach), under way, and in an open
@@ -93,5 +86,3 @@ function notedWork(b: any, due: number | undefined, by: Recorder): Refused | { j
 // ledger.add's answer as an item or a refusal
 const added = (on: number, answer: ReturnType<typeof ledger.add>): Item | Refused =>
   typeof answer === 'object' ? answer : typeof answer === 'string' ? [400, answer] : [answer, `there's no call #${on}`];
-// The work's link refused: the item goes with it
-class UnlinkedError extends Error {}

@@ -1,7 +1,7 @@
 // The select tool's cut, copy, paste, duplicate and delete (bookselect.js), and its keys: Delete or Backspace, ⌘ or
 // Ctrl with X, C, V, D (a duplicate a little down and right) and A (all on the page shown), Escape to let go, and the
 // arrow keys to nudge (Shift: ten times as far). The bar beside the selection does the same with a Pencil or a finger,
-// and a Pencil's tap on bare paper offers Paste.
+// and so does the Paste bubble a tap on bare paper brings (bookselectpaste.js).
 //
 // The clip is the book's own: what was copied, kept as it was. The system's clipboard gets a word that names it, so a
 // paste takes the clip only while that word is still there: a picture copied since is booktape.js's to paste, and
@@ -10,17 +10,17 @@
 import { button, MOD } from './bookui.js';
 import { sfx } from '../audio.js';
 import { keepAgain } from './booktape.js';
+import { mountTapPaste } from './bookselectpaste.js';
 import { crumple } from './bookpaper.js'; // (what's deleted balls up and drops off)
 import { thingsPicture } from './bookpaperdraw.js';
 import { said } from './booksave.js';
 import { word } from './bookscope.js';
 import { mapBox, moveBy, movedScrap, movedStroke, movedText, movedThings, pasteAt, union } from './bookselectmath.js';
 import { bounds, boxOfText, changed, choose, current, framed, letGo, redrawn, swapIn } from './bookselect.js';
+import { newCut } from './bookstrokes.js';
 
 // a duplicate lands this far (screen px) down and right of what it copies, as does a paste again on the same spot
 const STEP_PX = 16;
-// the Paste bubble goes after this long
-const BUBBLE_MS = 5000;
 // an arrow key nudges this far (page px; with Shift, BIG); a burst of nudges is one step, ended this long after the last
 const NUDGE = 1,
   BIG = 10,
@@ -29,21 +29,21 @@ const ARROWS = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], Arrow
 const FIELD = 'input, textarea, select, [contenteditable], review-mode';
 
 // sel: bookselect.js's. Returns { bar() (the bar beside a frame), fit() (the bar fitted to what's picked), offer([clientX,
-// clientY]) (Paste there, when the clip holds something), away() (before a press: the bubble gone, a burst of nudges
-// ended), settle() (the nudges ended) }
+// clientY]) (the Paste bubble there: bookselectpaste.js), settle() (a burst of nudges ended) }
 export function mountClip(sel) {
-  const clip = { sel, held: null, word: '', again: null, nudging: null, bubble: null, key: null, last: null };
+  const clip = { sel, held: null, word: '', again: null, nudging: null, key: null, last: null };
   keys(clip);
   clipboard(clip);
   following(clip);
+  // (the bubble's Paste: the clip where the clipboard's words still name it, its middle on a point of the page shown)
+  const tapped = mountTapPaste(sel, {
+    named: text => !!clip.held && text === clip.word,
+    pasteAt: at => paste(clip, clip.held, null, at),
+  });
   return {
     bar: () => barOf(clip),
     fit: () => fit(clip),
-    offer: at => offer(clip, at),
-    away: () => {
-      gone(clip);
-      settle(clip);
-    },
+    offer: tapped.offer,
     settle: () => settle(clip),
   };
 }
@@ -142,8 +142,11 @@ async function paste(clip, from = clip.held, tr = null, at = null) {
   if (book.view() !== view) return true;
   settle(clip);
   changed(sel, view, p => {
-    // (a copy is new: it finds its own group as it's saved, booksave.js.)
-    const ink = from.ink.map(s => fresh(movedStroke(s, move))),
+    // (a copy is new: it finds its own group as it's saved, booksave.js. The copied pieces of a see-through stroke are
+    // filled as one with each other, never with what they were copied from: a number of their own, bookstrokes.js.
+    const cuts = new Map(),
+      recut = s => (s.cut ? { ...s, cut: cuts.get(s.cut) ?? cuts.set(s.cut, newCut()).get(s.cut) } : s);
+    const ink = from.ink.map(s => fresh(recut(movedStroke(s, move)))),
       scraps = from.scraps.map((s, i) => fresh({ ...movedScrap(s, move), ...files[i] })),
       texts = from.texts.map((t, i) => fresh(movedText(t, move, from.boxes[i])));
     p.ink.push(...ink);
@@ -282,11 +285,9 @@ function following(clip) {
   const seen = e => e.pointerType !== 'touch' && (clip.last = [e.clientX, e.clientY]);
   desk.addEventListener('pointermove', seen);
   desk.addEventListener('pointerdown', seen);
-  // (a press anywhere but the Paste bubble sends it away)
-  addEventListener('pointerdown', e => clip.bubble && e.target !== clip.bubble && gone(clip), true);
 }
 
-// ---- the bar and the bubble
+// ---- the bar
 
 // The bar beside the selection: Cut, Copy, Paste (once the clip holds something: copied, it shows), Duplicate, Delete,
 // Move to page… (one whole group picked, as its clip's menu has it: fit) and Group (what's picked made one group:
@@ -364,29 +365,3 @@ const copied = clip =>
         `The copy didn’t reach the clipboard, so ${MOD}+V may not paste it: ${e.message}`,
       ),
     );
-
-// Paste offered where a Pencil tapped bare paper, when the clip holds something (booktape.js's bubble)
-function offer(clip, [x, y]) {
-  if (!clip.held) return;
-  gone(clip);
-  const { book } = clip.sel,
-    box = book.paper.getBoundingClientRect(),
-    on = book.at(x, y);
-  const bubble = Object.assign(document.createElement('button'), {
-    type: 'button',
-    className: 'bk-paste',
-    textContent: word('paste'),
-  });
-  Object.assign(bubble.style, { left: `${x - box.left}px`, top: `${y - box.top}px` });
-  book.paper.append((clip.bubble = bubble));
-  bubble.onclick = () => {
-    gone(clip);
-    paste(clip, clip.held, null, on && [on.x, on.y]);
-  };
-  bubble.timer = setTimeout(() => gone(clip), BUBBLE_MS);
-}
-function gone(clip) {
-  clearTimeout(clip.bubble?.timer);
-  clip.bubble?.remove();
-  clip.bubble = null;
-}

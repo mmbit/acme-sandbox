@@ -645,6 +645,10 @@ export async function loadCareNumbers(dev, app, mode) {
 export const loadMeaning = (dev, q) => get(dev ? 'mock/meaning.json' : `/api/search/meaning?q=${encodeURIComponent(q)}`);
 export const loadApps = dev => get(dev ? 'mock/apps.json' : '/api/apps');
 export const loadArtifacts = dev => get(dev ? 'mock/artifacts.json' : '/api/artifacts');
+// A preview page's earlier versions for the viewer, newest first, and how many older changes it has past them:
+// { versions: [{ back, at, open }], unlisted } (the coordinator's earlier.ts)
+export const loadEarlierVersions = (dev, url) =>
+  get(dev ? 'mock/earlier-versions.json' : `/api/artifacts/earlier-versions?${new URLSearchParams({ url })}`);
 // Reviews' Sent: the board's sent sheets, newest first (the book's store, booknotes.ts: { id, owner, name, sent, job,
 // notes: [{ n, words, snip, slips }] }), and the review notes sent before the book, each with who it went to (to) and
 // its job's code. Dev mode reads mock/book-sheets.json and mock/review.json.
