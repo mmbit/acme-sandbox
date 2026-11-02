@@ -28,6 +28,8 @@ const MIRROR = `window.process = { env: {} }; // (replay.js reads process.env in
   const ink = await import('/ink.js');
   // what the page shows over everything (toplayer.js), shown so in the replay.
   const { Layers, raise, topAt } = await import('/toplayer.js');
+  const { Media, mediaAt, applyMedia } = await import('/media.js');
+  let media = new Media();
   let inks = new Inks(), past = null, sized = null, tops = new Layers();
   // (useVirtualDom off: live, every event is older than the baseline, so rrweb plays each as a fast-forward, into its
   // virtual DOM, which only a fast-forward's end copies onto the screen: the live mirror showed the page as the share
@@ -50,6 +52,7 @@ const MIRROR = `window.process = { env: {} }; // (replay.js reads process.env in
       replayer.startLive(8.64e15);
       inks = new Inks();
       tops = new Layers();
+      media = new Media();
       return this.add(events);
     },
     async add(events) {
@@ -57,12 +60,14 @@ const MIRROR = `window.process = { env: {} }; // (replay.js reads process.env in
         replayer.addEvent(event);
         inks.add(event);
         tops.add(event);
+        media.add(event);
       }
       await frames();
     },
     async at(events, time) {
       if (!events.length) return;
       past = inkAt(events, time);
+      media = mediaAt(events, time + 1);
       tops = topAt(events, time + 1); // (as far as the replay plays)
       replayer = new Replayer(events, OPTIONS);
       replayer.pause(Math.max(0, time - events[0].timestamp) + 1); // (what happened at that time too)
@@ -79,6 +84,7 @@ const MIRROR = `window.process = { env: {} }; // (replay.js reads process.env in
       if (past && sized) for (const side of ['width', 'height']) iframe.setAttribute(side, String(sized.data[side]));
       const width = iframe && Number(iframe.width), height = iframe && Number(iframe.height);
       if (!width || !height || !iframe.contentDocument || !iframe.contentDocument.documentElement) return null;
+      applyMedia(replayer, media);
       raise(replayer, tops);
       // (what was coming in or going shown as it ends: rrweb holds the page's CSS animations where they start, so an
       // overlay that fades in, HQ's intercom say, stayed invisible. One that never ends stays.)
@@ -128,6 +134,7 @@ export const OWN: Record<string, Own> = {
   '/replay.js': { type: 'text/javascript', file: 'replay.js' },
   '/replay.css': { type: 'text/css', file: 'style.css' },
   '/strokes.js': { type: 'text/javascript', url: new URL('strokes.js', import.meta.url) },
+  '/media.js': { type: 'text/javascript', url: new URL('media.js', import.meta.url) },
   '/toplayer.js': { type: 'text/javascript', url: new URL('toplayer.js', import.meta.url) },
   '/ink.js': { type: 'text/javascript', url: new URL('../review/ink.js', import.meta.url) },
   // (ink.js's live line and the stroke's shapes, which it imports)

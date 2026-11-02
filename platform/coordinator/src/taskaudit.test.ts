@@ -214,6 +214,7 @@ test('weekly token scores keep the original split, exclude missing usage, and ex
   const tasks = [true, false].map(reported => {
     const job = h.pastJob({
       title: `Token comparison ${reported}`,
+      pr: reported ? 670 : 671,
       created: T + 510 * MINUTE,
       run: run(520, 10),
       merged: T + 560 * MINUTE,
@@ -249,9 +250,13 @@ test('weekly token scores keep the original split, exclude missing usage, and ex
       },
       T + 525 * MINUTE,
     );
-    if (reported) {
-      t.mock.timers.enable({ apis: ['Date'], now: T + 530 * MINUTE });
-      recordUsage({ job, engine: 'claude', usage: { models: { model: { input: 100 } } } });
+    t.mock.timers.enable({ apis: ['Date'], now: T + 530 * MINUTE });
+    recordUsage({ job, engine: 'claude', usage: { models: { model: { input: 100 } } } });
+    t.mock.timers.reset();
+    if (!reported) {
+      const review = h.pastJob({ kind: 'review', pr: 671, runs: [run(535, 5), run(545, 5)] });
+      t.mock.timers.enable({ apis: ['Date'], now: T + 540 * MINUTE });
+      recordUsage({ job: review, engine: 'claude', usage: { models: { model: { input: 20 } } } });
       t.mock.timers.reset();
     }
     return job;
@@ -265,6 +270,7 @@ test('weekly token scores keep the original split, exclude missing usage, and ex
   assert.equal(rows[0].revisions[0].confidence.level, 'low');
   assert.ok(audit.coverage.missing_confidence > 0);
   assert.equal(rows[0].whole.cost.split.work.tokens, 100);
+  assert.equal(rows[1].whole.cost.split.reviews.tokens, 20);
   assert.equal(rows[1].whole.cost.missing_usage, 1);
   assert.equal(audit.token_cost.phases.work.count, 1);
   assert.equal(audit.token_cost.phases.work.sum_ratio, 2);

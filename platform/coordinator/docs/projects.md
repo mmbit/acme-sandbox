@@ -247,6 +247,11 @@ it's read (`projects.ts ownerOf`), so `hq project owner` hands on every delivera
 How the platform plans: each deliverable's tasks one at a time on one branch, one pull request for the deliverable, read by the
 claim, the worker and the review panel (`threadorder.ts`). There is no setting for it and no other way.
 
+A merge ruling keeps its place in the shared-file order, but holds later approved work only while its own pull
+request can merge. Open author work, unstarted tasks in its deliverable, visual approval and an unanswered board
+ruling release that hold. Re-sync and merge-check work release it too. Once ready, it keeps its original place and
+is brought up to date onto the work that went first. Explicit dependencies between deliverables still apply.
+
 - **The order.** A task (a work job in a deliverable that isn't a pull request's fix or update) starts once the task before
   it in its deliverable (`jobs.seq`, else ids) is done: pushed, not merged. The deliverable's next task to
   start also waits until every deliverable it needs is done and merged, except one whose work is all pushed and whose pull
@@ -315,7 +320,11 @@ claim, the worker and the review panel (`threadorder.ts`). There is no setting f
   (`threadjudge.ts release`, from `jobs.ts createJob`); its end wakes a judge again.
   The owner closes it with `hq plan done` or draws its next task (a card's step too: `--after request:<id>`). The brief
   says how often it was judged before (`judgings`), its deadline and its agent time against its first size, so ending
-  it is as plain as feeding it. A judge that ends done closes each deliverable it left open with nothing drawn in it.
+  it is as plain as feeding it. Where a deliverable's "done when" or its tasks draw on the board's agreed sketches or a
+  deck, the brief has the judge find them and walk every behaviour they draw against the work, built or missing, and
+  each task's briefing has it build and check its part of them (`threadjudge.ts SKETCH_WALK`, the worker's
+  `threads.ts`). A behaviour another open deliverable owns is that deliverable's to build and judge: the judge names
+  the behaviour and its owner in its report and draws no step for it here. A judge that ends done closes each deliverable it left open with nothing drawn in it.
   A judge that fails wakes the owner again (`threadjudge.ts ended`, from `jobs.ts handOn`).
   `hq projects`, `hq deliverable` and the CEO's summary say "ready to judge" while the deliverable stays open, with the
   open deliverables that need it. HQ's one-task wrappers (a routine's

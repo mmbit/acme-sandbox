@@ -20,7 +20,7 @@ import { BOARD } from './book.ts';
 import { answeredOf, seenOf, type Seen } from './bookseen.ts';
 
 // Each judging spends a little of a Claude seat's window, which the company's jobs live on: JUDGES_A_DAY bounds what a
-// page or a client gone wrong can take in a day, as handwriting's READS_A_DAY does. It's the judge's only limit: a day
+// page or a client gone wrong can take in a day, as the ink's READS_A_DAY does (inkread.ts). It's the judge's only limit: a day
 // of the board's notes is a few dozen to a hundred or two.
 export const JUDGES_A_DAY = 400;
 // How long a verdict may take: nobody waits on it, the worker's small calls take their turn (a seat's slow minute too)
@@ -78,11 +78,11 @@ export const schemaOf = (onVersion: boolean) => ({
   required: ['reply', 'why'],
   additionalProperties: false,
 });
-// (its examples name no company's agents)
+// (its examples name no company's agents; handwriting read in the picture)
 const PROMPT = `You read one note the board (the person who runs the company) just made in its book in HQ, and decide \
-whether an agent replies to it right away, and how. A note is a mark on a page: words written by hand (read into type, \
-so a word may be misread), typed or said aloud, often with a ring, an arrow or a scribble on the page around it, which \
-the picture shows. Every note reaches its agent with its sheet later in any case: a reply now comes on top of that.
+whether an agent replies to it right away, and how. A note is a mark on a page: words typed or said aloud, or \
+written by hand, often with a ring, an arrow or a scribble on the page around it. The picture shows the ink, the \
+handwriting too: read it there. Every note reaches its agent with its sheet later in any case: a reply now comes on top of that.
 
 - answer: the board asks or doubts something, and a few words from an agent settle it: what something on the page \
 means, whether something is done or live, why something is the way it is. An agent writes a short answer beside the note.
@@ -98,33 +98,33 @@ it, "nee", "no", "not this one".
 reminder, a thought, a reaction, a tick, a scribble. None costs nothing and shows nothing.
 
 Judge what the board means, in whatever language it writes, never how the words look: a question can come without a \
-question mark, and a plain request can end in one. Read past misspellings from handwriting. When the words alone don't \
+question mark, and a plain request can end in one. Read handwriting with the page around it in mind. When the words alone don't \
 settle it, the picture, the page and what the note replies to do. Between answer and none: an answer nobody needed \
 costs little, a doubt left hanging costs more. Choose try only when versions would really help the board decide.
 
 why: one short line for whoever checks the verdicts later: what the note asks for, and so this reply.
 
 Notes and their verdicts:
-- "what does reach count here" (written, a ring round a figure on HQ's Gazette page) -> answer: asks what a figure means; a sentence settles it.
+- "what does reach count here" (handwritten, a ring round a figure on HQ's Gazette page) -> answer: asks what a figure means; a sentence settles it.
 - "is this live yet" (typed, on a shop's product page) -> answer: asks whether it has shipped.
-- "waarom?" (written, an arrow at a paused project in HQ) -> answer: asks why it's paused; the agent can say.
+- "waarom?" (handwritten, an arrow at a paused project in HQ) -> answer: asks why it's paused; the agent can say.
 - "ik snap niet waar dit getal vandaan komt" (said, on an invoice page) -> answer: a doubt about where a number comes from, no question mark needed.
-- "warmer?" (written, a ring round an app's header) -> try: wonders about a colour; versions show it.
-- "try this bigger" (written, a ring round a logo) -> try: a visible change whose right size is a matter of looking.
+- "warmer?" (handwritten, a ring round an app's header) -> try: wonders about a colour; versions show it.
+- "try this bigger" (handwritten, a ring round a logo) -> try: a visible change whose right size is a matter of looking.
 - "misschien hier een foto" (said, on a landing page's opening) -> try: wonders about a picture there; a few to choose from.
-- "swap" (written, a ring and an arrow between two cards) -> try: a layout change best judged by seeing it.
-- "fix the typo" (written, a ring round "recieve") -> none: clear work, done when the sheet goes.
+- "swap" (handwritten, a ring and an arrow between two cards) -> try: a layout change best judged by seeing it.
+- "fix the typo" (handwritten, a ring round "recieve") -> none: clear work, done when the sheet goes.
 - "Can you make the button blue?" (typed, on HQ's settings page) -> none: a clear request, work to do, not a question to answer.
-- "vrijdag Ada over de facturen" (written, on a free page) -> none: a reminder to self.
-- no words, a ring round a button (written) -> none: a mark with nothing asked; it goes with its sheet.
-- "mooi ✔" (written, on a film's still) -> none: a reaction.
-- "and last week?" (written, replying to the answer "Reach counts unique readers over 7 days.") -> answer: asks for one more figure.
-- "ok doe maar" (written, replying to an answer suggesting a fix) -> none: a go-ahead, the work follows.
-- no words, a ring round the whole frame (written, on version 2 of 3, "Brick red") -> pick: rings one version to choose it.
-- "✔" (written, on version 1 of 3, "Sand and honey") -> pick: ticks the version it likes.
-- "this, but softer" (written, on version 3 of 3, "Late sun") -> try: wants one more round from that version.
-- a cross over the frame (written, on version 1 of 2, "Bold") -> cross: rules that one out.
-- "nee" (written, on version 2 of 3, "Sand and honey") -> cross: doesn't want that one.`;
+- "vrijdag Ada over de facturen" (handwritten, on a free page) -> none: a reminder to self.
+- no words, a ring round a button (handwritten) -> none: a mark with nothing asked; it goes with its sheet.
+- "mooi ✔" (handwritten, on a film's still) -> none: a reaction.
+- "and last week?" (handwritten, replying to the answer "Reach counts unique readers over 7 days.") -> answer: asks for one more figure.
+- "ok doe maar" (handwritten, replying to an answer suggesting a fix) -> none: a go-ahead, the work follows.
+- no words, a ring round the whole frame (handwritten, on version 2 of 3, "Brick red") -> pick: rings one version to choose it.
+- "✔" (handwritten, on version 1 of 3, "Sand and honey") -> pick: ticks the version it likes.
+- "this, but softer" (handwritten, on version 3 of 3, "Late sun") -> try: wants one more round from that version.
+- a cross over the frame (handwritten, on version 1 of 2, "Bold") -> cross: rules that one out.
+- "nee" (handwritten, on version 2 of 3, "Sand and honey") -> cross: doesn't want that one.`;
 
 const SAID: Record<string, string> = {
   written: 'written by hand, read into type',
@@ -230,7 +230,7 @@ function ask(seen: Seen) {
   const about = [
     seen.words
       ? `Its words (${SAID[seen.said ?? ''] ?? 'typed'}): ${JSON.stringify(seen.words)}`
-      : 'It has no words: only marks.',
+      : 'It has no typed or said words: any handwriting is in the picture.',
     `Where: ${seen.where}.`,
     answered ? `It replies to an agent's answer: ${JSON.stringify(answered.text)}` : '',
     seen.picture ? 'The picture: the page around the note, its mark drawn on it.' : 'There is no picture of it.',

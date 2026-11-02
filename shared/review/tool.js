@@ -14,6 +14,7 @@ import * as dictation from './dictation.js';
 import * as pencil from './pencil.js';
 import { setupCall } from './callnotes.js';
 import { setupCallFrame } from './callframe.js';
+import { setupViewmarks } from './sharing.js';
 
 // what a part asks of the parts above it (acts.js)
 hand({
@@ -33,7 +34,6 @@ export function start(config) {
     mark: null,
     shot: null,
     strokes: [],
-    penSeen: false,
     covered: config.covered,
     away: config.away,
   };
@@ -61,6 +61,7 @@ export function start(config) {
     pencil.setupPencil(r);
     setupCall(r);
   } else if (r.framed && !r.outside) setupCallFrame(r); // (HQ's viewer on a call)
+  setupViewmarks(r);
   return { toggle: () => toggle(r) };
 }
 
@@ -114,7 +115,7 @@ export function reset(r) {
   pencil.unmark(r);
   pictures.clearPictures(r);
   r.penOn?.cancel();
-  Object.assign(r, { strokes: [], inkSteps: [], penSeen: false, undoTo: null, exposure: null });
+  Object.assign(r, { strokes: [], inkSteps: [], undoTo: null, exposure: null });
   r.veil.classList.remove('marked');
   r.undoButton.disabled = true;
   surface.paintInk(r, []);

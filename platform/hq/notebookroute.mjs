@@ -26,7 +26,7 @@ export function notebookRoute(r, play, { heard, bytes } = {}) {
     return r.fulfill({ json: answer });
   } catch (e) {
     if (!e.status) throw e;
-    // (a seeded picture is mock/'s, as dev mode keeps it: job #14672.)
+    // A seeded picture is mock/'s, as dev mode keeps it.
     const file = url.searchParams.get('file');
     if (picture && !body && e.status === 404 && /^[\w.-]+\.svg$/.test(file ?? ''))
       return r.fulfill({ path: fileURLToPath(new URL(`./mock/${file}`, import.meta.url)) });

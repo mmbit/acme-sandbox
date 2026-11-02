@@ -94,13 +94,14 @@ const played: ((f: Forecast) => void)[] = [];
 
 // The queue played now at both paces, kept nowhere: it neither becomes the latest forecast nor is logged.
 export function play(now = Date.now()): Forecast {
-  const plays = predictions.played(now);
-  return {
-    now,
-    version: PLAY_VERSION,
-    ...plays,
-    threads: threadOutlooks(plays.snapshot, plays.usual, plays.slow, plays.sizes.usual),
-  };
+  return latency.whole(playInParts(now));
+}
+// (in parts: latency.ts Parts.)
+function* playInParts(now: number): latency.Parts<Forecast> {
+  const plays = yield* predictions.playedInParts(now);
+  const threads = threadOutlooks(plays.snapshot, plays.usual, plays.slow, plays.sizes.usual);
+  yield 'the thread outlooks';
+  return { now, version: PLAY_VERSION, ...plays, threads };
 }
 
 // The queue read now and played at the usual pace, the one a thread's ETA and finish come from, as it is and as each
@@ -128,18 +129,9 @@ export function trial(now = Date.now()) {
 export function refresh(now = Date.now()): Forecast {
   const t0 = performance.now();
   const forecast = play(now);
-  [latest, stale] = [forecast, false];
+  stale = false;
   const t1 = performance.now(),
-    afters: number[] = [];
-  for (const after of played) {
-    const ta = performance.now();
-    try {
-      after(forecast);
-    } catch (err) {
-      console.error('After the forecast:', err);
-    }
-    afters.push(Math.round(performance.now() - ta));
-  }
+    afters = keep(forecast);
   // (a slow play's parts, in the status report's holds: latency.ts held)
   if (performance.now() - t0 >= latency.HOLD_MS)
     latency.held(
@@ -148,17 +140,59 @@ export function refresh(now = Date.now()): Forecast {
     );
   return forecast;
 }
+// keep stores the forecast as the latest and passes it to each callback registered with afterEach. It returns how many
+// milliseconds each callback took, in registration order.
+// kept counts the forecasts kept so far. A play in turns compares it to tell whether a newer one was kept meanwhile
+// (refreshInTurns).
+let kept = 0;
+function keep(forecast: Forecast) {
+  [latest, kept] = [forecast, kept + 1];
+  return played.map(after => {
+    const ta = performance.now();
+    try {
+      after(forecast);
+    } catch (err) {
+      console.error('After the forecast:', err);
+    }
+    return Math.round(performance.now() - ta);
+  });
+}
 
-// The minute's sweep (server.ts): new work's estimate, then the queue played, once: the new work's first outlook is this
-// play's (predictions.ts sweep).
-export function sweep(now = Date.now()) {
-  let forecast: Forecast | undefined;
+// The same play in turns of HQ's thread, one for each part of its read and play (latency.ts inTurns), so it holds HQ no
+// longer than its longest part. A part that holds it half a second is held() by name. The minute's play and a change's
+// take this way (sweep, playSoon), one at a time: a play asked for meanwhile waits for the one in its turns. A request
+// may play the queue whole during the turns (refresh). That play read the queue later, so the play in turns isn't kept
+// over it. A change published during the turns leaves the forecast stale, so the queue plays once more (playSoon).
+let inTurns: Promise<unknown> = Promise.resolve();
+export function refreshInTurns(now?: number): Promise<Forecast> {
+  const playing = inTurns.then(async () => {
+    stale = false;
+    const [turn, before] = [latency.turns('the play'), kept];
+    const forecast = await latency.inTurns(playInParts(now ?? Date.now()), turn);
+    if (kept === before) keep(forecast);
+    await turn('what follows each play');
+    return forecast;
+  });
+  inTurns = playing.catch(() => undefined);
+  return playing;
+}
+
+// The minute's sweep (server.ts): new work's estimate, then the queue played in turns, once: the new work's first
+// outlook is this play's (predictions.ts newWork, firstOutlooks).
+export async function sweep(now = Date.now()) {
+  let unplayed: number[] = [];
   try {
-    predictions.sweep(now, at => (forecast = refresh(at)).usual);
+    unplayed = predictions.newWork(now);
   } catch (err) {
     console.error('Could not estimate new work:', err);
   }
-  return forecast ?? refresh(now);
+  const forecast = await refreshInTurns(now);
+  try {
+    predictions.firstOutlooks(unplayed, forecast.usual);
+  } catch (err) {
+    console.error("Could not keep new work's first outlook:", err);
+  }
+  return forecast;
 }
 
 // The latest forecast. While the server watches, it's shown as last played: it plays again a moment after each change
@@ -198,11 +232,7 @@ export function playSoon() {
   pending ??= setTimeout(() => {
     pending = undefined;
     if (!stale) return;
-    try {
-      refresh();
-    } catch (err) {
-      console.error('Could not play the queue:', err);
-    }
+    refreshInTurns().catch(err => console.error('Could not play the queue:', err));
   }, SETTLE_MS);
   pending.unref();
 }

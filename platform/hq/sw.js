@@ -46,19 +46,20 @@ self.addEventListener('notificationclick', e => {
 });
 
 // The push service replaced the subscription (Firefox does this now and then): hand the new one over. If that
-// post fails, push.js's syncPush sends it again the next time HQ opens.
+// post fails or is refused, push.js's syncPush sends it again the next time HQ opens.
 self.addEventListener('pushsubscriptionchange', e =>
   e.waitUntil(
     (async () => {
       const key = e.oldSubscription?.options?.applicationServerKey;
       if (!key) return;
       const sub = await self.registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
-      await fetch('/api/push/subscribe', {
+      const res = await fetch('/api/push/subscribe', {
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(sub.toJSON()),
       });
+      if (!res.ok) throw new Error(`the new subscription refused: ${res.status}`);
     })(),
   ),
 );

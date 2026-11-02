@@ -18,38 +18,43 @@ const report = (seat: string, windows: Record<string, unknown>) =>
     ...windows,
   });
 
-test('the snapshot preserves an unset stop beside an explicitly configured default for pacing and drain policy', async () => {
+test('unset and configured stops give queued work their distinct pacing and reserve behavior', async t => {
+  t.after(() => h.cancelQueued());
   const { addSeat, stopSeat } = await import('./seats.ts');
-  const { at, available, seatEvent, seatsOf } = await import('./playseats.ts');
-  const { paceTo, pacedUntil, reserveElsewhere } = await import('../../worker/src/pace.ts');
+  const { play } = await import('./eta.ts');
   addSeat({ id: 'claude-default', provider: 'anthropic' });
   addSeat({ id: 'claude-explicit', provider: 'anthropic' });
   stopSeat('claude-explicit', 90);
   const reset = T0 + 24.5 * HOUR;
   for (const id of ['claude-default', 'claude-explicit', 'claude-peer'])
     await report(id, { week: id === 'claude-peer' ? 0.2 : 0.85, weekResets: reset });
+  const defaultJob = h.queue({ agent: 'bolt', engine: 'claude', forSeat: 'claude-default' });
+  const explicitJob = h.queue({ agent: 'wren', engine: 'claude', forSeat: 'claude-explicit' });
+  const sizes = new Map([defaultJob, explicitJob].map(id => [id, { agent_ms: 60_000 }]));
   const input = snapshot(T0);
+  input.slots = { claude: 3 };
+  input.room = 3;
+  input.rates = {};
   input.pacing = true;
-  const seats = seatsOf(input);
-  const moment = at(seats, T0);
-  const defaultSeat = seats.find(s => s.id === 'claude-default')!;
-  const explicitSeat = seats.find(s => s.id === 'claude-explicit')!;
-  const worker = { engine: 'claude', state: 'ready', week: 0.85, weekResets: reset, resets: 0 };
-  const peer = { ...worker, week: 0.2 };
-  const target = paceTo(worker, true, reserveElsewhere(worker, [worker, peer], T0));
-  assert.equal(moment.aims.get(defaultSeat), target);
-  assert.equal(moment.paced.get(defaultSeat), pacedUntil(worker, target, T0));
-  assert.equal(moment.aims.get(explicitSeat), 0.9);
-  assert.equal(moment.paced.get(explicitSeat), reset);
-  for (const seat of [defaultSeat, explicitSeat]) {
+  const paced = play(input, sizes);
+  assert.equal(paced.get(defaultJob)!.start, T0, 'the peer keeps the default reserve and releases its pacing');
+  assert.ok(paced.get(explicitJob)!.start! > T0, 'a configured stop paces its own week');
+  input.pacing = false;
+  for (const seat of input.seats.filter(s => s.id !== 'claude-peer')) {
     seat.week = 0.95;
     seat.weekResets = T0 + 20 * HOUR;
-    seat.pacing = false;
   }
-  assert.equal(available(defaultSeat, T0, seats), true, 'a peer can keep the default reserve');
-  assert.equal(available(explicitSeat, T0, seats), false, 'a configured stop keeps its own reserve');
-  assert.ok(seatEvent(defaultSeat, [defaultSeat], T0, 0) < defaultSeat.weekResets!);
-  assert.equal(seatEvent(explicitSeat, [explicitSeat], T0, 0), explicitSeat.weekResets);
+  const reserved = play(input, sizes);
+  assert.equal(reserved.get(defaultJob)!.start, T0, 'the peer keeps the default reserve');
+  assert.equal(reserved.get(explicitJob)!.start, T0 + 20 * HOUR, 'a configured stop waits for reset');
+  input.seats = input.seats.filter(s => s.id !== 'claude-peer');
+  const alone = play(input, sizes);
+  assert.equal(
+    alone.get(defaultJob)!.start,
+    T0 + 8 * HOUR + 10 * 60_000,
+    'the default reserve relaxes on a recovery read',
+  );
+  assert.equal(alone.get(explicitJob)!.start, T0 + 20 * HOUR, 'a configured stop stays fixed');
 });
 
 test('a missing weekly reading retains the earlier measured paced usage with its original age', async () => {

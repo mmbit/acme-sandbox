@@ -246,3 +246,35 @@ test("a stopped redo checked again after its rule changed goes back for its prev
     writeFileSync(`${h.repo}/company/org.yaml`, org);
   }
 });
+
+test('a Codex seat with only pixel work goes whole to a reviewer on Opus with no seat yet, and only agents on Opus rule it', async () => {
+  const engineOnly = await import('./engineonly.ts');
+  const panel = await import('./panel.ts');
+  const engineOf = (agent: string) => (['nib', 'flint'].includes(agent) ? 'codex' : 'claude');
+  const seat = (agent: string, files: string[]) => ({ agent, files, domains: ['hq'], slice: false, security: true });
+  const judged = engineOnly.judgedOn([seat('rook', [PIXEL]), seat('nib', [PIXEL])], engineOf, ['rook', 'tally', 'nib']);
+  assert.deepEqual(
+    judged.map(s => [s.agent, s.files, s.security]),
+    [
+      ['rook', [PIXEL], true],
+      ['tally', [PIXEL], true],
+    ],
+  );
+  const seated = engineOnly.judgedOn([seat('rook', [PIXEL]), seat('nib', [PIXEL])], engineOf, ['rook', 'nib']);
+  assert.deepEqual(
+    seated.map(s => s.agent),
+    ['rook', 'nib'],
+    'with no reviewer on Opus left, the seat keeps them and runs on Opus',
+  );
+
+  const org = readFileSync(`${h.repo}/company/org.yaml`, 'utf8');
+  writeFileSync(`${h.repo}/company/org.yaml`, org.replace('consolidator: quill', 'consolidator: [nib, quill]'));
+  try {
+    h.storedPr(511, h.ended({ agent: 'bolt' }), 'open', [PIXEL, CODE], { sha: sha('m'), round: 1 });
+    h.storedPr(512, h.ended({ agent: 'bolt' }), 'open', [CODE], { sha: sha('n'), round: 1 });
+    assert.deepEqual(panel.consolidators(511), ['quill']);
+    assert.deepEqual(panel.consolidators(512), ['nib', 'quill']);
+  } finally {
+    writeFileSync(`${h.repo}/company/org.yaml`, org);
+  }
+});

@@ -159,7 +159,7 @@ async function refused(page, c, { screen, touch, viewport }) {
   // A refused save says so over the title, which keeps what was written
   await page.route('**/api/notebooks/pages/title', r => {
     sent += 1;
-    return r.fulfill({ status: 400, json: { error: 'That title could not be saved.' } });
+    return r.fulfill({ status: 409, json: { error: 'That title could not be saved.' } });
   });
   await open(page, touch);
   await write(field, 'Refused title', touch);
@@ -216,7 +216,7 @@ async function pageGoes(page, c, { touch, mode }) {
     await page.route('**/api/notebooks/pages/title', async r => {
       sent.push(r.request().postDataJSON());
       await held;
-      await r.fulfill({ status: 400, json: { error: words } });
+      await r.fulfill({ status: 409, json: { error: words } });
     });
     await open(page, touch);
     await write(field, 'Meant for page two', touch);

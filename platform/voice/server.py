@@ -35,7 +35,7 @@ from urllib.request import Request, urlopen
 from aloud import DAYS, aloud, number, respelt
 from drawing import ASK_WORDS, INK_SECONDS, INK_WORDS, Drawing, note_said, notes_lost, one_line
 from driving import DRIVE_WORDS, OPEN_WORDS, Driving
-from callnotes import CHANGE_WORDS, MARK_WORDS, PAGE_WORDS, SCRAP_WORDS, TITLE_WORDS_SAID, TRY_WORDS, CallNotes
+from callnotes import CHANGE_WORDS, MARK_WORDS, PAGE_WORDS, TITLE_WORDS_SAID, TRY_WORDS, WRITE_DOWN_WORDS, CallNotes
 from echo import Echo
 from endpoint import Endpoint
 from guard import PARTNER, TOOLS, agent_env, hq_tools_work, sign_in_pipe, take_token
@@ -51,7 +51,7 @@ MODELS = Path(os.environ.get('VOICE_MODELS', '/models'))  # (replay.py runs the 
 # The call agent hands work on with hq_tools.py (guard.py). If it can't start here, calls still work without hand-on,
 # and the log says so (the transcript still reaches the agent after the call).
 # (add)
-print(f'Call tools (job, add, reach, promise, replace): {"on" if hq_tools_work() else "OFF (hq_tools.py did not start): calls work, with nothing queued or noted during them"}', flush=True)
+print(f'Call tools (job, add, reach, write_down, replace): {"on" if hq_tools_work() else "OFF (hq_tools.py did not start): calls work, with nothing queued or noted during them"}', flush=True)
 # The model and effort come from the coordinator with each call (company/models.yaml `calls`: Opus, the model that runs
 # the company, as the board asked); these are only for a coordinator that doesn't send them yet.
 MODEL, EFFORT = os.environ.get('VOICE_MODEL', 'claude-opus-5-5'), os.environ.get('VOICE_EFFORT', 'low')
@@ -140,9 +140,9 @@ PICTURE_TYPES = {'image/jpeg': b'\xff\xd8', 'image/png': b'\x89PNG'}  # (what th
 # keeps the budget and its token.
 SCREEN_TURN_SECONDS, SCREEN_PICTURES = 1.5, 40
 SCREENS = {}  # each live session's screen key, to its Call
-SCREEN_WORDS = {
+SCREEN_WORDS = {  # (circled)
     'lines': 'Their screen since your last turn:',
-    'picture': 'The last picture is their screen as they finished speaking, their last tap ringed.',
+    'picture': 'The last picture is their screen as they finished speaking, their last tap circled.',
     'paused': ("They've paused showing their screen: you see nothing of it, and the screen tool shows nothing, until "
                'they show it again.'),
     'full': ('No room for another picture of their screen in this session just now: its older pictures are compacted '
@@ -446,10 +446,10 @@ async def serve_screens(path):
 
 # Each tool's ask on the line's socket, by the key it carries (the screen tool's has none of these), and the tool's words
 # (ask_to_see and draw; open_work and drive)
-# (scrap and title_page: the call's notes page; read_page, mark_page, change_page and try: the agent working it. try:
+# (write_down and title_notes: the call's notes; read_notes, mark_notes, change_note and try: the agent working it. try:
 ASKED_WORDS = {'sketch': SKETCH_WORDS, 'ask_to_see': ASK_WORDS, 'draw': INK_WORDS, 'open_work': OPEN_WORDS, 'drive': DRIVE_WORDS,
-               'scrap': SCRAP_WORDS, 'title_page': TITLE_WORDS_SAID, 'read_page': PAGE_WORDS, 'mark_page': MARK_WORDS,
-               'change_page': CHANGE_WORDS, 'try': TRY_WORDS, 'name_voice': VOICE_WORDS}
+               'write_down': WRITE_DOWN_WORDS, 'title_notes': TITLE_WORDS_SAID, 'read_notes': PAGE_WORDS, 'mark_notes': MARK_WORDS,
+               'change_note': CHANGE_WORDS, 'try': TRY_WORDS, 'name_voice': VOICE_WORDS}
 ASKED_WORDS |= {'save_voice': ENROL_WORDS, 'forget_voice': FORGET_WORDS}
 
 
@@ -461,9 +461,9 @@ async def screen_asked(reader, writer):
         call = SCREENS.get(asked.get('key')) if isinstance(asked, dict) and isinstance(asked.get('key'), str) else None
         tool = call and {'screen': call.screen_tool, 'sketch': call.sketch_tool, 'ask_to_see': call.drawing.ask_tool,
                          'draw': call.drawing.ink_tool, 'open_work': call.driving.open_tool,
-                         'drive': call.driving.drive_tool, 'scrap': call.page.scrap_tool,
-                         'title_page': call.page.title_tool, 'read_page': call.page.page_tool,
-                         'mark_page': call.page.mark_tool, 'change_page': call.page.change_tool,
+                         'drive': call.driving.drive_tool, 'write_down': call.page.write_down_tool,
+                         'title_notes': call.page.title_tool, 'read_notes': call.page.page_tool,
+                         'mark_notes': call.page.mark_tool, 'change_note': call.page.change_tool,
                          'try': call.page.try_tool, 'name_voice': call.voice_tool,
                          'save_voice': call.enrol_tool, 'forget_voice': call.forget_tool}[kind]
         answer = await tool(asked) if tool else {'error': ASKED_WORDS.get(kind, SCREEN_WORDS)['gone']}
@@ -1161,7 +1161,7 @@ class Call:
         self.sounded_finished = True  # whether the board sounded finished after the draft's last piece (endpoint.py)
         self.pauses = [0, 0]  # the board's pauses after words, all call: how many sounded finished, how many in all
         self.waiting = None   # the timer that answers the draft once the board sounds finished
-        self.again = False    # the draft includes a message whose reply was taken back
+        self.taken_back_message = ''  # the draft starts with this message, whose reply was taken back
         self.speaking = None  # threading.Event that stops the current reply
         self.turn = None      # the current reply's task; the Claude session answers in order
         self.last = None      # the current reply: what it answers, where it starts in the transcript, when it was first heard
@@ -1716,14 +1716,14 @@ class Call:
         while self.inking() and self.wiring.monotonic() < until and not self.ended:
             await asyncio.sleep(0.1)
         self.waiting = None
-        text, again, at = self.so_far(), self.again, self.draft_at
-        self.draft, self.again, self.speaker, self.draft_at = [], False, None, None
+        text, taken_back_message, at = self.so_far(), self.taken_back_message, self.draft_at
+        self.draft, self.taken_back_message, self.speaker, self.draft_at = [], '', None, None
         if self.opening and not self.opening['said']:  # (the other side's first words: the opening answers them)
             return self.open(text, at)
         if self.first is not None:  # (a care call's words before its notice was heard: kept until it has been)
             self.turn = asyncio.create_task(self.care_first(text, self.turn))
             return
-        self.turn = asyncio.create_task(self.answer(text, self.turn, again, at))
+        self.turn = asyncio.create_task(self.answer(text, self.turn, taken_back_message, at))
 
     def pinged(self, sent):
         """HQ's ping, sent at `sent` (its performance.now(), ms) after the frames before it: how late they reached the
@@ -2137,7 +2137,7 @@ class Call:
                 # (named by voice already, it keeps its names: labelled)
                 self.draft.insert(0, ('\n' if self.voices and self.voices.many else '') + last['text'])
                 self.draft_at = last.get('at') or self.draft_at  # (said when they were first said)
-            self.again = True
+            self.taken_back_message = unhesitating(last['text'], self.lang)
             # (shown without its "um"s; back: HQ's transcript writes it over the turn's line, which the reply had closed.
             await self.send_event({'type': 'heard', 'text': unhesitating(self.so_far(), self.lang) + ' …', 'back': True})
 
@@ -2150,7 +2150,7 @@ class Call:
         await self.clear()
         await self.send_event({'type': 'state', 'state': 'listening'})
 
-    async def answer(self, text, before, again=False, at=None):
+    async def answer(self, text, before, taken_back_message='', at=None):
         if before and not before.done():
             if self.last is not None:  # (a care call's opening counts as heard up to here)
                 self.last.setdefault('cut', self.wiring.monotonic())
@@ -2187,8 +2187,12 @@ class Call:
         # a tool step is running, or the reply's first words haven't come (wait), and no words since
         step = {'on': True, 'wait': True}
         hum = asyncio.create_task(self.hum(stop, step, turn))
-        ask = text if not again else ("(I wasn't finished, and I didn't hear your reply to the first part: "
-                                      f"answer my whole message instead.) {text}")
+        ask = text
+        # (the session still has the replies to earlier messages, which the board heard: the note names the one taken
+        # back.)
+        if taken_back_message:
+            ask = (f'(I wasn\'t finished: I carried on before your reply to "{taken_back_message}" reached me. Answer my '
+                   f'whole message instead.) {text}')
         if shared and not ask:
             ask = f"(I've shared {'a picture' if len(shared) == 1 else f'{len(shared)} pictures'} on screen.)"
         # (the board's answers to the agent's asks first, then the screen's words, then the notes' before the words)

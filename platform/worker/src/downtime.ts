@@ -1,7 +1,7 @@
 // Downtime jobs, the worker's side (the coordinator's rule is in its jobs.ts): reading a Codex seat's windows, when a
 // seat drains, and which downtime jobs stop when their heartbeats say yield.
 import { spawn } from 'node:child_process';
-import { compareStopRoom, full, hasConfiguredStop, reserveElsewhere, type Windows } from './pace.ts';
+import { compareSeatPace, full, hasConfiguredStop, keepsToPlan, pausesAtStop, stopWindows, type Windows } from './pace.ts';
 import { cliOf, type SeatProvider } from './providers.ts';
 import { spendCredits } from './seatlist.ts';
 
@@ -147,23 +147,16 @@ export const DRAIN_RECHECK = 60 * 60_000;
 export function drainUntil(s: Windows, now = Date.now()) {
   if (s.credits) return 0;
   const over = full(s, now);
-  return over.length ? Math.max(...over.map(([, reset]) => reset || now + DRAIN_RECHECK)) : 0;
+  return holdUntil(over, now);
 }
 
-// An account with credits the board hasn't let it spend (seatlist.ts spendCredits): its provider bills them for use past
-// its plan's limits, so no run may take it there. It keeps its own reserve (reserveFor), its running jobs stop when it
-// drains (drainPauses), and its hold lets no job through to check it (checkDue): the worker reads its account itself
-// instead (readDue), and once that read holds it, the hold lasts till its window's reset, at most the window's length.
-export const keepsToPlan = (s: { hasCredits?: boolean; credits?: boolean }) => !!s.hasCredits && !s.credits;
-// Whether a seat runs on past its drain level, to its limit, while another of its engine keeps the reserve (pace.ts
-// reserveElsewhere): never one that keepsToPlan. seats: those it may leave the reserve to.
-export const reserveFor = <S extends Windows & { engine: string; state: string; hasCredits?: boolean }>(seat: S, seats: S[], now = Date.now()) =>
-  !keepsToPlan(seat) && reserveElsewhere(seat, seats, now);
+const holdUntil = (over: ReturnType<typeof full>, now: number) =>
+  over.length ? Math.max(...over.map(([, reset]) => reset || now + DRAIN_RECHECK)) : 0;
 // How a seat drains now (the worker's drain): until when it takes no new jobs (0: it doesn't), and the jobs running on it
 // that stop at their next step. Every reading asks again so runs admitted before a hold arrived also stop.
 type Draining = Windows & { id: string; engine: string; state: string; hasCredits?: boolean };
 export function drainOf<S extends Draining>(seat: S, seats: S[], running: Iterable<[string, { seat: string; job: number }]>, keep: string, now = Date.now()) {
-  const until = reserveFor(seat, seats, now) ? 0 : drainUntil(seat, now);
+  const until = holdUntil(stopWindows(seat, seats, now), now);
   return { until, pause: until ? drainPauses(seat, running, keep) : [] };
 }
 
@@ -204,13 +197,13 @@ export const retryAt = (s: Held, free: boolean, now = Date.now()) => free ? 0 : 
 export const firstToWake = <S extends { state: string; until: number }>(seats: S[]) =>
   seats.filter(s => s.state === 'sleeping').sort((a, b) => a.until - b.until)[0];
 
-// The healthiest seat of an engine (the worker's pickSeat, once it has woken the seats whose sleep or drain is over): ready,
-// most room below its own stop across both windows (none measured comes last). board: the board's own work (the intercom, the
-// voice line) may take a draining seat too, the reserve kept for it.
 type Pickable = Windows & { engine: string; state: string };
+// The healthiest seat of an engine, in compareSeatPace's order (pace.ts). The worker's pickSeat first wakes seats
+// whose sleep or drain is over. Ready seats only, except that the board's own work (the intercom and voice line)
+// may take a draining seat too, using its reserve.
 export const healthiest = <S extends Pickable>(seats: S[], engine: string, board = false, not?: S, now = Date.now()) =>
   seats.filter(s => s.engine === engine && (s.state === 'ready' || board && s.state === 'draining') && s !== not)
-    .sort((a, b) => compareStopRoom(a, b, now))[0];
+    .sort((a, b) => compareSeatPace(a, b, now))[0];
 
 // The seat a slot claiming for Codex takes: each ready Codex seat in turn (the one whose last claim is the oldest), not the least used. Every
 // Codex job is for one seat, which alone claims it (the coordinator's codexShare: the seats share the work evenly, and an
@@ -245,7 +238,7 @@ export const lineSeat = <S extends Pickable & { until: number }>(seats: S[], now
 // job an hour anyway (checkDue). But not on a seat that keepsToPlan, whose runs would go on into its credits (for a
 // reading a job planted, until the worker's read lifts its hold: readDue).
 export const drainPauses = (seat: { id: string; engine: string; hasCredits?: boolean; credits?: boolean; drainAt?: number }, running: Iterable<[string, { seat: string; job: number }]>, keep: string) =>
-  seat.engine === 'claude' || hasConfiguredStop(seat) || keepsToPlan(seat) ? [...running].filter(([slot, r]) => r.seat === seat.id && slot !== keep).map(([, r]) => r.job) : [];
+  pausesAtStop(seat) ? [...running].filter(([slot, r]) => r.seat === seat.id && slot !== keep).map(([, r]) => r.job) : [];
 
 // Until when a seat that hit its limit sleeps: the limit's own reset (limitReset: often only a backoff of 30 minutes
 // and up, when the CLI's message names no time), but never before a drain its windows already call for. A run that

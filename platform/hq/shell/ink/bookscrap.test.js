@@ -2,6 +2,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { TILT, placeScrap, scrapAt, tiltOf } from './bookscrap.js';
+import { drawnBox } from './bookscrapdraw.js';
+import { scrapBox } from './bookselectmath.js';
 
 const page = { w: 500, h: 900 },
   view = { x0: 0, y0: 100, x1: 500, y1: 700 };
@@ -54,4 +56,15 @@ test('a press finds the scrap on top, turned as it lies; a moved one keeps its m
   // (the turned one's corner: inside its box unturned, outside it turned 30 degrees)
   assert.equal(scrapAt([turned], [155, 125]), -1);
   assert.equal(scrapAt([turned], [250, 170]), 0);
+});
+
+test("what's drawn of a scrap reaches past its box: the tape up over its top edge, the shadow round it", () => {
+  for (const tilt of [-3, 0, 3]) {
+    const s = { x: 100, y: 200, w: 240, h: 160, tilt },
+      card = scrapBox(s),
+      drawn = drawnBox(s);
+    // (the tape is 14.4 tall, centred on the top edge, so half of it stands above the card)
+    assert.ok(drawn.y0 <= card.y0 - 7.2, `${tilt}: ${drawn.y0} vs ${card.y0}`);
+    assert.ok(drawn.x0 < card.x0 && drawn.x1 > card.x1 && drawn.y1 > card.y1, `${tilt}`);
+  }
 });

@@ -25,6 +25,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 os.environ.setdefault('HQ_URL', 'http://127.0.0.1:9')
 os.environ.setdefault('ORIGIN', 'https://hq.test')
 os.environ.setdefault('VOICE_TOKEN', 'load-check')
+os.environ.setdefault('HQ_TOOLS_REPO', str(Path(__file__).resolve().parents[2]))  # (hq_tools.py's company files)
 if os.environ.get('LOAD_CHECK_NO_POCKET_DUTCH'):  # (a machine short of memory: Poppy's voice speaks Dutch through Piper)
     import pocket_tts
     load, loaded = pocket_tts.TTSModel.load_model, {}

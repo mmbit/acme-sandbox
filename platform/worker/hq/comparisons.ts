@@ -1,5 +1,5 @@
 // Past jobs and timing exclusions shown before a queuer judges scope.
-import { costLines, type FeatureCost } from './costs.ts';
+import { costLines, taskCostLine, type FeatureCost } from './costs.ts';
 import type { TaskTime, TaskTimingFlag } from '../../coordinator/src/tasktime.ts';
 import { duration } from './waits.ts';
 import { minute, plural, print } from './output.ts';
@@ -65,14 +65,7 @@ function jobLines(j: Job) {
     `  ${j.rebuilt ? '≈' : ''}${workDuration(j.agent_minutes, j.origin)} of ${workUnit(j.origin)} in ${plural(j.runs, 'run')}${wall}; ${spent}${pr}`,
   ];
   lines.push(wholeLine(j.whole, j.origin));
-  if (j.whole.cost) {
-    const cost = j.whole.cost;
-    lines.push(
-      `  Whole-task tokens: ${Math.round(cost.total.tokens).toLocaleString('en-GB')} (${Object.entries(cost.split)
-        .map(([phase, spend]) => `${phase} ${Math.round(spend.tokens)}`)
-        .join(', ')}). Missing reports: ${cost.missing_usage}.`,
-    );
-  }
+  if (j.whole.cost) lines.push(taskCostLine('Whole-task tokens', j.whole.cost));
   lines.push(...costLines(j.feature_cost));
   if (j.tool_bound)
     lines.push('  Mostly waiting on tools that use no tokens (renders, test suites): its hours cost the seats little.');

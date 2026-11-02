@@ -3,6 +3,7 @@ import { db, redactedJson } from './db.ts';
 import { org, roles } from './company.ts';
 import * as capacity from './panelcapacity.ts';
 import { withPicks } from './models.ts';
+import * as engineOnly from './engineonly.ts';
 
 db.exec(`create table if not exists review_triage (job integer primary key, pr integer not null,
   round integer not null, sha text, base text, selection text not null);
@@ -74,6 +75,7 @@ function soonest(pr: number, candidates: string[], stage: string) {
 }
 
 // Each agent on the engine it runs on, from one read of the chart (a findAgent per agent read it and the picks again).
+// A pull request of work only one engine does (engineonly.ts) is ruled by an agent of that engine.
 export function consolidators(pr?: number): string[] {
   const excluded = pr === undefined ? new Set<string>() : excludedAuthors(pr);
   const agents: { id: string; engine: string }[] = withPicks(org()).departments.flatMap(
@@ -82,8 +84,14 @@ export function consolidators(pr?: number): string[] {
   const staff = agents.map(agent => agent.id);
   // (the first of an id, as findAgent finds it)
   const engines = new Map(agents.map(agent => [agent.id, agent.engine] as const).reverse());
+  const only = pr === undefined ? undefined : engineOnly.onWork(pr)?.engine;
   const eligible = new Set<string>(
-    staff.filter(agent => !excluded.has(agent) && ['claude', 'codex'].includes(engines.get(agent) ?? '')),
+    staff.filter(
+      agent =>
+        !excluded.has(agent) &&
+        ['claude', 'codex'].includes(engines.get(agent) ?? '') &&
+        (!only || engines.get(agent) === only),
+    ),
   );
   const configured = roles();
   for (const candidates of [configured.consolidators, configured.reviewers, staff]) {

@@ -118,7 +118,9 @@ try:
 except ImportError:
     stub('websockets'), stub('websockets.asyncio'), stub('websockets.asyncio.server', serve=None)
     stub('websockets.exceptions', ConnectionClosed=Exception)
-os.environ.update(HQ_URL='http://127.0.0.1:9', ORIGIN='https://hq.test', VOICE_TOKEN='test')
+# (HQ_TOOLS_REPO)
+os.environ.update(HQ_URL='http://127.0.0.1:9', ORIGIN='https://hq.test', VOICE_TOKEN='test',
+                  HQ_TOOLS_REPO=str(Path(__file__).resolve().parents[2]))  # (hq_tools.py's company files)
 import server  # noqa: E402
 from server import aloud, stray, unhesitating  # noqa: E402
 import limit_model  # noqa: E402
@@ -790,10 +792,7 @@ class Hold(Juno):
         self.brain.thinking = asyncio.Event()
         await self.talk('Can you check the orders?', 30)
         await self.quiet(20)
-        for _ in range(100):  # (until the agent is asked)
-            if self.brain.asked:
-                break
-            await asyncio.sleep(0.01)
+        await self.asked_times(1)
         await self.talk('', 20)
         await self.quiet(30)
         self.brain.thinking.set()
@@ -804,16 +803,31 @@ class Hold(Juno):
         self.brain.thinking.clear()
         await self.talk('Check the invoices.', 30)
         await self.quiet(20)
-        for _ in range(100):
-            if len(self.brain.asked) == 2:
-                break
-            await asyncio.sleep(0.01)
+        await self.asked_times(2)
         await self.talk('Um.', 12)  # (a hesitation is speech: the board isn't finished)
         await self.quiet(20)
         self.brain.thinking.set()
         await self.settle()
         # (taken back, and the "um" isn't written down: #6350.)
         self.assertTrue(self.brain.asked[2].startswith("(I wasn't finished") and self.brain.asked[2].endswith(') Check the invoices.'))
+
+    async def test_a_message_taken_back_after_a_reply_heard_whole_is_named(self):
+        """The board's "okay" after a reply it heard whole, then more while the agent thinks: the note in front of the
+        whole message quotes the "okay"."""
+        await self.first_reply()
+        await self.quiet(250)
+        self.brain.thinking = asyncio.Event()
+        await self.talk('Okay.', 12)
+        await self.quiet(20)
+        await self.asked_times(2)
+        await self.talk('The sent label gets cropped.', 30)
+        await self.quiet(20)
+        self.brain.thinking.set()
+        await self.settle()
+        self.assertEqual(self.brain.asked[1:], ['Okay.', "(I wasn't finished: I carried on before your reply to \"Okay.\" "
+                                                         'reached me. Answer my whole message instead.) Okay. The sent '
+                                                         'label gets cropped.'])
+        self.assertEqual(self.call.lines[:2], ['Board: Can you check the orders?', f'Juno: {REPLY}'])
 
     async def test_okay_lets_the_reply_play_on_and_starts_no_turn(self):
         await self.first_reply()
@@ -937,16 +951,13 @@ class Hold(Juno):
         self.brain.thinking = asyncio.Event()
         await self.talk('Can you check the orders?', 30)
         await self.quiet(20)
-        for _ in range(100):  # (until the agent is asked)
-            if self.brain.asked:
-                break
-            await asyncio.sleep(0.01)
+        await self.asked_times(1)
         await self.talk('tonight.', 15)
         await self.quiet(20)
         self.brain.thinking.set()
         await self.settle()
-        self.assertEqual(self.brain.asked[1], "(I wasn't finished, and I didn't hear your reply to the first part: answer my "
-                                              "whole message instead.) Can you check the orders? tonight.")
+        self.assertEqual(self.brain.asked[1], "(I wasn't finished: I carried on before your reply to \"Can you check the "
+                                              "orders?\" reached me. Answer my whole message instead.) Can you check the orders? tonight.")
         self.assertEqual(self.call.lines[0], 'Board: Can you check the orders? tonight.')
 
     async def test_carrying_on_over_the_reply_takes_it_back(self):
@@ -957,8 +968,8 @@ class Hold(Juno):
         self.assertFalse(self.playing())
         await self.quiet(30)
         await self.settle()
-        self.assertEqual(self.brain.asked[1], "(I wasn't finished, and I didn't hear your reply to the first part: answer my "
-                                              "whole message instead.) Can you check the orders? and the invoices from last week")
+        self.assertEqual(self.brain.asked[1], "(I wasn't finished: I carried on before your reply to \"Can you check the "
+                                              "orders?\" reached me. Answer my whole message instead.) Can you check the orders? and the invoices from last week")
         self.assertEqual(self.call.lines[:1], ['Board: Can you check the orders? and the invoices from last week'])
         self.assertEqual(len(self.call.lines), 2)  # (the reply taken back is gone; the one to the whole message is there)
 
@@ -1105,6 +1116,13 @@ class Hold(Juno):
             await asyncio.sleep(0.01)
         self.fail('the agent was never asked')
 
+    async def asked_times(self, count):
+        for _ in range(100):  # (until the agent has been asked count times)
+            if len(self.brain.asked) == count:
+                return
+            await asyncio.sleep(0.01)
+        self.fail(f'the agent was asked {len(self.brain.asked)} times, not {count}')
+
     def ticks(self):
         return self.audio.count(len(server.tick()))
 
@@ -1169,8 +1187,8 @@ class Hold(Juno):
         await self.quiet(20)
         self.brain.thinking.set()
         await self.settle()
-        self.assertEqual(self.brain.asked[1], "(I wasn't finished, and I didn't hear your reply to the first part: answer my "
-                                              "whole message instead.) Can you check the orders? tonight.")
+        self.assertEqual(self.brain.asked[1], "(I wasn't finished: I carried on before your reply to \"Can you check the "
+                                              "orders?\" reached me. Answer my whole message instead.) Can you check the orders? tonight.")
         self.assertEqual(self.call.lines, ['Board: Can you check the orders? tonight.', f'Juno: {REPLY}'])
 
     async def test_a_pause_mid_sentence_plays_no_sound_over_the_board(self):
@@ -1187,8 +1205,8 @@ class Hold(Juno):
         await self.quiet(20)
         self.brain.thinking.set()
         await self.settle()
-        self.assertEqual(self.brain.asked[1], "(I wasn't finished, and I didn't hear your reply to the first part: answer my "
-                                              "whole message instead.) Can you check the orders? And the invoices from "
+        self.assertEqual(self.brain.asked[1], "(I wasn't finished: I carried on before your reply to \"Can you check the "
+                                              "orders?\" reached me. Answer my whole message instead.) Can you check the orders? And the invoices from "
                                               "last week.")
         self.assertEqual(self.ticks() + self.thoughts(), 0)
 
@@ -3966,7 +3984,7 @@ class BoardDrawing(Juno):
         self.inks = []
         tile = {'x': 0.25, 'y': 0.5, 'width': 0.2, 'height': 0.125}
         self.assertEqual(await self.ink({'at': tile, 'words': ' this  one '}, {'drawn': True}),
-                         {'ok': "Drawn: a ring where you aimed on their screen, in your ink, with “this one” beside it. It "
+                         {'ok': "Drawn: a circle where you aimed on their screen, in your ink, with “this one” beside it. It "
                                 "follows what it's on as they scroll, and goes when that does or the call ends."})
         # (HQ's word on it goes with it)
         in_preview = await self.ink({'at': {'x': 0, 'y': 0, 'width': 1, 'height': 1}}, {'drawn': True, 'why': 'In the preview.'})
@@ -4063,8 +4081,8 @@ class BoardDrawing(Juno):
 # The call's notes page in the board's Notebook (callnotes.py)
 @unittest.skipIf(np is None, 'numpy is not installed (see the docstring)')
 class BoardCallNotes(Juno):
-    """On the board's own call (call 7) the agent puts one scrap per change on the call's notes page and titles it,
-    each straight to the coordinator's Ink store (its scrap and title routes), never through HQ's socket."""
+    """On the board's own call (call 7) the agent writes down one note per change in the call's notes and titles them,
+    each straight to the coordinator's Ink store (its write-down and title routes), never through HQ's socket."""
     told = BoardDrawing.told
 
     async def asyncSetUp(self):
@@ -4079,14 +4097,14 @@ class BoardCallNotes(Juno):
             self.asked.append((method, path, body))
             if body['id'] == 9:
                 raise HTTPError('http://hq/api/voice/try', 404, 'Not Found', {},
-                                io.BytesIO(b'{"error": "no #9 on the call\'s page (read it with page)"}'))
+                                io.BytesIO(b'{"error": "no #9 in the call\'s notes (read them with read_notes)"}'))
             return {'ok': 'Started: Wren makes a few versions of it.'}
-        if path in ('scrap', 'title'):
+        if path in ('write-down', 'title'):
             self.asked.append((method, path, body))
             if body.get('from') == 'note 9':
-                raise HTTPError('http://hq/api/voice/scrap', 404, 'Not Found', {},
+                raise HTTPError('http://hq/api/voice/write-down', 404, 'Not Found', {},
                                 io.BytesIO(b'{"error": "The board has no note 9 with a picture on this call."}'))
-            return {'ok': f"Scrap {len(self.asked)} is on the call's page"} if path == 'scrap' else {'ok': 'Titled.'}
+            return {'ok': f"Written down (#{len(self.asked)})"} if path == 'write-down' else {'ok': 'Titled.'}
         return super().coordinator(method, path, body)
 
     async def test_three_changes_go_as_three_scraps_each_with_its_own_crop(self):
@@ -4100,16 +4118,16 @@ class BoardCallNotes(Juno):
                    ({'x': 0.66, 'y': 0, 'width': 0.34, 'height': 1}, 'Drop the banner')]
         for region, words in changes:
             reader, writer = await asyncio.open_unix_connection(str(socket_path))
-            asked = {'scrap': {'from': 'note 2', 'region': region, 'words': words, 'goal': 'A calmer shop'},
+            asked = {'write_down': {'from': 'note 2', 'region': region, 'words': words, 'goal': 'A calmer shop'},
                      'key': self.call.screen_key}
             writer.write((json.dumps(asked) + '\n').encode())
-            self.assertIn('is on the call', json.loads(await reader.read())['ok'])
+            self.assertIn('Written down', json.loads(await reader.read())['ok'])
             writer.close()
-        self.assertEqual(self.asked, [('POST', 'scrap', {'call': 7, 'from': 'note 2', 'region': {k: float(v) for k, v in r.items()},
+        self.assertEqual(self.asked, [('POST', 'write-down', {'call': 7, 'from': 'note 2', 'region': {k: float(v) for k, v in r.items()},
                                                          'words': ' '.join(w.split()), 'goal': 'A calmer shop'})
                                       for r, w in changes])
         self.assertEqual(self.events, [], 'nothing of the page goes through HQ\'s socket: the store tells the screens')
-        title = await self.call.page.title_tool({'title_page': 'Shop page prices'})
+        title = await self.call.page.title_tool({'title_notes': 'Shop page prices'})
         self.assertEqual((title, self.asked[-1]), ({'ok': 'Titled.'}, ('POST', 'title', {'call': 7, 'title': 'Shop page prices'})))
 
     async def test_the_agent_is_reminded_every_third_turn_to_title_the_page_until_it_has(self):
@@ -4118,58 +4136,58 @@ class BoardCallNotes(Juno):
             await self.call.answer(words, None)
         self.assertEqual(self.brain.asked, ['Hello.', 'The shop page.', f'{callnotes.TITLE_REMINDER}\n\nThe prices on it.'])
         # (a topic too long for the Notebook's bar is refused, and the reminder goes on)
-        self.assertEqual(await self.call.page.title_tool({'title_page': 'Shop page: prices, basket'}),
+        self.assertEqual(await self.call.page.title_tool({'title_notes': 'Shop page: prices, basket'}),
                          {'error': server.TITLE_WORDS_SAID['shape']})
         self.assertEqual([self.call.page.told() for _ in range(3)], ['', '', callnotes.TITLE_REMINDER])
-        self.assertEqual(await self.call.page.title_tool({'title_page': 'Shop page prices'}), {'ok': 'Titled.'})
+        self.assertEqual(await self.call.page.title_tool({'title_notes': 'Shop page prices'}), {'ok': 'Titled.'})
         self.assertEqual([self.call.page.told() for _ in range(3)], ['', '', ''])
         # (none on a call with no notes page: a call out's)
         self.call.page.titled, self.call.callout = False, 12
         self.assertEqual([self.call.page.told() for _ in range(3)], ['', '', ''])
 
     async def test_what_the_page_cannot_take_is_refused_in_words(self):
-        tool = self.call.page.scrap_tool
+        tool = self.call.page.write_down_tool
         box = {'x': 0, 'y': 0, 'width': 0.5, 'height': 1}
         for wrong in ({'from': 'the pricing page', 'region': box, 'words': 'x'}, {'from': 'note 2', 'region': {**box, 'x': 0.8}, 'words': 'x'},
                       {'from': 'note 2', 'region': box, 'words': ''}, {'from': 'note 2', 'region': box, 'words': 'x', 'colour': 'red'},
                       {'from': 'note 2', 'region': box, 'words': 'x'}):
-            self.assertEqual(await tool({'scrap': wrong}), {'error': server.SCRAP_WORDS['shape']})
-        self.assertEqual(await tool({'scrap': {'from': 'note 9', 'region': box, 'words': 'x', 'goal': 'y'}}),
+            self.assertEqual(await tool({'scrap': wrong}), {'error': server.WRITE_DOWN_WORDS['shape']})
+        self.assertEqual(await tool({'write_down': {'from': 'note 9', 'region': box, 'words': 'x', 'goal': 'y'}}),
                          {'error': 'The board has no note 9 with a picture on this call.'})
-        self.assertEqual(await self.call.page.title_tool({'title_page': 'a title of far more than eight words for this one call'}),
+        self.assertEqual(await self.call.page.title_tool({'title_notes': 'a title of far more than eight words for this one call'}),
                          {'error': server.TITLE_WORDS_SAID['shape']})
         for callout, phone in ((12, False), (0, True)):
             self.call.callout, self.call.phone = callout, phone
-            self.assertEqual(await tool({'scrap': {'from': 'note 2', 'region': box, 'words': 'x'}}), {'error': server.SCRAP_WORDS['none']})
+            self.assertEqual(await tool({'write_down': {'from': 'note 2', 'region': box, 'words': 'x'}}), {'error': server.WRITE_DOWN_WORDS['none']})
         self.call.callout, self.call.phone, self.call.ended = 0, False, True
-        self.assertEqual(await tool({'scrap': {'from': '-20s', 'region': box, 'words': 'x'}}), {'error': server.SCRAP_WORDS['gone']})
+        self.assertEqual(await tool({'write_down': {'from': '-20s', 'region': box, 'words': 'x'}}), {'error': server.WRITE_DOWN_WORDS['gone']})
         self.assertEqual(len(self.asked), 1)
 
     async def test_a_plain_note_and_the_page_worked_as_the_board_does_go_straight_to_the_store(self):
         page = self.call.page
-        note = await page.scrap_tool({'scrap': {'words': 'Give the agent a plain note', 'goal': 'No nested pictures'}})
-        self.assertIn('is on the call', note['ok'])
-        self.assertEqual(self.asked[-1], ('POST', 'scrap', {'call': 7, 'words': 'Give the agent a plain note',
+        note = await page.write_down_tool({'write_down': {'words': 'Give the agent a plain note', 'goal': 'No nested pictures'}})
+        self.assertIn('Written down', note['ok'])
+        self.assertEqual(self.asked[-1], ('POST', 'write-down', {'call': 7, 'words': 'Give the agent a plain note',
                                                             'goal': 'No nested pictures'}))
         # (a crop is from and region both: one alone is refused)
-        self.assertEqual(await page.scrap_tool({'scrap': {'from': 'note 2', 'words': 'x', 'goal': 'y'}}),
-                         {'error': server.SCRAP_WORDS['shape']})
-        self.assertEqual(await page.page_tool({'read_page': {}}), {'ok': '#5 yours note: “Smaller price”\n#6 yours drawing'})
+        self.assertEqual(await page.write_down_tool({'write_down': {'from': 'note 2', 'words': 'x', 'goal': 'y'}}),
+                         {'error': server.WRITE_DOWN_WORDS['shape']})
+        self.assertEqual(await page.page_tool({'read_notes': {}}), {'ok': '#5 yours note: “Smaller price”\n#6 yours drawing'})
         self.assertEqual(self.asked[-1], ('POST', 'page', {'call': 7}))
         for mark in ({'mark': 'rect', 'around': 5}, {'mark': 'highlight', 'box': {'x': 10, 'y': 20, 'width': 300, 'height': 40}},
                      {'mark': 'arrow', 'points': [[0, 0], [120, 80]]}):
-            self.assertEqual(await page.mark_tool({'mark_page': mark}), {'ok': 'Done.'})
+            self.assertEqual(await page.mark_tool({'mark_notes': mark}), {'ok': 'Done.'})
             self.assertEqual(self.asked[-1], ('POST', 'mark', {'call': 7, **mark}))
         for change in ({'id': 5, 'words': 'Make the price  smaller'}, {'id': 5, 'after': 6}, {'id': 6, 'delete': True}):
-            self.assertEqual(await page.change_tool({'change_page': change}), {'ok': 'Done.'})
+            self.assertEqual(await page.change_tool({'change_note': change}), {'ok': 'Done.'})
         self.assertEqual(self.asked[-3][2], {'call': 7, 'id': 5, 'words': 'Make the price smaller'})
         asked = len(self.asked)
         for wrong in ({'mark': 'star'}, {'mark': 'rect', 'around': 'the price'}, {'mark': 'pen', 'points': [[1, 2, 3]]}):
-            self.assertEqual(await page.mark_tool({'mark_page': wrong}), {'error': server.MARK_WORDS['shape']})
+            self.assertEqual(await page.mark_tool({'mark_notes': wrong}), {'error': server.MARK_WORDS['shape']})
         for wrong in ({'id': 5}, {'id': 5, 'words': 'x', 'delete': True}, {'id': 5, 'delete': False}, {'id': 'five', 'delete': True}):
-            self.assertEqual(await page.change_tool({'change_page': wrong}), {'error': server.CHANGE_WORDS['shape']})
+            self.assertEqual(await page.change_tool({'change_note': wrong}), {'error': server.CHANGE_WORDS['shape']})
         self.call.ended = True
-        self.assertEqual(await page.page_tool({'read_page': {}}), {'error': server.PAGE_WORDS['gone']})
+        self.assertEqual(await page.page_tool({'read_notes': {}}), {'error': server.PAGE_WORDS['gone']})
         self.assertEqual(len(self.asked), asked)
 
     async def test_the_board_asks_for_versions_and_the_agent_starts_a_try_on_its_scrap(self):
@@ -4180,7 +4198,7 @@ class BoardCallNotes(Juno):
         self.assertEqual(got, {'ok': 'Started: Wren makes a few versions of it.'})
         self.assertEqual(self.asked[-1], ('POST', 'try', {'call': 7, 'id': 5, 'why': 'Show me a few versions of this'}))
         self.assertEqual(await page.try_tool({'try': {'id': 9, 'why': 'x'}}),
-                         {'error': "no #9 on the call's page (read it with page)"})
+                         {'error': "no #9 in the call's notes (read them with read_notes)"})
         asked = len(self.asked)
         for wrong in ({'id': 5}, {'id': 'five', 'why': 'x'}, {'id': 5, 'why': ' '}, {'id': 5, 'why': 'x', 'owner': 'wren'}):
             self.assertEqual(await page.try_tool({'try': wrong}), {'error': server.TRY_WORDS['shape']})
@@ -4232,7 +4250,7 @@ class BoardDriving(Juno):
         self.call.driving.opened({'type': 'opened', 'id': 1, 'answer': 'not now'})  # (answered already)
         await self.turn('Ah, there it is.')
         opened = ("(They tapped Open on the teacup page: it's on their screen now, and you see their screen with it. "
-                  'drive scrolls and points, draw rings.)')
+                  'drive scrolls and points, draw circles.)')
         self.assertEqual(self.brain.asked, [f'{opened}\n\nAh, there it is.'])
         for n, (answer, why) in enumerate((('not now', None), ('failed', "The  preview isn't\nrunning."), ('failed', None)), 2):
             self.assertIn('ok', await self.suggest('job 12', '/?open=jobs&job=12'))
@@ -4340,7 +4358,7 @@ class BoardDriving(Juno):
                       'the waiting suggestion, again on the resumed connection')
         self.assertEqual(await move, {'error': 'No “Price” on their screen.'})
         self.assertEqual(self.call.driving.answered, ["(They tapped Open on the teacup page: it's on their screen now, and their "
-                                                      "screen isn't shown to you. drive scrolls and points, draw rings.)"])
+                                                      "screen isn't shown to you. drive scrolls and points, draw circles.)"])
         self.assertIsNone(self.call.driving.waiting)
 
     async def test_no_suggestions_or_moves_on_a_call_out_or_the_phone_or_while_hq_is_away(self):

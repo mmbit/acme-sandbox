@@ -68,3 +68,62 @@ test('a kept plan still reads each claim whether a job it waits on has merged si
   assert.equal(next.timings, plan.timings, 'the same plan');
   assert.equal(next.eligible(waiter), true, 'merged since');
 });
+
+test("a claim's plan plays in turns of HQ's thread, and the claim's every read of it is that plan", async () => {
+  h.queue({ agent: 'bolt' });
+  let turns = 0;
+  const count = () => {
+    turns++;
+    if (turns < 1000) setImmediate(count);
+  };
+  setImmediate(count);
+  let turnsBefore = 0;
+  const [claim, other] = await Promise.all([
+    ordering.withPlan(() => ((turnsBefore = turns), [ordering.current().timings, ordering.current().timings])),
+    ordering.withPlan(() => ordering.current().timings),
+  ]);
+  turns = 1000;
+  assert.ok(turnsBefore > 1, 'HQ had turns while it played');
+  assert.equal(claim[0], claim[1], 'one plan for the whole claim');
+  assert.equal(other, claim[0], 'a claim asking meanwhile waits for the same play');
+  assert.equal(ordering.current().timings, claim[0], 'and the plan is kept');
+});
+
+test('a job queued or a change published while the plan plays in turns plays it again', async () => {
+  const { publish } = await import('./events.ts');
+  h.queue({ agent: 'bolt' });
+  let queued = 0;
+  setImmediate(() => (queued = h.queue({ agent: 'bolt' })));
+  const timings = await ordering.withPlan(() => ordering.current().timings);
+  assert.ok(queued > 0 && timings.has(queued), 'the job queued meanwhile is in the plan');
+  h.queue({ agent: 'bolt' });
+  let published = false;
+  setImmediate(() => {
+    publish({ type: 'log', agent: 'bolt', text: 'HQ change' });
+    published = true;
+  });
+  const played = await ordering.withPlan(() => {
+    assert.ok(published, 'published while it played');
+    return ordering.current().timings;
+  });
+  assert.equal(ordering.current().timings, played, 'played again after the change, and kept');
+});
+
+test("a wait added while the claim's plan plays in turns holds its job back in the claim's step", async () => {
+  const { publish } = await import('./events.ts');
+  const jobs = await import('./jobs.ts');
+  const [waiter, prior] = [h.queue({ agent: 'bolt' }), h.queue({ agent: 'bolt' })];
+  // (two turns of HQ's thread in: the play has placed its queue's waits by then)
+  setImmediate(() => setImmediate(() => jobs.holdForMerge(waiter, prior, 'bolt')));
+  assert.equal(await ordering.withPlan(() => ordering.current().eligible(waiter)), false, 'it waits for the merge');
+  // HQ changing something at every turn: the plays in turns are overtaken, and the step plays its own
+  const [other, next] = [h.queue({ agent: 'bolt' }), h.queue({ agent: 'bolt' })];
+  let changing = true;
+  const change = () => {
+    publish({ type: 'log', agent: 'bolt', text: 'HQ change' });
+    if (changing) setImmediate(change);
+  };
+  setImmediate(() => (jobs.holdForMerge(other, next, 'bolt'), change()));
+  const eligible = await ordering.withPlan(() => ((changing = false), ordering.current().eligible(other)));
+  assert.equal(eligible, false, 'it waits for the merge too');
+});

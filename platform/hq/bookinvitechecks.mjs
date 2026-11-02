@@ -1,6 +1,7 @@
 // Guest and Reviews invitations through their shared controls, on desktop and phone.
 import assert from 'node:assert/strict';
 import { until } from '../../shared/browser/browser.mjs';
+import { OVERVIEW } from './bookkit.mjs';
 // An invited notebook for one person, through the coordinator's route (guests are invited from the work: no form)
 export async function createNotebook(state, name, person) {
   const created = await state.h.board('/api/notebooks/guests', {
@@ -81,7 +82,7 @@ export async function createReviewRound(state, board) {
 
 // The board's Shelf, from the open book's overview
 export async function openShelf(board) {
-  await board.getByRole('button', { name: "The overview: the notebook's pages, and the Shelf", exact: true }).click();
+  await board.getByRole('button', { name: OVERVIEW, exact: true }).click();
   await settledTurn(board);
   await board.locator('[data-go=shelf]').click();
   await settledTurn(board);

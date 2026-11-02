@@ -2,7 +2,9 @@
 // support chat) and anyone can watch it back. README.md has the design.
 import { record } from './vendor/rrweb-record.js';
 import { hearInk } from './strokes.js';
+import { hearMedia } from './media.js';
 import { hearTopLayer } from './toplayer.js';
+import { frames, toFramer } from './frames.js';
 
 // A batch goes once a second, or sooner once this many events wait (a full snapshot is one big event)
 const FLUSH_MS = 1000,
@@ -56,15 +58,10 @@ export function watch({ url, typed = 'hidden', canvasFps = 0, onEnd = () => {}, 
     stopPage?.();
     stopPage = null;
     outbox.close();
-    document.removeEventListener('load', frameLoaded, true);
     onEnd(why);
   };
   const outbox = sender(url, finish, onSeen);
   const start = () => (stopPage = recordPage(typed, canvasFps, outbox.push));
-  // A page loaded in a frame records itself once asked (answerFrames), its first page and every one after
-  const frameLoaded = event =>
-    stopPage && event.target instanceof HTMLIFrameElement && ask(event.target, { watchalong: 'start', typed });
-  document.addEventListener('load', frameLoaded, true);
   start();
   return {
     // A moment of the page's own, kept with its events (the pen's strokes it hears by itself: inks)
@@ -96,26 +93,24 @@ export function watch({ url, typed = 'hidden', canvasFps = 0, onEnd = () => {}, 
 
 // This page's recording with its taps and pages, and its frames asked to record too: what stops it all
 function recordPage(typed, canvasFps, emit) {
+  const frameChannels = frames();
   const stopRecording = record({ ...settings(typed), emit });
   // canvases on HQ's own page only (its building): no frame or preview loads canvas.js
   let stopped = false,
     stopCanvases = null;
   if (canvasFps > 0)
     import('./canvas.js').then(({ sampleCanvases }) => !stopped && (stopCanvases = sampleCanvases(canvasFps, emit)));
-  const stopTaps = taps();
-  const stopPages = pages();
-  const stopInks = hearInk(record, named);
-  const stopTop = hearTopLayer(record); // (what's shown over everything: toplayer.js)
-  askFrames({ watchalong: 'start', typed });
+  const stopChanges = hearChanges();
+  frameChannels.startAll(typed);
+  const loaded = event => event.target instanceof HTMLIFrameElement && frameChannels.start(event.target, typed);
+  document.addEventListener('load', loaded, true);
   return () => {
+    document.removeEventListener('load', loaded, true);
     stopped = true;
     stopCanvases?.();
-    stopTop();
-    stopInks();
-    stopPages();
-    stopTaps();
+    stopChanges();
     stopRecording?.();
-    askFrames({ watchalong: 'stop' });
+    frameChannels.stopAll();
   };
 }
 
@@ -160,44 +155,51 @@ function sender(url, onEnd, onSeen) {
   };
 }
 
-// The frames on this page, asked to start or stop. Only a page of ours that answers (answerFrames) acts on it.
-const askFrames = message => document.querySelectorAll('iframe').forEach(frame => ask(frame, message));
-const ask = (frame, message) => frame.contentWindow?.postMessage(message, '*');
-
 // In a page that may be shown in a frame of `framer` (HQ's origin): record while that page asks, as it says. It asks
 // as it starts and as this page loads, which may be twice for one page: a second start goes on with the first.
 // Returns what it does with a message, for one heard before it ran (review.js loads this file on HQ's first ask).
 export function answerFrames(framer) {
   let stop = null,
     recording = '';
+  const toParent = toFramer();
+  const halt = () => {
+    stop?.();
+    stop = null;
+    recording = '';
+    toParent.connect(null);
+  };
   const hear = event => {
     if (event.source !== window.parent || event.origin !== framer) return;
     const { watchalong } = event.data ?? {};
     const typed = event.data?.typed === 'shown' ? 'shown' : 'hidden';
-    if ((watchalong !== 'start' && watchalong !== 'stop') || (watchalong === 'start' && recording === typed)) return;
+    if (watchalong !== 'start' && watchalong !== 'stop') return;
+    if (watchalong === 'stop') return halt();
+    toParent.connect(event.ports[0]);
+    if (recording === typed) return;
     stop?.();
-    stop = watchalong === 'start' ? watchFrame({ typed }) : null;
-    recording = watchalong === 'start' ? typed : '';
+    stop = watchFrame({ typed, emit: toParent.emit });
+    recording = typed;
   };
   addEventListener('message', hear);
+  addEventListener('pagehide', event => !event.persisted && halt());
   return hear;
 }
 
 // A page in a frame records itself: its events go up to the framing page's recorder, which keeps them as its own.
 // Returns what stops it.
-export function watchFrame({ typed = 'hidden' } = {}) {
-  const stopRecording = record(settings(typed));
-  const stopTaps = taps();
-  const stopPages = pages();
-  const stopInks = hearInk(record, named);
-  const stopTop = hearTopLayer(record); // (its own top layer, a preview's popovers: toplayer.js)
+export function watchFrame({ typed = 'hidden', emit }) {
+  const stopRecording = record({ ...settings(typed), recordCrossOriginIframes: false, emit });
+  const stopChanges = hearChanges();
   return () => {
-    stopTop();
-    stopInks();
-    stopPages();
-    stopTaps();
+    stopChanges();
     stopRecording?.();
   };
+}
+
+// The main page and each framed page record the same visible changes.
+function hearChanges() {
+  const stops = [taps(), pages(), hearInk(record, named), hearTopLayer(record), hearMedia(record)];
+  return () => stops.forEach(stop => stop());
 }
 
 // Every kind of field's value goes through maskInputFn: rrweb masks a field only where its options say so, and its

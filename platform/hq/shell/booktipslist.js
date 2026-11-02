@@ -167,7 +167,7 @@ export const TIPS = [
   {
     part: 'The pen and the page',
     title: 'Press and slide along the rail to pick a tool',
-    words: `Tap a tool on the rail, or press and slide along it: the tool under your finger is picked as you let go. Tap the tool in use for its colours and width. On a keyboard: V Select, P the pen, E the eraser, T text.`,
+    words: `Tap a tool on the rail, or press and slide along it: the tool under your finger is picked as you let go. Tap the pen in use to swap it for the pencil, the brush or the marker, and for its colours and width. On a keyboard: V Select, P the pen, E the eraser, T text, 1 to 0 a colour.`,
     from: 'platform/hq/shell/ink/bookstrip.js, platform/hq/shell/ink/bookpalette.js',
     picture: 'rail',
     alt: 'The tool rail, the pen and the marker one tool, a finger sliding along it',

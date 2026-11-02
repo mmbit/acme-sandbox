@@ -6,7 +6,7 @@ import { ceo } from './company.ts';
 import { inProcess } from './jobs.ts';
 import { findThread, ownerOf } from './projects.ts';
 import { readBudget } from './tokenbudget.ts';
-import type { CostPhase } from './costspend.ts';
+import type { CostPhase } from './taskphases.ts';
 
 db.exec(`create table if not exists feature_rounds (
   thread text primary key, feature text not null, feedback integer not null, round text not null, by text not null, at text not null);
@@ -90,31 +90,26 @@ export function featurePlan() {
   return { membership, expected, milestones };
 }
 
-export function linkFeedback(thread: string, feature: string, by: string, round = '', feedback = true) {
-  if (feedback && !round.trim()) return 'a feedback round needs its board label';
+export function linkFeedback(thread: string, feature: string, by: string, round: unknown = '', feedback = true) {
+  const label = feedback && typeof round === 'string' ? round.trim() : '';
+  if (feedback && !label) return 'a feedback round needs its board label';
   const member = findThread(thread),
     root = findThread(feature);
   if (!member || !root) return 'both the feedback deliverable and its original feature must exist';
   const plan = featurePlan();
-  const rootId = plan.membership.get(root.id)?.feature ?? root.id;
+  const rootId = resolvedFeature(root.id, plan);
   const children = [...plan.membership].filter(([, child]) => child.feature === member.id);
-  const affected = [
-    member.id,
-    plan.membership.get(member.id)?.feature ?? member.id,
-    rootId,
-    ...children.map(([id]) => id),
-  ];
+  const affected = [member.id, resolvedFeature(member.id, plan), rootId, ...children.map(([id]) => id)];
   if (affected.some(id => !mayRecord(id, by)))
     return denied('only the owners, CEO or Process can link these deliverables');
   if (rootId === member.id) return 'a feature cannot be its own feedback round';
-  round = feedback ? round.trim() : '';
   const write = db.prepare(`insert into feature_rounds values (?, ?, ?, ?, ?, ?)
     on conflict(thread) do update set feature = excluded.feature, feedback = excluded.feedback, round = excluded.round, by = excluded.by, at = excluded.at`);
   const at = new Date().toISOString();
   inOneStep(() => {
     for (const [id, child] of children)
-      write.run(id, rootId, feedback || child.feedback ? 1 : 0, feedback ? round : child.round, by, at);
-    write.run(member.id, rootId, feedback ? 1 : 0, round, by, at);
+      write.run(id, rootId, feedback || child.feedback ? 1 : 0, feedback ? label : child.round, by, at);
+    write.run(member.id, rootId, feedback ? 1 : 0, label, by, at);
   });
   return { thread: member.id, feature: rootId };
 }
@@ -122,7 +117,7 @@ export function linkFeedback(thread: string, feature: string, by: string, round 
 export function saveFeatureEstimate(thread: string, ask: unknown, by: string) {
   const found = findThread(thread);
   if (!found) return 'the deliverable does not exist';
-  const root = featurePlan().membership.get(found.id)?.feature ?? found.id;
+  const root = resolvedFeature(found.id);
   if (!mayRecord(root, by)) return denied('only the owner, CEO or Process can record its expected cost');
   const estimate = readEstimate(ask);
   if (typeof estimate === 'string') return estimate;
@@ -173,7 +168,7 @@ const denied = (why: string): [number, string] => [403, why];
 export function recordMilestone(thread: string, milestone: string, at: unknown, evidence: unknown, by: string) {
   const found = findThread(thread);
   if (!found) return 'the feature does not exist';
-  const root = featurePlan().membership.get(found.id)?.feature ?? found.id;
+  const root = resolvedFeature(found.id);
   if (!mayRecord(root, by)) return denied('only the owner, CEO or Process can record a board milestone');
   if (!['delivered', 'approved'].includes(milestone)) return 'milestone must be delivered or approved';
   const instant = typeof at === 'string' ? Date.parse(at) : NaN;
@@ -200,20 +195,38 @@ export function moveFeature(from: string, to: string) {
 }
 
 type Membership = Map<string, { feature: string; feedback: boolean; round: string }>;
+type FollowupRows = { thread: string; original: string }[];
+// The join order and indexes are named so the planner reads no job's brief or report pages
 function includeFollowups(membership: Membership) {
   const rows = db
     .prepare(
       `select distinct j.thread, source.thread original from review_followup_jobs followup
-    join jobs j on j.id = followup.job join findings f on f.id = followup.finding join prs p on p.number = f.pr
-    join jobs source on coalesce(source.branch, 'job/' || source.id) = p.branch
-    where j.thread is not null and source.thread is not null and source.kind = 'work'`,
+    cross join findings f on f.id = followup.finding cross join prs p on p.number = f.pr
+    cross join jobs source indexed by jobs_work_branch on coalesce(source.branch, 'job/' || source.id) = +p.branch
+      and source.kind = 'work'
+    cross join jobs j not indexed on j.id = followup.job
+    where j.thread is not null and source.thread is not null order by j.thread, source.thread`,
     )
-    .all() as { thread: string; original: string }[];
-  for (const [thread, sources] of Map.groupBy(rows, row => row.thread)) {
-    if (membership.has(thread)) continue;
+    .all() as FollowupRows;
+  // A follow-up of a follow-up waits for its original to join a feature first, so it reaches the chain's root whatever
+  // order the rows come in; a cycle goes on from its first thread by name.
+  const pending = new Map([...Map.groupBy(rows, row => row.thread)].filter(([thread]) => !membership.has(thread)));
+  while (pending.size) {
+    const [thread, sources] = nextFollowup(pending);
+    pending.delete(thread);
     const roots = new Set(sources.map(source => membership.get(source.original)?.feature ?? source.original));
     if (roots.size !== 1) continue;
     const source = sources[0].original;
     membership.set(thread, membership.get(source) ?? { feature: source, feedback: false, round: '' });
   }
+}
+
+const resolvedFeature = (id: string, plan = featurePlan()) => plan.membership.get(id)?.feature ?? id;
+// The first follow-up that waits on no other pending one, else the first (pending is never empty here)
+function nextFollowup(pending: Map<string, FollowupRows>): [string, FollowupRows] {
+  const entries = [...pending];
+  const ready = entries.find(([thread, sources]) =>
+    sources.every(source => source.original === thread || !pending.has(source.original)),
+  );
+  return ready ?? entries[0];
 }

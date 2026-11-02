@@ -26,7 +26,9 @@ scoped pages. (HQ's Sketchbook app on the computer, `sketch*`, is gone: the book
 - `calldraw.js` is the Pencil on a call, with the call's agent on the same page, and the call's notes page opened as
   it's picked up.
 - `pair.js` shows a one-time sign-in code for another device. Notebook content syncs through its model.
-  App annotations stay on the device that draws them.
+  Marks on the viewed work travel live between the board’s devices through `viewmarks.js` and the board feed.
+  Review mode’s `sharing.js` places them on the same element at each screen size. They disappear with the open
+  note and are never kept in the feed’s history. A disconnected device’s marks expire after three missed refreshes.
 - `agentink.js` is an agent's own ink, and `pagemerge.js` merges two writers' saves of one page.
 - `bookarrive.js` sets down whatever arrives on a page (from the store, or pasted, dropped or heard here) with the
   paper's landing (`bookpaper.js` `land`): held off the page while a copy comes down onto its place. Checked by
@@ -46,13 +48,15 @@ carry it, each in one module that the store, its play and HQ's page share:
 - **A scrap unit** (`scrapunit.js`) is one scrap: its own small canvas, `UNIT_W` scrap px wide and `h` tall. Its
   picture, typed words and ink are in its own px from its top-left, so its ink moves with it wherever the page puts it.
   Below its body (`bodyOf`: what an agent put down) is its room to write, part of the same unit. What an agent puts on
-  a page comes with `ROOM` of it, and a drag resizes it (`resized`: never into what's drawn). Drawing past the
-  bottom makes the unit taller (`heightFor`). In the store a unit is a top-level `notebook_groups` row: `pos` is its
-  order on the page, `h` its height, `column` the column a drawing with no unit above it keeps. Its answers and replies slip under it.
+  a page comes with `ROOM` of it, and a drag resizes it (`heightFor`: never into what's drawn).
+  Drawing past the bottom makes the unit taller (`heightFor`): each reader floors `h` at what's drawn as it draws it, and nothing drawn
+  changes `h` in the store, which keeps it as made or dragged, without the post-it words HQ's page draws in a scrap's
+  body (its ink's px count them). In the store a unit is a top-level `notebook_groups` row: `pos` is its
+  order on the page, `h` its height as set, `column` the column a drawing below its column's last unit keeps (bookunits.js: ink by a scrap is the scrap's). Its answers and replies slip under it.
 - **The masonry** (`masonry.js`) places a page's units, in order, each under the shortest column. The page's width
-  decides the columns (`columnsOf`): one in a sliver and on an iPad mini, ten or more across a 4K screen.
-  Units keep their width and grow down, always `GAP` apart. A page narrower than one column draws it scaled
-  (`scale`). `layout` takes each unit's height as the page draws it (its `h` and whatever hangs under it) and gives
+  decides the columns (`columnsOf`): as many as fit at `LEAST` of their size, one beside HQ on an iPad, two on an iPad
+  upright, ten or more across a 4K screen. The columns are drawn scaled (`scale`) to span the page, so a page never
+  leaves a slim column in its middle. Units keep their own width and grow down, always `GAP` apart. `layout` takes each unit's height as the page draws it (its `h` and whatever hangs under it) and gives
   every place. A new day on the page starts under a date across every column (`headers`). `placeAt` finds the unit under a pen, and `pointIn` turns the pen's point into that unit's px.
 - **The page** is HQ's (`bookunits.js`): it measures its width, calls `layout` again whenever the width or a unit's
   height changes, and draws each unit at its place as a sticky note, the page's title on top and a date where a day
@@ -60,15 +64,16 @@ carry it, each in one module that the store, its play and HQ's page share:
   starts on, else to the board's own drawing it comes near, else it's a new unit of its own, the page's last, kept in
   the column it was drawn in (masonry's and the store's `column`), its ink where it was drawn; a unit's canvas reaches all its ink. The
   board's own drawings have no paper card. A scrap's words are part of its body; under an agent's body its
-  room shows, with a handle at its foot (`resized`, saved with `/api/notebooks/groups/resize`). The page's lists hold
+  room shows, with a handle at its foot (`heightFor`, saved with `/api/notebooks/groups/resize`). The page's lists hold
   each element at its unit's place on the page; `booksave.js` saves it in the unit's own px.
 
 ## Bookmarks
 
 Every book of the board's has its chapters as bookmarks (`bookmarks.js`, `notebookchapters.js` shared with the store):
 Sketch, Asks and Calls, a round's Guests, Asks and Advice. A page's chapter comes from its kind, and the store lists a
-book's pages chapter by chapter, so the rail counts within one ("1/4" between the page's arrows). Upright the tabs stand
-along the book's top; sideways they peek out of a thick white stack of page edges at its left. A call's notes page is
+book's pages chapter by chapter, so the rail counts within one ("1/4" between the page's arrows). The tabs stand along the
+book's top, tucked behind its page, wherever the screen is tall enough; sideways on a phone they peek out of a thick
+white stack of page edges at its left. A call's notes page is
 under Calls, shut at hang-up and stamped Sent once the call's follow-up has handed out what's on it.
 
 ## Guest notebooks
@@ -118,3 +123,13 @@ notebook.on('letgo', ({ open }) => (frozen = open));
 ```
 
 A run from the repo serves it from the app's own server, as the other browser kits (`infra/products.md`).
+
+## Live messages from work
+
+`shared/notebook/notebook.js` lets framed work send `notebook.send('debug', 'Frame 42: paused')` or a structured
+context. `notebooklink.js` accepts messages only from the current staging frame at a trusted preview origin.
+`bookmessages.js` shows the kind and detail as plain text on the notebook page open when each message arrives.
+These lines belong to this visit, stay on their page when it turns and are not sent as board notes or saved.
+HQ can use the same display through `notebooklink.send`.
+
+Check both routes with `node platform/hq/book-check.mjs --stories 'live work'`, plus `--webkit`.

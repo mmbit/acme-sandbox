@@ -1,23 +1,24 @@
 // A call's notes page: an ordinary page of the board's My journal, made for the call as it's picked up and titled for
 // it ("28 Oct, 15:34, Call with Juno"), open while the call is live. The board writes on it as on any page; the call's agent
 // adds to it, through the notebook's own scraps (notebookscraps.ts).
-//   - The agent's scraps: on its turn the agent turns what the board said and drew into one scrap per change, each its
-//     own focused crop (the voice line's scrap tool, POST /api/voice/scrap): a part of one of the board's notes on this
-//     call (bookcalls.ts), or of the board's screen at a moment of the watch-along. Each lands as it's made, a 'book'
-//     event for its page, so the Notebook shows them one by one.
-//   - The agent's promises: what it promises on the call (ledger.ts add) is on the page too, typed on a post-it.
-//   - Its scraps and promises go on the page as its last units, each with room to write under it (notebookscraps.ts).
+//   - The agent's notes: on its turn the agent writes down what the board said and drew, one note per change, each with
+//     its own focused crop (the voice line's write_down tool, POST /api/voice/write-down): a part of one of the board's
+//     notes on this call (bookcalls.ts), or of the board's screen at a moment of the watch-along. Each lands as it's
+//     made, a 'book' event for its page, so the Notebook shows them one by one.
+//   - What else the call records (ledger.ts add: a job it queues there) is on the page too, typed on a post-it: one kind
+//     of note, its words alone, whoever does it.
+//   - Its notes go on the page as its last units, each with room to write under it (notebookscraps.ts).
 //   - Its title: the call's date and time, then a short topic the agent gives once the call's subject is clear (POST
-//     /api/voice/title; who the call is with until then), whole in the Notebook's bar (the board, call 161.).
+//     /api/voice/title; who the call is with until then), whole in the Notebook's bar.
 //   - A page brought to the call by its folded corner (bookshare.js) is its first scrap, in front of both.
-//   - The board's notes on the call (its scribbles on HQ, bookcalls.ts) are for the agent: none becomes a scrap by
-//     itself, the agent makes one of what it judges worth keeping (the board, call 161.).
+//   - The board's notes on the call (its scribbles on HQ, bookcalls.ts) are for the agent: none becomes a note by
+//     itself, the agent writes down what it judges worth keeping.
 //   - The call ended: what the board wrote the old book's way on the page (a mark before the page was the notes page)
 //     becomes groups (notebookcarry.ts), and the page is with the call's follow-up: read-only, unstamped, under My
 //     journal's Calls (notebookchapters.js). A page with nothing on it goes.
 //   - The follow-up has handed out what's on it (the call followed up, ledger.ts finished): the page is sent, its Sent
 //     stamp at that time.
-// Each scrap and promise on the page is an item on the call's list. Nothing on the page goes to anyone by itself: the
+// Each note of the agent's on the page is an item on the call's list. Nothing on the page goes to anyone by itself: the
 // call's follow-up, with the whole transcript, reads the page and hands each ask out in its brief, with the board's
 // context, so nothing is misread or queued twice. Its asks: callasks.ts.
 // The call engine (the watch-along, the line's driving and drawing) knows nothing of this page: Ink reads the engine
@@ -25,6 +26,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import sharp from 'sharp';
 import { db, inOneStep } from '../db.ts';
+import { onCall, toList } from '../callitems.ts';
 import { ceo, companyTime } from '../company.ts';
 import { findAgent } from '../jobs.ts';
 import { keysAgent } from '../memory.ts';
@@ -34,14 +36,15 @@ import { regionOf } from '../region.ts';
 import type { Region } from '../../../../shared/watchalong/mirror.ts';
 import { BOARD, row, summary, type Page } from './book.ts';
 import { pictureOf } from './bookpicture.ts';
-import { byHand, changed, endOf, newPage, ownNotebook, pageOf, pageRow, shut, type NotebookPage } from '../notebook.ts';
+import { changed, endOf, newPage, ownNotebook, pageOf, pageRow, shut, type NotebookPage } from '../notebook.ts';
 import { addPicture, addWords } from '../notebookscraps.ts';
-import { partsOf } from '../notebookgroups.ts';
+import { partsOf, type Group } from '../notebookgroups.ts';
 import { boxOf } from '../../../hq/shell/ink/notebookstack.js';
 import { carryParts } from '../notebookcarry.ts';
 import { throwAway } from './bookcalls.ts';
-import { GOAL, WHAT, add, onCallPage, oneLine } from '../ledger.ts';
-import { asked, marked, saidAtEnd, takenOff } from './callasks.ts';
+import { GOAL, WHAT, onCallPage, oneLine } from '../ledger.ts';
+import { asked, saidAtEnd, takenOff } from './callasks.ts';
+import { replaced } from './callpage.ts';
 import { isRefused, labelOf, type Anchor, type Refused } from '../pagechecks.ts';
 import { pictureSize } from '../../../../shared/pictures/size.ts';
 
@@ -120,18 +123,52 @@ async function bring(p: NotebookPage, brought: NotebookPage) {
   place(p, BOARD, picture, { words: brought.label, anchor: pageAnchor(brought.id), owner: null });
 }
 
-// POST /api/voice/scrap { call, from?, region?, words, goal, owner? }: one change the board asked for on the call, on its
-// notes page: a scrap, the part of what the board drew or showed that the change is about (region, fractions of the
-// picture from its top left) with the agent's words for the change, or with neither from nor region a plain note, the
-// words alone on a post-it. from: 'note 3' (the board's note 3 on this call), or
-// a moment of the shown screen ('now', '-20s', '17:03:12', '#12'). owner: the agent whose work it is, for the call's
+// POST /api/voice/write-down { call, from?, region?, words, goal, owner?, deadline?, board_set?, job?, deliverable? }:
+// one thing to be done, written down in the call's notes: a scrap, the part of what the board drew or showed that it's
+// about (region, fractions of the picture from its top left) with the agent's words for it, or with neither from nor
+// region a plain note, the words alone on a post-it. from: 'note 3' (the board's note 3 on this call), or
+// a moment of the shown screen ('now', '-20s', '17:03:12', '#12'). owner: the agent who sees it through, for the call's
 // follow-up to hand it to (none: the follow-up decides; on a call about a card for keys only the call's agent, its
 // owner left out too). It's an item on the call's list too, a task (the CEO's to see through without an owner) with
-// goal, the board's why. Made by the agent's hand: the board's Undo takes it off.
-export async function scrap(b: any) {
+// goal, the board's why, and its time and the work under way it's about, as callitems.ts checks them before anything is
+// written in. The agent's: the board's Undo never takes it off (the board deletes it by hand).
+export async function writeDown(b: any) {
   const call = Number(b?.call);
   const c = Number.isInteger(call) && call > 0 ? liveCall(call) : undefined;
-  if (!c) return [404, 'This call has ended: its page has gone in.'] as Refused;
+  if (!c) return [404, 'This call has ended: its notes have gone in.'] as Refused;
+  const note = noteOf(b, call);
+  if (isRefused(note)) return note;
+  const { words, goal, owner } = note;
+  const plain = b.from == null && b.region == null;
+  const cut = plain ? null : await cutFrom(call, b);
+  if (isRefused(cut)) return cut;
+  // (the call ended while its picture was cut: its page has started to send)
+  if (!liveCall(call)) return [404, 'This call has ended: its notes have gone in.'] as Refused;
+  const p = pageFor(call)!;
+  if (shut(p)) return [409, 'This call’s notes have gone in.'] as Refused;
+  const time = { deadline: b.deadline, board_set: b.board_set, job: b.job, thread: b.deliverable };
+  const item = { kind: 'task', owner: owner ?? ceo(), what: words, goal, quote: words, ...time };
+  const listed = toList(call, item, onCall(c), false);
+  if (isRefused(listed)) return listed;
+  // (its item first, so a refused one leaves nothing in the notes; a note that can't go in takes its item back with it)
+  try {
+    return inOneStep(() => {
+      const added = listed();
+      if (isRefused(added)) return added;
+      const g = cut
+        ? place(p, c.agent, cut.picture, { words, anchor: cut.anchor, owner })
+        : addWords(p, c.agent, words, { owner });
+      if (isRefused(g)) throw new UnwrittenError(g);
+      asked(g.id, { id: added.id, what: words });
+      return { ok: writtenDown(g, !!cut, added.id, words), id: g.id };
+    });
+  } catch (err) {
+    if (err instanceof UnwrittenError) return err.refused;
+    throw err;
+  }
+}
+// A note's words, goal and owner (none: the follow-up decides), or why not
+function noteOf(b: any, call: number) {
   const words = typeof b.words === 'string' ? b.words.replace(/\s+/g, ' ').trim() : '';
   // (a scrap's words, its post-it's, are its item's line)
   if (!words || [...words].length > WHAT)
@@ -148,35 +185,28 @@ export async function scrap(b: any) {
       400,
       `owner: this call is about a card for keys, so its work is ${keys}'s alone: name ${keys} or leave it out`,
     ] as Refused;
-  const plain = b.from == null && b.region == null;
-  const cut = plain ? null : await cutFrom(call, b);
-  if (isRefused(cut)) return cut;
-  // (the call ended while its picture was cut: its page has started to send)
-  if (!liveCall(call)) return [404, 'This call has ended: its page has gone in.'] as Refused;
-  const p = pageFor(call)!;
-  if (shut(p)) return [409, 'This call’s page has gone in.'] as Refused;
-  const owner = b.owner ?? keys;
-  const g = byHand(c.agent, () =>
-    cut ? place(p, c.agent, cut.picture, { words, anchor: cut.anchor, owner }) : addWords(p, c.agent, words, { owner }),
-  );
-  if (isRefused(g)) return g;
-  const item = add(call, { kind: 'task', owner: owner ?? ceo(), what: words, goal, quote: words }, null, false);
-  if (typeof item !== 'object') throw new Error(`Call #${call}'s scrap #${g.id} has no item on its list: ${item}`);
-  asked(g.id, { id: item.id, what: words });
-  const n = (
-    db
-      .prepare('select count(*) n from notebook_groups where page = ? and kind = ? and by = ? and deleted is null')
-      .get(p.id, g.kind, c.agent) as { n: number }
-  ).n;
-  // (a crop's box, for the agent to ring the spot on it with mark_page)
-  const box = cut ? boxOf(partsOf(g)) : null;
-  const what = box
-    ? `Scrap ${n} is on the call's page (#${g.id}) at ${boxWords(box)}`
-    : `Note ${n} is on the call's page (#${g.id}), its words alone with no picture`;
-  const ring = box ? ' Ring the spot on it with mark_page where that helps.' : '';
-  return { ok: `${what}, popping in as the board watches: “${words}”.${ring}`, id: g.id };
+  return { words, goal, owner: (b.owner ?? keys) as string | null };
 }
-// A group's box as the agent reads it, read_page and scrap alike: x, y, width and height in the page's px
+// write_down's answer: the note's id and its item's, and a picture's box
+function writtenDown(g: Group, pictured: boolean, item: number, words: string) {
+  // (a picture's box, for the agent to circle the spot on it with mark_notes.)
+  const box = pictured ? boxOf(partsOf(g)) : null;
+  const listedAs = `#${g.id}; item #${item} on the call's list`;
+  const what = box
+    ? `Written down (${listedAs}), its picture at ${boxWords(box)}`
+    : `Written down (${listedAs}), your words alone with no picture`;
+  const circle = box ? ' Circle the spot on it with mark_notes where that helps.' : '';
+  return `${what}, appearing as the board watches: “${words}”.${circle}`;
+}
+// A note that couldn't go in the call's notes, with why: its item goes with it
+class UnwrittenError extends Error {
+  refused: Refused;
+  constructor(refused: Refused) {
+    super(refused[1]);
+    this.refused = refused;
+  }
+}
+// A group's box as the agent reads it, read_notes and write_down alike: x, y, width and height in the page's px
 export const boxWords = (box: { x: number; y: number; w: number; h: number }) =>
   [box.x, box.y, box.w, box.h].map(Math.round).join(', ');
 // A scrap's cut: its region of what it's cut from
@@ -242,7 +272,7 @@ const place = (
 export function title(b: any) {
   const call = Number(b?.call);
   const c = Number.isInteger(call) && call > 0 ? liveCall(call) : undefined;
-  if (!c) return [404, 'This call has ended: its page has gone in.'] as Refused;
+  if (!c) return [404, 'This call has ended: its notes have gone in.'] as Refused;
   const t = labelOf(b.title);
   if (isRefused(t)) return t;
   if (!t || [...t].length > TOPIC_MOST)
@@ -251,28 +281,23 @@ export function title(b: any) {
       `title: what the call is about in at most ${TOPIC_MOST} characters ("Shop page prices"); the page keeps the call's date and time in front of it`,
     ] as Refused;
   const p = pageFor(call)!;
-  if (p.title_by === 'board') return { ok: "The board's title stays on the call's page." };
+  if (p.title_by === 'board') return { ok: "The board's own title for the call's notes stays." };
   const label = titleOf(c, t);
   db.prepare("update book_pages set label = ?, title_by = 'agent' where id = ?").run(label, p.id);
   changed(p.notebook, p.id);
-  return { ok: `The call's page is titled “${label}”.` };
+  return { ok: `The call's notes are titled “${label}”.` };
 }
 
-// What the agent promises on a live call (ledger.ts add), written on its page in type: an ask for its owner, which the
-// follow-up hands out (one for the board is a mark on it). Only on a page the call has: a call on the phone has none
+// What else a live call records (ledger.ts add: a job it queues), written on its page in type as any note of the agent's,
+// its words alone: an ask for its owner, which the follow-up hands out. Only on a page the call has: a call on the phone
+// has none
 export function noted(call: number, item: { id: number; kind: string; owner: string; what: string }) {
   const c = liveCall(call);
   const open = c && openPage(call);
   if (!c || !open) return;
   const p = pageRow(open, BOARD)!;
-  const agent = findAgent(item.owner);
-  const owner = agent?.name ?? (item.owner === 'board' ? 'you' : item.owner);
-  const text = `${item.kind[0].toUpperCase()}${item.kind.slice(1)} for ${owner}: ${item.what}`;
-  const g = byHand(c.agent, () => addWords(p, c.agent, text, { owner: agent ? item.owner : null }));
-  if (isRefused(g)) return;
-  // (one for the board stays on the page as written)
-  if (agent) asked(g.id, item);
-  else marked(g.id);
+  const g = addWords(p, c.agent, item.what, { owner: item.owner });
+  if (!isRefused(g)) asked(g.id, item);
 }
 // The call has ended (call.ts handOver, ledger.ts sweep): its page is shut as it is, staying where it is, with the
 // call's follow-up till it's handed out (followed), or is deleted if nothing is on it. Nothing on it goes to anyone: the call's follow-up reads it with the transcript and hands each ask
@@ -321,4 +346,11 @@ const pageAnchor = (id: number): Anchor => ({
 });
 
 // what's recorded on a call and its end reach the page through the ledger's hook (the ledger loads no Ink)
-onCallPage({ noted, ended, followed, page: pageOfCall, open: call => !!(liveCall(call) && openPage(call)) });
+onCallPage({
+  noted,
+  replaced,
+  ended,
+  followed,
+  page: pageOfCall,
+  open: call => !!(liveCall(call) && openPage(call)),
+});

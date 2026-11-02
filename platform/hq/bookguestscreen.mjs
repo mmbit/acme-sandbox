@@ -43,6 +43,17 @@ export const reopenPage = page => page.locator('[data-notebook-undo]').click();
 export const snapshot = async (state, name, page) =>
   state.shots && page.screenshot({ path: `${state.shots}/${name}.png` });
 
+// The page's arrows and where it is between them on the rail, where they show (the screen's px), and whether Send shows
+// (on the rail, a hidden one keeps its slot unseen.)
+export const arrowsOf = page =>
+  page.evaluate(() => ({
+    send: !!document.querySelector('#book .bk-send')?.checkVisibility({ visibilityProperty: true }),
+    arrows: [...document.querySelectorAll('#book .bk-column .bk-turns')].map(b => {
+      const r = b.getBoundingClientRect();
+      return [Math.round(r.x), Math.round(r.y), Math.round(r.width), Math.round(r.height)];
+    }),
+  }));
+
 export async function firstPage(page) {
   await page.locator('#book .bk-where').click();
   await page.locator('#book .bk-pages-menu [data-i="0"]').click();

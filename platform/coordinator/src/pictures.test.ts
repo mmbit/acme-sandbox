@@ -149,7 +149,7 @@ test('a card\'s answer takes pictures: they wait for that card apart from the in
 test('a card marked before as a customer\'s: its answer pictures only for whoever reads the card, refused with why to anyone else', async () => {
   const asker = await jobFor('kit');
   const card = (jobs.createRequest({ kind: 'decision', title: 'Refund the kea mug?', body: 'Their photo.', agent: 'kit', job: asker.id }) as { id: number }).id;
-  h.db.prepare('update requests set customers = 1 where id = ?').run(card);
+  h.markCustomer('requests', card);
   const id = (await upload(PNG, 'image/png', `?request=${card}`)).body.id;
   assert.equal((await h.answer(card, 'refund', { pictures: [id] })).status, 200);
   for (const job of [await jobFor('juno'), await jobFor('kit')]) {   // an unrelated job, and the same agent's other job
@@ -180,7 +180,7 @@ test('a call\'s pictures: the voice line gets them only for that live call; afte
   const kit = await jobFor('kit');
   assert.equal((await fetchAs(kit.token, id)).status, 200);
   // a call marked before as about a customer: a job not working on it is refused with why
-  h.db.prepare('update calls set customers = 1 where id = ?').run(ctx.call);
+  h.markCustomer('calls', ctx.call);
   for (const job of [await jobFor('juno'), await jobFor('wren')])
     assert.equal((await fetchAs(job.token, id)).status, 403);
   for (const job of [await jobFor('dex', { call: ctx.call }), await jobFor('vera')])   // a job handed out for the call, and org.yaml's roles.customerData
@@ -190,7 +190,7 @@ test('a call\'s pictures: the voice line gets them only for that live call; afte
 test('a call whose line dropped before the hand-over: its follow-up lists its pictures, and doesn\'t say which reached the call agent', async () => {
   const ctx = await startCall('wren');
   const id = (await upload(PNG, 'image/png', onCall(ctx))).body.id;
-  assert.equal((await agent('item', ctx.token, { kind: 'promise', owner: 'wren', goal: 'g', what: 'Look at the sketch', quote: 'I will look at it' })).status, 200);
+  assert.equal((await agent('item', ctx.token, { kind: 'task', owner: 'wren', goal: 'g', what: 'Look at the sketch', quote: 'I will look at it' })).status, 200);
   ledger.sweep(Date.now() + 3 * 3600_000 + 60_000);   // (three hours on, with no hand-over: no route moves the clock)
   const followUp = (await h.claim())!;
   assert.equal(followUp.call, ctx.call);

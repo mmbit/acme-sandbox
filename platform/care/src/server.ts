@@ -2,7 +2,8 @@
 // host), and a status page on care's own preview host. The company's plug-in (company.ts) is loaded first, and its
 // public files are served under /__care/company/. Every POST is JSON with an Origin equal to the host (CSRF); no
 // GET changes anything. Logs carry ids and statuses only, never what anyone wrote.
-import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { PORT, HOST, LOCAL, PROVIDER, UPLOAD_MS, appsOf } from './config.ts';
@@ -402,4 +403,8 @@ phoneanswer.start(); // the phone's answers by email, once a call is over
 settings.start(); // the company's own timers, from its plug-in
 server.listen(PORT, HOST, () => console.log(`care: listening on ${HOST ? `${HOST}:` : ''}${PORT} (model: ${PROVIDER})`));
 // the voice line's routes on their own port, only with its token (phone.ts)
-phone.listen();
+const phoneServer = phone.listen();
+
+// the ports care listens on, once it does: a port of 0 (the tests') is one the system picks
+const portOf = (s: Server) => new Promise<number>(r => s.on('listening', () => r((s.address() as AddressInfo).port)));
+export const bound = Promise.all([portOf(server), phoneServer && portOf(phoneServer)]).then(([port, phone]) => ({ port, phone }));

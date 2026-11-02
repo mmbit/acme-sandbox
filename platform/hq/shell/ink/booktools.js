@@ -1,21 +1,21 @@
 // The book's tools for a mouse and a pen: what a press on the paper does with the tool in use (bookpalette.js: the pen,
 // the marker, the eraser, shapes, Select and typed words). Only Select moves things (bookselect.js): with
-// any other tool a picture taped in is paper like the page, and the pen draws on it. (the sheets' post-its gone; the
-// pictures' own grab-to-move gone, one way to move things: job #13071) The eraser and shapes start anywhere on the page.
-// (eraser, shapes, Select: job #19243)
+// any other tool a picture taped in is paper like the page, and the pen draws on it. The eraser and shapes start
+// anywhere on the page.
 //
 // bookpages.js mounts them and asks, on a press on the paper: press(e) true: taken here; otherwise the pen draws with
 // ink().
 import { stylesheet } from '../../util.js';
 import { mountTexts } from './booktexts.js';
 import { begin } from './bookedit.js';
-import { mountPalette, inkOf, eraserRadius, setMode } from './bookpalette.js';
+import { mountPalette, inkOf, eraserRadius, setMode, gestures } from './bookpalette.js';
 import { mountStrip } from './bookstrip.js';
-import { mountAmend } from './bookamend.js';
 import { mountInput } from './bookinput.js';
 import { mountSelect } from './bookselect.js';
 import { mountShapes } from './bookshapes.js';
 import { mountEraser } from './bookerase.js';
+import { followPress } from './bookpress.js';
+import { wandered } from '/__review/tap.js';
 
 // a second press this soon and this near the first, on bare paper, is a double click: a box of typed words there
 const DOUBLE_MS = 450,
@@ -28,8 +28,6 @@ export function mountTools(book, paper, hooks) {
   stylesheet('shell/ink/booktools.css');
   const st = { book, paper, hooks, last: null }; // (last: the last press on bare paper, for a double click)
   st.texts = mountTexts(book, { changed: hooks.changed, color: () => st.pen });
-  // (a stroke over words strikes or slices them: bookamend.js.)
-  book.amend = mountAmend(book, st.texts);
   // (Select, shapes and the eraser: bookselect.js, bookshapes.js, bookerase.js; each change one step for Undo and Redo,
   // bookedit.js.)
   const edits = { ...hooks, begin: view => begin(book, view, hooks) };
@@ -55,6 +53,9 @@ function toolsOf(st) {
   return {
     mode: () => st.mode,
     ink: () => inkOf(st),
+    // Whether a line drawn now may be a gesture (a scratch-out, a circle carried out to assign): the pen's own nib's
+    // alone, never the pencil's or the brush's
+    gestures: () => gestures(st),
     press: e => press(st, e),
     // A Pencil's tap on a box of words its ink would draw over (the highlighter's): it's edited, the caret there.
     tapped: (box, at) => st.texts.edit(box, at),
@@ -81,8 +82,8 @@ function toolsOf(st) {
 }
 // ---- a press on the paper
 
-// True when the press is taken here: a field's or a control's (nothing draws), Select's, a box of typed words (edited),
-// or a new box of words (the text tool, or a double click on bare paper)
+// True when the press is taken here: a field's or a control's (nothing draws), Select's, a box of typed words (edited,
+// or moved by its grip), or a new box of words (the text tool, or a double click on bare paper)
 function press(st, e) {
   const { book } = st,
     mouse = e.pointerType === 'mouse' && e.button === 0,
@@ -90,9 +91,12 @@ function press(st, e) {
     finger = e.pointerType === 'touch' && !book.input?.fingerPans?.();
   if (!e.isPrimary || !(mouse || finger || e.pointerType === 'pen')) return false;
   const target = e.target instanceof Element ? e.target : null,
-    box = target?.closest('.bk-typed');
+    box = target?.closest('.bk-typed'),
+    grip = !!target?.closest('.bk-typed-grip');
   // (a press anywhere but in the words being typed keeps them: a press on the paper takes no focus by itself)
-  if (st.texts.editing() && !box?.matches('[data-editing]')) st.texts.done();
+  if (st.texts.editing() && (grip || !box?.matches('[data-editing]'))) st.texts.done();
+  // (a box's grip moves it straight away, with any tool: Select's move.)
+  if (grip) return st.select.grab(box, e, { keep: st.mode === 'select' });
   // (Ctrl or ⌘ held: Select for this press, the tool before it back once it's let go.)
   if (mouse && (e.ctrlKey || e.metaKey) && st.mode !== 'select' && !box?.matches('[data-editing]'))
     return selectFor(st, e);
@@ -107,7 +111,7 @@ function press(st, e) {
   // (a box of words is the highlighter's, the eraser's and a shape's to draw over)
   const over = ['highlighter', 'eraser', 'shapes'].includes(st.mode);
   if (box && (!over || box.matches('[data-editing]'))) return st.texts.press(box, e);
-  // (a scrap's words kept from Scribble for the pen take its strokes, with the tools that draw: bookamend.js.)
+  // (a scrap's words kept from Scribble for the pen take its strokes, with the tools that draw: ink over them.)
   const penned = !['select', 'text'].includes(st.mode) && target?.closest('textarea[data-pen]');
   if (!penned && target?.closest('input, textarea, select, [contenteditable], button, a, label')) return true;
   const at = book.at(e.clientX, e.clientY);
@@ -116,10 +120,22 @@ function press(st, e) {
   if (st.mode === 'shapes') return st.shaping.press(e, at);
   if (st.mode === 'text') {
     e.preventDefault();
-    st.texts.place(at, roomTo(st, e));
+    if (mouse) st.texts.place(at, roomTo(st, e));
+    // (a touch's box once it lifts as a tap: an iPad brings up its keyboard only for a caret placed at a lift, never at
+    // a press, and a Pencil that moves on writes nothing with the text tool. board, call 176)
+    else placeAtLift(st, e, at);
     return true;
   }
   return mouse && doubled(st, e, at);
+}
+
+// The text tool's press by touch: its box placed once it lifts, if it never went past a tap's reach
+function placeAtLift(st, down, at) {
+  let far = false;
+  followPress(down, {
+    move: m => (far ||= wandered(down, m)),
+    up: u => u.type !== 'pointercancel' && !far && st.texts.place(at, roomTo(st, down)),
+  });
 }
 
 // Ctrl or ⌘ held with the mouse: the press is Select's (a box drawn round things, or what's under it moved), and

@@ -76,12 +76,12 @@ export const untimedRefusal = (source: AskSource) =>
 // What the queuer hears when it isn't refused and the CEO isn't asked: on a live call, whose agent judges the time
 // itself or leaves it untimed, never asking the board by when, and on a
 // customer's call, whose details stay with its agent. A job in no thread goes on the one it serves first: a window is a
-// thread's (a live call's promise puts one it queued there: server.ts promisedWork).
+// thread's (what a live call writes down puts one it queued there: server.ts notedWork.).
 export const untimedLine = (job: number, onCall: boolean) =>
   "It has no window: it's in no deliverable. " +
   (onCall
     ? "Don't ask the board by when. If the board named a time or wants the work soon, or you judge a time sensible " +
-      `(the when tool's), note that time with promise, its deadline and this job (${job})` +
+      `(the when tool's), write that time down with write_down, its deadline and this job (${job})` +
       ', with the open deliverable it serves: its deliverable takes the time at once. ' +
       'Otherwise leave it untimed.'
     : `Give it its time: hq job move ${job} <project>/<slug> (the deliverable it serves), then ` +

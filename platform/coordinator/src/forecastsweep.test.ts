@@ -32,7 +32,7 @@ test("new work keeps the size the plays showed since it was queued, and the minu
   forecast.refresh(T0);
   const longer = past('Paint the harbour map for the harbourmaster at night', 400);
 
-  const played = forecast.sweep(T0 + MIN);
+  const played = await forecast.sweep(T0 + MIN);
   const row = h.db.prepare('select agent_ms, picks, start, done, eta from predictions where job = ?').get(id) as {
     agent_ms: number;
     picks: string;
@@ -45,4 +45,12 @@ test("new work keeps the size the plays showed since it was queued, and the minu
   const outlook = played.usual.get(id)!;
   assert.deepEqual([row.start, row.done, row.eta], [outlook.start, outlook.done, outlook.merged]);
   assert.equal(forecast.lastPlayed(), played, 'the sweep keeps its play as the latest');
+});
+
+test('a play in turns leaves the latest forecast to a play made whole while it ran (hq job)', async () => {
+  const inTurns = forecast.refreshInTurns(T0 + 2 * MIN);
+  await new Promise(setImmediate);
+  const whole = forecast.refresh(T0 + 2 * MIN);
+  assert.notEqual(await inTurns, whole);
+  assert.equal(forecast.lastPlayed(), whole);
 });

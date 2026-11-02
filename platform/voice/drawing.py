@@ -33,8 +33,8 @@ NOTE_WORDS = {
     'picture': ': the picture is the page around it, my ink on it.)',
     'bare': '.)',
     'full': ". Its picture didn't fit: the call has had all the pictures it can hold.)",
-    'lost': ("\n(You can't see the board's {notes} any more: they were in the stopped session. A scrap can still be "
-             "cut from them: ask the board what they showed if you need to.)"),
+    'lost': ("\n(You can't see the board's {notes} any more: they were in the stopped session. A note's picture can "
+             "still come from them: ask the board what they showed if you need to.)"),
 }
 # What the agent hears about its asks to see the board's screen: the tool's answer, its refusals, and the board's tap,
 # in front of the agent's next turn (or in a turn of its own once the line is quiet)
@@ -54,23 +54,23 @@ ASK_WORDS = {
     'gone': "This session can't ask any more: the call ended, or its session was restarted.",
     'failed': "The ask couldn't be sent just now",
 }
-# What the agent hears about its rings on the board's screen
+# What the agent hears about its circles on the board's screen
 INK_WORDS = {
-    'drawn': ("Drawn: a ring where you aimed on their screen, in your ink{beside}. It follows what it's on as they "
+    'drawn': ("Drawn: a circle where you aimed on their screen, in your ink{beside}. It follows what it's on as they "
               "scroll, and goes when that does or the call ends. {told}"),
     'beside': ', with “{words}” beside it',
-    'late': "HQ didn't answer: the ring may not be on their screen. Say what you meant in words.",
+    'late': "HQ didn't answer: the circle may not be on their screen. Say what you meant in words.",
     'ended': 'The call ended before HQ drew it.',
     'none': "You can draw only on the board's own calls in HQ.",
     'away': "HQ isn't connected just now (the board's connection dropped): say what you mean in words.",
-    'shape': (f'draw takes at (the box to ring on your latest picture of their whole screen: x, y, width and height, '
+    'shape': (f'draw takes at (the box to circle on your latest picture of their whole screen: x, y, width and height, '
               f'each a fraction of the picture from 0 to 1 from its top left) and words beside it (at most '
               f'{BESIDE_MOST} characters)'),
     # (scroll it into view, look again, aim from that picture.)
     'moved': ("You moved their screen since your last picture of it: look at it now (the screen tool) and aim from "
               'that picture.'),
     'gone': "This session can't draw any more: the call ended, or its session was restarted.",
-    'failed': "The ring couldn't be drawn just now",
+    'failed': "The circle couldn't be drawn just now",
 }
 # A spot on the picture of the board's whole screen, as fractions of its width and height from its top left (the
 # screen tool's region is in the same terms)

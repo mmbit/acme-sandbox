@@ -5,19 +5,15 @@ import { createRequire } from 'node:module';
 import { Mirrors } from '../../shared/watchalong/mirror.ts';
 import { playwright } from '../../shared/browser/browser.mjs';
 import { playLine } from './bookcall.mjs';
-import { inputs } from './bookbubbledrop.mjs';
-import { until, middleOf } from './bookkit.mjs';
+import { inputs } from './bookhands.mjs';
+import { minimiseCall } from './bookcallview.mjs';
+import { MINI, UPRIGHT, until, middleOf, bookOpen } from './bookkit.mjs';
 
 const COORDINATOR = new URL('../coordinator/', import.meta.url);
 const sharp = createRequire(COORDINATOR)('sharp');
-const SIZES = [
-  { width: 1133, height: 744 },
-  { width: 744, height: 1133 },
-];
-
 export function pictureStories(c) {
   return Object.fromEntries(
-    SIZES.flatMap(viewport => [
+    [MINI, UPRIGHT].flatMap(viewport => [
       [
         `the shared picture shows the call tile and only the remaining ink at ${viewport.width} × ${viewport.height}`,
         browser => callPicture(browser, c, viewport),
@@ -30,12 +26,11 @@ export function pictureStories(c) {
   );
 }
 
-export async function recording(browser, c, viewport) {
+export async function recording(browser, c, viewport, { hasTouch = true } = {}) {
   const context = await c.hqIn(browser, viewport, {
     notebooks: {},
-    hasTouch: true,
+    hasTouch,
     deviceScaleFactor: 1,
-    openReview: false,
   });
   const { events, notes } = await recordRoutes(context, c);
   const errors = [];
@@ -97,27 +92,19 @@ async function callPicture(browser, c, viewport) {
   try {
     await page.goto(`${c.base}/?intro=0&open=intercom&renderer=wire`);
     await page.waitForSelector('#loading.gone');
-    await fold(page);
+    await bookOpen(page, false);
     await page.locator('#call').tap();
     await page.waitForFunction(() => !document.querySelector('#call-screenshare')?.disabled);
     await page.locator('#call-screenshare').tap();
-    await page.locator('#call-min').tap();
-    await page.waitForSelector('.callbubble');
-    await page.waitForTimeout(800);
+    await minimiseCall(page);
     await tilesInPicture(s);
     await crossesInPicture(s, line);
-    await page.locator('#book .bk-lip').tap();
-    await page.waitForFunction(
-      () =>
-        !['folded', 'shut'].includes(document.documentElement.dataset.book) &&
-        !document.querySelector('#book.bk-swinging') &&
-        getComputedStyle(document.body).visibility !== 'hidden',
-    );
+    await bookOpen(page, true);
     await hand.pan([
       [viewport.width * 0.75, viewport.height * 0.65],
       [viewport.width * 0.8, viewport.height * 0.6],
     ]);
-    await fold(page);
+    await bookOpen(page, false);
     await hand.stroke('pen', [middleOf(await page.locator('.cb-face').boundingBox())]);
     await page.waitForSelector('#call-layer', { state: 'visible' });
     await page.locator('#call-end').tap();
@@ -166,18 +153,6 @@ async function crossesInPicture(s, line) {
   await page.waitForTimeout(200);
   const cleared = await screen(s, 'cleared');
   await sameInk(s, cleared.bytes, second, false);
-}
-
-export async function fold(page) {
-  if (await page.evaluate(() => !['folded', 'shut'].includes(document.documentElement.dataset.book)))
-    await page.locator('#book .bk-lip').tap();
-  await page.waitForFunction(
-    () =>
-      ['folded', 'shut'].includes(document.documentElement.dataset.book) &&
-      !document.querySelector('#book.bk-swinging') &&
-      getComputedStyle(document.body).visibility !== 'hidden',
-  );
-  await page.waitForTimeout(600);
 }
 
 export async function cross(hand, b) {

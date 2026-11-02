@@ -3,9 +3,6 @@
 .ng-book {
   --ng-paper: #fffaf0;
   --ng-ink: #292722;
-  /* the one to press and a pressed key: HQ's look's lit key for the board, the guest page's accent for a guest */
-  --ng-lit: var(--gold, var(--accent, #292722));
-  --ng-on-lit: var(--on-accent, var(--on, #fffaf0));
   color: var(--ng-ink);
   background: var(--ng-paper);
   font:
@@ -51,12 +48,12 @@
 .ng-book button {
   font: inherit;
   min-height: 44px;
-  border: var(--bw, 1px) solid var(--line, #bcb6a8);
-  border-radius: var(--btn-r, var(--r, 8px));
+  border: var(--bk-ui-border);
+  border-radius: var(--bk-ui-key-r);
   padding: 8px 14px;
-  background: var(--cream, var(--card, #fffaf0));
-  color: var(--ink, #292722);
-  box-shadow: var(--shadow-sm, none);
+  background: var(--bk-ui-bg);
+  color: var(--bk-ui-ink);
+  box-shadow: var(--bk-ui-shadow);
   cursor: pointer;
 }
 .ng-book button:hover {
@@ -84,8 +81,8 @@
   flex-basis: 100%;
 }
 .ng-book [aria-pressed='true'] {
-  background: var(--ng-lit);
-  color: var(--ng-on-lit);
+  background: var(--bk-ui-lit);
+  color: var(--bk-ui-on-lit);
 }
 .ng-state {
   font-size: 14px;
@@ -185,8 +182,8 @@
 }
 
 .ng-book [aria-pressed='true']:hover {
-  background: var(--ng-lit);
-  color: var(--ng-on-lit);
+  background: var(--bk-ui-lit);
+  color: var(--bk-ui-on-lit);
 }
 /* the guest's room: the guest page's own ground and words (guests.ts palette) */
 .notebook-guest-room {

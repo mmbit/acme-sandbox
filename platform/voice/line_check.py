@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 os.environ.setdefault('HQ_URL', 'http://127.0.0.1:9')
 os.environ.setdefault('ORIGIN', 'https://hq.test')
 os.environ.setdefault('VOICE_TOKEN', 'line-check')
+os.environ.setdefault('HQ_TOOLS_REPO', str(Path(__file__).resolve().parents[2]))  # (hq_tools.py's company files)
 # (the board's side isn't heard here: no recogniser, no VAD, no Dutch voice)
 sys.modules['sherpa_onnx'] = types.SimpleNamespace(OfflineRecognizer=NS(from_transducer=lambda **k: None),
                                                    VoiceActivityDetector=lambda *a, **k: None,
@@ -31,7 +32,7 @@ REPLIES = [  # (words as the model streams them, a tool step and how long it run
     ["Sorry about that, let me check what's actually live. ", ('Grep', 1.5), ('Read', 2.0),
      "I'm sorry, my note was wrong to say it was there for you. ", ('mcp__hq__job', 8.0),
      "I've queued it for Sam as job 12 to find the cause. Until then, could you copy the text and send it yourself?"],
-    [('mcp__hq__job', 7.0), "I've queued that for Sam as job 13. ", ('mcp__hq__promise', 3.0),
+    [('mcp__hq__job', 7.0), "I've queued that for Sam as job 13. ", ('mcp__hq__write_down', 3.0),
      "And I've noted it. Talk soon."],
 ]
 

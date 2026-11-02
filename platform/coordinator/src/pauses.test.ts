@@ -151,7 +151,7 @@ test("--until wakes the pause's owner once its jobs have all merged or ended, an
   );
   await merge(first, 71);
   await h.finish(second, { status: 'done', pr: 72, branch: `job/${second.id}` });
-  db.prepare('update jobs set customers = 1 where id = ?').run(second.id); // (marked before as holding a customer's details)
+  h.markCustomer('jobs', second.id); // (marked before as holding a customer's details)
   assert.equal(pauses.open()[0].until[1].state, 'in review (PR #72)');
   pausewake.sweep();
   assert.equal(pauses.open()[0].woken, null, 'one still in review: nothing wakes yet');
@@ -661,7 +661,7 @@ test("a pause keeps the item summaries and quotes of a call marked before as a c
   reset();
   thread('levels');
   const followup = await h.start({ agent: ceo() });
-  db.prepare('update jobs set customers = 1 where id = ?').run(followup.id);
+  h.markCustomer('jobs', followup.id);
   const { item } = agreed(
     { kind: 'task', status: 'handled', what: 'Private customer hold', quote: 'Private customer instruction' },
     Date.now(),

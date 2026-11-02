@@ -14,6 +14,7 @@ import { under } from './layer.js';
 import { paint as paintMarks } from './marks.js';
 import { ERASER_PATHS, segmentsApart } from './eraser.js';
 import { heldLines, settleCall } from './callframe.js';
+import { prefs } from './prefs.js';
 
 const UNDO =
   '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14L4 9l5-5" stroke="currentColor" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 9h10.5a5.5 5.5 0 010 11H11" stroke="currentColor" stroke-width="2.4" fill="none" stroke-linecap="round"/></svg>';
@@ -94,7 +95,6 @@ export function pick(r) {
   r.hl.hidden = true;
 }
 function stroked(r, stroke, e) {
-  if (e.pointerType === 'pen') r.penSeen = true;
   const area = boxOfLines([stroke]);
   r.penOn.clear();
   settleCall(r); // (on a call the mark goes to its agent once the pen rests: callframe.js.)
@@ -154,8 +154,6 @@ function touches(pass, line) {
 // tapping or drawing, the words kept
 export function undo(r) {
   if (r.mode !== 'note' || r.veil.hidden) return;
-  // (the post-it's words edited with the Pencil first: postitpen.js.)
-  if (r.wordSteps?.length) return r.wordSteps.pop()();
   if (r.inkSteps.length) {
     r.strokes = r.inkSteps.pop().was;
     if (r.strokes.length || r.mark.kind === 'pin') {
@@ -273,7 +271,8 @@ export function setupSurface(r) {
   const drawable = e =>
     (r.mode === 'pick' || (r.mode === 'note' && !r.veil.hidden)) &&
     !e.composedPath().includes(r.strip) &&
-    (e.pointerType === 'pen' || !r.penSeen) &&
+    // (a finger pans while "touch always scrolls" is on, as in the Notebook.)
+    !(e.pointerType === 'touch' && prefs().penPans) &&
     !(e.pointerType === 'mouse' && e.button !== 0);
   const shape = e => (e.shiftKey && e.pointerType === 'mouse' ? 'rect' : '');
   r.penOn = inkjs.pen(r.veil, r.wet, {

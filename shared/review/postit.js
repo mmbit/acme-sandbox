@@ -15,7 +15,6 @@ import { lift } from './lift.js';
 import { openLines, paint as paintInk } from './marks.js';
 import { PAPER } from './paper.js';
 import { ownerNamed } from './markpage.js';
-import { setupPostitPen } from './postitpen.js';
 import { showNotice } from './postitnotice.js';
 
 export const CSS = `
@@ -204,14 +203,6 @@ async function pinIt(r) {
     r.pinIt.disabled = false;
     if (r.mode !== 'note') return;
   }
-  // and words written with the Pencil still being read (postitpen.js): the press on Pin closed their gap.
-  if (r.wordGap) {
-    r.pinIt.disabled = true;
-    await r.wordGap.close();
-    if (!open()) return;
-    r.pinIt.disabled = false;
-    if (r.mode !== 'note') return;
-  }
   const note = r.text.value.trim();
   if (!note) {
     r.text.focus();
@@ -341,14 +332,23 @@ export const saveWord = r => (r.outside ? 'Pin it' : 'Save');
 export function setupPostit(r) {
   r.pinIt.textContent = saveWord(r);
   r.$('[data-cancel]').onclick = () => reset(r);
-  // (words typed after any were said: the Pencil keeps its own.)
-  if (!r.book) r.text.addEventListener('input', () => (r.typed = true));
+  // (words typed after any were said.)
+  r.text.addEventListener('input', () => (r.typed = true));
   r.pinIt.onclick = () => pinIt(r);
-  setupPostitPen(r); // (its words edited with the Pencil.)
+  penWithoutKeyboard(r.text);
   // With the on-screen keyboard up (Chrome on Android resizes only the visual viewport), lift the note above it.
   const vv = window.visualViewport;
   if (!vv) return;
   const fit = () => r.sheet.style.setProperty('--kb', `${Math.max(0, innerHeight - vv.height - vv.offsetTop)}px`);
   vv.addEventListener('resize', fit);
   vv.addEventListener('scroll', fit);
+}
+// On a touch screen the pen's handwriting in the field (Apple's Scribble) brings no keyboard: the field asks for none
+// until a finger's (or a mouse's) press on it, and again once it's left.
+function penWithoutKeyboard(field) {
+  if (!matchMedia('(any-pointer: coarse)').matches) return;
+  const none = () => (field.inputMode = 'none');
+  field.addEventListener('pointerdown', e => e.pointerType !== 'pen' && field.removeAttribute('inputmode'), true);
+  field.addEventListener('blur', none);
+  none();
 }

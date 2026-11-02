@@ -119,7 +119,7 @@ for (const kind of ['review', 'work'] as const) {
   test(`a done thread with an open PR takes a window by thread, job or PR and its ${kind === 'work' ? 'fix' : 'review'} crosses pacing`, async () => {
     h.cancelQueued();
     const { build, author, round } = await review(kind === 'review' ? 903 : 905, kind);
-    assert.deepEqual(plan.done(build, 'moss'), { ok: true });
+    h.closedThreads(build);
     const seat = await paced();
     assert.equal(await h.claim('codex', seat), null);
     const giver = await h.start({ agent: 'juno', kind: 'chat' });

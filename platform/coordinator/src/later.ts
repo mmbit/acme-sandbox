@@ -63,7 +63,7 @@ export function snoozeRequest(id: number, day: unknown) {
         'update requests set hidden_until = null, changed = ? where id = ? and hidden_until > ? returning kind, agent',
       )
       .get(now, id, now) as { kind: string; agent: string | null } | undefined;
-    if (back && !heldFor(id)) tips.cardShows(back);
+    if (back && !held(id)) tips.cardShows(back);
     return { ok: true, until: null };
   }
   const until = typeof day === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(day) ? hiddenUntil(day) : null;
@@ -120,12 +120,26 @@ export function heldFor(id: number) {
   const works = (
     db
       .prepare(
-        "select h.work from request_holds h join requests r on r.id = h.request where h.request = ? and r.status = 'open' order by h.rowid",
+        `select h.work from request_holds h join requests r on r.id = h.request where h.request = ? and r.status = 'open'
+        and h.work not like ? order by h.rowid`,
       )
-      .all(id) as { work: string }[]
+      .all(id, `${READ}%`) as { work: string }[]
   ).map(h => wakes.workOf(h.work));
   return works.length ? `the work of ${works.join(' and ')}` : null;
 }
+
+// The hold of a card waiting for the card reader before the board's desk phone (cardread.ts): 'read:<the reader's job>',
+// which only the reader's pass or answer lifts
+export const READ = 'read:';
+export const readHold = (id: number) =>
+  db
+    .prepare(
+      "select h.work from request_holds h join requests r on r.id = h.request where h.request = ? and h.work like ? and r.status = 'open'",
+    )
+    .get(id, `${READ}%`) as { work: string } | undefined;
+export const awaitsRead = (id: number) => !!readHold(id);
+// Whether an open card is off the desk phone for anything it waits for: work going live or the card reader
+export const held = (id: number) => !!db.prepare('select 1 from request_holds where request = ?').get(id);
 
 // Why the job that filed a held card can't wait for its answer in its session (hq wait), or null
 export function waitProblem(id: number) {
@@ -157,21 +171,29 @@ export function sweep() {
 function release(now: string) {
   const holds = db
     .prepare(
-      "select h.request, h.work from request_holds h join requests r on r.id = h.request where r.status = 'open'",
+      "select h.request, h.work from request_holds h join requests r on r.id = h.request where r.status = 'open' and h.work not like ?",
     )
-    .all() as { request: number; work: string }[];
+    .all(`${READ}%`) as { request: number; work: string }[];
   if (!holds.length) return [];
   wakes.readDeploys();
   const met = holds.filter(h => wakes.deployed(h.work) !== null);
-  for (const h of met) db.prepare('delete from request_holds where request = ? and work = ?').run(h.request, h.work);
-  const letGo = [...new Set(met.map(h => h.request))].filter(
-    id => !db.prepare('select 1 from request_holds where request = ?').get(id),
+  return [...new Set(met.map(h => h.request))].filter(id =>
+    unhold(
+      id,
+      met.filter(h => h.request === id).map(h => h.work),
+      now,
+    ),
   );
-  for (const id of letGo) {
-    const r = db.prepare(`update requests set changed = ? where id = ? returning ${RINGING}`).get(now, id) as Ringing;
-    if (!isHidden(r.hidden_until, now)) ring(r);
-  }
-  return letGo;
+}
+
+// The card lets go of those holds, and with none left it shows as a new card and rings as one would (unless it's also for
+// later: then it rings when its time comes). Whether it showed.
+export function unhold(id: number, works: string[], now = new Date().toISOString()) {
+  for (const work of works) db.prepare('delete from request_holds where request = ? and work = ?').run(id, work);
+  if (held(id)) return false;
+  const r = db.prepare(`update requests set changed = ? where id = ? returning ${RINGING}`).get(now, id) as Ringing;
+  if (!isHidden(r.hidden_until, now)) ring(r);
+  return true;
 }
 
 // A card ringing the board's devices as it shows (announceRequest), and bringing its tip (tips.ts), from its row

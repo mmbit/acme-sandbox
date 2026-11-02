@@ -9,6 +9,7 @@ import { recordedWorkEvidence, type WorkEvidence } from './pastjobs.fixture.ts';
 
 const h = await harness('sizes');
 const predictions = await import('./predictions.ts');
+const forecast = await import('./forecast.ts');
 const merged = await import('./merged.ts');
 const sizes = await import('./sizes.ts');
 const MIN = 60_000,
@@ -59,7 +60,7 @@ test('the queuer saves scope references once and every play keeps that estimate'
   assert.deepEqual((await estimate(job)).sizes[0].confidence, testConfidence);
   assert.deepEqual((await estimate(job)).sizes[0].token_budget, testBudget);
   assert.match((await h.hq(planner, 'estimate', `#${job}`)).out, /Token estimate: 1,300 tokens/);
-  predictions.sweep();
+  await forecast.sweep();
   const firstOutlook = h.db.prepare('select start, done, eta, outlook_saved from predictions where job = ?').get(job)!;
   assert.equal(firstOutlook.outlook_saved, 1);
   assert.equal(typeof firstOutlook.eta, 'number');
@@ -71,7 +72,7 @@ test('the queuer saves scope references once and every play keeps that estimate'
   assert.equal((await estimate(job)).outlook.left_minutes, 60);
   h.jobs.extendJob(job, 'juno', 'Add a lighthouse');
   mock.timers.tick(2 * HOUR);
-  predictions.sweep();
+  await forecast.sweep();
   predictions.outlooks();
   predictions.outlooks();
   assert.deepEqual(sizes.history(job), before);
@@ -135,7 +136,7 @@ test('the CEO and the agent running it change a saved size, and its reason stays
 for (const withItem of [false, true]) {
   test(`work queued on a live call ${withItem ? 'with an item' : 'without an item'} keeps its size and can be resized`, async () => {
     const { token } = await h.liveCall('juno');
-    const item = withItem ? await promiseOn(token) : undefined;
+    const item = withItem ? await noteOn(token) : undefined;
     const queued = await h.agent('job', token, { ...request, item, goal: 'Check the whole map' });
     assert.equal(queued.status, 200, JSON.stringify(queued.body));
     const job = queued.body.id;
@@ -299,7 +300,7 @@ test('comparisons expose scopes and recorded changes without choosing a new esti
   assert.ok(found.body.quality.total >= 4);
 });
 
-test('automatic work saves its measured default when queued', () => {
+test('automatic work saves its measured default when queued', async () => {
   const job = h.queue({ agent: 'kit', title: 'Paint the harbour map' });
   const initial = predictions.latest(job)!;
   assert.ok(initial);
@@ -307,7 +308,7 @@ test('automatic work saves its measured default when queued', () => {
     title: 'Paint the harbour map',
     run: { started: Date.now() - 20 * HOUR, ended: Date.now() - 10 * HOUR },
   });
-  predictions.sweep();
+  await forecast.sweep();
   predictions.outlooks();
   assert.deepEqual(predictions.latest(job), initial);
 });
@@ -372,9 +373,9 @@ test('comparisons show measured changed lines and leave unread merges unknown', 
   assert.equal(line(harbour[1]).added, null);
 });
 
-async function promiseOn(token: string) {
+async function noteOn(token: string) {
   const response = await h.agent('item', token, {
-    kind: 'promise',
+    kind: 'task',
     owner: 'kit',
     what: request.title,
     goal: 'Check the whole map',

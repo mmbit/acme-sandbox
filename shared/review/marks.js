@@ -59,41 +59,8 @@ export function paint(r, lines = r.strokes) {
     inkjs.draw(g, r.nextLines, { halo: true });
     shown.push(...r.nextLines);
   }
-  // (...and the mark being made's words, while its post-it holds them as read.)
-  const read = r.mark?.written;
-  if (read && open.length && r.text?.value.trim() === read) tag(g, boxOfLines(open), read, TYPE_INK, TYPE);
   inkjs.shown(c, shown, { halo: true });
 }
-// The board's words beside its mark, wrapped to this width
-const TAG_W = 240;
-// (the board's handwriting read into type: set in the page's own kind of type, dark, so it reads as the words and the
-// ink beside it as the hand.)
-const TYPE = '500 14px system-ui, -apple-system, "Segoe UI", sans-serif',
-  TYPE_INK = '#2b2230';
-function tag(g, b, words, color, font) {
-  g.save();
-  g.font = font;
-  const lines = [];
-  for (const word of words.split(/\s+/)) {
-    const last = lines.at(-1);
-    if (last && g.measureText(`${last} ${word}`).width <= TAG_W) lines[lines.length - 1] = `${last} ${word}`;
-    else lines.push(word);
-  }
-  const w = Math.max(...lines.map(l => g.measureText(l).width)),
-    x = Math.max(4, Math.min(innerWidth - w - 4, b.x + b.w + 10)),
-    y = Math.max(16, Math.min(innerHeight - 18 * lines.length, b.y + 4));
-  g.textBaseline = 'top';
-  g.lineJoin = 'round';
-  g.lineWidth = 4;
-  g.strokeStyle = 'rgba(255,255,255,.92)';
-  g.fillStyle = color;
-  lines.forEach((l, i) => {
-    g.strokeText(l, x, y + 18 * i);
-    g.fillText(l, x, y + 18 * i);
-  });
-  g.restore();
-}
-
 // Whether a scribble over an area crosses the mark being made (to wipe it)
 export const markAt = (r, area) => r.mode === 'note' && nearLines(area, openLines(r), SCRIBBLE_PX);
 

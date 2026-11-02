@@ -114,12 +114,14 @@ function boardItem(n: number) {
   return { said: `item #${n} ("${item.what}")` };
 }
 
-// A card the board itself answered: a guest's answer, or a card closed without one, isn't the board's word
+// A card the board itself answered: a guest's answer, the card reader's in the board's place (settled, jobs.ts
+// settleRequest), or a card closed without one, isn't the board's word
 function boardCard(n: number) {
-  const card = db.prepare('select title, kind, status from requests where id = ?').get(n) as
-    { title: string; kind: string; status: string } | undefined;
+  const card = db.prepare('select title, kind, status, settled from requests where id = ?').get(n) as
+    { title: string; kind: string; status: string; settled: string | null } | undefined;
   if (!card) return `there's no card #${n}`;
-  if (card.status !== 'answered' || card.kind === 'guest') return `card #${n} wasn't answered by the board`;
+  if (card.status !== 'answered' || card.kind === 'guest' || card.settled)
+    return `card #${n} wasn't answered by the board`;
   return { said: `card #${n} ("${card.title}")` };
 }
 

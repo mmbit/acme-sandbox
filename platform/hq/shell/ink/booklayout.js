@@ -22,9 +22,8 @@ export const BOOK = { min: 320, max: 520 };
 const NARROW = 560;
 // From a laptop's width up, a screen is remembered apart from a tablet's landscape.
 const WIDE = 1280;
-// The table kept round the book at its head, foot and (the spread's) outer edge, never at the spine past the screen's
-// right edge (book.css --bk-gap, less on a screen SMALL px wide or less), and the page block's edge showing past the
-// paper on its left (--bk-pages)
+// The table kept at the spread's outer edge (book.css --bk-gap, less on a screen SMALL px wide or less), and the page
+// block's edge showing past the paper on its left (--bk-pages)
 const GAP = 24,
   SMALL_GAP = 16,
   SMALL = 600,

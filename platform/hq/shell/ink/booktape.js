@@ -84,6 +84,9 @@ function held(tape) {
     away();
     // (a sheet's note no longer holds the press)
     if (e.pointerType !== 'touch' || !e.isPrimary) return;
+    // (nor a press in a field, which paste and drop leave alone too, nor on a scrap's words, a field or not: a sent
+    // page's are Safari's to select.)
+    if (theirs(e) || e.target.closest('.bk-words')) return;
     // (nor is a press another part of the book claims: a voice note's, a tool strip's, a radial menu's)
     if (tape.book.input?.claims?.(e)) return;
     if (onPage(tape.book, e) < 0) return;

@@ -10,6 +10,7 @@
 import assert from 'node:assert/strict';
 import { FEED_MS, notebookOn, opened, underItsNote } from './bookanswersplay.mjs';
 import { press } from './bookbar.mjs';
+import { OVERVIEW } from './bookkit.mjs';
 
 const WENT_LIVE = 'Yes: it went live this morning, at 09:12.';
 
@@ -54,7 +55,7 @@ export async function inStory(browser, c, { viewport, nb, options = {} }, steps)
   }
 }
 // (on the rail, or under More where the rail has folded it away.)
-const overview = page => press(page, "The overview: the notebook's pages, and the Shelf");
+const overview = page => press(page, OVERVIEW);
 // The first post to path since from, once it's made (null if none is by FEED_MS)
 async function postOf(c, from, path) {
   for (const end = Date.now() + FEED_MS; Date.now() < end; await new Promise(go => setTimeout(go, 100))) {

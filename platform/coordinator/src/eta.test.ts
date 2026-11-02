@@ -7,6 +7,7 @@ import { harness } from './harness.ts';
 
 const h = await harness('eta');
 const predictions = await import('./predictions.ts');
+const forecast = await import('./forecast.ts');
 
 const MIN = 60_000,
   HOUR = 60 * MIN;
@@ -228,7 +229,7 @@ test('a paced seat holds undated work in the play until its pacing lifts, as the
 test("a time a promise holds to: the play once more at every size's slow pick, four in five of the done jobs like it", async () => {
   await seat();
   const id = queued('Paint the harbour map for the harbourmaster');
-  predictions.sweep();
+  await forecast.sweep();
   const found = await ask({ q: `#${id}` });
   // The slow work takes 50 minutes, followed by the same two measured 15-minute runs.
   assert.equal(found.outlook.held, T0 + 80 * MIN);
@@ -239,7 +240,7 @@ test("a time a promise holds to: the play once more at every size's slow pick, f
 test("a queued job's own estimate is the one stored as it was queued", async () => {
   await seat();
   const id = queued('Paint the harbour map for the visitors');
-  predictions.sweep();
+  await forecast.sweep();
   const longer = past('Paint the harbour map for the visitors guide', 400, 60);
   const own = await ask({ q: `#${id}` });
   assert.deepEqual(
@@ -256,7 +257,7 @@ test("a queued job's own estimate is the one stored as it was queued", async () 
 test('new work keeps the estimate it was queued with, and --accuracy sets it against what happened', async () => {
   await seat();
   const id = queued('Paint the harbour lights');
-  predictions.sweep();
+  await forecast.sweep();
   const kept = h.db.prepare('select agent_ms, picks, eta from predictions where job = ?').get(id) as any;
   assert.deepEqual([kept.agent_ms, JSON.parse(kept.picks).length, kept.eta], [40 * MIN, 3, T0 + 70 * MIN]);
   const job = (await h.claim('claude', { seat: 'claude-a' }))!;

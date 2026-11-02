@@ -1,7 +1,7 @@
 // node --test platform/hq/shell/ink/scrapunit.test.js   (a scrap unit: pure)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ROOM, UNIT_W, added, bodyOf, heightFor, pointIn, resized, unitOf } from './scrapunit.js';
+import { ROOM, UNIT_W, added, bodyOf, heightFor, pointIn, unitOf } from './scrapunit.js';
 import { layout } from './masonry.js';
 import { boxOf, typedHigh } from './notebookstack.js';
 import { emptyGroup } from './notebookparts.js';
@@ -102,14 +102,6 @@ test('unitOf scales a wide drawing down within what the store keeps: a thin pen 
 
 test('an empty unit is just its room tall', () => {
   assert.deepEqual(unitOf(emptyGroup, ROOM), { parts: emptyGroup, h: ROOM });
-});
-
-test('resized can grow a unit, but not cut into its parts', () => {
-  const { parts } = unitOf(drawing),
-    bottom = boxOf(parts).h;
-  assert.equal(resized(parts, bottom + 200), Math.round(bottom + 200));
-  assert.ok(resized(parts, 10) >= bottom);
-  assert.ok(resized(emptyGroup, 40) === 40);
 });
 
 test('heightFor grows a unit when ink goes past its bottom, and never shrinks it', () => {

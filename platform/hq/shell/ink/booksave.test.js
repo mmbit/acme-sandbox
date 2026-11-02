@@ -27,7 +27,9 @@ registerHooks({
 globalThis.addEventListener = () => {};
 globalThis.document = { addEventListener: () => {} };
 globalThis.location = { hostname: '', search: '', pathname: '/' };
-const { changed, readPage, saved } = await import('./booksave.js');
+const { changed, readAgain, readPage, saved } = await import('./booksave.js');
+const { edit, redo, remade, stepList, undo } = await import('./bookedit.js');
+const { dried } = await import('./bookwrite.js');
 const { pointUnit, unitsOf } = await import('./bookunits.js');
 const { GAP, MARGIN, layout, widthFor } = await import('./masonry.js');
 const { UNIT_W } = await import('./scrapunit.js');
@@ -54,7 +56,7 @@ function storeOf(refuse = new Set()) {
   return {
     groups,
     add: parts => kept(++id, parts),
-    loadGroups: async () => ({ title: 'A page', handed: 0, groups: [...groups.values()].map(g => structuredClone(g)) }),
+    loadGroups: async () => ({ title: 'A page', groups: [...groups.values()].map(g => structuredClone(g)) }),
     createGroup: async (page, parts) => kept(++id, { kind: 'drawing', ...parts }),
     editGroup: async (gid, since, parts) => kept(gid, parts),
     deleteGroup: async gid => {
@@ -81,7 +83,9 @@ function bookOf(page) {
     redraws: 0,
     refuse: words => (view.said = words),
   };
-  return { dev: false, size: { w: 0, h: 0 }, views: [view], view };
+  const book = { dev: false, size: { w: 0, h: 0 }, views: [view], view, undone: [] };
+  book.steps = stepList(book);
+  return book;
 }
 const save = (book, page) => (changed(book, page), saved(book, page));
 // A line drawn on the page, into the unit it starts on or a new one, as the pen puts it (bookunits.js)
@@ -182,4 +186,138 @@ test('a drawing with nothing above it stays in the column it was drawn in when i
     layout(unitsOf(again), width).places.map(p => p.column),
     [0, 1],
   );
+});
+
+test("the board's Undo takes back only its own: a call agent's change read in between is no step, and stays", async () => {
+  const store = (globalThis.store = storeOf());
+  store.add({ ink: [line(0)] });
+  const page = { id: 1, w: 800 },
+    book = bookOf(page);
+  await readPage(book, page);
+  const own = page.ink[0],
+    hooks = { refresh() {}, changed: p => changed(book, p) };
+  edit(book, book.view, hooks, p => drawn(p, 900));
+  await saved(book, page);
+  const mine = page.ink.find(el => el.points[0][0] === 900);
+  // (the agent's note on the page, as the store has it now)
+  const theirs = store.add({ ink: [line(300)] }).id;
+  await readAgain(book, page);
+  assert.equal(book.steps.length, 1, "the agent's change is no step of the board's");
+  assert.ok(page.ink.includes(own) && page.ink.includes(mine), 'the read keeps the page’s own lines as they were');
+  await undo(book);
+  await saved(book, page);
+  assert.ok(!page.ink.includes(mine), "Undo takes the board's line back");
+  assert.ok(
+    page.ink.some(el => el.g === theirs) && page.ink.includes(own),
+    "the agent's note and the board's first stay",
+  );
+  assert.ok(store.groups.has(theirs), "the agent's note stays in the store");
+  await redo(book);
+  await saved(book, page);
+  assert.ok(page.ink.includes(mine) && page.ink.some(el => el.g === theirs), 'Redo puts only the board’s line back');
+  assert.equal(await undo(book), true);
+  assert.equal(await undo(book), false, 'nothing else to take back');
+  assert.ok(store.groups.has(theirs));
+});
+
+// (a stroke moved as Select moves it: its new self in its place, kept as its replacement, bookselect.js swapIn)
+const moved = (book, hooks, from, x) =>
+  edit(book, book.view, hooks, p => {
+    const now = { ...from, points: line(x).points };
+    remade(from, now);
+    p.ink.splice(p.ink.indexOf(from), 1, now);
+  });
+const xs = page => page.ink.map(el => el.points[0][0]);
+const stored = store => [...store.groups.values()].flatMap(g => g.ink.map(el => el.points[0][0]));
+
+test("a stroke this screen moved and another moved again stays where the other put it through Undo and Redo, and so it's saved", async () => {
+  const store = (globalThis.store = storeOf());
+  const { id } = store.add({ ink: [line(20)] });
+  const page = { id: 1, w: 800 },
+    book = bookOf(page),
+    hooks = { refresh() {}, changed: p => changed(book, p) };
+  await readPage(book, page);
+  moved(book, hooks, page.ink[0], 60);
+  await saved(book, page);
+  assert.deepEqual(stored(store), [60]);
+  // (another screen moves it on)
+  store.groups.set(id, { ...store.groups.get(id), updated: 99, ink: [line(100)] });
+  await readAgain(book, page);
+  assert.deepEqual(xs(page), [100]);
+  assert.equal(await undo(book), false, 'the move is no longer this screen’s to take back');
+  await saved(book, page);
+  assert.deepEqual(xs(page), [100]);
+  assert.deepEqual(stored(store), [100], 'the store keeps the other screen’s stroke alone');
+  const again = { id: 1, w: 800 };
+  await readPage(bookOf(again), again);
+  assert.deepEqual(xs(again), [100], 'read again from the store: the one stroke');
+});
+
+test("a move this screen took back, the stroke since moved on another, isn't made again by Redo", async () => {
+  const store = (globalThis.store = storeOf());
+  const { id } = store.add({ ink: [line(20)] });
+  const page = { id: 1, w: 800 },
+    book = bookOf(page),
+    hooks = { refresh() {}, changed: p => changed(book, p) };
+  await readPage(book, page);
+  moved(book, hooks, page.ink[0], 60);
+  await saved(book, page);
+  await undo(book);
+  await saved(book, page);
+  assert.deepEqual(stored(store), [20]);
+  store.groups.set(id, { ...store.groups.get(id), updated: 99, ink: [line(100)] });
+  await readAgain(book, page);
+  assert.equal(await redo(book), false);
+  await saved(book, page);
+  assert.deepEqual(stored(store), [100]);
+});
+
+test('a stroke moved twice here, the last moved on another screen: neither Undo brings back an older one', async () => {
+  const store = (globalThis.store = storeOf());
+  const { id } = store.add({ ink: [line(20)] });
+  store.add({ ink: [line(400)] });
+  const page = { id: 1, w: 800 },
+    book = bookOf(page),
+    hooks = { refresh() {}, changed: p => changed(book, p) };
+  await readPage(book, page);
+  const other = page.ink.find(el => el.points[0][0] === 400);
+  moved(book, hooks, page.ink[0], 60);
+  const once = page.ink.find(el => el.points[0][0] === 60);
+  moved(book, hooks, once, 80);
+  moved(book, hooks, other, 440);
+  await saved(book, page);
+  store.groups.set(id, { ...store.groups.get(id), updated: 99, ink: [line(100)] });
+  await readAgain(book, page);
+  assert.equal(book.steps.length, 1, 'only the other stroke’s move is left to take back');
+  await undo(book);
+  await saved(book, page);
+  const both = stored(store).sort((a, b) => a - b);
+  assert.deepEqual(both, [100, 400]);
+});
+
+test('a stroke the pen drew here, moved here and moved again on another screen: Undo and Redo never bring back the drawn one', async () => {
+  const store = (globalThis.store = storeOf());
+  const page = { id: 1, w: 800 },
+    book = bookOf(page),
+    hooks = { refresh() {}, changed: p => changed(book, p), lay() {}, inView() {} };
+  await readPage(book, page);
+  // (the pen lifted at x=20, as bookink.js hands its stroke over)
+  Object.assign(book, { target: 0, pan: { x: 0, y: 0 }, scale: 1, inking: { size: 4 }, ink: { clear() {} } });
+  book.view.addInk = () => {};
+  dried(book, line(20), hooks);
+  await saved(book, page);
+  moved(book, hooks, page.ink[0], 60);
+  await saved(book, page);
+  assert.deepEqual(stored(store), [60]);
+  const [id] = store.groups.keys();
+  store.groups.set(id, { ...store.groups.get(id), updated: 99, ink: [line(100)] });
+  await readAgain(book, page);
+  assert.equal(await undo(book), false, 'neither the move nor the drawing is this screen’s to take back');
+  assert.equal(await redo(book), false);
+  await saved(book, page);
+  assert.deepEqual(xs(page), [100]);
+  assert.deepEqual(stored(store), [100]);
+  const again = { id: 1, w: 800 };
+  await readPage(bookOf(again), again);
+  assert.deepEqual(xs(again), [100], 'read again from the store: the one stroke');
 });

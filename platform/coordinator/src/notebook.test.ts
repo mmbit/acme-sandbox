@@ -197,7 +197,7 @@ test('groups: units in order, edited (another screen first: read again), resized
     await h.board('/api/notebooks/groups/edit', { id: a.id, since: a.updated, ink: [stroke(10, 10), stroke(40, 300)] })
   ).body;
   assert.equal(edited.ink.length, 2);
-  assert.ok(edited.h >= edited.box.y + edited.box.h, 'taller with what reaches past it');
+  assert.equal(edited.h, a.h, 'its height as set: what reaches past it shows on the page (scrapunit.js heightFor)');
   const stale = await h.board('/api/notebooks/groups/edit', { id: a.id, since: a.updated, ink: [stroke(10, 10)] });
   assert.deepEqual([stale.status, stale.body.error], [409, 'this group changed on another screen: read it again']);
 
@@ -207,7 +207,7 @@ test('groups: units in order, edited (another screen first: read again), resized
   assert.equal((await resize({ since: edited.updated, h: 400 })).status, 409, 'read again first');
   assert.equal((await resize({ since: tall.updated, h: 'tall' })).status, 400);
   const short = (await resize({ since: tall.updated, h: 1 })).body;
-  assert.equal(short.h, Math.ceil(short.box.y + short.box.h), 'no shorter than its ink');
+  assert.equal(short.h, 1, 'as dragged: the page floors it at its ink');
 
   const split = (await h.board('/api/notebooks/groups/split', { id: a.id, ink: [1] })).body;
   assert.deepEqual([split.group.ink.length, split.split.ink.length], [1, 1]);

@@ -61,7 +61,7 @@ test("the sweep ends a lost line's watch-along with its call, and takes it with 
   const noted = await h.liveCall('kit'),
     silent = await h.liveCall('dex');
   await agent('item', noted.token, {
-    kind: 'promise',
+    kind: 'task',
     owner: 'kit',
     goal: 'g',
     what: 'Send the note',

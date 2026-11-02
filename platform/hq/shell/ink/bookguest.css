@@ -327,19 +327,6 @@ body.bk-guest-working .passkey-prompt {
   text-decoration: underline;
   text-underline-offset: 3px;
 }
-/* (a round page's lane wraps Mark done under the rail where the two don't fit side by side: in the rail's grid its
-   words ran off the paper's edge) */
-#book .bk-lane-line:has(.bk-guest-mark) {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-}
-/* (Mark done in words, as wide as they are, in the send stack) */
-#book .bk-btn.bk-guest-mark {
-  width: auto;
-  padding: 0 14px;
-  white-space: nowrap;
-}
 /* (Undo a quiet link beside Marked done, not a filled button) */
 #book .bk-island .bk-btn.bk-guest-undo {
   background: transparent;

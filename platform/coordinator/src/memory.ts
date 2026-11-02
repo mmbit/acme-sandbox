@@ -141,7 +141,7 @@ const callTitle = (c: { id: number; ts: string; agent: string; request: number |
 
 // A pass gives the server its thread back about every STEP_MS, so requests run between its steps: listing, reading and
 // hashing every document in one go takes seconds on a busy machine. Its writes go in steps of their own (sync()).
-// A step that still held the server half a second is in the status report's holds by name (latency.ts held).
+// A step that still held the server HOLD_MS is in the status report's holds by name (latency.ts held).
 const STEP_MS = 20;
 const stepper = () => {
   let since = performance.now();
@@ -151,7 +151,7 @@ const stepper = () => {
     async pause(always = false) {
       if (!always && !due()) return;
       const ms = performance.now() - since;
-      if (ms >= 500) latency.held(`the search index's pass: one step ${Math.round(ms)} ms`, ms);
+      if (ms >= latency.HOLD_MS) latency.held(`the search index's pass: one step ${Math.round(ms)} ms`, ms);
       await new Promise<void>(resolve => setImmediate(resolve));
       since = performance.now();
     },

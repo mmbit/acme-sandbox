@@ -6,16 +6,20 @@
 // A stroke is ink.js's { color, size, alpha?, fill?, points: [[x, y, pressure, t], ...] } in its page's px. A shape's
 // line is even: every point at SHAPE_P, which ink.js draws exactly `size` wide.
 
-// The highlighter's colours, the widths a line comes in (page px; the middle one review mode's pen) and the
-// highlighter's alpha
+// The highlighter's colours, the widths each ink's line comes in (page px; the pen's middle one review mode's pen) and
+// the see-through ones' alpha: the pencil's grey as graphite is, so its lines build up where they cross, and lie under
+// the ink as a sketch under its inking (the pencil and the brush)
 export const MARKERS = [
   { name: 'Yellow', color: '#ffd23f' },
+  { name: 'Orange', color: '#ffa552' },
   { name: 'Pink', color: '#ff7eb3' },
-  { name: 'Green', color: '#7fe08a' },
+  { name: 'Violet', color: '#b99cff' },
   { name: 'Blue', color: '#7cc8ff' },
+  { name: 'Green', color: '#7fe08a' },
 ];
-export const WIDTHS = { pen: [2.5, 5, 9], highlighter: [11, 18, 28] },
-  MARKER_ALPHA = 0.42;
+export const WIDTHS = { pen: [2.5, 5, 9], pencil: [2, 3, 5], brush: [7, 13, 22], highlighter: [11, 18, 28] },
+  MARKER_ALPHA = 0.42,
+  PENCIL_ALPHA = 0.7;
 // A stroke's line, as thin and as thick as the store keeps it: a page with one past it is refused (pagechecks.ts).
 export const LINE = { min: 0.5, max: 200 };
 

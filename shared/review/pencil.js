@@ -5,6 +5,8 @@
 //   - A mark is the lines drawn while the pen keeps coming back: the words said once its mic button is tapped (on a
 //     call, the call hears them) go in its note. Rest the pen and it lifts
 //     into the book as a note, the page left clean: nothing of it stays drawn (settle.js, marks.js paint: rule zero).
+//     Words written with it stay ink, on the note's snip, for whoever reads the note: nothing reads them into type
+//     (board, call 176).
 //   - Hold the pen still on one spot and talk: a voice note there, its words landing as the pen lifts.
 //   - Scribble over the mark being made: it's let go. Ring something: the mark is on what's inside the ring.
 //   - A two-finger tap takes back the last thing, whatever it was (Cmd or Ctrl+Z too). Nothing asks "are you sure?".
@@ -21,9 +23,6 @@ import { inside, ringed, scribbled } from './gestures.js';
 import { setupTouch, theirs } from './pentouch.js';
 import { setupSettle } from './settle.js';
 import { setupCarry } from './carry.js';
-// (handwriting read into type.)
-import * as written from './written.js';
-import { unpen } from './postitpen.js';
 
 export const CSS = `
       .listen { position: absolute; width: 44px; height: 44px; margin: -22px 0 0 -22px; border-radius: 50%; pointer-events: none;
@@ -52,7 +51,6 @@ function lifted(r, stroke) {
     if (marks.openLines(r, r.strokes) === r.strokes) aim(r); // (scrolled since, the first lines' element stays)
     marks.paint(r);
     develop(r);
-    written.readSoon(r);
     return;
   }
   if (r.mode !== 'idle') return;
@@ -71,7 +69,6 @@ function begin(r) {
   marks.paint(r);
   compose(r);
   towards(r, r.mark);
-  written.readSoon(r);
 }
 // a ring's pick, outlined for a moment
 function flash(r, el) {
@@ -95,15 +92,12 @@ function wipeOpen(r) {
 // Undo anything: the last line of the mark being made (the first one: the mark goes), else the last note sent to the
 // sheet comes off it, else the last mark scribbled out comes back
 export async function undo(r) {
-  // (the post-it's words edited with the Pencil first: postitpen.js.)
-  if (r.mode === 'note' && r.wordSteps?.length) return r.wordSteps.pop()();
   const floor = r.mark?.kind === 'circle' ? 1 : 0;
   if (r.mode === 'note' && r.strokes.length > floor) {
     r.strokes.pop();
     aim(r);
     marks.paint(r);
     develop(r);
-    written.readSoon(r);
     return;
   }
   if (r.mode === 'note') return reset(r);
@@ -131,7 +125,6 @@ export function setupPencil(r) {
   forgetHairlines();
   r.listen = r.$('.listen');
   r.pinIt.textContent = 'Save';
-  written.typing(r);
   r.pencil = inkjs.pen(r.$('.pencil'), r.wet, {
     halo: true,
     under: r.haloCanvas,
@@ -165,7 +158,6 @@ function carry(r) {
 
 // What a reset leaves
 export const unmark = r => {
-  unpen(r);
   if (r.listen && !r.holding) r.listen.hidden = true;
   r.spoken = r.typed = false;
   if (r.book) r.pinIt.textContent = 'Save';

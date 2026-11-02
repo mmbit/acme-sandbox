@@ -325,7 +325,7 @@ test("a call about a customer card and the intercom's lines reach the board and 
   fresh();
   const asker = await h.start({ agent: 'kit', title: 'Refund for a customer' });
   const req = jobs.createRequest({ kind: 'decision', title: 'Refund the koala mug?', body: 'It arrived cracked.', agent: 'kit', job: asker.id }) as { id: number };
-  db.prepare('update requests set customers = 1 where id = ?').run(req.id);   // (marked before as a customer's)
+  h.markCustomer('requests', req.id);   // (marked before as a customer's)
   const ctx = await context('kit', { request: req.id });
   await hangUp('kit', ['Board: yes, refund the koala mug in full.'], { request: req.id, token: ctx.token });
   const follow = await run((await calls())[0].job);
@@ -386,13 +386,13 @@ test('a call agent restarted mid-call stays on the same call: one row, one token
   const req = (await h.agent('request', asker.token, { kind: 'decision', title: 'Refund Jan?', body: 'Yes or no?' })).body.id;
   const rows = () => (db.prepare('select count(*) n from calls').get() as { n: number }).n;
   const first = await context('kit', { request: req }), n = rows();
-  const noted = { kind: 'promise', owner: 'kit', goal: 'g', what: 'Send Jan the refund today', quote: 'Kit: I will send it today.' };
+  const noted = { kind: 'task', owner: 'kit', goal: 'g', what: 'Send Jan the refund today', quote: 'Kit: I will send it today.' };
   assert.equal((await h.agent('item', first.token, noted)).status, 200);
   const again = await context('kit', { request: req, token: first.token });
   assert.equal(rows(), n, 'no second call row');
   assert.equal(again.token, first.token, 'one token');
   assert.equal(again.call, first.call);
-  assert.match(again.prompt, /Already noted on this call[\s\S]*#\d+: Send Jan the refund today \(promise for kit, open\)/, "the new session doesn't note it twice");
+  assert.match(again.prompt, /Already noted on this call[\s\S]*#\d+: Send Jan the refund today \(task for kit, open\)/, "the new session doesn't note it twice");
   assert.equal(again.model, first.model);
   await hangUp('kit', ['Board: yes, refund Jan.', 'Kit: I will send it today.'], { request: req, token: again.token });
   const ended = (await calls()).find(c => c.id === first.call)!;

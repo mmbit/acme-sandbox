@@ -80,7 +80,7 @@ on it. ${RICHER(`g${g.id}`)}
 
 Why it calls for an answer: ${why}
 
-The note's words, the board's (read from its handwriting when it wrote them):
+The note's words, the board's (typed or said; its handwriting is ink, on the page):
 ${words}`;
 }
 const noteBrief = (review: number, text: string, why: string) => `The board wrote a note on a page in HQ, in its book, \

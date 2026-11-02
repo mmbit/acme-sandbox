@@ -33,6 +33,11 @@ where it suffices.
   range, at most 2,147,483,647 ms. The Process arm must record absolute bounds exactly that far apart. This setting
   never arms automatically, extends a saved attempt or allows rearming. The single attempt retains two write-once
   receipts and one terminal disposition. See `platform/coordinator/docs/inspection.md` for the operations.
+
+
+- **Feature membership**: optional `company/features.yaml` groups initial deliverables and labelled feedback rounds
+  under their original feature for cost accounting. Missing configuration leaves each deliverable separate. Live
+  links override these historical entries. See `platform/coordinator/docs/feature-cost.md` for its schema and commands.
 - **Seat plans**: optional `company/seatplans.yaml` maps worker seat names to confirmed Claude subscription sizes,
   `5` or `20`. For example, `claude-main: 20` declares that seat's 20x plan. Omit seats whose size is unknown.
   `hq when --extra-seat 5x` (or `20x`) and `hq projects [words] --extra-seat 5x` replay the live plan with one fresh
@@ -153,3 +158,7 @@ where it suffices.
   still called `web` in the Hetzner console and guards it alone, which no new company's server has. Generic form:
   none, it goes. The Overseer sees both companies' servers: once each one's firewall carries its `SERVER_NAME`, the
   branch is dropped at a carry.
+- Review mode's post-it reads no handwriting, for every company, with no setting: its pen's words go as ink on the
+  scrap's snip, and `POST /api/book/read`, `written.js` and the pen's word edits (`penwords.js`, `penedit.js`,
+  `postitpen.js`) are gone. Carried to Onlyonery too (2 November): the board's own rule for its handwriting (call
+  176: a model reads the ink, nothing parses it), and no code of Onlyonery's used them.

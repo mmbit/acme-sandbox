@@ -3,12 +3,12 @@
 // open desk phone card with the work that waits on it.
 // (its messages say deliverable, the board's word for a thread)
 import { db } from './db.ts';
-import { org, companyTime } from './company.ts';
+import { org, companyTime, roles } from './company.ts';
 import { boardId, findAgent, nameOf, paused, held, pauseAllowed, pauseLets, FOLLOW_THROUGH } from './jobs.ts';
 import * as pauses from './pauses.ts';
 import * as redraws from './redraws.ts';
 import { teamMembers } from './team.ts';
-import { heldFor, isHidden } from './later.ts';
+import { awaitsRead, heldFor, isHidden } from './later.ts';
 import type { Forecast } from './forecast.ts';
 
 type Run = {
@@ -184,10 +184,13 @@ function cards(f: Forecast, paused: pauses.Pause[]) {
   );
 }
 
+// (reading: the card reader's read it waits for, cardread.ts)
 function notes(c: { id: number; hidden_until: string | null }) {
   const work = heldFor(c.id);
+  const reader = awaitsRead(c.id) && roles().cards;
+  const reading = reader ? ` (held: off the desk phone until ${findAgent(reader)!.name} has read it)` : '';
   const later = isHidden(c.hidden_until) ? ` (for later: off the desk phone until ${at(c.hidden_until!)})` : '';
-  return `${work ? ` (held: off the desk phone until ${work} is live)` : ''}${later}`;
+  return `${work ? ` (held: off the desk phone until ${work} is live)` : ''}${reading}${later}`;
 }
 
 function waitingOn(card: number, f: Forecast, decided: pauses.Pause[]) {

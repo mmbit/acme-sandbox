@@ -6,7 +6,7 @@ import { db, inOneStep, setting, remember } from './db.ts';
 import { publish } from './events.ts';
 import * as alarms from './alarms.ts';
 import * as jobs from './jobs.ts';
-import { list as listApps } from './apps.ts';
+import { products, productSlugs } from './apps.ts';
 import { approved } from './approvals.ts';
 import * as payments from './payments.ts';
 import { manifest } from './manifests.ts';
@@ -185,7 +185,7 @@ async function follow(url: string, redirects: Redirects, app: LiveApp, signal: A
 
 // ---- up and able to sell
 const liveApps = (): LiveApp[] =>
-  listApps()
+  products()
     .filter(a => a.status === 'live' && !a.platform && a.public.length)
     .map(a => ({ slug: a.slug, name: a.name, addresses: a.public, ordering: takesOrders(a.slug) }));
 
@@ -274,9 +274,9 @@ function ownAddress(app: LiveApp, url: string) {
   const target = new URL(url);
   const path = routedPath(target.pathname);
   if (path === null || path.split('/').some(segment => segment.startsWith('__'))) return false;
-  const shelves = listApps()
-    .filter(a => a.slug !== app.slug && !a.slug.includes('/'))
-    .map(a => `/${a.slug.toLowerCase()}/`);
+  const shelves = productSlugs()
+    .filter(slug => slug !== app.slug)
+    .map(slug => `/${slug.toLowerCase()}/`);
   return app.addresses.some(address => {
     const own = new URL(address);
     const prefix = routedPath(own.pathname)?.replace(/\/?$/, '/');
@@ -569,7 +569,7 @@ const atWork = (job: number | null) =>
 // An app that stopped being live isn't watched any more. Its alarms end, saying the watch ended: whether the app works
 // again wasn't checked.
 function unwatch(slug: string) {
-  const name = listApps().find(a => a.slug === slug)?.name ?? slug;
+  const name = products().find(a => a.slug === slug)?.name ?? slug;
   const text = `HQ stopped watching ${name}: it's no longer live. Whether it works again wasn't checked.`;
   for (const blocks of ['visits', 'orders'] as const) endAlarm(slug, blocks, text);
   for (const table of ['watch_outages', 'watch_apps']) db.prepare(`delete from ${table} where product = ?`).run(slug);

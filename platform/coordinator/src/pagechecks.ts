@@ -190,7 +190,8 @@ export function anchorOf(v: any): Anchor | Refused {
     ...(video ? { video: { time: video.time, src: video.src } } : {}),
   };
 }
-// A note's words, spoken, typed or written (read from handwriting), as one trimmed text, or the refusal
+// A note's words, spoken, typed or written (an older note's handwriting read into type), as one trimmed text, or the
+// refusal
 export const WORDS_MAX = 4000;
 export const SAID = ['spoken', 'typed', 'written'] as const;
 export function wordsOf(v: unknown, said: unknown): { words: string; said: string | null } | Refused {

@@ -5,6 +5,7 @@ import { LAND_MS, land } from './bookpaper.js';
 import { thingsPicture } from './bookpaperdraw.js';
 import { boundsOf } from './bookselectmath.js';
 import { keyOf, landing } from './bookgroupmath.js';
+import { bringIntoSight } from './bookgroupshow.js';
 import { picture } from '../../util.js';
 
 // each group arriving at once lands this long after the one before (ms); a picture not loaded within LOAD_MS lands
@@ -13,11 +14,30 @@ const STAGGER_MS = 90,
   LOAD_MS = 1500;
 // a line of typed words on the page (booktexts.js TEXT: 18 px at 1.4)
 const LINE_PX = 26;
+// the board's hands off the page this long (ms, no finger or pen down, none moved or key pressed since): what an agent
+// puts on the page is slid into sight before it lands
+const IDLE_MS = 3000;
+
+// The board's hands on the screen: the pointers down, and when it last pressed, moved one down or typed (ms)
+const hands = { down: new Set(), at: 0 };
+for (const type of ['pointerdown', 'pointermove', 'pointerup', 'pointercancel', 'keydown', 'wheel'])
+  addEventListener(
+    type,
+    e => {
+      if (type === 'pointerdown') hands.down.add(e.pointerId);
+      if (type === 'pointerup' || type === 'pointercancel') hands.down.delete(e.pointerId);
+      if (type !== 'pointermove' || e.buttons) hands.at = performance.now();
+    },
+    { capture: true, passive: true },
+  );
+const idle = () => !hands.down.size && performance.now() - hands.at > IDLE_MS;
 
 // Elements just put on a view's page (its ink, scraps and texts), landed group by group. Off the paper shown, or with
-// the book out of sight, they're simply there. What's held is held by its key (page.landing: bookgroupmath.js
-// landing()), so the page read again meanwhile holds its new copy of it too.
-export function arrive(book, view, els) {
+// the book out of sight, they're simply there; with show (an agent's, from the store) on a page the board has left
+// idle, the paper first slides to the last of them so the board sees it land (the board, call 174: never while it
+// draws). What's held is held by its key (page.landing: bookgroupmath.js landing()), so the page read again meanwhile
+// holds its new copy of it too.
+export function arrive(book, view, els, { show = false } = {}) {
   if (book.away || view.el.hidden || !els.length) return;
   const page = view.page,
     groups = new Map();
@@ -26,9 +46,24 @@ export function arrive(book, view, els) {
     page.landing.add(keyOf(el));
     groups.set(el.g, [...(groups.get(el.g) ?? []), el]);
   }
-  [...groups.values()].forEach((group, i) => landGroup(book, view, group, i * STAGGER_MS));
+  const all = () => [...groups.values()].forEach((group, i) => landGroup(book, view, group, i * STAGGER_MS));
   view.redraw(); // (held off the tiles and their words' boxes hidden, in the same task they were drawn in)
   showWords(view);
+  // (their words and answers unseen while the paper slides: bookgroupshow.js bringIntoSight; a hand that stops it on
+  // the way, a finger's scroll, sees them all at once where they are)
+  const last = [...groups.keys()].at(-1),
+    unseen = [...groups.keys()].flatMap(g => bitsOf(view, g)).map(el => el.animate({ opacity: [0, 0] }, 5000)),
+    landed = () => {
+      all();
+      unseen.forEach(a => a.cancel());
+    },
+    there = () => {
+      unseen.forEach(a => a.cancel());
+      for (const el of els) page.landing.delete(keyOf(el));
+      view.redraw();
+      showWords(view);
+    };
+  if (!(show && idle() && book.views[book.cur] === view && bringIntoSight(view, last, landed, there))) landed();
 }
 
 async function landGroup(book, view, els, delay) {

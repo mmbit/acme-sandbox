@@ -5,10 +5,10 @@ import { pacedTakes, spareOnly, type Order } from './planner.ts';
 import {
   CLAUDE_RECHECK_MS,
   drainLifts,
-  compareStopRoom,
-  full,
+  stopWindows,
+  pausesAtStop as stopPauses,
+  compareSeatPace,
   drainLevel,
-  hasConfiguredStop,
   seatRunLimit,
   nextWindowReset,
   paceChange,
@@ -20,7 +20,7 @@ import {
 const HOUR_MS = 3_600_000;
 // (pacing: the board's switch, as the snapshot has it.)
 export type Seat = SeatNow & {
-  drainReadAt: number | null;
+  recheckAt: number | null;
   fiveRate: number | null;
   weekRate: number | null;
   pacing: boolean;
@@ -33,7 +33,7 @@ export function seatsOf(snapshot: Snapshot) {
     const weekRate = typeof rate?.week === 'object' && rate.week !== null ? rate.week[row.id] : rate?.week;
     return {
       ...row,
-      drainReadAt: null as number | null,
+      recheckAt: null as number | null,
       fiveRate: rate?.five[row.id] ?? null,
       weekRate: weekRate ?? null,
       pacing: !!snapshot.pacing,
@@ -42,12 +42,20 @@ export function seatsOf(snapshot: Snapshot) {
   });
 }
 
-export function reset(seat: Seat, now: number) {
+// All peers' windows and wakeups must be current before a recovery read shares their reserve.
+export function reset(seats: Seat[], now: number) {
+  for (const seat of seats) resetWindows(seat, now);
+  for (const seat of seats) awaitRecheck(seat, now, seats);
+}
+
+function resetWindows(seat: Seat, now: number) {
   if (seat.fiveHourResets !== null && seat.fiveHourResets <= now) {
+    // A renewed window releases its hold without waiting for another recovery read.
+    if (seat.fiveHour !== 0) seat.recheckAt = null;
     seat.fiveHour = 0;
   }
   if (seat.weekResets !== null && seat.weekResets <= now) {
-    seat.drainReadAt = null;
+    seat.recheckAt = null;
     seat.week = 0;
     seat.weekResets = nextWindowReset(seat.weekResets, now, true);
   }
@@ -91,7 +99,7 @@ export const runLimit = (seat: Seat, limits: Record<string, number>, now: number
 export function available(seat: Seat, now: number, seats = [seat]) {
   return (
     seat.state === 'ready' &&
-    (seat.drainReadAt === null || seat.drainReadAt <= now) &&
+    (seat.recheckAt === null || seat.recheckAt <= now) &&
     (seat.until === null || seat.until <= now) &&
     (seat.credits || (knownWindows(seat) && !quotaHolds(seat, seats, now).length))
   );
@@ -103,7 +111,7 @@ function knownWindows(seat: Seat) {
 
 export function holding(seat: Seat, now: number, seats = [seat]) {
   const holds: { quota: 'fiveHour' | 'week' | 'reported'; until: number | null }[] = [];
-  if (seat.drainReadAt !== null && seat.drainReadAt > now) holds.push({ quota: 'week', until: seat.drainReadAt });
+  if (seat.recheckAt !== null && seat.recheckAt > now) holds.push({ quota: 'reported', until: seat.recheckAt });
   for (const [, reset, weekly] of quotaHolds(seat, seats, now))
     holds.push({ quota: weekly ? 'week' : 'fiveHour', until: reset || null });
   if (['draining', 'sleeping'].includes(seat.state) && (seat.until === null || seat.until > now))
@@ -113,20 +121,17 @@ export function holding(seat: Seat, now: number, seats = [seat]) {
 
 function quotaHolds(seat: Seat, seats: Seat[], now: number) {
   const own = windowsOf(seat);
-  if (seat.credits) return [];
-  if (hasConfiguredStop(own)) return full(own, now);
   const windows = seats.map(s => (s === seat ? own : windowsOf(s)));
-  return reserveElsewhere(own, windows, now) ? [] : full(own, now);
+  return stopWindows(own, windows, now);
 }
 
-export const pausesAtStop = (seat: Seat) => seat.engine === 'claude' || hasConfiguredStop(windowsOf(seat));
+export const pausesAtStop = (seat: Seat) => stopPauses(windowsOf(seat));
 
-// A relaxed reserve releases paused work when its next recovery read sees room.
-export function awaitDrainRead(seat: Seat, now: number) {
-  if (seat.engine !== 'claude' || seat.credits) return;
-  const lifts = drainLifts(windowsOf(seat), now);
-  if (lifts === undefined) return;
-  seat.drainReadAt = now + Math.ceil((lifts - now) / CLAUDE_RECHECK_MS) * CLAUDE_RECHECK_MS;
+// Each recovery read asks the shared stop policy again, including any reserve a peer can now keep.
+function awaitRecheck(seat: Seat, now: number, seats: Seat[]) {
+  if ((seat.cli ?? seat.engine) !== 'claude') return;
+  if (seat.recheckAt !== null && seat.recheckAt > now) return;
+  seat.recheckAt = quotaHolds(seat, seats, now).length ? now + CLAUDE_RECHECK_MS : null;
 }
 
 export function binding(seat: Seat, now: number, seats = [seat]) {
@@ -168,7 +173,7 @@ export function choose(
     .flatMap(s =>
       available(s, now, seats)
         ? [pacingLifts(windowsOf(s), moment.aims.get(s)!, now)]
-        : [s.until, s.fiveHourResets, s.weekResets, s.drainReadAt],
+        : [s.until, s.fiveHourResets, s.weekResets, s.recheckAt],
     )
     .filter((t): t is number => t !== null && t > now);
   if (returns.length) return { on: 'seats', engine: row.engine, until: Math.min(...returns) };
@@ -197,7 +202,7 @@ const fits = (seat: Seat, row: Claimed) =>
 const fallsBackOnto = (seat: Seat, row: Claimed) => !!row.fallsBack && !!seat.fallbacks?.includes(row.agent);
 
 const compareSeats = (a: Seat, b: Seat, now: number) =>
-  compareStopRoom(windowsOf(a), windowsOf(b), now) || a.id.localeCompare(b.id);
+  compareSeatPace(windowsOf(a), windowsOf(b), now) || a.id.localeCompare(b.id);
 
 // A full room holds its occupancy for the rest of the moment, as the seats' occupancy holds between two claims that
 // start. Claims with the same engine, seat binding, paced seats open to them and spare standing (with others waiting)
@@ -268,7 +273,7 @@ export function seatEvent(
     seat.fiveHourResets = nextWindowReset(seat.fiveHourResets, now, false);
     windows[index] = windowsOf(seat);
   }
-  const events = [seat.until, seat.fiveHourResets, seat.weekResets, seat.drainReadAt].filter(
+  const events = [seat.until, seat.fiveHourResets, seat.weekResets, seat.recheckAt].filter(
     (t): t is number => t !== null && t > now,
   );
   for (const change of [

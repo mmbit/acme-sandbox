@@ -1,11 +1,12 @@
 // book-check.mjs's story of a book's bookmarks (shell/ink/bookmarks.js) on My journal seeded with two sketch pages, its
 // Asks page with three asks open and two calls' notes pages, one stamped Sent by its follow-up and one still with it. At
-// a phone, an iPad mini upright and sideways and a wide desktop: the tabs placed (along the top upright, clear of the
-// dog-ear; out of the page stack at the left sideways, never over the paper), the chapter shown lit, Asks' red count,
+// a phone, an iPad mini upright and sideways and a wide desktop: the tabs placed (along the top where the screen is tall
+// enough, clear of the dog-ear and tucked under the paper's head; out of the page stack at the left on a phone
+// sideways, never over the paper), the chapter shown lit, Asks' red count,
 // each tab opening its chapter's first page and the bar counting within it, and the first call's page stamped Sent.
 // Recorded with --shots.
 import assert from 'node:assert/strict';
-import { until } from './bookkit.mjs';
+import { OVERVIEW, until } from './bookkit.mjs';
 import { press } from './bookbar.mjs';
 import { typedBoxes } from './shell/ink/notebookparts.js';
 
@@ -13,6 +14,8 @@ const T0 = '2026-10-29T15:00:00.000Z',
   ENDED = Date.parse('2026-10-29T16:21:00.000Z');
 // (a tap or a wait on the shared machine under load: taps time out at 30 s there, on main too)
 const LOADED_MS = 90_000;
+// how far the tabs along the top reach under the paper's head (bookmarks.css's --bk-mk-tuck)
+const TUCK = 4;
 const SIZES = {
   phone: { width: 390, height: 844 },
   'ipad-mini-upright': { width: 744, height: 1133 },
@@ -70,7 +73,7 @@ const SEED = {
   ],
   groups: [
     note(1, 2, 'Cover on top, bottom, outer edge; never on the spine.'),
-    note(2, 2, 'Promise for Marloes: cover edge, once it is sent.'),
+    note(2, 2, 'Cover edge, once it is sent.'),
     note(3, 5, 'Tabs a little bigger.'),
   ],
   slips: [],
@@ -121,7 +124,8 @@ async function atSize(browser, c, name, size) {
       await c.shot(`bookmarks-${name}-${chapter}`, p);
     }
     // (the call still with its follow-up: the next page under Calls, shut and unstamped)
-    await p.locator('#book .bk-btn[aria-label="The page after"]').click({ timeout: LOADED_MS });
+    // (from More where the rail folds the arrows away: a phone on its side.)
+    await press(p, 'The page after');
     await until(async () => (await shown(p)).title === 'Call with Moss', `${name}: the next call`, 8000);
     await p.waitForTimeout(700);
     const moss = await shown(p);
@@ -142,7 +146,7 @@ async function atSize(browser, c, name, size) {
 // The overview open: no bookmarks over it, nor the room they take on a page
 async function noneFar(p, name) {
   await p.locator('#book .bk-column').waitFor({ timeout: LOADED_MS });
-  await press(p, "The overview: the notebook's pages, and the Shelf");
+  await press(p, OVERVIEW);
   await p.waitForFunction(() => document.querySelector('#book')?.dataset.far, null, { timeout: LOADED_MS });
   await p.waitForTimeout(600);
   assert.equal(await p.locator('#book .bk-marks').isVisible(), false, `${name}: no bookmarks on the overview`);
@@ -187,12 +191,12 @@ const shown = p =>
       stamp: stamp?.getAttribute('aria-label') ?? null,
     };
   });
-// Upright: along the top over the paper's head, clear of the dog-ear. Sideways: in the page stack left of the paper.
-// Never over each other, all on screen.
+// Along the top: over the paper's head, their feet tucked under it, clear of the dog-ear. Sideways on a phone: in the
+// page stack left of the paper. Never over each other, all on screen.
 async function placed(p, name) {
   const t = await tabs(p),
     { height } = p.viewportSize(),
-    { paper, ear, upright } = await p.evaluate(() => {
+    { paper, ear, onTop } = await p.evaluate(() => {
       const box = el => {
         const r = el?.getBoundingClientRect();
         return r && { x: r.left, y: r.top, right: r.right, bottom: r.bottom };
@@ -200,20 +204,23 @@ async function placed(p, name) {
       return {
         paper: box(document.querySelector('#book .bk-paper')),
         ear: box(document.querySelector('#book .bk-dogear')),
-        upright: matchMedia('(orientation: portrait)').matches,
+        onTop: getComputedStyle(document.querySelector('#book .bk-marks')).flexDirection === 'row',
       };
     });
   for (const [i, a] of t.entries()) {
     assert.ok(a.box.x >= 0 && a.box.bottom <= height, `${name}: ${a.chapter} on screen`);
-    if (upright) {
-      assert.ok(a.box.bottom <= paper.y + 1, `${name}: ${a.chapter} above the paper (${a.box.bottom} > ${paper.y})`);
+    if (onTop) {
+      assert.ok(
+        a.box.y < paper.y && a.box.bottom <= paper.y + TUCK + 1,
+        `${name}: ${a.chapter} above the paper (${a.box.y}–${a.box.bottom} by ${paper.y})`,
+      );
       if (ear) assert.ok(a.box.right <= ear.x, `${name}: ${a.chapter} clear of the dog-ear`);
     } else
       assert.ok(a.box.right <= paper.x + 1, `${name}: ${a.chapter} left of the paper (${a.box.right} > ${paper.x})`);
     const b = t[i + 1];
     if (b)
       assert.ok(
-        upright ? a.box.right <= b.box.x : a.box.bottom <= b.box.y,
+        onTop ? a.box.right <= b.box.x : a.box.bottom <= b.box.y,
         `${name}: ${a.chapter} and ${b.chapter} apart`,
       );
   }

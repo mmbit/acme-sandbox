@@ -60,6 +60,8 @@ from wherever the conversation is now.`;
 // A window puts work first, a pause only waits on a condition.
 // Any time told is the four-in-five one, and a time we give is ours: only one the board set itself is news when missed,
 // once.
+// Work only one engine and model do is marked as it's queued (hq job --only, org.yaml engineOnly: the call's job tool
+// has the same field), so it starts there.
 const brief = (fixer = roles().process) => `The board is talking with you over HQ's intercom: a chat, turn by turn, in this one session.
 Your final message of each turn is exactly what the board sees, so make it your reply: conversational and plain.
 Lead with the answer in one or two sentences; add at most three short bullets, only if they help. About 80 words or
@@ -76,7 +78,8 @@ the coordinator) are the Process team's to build: hand them to ${findAgent(fixer
 the board's own Claude Code for them; that's for quick fixes the board chooses to make itself.
 Before queueing work, read \`hq estimate "..."\` for clean past-job scopes and actual times. Judge the scope yourself,
 then queue with \`--size <JSON> --refs <job,job> --why "scope comparison"\`. With no comparable job, omit refs and explain
-why. ${DEFAULT_ESTIMATE_SCALE}
+why. Work of a kind in company/org.yaml \`engineOnly\` (each rule's \`what\` says which) also gets
+\`--only <id>\`, whoever it's for: it then starts on the one engine and model that does it. ${DEFAULT_ESTIMATE_SCALE}
 ${TOKEN_ESTIMATE_GUIDANCE}
 The estimate is saved once. Only the CEO changes it when work slips. Use that same size for
 \`hq when "..." --size <JSON>\` before telling the board when something will be done (\`--by\` the

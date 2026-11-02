@@ -3,7 +3,8 @@
 // words by a translate, and a whole group's clip, post-it words and answers (bookgroups.js, bookanswers.js) with it, so
 // what shows while it's held is what lands and nothing jumps once it's let go. Let go, it lands as new things in the page's lists
 // (bookselectmath.js), one step for Undo, and the canvas goes once the tiles under it show them. Carried onto a call's
-// window instead, its pictures go to the call (calldrop.js) and everything stays where it was on the page.
+// window instead, its pictures go to the call (calldrop.js) and everything stays where it was on the page. A box of
+// words' grip starts the same move with any tool (grab).
 import { draw } from '/__review/ink.js';
 import { drawScrap } from './bookscrapdraw.js';
 import { sfx } from '../audio.js';
@@ -20,7 +21,7 @@ import {
   union,
 } from './bookselectmath.js';
 import { boxOf } from './notebookstack.js';
-import { bounds, boxOfText, frameAt, frameDown, pageOf, swapIn, textEl } from './bookselect.js';
+import { bounds, boxOfText, choose, frameAt, frameDown, letGo, pageOf, swapIn, textEl } from './bookselect.js';
 import { followPress } from './bookpress.js';
 
 // a press moves or scales once it has moved this far (screen px); let go, the lifted things settle in SETTLE_MS
@@ -32,8 +33,8 @@ const PAD = 2,
   CANVAS_MAX = 16e6;
 
 // A press on the selection (corner -1) or on a corner's handle (0 top-left, then clockwise): it lifts once it moves,
-// and lands where it's let go
-export function drag(sel, e, { corner }) {
+// and lands where it's let go (then: after it's let go, moved or not)
+export function drag(sel, e, { corner, then = null }) {
   const { book } = sel,
     from = pageOf(book, e),
     b = bounds(sel);
@@ -49,17 +50,30 @@ export function drag(sel, e, { corner }) {
     book.calls?.lightCall(held.onCall);
   };
   const up = u => {
-    if (!held) return;
-    const cancelled = u.type === 'pointercancel',
-      onCall = held.onCall && !cancelled;
-    book.calls?.lightCall(false);
-    // (on the call, the page keeps its own: the things land back where they were, at once)
-    if (onCall) held.canvas.style.transform = '';
-    drop(sel, held, onCall || cancelled ? null : tr);
-    if (onCall) book.calls.dropOnCall(sel.scraps.map(s => s.url));
+    if (held) {
+      const cancelled = u.type === 'pointercancel',
+        onCall = held.onCall && !cancelled;
+      book.calls?.lightCall(false);
+      // (on the call, the page keeps its own: the things land back where they were, at once)
+      if (onCall) held.canvas.style.transform = '';
+      drop(sel, held, onCall || cancelled ? null : tr);
+      if (onCall) book.calls.dropOnCall(sel.scraps.map(s => s.url));
+    }
+    then?.();
   };
   followPress(e, { move, up });
   return true;
+}
+// A press on a box of words' grip (booktexts.js), with any tool: the box moved as Select moves what it picks (alone,
+// the rest of its scrap staying), and let go once it lands unless Select is the tool (keep).
+export function grab(sel, box, e, { keep }) {
+  e.preventDefault();
+  sel.clip.away();
+  // (a box just typed and emptied is gone by now: booktexts.js commit)
+  if (!box.isConnected || !box.view.page.ink) return true;
+  letGo(sel);
+  choose(sel, box.view, { texts: [box.typed] });
+  return drag(sel, e, { corner: -1, then: keep ? null : () => letGo(sel) });
 }
 // A move from one point to another, anywhere (the paper is endless every way);
 // with Shift, straight across or straight down

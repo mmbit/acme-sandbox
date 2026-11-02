@@ -12,7 +12,8 @@ import * as redraws from './redraws.ts';
 import { lastPlayed } from './forecast.ts';
 import { deadlinePressure, pacedTakes, spareOnly, type Order } from './planner.ts';
 import { measuredMb, plannerCapacity, pauseBudget } from './room.ts';
-import { db, inOneStep, mergePending, once, planChange, prepared, scrub } from './db.ts';
+import { db, inOneStep, mergePending, once, OPEN_PRS, planChange, prepared, scrub, workBranch } from './db.ts';
+export { OPEN_PRS, workBranch } from './db.ts';
 import { codeIn, codeOf, numbered } from './jobcodes.ts';
 import { publish, redact, redactJob, status, type RunningJob } from './events.ts';
 import { createHash, randomBytes } from 'node:crypto';
@@ -74,6 +75,7 @@ import * as engineOnly from './engineonly.ts';
 import { runEnded, runStarted, runsLost } from './agenttime.ts';
 import { sweepTeam } from './team.ts';
 import * as owed from './owed.ts';
+import * as cardread from './cardread.ts';
 import { answerLetGo, cardHeard, holdAnswer } from './inbox.ts';
 import * as later from './later.ts';
 import { shownCard } from './shown.ts';
@@ -443,20 +445,17 @@ export function lineageTo(job: string) {
     union select r.replaces from line join job_replacement_links r on r.job = line.id) select id from line`;
 }
 
-// Open work: a job queued, running or waiting for the board, and a pull request in review, stuck or waiting for the
-// board's call.
+// Open work: a job queued, running or waiting for the board.
 const OPEN_JOB_STATUSES = ['queued', 'running', 'blocked'];
 export const OPEN_JOBS = `('${OPEN_JOB_STATUSES.join("', '")}')`;
 export const isOpenJob = (job: { status: string }) => OPEN_JOB_STATUSES.includes(job.status);
-export const OPEN_PRS = "('open', 'stuck', 'board')";
 // A board call's item that won't be worked on any more (ledger.ts): a job carrying it queues nothing, and it carries no
 // board's word (BOARD_CALL). Every other status is a live item. Here, not in ledger.ts, which imports this module.
 export const ENDED_ITEMS = ['dropped', 'replaced'];
 
-// A job's branches in SQL, for the jobs row `j` names. Its work branch is where its own work goes (its own branch, else
-// job/<id>). Its loop branch is the branch whose review loop it's in (its own, else its pull request's).
-export const workBranch = (j: string) => `coalesce(${j}.branch, 'job/' || ${j}.id)`;
+// The branch where a job's own work goes: its own branch, else job/<id>.
 export const workBranchOf = (job: { id: number; branch: string | null }) => job.branch ?? `job/${job.id}`;
+// A job's loop branch in SQL, for the jobs row `j` names: its own branch, else its pull request's.
 export const loopBranch = (j: string) => `coalesce(${j}.branch, (select p.branch from prs p where p.number = ${j}.pr))`;
 // The ids of the jobs whose loopBranch is `branch` (SQL), found through the branch and pr indexes rather than every job's
 // row.
@@ -2387,6 +2386,7 @@ type RunEnd = {
   withdrawn?: boolean;
   seat?: string;
   usage?: unknown;
+  no_engine?: boolean;
   lost?: unknown;
   lostAt?: unknown;
   members?: string[];
@@ -2425,11 +2425,22 @@ function finishJob(id: number, r: RunEnd) {
       result:
         `${r.result ?? ''}\n\nhq up hands a job on a lighter model up to its agent's own, and this one ran on its own.`.trim(),
     };
+  // A card reader's job that ends leaving its card unread failed: the card stays off the desk phone until the reader
+  // passes it on or answers it (cardread.ts)
+  const unread = r.status === 'done' ? cardread.unread(id) : [];
+  if (unread.length)
+    r = {
+      ...r,
+      status: 'failed',
+      result:
+        `${r.result ?? ''}\n\nCard #${unread.join(', #')} still waits for your read: \`hq card pass\` or \`hq card settle\` it.`.trim(),
+    };
   if (job.status === 'running')
     runEnded(
       id,
       r.status,
       r.status === 'interrupted' && typeof r.lostAt === 'string' ? Date.parse(r.lostAt) : undefined,
+      r.no_engine === true,
     );
   // the run's token use (usage.ts): a bad report never stops the finish
   if (r.usage && job.status === 'running')
@@ -2594,7 +2605,7 @@ function fileParkedCard(job: Job, request: NonNullable<RunEnd['request']>, body:
     visibleFrom,
     decides,
   } = request; // (zips, visibleFrom, address, questions, decides)
-  return createRequest({
+  return createRead(cardread.waitsForRead(job.agent, job.id, request), {
     kind,
     title,
     body,
@@ -3060,11 +3071,23 @@ function insertCard(
 
 // hq ask and hq request's card (server.ts): held for the work it waits for (later.ts holdsFor), which hq ask names with
 // --when; the reply says so (held). A refusal says why.
-export function fileCard(r: Parameters<typeof createRequest>[0] & { when?: unknown }) {
+// read: it waits for the read of org.yaml's card reader too (cardread.ts), whom the reply names (reading)
+export function fileCard(r: Parameters<typeof createRequest>[0] & { when?: unknown; read?: boolean }) {
   const holds = later.holdsFor(r.job, r.when);
   if (typeof holds === 'string') return holds;
-  const card = createRequest({ ...r, holds });
-  return typeof card === 'object' && holds.length ? { ...card, held: later.heldFor(card.id) } : card;
+  const card = createRead(r.read, { ...r, holds });
+  if (typeof card !== 'object') return card;
+  const reading = later.awaitsRead(card.id) && { reading: roles().cards };
+  return { ...card, ...(holds.length && { held: later.heldFor(card.id) }), ...reading };
+}
+// The card, and with read the card reader's job reading it before the desk phone (cardread.ts), in one step
+function createRead(read: boolean | undefined, r: NewCard) {
+  if (!read) return createRequest(r);
+  return inOneStep(() => {
+    const card = createRequest({ ...r, holds: [...(r.holds ?? []), later.READ] });
+    if (typeof card === 'object') cardread.queueRead(card.id);
+    return card;
+  });
 }
 
 // The desk phone also shows which of a credential request's keys are already saved, and, for an approval with a
@@ -3135,7 +3158,7 @@ const grants = (r: { kind: string; approves: string | null; secrets: string | nu
 // seat's sign-in. Every card comes whole, whatever it's about (the board, 2026-10-02 and 2026-10-06). A key typed into
 // a card's key fields never reaches it: answerRequest keeps only which were saved.
 // A page at a time, so every card stays reachable: { cards, more, total }; before = the last card shown, for the next page.
-const ARCHIVED = "status != 'open' and kind != 'login'",
+const ARCHIVED = "status != 'open' and kind != 'login' and settled is null",
   ARCHIVE_PAGE = 50;
 // The finder ranks these small rows locally. Full cards and their attachments load only when opened.
 export function listArchiveIndex() {
@@ -3257,6 +3280,27 @@ export function answerRequest(
   if (!voiceprints.settleYearlyCard(req.id)) answerHeard(req, recorded, gotIt);
   return { ok: true };
 }
+// The card reader (the CEO, usually) answers a colleague's card in the board's place while it waits for their read
+// (cardread.ts). It never reaches the desk phone or the board's archive, and its asker and the jobs waiting for it hear
+// that answer as they would the board's. Not a card only the board can answer: keys, an approval, or the board's own
+// photos, documents or zips.
+export function settleRequest(id: number, answer: string, by: string) {
+  const req = db.prepare("select * from requests where id = ? and status = 'open'").get(id) as any;
+  if (!req || !later.awaitsRead(id)) return 404;
+  if (db.prepare('select 1 from decisions where request = ? and answered is null and released is null').get(id))
+    return [409, 'only the board can answer a card linked to its awaited decision: pass it on'];
+  if (req.secrets || req.approves || req.photos || req.documents || req.zips)
+    return [
+      409,
+      'only the board can answer a card for keys, an approval or its own photos, documents or zips: pass it on',
+    ];
+  db.prepare('delete from request_holds where request = ?').run(id);
+  db.prepare('update requests set settled = ? where id = ?').run(by, id);
+  answerRecorded(req, answer, null, []);
+  answerHeard(req, answer, false, by);
+  return { ok: true };
+}
+
 // A card about a note, filed, answered on the desk phone or in the book, or taken off the desk phone unanswered: the
 // book reads the note's page again (a card about a page shows on the desk phone only: bookasks.ts)
 const bookReadsAgain = (req: { agent?: string | null; note?: number | null }) =>
@@ -3382,8 +3426,9 @@ function answerRecorded(req: any, answer: string, asked: Asked[] | null, picture
   bookReadsAgain(req);
 }
 
-// Who hears the answer: the asker, the jobs waiting for the card, the panel, or a parked job resuming
-function answerHeard(req: any, answer: string, gotIt: boolean) {
+// Who hears the answer: the asker, the jobs waiting for the card, the panel, or a parked job resuming. by: the card
+// reader who answered it in the board's place (settleRequest)
+function answerHeard(req: any, answer: string, gotIt: boolean, by?: string) {
   if (decisions.mergeCard(req.id)) {
     void visualDecided(req.id).catch(err => console.error('Could not resume visual merges:', err));
     return;
@@ -3402,7 +3447,8 @@ function answerHeard(req: any, answer: string, gotIt: boolean) {
   // The jobs waiting for the card read the answer when they start (tellWaiting). When the asker no longer hears it, the
   // first of them (heir) hears it in its place, and no new job is made for it. The products' lines go to the job that
   // hears it, and each other waiting job reads which job brings each product back.
-  const waitingLine = `The board answered card #${id} ("${req.title}"), which this job waited for, on its desk phone: ${answer}`;
+  const { who, where } = answeredBy(by);
+  const waitingLine = `${who} card #${id} ("${req.title}"), which this job waited for, ${where}: ${answer}`;
   if (
     !req.secrets &&
     !panel &&
@@ -3413,10 +3459,10 @@ function answerHeard(req: any, answer: string, gotIt: boolean) {
     const heir = askerHears(req) ? undefined : waitingFor(id)[0];
     const heard = owed.answered(req, answer, heir, (extra, others) => {
       tellWaiting(id, waitingLine, job => (job === heir ? extra : others));
-      const line = `The board answered your request #${id} ("${req.title}") on its desk phone: ${answer}${extra}`;
+      const line = `${who} your request #${id} ("${req.title}") ${where}: ${answer}${extra}`;
       // (an open proposal whose work waits for the card may hold it for the asker)
       if (heir === undefined && !askerHears(req) && holdAnswer(id)) return undefined;
-      return tell(req, line, { audience: true, waiting: heir });
+      return tell(req, line, { audience: true, waiting: heir, by });
     });
     if (heard) db.prepare('update requests set heard_by = ? where id = ?').run(heard, id);
   }
@@ -3426,13 +3472,20 @@ function answerHeard(req: any, answer: string, gotIt: boolean) {
     tellWaiting(id, waitingLine);
     db.prepare(
       "update jobs set status = 'queued', not_before = 0, note = ? where id = ? and status = 'blocked' and request = ? and kind = 'work'",
-    ).run(
-      `The board answered your request #${id} ("${req.title}") on its desk phone: ${answer}\n\n${AUDIENCE}`,
-      req.job,
-      id,
-    );
+    ).run(`${who} your request #${id} ("${req.title}") ${where}: ${answer}\n\n${answerAudience(by)}`, req.job, id);
   }
 }
+
+// Who answered a card and where, as its asker and the jobs waiting for it hear it
+const answeredBy = (by?: string) =>
+  by
+    ? { who: `${findAgent(by)!.name} answered`, where: "in the board's place, as it wasn't the board's to decide" }
+    : { who: 'The board answered', where: 'on its desk phone' };
+
+const answerAudience = (by?: string) =>
+  by
+    ? `${findAgent(by)!.name} answered in the board's place. The board never saw the card. Nobody reads your messages here live: write them as a report on the work.`
+    : AUDIENCE;
 
 // The board's answer to a card that no job heard, which open proposals may hold for its asker (inbox.ts holdAnswer): the
 // job the first one accepted becomes hears it (acceptance.ts queue), or, once the last is dropped, the asker hears it as
@@ -3445,8 +3498,9 @@ export function heldAnswerDropped(request: number) {
   if (!answerLetGo(request)) return;
   const req = db.prepare('select * from requests where id = ? and heard_by is null').get(request) as any;
   if (!req) return;
-  const line = `The board answered your request #${request} ("${req.title}") on its desk phone: ${req.answer}`;
-  const heard = tell(req, `${line}${owed.carriers(request)}`, { audience: true });
+  const { who, where } = answeredBy(req.settled);
+  const line = `${who} your request #${request} ("${req.title}") ${where}: ${req.answer}`;
+  const heard = tell(req, `${line}${owed.carriers(request)}`, { audience: true, by: req.settled });
   if (heard) heardHeldAnswer(request, heard);
 }
 
@@ -3507,8 +3561,9 @@ export const askedInIntercom = (request: number) =>
 function tell(
   req: { id: number; agent: string | null; job: number | null; title: string },
   note: string,
-  o: { call?: number; audience?: boolean; waiting?: number } = {},
+  o: { call?: number; audience?: boolean; waiting?: number; by?: string } = {},
 ) {
+  const readerName = o.by ? findAgent(o.by)!.name : undefined;
   // (a job parked on another request since isn't this one's to resume: the call becomes a job of its own)
   const job = req.job
     ? (db.prepare('select id, status, kind, request from jobs where id = ?').get(req.job) as
@@ -3516,15 +3571,9 @@ function tell(
     : undefined;
   if (job && isIntercom(job)) {
     // (an intercom turn's reply goes to the board: no AUDIENCE line; a quick run's not)
-    return hear(
-      note,
-      o.call
-        ? `Call with ${findAgent(ceo())?.name ?? 'the CEO'} · about request #${req.id}`
-        : `Answered request #${req.id} on the desk phone`,
-      o.call,
-    );
+    return hear(note, heardLabel(req.id, o.call, readerName), o.call);
   }
-  if (o.audience) note = `${note}\n\n${AUDIENCE}`;
+  if (o.audience) note = `${note}\n\n${answerAudience(o.by)}`;
   if (job?.status === 'blocked' && job.request === req.id) {
     db.prepare(
       "update jobs set status = 'queued', not_before = 0, note = ?, call = coalesce(?, call), answers = ? where id = ?",
@@ -3542,10 +3591,10 @@ function tell(
     const answering = createJob({
       agent: req.agent,
       code: codeOf(req.job ?? null) ?? undefined, // (the asking task's code.)
-      title: `The board on: ${req.title}`.slice(0, 140),
+      title: `${readerName ?? 'The board'} on: ${req.title}`.slice(0, 140),
       call: o.call,
       from: req.job ?? undefined,
-      prompt: `${note}${running}\n\nAct on what the board decided, and pass changes on to whoever owns them.`,
+      prompt: `${note}${running}\n\nAct on what ${readerName ?? 'the board'} decided, and pass changes on to whoever owns them.`,
     }).id;
     // (the board's word: a pause lets it through, PAUSE_LETS)
     db.prepare('update jobs set answers = ? where id = ?').run(req.id, answering);
@@ -3553,6 +3602,14 @@ function tell(
   }
   return req.job ?? undefined;
 }
+
+// An answer's label in the intercom: a call's, the card reader's or the desk phone's
+const heardLabel = (id: number, call: number | undefined, readerName: string | undefined) =>
+  call
+    ? `Call with ${findAgent(ceo())?.name ?? 'the CEO'} · about request #${id}`
+    : readerName
+      ? `${readerName} answered request #${id}`
+      : `Answered request #${id} on the desk phone`;
 
 // The cards an agent files itself, the only ones hq close and hq rewrite touch: not the coordinator's own (a pull request's
 // review card, a seat's sign-in, a guest card, an email card, a gated tool's card: agentRequest in server.ts refuses to file those too).
@@ -3565,16 +3622,38 @@ export const agentCard = (id: number) => {
   return !!kind && !['review', 'login', 'guest', 'mail', 'call', 'late'].includes(kind) && !approvals.toolKind(kind); // (mail: outbox.ts, late: reserved for HQ; call: callouts.ts)
 };
 
-// An agent rewrites its own open request (hq rewrite); the CEO may rewrite any an agent filed, to keep the desk phone short.
+// An agent rewrites its own open request (hq rewrite). The CEO may rewrite any an agent filed, and the card reader any
+// waiting for their read, to keep the desk phone short. questions: its question fields in their place, as hq ask's
+// --questions. Never on a card for keys, an approval or a sign-in (answerBox), nor
+// one whose questions a merge decision gave it (decisions.ts mergeQuestions).
 // team: a team member's own request is the one its job filed (its name may be another job's member's too).
-export function rewriteRequest(id: number, agent: string, body: string, from?: number, team = false) {
+export function rewriteRequest(
+  id: number,
+  agent: string,
+  body: string,
+  from?: number,
+  team = false,
+  questions?: unknown,
+) {
   if (!body.trim() || body.length > 20_000) return 400;
   if (!agentCard(id)) return 404;
+  const reader = !team && agent === roles().cards && later.awaitsRead(id);
   const theirs = db
-    .prepare(`select 1 from requests where id = ? and status = 'open' and (agent = ? or ? = ?) and (? = 0 or job = ?)`)
-    .get(id, agent, team ? '' : agent, ceo(), team ? 1 : 0, from ?? 0);
+    .prepare(
+      `select secrets, approves, seat from requests where id = ? and status = 'open' and (agent = ? or ? = ? or ?)
+      and (? = 0 or job = ?)`,
+    )
+    .get(id, agent, team ? '' : agent, ceo(), reader ? 1 : 0, team ? 1 : 0, from ?? 0) as
+    { secrets: string | null; approves: string | null; seat: string | null } | undefined;
   if (!theirs) return 404;
-  newBody(id, body.trim());
+  const asked = questions === undefined ? undefined : asking.questions(questions);
+  if (typeof asked === 'string') return [400, `its --questions: ${asked}`] as const;
+  if (asked && (theirs.secrets || theirs.approves || theirs.seat || decisions.mergeCard(id)))
+    return [
+      409,
+      "this card's answer fields are HQ's own (keys, an approval, a sign-in or a merge decision): rewrite its text only",
+    ] as const;
+  newBody(id, body.trim(), asked && JSON.stringify(asked));
   return { ok: true };
 }
 // hq topic: an agent sets or changes the topic of an open card it filed, of any kind (an email draft's or a guest's too).
@@ -3597,15 +3676,16 @@ export function setTopic(id: number, agent: string, topic: unknown, from?: numbe
 // An open card whose text changes (hq rewrite) comes back as a new one: first on the desk phone,
 // unread in HQ, and ringing the board's devices as a new card would. The same text again changes nothing. A card for later
 // stays silent: it rings, if it's urgent, when it shows (later.ts).
-function newBody(id: number, body: string) {
+function newBody(id: number, body: string, questions?: string) {
   const now = new Date().toISOString();
   const r = db
     .prepare(
-      'update requests set body = ?, changed = ? where id = ? and body != ? returning kind, title, urgency, approves, hidden_until',
+      `update requests set body = ?, questions = coalesce(?, questions), changed = ? where id = ?
+      and (body != ? or ? is not null and questions is not ?) returning kind, title, urgency, approves, hidden_until`,
     )
-    .get(body, now, id, body) as
+    .get(body, questions ?? null, now, id, body, questions ?? null, questions ?? null) as
     { kind: string; title: string; urgency: string; approves: string | null; hidden_until: string | null } | undefined;
-  if (r && !later.heldFor(id) && !later.isHidden(r.hidden_until, now))
+  if (r && !later.held(id) && !later.isHidden(r.hidden_until, now))
     announceRequest({
       id,
       kind: r.kind,
@@ -3730,6 +3810,7 @@ export const openRequests = (me: Reader, id?: number) =>
         topic: r.topic,
         ...(later.isHidden(r.hidden_until) ? { hidden_until: r.hidden_until } : {}),
         ...(later.heldFor(r.id) ? { held: later.heldFor(r.id) } : {}),
+        ...(later.awaitsRead(r.id) ? { reading: roles().cards } : {}),
       };
       const asked = r.questions ? { questions: r.questions } : {};
       if (r.customers && !readsCard(r.id, me)) return { ...shown, body: null, left_out: CARD_REFUSED };
@@ -3746,10 +3827,12 @@ export const askedBy = (id: number, agent: string) =>
 
 // hq wait (a held card's answer is refused: later.ts waitProblem)
 export function requestAnswer(id: number, job: number) {
-  const r = db.prepare('select status, answer from requests where id = ? and job = ?').get(id, job) as
-    { status: string; answer: string | null } | undefined;
+  const r = db.prepare('select status, answer, settled from requests where id = ? and job = ?').get(id, job) as
+    { status: string; answer: string | null; settled: string | null } | undefined;
   const held = r && later.waitProblem(id);
   if (held) return [409, held] as const;
-  // a card about products: whose job brings each back (owed.ts).
-  return r ? { status: r.status, answer: r.answer === null ? null : r.answer + owed.told(id) } : 404;
+  // a card about products: whose job brings each back (owed.ts). settled: the card reader who answered in the board's place.
+  if (!r) return 404;
+  const answer = r.answer === null ? null : r.answer + owed.told(id);
+  return { status: r.status, answer, ...(r.settled && { settled: r.settled }) };
 }

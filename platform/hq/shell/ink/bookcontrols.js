@@ -48,12 +48,12 @@ export function mountControls(book, act) {
   mountPrefs(cog);
   const { before, after, name, add } = pageButtons(book, act),
     rule = document.createElement('hr');
-  pages.append(before, after, name, rule, over, add, cog);
+  // (a one-page book has no overview or New page: none on its rail, where a control hidden keeps its slot.)
+  pages.append(before, after, name, rule, ...(scope?.singlePage ? [] : [over, add]), cog);
+  // (the asks still open on the page, counted by its title; in a guest's book, the scraps handed to them.)
+  const forYou = mountForYou(book);
   const send = scope ? sendKey(act) : null,
     locked = scope ? null : lockLine();
-  // (the asks still open on the page, counted on the rail over the page's arrows; in a guest's book, the scraps handed
-  // to them.)
-  const forYou = mountForYou(book, pages);
   return {
     update() {
       const far = act.level() !== 'page',
@@ -62,8 +62,7 @@ export function mountControls(book, act) {
       setPressed(over, far);
       // (the overview open: only its own button, pressed, to come back by)
       for (const el of [before, name, after, rule]) el.hidden = far;
-      over.hidden = !!scope?.singlePage;
-      add.hidden = far || !!scope?.singlePage;
+      add.hidden = far;
       cog.hidden = far;
       if (send) send.hidden = far || !page || shut(page) || page.kind === 'call';
       locked?.(!far && !!page && shut(page) && (page.sent || page.sending ? 'Sent, locked' : 'Locked'));
@@ -120,14 +119,15 @@ function sendKey(act) {
   return send;
 }
 // The board's page sent, or else read-only (a call's notes page till its follow-up hands it out): locked, a lock in
-// the tools' place, its words its tooltip, the tools gone while it shows (bookshare.css). Returns locked(words, or false).
+// the tools' place, its words its tooltip, the tools unseen in their room while it shows (bookshare.css). Returns
+// locked(words, or false).
 function lockLine() {
   const line = island('tools').closest('.bk-column'),
     lock = document.createElement('p');
   lock.className = 'bk-locked';
   lock.innerHTML = `${ICONS.lock}<span></span>`;
   lock.setAttribute('role', 'status');
-  island('tools').parentElement.after(lock);
+  island('tools').parentElement.append(lock);
   return words => {
     line.toggleAttribute('data-locked', !!words);
     if (words) lock.lastChild.textContent = words;

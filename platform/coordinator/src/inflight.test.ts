@@ -420,7 +420,7 @@ test('a card wait: a queued job of yours that never started, on an open card the
   await h.answer(answered, 'Done.');
   const review = (jobs.createRequest({ kind: 'review', title: 'PR #3', body: 'x', pr: 3 }) as { id: number }).id;
   const customer = (jobs.createRequest({ kind: 'decision', title: 'A refund', body: 'x', agent: 'lark' }) as { id: number }).id;
-  db.prepare('update requests set customers = 1 where id = ?').run(customer);   // (marked before as a customer's)
+  h.markCustomer('requests', customer);   // (marked before as a customer's)
   const foreign = (jobs.createRequest({ kind: 'decision', title: 'Private', body: 'x', agent: 'bolt' }) as { id: number }).id;
   const next = queue('kit', 'Publish', { queuedBy: 'lark', engine: 'card-wait' });
   const paused = await h.start({ agent: 'kit', title: 'Paused mid-run', queuedBy: 'lark' });

@@ -131,14 +131,11 @@ function keepSnip(id: number, snip: { type: string; clean: Buffer }) {
   keepFile(`${DIR}/${file}`, snip.clean);
   db.prepare('update book_notes set snip = ? where id = ?').run(file, id);
 }
-// POST /api/book/note/edit { id, words?, said?, was? }: an open note's words corrected (a word written over). New words
-// are judged again, never a call's (addNote; bookjudge.ts). was: the words they replace, refused when the note has
-// others by now (handwriting read late leaves the board's typed words.)
+// POST /api/book/note/edit { id, words?, said? }: an open note's words corrected (a word written over). New words are
+// judged again, never a call's (addNote; bookjudge.ts).
 export function editNote(b: any, who = BOARD) {
   const n = openNote(Number(b?.id), who);
   if (!n) return 404;
-  if (b.was !== undefined && b.was !== n.words)
-    return [409, 'the note has other words by now: read it again'] as Refused;
   const said = b.words === undefined ? { words: n.words, said: n.said } : wordsOf(b.words, b.said);
   if (isRefused(said)) return said;
   db.prepare('update book_notes set words = ?, said = ?, updated = ? where id = ?').run(

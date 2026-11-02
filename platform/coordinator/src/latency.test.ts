@@ -188,3 +188,17 @@ test('stalls make one queued job, of any cause, on spare room; a started job hol
   );
   assert.match(jobs()[1].prompt, /2\.2 s behind tick\.$/);
 });
+
+test("a request's excluded awaits add up in its own scope, not another's", async () => {
+  const [one, other] = await Promise.all(
+    [30, 0].map(ms =>
+      latency.requestHold(async excluded => {
+        await latency.exclude(new Promise(r => setTimeout(r, ms)));
+        await latency.exclude(new Promise(r => setTimeout(r, ms)));
+        return excluded.ms;
+      }),
+    ),
+  );
+  assert.ok(one >= 55, `${one} ms`);
+  assert.ok(other < 25, `${other} ms`);
+});

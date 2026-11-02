@@ -13,7 +13,6 @@ import { lift } from './lift.js';
 import * as marks from './marks.js';
 import { boxOfLines, marked } from './mark.js';
 import { expose } from './snapshot.js';
-import * as written from './written.js';
 
 // The Pencil up this long and the mark is done: about a breath, so a circle and the arrow after it stay one note
 export const SETTLE_MS = 1500;
@@ -125,18 +124,15 @@ async function heardNow(r) {
 // 9 s), for the post-it to say so }; null if the mark was let go while it developed (another maybe begun: never that
 // one's lines).
 export async function toBook(r) {
-  // (handwriting: the lines not read yet are read now, and words read as written are said 'written')
-  written.readNow(r);
   const mark = r.mark,
     words = r.text.value.trim(),
-    said = !words ? null : r.spoken && !r.typed ? 'spoken' : !r.typed && words === mark.written ? 'written' : 'typed',
+    said = !words ? null : r.spoken && !r.typed ? 'spoken' : 'typed',
     general = mark.kind === 'general';
   const snip = general ? null : await snipOfMark(r, mark, r.strokes);
   if (r.mark !== mark) return null;
   const anchor = general ? { ...marked(r), el: null } : marked(r);
   const note = await marks.post(r, { anchor, live: r.mark.el, words, said, snip });
   r.steps.push({ kind: note.group ? 'scrap' : 'note', id: note.id }); // (scrap)
-  written.sent(r, mark, note);
   mark.filed = true;
   marks.paint(r);
   return { note, snip, photoless: !general && !snip };

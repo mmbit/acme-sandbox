@@ -14,10 +14,11 @@ const round = n => Math.round(n * 100) / 100;
 // What the eraser does to a page's strokes as it passes from a to b (page px), r its radius: each line it touches is
 // cut where it passed (the pieces either side kept as strokes of their own), and a filled shape it touches goes whole
 // (its inside is one thing). Returns null when it touched nothing, else { ink: the page's strokes now (those it didn't
-// touch the same objects), box: what changed on the page }.
+// touch the same objects), box: what changed on the page, made: [stroke, piece] for each piece cut from a stroke }.
 export function rub(strokes, a, b, r) {
   let touched = false;
   const ink = [],
+    made = [],
     box = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };
   for (const s of strokes) {
     const pieces = cut(s, a, b, r);
@@ -28,8 +29,9 @@ export function rub(strokes, a, b, r) {
     touched = true;
     grow(box, reachOf(s));
     ink.push(...pieces);
+    made.push(...pieces.map(piece => [s, piece]));
   }
-  return touched ? { ink, box } : null;
+  return touched ? { ink, box, made } : null;
 }
 // A stroke's pieces after the eraser's pass, or null when it isn't touched
 export function cut(s, a, b, r) {

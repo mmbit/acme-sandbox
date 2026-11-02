@@ -1,7 +1,7 @@
 // The groups on a Notebook page as the board sees them (knowledge/notes/platform/notebook.md), each a scrap unit the
 // page lays (bookunits.js): picked with Select (bookselect.js), whose bar has its Move to page… and its Delete. A
-// scrap's post-it words in its body under its picture (typed in and edited with the pen while its page is open:
-// bookamend.js); and under each unit its answers (review mode's slips: a tick, and the room pulled out under one to
+// scrap's post-it words in its body under its picture (typed in while its page is open; the pen's strokes over them
+// are ink); and under each unit its answers (review mode's slips: a tick, and the room pulled out under one to
 // answer in, drawn or typed with the text tool: bookslipreply.js) with the board's replies, a reply's Undo there in its seconds, the agent's face and pencil dots while an
 // answer comes (or why none came), then the agents' desk-phone cards about it
 // (bookasks.js), one still open edged red (bookforyou.js). A group deleted crumples away at once, Undo a tap away in a
@@ -16,7 +16,6 @@ import { thingsPicture } from './bookpaperdraw.js';
 import { boundsOf, union } from './bookselectmath.js';
 import { CSS as SLIP_CSS, slipHtml, wireSlips } from '/__review/slip.js';
 import { scribbled } from '/__review/gestures.js';
-import { keepFromScribble } from '/__review/penwords.js';
 import { scratched } from './bookgroupmath.js';
 import { boxOf, slipsUnder } from './notebookstack.js';
 import { edit, keep } from './bookedit.js';
@@ -32,6 +31,7 @@ import { formHtml, formsIn, wireForms } from './bookanswerreply.js';
 import { sendForm, sendReply } from './bookanswersdata.js';
 import { waitingHtml } from './bookanswers.js';
 import { slipInkHtml } from './bookanswerart.js';
+import { CONTROLS } from './bookpan.js';
 
 // a reply can be taken back this long after it's written (notebooksend.ts SEND_MS)
 const REPLY_MS = 10_000;
@@ -95,8 +95,8 @@ function draw(gs, view) {
       // (a group whose elements are all off the page, deleted and not yet saved, is drawn no more)
       const { box } = partsNow(page, g.id);
       if (!box) return '';
-      // (a scrap's words part of its body, under its picture; its answers and replies under the unit, and whom it
-      // went to at its corner: bookunits.js places them. A scrap is a unit, no clip: Select's bar has its menu. job #14672)
+      // A scrap's words are part of its body, under its picture. Its answers and replies go under the unit, and whom it
+      // went to at its corner (bookunits.js places them). A scrap is a unit, no clip: Select's bar has its menu.
       const words = g.kind === 'scrap' ? wordsHtml(page, g, open) : '';
       const under = slipsHtml(g, view.rooms) + asksHtml(g, view.rooms, gs.book.dev);
       return `${words ? `<div class="bk-words" data-g="${g.id}">${words}</div>` : ''}${
@@ -116,16 +116,24 @@ function draw(gs, view) {
   wireForms(page, layer, forms, (a, sent) => sendForm(gs.book.dev, a.id, sent).then(() => readAgain(gs.book, page)));
   for (const b of layer.querySelectorAll('[data-unreply]'))
     b.addEventListener('click', () => unreply(gs, view, Number(b.dataset.unreply)));
-  // (the words' and answers' touches are their own: never the page's pan or ink. A scrap's words kept from Scribble
-  // for the pen take its strokes on the page: bookamend.js)
   for (const el of layer.querySelectorAll('.bk-words, .bk-under'))
-    for (const type of ['pointerdown', 'touchstart'])
-      el.addEventListener(type, e => e.target.matches('[data-pen]') || e.stopPropagation());
+    for (const type of ['pointerdown', 'touchstart']) el.addEventListener(type, e => ownTouches(gs, e));
   if (caret) caretBack(layer, caret);
-  // (what hangs under each unit counted in its place, and moved to its foot: bookunits.js. job #14672)
+  // What hangs under each unit is counted in its place and moved to its foot (bookunits.js).
   view.relay?.();
   markOpen(view, layer);
   gs.book.controls?.update();
+}
+// A press on a scrap's words or its answers, kept from the page unless it's the page's: the pen's strokes over words
+// kept from Scribble are ink, and a finger that moves the page (bookpan.js) moves it from a scrap's words as from bare
+// paper, its tap still the field's.
+function ownTouches(gs, e) {
+  const t = e.target,
+    penInk = t.matches('[data-pen]'),
+    fingerPan = e.type === 'pointerdown' && e.pointerType === 'touch' && !!gs.book.input?.fingerPans?.(),
+    onWords = !!t.closest('.bk-words') && !t.closest(CONTROLS);
+  if (penInk || (fingerPan && onWords)) return;
+  e.stopPropagation();
 }
 // A scrap's words being typed in, whose caret and words as typed the groups drawn again keep: { g, at, words } (null:
 // none). The words as typed go back while they're what's drawn but for the spaces at their ends, which the store
@@ -146,12 +154,32 @@ function caretBack(layer, caret) {
 function wireWords(gs, page, layer) {
   for (const f of layer.querySelectorAll('textarea.bk-scrap-words')) {
     const id = Number(f.closest('[data-g]').dataset.g);
-    f.pen = keepFromScribble(f);
+    keepFromScribble(f);
     f.addEventListener('input', () => {
       f.parentElement.dataset.words = f.value;
       typed(gs.book, page, id, f.value);
     });
   }
+}
+// A scrap's words field on a touch screen (an iPad's): read-only while it holds words and isn't being typed in, so
+// Apple's Scribble never takes a Pencil touching it and the pen's strokes over its words are ink on the page. A
+// finger's or a mouse's press, a tap that focuses it (the Pencil's too) or the keyboard's Tab make it editable again
+// before it's focused, so typing after a tap works as before. data-pen marks it read-only for the pen (not for good).
+function keepFromScribble(field) {
+  if (!matchMedia('(any-pointer: coarse)').matches) return;
+  const free = () => {
+    field.readOnly = false;
+    field.removeAttribute('data-pen');
+  };
+  const refresh = () => {
+    if (field.matches(':focus') || !field.value.trim()) return free();
+    field.readOnly = true;
+    field.setAttribute('data-pen', '');
+  };
+  field.addEventListener('pointerdown', e => e.pointerType !== 'pen' && free(), true);
+  field.addEventListener('focus', free);
+  field.addEventListener('blur', refresh);
+  refresh();
 }
 // A scrap's post-it words: while its page is open a field, its words typed in or edited with the pen saved to its
 // group (booksave.js typed), growing with them (a copy of them under it, unseen, gives its height); once it's sent,

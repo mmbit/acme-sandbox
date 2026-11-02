@@ -1,7 +1,9 @@
 // Words typed on a page of the book: a box placed at a point (the text tool, or a double click on the paper) with the
-// caret in it, typed, kept as it's left, edited again by a click or by the pen (bookamend.js), moved by Select
-// (bookselect.js), and gone once it's emptied. Each change is one step Undo takes back (book.steps). A page keeps them as texts: [{ x, y, w, text, color }],
-// x and y the words' top-left and w the width they wrap at, in the page's px, saved with its ink (booksave.js) and set
+// caret in it, typed with the device's keyboard, kept as it's left, edited again by a click or a tap (the caret where
+// it was tapped), moved by Select (bookselect.js) or by its grip with any tool, and gone once it's emptied or binned. The pen writing over a box is
+// ink, never its words: nothing here reads handwriting (board, call 176). Each
+// change is one step Undo takes back (book.steps). A page keeps them as texts: [{ x, y, w, text, color }], x and y the
+// words' top-left and w the width they wrap at, in the page's px, saved with its ink (booksave.js) and set
 // in its picture by the store (bookrender.ts: the same size, line and wrap). The boxes are the page's own elements, so
 // the book's pan and zoom carry them.
 //
@@ -13,6 +15,7 @@ import { boxesOf } from './bookwords.js';
 import { word } from './bookscope.js';
 import { landing } from './bookgroupmath.js';
 import { arrive } from './bookarrive.js';
+import { toward } from './bookedit.js';
 import { footOf, pointUnit } from './bookunits.js';
 import { UNIT_W } from './scrapunit.js';
 
@@ -42,10 +45,8 @@ export function mountTexts(book, hooks) {
     // as place() takes it, or the boxes' middle there (centre), wrapping at a readable width before right (page px),
     // long words a box per run of paragraphs. One step Undo takes back. Returns the texts added.
     put: (at, words, right, { centre = false } = {}) => put(tx, at, words, right, centre),
-    // A box edited, the caret at a point on screen ([clientX, clientY]), or at an index of its words
-    edit: (box, at, index) => edit(tx, box, { at, index }),
-    // A box's words made others (the pen's edits, bookamend.js): one step Undo takes back; emptied, the box goes.
-    rewrite: (box, words) => rewrite(tx, box, words),
+    // A box edited, the caret at a point on screen ([clientX, clientY])
+    edit: (box, at) => edit(tx, box, { at }),
     // The box being typed in kept as it is (a press elsewhere, a key)
     done: () => tx.editing?.words.blur(),
     editing: () => !!tx.editing,
@@ -76,6 +77,9 @@ function boxFor(tx, view, t) {
   el.classList.toggle('bk-landing', landing(view.page, t));
   // (words stacked as a note, a call's promise or review mode's general note: a post-it, as a scrap's words are.
   if (view.page.groups?.get(t.g)?.kind === 'note') el.dataset.note = '';
+  // (else its grip at its left: a press there is Select's move of it with any tool, booktools.js. Gone once with the
+  // old move (job #13071), missed by the board: call 176.)
+  else el.insertAdjacentHTML('beforeend', '<i class="bk-typed-grip" aria-hidden="true"></i>');
   setBox(el, t);
   view.el.append(el);
   return el;
@@ -93,18 +97,22 @@ function setBox(el, t) {
 
 // ---- typing
 
-// The keys a Pencil has no keyboard for, beside the box being typed in: delete the letter before the caret (or what's
-// selected), and a space. Pressed, the words keep the focus and the caret.
+// The bin beside the box being typed in: the whole box deleted (emptied and left, one step Undo takes back: commit).
+// The device's keyboard types the rest.
 function fixes(el) {
   const keys = document.createElement('span');
   keys.className = 'bk-typed-keys';
-  const key = (label, icon, command, value) =>
-    button({
-      label,
-      icon: svg(icon),
-      onClick: () => el.words.isContentEditable && document.execCommand(command, false, value),
-    });
-  keys.append(key(word('keyBackspace'), BACKSPACE, 'delete'), key(word('keySpace'), SPACE, 'insertText', ' '));
+  const gone = button({
+    label: word('keyDeleteBox'),
+    icon: svg(BIN),
+    onClick() {
+      if (!el.words.isContentEditable) return;
+      el.words.textContent = '';
+      el.words.blur();
+    },
+  });
+  gone.classList.add('bk-typed-gone');
+  keys.append(gone);
   // (their press is theirs: never the words' blur, the paper's pan or its ink)
   for (const type of ['pointerdown', 'mousedown', 'touchstart'])
     keys.addEventListener(type, e => {
@@ -115,8 +123,7 @@ function fixes(el) {
 }
 const svg = body =>
   `<svg viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${body}</svg>`;
-const BACKSPACE = '<path d="M7 5h9v10H7l-4-5z"/><path d="m9.5 8 4 4m0-4-4 4"/>',
-  SPACE = '<path d="M4 9v3h12V9"/>';
+const BIN = '<path d="M4 6h12M8 6V4h4v2m-6 0 1 10h6l1-10"/>';
 
 // A new box at the point: its first line's middle there, wrapping before right (page px), anywhere on the endless
 // paper
@@ -127,7 +134,7 @@ function place(tx, { view, x, y }, right) {
   edit(tx, boxFor(tx, view, t), { fresh: true });
 }
 // The box made editable with the caret in it (at a point on screen, else at its end); left, it's kept (commit)
-function edit(tx, el, { fresh = false, at = null, index = null } = {}) {
+function edit(tx, el, { fresh = false, at = null } = {}) {
   if (tx.editing?.el === el) return;
   tx.editing?.words.blur();
   const words = el.words,
@@ -138,7 +145,7 @@ function edit(tx, el, { fresh = false, at = null, index = null } = {}) {
   // (a browser without plain-text editing still edits; its pasted styles are dropped as it's kept: innerText)
   if (words.contentEditable !== 'plaintext-only') words.contentEditable = 'true';
   words.focus({ preventScroll: true });
-  caretAt(words, at, index);
+  caretAt(words, at);
   const keys = e => {
     // (the book's own keys never hear what's typed here)
     e.stopPropagation();
@@ -157,12 +164,11 @@ function edit(tx, el, { fresh = false, at = null, index = null } = {}) {
     { once: true },
   );
 }
-function caretAt(words, at, index) {
+function caretAt(words, at) {
   const sel = getSelection(),
     range = document.createRange();
   const pos = at && document.caretPositionFromPoint?.(at[0], at[1]);
-  if (index !== null) range.setStart(words.firstChild ?? words, index);
-  else if (pos && words.contains(pos.offsetNode)) range.setStart(pos.offsetNode, pos.offset);
+  if (pos && words.contains(pos.offsetNode)) range.setStart(pos.offsetNode, pos.offset);
   else {
     range.selectNodeContents(words);
     range.collapse(false);
@@ -182,9 +188,12 @@ function commit(tx, el, ed) {
   Object.assign(t, { text, color: ed.color });
   const texts = page.texts;
   if (ed.fresh) {
-    const { g, edge } = inUnit(page, t.x, t.y);
+    const { g, left, edge } = inUnit(page, t.x, t.y),
+      // (inside its scrap, at least NARROW wide, as put's: a tap past the scrap's edge, in the gap between columns or
+      // by a drawing, left the box no width, and the store refuses a page holding one.)
+      x = Math.max(left, Math.min(t.x, edge - NARROW));
     // (under what's in its scrap already: never over another box)
-    Object.assign(t, { g, w: Math.min(t.w, edge - t.x), y: Math.max(t.y, footOf(page, g)) });
+    Object.assign(t, { g, x, w: Math.min(t.w, edge - x), y: Math.max(t.y, footOf(page, g)) });
     setBox(el, t);
     texts.push(t);
     page.blank = false;
@@ -198,12 +207,6 @@ function commit(tx, el, ed) {
   }
   setBox(el, t);
   step(tx, el.view, () => Object.assign(t, ed.was));
-}
-// A box's words made others, kept as a typed change is
-function rewrite(tx, el, words) {
-  const t = el.typed;
-  el.words.textContent = words;
-  commit(tx, el, { fresh: false, color: t.color, was: { text: t.text, color: t.color } });
 }
 // A change made: the page saved soon, and its step for Undo, after which the page's boxes are made again from its texts
 function step(tx, view, undo) {
@@ -221,7 +224,8 @@ function step(tx, view, undo) {
 // ---- a press
 
 // A press on a box not being typed in: a click without a move edits it, the caret where it was clicked (a Pencil's
-// tap); a drag over its words writes over them instead, as on the paper. (Select moves boxes: one way to move things.)
+// tap); a drag over its words writes over them instead, as on the paper. (Select moves boxes, its grip too: one way to
+// move things.)
 function pressed(tx, el, e) {
   if (el.dataset.editing !== undefined) return true; // (the words' own: the caret, a selection)
   e.preventDefault();
@@ -238,14 +242,13 @@ function pressed(tx, el, e) {
   return true;
 }
 
-// A drag over a box's words as a line on its page (the board's "Left mouse: draw", and the Pencil's): from where it
-// pressed, so a line through the words strikes them out or slices them open (bookamend.js), and any other is ink. Not
-// with Select, whose presses move what they pick.
+// A drag over a box's words as a line on its page (the board's "Left mouse: draw", and the Pencil's): ink from where it
+// pressed, the words as they were. Not with Select, whose presses move what they pick.
 function inkFrom(tx, down, m) {
   const { book } = tx,
     hit = book.at(down.clientX, down.clientY);
   if (!hit?.view.page.ink || book.desk.dataset.tool === 'select') return false;
-  Object.assign(book, { target: hit.i, inking: book.tools.ink(), pointer: down.pointerType, waited: down });
+  Object.assign(book, { target: hit.i, inking: book.tools.ink(), waited: down });
   const started = book.ink.start(down);
   book.waited = null;
   if (started) book.ink.move(m);
@@ -268,7 +271,7 @@ export const READ = 560;
 function put(tx, { view, x, y }, words, right, centre) {
   const page = view.page,
     color = tx.hooks.color(),
-    // (into the scrap the writing started on, or a new one, wrapped inside it: bookunits.js. job #14672)
+    // Into the scrap the writing started on, or a new one, wrapped inside it (bookunits.js).
     { g, left, edge } = inUnit(page, x, y);
   x = Math.max(left, Math.min(centre ? x - (edge - left) / 2 : x, edge - NARROW));
   right = edge;
@@ -286,7 +289,7 @@ function put(tx, { view, x, y }, words, right, centre) {
     return Math.max(line, el.words.offsetHeight);
   });
   const tall = heights.reduce((sum, h) => sum + h, 0) + line * (texts.length - 1);
-  // (under what's in its scrap already, a line apart: never over another box. job #14672)
+  // Under what's in its scrap already, a line apart: never over another box.
   let top = Math.max(
     centre ? y - tall / 2 : y - line / 2,
     footOf(page, g) + (page.texts.some(t => t.g === g) ? line / 2 : 0),
@@ -296,8 +299,9 @@ function put(tx, { view, x, y }, words, right, centre) {
     setBox(boxes[i], t);
     top += heights[i] + line;
   });
-  const shown = held => {
-    page.texts.splice(0, page.texts.length, ...held);
+  // (the boxes taken off and put back: what else is on the page by then stays. bookedit.js toward)
+  const shown = (from, to) => {
+    page.texts.splice(0, page.texts.length, ...toward(page.texts, from, to));
     drawAll(tx, view);
     tx.hooks.changed(page);
   };
@@ -306,7 +310,7 @@ function put(tx, { view, x, y }, words, right, centre) {
   page.blank = false;
   const after = page.texts.slice();
   tx.hooks.changed(page);
-  tx.book.steps.push({ page, undo: () => shown(before), redo: () => shown(after) });
+  tx.book.steps.push({ page, undo: () => shown(after, before), redo: () => shown(before, after) });
   arrive(tx.book, view, texts);
   return texts;
 }

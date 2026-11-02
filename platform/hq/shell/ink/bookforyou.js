@@ -1,10 +1,11 @@
 // What's still the board's to answer on the page shown: a group carrying an open ask (an agent's card, bookasks.js)
-// wears a red edge marked "for you", and a small counter on the rail over the page's arrows says how many are open,
-// its arrows sliding the page to each in turn, the one reached pulsing once. With none open it's away: nothing waits
+// wears a red edge marked "for you", and a small counter by the page's title says how many are open ("2 open"), its
+// arrows sliding the page to each in turn, the one reached pulsing once. With none open it's away: nothing waits
 // on the board (the board's own drawings brought it up as soon as a page had any). In a guest's book, the board's scraps handed to them wait the same way till they write on one (forYou). Its
-// look: bookforyou.css. (a guest's)
+// look: bookforyou.css. (by the page's title, as the Ink deck draws it.)
 import { stylesheet } from '../../util.js';
 import { button, lineIcon } from './bookui.js';
+import { word } from './bookscope.js';
 import { bringIntoSight, reachOf } from './bookgroupshow.js';
 
 const ICONS = {
@@ -12,20 +13,23 @@ const ICONS = {
   next: lineIcon('<path d="M6 9l6 6 6-6"/>'),
 };
 
-// book: bookpages.js's; foot: the page's controls on the rail (bookui.js island('pages')), the counter at their head.
-// Returns { update(far) }: the counter as the page shown is now (far: the overview open, where it's away).
-export function mountForYou(book, foot) {
+// book: bookpages.js's: the counter in its paper's head, left of the dog-ear, kept where it is as the page pans and
+// zooms under it. Returns { update(far) }: the counter as the page shown is now (far: the overview open, where it's
+// away).
+export function mountForYou(book) {
   stylesheet('shell/ink/bookforyou.css');
   const el = document.createElement('div'),
     st = { book, el, page: null, at: null };
   el.className = 'bk-for-you-count';
   el.setAttribute('role', 'group');
+  el.setAttribute('data-keep-clear', ''); // (a minimised call keeps clear of it.)
+  el.setAttribute('data-no-ink', '');
   el.hidden = true;
   el.innerHTML = '<span class="bk-open" aria-live="polite"></span>';
   st.before = button({ icon: ICONS.before, onClick: () => step(st, -1) });
   st.next = button({ icon: ICONS.next, onClick: () => step(st, 1) });
   el.append(st.before, st.next);
-  foot.prepend(el);
+  book.paper.querySelector('.bk-pages').append(el);
   return { update: far => update(st, far) };
 }
 
@@ -53,7 +57,7 @@ function update(st, far) {
   st.el.hidden = far || !open;
   if (st.el.hidden) return;
   st.el.dataset.open = open;
-  st.el.querySelector('.bk-open').textContent = `${open} open`;
+  st.el.querySelector('.bk-open').textContent = word('openCount', { n: open });
   st.el.setAttribute('aria-label', `${open} open for you to answer`);
   st.before.setAttribute('aria-label', 'The open ask before');
   st.next.setAttribute('aria-label', 'The next open ask');

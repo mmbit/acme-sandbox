@@ -1,6 +1,5 @@
 // A thread on its project's page, more than the project's tile said of it, never less, and the line over its tasks on
 // its own page that says the same.
-import { costHtml } from './costs.js';
 import { esc } from '../util.js';
 import { icon } from './icons.js';
 import { names } from './brand.js';
@@ -55,7 +54,7 @@ export function threadTile(t, p, threadOf = () => null) {
     <span class="pj-tile-rows">${rows.length ? `<ul class="pj-next pj-now">${rows.join('')}</ul>` : ''}</span>
     <span class="pj-tile-rows">${threadWaits(t, p, threadOf)}</span>
     <span class="pj-tile-rows">${strip(t)}</span>
-    <span class="pj-foot pj-eta-foot">${eta ? `<span class="pj-when">${esc(eta.time)}</span>${lines(t.lines)}<small>${esc(eta.sums)}</small>` : `<span class="pj-state">Nothing open</span>${lines(t.lines)}`}${costHtml(t.cost)}</span>`,
+    <span class="pj-foot pj-eta-foot">${eta ? `<span class="pj-when">${esc(eta.time)}</span>${lines(t.lines)}<small>${esc(eta.sums)}</small>` : `<span class="pj-state">Nothing open</span>${lines(t.lines)}`}</span>`,
   );
 }
 // A task on a thread's tile: its sign (bars, or Next), its title and when (words or HTML)
@@ -99,6 +98,6 @@ function strip(t) {
 // tile did.
 export function threadBrief(t) {
   const e = threadEta(t),
-    parts = [t.goal && esc(nameText(t, 'goal')), e && esc(e.sums), costHtml(t.cost)].filter(Boolean);
+    parts = [t.goal && esc(nameText(t, 'goal')), e && esc(e.sums)].filter(Boolean);
   return parts.length ? `<p class="pj-brief">${parts.map(x => `<span>${x}</span>`).join('')}</p>` : '';
 }

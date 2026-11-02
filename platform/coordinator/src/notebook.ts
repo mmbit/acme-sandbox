@@ -48,7 +48,6 @@ for (const column of [
   "title_by text not null default ''",
   "title_seen text not null default ''",
   "zooms text not null default '{}'",
-  'handed integer not null default 0',
   'followed integer',
 ])
   if (lacks('book_pages', column.split(' ')[0])) db.exec(`alter table book_pages add column ${column}`);
@@ -81,13 +80,10 @@ export type NotebookPage = Page & {
   title_seen: string;
   // The zoom the board left the page at, by the book's shape on the screen (booklayout.js shapeOf): JSON, { wide: 0.72 }.
   zooms: string;
-  // How many changes someone else's hand has made on it (byHand): a screen's read that finds more takes what it brings
-  // as a step of its own
-  handed: number;
   // A call's notes page: when its call's follow-up handed out what's on it, its Sent stamp (ink/callnotes.ts followed)
   followed: number | null;
 };
-const PAGE_COLUMNS = `${COLUMNS}, notebook, pos, send_at, fresh, tries, title_by, title_seen, zooms, handed, followed`;
+const PAGE_COLUMNS = `${COLUMNS}, notebook, pos, send_at, fresh, tries, title_by, title_seen, zooms, followed`;
 // The size a new page starts at: it grows every way as it's drawn on
 const NEW_PAGE = { w: 1200, h: 1600 };
 
@@ -250,10 +246,8 @@ export function endOf(notebook: number) {
   return (last ?? -1) + 1;
 }
 // A page has changed: its box grows round its groups, its picture is drawn again when next read, its notebook moves up
-// the shelf, and every screen showing it reads it again: as a step its Undo takes back when someone else's hand made it
-// (byHand)
+// the shelf, and every screen showing it reads it again
 export function changed(notebook: number, page: number | null) {
-  if (hand && page) db.prepare('update book_pages set handed = handed + 1 where id = ?').run(page);
   const now = new Date().toISOString();
   if (page) {
     const p = pageRow(page, null)!,
@@ -270,18 +264,6 @@ export function changed(notebook: number, page: number | null) {
   db.prepare('update notebooks set updated = ? where id = ?').run(now, notebook);
   publish({ type: 'book', agent: BOARD, text: 'notebook', ...(page ? { page } : {}) });
   if (page) titleLater(page);
-}
-// A change someone else makes on the board's page (a call's agent's: ink/callpage.ts), counted on the page (handed), so
-// each screen showing the page takes it as a step of its own, which the board's Undo takes back like its own: a count
-// read with the page, not the change's event, as a read another event started may bring it first
-let hand: string | null = null;
-export function byHand<T>(who: string, act: () => T): T {
-  hand = who;
-  try {
-    return act();
-  } finally {
-    hand = null;
-  }
 }
 
 // ---------------------------------------------------------------- shared

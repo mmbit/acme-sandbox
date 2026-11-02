@@ -15,6 +15,7 @@ import {
   restoreProfile,
   splitProfile,
   startRepair,
+  threadBriefing,
 } from './threads.ts';
 
 const tmp = mkdtempSync(`${tmpdir()}/threads-test-`);
@@ -460,4 +461,22 @@ test("a profile branch's repair goes back as one commit on main's head, and chan
     () => rebuildProfile(agent, fix, { base: 'main', paths, message: 'm', author: ana }),
     /more than the agent's profile/,
   );
+});
+
+test("a task's briefing has it build and check what the board's agreed sketches or deck draw", () => {
+  const inThread = {
+    id: 'game/boss',
+    name: 'Boss fight',
+    goal: 'As in the agreed deck.',
+    place: 1,
+    of: 2,
+    before: null,
+  };
+  const briefing = threadBriefing(inThread, []);
+  assert.ok(
+    briefing.includes(
+      'done when: As in the agreed deck. Where the "done when" or your brief draws on the board\'s agreed sketches or a deck, build every behaviour',
+    ),
+  );
+  assert.ok(briefing.includes('its judge holds the work against every one of them. It starts the deliverable'));
 });

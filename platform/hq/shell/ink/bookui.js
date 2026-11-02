@@ -1,9 +1,10 @@
 // The book's controls, one style for all of them (bookui.css): a button with its icon or its word and the book's own
-// tooltip, and the rail at the paper's right edge, by the spine, that holds every control there is: the tools
-// (bookstrip.js), the book's own islands (Send; Tips and invites), the page's controls (bookcontrols.js) and, where
-// the rail is too short for them all, More with the rarely used ones. The paper ends left of the rail
-// (--bk-rail-width), so no control ever sits over what's written. Every part of the book makes its controls here, so
-// they look and answer alike. (one rail at the spine)
+// tooltip, and the rail floating over the paper's right margin, two toolbars in HQ's look that hold every control
+// there is: at its head the tools (bookstrip.js) and Send, at its foot the page's controls (bookcontrols.js), the
+// book's own island (Tips and invites) and, where the rail is too short for them all, More with the rarely used ones.
+// What's written ends left of the rail (--bk-rail-width), so no control ever sits over it. Every part of the book
+// makes its controls here, so they look and answer alike. Only the page is paper; the controls are HQ's (board, call
+// 174). (one floating rail)
 import { esc } from '../../util.js';
 import { word } from './bookscope.js';
 
@@ -50,8 +51,9 @@ export function island(name) {
   islands();
   return made.get(name);
 }
-// The rail at the paper's right edge, for bookrail.js to place: its column of islands (.bk-column) and More at its
-// foot. Cards, the page's targets and their asks hang on the rail beside the column (.bk-controls), over the paper.
+// The rail over the paper's right margin, for bookrail.js to place: its column of islands (.bk-column), in a toolbar
+// at its head and one at its foot with More. Cards, the page's targets and their asks hang on the rail beside the
+// column (.bk-controls), over the paper.
 export function islands() {
   if (controls) return controls;
   const div = name => Object.assign(document.createElement('div'), { className: name }),
@@ -65,17 +67,25 @@ export function islands() {
     };
   controls = div('bk-controls');
   const column = div('bk-column'),
+    head = div('bk-rail-head'),
+    foot = div('bk-rail-foot'),
     strip = div('bk-strip');
   column.setAttribute('data-no-ink', '');
   column.setAttribute('data-keep-clear', ''); // (a minimised call keeps clear of it.)
   strip.append(one('tools'));
-  column.append(strip, ...RAIL.slice(1).map(name => one(name)), moreButton());
+  // (the tools and Send at the rail's head, the page's controls at its foot: whatever comes and goes at the head, the
+  // page's arrows stay where they are.)
+  head.append(strip, one('send'));
+  foot.append(one('pages'), one('book'), moreButton());
+  column.append(head, foot);
   controls.append(column);
   one(OVERVIEW, 'horizontal').classList.add('bk-far-tools');
   watchFit(column);
   return controls;
 }
-// The rail fitted (data-fit) whenever it or what shows on it changes: the roomiest of FITS that's no taller than it.
+// The rail fitted (data-fit) whenever it or what's on it changes: the roomiest of FITS that's no taller than it. What
+// a page doesn't show keeps its room unseen (bookstrip.css), so the fit is the device's alone: a page's coming and
+// going never changes it, Undo, Redo and the page's arrows never move, and More stays a menu on every page.
 function watchFit(column) {
   let frame = 0;
   const fit = () => {
@@ -83,7 +93,7 @@ function watchFit(column) {
     if (!column.offsetHeight) return;
     for (const level of FITS) {
       column.dataset.fit = level;
-      if (column.scrollHeight <= column.clientHeight) return;
+      if (column.scrollHeight <= column.clientHeight) break;
     }
   };
   // (fitted in the frame after, never in the observer's own call: what fit sets sizes what it watches)

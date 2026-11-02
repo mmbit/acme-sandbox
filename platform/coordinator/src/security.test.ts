@@ -409,11 +409,11 @@ test('Voice line: VOICE_TOKEN only on /api/voice/*, and a call token assigns and
   assert.equal((await agent('overseer', t)).status, 200);
   // (closing a card that is not the call agent's is HQ's own refusal.)
   assert.equal((await agent('request-close', t, { id: 1 })).status, 404);
-  // a promise on its own call's list, nothing else: not another call's item or job
+  // what it writes down on its own call's list (a task), nothing else: not another call's item or job
   const kit = await callToken('kit');
-  const kitsItem = (await agent('item', kit, { kind: 'promise', owner: 'kit', goal: 'g', what: 'Coming-soon page', quote: 'Build it' })).body.id;
+  const kitsItem = (await agent('item', kit, { kind: 'task', owner: 'kit', goal: 'g', what: 'Coming-soon page', quote: 'Build it' })).body.id;
   const kitsJob = (await agent('job', kit, { agent: 'kit', title: 'Coming-soon page', prompt: 'x', item: kitsItem })).body.id;
-  assert.equal((await agent('item', t, { kind: 'task', owner: 'wren', goal: 'g', what: 'Something else', quote: 'y' })).status, 403);
+  assert.equal((await agent('item', t, { kind: 'decision', owner: 'wren', goal: 'g', what: 'Something else', quote: 'y' })).status, 403);
   assert.equal((await agent('item-drop', t, { id: kitsItem, why: 'x' })).status, 403);
   // (cancel: open to a call as hq cancel is to its agent's jobs, and wren may cancel neither kit's job nor one kit queued)
   assert.equal((await agent('cancel', t, { id: kitsJob })).status, 404);
@@ -434,7 +434,7 @@ test('Voice line: VOICE_TOKEN only on /api/voice/*, and a call token assigns and
 
 test("Call ledger: a job handed out for one item can't drop or close a colleague's item on the same call, nor cancel a job the coordinator made", async () => {
   const kit = await callToken('kit');
-  const it = async (what: string) => (await agent('item', kit, { kind: 'promise', owner: 'kit', goal: 'g', what, quote: 'Build it' })).body.id as number;
+  const it = async (what: string) => (await agent('item', kit, { kind: 'task', owner: 'kit', goal: 'g', what, quote: 'Build it' })).body.id as number;
   const a = await it('Coming-soon page'), b = await it('Mission note');
   // (now: started on the call, which hasn't ended. A call's job waits for its end otherwise)
   const own = (await agent('job', kit, { agent: 'kit', title: 'Coming-soon page', prompt: 'x', item: a, now: true })).body.id;
@@ -525,7 +525,7 @@ test("A call shows the agent its own recent work; a desk phone answer tells the 
   // a job marked before as holding a customer's details: its report stays with that job, so the call has its title only;
   // a plain card's answer shows like any
   const marked = await finished('poppy', 'Answer a customer', 'Refunded Jan at Kerkstraat 1.');
-  db.prepare('update jobs set customers = 1 where id = ?').run(marked);
+  h.markCustomer('jobs', marked);
   const poppy = await running('poppy');
   await h.answer(await h.ask(poppy, { title: 'Approve a refund?', body: 'Order 12.' }), 'Yes, refund the order.');
   const care = (await h.voice('call-context?agent=poppy')).body.prompt as string;

@@ -20,6 +20,7 @@ const { BAD_TITLE } = await import('./tasktitles.ts');
 const projects = await import('./projects.ts');
 const order = await import('./threadorder.ts');
 const plan = await import('./plan.ts');
+const reviewwork = await import('./reviewwork.ts');
 const { cancelJob } = await import('./ledger.ts');
 const findings = [
   {
@@ -86,6 +87,7 @@ const fixTasks = () =>
 test('a thread is ready to judge only once no finished task still has a pull request in review', async () => {
   const closure = await import('./reviewclosure.ts');
   const ends = await import('./threadends.ts');
+  const owner = await h.start({ agent: 'wren', title: 'Judge the world' });
   const pending = h.ended({ agent: 'bolt', thread: 'game/world' });
   const merged = h.ended({ agent: 'bolt', thread: 'game/world' });
   h.storedPr(72, merged, 'merged');
@@ -95,12 +97,58 @@ test('a thread is ready to judge only once no finished task still has a pull req
     assert.equal(closure.status(`job/${pending}`), state);
     ends.merged(72);
     assert.equal(projects.findThread('game/world')!.judge, null);
+    const refused = await h.hq(owner, 'plan', 'done', 'game/world');
+    assert.equal(refused.code, 1, refused.out);
+    assert.match(refused.out, /PR #71/);
+    assert.equal(projects.findThread('game/world')!.status, 'open');
   }
   h.mergedPr(71);
   ends.merged(71);
   assert.equal(projects.findThread('game/world')!.status, 'open', 'its owner closes it');
   assert.notEqual(projects.findThread('game/world')!.judge, null);
+  const done = await h.hq(owner, 'plan', 'done', 'game/world');
+  assert.equal(done.code, 0, done.out);
+  assert.equal(projects.findThread('game/world')!.status, 'done');
 });
+
+for (const timing of ['before the ruling', 'after the ruling']) {
+  test(`review fixes reopen a deliverable closed ${timing} and stay on its branch`, async () => {
+    if (timing === 'before the ruling') {
+      assert.deepEqual(plan.done('game/world', 'wren'), { ok: true });
+      assert.ok(projects.findThread('game/world')!.done);
+    }
+    const { branch } = await deliver();
+    if (timing === 'after the ruling') {
+      h.closedThreads('game/world');
+      reviewwork.reopenDone();
+      proposals.sweep();
+    }
+    assert.equal(projects.findThread('game/world')!.status, 'open');
+    assert.equal(projects.findThread('game/world')!.done, null);
+    assert.equal(projects.findThread('game/world')!.branch, branch);
+    const owner = await h.start({ agent: 'wren', title: 'Draw the review fixes' });
+    const made = await h.hq(owner, 'inbox', 'accept', 'findings:71', '--for', 'kit', '--findings', '12,13');
+    assert.equal(made.code, 0, made.out);
+    assert.deepEqual(
+      fixTasks().map(task => [task.thread, task.branch]),
+      [['game/world', branch]],
+    );
+    proposals.sweep();
+    assert.equal(projects.findThread('game/world')!.status, 'open');
+    assert.equal(fixTasks().length, 1, 'repeated sweeps keep the drawn fix');
+  });
+}
+
+for (const state of ['merged', 'closed', 'older round']) {
+  test(`a ${state} review does not reopen a done deliverable`, async () => {
+    const { author } = await deliver();
+    h.closedThreads('game/world');
+    h.storedPr(71, author.id, state === 'older round' ? 'open' : state, [], { round: state === 'older round' ? 2 : 1 });
+    reviewwork.reopenDone();
+    proposals.sweep();
+    assert.equal(projects.findThread('game/world')!.status, 'done');
+  });
+}
 
 test('one review inbox item reaches the project owner with domains and files, and shares its planning job', async () => {
   const { author, branch } = await deliver();
@@ -864,6 +912,16 @@ test('a newer pull request in the same thread wins over an older unrelated round
     summary: 'Current branch',
     findings: [{ ...findings[1], id: 99 }],
   });
+  h.closedThreads('game/world');
+  assert.equal(projects.findThread('game/world')!.branch, null);
+  proposals.deliverFindings(inbox.get(71)!);
+  assert.equal(projects.findThread('game/world')!.status, 'done', 'an older replay cannot reopen the deliverable');
+  assert.equal(projects.findThread('game/world')!.branch, null);
+  reviewwork.reopenDone();
+  proposals.sweep();
+  assert.equal(projects.findThread('game/world')!.status, 'open');
+  assert.equal(projects.findThread('game/world')!.done, null);
+  assert.equal(projects.findThread('game/world')!.branch, `job/${later.id}`);
   const owner = await h.start({ agent: 'wren', title: 'Fix the current branch' });
   const reply = await h.agent('job', owner.token, {
     agent: 'kit',
@@ -876,6 +934,10 @@ test('a newer pull request in the same thread wins over an older unrelated round
   assert.deepEqual(
     inbox.tasks(72, 1).map(task => task.findings),
     [[99]],
+  );
+  assert.deepEqual(
+    fixTasks().map(task => [task.thread, task.branch]),
+    [['game/world', `job/${later.id}`]],
   );
 });
 

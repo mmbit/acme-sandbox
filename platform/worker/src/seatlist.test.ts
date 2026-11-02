@@ -12,11 +12,10 @@ import {
   limitsReading,
   readDue,
   reportedUntil,
-  reserveFor,
   takeRead,
   takeReading,
 } from './downtime.ts';
-import { pacedUntil, paceTo, reserveElsewhere } from './pace.ts';
+import { pacedUntil, paceTo, reserveElsewhere, reserveFor } from './pace.ts';
 
 type S = {
   id: string;
@@ -197,10 +196,14 @@ test("a seat's stop level is the board's once it set one; until then the seat ke
       ['claude-3', 0.7],
     ],
   );
-  applyList(w.seats, [listed('claude-1', { stop: 80 }), listed('claude-2', { stop: 99 }), listed('claude-3')], w.hooks);
+  applyList(
+    w.seats,
+    [listed('claude-1', { stop: 80 }), listed('claude-2', { stop: 100 }), listed('claude-3')],
+    w.hooks,
+  );
   assert.deepEqual(
     w.seats.map(s => s.drainAt),
-    [0.8, 0.99, 0.7],
+    [0.8, 1, 0.7],
   );
 });
 

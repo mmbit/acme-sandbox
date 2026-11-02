@@ -1,17 +1,18 @@
 // The book's tools on the rail (bookstrip.js): Select, the pen (the marker the same tool: one button, showing the one
 // in use, both side by side only where the rail has room), the eraser, shapes and Text, and beside the rail the tool's
-// own card: the pen or the marker, its colours, its line's width, the eraser's size, a shape's kind and whether it's
-// filled, the pen's smoothing. The tool in use pressed again, or any tool held, opens its card; the keys a drawing app
-// has do the same on a desktop. Every setting is remembered in this browser, and the book opens on the pen or the
-// marker, whichever was last in use. (the pen one tool)
+// own card: what draws (the pen, the pencil, the brush or the marker), its colours, its line's width, the eraser's
+// size, a shape's kind and whether it's filled, the pen's smoothing. The pencil and the brush are the pen's nibs, in
+// its colours. The tool in use pressed again, or any tool held, opens its card; the keys a drawing app has do the same
+// on a desktop. Every setting is remembered in this browser, and the book opens on the pen or the marker, whichever
+// was last in use. (the pen one tool; the nibs and the card in lines)
 //
 // st: booktools.js's state; this keeps st.mode and the settings on it, and calls st.changedTool(mode) when the tool
 // changes.
 import { store } from '../../util.js';
 import { button, island, setPressed, hide, besideRail } from './bookui.js';
-import { MARKERS, MARKER_ALPHA, SHAPES, WIDTHS } from './bookinkmath.js';
+import { MARKERS, MARKER_ALPHA, PENCIL_ALPHA, SHAPES, WIDTHS } from './bookinkmath.js';
 import { word } from './bookscope.js';
-import { ERASER_PATHS } from '/__review/eraser.js';
+import { ICONS, INK_WORDS, colourKey, swatch, widthIcon, ringIcon } from './bookpaletteart.js';
 // The pens' inks, from the book's own Night: review mode's pin offers the same
 import { PENS } from '/__review/ink.js';
 
@@ -24,27 +25,6 @@ const HOLD_SLIP_PX = 6;
 // The pen's smoothing: how far each point goes towards the pointer (ink.js's follow): steady, or as the hand went
 const SMOOTH = { on: 0.42, off: 0.75 };
 
-// (the line's attributes on a group, as bookui.js's lineIcon: HQ's own style fills every svg, and that beats an
-// attribute on the svg itself.)
-const svg = body =>
-  `<svg viewBox="0 0 20 20" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${body}</g></svg>`;
-const ICONS = {
-  // Select: a dashed box, its dashes meeting at the corners
-  select: svg('<path d="M4 4h12v12H4z" stroke-dasharray="2.6 3.4" stroke-dashoffset="1.3"/>'),
-  pen: svg('<path d="M4.2 15.8l.9-3.6 8.6-8.6a2 2 0 0 1 2.8 2.8l-8.6 8.6z"/><path d="M12.3 5l2.7 2.7"/>'),
-  highlighter: svg(
-    '<path d="M6.6 13.6l7.6-9.4 3 2.4-7.6 9.4z"/><path d="M6.6 13.6l-1.5 2.4 3.1.2 1.4-1.8"/><path d="M3 18.2h9" stroke-width="2.2" opacity=".45"/>',
-  ),
-  eraser: svg(ERASER_PATHS),
-  ellipse: svg('<ellipse cx="10" cy="10" rx="6.6" ry="5.4"/>'),
-  rect: svg('<rect x="3.6" y="5" width="12.8" height="10" rx="1.2"/>'),
-  line: svg('<path d="M4.5 15.5l11-11"/>'),
-  arrow: svg('<path d="M4.5 15.5l11-11"/><path d="M9.2 4.5h6.3v6.3"/>'),
-  text: svg('<path d="M4.5 5.5V4h11v1.5"/><path d="M10 4v12"/><path d="M7.5 16h5"/>'),
-  outline: svg('<rect x="4" y="4" width="12" height="12" rx="2"/>'),
-  filled: svg('<rect x="4" y="4" width="12" height="12" rx="2" fill="currentColor"/>'),
-  smooth: svg('<path d="M3 13c2.5-6 4.5-6 7-1.5S15 15 17 7"/>'),
-};
 // The tools down the rail (the pen and the marker one tool: the one not in use shows only where there's room).
 // Every word here, and every row's name, is a key of the guest words (notebookwords.js).
 export const TOOLS = [
@@ -56,6 +36,14 @@ export const TOOLS = [
   { mode: 'text', word: 'toolText', key: 'T' },
 ];
 const INKS = ['pen', 'highlighter'];
+// The pen's nibs, in its card's first row before the marker: each its own widths (bookinkmath.js WIDTHS), the
+// pencil's see-through. Only the pen's own line is a gesture (a scratch-out, a circle carried out to assign): the
+// pencil's hatching and the brush's back and forth are drawing.
+const NIBS = {
+  pen: { word: 'toolPen' },
+  pencil: { word: 'toolPencil', alpha: PENCIL_ALPHA },
+  brush: { word: 'toolBrush' },
+};
 // (shapes: the Shapes button's name with the shape in use)
 const KINDS = {
   ellipse: { word: 'shapeEllipse', shapes: 'shapesEllipse', key: 'O' },
@@ -63,24 +51,6 @@ const KINDS = {
   line: { word: 'shapeLine', shapes: 'shapesLine', key: 'L' },
   arrow: { word: 'shapeArrow', shapes: 'shapesArrow', key: 'A' },
 };
-// the inks' words by their names (ink.js PENS, bookinkmath.js MARKERS)
-const INK_WORDS = {
-  Night: 'inkNight',
-  Red: 'inkRed',
-  Blue: 'inkBlue',
-  Green: 'inkGreen',
-  Yellow: 'inkYellow',
-  Pink: 'inkPink',
-};
-const swatch = (color, alpha = 1) =>
-  `<svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7" fill="#fffaf0"/><circle cx="10" cy="10" r="7" fill="${color}" fill-opacity="${alpha}" stroke="rgba(42,35,82,.28)" stroke-width="1"/></svg>`;
-// a width as a short line of it, in the tool's colour (scaled so the widest fits)
-const widthIcon = (w, most, color, alpha = 1) =>
-  `<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h12" stroke="${color}" stroke-opacity="${alpha}" stroke-width="${Math.max(1.4, (w / most) * 9)}" stroke-linecap="round"/></svg>`;
-// the eraser's size as a ring that size (at most the button's)
-const ringIcon = (d, most) =>
-  `<svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="${Math.max(2, (d / most) * 8)}" fill="#fffaf0" stroke="currentColor" stroke-width="1.4"/></svg>`;
-
 // The palette's state on st, from what this browser remembers
 export function mountPalette(st) {
   const kept = store.get('book.tools', {});
@@ -89,10 +59,13 @@ export function mountPalette(st) {
   Object.assign(st, {
     mode: ink,
     ink,
+    nib: kept.nib in NIBS ? kept.nib : 'pen',
     pen: PENS.some(p => p.color === kept.pen) ? kept.pen : PENS[0].color,
     marker: MARKERS.some(p => p.color === kept.marker) ? kept.marker : MARKERS[0].color,
     widths: {
       pen: index(kept.widths?.pen, WIDTHS.pen),
+      pencil: index(kept.widths?.pencil, WIDTHS.pencil),
+      brush: index(kept.widths?.brush, WIDTHS.brush),
       highlighter: index(kept.widths?.highlighter, WIDTHS.highlighter),
     },
     eraser: index(kept.eraser, ERASERS),
@@ -109,8 +82,16 @@ export function mountPalette(st) {
 export function inkOf(st) {
   if (st.mode === 'highlighter')
     return { color: st.marker, size: WIDTHS.highlighter[st.widths.highlighter], alpha: MARKER_ALPHA };
-  return { color: st.pen, size: WIDTHS.pen[st.widths.pen], follow: st.smooth ? SMOOTH.on : SMOOTH.off };
+  const alpha = NIBS[st.nib].alpha;
+  return {
+    color: st.pen,
+    size: WIDTHS[st.nib][st.widths[st.nib]],
+    ...(alpha ? { alpha } : {}),
+    follow: st.smooth ? SMOOTH.on : SMOOTH.off,
+  };
 }
+// Whether a line drawn now may be a gesture: the pen's own nib's alone
+export const gestures = st => st.mode === 'pen' && st.nib === 'pen';
 // The eraser's radius on screen
 export const eraserRadius = st => ERASERS[st.eraser] / 2;
 
@@ -176,7 +157,7 @@ export function setMode(st, mode, { keep = false } = {}) {
 const inksOf = st => (st.mode === 'highlighter' ? MARKERS : PENS);
 const colourOf = st => (st.mode === 'highlighter' ? st.marker : st.pen);
 const coloured = st => !['select', 'eraser'].includes(st.mode);
-const widthsOf = st => (st.mode === 'highlighter' ? 'highlighter' : 'pen');
+const widthsOf = st => (st.mode === 'highlighter' ? 'highlighter' : st.mode === 'pen' ? st.nib : 'pen');
 
 function setColour(st, color) {
   if (st.mode === 'highlighter') st.marker = color;
@@ -202,11 +183,13 @@ function stepSize(st, by) {
   return true;
 }
 
-// The shapes' button as the settings are, the pen's and the marker's colours on their buttons (a dot under the icon,
-// bookstrip.css), and the cursor in the tool's colour and size
+// The shapes' button and the pen's (its nib) as the settings are, the pen's and the marker's colours on their buttons
+// (a dot under the icon, bookstrip.css), and the cursor in the tool's colour and size
 function show(st) {
   st.buttons.shapes.innerHTML = ICONS[st.shape];
   st.buttons.shapes.setAttribute('aria-label', word(KINDS[st.shape].shapes));
+  st.buttons.pen.innerHTML = ICONS[st.nib];
+  st.buttons.pen.setAttribute('aria-label', word(NIBS[st.nib].word));
   st.buttons.pen.style.setProperty('--bk-dot', st.pen);
   st.buttons.highlighter.style.setProperty('--bk-dot', st.marker);
   st.book.desk.style.setProperty('--bk-tool-cursor', cursorOf(st, colourOf(st)));
@@ -228,6 +211,7 @@ function cursorOf(st, color) {
 const remember = st =>
   store.set('book.tools', {
     ink: st.ink,
+    nib: st.nib,
     pen: st.pen,
     marker: st.marker,
     widths: st.widths,
@@ -261,15 +245,23 @@ function card(st) {
   addEventListener('pointerdown', st.away, true);
   addEventListener('keydown', st.away, true);
 }
-// The card's rows for the tool: the pen or the marker, a shape's kind and fill, the colours, the widths (the eraser:
-// its sizes), smoothing
+// The card's lines, one under another, for the tool: what draws (the pen's nibs and the marker), a shape's kind and
+// fill, the colours (six to a line), the widths (the eraser: its sizes) and smoothing. A rule between lines, and
+// between two rows on one line.
 function fillCard(st) {
-  const rows = [];
-  if (INKS.includes(st.mode)) rows.push(inkChoice(st));
-  if (st.mode === 'shapes') rows.push(...shapeRows(st));
-  if (st.mode === 'eraser') rows.push(eraserRow(st));
-  else rows.push(...inkRows(st));
-  st.card.replaceChildren(...rows.flatMap((r, i) => (i ? [document.createElement('hr'), r] : [r])));
+  const lines = [];
+  if (INKS.includes(st.mode)) lines.push([inkChoice(st)]);
+  if (st.mode === 'shapes') lines.push(shapeRows(st));
+  if (st.mode === 'eraser') lines.push([eraserRow(st)]);
+  else lines.push(...inkRows(st));
+  st.card.replaceChildren(
+    ...lines.flatMap((rows, i) => {
+      const line = document.createElement('div');
+      line.className = 'bk-palette-line';
+      line.append(...rows.flatMap((r, j) => (j ? [document.createElement('hr'), r] : [r])));
+      return i ? [document.createElement('hr'), line] : [line];
+    }),
+  );
 }
 // A row of choices, each a button pressed when it's the one in use
 function row(name, items) {
@@ -284,21 +276,31 @@ function row(name, items) {
   }
   return r;
 }
-// (the card opened again for the one picked, as its colours are its own)
+// The pen's nibs, then the marker (the card opened again for the marker or back from it, as its colours are its own)
 const inkChoice = st =>
-  row(
-    'penOrMarker',
-    INKS.map(m => {
-      const tool = TOOLS.find(t => t.mode === m);
-      return {
-        icon: ICONS[m],
-        word: tool.word,
-        keys: tool.key,
-        on: st.mode === m,
-        pick: () => m !== st.mode && (setMode(st, m), card(st)),
-      };
-    }),
-  );
+  row('drawWith', [
+    ...Object.entries(NIBS).map(([nib, { word }]) => ({
+      icon: ICONS[nib],
+      word,
+      on: st.mode === 'pen' && st.nib === nib,
+      pick: () => pickNib(st, nib),
+    })),
+    {
+      icon: ICONS.highlighter,
+      word: 'toolMarker',
+      keys: 'M',
+      on: st.mode === 'highlighter',
+      pick: () => st.mode !== 'highlighter' && (setMode(st, 'highlighter'), card(st)),
+    },
+  ]);
+function pickNib(st, nib) {
+  st.nib = nib;
+  if (st.mode !== 'pen') {
+    setMode(st, 'pen');
+    return card(st);
+  }
+  changed(st);
+}
 const shapeRows = st => [
   row(
     'shape',
@@ -320,7 +322,7 @@ const eraserRow = st =>
       pick: () => ((st.eraser = i), changed(st)),
     })),
   );
-// The colours; the widths but for typed words; the pen's smoothing
+// The colours, six to a line; the widths but for typed words, the pen's smoothing beside them
 function inkRows(st) {
   const marker = st.mode === 'highlighter',
     k = widthsOf(st);
@@ -329,15 +331,16 @@ function inkRows(st) {
     inksOf(st).map((ink, i) => ({
       icon: swatch(ink.color, marker ? 0.75 : 1),
       word: INK_WORDS[ink.name],
-      keys: String(i + 1),
+      keys: colourKey(i),
       on: ink.color === colourOf(st),
       pick: () => setColour(st, ink.color),
     })),
   );
+  colours.dataset.colours = '';
   const widths = row(
     'width',
     WIDTHS[k].map((w, i) => ({
-      icon: widthIcon(w, WIDTHS[k].at(-1), colourOf(st), marker ? 0.6 : 1),
+      icon: widthIcon(w, WIDTHS[k].at(-1), colourOf(st), marker ? 0.6 : (NIBS[k]?.alpha ?? 1)),
       word: ['widthFine', 'widthMedium', 'widthBold'][i],
       keys: ['[', '', ']'][i],
       on: st.widths[k] === i,
@@ -352,7 +355,7 @@ function inkRows(st) {
       pick: () => ((st.smooth = !st.smooth), changed(st)),
     },
   ]);
-  return [colours, ...(st.mode === 'text' ? [] : [widths]), ...(st.mode === 'pen' ? [smooth] : [])];
+  return [[colours], ...(st.mode === 'text' ? [] : [[widths, ...(st.mode === 'pen' ? [smooth] : [])]])];
 }
 function pickShape(st, kind) {
   st.shape = kind;
@@ -374,8 +377,8 @@ function closeCard(st) {
 // ---- keys
 
 // The tools' keys while the book is open and has the pointer or the focus, never while a field has the keyboard: a
-// tool's letter (V, P, M, E, S, T; O, R, L and A a shape), 1–4 a colour, [ and ] the width or the eraser's size, F a
-// shape filled or not
+// tool's letter (V, P, M, E, S, T; O, R, L and A a shape), 1–9 and 0 a colour, [ and ] the width or the eraser's size,
+// F a shape filled or not
 function keys(st) {
   document.addEventListener('keydown', e => {
     if (e.metaKey || e.ctrlKey || e.altKey || e.repeat || !open()) return;
@@ -385,7 +388,7 @@ function keys(st) {
     const key = e.key.toLowerCase(),
       tool = TOOLS.find(t => t.key.toLowerCase() === key),
       kind = SHAPES.find(k => KINDS[k].key.toLowerCase() === key),
-      ink = inksOf(st)[Number(e.key) - 1];
+      ink = inksOf(st).find((_, i) => colourKey(i) === e.key);
     if (tool) setMode(st, tool.mode);
     else if (kind) pickShape(st, kind);
     else if (ink && coloured(st)) setColour(st, ink.color);

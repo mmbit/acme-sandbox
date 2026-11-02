@@ -43,7 +43,7 @@ test('answered and closed cards, newest first, with what the board answered; ope
 
 test("every card comes whole, one marked before as a customer's and its photos too; a key's value never", async () => {
   const customer = (jobs.createRequest({ kind: 'decision', agent: 'kit', title: 'A refund', body: 'Jane Doe, order 1234', photos: ['The parcel'] } as any) as { id: number }).id;
-  h.db.prepare('update requests set customers = 1 where id = ?').run(customer);
+  h.markCustomer('requests', customer);
   const keys = await ask({ kind: 'credential', title: 'Stripe keys', body: 'Paste them', secrets: 'STRIPE_TEST_KEY' });
   const plain = await ask({ title: 'Test print', body: 'Two posters', photos: ['Ava'] });
   for (const id of [customer, plain]) await upload(id);

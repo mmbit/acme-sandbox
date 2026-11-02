@@ -98,7 +98,7 @@ test("scraps' words, said or typed, and answers under them are found with their 
   assert.equal((await find('tear')).total, 2);
 });
 
-test('handwriting read into type on a page is found by its words, as written', async () => {
+test('a box typed on a page is found by its words, as typed', async () => {
   const page = (await scrap('', 'typed')).page;
   const drawn = (
     await h.board('/api/notebooks/groups/create', {
@@ -113,7 +113,7 @@ test('handwriting read into type on a page is found by its words, as written', a
   );
   assert.deepEqual(
     (await find('mugs order')).found.map((f: any) => [f.note, f.how, f.text]),
-    [[drawn.id, 'written', 'Swap the mugs’ order?']],
+    [[drawn.id, 'typed', 'Swap the mugs’ order?']],
   );
 });
 

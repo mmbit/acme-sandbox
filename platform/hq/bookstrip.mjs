@@ -4,11 +4,14 @@
 // words land where it was held, the cog's preferences kept on this device and its hold time obeyed; on a touch screen
 // (Chromium's own touch and pen events, trusted), one finger drawing and two moving the page with no stray line, a
 // slide along the rail picking a tool, drifting above it too, a double tap held a voice note, the radial menu
-// on a long press, and a finger that pans once the pen's been used where the preferences say so. Each asserts what the
-// board sees and what the store keeps.
+// on a long press, and a finger that pans once the pen's been used, as the preferences have it unless turned off (on a
+// fresh device the first pen anywhere in HQ turns that on, once, and only the board turns it off); and
+// by hand at the board's iPad sizes, the Pencil writing and one finger or two scrolling a long page with the text tool
+// on, leaving no ink and no box of words. Each asserts what the board sees and what the store keeps.
 import assert from 'node:assert/strict';
 import { desk, freePage, paperBox, savedWhere, colourIn, BLUE } from './bookmouse.mjs';
-import { HEARD, QUIET_MS, middleOf, mini, until, wordsHeard } from './bookkit.mjs';
+import { press } from './bookbar.mjs';
+import { HEARD, QUIET_MS, MINI, UPRIGHT, middleOf, mini, until, wordsHeard } from './bookkit.mjs';
 
 // c: book-check.mjs's played store and helpers
 export function stripStories(c) {
@@ -22,6 +25,12 @@ export function stripStories(c) {
       fingers(browser, c),
     'controls with the Pencil: a double tap held is a voice note, the radial menu on a long press, a finger pans once the pen is in use':
       browser => pencil(browser, c),
+    'a fresh iPad: a finger draws till the first pen anywhere in HQ, then scrolls, after a reload too; turned off, it stays off':
+      browser => firstPen(browser, c),
+    'by hand on an iPad mini, sideways and upright: the Pencil writes, a finger or two scrolls with the text tool on, by default':
+      async browser => {
+        for (const viewport of [MINI, UPRIGHT]) await scrolling(browser, c, viewport);
+      },
   };
 }
 
@@ -104,7 +113,7 @@ async function preferences(browser, c) {
     const kept = page.getByRole('dialog', { name: 'Preferences on this device' });
     assert.equal(await kept.getByLabel('Long').isChecked(), true, 'Long kept on this device');
     assert.equal(await kept.getByLabel('Use radial menu').isChecked(), true, 'the radial menu kept');
-    assert.equal(await kept.getByLabel('When pen is active, touch always pans').isChecked(), false);
+    assert.equal(await kept.getByLabel('Touch always scrolls').isChecked(), false, 'off where no pen was ever used');
     await page.keyboard.press('Escape');
     // Long: a press held 800 ms is no voice note yet; held on past 1000 ms it is
     const paper = await paperBox(page);
@@ -156,7 +165,7 @@ async function fingers(browser, c) {
         [mid[0] + 60 + 90, mid[1] + 160],
       ],
     );
-    // (the page scrolls down only, never sideways: a page this short stays put. job #14672)
+    // The page scrolls down only, never sideways: a page this short stays put.
     const after = await placed(page);
     assert.equal(after[0], before[0], `two fingers never move the page sideways: ${JSON.stringify([before, after])}`);
     await page.waitForTimeout(QUIET_MS);
@@ -187,9 +196,7 @@ async function pencil(browser, c) {
     const left = stored(c, free).ink.map(s => s.points);
     assert.deepEqual(left, [lone.points], "the double tap's dot taken off, the lone dot kept");
     // the radial menu on: a long press opens it, a slide out to the highlighter and a lift picks it
-    await page.evaluate(() =>
-      localStorage.setItem('ink.prefs', JSON.stringify({ radial: true, penPans: true, hold: 'medium' })),
-    );
+    await page.evaluate(() => localStorage.setItem('ink.prefs', JSON.stringify({ radial: true, hold: 'medium' })));
     const ring = [paper.x + paper.width / 2, paper.y + paper.height / 2 + 40];
     await pen.down(ring);
     await page.locator('#book .bk-radial [role=menuitemradio]').first().waitFor({ timeout: 2000 });
@@ -199,11 +206,127 @@ async function pencil(browser, c) {
     await pen.up(middleOf(lit));
     await until(async () => (await pressed(page)) === 'Marker', 'the highlighter picked from the ring');
     assert.equal(await page.locator('#book .bk-radial').count(), 0, 'the ring gone');
-    // "touch always pans" on, and the pen used: a finger moves the page and draws nothing
+    // the pen used, so "touch always scrolls" on: a finger moves the page and draws nothing
     const ink = stored(c, free).ink.length;
     await touch.stroke([[ring[0] - 80, ring[1] + 100]], [[ring[0] + 40, ring[1] + 120]]);
     await page.waitForTimeout(QUIET_MS);
     assert.equal(stored(c, free).ink.length, ink, 'the finger panned, drawing nothing');
+    assert.deepEqual(errors, []);
+  } finally {
+    await done();
+  }
+}
+
+// A fresh iPad, nothing kept on it (the board, call 177): a finger draws; the first pen tap anywhere in HQ, here on
+// HQ's own page beside the book, turns "touch always scrolls" on, once; from then a finger moves the page with no pen
+// first, after a reload too. Turned off in Preferences, it stays off however often the pen comes back.
+async function firstPen(browser, c) {
+  const free = freePage(c);
+  const { page, pen, touch, errors, done } = await mini(browser, c);
+  const kept = () => page.evaluate(() => JSON.parse(localStorage.getItem('ink.prefs') ?? '{}'));
+  const { draws, pans } = fingerLines(page, touch, c, free);
+  // (on HQ's page beside the book, nothing there to press)
+  const onHq = await page.evaluate(() => {
+    const at = [8, innerHeight - 8];
+    if (document.elementFromPoint(...at)?.closest('#book, button, a, input')) throw new Error('no bare HQ there');
+    return at;
+  });
+  try {
+    assert.deepEqual(await kept(), {}, 'nothing kept on a fresh device');
+    await draws('a finger draws before any pen');
+    await pen.tap(onHq);
+    await until(async () => (await kept()).penPans === true, 'the first pen, outside the book, turned it on');
+    await reopen(page, c);
+    await pans('after a reload, a finger moves the page with no pen first');
+    await press(page, 'Preferences on this device');
+    const card = page.getByRole('dialog', { name: 'Preferences on this device' });
+    assert.equal(await card.getByLabel('Touch always scrolls').isChecked(), true, 'on in Preferences');
+    await card.getByLabel('Touch always scrolls').uncheck();
+    await page.keyboard.press('Escape');
+    await pen.tap(onHq);
+    await page.waitForTimeout(QUIET_MS);
+    assert.equal((await kept()).penPans, false, 'the pen again turns nothing back on');
+    await reopen(page, c);
+    await draws('turned off, a finger draws again after a reload');
+    assert.deepEqual(errors, []);
+  } finally {
+    await done();
+  }
+}
+
+// A finger's line across the free page's paper: it draws (the line saved), or it moves the page and leaves nothing
+function fingerLines(page, touch, c, free) {
+  const finger = async () => {
+    const n = stored(c, free).ink.length,
+      [x, y] = middleOf(await paperBox(page));
+    await touch.stroke([[x - 80, y + 60]], [[x + 40, y - 60]]);
+    return n;
+  };
+  return {
+    draws: async why => {
+      const n = await finger();
+      await savedWhere(c, free.id, p => p.ink.length > n).catch(() => assert.fail(why));
+    },
+    pans: async why => {
+      const n = await finger();
+      await page.waitForTimeout(QUIET_MS);
+      assert.equal(stored(c, free).ink.length, n, why);
+    },
+  };
+}
+// HQ reloaded, nothing else changed, the book open again
+async function reopen(page, c) {
+  await page.reload();
+  await page.waitForSelector('#book .bk-desk', { timeout: 30_000 });
+  await c.settled(page, 'open');
+}
+
+// The board's walk-through by hand (call 174), nothing set on the device: a long page, the Pencil writes a line, the
+// text tool picked; a finger's drag up and then two fingers' scroll the page each time, and neither leaves ink or a
+// box of words
+async function scrolling(browser, c, viewport) {
+  const free = freePage(c);
+  // (a line written far down it: the page as tall as what's on it, longer than the screen)
+  free.ink.push({
+    color: '#1d9a5b',
+    size: 5,
+    points: Array.from({ length: 40 }, (_, i) => [80 + (i % 2) * 400, i * 70, 0.5, i * 16]),
+  });
+  const { page, pen, touch, errors, done } = await mini(browser, c, { viewport });
+  const size = `${viewport.width} × ${viewport.height}`;
+  try {
+    const paper = await paperBox(page),
+      mid = middleOf(paper);
+    await pen.stroke([
+      [mid[0] - 80, mid[1]],
+      [mid[0], mid[1] + 10],
+      [mid[0] + 80, mid[1]],
+    ]);
+    const { ink } = await savedWhere(c, free.id, p => p.ink.length === 2);
+    await page.locator('#book .bk-strip').getByRole('button', { name: 'Text', exact: true }).tap();
+    await until(async () => (await pressed(page)) === 'Text', 'the text tool picked');
+    for (const fingers of [1, 2]) {
+      const before = await placed(page),
+        from = Array.from({ length: fingers }, (_, i) => [mid[0] - 40 + i * 80, mid[1] + 150]);
+      await touch.stroke(
+        from,
+        from.map(([x, y]) => [x, y - 250]),
+      );
+      await page.waitForTimeout(QUIET_MS);
+      const after = await placed(page);
+      assert.ok(after[1] < before[1] - 100, `${fingers} finger(s) scrolled the page at ${size}: ${before} → ${after}`);
+      assert.equal(
+        await page.locator('#book .bk-typed').count(),
+        0,
+        `no box of words from ${fingers} finger(s) at ${size}`,
+      );
+      assert.equal(stored(c, free).ink.length, ink.length, `no ink from ${fingers} finger(s) at ${size}`);
+      assert.equal(stored(c, free).texts.length, 0, `no words kept from ${fingers} finger(s) at ${size}`);
+      await c.shot(`book-scroll-${fingers}-${viewport.width}`, page);
+      // (back to the top for the next)
+      await touch.stroke([[mid[0], mid[1] - 150]], [[mid[0], mid[1] + 400]]);
+      await page.waitForTimeout(QUIET_MS);
+    }
     assert.deepEqual(errors, []);
   } finally {
     await done();

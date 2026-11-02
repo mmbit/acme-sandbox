@@ -5,8 +5,7 @@
 // the page before swings back from the spine onto the page shown: the same turn played backwards, frame for frame.
 // midway() swaps what's under the leaf while the leaf hides it (it may return a promise). The leaf is a picture of a page
 // (its parts copied, its canvases' pixels too), so nothing on the page flashes or jumps. Transforms and opacity only:
-// the compositor's. Reduced motion: the page shown fades into the new one. Either way with the faintest swish of paper
-// (the board's call 149). (the turn the same both ways: job #19861)
+// the compositor's. Reduced motion: the page shown fades into the new one. Either way with the faintest swish of paper.
 import { foley } from '../audio.js';
 
 // A turn: quick, the leaf lifting at first and gone over the spine as it speeds up; played back, it sweeps in and

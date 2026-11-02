@@ -59,8 +59,7 @@ export function notebookPlay({ seed, now = () => Date.now(), sendMs = 10_000 } =
     ask: (group, card) => askAbout(s, group, card),
     // An agent's note on a page (a call agent's scrap or typed words: ink/callnotes.ts), by: the agent's id; parts:
     // { ink, texts, pictures }. → the group
-    note: (page, by, parts) =>
-      inHand(s, by, () => copy(insertGroup(s, s.page(Number(page)), 'scrap', by, { ...EMPTY, ...parts }))),
+    note: (page, by, parts) => copy(insertGroup(s, s.page(Number(page)), 'scrap', by, { ...EMPTY, ...parts })),
     // A live call's notes page as the store makes it at pickup (ink/callnotes.ts pageFor): a new page of the notebook,
     // in its Calls chapter. → its id
     callPage: notebook => {
@@ -68,9 +67,8 @@ export function notebookPlay({ seed, now = () => Date.now(), sendMs = 10_000 } =
       s.page(id).kind = 'call';
       return id;
     },
-    // The board's routes as a call's agent works the page through them (ink/callpage.ts): its changes counted on the
-    // page as made by its hand (notebook.ts byHand)
-    by: (agent, path, body) => inHand(s, agent, () => routed(s, path, {}, body)),
+    // The board's routes as a call's agent works the page through them (ink/callpage.ts): agent, its id
+    by: (agent, path, body) => routed(s, path, {}, body),
     // fn({ notebook, page }) after every change, as the coordinator's `book` event with text `notebook` (page null: a
     // notebook's order)
     listen(fn) {
@@ -172,8 +170,6 @@ function changed(s, notebook, page) {
     Object.assign(p, { updated: now, x: Math.floor(x), y: Math.floor(y), w: Math.ceil(w), h: Math.ceil(h) });
   }
   s.notebook(notebook).updated = now;
-  // (counted, as notebook.ts byHand's: someone else's change, which a screen's read takes as a step of its own)
-  if (p && s.hand) p.handed = (p.handed ?? 0) + 1;
   for (const fn of [...s.listeners]) fn({ notebook, page: page ?? null });
 }
 function routed(s, path, query, body) {
@@ -184,14 +180,6 @@ function routed(s, path, query, body) {
 }
 const EMPTY = { ink: [], texts: [], pictures: [] },
   copy = x => JSON.parse(JSON.stringify(x));
-function inHand(s, hand, act) {
-  s.hand = hand;
-  try {
-    return act();
-  } finally {
-    s.hand = null;
-  }
-}
 
 // ---------------------------------------------------------------- notebooks, pages, sending
 // A route's handler for its 'METHOD path': (s, the body or a GET's query, the query)
@@ -293,7 +281,6 @@ function listGroups(s, q) {
     page: p.id,
     notebook: p.notebook,
     title: p.label,
-    handed: p.handed ?? 0,
     groups: unitsOn(s, p.id).map(g => groupOf(s, g, replies)),
   };
 }

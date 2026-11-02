@@ -1,6 +1,6 @@
 // The book's Search, in the overview's head (bookui.js's overview island, bookzoom.js): one line to write on, with the
 // Pencil (Apple's Scribble turns handwriting in a field into type, nothing of ours) or a keyboard. What the book holds
-// is found as it's written: handwriting read into type, words said while drawing, a scrap's typed words and the
+// is found as it's written: words said while drawing, a scrap's typed words, the boxes typed on a page and the
 // agents' answers under them, listed under the line. A find tapped opens its page in the book (bookpages.js find). The
 // store's route is booksearch.ts (played in dev mode by notebookplay.js), the matching booksearchwords.js. It finds in
 // every notebook of the board's own, so on the Shelf its line says so.

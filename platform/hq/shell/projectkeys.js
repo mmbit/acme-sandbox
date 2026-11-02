@@ -5,7 +5,6 @@
 // keys in reach above the tiles. Lit in the one accent wherever something waits on the board (threads.js forBoard), the
 // same at every level, and work under way shows as moving bars. (A thread's tile is threadtile.js's, with the pieces
 // it shares from here.)
-import { costHtml, projectCostHtml } from './costs.js';
 import { esc, cap } from '../util.js';
 import * as world from '../world/world.js';
 import { scene, look } from './stage.js';
@@ -87,7 +86,7 @@ export function projectTile(p) {
     on = atWork(p.threads),
     people = [p.owner, ...on.filter(a => a !== p.owner)].map((a, i) => person(a, i === 0, on.includes(a)));
   return `<button class="pj-tile pj-project${state.lit ? ' lit' : ''}" data-project="${esc(p.id)}" data-sort="${esc(p.id)}" data-owner="${esc(p.owner ?? '')}">
-    ${art(p, nameText(p, 'name'), people, state, running(p.threads))}<b>${nameHtml(p, 'name')}</b>${deliverables(p)}${projectCostHtml(p.cost)}</button>`;
+    ${art(p, nameText(p, 'name'), people, state, running(p.threads))}<b>${nameHtml(p, 'name')}</b>${deliverables(p)}</button>`;
 }
 // A done thread, quieter: its owner, its name and how many of its jobs were done (projects.ts tally), or while it's
 // being opened, how that goes (opening: projects.js's, for one of the project's done threads). One closed with no
@@ -104,7 +103,7 @@ export function doneThreadTile(t, opening) {
     label: `${nameText(t, 'name')}, ${words}`,
     top: faces([t.owner]),
     name: nameHtml(t, 'name'),
-    foot: `<span class="pj-state">${esc(words)}</span>${lines(t.lines)}${costHtml(t.cost)}`,
+    foot: `<span class="pj-state">${esc(words)}</span>${lines(t.lines)}`,
     live: opening?.id === t.id,
   });
 }

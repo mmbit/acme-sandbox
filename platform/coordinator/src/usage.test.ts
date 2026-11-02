@@ -56,6 +56,36 @@ test("a run cut off without a report shows up in the next run's share", async ()
   assert.deepEqual(rows(id).map(r => [r.input, r.cost]), [[1000, 0.5], [2000, 1]]);
 });
 
+test('a no-engine completion preserves the session base for its next resumed run', async () => {
+  const id = await running();
+  const session = 'no-engine-session';
+  await finish(id, { status: 'limited', session, usage: { models: { [SONNET]: t(1000, 0.5) }, cost: 0.5 } });
+  await again(id);
+  await finish(id, { status: 'limited', session, no_engine: true, usage: { models: {} } });
+  await again(id);
+  await finish(id, {
+    status: 'done',
+    session,
+    usage: { models: { [SONNET]: t(1500, 0.7) }, cost: 0.7, resumed: true },
+  });
+  assert.deepEqual(
+    rows(id).map(r => [r.input, r.cost]),
+    [
+      [1000, 0.5],
+      [500, 0.2],
+    ],
+  );
+  const { rebaseCarried } = await import('./usage.ts');
+  rebaseCarried();
+  assert.deepEqual(
+    rows(id).map(r => [r.input, r.cost]),
+    [
+      [1000, 0.5],
+      [500, 0.2],
+    ],
+  );
+});
+
 test('Codex: no price figure, and nothing but numbers and model names is kept', async () => {
   const id = await running('codex-1', 'codex');
   await finish(id, { status: 'done', session: 'c1', seat: 'codex-1', usage: { resumed: false, models: {

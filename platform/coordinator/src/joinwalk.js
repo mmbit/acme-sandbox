@@ -112,7 +112,7 @@ export class WalkThrough {
     this.showWatching();
   }
 
-  // (its Pause comes and goes, so it settles into its corner again at its new width)
+  // Keep the bubble on screen as its Pause button comes and goes.
   showWatching() {
     const w = this.watching;
     this.bubble.watching(!w ? 'off' : w.paused ? 'paused' : this.ours ? 'watched' : 'off');
@@ -145,7 +145,7 @@ export class WalkThrough {
     return true;
   }
 
-  // A soft knock as the bubble lands in its corner, played into the call like its voice so the line's echo canceller
+  // A soft knock as the bubble is dropped, played into the call like its voice so the line's echo canceller
   // takes it out too
   settled() {
     const audio = this.audio();

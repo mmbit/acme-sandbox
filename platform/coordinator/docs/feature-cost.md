@@ -1,9 +1,11 @@
 # Feature cost
 
 
-Feature cost accompanies the ETA in the projects view, `hq projects`, `hq deliverable` and clean comparisons from
-`hq estimate`. It supplies recorded measurements and the agent's saved expectation. Matching never invents a token
-or seat budget. The planning agent weighs scope and value against these costs, with no automatic value score.
+
+Feature cost accompanies the ETA in `hq projects`, `hq deliverable` and clean comparisons from `hq estimate`. The
+board's projects view shows none of it. It supplies recorded measurements and the agent's saved expectation.
+Matching never invents a token or seat budget. The planning agent weighs scope and value against these costs, with no
+automatic value score.
 
 A feature defaults to its deliverable. Group initial pieces with `hq deliverable feature <member> <original>`.
 Group board feedback with `hq deliverable feedback <member> <original> --round <label>`. Every deliverable built
@@ -24,7 +26,10 @@ Live links override those entries. Deliverable aliases keep both sources working
 `estimate.jobs[].feature_cost` includes the feature's linked feedback, even after its initial merge. Feature costs
 also appear at `thread.cost` and on the board's project and completed-deliverable responses.
 
-Usage comes from the existing session-increment ledger. Input, cache writes, reused input and output remain separate
+
+Usage comes from the existing session-increment ledger. A job remains incomplete when any run in the measured
+window lacks its own closing report. An earlier report cannot cover a later retry, and partial totals stay out of
+weekly token calibration. Input, cache writes, reused input and output remain separate
 and sum to tokens. Team usage already included by the engine is not added again. A resumed session contributes only
 its increment. Failed, cancelled and repeated work still consumes resources and remains in feature actuals.
 
@@ -44,7 +49,7 @@ history expires. Meter use is attributed, rather than a provider measurement of 
 no job owner. Native seat-week fractions are not normalized across subscription sizes or engines.
 
 Token counts are not subscription credits, API-equivalent money, or a conversion to a seat's week. Missing meter
-history stays unknown. Metered run time and jobs without token reports accompany recorded totals. A measured
+history stays unknown. Metered run time and jobs with incomplete token reports accompany recorded totals. A measured
 seat total can cover only part of a feature. It excludes unmetered work and is not a claim of complete coverage.
 Historical token reports remain available even where old seat readings are gone. New meter attribution begins
 with this implementation's observations. No past subscription percentage is reconstructed from token counts.

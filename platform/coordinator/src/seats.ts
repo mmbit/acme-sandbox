@@ -126,7 +126,7 @@ type ListedSeat = {
 // the board's choice, never a default.
 export const STOP_DEFAULT = 90;
 const STOP_MIN = 50,
-  STOP_MAX = 99;
+  STOP_MAX = 100;
 const PACING_KEY = 'seats.pacing';
 export const pacingOn = () => setting(PACING_KEY) !== 'off';
 const stopLevel = (value: unknown) =>
@@ -379,11 +379,11 @@ export function sendSeatKey(id: string, value: unknown) {
 // What a sign-in asks of the board before the worker's tool says: Claude's and Antigravity's page gives a code to paste back
 const asksFor = (provider: Provider) => (['claude', 'agy'].includes(provider.cli) ? 'code' : 'nothing');
 
-// A seat's stop level, from 50% to 99%, and pacing on or off for all seats.
+// A seat's stop level, from 50% to 100%, and pacing on or off for all seats.
 export function stopSeat(id: string, stop: unknown) {
   if (!seatOf(id)) return "There's no such seat.";
   const level = stopLevel(stop);
-  if (level === null) return 'Pick a level from 50% to 99%.';
+  if (level === null) return 'Pick a level from 50% to 100%.';
   db.prepare('update seat_list set stop = ? where id = ?').run(level, id);
   return { ok: true, action: recordAction({ seat: id, what: 'stop' }) };
 }

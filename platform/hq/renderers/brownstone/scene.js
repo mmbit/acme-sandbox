@@ -2,7 +2,7 @@
 // walls and the showcase tour's stops.
 import { clamp, canvas, cap } from '../../util.js';
 import { SX, SY, LOGO_COLOURS, lettering } from './iso.js';
-import { spriteFrame, CW, CH } from './sprites.js';
+import { spriteFrame, CW, CH, BELOW_FEET } from './sprites.js';
 import { darkness, fireworksRate } from './env.js';
 import { update, walkCheck, errand } from './sim.js';
 import { createRenderer, render, ISLAND } from './render.js';
@@ -207,9 +207,10 @@ function draw(t) {
   render(R, S, L, cam, { SW, SH, dpr, t: now, hour: world.hour(), selected: lit && S.people.get(lit.id), planes: fx.planes, rounds: fx.rounds, intro: introT != null ? introOffset : null, walls: wallOpen }); // (rounds: the bar's)
 }
 
-// A picture for the panels and the colour to frame it in: an agent standing, in their shirt's colour, or a mascot
-// sitting ({ kind: 'agent' | 'mascot', id }); null for a mascot of a kind the brownstone doesn't draw, or an agent
-// who isn't in the building (one who has left: their call or card shows their initial)
+// A picture for the panels and the colour to frame it in: an agent standing, in their shirt's colour, with how much of
+// the picture lies below their feet (foot, a fraction: the call's floor meets them there), or a mascot sitting
+// ({ kind: 'agent' | 'mascot', id }); null for a mascot of a kind the brownstone doesn't draw, or an agent who isn't in
+// the building (one who has left: their call or card shows their initial)
 function portrait({ kind, id }) {
   const c = canvas(CW, CH), g = c.getContext('2d');
   if (kind === 'mascot') {
@@ -220,7 +221,7 @@ function portrait({ kind, id }) {
   const A = S.people.get(id);
   if (!A) return null;
   g.drawImage(spriteFrame(A.id, A.look, 'stand', true, false), 0, 0);
-  return { img: c, accent: A.look.shirt };
+  return { img: c, accent: A.look.shirt, foot: BELOW_FEET };
 }
 // where a mascot lives, as the panels name it (null: it isn't in the building)
 const where = ({ kind, id }) => kind === 'mascot' && S.mascots.some(c => c.data.id === id) ? 'roof terrace' : null;

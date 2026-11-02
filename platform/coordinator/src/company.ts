@@ -166,6 +166,8 @@ export const unstaffed = () => (org().departments ?? []).every((d: any) => (d.ag
 // - foundation: the foundation keeper, who runs the weekly foundation sweep (shared/routines/foundation-sweep.md)
 // - readability: the reader of readability and structure a first review round chooses unless its triage says why not
 //   (reviewtriage.ts). Left out, triage chooses that lens like any other
+// - cards: who reads every colleague's card before the board's desk phone, and passes it on or answers it in the board's
+//   place (cardread.ts). Left out, cards go straight to the desk phone
 export function roles() {
   const r = optional('company/org.yaml').roles ?? {}, id = (v: unknown) => typeof v === 'string' && v ? v : ceo();
   const ids = (v: unknown) => (Array.isArray(v) ? v : []).filter((a: unknown) => typeof a === 'string') as string[];
@@ -174,7 +176,8 @@ export function roles() {
     businessMail: ids(r.businessMail), customerData: ids(r.customerData), customerMail: ids(r.customerMail), orders: ids(r.orders),
     triage: r.triage as string | undefined, asks: r.asks as string | undefined,
     foundation: typeof r.foundation === 'string' && r.foundation ? r.foundation : undefined,
-    readability: typeof r.readability === 'string' && r.readability ? r.readability : undefined };
+    readability: typeof r.readability === 'string' && r.readability ? r.readability : undefined,
+    cards: typeof r.cards === 'string' && r.cards ? r.cards : undefined };
 }
 // Whether an agent's work needs what one of those roles reads
 export type ReadingRole = 'businessMail' | 'customerData' | 'customerMail' | 'orders';

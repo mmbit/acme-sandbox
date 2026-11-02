@@ -13,17 +13,14 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { playwright, openPage } from '../browser/browser.mjs';
+import { RECORDER_MODULES } from '../../platform/hq/extras.mjs';
 
 const REPO = new URL('../..', import.meta.url).pathname;
 const MODULES = `${REPO}/platform/coordinator/node_modules`;
 const shotsAt = process.argv.indexOf('--shots');
 const SHOTS = shotsAt > 0 ? process.argv[shotsAt + 1] : `${tmpdir()}/watchalong-check`;
 const RECORDER = {
-  '/watchalong.js': `${REPO}/shared/watchalong/watchalong.js`,
-  '/canvas.js': `${REPO}/shared/watchalong/canvas.js`,
-  '/encoder.js': `${REPO}/shared/watchalong/encoder.js`,
-  '/strokes.js': `${REPO}/shared/watchalong/strokes.js`,
-  '/toplayer.js': `${REPO}/shared/watchalong/toplayer.js`,
+  ...Object.fromEntries(RECORDER_MODULES.map(name => [`/${name}`, `${REPO}/shared/watchalong/${name}`])),
   '/ink.js': `${REPO}/shared/review/ink.js`,
   // (ink.js's live line and the stroke's shapes)
   '/inklive.js': `${REPO}/shared/review/inklive.js`,
@@ -96,11 +93,12 @@ try {
   for (const { events, text } of [guest, board]) {
     const custom = tag => events.filter(e => e.type === 5 && e.data.tag === tag).map(e => e.data.payload);
     const taps = custom('tap').map(tap => `${tap.role}: ${tap.label}`);
-    for (const tap of ['button: Open the shop', 'button: Add to basket', 'a: Basket'])
+    for (const tap of ['button: Open the shop', 'button: Add to basket'])
       assert.ok(taps.includes(tap), taps.join(' | '));
     assert.ok(taps.includes('button: '), `a tap on a control holding a private part has no label: ${taps.join(' | ')}`);
     const pages = custom('page').map(page => new URL(page.address).pathname);
-    for (const path of ['/', '/shop.html', '/basket.html']) assert.ok(pages.includes(path), pages.join(' | '));
+    for (const path of ['/', '/shop.html']) assert.ok(pages.includes(path), pages.join(' | '));
+    navigationRecorded(events);
     assert.ok(text.includes('"mailto:"'), 'an email link keeps its kind');
     assert.ok(
       events.some(e => e.type === 4 && e.data.href === `${desk.origin}/`),
@@ -122,6 +120,19 @@ try {
   await browser.close();
   desk.server.close();
   shop.server.close();
+}
+
+// A link's tap survives the frame leaving and comes before the next page in the saved recording.
+function navigationRecorded(events) {
+  const taps = events.filter(
+    e => e.type === 5 && e.data.tag === 'tap' && e.data.payload.role === 'a' && e.data.payload.label === 'Basket',
+  );
+  assert.equal(taps.length, 1, 'the saved recording keeps the link tap once');
+  const tapAt = events.indexOf(taps[0]);
+  const pageAt = events.findIndex(
+    e => e.type === 5 && e.data.tag === 'page' && new URL(e.data.payload.address).pathname === '/basket.html',
+  );
+  assert.ok(tapAt >= 0 && pageAt > tapAt, 'the saved recording keeps the link tap before the next page');
 }
 
 // One walk through the desk and the shop in its frame: the events recorded, as text too, and when the shop's button

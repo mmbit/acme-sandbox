@@ -84,6 +84,8 @@
       start().then(ui => {
         if (e.data.pin) ui.toggle(); // the pin button in HQ's viewer bar
       });
+      if (Array.isArray(e.data.marks))
+        start().then(() => dispatchEvent(new CustomEvent('viewmarks', { detail: e.data.marks })));
       if (e.data.ask) hello(); // HQ asks every page its frame loads
       if (typeof e.data.call === 'boolean') {
         dispatchEvent(new CustomEvent('review:call', { detail: e.data.call }));

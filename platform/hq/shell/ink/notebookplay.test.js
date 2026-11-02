@@ -119,17 +119,18 @@ test("a unit is created at the page's end (in a column) or right after another, 
   assert.equal(groups().at(-1).id, d.id);
 });
 
-test("edit grows a unit when ink goes past its bottom; resize can't cut into its parts", () => {
+test('a unit keeps its height as set: an edit leaves it, resize sets it (each reader floors it at its parts)', () => {
   const { post, page } = played();
   const g = post('groups/create', { page, ink: [stroke(10, 10)] });
-  const grown = post('groups/edit', { id: g.id, since: g.updated, ink: [stroke(10, 10), stroke(10, 300)] });
-  assert.ok(grown.h >= 300);
-  const tall = post('groups/resize', { id: g.id, since: grown.updated, h: 600 });
+  assert.ok(g.h >= g.box.y + g.box.h, 'made as tall as its ink');
+  const drawn = post('groups/edit', { id: g.id, since: g.updated, ink: [stroke(10, 10), stroke(10, 300)] });
+  assert.equal(drawn.h, g.h, 'ink past its bottom leaves it: the page shows it to its foot');
+  const tall = post('groups/resize', { id: g.id, since: drawn.updated, h: 600 });
   assert.equal(tall.h, 600);
   const kept = post('groups/edit', { id: g.id, since: tall.updated, ink: [stroke(10, 10)] });
   assert.equal(kept.h, 600, 'an edit never shrinks it');
-  const short = post('groups/resize', { id: g.id, since: kept.updated, h: 5 });
-  assert.ok(short.h >= short.box.y + short.box.h && short.h < 600);
+  const short = post('groups/resize', { id: g.id, since: kept.updated, h: 5.4 });
+  assert.equal(short.h, 5, "as the page dragged it, the post-it words aside: it floors it at what's drawn");
   assert.throws(() => post('groups/resize', { id: g.id, since: kept.updated, h: 400 }), refusal(409, CHANGED));
   for (const h of ['tall', -40, 0])
     assert.throws(
@@ -432,7 +433,7 @@ test("pages are titled, ordered and archived; dev mode's seed reads whole", () =
   assert.equal(play.route('/api/notebooks').archive.length, 1);
 });
 
-test("Search: a group's words, its handwriting and the answers under it, as booksearch.ts finds them", () => {
+test("Search: a group's words, the boxes typed on its page and the answers under it, as booksearch.ts finds them", () => {
   const { play, page, post } = played();
   const cut = post('groups/scrap', {
     anchor: { v: 1, url: '/gazette', el: null, view: { x: 0, y: 0, w: 1280, h: 800, dpr: 2 }, ink: [] },
@@ -452,7 +453,7 @@ test("Search: a group's words, its handwriting and the answers under it, as book
     tear.found.map(f => [f.how, f.note, f.n, f.page]),
     [
       ['answer', cut.id, 1, page],
-      ['written', drawn.id, 2, page],
+      ['typed', drawn.id, 2, page],
       ['spoken', cut.id, 1, page],
     ],
   );

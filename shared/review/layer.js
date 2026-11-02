@@ -55,7 +55,7 @@ function opening(r, el) {
 // reshow: a popup opened or closed, so the host joins the top layer again, after it
 function liftHost(r, reshow) {
   const { host } = r;
-  host.toggleAttribute('data-spread', r.book && document.documentElement.dataset.book === 'spread');
+  showSpread(r);
   r.popups = r.popups.filter(e => e.isConnected);
   // Floating controls own their pen events and their lifetime, so the ink stays outside their layer.
   const modal = activeModal(r),
@@ -72,6 +72,9 @@ function liftHost(r, reshow) {
     showAgain = true;
   } // (out of the document, a popover is hidden)
   showHost(host, showAgain);
+}
+function showSpread(r) {
+  r.host.toggleAttribute('data-spread', r.book && document.documentElement.dataset.book === 'spread');
 }
 function showHost(host, again) {
   host.popover = 'manual';
@@ -92,7 +95,7 @@ export function followPopups(r) {
   const modal = activeModal(r);
   if (modal) r.popups = [...r.popups.filter(e => !modal.contains(e)), ...r.popups.filter(e => modal.contains(e))];
   const watch = new MutationObserver(records => {
-    r.host.toggleAttribute('data-spread', r.book && document.documentElement.dataset.book === 'spread');
+    showSpread(r);
     const changed = dialogsChanged(r, records);
     // (or a popup, or the host in it, taken out)
     if (changed || !r.host.isConnected || r.popups.some(e => !e.isConnected)) liftHost(r, changed);

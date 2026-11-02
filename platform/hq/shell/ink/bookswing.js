@@ -10,13 +10,13 @@
 // The pull tab's gestures are here: pulled while shut (or mid-swing), it lifts the board, which follows the finger
 // with a slight lag; let go, gravity or the close takes it (letGo). Held on after it lands, the book stays put for
 // HOLD ms, then the same drag resizes it, the edge catching up with the finger once. Open, pulled left first, it
-// resizes as the cover's edge does (book.js's). A tap is the tab's click (bookhandle.js). The page's left edge (the
-// stack, book.css) swiped right lifts the open book the same way, to close it. With reduced motion, none of this:
-// book.js crossfades.
+// resizes as the cover's edge does (book.js's). A tap is the tab's click (bookhandle.js). A finger's swipe right from
+// the page's left edge (the stack, book.css) lifts the open book the same way, to close it. With reduced motion, none
+// of this: book.js crossfades.
 import { store } from '../../util.js';
 import { foley } from '../audio.js';
 import { EDGE, BOOK } from './booklayout.js';
-import { follow } from './bookfollow.js';
+import { follow, within } from './bookfollow.js';
 import * as link from './notebooklink.js';
 import {
   UPRIGHT,
@@ -346,8 +346,8 @@ function resize(dt) {
 }
 
 // The pull tab's press (tab true): a tap (its click, bookhandle.js), a lift, or (open, pulled left first) a resize.
-// Held, it lifts a little. The page's left edge's (tab false): only a swipe
-// right of the book open at rest, a lift to close it; anything else there is nothing.
+// Held, it lifts a little. The page's left edge's (tab false): only a finger's swipe right of the book open at rest, a
+// lift to close it; anything else there is nothing.
 function grip(node, { tab }) {
   let kind = null,
     reach0 = 0;
@@ -359,7 +359,10 @@ function grip(node, { tab }) {
       addEventListener('pointerup', up, { once: true });
       addEventListener('pointercancel', up, { once: true });
     });
-  follow(node, {
+  // (the page's edge takes no press: a finger's on it is read on the leaf, the Pencil and the mouse write there, the
+  // page letting go of the finger's as the leaf takes it. Board, call 174.)
+  follow(tab ? node : parts.leaf, {
+    takes: e => tab || (e.pointerType === 'touch' && !e.target.closest?.('.bk-rail') && within(node, e)),
     start(dx) {
       const shutAtStart = !mode && document.documentElement.dataset.book === 'folded';
       if (!tab && (mode || shutAtStart || dx < 0)) return void (kind = null);

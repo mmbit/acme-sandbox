@@ -55,8 +55,7 @@ const hqServer = createServer((req, res) => {
 });
 await new Promise<void>(r => hqServer.listen(0, '127.0.0.1', r));
 
-const PORT = 20000 + Math.floor(Math.random() * 20000);
-Object.assign(process.env, { DATA_DIR: mkdtempSync(join(tmpdir(), 'care-engine-')), PORT: String(PORT), CARE_LOCAL: '1', CARE_PROVIDER: 'fake',
+Object.assign(process.env, { DATA_DIR: mkdtempSync(join(tmpdir(), 'care-engine-')), PORT: '0', CARE_LOCAL: '1', CARE_PROVIDER: 'fake',
   CARE_APPS: JSON.stringify({ shop: `http://127.0.0.1:${(shop.address() as any).port}` }), CARE_TOKENS: JSON.stringify({ shop: TOKEN }),
   CARE_NAMES: JSON.stringify({ shop: 'Shop' }), CARE_CAP_CONVERSATION: '0.05', CARE_RETRY_MS: '300', CARE_SILENT_MS: '10000', CARE_MAIL_RETRY_MS: '500', CARE_HELPED_MS: '300',
   CARE_HQ_URL: `http://127.0.0.1:${(hqServer.address() as any).port}`, CARE_HQ_TOKEN: 'hq-test-token',
@@ -69,7 +68,7 @@ const email = await import('./email.ts');
 const engine = await import('./engine.ts');
 const hq = await import('./hq.ts');
 const phonecall = await import('./phonecall.ts');
-await import('./server.ts');
+const { bound } = await import('./server.ts');
 const { t } = await import('./texts.ts'); // the template's words (its plug-in, loaded by the server)
 const { TURN_ROUNDS } = await import('./model.ts');
 const { settings } = await import('./company.ts');
@@ -82,7 +81,7 @@ async function withSetting<K extends keyof typeof settings>(key: K, value: (type
 await new Promise(r => setTimeout(r, 100));
 
 // ---- a customer: a cookie jar, the stream as a list of messages, and the widget's POSTs
-const BASE = `http://127.0.0.1:${PORT}`;
+const BASE = `http://127.0.0.1:${(await bound).port}`;
 async function customer(start = '', { renews = true, lang = 'en' } = {}) {
   let cookie = start;
   const events: any[] = [];

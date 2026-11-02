@@ -24,6 +24,7 @@ import { outlookOf } from './outlooks.ts';
 import type { Forecast } from './forecast.ts';
 import { levelsOf, splitMarks } from './levels.ts';
 import { PREFIX } from './jobcodes.ts';
+import { pendingReview } from './threadends.ts';
 
 const NAME_MAX = 80,
   TITLE_MAX = 140,
@@ -176,6 +177,9 @@ export function done(id: string, agent: string) {
   const own = ownThread(id, agent);
   if (typeof own === 'string') return own;
   if (own.thread.status === 'done') return `${id} is done already`;
+  const pending = pendingReview(own.thread.id);
+  if (pending)
+    return `${id} still has PR #${pending.number} waiting to merge: finish its review before marking it done`;
   if (own.thread.branch) return `${id} has its branch ${own.thread.branch}: it's done when that merges`;
   // (a moved thread found by its old id: its new one)
   db.prepare("update threads set status = 'done', done = ? where id = ?").run(new Date().toISOString(), own.thread.id);

@@ -31,7 +31,7 @@ globalThis.document = { addEventListener: () => {}, dispatchEvent: () => {}, cre
 globalThis.location = { hostname: '', search: '', pathname: '/' };
 // (dev mode's store, notebookplay.js, seeded with the pages below: each test draws on one of its own)
 globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => SEED });
-const { inkUnit, layUnits } = await import('./bookunits.js');
+const { inkUnit, layUnits, heightOf } = await import('./bookunits.js');
 const { changed, readAgain, readPage, saved } = await import('./booksave.js');
 const { widthFor } = await import('./masonry.js');
 
@@ -93,6 +93,9 @@ const PAGES = {
       ],
     },
   ],
+  // (three of an agent's scraps, a picture and its room to write each: the first two side by side, the third under the
+  // first)
+  4: [0, 1, 2].map(() => ({ scrap: true, ink: [], h: 260 })),
   // (yesterday's word, alone in the left column)
   3: [
     {
@@ -114,10 +117,11 @@ const SEED = {
     drawings.map((d, k) => ({
       id: Number(page) * 100 + k,
       page: Number(page),
-      kind: 'drawing',
+      kind: d.scrap ? 'scrap' : 'drawing',
       ink: d.ink.map(line),
+      pictures: d.scrap ? [{ file: 'a.png', url: '/a.png', x: 0, y: 0, w: 320, h: 120, tilt: 0 }] : [],
       pos: k,
-      h: 0,
+      h: d.h ?? 0,
       column: d.column ?? null,
       created: d.created ?? NOW,
       updated: d.created ?? NOW,
@@ -215,4 +219,104 @@ test("a drawing on a page whose last unit is yesterday's stays where it was draw
   const made = [...view.page.groups.values()].find(g => !PAGES[3].some((_, k) => g.id === 300 + k));
   assert.ok(made && made.created > YESTERDAY, `made in the store today: ${JSON.stringify(made)}`);
   assert.deepEqual(inked(view.page), drawn);
+});
+
+// The board's walk-through on its iPad (call 174): ink drawn beside a scrap followed the scrap's room as it grew and
+// as it was dragged, and a scribble meant for the note at the bottom pushed that note down, an empty gap where it was.
+const placeOf = (page, id) => page.places.find(p => p.id === id);
+// (the page's scraps' places, by id)
+const cards = page => Object.fromEntries(page.places.filter(p => p.id > 400).map(p => [p.id, [p.x, p.y]]));
+
+test("ink drawn beside a scrap stays where it was drawn as the scrap's room grows and is dragged", async () => {
+  const { view } = await pageOf(4),
+    { page } = view,
+    first = placeOf(page, 400);
+  // (a circle and an arrow in the gap beside the first scrap, by its room)
+  draw(view, [
+    [
+      [first.x + first.w + 2, first.y + 180],
+      [first.x + first.w + 20, first.y + 200],
+      [first.x + first.w + 4, first.y + 220],
+    ],
+    [
+      [first.x + first.w + 22, first.y + 150],
+      [first.x + first.w + 10, first.y + 190],
+    ],
+  ]);
+  const drawn = inked(page);
+  // (writing in its room past its foot, which grows to hold it)
+  draw(view, [
+    [
+      [first.x + 20, first.y + first.h - 10],
+      [first.x + 200, first.y + first.h + 60],
+    ],
+  ]);
+  assert.ok(heightOf(page, 400) > 260, 'the room grew');
+  assert.deepEqual(inked(page).slice(0, 2), drawn, 'the circle and arrow stay where they were drawn as it grows');
+  page.resizing = { id: 400, h: 600 };
+  layUnits(view, WIDTH);
+  assert.deepEqual(inked(page).slice(0, 2), drawn, '… and as its room is dragged taller');
+});
+
+test('a scribble on the note at the bottom lands on it, and no scrap moves', async () => {
+  const { view } = await pageOf(4),
+    { page } = view,
+    last = placeOf(page, 402),
+    before = cards(page);
+  // (started just above it, in the gap over it, and across its picture)
+  draw(view, [
+    [
+      [last.x + 40, last.y - 12],
+      [last.x + 120, last.y + 40],
+      [last.x + 200, last.y + 20],
+    ],
+  ]);
+  assert.equal(page.ink[0].g, 402, 'the scribble is the note’s');
+  assert.deepEqual(cards(page), before, 'every scrap where it was');
+});
+
+test("a scrap's room grown keeps every scrap in its column", async () => {
+  const { view } = await pageOf(4),
+    { page } = view,
+    columns = Object.fromEntries(page.places.map(p => [p.id, p.x]));
+  page.resizing = { id: 400, h: 900 };
+  layUnits(view, WIDTH);
+  assert.deepEqual(Object.fromEntries(page.places.map(p => [p.id, p.x])), columns, 'none moved across');
+});
+
+// A line written low in a scrap's room, above its foot: the store keeps the scrap's height without the post-it words
+// drawn in its body, so once saved the scrap is as tall as it was, and the note under it stays put.
+test("a line low in a scrap's room, its post-it words drawn, grows it only past its ink once saved", async () => {
+  const shown = await pageOf(4),
+    { view } = shown,
+    { page } = view,
+    // (its post-it words, 40 px tall, under its picture: bookunitcards.js)
+    words = { dataset: { g: '400' }, offsetHeight: 40, style: {} };
+  view.el.querySelectorAll = selector => (selector.includes('bk-words') ? [words] : []);
+  view.place();
+  const tall = heightOf(page, 400),
+    first = placeOf(page, 400),
+    under = placeOf(page, 402);
+  assert.equal(tall, 260 + 48, 'its room, its words added');
+  // (past its room as the store set it, short of its foot as drawn)
+  draw(view, [
+    [
+      [first.x + 20, first.y + tall - 30],
+      [first.x + 200, first.y + tall - 20],
+    ],
+  ]);
+  assert.equal(heightOf(page, 400), tall, 'drawn, as tall as it was');
+  await save(shown);
+  assert.equal(page.groups.get(400).h, 260, 'the store keeps its room as set');
+  assert.equal(heightOf(page, 400), tall, 'saved, as tall as it was');
+  assert.deepEqual([placeOf(page, 402).x, placeOf(page, 402).y], [under.x, under.y], 'the note under it stays put');
+  // (and one from its room past its foot grows it to the line's foot, no further)
+  draw(view, [
+    [
+      [first.x + 20, first.y + tall - 10],
+      [first.x + 200, first.y + tall + 40],
+    ],
+  ]);
+  await save(shown);
+  assert.equal(heightOf(page, 400), tall + 40 + 4, 'grown to the line and its pen, no further');
 });

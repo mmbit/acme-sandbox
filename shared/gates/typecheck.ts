@@ -6,7 +6,7 @@
 // while they hold it. A check that passes the cap fails as not run, never as passed: the cap is set over the whole
 // repo's program (~1.3 GB live in October 2026), so only a check far bigger than any yet stops at it. A thread's memory
 // goes when it ends, so no step holds what the one before left for V8 to collect (one process held ~1.96 GB at the end
-// of a job, measured in job #21775).
+// of a job).
 import { isMainThread, parentPort, Worker, workerData } from 'node:worker_threads';
 import { join, relative } from 'node:path';
 import type { CompilerOptions, Diagnostic } from 'typescript';

@@ -44,6 +44,7 @@ import { oneTaskThread } from './made.ts';
 import * as threadrelease from './threadrelease.ts';
 import * as jobcodes from './jobcodes.ts';
 import * as threadends from './threadends.ts';
+import * as reviewwork from './reviewwork.ts';
 import * as decisions from './decisions.ts';
 import * as visualapproval from './visualapproval.ts';
 import * as followthrough from './followthrough.ts';
@@ -124,6 +125,7 @@ import { managedPage } from './notebookaccess.ts';
 import * as notebookguestroom from './notebookguestroom.ts';
 import { syncOpenReviews } from './notebookreviews.ts';
 import * as notebookrounds from './notebookrounds.ts';
+import * as viewmarks from './viewmarks.ts';
 import * as notebook from './notebook.ts';   // the Notebook: notebooks and their pages
 import * as notebookgroups from './notebookgroups.ts';   // and the groups on its pages
 import './notebookunits.ts';   // the groups from before scrap units carried into them, once
@@ -134,9 +136,10 @@ import * as bookanswer from './ink/bookanswer.ts';   // the agents' answers ther
 import * as notebookpictures from './notebookpictures.ts';   // and a group's pictures
 import * as notebookshelf from './notebookshelf.ts'; // and a notebook's cover
 import * as callnotes from './ink/callnotes.ts';   // and a call's notes page
+import * as callitems from './callitems.ts';   // an item on a call's list, checked whole
 import * as callpage from './ink/callpage.ts';   // the agent working it
 import * as pair from './pair.ts';   // two of the board's devices paired for a session
-import { NOTE_MAX, SAVE_MAX } from './pagechecks.ts';
+import { NOTE_MAX, SAVE_MAX, isRefused } from './pagechecks.ts';
 import * as seen from './seen.ts';   // what the board has read, for every device
 import * as language from './language.ts';   // the board's language
 import * as messages from './messages.ts';
@@ -156,7 +159,6 @@ import * as calibration from './calibration.ts';
 import * as accuracy from './accuracy.ts';
 import * as meetinggist from './meetinggist.ts';
 import * as plainnames from './plainnames.ts';
-import * as handwriting from './handwriting.ts';
 import * as smallmodel from './smallmodel.ts';
 import { boardJob, boardJobs } from './boardnames.ts'; // (the jobs the board reads, by its names)
 import * as sizes from './sizes.ts';
@@ -201,6 +203,7 @@ import * as careNumbers from './care-numbers.ts';   // the lines marked "Care â€
 import * as careCredit from './care-credit.ts';
 import * as heldLines from './held-lines.ts';   // a product's paid lines held for a person
 import * as later from './later.ts';   // cards kept off the desk phone until a day
+import * as cardread from './cardread.ts';   // a colleague's card read before the desk phone
 import * as claimobservation from './claimobservation.ts';
 import * as pagecheck from './pagecheck.ts';
 import * as reverts from './reverts.ts';
@@ -458,7 +461,7 @@ const api: Record<string, BoardRoute> = {
   'GET /api/book/sheets': () => booksheets.sheets(),
   'GET /api/book/calls': (q, s, b) => refusal(booksheets.callSheets(b.pages)),
   'POST /api/book/sheet/order': (q, s, b) => refusal(booknotes.orderSheet(b)),
-  'POST /api/book/send': (q, s, b) => refusal(booksheets.send(Number(b.id), undefined, b.spots)), // (spots)
+  'POST /api/book/send': (q, s, b) => refusal(booksheets.send(Number(b.id))),
   'POST /api/book/undo': (q, s, b) => refusal(booksheets.undo(Number(b.id))),
   // two notes linked, and a free page sent on its own
   'POST /api/book/note/link': (q, s, b) => refusal(booknotes.linkNotes(b)),
@@ -466,9 +469,8 @@ const api: Record<string, BoardRoute> = {
   'POST /api/book/slip/reply': (q, s, b) => refusal(bookslips.replyTo(b)),
   // the book's words found: notes written, said or typed, and answers
   'GET /api/book/search': (q, s, b) => booksearch.searchBook(b.q),
-  // the words in the board's ink, read by a small model (handwriting.ts.)
-  'POST /api/book/read': async (q, s, b) => refusal(await handwriting.read(b)),
   // (HQ's Sketchbook app and its /api/sketches routes are gone)
+  'POST /api/viewer/marks': (q, s, b) => refusal(viewmarks.shareMarks(b)),
   // the Notebook: the shelf, a notebook's pages, a page's groups, a page sent (notebook*.ts; a group's elements are board
   // rows, for their size.).
   'GET /api/notebooks/guests': (q, s, b) => notebookguests.listNotebooks(undefined, Number(b.notebook) || undefined),
@@ -605,25 +607,29 @@ const worker: Record<string, (b: any) => unknown> = {
   // (projects.ts withOwnedProject, the worker's closing.ts).
   // resize: a work job's size, for its briefing's line on re-sizing it (sizes.ts withSize).
   // (nothing to start in a slot that holds a meeting's seat: `held`, so the worker keeps its room.)
-  'POST /api/worker/claim': b => sizes.withSize(projects.withOwnedProject(review.withTold(jobs.claim(b.seat, b.engine, b.kind === 'chat' || b.kind === 'incident' ? b.kind : undefined, b.probe === true ? 0 : util(b.util), b.probe === true,
+  // Both read the claim's plan in turns of HQ's thread first, and make their step on it (ordering.ts withPlan).
+  'POST /api/worker/claim': b => ordering.withPlan(() => sizes.withSize(projects.withOwnedProject(review.withTold(jobs.claim(b.seat, b.engine, b.kind === 'chat' || b.kind === 'incident' ? b.kind : undefined, b.probe === true ? 0 : util(b.util), b.probe === true,
     typeof b.slot === 'string' ? b.slot : undefined, Number.isInteger(b.room) && b.room >= 0 ? b.room : undefined,
-    Number.isInteger(b.pacedUntil) && b.pacedUntil > 0 ? b.pacedUntil : undefined)))) ?? meetingseats.holding(b.slot),
+    Number.isInteger(b.pacedUntil) && b.pacedUntil > 0 ? b.pacedUntil : undefined)))) ?? meetingseats.holding(b.slot)),
   // (never held, so the run keeps its lease: past its job's share of HQ's time, the beat's dear part waits, jobs.ts reined)
-  'POST /api/worker/heartbeat': b => !jobs.runsOn(Number(b.job), b.seat) ? 409 : jobs.heartbeat(Number(b.job), {
+  'POST /api/worker/heartbeat': b => ordering.withPlan(() => !jobs.runsOn(Number(b.job), b.seat) ? 409 : jobs.heartbeat(Number(b.job), {
     util: b.util === undefined ? undefined : util(b.util), probe: b.probe === true, reined: reins.heldFor(Number(b.job)) > 0,
-    short: b.short === true, capped: Array.isArray(b.capped) ? b.capped.filter((e: unknown) => typeof e === 'string') : [] }),
+    short: b.short === true, capped: Array.isArray(b.capped) ? b.capped.filter((e: unknown) => typeof e === 'string') : [] })),
   // The worker's own text before it goes back to the company (the memory copy, a pull request's body), keys masked.
   'POST /api/worker/redact': b => typeof b.text !== 'string' ? 400 : b.text.length > REDACT_MAX ? 413 : { text: redact(b.text) },
   // solo: the run started no one else who holds its token, so the CEO's notes to the Overseer it held go out (overseer.ts)
-  'POST /api/worker/finish': b => {
+  // A push's round reaches the panel before the answer, its triage's projections each a turn of their own (review.ts
+  // handingOn).
+  'POST /api/worker/finish': async b => {
     if (!jobs.runsOn(Number(b.job), b.seat)) return 409;
     if (b.request && !agentRequest(b.request, jobs.jobAgent(Number(b.job)))) return 400;
     if (b.tooling !== undefined) {
       tooling.keepMetrics(Number(b.job), b.toolingEngine, b.tooling);
     }
-    const done = jobs.finish(Number(b.job), b);
+    const { answer: done, handed } = review.handingOn(() => jobs.finish(Number(b.job), b));
     if (done !== 404) overseer.runEnded(Number(b.job), b.solo === true);
     if (done !== 404) feedback.ended(Number(b.job));   // the board's notes it left open go back to routing
+    await handed();
     return done;
   },
   // A task's push: the thread's title and tasks for the pull request it opens (threadorder.ts pullOf). Every push opens
@@ -659,8 +665,8 @@ const worker: Record<string, (b: any) => unknown> = {
   // the names the board reads, put plainly by the same: the next names due, and the model's answer (plainnames.ts.)
   'POST /api/worker/names/claim': () => plainnames.claim() ?? {},
   'POST /api/worker/names/answer': b => plainnames.answer(b ?? {}),
-  // the small model's short calls, by the same: the next to make (the board's handwriting read into type, the book's
-  // judge) and the model's answer (smallmodel.ts)
+  // the small model's short calls, by the same: the next to make (the board's ink read for a call's agent, the
+  // book's judge) and the model's answer (smallmodel.ts)
   'POST /api/worker/reads/claim': () => smallmodel.claim() ?? {},
   'POST /api/worker/reads/answer': b => smallmodel.answer(b ?? {}),
   // a push's tests, kept by the code they tested: the claim before they run, and their result (testresults.ts)
@@ -777,13 +783,13 @@ function jobOrigin(b: any, me: Me) {
   return { title, brief: ownBrief, hire, from, sheet, sheetGoals, failedJobId, landingSource, landingBrief, card, when };
 }
 
-// A job the board's call in HQ queues with no item carries its promise, written on the call's notes page (ledger.ts
-// promiseOnPage): the item it then carries.
-function pagePromise(b: any, me: Me, title: string) {
+// A job the board's call in HQ queues with no item carries its note, written in the call's notes (ledger.ts
+// noteOnPage): the item it then carries.
+function pageNote(b: any, me: Me, title: string) {
   if (!me.call || b.item != null) return undefined;
-  const promised = ledger.promiseOnPage(me.callId!, { owner: String(b.agent), what: title, goal: b.goal });
-  if (typeof promised === 'string') throw new Refused(400, promised);
-  return typeof promised === 'object' ? { call: promised.call, item: promised.id } : undefined;
+  const noted = ledger.noteOnPage(me.callId!, { owner: String(b.agent), what: title, goal: b.goal });
+  if (typeof noted === 'string') throw new Refused(400, noted);
+  return typeof noted === 'object' ? { call: noted.call, item: noted.id } : undefined;
 }
 
 function jobPlacement(b: any, me: Me, origin: Exclude<ReturnType<typeof jobOrigin>, Refused>) {
@@ -890,31 +896,6 @@ function askedForTime(me: Me, job: { id: number; agent: string; title: string },
   if (me.call || me.agent === ceo()) return told;
   const sent = askwindow.askCeo({ agent: me.agent, job: me.id }, job, source);
   return typeof sent === 'object' ? { askedCeo: ceo() } : told;
-}
-// The work a live call's promise names (hq item add --job), checked before anything is recorded: its owner's (a misheard
-// number names someone else's: call.ts reach), under way, and in an open thread, or put on the one the promise names
-// (--thread) if the call queued it in none (askwindow.ts untimedLine).
-function promisedWork(b: any, due: number | undefined, me: Me) {
-  const id = Number(b.job), onto = str(b.thread);
-  if (!me.call) return new Refused(400, '--job is for a live call: its follow-up links the item to the work (hq item link)');
-  if (due === undefined) return new Refused(400, '--job goes with --deadline: the time the work\'s deliverable takes');
-  const whose = Number.isSafeInteger(id) && id > 0 ? call.notTheirs(String(b.owner), id) : [404, `there's no job #${b.job}`] as const;
-  if (whose) return new Refused(whose[0], whose[1]);
-  if (windows.finished(id) || windows.dropped(id))
-    return new Refused(409, `job #${id} isn't work under way: note the promise without it, and the follow-up links it`);
-  const queuedHere = call.queuedHere(me.callId, id);
-  if (onto === undefined) {
-    const thread = windows.threadOf({ job: id });
-    if (typeof thread !== 'string') return { job: id };
-    // (the field is deliverable)
-    return new Refused(409, queuedHere ? `${thread}: note the promise with the open deliverable it serves too (deliverable)`
-      : `${thread}: note the promise without it, and the follow-up puts the work on a deliverable`);
-  }
-  const had = jobs.threadOf(id);
-  if (had && projects.isOpen(had)) return new Refused(409, `job #${id} is on ${had} already: note the promise without the deliverable`);
-  if (!queuedHere) return new Refused(409, `job #${id} wasn't queued on this call: only one you queued goes on a deliverable now`);
-  if (!projects.isOpen(onto)) return new Refused(409, `${onto} isn't an open deliverable (eta lists them)`);
-  return { job: id, thread: onto };
 }
 // The window of the deliverable an ask's thread serves, when it's another thread's (the job's own shows as its thread's).
 function servesOther(job: number) {
@@ -1045,8 +1026,8 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
     if (held) throw new Refused(409, held);
     const { title, brief, hire, sheet, sheetGoals, failedJobId, landingSource, landingBrief, card, when } = origin;
     const { thread, chain, byCall, target, untimed, source, fix, named, release, lighter } = placement;   // (chain)
-    const noted = pagePromise(b, me, title);
-    const carried = noted ?? origin.from;   // (its promise on the call's notes page, else its origin's item)
+    const noted = pageNote(b, me, title);
+    const carried = noted ?? origin.from;   // (its note in the call's notes, else its origin's item)
     const earlier = moves.before();
     const job = jobs.createJob({ agent: String(b.agent), title, ...thread, check: b.check === true, only: b.only ?? undefined,
       prompt: `${brief || title}${notes ? `\n\n${notes.text}` : ''}${fix ? `\n\n${reviewinbox.instructions(fix)}` : ''}${origin.from?.words ? `\n\n${origin.from.words}` : ''}${sheetGoals}${landingBrief}\n\n(Assigned by ${me.agent}${me.call ? ', on a call with the board' : ''}.)`,  // (notes)
@@ -1137,9 +1118,7 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
   'POST /api/agent/threads/feature': (b, me) => {
     const agent = speaker(b.as, me);
     if (!agent) return 403;
-    if (b.feedback !== false && (typeof b.round !== 'string' || !b.round.trim()))
-      return new Refused(400, 'a feedback round needs its board label');
-    return refusal(featureplan.linkFeedback(String(b.id ?? ''), String(b.feature ?? ''), agent, b.feedback === false ? '' : b.round, b.feedback !== false));
+    return refusal(featureplan.linkFeedback(String(b.id ?? ''), String(b.feature ?? ''), agent, b.round, b.feedback !== false));
   },
   'POST /api/agent/threads/cost': (b, me) => {
     const agent = speaker(b.as, me);
@@ -1308,8 +1287,9 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
   },
   // hq item add: on the call this job follows up (or the one it names, if it works for it); hq item replace: the same,
   // with the earlier item's kind and owner. Only a call's follow-up replaces an item (that drops it and cancels its jobs
-  // that never ran), and a live call's own token (the voice line's promise and replace tools), on its own call's list:
-  // a promise, or the board's correction of an open item while it's on the line (the cancelling happens
+  // that never ran), and a live call's own token (the voice line's write_down on the phone, and replace), on its own
+  // call's list: a task (what's to be done, whoever does it: the CEO's to see through without an owner), or the board's
+  // correction of an open item while it's on the line (the cancelling happens
   // before the follow-up starts; the running ones hear it from the follow-up: ledger.tell), only of an item its briefing
   // numbered (call.ts) or one the call recorded itself: a misheard number doesn't cancel an unrelated item's jobs. Nothing
   // else from a call.
@@ -1319,37 +1299,16 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
     const old = b.replaces != null ? ledger.item(Number(b.replaces)) : undefined;
     if (me.call && old) b = { ...b, kind: old.kind, owner: old.owner };
     else if (old) b = { kind: old.kind, owner: old.owner, ...b };
-    if (!on || (me.call ? b.replaces == null && b.kind !== 'promise' : !ledger.mine(me.id, on))) return new Refused(403, me.call ? 'on a call, only a promise or a correction goes on the list' : "this job doesn't work for that call");
+    else if (me.call && !b.owner) b = { ...b, owner: ceo() };
+    if (!on || (me.call ? b.replaces == null && b.kind !== 'task' : !ledger.mine(me.id, on))) return new Refused(403, me.call ? "on a call, only what's to be done (a task) or a correction goes on the list" : "this job doesn't work for that call");
     if (b.replaces != null && !me.call && !ledger.followsUp(me.id)) return new Refused(403, "only a call's follow-up replaces an earlier item");
     if (b.replaces != null && !old) return new Refused(409, `item #${b.replaces} isn't there to replace`);
     // (a ready item is still open: its work ended, the board's yes is still to come, and the briefing lists it)
     if (me.call && b.replaces != null && !['open', 'ready'].includes(old!.status)) return new Refused(409, `item #${b.replaces} isn't open: on a call, only an open item is replaced (the call's follow-up can replace a handled one)`);
     if (me.call && old && old.call !== me.callId && !me.listed?.includes(old.id)) return new Refused(409, `item #${old.id} isn't one from your briefing: the call's follow-up corrects it from the transcript`);
     if (!assignable(String(b.owner ?? ''))) return new Refused(400, `${b.owner} isn't a colleague who takes work`);
-    // --deadline: the time the board was given for it, which its job takes
-    const due = b.deadline == null ? undefined : windows.parse(String(b.deadline), Date.now(), true);
-    if (typeof due === 'string') return new Refused(400, due);
-    // --job, on a live call: the work under way the promise is about. The item is linked to it as it's added (as hq item
-    // link job:<id>, --thread too), so its thread takes the time at once and it's handled when that work ends done: both
-    // or neither (askwindow.ts).
-    const work = b.job == null ? undefined : promisedWork(b, due, me);
-    if (work instanceof Refused) return work;
-    if (b.thread != null && !work) return new Refused(400, '--deliverable goes with --job: it puts that work on the deliverable');
-    // (--board-set: the board set that time itself, not one it was given: windows.ts BOARD)
-    const add = () => ledger.add(on, { ...b, owner: String(b.owner), quote: me.call && !b.quote ? b.what : b.quote, due, dueBoard: b.board_set === true }, me.call ? null : me.id);
-    if (!work) return refusal(add());
-    try {
-      return refusal(inOneStep(() => {
-        const added = add();
-        if (typeof added !== 'object') return added;
-        const link = ledger.link(added.id, work, me.agent, me.id);
-        if (typeof link === 'string') throw new Refused(409, link);   // (the item with it: inOneStep rolls it back)
-        return { ...added, job: work.job, ...'deadline' in link && { deadline: link.deadline, thread: link.thread } };
-      }));
-    } catch (err) {
-      if (err instanceof Refused) return err;
-      throw err;
-    }
+    const listed = callitems.toList(on, b, me);
+    return refusal(isRefused(listed) ? listed : listed());
   },
   // hq item link <item> job:<id> | request:<id> | pause:<thread or project> | <ref>, and hq item drop <item> "why": the
   // call's follow-up, or (a link only) the job that carries the item or a job of roles.asks (keepsAsks). A job handed out
@@ -1400,9 +1359,10 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
     // (the note or page it's about, which the book shows it under)
     const place = bookasks.place(b, agent);
     if (typeof place === 'string') return new Refused(400, place);
+    const read = cardread.waitsForRead(agent, me.id, { ...b, ...place });   // (the card reader's read first)
     const card = jobs.fileCard({ files, kind: String(b.kind), title: String(b.title), body: String(b.body ?? ''), urgency: str(b.urgency),
       agent, job: me.id, secrets: str(b.secrets), approves: str(b.approves), photos: b.photos, documents: b.documents, zips: b.zips, products: b.products, back: b.back, topic: b.topic, visibleFrom: b.visibleFrom,
-      address: b.address, questions: b.questions, decides: b.decides, when: b.when, walk: b.walk, ...place });   // (topic, zips, visibleFrom, address, questions, decides, when; walk)
+      address: b.address, questions: b.questions, decides: b.decides, when: b.when, walk: b.walk, read, ...place });   // (topic, zips, visibleFrom, address, questions, decides, when; walk)
     if (!book || typeof card !== 'object') return refusal(card);   // (a card about a page stays on the desk phone)
     const scrap = askpages.placeAsk(card.id, book, agent, String(b.title));
     return { ...card, book: { ...scrap, name: book.name, fell: book.fell } };
@@ -1422,7 +1382,12 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
     return jobs.closeRequest(id, agent, job); },
   'POST /api/agent/request-rewrite': (b, me) => { const agent = speaker(b.as, me);
     const problem = cardIssue(b) ?? unshelvedProblem(String(b.body ?? '')) ?? unseenProblem(b, me);
-    return !agent ? 403 : problem ? new Refused(400, problem) : jobs.rewriteRequest(Number(b.id), agent, String(b.body ?? ''), me.id, agent !== me.agent); },
+    return !agent ? 403 : problem ? new Refused(400, problem) : refusal(jobs.rewriteRequest(Number(b.id), agent, String(b.body ?? ''), me.id, agent !== me.agent, b.questions)); },   // (questions)
+  // hq card pass and hq card settle: the card reader's read of a colleague's card (cardread.ts)
+  'POST /api/agent/request-pass': (b, me) => (me.agent === roles().cards ? refusal(cardread.pass(Number(b.id), b.title)) : 403),
+  'POST /api/agent/request-settle': (b, me) => { const answer = String(b.answer ?? '').trim();
+    if (me.agent !== roles().cards) return 403;
+    return !answer ? new Refused(400, 'an answer cannot be empty: write your decision before settling the card') : refusal(jobs.settleRequest(Number(b.id), answer, me.agent)); },
   // hq topic <id> "topic": the card's group in the desk phone's list
   'POST /api/agent/request-topic': (b, me) => { const agent = speaker(b.as, me);
     return !agent ? 403 : jobs.setTopic(Number(b.id), agent, b.topic, me.id, agent !== me.agent); },
@@ -1711,7 +1676,7 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
 // The worker token, compared in constant time (hashed first, so the lengths match).
 const digest = (s: string) => createHash('sha256').update(s).digest();
 // What a live call's token may do: hq job, add to a job it queued (hq extend), look things up (hq search, history, call
-// and intercom: memory.ts, intercom.ts; hq when), and a promise or a correction on its own call's list. Its hand-off
+// and intercom: memory.ts, intercom.ts; hq when), and what's to be done or a correction on its own call's list. Its hand-off
 // is a job, which carries the whole brief, and what the board adds to it goes into that job (call.ts addToJob). Its hq
 // say reaches a job under way, for real need, as often as the board's word needs (call.ts reach).
 // It reads no items, and earlier calls as its agent does (memory.ts), never the numbered transcript of a call a job
@@ -1770,11 +1735,11 @@ const voice: Record<string, (b: any) => unknown> = {
   'POST /api/voice/sketch': async b => refusal(await bookreads.forVoice(b)),
   // (a note the board drew on the live call, as the Pencil lifted: bookcalls.ts.)
   'GET /api/voice/note': b => bookcalls.forVoice(Number(b.id), Number(b.call)),
-  // (a call's notes page: the agent's scraps, one per change, and its title. callnotes.ts)
-  'POST /api/voice/scrap': async b => refusal(await callnotes.scrap(b)),
+  // (a call's notes page: the agent's notes, one per change, and its title. callnotes.ts)
+  'POST /api/voice/write-down': async b => refusal(await callnotes.writeDown(b)),
   'POST /api/voice/title': b => refusal(callnotes.title(b)),
   // (and the agent working the page as the board does: reads it, draws on it, changes what's there. callpage.ts)
-  'POST /api/voice/page': b => refusal(callpage.read(b)),
+  'POST /api/voice/page': async b => refusal(await callpage.read(b)),
   'POST /api/voice/mark': b => refusal(callpage.mark(b)),
   'POST /api/voice/change': b => refusal(callpage.change(b)),
   // (its versions to pick from)
@@ -1841,10 +1806,9 @@ const answered = async (
 // waits for the answer (x-hq-wait-ms: a worker report's or a timed hq command's own deadline), the other half left for
 // HQ's answer, and at most half a run's lapse when it gives none (a run's heartbeat is never held: forWorker). Its
 // handler's and answer's work, after their awaits too, is spent from its share (charged), and it's told on its answer.
-const reinedMs = new WeakMap<ServerResponse, number>();   // (a held request's wait holds nothing: app's heldLong)
+// (a held request's wait holds nothing: latency.ts exclude, app's heldLong.)
 async function reined(res: ServerResponse, job: number, handle: () => unknown, waitsMs: number) {
-  const heldMs = waitsMs > 0 ? await reins.admit(job, Math.min(waitsMs, jobs.STALE_MS) / 2) : 0;
-  reinedMs.set(res, heldMs);
+  const heldMs = waitsMs > 0 ? await latency.exclude(reins.admit(job, Math.min(waitsMs, jobs.STALE_MS) / 2)) : 0;
   const routeReply = await reins.charged(job, handle), told = reins.words(job, heldMs);
   if (told) res.setHeader('x-hq-rein', told);
   return reins.charged(job, () => answer(res, routeReply));
@@ -2146,7 +2110,8 @@ async function sendAttachment(res: ServerResponse, a: ReturnType<typeof mail.att
   return res.end(bytes);
 }
 
-export const app = (req: IncomingMessage, res: ServerResponse) => {
+// (what it waited for outside HQ's thread held nothing: latency.ts requestHold.)
+export const app = (req: IncomingMessage, res: ServerResponse) => latency.requestHold(excluded => {
   const t = performance.now();
   return handle(req, res)
     .catch(err => {
@@ -2156,8 +2121,8 @@ export const app = (req: IncomingMessage, res: ServerResponse) => {
       console.error(err);
       if (!res.headersSent) send(res, 500, { error: 'internal' });
     })
-    .finally(() => heldLong(`${req.method} ${(req.url ?? '').split('?')[0].split('/').slice(0, 4).join('/').replace(/\d+/g, 'n').slice(0, 60)}`, t + (reinedMs.get(res) ?? 0)));
-};
+    .finally(() => heldLong(`${req.method} ${(req.url ?? '').split('?')[0].split('/').slice(0, 4).join('/').replace(/\d+/g, 'n').slice(0, 60)}`, t + excluded.ms));
+});
 
 // What holds the server half a second or more, by name, in the log and the status report's holds (latency.ts held): a
 // request, or a timer's callback (its synchronous part, all that blocks).
@@ -2196,9 +2161,10 @@ const artifactTip = () => {
   if (artifacts.list().length) tips.offer('artifact');
 };
 // New work's estimate and the minute's forecast in one play (forecast.ts sweep), on the deploys read in (its deploy lag).
+// (the play in turns of HQ's thread)
 const forecastSweep = () => {
   try { wakes.readDeploys(); } catch (err) { console.error('Could not read the deploys:', err); }
-  try { forecast.sweep(); } catch (err) { console.error('Could not play the queue:', err); }
+  forecast.sweep().catch(err => console.error('Could not play the queue:', err));
 };
 // (the play's kept input with the log, in one step)
 const predictionWrite = () => { try { inOneStep(() => { predictionlog.write(); snapshots.write(); }); } catch (err) { console.error('Could not write the prediction log and the kept play inputs:', err); } };
@@ -2260,6 +2226,7 @@ if (import.meta.main) server.listen(PORT, () => {  // tests import app without s
   orders.start(); // our live Print API orders (hq orders): read hourly once the live keys are in, only what the invoice check needs
   backup.start(); // the nightly off-site backup (infra/backup.py): a missed night reaches HQ's feed and the CEO
   watch.start(); // the live apps: up and able to sell every 5 minutes, the daily error scan and money check
+  inOneStep(() => reviewwork.reopenDone());
   // proposals left for a planning job that ended go to their owner again
   const proposalSweep = () => { try { proposals.sweep(); } catch (err) { console.error('Could not pass the proposals on:', err); } };
   proposalSweep(); setInterval(proposalSweep, 60_000);

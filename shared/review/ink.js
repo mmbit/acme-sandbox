@@ -14,16 +14,25 @@ import { ahead, dropTail, samples, show } from './inklive.js';
 export { outline }; // (the book's page picture draws with it)
 
 // The pens' colours, the notebook's (HQ's bookpalette.js) and the pin's strip's alike, so a colour picked in one is found
-// in the other (the board, call 161.)
+// in the other (the board, call 161.) Two rows of six in the notebook: the darks and the warm ones, then the cool ones
+// (the eight after the first four)
 export const PENS = [
   { name: 'Night', color: '#2a2352' },
+  { name: 'Graphite', color: '#6b6875' },
+  { name: 'Brown', color: '#8a5a36' },
   { name: 'Red', color: '#d0443a' },
-  { name: 'Blue', color: '#2f6bdc' },
+  { name: 'Orange', color: '#e8772a' },
+  { name: 'Yellow', color: '#e0a91b' },
   { name: 'Green', color: '#1d9a5b' },
+  { name: 'Teal', color: '#14908f' },
+  { name: 'Sky', color: '#3da2e0' },
+  { name: 'Blue', color: '#2f6bdc' },
+  { name: 'Violet', color: '#7449c6' },
+  { name: 'Pink', color: '#de4f8e' },
 ];
 const penInk = name => ({ ...PENS.find(p => p.name === name), size: 5 });
-// The inks a small tool strip offers: red first (a call's only ink: pencil.js), then the notebook's other pens and its
-// first see-through highlighter
+// The inks a small tool strip offers: red first (a call's only ink: pencil.js), then three of the notebook's other pens
+// and its first see-through highlighter
 export const INKS = [
   penInk('Red'),
   penInk('Night'),
@@ -99,7 +108,7 @@ export function fit(canvas) {
 // HQ, followed on the window).
 // Anything may follow the ink as data (a walk-through call's recording): the document hears an 'ink:stroke' event as
 // a stroke starts, grows and ends or is cancelled, its detail { phase: 'start' | 'move' | 'end' | 'cancel', stroke,
-// left, top, scroll, halo, pictured }: the surface's place on screen and the page's scroll as the stroke started,
+// canvas, left, top, scroll, halo, pictured }: the wet canvas it's drawn on, the surface's place on screen and the page's scroll as the stroke started,
 // whether it's drawn with a white edge, and whether its dry ink is in recorded canvas pictures (opts.pictured). A
 // surface's dry ink drawn again (shown) is { phase: 'shown', canvas, strokes, halo }.
 export function pen(surface, wet, opts) {
@@ -247,9 +256,9 @@ function boxed(line, e) {
   line.stroke.points = corners.map(([a, b], i) => [Math.round(a), Math.round(b), 0.5, i ? t : 0]);
 }
 
-const tell = (phase, { stroke, left, top, scroll, halo, pictured }) =>
+const tell = (phase, { stroke, left, top, scroll, halo, pictured, g }) =>
   document.dispatchEvent(
-    new CustomEvent('ink:stroke', { detail: { phase, stroke, left, top, scroll, halo, pictured } }),
+    new CustomEvent('ink:stroke', { detail: { phase, stroke, left, top, scroll, halo, pictured, canvas: g.canvas } }),
   );
 
 // What a canvas of dry ink shows now, after it's drawn again (a note's lines, fewer after an undo, none once sent), for

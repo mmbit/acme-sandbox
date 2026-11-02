@@ -116,3 +116,35 @@ test('the play keeps a tight seat to one job and prefers a peer with room below 
   assert.deepEqual(pick(new Map([['claude-1', 1]]), 'claude-1'), { on: 'queue', engine: 'claude', minutes: 0 });
   assert.equal((pick(new Map(), 'claude-1') as { id: string }).id, 'claude-1');
 });
+
+test('new work spends the nearly finished weeks before an under-pace peer', () => {
+  const input = snapshot();
+  input.seats[0] = { ...input.seats[0], id: 'claude-1', week: 0.88, stop: 0.99, weekResets: now + 5 * 24 * HOUR };
+  input.seats.push(
+    { ...input.seats[0], id: 'claude-4', week: 0.92, weekResets: now + 12 * HOUR },
+    { ...input.seats[0], id: 'claude-3', week: 0.95, weekResets: now + 4 * HOUR },
+  );
+  const seats = seatsOf(input);
+  const order = { id: 1, board: 0, latestStart: now };
+  const row = { id: 1, agent: 'bolt', engine: 'claude', for_seat: null, downtime: 0 };
+  const pick = (busy = new Map<string, number>()) => choices(at(seats, now), busy, {})(row, order).seat;
+  assert.equal((pick() as { id: string }).id, 'claude-3');
+  seats[0].week = 0.1;
+  assert.equal((pick() as { id: string }).id, 'claude-3');
+  seats[0].week = 0.88;
+  assert.equal((pick(new Map([['claude-3', 1]])) as { id: string }).id, 'claude-4');
+  seats[2].week = seats[2].stop;
+  assert.equal((pick() as { id: string }).id, 'claude-4');
+  seats[1].week = seats[1].stop;
+  assert.equal((pick() as { id: string }).id, 'claude-1');
+  seats[2].week = 0.9;
+  seats[0].week = 0.4;
+  seats[0].weekResets = now + 3 * 24 * HOUR;
+  assert.equal((pick() as { id: string }).id, 'claude-3');
+  seats[2].week = 0.989;
+  assert.equal(
+    (pick() as { id: string }).id,
+    'claude-1',
+    'remaining allowance per time decides, not reset order alone',
+  );
+});

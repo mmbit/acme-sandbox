@@ -69,7 +69,7 @@ test('the board reads every card in the Answered list whole, and a card marked b
   assert.deepEqual([shown.body, shown.left_out], ['Testco B.V., one VAT number', undefined]);
   const mine = await h.start({ agent: 'wren' });
   const care = (h.jobs.createRequest({ kind: 'decision', title: 'A refund for case C-12?', body: 'Jan Jansen, jan@example.com', agent: 'wren', job: mine.id }) as { id: number }).id;
-  h.db.prepare('update requests set customers = 1 where id = ?').run(care);
+  h.markCustomer('requests', care);
   const read = async (job: Running) => (await agent(`requests?id=${care}`, job.token)).body[0];
   for (const other of [await h.start({ agent: 'dex' }), await h.start({ agent: 'wren' })]) {
     const r = await read(other);

@@ -11,7 +11,7 @@ import { BOARD, drawnOf, row, type Page } from './book.ts';
 import { partsOf, shown, type Group } from '../notebookgroups.ts';
 import { CAPTION, slipsUnder, underAt } from '../../../hq/shell/ink/notebookstack.js';
 import { shifted } from '../../../hq/shell/ink/notebookparts.js';
-import { UNIT_W } from '../../../hq/shell/ink/scrapunit.js';
+import { UNIT_W, heightFor } from '../../../hq/shell/ink/scrapunit.js';
 import type { Stroke, Typed } from '../pagechecks.ts';
 import { layout, widthFor } from '../../../hq/shell/ink/masonry.js';
 import { inkOf } from '../../../hq/shell/ink/agentink.js';
@@ -80,7 +80,7 @@ async function unitsPage(page: number): Promise<Drawn> {
   const units = [];
   for (const g of tops) {
     const parts = partsOf(g),
-      h = g.h!,
+      h = heightFor(parts, g.h!),
       read = shown(g),
       slips: Said[] = slipsUnder(read.children)
         .map(c =>

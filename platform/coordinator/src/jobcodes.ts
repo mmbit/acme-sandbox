@@ -45,6 +45,7 @@ export const STANDING = {
   chat: 'CHAT',
   meetingAsks: 'ASKS',
   followThrough: 'FOLLOW',
+  cardRead: 'CARDREAD', // cardread.ts
   checksBroken: 'CHECKFIX',
   mailPlan: 'MAILPLAN',
   refunds: 'REFUNDS',

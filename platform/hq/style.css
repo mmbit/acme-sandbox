@@ -724,11 +724,19 @@ body.touring #zoom, body.touring #status, body.touring #hint { display: none; }
 @keyframes cf-off { from { opacity: 1; } 35% { opacity: 1; transform: scale(1, .08); background-color: transparent; } 45% { opacity: 1; transform: scale(1, .01); background-color: var(--cf-line); } 75% { opacity: 1; transform: scale(.02, .02); background-color: var(--cf-line); } to { opacity: 0; transform: scale(0, .02); background-color: var(--cf-line); } }
 @keyframes cf-fade { from { opacity: 0; } to { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .intercom .call .call-face.switching.lit .cf-picture { animation: cf-fade .3s both; } .intercom .call .call-face.switching.unlit .cf-picture { animation: cf-fade .3s reverse both; } }
-/* (the light it stands in, brighter as it speaks; no floor drawn under it.) */
+/* The light brightens with speech. */
 .intercom .call .cf-picture::before { content: ''; position: absolute; inset: 0; pointer-events: none;
   background: radial-gradient(ellipse 46% 70% at 50% 100%, color-mix(in srgb, var(--cb-accent) calc(22% + var(--cb-level) * 40%), transparent), transparent 70%); }
-.intercom .call .cf-figure { position: relative; z-index: 1; display: grid; place-items: end center; margin-bottom: 12px; }
-.intercom .call .cf-figure > img { width: 70px; height: 140px; image-rendering: pixelated; transform-origin: 50% 100%; -webkit-touch-callout: none; } /* (an image of the portrait: callscreen.js faceOf.) */
+.intercom .call .cf-figure { position: absolute; inset: 0; z-index: 1; display: grid; place-items: end center; --cb-portrait-height: 140px; --cb-portrait-gap: 12px; padding-bottom: var(--cb-portrait-gap); }
+/* The floor meets the figure's feet, in the call's screen and its bubble alike: --call-foot is how much of the
+   portrait lies below them (the look's own portrait says: callscreen.js framePortrait), --cb-portrait-height the
+   picture's height and --cb-portrait-gap the screen under it. --call-floor is the floor's height, from the feet to the
+   screen's foot, on a whole pixel. A look's pad on it is the ::after. */
+.intercom .call .cf-figure, .callbubble .cb-face { --call-floor: round(calc(var(--cb-portrait-gap) + var(--cb-portrait-height) * var(--call-foot)), 1px); }
+.intercom .call .cf-figure:has(> img)::before, .callbubble .cb-face:has(> img)::before { content: ''; position: absolute; pointer-events: none; inset: auto 0 0; box-sizing: border-box;
+  height: var(--call-floor);
+  border-top: 1px solid color-mix(in srgb, var(--scr-hi) 28%, transparent); background: color-mix(in srgb, var(--scr-hi) 8%, transparent); }
+.intercom .call .cf-figure > img { position: relative; z-index: 1; width: 70px; height: var(--cb-portrait-height); image-rendering: pixelated; transform-origin: 50% calc(100% * (1 - var(--call-foot))); -webkit-touch-callout: none; } /* (an image of the portrait: callscreen.js faceOf.) */
 .intercom .call .cf-figure > .cb-initial { margin-bottom: 30px; font-size: 52px; line-height: 1; color: var(--scr); text-shadow: var(--scr-glow); }
 .intercom .call .call-face.talking .cf-figure > * { animation: cb-talk .24s steps(2) infinite; }
 .intercom .call .call-face[data-state=thinking] .cf-figure > img { animation: cb-think 1.6s steps(4) infinite; }
@@ -759,7 +767,7 @@ body.touring #zoom, body.touring #status, body.touring #hint { display: none; }
 #call-screen .said > .lines { flex: 0 1 auto; min-height: 64px; margin: 0; }
 .intercom.big #call-screen > .said, .intercom.big #call-screen .said > .lines { flex-grow: 1; }
 /* (its figure whole at 88 px: an initial's 82 px and the border) */
-@media (max-height: 560px) { .intercom .call .call-face { height: 104px; } #call-screen > .call-face { min-height: 88px; } .intercom .call .cf-figure > img { width: 28px; height: 56px; } }
+@media (max-height: 560px) { .intercom .call .call-face { height: 104px; } #call-screen > .call-face { min-height: 88px; } .intercom .call .cf-figure { --cb-portrait-height: 56px; } .intercom .call .cf-figure > img { width: 28px; } }
 /* (no margin above the keys: a device row's 10 px would add to the 12 px under the transcript, as margins don't collapse
    in the call's column.) */
 .intercom .call .row { justify-content: center; gap: 12px; margin-top: 0; flex-wrap: nowrap; } .intercom .call .row > button { flex: none; }
@@ -818,15 +826,15 @@ body.touring #zoom, body.touring #status, body.touring #hint { display: none; }
    the call's accent */
 #call-layer .device[data-drop], .callbubble[data-drop] { outline: 4px dashed var(--gold); outline-offset: 6px; box-shadow: 0 0 0 12px color-mix(in srgb, var(--gold) 30%, transparent), var(--shadow-xl); }
 .callbubble[data-drop] { outline-color: var(--cb-accent); }
-.callbubble .cb-face { position: relative; display: grid; place-items: end center; height: 84px; padding: 0; overflow: hidden; cursor: inherit; font: inherit;
+.callbubble .cb-face { position: relative; display: grid; place-items: end center; height: 84px; --cb-portrait-height: 72px; --cb-portrait-gap: 0px; padding: 0; overflow: hidden; cursor: inherit; font: inherit;
   background: var(--scr-bg); border: var(--bw) solid var(--scr-frame); border-radius: var(--r); } /* (the bob says it speaks: no ring.) */
-.callbubble .cb-face > img { width: 36px; height: 72px; image-rendering: pixelated; transform-origin: 50% 100%; -webkit-touch-callout: none; }
+.callbubble .cb-face > img { position: relative; z-index: 1; width: 36px; height: var(--cb-portrait-height); image-rendering: pixelated; transform-origin: 50% calc(100% * (1 - var(--call-foot))); -webkit-touch-callout: none; }
 .callbubble .cb-face > .cb-initial { align-self: center; font-size: 34px; color: var(--scr); text-shadow: var(--scr-glow); }
 /* alive with its voice: the pixel figure bobs on two frames while it speaks, leans in while it thinks */
 .callbubble.talking .cb-face > :is(img, .cb-initial) { animation: cb-talk .24s steps(2) infinite; }
 .callbubble[data-state=thinking] .cb-face > img { animation: cb-think 1.6s steps(4) infinite; }
-@keyframes cb-talk { 50% { transform: translateY(-3px) scaleY(1.04); } }
-@keyframes cb-think { 50% { transform: rotate(-4deg); } }
+@keyframes cb-talk { 50% { transform: scaleY(1.04); } }
+@keyframes cb-think { 50% { transform: skewX(-4deg); } }
 .callbubble .cb-eye { position: absolute; left: 10px; top: 10px; display: grid; place-items: center; width: 26px; height: 20px; color: #fff; background: var(--red);
   border: var(--bw) solid var(--ink); border-radius: var(--r-sm); pointer-events: none; }
 .callbubble .cb-eye[hidden] { display: none; }
@@ -845,8 +853,8 @@ body.touring #zoom, body.touring #status, body.touring #hint { display: none; }
    less of the page. */
 @media (max-width: 599px), (max-height: 499px) {
   .callbubble { width: 108px; gap: 4px; padding: 4px; }
-  .callbubble .cb-face { height: 62px; }
-  .callbubble .cb-face > img { width: 26px; height: 52px; }
+  .callbubble .cb-face { height: 62px; --cb-portrait-height: 52px; }
+  .callbubble .cb-face > img { width: 26px; }
   .callbubble .cb-face > .cb-initial { font-size: 26px; }
   .callbubble .cb-keys { gap: 4px; }
   .callbubble .cb-keys button { min-height: 30px; font-size: 12px; }
@@ -858,8 +866,8 @@ body.touring #zoom, body.touring #status, body.touring #hint { display: none; }
    dates and scraps (floating.js clearSpot). */
 @media (max-height: 499px) {
   .callbubble { width: 96px; }
-  .callbubble .cb-face { height: 52px; }
-  .callbubble .cb-face > img { width: 22px; height: 44px; }
+  .callbubble .cb-face { height: 52px; --cb-portrait-height: 44px; }
+  .callbubble .cb-face > img { width: 22px; }
   .callbubble .cb-keys button { padding: 0 3px; font-size: 11px; }
   .callbubble .cb-keys .cb-hangup { width: 28px; }
 }
@@ -885,22 +893,24 @@ body.keys.keys #call-cards .call-card :is([data-show], [data-keep], [data-open])
 /* Wire: the bubble is a key itself, its face set in, its keys with a lip that press down */
 body.keys .callbubble { background: var(--key-bg); border: 1.5px solid var(--key-edge); border-radius: 22px; box-shadow: var(--key-lip), 0 18px 40px rgba(0, 0, 0, .22); transition: box-shadow .2s, scale .2s cubic-bezier(.2, 1.4, .4, 1); }
 body.keys .callbubble.held { box-shadow: var(--key-lip), 0 26px 50px rgba(0, 0, 0, .28); }
-body.keys .callbubble .cb-face { border-radius: 16px; border: 0; background: color-mix(in srgb, var(--k-ink) 8%, var(--key-bg)); }
+body.keys .callbubble .cb-face { border-radius: 16px; border: 0; }
 body.keys .callbubble.talking .cb-face > :is(img, .cb-initial) { animation: cb-talk-smooth .5s ease-in-out infinite; }
-@keyframes cb-talk-smooth { 50% { transform: translateY(-3px) scale(1.03); } }
+@keyframes cb-talk-smooth { 50% { transform: scaleY(1.03); } }
 body.keys .callbubble .cb-eye { border: 0; border-radius: 999px; box-shadow: 0 2px 0 color-mix(in srgb, var(--red) 60%, #000); }
 body.keys .callbubble .cb-eye svg { fill: none; stroke: currentColor; }
 body.keys .callbubble .cb-keys button { background: var(--key-bg); color: var(--key-ink); border: 1.5px solid var(--key-edge); border-radius: var(--key-r); box-shadow: var(--key-lip); }
 body.keys .callbubble .cb-keys button:active { transform: var(--key-down); box-shadow: var(--key-down-lip); }
 body.keys.keys .callbubble .cb-pause[aria-pressed=true] { transform: var(--key-down); box-shadow: var(--key-down-lip); font-weight: 750; }
 body.keys.keys .callbubble .cb-hangup { background: var(--red); color: #fff; border-radius: 999px; box-shadow: 0 var(--depth-button) 0 color-mix(in srgb, var(--red) 60%, #000); }
-/* Wire: the call's little screen set in like the bubble's face, the figure standing on its own soft shadow, the lines
-   easing in. */
-body.keys .intercom .call .call-face { border: 0; border-radius: 16px; background: color-mix(in srgb, var(--k-ink) 7%, var(--key-bg)); }
-body.keys .intercom .call .cf-picture::after { content: ''; position: absolute; pointer-events: none; left: 50%; right: auto; bottom: 8px; width: 96px; height: 12px; translate: -50% 0; border: 0; border-radius: 50%; background: color-mix(in srgb, var(--k-ink) 12%, transparent); }
-body.keys .intercom .call .cf-figure { margin-bottom: 14px; }
+/* Wire: the call’s little screen set in like the bubble’s face, the lines easing in. */
+/* (both a clean dark screen, the skin's --key-screen: no scanlines or glow, a sheen at its top, its words and the floor
+   in --key-screen-ink.) */
+body.keys :is(.intercom .call .call-face, .callbubble .cb-face) { --scr: color-mix(in srgb, var(--key-screen-ink) 72%, transparent); --scr-hi: var(--key-screen-ink); --scr-glow: none;
+  background: linear-gradient(color-mix(in srgb, var(--key-screen-ink) 8%, transparent), transparent 40%) var(--key-screen);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--key-screen-ink) 14%, transparent); }
+body.keys .intercom .call .call-face { border: 0; border-radius: 16px; }
 body.keys .intercom .call .call-face.talking .cf-figure > * { animation: cb-talk-smooth .5s ease-in-out infinite; }
-body.keys .intercom .call .call-face .state { top: 10px; left: 14px; font-size: 12px; color: var(--k-muted); }
+body.keys .intercom .call .call-face .state { top: 10px; left: 14px; font-size: 12px; }
 body.keys .intercom .call .lines { border-radius: 16px; }
 body.keys .intercom .call .lines li { border-radius: 12px; animation: cs-line-in .28s cubic-bezier(.2, .8, .2, 1) both; }
 .intercom .chat .hint { align-self: center; max-width: 100%; color: #c8ccd8; font-size: 14px; text-align: center; }
@@ -1130,7 +1140,10 @@ i.mark { font-style: normal; font-size: 12px; line-height: 16px; text-align: cen
 .rows.settings li.switch-row { align-items: center; min-height: 44px; }
 .rows.settings li.switch-row > b { grid-column: 1; }
 .rows.settings li.switch-row > :is(.ctl, .seg) { grid-column: 2; grid-row: 1; justify-self: end; display: flex; }
-@container page (max-width: 400px) { .rows.settings li.switch-row:has(.seg) > .seg { grid-column: 1 / -1; grid-row: 2; justify-self: start; margin-bottom: 4px; } }
+@container page (max-width: 400px) {
+  .rows.settings li.switch-row:has(.seg) > .seg { grid-column: 1 / -1; grid-row: 2; justify-self: start; margin-bottom: 4px; }
+  .seats-app .rows.settings li.switch-row > .seg { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); width: 100%; }
+}
 /* An on/off switch, the CRT's own: a square track of screen light, its knob a block that jumps across */
 .crt .switch { all: unset; box-sizing: border-box; position: relative; flex: none; width: 48px; height: 26px; cursor: pointer; border: 1px solid var(--scr-dim); border-radius: 2px; background: var(--scr-ink); }
 .crt .switch i { position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; background: var(--scr-dim); transition: left .08s steps(3), background .08s; }

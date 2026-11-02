@@ -18,9 +18,10 @@ import {
   snapshot,
   selectionAndPrefs,
   untitledPage,
+  arrowsOf,
 } from './bookguestscreen.mjs';
 import { playwright, until } from '../../shared/browser/browser.mjs';
-import { markedSlip, pageDate } from './bookguestlanguage.mjs';
+import { markedSlip, pageDate, roundWords } from './bookguestlanguage.mjs';
 
 export async function guestNotebookStories({ shots = null, webkit = true } = {}) {
   if (shots) await mkdir(shots, { recursive: true });
@@ -148,6 +149,7 @@ async function roundStory(state, board) {
   await artifactScrap(state, ada, round.people[0].reviewLink, round.people[0].page, 'desktop');
   await artifactScrap(state, bela, round.people[1].reviewLink, round.people[1].page, 'phone');
   console.log('Guest browser: both artifact scraps saved');
+  await roundWords(state, board, emailSignIn);
   await watch(state, board, round);
   await board.locator(`[data-page="${round.people[0].page}"]`).click();
   await until(board, '.ng-groups', /Give the page title/);
@@ -180,7 +182,8 @@ async function completeRound(state, board, round, ada, bela) {
   await bela.page.reload();
   await until(bela.page, '[data-notebook-status]', /round is closed/, 20_000);
   const closed = (await state.h.board(`/api/notebooks/guests/list?notebook=${round.id}`)).body.notebooks[0];
-  assert.deepEqual([closed.state, closed.pages.length], ['closed', 2]);
+  // (Ada's and Bela's pages, and the two of roundWords' guests)
+  assert.deepEqual([closed.state, closed.pages.length], ['closed', 4]);
   const closing = state.h.db.prepare('select advice from notebook_rounds where notebook = ?').get(round.id);
   assert.ok(closing.advice, 'the board closing it queues the Advice job');
   await snapshot(state, 'round-closed-phone', bela.page);
@@ -309,7 +312,13 @@ async function tabletStory(state, invited) {
     await tablet.context.addCookies(invited.cookies);
     await tablet.page.goto(`${state.origin}/guest/notebooks/?notebook=${invited.book.id}`);
     await readyNotebook(tablet.page);
+    // (the fresh page with its Send, then the sent one without: the page's arrows where they were.)
+    const fresh = await arrowsOf(tablet.page);
+    assert.ok(fresh.send && fresh.arrows.length === 3, `the fresh page's Send and arrows: ${JSON.stringify(fresh)}`);
     await firstPage(tablet.page);
+    const sent = await arrowsOf(tablet.page);
+    assert.equal(sent.send, false, "the sent page's Send away");
+    assert.deepEqual(sent.arrows, fresh.arrows, "the page's arrows where they were, Send gone on the sent page");
     await until(tablet.page, '#book .answer-slip', /make the menu label clearer/);
     await snapshot(state, 'invited-answer-ipad-webkit', tablet.page);
     assert.deepEqual(tablet.errors, []);

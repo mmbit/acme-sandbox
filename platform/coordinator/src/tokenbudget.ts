@@ -1,8 +1,7 @@
 // Agent-supplied token expectations, separate from scheduling time and subscription meters.
 import { readConfidence } from './confidence.ts';
-import type { CostPhase } from './costspend.ts';
+import { COST_PHASES as phases, type CostPhase } from './taskphases.ts';
 export type TokenBudget = { tokens: Record<CostPhase, number>; feedback_rounds: number };
-const phases = ['work', 'reviews', 'fixes', 'feedback'] as const;
 const nonnegative = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value) && value >= 0;
 

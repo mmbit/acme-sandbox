@@ -578,9 +578,10 @@ test('a picture arriving after the guest sends the page is refused after its bod
   assert.equal((await pending).status, 403);
 });
 
-test('guest pen tools use their authenticated transcription, handwriting and safe picture routes', async () => {
+test('guest pen tools use their authenticated transcription and safe picture routes, and nothing reads their ink', async () => {
   const ps = await invited('Oren', 'oren@example.org');
-  assert.equal((await guest(ps, '/book/read', { ink: 'not a picture' })).status, 400);
+  // (the pen's ink stays handwriting: no route reads it into words. board, call 176)
+  assert.equal((await guest(ps, '/book/read', { ink: 'not a picture' })).status, 405, 'no such route');
   const voice = await call(`${api}/voice`, {
     cookie: sessions.get(ps)!.cookie,
     origin: ORIGIN,
@@ -590,7 +591,7 @@ test('guest pen tools use their authenticated transcription, handwriting and saf
   assert.equal(voice.status, 400);
   assert.equal((await guest(ps, '/book/fetch?url=http%3A%2F%2F127.0.0.1%2F')).status, 403);
   await close(ps);
-  assert.equal((await guest(ps, '/book/read', { ink: 'not a picture' })).status, 403);
+  assert.equal((await guest(ps, '/book/fetch?url=http%3A%2F%2F127.0.0.1%2F')).status, 403);
 });
 
 // A guest's group pictures count in their book's room: a picture past it is refused, two ending together included
@@ -618,31 +619,10 @@ test('a guest’s pictures stop at their book’s room, counted right before eac
   rmSync(filler);
 });
 
-test('a guest’s handwriting reads have their own allowance, apart from the board’s day', async () => {
-  const ps = await invited('Quin', 'quin@example.org');
-  const who = sketchPeople.whoOf(sketchPeople.grantOf('Quin')!);
-  const day = (await import('../company.ts')).companyDay(Date.now());
-  const handwriting = await import('../handwriting.ts');
-  const boardReads = () =>
-    (db.prepare('select reads from handwriting_reads where day = ?').get(day) as { reads: number } | undefined)?.reads;
-  const before = boardReads();
-  db.prepare('insert into guest_handwriting_reads (day, who, reads) values (?, ?, ?)').run(
-    day,
-    who,
-    handwriting.GUEST_READS_A_DAY,
-  );
-  const ink = `data:image/png;base64,${(await png()).toString('base64')}`;
-  assert.equal((await guest(ps, '/book/read', { ink })).status, 429);
-  assert.equal(boardReads(), before, 'the board’s day untouched');
-});
-
-test('handwriting and voice arriving after a guest’s last membership ends start no model work', async () => {
+test('voice arriving after a guest’s last membership ends starts no model work', async () => {
   const ps = await invited('Rik', 'rik@example.org');
-  const who = sketchPeople.whoOf(sketchPeople.grantOf('Rik')!);
-  const ink = `data:image/png;base64,${(await png()).toString('base64')}`;
   let release!: () => void;
   const held = new Promise<void>(resolve => (release = resolve));
-  const reading = call(`${api}/book/read`, { cookie: sessions.get(ps)!.cookie, origin: ORIGIN, body: { ink } }, held);
   const speaking = call(
     `${api}/voice`,
     { cookie: sessions.get(ps)!.cookie, origin: ORIGIN, body: Buffer.alloc(400), type: 'audio/webm' },
@@ -651,6 +631,5 @@ test('handwriting and voice arriving after a guest’s last membership ends star
   await new Promise(resolve => setTimeout(resolve, 50));
   await close(ps);
   release();
-  assert.deepEqual([(await reading).status, (await speaking).status], [403, 403]);
-  assert.equal(db.prepare('select 1 from guest_handwriting_reads where who = ?').get(who), undefined);
+  assert.equal((await speaking).status, 403);
 });

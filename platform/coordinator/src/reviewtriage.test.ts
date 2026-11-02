@@ -1212,3 +1212,45 @@ test('a round follows projected queue waits, and a paced seat takes a round whos
     });
   });
 });
+
+test("a push's finish answers with its triage queued, HQ answering throughout, both engines' starts at one time", async () => {
+  await routingRoom();
+  // both seats free, the same reset, and Codex with more of its week left: equally soon starts go to the roomier engine
+  const resets = Date.now() + 3 * 24 * 3_600_000;
+  const week = (seat: string, used: number) =>
+    h.worker('seat', { seat, engine: seat.split('-')[0], state: 'ready', week: used, weekResets: resets });
+  await week('claude-1', 0.4);
+  await week('codex-1', 0.1);
+  try {
+    const pr = 176;
+    const author = await h.start({ agent: 'bolt', branch: `review/${pr}` });
+    let answered = false;
+    const finished = h
+      .finish(author, { pr, branch: `review/${pr}`, files, sha: sha() })
+      .finally(() => (answered = true));
+    let between = 0;
+    while (!answered) if ((await h.board('/api/me')).status === 200 && !answered) between++;
+    assert.equal((await finished).status, 200);
+    assert.ok(between >= 4, `HQ answers other requests throughout the projections (${between} while the finish ran)`);
+    assert.equal(triager(pr), 'nib', 'the triage is queued when the finish answers, on the roomier engine');
+  } finally {
+    await week('claude-1', 0);
+    await week('codex-1', 0);
+  }
+});
+
+test('a push sent back while the round before it hands on to the panel leaves that hand-off nothing to queue', async () => {
+  await routingRoom();
+  const pr = 177,
+    branch = `review/${pr}`,
+    sent = sha();
+  const first = await h.start({ agent: 'bolt', branch });
+  const second = await h.start({ agent: 'flint', branch });
+  const { handed } = review.handingOn(() => h.jobs.finish(first.id, { status: 'done', pr, branch, files, sha: sha() }));
+  const gates = { passed: false, report: 'a.ts:1: x is never used' };
+  h.jobs.finish(second.id, { status: 'done', pr, branch, files, sha: sent, gates });
+  await handed();
+  assert.ok(!pending(pr).some(job => job.stage === 'triage'), "the first push's triage isn't queued");
+  const { sha: pinned } = db.prepare('select sha from prs where number = ?').get(pr) as { sha: string };
+  assert.equal(pinned, sent, 'the round is pinned to the push sent back');
+});

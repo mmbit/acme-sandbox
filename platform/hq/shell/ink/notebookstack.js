@@ -4,20 +4,19 @@
 
 // A scrap's picture at most this wide, in its unit's px: a little inside the unit (scrapunit.js UNIT_W)
 export const STACK = { w: 313 };
-// A scrap's picture at most this tall (half again its width), scaled down to it, but never below this share of the
-// scale its width allows, so a tall crop's words stay readable rather than towering down the page (the board, call 162)
-const TALL = { h: 470, readable: 0.6 };
+// A scrap's picture at most this tall (about its width), a tall crop scaled down to it however narrow that makes it: a
+// tall crop is fine, a page it takes over isn't (the board, calls 162 and 174)
+export const TALL = { h: 320 };
 // a scrap's post-it words under its picture (bookgroups.js .bk-under, bookgroups.css .bk-scrap-words): this far below
 // it, at least this wide (a scrap's as wide as the stack, anything else's this) and at most that, a line this tall at
 // about this many px a letter, and the paper round them
 export const CAPTION = { top: 10, least: 280, most: 420, line: 14 * 1.45, letter: 7.4, pad: { x: 10, y: 8 } };
 
 // A scrap's picture's size on its page from the snip's (its pixels, as the book shows it): as wide as it was cut, at
-// most STACK.w, a tall one scaled down towards TALL.h
+// most STACK.w, and at most TALL.h
 /** @param {number} width @param {number} height */
 export function scrapSize(width, height) {
-  const wide = Math.min(1, STACK.w / width),
-    k = Math.max(Math.min(wide, TALL.h / height), wide * TALL.readable);
+  const k = Math.min(1, STACK.w / width, TALL.h / height);
   return { w: Math.round(width * k), h: Math.round(height * k) };
 }
 // a typed box's line, and how wide a letter of it is at most, about (booktexts.js TEXT: 18 px, in the book's face or a

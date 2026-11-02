@@ -10,6 +10,9 @@ const UPLOAD_SIDE = 2000,
 const matOf = s => Math.max(3, Math.min(s.w, s.h) * 0.035);
 const tapeOf = s => ({ w: Math.min(s.w * 0.36, 70), h: Math.max(9, Math.min(16, s.h * 0.09)) });
 const TAPE = 'rgb(246 236 200 / 80%)';
+// the tape's own turn on the scrap, and how far the scrap's shadow reaches past it
+const TAPE_TURN = -4,
+  SHADOW = { blur: 6, y: 2 };
 
 // A scrap on a canvas in its page's units, as the page shows it
 export function drawScrap(g, s) {
@@ -18,16 +21,49 @@ export function drawScrap(g, s) {
   g.save();
   g.translate(s.x + s.w / 2, s.y + s.h / 2);
   g.rotate((s.tilt * Math.PI) / 180);
-  Object.assign(g, { shadowColor: 'rgb(40 30 50 / 28%)', shadowBlur: 6, shadowOffsetY: 2 });
+  Object.assign(g, { shadowColor: 'rgb(40 30 50 / 28%)', shadowBlur: SHADOW.blur, shadowOffsetY: SHADOW.y });
   g.fillStyle = '#fff';
   g.fillRect(-s.w / 2, -s.h / 2, s.w, s.h);
   Object.assign(g, { shadowColor: 'transparent', shadowBlur: 0, shadowOffsetY: 0 });
   if (s.img?.complete && s.img.naturalWidth) g.drawImage(s.img, -s.w / 2 + m, -s.h / 2 + m, s.w - 2 * m, s.h - 2 * m);
   g.translate(0, -s.h / 2);
-  g.rotate((-4 * Math.PI) / 180);
+  g.rotate((TAPE_TURN * Math.PI) / 180);
   g.fillStyle = TAPE;
   g.fillRect(-tape.w / 2, -tape.h / 2, tape.w, tape.h);
   g.restore();
+}
+
+// All drawScrap paints of a scrap, in its page's units: its card turned, the tape standing up past its top edge and
+// the shadow round it, so a canvas this big cuts none of it (bookpage.js.)
+export function drawnBox(s) {
+  const tape = tapeOf(s),
+    turn = (s.tilt * Math.PI) / 180,
+    t = (TAPE_TURN * Math.PI) / 180,
+    [hw, hh, tw, th] = [s.w / 2, s.h / 2, tape.w / 2, tape.h / 2];
+  const corners = [
+    [-hw, -hh],
+    [hw, -hh],
+    [hw, hh],
+    [-hw, hh],
+    ...[
+      [-tw, -th],
+      [tw, -th],
+      [tw, th],
+      [-tw, th],
+    ].map(([x, y]) => [x * Math.cos(t) - y * Math.sin(t), x * Math.sin(t) + y * Math.cos(t) - hh]),
+  ].map(([x, y]) => [
+    s.x + hw + x * Math.cos(turn) - y * Math.sin(turn),
+    s.y + hh + x * Math.sin(turn) + y * Math.cos(turn),
+  ]);
+  const xs = corners.map(c => c[0]),
+    ys = corners.map(c => c[1]),
+    pad = 2 * SHADOW.blur;
+  return {
+    x0: Math.min(...xs) - pad,
+    y0: Math.min(...ys) - pad,
+    x1: Math.max(...xs) + pad,
+    y1: Math.max(...ys) + pad + SHADOW.y,
+  };
 }
 
 // A picture file as HQ uploads it, drawn again at most UPLOAD_SIDE a side (nothing of the file goes but its pixels):

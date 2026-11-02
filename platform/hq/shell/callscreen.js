@@ -87,7 +87,7 @@ export function closeLayer(c) {
 function callFace(c, el) {
   const picture = el.querySelector('.cf-picture');
   el.querySelector('.cf-figure').append(faceOf(c));
-  if (c.portrait?.accent) el.parentElement.style.setProperty('--cb-accent', c.portrait.accent); // (its lines' too)
+  framePortrait(c, el.parentElement); // (its lines' accent too)
   return {
     voice(level, talking = level > 0.02) {
       // (only a change: the call's window is in the watch-along's recording, and each write is an event in it.
@@ -205,7 +205,7 @@ function newBubble(c) {
     onOpen: () => expand(c),
     onSound: name => cue(name === 'settle' ? 'dock' : name),
   });
-  if (c.portrait?.accent) bubble.el.style.setProperty('--cb-accent', c.portrait.accent);
+  framePortrait(c, bubble.el);
   bubble.watching(watchState(c));
   return bubble;
 }
@@ -216,11 +216,17 @@ function newBubble(c) {
 function faceOf(c) {
   if (c.portrait === undefined) {
     const portrait = scene.portrait?.({ kind: 'agent', id: c.agent });
-    c.portrait = portrait ? { src: portrait.img.toDataURL(), accent: portrait.accent } : null;
+    c.portrait = portrait ? { src: portrait.img.toDataURL(), accent: portrait.accent, foot: portrait.foot } : null;
   }
   return c.portrait
     ? Object.assign(new Image(), { src: c.portrait.src, alt: '', draggable: false, decoding: 'sync' })
     : Object.assign(document.createElement('span'), { className: 'cb-initial', textContent: c.name[0] ?? '?' });
+}
+// The portrait's own facts on the screen it's on: the colour it's framed in, and how much of the picture lies below its
+// feet, where the floor meets them (style.css --call-foot)
+function framePortrait(c, el) {
+  if (c.portrait?.accent) el.style.setProperty('--cb-accent', c.portrait.accent);
+  if (c.portrait) el.style.setProperty('--call-foot', String(c.portrait.foot));
 }
 
 // ---- the watch-along: from the board's Show my screen on, HQ records itself for the call's agent and the call's

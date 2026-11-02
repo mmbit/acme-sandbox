@@ -55,6 +55,7 @@ Input is recorded as it happens: a shadow root's change event never crosses its 
 is an image, and lifted ink is SVG, so they remain visible without sampling the preview's canvases. Review hosts
 mark themselves `data-review-ui`: their own note snapshots skip them before copying or collecting privacy masks.
 
+
 **The top layer** (`toplayer.js`): what a page shows over everything, a popover or a modal dialog (HQ's small call
 and its cards, a picture opened large), is there by a call (`showPopover`, `showModal`), not by anything in the DOM, so
 rrweb alone records it hidden. The recorder, a framed page's too (a preview's popover), marks a `top` moment as it
@@ -63,6 +64,14 @@ rrweb's ids, which rrweb makes a frame's the framing page's under `id`), and the
 each document of their replay before each picture and frame. One their replay can't show throws, and the picture
 fails with it. Anything a page puts there is captured so, with nothing to mark; `toplayer.test.ts` compares the
 mirror's picture of such a page, and of one in a frame, with the page's own screenshot.
+**CSS media queries** (`media.js`): the recorder keeps the query matches of each document's accessible stylesheets,
+including nested rules, imports, media attributes, open shadow roots and adopted stylesheets. Each `media` moment
+carries its document under `id` for rrweb's frame translation. Query changes, stylesheet loads and DOM edits update
+it. A one-second read discovers CSSOM edits and shadow styles. Mirrors and playback apply those matches to each
+replayed media list, so touch-sized controls and other responsive rules keep the recorded environment. A recording
+without these moments retains the viewer's media environment. Foreign stylesheet rules inaccessible to the recorder
+cannot be captured. `node --test shared/watchalong/media.test.ts` checks that the same controls remain under recorded
+points after rotation and late styles, including a shadow tree.
 **Kept out:** passwords and hidden fields' values always; anything inside `[data-watchalong-hide]` (an empty box in
 the replay: key fields). Inside `[data-private]`, for the board too (a person's address,
 email or phone, a customer's case: mark them where a page shows them): the text, what's typed, every attribute but
@@ -90,9 +99,21 @@ It runs `answerFrames(framer)` with the framing page's origin; `framed.js` does 
 serves `framed.js` after review mode's script, HQ's origin filled in, whether that page's viewer may take notes or not
 (a guest who sent theirs is still seen); it says `{hq: 'watchalong', hello}` to HQ as the page loads and `bye` as it
 goes, which is how the join page knows the frame answers. `watch()` asks every frame as it
-starts and as each frame's page loads, and tells them to stop on pause and at the end. rrweb's cross-origin frame
-mode sends the frame's events up to the framing page's recorder, which keeps them in its own stream. On preview hosts
-the coordinator serves both files at `/__review/watchalong.js` and `/__review/vendor/rrweb-record.js`; on HQ's host at
+starts and as each frame's page loads, and tells them to stop on pause and at the end.
+
+
+A message channel bound to the iframe sends the frame's events up to the framing page's recorder, where rrweb
+translates their ids and keeps them in the same stream. The channel retains the frame's window while a message waits:
+a navigation can erase a window message's source before the parent receives its final tap. Each document releases
+its channel after its final events, and pausing or stopping the parent closes all its channels. Only rrweb events
+cross this channel. The parent rebuilds each message from its type, event and origin, so frame-supplied HQ, notebook
+or other protocol keys never reach the parent's message listeners. The framed recorder requires its channel's emit
+function and disables rrweb's parent-window route.
+
+`platform/hq/extras.mjs` exports `RECORDER_MODULES` for recorder hosts and browser fixtures. The coordinator image
+includes browser JavaScript in this folder with one allow rule, checked by its existing image asset test.
+
+On preview hosts the coordinator serves the recorder and its vendor at `/__review/watchalong.js` and `/__review/vendor/rrweb-record.js`; on HQ's host at
 `/shared/watchalong/`.
 
 `scrolllink.js` follows `framed.js` on previews and stands alone on public hosts: it tells the frame's parent where the

@@ -67,9 +67,15 @@ export const inStep = () => afterSteps.length > 0;
 // Shared by wait and pause validation and their cycle check.
 export function mergePending(job: string) {
   return `(${job}.status in ('queued', 'running', 'blocked') or ${job}.status = 'done' and
-    (select status from prs where branch = coalesce(${job}.branch, 'job/' || ${job}.id)
-      order by number desc limit 1) in ('open', 'stuck', 'board'))`;
+    ${pendingPr(job)} is not null)`;
 }
+// The latest pull request on a job's branch, only while it still waits to merge.
+export const pendingPr = (job: string) => `(select case when status in ${OPEN_PRS} then number end
+  from prs where branch = ${workBranch(job)} order by number desc limit 1)`;
+// Pull requests in review, stuck or waiting for the board's call.
+export const OPEN_PRS = "('open', 'stuck', 'board')";
+// A job's work branch in SQL, for the jobs row `j` names.
+export const workBranch = (j: string) => `coalesce(${j}.branch, 'job/' || ${j}.id)`;
 // A key's value never stays in the free text an agent can read (secrets.ts redact()): a module that keeps such text names
 // its columns once its table exists, and every insert and update of them is redacted as it's written. The triggers are
 // this connection's own (temp), so the file holds none: report.sh, the backup's copy or an older coordinator open it
@@ -265,7 +271,7 @@ db.exec(`
     status text not null default 'open', answer text, seat text, secrets text, approves text, pr integer, photos text,
     documents text, zips text, address integer, questions text, customers integer not null default 0, answered text,
     changed text, topic text, heard_by integer, closing text, hidden_until text, walk integer not null default 0,
-    note integer, page text);
+    note integer, page text, settled text);
   create table if not exists prs (number integer primary key, branch text not null, author text not null,
     round integer not null default 0, status text not null default 'open', verdict text, sha text,
     since integer not null default 0, review_since integer not null default 0,
@@ -323,7 +329,8 @@ db.exec(`create index if not exists jobs_review_runs on jobs (id, status, kind, 
   drop index if exists jobs_run_sizes`);
 // Covers queueRows in backlog.ts, ordered by status then id, so queue reads avoid brief and output overflow pages.
 // That query names it with `indexed by`. It replaced jobs_queue, dropped here, with the seats a job may run on: its CLI,
-// and whether it falls back (jobs.ts FALLS_BACK).
+// and whether it falls back (jobs.ts FALLS_BACK). featurecost.ts's cost book names it too, for every job's thread,
+// branch, kind, stage, pr and round.
 db.exec(`create index if not exists jobs_play on jobs (status, id, kind, agent, title, step, round, engine, for_seat,
   downtime, after, request, not_before, held_by, created, branch, pr, seat, thread, finished, stage, queued_by, cli,
   session, engine_only);
@@ -437,8 +444,8 @@ db.exec('create index if not exists deploys_finished on deploys (finished)');
 // The Codex seat each share went to (a job, or a normal review round's Codex review its seat was out for), so the next
 // goes to the seat with fewer (jobs.ts codexShare).
 db.exec('create table if not exists codex_shares (id integer primary key, seat text not null, at integer not null, job integer)');
-// The work an open card waits for, kept off the desk phone until it's merged and deployed (later.ts holdsFor): a
-// deployed: wake's arg, '<job>' or 'pr:<n>' (wakes.ts)
+// What an open card waits for off the desk phone: work until it's merged and deployed (later.ts holdsFor), a deployed:
+// wake's arg, '<job>' or 'pr:<n>' (wakes.ts), or 'read:<job>', the card reader's read (cardread.ts)
 db.exec('create table if not exists request_holds (request integer not null, work text not null, primary key (request, work))');
 
 // A live call's agent token (call.ts): only its sha256, the agent it speaks as, until when, and its call. listed: the
@@ -937,8 +944,7 @@ db.exec(`drop index if exists book_sheets_open;
   create unique index if not exists book_sheets_batch on book_sheets (who, coalesce(owner, ''))
     where status in ('open', 'sending') and page is null and notebook_page is null`);
 db.exec('drop table if exists call_pins');
-// A second device's links on the board's call went with the second device on 29 October 2026: group calls keep only
-// their speaker labels (the board, call #248).
+// Group calls keep only their speaker labels, with no second device's links.
 db.exec('drop table if exists call_devices');
 
 // A minute is the worker's reporting cadence. Two weekly windows keep observations on both sides of a reset.
@@ -974,6 +980,9 @@ once('2026-10-30-incidents', () => {
   if (lacks('deploys', 'broke')) db.exec("alter table deploys add column broke text not null default ''");
   if (lacks('deploys', 'reverted')) db.exec("alter table deploys add column reverted text not null default ''");
 });
+// A card answered in the board's place (jobs.ts settleRequest): the card reader's id. It never reached the board's desk phone,
+// so the board's archive leaves it out.
+once('2026-11-02-requests-settled', () => lacks('requests', 'settled') && db.exec('alter table requests add column settled text'));
 // jobs_work_branch with its kind and thread (above), in place of the branch alone.
 once('2026-10-31-jobs-work-branch-thread', () => {
   db.exec(`drop index if exists jobs_work_branch;

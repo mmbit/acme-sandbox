@@ -34,8 +34,8 @@ export function answerOf(result: unknown): Record<string, unknown> | string {
 
 // ---------------------------------------------------------------- the reads queue
 // One short call on the worker's small model, put up for the worker to claim (POST /api/worker/reads/claim, worker.ts
-// readLoop) and answered by it (/answer): the board's handwriting read into type (handwriting.ts) and the book's judge
-// (ink/bookjudge.ts). The content (pictures and words) lives in memory only, for the length of the call. Each caller
+// readLoop) and answered by it (/answer): the board's ink on a call's page read for its agent (ink/inkread.ts), the
+// book's judge (ink/bookjudge.ts) and the notebook's page titles (notebooktitles.ts). The content (pictures and words) lives in memory only, for the length of the call. Each caller
 // bounds its own calls a day and checks its own answer (check: the answer, or what's wrong with it).
 // A claimed call that hasn't answered within CALL_MS has died (oneLine kills the CLI at 90 s): due again, TRIES in all.
 const CALL_MS = 95_000,
@@ -44,6 +44,7 @@ export type Claimed = { reading: string; model: string; content: unknown[]; sche
 type Waiting = {
   id: string;
   name: string;
+  model: string;
   content: unknown[];
   schema: string;
   claimed: number;
@@ -57,9 +58,10 @@ const waiting: Waiting[] = [];
 
 // The model's answer to content (the prompt: pictures and text) in the schema's shape, as check reads it; 504 when none
 // came within wait ms, 502 when the model's answers were no use. name: who asks, as the log and the refusals say it.
-// keepAlive false: a call no request waits on doesn't hold the process open.
+// keepAlive false: a call no request waits on doesn't hold the process open. model: another than MODEL, by its full id.
 export function smallCall<T>(c: {
   name: string;
+  model?: string;
   content: unknown[];
   schema: object;
   check: (result: unknown) => T | string;
@@ -72,6 +74,7 @@ export function smallCall<T>(c: {
     const w: Waiting = {
       id: randomUUID(),
       name: c.name,
+      model: c.model ?? MODEL,
       content: c.content,
       schema: JSON.stringify(c.schema),
       claimed: 0,
@@ -96,7 +99,7 @@ export function claim(now = Date.now()): Claimed | null {
   if (!w) return null;
   w.claimed = now;
   w.tries++;
-  return { reading: w.id, model: MODEL, content: w.content, schema: w.schema };
+  return { reading: w.id, model: w.model, content: w.content, schema: w.schema };
 }
 
 // POST /api/worker/reads/answer: the model's answer, or the call's failure (due again while it has tries left)

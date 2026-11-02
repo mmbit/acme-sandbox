@@ -92,15 +92,15 @@ export const item = {
                                                      --replaces (a call's follow-up only): the board changed an earlier
                                                      item; that one is replaced, its jobs that never ran are cancelled,
                                                      and a running one is told at its next step.
-                                                     --deadline: the time the board was given for it on the call
-                                                     (2026-10-26 09:00 on the company's clock, 14:30 UTC, 2h): its job's
-                                                     deliverable (hq job --item, or linked) takes it as its window (hq
-                                                     window); a correction keeps the earlier time. --board-set: the
-                                                     board named it itself (else it's ours). --job <id>, on a live call:
-                                                     a promise about its owner's work under way, linked to it as it's
-                                                     recorded (handled when it ends done), whose deliverable takes the
-                                                     time at once; --deliverable puts a job the call queued in no
-                                                     deliverable on that one (--thread, the old name, still works)
+                                                     --deadline: the time the board was given for it on the call (2026-10-26
+                                                     09:00 on the company's clock, 14:30 UTC, 2h): its job's deliverable (hq
+                                                     job --item, or linked) takes it as its window (hq window); a correction
+                                                     keeps the earlier time. --board-set: the board named it itself (else
+                                                     it's ours). --job <id>, on a live call: its owner's work under way,
+                                                     linked as it's recorded (handled when it ends done), its deliverable
+                                                     taking the time at once; --deliverable puts a job the call queued in no
+                                                     deliverable on that one (--thread, the old name, still works). Owner ""
+                                                     on a live call: the CEO's till the follow-up decides
    hq item replace <item> "what" - [a-b] --goal - [--call <id>] [--deadline <when>]
                                                      the same as add --replaces, with the earlier item's kind and owner.
                                                      On a live call (its own token): only an open item, while the board is

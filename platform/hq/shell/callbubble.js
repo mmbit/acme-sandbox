@@ -171,13 +171,13 @@ export class CallBubble {
   }
 
   // A page carried toward the call must keep the target it saw when it was picked up.
-  holdPosition(held) {
-    this.placementHeld = held;
+  holdCallPosition(held) {
+    this.callPositionHeld = held;
     if (!held) this.settle();
   }
 
   settle() {
-    if (this.placementHeld || !this.el.isConnected || this.el.classList.contains('held')) return;
+    if (this.callPositionHeld || !this.el.isConnected || this.el.classList.contains('held')) return;
     const home = this.home();
     this.place(home.x, home.y);
   }

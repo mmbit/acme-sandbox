@@ -281,15 +281,16 @@ function covering(r) {
   addEventListener('review:cover', e => {
     r.covered = !!e.detail;
     if (r.covered) stopMic(r);
-    if (r.book) r.host.toggleAttribute('data-covered', r.covered);
-    else r.host.style.display = r.covered ? 'none' : 'block';
+    showCovered(r);
   });
-  if (r.covered) {
-    if (r.book) r.host.setAttribute('data-covered', '');
-    else r.host.style.display = 'none';
-  }
+  showCovered(r);
   // (away, there's no pin to show)
   if (r.summoned) addEventListener('review:pin', e => !r.covered && !r.away && !r.fab.hidden && (e.detail.pin = r.fab));
+}
+
+function showCovered(r) {
+  if (r.book) r.host.toggleAttribute('data-covered', r.covered);
+  else r.host.style.display = r.covered ? 'none' : 'block';
 }
 
 export function setupDock(r) {

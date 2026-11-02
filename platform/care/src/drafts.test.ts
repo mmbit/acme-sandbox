@@ -29,7 +29,7 @@ const hqServer = createServer((req, res) => {
 });
 await new Promise<void>(r => hqServer.listen(0, '127.0.0.1', r));
 
-Object.assign(process.env, { DATA_DIR: mkdtempSync(join(tmpdir(), 'care-drafts-')), PORT: String(20000 + Math.floor(Math.random() * 20000)),
+Object.assign(process.env, { DATA_DIR: mkdtempSync(join(tmpdir(), 'care-drafts-')), PORT: '0',
   CARE_LOCAL: '1', CARE_PROVIDER: 'fake', CARE_NAMES: JSON.stringify({ shop: 'Shop' }),
   CARE_COMPANY_DIR: new URL('../../../template/products/care', import.meta.url).pathname,
   CARE_HQ_URL: `http://127.0.0.1:${(hqServer.address() as any).port}`, CARE_HQ_TOKEN: 'hq-test-token' });

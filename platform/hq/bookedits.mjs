@@ -1,32 +1,24 @@
-// book-check.mjs's stories of handwriting's words edited with the pen (shared/review/penwords.js, shell/ink/bookamend.js):
-// on a desktop with a mouse and on an iPad mini with the Pencil, a box of words on a page has a word struck out (gone
-// from what the board sees and from what the store keeps, no ink left), Undo brings it back, and a slice between two
-// words opens them where new words go: typed on the desktop, written on the iPad and read by the handwriting reader
-// (played here). And a scrap's post-it words under it on an open page have a word struck out with the Pencil, saved to
-// its group. (the scrap's words: job #20856)
+// book-check.mjs's stories of the pen over words in the book (shell/ink/booktexts.js, bookwrite.js): on a desktop with a
+// mouse and on an iPad mini with the Pencil, a line over a box of words, or over a scrap's post-it words, is ink on the
+// page, the words as they were (nothing reads the board's handwriting or strikes words out: board, call 176), and a
+// Pencil's tap in a box puts the caret where it tapped, deleting nothing.
 import assert from 'node:assert/strict';
 import { freePage, onDesk, savedWhere } from './bookmouse.mjs';
 import { MINI, pressAlong, until } from './bookkit.mjs';
 
 const WORDS = 'Order the teal mugs today';
-// where a scrap was cut, and its picture (a pixel of paper)
+// where a scrap was cut
 const ANCHOR = { v: 1, url: 'https://hq.example/', el: null, view: { x: 0, y: 0, w: 1200, h: 800, dpr: 1 }, ink: [] };
-const SNIP =
-  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR42mP4//8/AAX+Av4N70a4AAAAAElFTkSuQmCC';
 
-// c: book-check.mjs's played store and helpers, as mouseStories gets them
+// c: book-check.mjs's played store and helpers, as mouseStories gets them, and snipPng(), a scrap's picture
 export function editStories(c) {
   return {
-    'with a mouse: a word struck out, Undo bringing it back, a slice typed into': browser => withMouse(browser, c),
-    'with the Pencil: a word struck out, Undo bringing it back, a slice written into and read': browser =>
-      withPencil(browser, c),
-    "with the Pencil: a word of a scrap's words struck out, saved to its group": browser => scrapStruck(browser, c),
+    "with a mouse: a line over a box's words is ink, the words as they were": browser => withMouse(browser, c),
+    "with the Pencil: a line over a box's words is ink, and a tap in it puts the caret there, deleting nothing":
+      browser => withPencil(browser, c),
+    "with the Pencil: a line over a scrap's words is ink, the words as they were": browser => scrapInked(browser, c),
     "with a mouse: a scrap's words typed with a space at their end, saved, another screen's words after them kept":
       browser => scrapTyped(browser, c),
-    "a gap closed while its writing is read: what waits on it has the words, and a reset's drop puts none in":
-      browser => gapClosed(browser, c),
-    'a gap closed as its pen writes: the close waits for every reading, and a line lifted after it is never read':
-      browser => lateLine(browser, c),
   };
 }
 
@@ -35,26 +27,15 @@ export function editStories(c) {
 async function withMouse(browser, c) {
   const free = wordsPage(c);
   // No microphone allowed here. With it, a mouse pressed on the paper and held still is a voice note
-  // (shell/ink/bookinput.js). On a loaded worker Playwright's moves can come that late, and the slice would be lost.
+  // (shell/ink/bookinput.js). On a loaded worker Playwright's moves can come that late, and the line would be lost.
   const { page, errors, done } = await onDesk(browser, c, { permissions: [] });
   try {
-    // a drag along the middle of "teal", from inside the box: struck out, no ink
+    // a drag along the middle of "teal", from inside the box: the line once struck the word out
     await drag(page, along(await wordBox(page, 'teal')));
-    const struck = await savedWhere(c, free.id, p => p.texts[0]?.text === 'Order the mugs today');
-    assert.equal(struck.ink.length, 0, 'the strike left no ink');
-    assert.equal(await shownWords(page), 'Order the mugs today', 'the board sees the word go');
-    await c.shot('book-edits-mouse-struck', page);
-    await page.keyboard.press('Control+z');
-    await savedWhere(c, free.id, p => p.texts[0]?.text === WORDS);
-    assert.equal(await shownWords(page), WORDS, 'Undo brings the word back');
-    // a drag down between "teal" and "mugs", from the paper above: the caret there, the words opened
-    await drag(page, down(await wordBox(page, 'teal'), await wordBox(page, 'mugs')));
-    await until(() => opened(page), 'the words opened with the caret in the gap');
-    await c.shot('book-edits-mouse-sliced', page);
-    await page.keyboard.type('blue');
-    await page.keyboard.press('Escape');
-    const typed = await savedWhere(c, free.id, p => p.texts[0]?.text === 'Order the teal blue mugs today');
-    assert.equal(typed.ink.length, 0, 'the slice left no ink');
+    const inked = await savedWhere(c, free.id, p => p.ink.length === 1);
+    assert.equal(inked.texts[0].text, WORDS, 'the words kept as they were');
+    assert.equal(await shownWords(page), WORDS, 'the board sees its words as they were');
+    await c.shot('book-edits-mouse-inked', page);
     c.noErrorsIn(errors);
   } finally {
     await done();
@@ -66,42 +47,28 @@ async function withPencil(browser, c) {
   const free = wordsPage(c);
   const context = await c.hqIn(browser, MINI, { hasTouch: true });
   const page = await context.newPage(),
-    errors = [],
-    inks = [];
+    errors = [];
   page.on('pageerror', e => errors.push(e.message));
-  // (the handwriting reader: whatever's written reads as "blue")
-  await page.route('**/api/book/read', r => {
-    inks.push(r.request().postDataJSON().ink);
-    return r.fulfill({ json: { writing: true, words: 'blue' } });
-  });
   try {
     await page.goto(`${c.base}/?intro=0`);
     await page.waitForSelector('#book .bk-desk', { timeout: 30_000 });
     await c.settled(page, 'open');
     await pressAlong(page, along(await wordBox(page, 'teal')));
-    const struck = await savedWhere(c, free.id, p => p.texts[0]?.text === 'Order the mugs today');
-    assert.equal(struck.ink.length, 0, 'the strike left no ink');
-    assert.equal(await shownWords(page), 'Order the mugs today', 'the board sees the word go');
-    await page.locator('#book').getByRole('button', { name: 'Undo' }).first().tap();
-    await savedWhere(c, free.id, p => p.texts[0]?.text === WORDS);
-    assert.equal(await shownWords(page), WORDS, 'Undo brings the word back');
-    // a slice between "teal" and "mugs": a gap there, and a word written in it read and put in
+    await savedWhere(c, free.id, p => p.ink.length === 1);
     const [teal, mugs] = [await wordBox(page, 'teal'), await wordBox(page, 'mugs')];
     await pressAlong(page, down(teal, mugs));
-    await until(() => opened(page), 'the words opened with a gap');
-    const gap = await page.evaluate(() => {
-      const r = document.querySelector('#book .bk-typed span[style*="inline-block"]').getBoundingClientRect();
-      return { x: r.x, y: r.y, w: r.width, h: r.height };
-    });
-    await pressAlong(page, scrawl(gap));
-    await c.shot('book-edits-pencil-written', page);
-    const written = await savedWhere(c, free.id, p => p.texts[0]?.text === 'Order the teal blue mugs today');
-    assert.equal(written.ink.length, 0, 'what was written went into the words, not the page');
-    assert.equal(inks.length, 1, 'one reading of what was written');
-    // a tap elsewhere closes the gap; Undo takes the words written back out
-    await page.locator('#book').getByRole('button', { name: 'Undo' }).first().tap();
-    await until(async () => !(await opened(page)), 'the gap closed by a tap elsewhere');
-    await savedWhere(c, free.id, p => p.texts[0]?.text === WORDS);
+    await pressAlong(page, scrawl({ x: teal.left, y: teal.top, h: teal.bottom - teal.top }));
+    const inked = await savedWhere(c, free.id, p => p.ink.length === 3);
+    assert.equal(inked.texts[0].text, WORDS, 'the words kept as they were');
+    assert.equal(await shownWords(page), WORDS, 'the board sees its words as they were');
+    // a tap just inside the end of "teal": the caret there, and the keyboard's letter goes in, nothing taken out
+    const at = await wordBox(page, 'teal');
+    await pressAlong(page, [[at.right - 1, (at.top + at.bottom) / 2]]);
+    await until(() => page.evaluate(() => !!document.querySelector('#book .bk-typed[data-editing]')), 'the box edited');
+    await page.keyboard.type('s');
+    await page.keyboard.press('Escape');
+    await savedWhere(c, free.id, p => p.texts[0]?.text === 'Order the teals mugs today');
+    await c.shot('book-edits-pencil-caret', page);
     c.noErrorsIn(errors);
   } finally {
     await context.close();
@@ -109,106 +76,14 @@ async function withPencil(browser, c) {
   }
 }
 
-// A post-it's Send waits on its gap's close (postit.js pinIt), its reset drops it (postitpen.js unpen): a gap with a
-// line written in it, closed twice (as Send's press, then Send itself, do) and waited on; another dropped as its line
-// is being read.
-async function gapClosed(browser, c) {
-  const { page, errors, done } = await onDesk(browser, c);
-  try {
-    const got = await page.evaluate(async () => {
-      const { openGap } = await import('/__review/penwords.js');
-      const field = Object.assign(document.createElement('textarea'), { value: 'Order the mugs' });
-      Object.assign(field.style, { position: 'fixed', left: '200px', top: '200px', width: '300px', zIndex: 99 });
-      document.body.append(field);
-      const r = field.getBoundingClientRect(),
-        line = [
-          [r.left + 20, r.top + 10, 0.5],
-          [r.left + 40, r.top + 12, 0.5],
-        ];
-      const gap = () =>
-        openGap(field, field.value.length, {
-          text: () => field.value,
-          put: text => (field.value = text),
-          read: () => new Promise(read => setTimeout(() => read('teal'), 300)),
-          lines: [line],
-        });
-      const first = gap();
-      first.close();
-      await first.close();
-      const closed = field.value;
-      const second = gap();
-      await new Promise(rest => setTimeout(rest, 1300)); // (past the pen's rest: its reading under way)
-      await second.drop();
-      await new Promise(read => setTimeout(read, 600));
-      field.remove();
-      return { closed, dropped: field.value };
-    });
-    assert.equal(got.closed, 'Order the mugs teal', 'closed again, the gap is waited on till its words are in');
-    assert.equal(got.dropped, 'Order the mugs teal', "a dropped gap's reading puts nothing in");
-    c.noErrorsIn(errors);
-  } finally {
-    await done();
-  }
-}
-
-// The words written after a post-it's Send stay out of it: a gap closed while its first line is read and a second
-// waits, with a third pressed before the close and lifted after it (the finger's, which the pad writes as the pen's:
-// the field is on HQ's page, where review mode takes the pen).
-async function lateLine(browser, c) {
-  const { page, errors, done } = await onDesk(browser, c);
-  try {
-    const got = await page.evaluate(async () => {
-      const { openGap } = await import('/__review/penwords.js');
-      const field = Object.assign(document.createElement('textarea'), { value: 'Order the mugs' });
-      Object.assign(field.style, { position: 'fixed', left: '200px', top: '200px', width: '300px', zIndex: 99 });
-      document.body.append(field);
-      const r = field.getBoundingClientRect(),
-        at = dx => ({ clientX: r.left + 20 + dx, clientY: r.top + 10, pressure: 0.5 }),
-        reads = [],
-        words = ['teal', 'big', 'late'];
-      const gap = openGap(field, field.value.length, {
-        text: () => field.value,
-        put: text => (field.value = text),
-        read: lines => (
-          reads.push(lines.length),
-          new Promise(read => setTimeout(() => read(words[reads.length - 1]), 300))
-        ),
-        lines: [[Object.values(at(0)), Object.values(at(20))]],
-      });
-      await new Promise(rest => setTimeout(rest, 1300)); // (past the pen's rest: the first reading under way)
-      const pad = [...document.body.children].find(el => el.style.touchAction === 'none'),
-        touch = (type, pointerId, dx) =>
-          pad.dispatchEvent(new PointerEvent(type, { pointerId, pointerType: 'touch', isPrimary: true, ...at(dx) }));
-      touch('pointerdown', 7, 40);
-      touch('pointermove', 7, 60);
-      touch('pointerup', 7, 60);
-      touch('pointerdown', 8, 80);
-      touch('pointermove', 8, 100);
-      const closing = gap.close();
-      touch('pointerup', 8, 100);
-      await closing;
-      const closed = field.value; // (what the close itself waited for)
-      await new Promise(rest => setTimeout(rest, 1600)); // (past the pen's rest again: a late line would be read by now)
-      field.remove();
-      return { reads, closed, value: field.value };
-    });
-    assert.deepEqual(got.reads, [1, 1], 'the close waits for both readings, the line lifted after it never read');
-    assert.equal(got.closed, 'Order the mugs teal big', '...both readings in by the time the close returns');
-    assert.equal(got.value, 'Order the mugs teal big', "...the late line's words none");
-    c.noErrorsIn(errors);
-  } finally {
-    await done();
-  }
-}
-
-// A scrap on a free page of today's, its post-it's words a field under it: a word struck out with the Pencil goes from
-// the field and from the words the store keeps for its group, and leaves no ink
-async function scrapStruck(browser, c) {
+// A scrap on a free page of today's, its post-it's words a field under it: a Pencil line over a word is ink the store
+// keeps on the scrap, its words as they were
+async function scrapInked(browser, c) {
   const free = freePage(c);
   const scrap = c.notebook.route(
     '/api/notebooks/groups/scrap',
     {},
-    { anchor: ANCHOR, words: WORDS, said: 'typed', snip: SNIP },
+    { anchor: ANCHOR, words: WORDS, said: 'typed', snip: c.snipPng() },
   );
   const kept = () => c.notebook.route('/api/notebooks/pages/groups', { page: free.id }).groups;
   const context = await c.hqIn(browser, MINI, { hasTouch: true });
@@ -223,17 +98,17 @@ async function scrapStruck(browser, c) {
     const field = page.locator(`#book .bk-words[data-g="${scrap.id}"] textarea.bk-scrap-words`);
     await field.waitFor();
     assert.equal(await field.getAttribute('data-pen'), '', 'the field kept from Scribble for the pen');
+    const edits = [];
+    page.on('request', r => r.url().includes('/api/notebooks/groups/edit') && edits.push(r.postDataJSON()));
     await pressAlong(page, along(await scrapWordBox(page, 'teal')));
-    await until(
-      () => kept().find(g => g.id === scrap.id)?.words === 'Order the mugs today',
-      "the scrap's words saved without the word",
-    );
-    assert.equal(await field.inputValue(), 'Order the mugs today', 'the board sees the word go');
-    assert.ok(
-      kept().every(g => !g.ink.length),
-      'the strike left no ink',
-    );
-    await c.shot('book-edits-scrap-struck', page);
+    const edit = await until(() => edits.find(b => b.id === scrap.id), "the scrap's edit sent");
+    assert.equal(edit.ink.length, 1, 'the line goes as ink on the scrap');
+    assert.equal(edit.words, undefined, "the scrap's words not changed");
+    await until(() => kept().find(g => g.id === scrap.id)?.ink.length === 1, 'the store keeps the line on the scrap');
+    assert.equal(kept().find(g => g.id === scrap.id)?.words, WORDS, "the scrap's words kept as they were");
+    assert.equal(await page.locator('#book .bk-refusal:visible').count(), 0, 'no save refused');
+    assert.equal(await field.inputValue(), WORDS, 'the board sees its words as they were');
+    await c.shot('book-edits-scrap-inked', page);
     c.noErrorsIn(errors);
   } finally {
     await context.close();
@@ -249,7 +124,7 @@ async function scrapTyped(browser, c) {
   const scrap = c.notebook.route(
     '/api/notebooks/groups/scrap',
     {},
-    { anchor: ANCHOR, words: WORDS, said: 'typed', snip: SNIP },
+    { anchor: ANCHOR, words: WORDS, said: 'typed', snip: c.snipPng() },
   );
   const kept = () =>
     c.notebook.route('/api/notebooks/pages/groups', { page: free.id }).groups.find(g => g.id === scrap.id);
@@ -315,16 +190,50 @@ async function wordBox(page, word) {
     return { left: r.left, right: r.right, top: r.top, bottom: r.bottom };
   }, word);
 }
-// A word's box on screen, in a scrap's words (a field: measured as the pen's edits measure it)
+// A word's box on screen, in a scrap's words (a field: its words laid out in a copy over it, measured, gone again)
 const scrapWordBox = (page, word) =>
-  page.evaluate(async word => {
-    const { wordsOf } = await import('/__review/penedit.js');
-    const { text, words } = wordsOf(document.querySelector('#book textarea.bk-scrap-words'));
-    return words.find(w => text.slice(w.start, w.end) === word).rects[0];
+  page.evaluate(word => {
+    const field = document.querySelector('#book textarea.bk-scrap-words'),
+      style = getComputedStyle(field),
+      copy = document.createElement('div');
+    for (const p of [
+      'boxSizing',
+      'width',
+      'paddingTop',
+      'paddingRight',
+      'paddingLeft',
+      'borderTopWidth',
+      'borderRightWidth',
+      'borderLeftWidth',
+      'fontFamily',
+      'fontSize',
+      'fontWeight',
+      'fontStyle',
+      'letterSpacing',
+      'wordSpacing',
+      'lineHeight',
+      'textAlign',
+      'overflowWrap',
+    ])
+      copy.style[p] = style[p];
+    Object.assign(copy.style, {
+      position: 'fixed',
+      margin: '0',
+      borderStyle: 'solid',
+      borderColor: 'transparent',
+      whiteSpace: 'pre-wrap',
+      visibility: 'hidden',
+    });
+    const f = field.getBoundingClientRect();
+    Object.assign(copy.style, { left: `${f.left}px`, top: `${f.top}px` });
+    const at = field.value.indexOf(word);
+    copy.append(field.value.slice(0, at), Object.assign(document.createElement('span'), { textContent: word }));
+    document.body.append(copy);
+    const r = copy.lastChild.getBoundingClientRect();
+    copy.remove();
+    return { left: r.left, right: r.right, top: r.top, bottom: r.bottom };
   }, word);
 const shownWords = page => page.evaluate(() => document.querySelector('#book .bk-typed-words').textContent);
-// Whether the box of words shows a gap opened in it
-const opened = page => page.evaluate(() => !!document.querySelector('#book .bk-typed span[style*="inline-block"]'));
 // A hand's line along a word's middle, from a little before it to a little past it
 const along = w => {
   const y = (w.top + w.bottom) / 2;

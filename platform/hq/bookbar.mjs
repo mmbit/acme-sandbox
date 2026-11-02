@@ -1,14 +1,15 @@
-// book-check.mjs's story of the rail at the paper's right edge (shell/ink/bookui.js, bookstrip.js, bookcontrols.js):
-// on a phone and an iPad mini both ways and a desktop with the notebook wide and narrow, every control the page has on
-// one vertical column at the paper's right edge, nothing scrolling and nothing floating over the page; the tools
+// book-check.mjs's story of the rail floating by the paper's right edge (shell/ink/bookui.js, bookstrip.js,
+// bookcontrols.js): on a phone and an iPad mini both ways and a desktop with the notebook wide and narrow, every
+// control the page has on the floating toolbars just in from the paper's right edge, nothing scrolling and no other island over
+// the page; the tools
 // first, the pen one tool (the marker beside it only where the rail has room), each 40 px wide or more; the page's
 // scroll area ending left of the rail, so no control sits over what's written; the cog's and the pen's cards whole on
 // the screen beside it. Press and slide: a press on Select slid down to Text picks Text the moment it lifts, with no
 // hold (the mouse, and in Chromium a finger). Run with --webkit for the same in the iPad's engine.
-// (the rail at the right edge)
+// (the rail at the right edge, floating: board, call 174)
 import assert from 'node:assert/strict';
 import { freePage } from './bookmouse.mjs';
-import { touchOf, until } from './bookkit.mjs';
+import { OVERVIEW, touchOf, until } from './bookkit.mjs';
 
 const SIZES = [
   { name: 'phone', viewport: { width: 390, height: 844 }, touch: true },
@@ -53,6 +54,7 @@ async function atSize(browser, c, size) {
     await fitted(page);
     await c.shot(`book-rail-${size.name}`, page);
     await fits(page);
+    await keysStay(page, size);
     await cards(page, c, size);
     await slides(page, size, browser);
     assert.deepEqual(errors, []);
@@ -96,8 +98,8 @@ const fitted = page =>
     'the book at rest, its rail fitted',
   );
 
-// A control on the rail pressed: on the rail, or from More's card where the rail has folded it away (also
-// bookbookmarks.mjs's)
+// A control on the rail pressed: on the rail, or from More's card where the rail has folded it away (the book's other
+// checks' too)
 export async function press(page, name) {
   const own = page.locator('#book .bk-column').getByRole('button', { name, exact: true });
   if (await own.isVisible()) return own.click();
@@ -133,6 +135,84 @@ async function cards(page, c, size) {
   }
 }
 
+// Every control the rail shows (its label: where it is on the screen, px), and its fit
+const railOf = page =>
+  page.evaluate(() => {
+    const column = document.querySelector('#book .bk-column'),
+      keys = {};
+    for (const b of column.querySelectorAll('.bk-btn'))
+      if (b.checkVisibility({ visibilityProperty: true })) {
+        const r = b.getBoundingClientRect();
+        keys[b.getAttribute('aria-label')] = [r.x, r.y, r.width, r.height].map(Math.round);
+      }
+    const r = column.getBoundingClientRect();
+    return { fit: column.dataset.fit, rail: [r.y, r.height].map(Math.round), keys };
+  });
+// Undo, Redo and the page's arrows, top to bottom, where they are on the screen (px, null off the rail), and its fit
+const KEYS = ['Undo', 'Redo', 'The page before', 'The page after'];
+const keysOf = async page => {
+  const { fit, keys } = await railOf(page);
+  return { fit, keys: KEYS.map(name => keys[name] ?? null) };
+};
+// Undo, Redo and the page's arrows never move or swap places, so a tap does what the board meant: each on the rail, in
+// that order, and where it was at rest with another tool in use and with each of the rail's cards open.
+async function keysStay(page, size) {
+  const rest = await keysOf(page),
+    said = state => `${size.name}, ${state}: ${KEYS.join(', ')}`;
+  // (the page's arrows folded into More only where the rail is shortest: a phone on its side)
+  const shown = rest.keys.filter(Boolean),
+    folded = ['least', 'tight'].includes(rest.fit) ? 2 : 0;
+  assert.ok(
+    shown.length === KEYS.length - folded && shown.every((k, i) => !i || k[1] >= shown[i - 1][1] + shown[i - 1][3]),
+    `${said('at rest')} each on the rail, one under the other (${JSON.stringify(rest)})`,
+  );
+  const stays = async state =>
+    assert.deepEqual((await keysOf(page)).keys, rest.keys, `${said(state)} where they were at rest (${rest.fit})`);
+  const tools = page.locator('#book [data-island=tools]');
+  for (const name of ['Eraser', 'Text', 'Pen']) {
+    await tools.getByRole('button', { name, exact: true }).click();
+    await stays(`${name} in use`);
+  }
+  for (const [name, key, selector] of [
+    ['Preferences', "[aria-label='Preferences on this device']", '.bk-prefs'],
+    ['Pen', "[data-island=tools] [data-mode='pen']", '.bk-palette'],
+    ['Pages', '.bk-where', '.bk-pages-menu'],
+    ['More', '.bk-more', '.bk-more-card'],
+  ]) {
+    const on = page.locator(`#book .bk-column ${key}`).first();
+    if (!(await on.isVisible())) continue;
+    await on.click();
+    await page.locator(`#book ${selector}`).waitFor({ state: 'visible', timeout: 5000 });
+    await stays(`${name}'s card open`);
+    await page.keyboard.press('Escape');
+    await page.locator(`#book ${selector}`).waitFor({ state: 'detached', timeout: 5000 });
+  }
+  await overviewStays(page, size);
+}
+// The rail keeps one layout on a device: in the overview, with the tools, Undo, Redo and the page's arrows gone, it
+// fits as on the page, every control it still shows where it was there, and More a menu wherever it's one on the page,
+// not spread out for the room.
+async function overviewStays(page, size) {
+  const onPage = await railOf(page);
+  await press(page, OVERVIEW);
+  await page.locator('#book[data-far]').waitFor({ state: 'attached', timeout: 5000 });
+  await refitted(page);
+  const far = await railOf(page),
+    said = `${size.name}, the overview against the page (${JSON.stringify({ onPage, far })})`;
+  assert.equal(far.fit, onPage.fit, `${said}: one fit`);
+  assert.equal(!!far.keys.More, !!onPage.keys.More, `${said}: More where it was`);
+  for (const [name, at] of Object.entries(far.keys))
+    assert.deepEqual(at, onPage.keys[name], `${said}: ${name} where it was`);
+  await press(page, OVERVIEW);
+  await until(() => page.evaluate(() => !document.querySelector('#book[data-far]')), 'the page back');
+  await fitted(page);
+}
+// The rail fitted again to what it shows: two frames on
+async function refitted(page) {
+  await page.evaluate(() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done))));
+  await page.waitForTimeout(100);
+}
+
 // Where the rail and the page are, and what's on the rail (the screen's px)
 const measured = page =>
   page.evaluate(() => {
@@ -145,7 +225,7 @@ const measured = page =>
       column: box(column),
       scrolls: column.scrollHeight > column.clientHeight + 1 || column.scrollWidth > column.clientWidth + 1,
       buttons: [...column.querySelectorAll('.bk-btn')]
-        .filter(b => b.getBoundingClientRect().width)
+        .filter(b => b.checkVisibility({ visibilityProperty: true }))
         .map(b => ({ name: b.getAttribute('aria-label'), ...box(b) })),
       // (the overview's own tools are in its head)
       floating: [...document.querySelectorAll('#book .bk-island')]
@@ -154,8 +234,8 @@ const measured = page =>
     };
   });
 
-// Every control on the column, one above the other, whole on the screen and 40 px wide or more; the column at the
-// paper's right edge, scrolling nothing; the tools first in their order, the pen one tool; the page's scroll area
+// Every control on the column, one above the other, whole on the screen and 40 px wide or more; the column floating
+// just in from the paper's right edge, scrolling nothing; the tools first in their order, the pen one tool; the page's scroll area
 // ending left of it; no control anywhere else over the page
 async function fits(page) {
   const m = await measured(page),
@@ -163,9 +243,10 @@ async function fits(page) {
     names = m.buttons.map(b => b.name),
     mid = r => (r.left + r.right) / 2;
   assert.ok(!m.scrolls, `the rail scrolls nothing (${m.fit})`);
+  const inFrom = Math.min(m.paper.right, view.width) - m.column.right;
   assert.ok(
-    Math.abs(m.column.right - Math.min(m.paper.right, view.width)) < 1.5,
-    `the rail at the paper's right edge: ${m.column.right} ${m.paper.right}`,
+    inFrom >= 2 && inFrom <= 16,
+    `the rail floating just in from the paper's right edge: ${m.column.right} ${m.paper.right}`,
   );
   for (const b of m.buttons) {
     assert.ok(Math.abs(mid(b) - mid(m.column)) < 2, `${b.name} on the rail's one column: ${mid(b)} ${mid(m.column)}`);

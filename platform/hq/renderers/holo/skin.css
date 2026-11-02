@@ -42,8 +42,15 @@ body { font-weight: 500; }
 .callbubble .cb-keys .cb-hangup { background: color-mix(in srgb, var(--red) 70%, transparent); color: #fff; border-color: var(--red); border-radius: 999px; }
 /* the call's little screen a projector's, plain dark glass the figure stands in (no grid.) */
 .intercom .call .call-face { border: 1px solid var(--line); border-radius: 10px; background: rgba(0, 10, 16, .7); }
-.intercom .call .cf-picture::after { content: ''; position: absolute; pointer-events: none; left: 50%; right: auto; bottom: 6px; width: 120px; height: 16px; translate: -50% 0; border: 1px solid color-mix(in srgb, var(--cb-accent) 60%, transparent); border-radius: 50%;
-  background: radial-gradient(closest-side, color-mix(in srgb, var(--cb-accent) 30%, transparent), transparent); box-shadow: 0 0 14px color-mix(in srgb, var(--cb-accent) 40%, transparent); }
+/* The hologram's own pad, drawn below its feet (--call-foot, the portrait's: labels.js HOLOGRAM_FOOT), is cut off, and the
+   projector's pad lies on style.css's floor under the feet, a wider one in the small call. */
+:is(.intercom .call .cf-figure, .callbubble .cb-face) > img { position: relative; z-index: 2; clip-path: inset(0 0 calc(100% * var(--call-foot)) 0); }
+.intercom .call .cf-figure:has(> img)::after, .callbubble .cb-face:has(> img)::after { content: ''; position: absolute; z-index: 1; pointer-events: none; left: 50%;
+  bottom: var(--call-floor);
+  translate: -50% 50%; width: calc(var(--cb-portrait-height) * .4); aspect-ratio: 5; border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--cb-accent) 70%, transparent); background: radial-gradient(closest-side, color-mix(in srgb, var(--cb-accent) 45%, transparent), transparent);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--cb-accent) 45%, transparent); }
+.callbubble .cb-face:has(> img)::after { width: calc(var(--cb-portrait-height) * .6); }
 .intercom .call .call-face.talking .cf-figure > * { animation: cb-talk-smooth .5s ease-in-out infinite; }
 .intercom .call .lines { border-radius: 10px; }
 .intercom .call .lines li { animation: cs-line-in .28s ease-out both; }
@@ -60,13 +67,10 @@ body { font-weight: 500; }
 .back, .tag, .req .body a, .req .steps a, .req .rec a, .req .doc-link, .post .html a, .intercom summary { color: color-mix(in srgb, var(--blue) 50%, #9ff0ff); }
 .brand img { content: var(--logo-dark); } /* the brand's logo for dark grounds (main.js brandApp) */
 #card { background: rgba(5, 20, 28, .75); }
-/* the shared controls (controls.css) in the deck's cyan, the Notebook's too: its pressed tool and the one to press lit in it,
-   its cards and islands on a solid deck panel, since nothing blurs the paper under them (body ~ #book always matches: an id and a type, to outweigh bookui.css's #book whichever sheet loads first) */
-body ~ #book { --bk-ui-bg: #0a2a36; --bk-ui-lit: var(--cy); --bk-ui-on-lit: var(--scr-ink); }
-/* and the board's view of a guest's Notebook (shell/ink/notebookguest.css) the same (body .ng-book outweighs its own
-   .ng-book.) */
-body .ng-book { --cream: #0a2a36; --ng-lit: var(--cy); --ng-on-lit: var(--scr-ink); }
-body, #book { --cy: var(--scr); --cy-hi: var(--scr-hi); --cy-fill: rgba(110, 225, 255, .14); --cy-glow: 0 0 12px rgba(110, 225, 255, .45);
+/* the shared controls (controls.css) in the deck's cyan, the Notebook's too (--ui-*: shell/ink/bookui.css): its pressed
+   tool and the one to press lit in it, its cards and islands on a solid deck panel, since nothing blurs the paper under
+   them */
+body, #book { --ui-bg: #0a2a36; --ui-lit: var(--cy); --ui-on-lit: var(--scr-ink); --cy: var(--scr); --cy-hi: var(--scr-hi); --cy-fill: rgba(110, 225, 255, .14); --cy-glow: 0 0 12px rgba(110, 225, 255, .45);
   --glass: rgba(6, 26, 36, .62); --alarm: #ff6b7a; --alarm-ink: #ffd6db; --alarm-fill: rgba(255, 107, 122, .16);
   --cy-on: rgba(110, 225, 255, .24); --cy-on-inset: inset 0 0 12px rgba(110, 225, 255, .25); --cy-tint: rgba(110, 225, 255, .18); --cy-pale: #bff4ff;
   --cy-soft: rgba(110, 225, 255, .35); --cy-mark: rgba(110, 225, 255, .3); --field: rgba(2, 12, 18, .6); --hint-bg: rgba(4, 18, 26, .72);

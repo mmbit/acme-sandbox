@@ -33,7 +33,7 @@ export function changesOf(base, now) {
     deletes = [];
   for (const [id, was] of base) {
     const parts = now.get(id) ?? emptyParts();
-    // (a unit of words alone, an agent's note, had nothing to lose: it stays. job #14672)
+    // A unit of words alone, an agent's note, has nothing to lose: it stays.
     if (!KINDS.some(k => was[k].length)) continue;
     if (!KINDS.some(k => parts[k].length)) deletes.push(id);
     else if (KINDS.some(k => !same(was[k], parts[k].map(keyOf)))) edits.push({ id, parts });

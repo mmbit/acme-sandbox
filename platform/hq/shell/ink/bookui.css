@@ -2,22 +2,23 @@
    tooltip, and the islands the controls float on over the paper. They're HQ's own, drawn in the look HQ wears (its
    panel, line, corners, shadow, font, and its gold for what's pressed or the one to press), and on a guest's page in
    that page's look (its card, line and accent): never a style of the book's own. Only the paper is the book's. Lark's
-   send button and the guest book reuse it. */
+   send button, the guest book and the board's view of a guest's Notebook (notebookguest.css) reuse it. */
 #book,
-.bk-ui {
+.ng-book {
   --bk-ink: #2a2352;
   --bk-ink-soft: rgba(42, 35, 82, 0.08);
   --bk-ink-wash: rgba(42, 35, 82, 0.14);
   --bk-edge: rgba(42, 35, 82, 0.14);
   --bk-lift: 0 1px 0 rgba(42, 35, 82, 0.08), 0 6px 18px -4px rgba(29, 26, 47, 0.28), 0 0 0 1px var(--bk-edge);
-  /* the look's, for the controls (a guest's page: guests.ts palette, its --cream its card) */
-  --bk-ui-bg: var(--cream, #fffaf0);
+  /* the look's, for the controls (a guest's page: guests.ts palette, its --cream its card). A look whose keys don't
+     come from its cream and gold sets --ui-bg, --ui-lit and --ui-on-lit on its body and #book (Holo's skin.css) */
+  --bk-ui-bg: var(--ui-bg, var(--cream, #fffaf0));
   --bk-ui-ink: var(--ink, #2a2352);
   --bk-ui-muted: var(--muted, #5a5478);
   --bk-ui-line: var(--line, var(--bk-edge));
   --bk-ui-wash: color-mix(in srgb, var(--bk-ui-ink) 9%, transparent);
-  --bk-ui-lit: var(--gold, var(--accent, #2a2352));
-  --bk-ui-on-lit: var(--on-accent, var(--on, #fffaf0));
+  --bk-ui-lit: var(--ui-lit, var(--gold, var(--accent, #2a2352)));
+  --bk-ui-on-lit: var(--ui-on-lit, var(--on-accent, var(--on, #fffaf0)));
   --bk-ui-font: var(--font, var(--bk-font, system-ui, sans-serif));
   /* a key's: its edge, corner and shadow */
   --bk-ui-border: var(--bw, 1px) solid var(--bk-ui-line);
@@ -44,7 +45,8 @@
     transform 0.08s;
   -webkit-tap-highlight-color: transparent;
 }
-.bk-btn[hidden] {
+/* (on the rail, a control a page hides keeps its slot: bookstrip.css.) */
+.bk-btn[hidden]:not(.bk-column *) {
   display: none;
 }
 .bk-btn svg {
@@ -244,7 +246,7 @@
   }
 }
 
-/* ---- the islands: groups of controls, on the rail at the paper's right edge (bookui.js, bookstrip.css) or the
+/* ---- the islands: groups of controls, on the floating rail over the paper (bookui.js, bookstrip.css) or the
    overview's head; an island with nothing in it, or nothing shown (Send on a page sent), doesn't show */
 .bk-island {
   display: flex;
@@ -258,16 +260,16 @@
   box-shadow: var(--shadow-sm, var(--bk-lift));
   pointer-events: auto;
 }
+/* (an island with nothing in it doesn't show. On the rail, one whose controls a page hides keeps its room:
+   bookstrip.css.) */
 .bk-island:empty,
-.bk-island:not(:has(> :not([hidden]))) {
+.bk-island:not(.bk-column *):not(:has(> :not([hidden]))) {
   display: none;
 }
 /* the overview and the Shelf (data-far, bookpagesfar.js): nothing there to draw on, undo or share by its corner, so
-   the tools, Undo and Redo and the page's dog-ear put away */
-#book[data-far] .bk-island[data-island='tools'],
+   the tools' card and the page's dog-ear put away (the tools, Undo and Redo unseen in their room on the rail:
+   bookstrip.css.) */
 #book[data-far] .bk-controls > .bk-palette,
-#book[data-far] .bk-undo,
-#book[data-far] .bk-redo,
 #book[data-far] .bk-dogear {
   display: none;
 }

@@ -35,7 +35,7 @@ const about = (agent: string, id: number) => id ? db.prepare(`select id, title, 
   .get(id, agent) as Req | undefined : undefined;
 // The agent on the call gets a token of its own for hq job, like a job's: only an org.yaml agent, never the
 // board or a team member, and it stops working when the call ends or after 3 hours. The call's row exists from the
-// start (status live) and the token is bound to it, so what's recorded during the call (a promise) belongs to it and
+// start (status live) and the token is bound to it, so what's recorded during the call (what it writes down) belongs to it and
 // survives a dropped line. (Spent tokens stay a day, so a voice line that comes back after a crash still finds its call, even once the
 // sweep has ended it: ledger.late().) The voice line restarts a call agent that died or hung mid-call with the call's
 // token (in the body, never the URL): the same row and token go on, so the transcript and what was noted before the
@@ -157,7 +157,7 @@ export const callAgent = (token: string) => token ? db.prepare('select agent, ca
 export const queuedOn = (call: number, job: number) =>
   db.prepare('insert or ignore into call_jobs (call, job) values (?, ?)').run(call, job);
 // Whether the call queued that job (queuedOn), and why a work job the call names for `to` isn't theirs: a misheard
-// number names someone else's (a promise's job: server.ts promisedWork; reach checks it too).
+// number names someone else's (a note's job: server.ts notedWork; reach checks it too).
 export function queuedHere(call: number | undefined, job: number) {
   return !!call && !!db.prepare('select 1 from call_jobs where call = ? and job = ?').get(call, job);
 }
@@ -307,7 +307,7 @@ ${ledger.items(restarted).map(i => `- #${i.id}: ${i.what} (${i.kind} for ${i.own
 
 // Who they are on the call and how to talk: the call's rules, then AGENTS.md. A window puts work first, a pause only
 // waits on a condition.
-// (the notes page's try)
+// (the notes page's try) (the call's notes in plain words)
 // eslint-disable-next-line max-lines-per-function -- one template of words, the call's instructions: a data table in prose
 function instructions(lang: BoardLanguage, agent: string, phone: boolean) {
   const who = findAgent(agent)!, name = String(who.name ?? agent), role = titleOf(who);
@@ -316,9 +316,10 @@ function instructions(lang: BoardLanguage, agent: string, phone: boolean) {
   // thinking off; effort is low) and the board waits through it; Anthropic's advice for a fast first token is this line
   // (and the pictures sentence: the voice line shows the agent what the board shares on HQ's call screen. A phone call
   // has no screen.)
-  // a time told on the call goes on the promise, which its job carries, or the work under way it names (askwindow.ts).
+  // a time told on the call is written down with what's to be done, which its job carries, or the work under way it
+  // names (askwindow.ts). One kind of note, written down with one tool.
   // Follow-ups inherit the deadline of the deliverable they serve. Missing times show once for that deliverable.
-  // A job queued on a call in HQ carries its promise on the call's notes page (ledger.ts promiseOnPage).
+  // A job queued on a call in HQ carries its note on the call's notes page (ledger.ts noteOnPage).
   // A time from the when tool: the work played into the plan (when.ts). A time far past the board's is the agent's to
   // solve on the call: it sets windows as it queues or releases, and the when and eta answers say what to check when a
   // finish misses (worker/hq deadlines.ts lateLines). Judgment, never a refusal.
@@ -329,7 +330,7 @@ function instructions(lang: BoardLanguage, agent: string, phone: boolean) {
   // add: what the board adds to a job the call queued goes into it (addToJob).
   // reach: the board's settled word to work under way, for real need only, as often as the board's word needs
   // manage: the agent manages the company's work on the call as off it (voice hq_tools.py MANAGE, server.ts
-  // MANAGE_ROUTES), never a promise for the follow-up to do it
+  // MANAGE_ROUTES), never a note for the follow-up to do it
   // No numbers aloud: the briefing and the tools number the work for the agent's tools, never for the board's ears.
   // Every tool answer says it again (voice hq_tools.py ALOUD). (the answer first, an example, plain times)
   // A time aloud: the template's own line says how.
@@ -370,19 +371,19 @@ You manage the company's work on the call as you do off it, with the manage tool
 deliverables, windows, waits, the inbox, meetings, the desk phone's cards): when the board decides it, do it then and there
 and say what you did, never leave it to your follow-up. ${WINDOW_FIRST} ${PAUSE_FOR}
 Hand work to a colleague with the job tool: a short
-title and the full brief, in their terms (it's all they get).${phone ? '' : " It goes on the call's notes page as a promise the job carries, so the board sees what reaches the team: a promise you noted already, give as its item."} Before queueing, use estimate to inspect past jobs' scopes
+title and the full brief, in their terms (it's all they get).${phone ? '' : " It's written in the call's notes too, so the board sees what reaches the team: for something you wrote down already, give its item instead."} Before queueing, use estimate to inspect past jobs' scopes
 and clean actual times. You know this task's context: judge its size between comparable jobs and give job your size,
 refs and why. With no comparable scope, give your reason and an empty refs list. ${DEFAULT_ESTIMATE_SCALE}
 That estimate is saved once at queue
 time. Only the CEO changes it when work slips. Use the same size with when. When the board adds to or changes a job you queued on this
-call, put it into that job with add and its number, then and there: never a second job beside it, nor a promise to add
+call, put it into that job with add and its number, then and there: never a second job beside it, nor a note to add
 it after the call. When the board's settled word matters to work already under way before the call ends (a running job,
 or a pull request's review, by its number below), pass it on with reach, as often as the board's word needs; anything still
-being worked out goes to the follow-up. Anything you promise goes in with promise before you say
+being worked out goes to the follow-up. Anything you tell the board you or a colleague will do, write down with write_down before you say
 it's done; the team follows it up after the call and the board sees whether it happened.
 ${ONE_DEADLINE}
 Never ask the board by when. If it named a time or you judge one sensible, set the deliverable's window as you
-queue work or record its time with promise. Otherwise leave it untimed.
+queue work or write its time down with write_down. Otherwise leave it untimed.
 Before you give a time, check it, never a feeling: for work already planned, eta; for new work, the when tool, which
 plays it into the plan, every seat and window counted (an AI hour is one agent working for an hour, waits for a seat left out). When the board names a time,
 give it by: only when the work doesn't make it, say what would. When the board wants something by a time, that time is
@@ -391,11 +392,11 @@ check it with when or eta before you tell the board anything. A time far past th
 call, never news to report: the tool's answer then says what to check. Give one plain time: the time to tell the board
 the tool gives (live four times in five), never a "done about", an ETA or a planned finish, which are as likely late as
 early. When you tell the board a time,
-note it with promise, and give the job that does it its item, or, for work already under way (a review, a running
-job), name that job in the promise: it becomes the window of the work's deliverable at once, while you're still on the line,
+write it down with write_down, and give the job that does it its item, or, for work already under way (a review, a
+running job), name that job in it: it becomes the window of the work's deliverable at once, while you're still on the line,
 so HQ orders its work by it. A time you give or offer is ours, even one the board takes: its slips are ours to plan
 with and the board hears nothing of them. Only a time the board named itself, or asked for the work by, is the board's
-(promise with board_set): its miss, if nothing brings it back, is told once. Then set the time to tell the board as
+(write_down with board_set): its miss, if nothing brings it back, is told once. Then set the time to tell the board as
 its window (manage's window, without --board-set): it is ours from then on. If the board heard of this miss on a call
 or the intercom already, only set the new window. A job with a time names its deliverable. Never tell the board that HQ will tell it if a time slips: it knows that rule.
 New work shifts other work, and the board knows it: say nothing about shifts unless a time the board set itself will be
@@ -406,8 +407,8 @@ mention it unless the board asks. Before you queue work that eats into a deadlin
 much the board wants it now and how big the risk is, then queue it after that deadline's work (after) to
 protect it, or now anyway: a real judgment each time, never a set line. Say a warning once: the earlier calls and the
 intercom show what the board has already heard. A hand-off is done only when
-the tool answers with a job number; never tell the board something was sent or forwarded otherwise. While a tool, job or
-promise runs, the board hears a soft tick on the line, so you needn't announce it; keep the tool quick. Whatever you write before a tool is spoken at once and the board has heard it: after the
+the tool answers with a job number; never tell the board something was sent or forwarded otherwise. While a tool or a job
+runs, the board hears a soft tick on the line, so you needn't announce it; keep the tool quick. Whatever you write before a tool is spoken at once and the board has heard it: after the
 tool, carry on from there in the same reply, never say it again or start the reply over. When the board decides something,
 confirm it in a few words: after the call you get the transcript and follow up. Once your business is done, stop there.
 Never ask whether there's anything else or whether the board is done. If there's more, the board says so. Otherwise,
@@ -429,19 +430,20 @@ into words: if what you hear seems garbled, unrelated or not addressed to you, s
 ${phone ? '' : `The board can also show you pictures on screen during the call: they come with its words, or on their own with a short note.
 You see its screen only while it shows it to you. When the board talks about something on its screen that you can't see,
 ask to see it with ask_to_see then and there: that one step asks, and the board answers yes or no. Never tell it which
-button to tap. Only what the board raised or agreed to goes on the notes page or into work: something you notice on
+button to tap. Only what the board raised or agreed to goes in the call's notes or into work: something you notice on
 your own, in a picture of its screen too (your copy can differ from what it sees), ask about first ("I see X, is that
 on your screen too?") and note it only once the board says so.
-The call's notes page is yours to work as the board does, and the board can undo anything you do there: each change it asks
-for goes on it with scrap. By default a scrap carries a crop of what the change is about, cut from one of the board's
-notes or from the board's screen. Make it a plain note (no picture) only for a change about the notes page itself (which is
-never cropped) or when there's nothing to show; mark_page rings, points at or highlights what you mean; change_page fixes a note of
-yours, moves or deletes what's there (read_page first for anything you didn't just make). When the board asks to see a
-few versions of a change, put it on the page and start a try on it: its owner builds them, and they land under it.
-The board scribbles on its screen to show you things ("move this here"): each scribble comes with its turn as a note, its
-picture the page around the ink. It's for you: nothing of it goes on the page by itself. From what the board says, make a
-scrap of what's worth keeping (from: 'note 3') and let the rest be: not everything has to become a scrap. Its ink goes
-from the board's screen once your turn is done, so it can circle afresh.
+The call's notes, its page in the board's Notebook, are yours to work as the board does, though its Undo takes back only
+its own strokes, never yours: write down each change it asks for with write_down. By default a note carries a picture of
+what the change is about, from one of the board's own notes or from the board's screen. Leave the picture out only for a
+change about the notes themselves or when there's nothing to show; mark_notes circles, points at or highlights what you
+mean; change_note fixes a note of yours, moves or deletes what's there (read_notes first for anything you didn't just
+write). When the board asks to see a few versions of a change, write it down and start a try on it: its owner builds
+them, and they appear under it.
+The board scribbles on its screen to show you things ("move this here"): each scribble comes with its turn as a note of
+its own, its picture the page around the ink. It's for you: nothing of it goes in the call's notes by itself. From what
+the board says, write down what's worth keeping (from: 'note 3', the board's own note by the number the line gave it)
+and let the rest be: not everything has to be written down. Its ink goes from the board's screen once your turn is done, so it can circle afresh.
 `}${agent === ceo() && unstaffed() ? `The company has no team yet besides you. Hand out no work on this call: after it, your follow-up hires the
 team first and gives the work to the new people (company/playbooks/founding.md). Tell the board that's what happens next.
 ` : ''}

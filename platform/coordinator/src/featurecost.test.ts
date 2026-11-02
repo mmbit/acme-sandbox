@@ -239,6 +239,19 @@ test('post-merge review follow-ups stay in their source feature and shared revie
   assert.equal(a.used.split.fixes.tokens + b.used.split.fixes.tokens, 60);
 });
 
+test("a follow-up of a follow-up joins the chain's root feature", async () => {
+  // (the second follow-up recorded first, on the lower pull request and named before the first and its root: rows in
+  // any of those orders meet it first)
+  const root = thread('chain-z'),
+    first = thread('chain-y'),
+    second = thread('chain-x');
+  h.storedPr(621, past({ thread: root }, 100), 'open');
+  past({ thread: second, followupFor: 620 }, 20);
+  h.storedPr(620, past({ thread: first, followupFor: 621 }, 30), 'open');
+  for (const id of [first, second]) assert.equal((await read(id)).feature, root);
+  assert.equal((await read(root)).used.total.tokens, 150);
+});
+
 test('a carried session adds only its feedback increment to the feature', async () => {
   const root = thread('carried'),
     feedback = thread('carried-round');
@@ -251,4 +264,109 @@ test('a carried session adds only its feedback increment to the feature', async 
   const cost = await read(root);
   assert.equal(cost.used.total.tokens, 140);
   assert.equal(cost.used.split.feedback.tokens, 40);
+});
+
+test('a report from one run leaves later unreported work incomplete in feature and task costs', async () => {
+  const root = thread('partial-runs');
+  const job = h.pastJob({
+    thread: root,
+    runs: [
+      { started: T, ended: T + MINUTE },
+      { started: T + 10 * MINUTE, ended: T + 11 * MINUTE },
+    ],
+    merged: T + 20 * MINUTE,
+  });
+  mock.timers.enable({ apis: ['Date'], now: T + 2 * MINUTE });
+  try {
+    recordUsage({ job, engine: 'claude', usage: { models: { model: { input: 20 } } } });
+  } finally {
+    mock.timers.reset();
+  }
+  const cost = await read(root);
+  assert.equal(cost.used.total.tokens, 20);
+  assert.equal(cost.used.missing_usage, 1);
+  const compared = await h.agent(`estimate?q=%23${job}`, reader.token);
+  assert.equal(compared.body.job.whole.cost.missing_usage, 1);
+  await change('milestone', {
+    id: root,
+    milestone: 'delivered',
+    at: new Date(T + 5 * MINUTE).toISOString(),
+    evidence: 'Observed delivery',
+  });
+  assert.equal((await read(root)).after_delivery.missing_usage, 1);
+});
+
+test('a landing-only retry closes token coverage without adding to recorded spend', async t => {
+  const root = thread('landing-only');
+  t.mock.timers.enable({ apis: ['Date'], now: T + 30 * MINUTE });
+  const job = await h.start({ agent: 'juno', thread: root, engine: 'landing-only' });
+  t.mock.timers.setTime(T + 31 * MINUTE);
+  const snagged = await h.worker('finish', {
+    job: job.id,
+    seat: job.seat,
+    status: 'snagged',
+    session: 'landing-session',
+    landing: { summary: 'Work complete', result: 'Work complete' },
+    usage: { models: { model: { input: 5000 } } },
+  });
+  assert.equal(snagged.status, 200);
+  t.mock.timers.setTime(T + 37 * MINUTE);
+  assert.equal((await h.claim('landing-only', { seat: job.seat }))?.id, job.id);
+  t.mock.timers.setTime(T + 38 * MINUTE);
+  const landed = await h.worker('finish', { job: job.id, seat: job.seat, status: 'done', no_engine: true });
+  assert.equal(landed.status, 200);
+  const cost = await read(root);
+  assert.equal(cost.used.total.tokens, 5000);
+  assert.equal(cost.used.missing_usage, 0);
+  const compared = await h.agent(`estimate?q=%23${job.id}`, reader.token);
+  assert.equal(compared.body.job.whole.cost.total.tokens, 5000);
+  assert.equal(compared.body.job.whole.cost.missing_usage, 0);
+  await change('milestone', {
+    id: root,
+    milestone: 'delivered',
+    at: new Date(T + 35 * MINUTE).toISOString(),
+    evidence: 'Observed delivery',
+  });
+  const interval = (await read(root)).after_delivery;
+  assert.equal(interval.total.tokens, 0);
+  assert.equal(interval.missing_usage, 0);
+  const { jobSpend } = await import('./costspend.ts');
+  assert.equal(jobSpend(job.id, T + 35 * MINUTE, T + 37.5 * MINUTE).reported, false);
+});
+
+test('held preview shares propagate through their reviews and separate fix branches', async () => {
+  const first = thread('held-first'),
+    second = thread('held-second'),
+    other = thread('held-other');
+  const a = past({ thread: first }, 100);
+  past({ thread: second, branch: `job/${a}` }, 100);
+  const b = past({ thread: other }, 100);
+  h.storedPr(680, a, 'open');
+  h.storedPr(681, b, 'open');
+  const preview = past({ previewFor: [680, 681] }, 80);
+  h.storedPr(682, preview, 'open');
+  past({ branch: `job/${preview}`, stage: 'fix' }, 8);
+  past({ kind: 'review', pr: 682, round: 1 }, 40);
+  const fix = past({ fixFor: 682, stage: 'fix', round: 1 }, 20);
+  h.storedPr(683, fix, 'open');
+  past({ kind: 'review', pr: 683, round: 1 }, 12);
+  const costs = await Promise.all([read(first), read(second), read(other)]);
+  assert.deepEqual(
+    costs.map(cost => cost.used.total.tokens),
+    [140, 140, 180],
+  );
+  assert.deepEqual(
+    costs.map(cost => cost.used.split.reviews.tokens),
+    [33, 33, 66],
+  );
+  assert.deepEqual(
+    costs.map(cost => cost.used.split.fixes.tokens),
+    [7, 7, 14],
+  );
+  assert.equal(
+    costs.reduce((sum, cost) => sum + cost.used.total.tokens, 0),
+    460,
+  );
+  const comparison = await h.agent(`estimate?q=%23${a}`, reader.token);
+  assert.deepEqual(comparison.body.job.whole.cost.split, costs[0].used.split);
 });

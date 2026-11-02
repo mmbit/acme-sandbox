@@ -1,5 +1,6 @@
 // How fast HQ answers: each /api request's time, and how late the event loop runs (one slow synchronous step holds up
 // every request behind it), kept for the last hours for infra/report.sh.
+import { AsyncLocalStorage } from 'node:async_hooks';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { db } from './db.ts';
@@ -39,6 +40,43 @@ export function turns(what: string): Turn {
     began = performance.now();
     return value;
   };
+}
+
+// A request's hold of HQ (requestHold, server.ts app): its time less what it waited for outside HQ's thread (excluded,
+// each such await wrapped in exclude: a job's turn behind its share, reins.ts admit; a play in turns, held() by its
+// own parts).
+export type Excluded = { ms: number };
+const scopes = new AsyncLocalStorage<Excluded>();
+export function requestHold<T>(request: (excluded: Excluded) => T) {
+  const excluded = { ms: 0 };
+  return scopes.run(excluded, () => request(excluded));
+}
+export async function exclude<T>(until: Promise<T>) {
+  const began = performance.now();
+  try {
+    return await until;
+  } finally {
+    const excluded = scopes.getStore();
+    if (excluded) excluded.ms += performance.now() - began;
+  }
+}
+
+// A long step written in parts: a generator that yields each part's name as the part ends. whole() runs it in one go;
+// inTurns() ends a turn of HQ's thread after each part (turns), so the step holds the thread no longer than its longest
+// part.
+export type Parts<T> = Generator<string, T, void>;
+export function whole<T>(parts: Parts<T>) {
+  for (;;) {
+    const next = parts.next();
+    if (next.done) return next.value;
+  }
+}
+export async function inTurns<T>(parts: Parts<T>, turn: (part: string) => Promise<unknown>) {
+  for (;;) {
+    const next = parts.next();
+    if (next.done) return next.value;
+    await turn(next.value);
+  }
 }
 
 // A stall: the loop STALL_MS or more late, with the hold that explains it, among those held since the last tick. That's

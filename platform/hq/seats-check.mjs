@@ -182,17 +182,17 @@ for (const look of RENDERERS)
     assert.equal(await crumb(page), '› Settings › Seats › claude-1', at);
     assert.match(
       await text(page, '.seats-app'),
-      /^claude-1 Anthropic: Claude subscription Pause ✓ Resumed\. It takes work again\. Stop at 80% 85% 90% 95% 99% Sign in again › Remove seat$/i,
+      /^claude-1 Anthropic: Claude subscription Pause ✓ Resumed\. It takes work again\. Stop at 80% 85% 90% 95% 99% 100% Sign in again › Remove seat$/i,
       at,
     );
     assert.equal(await page.$eval('[data-stop="90"]', b => b.getAttribute('aria-pressed')), 'true', at);
     await shot('seat');
     // Stop at: the level taps in at once, then the worker's words under it
-    await tap(page, '[data-stop="95"]');
-    assert.equal(await page.$eval('[data-stop="95"]', b => b.getAttribute('aria-pressed')), 'true', at);
-    await until(page, '.seats-app', /Changing it: waiting for the worker|✓ Stops at 95%/); // (holo's busy frames can outlast the wait)
-    await until(page, '.seats-app', /✓ Stops at 95% of its limits now\./);
-    assert.equal(await page.$eval('[data-stop="95"]', b => b.getAttribute('aria-pressed')), 'true', at);
+    await tap(page, '[data-stop="100"]');
+    assert.equal(await page.$eval('[data-stop="100"]', b => b.getAttribute('aria-pressed')), 'true', at);
+    await until(page, '.seats-app', /Changing it: waiting for the worker|✓ Stops at 100%/); // (holo's busy frames can outlast the wait)
+    await until(page, '.seats-app', /✓ Stops at 100% of its limits now\./);
+    assert.equal(await page.$eval('[data-stop="100"]', b => b.getAttribute('aria-pressed')), 'true', at);
     await shot('stop');
     // Pause: a switch, its words under it
     await tap(page, '[data-toggle="pause"]');

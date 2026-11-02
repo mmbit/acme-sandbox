@@ -109,7 +109,7 @@ test("call tasks use their deliverable's deadline and an unset deadline never as
 
   // a promise with its time, handed out: its thread's window, and nobody asked
   const promise = await h.agent('item', call, {
-    kind: 'promise',
+    kind: 'task',
     goal: 'The board wants it on time.',
     owner: 'bolt',
     what: 'The logs',
@@ -171,7 +171,7 @@ test("a promise on a live call about its owner's work under way is linked to it,
   const work = await h.start({ agent: 'wren', title: 'The names fall back', thread: fallback });
   const call = await liveCall('juno');
   const promise = await h.agent('item', call, {
-    kind: 'promise',
+    kind: 'task',
     goal: 'The board wants it on time.',
     owner: 'wren',
     what: 'The fallback is live',
@@ -192,7 +192,7 @@ test("a promise on a live call about its owner's work under way is linked to it,
   assert.equal(queued.status, 200, JSON.stringify(queued.body));
   const list = opened();
   const named = await h.agent('item', call, {
-    kind: 'promise',
+    kind: 'task',
     goal: 'The board wants it on time.',
     owner: 'wren',
     what: 'The list is in',
@@ -209,7 +209,7 @@ test("a promise on a live call about its owner's work under way is linked to it,
   const bolts = await h.start({ agent: 'bolt', title: 'The phone logs', thread: opened() });
   const loose = await h.start({ agent: 'wren', title: 'Loose', thread: null });
   const first = await h.agent('item', call, {
-    kind: 'promise',
+    kind: 'task',
     goal: 'The board wants it on time.',
     owner: 'wren',
     what: 'The names',
@@ -225,12 +225,12 @@ test("a promise on a live call about its owner's work under way is linked to it,
   for (const [body, status, error] of [
     [{ deadline: '40m', job: bolts.id }, 409, /is bolt's \(The phone logs\), not wren's: check the number/],
     [{ job: work.id }, 400, /goes with --deadline/],
-    [{ deadline: '40m', job: loose.id }, 409, /in no deliverable: note the promise without it/],
+    [{ deadline: '40m', job: loose.id }, 409, /in no deliverable: write it down without it/],
     [{ deadline: '40m', job: loose.id, thread: opened() }, 409, /wasn't queued on this call/],
   ] as const) {
     const before = items();
     const refused = await h.agent('item', call, {
-      kind: 'promise',
+      kind: 'task',
       goal: 'The board wants it on time.',
       owner: 'wren',
       what: 'x',
@@ -242,7 +242,7 @@ test("a promise on a live call about its owner's work under way is linked to it,
   }
   // a job that carries another item takes this one too: its brief covers both
   const both = await h.agent('item', call, {
-    kind: 'promise',
+    kind: 'task',
     goal: 'The board wants it on time.',
     owner: 'wren',
     what: 'The names, spelled out',

@@ -43,9 +43,8 @@ const hqServer = createServer((req, res) => {
 });
 await new Promise<void>(r => hqServer.listen(0, '127.0.0.1', r));
 
-const PORT = 20000 + Math.floor(Math.random() * 20000);
 const DATA = mkdtempSync(join(tmpdir(), 'care-photos-'));
-Object.assign(process.env, { DATA_DIR: DATA, PORT: String(PORT), CARE_LOCAL: '1', CARE_PROVIDER: 'fake', CARE_UPLOAD_MS: '1500',
+Object.assign(process.env, { DATA_DIR: DATA, PORT: '0', CARE_LOCAL: '1', CARE_PROVIDER: 'fake', CARE_UPLOAD_MS: '1500',
   CARE_APPS: JSON.stringify({ shop: `http://127.0.0.1:${(shop.address() as any).port}` }), CARE_TOKENS: JSON.stringify({ shop: TOKEN }),
   CARE_NAMES: JSON.stringify({ shop: 'Shop' }), CARE_THINGS: JSON.stringify({ shop: 'mug' }),
   CARE_COMPANY_DIR: new URL('../../../template/products/care', import.meta.url).pathname,
@@ -54,7 +53,7 @@ const { db, now } = await import('./db.ts');
 const engine = await import('./engine.ts');
 const photos = await import('./photos.ts');
 const { t } = await import('./texts.ts');
-await import('./server.ts');
+const { bound } = await import('./server.ts');
 await new Promise(r => setTimeout(r, 100));
 
 // ---- pictures, made by the local ImageMagick without our policy (the test's own tool, not the decoder under test)
@@ -90,7 +89,7 @@ function bomb(width: number, height: number) {
 const spy = () => { const calls: Buffer[] = []; const f = async (b: Buffer) => { calls.push(b); return photos.reencode(b, jpegSize(b)!); }; return Object.assign(f, { calls }); };
 
 // ---- a customer with a claim waiting for photos (what remedies.ts sets when claim_check asks for them)
-const BASE = `http://127.0.0.1:${PORT}`;
+const BASE = `http://127.0.0.1:${(await bound).port}`;
 const CLAIM = { order: 'ORD-7Q4K-M2', kind: 'damaged', shots: ['box', 'label', 'box_damage', 'product', 'closeup'] };
 async function customer({ orders = [CLAIM.order], email = null as string | null, claim = CLAIM as any } = {}) {
   const ip = `10.1.${Math.floor(Math.random() * 250)}.${Math.floor(Math.random() * 250)}`, tab = crypto.randomUUID();

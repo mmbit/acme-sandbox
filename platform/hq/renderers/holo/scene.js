@@ -7,7 +7,7 @@ import { TAU, add, sub, scl, polar, context } from './gl.js';
 import { createRenderer, size, render } from './render.js';
 import { layout, printIn, update as move, addMascots, updateMascots, introLength, built, agentAt, mascotAt, agentColour, TABLE_Y, TABLE_R, CORE, AMBER, WHITE, GOLD, CORAL, MAG, TEAL, VIOLET, MASCOT } from './deck.js';
 import { hologram, flightEnds, PARCEL_S, ART } from './draw.js';
-import { drawLabels, loadFont, portrait as picture } from './labels.js';
+import { drawLabels, loadFont, portrait as picture, HOLOGRAM_FOOT } from './labels.js';
 import { makeLook, spriteFrame } from '../brownstone/sprites.js';
 import { cam, view, reset, setScreen, step as camStep, matrices, project, ray, focus as frame, camera } from './camera.js';
 import { moreKey } from '../../shell/more.js';
@@ -212,7 +212,7 @@ function portrait({ kind, id }) {
   if (!P) return null;
   const col = agentColour(P);
   const look = makeLook(world.agents.get(id)?.data ?? { id });
-  return { img: picture(col, 'agent', spriteFrame(id, look, 'stand', true, false)), accent: hex(col) };
+  return { img: picture(col, 'agent', spriteFrame(id, look, 'stand', true, false)), accent: hex(col), foot: HOLOGRAM_FOOT };
 }
 
 // ---------------------------------------------------------------- the world's signals (after the shell's bubbles)
