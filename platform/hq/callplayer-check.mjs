@@ -18,6 +18,7 @@ import { serve, ROOT } from './serve.mjs';
 import { playwright, openPage, until, tap } from '../../shared/browser/browser.mjs';
 import { Moments } from '../../shared/watchalong/moments.ts';
 import { lookNames } from './looks.mjs';
+import { RECORDER_MODULES } from './extras.mjs';
 
 const shots = process.argv.includes('--shots') ? process.argv[process.argv.indexOf('--shots') + 1] : null;
 if (shots) await mkdir(shots, { recursive: true });
@@ -91,11 +92,9 @@ const MUG = `<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" view
 // ---- HQ in dev mode, with the player's files and the recording's route as the coordinator serves them
 const REPLAY = join(ROOT, 'platform/coordinator/node_modules/@rrweb/replay/dist');
 const files = { 'mock/calls.json': JSON.stringify(CALLS.map(c => ({ ...c, recorded: c.id === CALL.id }))) };
-// (toplayer.js)
-for (const name of ['player.js', 'scrubber.js', 'strokes.js', 'toplayer.js', 'replay.html', 'replay.js'])
+for (const name of ['player.js', 'scrubber.js', 'replay.html', 'replay.js'])
   files[`shared/watchalong/${name}`] = await readFile(join(ROOT, 'shared/watchalong', name));
-for (const name of ['watchalong.js', 'canvas.js', 'encoder.js'])
-  // (encoder.js)
+for (const name of RECORDER_MODULES)
   files[`shared/watchalong/${name}`] = await readFile(join(ROOT, 'shared/watchalong', name));
 files['shared/watchalong/vendor/rrweb-record.js'] = await readFile(
   join(ROOT, 'platform/coordinator/node_modules/@rrweb/record/dist/record.js'),

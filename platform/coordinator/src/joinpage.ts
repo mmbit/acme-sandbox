@@ -21,6 +21,7 @@ import { brand } from './company.ts';
 import { inside } from './files.ts';
 import { hex, look, palette } from './guests.ts';
 import { logo } from './pages.ts';
+import { RECORDER_MODULES } from '../../hq/extras.mjs';
 
 export type JoinLang = 'en' | 'nl' | 'de';
 export type JoinView = {
@@ -209,9 +210,9 @@ export const ASSETS: Record<string, URL> = {
   'walk.js': new URL('./joinwalk.js', import.meta.url),
   'callbubble.js': new URL('../../hq/shell/callbubble.js', import.meta.url),
   'floating.js': new URL('../../hq/shell/floating.js', import.meta.url),
-  'watchalong.js': new URL('../../../shared/watchalong/watchalong.js', import.meta.url),
-  'strokes.js': new URL('../../../shared/watchalong/strokes.js', import.meta.url),
-  'toplayer.js': new URL('../../../shared/watchalong/toplayer.js', import.meta.url),
+  ...Object.fromEntries(
+    RECORDER_MODULES.map(name => [name, new URL(`../../../shared/watchalong/${name}`, import.meta.url)]),
+  ),
   'vendor/rrweb-record.js': new URL('../node_modules/@rrweb/record/dist/record.js', import.meta.url), // (watchalong.ts RECORDER)
 };
 

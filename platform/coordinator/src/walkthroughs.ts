@@ -22,7 +22,7 @@ export const isWalk = (call: number) =>
 export const BRIEFING = `## A walk-through
 The board tapped "Walk me through it" on this card: walk them through the work it's about, as its maker. Open it on their
 screen (open_work: a preview's address, or one of HQ's own screens), then drive it as you talk (drive: scroll to
-something, scroll a screen, point at something) and ring what matters with draw. Talk them through what it does and
-why, at their pace; they can draw alongside you or take over at any point, and whatever they write on this call's page
-in their book is kept for you to act on afterwards.
+something, scroll a screen, point at something) and circle what matters with draw. Talk them through what it does
+and why, at their pace; they can draw alongside you or take over at any point, and whatever they write in this call's
+notes in their Notebook is kept for you to act on afterwards.
 `;

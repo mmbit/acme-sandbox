@@ -1,7 +1,7 @@
 // A book's chapters as its bookmarks, the board's on every book of its own (notebookchapters.js): Sketch, Asks and Calls,
-// or a round's (notebookrounds.ts) Guests, Asks and Advice (once the round is done). Upright they stand along the
-// book's top, its page trimmed to make room under Safari's blurred strip; sideways they peek out of a thick white
-// stack of page edges at the book's left (bookmarks.css). The chapter shown is lit; Asks has a red count of the asks
+// or a round's (notebookrounds.ts) Guests, Asks and Advice (once the round is done). They stand along the book's top,
+// its page trimmed to make room under Safari's blurred strip, wherever the screen is tall enough; sideways on a short
+// screen they peek out of a thick white stack of page edges at the book's left (bookmarks.css). The chapter shown is lit; Asks has a red count of the asks
 // still open. A tab opens the first page of its chapter; one with no pages yet shows, dim, and opens an empty page of its
 // own, its chapter's name at its head, till another page or tab is chosen (it
 // said so in a toast). A round's

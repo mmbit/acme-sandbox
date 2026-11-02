@@ -2,7 +2,7 @@
 // pictures and typed words in it; a click picks the one on top, Shift adds or takes away, a click on bare paper lets
 // go. A press on anything in a group (bookgroups.js) picks the whole group, which moves as one. What's picked shows in a
 // frame with a handle at each corner: pressed inside and dragged, it moves; a handle scales it about the opposite
-// corner. Select is the only way things move on a page (one way to move things: job #13071). Cut, copy, paste,
+// corner. Select is the only way things move on a page. Cut, copy, paste,
 // duplicate and delete are bookselectclip.js's (the keys, the clipboard and the bar beside the frame); the live move
 // and resize bookselectlift.js's; Assign in the bar and a Pencil's loop out of one scrap, bookassign.js's. Post-its
 // keep their own order on their sheet and are never picked (booktools.js sends their presses elsewhere).
@@ -12,11 +12,12 @@
 import { stylesheet } from '../../util.js';
 import { sfx } from '../audio.js';
 import { grownTo } from './bookrow.js';
+import { remade } from './bookedit.js';
 import { boundsOf, gestureOf, groupOf, membersOf, picked, topAt, union, within } from './bookselectmath.js';
 import { unitAt } from './bookunits.js';
 import { mountClip } from './bookselectclip.js';
 import { mountAssign } from './bookassign.js';
-import { drag } from './bookselectlift.js';
+import { drag, grab } from './bookselectlift.js';
 import { followPress } from './bookpress.js';
 
 // a press that moves less than this far (screen px) is a click; a line this near (screen px) is under the pointer
@@ -57,6 +58,7 @@ export function mountSelect(book, hooks) {
     // once. And whether a press is on the frame's handles or its bar, for the other tools to give it here.
     pick: (view, things) => view === book.view() && choose(sel, view, things),
     holds: e => holds(sel, e),
+    grab: (box, e, opts) => grab(sel, box, e, opts), // (a box of words' grip pressed: bookselectlift.js)
   };
 }
 
@@ -361,8 +363,10 @@ export function replaced(sel, view, act) {
   if (now) choose(sel, view, after);
   else letGo(sel);
 }
-// A page's things replaced by their new selves (a map from each to its new self), each in its place in its list
+// A page's things replaced by their new selves (a map from each to its new self), each in its place in its list, and
+// kept as their replacements for the step (bookedit.js remade.)
 export function swapIn(page, swap) {
+  for (const [old, now] of swap) remade(old, now);
   for (const k of ['ink', 'scraps', 'texts']) {
     const list = (page[k] ??= []);
     list.splice(0, list.length, ...list.map(x => swap.get(x) ?? x));

@@ -195,7 +195,7 @@ test("a call's item with its time sets its thread's window when it's handed out:
   const ctx = await h.voice('call-context?agent=juno&request=0');
   assert.equal(ctx.status, 200, JSON.stringify(ctx.body));
   const promise = await h.agent('item', ctx.body.token, {
-    kind: 'promise',
+    kind: 'task',
     goal: 'The board wants it on time.',
     owner: 'bolt',
     what: 'The deck',
@@ -575,7 +575,10 @@ test("hq window --try saves nothing: the thread's row, the latest forecast and t
     assert.notEqual(thread(second).deadline, null);
     assert.deepEqual(await finishes(), planned, 'shown as last played until the play a moment later');
     assert.equal(logged(), log);
+    const before = forecast.lastPlayed();
     mock.timers.tick(10_000);
+    // (kept once its turns are done: forecast.ts refreshInTurns.)
+    while (forecast.lastPlayed() === before) await new Promise(setImmediate);
   } finally {
     mock.timers.reset();
   }

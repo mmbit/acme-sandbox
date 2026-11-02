@@ -12,6 +12,9 @@ const DOT_PX = 22;
 const SLIDE_MS = 200;
 // once the zoom has stayed put this long, the ink is drawn again for it, sharp
 const REST_MS = 140;
+// how much of the page's foot (its last note's, screen px) stays in sight at the top of the paper scrolled to its end:
+// the rest of the screen below it is empty page, to stretch the note and write under it
+const FOOT_SHOWN = 120;
 
 // The page shown
 export const viewOf = book => book.views[book.cur] ?? null;
@@ -26,8 +29,10 @@ export function setView(book, { pan = book.pan, scale = book.scale } = {}) {
   scale = v.page.scale ?? 1;
   const zoomed = scale !== book.scale;
   book.scale = scale;
-  const room = book.size.h / scale;
-  book.pan = { x: 0, y: Math.max(0, Math.min(pan.y, (v.page.h ?? 0) - room)) };
+  // (scrolled on past the page's foot by about a screen, never moved there by itself: a unit's room dragged shorter
+  // leaves the page where it is, kept on it once let go.)
+  const end = (v.page.h ?? 0) - Math.min(book.size.h, FOOT_SHOWN) / scale;
+  book.pan = { x: 0, y: Math.max(0, v.page.resizing ? pan.y : Math.min(pan.y, end)) };
   draw(book);
   if (zoomed) {
     clearTimeout(book.rest);
@@ -78,8 +83,9 @@ export function at(book, clientX, clientY) {
   return { i: book.cur, view: v, ...pageAt(book.pan, book.scale, on) };
 }
 
-// The view slides to a place ({ pan, scale }), quickly, and comes to rest there; then(), once it has
-export function slideTo(book, to, then = () => {}) {
+// The view slides to a place ({ pan, scale }), quickly, and comes to rest there; then(), once it has, or stopped(), once
+// a hand or another slide stops it on the way (halt.)
+export function slideTo(book, to, then = () => {}, stopped = () => {}) {
   halt(book);
   const from = { pan: { ...book.pan }, scale: book.scale },
     end = { pan: to.pan ?? from.pan, scale: to.scale ?? from.scale },
@@ -103,8 +109,11 @@ export function slideTo(book, to, then = () => {}) {
     }
   };
   book.slide = requestAnimationFrame(step);
+  book.stopped = stopped;
 }
 export const halt = book => {
+  if (!book.slide) return;
   cancelAnimationFrame(book.slide);
   book.slide = 0;
+  book.stopped();
 };

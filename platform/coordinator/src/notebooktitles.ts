@@ -12,9 +12,9 @@ import { answerOf, PROMPT_CHARS, smallCall } from './smallmodel.ts';
 
 // Let a burst of pen or keyboard saves settle before spending a model call.
 const REST_MS = 5000;
-// Each title spends a little of a Claude seat's window, which the company's jobs live on, in the queue handwriting's
-// reads and the book's judge share: TITLES_A_DAY bounds what a notebook of untitled pages (or a model failing on them)
-// can take in a day, under handwriting's READS_A_DAY and the judge's JUDGES_A_DAY. A day of the board's new pages is a
+// Each title spends a little of a Claude seat's window, which the company's jobs live on, in the queue the ink's
+// readings and the book's judge share: TITLES_A_DAY bounds what a notebook of untitled pages (or a model failing on them)
+// can take in a day, under the ink's READS_A_DAY (ink/inkread.ts) and the judge's JUDGES_A_DAY. A day of the board's new pages is a
 // handful to a few dozen.
 export const TITLES_A_DAY = 100;
 db.exec('create table if not exists page_titles (day text primary key, titles integer not null)');

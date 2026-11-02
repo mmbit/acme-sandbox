@@ -1,9 +1,9 @@
 // book-check.mjs's stories of what's still the board's to answer on a Notebook page (shell/ink/bookforyou.js), on the
 // played Notebook seeded as dev mode's (mock/notebook.json) with two more cards on its sent page: one open and one
-// answered, beside Moss's open one. On a phone and an iPad mini, upright: the rail counts "2 open" over the page's
-// arrows, the two groups edged "for you" and the answered one not; next slides the page to the first open ask, next
-// again to the second; a chip tapped there answers it and the count drops to "1 open"; once none is open the counter is away.
-// (on the rail)
+// answered, beside Moss's open one. On a phone and an iPad mini, upright: the counter by the page's title says "2 open",
+// the two groups edged "for you" and the answered one not; next slides the page to the first open ask, next again to
+// the second; a chip tapped there answers it and the count drops to 1; once none is open the counter is away.
+// (by the page's title.)
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { open } from './booknotebook.mjs';
@@ -18,9 +18,9 @@ const SENT = 1;
 // c: book-check.mjs's hqIn, base, settled, shot, noErrorsIn, shots
 export function forYouStories(c) {
   return {
-    'asks for you on a phone: "2 open" on the rail, next going to each, one answered in the book leaving "1 open", none open putting the counter away':
+    'asks for you on a phone: "2 open" by the title, next going to each, one answered in the book leaving "1 open", none open putting the counter away':
       browser => story(browser, c, 'phone', PHONE, { isMobile: true, folded: true }),
-    'asks for you on an iPad mini upright: "2 open" on the rail, next going to each, one answered in the book leaving "1 open", none open putting the counter away':
+    'asks for you on an iPad mini upright: "2 open" by the title, next going to each, one answered in the book leaving "1 open", none open putting the counter away':
       browser => story(browser, c, 'mini', UPRIGHT, { folded: true }),
   };
 }
@@ -34,7 +34,8 @@ async function story(browser, c, name, viewport, more) {
   try {
     await answeredByPlay(page, play, c);
     await turnTo(page, SENT);
-    const count = page.locator('#book .bk-for-you-count');
+    // (the book's own, not the copy a page turn shows over it.)
+    const count = page.locator('#book .bk-for-you-count:not(.bk-turn-picture *)');
     const edged = await twoOpen(page, count, c, name);
     await answeredInTheBook(page, count, edged, c, name);
     await noneOpen(page, play, count, c, name);
@@ -118,7 +119,7 @@ const edges = page =>
       .map(e => Number(e.dataset.g));
   });
 // Whether a group on the page shown (what's drawn round it: its box with its answers and cards) lies whole on the
-// paper, above the counter over the pages' row and clear of every control over the paper
+// paper, clear of the counter and of every control over the paper
 const inView = async (page, selector) => {
   const box = await page.evaluate(selector => {
     const shown = [...document.querySelectorAll('#book .bk-page')].find(p => !p.hidden),
@@ -126,9 +127,11 @@ const inView = async (page, selector) => {
     if (!el) return null;
     const r = el.getBoundingClientRect(),
       desk = document.querySelector('#book .bk-desk').getBoundingClientRect();
-    // (the counter is on the rail beside the paper)
-    const on = r.top >= desk.top && r.bottom <= desk.bottom && r.left >= desk.left && r.right <= desk.right;
-    return on && { x: r.x, y: r.y, width: r.width, height: r.height };
+    // (and clear of the counter by the title, over the paper's head)
+    const c = document.querySelector('#book .bk-for-you-count').getBoundingClientRect(),
+      on = r.top >= desk.top && r.bottom <= desk.bottom && r.left >= desk.left && r.right <= desk.right,
+      clear = c.bottom <= r.top || c.top >= r.bottom || c.right <= r.left || c.left >= r.right;
+    return on && clear && { x: r.x, y: r.y, width: r.width, height: r.height };
   }, selector);
   return box && islandsClearOf(page, box);
 };

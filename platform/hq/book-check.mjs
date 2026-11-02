@@ -24,8 +24,8 @@
 // pointing and ringing inside it. (the preview: job #18848)
 // An agent's answer under its group within seconds, ticked and replied to (booknotebook.mjs), and an agent's
 // desk-phone card about a note under the note's group, answered there by a chip (booknotebookasks.mjs).
-// What's still the board's to answer on a page (bookforyou.mjs): open asks edged "for you", counted on the rail,
-// its arrows going to each, and away once none is open. (on the rail)
+// What's still the board's to answer on a page (bookforyou.mjs): open asks edged "for you", counted by the page's
+// title, its arrows going to each, and away once none is open.
 // A lone picture, a scrap of its own, moved to another page and deleted from Select's bar (booknotebookselect.mjs).
 // A scrap assigned to a person by the Pencil's circle and line, and by Select's Assign, More… and a search
 // (bookassign.mjs).
@@ -39,6 +39,8 @@
 // asks still open on it asked about first.
 // The tool strip's cards (bookcards.mjs): the preferences and the colours whole on the iPad mini, upright, on its side
 // and on a screen short enough that the strip scrolls, and on a desktop.
+// The pen box (bookpenbox.mjs): the pen, the pencil, the brush and the marker in every colour, drawn, saved and in
+// Lyra's picture the same, with a mouse and the Pencil; the pencil's scribble kept as ink.
 // The tips book (booktips.mjs): the Tips control brings up a hard cover in the middle that opens to two-page spreads,
 // the index first, a leaf turning over the spine to each tip, never waited on; closed again, put away.
 // The pin (bookpin.mjs): away as HQ loads on a desktop, an iPad and a phone, the book open or folded, and the book
@@ -46,8 +48,8 @@
 // pin as it was; none on a call, nor the viewer's Note (job #13447), and a mark on the viewer's artifact then goes to the call's agent
 // (bookframeink.mjs, job #14311); a note's scrap naming one owner. Carried and let go, it stays exactly where it's
 // dropped, the same button while it's held.
-// Handwriting (bookwritten.mjs): words written on HQ's page, read once the pen rests, stand beside the ink as type and
-// go into the book as written; read late, they still reach the note.
+// Handwriting (bookwritten.mjs): words written on HQ's page stay ink: nothing reads them, and the scrap goes into the
+// Notebook with no words, its ink and snip the strokes.
 // Rule zero (bookink.mjs): nothing stays drawn on HQ. A ring shows while it's made only; saved, let go, its sheet sent,
 // the page reloaded or in another tab, notes kept from before with their lines: nothing drawn, read from the layers.
 // The film's other stories (bookfilm.mjs): a morning, yesterday's sheet in the book with its answer clipped on; HQ's
@@ -78,6 +80,10 @@ import { fulfilPart } from '../../shared/review/parts.mjs';
 import { wetDry, STILL } from '../../shared/review/inkcheck.mjs';
 import { callStory } from './bookcall.mjs';
 import { notesPageStories } from './booknotespage.mjs';
+import { notesScrapsStories } from './booknotesscraps.mjs';
+import { inkStaysStories } from './bookinkstays.mjs';
+import { flickStories } from './bookflick.mjs';
+import { roomBelowStories } from './bookroombelow.mjs';
 import { agentPageStories } from './bookagentpage.mjs';
 import { walkStory } from './bookwalk.mjs';
 import { findStory, keptStory } from './bookfind.mjs';
@@ -104,19 +110,21 @@ import { titleStories } from './booktitles.mjs';
 import { circleStories } from './bookcircle.mjs';
 import { liftStories } from './booklift.mjs';
 import { penStories } from './bookpen.mjs';
+import { handStories } from './bookpenhand.mjs';
 import { answerStories } from './bookanswers.mjs'; // (Ink answers any note)
 import { pickStories } from './bookpicks.mjs'; // (circle a version to pick it)
 import { versionStories } from './bookversions.mjs'; // (a note's versions under it)
 import { pasteStories } from './bookpaste.mjs';
 import { stripStories } from './bookstrip.mjs';
 import { cardStories } from './bookcards.mjs';
+import { penBoxStories } from './bookpenbox.mjs'; // (the pen box)
 import { strayStories } from './bookstray.mjs';
 import { sendStories } from './booksend.mjs';
 import { grabStories } from './bookgrab.mjs';
 import { backdropStories } from './bookbackdrop.mjs';
 import { arrivalStories } from './bookarrival.mjs';
 import { wheelStories } from './bookwheel.mjs';
-import { barStories } from './bookbar.mjs';
+import { barStories, press } from './bookbar.mjs';
 import { micStories } from './bookmic.mjs';
 import { webkitStories } from './bookwebkit.mjs';
 import { editStories } from './bookedits.mjs';
@@ -125,6 +133,7 @@ import { notebookRoute } from './notebookroute.mjs';
 import { notebookStories } from './booknotebook.mjs';
 import { notebookPhoneStories } from './booknotebookphone.mjs';
 import { unitsPageStories } from './bookunitspage.mjs';
+import { fillStories } from './bookfill.mjs';
 import { drawnPageStories } from './bookdrawn.mjs';
 import { bookmarksStories } from './bookbookmarks.mjs';
 import { notebookAskStories } from './booknotebookasks.mjs';
@@ -138,12 +147,14 @@ import { moveStories } from './bookmove.mjs';
 import { nativeStories } from './booknative.mjs';
 import { newestStories } from './booknewest.mjs';
 import { callSizesStories } from './bookcallsizes.mjs';
-import { overlayStories } from './bookoverlays.mjs';
+import { overlayStories, mediaStories } from './bookoverlays.mjs';
 import { pictureStories } from './bookpicture.mjs';
+import { messageStories } from './bookmessages.mjs';
+import { callKeyStories } from './bookcallkeys.mjs';
 import { bubbleDropStories } from './bookbubbledrop.mjs';
 import { scrapStories, savedScrap } from './bookscrap.mjs'; // (the pin flow)
 import { talked, voiceLine, hush, SAID } from './bookvoice.mjs';
-import { DESKTOP, MINI, UPRIGHT, pressAlong, ui, bookAtRest } from './bookkit.mjs';
+import { DESKTOP, MINI, UPRIGHT, OVERVIEW, pressAlong, ui, bookAtRest } from './bookkit.mjs';
 import { groupsOf } from './bookplayed.mjs';
 // (LOOKS: job #19359)
 import { morningStory, everyWidthStory, LOOKS } from './bookfilm.mjs';
@@ -281,9 +292,6 @@ function sheetStore(path, body, q) {
       Object.assign(s, { status: 'open', send_at: null });
     return shownSheet(owner);
   }
-  // (words read late only over the words they were read for)
-  if (path === '/api/book/note/edit' && body.was !== undefined && body.was !== note.words)
-    return { refused: [409, 'the note has other words by now: read it again'] };
   // (and lines joined to it on HQ's page: its ink and its snip cut again.)
   if (path === '/api/book/note/edit' && body.snip) snips.set(note.id, body.snip);
   if (path === '/api/book/note/edit')
@@ -397,10 +405,6 @@ function keepScrap(id, type, bytes) {
   return { file, url: scrapUrl({ file }) };
 }
 
-// ---- a stand-in handwriting reader (handwriting.ts): any ink reads as its words, after ms (or refused: [status, why]);
-// the inks it was given kept. Its asks aren't the book's posts: one comes a moment after any mark's lines.
-const reader = { words: '', ms: 0, inks: [], refused: null };
-
 const IPAD_MINI = { viewport: { width: 744, height: 1133 }, deviceScaleFactor: 2, hasTouch: true };
 // The board's one tap on the pen as the book's tools come and each time the book opens, where it isn't in use already
 // (the book opens on the pen or the marker, whichever was last: a tap on the pen in use would open its card): the
@@ -419,11 +423,7 @@ function penOnOpen() {
 // HQ held like an iPad mini in a browser, its coordinator and voice line played. more: the context's options (pen:
 // penOnOpen's; the microphone allowed unless they say otherwise), and notebooks, the Notebook's seed (notebookplay.js;
 // none: My journal with one blank page), played on context.notebook.
-async function hqIn(
-  browser,
-  viewport = IPAD_MINI.viewport,
-  { notebooks, pen = true, openReview = true, ...more } = {},
-) {
+async function hqIn(browser, viewport = IPAD_MINI.viewport, { notebooks, pen = true, ...more } = {}) {
   const context = await browser.newContext({
     ...IPAD_MINI,
     permissions: ['microphone'],
@@ -432,14 +432,8 @@ async function hqIn(
     serviceWorkers: 'block',
   });
   if (pen) await context.addInitScript(penOnOpen);
-  // review mode's closed shadow root opened, and a recorder for the microphone (the browser's own stand-in, once
-  // allowed): Safari has MediaRecorder, Linux's headless WebKit doesn't (the words come over the live line, the clip is
-  // only its fallback)
-  await context.addInitScript(openReview => {
-    const a = Element.prototype.attachShadow;
-    Element.prototype.attachShadow = function (o) {
-      return a.call(this, openReview ? { ...o, mode: 'open' } : o);
-    };
+  // Linux's headless WebKit has no MediaRecorder. The words arrive over the live line, so the clip is only a fallback.
+  await context.addInitScript(() => {
     window.MediaRecorder ??= class {
       static isTypeSupported = type => type === 'audio/webm';
       state = 'inactive';
@@ -455,7 +449,7 @@ async function hqIn(
         });
       }
     };
-  }, openReview);
+  });
   await context.routeWebSocket(/\/__review\/dictate(\?.*)?$/, voiceLine);
   await context.route(`${base}/__review/**`, r => {
     const path = new URL(r.request().url()).pathname;
@@ -517,14 +511,6 @@ async function hqIn(
         contentType: snip.slice(5, snip.indexOf(';')),
         body: Buffer.from(snip.split(',')[1], 'base64'),
       });
-    }
-    // (the handwriting reader.)
-    if (url.pathname === '/api/book/read') {
-      reader.inks.push(body.ink);
-      const { words, ms, refused } = reader;
-      await new Promise(res => setTimeout(res, ms));
-      if (refused) return r.fulfill({ status: refused[0], json: { error: refused[1] } });
-      return r.fulfill({ json: { writing: !!words, words } });
     }
     if (body && url.pathname.startsWith('/api/book')) posts.push({ path: url.pathname, body });
     const answer = store(url.pathname, body, url.searchParams);
@@ -607,6 +593,7 @@ function STORIES() {
     ...notebookPhoneStories({ hqIn, base, settled, shot, noErrorsIn, shots }),
     // (a page of scrap units laid as a masonry at every width: job #14672)
     ...unitsPageStories({ hqIn, base, settled, shot, noErrorsIn }),
+    ...fillStories({ hqIn, base, settled, shot, noErrorsIn }),
     ...drawnPageStories({ hqIn, base, pages, notebook, shot, noErrorsIn }),
     ...bookmarksStories({ hqIn, base, shot, noErrorsIn }), // (the bookmarks: job #14679)
     ...notebookRowStories({ hqIn, base, settled, shot, noErrorsIn, shots }),
@@ -642,6 +629,7 @@ function STORIES() {
     // note held.)
     ...stripStories({ hqIn, base, store, pages, notebook, shot, settled }),
     ...cardStories({ hqIn, base, store, pages, notebook, shot, settled }),
+    ...penBoxStories({ hqIn, base, store, pages, notebook, shot, settled, settle: SETTLE_MS }),
     ...strayStories({ hqIn, base, settled }),
     ...sendStories({ hqIn, base, settled, shot, noErrorsIn }),
     ...grabStories({ hqIn, base, settled }),
@@ -652,8 +640,8 @@ function STORIES() {
     // (the microphone asked for only at a mic's tap)
     ...micStories({ hqIn, base, reviewJs, posts, settled, ring, noErrorsIn, notebook, pages }),
     ...webkitStories({ hqIn, base, store, pages, notebook, shot, settled }),
-    // (handwriting edited with the pen and the mouse: a word struck out, a sentence sliced open.)
-    ...editStories({ hqIn, base, store, pages, notebook, shot, settled, noErrorsIn }),
+    // (the pen and the mouse over words: ink, the words as they were. snipPng)
+    ...editStories({ hqIn, base, store, pages, notebook, shot, settled, noErrorsIn, snipPng }),
     // (what lands from outside: pictures by address and file, pasted words and links.)
     ...pasteStories({
       hqIn,
@@ -672,10 +660,19 @@ function STORIES() {
     }),
     // (a call's notes page: the agent's scraps landing on it, the book opening there where it fits.)
     ...notesPageStories({ hqIn, base, shot, settled, noErrorsIn, MINI, DESKTOP, PHONE }),
+    ...notesScrapsStories({ hqIn, base, shot, settled, noErrorsIn }),
+    ...inkStaysStories({ hqIn, base, shot, settled, noErrorsIn }),
+    // (a flick always glides on, from paper and from a scrap's words)
+    ...flickStories({ hqIn, base, shot, settled, noErrorsIn }),
+    // (a page scrolls a screen past its last note)
+    ...roomBelowStories({ hqIn, base, shot, settled, noErrorsIn }),
     // (the test call at a phone both ways, an iPad mini on its side and a desktop)
     ...callSizesStories({ hqIn, base, shot, noErrorsIn }),
     ...bubbleDropStories({ hqIn, base, shot, noErrorsIn }),
-    ...overlayStories({ hqIn, base, shot, noErrorsIn, shots }),
+    ...mediaStories({ hqIn, base, shot, noErrorsIn, shots }),
+    ...callKeyStories({ hqIn, base, shot, noErrorsIn }),
+    ...overlayStories({ hqIn, base, shot, noErrorsIn, shots, SNIP }),
+    ...messageStories({ hqIn, base, settled, shot, noErrorsIn, shots, reviewJs }),
     ...pictureStories({ hqIn, base, shot, noErrorsIn, shots }),
     ...agentPageStories({ hqIn, base, shot, settled, noErrorsIn, DESKTOP }),
     // (the drawing tools: the eraser, shapes, Select, Undo and Redo, with a mouse and the Pencil.)
@@ -685,6 +682,7 @@ function STORIES() {
     ...spaceStories({ hqIn, base, store, pages, notebook, shot, settled, noErrorsIn, settle: SETTLE_MS }),
     // (the Pencil's taps, Select off the screen's edge, Copy and Paste, boxes of words.)
     ...penStories({ hqIn, base, store, pages, notebook, shot, settled }),
+    ...handStories({ hqIn, base, store, pages, notebook, shot, settled }),
     // (Ink answers any note: its dots, then its slip under the note's unit at every width, a drawing, a form, a
     // question, versions, a call's page.)
     ...answerStories({
@@ -1234,7 +1232,6 @@ function STORIES() {
       browser => findStory(browser, { hqIn, base, inBook, shot, noErrorsIn, viewport: MINI, settle: SETTLE_MS }),
     'Search on a desktop: in the overview, its words kept when the overview closes and opens again, Esc wiping them':
       browser => keptStory(browser, { hqIn, base, noErrorsIn, desktop: DESKTOP }),
-    // (handwriting read into type, bookwritten.mjs)
     // (a page shared by its corner, the paper's feel)
     ...shareStories({ hqIn, base, store, pages, notebook, shot, settled, noErrorsIn, SNIP }),
     ...downloadStories({ hqIn, base, settled, shot, noErrorsIn, SNIP }),
@@ -1250,19 +1247,9 @@ function STORIES() {
       TALL: snipPng(600, 2400),
       GROWN: snipPng(600, 1200),
     }),
-    // (into its post-it, saved as a scrap)
-    'handwriting on the page read into type: into its post-it, saved as written, read late, refused': browser =>
-      writtenStory(browser, {
-        hqOnStore,
-        ui,
-        reader,
-        hush,
-        posts,
-        play: notebook,
-        pages,
-        noErrorsIn,
-        shot,
-      }),
+    // (its post-it, saved as a scrap)
+    'handwriting on the page stays ink: nothing reads it, its post-it holds no words, the scrap goes with its strokes':
+      browser => writtenStory(browser, { hqOnStore, ui, hush, posts, pages, noErrorsIn, shot }),
     // (in Wire too: job #19359)
     // (rule zero)
     'rule zero: nothing stays drawn on HQ once a note is saved or let go, sent, reloaded, or in another tab': browser =>
@@ -1286,7 +1273,7 @@ function STORIES() {
         try {
           const paper = (await sight(page)).book,
             stored = (await storedPages(page)).length;
-          await overviewButton(page).click();
+          await toOverview(page);
           await page.waitForTimeout(SETTLE_MS);
           let far = await farView(page);
           assert.equal(far.level, 'pages', "the overview shows the notebook's pages");
@@ -1331,7 +1318,7 @@ function STORIES() {
           assert.ok(await where.isVisible());
           assert.match(await where.getAttribute('aria-label'), /, 1 of \d+$/, 'the oldest page shown');
           // and a pinch in comes back from the pages
-          await overviewButton(page).click();
+          await toOverview(page);
           await page.waitForTimeout(SETTLE_MS);
           assert.equal((await farView(page)).level, 'pages');
           await pinch(page, paper, 2);
@@ -1446,12 +1433,8 @@ const noErrorsIn = errors =>
     [],
   );
 
-// The overview's button at the paper's foot
-const overviewButton = page =>
-  page
-    .locator('#book')
-    .getByRole('button', { name: /^The overview:/ })
-    .first();
+// The overview's button on the rail pressed, from More where the rail folds it away
+const toOverview = page => press(page, OVERVIEW);
 // Two fingers on the book's paper, apart and then closing to (or opening to) k of that, as Safari hands them over
 const pinch = (page, paper, k) =>
   page.evaluate(
@@ -1507,7 +1490,7 @@ const farView = page =>
         Math.max(
           0,
           ...[...document.querySelectorAll('#book .bk-strip > *')]
-            .filter(el => el.offsetWidth && getComputedStyle(el).opacity !== '0')
+            .filter(el => el.checkVisibility({ opacityProperty: true, visibilityProperty: true }))
             .map(el => el.getBoundingClientRect().right),
         ),
       ),
@@ -2091,6 +2074,6 @@ await chromium.close();
 server.close();
 // (Search; handwriting; a morning, a picture dragged in, every width)
 console.log(
-  `book-check: on HQ in WebKit at iPad mini size, a pen's ring with no button first (nothing moving at the lift: at most ${jump.worst} off on an edge, ${wire.jump.worst} in Wire), no number on it (no page made for it), the pen rested and the note in the book with no post-it (anchor, words, snip), nothing of the mark left on the page once it's in (rule zero), in Brownstone and in Wire (Chromium); a finger's drag drawing nothing; a voice note held still; a two-finger tap taking it back off its sheet; a call (in Brownstone, and in Wire in Chromium): the Pencil making it small, a note to the call's page and the line with the words heard, a private part painted over in its snip, a line drawn while it goes in drawn and the next note, a mark the book didn't take kept and told, one whose line was lost as the call ended not sent twice (a line drawn after it sent alone, also after an undo), the agent's ask and Show, its ring where it aimed in its own ink and never in the book, its projects view and a preview opened alone, its rings gone when the board speaks again and at hang-up, nothing drawn on HQ after it, the page thrown away, the cards' answers Wire's keys; a walk-through from a card (its page opened at pickup, the agent's Open card and nothing left over what opened, its pointer where it aimed, a miss told, the empty page gone at hang-up, a written one kept), and of a preview in HQ's viewer (the agent's pointer and its ring in its ink where it aimed inside the frame, the ring following as the preview scrolls, nothing on HQ's page, both gone at hang-up); every kind of line the same wet and dry; the Pencil's layer HQ's page beside the open book (a pen on the book's paper drawing nothing, a ring at its edge going in, the pin on the page, over a dialog too, the spread covering it), in WebKit and Chromium; the book's stories above (the Notebook's groups drawn, joined, split, moved, deleted and sent, with Undo, answers under them, an agent's card answered under its group, and a second screen's change, on an iPad mini, a desktop and a phone; the overview of the notebook's pages and the Shelf among them, Search, handwriting read into type, a morning with yesterday's answer, a picture dragged in, and HQ's page at every width)${failed ? `, ${failed} failing` : ''}${shots ? ` (screenshots in ${shots})` : ''}`,
+  `book-check: on HQ in WebKit at iPad mini size, a pen's ring with no button first (nothing moving at the lift: at most ${jump.worst} off on an edge, ${wire.jump.worst} in Wire), no number on it (no page made for it), the pen rested and the note in the book with no post-it (anchor, words, snip), nothing of the mark left on the page once it's in (rule zero), in Brownstone and in Wire (Chromium); a finger's drag drawing nothing; a voice note held still; a two-finger tap taking it back off its sheet; a call (in Brownstone, and in Wire in Chromium): the Pencil making it small, a note to the call's page and the line with the words heard, a private part painted over in its snip, a line drawn while it goes in drawn and the next note, a mark the book didn't take kept and told, one whose line was lost as the call ended not sent twice (a line drawn after it sent alone, also after an undo), the agent's ask and Show, its ring where it aimed in its own ink and never in the book, its projects view and a preview opened alone, its rings gone when the board speaks again and at hang-up, nothing drawn on HQ after it, the page thrown away, the cards' answers Wire's keys; a walk-through from a card (its page opened at pickup, the agent's Open card and nothing left over what opened, its pointer where it aimed, a miss told, the empty page gone at hang-up, a written one kept), and of a preview in HQ's viewer (the agent's pointer and its ring in its ink where it aimed inside the frame, the ring following as the preview scrolls, nothing on HQ's page, both gone at hang-up); every kind of line the same wet and dry; the Pencil's layer HQ's page beside the open book (a pen on the book's paper drawing nothing, a ring at its edge going in, the pin on the page, over a dialog too, the spread covering it), in WebKit and Chromium; the book's stories above (the Notebook's groups drawn, joined, split, moved, deleted and sent, with Undo, answers under them, an agent's card answered under its group, and a second screen's change, on an iPad mini, a desktop and a phone; the overview of the notebook's pages and the Shelf among them, Search, handwriting kept as ink, a morning with yesterday's answer, a picture dragged in, and HQ's page at every width)${failed ? `, ${failed} failing` : ''}${shots ? ` (screenshots in ${shots})` : ''}`,
 );
 if (failed) process.exitCode = 1;

@@ -129,11 +129,9 @@ function simulate(
   for (let now = snapshot.now; now < snapshot.now + HORIZON_DAYS * DAY_MS;) {
     events.finish(play, now);
     resolve(play, now);
-    for (const seat of play.seats) {
-      if (account) ledger.reset(account, seat, now);
-      capacity.reset(seat, now);
-      if (account) ledger.release(account, seat, play.seats, now);
-    }
+    if (account) for (const seat of play.seats) ledger.reset(account, seat, now);
+    capacity.reset(play.seats, now);
+    if (account) for (const seat of play.seats) ledger.release(account, seat, play.seats, now);
     events.drain(play, now);
     start(play, now);
     const next = events.nextEvent(play, now);

@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { RECORDER_MODULES } from '../../hq/extras.mjs';
 
 const repo = mkdtempSync(`${process.env.TMPDIR ?? tmpdir()}/joinpage-`);
 mkdirSync(`${repo}/company`);
@@ -105,7 +106,7 @@ test("the assets are the page's scripts, the call's audio and microphone worklet
     'walk.js',
     'callbubble.js',
     'floating.js',
-    'watchalong.js',
+    ...RECORDER_MODULES,
     'vendor/rrweb-record.js',
   ])
     assert.match(joinAsset(name)!.type, /^text\/javascript/);

@@ -1,13 +1,15 @@
 // A change to what's on a page (its ink, pictures and typed words) as one step Undo takes back and Redo makes again:
-// the eraser's rub, a shape, a selection moved, resized, cut, pasted, duplicated or deleted, and what a call's agent
-// changed (arrived). What the page held is
-// kept as it was before and as it is after (lists of the same objects: a change makes new ones rather than altering
-// these), so Undo and Redo only put a list back.
+// the eraser's rub, a shape, a selection moved, resized, cut, pasted, duplicated or deleted. Only this screen's own:
+// what someone else's hand changes meanwhile (a call's agent's, another screen's, read in: booksave.js) is no step,
+// and a step taken back or made again leaves it as it is. A step keeps what the change took off the page and what it
+// put on (the same objects the page's lists hold: a change makes new ones rather than altering these, and a read
+// keeps them, booksave.js fill), so Undo and Redo only take those off and put those back.
 //
 // book: bookpages.js's. view: the page's (bookpage.js). hooks: { lay(), changed(page), refresh(view) (its ink, pictures
 // and words drawn again) }.
 import { pageBox } from './bookrow.js';
 
+const LISTS = ['ink', 'scraps', 'texts'];
 // A page's contents now: its lists copied, the objects in them shared
 const contents = page => ({
   ink: page.ink.slice(),
@@ -17,15 +19,39 @@ const contents = page => ({
 });
 // (the page's box, its top-left too.)
 const sides = page => ({ x: pageBox(page).x0, y: pageBox(page).y0, w: page.w, h: page.h });
+const sameSides = (a, b) => ['x', 'y', 'w', 'h'].every(k => a[k] === b[k]);
 const same = (a, b) =>
-  ['x', 'y', 'w', 'h'].every(k => a[k] === b[k]) &&
-  ['ink', 'scraps', 'texts'].every(k => a[k].length === b[k].length && a[k].every((x, i) => x === b[k][i]));
-// The page made to hold what it held then (its lists changed in place: the page's tiles and saves read them)
-function put(page, held) {
-  page.ink.splice(0, page.ink.length, ...held.ink);
-  page.scraps.splice(0, page.scraps.length, ...held.scraps);
-  page.texts.splice(0, page.texts.length, ...held.texts);
-  Object.assign(page, sides(held));
+  sameSides(a, b) && LISTS.every(k => a[k].length === b[k].length && a[k].every((x, i) => x === b[k][i]));
+// A list as it is now taken from what a step had (from) to what it has (to): what the step took off goes, what it put on
+// comes back next to what it was beside, and everything else on it (someone else's since) stays where it is
+export function toward(list, from, to) {
+  const had = new Set(from),
+    has = new Set(to),
+    out = list.filter(x => has.has(x) || !had.has(x)),
+    on = new Set(out);
+  to.forEach((x, i) => {
+    if (on.has(x) || had.has(x)) return;
+    const before = to.slice(0, i).findLast(y => on.has(y));
+    out.splice(before === undefined ? 0 : out.indexOf(before) + 1, 0, x);
+    on.add(x);
+  });
+  return out;
+}
+// What each element a tool made in place of another was made from (a stroke moved, resized or rubbed into pieces: its
+// old self), so a step's replacement goes whole when someone else's change takes away either side of it (forget.
+const originals = new WeakMap();
+export const remade = (old, now) => originals.set(now, old);
+// Every element x was made from, its original's original too, back to the first (a piece rubbed again in the same rub)
+function ancestors(x) {
+  const line = [];
+  for (let y = originals.get(x); y; y = originals.get(y)) line.push(y);
+  return line;
+}
+// The page taken from what a step had to what it has (its lists changed in place: the page's tiles and saves read
+// them), and its box too unless someone else's change has moved it since
+function put(page, from, to) {
+  for (const k of LISTS) page[k].splice(0, page[k].length, ...toward(page[k], from[k], to[k]));
+  if (sameSides(sides(page), from)) Object.assign(page, sides(to));
 }
 
 // The start of a change on a view's page: { end(), cancel() }. end() makes it a step (none when nothing changed, or
@@ -34,8 +60,8 @@ function put(page, held) {
 export function begin(book, view, hooks) {
   const page = view.page,
     before = contents(page);
-  const shown = held => {
-    put(page, held);
+  const shown = (from, to) => {
+    put(page, from, to);
     hooks.refresh(view);
     hooks.changed(page);
   };
@@ -45,10 +71,16 @@ export function begin(book, view, hooks) {
       if (same(before, after)) return false;
       page.blank = false;
       hooks.changed(page);
-      book.steps.push({ page, undo: () => shown(before), redo: () => shown(after) });
+      const held = { before, after };
+      book.steps.push({
+        page,
+        held,
+        undo: () => shown(held.after, held.before),
+        redo: () => shown(held.before, held.after),
+      });
       return true;
     },
-    cancel: () => shown(before),
+    cancel: () => shown(contents(page), before),
   };
 }
 // A change made at once: act() changes the page's lists, and it's one step
@@ -58,30 +90,46 @@ export function edit(book, view, hooks, act) {
   return change.end();
 }
 
-// A change that came from someone else's hand through the store (a call's agent's: booksave.js) as one step of this
-// screen's, so Undo takes it back and Redo makes it again as the board's own are: read() puts the page's lists as the
-// store has them now. Its groups the hand deleted are kept as this screen's deleted ones (page.gone), so Undo putting
-// their elements back restores them, and a scrap's words it changed go back as typed. hooks: { changed(page),
-// refresh(page) (drawn again), words(id, text) }
-export function arrived(book, page, hooks, read) {
-  const before = { ...contents(page), words: wordsOf(page) },
-    had = page.groups;
-  read();
-  const after = { ...contents(page), words: wordsOf(page) };
-  for (const [id, g] of had ?? []) if (!page.groups.has(id)) page.gone.set(id, g);
-  // (read again, every element is a new object: compared by what they hold, an answer clipped on is no step)
-  const held = h => JSON.stringify([h.ink, h.scraps, h.texts, [...h.words]]);
-  if (held(before) === held(after)) return false;
-  const shown = (to, was) => {
-    put(page, to);
-    for (const [id, w] of to.words) if (was.words.has(id) && was.words.get(id) !== w) hooks.words(id, w);
-    hooks.refresh(page);
-    hooks.changed(page);
-  };
-  book.steps.push({ page, undo: () => shown(before, after), redo: () => shown(after, before) });
-  return true;
+// Someone else's change read in (booksave.js fill), which took elements this screen holds off a page (moved, rubbed or
+// deleted on another screen): the page's steps let go of each, and of what a step made it from or into, so neither
+// Undo nor Redo puts back what it replaced or a copy of what replaced it. Undo's steps and Redo's are each walked from
+// the one nearest now outward, so a farther step lets go of what a nearer one let go of too. A step left changing
+// nothing goes, and so does the pen's drawing of a stroke that's lost (bookwrite.js dried). (strokes: job #17706)
+export function forget(book, page, gone) {
+  for (const steps of [book.steps, book.undone]) {
+    const lost = new Set(gone),
+      lostStrokes = new Set();
+    for (const step of steps.toReversed()) {
+      if (step.page !== page) continue;
+      if (step.held) letGo(step.held, lost);
+      else if (lost.has(step.stroke)) lostStrokes.add(step);
+    }
+    keep(steps, step => !lostStrokes.has(step) && (!step.held || !same(step.held.before, step.held.after)));
+  }
 }
-const wordsOf = page => new Map([...(page.groups ?? new Map()).values()].map(g => [g.id, g.words]));
+// A step's lists without what's lost: an element it took off or put on goes with the other side of its replacement,
+// which is lost from then on too
+function letGo(held, lost) {
+  const changed = LISTS.flatMap(k => {
+      const a = new Set(held.before[k]),
+        b = new Set(held.after[k]);
+      return [...a.difference(b), ...b.difference(a)];
+    }),
+    linked = (x, y) => ancestors(x).includes(y) || ancestors(y).includes(x);
+  let more = true;
+  while (more) {
+    more = false;
+    for (const x of changed)
+      if (!lost.has(x) && changed.some(y => lost.has(y) && linked(x, y))) {
+        lost.add(x);
+        more = true;
+      }
+  }
+  for (const k of LISTS) {
+    held.before[k] = held.before[k].filter(x => !lost.has(x));
+    held.after[k] = held.after[k].filter(x => !lost.has(x));
+  }
+}
 
 // The book's steps: a list whose new step clears what Redo could make again (book.undone). Steps are { undo(), redo()
 // } (redo: none when it can't be made again, a send that went). A step's list can be filtered in place only:

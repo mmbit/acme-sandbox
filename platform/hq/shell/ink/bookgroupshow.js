@@ -29,14 +29,20 @@ export async function showGroup(pages, { page, id }) {
   if (book.views[book.cur] !== v || !bringIntoSight(v, id)) return;
   if (id > lastShown()) store.set(SHOWN, id);
 }
-// A group on a page shown slid into sight, then() once it's there: false when it isn't drawn on it (also bookforyou.js's.
-export function bringIntoSight(v, id, then = () => {}) {
+// A group on a page shown slid into sight, then() once it's there, or stopped() once a hand stops the slide on the way:
+// false when it isn't drawn on it (also bookforyou.js's, and bookarrive.js's: what arrives from the store.)
+export function bringIntoSight(v, id, then = () => {}, stopped = () => {}) {
   const r = reachOf(v, id);
   if (!r) return false;
-  slideTo(book, inSight(r), () => {
-    book.remember();
-    then();
-  });
+  slideTo(
+    book,
+    inSight(r),
+    () => {
+      book.remember();
+      then();
+    },
+    stopped,
+  );
   return true;
 }
 // A scrap's page turned to: read into the book first when it's new; its own notebook (the store's: a scrap can go to
@@ -46,8 +52,7 @@ async function turnTo(pages, page) {
   const { notebook } = await loadGroups(pages.dev, page);
   return notebook === book.notebook ? pages.made(page) : pages.find({ page, notebook });
 }
-// A unit's place with its answers under it (bookunits.js places both), in the page's px. (job #14672; also
-// bookforyou.js's.)
+// A unit's place with its answers under it (bookunits.js places both), in the page's px. bookforyou.js reads it too.
 export function reachOf(v, id) {
   const p = v.page.places?.find(q => q.id === id),
     under = v.el.querySelector(`:scope > .bk-groups > .bk-under[data-g="${id}"]`);

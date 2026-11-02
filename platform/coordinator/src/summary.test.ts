@@ -243,14 +243,14 @@ test("finished since the last check: threads done and the board's items, once th
   followThroughSweep(now);
   assert.deepEqual(checks(), [], 'news, not a reason for the check');
 
-  // a thread carrying the board's item, and an item whose work is on no thread: done, then merged, then deployed
+  // A thread carrying the board's item, and an item whose work is on no thread: merged, done, then deployed
   const priced = h.dueThread();
   const onThread = await h.start({ agent: 'kit', title: 'The price list', thread: priced });
   const alone = await h.start({ agent: 'moss', title: 'The shop banner' });
   // (calls marked before as about a customer, by their follow-ups: their words stay with hq call, charter rule 7)
   const aboutCustomer = (what: string, job: number) => {
     const heard = h.queue({ agent: 'juno', title: 'The call about a customer' });
-    db.prepare('update jobs set customers = 1 where id = ?').run(heard);
+    h.markCustomer('jobs', heard);
     return agreed({ kind: 'task', what, status: 'handled', job }, now, undefined, { job: heard });
   };
   const item = aboutCustomer('The price list for Ms Jansen of Kerkstraat 4', onThread.id);
@@ -263,7 +263,6 @@ test("finished since the last check: threads done and the board's items, once th
     await h.finish(job);
     h.storedPr(pr, job.id, 'open');
   }
-  await done(priced);
   // the summary's finished part, its lines
   const finishedLines = async () =>
     /^Finished since the last check \(merged and deployed\):\n((?:- .*\n?)*)/m
@@ -274,6 +273,7 @@ test("finished since the last check: threads done and the board's items, once th
   h.mergedPr(901, now + MIN);
   h.mergedPr(902, now + MIN);
   mock.timers.setTime(now + 2 * MIN);
+  await done(priced);
   assert.equal((await finishedLines()).length, 1, 'merged, not deployed yet');
   await recordedDeploy(h.dataDir, {
     fetched: now + 2 * MIN,
@@ -286,7 +286,7 @@ test("finished since the last check: threads done and the board's items, once th
   const live = clock(now + 3 * MIN, now + 4 * MIN);
   const left = 'its words left out (hq call shows this call only to the jobs it may)';
   assert.deepEqual((await finishedLines()).slice(1), [
-    `- deliverable ${priced} (Thread ${priced.split('-').at(-1)}, juno's): done ${clock(now, now)}, its work deployed ${live}. It carries item #${item.item} (call ${item.call}, task): ${left}`,
+    `- deliverable ${priced} (Thread ${priced.split('-').at(-1)}, juno's): done ${clock(now + 2 * MIN, now + 4 * MIN)}, its work deployed ${live}. It carries item #${item.item} (call ${item.call}, task): ${left}`,
     `- item #${other.item} (call ${other.call}, task for juno): ${left}. Its work (#${alone.id}) deployed ${live}`,
     `- item #${plain.item} (call ${plain.call}, task for juno): A sign for the shop door. Its work (#${alone.id}) deployed ${live}`,
   ]);
@@ -308,23 +308,23 @@ test('a thread done before the last check whose work deploys after it is finishe
   reset();
   const now = held();
   const juno = await h.start({ agent: 'juno', title: 'The plan' });
-  const doneWith = async (pr: number) => {
+  const doneWith = async (pr: number, mergedAt: number) => {
     const thread = h.dueThread();
     const job = await h.start({ agent: 'kit', title: `The work of #${pr}`, thread });
     await h.finish(job);
     h.storedPr(pr, job.id, 'open');
+    h.mergedPr(pr, mergedAt);
+    mock.timers.setTime(mergedAt);
     assert.equal((await h.agent('plan/done', juno.token, { thread })).status, 200);
     return thread;
   };
   const deploy = (at: number) =>
     recordedDeploy(h.dataDir, { fetched: at, finished: at + MIN, sha: 'abc1234', ok: true, services: [] });
   // live before the check: merged, then deployed
-  const early = await doneWith(911);
-  h.mergedPr(911, now + MIN);
+  const early = await doneWith(911, now + MIN);
   await deploy(now + 2 * MIN);
   // merged after that deploy was fetched, and deployed only after the check
-  const late = await doneWith(912);
-  h.mergedPr(912, now + 4 * MIN);
+  const late = await doneWith(912, now + 4 * MIN);
   agreed({ kind: 'task', what: 'The door sign', status: 'open' }, now);
   mock.timers.setTime(now + 5 * MIN);
   followThroughSweep(now + 5 * MIN);

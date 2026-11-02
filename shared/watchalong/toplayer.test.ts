@@ -13,6 +13,7 @@ import { createRequire } from 'node:module';
 import { Mirrors } from './mirror.ts';
 import { playwright } from '../browser/browser.mjs';
 import type { RecordedEvent } from './store.ts';
+import { RECORDER_MODULES } from '../../platform/hq/extras.mjs';
 
 const COORDINATOR = new URL('../../platform/coordinator/', import.meta.url);
 const REPLAY = new URL('node_modules/@rrweb/replay/dist/', COORDINATOR);
@@ -91,9 +92,7 @@ addEventListener('message', e => {
 </script>`;
 
 const FILES: Record<string, URL> = {
-  '/watchalong.js': new URL('watchalong.js', import.meta.url),
-  '/strokes.js': new URL('strokes.js', import.meta.url),
-  '/toplayer.js': new URL('toplayer.js', import.meta.url),
+  ...Object.fromEntries(RECORDER_MODULES.map(name => [`/${name}`, new URL(name, import.meta.url)])),
   '/vendor/rrweb-record.js': RECORD,
 };
 const recorded: Record<string, RecordedEvent[]> = { page: [], framing: [] };

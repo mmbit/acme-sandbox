@@ -97,13 +97,6 @@ test("a call's page: the board's notes numbered on it, never on a sheet to send,
   ).body;
   assert.equal(edited.note.words, 'Or with shipping in?');
   await unjudged('Or with shipping in?');
-  // ...nor the board's handwriting, read after the note went in
-  const written = (await note({ page: page.id })).body.note;
-  const late = (
-    await h.board('/api/book/note/edit', { id: written.id, words: 'What time is it?', said: 'written', was: '' })
-  ).body;
-  assert.equal(late.note.words, 'What time is it?');
-  await unjudged('What time is it?');
 
   // the voice line reads the board's note, on this live call only
   const read = await h.voice(`note?id=${one.note.id}&call=${call}`);

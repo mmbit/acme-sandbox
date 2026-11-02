@@ -139,8 +139,14 @@ await letter(2);
 assert.deepEqual(previews[1], { id: 13, subject: 'Kennismaken', text: 'Beste allemaal,\n\nTot snel,' });
 assert.match(frames[1], /^\?id=13&at=\d+$/);
 // an edit, then Next before the redraw: the next card draws its own words, and the first card's redraw never posts them
-await page.fill('#mail-text', 'Beste allemaal, half');
-await page.click('[data-step="1"]');
+// (in one step: a click under load can take longer than the redraw's wait.)
+await page.evaluate(() => {
+  const box = document.querySelector('#mail-text');
+  box.focus();
+  box.value = 'Beste allemaal, half';
+  box.dispatchEvent(new Event('input'));
+  document.querySelector('[data-step="1"]').click();
+});
 await page.waitForFunction(() => document.querySelector('.req h3')?.textContent === 'Nog een brief');
 await letter(3);
 await page.waitForTimeout(1000);

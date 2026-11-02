@@ -8,6 +8,8 @@ import { boxOf } from '../../../hq/shell/ink/notebookstack.js';
 const h = await harness('callpage');
 const { db } = h;
 const ledger = await import('../ledger.ts');
+const { READS_A_DAY, counted } = await import('./inkread.ts');
+const { companyDay } = await import('../company.ts');
 
 const GOAL = 'The call writes on the page like the board';
 const groups = async (page: number) => (await h.board(`/api/notebooks/pages/groups?page=${page}`)).body.groups as any[];
@@ -15,16 +17,21 @@ const said = (r: { status: number; body: any }) => {
   assert.equal(r.status, 200, JSON.stringify(r.body));
   return r.body;
 };
+// The worker's next small-model call, once the agent's read has put one up
+async function claimed() {
+  for (let i = 0; i < 100; i++) {
+    const c = (await h.worker('reads/claim')).body;
+    if (c.reading) return c;
+    await new Promise(res => setTimeout(res, 20));
+  }
+  throw new Error('nothing to claim');
+}
 const groupRow = (id: number) =>
   db.prepare('select kind, by, status, note, deleted, words from notebook_groups where id = ?').get(id) as any;
 // The call's page gone in at its end, its group with it
 async function sent(id: number) {
   for (let i = 0; i < 100 && groupRow(id).status !== 'sent'; i++) await new Promise(r => setTimeout(r, 50));
 }
-// (every change the agent makes is counted on the page as its hand's: each screen's read takes it as a step its Undo
-// takes back)
-const handed = async (page: number) =>
-  (await h.board(`/api/notebooks/pages/groups?page=${page}`)).body.handed as number;
 async function callPage() {
   const { call, token } = await h.liveCall('juno');
   const page = said(await h.board('/api/notebooks/call', { call })).page.id as number;
@@ -33,8 +40,10 @@ async function callPage() {
 
 test('a plain note is words on a post-it, no picture, an ask on the call’s list, in the agent’s hand', async () => {
   const { call, page } = await callPage();
-  const note = said(await h.voice('scrap', { call, words: 'Give the agent a plain note', goal: GOAL, owner: 'wren' }));
-  assert.match(note.ok, /^Note 1 is on the call's page \(#\d+\)/);
+  const note = said(
+    await h.voice('write-down', { call, words: 'Give the agent a plain note', goal: GOAL, owner: 'wren' }),
+  );
+  assert.match(note.ok, /^Written down \(#\d+; item #\d+ on the call's list\), your words alone/);
   const [g] = await groups(page);
   assert.equal(g.id, note.id);
   assert.deepEqual(
@@ -45,15 +54,59 @@ test('a plain note is words on a post-it, no picture, an ask on the call’s lis
     ledger.items(call).map(i => [i.kind, i.owner, i.what]),
     [['task', 'wren', 'Give the agent a plain note']],
   );
-  assert.ok((await handed(page)) > 0, "the agent's hand counted on the page");
   // (a crop is from and region both)
-  const half = await h.voice('scrap', { call, from: 'now', words: 'x', goal: GOAL });
+  const half = await h.voice('write-down', { call, from: 'now', words: 'x', goal: GOAL });
   assert.equal(half.status, 400);
+});
+
+// The board's drawing on the call's page, its ink a line from (x, 40)
+const drawing = (page: number, x: number) =>
+  h.board('/api/notebooks/groups/create', {
+    page,
+    ink: [
+      {
+        color: '#d63c3c',
+        size: 4,
+        points: [
+          [x, 40, 0.5, 0],
+          [x + 60, 90, 0.5, 16],
+        ],
+      },
+    ],
+  });
+const readsToday = () =>
+  (db.prepare('select reads from handwriting_reads where day = ?').get(companyDay(Date.now())) as any)?.reads ?? 0;
+// The worker's claim answered with readings of the asked pictures, each as given
+const answered = (asked: any, reading: (id: number) => object) =>
+  h.worker('reads/answer', {
+    reading: asked.reading,
+    result: {
+      is_error: false,
+      structured_output: {
+        readings: asked.content
+          .filter((c: any) => c.type === 'text' && /^Picture #/.test(c.text))
+          .map((c: any) => Number(/#(\d+)/.exec(c.text)![1]))
+          .map((id: number) => ({ id, ...reading(id) })),
+      },
+    },
+  });
+
+test("a reading missing a field or over its length is no reading, kept for none, and '' stays a reading", async () => {
+  const { call, page } = await callPage();
+  await drawing(page, 500);
+  const reading = h.voice('page', { call });
+  // (a failed answer is tried once more: both wrong, the call fails)
+  await answered(await claimed(), () => ({ words: 'yes' }));
+  await answered(await claimed(), () => ({ words: 'x'.repeat(601), marks: '', unsure: '' }));
+  assert.match(said(await reading).ok, /its ink couldn't be read just now/);
+  const again = h.voice('page', { call });
+  await answered(await claimed(), () => ({ words: '', marks: '', unsure: '' }));
+  assert.match(said(await again).ok, /its ink, read: nothing anyone could read$/m);
 });
 
 test('the agent reads the page, draws a rectangle round a note and a highlight, each its own mark in its hand', async () => {
   const { call, page } = await callPage();
-  const note = said(await h.voice('scrap', { call, words: 'Two notes side by side', goal: GOAL })).id as number;
+  const note = said(await h.voice('write-down', { call, words: 'Two notes side by side', goal: GOAL })).id as number;
   await h.board('/api/notebooks/groups/create', {
     page,
     ink: [
@@ -67,7 +120,6 @@ test('the agent reads the page, draws a rectangle round a note and a highlight, 
       },
     ],
   });
-  const counted = await handed(page);
   await h.board('/api/notebooks/groups/create', {
     page,
     ink: [
@@ -81,11 +133,34 @@ test('the agent reads the page, draws a rectangle round a note and a highlight, 
       },
     ],
   });
-  assert.equal(await handed(page), counted, "the board's own change isn't counted");
-  const read = said(await h.voice('page', { call })).ok as string;
+  // (the board's drawing read from its strokes by Haiku 5.5, the page's words beside it: the worker's claim answered)
+  const reading = h.voice('page', { call });
+  const asked = await claimed();
+  assert.equal(asked.model, 'claude-haiku-5-5');
+  assert.deepEqual(
+    asked.content.map((c: any) => c.type),
+    ['text', 'image', 'text', 'image', 'text'],
+    "each of the board's drawings a picture",
+  );
+  assert.match(asked.content.at(-1).text, /Two notes side by side/, 'the page beside the ink');
+  const drawn = asked.content
+    .filter((c: any) => c.type === 'text' && /^Picture #/.test(c.text))
+    .map((c: any) => Number(/#(\d+)/.exec(c.text)![1]));
+  await h.worker('reads/answer', {
+    reading: asked.reading,
+    result: {
+      is_error: false,
+      structured_output: {
+        readings: drawn.map((id: number) => ({ id, words: '', marks: 'a line under the title', unsure: '' })),
+      },
+    },
+  });
+  const read = said(await reading).ok as string;
   assert.match(read, new RegExp(`#${note} yours note \\(an ask\\): “Two notes side by side” at `));
-  assert.match(read, /the board's drawing, 1 line of ink at /);
-  const before = await handed(page);
+  assert.match(read, /the board's drawing, 1 line of ink at [\d, ]+; its ink, read: drawn: a line under the title$/m);
+  // (read again: the reading kept, nothing asked of the model)
+  assert.match(said(await h.voice('page', { call })).ok, /its ink, read: drawn: a line under the title/);
+  assert.deepEqual((await h.worker('reads/claim')).body, {}, 'nothing more to read');
   const rect = said(await h.voice('mark', { call, mark: 'rect', around: note })).id as number;
   const highlight = said(
     await h.voice('mark', { call, mark: 'highlight', box: { x: 500, y: 30, width: 220, height: 60 } }),
@@ -101,7 +176,6 @@ test('the agent reads the page, draws a rectangle round a note and a highlight, 
       ],
     }),
   ).id as number;
-  assert.ok((await handed(page)) >= before + 3, "each mark counted as the agent's hand's");
   const on = await groups(page);
   const of = (id: number) => on.find(g => g.id === id);
   // (on the note itself, round its words; the highlight and the pen line drawings of their own; the highlight the
@@ -131,13 +205,13 @@ test('the agent reads the page, draws a rectangle round a note and a highlight, 
 
 test('the agent changes its own scrap’s words and its item’s, moves and deletes, but not the board’s words', async () => {
   const { call, page } = await callPage();
-  const note = said(await h.voice('scrap', { call, words: 'Make the price smaller', goal: GOAL })).id as number;
+  const note = said(await h.voice('write-down', { call, words: 'Make the price smaller', goal: GOAL })).id as number;
   const changed = said(await h.voice('change', { call, id: note, words: 'Make the price much smaller' }));
-  assert.match(changed.ok, /the board can undo it/);
+  assert.match(changed.ok, /says it now\.$/);
   const [g] = await groups(page);
   assert.equal(g.texts.map((t: any) => t.text).join(''), 'Make the price much smaller');
   assert.equal(ledger.items(call)[0].what, 'Make the price much smaller', 'its item takes the new words');
-  const other = said(await h.voice('scrap', { call, words: 'Move Send elsewhere', goal: GOAL })).id as number;
+  const other = said(await h.voice('write-down', { call, words: 'Move Send elsewhere', goal: GOAL })).id as number;
   said(await h.voice('change', { call, id: note, after: other }));
   assert.deepEqual(
     (await groups(page)).map(g => g.id),
@@ -181,16 +255,17 @@ test('the agent changes its own scrap’s words and its item’s, moves and dele
   assert.equal((await h.voice('change', { call, id: note, words: 'x', delete: true })).status, 400);
 });
 
-test("after the board's Undo of the agent's new words, its note and its promise for the board are still its own", async () => {
+test("after the board's Undo of the agent's new words, each of its notes is still its own", async () => {
   const { call, page } = await callPage();
-  const note = said(await h.voice('scrap', { call, words: 'Make the price smaller', goal: GOAL })).id as number;
+  const note = said(await h.voice('write-down', { call, words: 'Make the price smaller', goal: GOAL })).id as number;
+  // (and one the call records otherwise: a job it queues there, ledger.ts noteOnPage)
   ledger.add(
     call,
-    { kind: 'promise', owner: 'board', what: 'Try the shop on the phone', goal: GOAL, quote: 'try it' },
+    { kind: 'task', owner: 'moss', what: 'Try the shop on the phone', goal: GOAL, quote: 'try it' },
     null,
   );
-  const promise = (await groups(page)).find(g => g.id !== note).id as number;
-  for (const id of [note, promise]) {
+  const other = (await groups(page)).find(g => g.id !== note).id as number;
+  for (const id of [note, other]) {
     const before = (await groups(page)).find(g => g.id === id);
     said(await h.voice('change', { call, id, words: 'Make it smaller still' }));
     // (Undo: the board's screen puts the group's lines back as they were, their own ids)
@@ -203,7 +278,7 @@ test("after the board's Undo of the agent's new words, its note and its promise 
 
 test("the board's Undo of the agent's new words takes its item's line back too, by the call's end", async () => {
   const { call, token, page } = await callPage();
-  const note = said(await h.voice('scrap', { call, words: 'Make the price smaller', goal: GOAL })).id as number;
+  const note = said(await h.voice('write-down', { call, words: 'Make the price smaller', goal: GOAL })).id as number;
   const before = (await groups(page)).find(g => g.id === note);
   said(await h.voice('change', { call, id: note, words: 'Make it smaller still' }));
   const after = (await groups(page)).find(g => g.id === note);
@@ -215,7 +290,7 @@ test("the board's Undo of the agent's new words takes its item's line back too, 
 
 test("at hang-up the agent's notes and marks stay on the page, the board's ink on them too, and none is sent", async () => {
   const { call, token, page } = await callPage();
-  const note = said(await h.voice('scrap', { call, words: 'Use the page’s width', goal: GOAL })).id as number;
+  const note = said(await h.voice('write-down', { call, words: 'Use the page’s width', goal: GOAL })).id as number;
   const kept = said(await h.voice('mark', { call, mark: 'ellipse', around: note })).id as number;
   const drawnOn = said(await h.voice('mark', { call, mark: 'rect', box: { x: 600, y: 600, width: 200, height: 100 } }))
     .id as number;
@@ -247,11 +322,11 @@ test("at hang-up the agent's notes and marks stay on the page, the board's ink o
 
 test("the agent starts a try on a scrap: its owner's try run, once; a scrap on another call's page is refused", async () => {
   const { call } = await callPage();
-  const note = said(await h.voice('scrap', { call, words: 'Make the basket bigger', goal: GOAL, owner: 'wren' }))
+  const note = said(await h.voice('write-down', { call, words: 'Make the basket bigger', goal: GOAL, owner: 'wren' }))
     .id as number;
   const why = 'Show me a few versions of a bigger basket';
   const started = said(await h.voice('try', { call, id: note, why }));
-  assert.match(started.ok, /^Started: .+ makes a few versions of it, .+ land under it one by one/);
+  assert.match(started.ok, /^Started: .+ makes a few versions of it, .+ appear under it one by one/);
   const run = db.prepare('select agent, kind, expedite, prompt from jobs where id = ?').get(started.job) as any;
   assert.deepEqual([run.agent, run.kind, run.expedite], ['wren', 'try', 1]);
   assert.ok(run.prompt.includes(why), "the board's words in the run's brief");
@@ -261,8 +336,30 @@ test("the agent starts a try on a scrap: its owner's try run, once; a scrap on a
   assert.match(again.ok, /still going/);
   // (another call's page, and no words for why)
   const other = await callPage();
-  const theirs = said(await h.voice('scrap', { call: other.call, words: 'Not this call’s', goal: GOAL })).id as number;
+  const theirs = said(await h.voice('write-down', { call: other.call, words: 'Not this call’s', goal: GOAL }))
+    .id as number;
   assert.equal((await h.voice('try', { call, id: theirs, why })).status, 404);
   assert.equal((await h.voice('try', { call, id: note, why: ' ' })).status, 400);
   h.cancelQueued();
+});
+
+// (last in the file: it uses up the day's readings, and nothing after it may need one.)
+test("the board's ink read on a call is one of the day's handwriting readings, none past them", async () => {
+  // (the readings earlier tests left unanswered, claimed and let go: the next claim is this test's)
+  while ((await h.worker('reads/claim')).body.reading);
+  const { call, page } = await callPage();
+  await drawing(page, 500);
+  const was = readsToday(),
+    reading = h.voice('page', { call });
+  await answered(await claimed(), () => ({ words: 'yes', marks: '', unsure: '' }));
+  assert.match(said(await reading).ok, /its ink, read: written “yes”$/m);
+  assert.equal(readsToday(), was + 1, 'counted');
+  for (let used = readsToday(); used < READS_A_DAY; used++) counted();
+  // (read again: the kept reading needs none)
+  assert.match(said(await h.voice('page', { call })).ok, /its ink, read: written “yes”$/m);
+  await drawing(page, 900);
+  const past = await h.voice('page', { call });
+  assert.equal(past.status, 429);
+  assert.match(past.body.error, new RegExp(`${READS_A_DAY} times a day`));
+  assert.deepEqual((await h.worker('reads/claim')).body, {}, 'nothing sent to the model past the bound');
 });

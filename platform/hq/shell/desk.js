@@ -23,6 +23,7 @@ import { openLibraryDoc } from './news.js';   // (Team's Gazette and Library but
 import { onDirective } from './events.js';
 import { record, canRecord, MAX_SECONDS, TRANSCRIBER } from './voice.js';
 import { dictate } from './dictate.js';
+import '/__review/prefs.js';   // (the first pen anywhere in HQ turns "touch always scrolls" on.)
 import { pushState, enablePush, disablePush, testPush } from './push.js';
 import { makeAgeKey } from './agekey.js';
 import { names, brand, theme, runs } from './brand.js';
@@ -51,6 +52,7 @@ import { Tray, shrink } from './tray.js';
 import { notes, openReviews, holdReviews } from './reviews.js';   // (the computer's Reviews app)
 import { openAt } from './ink/book.js';   // (review mode's Open the book: bookAt.)
 import * as notebook from './ink/notebooklink.js';
+import { mountMarks, shareMarks } from './ink/viewmarks.js';
 import { mountStage } from './viewer.js';   // (the viewer's frames)
 import { mountPin, pinOn, setPin, tellPin } from './pinsetting.js';   // (Settings › Pin on HQ.)
 import { mountTips } from './booktips.js';   // (the tips book)
@@ -124,7 +126,8 @@ export function initDesk() {
   addEventListener('keydown', e => { if (e.key !== 'Escape') return; if (callInFront()) minimiseCall(); else if (open) closeTool(); });   // (a call in front goes small)
   addEventListener('message', fromViewer);
   // (the viewer's page hears the notebook's moves and may talk back to it.)
-  notebook.mountFrames(window, { frames: () => (viewing ? [stagingFrame().contentWindow] : []), trusts: origin => PREVIEW.test(`${origin}/`) });
+  mountMarks({ frame: stagingFrame });
+  notebook.mountFrames(window, { frames: () => (viewing ? [stagingFrame().contentWindow] : []), trusts });
   followCall();
   loadPin();
   // (a card answered in the book, or the book changed on the store: the cards read again, so one answered there leaves
@@ -147,6 +150,7 @@ function show(kind, html, force = false) {
 const opened = kind => document.dispatchEvent(new CustomEvent('hq:open', { detail: { open: kind, ...(kind === 'computer' && { app: tab }) } }));
 export const toolOpen = () => !!open;
 const previews = previewsOn(location.hostname, local);
+const trusts = origin => PREVIEW.test(`${origin}/`);
 export const PREVIEW = previews.page;   // (exported for calldrive.js)
 // The origin of the page in the viewer while review mode runs there (it said hello), or none: what calldrive.js sends to
 // and hears from, and no other page the frame may have gone on to.
@@ -426,7 +430,7 @@ export function wireShare(el, s, o) {
 // slides.css), or a page asking for a backdrop (backdropOf). Anything else, or from anywhere else, is ignored.
 function fromViewer(e) {
   const frame = stagingFrame(), d = e.data, me = viewing;
-  if (!me || !frame || e.source !== frame.contentWindow || !PREVIEW.test(`${e.origin}/`) || !d || typeof d !== 'object') return;
+  if (!me || !frame || e.source !== frame.contentWindow || !trusts(e.origin) || !d || typeof d !== 'object') return;
   // Decks built before 2026-10-04 inline the old deck.js: it tags its messages { onlyonery: 'deck' } and hears the look
   // under that key. Still a deck's, answered the way it listens.
   const old = d.hq === undefined && d.onlyonery === 'deck', tag = old ? 'deck' : d.hq;
@@ -448,6 +452,7 @@ function fromViewer(e) {
       if (!calling) answer({ failed: 'The call had ended.' });
       else document.dispatchEvent(new CustomEvent('call:mark', { detail: { anchor: d.callMark.anchor, snip: typeof d.callMark.snip === 'string' ? d.callMark.snip : null, ago: Number(d.callMark.ago) || 0, answer } }));
     }
+    else if (d.marks && typeof d.marks === 'object') shareMarks(d.marks, e.origin);
     paintPin();
   } else if (tag === 'backdrop') {
     frame.style.background = backdropOf(d) ?? '';

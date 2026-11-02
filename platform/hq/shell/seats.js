@@ -15,7 +15,7 @@ const SAID_MS = 10 * 60_000;    // how long an action's "done" stays on its page
 const POLL_MS = 2000;           // the read while something moves
 const IDLE_MS = 15_000;         // and otherwise, while Seats is open
 const SIGNING_IN = ['starting', 'open', 'checking'];
-const STOPS = [80, 85, 90, 95, 99];   // the levels a seat can stop at, in percent of its limits (the coordinator takes 50 to 99)
+const STOPS = [80, 85, 90, 95, 99, 100]; // the levels a seat can stop at, in percent of its limits
 // An action under way, in words (action.what: add, remove, pause, resume, sign-in, key, stop, pacing, credits)
 const DOING = { add: 'Setting it up', remove: 'Removing it', pause: 'Pausing', resume: 'Resuming', 'sign-in': 'Signing in', key: 'Testing the key', stop: 'Changing it', pacing: 'Changing it', credits: 'Changing it' };
 // Where an action's outcome shows on a seat's page: under the control it came from, the rest at the top

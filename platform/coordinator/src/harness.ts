@@ -271,6 +271,9 @@ export async function harness(
   const job = (id: number) => (jobs.listJobs() as any[]).find(j => j.id === id);
   // A persisted stuck review whose replacement can still report.
   const stuckReview = (pr: number) => db.prepare("update prs set status = 'stuck' where number = ?").run(pr);
+  // A job, card or call marked before 31 Oct as holding a customer's details (nothing marks one now.)
+  const markCustomer = (table: 'jobs' | 'requests' | 'calls', id: number) =>
+    db.prepare(`update ${table} set customers = 1 where id = ?`).run(id);
   // A persisted review transferred to another owner.
   const transferPr = (pr: number, author: string) =>
     db.prepare('update prs set author = ? where number = ?').run(author, pr);
@@ -333,6 +336,7 @@ export async function harness(
     ask,
     job,
     stuckReview,
+    markCustomer,
     transferPr,
     feed,
     stream,

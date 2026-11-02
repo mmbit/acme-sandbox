@@ -19,7 +19,8 @@ import {
   type Work,
 } from './matching.ts';
 import { play, type Outlook, type Planned, type QueuedJob, type Size, type Snapshot } from './eta.ts';
-import { snapshot } from './backlog.ts';
+import { snapshotInParts } from './backlog.ts';
+import { whole } from './latency.ts';
 import type { ProspectiveRun } from './reviewplan.ts';
 import { playOrder } from './simulation.ts';
 import { loopSizes, SLOW_SHARE, type Pace } from './reviewtime.ts';
@@ -104,40 +105,41 @@ export function stored(job: number, pool = pastJobs()): Prediction | undefined {
   return { size, slow: storedSizes([job]).get(job)!.slow, picks, basis: JSON.parse(row.basis) as Basis, guessed };
 }
 
-// The minute's sweep stores missing sizes, then saves each open job's first outlook from that minute's play.
-// Saved queue-time sizes stay fixed. Legacy work gets its default once before the play.
-export function sweep(now = Date.now(), played: (now: number) => Map<number, Outlook> = outlook) {
+// The minute's sweep (forecast.ts sweep) stores missing sizes, then saves each open job's first outlook from that
+// minute's play, in two steps with the play in turns between them. Saved queue-time sizes stay fixed. Legacy work gets
+// its default once before the play. The open jobs with no first outlook yet are read before the play, so work queued
+// during it waits for the next one.
+export function newWork(now: number) {
   const missing = db
     .prepare(
       `select j.id, j.agent, j.title, ${ORIGIN} origin, ${RUN_COLUMNS} from jobs j ${RUN_JOIN} where j.kind = 'work'
       and j.status in ${OPEN_JOBS} and not exists (select 1 from predictions p where p.job = j.id)`,
     )
     .all() as ({ id: number; agent: string; title: string; origin: JobOrigin } & Run)[];
-  if (!missing.length) return recordFirstOutlooks(now, played);
-  const pool = pastJobs();
-  const insert = db.prepare(`insert into predictions (job, made, agent_ms, picks, basis, guessed,
-    slow_agent_ms) values (?, ?, ?, ?, ?, ?, ?)`);
-  for (const job of missing) {
-    const { size, slow, picks, basis, guessed } = predict(job, pool);
-    const picked = JSON.stringify(picks.map(p => p.id));
-    const made = new Date(now).toISOString();
-    insert.run(job.id, made, size.agent_ms, picked, JSON.stringify(basis), guessed ? 1 : 0, slow.agent_ms);
+  if (missing.length) {
+    const pool = pastJobs();
+    const insert = db.prepare(`insert into predictions (job, made, agent_ms, picks, basis, guessed,
+      slow_agent_ms) values (?, ?, ?, ?, ?, ?, ?)`);
+    for (const job of missing) {
+      const { size, slow, picks, basis, guessed } = predict(job, pool);
+      const picked = JSON.stringify(picks.map(p => p.id));
+      const made = new Date(now).toISOString();
+      insert.run(job.id, made, size.agent_ms, picked, JSON.stringify(basis), guessed ? 1 : 0, slow.agent_ms);
+    }
   }
-  recordFirstOutlooks(now, played);
+  return (
+    db
+      .prepare(
+        `select p.job from predictions p join jobs j on j.id = p.job
+      where p.outlook_saved = 0 and j.status in ${OPEN_JOBS}`,
+      )
+      .all() as { job: number }[]
+  ).map(row => row.job);
 }
-
-function recordFirstOutlooks(now: number, played: (now: number) => Map<number, Outlook>) {
-  const unplayed = db
-    .prepare(
-      `select p.job from predictions p join jobs j on j.id = p.job
-    where p.outlook_saved = 0 and j.status in ${OPEN_JOBS}`,
-    )
-    .all() as { job: number }[];
-  if (!unplayed.length) return;
-  const outlooks = played(now);
+export function firstOutlooks(unplayed: number[], outlooks: Map<number, Outlook>) {
   // (the column eta holds the outlook's merge time, as hq estimate --accuracy reads it)
   const first = db.prepare('update predictions set start = ?, done = ?, eta = ?, outlook_saved = 1 where job = ?');
-  for (const { job } of unplayed) {
+  for (const job of unplayed) {
     const seen = outlooks.get(job);
     first.run(seen?.start ?? null, seen?.done ?? null, seen?.merged ?? null, job);
   }
@@ -158,17 +160,20 @@ export function outlooks(now = Date.now(), planned: SizedPlan[] = [], paces: Pac
 // The same, with what they played on: the snapshot and each pace's sizes (forecast.ts keeps them; the prediction log
 // stores them, so a later play can be scored on them).
 export function played(now = Date.now(), planned: SizedPlan[] = [], paces: Pace[] = ['usual', 'slow']) {
-  const { snapshot: queue, sizes, sizedBy } = prepared(now, planned, paces);
+  return whole(playedInParts(now, planned, paces));
+}
+// (in parts: latency.ts Parts.)
+export function* playedInParts(now: number, planned: SizedPlan[] = [], paces: Pace[] = ['usual', 'slow']) {
+  const { snapshot: queue, sizes, sizedBy } = yield* preparedInParts(now, planned, paces);
   const empty = new Map<number, Outlook>();
   // (the order the work goes in rests on the queue's planning sizes alone: worked out once for both paces)
   const order = playOrder(queue, sizes.slow);
-  return {
-    snapshot: queue,
-    sizes,
-    sizedBy,
-    usual: paces.includes('usual') ? play(queue, sizes.usual, { pace: 'usual', order }) : empty,
-    slow: paces.includes('slow') ? play(queue, sizes.slow, { pace: 'slow', order }) : empty,
-  };
+  yield 'the order';
+  const usual = paces.includes('usual') ? play(queue, sizes.usual, { pace: 'usual', order }) : empty;
+  yield 'the usual play';
+  const slow = paces.includes('slow') ? play(queue, sizes.slow, { pace: 'slow', order }) : empty;
+  yield 'the slow play';
+  return { snapshot: queue, sizes, sizedBy, usual, slow };
 }
 // The snapshot and each pace's sizes, ready to play: hq when plays them several ways (when.ts).
 export function prepared(
@@ -177,9 +182,17 @@ export function prepared(
   paces: Pace[] = ['usual', 'slow'],
   prospective?: ProspectiveRun,
 ) {
+  return whole(preparedInParts(now, given, paces, prospective));
+}
+export function* preparedInParts(
+  now: number,
+  given: SizedPlan[] = [],
+  paces: Pace[] = ['usual', 'slow'],
+  prospective?: ProspectiveRun,
+) {
   // (a drawn thread with no task yet plays as one, sized on its name and "done when": threadorder.ts placeholders.)
   const placeholders = threadorder.placeholders();
-  const queue = snapshot(now, [...given, ...placeholders], prospective);
+  const queue = yield* snapshotInParts(now, [...given, ...placeholders], prospective);
   const record = recordFor(queue.now, queue.jobs);
   const drawn = placeholders.map(p => {
     const { size, slow } = record.drawn(p);
@@ -199,6 +212,7 @@ export function prepared(
   queue.planningSizes = [...(paces.includes('slow') ? sizes.slow : sized('slow'))];
   // (who gave each job's size, for the prediction log: predictionlog.ts.)
   const sizedBy = new Map([...record.latest].map(([job, size]) => [job, size.by]));
+  yield 'the sizes';
   return { snapshot: queue, sizes, sizedBy };
 }
 

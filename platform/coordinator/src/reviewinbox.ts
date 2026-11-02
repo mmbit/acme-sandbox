@@ -46,7 +46,10 @@ type Fix = {
 
 export function deliver(details: Delivery) {
   const previous = get(details.pr);
-  if (sameDelivery(previous, details)) return previous!;
+  if (sameDelivery(previous, details)) {
+    reviewwork.reopen(previous!);
+    return previous!;
+  }
   const thread = threadOfBranch(details.branch);
   const project = thread ? findThread(thread)!.project : null;
   const title = titleOf(details);
@@ -84,7 +87,9 @@ export function deliver(details: Delivery) {
     project,
     details.touchups ?? null,
   );
-  return { ...details, proposal, thread, project };
+  const item = { ...details, proposal, thread, project };
+  reviewwork.reopen(item);
+  return item;
 }
 
 export const titleOf = ({ decision, pr }: Pick<Delivery, 'decision' | 'pr'>) => `Review ${decision} on PR #${pr}`;

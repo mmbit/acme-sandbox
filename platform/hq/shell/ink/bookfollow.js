@@ -7,10 +7,10 @@ const FLICK_MS = 100;
 
 // A horizontal drag on an element: start(dx) once it's held past TAP_PX, move(dx) while it is, end(dx, v) as it's let go
 // (v in px per ms, over its last FLICK_MS: a flick is how fast it was going as it left, whatever came before). A press
-// that never moves that far stays a tap.
-export function follow(node, { start = () => {}, move, end }) {
+// that never moves that far stays a tap. takes(e): whether a press on it is the drag's at all (else it's left alone;
+export function follow(node, { takes = () => true, start = () => {}, move, end }) {
   node.addEventListener('pointerdown', e => {
-    if (!e.isPrimary || e.button > 0) return;
+    if (!e.isPrimary || e.button > 0 || !takes(e)) return;
     const x0 = e.clientX,
       trail = [[e.timeStamp, x0]];
     let dragging = false;
@@ -51,4 +51,9 @@ export function follow(node, { start = () => {}, move, end }) {
     addEventListener('pointerup', onUp);
     addEventListener('pointercancel', onUp);
   });
+}
+// Whether a press is over an element's box (one that takes no press itself: bookswing.js's page edge.)
+export function within(el, e) {
+  const r = el.getBoundingClientRect();
+  return e.clientX >= r.left && e.clientX < r.right && e.clientY >= r.top && e.clientY < r.bottom;
 }

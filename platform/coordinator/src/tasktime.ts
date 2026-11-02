@@ -1,10 +1,11 @@
 // Whole-task agent time, read from the run ledger and the recorded review relationships.
 import { db } from './db.ts';
+import { heldBranches } from './tasklinks.ts';
 import { emptyCost, addSpend, jobSpend, type Cost } from './costspend.ts';
 import { workBranch, type Named } from './jobs.ts';
 import { REBUILT_RUN, INVALID_RUN } from './timing.ts';
 
-export type Phase = 'work' | 'reviews' | 'fixes' | 'syncs' | 'previews';
+import { phaseOf, costPhase, type Phase } from './taskphases.ts';
 type Member = Named & {
   id: number;
   kind: string;
@@ -97,8 +98,7 @@ function taskCost(contributions: Map<number, Contribution>) {
   const cost = emptyCost();
   for (const entry of contributions.values()) {
     addSpend(cost.total, entry.cost.total);
-    const phase =
-      entry.phase === 'work' ? 'work' : entry.phase === 'reviews' || entry.phase === 'previews' ? 'reviews' : 'fixes';
+    const phase = costPhase(entry.phase);
     addSpend(cost.split[phase], entry.cost.total);
     cost.missing_usage += entry.cost.missing_usage;
   }
@@ -174,14 +174,13 @@ function collectLinked(job: WindowJob, branch: string, share: number, phase: Pha
 
 function memberPhase(member: Member, isRequestedJob: boolean, context: Context): Phase {
   if (context.root && isRequestedJob) return 'work';
-  if (isReview(member)) return 'reviews';
-  if (context.root) return phaseOf(member);
+  const phase = phaseOf(member);
+  if (context.root || (phase !== 'work' && phase !== 'previews')) return phase;
   return context.phase;
 }
 
 const finishedAt = (member: WindowJob): number | null =>
   member.finished === null ? null : Date.parse(member.finished);
-const isReview = (member: Member) => member.kind === 'review' || member.kind === 'consolidate';
 
 function readFamily(branch: string): Family {
   const prs = db
@@ -209,12 +208,6 @@ export const isTask = (member: Pick<Member, 'kind' | 'status' | 'fix' | 'preview
   !member.fix &&
   !member.preview &&
   !['fix', 'feedback'].includes(member.stage ?? '');
-function phaseOf(member: Member): Phase {
-  if (isReview(member)) return 'reviews';
-  if (member.fix || member.stage === 'feedback' || (member.stage === 'fix' && member.round !== null)) return 'fixes';
-  if (member.stage === 'fix') return 'syncs';
-  return 'work';
-}
 
 function measured(member: Member, phase: Phase, share: number, { from, until }: Window): Contribution {
   const runs = db
@@ -246,7 +239,7 @@ function measured(member: Member, phase: Phase, share: number, { from, until }: 
   }
   return {
     phase,
-    cost: contributionCost(member.id, share, { from, until }, runs.length > 0),
+    cost: contributionCost(member.id, share, { from, until }),
     attributed_ms: agentMs * share,
     flags: [...new Set(flags)],
   };
@@ -254,14 +247,15 @@ function measured(member: Member, phase: Phase, share: number, { from, until }: 
 
 function previews(prs: PullRequest[]) {
   const numbers = JSON.stringify(prs.map(pr => pr.number));
-  return db
+  const held = heldBranches();
+  const rows = db
     .prepare(
-      `select distinct j.id, j.created, j.finished, ${workBranch('j')} branch,
-    (select count(distinct p.branch) from card_merges held join prs p on p.number = held.pr where held.job = c.job) branches
+      `select distinct j.id, j.created, j.finished, ${workBranch('j')} branch
     from card_merges m join card_jobs c on c.job = m.job join jobs j on j.id = c.job
     where m.pr in (select value from json_each(?))`,
     )
-    .all(numbers) as (WindowJob & { branch: string; branches: number })[];
+    .all(numbers) as (WindowJob & { branch: string })[];
+  return rows.map(row => ({ ...row, branches: held.get(row.id)!.length }));
 }
 
 // Older cards can have lost their merge links. An overlapping run warns of missing attribution, without guessing it.
@@ -277,10 +271,10 @@ function unlinkedPreviews({ from, until }: Window) {
 }
 const toMinutes = (ms: number) => Math.round(ms / 600) / 100;
 
-function contributionCost(job: number, share: number, { from, until }: Window, ran: boolean) {
+function contributionCost(job: number, share: number, { from, until }: Window) {
   const recorded = jobSpend(job, from, until);
   const cost = emptyCost();
   addSpend(cost.total, recorded.spend, share);
-  cost.missing_usage = !recorded.reported && ran ? share : 0;
+  cost.missing_usage = !recorded.reported && recorded.ran ? share : 0;
   return cost;
 }

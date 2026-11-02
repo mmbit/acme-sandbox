@@ -2,6 +2,7 @@
 import type { ServerResponse } from 'node:http';
 import { afterStep, db } from './db.ts';
 import * as secrets from './secrets.ts';
+import type { Anchor } from './pagechecks.ts';
 
 // lines: the lines an agent's job changes so far (add, del); tokens: the tokens it has written so far (total). Both to HQ
 // only, kept on its status but not in the events table (tokens: the last TOKENS_KEPT_MS of readings, [ms, total], for
@@ -15,7 +16,7 @@ export type Event = {
   // delivered (booksheets.ts): agent, its owner, and text 'sent'. Or an answer
   // typed onto a page (book.ts typeOnto): agent, who answered, text 'page' and page, its id, so a book showing it reads
   // it again.)
-  ts?: string; type: 'status' | 'chat' | 'post' | 'log' | 'lines' | 'tokens' | 'machines' | 'studio' | 'book';
+  ts?: string; type: 'status' | 'chat' | 'post' | 'log' | 'lines' | 'tokens' | 'machines' | 'studio' | 'book' | 'viewmarks';
   agent?: string; to?: string; text?: string; state?: string; page?: number;
   // job: the run an agent's own status or lines come from; jobs: on a status from its queue, every job it has running
   job?: number; jobs?: RunningJob[];
@@ -24,6 +25,7 @@ export type Event = {
   since?: string;
   add?: number; del?: number; tests?: number; total?: number; board?: string;
   machines?: unknown;   // (machines: each machine live, runs.ts listMachines(); not kept in the events table either)
+  marks?: { device: string; anchor: Anchor };
   studio?: unknown;
 };
 // since: when it set to work on its task (as HQ's world counts it, so one opened mid-job knows too)
@@ -85,7 +87,7 @@ function publishNow(event: Event & { ts: string }, by: Source) {
     // (a new run of the job counts from nothing again: a total below the last reading's starts the readings over.)
     const total = e.total ?? 0, now = Date.parse(e.ts!), kept = total < (s?.tokens?.at(-1)?.[1] ?? 0) ? [] : (s?.tokens ?? []);
     if (s) s.tokens = [...kept.filter(([at]) => at > now - TOKENS_KEPT_MS), [now, total]];
-  } else if (e.type !== 'machines' && e.type !== 'studio' && e.type !== 'book') {   // (book)
+  } else if (e.type !== 'machines' && e.type !== 'studio' && e.type !== 'book' && e.type !== 'viewmarks') {
     const row = Number(insert.run(e.ts, e.type, e.agent ?? null, e.to ?? null, e.text ?? null, e.state ?? null).lastInsertRowid);
     if (board) boardLines.set(row, board);
     if (boardLines.size > REPLAY) boardLines.delete(boardLines.keys().next().value!);

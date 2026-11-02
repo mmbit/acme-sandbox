@@ -19,7 +19,7 @@ const running = (agent: string) => h.start({ agent, title: `test job for ${agent
 async function finished(agent: string, title: string, result: string, { customers = false, pr = 0, before }: { customers?: boolean; pr?: number;
   before?: (j: Running) => Promise<unknown> } = {}) {
   const j = await h.start({ agent, title });
-  if (customers) db.prepare('update jobs set customers = 1 where id = ?').run(j.id);
+  if (customers) h.markCustomer('jobs', j.id);
   await before?.(j);
   assert.equal((await h.finish(j, { result, ...(pr ? { pr, branch: `job/${j.id}`, sha: 'abc' } : {}) })).status, 200);
   return j.id;
@@ -132,7 +132,7 @@ test("A customer's details reach only the job working on them: hq call refuses i
   // a card marked before as holding a customer's details, and the board's call about it (with Dex: no job runs as Poppy,
   // on api, to follow it up)
   const card = h.jobs.createRequest({ kind: 'decision', title: 'Refund the walrusmug?', body: 'Mrs Jansen, Kerkstraat 1, wants a refund.', agent: 'dex' }) as { id: number };
-  db.prepare('update requests set customers = 1 where id = ?').run(card.id);
+  h.markCustomer('requests', card.id);
   const about = await call('dex', ['Board: yes, refund Mrs Jansen.'], 'Refunded the walrusmug.', card.id);
   const dex = await running('dex');
   const refused = await agent(`call?id=${about.id}`, dex.token);

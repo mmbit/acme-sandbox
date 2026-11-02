@@ -22,8 +22,7 @@ const hqServer = createServer((req, res) => {
 });
 await new Promise<void>(r => hqServer.listen(0, '127.0.0.1', r));
 
-const PORT = 20000 + Math.floor(Math.random() * 20000);
-Object.assign(process.env, { DATA_DIR: mkdtempSync(join(tmpdir(), 'care-diagnostics-')), PORT: String(PORT), CARE_LOCAL: '1', CARE_PROVIDER: 'fake',
+Object.assign(process.env, { DATA_DIR: mkdtempSync(join(tmpdir(), 'care-diagnostics-')), PORT: '0', CARE_LOCAL: '1', CARE_PROVIDER: 'fake',
   CARE_APPS: JSON.stringify({ shop: 'http://127.0.0.1:9' }), CARE_TOKENS: JSON.stringify({ shop: 'unused' }), CARE_NAMES: JSON.stringify({ shop: 'Shop' }),
   CARE_COMPANY_DIR: new URL('../../../template/products/care', import.meta.url).pathname,
   CARE_HQ_URL: `http://127.0.0.1:${(hqServer.address() as any).port}`, CARE_HQ_TOKEN: 'hq-test-token' });
@@ -31,11 +30,11 @@ const fake = await import('./fake.ts');
 const { t } = await import('./texts.ts');
 const { db, sweep } = await import('./db.ts');
 const hq = await import('./hq.ts');
-await import('./server.ts');
+const { bound } = await import('./server.ts');
 await new Promise(r => setTimeout(r, 100));
 
 // ---- a customer: a cookie, the stream as a list of messages, and the widget's POSTs
-const BASE = `http://127.0.0.1:${PORT}`;
+const BASE = `http://127.0.0.1:${(await bound).port}`;
 async function customer() {
   let cookie = '';
   const events: any[] = [], tab = crypto.randomUUID(), ip = `10.1.${Math.floor(Math.random() * 250)}.${Math.floor(Math.random() * 250)}`;

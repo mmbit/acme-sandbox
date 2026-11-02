@@ -410,8 +410,10 @@ test('a pull request waiting for the one its deliverable needs holds no other, s
   assert.deepEqual(plan.need(a, b, 'wren'), { ok: true });
   for (const t of [a, c]) db.prepare('update threads set deadline = ? where id = ?').run(Date.now() + 86_400_000, t);
   const file = 'platform/engine/core.ts';
+  const head = sha('r');
   const [pa, pb, pc] = [a, b, c].map((t, i) => {
-    h.storedPr(9240 + i, task(t), 'open', [file]);
+    const work = h.ended({ agent: 'bolt', thread: t });
+    h.storedPr(9240 + i, work, 'open', [file], { sha: head });
     return 9240 + i;
   });
   // ruled A, C, B: each a pass that keeps its place
@@ -419,7 +421,7 @@ test('a pull request waiting for the one its deliverable needs holds no other, s
     const id = h.jobs.createJob({ agent: 'idris', title: 'Rule it', prompt: 'Rule.', queuedBy: 'wren' }).id;
     db.prepare(
       "update jobs set kind = 'consolidate', status = 'done', pr = ?, round = 0, sha = ?, finished = ? where id = ?",
-    ).run(pr, sha('r'), new Date(Date.now() + i * 1000).toISOString(), id);
+    ).run(pr, head, new Date(Date.now() + i * 1000).toISOString(), id);
   }
   const mergeorder = await import('./mergeorder.ts');
   const before = (n: number) =>
@@ -526,6 +528,28 @@ test("a deliverable's last task ending done with no pull request wakes its owner
     new RegExp(`#${check} bolt: bolt's step\\. It ended done\\.\n  Its report: "Checked live`),
   );
   assert.equal(projects.findThread(engine)!.status, 'open', 'its owner closes it');
+});
+
+// A deliverable whose "done when" names the board's agreed deck, drawn as any other: its judge walks the deck itself
+test("a deliverable drawn from the board's agreed deck has its judge walk every behaviour the deck draws", async () => {
+  const goal = 'Every behaviour in products/game/deck.json works on the iPad, as in its whole deck';
+  assert.equal(typeof projects.createThread({ project: 'game', name: 'Deck built', goal, slug: 'deck' }), 'object');
+  task('game/deck');
+  await h.finish((await claim())!, { result: 'Built it' });
+  const judged = judgeRow(judgeOf('game/deck')!).prompt;
+  assert.ok(judged.includes(`done when: ${goal}\n`));
+  assert.ok(
+    judged.includes(
+      `Where a deliverable's "done when" or its tasks draw on the board's agreed sketches or a deck, hold the work against them yourself before you close it`,
+    ),
+  );
+  assert.ok(judged.includes('one line each in your report, built or missing. One missing is a step still missing.'));
+  assert.ok(
+    judged.includes(
+      'A behaviour another open deliverable owns (its "done when" or one of its tasks names it: `hq projects`) is that deliverable\'s to build and judge, not a missing step here',
+    ),
+    "a behaviour another open deliverable owns isn't a missing step here",
+  );
 });
 
 test("a follow-up that ran on past its deliverable's merge wakes the owner as it ends", async () => {
@@ -704,10 +728,9 @@ test('a failed task landed before its woken judge starts takes its deliverable o
 
 // A task that ended with a report, its pull request merged into its thread's (customers: marked before as holding a
 // customer's details)
-const marked = (job: number) => h.db.prepare('update jobs set customers = 1 where id = ?').run(job);
 const reported = (t: string, pr: number, report: string, customers = false) => {
   const id = h.ended({ agent: 'bolt', thread: t, result: report });
-  if (customers) marked(id);
+  if (customers) h.markCustomer('jobs', id);
   h.storedPr(pr, id, 'merged');
   threadends.merged(pr);
   return id;
@@ -731,7 +754,7 @@ test("a reused judge omits even its owner's customer report from another job", (
   reported(thread('plain'), 9214, 'Ordinary progress.');
   const judge = judgeOf('game/plain')!;
   const source = h.ended({ agent: 'wren', thread: thread('private'), result: CUSTOMER });
-  marked(source);
+  h.markCustomer('jobs', source);
   h.storedPr(9215, source, 'merged');
   threadends.merged(9215);
   assert.equal(judgeOf('game/private'), judge);
@@ -1144,7 +1167,7 @@ test("a job waiting for its own thread's work deployed gets a thread of its own,
   assert.equal(ctx.status, 200);
   const deadline = new Date(Date.now() + 2 * 3_600_000).toISOString().slice(0, 19) + 'Z';
   const promise = await h.agent('item', ctx.body.token, {
-    kind: 'promise',
+    kind: 'task',
     goal: 'The board wants it on time.',
     owner: 'bolt',
     what: 'Prove it live',

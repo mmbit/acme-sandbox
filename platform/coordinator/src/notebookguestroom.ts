@@ -2,7 +2,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import * as guests from './guests.ts';
 import { voice } from './feedback.ts';
-import * as handwriting from './handwriting.ts';
 import { fetchGuestPicture } from './ink/bookfetch.ts';
 import * as files from './notebookguestfiles.ts';
 import * as notebooks from './notebookguests.ts';
@@ -79,7 +78,6 @@ const room = routes({
     fetchGuestPicture(nameOf(req).toLowerCase(), res, url.searchParams.get('url') ?? ''),
   [`POST ${API}/voice`]: voiceNote,
   [`POST ${API}/pictures`]: uploadPicture,
-  [`POST ${API}/book/read`]: write(readHandwriting),
   [`POST ${API}/pages/create`]: write(createPage),
   [`POST ${API}/pages/send`]: onPage(byId, (b, on) => rounds.handIn(on.page, on.who, on.stillOpen)),
   [`POST ${API}/pages/undo`]: onPage(byId, (b, on) => rounds.takeBack(on.page, on.who)),
@@ -150,12 +148,6 @@ function onPage(page: (b: any) => number, writing: (b: any, on: OnPage) => unkno
     const on = { name, member, round, page: at, who: members.whoOf(member), stillOpen };
     return (await writing(b, on)) ?? { ok: true };
   });
-}
-
-function readHandwriting(b: any, name: string) {
-  const [member] = members.forGuest(name);
-  if (!member) return 403;
-  return handwriting.read(b, members.whoOf(member));
 }
 
 function createPage(b: any, name: string) {

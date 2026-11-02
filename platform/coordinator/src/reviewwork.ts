@@ -1,6 +1,6 @@
 // Who decides a review's findings, the thread their tasks go in, and the review that is current for a thread.
 // (its messages say deliverable, the board's word for a thread)
-import { db } from './db.ts';
+import { db, planChange } from './db.ts';
 import { ceo } from './company.ts';
 import { findProject, findThread, type JobThreadAsk } from './projects.ts';
 import { jobThread } from './newthread.ts';
@@ -39,6 +39,27 @@ export function current(thread: string | null, pr?: number) {
     order by p.number desc limit 1`,
     )
     .get({ pr: pr ?? null, thread: canonical }) as { pr: number } | undefined;
+}
+
+// Older completed deliverables may still hold a current changes ruling when HQ starts.
+export function reopenDone() {
+  const items = db
+    .prepare(`select r.* from review_inbox r join threads t on t.id = r.thread where t.status = 'done'`)
+    .all() as Pick<Item, 'pr' | 'thread' | 'branch' | 'decision'>[];
+  for (const item of items) reopen(item);
+}
+
+export function reopen(item: Pick<Item, 'pr' | 'thread' | 'branch' | 'decision'>) {
+  if (item.decision !== 'changes' || !item.thread || current(item.thread)?.pr !== item.pr) return;
+  const thread = findThread(item.thread)!;
+  if (thread.status !== 'done') return;
+  db.prepare("update threads set status = 'open', done = null, branch = ? where id = ?").run(item.branch, thread.id);
+  planChange({
+    project: thread.project,
+    thread: thread.id,
+    what: `deliverable reopened: PR #${item.pr} still needs review fixes`,
+    by: 'hq',
+  });
 }
 
 export function bind(item: Item, thread: string) {

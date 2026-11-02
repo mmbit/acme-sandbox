@@ -294,13 +294,13 @@ test('a change the worker had taken up when it restarted ends, and says so', asy
   assert.equal(row.signin.url, undefined);
 });
 
-test("a seat's stop level: the board's, from 50% to 99%, listed with the worker's default until it's set", async () => {
+test("a seat's stop level: the board's, from 50% to 100%, listed with the worker's default until it's set", async () => {
   assert.equal((await seat('claude-1')).stop, 90);
   assert.equal((await list()).seats.find(s => s.id === 'claude-1').stop, null);
-  for (const stop of [49, 100, 85.5, '85', null])
+  for (const stop of [49, 101, 85.5, '85', null])
     assert.equal(
       (await board('/api/seats/stop', { seat: 'claude-1', stop })).body.error,
-      'Pick a level from 50% to 99%.',
+      'Pick a level from 50% to 100%.',
     );
   assert.equal((await board('/api/seats/stop', { seat: 'claude-x', stop: 80 })).body.error, "There's no such seat.");
   const first = (await board('/api/seats/stop', { seat: 'claude-1', stop: 80 })).body;
@@ -319,6 +319,22 @@ test("a seat's stop level: the board's, from 50% to 99%, listed with the worker'
   );
   await settle(r.action, 'done', 'Stops at 85% of its limits now.');
   assert.deepEqual([(await seat('claude-1')).action.what, (await seat('claude-1')).action.status], ['stop', 'done']);
+});
+
+test('a work seat can use its full plan while the call seat keeps its reserve', async () => {
+  await board('/api/seats/stop', { seat: 'claude-1', stop: 80 });
+  await board('/api/seats/pause', { seat: 'claude-1', paused: true });
+  await worker('seats', { seats: ['claude-1:claude:80'] });
+  await board('/api/seats/add', { id: 'claude-full', provider: 'anthropic' });
+  const full = (await board('/api/seats/stop', { seat: 'claude-full', stop: 100 })).body;
+  assert.equal(full.ok, true);
+  const listed = (await list()).seats;
+  assert.equal(listed.find(s => s.id === 'claude-full').stop, 100);
+  const reserve = listed.find(s => s.id === 'claude-1');
+  assert.equal(reserve.stop, 80);
+  assert.equal(reserve.paused, true);
+  await board('/api/seats/stop', { seat: 'claude-1', stop: 85 });
+  await board('/api/seats/pause', { seat: 'claude-1', paused: false });
 });
 
 test("a SEATS level fills in a stop the board hasn't set, at every start, and never over the board's", async () => {

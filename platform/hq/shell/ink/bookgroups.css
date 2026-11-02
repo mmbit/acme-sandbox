@@ -89,15 +89,30 @@
   inset: 0 auto auto 0;
   pointer-events: none;
 }
+/* The page's head (bookunits.js TITLE_H) has room for one title line, at its left as the Ink deck draws it, in line
+   with the scraps. At its right it ends 4 px short of the dog-ear at the screen's scale, so a long title's ellipsis
+   never runs under the fold; while the open asks' counter shows (the book's own, not a page turn's picture of it), it
+   ends 8 px short of the counter's left edge instead (its place and width bookforyou.css's), so the two never touch.
+   The title stays where it is, only ending sooner. */
+#book {
+  --bk-head-inset: 28px;
+}
 #book .bk-page-title {
   position: absolute;
   top: 22px;
   left: 0;
+  box-sizing: border-box;
   margin: 0;
-  text-align: center;
+  padding: 0 calc((var(--bk-ear) + 4px) / var(--bk-scale)) 0 calc(var(--bk-head-inset) / var(--bk-scale));
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
   font: 600 20px/1.3 var(--bk-font, system-ui, sans-serif);
   color: var(--bk-ink, #2a2352);
   letter-spacing: 0.01em;
+}
+#book:has(.bk-for-you-count:not([hidden], .bk-turn-picture *)) .bk-page-title {
+  padding-right: calc((var(--bk-count-at) + var(--bk-count-w) + 8px) / var(--bk-scale));
 }
 #book .bk-day {
   position: absolute;
@@ -110,14 +125,21 @@
   text-transform: uppercase;
   color: var(--bk-muted, #8a849c);
 }
+/* (the page's first day, under its title in the page's head, in line with it) */
+#book .bk-head-day {
+  top: 46px;
+  box-sizing: border-box;
+  padding: 0 0 0 calc(var(--bk-head-inset) / var(--bk-scale));
+  text-align: left;
+}
 #book .bk-unit {
   position: absolute;
   box-sizing: border-box;
   border-radius: 3px 3px 3px 3px;
   background: linear-gradient(180deg, #fffdf4, #fffaea);
   box-shadow:
-    0 1px 1px rgba(42, 35, 82, 0.08),
-    0 3px 10px rgba(42, 35, 82, 0.1);
+    0 1px 2px rgba(42, 35, 82, 0.16),
+    0 4px 14px rgba(42, 35, 82, 0.16);
   /* (the turned corner: cut off here, drawn by ::after) */
   clip-path: polygon(0 0, 100% 0, 100% calc(100% - 18px), calc(100% - 18px) 100%, 0 100%);
 }
@@ -140,6 +162,8 @@
   background: linear-gradient(135deg, #efe6c8 0 50%, transparent 50%);
   box-shadow: -1px -1px 2px rgba(42, 35, 82, 0.12);
 }
+/* the room to write: a pad of whiter lined paper pressed into the card, its edge and its shadow plain to see, so where
+   it ends reads at a glance (the board, call 174) */
 #book .bk-room {
   position: absolute;
   inset: auto 14px 14px;
@@ -148,8 +172,10 @@
 /* the room's lined paper, and a slip's room's pulled out (bookslipreply.css) */
 #book .bk-room,
 #book .bk-slip-room[data-open] .bk-slip-room-paper {
-  border-top: 1px dashed rgba(42, 35, 82, 0.12);
-  background: repeating-linear-gradient(180deg, transparent 0 31px, rgba(42, 35, 82, 0.05) 31px 32px);
+  border: 1px solid rgba(42, 35, 82, 0.3);
+  border-radius: 3px;
+  background: #fff repeating-linear-gradient(180deg, transparent 0 31px, rgba(42, 35, 82, 0.1) 31px 32px);
+  box-shadow: inset 0 2px 5px rgba(42, 35, 82, 0.14);
 }
 /* the room's handle: a short quiet bar at the unit's foot, a 44 px target round it for a finger and the Pencil; a
    slip's room's handle the same bar, placed by bookslipreply.css */
@@ -181,7 +207,8 @@
 #book .bk-slip-room-pull:focus-visible::before {
   background: rgba(42, 35, 82, 0.4);
 }
-/* the paper the page scrolls in ends left of the rail (--bk-rail-width: book.css), so nothing is under it */
+/* what's written on the page ends left of the floating rail (--bk-rail-width: book.css), so nothing is under it; the
+   paper itself runs on under the rail to the book's edge (.bk-paper) */
 #book .bk-pages .bk-desk {
   right: var(--bk-rail-width);
 }

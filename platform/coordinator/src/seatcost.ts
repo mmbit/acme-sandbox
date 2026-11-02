@@ -92,3 +92,27 @@ function writeInterval(
       );
   });
 }
+
+export function seatCosts(jobs: number[] | null = null) {
+  const where = jobs ? 'where job in (select value from json_each(?))' : '';
+  const selected = jobs ? [JSON.stringify(jobs)] : [];
+  const rows = db.prepare(`select job, end, week, milliseconds from seat_cost_jobs ${where}`).all(...selected) as {
+    job: number;
+    end: number;
+    week: number;
+    milliseconds: number;
+  }[];
+  const grouped = Map.groupBy(rows, row => row.job);
+  return (job: number, from: number, until: number) => jobSeatCost(grouped.get(job) ?? [], from, until);
+}
+
+function jobSeatCost(rows: { end: number; week: number; milliseconds: number }[], from: number, until: number) {
+  let seat_weeks: number | null = null;
+  let metered_ms = 0;
+  for (const row of rows)
+    if (row.end > from && row.end <= until) {
+      seat_weeks = (seat_weeks ?? 0) + row.week;
+      metered_ms += row.milliseconds;
+    }
+  return { seat_weeks, metered_ms };
+}

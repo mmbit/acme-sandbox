@@ -38,8 +38,7 @@ const servers = { bud: endpoint('bud'), hui: endpoint('hui') };
 for (const s of Object.values(servers)) await new Promise<void>(r => s.listen(0, '127.0.0.1', r));
 const url = (app: 'bud' | 'hui') => `http://127.0.0.1:${(servers[app].address() as any).port}/`;
 
-const PORT = 20000 + Math.floor(Math.random() * 20000);
-Object.assign(process.env, { DATA_DIR: mkdtempSync(join(tmpdir(), 'care-shop-')), PORT: String(PORT), CARE_LOCAL: '1', CARE_PROVIDER: 'fake',
+Object.assign(process.env, { DATA_DIR: mkdtempSync(join(tmpdir(), 'care-shop-')), PORT: '0', CARE_LOCAL: '1', CARE_PROVIDER: 'fake',
   CARE_APPS: JSON.stringify({ bud: url('bud'), hui: url('hui') }), CARE_TOKENS: JSON.stringify({ bud: 'token-bud', hui: 'token-hui' }),
   CARE_SHOPS: JSON.stringify({ front: ['bud', 'hui'] }), CARE_NAMES: JSON.stringify({ front: 'The Shop', bud: 'Bud', hui: 'Hui' }),
   CARE_COMPANY_DIR: new URL('../../../template/products/care', import.meta.url).pathname });
@@ -48,11 +47,11 @@ const { db } = await import('./db.ts');
 const email = await import('./email.ts');
 const gate = await import('./gate.ts');
 const numbers = await import('./numbers.ts');
-await import('./server.ts');
+const { bound } = await import('./server.ts');
 await new Promise(r => setTimeout(r, 100));
 
 // ---- a customer's browser: one cookie jar for the whole origin, a page on a stall at a time (as Caddy says it)
-const BASE = `http://127.0.0.1:${PORT}`;
+const BASE = `http://127.0.0.1:${(await bound).port}`;
 async function browser(stall: string, shop: string | null = 'front') {
   let cookie = '';
   const ip = `10.1.${Math.floor(Math.random() * 250)}.${Math.floor(Math.random() * 250)}`, tab = crypto.randomUUID();

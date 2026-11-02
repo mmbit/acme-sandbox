@@ -105,7 +105,8 @@ after a let-go "okay": nothing is taken back once the reply has played out, "Oka
 the replay a real "Wait, stop" stops the reply about 0.6 s after the board starts and "Hold on, ..." about 0.9 s, on HQ's
 path and the phone's. A first look earlier than 0.5 s lets a misheard "Yeah, right?" stop it on the phone. If the board started talking before hearing 1.2 s of the reply, the reply is taken back and the whole
 message answered, counted from when the board started, not from when the line was sure. While the agent is still
-thinking (none of the reply heard yet), any word does that, and a sound with no words takes nothing back. With no reply
+thinking (none of the reply heard yet), any word does that, and a sound with no words takes nothing back. The whole
+message goes after a note quoting the message taken back. With no reply
 playing, turns work as before. Tests: `test_server.py` (stand-in models and clock); `replay.py` plays these sounds through the real
 models, also over the phone line's 8 kHz.
 
@@ -184,22 +185,22 @@ with the board's next words or alone after the quiet, its words in a line in fro
 against the 20 MB (one that doesn't fit goes without it, and the agent hears so). HQ hears `received` or `failed`
 (`unreadable`, `too many`), again on a resume. The agent's `ask_to_see` sends HQ an `ask` (its card, Show and Not now,
 blocking nothing) and answers at once; the board's tap (`asked`) reaches the agent with its next turn, or alone after
-the quiet. Its `draw` sends an `ink` (a ring at a box the agent aims at on its picture of the board's screen, in
+the quiet. Its `draw` sends an `ink` (a circle at a box the agent aims at on its picture of the board's screen, in
 fractions of the picture: HQ draws it there and chooses nothing; it follows what it's on as the page scrolls, goes with
 it and with the call, and is never kept) and waits up to 5 s for HQ's `inked`. After the agent's own scroll (`drive`)
 it is refused until the agent has a picture of the screen as it is now. Both go through the screen socket and are refused on a call out (rule 9), on the phone and while
 HQ's connection is down; an ask also while the screen is shown or another ask waits.
-The call's notes page in the board's Notebook (`callnotes.py`): the agent's
-`scrap` puts one change on it, a plain note (its words on a post-it, no picture) or cut from one of the board's notes
+The call's notes, its page in the board's Notebook (`callnotes.py`): the agent's
+`write_down` writes one change in them, its words on a post-it alone or with a picture cut from one of the board's notes
 on the call (`from: 'note 3'`) or from its shown screen at a moment (`'-20s'`, `'#12'`), a region of that picture with
-the change in its words, and `title_page` names the page's topic in at most 21 characters, after the call's date and
+the change in its words, and `title_notes` names the page's topic in at most 21 characters, after the call's date and
 time the coordinator keeps in front; every third turn until it has, a line before the board's words reminds the agent
 to. The agent works the page as the board does
-too: `read_page` lists what's on it, `mark_page` draws a rectangle, ellipse, line, arrow, pen line or highlight, and
-`change_page` changes its own note's words, or moves or deletes anything there, each a step the board's Undo takes
-back. `try` has a few versions of something there made for the board to pick from, when it asks to see them: its owner's
+too: `read_notes` lists what's on it, `mark_notes` draws a rectangle, ellipse, line, arrow, pen line or highlight, and
+`change_note` changes its own note's words, or moves or deletes anything there, none of it a step the board's Undo
+takes back: that takes back only the board's own (board, call 174). `try` has a few versions of something there made for the board to pick from, when it asks to see them: its owner's
 try run builds each and it lands under it (`ink/booktry.ts`). All go through the
-screen socket to the coordinator's Ink store (`POST scrap`, `POST title`: `ink/callnotes.ts`; `POST page`, `POST mark`,
+screen socket to the coordinator's Ink store (`POST write-down`, `POST title`: `ink/callnotes.ts`; `POST page`, `POST mark`,
 `POST change`, `POST try`: `ink/callpage.ts`), never to
 HQ's socket: the store tells the board's screens. Refused on a call out, on the phone and
 once the call is over. The line's drawing and driving halves import nothing of it (test_server's split test).

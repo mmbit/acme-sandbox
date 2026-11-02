@@ -240,7 +240,10 @@ const stampOf = page =>
         return box(el.matches('.bk-unit') ? el.getBoundingClientRect() : words.getBoundingClientRect());
       }),
       locked: !!document.querySelector('#book .bk-locked')?.checkVisibility(),
-      toolsHidden: !document.querySelector('#book .bk-strip')?.checkVisibility(),
+      // (the tools keep their room, unseen: bookshare.css)
+      toolsHidden: !document
+        .querySelector("#book .bk-island[data-island='tools']")
+        ?.checkVisibility({ visibilityProperty: true }),
     };
   });
 const inside = (a, b) => a.left >= b.left && a.right <= b.right && a.top >= b.top && a.bottom <= b.bottom;

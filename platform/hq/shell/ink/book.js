@@ -155,8 +155,7 @@ export const showBookPage = id => pages?.show(id);
 const shape = () => shapeOf(innerWidth, innerHeight);
 // Go to a state, and remember it for this shape: opened or shut, the board swings (from where it is, mid-swing too);
 // from one open width to another, the book slides from where it is on the screen (where a drag left it), never from
-// where it was before. The book opens straight onto its page. With reduced motion it fades in or out. (from where it
-// is: job #19861)
+// where it was before. The book opens straight onto its page. With reduced motion it fades in or out.
 function go(next) {
   stop();
   state = next;

@@ -52,13 +52,20 @@ export function repin(pr: number, branch: string, rule: EngineOnly) {
 // A review panel's seats, with work only one engine does judged on that engine alone. A seat on another engine that has
 // other files too keeps those, so its independent read of them stays on its own engine, and hands the rule's to a seat
 // on the rule's engine: the panel's first, else the first of `reviewers` on it, who joins. A seat with nothing else
-// keeps them, and its review runs on the rule's engine (jobs.ts onlyFor), as does one no reviewer could take them from.
+// goes whole to the first of `reviewers` on the rule's engine not seated yet, so the panel keeps its number of reads;
+// with none, it keeps them and its review runs on the rule's engine (jobs.ts onlyFor), as does one no reviewer could
+// take them from.
 export function judgedOn(seats: Seat[], engineOf: (agent: string) => string | undefined, reviewers: string[]) {
   const judged = seats.map(seat => ({ ...seat }));
   for (const rule of rules())
     for (const seat of judged) {
       const theirs = held(rule, seat.files);
-      if (!theirs.length || theirs.length === seat.files.length || engineOf(seat.agent) === rule.engine) continue;
+      if (!theirs.length || engineOf(seat.agent) === rule.engine) continue;
+      if (theirs.length === seat.files.length) {
+        const own = reviewers.find(agent => engineOf(agent) === rule.engine && !judged.some(s => s.agent === agent));
+        if (own) seat.agent = own;
+        continue;
+      }
       const judge = judgeOn(rule.engine, judged, engineOf, reviewers);
       if (!judge) continue;
       seat.files = seat.files.filter(file => !theirs.includes(file));

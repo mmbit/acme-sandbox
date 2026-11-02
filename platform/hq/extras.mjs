@@ -8,6 +8,7 @@ export const BOARD_EXTRAS = {
   '/foley.js': 'shared/demo/foley.js', // the platform's sound kit
   '/ask.js': 'shared/ask/ask.js', // the button that asks once more
   '/contrast.js': 'shared/contrast/contrast.js', // the contrast sums, as HQ's looks import them
+  '/shared/contrast/contrast.js': 'shared/contrast/contrast.js', // ...and as the signs import them
   '/shared/signs/signs.js': 'shared/signs/signs.js',
   // the keys' motion, and the statistics' drawing, which Slate shares with the brand guide
   '/shared/tactile/': 'shared/tactile/',
@@ -22,15 +23,20 @@ export const BOARD_EXTRAS = {
   '/shared/watchalong/replay.js': 'shared/watchalong/replay.js',
 };
 
+// Browser modules served wherever a page records itself, including the canvas sampler's worker.
+export const RECORDER_MODULES = [
+  'watchalong.js',
+  'canvas.js',
+  'encoder.js',
+  'strokes.js',
+  'toplayer.js',
+  'media.js',
+  'frames.js',
+];
+
 // Anyone's on HQ's host: a call's join link records its walk-through with the watch-along too
 export const OPEN_EXTRAS = {
-  // the contrast sums as the signs and Slate's colourways import them, on the signed-out pages too
-  '/shared/contrast/contrast.js': 'shared/contrast/contrast.js',
-  '/shared/watchalong/watchalong.js': 'shared/watchalong/watchalong.js',
-  '/shared/watchalong/canvas.js': 'shared/watchalong/canvas.js',
-  '/shared/watchalong/encoder.js': 'shared/watchalong/encoder.js', // (its encoder, a worker)
-  '/shared/watchalong/strokes.js': 'shared/watchalong/strokes.js',
-  '/shared/watchalong/toplayer.js': 'shared/watchalong/toplayer.js',
+  ...Object.fromEntries(RECORDER_MODULES.map(name => [`/shared/watchalong/${name}`, `shared/watchalong/${name}`])),
 };
 
 // Review mode's parts anyone may load, on HQ's host and every product's. None holds review mode's own logic. They are

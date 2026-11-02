@@ -35,7 +35,8 @@
 !platform/hq/shell/mic-worklet.js
 !platform/hq/shell/callbubble.js
 !platform/hq/shell/floating.js
-!shared/watchalong/watchalong.js
+# Recorder browser modules share one allow rule as RECORDER_MODULES grows (platform/hq/extras.mjs).
+!shared/watchalong/*.js
 # the one HTML escaper, which the emails' look writes with (platform/coordinator/src/mailpage.ts)
 !shared/html/escape.ts
 # the route tables' engine (platform/coordinator/src/runs.ts).
@@ -49,10 +50,6 @@
 !shared/watchalong/shown.ts
 # (its replay's page)
 !shared/watchalong/mirrorpage.ts
-# and the pen's ink that page reads and draws, with shared/review/ink.js below
-!shared/watchalong/strokes.js
-# and what the page showed over everything, which the replay shows too
-!shared/watchalong/toplayer.js
 # the one headless Chromium driver, which the mirror and a company's print renders start.
 !shared/chromium/chromium.ts
 # the platform's formats, which a company's kits may import

@@ -83,8 +83,8 @@ const watched = page =>
     return { sizes: [...sizes], cover };
   });
 
-// Nothing of HQ's page at any point round the book, and its head below Safari's strip (style.css's --sat) by the
-// table's margin, as before
+// Nothing of HQ's page at any point round the book, and its head where book.css puts it (its pages under Safari's
+// strip, style.css's --sat)
 async function covered(page, when) {
   const seen = await page.evaluate(GRID => {
     const book = document.querySelector('#book .bk-leaf').getBoundingClientRect(),
@@ -95,7 +95,7 @@ async function covered(page, when) {
         if (!hit?.closest('#book')) peeks.push(`${x},${y} ${hit?.tagName.toLowerCase()}.${hit?.className}`);
       }
     const probe = document.createElement('div');
-    probe.style.cssText = 'position: fixed; top: calc(var(--sat) + var(--bk-gap))';
+    probe.style.cssText = 'position: fixed; top: var(--bk-top)';
     document.getElementById('book').append(probe);
     const head = probe.getBoundingClientRect().top;
     probe.remove();

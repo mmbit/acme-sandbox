@@ -7,7 +7,7 @@ import { basename } from 'node:path';
 import { createServer, request } from 'node:http';
 import { fixtureRepo } from './fixture.ts';
 import { framedAnswer, reviewModeOff } from './testreview.ts';
-import { REVIEW_PARTS } from '../../hq/extras.mjs';
+import { REVIEW_PARTS, RECORDER_MODULES } from '../../hq/extras.mjs';
 
 fixtureRepo();
 process.env.DATA_DIR = mkdtempSync(`${tmpdir()}/feedback-test-`);
@@ -149,9 +149,15 @@ test("review mode's parts are served only to whoever gets the tool", async () =>
 });
 
 test("the watch-along's recorder is served on every preview host, to anyone, for a page in HQ's viewer", async () => {
-  const own = readFileSync(new URL('../../../shared/watchalong/watchalong.js', import.meta.url), 'utf8');
   const recorder = readFileSync(new URL('../node_modules/@rrweb/record/dist/record.js', import.meta.url), 'utf8');
-  for (const [path, text] of [['/__review/watchalong.js', own], ['/__review/vendor/rrweb-record.js', recorder]])
+  const modules = RECORDER_MODULES.map(name => [
+    `/__review/${name}`,
+    readFileSync(new URL(`../../../shared/watchalong/${name}`, import.meta.url), 'utf8'),
+  ]);
+  for (const [path, text] of [
+    ...modules,
+    ['/__review/vendor/rrweb-record.js', recorder],
+  ])
     for (const opts of [{}, { key: null }]) {
       const r = await call(path, opts);
       assert.equal(r.status, 200, path);

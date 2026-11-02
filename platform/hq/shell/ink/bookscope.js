@@ -22,7 +22,10 @@ export function word(key, places = {}) {
 export const aiMark = () => (scope ? words[document.documentElement.lang].aiAgent : '');
 export const scopedUrl = url => (scope ? scopedPath(url, scope.api) : url);
 export async function notebookRequest(url, body) {
-  if (!scope) return act(url, body);
+  if (!scope)
+    return act(url, body).catch(e => {
+      throw bookRefused(e.status, e.message, e.reason);
+    });
   const blob = body instanceof Blob;
   const response = await fetch(scopedUrl(url), {
     credentials: 'same-origin',
@@ -32,11 +35,17 @@ export async function notebookRequest(url, body) {
     ...(body === undefined ? {} : { body: blob ? body : JSON.stringify(body) }),
   });
   const answer = await response.json();
-  if (!response.ok)
-    throw refused(
-      response.status,
-      refusal(document.documentElement.lang, answer.reason, scope.limits) ?? answer.error,
-      answer.reason,
-    );
+  if (!response.ok) throw bookRefused(response.status, answer.error, answer.reason);
   return answer;
+}
+// A refusal as the book says it on the page. A reason's are worded for the person reading (notebookwords.js, the
+// store's own in the board's book); a 400 without one is a request out of shape, worded by the store's checks for
+// whoever wrote it (an agent, or this page's own mistake): our internals, so the page says a plain line and the store's
+// words go to the console for us.
+export function bookRefused(status, error, reason) {
+  if (status === 400 && !reason) {
+    console.error(`[hq] book: the store refused a request: ${error}`);
+    return refused(status, word('notThrough'));
+  }
+  return refused(status, (scope && refusal(document.documentElement.lang, reason, scope.limits)) ?? error, reason);
 }

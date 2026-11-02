@@ -403,13 +403,13 @@ test("a job a limit paused while every seat was full starts on the first seat to
   const t = Date.now(), id = queue('Round-3 fixes');
   const job = (await pickup('claude-2'))!;
   assert.equal(job.id, id);
-  // claude-2 drains at 90% of its week, and claude-1 and claude-3 are draining too: no seat is free, so the job goes
+  // claude-2 exhausts its week, and claude-1 and claude-3 are draining too: no seat is free, so the job goes
   // back until claude-2's weekly reset, two days off.
   await seat('claude-1', 'draining', { util: 0.9, week: 0.3 });
   await seat('claude-3', 'draining', { util: 0.9, week: 0.35 });
-  await seat('claude-2', 'draining', { util: 0, week: 0.9 });
+  await seat('claude-2', 'sleeping', { util: 0, week: 1 });
   const drained = { engine: 'claude', state: 'draining', until: t + 50 * H };
-  assert.equal((await h.finish(job, { status: 'limited', session: 's-limited', resetAt: retryAt(drained, false, t) })).status, 200);
+  assert.equal((await h.finish(job, { status: 'limited', session: 's-limited', branch: `job/${id}`, resetAt: retryAt(drained, false, t) })).status, 200);
   assert.equal(until(id), t + 50 * H);
   assert.equal(await pickup('claude-1'), null);
   // a worker restart: a seat back as ready with no reading yet may be just as full, so it lets nothing go
@@ -423,6 +423,7 @@ test("a job a limit paused while every seat was full starts on the first seat to
   const again = (await pickup('claude-3'))!;
   assert.equal(again.id, id);
   assert.equal(again.session, 's-limited', 'in its own session');
+  assert.equal(again.branch, `job/${id}`, 'on its retained branch');
 });
 
 test('a seat that gets room between the worker reading no seat free and the limited finish lets the job go at once', async () => {

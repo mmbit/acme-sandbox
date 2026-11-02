@@ -21,8 +21,8 @@ const job = (id: number) => db.prepare('select * from jobs where id = ?').get(id
 const callRow = (id: number) => db.prepare('select * from calls where id = ?').get(id) as any;
 const lastCall = () => db.prepare('select * from calls order by id desc limit 1').get() as any;
 const item = (id: number) => db.prepare('select * from call_items where id = ?').get(id) as any;
-// A card marked before as holding a customer's details (nothing marks one now): its column, set by hand.
-const marked = <T extends { id: number }>(card: T) => { db.prepare('update requests set customers = 1 where id = ?').run(card.id); return card; };
+// A card marked before as holding a customer's details.
+const marked = <T extends { id: number }>(card: T) => { h.markCustomer('requests', card.id); return card; };
 // The worker claims this job (on an engine of its own, so nothing else is taken) and gets its token.
 const tokens = new Map<number, string>();
 async function claim(id: number) {
@@ -60,14 +60,16 @@ const history = async () => (await h.board('/api/chat')).body;
 const quietIntercom = () => db.exec("update jobs set status = 'cancelled' where kind = 'chat'; update chat set sent = 1");
 const hour = 3600_000;
 
-test('a call has its row from its start, a promise made on it lands there, and its follow-up carries the call', async () => {
+test('a call has its row from its start, what it writes down lands there, and its follow-up carries the call', async () => {
   const c = await aCall('kit', TALK);
   assert.equal(callRow(c.id).status, 'live');
-  // the voice line's promise tool: the call's own token, only a promise, only on its own call
-  const p = await agent('item', c.token, { kind: 'promise', owner: 'kit', goal: 'g', what: 'Send Juno the mission note', quote: TALK[1] });
+  // the voice line's write_down on the phone: the call's own token, one kind of note (a task), only on its own call
+  const p = await agent('item', c.token, { kind: 'task', owner: 'kit', goal: 'g', what: 'Send Juno the mission note', quote: TALK[1] });
   assert.equal(p.status, 200);
   assert.equal(item(p.body.id).call, c.id);
-  assert.equal((await agent('item', c.token, { kind: 'task', owner: 'kit', goal: 'g', what: 'x', quote: 'y' })).status, 403);
+  assert.equal((await agent('item', c.token, { kind: 'promise', owner: 'kit', goal: 'g', what: 'x', quote: 'y' })).status, 403);
+  const whose = await agent('item', c.token, { kind: 'task', goal: 'g', what: 'Someone sends the note', quote: 'y' });
+  assert.equal(item(whose.body.id).owner, ceo(), "the CEO's to see through without an owner");
   assert.equal((await agent(`items?call=${c.id}`, c.token)).status, 404, "no call's items for a call token");
   // (every call's open items, one line each, as its briefing has them)
   assert.equal((await agent('items', c.token)).status, 200);
@@ -173,7 +175,7 @@ test('item routes: only for a job that works for the call, never for a worker or
   assert.ok(open.every(i => !('quote' in i) && !('lines' in i)));
   // but a goal only from a call it may read: not one still live
   const live = await aCall('kit', TALK);
-  const p = (await agent('item', live.token, { kind: 'promise', owner: 'kit', goal: 'Keep the board posted', what: 'Send the note', quote: TALK[1] })).body.id;
+  const p = (await agent('item', live.token, { kind: 'task', owner: 'kit', goal: 'Keep the board posted', what: 'Send the note', quote: TALK[1] })).body.id;
   assert.ok(!('goal' in ((await agent('items', ot)).body as any[]).find(i => i.id === p)), 'a live call is nobody else\'s to read yet');
   await live.end();
 });
@@ -654,7 +656,7 @@ test('the sweep: a follow-up done with nothing recorded is sent again; after thr
 
 test('the sweep: a call that lost its line keeps what was recorded on it, and a silent one goes', async () => {
   const kept = await aCall('kit', []), gone = await aCall('dex', []);
-  await agent('item', kept.token, { kind: 'promise', owner: 'kit', goal: 'g', what: 'Send Juno the mission note', quote: 'I will send it' });
+  await agent('item', kept.token, { kind: 'task', owner: 'kit', goal: 'g', what: 'Send Juno the mission note', quote: 'I will send it' });
   ledger.sweep(Date.now() + 3 * hour + 60_000);
   assert.equal(callRow(gone.id), undefined);
   const row = callRow(kept.id);
@@ -1017,7 +1019,7 @@ test("two calls on one intercom chat job: each item goes on its own call, and on
 
 test('a late hand-over reaches the call the sweep ended; a silent call the sweep deletes takes its token with it', async () => {
   const lost = await aCall('kit', []), silent = await aCall('dex', []);
-  await agent('item', lost.token, { kind: 'promise', owner: 'kit', goal: 'g', what: 'Send Juno the mission note', quote: 'I will send it' });
+  await agent('item', lost.token, { kind: 'task', owner: 'kit', goal: 'g', what: 'Send Juno the mission note', quote: 'I will send it' });
   const calls = () => (db.prepare('select count(*) n from calls').get() as any).n;
   ledger.sweep(Date.now() + 3 * hour + 60_000);
   const first = callRow(lost.id).job, before = calls();
@@ -1032,7 +1034,7 @@ test('a late hand-over reaches the call the sweep ended; a silent call the sweep
 
 test('a late hand-over gets no fresh attempts: a call that used its three stays with the one it has, and the sweep says so', async () => {
   const lost = await aCall('kit', []);
-  await agent('item', lost.token, { kind: 'promise', owner: 'kit', goal: 'g', what: 'Send Juno the mission note', quote: 'I will send it' });
+  await agent('item', lost.token, { kind: 'task', owner: 'kit', goal: 'g', what: 'Send Juno the mission note', quote: 'I will send it' });
   ledger.sweep(Date.now() + 3 * hour + 60_000);
   for (let attempt = 1; attempt < 3; attempt++) {   // its first two follow-ups fail, and the sweep sends it again
     const failed = callRow(lost.id).job;
@@ -1050,7 +1052,7 @@ test('a late hand-over gets no fresh attempts: a call that used its three stays 
 
 test("a promise recorded on the call, or by a follow-up before a late transcript, isn't the call followed up", async () => {
   const c = await aCall('kit', TALK);
-  await agent('item', c.token, { kind: 'promise', owner: 'kit', goal: 'g', what: 'Send Juno the mission note', quote: TALK[1] });
+  await agent('item', c.token, { kind: 'task', owner: 'kit', goal: 'g', what: 'Send Juno the mission note', quote: TALK[1] });
   await c.end();
   const first = callRow(c.id).job;
   await claim(first); await finish(first, { status: 'done', result: 'Nothing to do.' });
@@ -1059,7 +1061,7 @@ test("a promise recorded on the call, or by a follow-up before a late transcript
   assert.notEqual(callRow(c.id).job, first, 'sent again');
   // lost, then followed up without the transcript: when it comes in late, that follow-up's items aren't enough
   const lost = await aCall('kit', []);
-  await agent('item', lost.token, { kind: 'promise', owner: 'kit', goal: 'g', what: 'Send Juno the mission note', quote: 'I will send it' });
+  await agent('item', lost.token, { kind: 'task', owner: 'kit', goal: 'g', what: 'Send Juno the mission note', quote: 'I will send it' });
   ledger.sweep(Date.now() + 3 * hour + 60_000);   // ended with no hand-over: only the promise is on it
   const empty = callRow(lost.id).job;
   await claim(empty); await finish(empty, { status: 'done', result: 'Nothing to do.' });
@@ -1084,7 +1086,7 @@ test("the intercom: a turn that ended before the call's line reached it hasn't h
   const r = (jobs.createRequest({ kind: 'decision', title: 'Which headline?', body: 'x', agent: 'juno', job: turn }) as { id: number }).id;   // (an earlier run's hq ask)
   const t = await claim(turn);   // an unrelated turn is running
   const c = await aCall('juno', ['Board: The second headline.'], r);
-  await agent('item', c.token, { kind: 'promise', owner: 'juno', goal: 'g', what: 'Tell Kit', quote: 'Board: The second headline.' });
+  await agent('item', c.token, { kind: 'task', owner: 'juno', goal: 'g', what: 'Tell Kit', quote: 'Board: The second headline.' });
   await c.end();
   assert.equal(callRow(c.id).job, turn);
   await finish(turn, { status: 'done', result: 'Morning!' });
@@ -1201,7 +1203,7 @@ exit 0
 test('a call whose only item is its own promise is followed up once the follow-up hands it out, links it or drops it', async () => {
   for (const how of ['hand out', 'link', 'drop', 'nothing'] as const) {
     const c = await aCall('kit', TALK);
-    const p = (await agent('item', c.token, { kind: 'promise', owner: 'kit', goal: 'g', what: 'Send Juno the mission note', quote: TALK[1] })).body.id;
+    const p = (await agent('item', c.token, { kind: 'task', owner: 'kit', goal: 'g', what: 'Send Juno the mission note', quote: TALK[1] })).body.id;
     // the call's own hand-out during the call (the job tool's item) isn't anyone going through the call
     if (how === 'nothing') assert.equal((await agent('job', c.token, { agent: 'kit', title: 'Mission note', prompt: 'Send it', item: p })).status, 200);
     await c.end();
@@ -1217,13 +1219,13 @@ test('a call whose only item is its own promise is followed up once the follow-u
 
 test('the voice line restarting its call agent mid-call goes on with the same call and token', async () => {
   const c = await aCall('kit', TALK), calls = () => (db.prepare('select count(*) n from calls').get() as any).n, n = calls();
-  const p = (await agent('item', c.token, { kind: 'promise', owner: 'kit', goal: 'g', what: 'Send Juno the mission note', quote: TALK[1] })).body.id;
+  const p = (await agent('item', c.token, { kind: 'task', owner: 'kit', goal: 'g', what: 'Send Juno the mission note', quote: TALK[1] })).body.id;
   const again = await voice('call-context', { agent: 'kit', lang: 'en', request: 0, token: c.token });
   assert.equal(again.status, 200);
   assert.equal(again.body.token, c.token);
-  assert.match(again.body.prompt, /promise before you say\s+it's done/);
+  assert.match(again.body.prompt, /write down with write_down before you say\s+it's done/);
   assert.equal(calls(), n, 'no second row');
-  const q = (await agent('item', again.body.token, { kind: 'promise', owner: 'kit', goal: 'g', what: 'Build the page', quote: TALK[0] })).body.id;
+  const q = (await agent('item', again.body.token, { kind: 'task', owner: 'kit', goal: 'g', what: 'Build the page', quote: TALK[0] })).body.id;
   await c.end();
   assert.deepEqual([item(p).call, item(q).call, callRow(c.id).status], [c.id, c.id, 'ended']);
   // a token the call no longer has (it ended), or someone else's, is refused: a restart never starts a call of its own
@@ -1381,7 +1383,7 @@ test("a follow-up that never went through the call's correction tells its runnin
 
 test("another job acting on the call's items isn't its follow-up going through the call", async () => {
   const c = await aCall('kit', TALK);
-  const p = (await agent('item', c.token, { kind: 'promise', owner: 'kit', goal: 'g', what: 'Send Juno the mission note', quote: TALK[1] })).body.id;
+  const p = (await agent('item', c.token, { kind: 'task', owner: 'kit', goal: 'g', what: 'Send Juno the mission note', quote: TALK[1] })).body.id;
   const j = (await agent('job', c.token, { agent: 'kit', title: 'Mission note', prompt: 'Send it', item: p })).body.id;
   assert.match(job(j).prompt, /What the call agent noted on the call[^]*in its own words, not the board's/, "a call-noted line isn't passed off as the board's words");
   await c.end();
@@ -1437,7 +1439,7 @@ test("a promise whose job ends done is ready, stays on what the board asked for,
 test('a promise whose job ended done before the follow-up got to it: the follow-up links it to say it went through it', async () => {
   for (const ack of [true, false]) {
     const c = await aCall('kit', TALK);
-    const p = (await agent('item', c.token, { kind: 'promise', owner: 'kit', goal: 'g', what: 'Send Juno the mission note', quote: TALK[1] })).body.id;
+    const p = (await agent('item', c.token, { kind: 'task', owner: 'kit', goal: 'g', what: 'Send Juno the mission note', quote: TALK[1] })).body.id;
     // (started on the call: one queued on it waits for its end otherwise)
     const j = (await agent('job', c.token, { agent: 'kit', title: 'Mission note', prompt: 'Send it', item: p, now: true })).body.id;
     await claim(j);
@@ -1462,7 +1464,7 @@ test('a promise whose job ended done before the follow-up got to it: the follow-
 // Pylon #2307 (PR #233's review, round 2): a promise the call handed out whose job hasn't run yet.
 test("a promise the call handed out whose job hasn't run: the follow-up links that job, and the item stays open until it's done", async () => {
   const c = await aCall('kit', TALK);
-  const p = (await agent('item', c.token, { kind: 'promise', owner: 'kit', goal: 'g', what: 'Send Juno the mission note', quote: TALK[1] })).body.id;
+  const p = (await agent('item', c.token, { kind: 'task', owner: 'kit', goal: 'g', what: 'Send Juno the mission note', quote: TALK[1] })).body.id;
   const j = (await agent('job', c.token, { agent: 'kit', title: 'Mission note', prompt: 'Send it', item: p })).body.id;
   await c.end();
   const f = callRow(c.id).job, t = await claim(f);
@@ -1483,7 +1485,7 @@ test("a promise the call handed out whose job hasn't run: the follow-up links th
 // briefing's items and keeps the ones the agent heard before.
 test("a call replaces only the items its briefing listed, or its own; a restart adds the new briefing's", async () => {
   const earlier = await aCall('kit', []), promise = async (token: string, what: string) =>
-    (await agent('item', token, { kind: 'promise', owner: 'kit', goal: 'g', what, quote: 'I will' })).body.id as number;
+    (await agent('item', token, { kind: 'task', owner: 'kit', goal: 'g', what, quote: 'I will' })).body.id as number;
   const old = await promise(earlier.token, 'Print the old sticker sheet');
   const queued = (await agent('job', earlier.token, { agent: 'kit', title: 'Stickers', prompt: 'x', item: old })).body.id;
   const recent: number[] = [];
@@ -1519,7 +1521,7 @@ test("a call replaces only the items its briefing listed, or its own; a restart 
 // what can grow (open request titles have no cap), and a line fit() cut off anyway (a call about a request with an
 // over-long title) isn't listed, on a new call or a restart; a restart keeps the ones heard before.
 test("an open item whose line an over-long briefing cut isn't the call's to replace, on a restart too", async () => {
-  const promise = async (token: string, what: string) => (await agent('item', token, { kind: 'promise', owner: 'kit', goal: 'g', what, quote: 'I will' })).body.id as number;
+  const promise = async (token: string, what: string) => (await agent('item', token, { kind: 'task', owner: 'kit', goal: 'g', what, quote: 'I will' })).body.id as number;
   const shown = (id: number) => JSON.parse((db.prepare('select listed from call_tokens where call = ?').get(id) as any).listed) as number[];
   const earlier = await aCall('kit', []), x = await promise(earlier.token, 'Order the cut sample');
   const queued = (await agent('job', earlier.token, { agent: 'kit', title: 'Cut sample', prompt: 'x', item: x })).body.id;
@@ -1696,7 +1698,7 @@ test('a call whose follow-ups recorded nothing fails; the board adds what was mi
 
 test("the board's items acted on, before a late transcript or after it, aren't the transcript followed up", async () => {
   const lost = await aCall('kit', []);
-  await agent('item', lost.token, { kind: 'promise', owner: 'kit', goal: 'g', what: 'Send Juno the mission note', quote: 'I will send it' });
+  await agent('item', lost.token, { kind: 'task', owner: 'kit', goal: 'g', what: 'Send Juno the mission note', quote: 'I will send it' });
   ledger.sweep(Date.now() + 3 * hour + 60_000);   // ended with no hand-over: only the promise is on it
   const r = await board({ call: lost.id, what: 'Put the call volume slider back' });
   assert.equal(r.status, 200);
@@ -1724,15 +1726,15 @@ test("a promise's time, noted on the call, becomes the deadline of the thread of
   const deadlineOf = (thread: string) => ({ ...(db.prepare('select deadline, deadline_by from threads where id = ?').get(thread) as any) });
   const aimOf = (thread: string) => (db.prepare('select aim from threads where id = ?').get(thread) as { aim: number | null }).aim;
   const c = await aCall('juno', ['Board: When is the share link live?', 'Juno: In two or three hours.', 'Board: And the deck?', 'Juno: Wren has it to you by six.']);
-  const link = await agent('item', c.token, { kind: 'promise', owner: 'bolt', goal: 'g', what: 'The share link is live', deadline: '3h' });
+  const link = await agent('item', c.token, { kind: 'task', owner: 'bolt', goal: 'g', what: 'The share link is live', deadline: '3h' });
   assert.equal(link.status, 200);
   assert.ok(Math.abs(item(link.body.id).due - (Date.now() + 3 * hour)) < 60_000, 'three hours from when it was said');
-  assert.equal((await agent('item', c.token, { kind: 'promise', owner: 'bolt', goal: 'g', what: 'x', deadline: 'soon' })).status, 400);
+  assert.equal((await agent('item', c.token, { kind: 'task', owner: 'bolt', goal: 'g', what: 'x', deadline: 'soon' })).status, 400);
   // the call's own job for a promise with a time: refused while it names no thread (its token has no job to inherit one
   // from), with how to draw or join one and nothing queued; with one, the time is that thread's window, from juno.
   const onCall = h.dueThread();
   const count = (title: string) => (db.prepare('select count(*) n from jobs where title = ?').get(title) as any).n;
-  const banner = (await agent('item', c.token, { kind: 'promise', owner: 'bolt', goal: 'g', what: 'The banner', deadline: '2h' })).body.id;
+  const banner = (await agent('item', c.token, { kind: 'task', owner: 'bolt', goal: 'g', what: 'The banner', deadline: '2h' })).body.id;
   const unnamed = await agent('job', c.token, { agent: 'bolt', title: 'The banner', prompt: 'Make it.', item: banner });
   assert.equal(unnamed.status, 409);
   assert.match(unnamed.body.error, /this job would be in none: name the deliverable it serves, --deliverable new:<project> "name" "done when" draws its own/);
@@ -1901,7 +1903,7 @@ test("a follow-up that isn't the CEO's links a timed promise to the call's work 
 // call.
 test('a call placed before the last one is followed up carries on from it; its follow-up waits, then acts on the new part', async () => {
   const first = await aCall('moss', ['Board: Make the brand film in blue.', 'Moss: Blue it is.', 'Board: And send me the storyboard.']);
-  const promised = (await agent('item', first.token, { kind: 'promise', owner: 'moss', goal: 'g', what: 'Brand film in blue', quote: 'Moss: Blue it is.' })).body.id;
+  const promised = (await agent('item', first.token, { kind: 'task', owner: 'moss', goal: 'g', what: 'Brand film in blue', quote: 'Moss: Blue it is.' })).body.id;
   await first.end();
   const f1 = callRow(first.id).job;
   const second = await aCall('moss', ['Board: Actually, make that film green.', 'Board: Forget the storyboard.', 'Board: And book the studio.'], 0, { carry: true });
@@ -1910,7 +1912,7 @@ test('a call placed before the last one is followed up carries on from it; its f
   assert.ok(p.includes(`## Carrying on from your call #${first.id}\n`));
   assert.ok(p.indexOf('[1] Board: Make the brand film in blue.') > 0 && p.indexOf('[3] Board: And send me the storyboard.') < starts && starts > 0,
     'the earlier transcript, then where this call starts');
-  assert.ok(p.includes(`- #${promised}: Brand film in blue (promise for moss, open)`));
+  assert.ok(p.includes(`- #${promised}: Brand film in blue (task for moss, open)`));
   assert.ok(!p.includes(`- #${promised}: Brand film in blue (moss)`), 'once: the still-open list leaves it out');
   // the call corrects the earlier call's open promise (its briefing numbered it), and a restart still carries on
   const fixed = await agent('item', second.token, { goal: 'g', what: 'Brand film in green', quote: 'Board: Actually, make that film green.', replaces: promised });

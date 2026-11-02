@@ -15,6 +15,7 @@ export function onEvent(ev) {
   // typed onto a page names it, which the book reads again if it's open, bookpages.js.)
   // (a notebook's page changed, by this screen or another of the board's: every screen showing it reads it again,
   // bookpages.js.)
+  if (ev.type === 'viewmarks') return void document.dispatchEvent(new CustomEvent('viewmarks', { detail: ev.marks }));
   if (ev.type === 'book' && ev.text === 'notebook')
     return void document.dispatchEvent(new CustomEvent('book:notebook', { detail: { page: ev.page ?? null } }));
   if (ev.type === 'book')

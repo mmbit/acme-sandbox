@@ -6,7 +6,7 @@
 // every control whole (a second column). Each asserts what the board sees: boxes, pixels, words. (the short window)
 import assert from 'node:assert/strict';
 import { shutBook } from './bookchrome.mjs';
-import { DESKTOP, MINI } from './bookkit.mjs';
+import { DESKTOP, MINI, OVERVIEW } from './bookkit.mjs';
 
 // Laptops' windows under their browser's bars: a 768 px screen's, a 13-inch's with its bookmarks and Dock, and one
 // with its developer tools docked below, the one short enough for the stack's second column
@@ -28,7 +28,7 @@ export function frameStories(c) {
       pairCard(browser, c),
     "a laptop-height window: every control in the book's islands whole, Undo and Redo at their foot among them":
       browser => shortWindow(browser, c),
-    "a hardcover: the black board round the pages at the head, the foot and the outer edge beside HQ's page; upright, the page fills the screen":
+    "a hardcover: the black board on the outer edge beside HQ's page, the pages the screen's height; upright, the page fills the screen":
       browser => hardcover(browser, c),
   };
 }
@@ -147,8 +147,8 @@ async function pairCard(browser, c) {
     await page.route(/\/api\/notebooks\/pair$/, r =>
       r.fulfill({ json: { code: '915183', expires: Date.now() + 60_000 } }),
     );
-    // (Devices is on the overview's island)
-    await page.getByRole('button', { name: "The overview: the notebook's pages, and the Shelf", exact: true }).click();
+    // (Devices is on the overview's island.)
+    await page.getByRole('button', { name: OVERVIEW, exact: true }).click();
     await page.waitForTimeout(c.settle);
     await page.locator('#book').getByRole('button', { name: 'Devices', exact: true }).click();
     await whole(page, 'at its open width');

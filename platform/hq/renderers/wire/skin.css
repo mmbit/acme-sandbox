@@ -141,6 +141,16 @@ body.wire-dark ~ #book {
 body.wire-dark {
   color-scheme: dark;
 }
+/* the call's screen (style.css body.keys .call-face): dark in every colourway, the ink where the ground is light and the
+   ground taken further down where it's dark, its words in the light of the other */
+body {
+  --key-screen: var(--k-ink);
+  --key-screen-ink: var(--k-panel);
+}
+body.wire-dark {
+  --key-screen: color-mix(in srgb, var(--k-ground) 60%, #000);
+  --key-screen-ink: var(--k-ink);
+}
 body.wire-dark .brand img {
   content: var(--logo-dark); /* the brand's logo for dark grounds (main.js brandApp) */
 }

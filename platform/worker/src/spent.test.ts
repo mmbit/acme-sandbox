@@ -1,7 +1,15 @@
 // node --test src/spent.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { relaunched, report, see, spentOn } from './spent.ts';
+import { engineStarted, relaunched, report, see, spentOn } from './spent.ts';
+
+test('only a run that launched no engine reports explicit zero use', () => {
+  const spent = spentOn('claude');
+  assert.equal(report(spent).no_engine, true);
+  engineStarted(spent);
+  assert.equal(report(spent).no_engine, undefined);
+  assert.equal(report(spent).usage, undefined);
+});
 
 const result = (output: number) => ({
   type: 'result',

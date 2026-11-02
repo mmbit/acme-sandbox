@@ -52,6 +52,12 @@ its hello too), whose pin goes and whose Pencil inks red only (`review:call`), f
 the notebook by itself; its ink stays drawn until the agent's turn on it is done (`{ had: note }`) or the call ends
 .
 
+Alongside the call messages, framed review mode sends `{ hq: 'review', marks: anchor }` while the open mark is drawn
+and when it clears. HQ accepts it through its viewer's message intake and relays it through `POST /api/viewer/marks`
+and the transient `viewmarks` feed event. HQ sends `{ hq: 'hq', marks: [anchors] }` back with the other devices' open
+marks on that page. `sharing.js` draws them on the same element at each screen size. An empty ink list clears the
+sender's mark. These marks expire after three missed refreshes and stay out of the notebook and event history.
+
 **The pin** is just the pin, a red button with a pencil on it. The board reads, corrects, wipes and sends its notes in
 its book in HQ.
 
@@ -59,17 +65,18 @@ its book in HQ.
 modules beside it, one concern each: `tool.js` puts them together (the shared state, Escape and Cmd+Z) and no part
 imports it, `acts.js` what a part asks of the parts above it (put the note away, the pin pressed...), which tool.js
 hands in as it loads, so the imports form no circle, `dock.js` the pin (where it sits and when it shows), `surface.js` the page
-while it's marked (pen and finger), `eraser.js` the eraser's reach and icon, which HQ's book shares, `mark.js` what a mark keeps, `postit.js` the note's sheet and its polaroid (in the look of a scrap torn from HQ's book, its paper and indigo, on every page),
+while it's marked (pen and finger), `eraser.js` the eraser's reach and icon, which HQ's book shares, `mark.js` what a mark keeps,
+`sharing.js` the open mark shared live through HQ's viewer, `postit.js` the note's sheet and its polaroid (in the look of a scrap torn from HQ's book, its paper and indigo, on every page),
 `pictures.js` the pictures added, `dictation.js` the mic (with `micallowed.js`, whether it's allowed, which HQ's own
 recorder shares; `liveline.js`, the live line its words come over as they're said, which HQ's own recorder for the viewer shares; and `hqmic.js`, its part in HQ's viewer, where HQ's mic key lies over the post-it's and records at one tap), `snapshot.js` (with `copy.js`, `flow.js`, `inline.js` and `faces.js`)
-the screenshot, `trail.js` the trail, `layer.js` the layer over popups, `pencil.js`, `pentouch.js`, `tap.js`, `settle.js`, `lift.js`, `gestures.js`, `marks.js`, `markpage.js`, `markfollow.js` and `written.js` the Pencil on HQ
-and the mark being made (below), `penwords.js`, `penedit.js` and `postitpen.js` words edited with the pen (below),
+the screenshot, `trail.js` the trail, `layer.js` the layer over popups, `pencil.js`, `pentouch.js`, `tap.js`, `settle.js`, `lift.js`, `gestures.js`, `marks.js`, `markpage.js` and `markfollow.js` the Pencil on HQ
+and the mark being made (below),
 `slip.js` the answers on notes, `paper.js` the book's paper, `prefs.js` Ink's preferences on this device, `base.js` what
 they share. The coordinator serves
 each at `/__review/<name>.js` behind the same gate as the real `review.js`; only `anchor.js`, `frame.js`, `ink.js` with
 `inklive.js` and `inkshape.js` (which it imports), `paper.js`, `tap.js` and `micallowed.js` are open on every host.
-Its UI lives in an open shadow root, so the watch-along records it while product styles can't touch it
-, and it never logs or photographs itself. `frame.js` frames a note's screenshot on its mark (the circle, or the pinned element and the pin's
+
+Its UI lives in an open shadow root, so the watch-along records it while product styles can't touch it, and it never logs or photographs itself. `frame.js` frames a note's screenshot on its mark (the circle, or the pinned element and the pin's
 head), for review mode's polaroid and HQ's note thumbnails alike; `anchor.js` finds a mark's element again on any width
 (`node --test shared/review/frame.test.js shared/review/anchor.test.js`).
 
@@ -120,18 +127,11 @@ alone, so the imports form no circle.
 - **The words as they're said:** the mic's audio goes as 16 kHz PCM to `/__review/dictate` and each phrase's words come
   back while the reviewer talks (above). The clip is recorded too, and where the line can't be reached (or drops), it's
   transcribed whole by `POST /__review/voice`. Five minutes at most.
-- **Words edited with the pen** (`penwords.js`, `penedit.js` deciding what a stroke does): a stroke over words, the
-  post-it's (`postitpen.js`) or a box of words in HQ's book, strikes words out (a line along their middle) or slices the
-  text open (a line down through it). A slice opens a gap with a caret. The Pencil writes there, read as handwriting
-  once it rests and put in, and the gap moves on after the words; a keyboard types there. Closing the gap (Send, a press
-  elsewhere, Escape) puts in what was written before it closed, and its pad takes no more strokes. On a touch screen a
-  field the pen edits is read-only while it holds words, so Apple's Scribble never takes the Pencil there: a finger, a
-  tap or Tab gives it back to the keyboard (`node --test shared/review/penedit.test.js`).
-- **Handwriting on the post-it** (Scribble): the iPad looks for a field in a box round the pen's start, and stops at the
-  first thing over it whose box fills that box, clipped or not. So nothing over the words' field takes a touch (the
-  polaroid's framed screenshot is far wider than the photo), and the Pencil's handwriting brings no keyboard
-  (`inputmode="none"` until a finger's press on the field). Under its head the post-it names the page: Home at a site's
-  root, else its title.
+- **Handwriting on the post-it** (Apple's Scribble, the iPad's own: nothing of ours reads the pen): the iPad looks for
+  a field in a box round the pen's start, and stops at the first thing over it whose box fills that box, clipped or
+  not. So nothing over the words' field takes a touch (the polaroid's framed screenshot is far wider than the photo),
+  and the Pencil's handwriting brings no keyboard (`inputmode="none"` until a finger's press on the field). Under its
+  head the post-it names the page: Home at a site's root, else its title.
 
 `pen-check.mjs` runs it held like an iPad mini: a pen's tap, a pen's line opening a note, a palm, the inks and undo, the
 lines and the screenshot with them on the note, the pin dragged, the mic tapped with live words
@@ -178,17 +178,23 @@ it's the page's width and the book's spread covers it with the page; over a dial
   over a dialog. (`pentouch.js` has the pen's and the fingers' touches.) (pointers)
 - **Not for ink**: a page's floating control marked `data-no-ink` (HQ's minimised call) takes the pen as a finger, to
   drag or tap, never ink (`pentouch.js` theirs).
-- **Written words**: once the pen rests 1.2 s, the mark's lines go as a
-  picture of the ink alone, dark on white, to `POST /api/book/read` (the coordinator's `handwriting.ts`: a small model
-  on a seat says whether it's writing and what it says). The words are the note's while it holds no words
-  typed or said, stand beside the ink as type (`marks.js`), and the note keeps them as `written` (changed first:
-  `typed`). Lines that went before they were read are read as they go, and their words go in the note when they come (`note/edit`, then
-  `pencil:words` on the document for the book). Never on a call: its agent sees the ink.
+- **Written words** stay ink: the mark's lines are on its note's snip, and whoever reads the note reads them there
+  (a job by its picture, the book's judge with it). Nothing reads them into type (board, call 176).
 - **Hold the pen still** on one spot for half a second and talk: a red pulse at its tip, the words landing there as a
   note (a pin on what's under it) as the pen lifts, on a call too (the call's own hearing). Nothing heard, no note.
 - **Ring something** and the mark is on what's inside the ring. Nothing asks "are you sure?". An undo the book refuses
   changes nothing, and the step stays to take back.
 - The document hears `pencil:note` (`{ id, n, page, call }`) as each note goes into the book, for the book and a call.
+
+**The system's Undo** (`systemundo.js`): the system's own Undo and Redo (the Apple Pencil Pro's squeeze palette, the
+iPad's shortcut bar, Edit › Undo) reach a page with an undo of its own. Safari hands a page those only as an input
+event (`historyUndo`, `historyRedo`) on an editable with steps in the browser's undo history, so a hidden one keeps a
+step each way: the system's Undo takes back the page's last step, and the hidden step is put back at once, ready for
+the next. `systemUndo({ undo, redo }, { focused })` takes the page's own two; `focused` keeps the hidden editable
+focused (its keyboard stays down). It returns `{ arm(), armed(), stop() }`: `arm()` makes the two steps (with
+`focused`, it puts the focus back on them too), inside a touch or a click, as Safari focuses nothing otherwise, and
+again after any other edit on the page, which drops the browser's redo; `stop()` takes the editable and its
+listeners away.
 
 **On a call** (`callnotes.js`; HQ's `shell/ink/calldraw.js` tells it through `call:on`, `call:off`, `call:heard` and `call:had`;
 Ink's folder): a mark goes on the call's page in the book (`kind: 'call'`, made
@@ -396,8 +402,7 @@ Shoot the before and the after with the same arguments, so the two frames match.
 - **HQ's Reviews:** serve HQ (`node platform/hq/serve.mjs`) and open it on `localhost`. Dev mode kicks
   in and Sent reads `mock/book-sheets.json` and `mock/review.json`.
 - **The tool on a page:** serve a product's `app/public/` and, in Playwright, route `**/__review/*.js` to this
-  folder (`parts.mjs` does it) and `**/__review/notes` to a stub that records the POST body. The UI's shadow root is closed:
-  force it open with an init script that wraps `Element.prototype.attachShadow`. The pin button bobs, so click
+  folder (`parts.mjs` does it) and `**/__review/notes` to a stub that records the POST body. The UI's shadow root is open, so Playwright can reach its controls. The pin button bobs, so click
   it with `{ force: true }`.
 - **The book:** `node platform/hq/book-check.mjs [--shots dir]`, the book's stories in a browser.
 - **The gate:** `cd platform/coordinator && node --test src/feedback.test.ts`.

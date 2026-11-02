@@ -113,6 +113,26 @@ threads[banners.id] = {
   ...banners,
   jobs: banners.jobs.map(j => ({ ...j, status: 'done', request: null, finished: '2026-10-19T09:00:00Z' })),
 };
+// every project and deliverable with a feature's cost, which the view never shows
+const spend = tokens => ({ tokens, seat_weeks: null });
+const used = {
+  total: spend(1500),
+  split: { work: spend(800), reviews: spend(200), fixes: spend(100), feedback: spend(400) },
+  missing_usage: 1,
+};
+const cost = { expected: null, used, feedback_rounds: 1, approved: null, after_delivery: { total: spend(400) } };
+const projectCost = { expected_tokens: 0, features: 1, missing_estimates: 1, used };
+for (const project of board.projects) {
+  project.cost = projectCost;
+  for (const thread of [...project.threads, ...project.done]) thread.cost = cost;
+}
+// (a completed project's done is its date)
+for (const project of board.completed) {
+  project.cost = projectCost;
+  for (const thread of project.threads) thread.cost = cost;
+}
+for (const thread of Object.values(threads)) thread.cost = cost;
+const COST = /tokens|seat[- ]week|seat use|feature cost|not estimated|through approval|first delivery|metered/gi;
 // the platform's mock org, jobs, schedule and cards (the dev server's own are the company's), so every face is the look's portrait.
 const files = {
   'mock/projects.json': Buffer.from(JSON.stringify(board)),
@@ -224,14 +244,22 @@ for (const look of RENDERERS)
           .filter(e => [getComputedStyle(e).color, getComputedStyle(e).backgroundColor].includes(red))
           .map(e => e.className || e.tagName);
       });
-    // the board never reads a job's number, and nothing is underlined
+    // the board never reads a job's number or a feature's cost, and nothing is underlined
     const plain = () =>
-      page.evaluate(() => ({
-        numbers: document.querySelector('#projects').innerText.match(/#\d+/g) ?? [],
-        underlined: [...document.querySelectorAll('#projects *')]
-          .filter(e => getComputedStyle(e).textDecorationLine.includes('underline'))
-          .map(e => e.className || e.tagName),
-      }));
+      page.evaluate(
+        ([source, flags]) => {
+          const words = document.querySelector('#projects').innerText;
+          return {
+            numbers: words.match(/#\d+/g) ?? [],
+            costs: words.match(new RegExp(source, flags)) ?? [],
+            underlined: [...document.querySelectorAll('#projects *')]
+              .filter(e => getComputedStyle(e).textDecorationLine.includes('underline'))
+              .map(e => e.className || e.tagName),
+          };
+        },
+        [COST.source, COST.flags],
+      );
+    const PLAIN = { numbers: [], costs: [], underlined: [] };
     // tiles' covers: the picture's file, or the fallback's initial; and the bars over each one's cover, a voice for each
     // job running
     const covers = tiles =>
@@ -407,7 +435,7 @@ for (const look of RENDERERS)
     assert.ok(hud.board >= hud.hud - 1, `${at}: the keys scroll under the HUD's edge (${JSON.stringify(hud)})`);
     assert.deepEqual(await offScreen(), [], at);
     assert.deepEqual(await reds(), [], at);
-    assert.deepEqual(await plain(), { numbers: [], underlined: [] }, at);
+    assert.deepEqual(await plain(), PLAIN, at);
     assert.ok(!(await page.$('#projects .sides')), `${at}: no sides`);
     await shot('home');
 
@@ -415,6 +443,7 @@ for (const look of RENDERERS)
     await tap(page, '[data-business=shopfront]');
     await level('The shopfront');
     assert.deepEqual(await texts(page, '[data-project] b'), ['The sticker shop', 'The newsletter'], at);
+    assert.deepEqual(await plain(), PLAIN, at);
     assert.deepEqual(
       await page.$$eval('.pj-head .pj-mark.you', m => m.map(e => e.title)),
       ['Waits for you'],
@@ -534,6 +563,7 @@ for (const look of RENDERERS)
     await tap(page, '[data-project=shop]');
     await level('The sticker shop');
     assert.deepEqual(await texts(page, '.pj-head small'), ['The shopfront'], `${at}: the level above, over its name`);
+    assert.deepEqual(await plain(), PLAIN, at);
     assert.equal(
       await page.$eval('.pj-head .pj-marks .pj-owner', e => e.dataset.name),
       'Kit, owner',
@@ -659,7 +689,7 @@ for (const look of RENDERERS)
       at,
     );
     assert.deepEqual(await texts(page, '.pj-head .pj-keys button'), [], `${at}: nothing finished to fold away`);
-    assert.deepEqual(await plain(), { numbers: [], underlined: [] }, at);
+    assert.deepEqual(await plain(), PLAIN, at);
     await shot('thread');
     // a finished review shows what it found on its row, in ink when something blocks, and its ruling the verdict; a tap
     // lists each finding, blocking or a note, with what became of it
@@ -907,7 +937,7 @@ for (const look of RENDERERS)
     // (and a tap opens an older one)
     await tap(page, '.pj-card .steplog li[data-k]:nth-child(2) span');
     assert.ok(await page.$('.pj-card .steplog li[data-k]:nth-child(2).open'), `${at}: a tap opens an older step`);
-    assert.deepEqual(await plain(), { numbers: [], underlined: [] }, at);
+    assert.deepEqual(await plain(), PLAIN, at);
     assert.deepEqual(await offScreen(), [], at);
     await shot('job');
     // a job it leads to opens in its place, on its front; Escape closes the job, then goes up a level at a time
@@ -1262,6 +1292,7 @@ for (const look of RENDERERS)
       `${at}: the completed threads, in place of the ongoing`,
     );
     assert.deepEqual(await page.$$eval('.pj-head [data-done]', k => k.map(e => e.ariaPressed)), ['false', 'true'], at);
+    assert.deepEqual(await plain(), PLAIN, at);
     await shot('completed');
     await tap(page, '[data-done=ongoing]');
     assert.deepEqual(await texts(page, `${box('[data-thread]')} b`), ['Banners for the posts'], `${at}: and back`);

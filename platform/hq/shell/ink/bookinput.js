@@ -31,16 +31,15 @@ export function mountInput(book) {
   stylesheet('shell/ink/bookinput.css');
   // last: a tap, the first half of a double tap maybe; stepAtPress: the book's last step as the press began, for the
   // dot the tap drew (the step it made since.)
-  const input = { book, last: null, stepAtPress: null, hold: null, pen: false, mic: null };
-  addEventListener('pointerdown', e => e.pointerType === 'pen' && (input.pen = true), true);
+  const input = { book, last: null, stepAtPress: null, hold: null, mic: null };
   book.desk.addEventListener('pointerdown', e => pressed(input, e), true);
   addEventListener('pointermove', e => input.hold && moved(input, e), true);
   addEventListener('pointerup', e => lifted(input, e), true);
   addEventListener('pointercancel', e => !e.unmade && letGo(input, e), true);
   microphones(input);
   return (book.input = {
-    // A finger moves the page, rather than drawing, once a pen has been used here, where the preferences say so
-    fingerPans: () => input.pen && prefs().penPans,
+    // A finger moves the page, rather than drawing, where this device's preferences say so (on since its first pen)
+    fingerPans: () => prefs().penPans,
     claims: e => !!e.target?.closest?.('.bk-strip') || !!kindOf(input, e),
   });
 }

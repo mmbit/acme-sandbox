@@ -38,7 +38,6 @@ export function drain(play: Play, now: number) {
     if (run.state !== 'running' || !run.seat) continue;
     if (!capacity.pausesAtStop(run.seat)) continue;
     if (!capacity.drained(run.seat, now, play.seats)) continue;
-    capacity.awaitDrainRead(run.seat, now);
     play.started.splice(play.started.indexOf(run), 1);
     run.left = Math.max(0, run.ends - now);
     run.state = 'waiting';

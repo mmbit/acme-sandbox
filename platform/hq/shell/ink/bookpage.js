@@ -4,9 +4,10 @@
 // The page is its units (bookunits.js): each draws its pictures and dry ink on a canvas of its own at its place, as
 // big as the unit and what's drawn on it. (were tiles across an endless page; what's drawn)
 import { draw } from '/__review/ink.js';
-import { drawScrap } from './bookscrapdraw.js';
+import { drawScrap, drawnBox } from './bookscrapdraw.js';
 import { picture } from '../../util.js';
 import { pageBox } from './bookrow.js';
+import { union } from './bookselectmath.js';
 import { landing } from './bookgroupmath.js';
 import { mountAnswers } from './bookanswers.js';
 import { nameOf } from './bookhead.js';
@@ -48,7 +49,8 @@ export function pageView(page, held = false) {
       tiles.show(box, r);
       if (!box) return;
       Object.assign(refusal.style, { top: `${box.y0 + 12}px`, left: `${(box.x0 + box.x1) / 2}px` });
-      // (how far the paper's top is down the page, for what stays in view there; the box's bottom: job #19861)
+      // How far the paper's top is down the page, for what stays in view there: never past 140 px above the page's
+      // foot.
       el.style.setProperty('--bk-above', `${Math.round(Math.max(0, Math.min(box.y0, pageBox(page).y1 - 140)))}px`);
     },
     addInk: tiles.addInk,
@@ -112,9 +114,11 @@ function paint(st, p) {
     st.el.prepend(canvas);
     units.set(p.id, { canvas, id: p.id });
   }
-  // (as big as the unit, and further wherever its ink reaches past it: nothing drawn is cut.)
-  const { canvas } = units.get(p.id),
-    r = reachOn(page, p),
+  // (as big as the unit, and further wherever its ink, a scrap's tape or its shadow reaches past it: nothing drawn is
+  // cut.)
+  const scraps = page.scraps.filter(s => s.g === p.id && !landing(page, s)),
+    { canvas } = units.get(p.id),
+    r = scraps.map(drawnBox).reduce(union, reachOn(page, p)),
     [x, y] = [Math.floor(r.x0), Math.floor(r.y0)],
     [cw, ch] = [Math.ceil(r.x1) - x, Math.ceil(r.y1) - y],
     k = devicePixelRatio || 1,
@@ -126,7 +130,7 @@ function paint(st, p) {
   g.setTransform(1, 0, 0, 1, 0, 0);
   g.clearRect(0, 0, w, h);
   g.setTransform(k, 0, 0, k, -x * k, -y * k);
-  for (const s of page.scraps) if (s.g === p.id && !landing(page, s)) drawScrap(g, withPicture(st, s));
+  for (const s of scraps) drawScrap(g, withPicture(st, s));
   const here = page.ink.filter(s => s.g === p.id && !landing(page, s));
   draw(g, [...here.filter(s => s.alpha < 1), ...here.filter(s => !(s.alpha < 1))]);
 }

@@ -26,6 +26,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 os.environ.setdefault('HQ_URL', 'http://127.0.0.1:9')
 os.environ.setdefault('ORIGIN', 'https://hq.test')
 os.environ.setdefault('VOICE_TOKEN', 'replay')
+os.environ.setdefault('HQ_TOOLS_REPO', str(Path(__file__).resolve().parents[2]))  # (hq_tools.py's company files)
 try:
     import pocket_tts  # noqa: F401
 except ImportError:  # (the agent's voice doesn't matter here: 2 s of near silence a sentence)

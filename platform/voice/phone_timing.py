@@ -48,9 +48,10 @@ with socket.socket() as s:
     s.bind(('127.0.0.1', 0))
     PORT = s.getsockname()[1]
 sys.path.insert(0, str(HERE))
+# (HQ_TOOLS_REPO)
 os.environ.update({'HQ_URL': 'http://127.0.0.1:9', 'ORIGIN': 'https://hq.test', 'VOICE_TOKEN': 'timing',
                    'CARE_ENGINES': json.dumps({ENGINE: {'url': f'http://127.0.0.1:{PORT}', 'token': 'CARE_TIMING_TOKEN'}}),
-                   'CARE_TIMING_TOKEN': 'timing'})
+                   'CARE_TIMING_TOKEN': 'timing', 'HQ_TOOLS_REPO': str(REPO)})  # (hq_tools.py's company files)
 texts = json.loads(subprocess.run(['node', '-e', "import('./products/care/src/texts.ts').then(m => console.log("
                                    "JSON.stringify(m.texts)))"], cwd=REPO, capture_output=True, text=True, check=True).stdout)
 WORDS = {lang: {k: texts[lang][f'phone_{k}'] for k in ('ai', 'reply_ai', 'transcript', 'ask', 'objected', 'fine')

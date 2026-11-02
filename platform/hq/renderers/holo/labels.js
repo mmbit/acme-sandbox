@@ -5,6 +5,7 @@ import { TAU, add, polar } from './gl.js';
 import { TABLE_Y, CORE, built, agentAt } from './deck.js';
 import { area } from './camera.js';
 import { ART } from './draw.js';
+import { CW, CH, FOOT } from '../brownstone/sprites.js';
 
 const FACE = "Rajdhani, 'DejaVu Sans', 'Segoe UI', sans-serif";
 // the deck's lettering, its labels' and its UI's (skin.css), from Google Fonts (the only fonts HQ's CSP allows), once per
@@ -193,25 +194,30 @@ export function portrait(col, kind, sprite) {
   for (let y = 0; y < 112; y += 3) g.fillRect(0, y, 56, 1);
   return c;
 }
-// A person: their pixel avatar (the brownstone's sprite, 14×28, so the same face in every look) at three times its size,
-// 48×96 as the panel shows it, so it stays crisp: lit in their room's colour by its own light and dark (with some of its
-// own colours, so a face stays theirs), every other row
-// dimmed, a soft glow round it, over a projector's beam
+// a person's hologram: their sprite at UP times its size, TOP px down its picture
+const UP = 3, TOP = 6;
+// how much of that picture lies below their feet: the call's floor meets them there (scene.js portrait)
+export const HOLOGRAM_FOOT = 1 - (TOP + UP * FOOT) / 96;
+// A person: their pixel avatar (the brownstone's sprite, 14×28, so the same face in every look) at three times its
+// size, six px down a 48×96 picture as the panel shows it, so it stays crisp: lit in their room's colour by its own light
+// and dark (with some of its own colours, so a face stays theirs), every other row dimmed, a soft glow round it, over a
+// projector's beam
 function hologramOf(sprite, col) {
-  const c = canvas(48, 96), g = c.getContext('2d'), s = canvas(42, 84), h = s.getContext('2d');
-  h.imageSmoothingEnabled = false; h.drawImage(sprite, 0, 0, 42, 84);
-  const px = h.getImageData(0, 0, 42, 84), d = px.data;
+  const sw = CW * UP, sh = CH * UP;
+  const c = canvas(48, 96), g = c.getContext('2d'), s = canvas(sw, sh), h = s.getContext('2d');
+  h.imageSmoothingEnabled = false; h.drawImage(sprite, 0, 0, sw, sh);
+  const px = h.getImageData(0, 0, sw, sh), d = px.data;
   for (let i = 0; i < d.length; i += 4) {
     if (!d[i + 3]) continue;
     const light = (0.3 * d[i] + 0.59 * d[i + 1] + 0.11 * d[i + 2]) / 255;
     for (let k = 0; k < 3; k++) d[i + k] = Math.min(255, 255 * (0.62 * Math.min(1, col[k]) * (0.12 + 1.15 * light) + 0.38 * d[i + k] / 255));
-    d[i + 3] = (i / 4 / 42 | 0) % 2 ? 150 : 235;
+    d[i + 3] = (i / 4 / sw | 0) % 2 ? 150 : 235;
   }
   h.putImageData(px, 0, 0);
   const beam = g.createLinearGradient(0, 92, 0, 20);
   beam.addColorStop(0, rgba(col, 0.3)); beam.addColorStop(1, rgba(col, 0));
   g.fillStyle = beam; g.beginPath(); g.moveTo(17, 89); g.lineTo(31, 89); g.lineTo(46, 20); g.lineTo(2, 20); g.fill();
   g.strokeStyle = rgba(col, 0.9); g.lineWidth = 1.2; g.beginPath(); g.ellipse(24, 89, 12, 2.5, 0, 0, TAU); g.stroke();
-  g.shadowColor = rgba(col, 0.9); g.shadowBlur = 5; g.drawImage(s, 3, 6);
+  g.shadowColor = rgba(col, 0.9); g.shadowBlur = 5; g.drawImage(s, 3, TOP);
   return c;
 }

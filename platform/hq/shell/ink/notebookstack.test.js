@@ -1,7 +1,7 @@
 // node --test platform/hq/shell/ink/notebookstack.test.js   (where a notebook's new things land: pure)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { boxOf, landingPage, scrapSize, slipsUnder, STACK } from './notebookstack.js';
+import { boxOf, landingPage, scrapSize, slipsUnder, STACK, TALL } from './notebookstack.js';
 
 const page = (id, created, more = {}) => ({ id, created, archived: 0, send_at: null, tries: null, ...more });
 const sent = p => p.send_at !== null;
@@ -41,14 +41,11 @@ test("a group's box holds its strokes' width, its words' lines and its pictures"
   assert.deepEqual(boxOf({ ink: [stroke], texts: [text], pictures: [picture] }), { x: -20, y: 0, w: 200, h: 62 });
 });
 
-test("a scrap's picture as wide as it was cut, at most the stack's width; a tall crop shorter, but still readable", () => {
+test("a scrap's picture as wide as it was cut, at most the stack's width; a tall crop at most TALL.h, however narrow", () => {
   assert.deepEqual(scrapSize(240, 150), { w: 240, h: 150 }, 'as cut');
   assert.deepEqual(scrapSize(720, 360), { w: STACK.w, h: 157 }, 'a wide one at the stack width');
-  const tall = scrapSize(390, 900);
-  assert.ok(tall.h <= 470 && tall.h < (900 * STACK.w) / 390, `shorter than its width would make it: ${tall.h}`);
-  const tower = scrapSize(390, 3000),
-    fit = STACK.w / 390;
-  assert.ok(Math.abs(tower.w / 390 - fit * 0.6) < 0.01, `a tower scaled no less than readable: ${tower.w}`);
+  assert.deepEqual(scrapSize(390, 900), { w: 139, h: TALL.h }, 'a tall one at the cap');
+  assert.deepEqual(scrapSize(80, 1133), { w: 23, h: TALL.h }, "a strip of HQ's keys, top to bottom, at the cap too");
 });
 
 test("what's slipped under a group: a reply matched only by the answer it answers, never by its own id", () => {

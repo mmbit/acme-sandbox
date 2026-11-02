@@ -34,10 +34,9 @@ writeFileSync(
   '---\nquestion: What data do you keep?\nsource: the privacy notice\nverified: 2026-10-21\nanswers: "H-1001, H-1002"\n---\nThe chat keeps the conversation and anything sent to the team.\n',
 );
 
-const PORT = 20000 + Math.floor(Math.random() * 20000);
 Object.assign(process.env, {
   DATA_DIR: mkdtempSync(join(tmpdir(), 'care-rights-')),
-  PORT: String(PORT),
+  PORT: '0',
   CARE_LOCAL: '1',
   CARE_PROVIDER: 'fake',
   CARE_KB_DIR: KB_DIR,
@@ -53,11 +52,11 @@ const hq = await import('./hq.ts');
 const answers = await import('./answers.ts');
 const { t, mask } = await import('./texts.ts');
 const { settings } = await import('./company.ts');
-await import('./server.ts');
+const { bound } = await import('./server.ts');
 await new Promise(r => setTimeout(r, 100));
 
 // ---- a customer: a cookie, the chat's stream, and the widget's POSTs
-const BASE = `http://127.0.0.1:${PORT}`;
+const BASE = `http://127.0.0.1:${(await bound).port}`;
 async function customer() {
   let cookie = '';
   const events: any[] = [];

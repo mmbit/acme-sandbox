@@ -137,6 +137,11 @@ test('a rub over a page: only what it touched changes, and says where', () => {
   const done = rub([a, b], [50, -20], [50, 20], 6);
   assert.equal(done.ink.length, 3);
   assert.equal(done.ink[2], b, 'the other line the same object');
+  assert.deepEqual(
+    done.made,
+    done.ink.slice(0, 2).map(piece => [a, piece]),
+    'each piece kept with the line it was cut from (for Undo)',
+  );
   assert.ok(done.box.y1 < 50 && done.box.x0 <= 0);
   assert.equal(rub([a, b], [50, 100], [60, 100], 6), null);
 });

@@ -1,35 +1,68 @@
-/* What's still the board's to answer (bookforyou.js): the counter at the head of the page's controls on the rail, a
-   red dot over "2 open" over its arrows, and the red edge marked "for you" round a group with an open ask, the ring a
-   step reaches pulsing once. The edge and the ring are in the page's px: they pan and zoom with it.
-   (on the rail) */
+/* What's still the board's to answer (bookforyou.js): the counter by the page's title, as the Ink deck draws it (a pill:
+   a red dot, "2 open", a rule and its two arrows), and the red edge marked "for you" round a group with an open ask,
+   the ring a step reaches pulsing once. The counter stands in the paper's head left of the dog-ear, in the screen's
+   px, where the page pans and zooms under it; while it shows, the title ends 8 px short of its left edge, so the two
+   never touch (bookgroups.css reads its place and width here). The edge and the ring are in the page's px: they pan
+   and zoom with it. (by the page's title.) */
+#book {
+  /* its right edge from the writing paper's: clear of the dog-ear's touch, which reaches 16 px further along the top
+     than it shows (bookshare.css) */
+  --bk-count-at: calc(var(--bk-ear) + 20px);
+  --bk-count-w: 136px;
+}
 #book .bk-for-you-count {
+  position: absolute;
+  top: 16px;
+  right: calc(var(--bk-rail-width, 0px) + var(--bk-count-at));
+  z-index: 5;
+  box-sizing: border-box;
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 2px;
-  margin-bottom: 4px;
-  padding-bottom: 4px;
-  border-bottom: 1px solid var(--bk-edge);
-  color: var(--bk-ink);
+  max-width: var(--bk-count-w);
+  height: 32px;
+  padding: 0 2px 0 10px;
+  border: 1.5px solid color-mix(in srgb, var(--bk-night) 22%, transparent);
+  border-radius: 999px;
+  background: var(--bk-paper);
+  color: var(--bk-night);
   font: 600 12px/1 var(--bk-font);
   white-space: nowrap;
 }
 #book .bk-for-you-count[hidden] {
   display: none;
 }
-#book .bk-for-you-count .bk-open:not(:empty) {
+/* (a rule between the words and the arrows) */
+#book .bk-for-you-count .bk-open {
+  flex: 1;
   display: flex;
-  flex-direction: column;
   align-items: center;
   gap: 5px;
-  padding: 6px 0 4px;
+  height: 18px;
+  margin-right: 3px;
+  padding-right: 7px;
+  border-right: 1.5px solid color-mix(in srgb, var(--bk-night) 22%, transparent);
 }
-#book .bk-for-you-count .bk-open:not(:empty)::before {
+#book .bk-for-you-count .bk-open::before {
   content: '';
   width: 8px;
   height: 8px;
   border-radius: 50%;
   background: var(--bk-red);
+}
+/* (the arrows: within the pill; wider to the touch than they look) */
+#book .bk-for-you-count .bk-btn {
+  width: 26px;
+  height: 28px;
+  color: var(--bk-night);
+}
+#book .bk-for-you-count .bk-btn svg {
+  width: 18px;
+  height: 18px;
+}
+@media (pointer: coarse) {
+  #book .bk-for-you-count .bk-btn::after {
+    inset: -8px -2px;
+  }
 }
 
 /* the edge round a group waiting on the board, a little off what it holds, its tag at the top right */

@@ -1,13 +1,18 @@
 // Each run of a job from its start to its end, so a job's agent time leaves out its waits (for a seat, a card, a
 // deploy): a claim starts one and a finish ends it (jobs.ts).
-import { db } from './db.ts';
+import { db, once, columnsOf } from './db.ts';
 
 db.exec(`create table if not exists runs (id integer primary key, job integer not null, seat text, started text not null,
-  ended text, ended_as text)`);
+  ended text, ended_as text, no_engine integer not null default 0)`);
 db.exec('create index if not exists runs_job on runs (job)');
 db.exec('create index if not exists runs_seat_started on runs (seat, started)');
 // (the runs of the last day or week, which the queue's play reads each time: backlog.ts, headroom.ts)
 db.exec('create index if not exists runs_ended on runs (ended)');
+
+once('2026-11-01-runs-no-engine', () => {
+  if (!columnsOf('runs').includes('no_engine'))
+    db.exec('alter table runs add column no_engine integer not null default 0');
+});
 
 // How a run ended: the worker's outcome as its job finished (jobs.ts finish), lost with its worker, or rebuilt from the
 // records from before this table.
@@ -39,8 +44,13 @@ export const runStart = (job: number) =>
       { started: string } | undefined
   )?.started;
 
-export function runEnded(job: number, endedAs: RunEnd, endedAt = Date.now()) {
-  db.prepare('update runs set ended = ?, ended_as = ? where job = ? and ended is null').run(iso(endedAt), endedAs, job);
+export function runEnded(job: number, endedAs: RunEnd, endedAt = Date.now(), noEngine = false) {
+  db.prepare('update runs set ended = ?, ended_as = ?, no_engine = ? where job = ? and ended is null').run(
+    iso(endedAt),
+    endedAs,
+    noEngine ? 1 : 0,
+    job,
+  );
 }
 
 // Runs whose worker went quiet end at its last heartbeat, not when the coordinator notices.

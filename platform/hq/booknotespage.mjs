@@ -22,7 +22,7 @@ export const notesPageStories = c => ({
   "a call's notes page the coordinator fails to open: a card says so, and the page a notebook has asks nothing":
     browser => notOpened(browser, c),
   //
-  'a call-sized notes page: a dozen scraps and five promises as post-its, none over another (desktop)': browser =>
+  'a call-sized notes page: a dozen scraps and five post-its, none over another (desktop)': browser =>
     callSized(browser, c, c.DESKTOP, 'desktop'),
   'a call-sized notes page: post-its, none over another (iPad mini landscape)': browser =>
     callSized(browser, c, c.MINI, 'ipad'),
@@ -201,10 +201,10 @@ const where = page =>
     .getByRole('button', { name: /^The notebook's pages/ })
     .getAttribute('aria-label');
 
-// A call's page as a long call leaves it: a dozen scraps, each with its words, and five promises, put on it by the
-// store's own stacking (the play's, notebookplaygroups.js: notebookstack.js). Each scrap's words sit under its own
-// picture, a clear gap before the next; the promises are post-its; nothing lies over anything else, and the notes go
-// in two columns.
+// A call's page as a long call leaves it: a dozen scraps, each with its words, and five notes in words alone, put on
+// it by the store's own stacking (the play's, notebookplaygroups.js: notebookstack.js). Each scrap's words sit under its
+// own picture, a clear gap before the next; the notes in words alone are post-its; nothing lies over anything else, and
+// the notes go in two columns.
 const CAPTIONS = [
   'Smaller',
   'Move the basket next to the price, where the eye already is',
@@ -219,12 +219,14 @@ const CAPTIONS = [
   'This',
   'Keep the zoom per page',
 ];
-const PROMISES = [
-  'Promise for Juno: Send the board the new shop page',
-  'Promise for Juno: Fix the tooltips by tonight, and tell the board when they are live on HQ',
-  'Promise for Juno: Move the send button',
-  'Promise for Juno: Put the title on one line',
-  'Promise for you: try it on the iPad',
+// the words under a tall narrow crop (fillCall's tall)
+export const TALL_WORDS = 'The rail, top to bottom: every key one tap apart';
+const WORDS_ALONE = [
+  'Send the board the new shop page',
+  'Fix the tooltips by tonight, and tell the board when they are live on HQ',
+  'Move the send button',
+  'Put the title on one line',
+  'Try it on the iPad',
 ];
 // My journal with the call's page alone, empty
 export const callSeed = T => ({
@@ -263,7 +265,7 @@ async function callSized(browser, c, viewport, device) {
     });
     await page.waitForFunction(() => document.querySelectorAll('.bk-typed[data-note]').length === 5);
     const groups = context.notebook.route('/api/notebooks/pages/groups', { page: 9101 }).groups;
-    assert.equal(groups.filter(g => g.kind === 'note').length, 5, 'the promises, notes of their own kind');
+    assert.equal(groups.filter(g => g.kind === 'note').length, 5, 'the notes in words alone');
     noneOver(await laidOut(page), groups.length);
     // (seen as the board reads it, the scraps' pictures drawn)
     await page.waitForTimeout(1500);
@@ -273,8 +275,9 @@ async function callSized(browser, c, viewport, device) {
     await context.close();
   }
 }
-// Scraps cut from HQ's own page, each its own size and words, a promise after every third, as a call puts them on
-async function fillCall(page, play, viewport) {
+// Scraps cut from HQ's own page, each its own size and words, a note in words alone after every third, as a call puts
+// them on; with tall, a tall narrow crop among them (a strip of HQ's keys top to bottom: booknotesscraps.mjs)
+export async function fillCall(page, play, viewport, { tall = false } = {}) {
   const view = { x: 0, y: 0, w: viewport.width, h: viewport.height, dpr: 1 },
     anchor = { v: 1, url: '/', el: null, view, ink: [] },
     put = more => play.route('/api/notebooks/groups/scrap', {}, { anchor, said: 'typed', ...more });
@@ -285,11 +288,19 @@ async function fillCall(page, play, viewport) {
       owner: 'juno',
       snip: `data:image/png;base64,${(await page.screenshot({ clip })).toString('base64')}`,
     });
-    if (i % 3 === 2) put({ words: PROMISES[(i - 2) / 3], owner: 'juno' });
+    if (i % 3 === 2) put({ words: WORDS_ALONE[(i - 2) / 3], owner: 'juno' });
+    if (tall && i === 1) {
+      const strip = { x: viewport.width - 90, y: 0, width: 80, height: viewport.height };
+      put({
+        words: TALL_WORDS,
+        owner: 'juno',
+        snip: `data:image/png;base64,${(await page.screenshot({ clip: strip })).toString('base64')}`,
+      });
+    }
   }
-  put({ words: PROMISES[4] });
+  put({ words: WORDS_ALONE[4] });
 }
-// The page's units (each scrap and promise, as its masonry lays them), the scraps' words and the promises' post-its,
+// The page's units (each note, as its masonry lays them), the scraps' words and the post-its,
 // in CSS px, each with its group.
 const laidOut = page =>
   page.evaluate(() => {
@@ -308,16 +319,16 @@ const laidOut = page =>
     };
   });
 const overlap = (a, b) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
-// Every group a unit of its own, no two over each other, and each scrap's words and promise's post-it on its own unit
+// Every group a unit of its own, no two over each other, and each scrap's words and each post-it on its own unit
 // and no other's
 function noneOver({ units, words, notes }, groups) {
-  assert.equal(units.length, groups, 'each scrap and promise a unit of its own');
+  assert.equal(units.length, groups, 'each note a unit of its own');
   for (const [i, a] of units.entries())
     for (const b of units.slice(i + 1))
       assert.ok(!overlap(a, b), `units #${a.g} and #${b.g} don't overlap: ${JSON.stringify([a, b])}`);
   for (const [kind, all] of [
     ['words', words],
-    ['promise', notes],
+    ['post-it', notes],
   ])
     for (const x of all) {
       const on = units.filter(u => overlap(x, u));

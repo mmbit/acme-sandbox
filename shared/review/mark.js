@@ -43,6 +43,15 @@ export function aim(r) {
   const { mark } = r;
   if (mark.kind !== 'circle') return;
   const area = boxOfLines(r.strokes);
+  const el = holderOf(r, r.strokes);
+  Object.assign(mark, { el, area });
+  if (!mark.element) return; // (compose describes it)
+  mark.element = { ...mark.element, ...describe(el), area: box(area) };
+}
+
+// The smallest element holding most of the lines' box, for a saved mark and its live view alike.
+export function holderOf(r, lines) {
+  const area = boxOfLines(lines);
   let el = under(r, area.x + area.w / 2, area.y + area.h / 2);
   for (
     let b;
@@ -52,9 +61,7 @@ export function aim(r) {
     (b.width < area.w * 0.8 || b.height < area.h * 0.8);
   )
     el = el.parentElement;
-  Object.assign(mark, { el, area });
-  if (!mark.element) return; // (compose describes it)
-  mark.element = { ...mark.element, ...describe(el), area: box(area) };
+  return el;
 }
 
 // the screen too, as a big screen with a half-width window reads as a small laptop; touch points tell an iPad from a Mac

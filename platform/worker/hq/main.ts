@@ -2,6 +2,7 @@
 // company's own commands come from its kits (kits.ts). bin/hq, the worker image's /usr/local/bin/hq, runs this.
 import { ApiError, speakAs } from './api.ts';
 import * as cards from './cards.ts';
+import { card } from './cardread.ts';
 import { care } from './care.ts';
 import { estimate } from './estimate.ts';
 import * as feedback from './feedback.ts';
@@ -93,6 +94,7 @@ const COMMANDS: Record<string, Command> = {
   jobs: jobs.jobs,
   extend: jobs.extend,
   rewrite: cards.rewrite,
+  card,
   request: cards.request,
   mail,
   guest,

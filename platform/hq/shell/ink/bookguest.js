@@ -59,14 +59,14 @@ if (!shelved.ok || (response && (!response.ok || !read.notebooks.length))) {
   if (round && send) {
     send.innerHTML = `<span>${esc(text.markDone)}</span>`;
     send.setAttribute('aria-label', text.markDone);
-    send.classList.add('bk-guest-mark');
+    send.classList.add('bk-text', 'bk-guest-mark');
   }
   const marked = document.createElement('span');
   marked.className = 'bk-guest-marked';
   marked.innerHTML = `<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.5"/><path d="M5 8.3l2.1 2.1L11.2 6"/></svg>${esc(text.markedDone)}`;
   marked.hidden = true;
   const undo = button({
-    text: round ? text.undo : text.unsend,
+    text: text.undo,
     onClick: async () => {
       try {
         await notebookRequest('/api/notebooks/pages/undo', { id: notebook.pages[0].id });
@@ -79,7 +79,9 @@ if (!shelved.ok || (response && (!response.ok || !read.notebooks.length))) {
   undo.dataset.notebookUndo = '';
   undo.classList.add('bk-guest-undo');
   undo.hidden = true;
-  island('pages').append(marked, undo);
+  // (Marked done and Undo belong to a round. Other books leave them off the rail, where a hidden control would still
+  // keep its slot.)
+  if (round) island('pages').append(marked, undo);
   status.className = 'bk-guest-status';
   document.querySelector('#book .bk-paper').append(status);
   let stopped = false;
@@ -95,8 +97,8 @@ if (!shelved.ok || (response && (!response.ok || !read.notebooks.length))) {
         return;
       }
       const page = book.pages[0];
-      undo.hidden = book.kind !== 'round' || !page?.canUndo;
-      marked.hidden = book.kind !== 'round' || !(page?.canUndo || page?.sent || page?.sending);
+      undo.hidden = !page?.canUndo;
+      marked.hidden = !(page?.canUndo || page?.sent || page?.sending);
       status.textContent = book.kind === 'round' ? text.round[book.state] : '';
       const next = JSON.stringify(book);
       if (signature && signature !== next) document.dispatchEvent(new CustomEvent('book:notebook'));

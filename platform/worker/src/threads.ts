@@ -59,6 +59,12 @@ export function ownCommit(clone: InClone, dir: string, branch: string, base: str
   return own ? sha : undefined;
 }
 
+// A task drawn from the board's agreed sketches or a deck builds what they draw, checked by its judge
+// (the coordinator's threadjudge.ts).
+const SKETCHED =
+  `Where the "done when" or your brief draws on the board's agreed sketches or a deck, build every behaviour they ` +
+  `draw for your part and check each against them before you report: its judge holds the work against every one of them.`;
+
 // The briefing's lines for a task in a thread (a deliverable, in the board's word), after its title: the merge it must finish first, where it stands in the
 // thread, and what isn't part of it
 export function threadBriefing(thread: InThread, conflicts: string[]) {
@@ -72,7 +78,7 @@ export function threadBriefing(thread: InThread, conflicts: string[]) {
     : "It starts the deliverable's branch.";
   return (
     `${merge}This is task ${thread.place} of ${thread.of} in the deliverable "${thread.name}" (${thread.id}), done when: ` +
-    `${thread.goal.replace(/\.$/, '')}. ${after} Anything beyond the "done when" is a proposal (\`hq propose\`), not part of this task.`
+    `${thread.goal.replace(/\.$/, '')}. ${SKETCHED} ${after} Anything beyond the "done when" is a proposal (\`hq propose\`), not part of this task.`
   );
 }
 

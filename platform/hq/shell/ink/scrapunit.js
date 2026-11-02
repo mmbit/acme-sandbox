@@ -29,11 +29,11 @@ export function unitOf(parts, room = 0) {
   return { parts: unit, h: bottomOf(unit) + room };
 }
 
-// A unit's height once parts change on it: never shorter than they reach down, never shorter than it was
+// A unit's height as it stands, in its own px: as it was made or dragged (h), and never shorter than its parts reach
+// down. The store keeps h without the post-it words HQ's page draws in a scrap's body, which only that page can
+// measure, and nothing drawn changes it: each reader floors it at what's on the unit as it draws it (bookunits.js
+// heightOf, bookpicture.ts), and a drag at what's drawn (bookunitcards.js).
 export const heightFor = (parts, h) => Math.max(h, bottomOf(parts));
-
-// A unit resized by hand to h: down no further than its parts reach
-export const resized = (parts, h) => Math.max(Math.round(h), bottomOf(parts));
 
 // What's under one more piece on a unit: its parts joined after the ones it has, taller if they reach past it
 export function added(unit, more) {

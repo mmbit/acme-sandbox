@@ -3,8 +3,8 @@
 // mock/notebook.json (notebookplay.js), with the same answers and refusals. Every change there is a `book` event with
 // text `notebook` and its page; dev mode's are book:notebook on the document straight away, as events.js passes the
 // store's on.
-import { copy, get, refused } from '../data.js';
-import { notebookRequest } from './bookscope.js';
+import { copy, get } from '../data.js';
+import { bookRefused, notebookRequest } from './bookscope.js';
 import { notebookPlay } from './notebookplay.js';
 import { pagePicture } from './notebookpicture.js';
 
@@ -16,7 +16,7 @@ export async function ask(dev, path, query = null, body = undefined) {
   try {
     return pictured(copy(play.route(path, new URLSearchParams(query ?? {}), body)));
   } catch (e) {
-    throw refused(e.status ?? 0, e.message, e.reason);
+    throw bookRefused(e.status ?? 0, e.message, e.reason);
   }
 }
 

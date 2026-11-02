@@ -1,27 +1,31 @@
 // A notebook page as the deck draws it: paper-wide, scrolling down only, its scrap units laid as a masonry
 // (masonry.js) at the page's width, each a sticky note at its place with its room to write under its body and a
-// handle at its foot to drag that room taller or shorter. The page's title is at its top, a day's date across every
-// column where its units start. (The cards, title and dates drawn: bookunitcards.js.)
+// handle at its foot to drag that room taller or shorter. The page's title is at its top with its first day, and a
+// later day's date across every column where its units start. (The cards, title and dates drawn: bookunitcards.js.)
 //
 // The page's lists (page.ink, page.scraps, page.texts: what the tools work on) hold each unit's elements at its place
 // on the page, in the page's px: a unit's own scrap px moved by its origin (page.origins: id → { x, y }). The store
 // keeps them in the unit's own px (localOf undoes the move), so a unit's ink moves with it wherever the masonry puts it.
-// A stroke goes to the unit it starts on, else to the board's own drawing it comes near (strokes close together are one
-// drawing: a word's letters, a shape's sides); else it's a new unit of its own (page.pending, made in the store by
-// booksave.js with `after` the unit above it, or with the column it's drawn in where none is above), at the place the
-// masonry gives it, so its ink stays where it was drawn. Never so that the board's drawing already on the page moves (an
-// agent's card under it makes room, its ink with it): a drawing that would grow into one under it, or a new unit that
-// would push one, gives way to the next choice, down to a new unit as the page's last in its column.
-// A unit grows to hold whatever goes past its foot (scrapunit.js heightFor), and its canvas reaches its ink wherever
-// that goes (bookpage.js): nothing drawn is cut. The board's own drawings are ink on the page, no paper under them; an
-// agent's scrap is a card.
-import { GAP, MARGIN, layout, placeAt } from './masonry.js';
+// A stroke goes to the unit it starts on, else to the scrap it's drawn across, else to the board's own drawing it comes
+// near (strokes close together are one drawing: a word's letters, a shape's sides), else to the scrap it's drawn beside
+// (its column's nearest, but one it's wholly below by more than NEAR); only ink below its column's last is a unit of
+// its own (page.pending, made in the store by booksave.js with the column it's drawn in), the page's last, at the place
+// the masonry gives it. So ink stays where it was drawn: a scrap's room growing or dragged moves none of what's drawn
+// by it, and nothing drawn is put among the units to push the ones after it down. Never so that the board's drawing
+// already on the page moves (an agent's card under it makes room, its ink with it): a drawing that would grow into one
+// under it gives way to the next choice.
+// Laid again (a room grown, an answer come, a scrap arrived), every unit keeps the column it was in while the page has
+// as many: only what's under a unit that grew moves, and only down.
+// A unit grows to hold whatever goes past its foot (heightOf), and its canvas reaches its ink wherever that goes
+// (bookpage.js): nothing drawn is cut. The board's own drawings are ink on the
+// page, no paper under them; an agent's scrap is a card.
+import { GAP, MARGIN, columnsOf, layout, placeAt } from './masonry.js';
 import { UNIT_W, bodyOf } from './scrapunit.js';
 import { boxOf as inkBox } from './bookrow.js';
 import { scrapBox, union } from './bookselectmath.js';
 import { underOf } from './bookunder.js';
 
-// the page's px above its grid, for its title
+// the page's px above its grid, for its title and first day
 export const TITLE_H = 72;
 // kept off the paper's left and right edges besides the masonry's margin (the close-swipe strip on the left takes
 // 28 px: book.css), in CSS px
@@ -36,10 +40,10 @@ const LISTS = { ink: 'ink', texts: 'texts', pictures: 'scraps' };
 // A unit's page origin, at the top-left before it is laid
 const originOf = (page, id) => page.origins?.get(id) ?? { x: 0, y: 0 };
 
-// A page's units in their order: its top-level groups by pos, and the units drawn here not yet in the store right
-// after the unit they were drawn under. [{ id, h, day, follows, column }], h in its scrap px as the page draws it.
-// What the board draws under a unit (a drawing, a unit drawn here) follows it: it stays under that one at every width.
-// One drawn with nothing above it keeps the column it was drawn in instead.
+// A page's units in their order: its top-level groups by pos, and the units drawn here not yet in the store last.
+// [{ id, h, day, follows, column }], h in its scrap px as the page draws it. The board's drawing the store has under a
+// unit follows it: it stays under that one at every width. One drawn as the page's last keeps the column it was drawn
+// in instead.
 export function unitsOf(page) {
   // (a group just deleted waits for its save, with no unit while nothing of it is on the page: Undo puts its things back;
   const gone = g => g.vanished && !Object.values(LISTS).some(list => page[list]?.some(el => el.g === g.id)),
@@ -47,14 +51,7 @@ export function unitsOf(page) {
       .filter(g => !gone(g))
       .sort((a, b) => (a.pos ?? 0) - (b.pos ?? 0) || a.id - b.id),
     units = groups.map(g => ({ id: g.id, day: dayOf(g.created), ...placing(g.kind === 'drawing', g.column) }));
-  for (const p of page.pending ?? []) {
-    const at = units.findIndex(u => u.id === p.after);
-    units.splice(
-      at < 0 ? units.length : at + 1,
-      0,
-      at < 0 ? { id: p.id, day: today(), column: p.column } : { id: p.id, follows: true },
-    );
-  }
+  for (const p of page.pending ?? []) units.push({ id: p.id, day: today(), column: p.column });
   if (units.length) units[0].follows = false;
   // (a unit following another is of its day, and one drawn between older ones of theirs: the days only go on down
   // the page)
@@ -65,7 +62,8 @@ export function unitsOf(page) {
 }
 // How the board's drawing is laid: in the column it was drawn in (the store's column), else under the unit before it
 const placing = (drawn, column) => (!drawn ? {} : column == null ? { follows: true } : { column });
-// A unit's height in its scrap px: as the store or a drag set it, and never shorter than what's on it reaches
+// A unit's height in its scrap px: as the store or a drag set it with its post-it words added (the store keeps it
+// without them), and never shorter than what's on it reaches
 export function heightOf(page, id) {
   const set = page.resizing?.id === id ? page.resizing.h : (page.groups?.get(id)?.h ?? 0),
     o = originOf(page, id);
@@ -119,8 +117,13 @@ export function layUnits(view, width) {
     ]),
   );
   const units = unitsOf(page),
+    kept = keptColumns(page, width - 2 * INSET),
     laid = {
-      units: units.map(u => ({ ...u, h: u.h + underOf(view, u.id) })),
+      units: units.map(u => ({
+        ...u,
+        h: u.h + underOf(view, u.id),
+        ...(kept.has(u.id) && { column: kept.get(u.id) }),
+      })),
       width: width - 2 * INSET,
     },
     l = layout(laid.units, laid.width),
@@ -141,13 +144,17 @@ export function layUnits(view, width) {
   for (const [id, o] of page.origins) if (!origins.has(id)) origins.set(id, o);
   const heights = new Map(units.map(u => [u.id, u.h]));
   page.origins = origins;
-  page.places = l.places.map(p => ({ id: p.id, ...onPage(p, s), w: UNIT_W, h: heights.get(p.id) }));
+  page.places = l.places.map(p => ({ id: p.id, ...onPage(p, s), w: UNIT_W, h: heights.get(p.id), column: p.column }));
   page.laid = laid;
+  page.day = units.find(u => u.day !== undefined)?.day;
   page.headers = l.headers.map(h => ({ day: h.day, y: h.y / s + TITLE_H })).filter(h => !inkedOver(page, h.y));
   page.columns = l.columns;
   Object.assign(page, { x: 0, y: 0, w: width / s, h: l.height / s + TITLE_H, scale: s });
   return moved;
 }
+// The column each unit was laid in, while the page is laid at as many (id → column; none at a new count)
+const keptColumns = (page, width) =>
+  new Map(page.columns === columnsOf(width) ? (page.places ?? []).map(p => [p.id, p.column]) : []);
 // Whether the board's own writing, kept where drawn (above its unit too), crosses the words of a day's date at y (the
 // page's px, bookgroups.css's .bk-day): the date gives way.
 const inkedOver = (page, y) =>
@@ -163,10 +170,11 @@ function placeAmong(page, unit, at) {
 }
 // A place in the masonry's px as the page's own, at the layout's scale
 const onPage = (p, s) => ({ x: (p.x + INSET) / s, y: p.y / s + TITLE_H });
-// Typed words kept inside their unit, PAD in from its sides
+// Typed words kept inside their unit, PAD in from its sides: a box moved past its right side slides back in at its own
+// width, never squeezed to a sliver (a box's grip, board call 176.)
 function inside(el, o) {
-  el.x = Math.max(el.x, o.x + PAD);
-  el.w = Math.max(40, Math.min(el.w, o.x + UNIT_W - PAD - el.x));
+  el.w = Math.max(40, Math.min(el.w, UNIT_W - 2 * PAD));
+  el.x = Math.max(o.x + PAD, Math.min(el.x, o.x + UNIT_W - PAD - el.w));
 }
 // Whether an element is in a unit the page knows (the store's, or one drawn here)
 const homed = (page, el) => page.groups.has(el.g) || page.gone?.has(el.g) || page.pending?.some(p => p.id === el.g);
@@ -184,8 +192,38 @@ function unitFor(page, [x, y], box) {
   const on = unitAt(page, x, y);
   // (a scrap's paper takes what starts on it; the board's drawing, no paper, only what moves nothing)
   if (on !== undefined && (!drawing(page, on) || takes(page, on, box))) return on;
-  return nearDrawing(page, box) ?? newUnit(page, box, y);
+  return scrapAcross(page, box) ?? nearDrawing(page, box) ?? scrapBeside(page, box) ?? newUnit(page, box);
 }
+// The scrap a box (page px) is drawn across, the one it covers most; undefined when it covers none
+const scrapAcross = (page, box) =>
+  bestScrap(page, p => {
+    const [w, h] = overlap(box, p);
+    return w > 0 && h > 0 ? w * h : undefined;
+  });
+// The scrap a box is drawn beside: the nearest in its column, but one it's wholly below by more than NEAR; undefined
+// when none
+function scrapBeside(page, box) {
+  const column = columnAt(page, (box.x0 + box.x1) / 2);
+  return bestScrap(page, p => {
+    if (p.column !== column || box.y0 > p.y + p.h + NEAR) return undefined;
+    const [w, h] = overlap(box, p);
+    return Math.min(0, w) + Math.min(0, h);
+  });
+}
+// The scrap with the highest score (undefined: not a candidate)
+function bestScrap(page, score) {
+  let best, most;
+  for (const p of page.places ?? []) {
+    const s = drawing(page, p.id) ? undefined : score(p);
+    if (s !== undefined && (most === undefined || s > most)) [best, most] = [p.id, s];
+  }
+  return best;
+}
+// How far a box and a place overlap across and down (negative: the gap between them)
+const overlap = (box, p) => [
+  Math.min(box.x1, p.x + p.w) - Math.max(box.x0, p.x),
+  Math.min(box.y1, p.y + p.h) - Math.max(box.y0, p.y),
+];
 // The board's own drawing nearest a box, within NEAR of what's drawn on it, that takes it with nothing moved; undefined
 // when none is that near
 function nearDrawing(page, box) {
@@ -224,30 +262,16 @@ export function reachOn(page, p) {
     for (const el of page[list] ?? []) if (el.g === p.id) r = union(r, boxOf(kind, el));
   return r;
 }
-// A new unit for what's drawn in a box between units, started at height y: right after the unit above that in its
-// column, which it follows; where none is above, or that would push the board's drawing, the page's last, today's, kept
-// in the column it's drawn in. At the place the masonry gives it, as layUnits lays it, so what's drawn stays where it
-// was (above the unit's top, where it's drawn higher). On a page not laid yet, just above what's drawn.
-function newUnit(page, box, y) {
+// A new unit for what's drawn in a box below every scrap: the page's last, today's, kept in the column it's drawn in, at
+// the place the masonry gives it, as layUnits lays it, so what's drawn stays where it was. On a page not laid yet, just
+// above what's drawn.
+function newUnit(page, box) {
   const id = (page.temp = (page.temp ?? 0) - 1),
     column = columnAt(page, (box.x0 + box.x1) / 2),
-    above = (page.places ?? [])
-      .filter(p => columnAt(page, p.x + p.w / 2) === column && p.y + p.h <= y)
-      .sort((a, b) => b.y - a.y)[0],
-    units = page.laid?.units ?? [],
-    at = units.findIndex(u => u.id === above?.id) + 1,
-    under = { id, h: 0, follows: true },
-    follows = at > 0 && staysAmong(page, under, at, box),
-    place = follows ? placeAmong(page, under, at) : placeAmong(page, { id, h: 0, day: today(), column }, units.length);
-  (page.pending ??= []).push(follows ? { id, after: above.id } : { id, after: null, column });
+    place = placeAmong(page, { id, h: 0, day: today(), column }, page.laid?.units.length);
+  (page.pending ??= []).push({ id, column });
   page.origins.set(id, place ?? { x: 0, y: Math.max(TITLE_H, box.y0 - PAD) });
   return id;
-}
-// Whether a unit put among the page's laid units at an index, what's drawn in a box (page px) on it, moves none of the
-// board's drawings
-function staysAmong(page, unit, at, box) {
-  const place = placeAmong(page, unit, at);
-  return movesNone(page, page.laid.units.toSpliced(at, 0, { ...unit, h: Math.max(0, Math.ceil(box.y1 - place.y)) }));
 }
 // The masonry's column under an x on the page (its px), the nearest where it's beside the grid
 function columnAt(page, x) {
@@ -262,9 +286,10 @@ function columnAt(page, x) {
 // A pending unit made in the store: its id the store's from now on
 export function madeUnit(page, temp, id) {
   page.pending = (page.pending ?? []).filter(p => p.id !== temp);
-  for (const p of page.pending) if (p.after === temp) p.after = id;
   page.origins.set(id, page.origins.get(temp));
   page.origins.delete(temp);
+  // (and its place under its new id: its ink is drawn at it before the page is laid again)
+  for (const p of [...(page.places ?? []), ...(page.laid?.units ?? [])]) if (p.id === temp) p.id = id;
   for (const list of Object.values(LISTS)) for (const el of page[list] ?? []) if (el.g === temp) el.g = id;
 }
 

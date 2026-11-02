@@ -7,8 +7,11 @@ export const GAP = 24;
 // Round the grid, at scale 1: off the page's edges
 export const MARGIN = 24;
 
-// How many columns a page this wide (CSS px) holds: one at least, however narrow
-export const columnsOf = width => Math.max(1, Math.floor((width - 2 * MARGIN + GAP) / (UNIT_W + GAP)));
+// The least a page's columns are drawn at to fit one more: a scrap's 14 px words no smaller than about 12.5 px
+export const LEAST = 0.9;
+
+// How many columns a page this wide (CSS px) holds: as many as fit at LEAST of their size, one at least
+export const columnsOf = width => Math.max(1, Math.floor((width / LEAST - 2 * MARGIN + GAP) / (UNIT_W + GAP)));
 
 // The width a page needs for n columns at scale 1 (a picture of a page drawn n columns wide)
 export const widthFor = n => n * UNIT_W + (n - 1) * GAP + 2 * MARGIN;
@@ -18,25 +21,28 @@ export const DAY_H = 48;
 
 // The page's layout at width (CSS px), its units in order: [{ id, h, day?, follows?, column? }], h a unit's height at
 // scale 1 with whatever its page draws under it. A unit whose day differs from the one before starts that day under a
-// header across every column. One that follows (never the first) is laid right under the unit before it, in its
+// header across every column (the first day has none: it's the page's own). One that follows (never the first) is laid right under the unit before it, in its
 // column, at every width. One with a column stays in it where the page has it (the board's drawing, the page's last,
 // in the column it was drawn in: bookunits.js). Returns the columns, the scale
-// (1, or less on a page too narrow for one column), each unit's place { id, column, x, y, w, h } and each header's
-// { day, y, h } in the page's CSS px, and the page's height. Extra width centres the grid.
+// (the columns drawn to the page's width: from LEAST up, or less on a page too narrow for one column), each unit's
+// place { id, column, x, y, w, h } and each header's { day, y, h } in the page's CSS px, and the page's height.
 export function layout(units, width) {
   const columns = columnsOf(width),
-    scale = Math.min(1, width / widthFor(1)),
-    left = Math.max(0, (width - widthFor(columns) * scale) / 2) + MARGIN * scale,
+    scale = width / widthFor(columns),
+    left = MARGIN * scale,
     feet = Array(columns).fill(MARGIN * scale),
     headers = [];
   let day;
   const places = [];
   for (const u of units) {
     if (u.day !== undefined && u.day !== day) {
+      // (the page's first day is its own, in its head with its title: bookunitcards.js)
+      if (day !== undefined) {
+        const top = Math.max(...feet);
+        headers.push({ day: u.day, y: top, h: DAY_H * scale });
+        feet.fill(top + DAY_H * scale);
+      }
       day = u.day;
-      const top = Math.max(...feet);
-      headers.push({ day, y: top, h: DAY_H * scale });
-      feet.fill(top + DAY_H * scale);
     }
     const column = u.column < columns ? u.column : u.follows ? places.at(-1).column : feet.indexOf(Math.min(...feet)),
       place = { id: u.id, column, x: left + column * (UNIT_W + GAP) * scale, y: feet[column], w: UNIT_W * scale };

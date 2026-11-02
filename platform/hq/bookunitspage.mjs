@@ -1,12 +1,12 @@
 // book-check.mjs's story of a notebook page as a masonry of scrap units (shell/ink/bookunits.js), on a page seeded as
 // the end of a test call: an agent's six scraps of mixed heights (pictures with words, plain notes, one with an answer
-// under it). Then the board's annotations: a line written in a scrap's room, a line between scraps (a unit of its own),
-// a room dragged taller by its handle, a line under the tallest column's last scrap. At a phone, an iPad mini upright
+// under it). Then the board's annotations: a line written in a scrap's room, a line between scraps (the nearer
+// scrap's: job #17184), a room dragged taller by its handle, a line under the tallest column's last
+// scrap. At a phone, an iPad mini upright
 // and sideways, and a wide desktop. Each time: no two units (with what hangs under them) overlap, the space between
 // units in a column is the same, nothing scrolls sideways, each line between scraps stays under the scrap it was
 // written under, the room grows as its handle's dragged, and the last unit scrolls clear of the tools. The wide desktop
-// is then made narrower and opened again: its lines still under their scraps in fewer columns (an iPad mini is one
-// column either way up, left of the rail: job #15863). Recorded with --shots.
+// is then made narrower and opened again: its lines still under their scraps in fewer columns. Recorded with --shots.
 import assert from 'node:assert/strict';
 import { until } from './bookkit.mjs';
 import { typedBoxes } from './shell/ink/notebookparts.js';
@@ -46,7 +46,7 @@ const note = (id, words) => {
   const texts = typedBoxes(words, { x: 0, w: 320, color: '#1d1a2f' });
   return { ...scrap(id, 'note', [], '', 96), texts, h: 40 + 96 };
 };
-const SEED = {
+export const SEED = {
   notebooks: [{ id: 1, kind: 'mine', name: 'My journal', archived: false, created: T0, updated: T0 }],
   pages: [
     { id: 1, notebook: 1, pos: 0, label: 'Call with Moss: the cover', created: T0, updated: T0, w: 1200, h: 1600 },
@@ -139,52 +139,93 @@ async function opened(page, n) {
   }
   await until(async () => (await units(page)).length === n, `the ${n} units drawn`);
 }
-// The board's annotations: a line in the first unit's room, one in the space under a unit (a unit of its own, right
-// under it), a room dragged taller by its handle. Returns the unit the line was written under.
+// The board's annotations: a line in the first unit's room, one in the space under a unit (that unit's, or one of its
+// own right under it), a room dragged taller by its handle. Returns where the line was written under its unit (written).
+// (each at the page's px, so the same place in a scrap at every scale)
 async function annotate(page, name) {
-  const [first] = await units(page);
-  await line(page, first.x + 40, first.y + first.h - 50, 120);
+  const [first] = await units(page),
+    s = first.w / UNIT_W;
+  await line(page, first.x + 40 * s, first.y + first.h - 50 * s, 120);
   // (apart in time, so the handwriting read into type, where it is, reads them apart)
   // (once the page is still: words read from the first line, where it is, land and grow its scrap first)
   const low = (await still(page)).sort((a, b) => a.bottom - b.bottom)[0];
-  await line(page, low.x + 40, low.bottom + 12, 140);
-  await until(async () => (await units(page)).length === 7, 'the line between scraps a unit of its own', 8000);
-  stays(await still(page), low.id, `${name}: the line between scraps`);
+  const between = await written(page, low);
+  stays(await still(page), between, `${name}: the line between scraps`);
   await dragRoom(page, name);
-  return low.id;
+  return between;
 }
 // A line written under the tallest column's last unit, at the page's foot: it stays in that column, under it.
 // Returns that unit.
 async function underTallest(page, name) {
-  const last = (await still(page)).sort((a, b) => b.bottom - a.bottom)[0];
-  await line(page, last.x + 40, last.bottom + 12, 140);
-  await until(async () => (await units(page)).length === 8, "the line under the tallest column's last", 8000);
-  stays(await still(page), last.id, `${name}: the line under the tallest column's last unit`);
-  return last.id;
+  const all = await still(page),
+    last = all.sort((a, b) => b.bottom - a.bottom)[0],
+    under = await written(page, last);
+  stays(await still(page), under, `${name}: the line under the tallest column's last unit`);
+  return under;
 }
+// A line written 12 px (the page's, at the unit's scale) under a unit (and what hangs under it): saved in the store,
+// the unit's own or the next one's in its column (as near), or a unit of its own (bookunits.js: job #17184). Returns
+// the unit, how far down it the line is as a share of its width (its scale's), the next unit under it in its column,
+// and the group the store keeps it in.
+async function written(page, unit) {
+  const s = unit.w / UNIT_W,
+    y = unit.bottom + 12 * s,
+    all = await units(page),
+    next = all
+      .filter(u => Math.abs(u.x - unit.x) < 1 && u.y > unit.y)
+      .sort((a, b) => a.y - b.y)
+      .at(0)?.id,
+    had = strokesBy(page);
+  await line(page, unit.x + 40 * s, y, 140);
+  let into;
+  await until(
+    () => {
+      const now = strokesBy(page);
+      into = [...now.keys()].find(id => now.get(id) > (had.get(id) ?? 0));
+      return into !== undefined;
+    },
+    'the line written under a unit saved',
+    8000,
+  );
+  return { id: unit.id, down: (y - unit.y) / unit.w, next, into };
+}
+// How many strokes the store keeps in each group of the page: group id → strokes
+const strokesBy = page =>
+  new Map(
+    page
+      .context()
+      .notebook.route('/api/notebooks/pages/groups', { page: 1 })
+      .groups.map(g => [g.id, g.ink.length]),
+  );
 // The page turned to another size once its lines are saved, and opened again from the store: laid in another number
 // of columns, each line still right under the unit it was written under
 async function turned(page, c, name, size, under) {
   await until(async () => (await units(page)).every(u => u.id > 0), 'the lines saved', 8000);
   const columns = async () => new Set((await units(page)).map(u => Math.round(u.x))).size,
-    were = await columns();
+    were = await columns(),
+    n = (await units(page)).length;
   await page.setViewportSize(size);
   await page.reload();
-  await opened(page, 8);
+  await opened(page, n);
   const all = await still(page);
   assert.notEqual(await columns(), were, `${name}: turned, the page laid in another number of columns`);
-  for (const id of under) stays(all, id, `${name}, turned: the line written under unit ${id}`);
+  for (const at of under) stays(all, at, `${name}, turned: the line written under unit ${at.id}`);
   await sound(page, `${name}, turned`);
   await c.shot(`units-${name}-4-turned`, page);
 }
-// A line (a unit not the seed's) right under unit id in its column, the space between units apart
-function stays(all, id, what) {
+// A line written under a unit (written) still by it: the unit grown to hold it, the next unit in its column holding it
+// over its top, or a unit not the seed's right under it in its column, the space between units apart
+function stays(all, { id, down, next, into }, what) {
   const above = all.find(u => u.id === id),
     seeded = new Set(SEED.groups.map(g => g.id)),
     made = all.find(u => !seeded.has(u.id) && Math.abs(u.x - above.x) < 1 && u.y > above.bottom);
   assert.ok(
-    made && made.y - above.bottom <= 40,
-    `${what} stays under the unit it was written under (${JSON.stringify({ above, made })})`,
+    into === id
+      ? above.h / above.w >= down
+      : into === next
+        ? all.some(u => u.id === next)
+        : made && made.y - above.bottom <= 40,
+    `${what} stays by the unit it was written under (${JSON.stringify({ above, made, down, next, into })})`,
   );
 }
 // HQ at a size on the seed, a mouse's desk: its notebook as narrow or wide as the board dragged it (booklayout.js keep)
@@ -204,6 +245,23 @@ async function deskAt(browser, c, size) {
 }
 // A unit's room dragged 80 px taller by its handle: the first handle on screen
 async function dragRoom(page, name) {
+  // (one scrolled up into the top of the screen where none shows there: a line written in a room grows it, its handle
+  // further down)
+  const low = await page.evaluate(() =>
+    [...document.querySelectorAll('#book .bk-page:not([hidden]) .bk-room-handle')]
+      .map(h => h.getBoundingClientRect())
+      .every(r => r.top <= 0 || r.bottom >= innerHeight - 200)
+      ? [...document.querySelectorAll('#book .bk-page:not([hidden]) .bk-room-handle')]
+          .map(h => h.getBoundingClientRect().top)
+          .find(top => top >= innerHeight - 200)
+      : undefined,
+  );
+  if (low !== undefined) {
+    const paper = await page.locator('#book .bk-desk').boundingBox();
+    await page.mouse.move(paper.x + paper.width / 2, paper.y + paper.height / 2);
+    await page.mouse.wheel(0, low - 200);
+    await page.waitForTimeout(800);
+  }
   const b = await page.evaluate(() => {
     const on = [...document.querySelectorAll('#book .bk-page:not([hidden]) .bk-room-handle')]
       .map(h => Object.assign(h.getBoundingClientRect().toJSON(), { unit: h.dataset.unit }))
@@ -217,7 +275,7 @@ async function dragRoom(page, name) {
   await page.mouse.down();
   for (let k = 1; k <= 8; k++) await page.mouse.move(b.x, b.y + k * 10);
   await page.mouse.up();
-  // (the press the handle's, never the pen's: job #15978)
+  // The press is the handle's, never the pen's.
   await until(async () => (await tall()) >= was + 70, `${name}: the room dragged 80 px taller`, 4000);
 }
 // Scrolled to its foot: the last unit up on the page, and every unit clear of the rail
@@ -245,7 +303,7 @@ async function atFoot(page, c, name) {
 }
 
 // The units on screen, each with what hangs under it: { id, x, y, w, h, bottom } in CSS px
-const units = page =>
+export const units = page =>
   page.evaluate(() =>
     [...document.querySelectorAll('#book .bk-page:not([hidden]) .bk-unit')].map(u => {
       const r = u.getBoundingClientRect(),

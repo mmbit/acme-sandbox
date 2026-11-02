@@ -1,15 +1,15 @@
-"""A call's notes page in the board's Notebook, the voice line's half.
+"""A call's notes, its page in the board's Notebook, the voice line's half.
 
-On its turn the agent turns what the board said and drew into one scrap per change, each its own focused crop (scrap):
-the part of one of the board's notes on this call, or of its shown screen at a moment, that the change is about, with
-the change in the agent's words and the board's why. The coordinator's Ink store cuts it and puts it on the call's notes
-page (ink/callnotes.ts), where the board sees it land as it's made, and on the call's list; the call's follow-up hands
-it out; a plain note is a scrap with no crop, its words alone on a post-it. The agent works the page as
-the board does too: reads it (read_page), draws on it (mark_page) and changes, moves or deletes what's on it
-(change_page), each a step the board's Undo takes back, and has versions of something on it made for the board to pick
-from (try). title names the page's topic, after the call's date and time,
-and the agent is reminded every few turns until it has. Only on the board's own HQ call.
-The call engine's halves (drawing.py, driving.py, the screen tool) know nothing of the page: this reads them, never the
+On its turn the agent writes down what the board said and drew, one note per change (write_down): the change in the
+agent's words with the board's why, and by default a picture of the part of one of the board's own notes on this call,
+or of its shown screen at a moment, that the change is about. The coordinator's Ink store cuts the picture and puts the
+note in the call's notes (ink/callnotes.ts), where the board sees it appear as it's written, and on the call's list;
+the call's follow-up hands it out. A note with no picture is the agent's words alone on a post-it. The agent works the
+notes as the board does too: reads them (read_notes), draws on them (mark_notes) and changes, moves or deletes what's
+there (change_note), none of it a step the board's Undo takes back (only the board's own are), and has versions of a
+note made for the board to pick from (try). title_notes names their topic, after the call's date and time, and the
+agent is reminded every few turns until it has. Only on the board's own HQ call.
+The call engine's halves (drawing.py, driving.py, the screen tool) know nothing of the notes: this reads them, never the
 other way round."""
 import asyncio
 import json
@@ -18,41 +18,45 @@ from urllib.error import HTTPError
 
 from drawing import box_asked, one_line
 
-# The most of an item's line and of its goal, a scrap's words and goal among them: the coordinator's ledger.ts WHAT and
+# The most of an item's line and of its goal, a note's words and goal among them: the coordinator's ledger.ts WHAT and
 # GOAL, which every hand-off and note from a call keeps to. hq_tools reads them here. The most of the page's topic is
 # callnotes.ts TOPIC_MOST: 21 characters after the call's date and time are whole in the Notebook's bar on an iPad mini.
 WHAT, GOAL, TOPIC_MOST = 200, 300, 21
-# Where a scrap is cut from: one of the board's notes on the call ('note 3'), or a moment of its shown screen
+# A note's time and the work under way it's about (hq_tools.py timed_refusal), as the coordinator takes them
+TIMED = {'deadline': str, 'board_set': bool, 'job': int, 'deliverable': str}
+# Where a note's picture is cut from: one of the board's notes on the call ('note 3'), or a moment of its shown screen
 FROM = re.compile(r'^(note\s*#?[0-9]{1,4}|now|-[0-9]{1,4}[sm]|[0-9]{1,2}:[0-9]{2}(:[0-9]{2})?|#[0-9]{1,6})$', re.I)
-# What the agent hears about its scraps and the page's title
-SCRAP_WORDS = {
-    'shape': (f"scrap takes words (the one change, at most {WHAT} characters), goal (why the board wants it, at "
-              f"most {GOAL} characters), owner (the id of the agent whose work it is) if you know it, and for a crop "
-              f"both from ('note 3': one of the board's notes on this call; or a moment of its shown screen: 'now', "
-              f"'-20s', '17:03:12', '#12') and region (the part of that picture the change is about: x, y, width and "
-              f"height, fractions from 0 to 1 from its top left), or neither for a plain note"),
-    'none': "There's no notes page on this call: only the board's own calls in HQ have one.",
-    'gone': "This session can't add to the page any more: the call ended, or its session was restarted.",
-    'failed': "The scrap couldn't be made just now",
+# What the agent hears about its notes and their title
+WRITE_DOWN_WORDS = {
+    'shape': (f"write_down takes words (the one thing to be done, at most {WHAT} characters), goal (why the board "
+              f"wants it, at most {GOAL} characters), owner (who sees it through) if you know it, deadline, board_set, "
+              f"job and deliverable as their descriptions say, and for a "
+              f"picture both from ('note 3': one of the board's own notes on this call; or a moment of its shown "
+              f"screen: 'now', '-20s', '17:03:12', '#12') and region (the part of that picture the change is about: x, "
+              f"y, width and height, fractions from 0 to 1 from its top left), or neither for your words alone"),
+    'none': "There are no notes on this call: only the board's own calls in HQ have them.",
+    'gone': "This session can't write in the call's notes any more: the call ended, or its session was restarted.",
+    'failed': "The note couldn't be written just now",
 }
 TITLE_WORDS_SAID = {
-    'shape': (f'title is what the call is about in at most {TOPIC_MOST} characters ("Shop page prices"): the page '
-              "keeps the call's date and time in front of it"),
-    'none': SCRAP_WORDS['none'],
-    'gone': SCRAP_WORDS['gone'],
-    'failed': "The page couldn't be titled just now",
+    'shape': (f'title is what the call is about in at most {TOPIC_MOST} characters ("Shop page prices"): the '
+              "Notebook puts the call's date and time in front of it"),
+    'none': WRITE_DOWN_WORDS['none'],
+    'gone': WRITE_DOWN_WORDS['gone'],
+    'failed': "The notes couldn't be titled just now",
 }
-# Every so many of the board's turns, until the agent has titled the page, a line in front of the board's words reminds
-# it to
+# Every so many of the board's turns, until the agent has titled the notes, a line in front of the board's words
+# reminds it to
 REMIND_EVERY = 3
-TITLE_REMINDER = ("(Your notes page has no topic yet: once it's clear what this call is about, give it one with "
-                  'title_page.)')
+TITLE_REMINDER = ("(The call's notes have no title yet: once it's clear what this call is about, give them one with "
+                  'title_notes.)')
 
 
-def scrap_asked(a):
-    """A scrap the agent asks for ({from?, region?, words, goal, owner?}: a crop from and region both, or a plain note
-    with neither), cleaned, or None if it isn't one."""
-    if not isinstance(a, dict) or set(a) - {'from', 'region', 'words', 'goal', 'owner'}:
+def written_asked(a):
+    """A note the agent writes down ({from?, region?, words, goal, owner?, deadline?, board_set?, job?, deliverable?}: a
+    crop from and region both, or a plain note with neither; its time and the work it's about as hq_tools checks them),
+    cleaned, or None if it isn't one."""
+    if not isinstance(a, dict) or set(a) - {'from', 'region', 'words', 'goal', 'owner', *TIMED}:
         return None
     words = one_line(a.get('words')) if isinstance(a.get('words'), str) else ''
     goal = one_line(a.get('goal')) if isinstance(a.get('goal'), str) else ''
@@ -61,7 +65,10 @@ def scrap_asked(a):
         return None
     if owner is not None and not (isinstance(owner, str) and re.fullmatch(r'[a-z0-9-]{1,40}', owner)):
         return None
-    asked = {'words': words, 'goal': goal, **({'owner': owner} if owner else {})}
+    if any(k in a and not isinstance(a[k], kind) for k, kind in TIMED.items()):
+        return None
+    timed = {k: a[k] for k in TIMED if k in a}
+    asked = {'words': words, 'goal': goal, **({'owner': owner} if owner else {}), **timed}
     if 'from' not in a and 'region' not in a:
         return asked
     source = one_line(a.get('from')) if isinstance(a.get('from'), str) else ''
@@ -74,36 +81,36 @@ def scrap_asked(a):
 # on it changed
 MARKS = ('rect', 'ellipse', 'line', 'arrow', 'pen', 'highlight')
 PAGE_WORDS = {
-    'shape': 'read_page takes nothing',
-    'none': SCRAP_WORDS['none'],
-    'gone': SCRAP_WORDS['gone'],
-    'failed': "The page couldn't be read just now",
+    'shape': 'read_notes takes nothing',
+    'none': WRITE_DOWN_WORDS['none'],
+    'gone': WRITE_DOWN_WORDS['gone'],
+    'failed': "The notes couldn't be read just now",
 }
-MARK_WORDS = {  # (scrap px)
-    'shape': (f"mark_page takes mark (one of {', '.join(MARKS)}), around (the scrap it goes on, a number as read_page "
-              "gives it; without it the mark is a drawing of its own), box ({x, y, width, height} in the scrap's px) "
-              "for a rect, ellipse or highlight not round its contents; points ([[x, y], ...] in the scrap's px) for a "
+MARK_WORDS = {  # (a note's px)
+    'shape': (f"mark_notes takes mark (one of {', '.join(MARKS)}), around (the note it goes on, a number as read_notes "
+              "gives it; without it the mark is a drawing of its own), box ({x, y, width, height} in the note's px) "
+              "for a rect, ellipse or highlight not round its contents; points ([[x, y], ...] in the note's px) for a "
               "line or arrow (from and to), a pen line or a highlight along them; filled (true) for a rect or ellipse"),
-    'none': SCRAP_WORDS['none'],
-    'gone': SCRAP_WORDS['gone'],
+    'none': WRITE_DOWN_WORDS['none'],
+    'gone': WRITE_DOWN_WORDS['gone'],
     'failed': "The mark couldn't be made just now",
 }
 CHANGE_WORDS = {  # (after)
-    'shape': (f"change_page takes id (a number on the page, as read_page gives it) and one of words (your own note's or "
-              f"scrap's new words, at most {WHAT} characters), after (the number of the scrap it goes right after) "
+    'shape': (f"change_note takes id (a note's number, as read_notes gives it) and one of words (your own note's new "
+              f"words, at most {WHAT} characters), after (the number of the note it goes right after) "
               "and delete (true)"),
-    'none': SCRAP_WORDS['none'],
-    'gone': SCRAP_WORDS['gone'],
-    'failed': "The page couldn't be changed just now",
+    'none': WRITE_DOWN_WORDS['none'],
+    'gone': WRITE_DOWN_WORDS['gone'],
+    'failed': "The notes couldn't be changed just now",
 }
 
 # The board asks to see a few versions of something on the page: its owner makes them in a try run (the coordinator's
 # booktry.ts), and each lands under it
 TRY_WORDS = {
-    'shape': (f"try takes id (a number on the page, as read_page or the scrap tool gives it) and why (the board's ask, "
+    'shape': (f"try takes id (a note's number, as read_notes or write_down gives it) and why (the board's ask, "
               f"in one plain line of at most {WHAT} characters)"),
-    'none': SCRAP_WORDS['none'],
-    'gone': SCRAP_WORDS['gone'],
+    'none': WRITE_DOWN_WORDS['none'],
+    'gone': WRITE_DOWN_WORDS['gone'],
     'failed': "The try couldn't be started just now",
 }
 
@@ -199,38 +206,39 @@ class CallNotes:
         try:
             got = await asyncio.to_thread(self.call.wiring.hq, 'POST', route, {'call': self.call.brain.call, **body})
         except HTTPError as err:
-            if err.code not in (400, 404, 409):
+            # (429: the day's ink readings used, its words saying so.)
+            if err.code not in (400, 404, 409, 429):
                 raise
             return {'error': said_back(err) or f"{words['failed']}."}
         return {'ok': str(got['ok']) if whole else one_line(got['ok'])}
 
-    async def scrap_tool(self, asked):
-        """The agent's scrap tool (hq_tools.py, through the line's socket): one change on the call's notes page."""
-        if refusal := self.refused(SCRAP_WORDS):
+    async def write_down_tool(self, asked):
+        """The agent's write_down tool (hq_tools.py, through the line's socket): one change in the call's notes."""
+        if refusal := self.refused(WRITE_DOWN_WORDS):
             return {'error': refusal}
-        if not (scrap := scrap_asked(asked.get('scrap'))):
-            return {'error': SCRAP_WORDS['shape']}
-        return await self.ask('scrap', scrap, SCRAP_WORDS)
+        if not (note := written_asked(asked.get('write_down'))):
+            return {'error': WRITE_DOWN_WORDS['shape']}
+        return await self.ask('write-down', note, WRITE_DOWN_WORDS)
 
     async def page_tool(self, asked):
-        """The agent's read_page tool: what's on the call's notes page, a line each."""
+        """The agent's read_notes tool: what's on the call's notes page, a line each."""
         if refusal := self.refused(PAGE_WORDS):
             return {'error': refusal}
         return await self.ask('page', {}, PAGE_WORDS, whole=True)
 
     async def mark_tool(self, asked):
-        """The agent's mark_page tool: a shape, a pen line or a highlight on the call's notes page."""
+        """The agent's mark_notes tool: a shape, a pen line or a highlight on the call's notes page."""
         if refusal := self.refused(MARK_WORDS):
             return {'error': refusal}
-        if not (mark := mark_asked(asked.get('mark_page'))):
+        if not (mark := mark_asked(asked.get('mark_notes'))):
             return {'error': MARK_WORDS['shape']}
         return await self.ask('mark', mark, MARK_WORDS)
 
     async def change_tool(self, asked):
-        """The agent's change_page tool: one thing on the call's notes page changed, moved or deleted."""
+        """The agent's change_note tool: one thing on the call's notes page changed, moved or deleted."""
         if refusal := self.refused(CHANGE_WORDS):
             return {'error': refusal}
-        if not (change := change_asked(asked.get('change_page'))):
+        if not (change := change_asked(asked.get('change_note'))):
             return {'error': CHANGE_WORDS['shape']}
         return await self.ask('change', change, CHANGE_WORDS)
 
@@ -243,10 +251,10 @@ class CallNotes:
         return await self.ask('try', versions, TRY_WORDS)
 
     async def title_tool(self, asked):
-        """The agent's title_page tool: the call's notes page named in a few words."""
+        """The agent's title_notes tool: the call's notes page named in a few words."""
         if refusal := self.refused(TITLE_WORDS_SAID):
             return {'error': refusal}
-        if not (title := title_asked(asked.get('title_page'))):
+        if not (title := title_asked(asked.get('title_notes'))):
             return {'error': TITLE_WORDS_SAID['shape']}
         got = await self.ask('title', {'title': title}, TITLE_WORDS_SAID)
         self.titled = self.titled or 'ok' in got

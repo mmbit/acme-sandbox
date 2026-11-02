@@ -8,20 +8,19 @@ import { distance, isTap } from './tap.js';
 import { settleSoon } from './settle.js';
 import { holdMs } from './prefs.js';
 
-// (offPage, theirs and free)
+// (ownsPen, theirs and free)
 // A surface with its own pen handling owns its events. Other surfaces, wherever mounted, take HQ's pen.
-export function offPage(e) {
+export function ownsPen(e) {
   for (const el of e.composedPath()) {
     if (el.hasAttribute?.('data-no-ink')) return true;
     if (el.matches?.('dialog, [popover], [role="dialog"], [role="menu"]')) return false;
   }
   return false;
 }
-// Where a pen's touch belongs to the page or the browser, not the ink: review mode's own UI, the book, text fields
-// (Scribble writes in them) and what the page marks data-no-ink (a floating control the pen works as a finger does)
+// Review mode's UI, surfaces with their own pen handling and text fields (where Scribble writes) take their own events.
 export function theirs(r, e) {
   const path = e.composedPath();
-  if (path.includes(r.host) || offPage(e)) return true;
+  if (path.includes(r.host) || ownsPen(e)) return true;
   const t = path[0];
   return !!(
     t instanceof Element && t.closest('input, textarea, select, [contenteditable=""], [contenteditable="true"]')
@@ -73,7 +72,6 @@ const FOCUSABLE = 'a[href], button, input, select, textarea, summary, [tabindex]
 const fresh = r => r.mode === 'idle' || (r.mode === 'sending' && !r.nextLines.length);
 const penDown = (r, p, begin) => e => {
   if (e.pointerType !== 'pen' || !e.isPrimary || !free(r) || theirs(r, e)) return;
-  r.penSeen = true;
   e.preventDefault(); // Native text selection must not take the pen away from the drawing.
   e.stopPropagation(); // The page must not start a swipe or pan while the pen owns the gesture.
   Object.assign(p, { down: e, drawing: false, reach: 0 });
@@ -161,7 +159,7 @@ function twoFingerTap(r, undo) {
     'touchstart',
     e => {
       const f = fingers(e);
-      if (offPage(e)) tap = null;
+      if (ownsPen(e)) tap = null;
       else if (f.length === 2 && e.touches.length === 2)
         tap = { at: e.timeStamp, from: f.map(t => [t.clientX, t.clientY]) };
       else if (e.touches.length > 2) tap = null;

@@ -173,8 +173,8 @@ async function written(page) {
   for (const r of rects) await stroke(page, r);
   return { letters, rects };
 }
-// The points (CSS px) with no ink of the page's within 3 px of them
-const bareOf = (page, points) =>
+// The points (CSS px) with no ink of the page's within 3 px of them (bookfill.mjs's too)
+export const bareOf = (page, points) =>
   page.evaluate(points => {
     const inked = ([x, y]) =>
       [...document.querySelectorAll('#book .bk-page:not([hidden]) canvas.bk-ink')].some(cv => {

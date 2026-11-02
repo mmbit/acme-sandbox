@@ -14,6 +14,7 @@ from guard import CALL_TOOLS, HQ_TOOLS, PARTNER, PARTNER_TOOLS, TOOLS, agent_env
 
 HERE = str(Path(__file__).parent)
 HQ = str(Path(HERE).parent / 'worker' / 'bin' / 'hq')
+CHECKOUT = Path(HERE).parent.parent  # (the company's files hq_tools.py reads, where a test gives none of its own)
 SEAT = 'sk-ant-oat01-' + os.urandom(8).hex()  # a stand-in for the seat's sign-in
 def sized_time(time):
     return json.dumps({'time': time, 'tokens': {'work': 1000, 'reviews': 200, 'fixes': 100, 'feedback': 0},
@@ -27,11 +28,22 @@ FILES = tempfile.TemporaryDirectory(prefix='call-files-')
 FOLDERS = {'work': FILES.name, 'cli_config': FILES.name}
 
 
+def repo_env(repo=CHECKOUT):
+    """The company's files for hq_tools.py (its org.yaml's engineOnly), and this machine's own Python packages where
+    it has PyYAML only there (the voice line's venv has it installed)."""
+    return {'HQ_TOOLS_REPO': str(repo), **({'PYTHONPATH': os.environ['PYTHONPATH']} if 'PYTHONPATH' in os.environ else {})}
+
+
+# (hq_tools.py started by guard.py's own start-up check, in this process's environment)
+os.environ.update(repo_env())
+
+
 def fake_hq(d):
-    """An hq on PATH that notes its environment and arguments in d/hq.log, then runs the real one."""
+    """An hq on PATH that notes its environment and arguments in d/hq.log, then runs the real one (with the company's
+    files hq_tools.py reads)."""
     Path(d, 'hq').write_text(f'#!/bin/bash\n{{ env; printf "ARG %s\\n" "$@"; }} >> {d}/hq.log\nexec bash {HQ} "$@"\n')
     Path(d, 'hq').chmod(0o755)
-    return {'PATH': f'{d}:{os.environ["PATH"]}'}
+    return {'PATH': f'{d}:{os.environ["PATH"]}', **repo_env()}
 
 
 class Coordinator(BaseHTTPRequestHandler):
@@ -261,9 +273,11 @@ class HqTools(unittest.TestCase):
         r = subprocess.run(HQ_TOOLS, input=''.join(json.dumps(m) + '\n' for m in msgs), env=env, capture_output=True, text=True, timeout=60)
         return [json.loads(line) for line in r.stdout.splitlines()]
 
-    def env(self, d, url):
-        """The call agent's environment, as the CLI hands it to hq_tools.py, with fake_hq."""
-        return agent_env({'PATH': fake_hq(d)['PATH']}, url, SIGN_IN_FD, 'call-token', 'juno', **FOLDERS)
+    def env(self, d, url, screen=None):
+        """The call agent's environment, as the CLI hands it to hq_tools.py, with fake_hq and the company's files the
+        voice service gives it."""
+        hq = fake_hq(d)
+        return {**hq, **agent_env(hq, url, SIGN_IN_FD, 'call-token', 'juno', screen, **FOLDERS)}
 
     def test_a_call_queuer_supplies_its_scope_estimate_and_missing_or_bad_sizes_run_nothing(self):
         with tempfile.TemporaryDirectory() as d:
@@ -281,6 +295,19 @@ class HqTools(unittest.TestCase):
     def test_the_start_up_check(self):
         self.assertTrue(hq_tools_work())
 
+    def test_without_the_company_s_org_yaml_the_tools_dont_start(self):
+        """Its engineOnly may be absent (no only), the file may not: without it hq_tools.py doesn't start."""
+        with tempfile.TemporaryDirectory() as d:
+            ask, env = json.dumps({'jsonrpc': '2.0', 'id': 1, 'method': 'tools/list'}) + '\n', {**fake_hq(d), **repo_env(d)}
+            missing = subprocess.run(HQ_TOOLS, input=ask, env=env, capture_output=True, text=True)
+            Path(d, 'company').mkdir()
+            Path(d, 'company/org.yaml').write_text('people: []\n')
+            none = subprocess.run(HQ_TOOLS, input=ask, env=env, capture_output=True, text=True)
+        self.assertNotEqual(missing.returncode, 0)
+        self.assertEqual(missing.stdout, '')
+        job = next(t for t in json.loads(none.stdout)['result']['tools'] if t['name'] == 'job')
+        self.assertNotIn('only', job['inputSchema']['properties'])
+
     def test_only_the_call_tools_no_say(self):
         """A chat bubble reaches nobody, so a call can't send one: its one hand-off is a job (no forward either; search,
         history and call only read)."""
@@ -289,9 +316,9 @@ class HqTools(unittest.TestCase):
             r = subprocess.run(HQ_TOOLS, input=json.dumps({'jsonrpc': '2.0', 'id': 1, 'method': 'tools/list'}) + '\n', env=env, capture_output=True, text=True)
             out = self.call(('say', {'agent': 'bolt', 'text': 'the logs, please'}), env=env)
             self.assertFalse(Path(d, 'hq.log').exists())
-        self.assertEqual([t['name'] for t in json.loads(r.stdout)['result']['tools']], ['job', 'promise', 'replace', 'expedite', 'add', 'reach', 'search', 'history', 'call', 'intercom', 'eta', 'estimate', 'when', 'report', 'git', 'manage', 'waiting', 'hang_up', 'screen', 'sketch',
-                                                                                'ask_to_see', 'draw', 'open_work', 'drive', 'scrap', 'title_page',
-                                                                                'read_page', 'mark_page', 'change_page', 'try',
+        self.assertEqual([t['name'] for t in json.loads(r.stdout)['result']['tools']], ['job', 'replace', 'expedite', 'add', 'reach', 'search', 'history', 'call', 'intercom', 'eta', 'estimate', 'when', 'report', 'git', 'manage', 'waiting', 'hang_up', 'screen', 'sketch',
+                                                                                'ask_to_see', 'draw', 'open_work', 'drive', 'write_down', 'title_notes',
+                                                                                'read_notes', 'mark_notes', 'change_note', 'try',
                                                                                 'name_voice',
                                                                                 'save_voice', 'forget_voice'])
         self.assertTrue(out[1]['result']['isError'])
@@ -303,7 +330,7 @@ class HqTools(unittest.TestCase):
             msgs = [{'jsonrpc': '2.0', 'id': 1, 'method': 'tools/list'}]
             msgs += [{'jsonrpc': '2.0', 'id': i + 2, 'method': 'tools/call', 'params': {'name': n, 'arguments': a}} for i, (n, a) in enumerate(
                 (('note', {'what': 'Reprint ships Tuesday'}), ('no_transcript', {}), ('note', {'what': 'two\nlines'}),
-                 ('job', {'goal': 'g', 'agent': 'bolt', 'code': 'LOGS', **ESTIMATE, 'title': 'x', 'brief': 'y'}), ('promise', {'goal': 'g', 'owner': 'juno', 'what': 'x'}),
+                 ('job', {'goal': 'g', 'agent': 'bolt', 'code': 'LOGS', **ESTIMATE, 'title': 'x', 'brief': 'y'}), ('write_down', {'goal': 'g', 'owner': 'juno', 'words': 'x'}),
                  ('call', {'id': 12}), ('hang_up', {}), ('search', {'query': 'parcel'}), ('history', {})))]
             r = subprocess.run([*HQ_TOOLS, 'partner'], input=''.join(json.dumps(m) + '\n' for m in msgs), env=env,
                                capture_output=True, text=True, timeout=60)
@@ -330,7 +357,7 @@ class HqTools(unittest.TestCase):
         path, asked = line_socket(self, [{'picture': picture, 'line': moments[0]}, {'lines': moments},
                                          {'error': 'They paused showing their screen.'}, {'lines': []}])
         with tempfile.TemporaryDirectory() as d:
-            env = agent_env({'PATH': fake_hq(d)['PATH']}, 'http://127.0.0.1:9', SIGN_IN_FD, 'call-token', 'juno', (path, 'key-1'), **FOLDERS)
+            env = self.env(d, 'http://127.0.0.1:9', (path, 'key-1'))
             out = self.call(('screen', {'at': '-20s', 'region': region, 'key': 'another'}), ('screen', {'since': '17:03'}),
                             ('screen', {}), ('screen', {'at': 'yesterday'}), ('screen', {'since': '#12', 'at': '#13'}),
                             ('screen', {'region': {**region, 'x': 2}}), ('history', {}), env=env)
@@ -356,7 +383,7 @@ class HqTools(unittest.TestCase):
         line = 'Sketch #12 “Tote bag”: drawn 2026-10-24 14:02 UTC, last changed 2026-10-24 15:10 UTC.'
         path, asked = line_socket(self, [{'pictures': [picture, picture], 'line': line}, {'error': 'No sketch has those words in its label.'}])
         with tempfile.TemporaryDirectory() as d:
-            env = agent_env({'PATH': fake_hq(d)['PATH']}, 'http://127.0.0.1:9', SIGN_IN_FD, 'call-token', 'juno', (path, 'key-1'), **FOLDERS)
+            env = self.env(d, 'http://127.0.0.1:9', (path, 'key-1'))
             out = self.call(('sketch', {'sketch': '#12'}), ('sketch', {'sketch': 'mug lid'}), ('sketch', {'sketch': ' '}),
                             ('sketch', {}), env=env)
             msg = {'jsonrpc': '2.0', 'id': 2, 'method': 'tools/call', 'params': {'name': 'sketch', 'arguments': {'sketch': '12'}}}
@@ -381,7 +408,7 @@ class HqTools(unittest.TestCase):
                                          {'ok': 'Drawn: ...'}, {'error': 'Nothing there on their screen.'}, {'ok': 'Drawn: ...'}])
         tile, whole = {'x': 0.25, 'y': 0.5, 'width': 0.2, 'height': 0.125}, {'x': 0, 'y': 0, 'width': 1, 'height': 1}
         with tempfile.TemporaryDirectory() as d:
-            env = agent_env({'PATH': fake_hq(d)['PATH']}, 'http://127.0.0.1:9', SIGN_IN_FD, 'call-token', 'juno', (path, 'key-1'), **FOLDERS)
+            env = self.env(d, 'http://127.0.0.1:9', (path, 'key-1'))
             out = self.call(('ask_to_see', {'what': 'the pricing  page'}), ('ask_to_see', {'what': 'the basket'}),
                             ('draw', {'at': tile, 'words': 'this one'}), ('draw', {'at': tile}),
                             ('draw', {'at': whole, 'words': None}),
@@ -421,7 +448,7 @@ class HqTools(unittest.TestCase):
                                          {'ok': 'Scrolled: ...'}, {'error': 'Nothing to point at there.'},
                                          {'ok': 'Scrolled: ...'}])
         with tempfile.TemporaryDirectory() as d:
-            env = agent_env({'PATH': fake_hq(d)['PATH']}, 'http://127.0.0.1:9', SIGN_IN_FD, 'call-token', 'juno', (path, 'key-1'), **FOLDERS)
+            env = self.env(d, 'http://127.0.0.1:9', (path, 'key-1'))
             out = self.call(('open_work', {'what': 'the teacup  page', 'address': page}),
                             ('open_work', {'what': 'job 12', 'address': '/?open=jobs&job=12'}),
                             ('drive', {'to': 'Price'}), ('drive', {'point': {'x': 0.4, 'y': 0.6}}), ('drive', {'by': 'bottom'}),
@@ -461,7 +488,7 @@ class HqTools(unittest.TestCase):
         """Done, refused or looked up, the agent speaks next: each answer carries the rule, except hang_up's.
 """
         with tempfile.TemporaryDirectory() as d:
-            out = self.call(('job', {'goal': 'g', 'agent': 'bolt', 'code': 'LOGS', **ESTIMATE, 'title': 'Logs', 'brief': 'Check them.'}), ('promise', {'goal': 'g', 'owner': 'Bolt!', 'what': 'x'}),
+            out = self.call(('job', {'goal': 'g', 'agent': 'bolt', 'code': 'LOGS', **ESTIMATE, 'title': 'Logs', 'brief': 'Check them.'}), ('write_down', {'goal': 'g', 'owner': 'Bolt!', 'words': 'x'}),
                             ('history', {}), ('expedite', {'job': 0}), ('hang_up', {}), env=self.env(d, coordinator(self)))
         self.assertEqual([r['result']['isError'] for r in out[1:]], [False, True, False, True, False])
         for reply in out[1:5]:
@@ -501,7 +528,7 @@ class HqTools(unittest.TestCase):
     # (deliverable, the tools' word)
     def test_a_deliverable_goes_to_hq_job_as_given_and_a_time_never_does(self):
         """ The coordinator puts the job on the deliverable named; the tool only keeps it one plain word. A job takes no
-        time of its own: a promise's time becomes its deliverable's window (windows.ts)."""
+        time of its own: the time of something written down becomes its deliverable's window (windows.ts)."""
         with tempfile.TemporaryDirectory() as d:
             url = coordinator(self)
             deck = {'goal': 'g', 'agent': 'bolt', 'code': 'DECK', **ESTIMATE, 'title': 'Deck', 'brief': 'Make it.'}
@@ -723,8 +750,11 @@ class HqTools(unittest.TestCase):
         """A call's tool puts something on a list; its description says so."""
         import hq_tools
         self.assertEqual(sorted(t['name'] for t in hq_tools.TOOLS), CALL_TOOLS)
-        for t in hq_tools.TOOLS[:3]:  # (search, history and call only read)
-            self.assertIn("reaches nobody live" if t['name'] != 'job' else "doesn't reach them live", t['description'], t['name'])
+        said = {'job': "doesn't reach them live", 'replace': 'reaches nobody live', 'write_down': 'goes to anyone by itself'}
+        for t in hq_tools.TOOLS:  # (search, history and call only read)
+            if t['name'] in said:
+                self.assertIn(said[t['name']], t['description'], t['name'])
+        self.assertEqual(sum(t['name'] in said for t in hq_tools.TOOLS), len(said))
 
     def test_hang_up_runs_nothing_and_says_the_line_hangs_up_after_the_goodbye(self):
         """The voice line ends the call when the agent uses it (server.py, Call.leave): the tool itself runs no hq, and its
@@ -745,32 +775,33 @@ class HqTools(unittest.TestCase):
         self.assertEqual(out[1]['result'], answer)
         self.assertIn('hangs up once your goodbye has finished playing', hq_tools.HANG_UP_ANSWER)
 
-    def test_a_promise_goes_on_the_calls_list_with_the_agents_own_words(self):
+    def test_written_down_on_the_phone_it_goes_on_the_calls_list_with_the_agents_own_words(self):
+        """The phone has no notes: write_down is a task on the call's list alone, the words as the agent gave them."""
         what = 'Bolt checks Monday\'s phone logs for dropped calls: $(id) `id`'
         with tempfile.TemporaryDirectory() as d:
             url = coordinator(self)
-            out = self.call(('promise', {'goal': 'g', 'owner': 'bolt', 'what': what}), ('job', {'goal': 'g', 'agent': 'bolt', 'code': 'LOGS', **ESTIMATE, 'title': 'Logs', 'brief': 'Check them.', 'item': 1234}),
+            out = self.call(('write_down', {'goal': 'g', 'owner': 'bolt', 'words': what}), ('job', {'goal': 'g', 'agent': 'bolt', 'code': 'LOGS', **ESTIMATE, 'title': 'Logs', 'brief': 'Check them.', 'item': 1234}),
                             env=self.env(d, url))
             log = Path(d, 'hq.log').read_text()
-        self.assertEqual([s[1:4] for s in Coordinator.seen], [('/api/agent/item', 'Bearer call-token', {'kind': 'promise', 'owner': 'bolt', 'what': what, 'goal': 'g', 'quote': what}),
+        self.assertEqual([s[1:4] for s in Coordinator.seen], [('/api/agent/item', 'Bearer call-token', {'kind': 'task', 'owner': 'bolt', 'what': what, 'goal': 'g', 'quote': what}),
                                                               ('/api/agent/job', 'Bearer call-token', {'agent': 'bolt', 'title': 'Logs', 'after': None, 'code': 'LOGS', **ESTIMATE, 'prompt': 'Check them.', 'item': 1234, 'goal': 'g'})])
-        self.assertIn(f'ARG item\nARG add\nARG promise\nARG bolt\nARG {what}\nARG -\nARG --goal\nARG -\n', log)
+        self.assertIn(f'ARG item\nARG add\nARG task\nARG bolt\nARG {what}\nARG -\nARG --goal\nARG -\n', log)
         self.assertFalse(out[1]['result']['isError'])
-        promise_words = '\n'.join(part['text'] for part in out[1]['result']['content'])
-        self.assertIn('Noted as promise #1234 on this call, for bolt.', promise_words)
-        self.assertIn("It's on the call's list, not handed to anyone yet: after the call, the follow-up hands it out.", promise_words)
+        noted = '\n'.join(part['text'] for part in out[1]['result']['content'])
+        self.assertIn('Noted as task #1234 on this call, for bolt.', noted)
+        self.assertIn("It's on the call's list, not handed to anyone yet: after the call, the follow-up hands it out.", noted)
         self.assertFalse(out[2]['result']['isError'])
         job_words = '\n'.join(part['text'] for part in out[2]['result']['content'])
         self.assertIn("Queued job #1234 HQ-LOGS for bolt: Logs\nIt carries item #1234: handled when #1234 ends done "
                       "(it hasn't started yet).\nNot started yet: it's on bolt's list, and nobody is on it until it runs.", job_words)
 
-    def test_a_promise_carries_the_time_told_to_the_board(self):
-        """ a promise's time (and a correction's) goes to hq as --deadline; a bad one goes nowhere."""
+    def test_what_is_written_down_carries_the_time_told_to_the_board(self):
+        """ its time (and a correction's) goes to hq as --deadline; a bad one goes nowhere."""
         with tempfile.TemporaryDirectory() as d:
             url = coordinator(self)
-            out = self.call(('promise', {'goal': 'g', 'owner': 'bolt', 'what': 'The share link is live', 'deadline': '3h'}),
+            out = self.call(('write_down', {'goal': 'g', 'owner': 'bolt', 'words': 'The share link is live', 'deadline': '3h'}),
                             ('replace', {'goal': 'g', 'item': 7, 'what': 'Live by 18:00', 'deadline': '16:00'}),
-                            ('promise', {'goal': 'g', 'owner': 'bolt', 'what': 'x', 'deadline': 'tonight'}), env=self.env(d, url))
+                            ('write_down', {'goal': 'g', 'owner': 'bolt', 'words': 'x', 'deadline': 'tonight'}), env=self.env(d, url))
             log = Path(d, 'hq.log').read_text()
         self.assertEqual([s[3].get('deadline') for s in Coordinator.seen], ['3h', '16:00'])
         self.assertIn('ARG -\nARG --goal\nARG -\nARG --deadline\nARG 3h\n', log)
@@ -778,11 +809,11 @@ class HqTools(unittest.TestCase):
         self.assertIn('deadline must be', out[3]['result']['content'][0]['text'])
 
     def test_a_goal_goes_to_hq_on_stdin_never_in_argv(self):
-        """ promise, replace and reach: a goal can hold what was said on the call, and any uid reads argv."""
+        """ write_down, replace and reach: a goal can hold what was said on the call, and any uid reads argv."""
         goal = "Make it right for Jan Jansen before the weekend"
         with tempfile.TemporaryDirectory() as d:
             url = coordinator(self)
-            self.call(('promise', {'goal': goal, 'owner': 'bolt', 'what': 'Refund the mug'}),
+            self.call(('write_down', {'goal': goal, 'owner': 'bolt', 'words': 'Refund the mug'}),
                       ('replace', {'goal': goal, 'item': 7, 'what': 'Refund the mug today'}),
                       ('reach', {'goal': goal, 'agent': 'bolt', 'job': 9, 'words': 'Refund first.', 'what': 'Refund first'}), env=self.env(d, url))
             log = Path(d, 'hq.log').read_text()
@@ -792,16 +823,16 @@ class HqTools(unittest.TestCase):
         self.assertEqual({g for _, g in seen}, {goal})
         self.assertNotIn('Jansen', log)
 
-    def test_a_promise_about_work_under_way_names_its_job(self):
-        """A promise's job (the work under way it's about) goes to hq as --job with its time, whose deliverable takes it
+    def test_what_is_written_down_about_work_under_way_names_its_job(self):
+        """Its job (the work under way it's about) goes to hq as --job with its time, whose deliverable takes it
         at once (askwindow.ts), with --deliverable for one the call queued in none; without a time, or a deliverable
         without a job, it goes nowhere."""
         with tempfile.TemporaryDirectory() as d:
             url = coordinator(self)
-            out = self.call(('promise', {'goal': 'g', 'owner': 'wren', 'what': 'The fallback is live', 'deadline': '40m', 'job': 9222}),
-                            ('promise', {'goal': 'g', 'owner': 'wren', 'what': 'x', 'job': 9222}),
-                            ('promise', {'goal': 'g', 'owner': 'wren', 'what': 'Names', 'deadline': '2h', 'job': 9223, 'deliverable': 'shop/names'}),
-                            ('promise', {'goal': 'g', 'owner': 'wren', 'what': 'x', 'deadline': '2h', 'deliverable': 'shop/names'}), env=self.env(d, url))
+            out = self.call(('write_down', {'goal': 'g', 'owner': 'wren', 'words': 'The fallback is live', 'deadline': '40m', 'job': 9222}),
+                            ('write_down', {'goal': 'g', 'owner': 'wren', 'words': 'x', 'job': 9222}),
+                            ('write_down', {'goal': 'g', 'owner': 'wren', 'words': 'Names', 'deadline': '2h', 'job': 9223, 'deliverable': 'shop/names'}),
+                            ('write_down', {'goal': 'g', 'owner': 'wren', 'words': 'x', 'deadline': '2h', 'deliverable': 'shop/names'}), env=self.env(d, url))
             log = Path(d, 'hq.log').read_text()
         self.assertEqual([(s[3].get('deadline'), s[3].get('job'), s[3].get('thread')) for s in Coordinator.seen],
                          [('40m', 9222, None), ('2h', 9223, 'shop/names')])
@@ -815,22 +846,34 @@ class HqTools(unittest.TestCase):
     def test_limits_are_refused_with_a_message_never_cut(self):
         with tempfile.TemporaryDirectory() as d:
             url = coordinator(self)
-            out = self.call(('promise', {'goal': 'g', 'owner': 'bolt', 'what': 'w' * 201}), ('promise', {'goal': 'g', 'owner': 'bolt', 'what': 'Two\nlines'}),
-                            ('replace', {'goal': 'g', 'item': 7, 'what': 'w' * 250}), ('promise', {'goal': 'g', 'owner': 'Bolt Smith', 'what': 'x'}), env=self.env(d, url))
+            out = self.call(('write_down', {'goal': 'g', 'owner': 'bolt', 'words': 'w' * 201}), ('write_down', {'goal': 'g', 'owner': 'bolt', 'words': 'Two\nlines'}),
+                            ('replace', {'goal': 'g', 'item': 7, 'what': 'w' * 250}), ('write_down', {'goal': 'g', 'owner': 'Bolt Smith', 'words': 'x'}), env=self.env(d, url))
             self.assertFalse(Path(d, 'hq.log').exists())
         self.assertEqual(Coordinator.seen, [])
         self.assertEqual([(r['result']['isError'], r['result']['content'][0]['text']) for r in out[1:]], [
-            (True, 'what too long (201 > 200): make it one short line; the follow-up has the whole call'),
-            (True, 'what needs one plain line: the board reads it'),
+            (True, 'words too long (201 > 200): make it one short line; the follow-up has the whole call'),
+            (True, 'words needs one plain line: the board reads it'),
             (True, 'what too long (250 > 200): make it one short line; the follow-up has the whole call'),
             (True, 'owner must be a colleague id, like ada')])
 
-    def test_a_lost_answer_to_a_promise_is_unconfirmed(self):
+    def test_a_picture_on_the_phone_is_refused_and_goes_nowhere(self):
+        """The phone has no notes and no screen to cut a picture from: write_down there is words alone."""
+        box = {'x': 0.1, 'y': 0.1, 'width': 0.5, 'height': 0.5}
+        with tempfile.TemporaryDirectory() as d:
+            url = coordinator(self)
+            out = self.call(('write_down', {'goal': 'g', 'words': 'Make the price smaller', 'from': 'now', 'region': box}),
+                            ('write_down', {'goal': 'g', 'words': 'Make the price smaller', 'from': 'note 3'}), env=self.env(d, url))
+            self.assertFalse(Path(d, 'hq.log').exists())
+        self.assertEqual(Coordinator.seen, [])
+        self.assertEqual([(r['result']['isError'], r['result']['content'][0]['text']) for r in out[1:]],
+                         [(True, "There's no picture on the phone: write it down in your words alone")] * 2)
+
+    def test_a_lost_answer_to_what_is_written_down_is_unconfirmed(self):
         """A retry could put it on the list twice: the agent hears it may be there, and that the follow-up catches it if not."""
         for lose, why in (('drop', 'Empty reply from server'), (500, 'HTTP 500: internal')):
             with self.subTest(lose=lose), tempfile.TemporaryDirectory() as d:
                 url = coordinator(self, lose=lose)
-                out = self.call(('promise', {'goal': 'g', 'owner': 'bolt', 'what': 'Check the logs'}), env=self.env(d, url))
+                out = self.call(('write_down', {'goal': 'g', 'owner': 'bolt', 'words': 'Check the logs'}), env=self.env(d, url))
                 self.assertEqual((out[1]['result']['isError'], out[1]['result']['content'][0]['text']), (True,
                     f"Not confirmed: the item may or may not be recorded ({why}). Don't record it again: it may be there already. "
                     "Don't note it again: the follow-up goes through the whole call afterwards and records it if it's missing."))
@@ -860,10 +903,10 @@ class HqTools(unittest.TestCase):
                    ('job', {**ok, 'title': ' '}), ('job', {**ok, 'brief': ' '}), ('job', {k: v for k, v in ok.items() if k != 'brief'}),
                    ('job', {**ok, 'agent': 'Bolt Smith'}), ('job', {**ok, 'item': '7'}), ('job', {**ok, 'item': 0}),
                    ('say', {'agent': 'bolt', 'text': 'x'}), ('status', {'agent': 'bolt', 'text': 'x'}), ('forward', {'agent': 'bolt', 'text': 'x'}),
-                   ('promise', {'goal': 'g', 'owner': '--call', 'what': 'x'}), ('promise', {'goal': 'g', 'owner': 'bolt', 'what': ' '}), ('replace', {'goal': 'g', 'item': '7', 'what': 'x'}),
+                   ('write_down', {'goal': 'g', 'owner': '--call', 'words': 'x'}), ('write_down', {'goal': 'g', 'owner': 'bolt', 'words': ' '}), ('replace', {'goal': 'g', 'item': '7', 'what': 'x'}),
                    ('replace', {'goal': 'g', 'item': True, 'what': 'x'}), ('replace', {'goal': 'g', 'item': 7}),
-                   ('job', {k: v for k, v in ok.items() if k != 'goal'}), ('promise', {'owner': 'bolt', 'what': 'x'}),
-                   ('promise', {'goal': 'Two\nlines', 'owner': 'bolt', 'what': 'x'}), ('replace', {'goal': 'g' * 301, 'item': 7, 'what': 'x'}),
+                   ('job', {k: v for k, v in ok.items() if k != 'goal'}), ('write_down', {'owner': 'bolt', 'words': 'x'}),
+                   ('write_down', {'goal': 'Two\nlines', 'owner': 'bolt', 'words': 'x'}), ('replace', {'goal': 'g' * 301, 'item': 7, 'what': 'x'}),
                    ('add', {'job': 7, 'words': 'x'}), ('reach', {'agent': 'bolt', 'job': 7, 'words': 'x', 'what': 'x'}),
                    # (manage: only hq's management commands, one line a word)
                    ('manage', {'command': ['status', 'x']}), ('manage', {'command': ['job', 'bolt', 'x', '-']}), ('manage', {'command': ['job']}),
@@ -879,7 +922,7 @@ class HqTools(unittest.TestCase):
 
     def test_look_ups_run_hq_from_an_argument_list(self):
         with tempfile.TemporaryDirectory() as d:
-            env = {**fake_hq(d), **agent_env({'PATH': fake_hq(d)['PATH']}, 'http://127.0.0.1:9', SIGN_IN_FD, 'call-token', 'juno', **FOLDERS)}
+            env = self.env(d, 'http://127.0.0.1:9')
             q = "Penny's request #35; $(cat /seat/token) `id`"
             out = self.call(('search', {'query': q}), ('history', {'query': '#35'}), ('history', {}),
                             ('when', {'what': q, 'size': sized_time('1h30m'), 'agent': 'bolt', 'after': 123, 'by': '2026-10-06T14:30Z'}),
@@ -896,7 +939,7 @@ class HqTools(unittest.TestCase):
 
     def test_added_seat_replay_is_available_without_a_deadline_or_query(self):
         with tempfile.TemporaryDirectory() as d:
-            env = {**fake_hq(d), **agent_env({'PATH': fake_hq(d)['PATH']}, 'http://127.0.0.1:9', SIGN_IN_FD, 'call-token', 'juno', **FOLDERS)}
+            env = self.env(d, 'http://127.0.0.1:9')
             self.call(('eta', {'extra_seat': '5x'}), ('when', {'extra_seat': '20x'}), env=env)
             log = Path(d, 'hq.log').read_text()
         self.assertIn('ARG projects\nARG --extra-seat\nARG 5x\n', log)
@@ -910,7 +953,7 @@ class HqTools(unittest.TestCase):
     def test_eta_with_no_query_reads_whats_going_on_now(self):
         # (who's at work and what each open card holds up, fresh each time: hq now.)
         with tempfile.TemporaryDirectory() as d:
-            env = {**fake_hq(d), **agent_env({'PATH': fake_hq(d)['PATH']}, 'http://127.0.0.1:9', SIGN_IN_FD, 'call-token', 'juno', **FOLDERS)}
+            env = self.env(d, 'http://127.0.0.1:9')
             self.call(('eta', {}), ('eta', {'query': ' '}), env=env)
             log = Path(d, 'hq.log').read_text()
         self.assertEqual(log.count('ARG now\n'), 2)
@@ -954,7 +997,7 @@ COORDINATOR = Path(HERE).parent / 'coordinator'
 
 @unittest.skipUnless((COORDINATOR / 'node_modules').is_dir(), 'needs the coordinator (npm ci in platform/coordinator)')
 class CallsList(unittest.TestCase):
-    """promise and replace through the real hq and the real coordinator (its app, with a throwaway database), under the
+    """write_down (on the phone) and replace through the real hq and the real coordinator (its app, with a throwaway database), under the
     call token the coordinator gave the call, as the voice line has it."""
 
     @classmethod
@@ -966,6 +1009,10 @@ class CallsList(unittest.TestCase):
         shutil.copytree(COORDINATOR / 'fixture', cls.repo)
         for d in ('platform', 'shared'):
             (cls.repo / d).symlink_to(COORDINATOR.parent.parent / d)
+        # (work only Opus does, as the company's org.yaml has it: the job tool's only)
+        with open(cls.repo / 'company/org.yaml', 'a') as org:
+            org.write('\nengineOnly:\n  - { id: pixels, what: pixel work, engine: claude, model: claude-opus-5-5, '
+                      'paths: ["platform/hq/**"] }\n')
         code = ("import { createServer } from 'node:http'; const { app } = await import('file://' + process.argv[1]);"
                 "const s = createServer(app).listen(0, '127.0.0.1', () => console.log('port', s.address().port));")
         cls.proc = subprocess.Popen(['node', '--input-type=module', '-e', code, str(COORDINATOR / 'src' / 'server.ts')], stdout=subprocess.PIPE, text=True,
@@ -997,7 +1044,8 @@ class CallsList(unittest.TestCase):
 
     def tools(self, token, agent, *calls):
         with tempfile.TemporaryDirectory() as d:
-            out = HqTools.call(self, *calls, env=agent_env({'PATH': fake_hq(d)['PATH']}, self.url, SIGN_IN_FD, token, agent, **FOLDERS))
+            out = HqTools.call(self, *calls, env={**agent_env({'PATH': fake_hq(d)['PATH']}, self.url, SIGN_IN_FD, token, agent, **FOLDERS),
+                                                   **repo_env(self.repo)})
         return [(r['result']['isError'], r['result']['content'][0]['text']) for r in out[1:]]
 
     def hq(self, token, agent, *args, words=''):
@@ -1005,20 +1053,20 @@ class CallsList(unittest.TestCase):
         return subprocess.run(['bash', HQ, *args], input=words, capture_output=True, text=True,
                               env=agent_env({'PATH': os.environ['PATH']}, self.url, SIGN_IN_FD, token, agent, **FOLDERS))
 
-    def test_a_promise_is_on_the_calls_list_at_once_and_stays_after_hang_up(self):
+    def test_what_is_written_down_is_on_the_calls_list_at_once_and_stays_after_hang_up(self):
         for lines in ([], ['Board: Kit, the coming-soon page.', 'Kit: I will send Juno the mission note.']):
             with self.subTest(lines=len(lines)):
                 token, call = self.start('kit')
-                out = self.tools(token, 'kit', ('promise', {'goal': 'g', 'owner': 'kit', 'what': 'Kit sends Juno the mission note'}))
+                out = self.tools(token, 'kit', ('write_down', {'goal': 'g', 'owner': 'kit', 'words': 'Kit sends Juno the mission note'}))
                 item = self.db('select id, call, kind, owner, what, quote, by, status from call_items order by id desc limit 1')[0]
-                self.assertEqual(item[1:], (call, 'promise', 'kit', 'Kit sends Juno the mission note', 'Kit sends Juno the mission note', None, 'open'))
-                self.assertEqual(out, [(False, f"Noted as promise #{item[0]} on this call, for kit.\n"
+                self.assertEqual(item[1:], (call, 'task', 'kit', 'Kit sends Juno the mission note', 'Kit sends Juno the mission note', None, 'open'))
+                self.assertEqual(out, [(False, f"Noted as task #{item[0]} on this call, for kit.\n"
                                         "It's on the call's list, not handed to anyone yet: after the call, the follow-up hands it out.")])
                 self.voice('call-end', {'agent': 'kit', 'lines': lines, 'token': token})  # (the line drops, or the call ends)
                 self.assertEqual(self.db('select call, status from call_items where id = ?', item[0]), [(call, 'open')])
                 status, job = self.db('select status, job from calls where id = ?', call)[0]
                 self.assertEqual((status, bool(job)), ('ended', True), 'its follow-up hands it out')
-                again = self.tools(token, 'kit', ('promise', {'goal': 'g', 'owner': 'kit', 'what': 'After the call'}))
+                again = self.tools(token, 'kit', ('write_down', {'goal': 'g', 'owner': 'kit', 'words': 'After the call'}))
                 self.assertTrue(again[0][0] and again[0][1].startswith('Nothing recorded'), again)  # (the token ended with the call)
 
     def test_the_ceos_call_expedites_and_a_refusal_says_why(self):
@@ -1041,7 +1089,7 @@ class CallsList(unittest.TestCase):
         other, theirs = self.start('moss')
         self.voice('call-end', {'agent': 'moss', 'lines': [said], 'token': other})
         token, mine = self.start('kit')
-        r = self.hq(token, 'kit', 'item', 'add', 'promise', 'kit', 'Onto the other call?', '-', '--goal', '-', '--call', str(theirs),
+        r = self.hq(token, 'kit', 'item', 'add', 'task', 'kit', 'Onto the other call?', '-', '--goal', '-', '--call', str(theirs),
                     words=json.dumps({'goal': 'g', 'words': 'x'}))
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(self.db('select call from call_items order by id desc limit 1'), [(mine,)], 'on its own call, whatever it asks')
@@ -1060,7 +1108,7 @@ class CallsList(unittest.TestCase):
         self.assertNotIn('[1]', r.stdout, 'never the numbered transcript a follow-up works from')
         out = self.tools(token, 'kit', ('call', {'id': theirs}), ('items', {'call': theirs}))
         self.assertEqual([e for e, _ in out], [False, True])
-        self.assertEqual(out[1][1], 'no tool items: hand work on with job, note a promise with promise')
+        self.assertEqual(out[1][1], 'no tool items: hand work on with job, write down what is to be done with write_down')
         self.voice('call-end', {'agent': 'kit', 'lines': [], 'token': token})
 
     def test_the_call_manages_the_companys_work_as_off_the_call(self):
@@ -1095,7 +1143,7 @@ class CallsList(unittest.TestCase):
 
     def test_the_boards_correction_replaces_an_open_item_on_the_line(self):
         first, call1 = self.start('moss')
-        self.tools(first, 'moss', ('promise', {'goal': 'g', 'owner': 'moss', 'what': 'Brand films A2 and D'}))
+        self.tools(first, 'moss', ('write_down', {'goal': 'g', 'owner': 'moss', 'words': 'Brand films A2 and D'}))
         old = self.db('select max(id) from call_items')[0][0]
         self.voice('call-end', {'agent': 'moss', 'lines': ['Moss: I will make A2 and D.'], 'token': first})
         token, call2 = self.start('moss')
@@ -1103,11 +1151,31 @@ class CallsList(unittest.TestCase):
         self.assertIn(f'- #{old}: Brand films A2 and D (moss)', prompt)  # (what replace takes)
         out = self.tools(token, 'moss', ('replace', {'goal': 'g', 'item': old, 'what': 'Only film D, no A2'}), ('replace', {'goal': 'g', 'item': old, 'what': 'Again'}))
         new = self.db('select max(id) from call_items')[0][0]
-        self.assertEqual(out, [(False, f"Noted as promise #{new} on this call, for moss: it replaces #{old} (Brand films A2 and D), which the board changed.\n"
+        self.assertEqual(out, [(False, f"Noted as task #{new} on this call, for moss: it replaces #{old} (Brand films A2 and D), which the board changed.\n"
                                 "It's on the call's list, not handed to anyone yet: after the call, the follow-up hands it out."),
                                (True, f"Nothing recorded: item #{old} isn't open: on a call, only an open item is replaced (the call's follow-up can replace a handled one)")])
         self.assertEqual(self.db('select id, call, status from call_items where id in (?, ?) order by id', old, new), [(old, call1, 'replaced'), (new, call2, 'open')])
         self.voice('call-end', {'agent': 'moss', 'lines': [], 'token': token})
+
+    def test_a_job_marked_as_work_only_one_engine_does_starts_on_it_whoever_it_s_for(self):
+        """only: org.yaml's engineOnly ids, each with its what, and the job runs on its rule's engine and model from
+        the start, even for a colleague on Codex; an id the company has none of reaches nobody."""
+        with tempfile.TemporaryDirectory() as d:
+            r = subprocess.run(HQ_TOOLS, input=json.dumps({'jsonrpc': '2.0', 'id': 1, 'method': 'tools/list'}) + '\n',
+                               env={**fake_hq(d), **repo_env(self.repo)}, capture_output=True, text=True)
+        job = next(t for t in json.loads(r.stdout)['result']['tools'] if t['name'] == 'job')
+        only = job['inputSchema']['properties']['only']
+        self.assertEqual(only['enum'], ['pixels'])
+        self.assertIn('pixels: pixel work', only['description'])
+        token, _ = self.start('kit')
+        base = {'goal': 'g', 'agent': 'nib', **ESTIMATE, 'brief': 'The arrival animation plays once.'}
+        out = self.tools(token, 'kit', ('job', {**base, 'code': 'REPLAY', 'title': 'Replay', 'only': 'pixels'}),
+                         ('job', {**base, 'code': 'PLAIN', 'title': 'Plain'}),
+                         ('job', {**base, 'code': 'OTHER', 'title': 'Other', 'only': 'sound'}))
+        self.assertEqual([error for error, _ in out], [False, False, True])
+        self.assertEqual(self.db('select title, engine, model, engine_only from jobs where agent = ? order by id', 'nib'),
+                         [('Replay', 'claude', 'claude-opus-5-5', 'pixels'), ('Plain', 'codex', None, None)])
+        self.voice('call-end', {'agent': 'kit', 'lines': [], 'token': token})
 
     def test_what_the_board_adds_reaches_the_job_queued_on_the_call(self):
         """add puts what the board adds in the brief while the job waits, else in its running session; only the call's own jobs."""
@@ -1172,7 +1240,7 @@ class CallsList(unittest.TestCase):
 
     def test_the_coordinators_limits_reach_the_agent(self):
         token, call = self.start('kit')
-        out = self.tools(token, 'kit', ('promise', {'goal': 'g', 'owner': 'nobody-here', 'what': 'x'}), ('replace', {'goal': 'g', 'item': 999999, 'what': 'x'}))
+        out = self.tools(token, 'kit', ('write_down', {'goal': 'g', 'owner': 'nobody-here', 'words': 'x'}), ('replace', {'goal': 'g', 'item': 999999, 'what': 'x'}))
         self.assertEqual(out, [(True, "Nothing recorded: nobody-here isn't a colleague who takes work"),
                                (True, "Nothing recorded: item #999999 isn't there to replace")])
         self.assertEqual(self.db('select count(*) from call_items where call = ?', call), [(0,)])
@@ -1192,7 +1260,7 @@ class CallAgent(unittest.TestCase):
                 Path(d, f).write_text(text)
             signs = sign_in_pipe(SEAT)  # (as server.py hands it over)
             env = agent_env({**fake_hq(d), 'HOME': d}, url, signs, 'call-token', 'juno', work=d, cli_config=d)
-            env.update(ANTHROPIC_BASE_URL=url, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC='1')
+            env.update(ANTHROPIC_BASE_URL=url, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC='1', **repo_env())
             msg = {'type': 'user', 'message': {'role': 'user', 'content': [{'type': 'text', 'text': 'Give Bolt the phone logs.'}]}}
             try:
                 r = subprocess.run(['claude', '-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose',
@@ -1235,11 +1303,11 @@ class CallAgent(unittest.TestCase):
             self.turn('mcp__hq__search', {'query': 'x'}, checkout={'.claude/settings.json': settings, '.claude/settings.local.json': settings})
             self.assertFalse(Path(out, 'ran').exists())
 
-    def test_a_promise_goes_on_the_list(self):
-        init, seen, log = self.turn('mcp__hq__promise', {'owner': 'bolt', 'what': 'Bolt checks the phone logs', 'goal': 'Calls stop dropping'})
-        self.assertIn(('hq', '/api/agent/item', 'Bearer call-token', {'kind': 'promise', 'owner': 'bolt', 'what': 'Bolt checks the phone logs',
+    def test_what_is_written_down_on_the_phone_goes_on_the_list(self):
+        init, seen, log = self.turn('mcp__hq__write_down', {'owner': 'bolt', 'words': 'Bolt checks the phone logs', 'goal': 'Calls stop dropping'})
+        self.assertIn(('hq', '/api/agent/item', 'Bearer call-token', {'kind': 'task', 'owner': 'bolt', 'what': 'Bolt checks the phone logs',
                                                                      'goal': 'Calls stop dropping', 'quote': 'Bolt checks the phone logs'}), seen)
-        self.assertIn("Noted as promise #1234 on this call, for bolt.\\nIt's on the call's list, not handed to anyone yet", seen[-1][2])
+        self.assertIn("Noted as task #1234 on this call, for bolt.\\nIt's on the call's list, not handed to anyone yet", seen[-1][2])
 
     def test_a_tool_step_before_any_words_shows_in_the_stream(self):
         """What server.py's Agent.ask goes by, from the CLI as the line runs it (partial messages on): a tool step's start

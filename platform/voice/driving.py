@@ -33,7 +33,7 @@ OPEN_WORDS = {
               'their answer comes with a later turn.'),
     'tapped': {
         'open': ("(They tapped Open on {what}: it's on their screen now, and {seen}. drive scrolls and points, draw "
-                 'rings.)'),
+                 'circles.)'),
         'not now': '(They tapped Not now on your suggestion to open {what}.)',
         'failed': "(HQ couldn't open {what} on their screen. {why})",
     },
@@ -59,8 +59,8 @@ DRIVE_WORDS = {
         'bottom': 'Scrolled: their screen is at the bottom of the page.',
         'point': 'Pointed: your pointer is where you aimed on their screen.',
     },
-    # (after a scroll: what the agent rings, it aims from a fresh picture.)
-    'look': 'Look at their screen now (the screen tool) before you point at or ring anything on it.',
+    # (after a scroll: what the agent circles, it aims from a fresh picture.)
+    'look': 'Look at their screen now (the screen tool) before you point at or circle anything on it.',
     'late': "HQ didn't answer: their screen may not have moved. Say what you meant in words.",
     'ended': 'The call ended before HQ moved their screen.',
     'none': "You can move the board's screen only on the board's own calls in HQ.",

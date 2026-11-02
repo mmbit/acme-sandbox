@@ -1,5 +1,5 @@
 // Writing in the book: whether a press writes (the Pencil and a mouse on a page whose ink is read, unless the press
-// pans or a tool takes it), and a stroke lifted onto its page, one step for Undo and Redo. (moved here from bookpages.js, and Redo: job #19243)
+// pans or a tool takes it), and a stroke lifted onto its page, one step for Undo and Redo.
 import { INKS } from '/__review/ink.js';
 import { at } from './bookview.js';
 import { boxOf } from './bookrow.js';
@@ -14,7 +14,7 @@ export const INK = { color: '#2a2352', size: INKS[0].size };
 
 // The Pencil and a mouse write on the page once its ink is read, unless the press pans (bookpan.js) or the mouse's
 // tools take it (moving a picture, a text box: booktools.js); a finger does too, unless it moves the page: with the
-// hand, or once a pen is in use where this device's preferences say so (book.input.fingerPans(): bookinput.js). A text field on a page (a
+// hand, or where this device's preferences say so (on since its first pen) (book.input.fingerPans(): bookinput.js). A text field on a page (a
 // reply's) is the field's: the Pencil writes into it with Scribble. The Pencil on something on the page (a box of
 // words, an answer's slip, a picture) waits: a quick tap there is a click on it, never a dot of ink, and once it
 // moves its line starts where it touched. On bare paper it inks at once, so a dotted i keeps its dot.
@@ -24,9 +24,8 @@ export function drawable(book, e, table) {
     book.assign?.inking(e); // (a ring round a scrap and a line out of it: bookassign.js)
     return true;
   }
-  // (a note's words kept from Scribble for the pen take its strokes: bookamend.js; a read refused, over the page, is tapped to try again)
+  // (a note's words kept from Scribble for the pen take its strokes as ink; a read refused, over the page, is tapped to try again)
   if (e.target.closest?.('textarea:not([data-pen]), input, [contenteditable], button, .bk-lost')) return false;
-  book.pointer = e.pointerType;
   // (a finger writes too, where it doesn't move the page: bookpan.js.)
   const writes =
     e.pointerType === 'pen' ||
@@ -93,12 +92,11 @@ export function dried(book, stroke, hooks) {
     size: book.inking.size,
     points: stroke.points.map(([x, y, p, t]) => [round(x / s + pan.x), round(y / s + pan.y), p, t]),
   };
-  // Only the pen edits content. A highlighter always leaves ink.
-  if (!(line.alpha < 1)) {
+  // Only the pen edits content. A highlighter, a pencil or a brush always leaves ink. (no line over words reads or
+  // strikes them: they stay ink; the pencil and the brush: job #17195)
+  if (!(line.alpha < 1) && (book.tools?.gestures?.() ?? true)) {
     // A scratch-out deletes its group without keeping the gesture as ink.
     if (book.groups?.scratch(v, line)) return book.ink.clear();
-    // A line across words strikes them out or slices them open instead of adding ink.
-    if (book.amend?.claim(stroke, book.pointer)) return book.ink.clear();
     // A stroke that circled a scrap and was lifted on the list it opened handed the scrap over (bookassign.js).
     if (book.assign?.claim()) return book.ink.clear();
   }
@@ -120,7 +118,10 @@ export function dried(book, stroke, hooks) {
 }
 // A stroke undone: it goes, and the growth it made; its page comes into view if it's out of it
 function unstroke(book, hooks, page, stroke) {
-  page.ink.splice(page.ink.lastIndexOf(stroke), 1);
+  const n = page.ink.lastIndexOf(stroke);
+  // (one already gone, rubbed out or its unit deleted by someone else, takes nothing else with it)
+  if (n < 0) return;
+  page.ink.splice(n, 1);
   inkChanged(book, hooks, page, stroke);
 }
 // (and made again)

@@ -9,6 +9,7 @@ const h = await harness('matching');
 const { db } = h;
 const { tick } = await import('./schedule.ts');
 const predictions = await import('./predictions.ts');
+const forecast = await import('./forecast.ts');
 const accuracy = await import('./accuracy.ts');
 const matching = await import('./matching.ts');
 
@@ -72,8 +73,8 @@ const hqOwn = (agent: string) =>
 const scheduled = (entry: string) =>
   (db.prepare('select job from schedule_runs where id = ? and slot = ?').get(entry, '2026-10-17') as { job: number })
     .job;
-const storedFor = (job: number) => {
-  predictions.sweep();
+const storedFor = async (job: number) => {
+  await forecast.sweep();
   return predictions.stored(job)!;
 };
 
@@ -108,7 +109,7 @@ test("a scheduled job is sized on its own entry's earlier runs, whoever ran them
   ];
   tick(SATURDAY);
   const job = scheduled('refactor-hq');
-  const { size, picks, basis } = storedFor(job);
+  const { size, picks, basis } = await storedFor(job);
   assert.deepEqual(
     picks.map(p => p.id),
     [...runs].reverse(),
@@ -145,7 +146,7 @@ test("an entry with too few runs stands on its routine's entries, its own first;
   ];
   done('lark', 'Tidy the HQ notes (2026-10-10)', 12, { entry: 'tidy', slot: '2026-10-10' });
   tick(SATURDAY);
-  const routine = storedFor(scheduled('refactor-voice'));
+  const routine = await storedFor(scheduled('refactor-voice'));
   assert.deepEqual(
     routine.picks.map(p => p.id),
     [voice, hq[1], hq[0]],
@@ -153,7 +154,7 @@ test("an entry with too few runs stands on its routine's entries, its own first;
   assert.deepEqual(routine.basis, { kind: 'hq', agent: null, words: [], routine: 'refactoring' });
 
   // an entry with no routine and one run: the matching, over HQ's jobs of lark's, and never on the slot's date
-  const matched = storedFor(scheduled('tidy'));
+  const matched = await storedFor(scheduled('tidy'));
   assert.equal(matched.basis.entry, undefined);
   assert.equal(matched.basis.routine, undefined);
   assert.deepEqual(matched.basis.words, ['tidy', 'hq', 'notes']);
@@ -168,7 +169,7 @@ test('a job whose title ends in a date and that no schedule made is matched as b
     done('dex', 'Shop copy for the 2026 catalogue', 30),
   ];
   const job = h.queue({ agent: 'dex', title: 'Test parcel (2026-10-18)', queuedBy: 'juno' });
-  const { basis, picks, size } = storedFor(job);
+  const { basis, picks, size } = await storedFor(job);
   assert.deepEqual(basis, { kind: 'work', agent: 'dex', words: ['test', 'parcel', '2026', '10'] });
   assert.deepEqual(picks.map(p => p.id).sort(), parcels.sort());
   assert.equal(size.agent_ms, 15 * MINUTE);
@@ -184,7 +185,7 @@ test("a title in the board's German is matched on its own words, its small words
   done('dex', 'Die Speisekarte im Laden', 25);
   done('dex', 'Der Newsletter für die Woche', 40);
   const job = h.queue({ agent: 'dex', title: 'Die Speisekarte für den Laden und das Menü', queuedBy: 'juno' });
-  assert.deepEqual(storedFor(job).basis.words, ['speisekarte', 'laden']); // (für is in the newsletter's title too)
+  assert.deepEqual((await storedFor(job)).basis.words, ['speisekarte', 'laden']); // (für is in the newsletter's title too)
 });
 
 test("a pool's first jobs ranked on the whole pool's index rank as they would alone (hq estimate --accuracy)", async () => {

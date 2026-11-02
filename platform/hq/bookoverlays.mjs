@@ -1,20 +1,86 @@
 // node platform/hq/book-check.mjs --stories 'the pen reaches every overlay' [--webkit] [--shots dir]
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
-import { recording, fold, cross, screen, sameInk } from './bookpicture.mjs';
+import { writeFile } from 'node:fs/promises';
+import { recording, cross, screen, sameInk } from './bookpicture.mjs';
 import { playLine } from './bookcall.mjs';
-import { until } from './bookkit.mjs';
+import { MINI, UPRIGHT, DESKTOP, middleOf, until, bookOpen } from './bookkit.mjs';
+import { minimiseCall } from './bookcallview.mjs';
 
 export function overlayStories(c) {
   return Object.fromEntries(
-    [
-      { width: 1133, height: 744 },
-      { width: 744, height: 1133 },
-    ].map(viewport => [
+    [MINI, UPRIGHT].map(viewport => [
       `the pen reaches every overlay and the call sees it at ${viewport.width} × ${viewport.height}`,
       browser => overlays(browser, c, viewport),
     ]),
   );
+}
+
+export function mediaStories(c) {
+  return Object.fromEntries(
+    [MINI, UPRIGHT, DESKTOP].map(viewport => [
+      `the shared picture keeps the device's controls at ${viewport.width} × ${viewport.height}`,
+      browser => mediaPicture(browser, c, viewport),
+    ]),
+  );
+}
+
+async function mediaPicture(browser, c, viewport) {
+  const s = await recording(browser, c, viewport, { hasTouch: viewport !== DESKTOP });
+  const { page } = s;
+  try {
+    const line = await prepare(s, true);
+    await page.locator('#book .bk-lip').click();
+    await page.waitForFunction(() => !['folded', 'shut'].includes(document.documentElement.dataset.book));
+    await page.waitForTimeout(900);
+    const button = page.locator('#book').getByRole('button', { name: 'Pen', exact: true, includeHidden: true });
+    if (await button.isVisible()) await button.click();
+    else {
+      await page.locator('#book .bk-more').click();
+      await page.locator('.bk-more-card').getByRole('menuitem', { name: 'Pen', exact: true }).click();
+    }
+    const control = page.locator('.bk-palette').getByRole('menuitemradio', { name: 'Blue', exact: true });
+    await control.waitFor();
+    const centre = middleOf(await control.boundingBox());
+    const box = { x: centre[0] - 50, y: centre[1] - 35, width: 100, height: 70 };
+    await cross(s.hand, box);
+    await until(() => s.notes.length > 0, 'the marked control reaches the call');
+    const picture = await screen(s, 'media-controls');
+    const matches = s.events.filter(e => e.type === 5 && e.data.tag === 'media');
+    assert.ok(
+      matches.some(e => e.data.payload.matches['(pointer: coarse)'] === (viewport !== DESKTOP)),
+      'the recording keeps this device’s pointer environment',
+    );
+    await sameInk(s, picture.bytes, box, true);
+    await mediaComparison(s);
+    line.send({ type: 'note', id: s.notes.length, state: 'done' });
+    await page.keyboard.press('Escape');
+    await page.locator('.cb-hangup').click();
+    c.noErrorsIn(s.errors);
+  } finally {
+    await s.done();
+  }
+}
+
+async function mediaComparison(s) {
+  const { viewport, c } = s;
+  const past = await s.mirrors.at(
+    s.events,
+    s.events.at(-1).timestamp,
+    { long: Math.max(viewport.width, viewport.height), png: true },
+    () => true,
+  );
+  assert.ok(past, 'the past picture is available');
+  if (c.shots) {
+    await writeFile(`${c.shots}/past-${viewport.width}-media-controls.png`, past.bytes);
+    // The same recording without its media environment shows the previous replay behavior.
+    const before = await s.mirrors.at(
+      s.events.filter(e => !(e.type === 5 && e.data.tag === 'media')),
+      s.events.at(-1).timestamp,
+      { long: Math.max(viewport.width, viewport.height), png: true },
+      () => true,
+    );
+    await writeFile(`${c.shots}/before-${viewport.width}-media-controls.png`, before.bytes);
+  }
 }
 
 async function overlays(browser, c, viewport) {
@@ -22,9 +88,7 @@ async function overlays(browser, c, viewport) {
   const { page, hand } = s;
   const line = await prepare(s);
   try {
-    await page.locator('#book .bk-lip').tap();
-    await page.waitForFunction(() => !['folded', 'shut'].includes(document.documentElement.dataset.book));
-    await page.waitForTimeout(900);
+    await bookOpen(page, true);
     await railButton(page, 'Tips');
     await page.waitForSelector('.tb-book:not(.tb-shut)');
     await page.waitForTimeout(900);
@@ -41,7 +105,7 @@ async function overlays(browser, c, viewport) {
     await page.waitForSelector('.tb', { state: 'detached' });
     await rail(s, line, 'Preferences on this device', '.bk-prefs', 'preferences');
     await rail(s, line, 'Pen', '.bk-palette', 'colours');
-    await fold(page);
+    await bookOpen(page, false);
     await pageOverlays(s, line);
     await dialogs(s, line);
     await futureSurfaces(s, line);
@@ -88,7 +152,8 @@ async function dialogs(s, line) {
   });
   await marked(s, line, '.showme-step', 'show-me');
   await page.locator('.showme-step button').tap();
-  await page.evaluate(() => import('/shell/zoom.js').then(m => m.zoom('/theme/hq/tips/pen-button.jpg', 'Picture')));
+  await page.evaluate(src => import('/shell/zoom.js').then(m => m.zoom(src, 'Picture')), s.c.SNIP);
+  await page.locator('dialog.zoom > img').evaluate(img => img.decode());
   await marked(s, line, 'dialog.zoom', 'picture');
   await page.locator('.zoom-close').tap();
   await s.context.route('**/api/notebooks/guests', r => r.fulfill({ json: { notebooks: [] } }));
@@ -101,36 +166,17 @@ async function dialogs(s, line) {
   await page.locator('.cp-close').tap();
 }
 
-async function prepare(s) {
+async function prepare(s, mouse = false) {
   const { page } = s;
-  if (process.argv.includes('--original-pen')) {
-    for (const file of [
-      'shared/review/layer.js',
-      'shared/review/pentouch.js',
-      'shared/review/dock.js',
-      'platform/hq/shell/ink/book.js',
-    ]) {
-      const path = file.startsWith('shared/') ? `/__review/${file.split('/').at(-1)}` : '/shell/ink/book.js';
-      await s.context.route(`${s.c.base}${path}`, async r =>
-        r.fulfill({
-          contentType: 'text/javascript',
-          body: await readFile(
-            `${process.argv[process.argv.indexOf('--original-pen') + 1]}/${file.split('/').at(-1)}`,
-            'utf8',
-          ),
-        }),
-      );
-    }
-  }
   const line = await playLine(s.context);
   await page.goto(`${s.c.base}/?intro=0&open=intercom&renderer=wire`);
   await page.waitForSelector('#loading.gone');
-  await fold(page);
-  await page.locator('#call').tap();
+  await bookOpen(page, false, mouse);
+  const press = selector => (mouse ? page.locator(selector).click() : page.locator(selector).tap());
+  await press('#call');
   await page.waitForFunction(() => !document.querySelector('#call-screenshare')?.disabled);
-  await page.locator('#call-screenshare').tap();
-  await page.locator('#call-min').tap();
-  await page.waitForSelector('.callbubble');
+  await press('#call-screenshare');
+  await minimiseCall(page, mouse);
   return line;
 }
 

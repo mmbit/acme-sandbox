@@ -1,145 +1,73 @@
-// book-check.mjs's story of a call's agent working the open notes page as the board does (the store's ink/callpage.ts,
-// played: shell/ink/notebookplay.js `by`), each change counted as its hand's (notebook.ts byHand): a plain note (words
-// on a post-it, no picture), a rectangle round it, a highlight, its scrap's words changed and the scrap deleted. Each
-// is one step on the board's screen (shell/ink/bookedit.js arrived): Undo takes it back in the store, Redo makes it
-// again.
+// book-check.mjs's story of the board's Undo on a call's notes page while the call's agent works it (the store's
+// ink/callpage.ts, played: shell/ink/notebookplay.js `by`), by hand on its iPad at 1133 × 744 and 744 × 1133 with
+// Chromium's own pen and touch, as on call 174: the agent puts a note on, the board draws, the agent puts another on,
+// the board draws again. The Pencil's taps on the rail's Undo take back the board's two lines, the last first, and
+// nothing of the agent's: its notes stay on the page and in the store, a third Undo has nothing to take, and a finger
+// on Redo puts only the board's line back (shell/ink/bookedit.js: someone else's change is no step).
 import assert from 'node:assert/strict';
-import { callSeed, mode } from './booknotespage.mjs';
+import { MINI, QUIET_MS, UPRIGHT, middleOf, mini, until } from './bookkit.mjs';
+import { callSeed } from './booknotespage.mjs';
 
-// c: book-check's { hqIn, base, shot, settled, noErrorsIn, DESKTOP }
+// c: book-check's { hqIn, base, shot, settled, noErrorsIn }
 export const agentPageStories = c => ({
-  "a call's agent works the page: a plain note, a rectangle, a highlight, its scrap changed and deleted, each undone":
-    browser => agentWorks(browser, c),
+  "the board's Undo on a call's page takes back only its own lines, never the agent's notes (landscape)": browser =>
+    ownUndo(browser, c, MINI, 'landscape'),
+  "the board's Undo on a call's page takes back only its own lines, never the agent's notes (portrait)": browser =>
+    ownUndo(browser, c, UPRIGHT, 'portrait'),
 });
 
 const PAGE = 9101;
-const anchor = { v: 1, url: '/', el: null, view: { x: 0, y: 0, w: 1280, h: 800, dpr: 1 }, ink: [] };
+const anchor = { v: 1, url: '/', el: null, view: { x: 0, y: 0, w: 1133, h: 744, dpr: 1 }, ink: [] };
 
-async function agentWorks(browser, c) {
-  const context = await c.hqIn(browser, c.DESKTOP, { notebooks: callSeed(new Date().toISOString()) });
-  await context.addInitScript(keepReads);
-  const page = await context.newPage(),
-    errors = [];
-  page.on('pageerror', e => errors.push(e.message));
-  const s = storyOf(page, context.notebook);
+async function ownUndo(browser, c, viewport, held) {
+  const s = await mini(browser, c, { viewport, notebooks: callSeed(new Date().toISOString()) });
+  const play = s.page.context().notebook,
+    groups = () => play.route('/api/notebooks/pages/groups', { page: PAGE }).groups,
+    lines = () => groups().reduce((n, g) => n + g.ink.length, 0),
+    notes = () => groups().filter(g => g.kind === 'note').length,
+    shown = () => s.page.evaluate(() => document.querySelectorAll('#book .bk-typed[data-note]').length);
+  // (the agent's plain note, read on the board's screen)
+  const note = async words => {
+    const had = await shown();
+    play.by('juno', '/api/notebooks/groups/scrap', { anchor, said: 'typed', words });
+    await until(async () => (await shown()) > had, `the agent's note “${words}” on the board's page`);
+  };
+  const tap = async (key, by) => {
+    const at = middleOf(await s.page.locator(`#book .${key}`).boundingBox());
+    await (by === 'pen' ? s.pen.tap(at) : s.touch.stroke([at], [at]));
+  };
   try {
-    await opened(page, c, context.notebook);
-    const note = await plainNote(page, c, s);
-    await marks(page, c, s, note);
-    await scrapChanged(page, s);
-    c.noErrorsIn(errors);
+    await note('The tabs read as tabs');
+    await drawn(s, 0.3);
+    await until(() => lines() === 1, "the board's first line saved");
+    await note('One title on the page');
+    await drawn(s, 0.55);
+    await until(() => lines() === 2, "the board's second line saved");
+    await c.shot(`book-notes-own-undo-${held}-drawn`, s.page);
+    await tap('bk-undo', 'pen');
+    await until(() => lines() === 1, "the Pencil's Undo takes the board's last line back");
+    assert.equal(notes(), 2, "the agent's notes stay in the store");
+    await tap('bk-undo', 'pen');
+    await until(() => lines() === 0, "and then the board's first");
+    await tap('bk-undo', 'pen');
+    await s.page.waitForTimeout(2 * QUIET_MS);
+    assert.deepEqual([notes(), await shown()], [2, 2], "a third Undo takes nothing of the agent's");
+    await tap('bk-redo', 'touch');
+    await until(() => lines() === 1, "a finger's Redo puts the board's first line back");
+    await s.page.waitForTimeout(2 * QUIET_MS);
+    assert.deepEqual([notes(), await shown(), lines()], [2, 2, 1], 'and only that');
+    await c.shot(`book-notes-own-undo-${held}`, s.page);
+    c.noErrorsIn(s.errors);
   } catch (e) {
-    await c.shot('book-notes-agent-failed', page).catch(() => {});
+    await c.shot(`book-notes-own-undo-${held}-failed`, s.page).catch(() => {});
     throw e;
   } finally {
-    await context.close();
+    await s.done();
   }
 }
-// (each read of the page's groups, kept once the book is done with it: the book's own read ends in the same task)
-function keepReads() {
-  const json = Response.prototype.json;
-  Response.prototype.json = async function () {
-    const read = await json.call(this);
-    if (this.url.includes('/api/notebooks/pages/groups')) setTimeout(() => (window.groupsRead = read));
-    return read;
-  };
-}
-// What the story asks of the store and the page: its groups, one by id, a wait on the store, and the agent's change
-// read on the board's screen (the book done with a read of the group as the store has it now) before the board's hand
-// goes to Undo
-function storyOf(page, play) {
-  const group = id => play.route('/api/notebooks/pages/groups', { page: PAGE }).groups.find(g => g.id === id);
-  const until = async (test, why) => {
-    for (let i = 0; i < 80 && !test(); i++) await page.waitForTimeout(250);
-    assert.ok(test(), why);
-  };
-  const byAgent = async (path, body) => {
-    const made = play.by('juno', path, body),
-      id = made.id ?? body.id;
-    await page.waitForFunction(
-      ([id, now]) => (window.groupsRead?.groups.find(g => g.id === id)?.updated ?? null) === now,
-      [id, group(id)?.updated ?? null],
-      { timeout: 60_000 },
-    );
-    return made;
-  };
-  const undo = () => page.keyboard.press('Control+z');
-  return { group, until, byAgent, undo };
-}
-// The call's page open in the book, the board's own note on it
-async function opened(page, c, play) {
-  await page.goto(`${c.base}/?intro=0&open=intercom`);
-  await page.waitForSelector('#loading.gone');
-  play.route('/api/notebooks/groups/scrap', {}, { anchor, said: 'typed', words: 'Seen first' });
-  if ((await mode(page)) !== 'open') {
-    await page.focus('#book .bk-lip');
-    await page.keyboard.press('Enter');
-    await c.settled(page, 'open');
-  }
-  await page.waitForFunction(() => document.querySelectorAll('.bk-typed[data-note]').length === 1, null, {
-    timeout: 60_000,
-  });
-}
-async function plainNote(page, c, { group, until, byAgent, undo }) {
-  const note = await byAgent('/api/notebooks/groups/scrap', {
-    anchor,
-    said: 'typed',
-    words: 'Give the agent a plain note',
-  });
-  await page.waitForFunction(() => document.querySelectorAll('.bk-typed[data-note]').length === 2);
-  assert.deepEqual([note.kind, note.pictures.length], ['note', 0], 'a plain note: words, no picture');
-  await c.shot('book-notes-agent-note', page);
-  await undo();
-  await until(() => !group(note.id), "Undo takes the agent's note off the page");
-  await page.keyboard.press('Control+Shift+z');
-  await until(() => group(note.id), 'Redo puts it back');
-  return note;
-}
-async function marks(page, c, { group, until, byAgent, undo }, note) {
-  const { x, y, w, h } = note.box;
-  const ring = await byAgent('/api/notebooks/groups/create', {
-    page: PAGE,
-    ink: [stroke({ color: '#4458c9', size: 5 }, [x - 12, y - 12, w + 24, h + 24])],
-  });
-  const highlight = await byAgent('/api/notebooks/groups/create', {
-    page: PAGE,
-    ink: [stroke({ color: '#ffd23f', size: 2, alpha: 0.42, fill: true }, [x, y, w, 30])],
-  });
-  await c.shot('book-notes-agent-marks', page);
-  await undo();
-  await until(() => !group(highlight.id) && group(ring.id), 'Undo takes the highlight back, the rectangle stays');
-  await undo();
-  await until(() => !group(ring.id) && group(note.id), 'and then the rectangle');
-}
-// A rectangle's stroke round a box, as the store's shapes are (bookinkmath.js shape)
-const stroke = (ink, [x, y, w, h]) => ({
-  ...ink,
-  points: [
-    [x, y],
-    [x + w, y],
-    [x + w, y + h],
-    [x, y + h],
-    [x, y],
-  ].map(([px, py], i) => [px, py, 0.58, i * 6]),
-});
-async function scrapChanged(page, { group, until, byAgent, undo }) {
-  const snip = await page.screenshot({ clip: { x: 20, y: 40, width: 200, height: 120 } });
-  const scrap = await byAgent('/api/notebooks/groups/scrap', {
-    anchor,
-    said: 'typed',
-    words: 'Make the price smaller',
-    snip: `data:image/png;base64,${snip.toString('base64')}`,
-  });
-  await byAgent('/api/notebooks/groups/edit', {
-    id: scrap.id,
-    since: group(scrap.id).updated,
-    words: 'Make the price much smaller',
-    said: 'typed',
-  });
-  await undo();
-  await until(() => group(scrap.id)?.words === 'Make the price smaller', "Undo puts the scrap's words back");
-  await byAgent('/api/notebooks/groups/delete', { id: scrap.id });
-  await undo();
-  await until(() => group(scrap.id), 'Undo brings the deleted scrap back');
-  assert.equal(group(scrap.id).words, 'Make the price smaller');
+// A zigzag drawn with the Pencil low on the paper, clear of the notes at its top, from a fraction of its width across
+async function drawn({ page, pen }, from) {
+  const desk = await page.locator('#book .bk-desk').boundingBox(),
+    [x, y] = [desk.x + desk.width * from, desk.y + desk.height * 0.72];
+  await pen.stroke(Array.from({ length: 9 }, (_, k) => [x + k * 12, y + (k % 2) * 24]));
 }

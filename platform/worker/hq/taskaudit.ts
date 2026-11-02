@@ -1,5 +1,5 @@
 // The first saved work estimate beside its own runs and attributed whole-task cost.
-import { budgetLine, confidenceLine } from './costs.ts';
+import { budgetLine, confidenceLine, taskCostLine } from './costs.ts';
 import type { TaskAudit } from '../../coordinator/src/taskaudit.ts';
 import type { TaskTimingFlag } from '../../coordinator/src/tasktime.ts';
 import { workDuration, TASK_TIMING_REASONS } from './comparisons.ts';
@@ -69,12 +69,7 @@ function printTask(task: Task) {
     `  Phases: work ${workDuration(task.whole.split.work, task.origin)}, ${phaseWords(task.whole.split)}${quality}${wholeQuality}`,
   );
   print(`  ${budgetLine(estimate?.token_budget)}`, `  ${confidenceLine(estimate?.confidence)}`);
-  const cost = task.whole.cost;
-  print(
-    `  Recorded task tokens: ${Math.round(cost.total.tokens)} (${Object.entries(cost.split)
-      .map(([phase, spend]) => `${phase} ${Math.round(spend.tokens)}`)
-      .join(', ')}). Missing reports: ${cost.missing_usage}.`,
-  );
+  print(taskCostLine('Recorded task tokens', task.whole.cost));
   if (task.revisions.length)
     for (const revision of task.revisions)
       print(

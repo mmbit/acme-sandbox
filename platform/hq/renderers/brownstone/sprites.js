@@ -4,6 +4,8 @@ import { rng, pick, canvas, mix } from '../../util.js';
 import { INK } from './iso.js';
 
 export const CW = 14, CH = 28, FOOT = 25; // sprite canvas and the row the feet stand on
+// how much of the sprite lies below its feet
+export const BELOW_FEET = 1 - FOOT / CH;
 const OY = 5; // headroom for buns, hats and umbrellas
 const SKINS = ['#ffd9b8', '#f5c49c', '#e0a878', '#c68a5c', '#9c6644', '#7a4b30'];
 const HAIRS = ['#2b2230', '#5a3825', '#8b5a2b', '#d9a441', '#e8e0d0', '#c8553d', '#6b4c9a', '#3d6e70'];

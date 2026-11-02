@@ -8,6 +8,7 @@ import { harness, WORKER_TOKEN } from './harness.ts';
 
 const h = await harness('reins');
 const reins = await import('./reins.ts');
+const latency = await import('./latency.ts');
 reins.start(); // (as the server's start)
 
 test("jobs joining or leaving while a job's time drains change its share from then on, not what it drained", () => {
@@ -141,6 +142,9 @@ test("a job past its share is held and told (its run's heartbeat is not), the bo
   assert.equal(answer.status, 200);
   assert.ok(ms >= 1_000, `the heavy job's request went in after ${ms} ms`);
   assert.match(String(answer.headers['x-hq-rein']), /^HQ held this call [\d.]+ s\. Job #\d+ has taken/);
+  // (its wait held nothing of HQ: no slow hold for it, latency.ts requestHold.)
+  latency.flush();
+  assert.deepEqual(h.db.prepare("select ms from slow_holds where name like '% /api/agent/room'").all(), []);
 
   // Its run's heartbeat goes in at once and keeps its lease, and the beat's window check waits for one within its share
   reins.spend(heavy.id, 400);

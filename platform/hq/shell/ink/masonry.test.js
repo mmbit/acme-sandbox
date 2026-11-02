@@ -1,7 +1,7 @@
 // node --test platform/hq/shell/ink/masonry.test.js   (a page's masonry: pure)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { DAY_H, GAP, columnsOf, layout, placeAt, widthFor } from './masonry.js';
+import { DAY_H, GAP, LEAST, MARGIN, columnsOf, layout, placeAt, widthFor } from './masonry.js';
 import { UNIT_W } from './scrapunit.js';
 
 // Units of mixed heights, as a page has them
@@ -10,17 +10,36 @@ const units = Array.from({ length: 23 }, (_, i) => ({ id: i + 1, h: 80 + ((i * 1
 // Whether every place lies on a page this wide, left to right
 const onPage = (places, width) => places.every(p => p.x >= 0 && p.x + p.w <= width + 1e-9);
 
-test('a phone-width page has one column at scale 1, on the page', () => {
+// Whether the grid spans the page: only the masonry's margin, at the page's scale, left of it and right of it
+const spans = (page, width) => {
+  const left = Math.min(...page.places.map(p => p.x)),
+    right = Math.max(...page.places.map(p => p.x + p.w)),
+    margin = MARGIN * page.scale;
+  return Math.abs(left - margin) < 1e-9 && Math.abs(width - right - margin) < 1e-9;
+};
+
+test('a phone-width page has one column across it, on the page', () => {
   const page = layout(units, 390);
   assert.equal(page.columns, 1);
-  assert.equal(page.scale, 1);
+  assert.ok(page.scale >= 1);
+  assert.ok(spans(page, 390));
   assert.ok(onPage(page.places, 390));
 });
 
-test('an iPad mini upright has two columns', () => {
+test("the book's page beside HQ on an iPad, at its own width or half the screen: one column across it, never slim", () => {
+  for (const width of [430, 500, 560]) {
+    const page = layout(units, width);
+    assert.equal(page.columns, 1);
+    assert.ok(page.scale > 1, `${width} px: scale ${page.scale}`);
+    assert.ok(spans(page, width), `${width} px: the column across the page`);
+  }
+});
+
+test('an iPad mini upright has two columns across it', () => {
   const page = layout(units, 744);
   assert.equal(page.columns, 2);
-  assert.equal(page.scale, 1);
+  assert.ok(page.scale >= LEAST);
+  assert.ok(spans(page, 744));
   assert.ok(onPage(page.places, 744));
   assert.deepEqual(new Set(page.places.map(p => p.column)), new Set([0, 1]));
 });
@@ -38,11 +57,14 @@ test('a sliver of a page has one column scaled down so nothing runs off it', () 
   assert.ok(onPage(page.places, 240));
 });
 
-test('widthFor(n) is a page wide enough for n columns, no more', () => {
+test('a page takes another column once it fits at LEAST of its size, its columns always across the page', () => {
   for (let n = 1; n <= 12; n++) {
-    assert.equal(columnsOf(widthFor(n)), n);
-    assert.equal(columnsOf(widthFor(n + 1) - 1), n);
-    assert.equal(layout(units, widthFor(n)).scale, 1);
+    assert.equal(columnsOf(widthFor(n + 1) * LEAST), n + 1);
+    assert.equal(columnsOf(widthFor(n + 1) * LEAST - 1), n);
+    for (const width of [widthFor(n + 1) * LEAST - 1, widthFor(n + 1) * LEAST]) {
+      const page = layout(units, width);
+      assert.ok(page.scale >= LEAST && spans(page, width), `${width} px: scale ${page.scale}`);
+    }
   }
 });
 
@@ -101,21 +123,21 @@ test('placeAt finds the unit under a point and nothing in the space between', ()
   assert.equal(placeAt(places, a.x - GAP * scale, a.y + 1), undefined);
 });
 
-test("a new day's units start under its header, below every unit of the day before", () => {
+test("a new day's units start under its header, below every unit of the day before; the first day has none", () => {
   const days = units.map((u, i) => ({ ...u, day: i < 9 ? '2026-10-29' : '2026-10-30' }));
   for (const width of [390, 744, 1400]) {
     const { places, headers, scale, height } = layout(days, width);
     assert.deepEqual(
       headers.map(d => d.day),
-      ['2026-10-29', '2026-10-30'],
+      ['2026-10-30'],
     );
-    const [first, second] = headers,
+    const [header] = headers,
       before = places.slice(0, 9),
       after = places.slice(9);
-    assert.ok(Math.abs(second.h - DAY_H * scale) < 1e-9);
-    assert.ok(before.every(p => p.y >= first.y + first.h));
-    assert.ok(before.every(p => p.y + p.h + GAP * scale <= second.y + 1e-9));
-    assert.ok(after.every(p => p.y >= second.y + second.h));
+    assert.ok(Math.abs(header.h - DAY_H * scale) < 1e-9);
+    assert.ok(Math.abs(Math.min(...before.map(p => p.y)) - MARGIN * scale) < 1e-9);
+    assert.ok(before.every(p => p.y + p.h + GAP * scale <= header.y + 1e-9));
+    assert.ok(after.every(p => p.y >= header.y + header.h));
     assert.ok(places.every(p => p.y + p.h <= height));
   }
 });

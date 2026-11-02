@@ -26,6 +26,7 @@ import { at, away, draw, halt, setView, shown, slideTo, viewOf } from './bookvie
 import { placeIn, showsBox } from './bookrow.js';
 import { recordOf, summaryOf } from './bookrecords.js';
 import { stepList, undo, redo } from './bookedit.js';
+import { mountMessages } from './bookmessages.js';
 import { INK, drawable, dried, endLostLines } from './bookwrite.js';
 
 const HTML = `<div class="bk-pages">
@@ -37,6 +38,7 @@ const HTML = `<div class="bk-pages">
 export function mountPages(paper, { dev, shape, calls = null }) {
   paper.innerHTML = HTML;
   const book = bookOf(paper, { dev, shape, calls });
+  if (!scope) mountMessages(book);
   book.steps = stepList(book);
   // (what the mouse's tools and the pages' parts ask of the page: booktools.js, booktape.js)
   Object.assign(book, {
@@ -127,7 +129,7 @@ const bookOf = (paper, { dev, shape, calls }) => ({
   size: { w: 0, h: 0 },
   cams: new WeakMap(), // a page's view as it was left this visit: page → { pan, scale }
   // the book's steps this visit, the last last, for Undo: each { undo(), redo() } (a stroke, a group deleted, a send:
-  // one that can't be made again has no redo), and those undone, for Redo (bookedit.js). (redo: job #19243)
+  // one that can't be made again has no redo), and those undone, for Redo (bookedit.js).
   steps: null,
   undone: [],
   target: -1, // the page under the stroke being drawn
@@ -366,8 +368,7 @@ const controlsOf = book => ({
       under: id => show1(book, indexOf(book, id)),
     }),
 });
-// A page of the notebook by its id, turned to at its top; y: that far
-// down it, Search's find. (y: job #18532)
+// A page of the notebook by its id, turned to at its top, or y px down it for Search's find.
 function show(book, id, y = 0) {
   const i = indexOf(book, id);
   if (i < 0) return;

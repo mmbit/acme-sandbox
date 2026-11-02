@@ -1,6 +1,6 @@
 // The old book carried into a person's new notebook, once, as it's made (notebook.ts mine): nothing they wrote is
 // lost. Each page with something on it becomes a notebook page in the order it was made, of scrap units: its ink in
-// drawings (strokes near each other, as lines of writing join: bookwriting.ts), each typed box and picture a drawing of
+// drawings (strokes near each other, as lines of writing join: booklines.ts), each typed box and picture a drawing of
 // its own, in the order they read on it, and then each note a scrap, its snip its picture, its answers its children.
 //   - A note still waiting on an open sheet becomes an open scrap, off its sheet (it goes when its page is sent), a
 //     reply waiting there too; one sent, or going, is a sent scrap with its answers, and a reply sent under an answer
@@ -17,7 +17,7 @@ import { companyDay } from './company.ts';
 import { COLUMNS, drawnOf, type Page } from './ink/book.ts';
 import { renumber, sheetRow, type Note } from './ink/booknotes.ts';
 import { unlink } from './ink/booklinks.ts';
-import { linesOf } from './ink/bookwriting.ts';
+import { linesOf } from './ink/booklines.ts';
 import { DIR, type Scrap } from './pagescraps.ts';
 import { inReadingOrder, lastPos } from './notebookorder.ts';
 import { boxOf } from '../../hq/shell/ink/notebookstack.js';

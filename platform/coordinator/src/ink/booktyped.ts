@@ -1,9 +1,10 @@
-// A question typed on a page of the board's book (the board on call #239: a
-// question typed on a call's page got no answer). Words the board types in a box on a page of its own book (book.ts
-// texts: typed, or written into the box by hand) are judged when they're new, as a note's are (bookjudge.ts): a reply's verdict, answer or try, asks now and the page's agent answers in a quick run (a sheet's or a guest's page its owner, a call's page the call's
-// agent, any other the CEO), and the answer is typed onto the page under the question, in the agent's ink, where the
-// board sees it and the page's picture shows it. A box moved, or saved again as it was, asks nothing again; nor do the
-// words in an invited person's book.
+// A question typed on a page of the board's book, answered on that page.
+// Words the board types in a box on a page of its own book (book.ts texts: typed, or written into the box by hand) are
+// judged when they're new, as a note's are (bookjudge.ts): a reply's verdict, answer or try, asks now and the page's
+// agent answers in a quick run (a sheet's or a guest's page its owner, a call's page the call's agent, any other the
+// CEO), and the answer is typed onto the page under the question, in the agent's ink, where the board sees it and the
+// page's picture shows it. A box moved, or saved again as it was, asks nothing again; nor do the words in an invited
+// person's book.
 import { rmSync } from 'node:fs';
 import { db, lacks, once } from '../db.ts';
 import { publish } from '../events.ts';

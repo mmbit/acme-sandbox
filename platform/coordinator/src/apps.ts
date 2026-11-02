@@ -85,10 +85,13 @@ function folders(path: string) {
 export const iconOf = (slug: string) => SLUG.test(slug) && existsSync(`${REPO_DIR}/products/${slug}/product.yaml`)
   && existsSync(`${REPO_DIR}/products/${slug}/icon.png`) ? `${REPO_DIR}/products/${slug}` : null;
 
-// Live first, then test, then preview; the platform's pieces after every product; by name within each. The demos last.
-export function list() {
-  let slugs: string[] = [];
-  try { slugs = readdirSync(`${REPO_DIR}/products`).filter(s => SLUG.test(s) && existsSync(`${REPO_DIR}/products/${s}/product.yaml`)); } catch { /* no products yet */ }
-  return [...slugs.map(app).sort((a, b) => Number(a.platform) - Number(b.platform) || STATUSES.indexOf(a.status) - STATUSES.indexOf(b.status)
-    || a.name.localeCompare(b.name)), ...demos().sort((a, b) => a.name.localeCompare(b.name))];   // (demos)
+// Every product's slug: a folder of products/ with a product.yaml
+export function productSlugs() {
+  try { return readdirSync(`${REPO_DIR}/products`).filter(s => SLUG.test(s) && existsSync(`${REPO_DIR}/products/${s}/product.yaml`)); } catch { return []; }   // (no products yet)
 }
+// The products alone, without reading the demos' owners from git.
+// Live first, then test, then preview; the platform's pieces after every product; by name within each.
+export const products = () => productSlugs().map(app).sort((a, b) => Number(a.platform) - Number(b.platform)
+  || STATUSES.indexOf(a.status) - STATUSES.indexOf(b.status) || a.name.localeCompare(b.name));
+// The demos last.
+export const list = () => [...products(), ...demos().sort((a, b) => a.name.localeCompare(b.name))];   // (demos)

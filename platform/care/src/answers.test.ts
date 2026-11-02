@@ -39,7 +39,7 @@ entry('unread', 'typo.md', '', 'A label the chat doesn\'t have. Tap “{label:m_
 
 const logs: string[] = [], log = console.log;
 console.log = (...a: any[]) => { logs.push(a.join(' ')); };
-Object.assign(process.env, { DATA_DIR: mkdtempSync(join(tmpdir(), 'care-answers-')), PORT: String(20000 + Math.floor(Math.random() * 20000)),
+Object.assign(process.env, { DATA_DIR: mkdtempSync(join(tmpdir(), 'care-answers-')), PORT: '0',
   CARE_LOCAL: '1', CARE_PROVIDER: 'fake', CARE_KB_DIR: KB_DIR, CARE_MAIL_RETRY_MS: '1000',
   CARE_NAMES: JSON.stringify({ shop: 'Shop', other: 'Elsewhere' }),
   CARE_COMPANY_DIR: new URL('../../../template/products/care', import.meta.url).pathname,

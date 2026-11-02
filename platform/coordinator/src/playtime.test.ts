@@ -31,7 +31,7 @@ const titleOf = (i: number) => Array.from({ length: 6 }, (_, k) => WORDS[(i * 7 
 // Thirty replacements still await merge. The open queue also has 250 work jobs: 60 queued, 20 running,
 // 100 done in review with a review queued, and 70 queued behind others. Some have a deadline today or waits on others.
 // Recent review and deploy history both affect a fresh plan.
-function grow() {
+async function grow() {
   const inserts = jobInserts();
   h.db.exec('begin');
   const prs = completedHistory();
@@ -47,7 +47,7 @@ function grow() {
   h.db.exec('commit');
   h.db.exec('analyze');
   // each open job's stored size, as the server's minute sweep gives it
-  predictions.sweep(NOW);
+  await forecast.sweep(NOW);
 }
 
 function jobInserts() {
@@ -160,7 +160,7 @@ function openQueue({ addJob, run, pr }: ReturnType<typeof jobInserts>, prs: numb
 
 before(async () => {
   await h.capacity({ claude: 4 });
-  grow();
+  await grow();
 });
 
 test("the queue's play at HQ's size, briefs and all, takes well under a second", t => {

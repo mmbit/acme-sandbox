@@ -23,12 +23,12 @@ import { existsSync, mkdirSync, chmodSync, lchownSync, lstatSync, readdirSync, r
 import { keepRenders } from './renders.ts';
 import { agentEnv, redact, redactJson, PROFILE_BRANCH, workRunsOn, BRANCH_CONFIG, REVIEW_STRIP, claudeArgs, codexAskArgs, SIGN_IN } from './safety.ts';
 import { TOUCHUP_LINES, FetchUnreachedError, PushUnreachedError, answerMainMerge, branchLines, gitFlow, pinnedGitEnv, runAs } from './git.ts';   // (pinnedGitEnv)
-import { see as account, relaunched, report, spentOn, type Spent } from './spent.ts';
+import { see as account, engineStarted, relaunched, report, spentOn, type Spent } from './spent.ts';
 import { handOut, masked, plainName, type Files, type Folders, type Snap } from './copyback.ts';
 import { roomTurns } from './roomturns.ts';
 import { capacityCapture, capacitySample } from './capacity.ts';
-import { CLAUDE_RECHECK_MS, pacedUntil, paceTo, seatRunLimit, windowUsed } from './pace.ts';
-import { checkDue, claimAnswered, codexLimits, codexLogLine, codexReading, codexTokens, drainOf, healthiest, limitsReading, readDue, readsAccount, reserveFor, heard, takeRead, takeReading, inTurn, lineSeat, reportedUntil, retryAt, sleepUntil, unpacedFirst, type Asked } from './downtime.ts';
+import { CLAUDE_RECHECK_MS, pacedUntil, paceTo, reserveFor, seatRunLimit, windowUsed } from './pace.ts';
+import { checkDue, claimAnswered, codexLimits, codexLogLine, codexReading, codexTokens, drainOf, healthiest, limitsReading, readDue, readsAccount, heard, takeRead, takeReading, inTurn, lineSeat, reportedUntil, retryAt, sleepUntil, unpacedFirst, type Asked } from './downtime.ts';
 import { FREE_MB, JOB_MB, SEAT_MB, STARTING_MS } from './reserve.ts';
 import { type AdmissionInput, admission, hostAvailableBytes } from './admission.ts';
 import { roomRecords, type RecordIdentity } from './roomrecords.ts';
@@ -111,7 +111,7 @@ type Seat = SeatProvider & { id: string; state: SeatState; until: number; util?:
 // needs): HQ takes it once, for a seat the board hasn't set (the coordinator's seedSeats), and until HQ's list comes the
 // seat runs to it.
 const ENGINES = ['claude', 'codex'];
-const SEATS_ENTRY = new RegExp(`^${SEAT_NAME}:(${ENGINES.join('|')})(:(5[0-9]|[6-9][0-9]))?$`);
+const SEATS_ENTRY = new RegExp(`^${SEAT_NAME}:(${ENGINES.join('|')})(:(5[0-9]|[6-9][0-9]|100))?$`);
 const DRAIN_AT: Map<string, number> = new Map((process.env.SEATS ?? '').split(',').filter(s => SEATS_ENTRY.test(s) && s.split(':')[2])
   .map(s => [s.split(':')[0], Number(s.split(':')[2]) / 100]));
 const newSeat = (id: string, engine: string): Seat => ({ id, engine, cli: listedCli.get(id) ?? engine, signIn: 'login', state: 'login', until: 0, resets: 0, weekResets: 0,
@@ -529,7 +529,7 @@ function moveLogins() {
   if (held.length) log(`Seats after the moves: ${SEATS.map(s => `${s.id} (${s.engine})`).join(', ')}`);
 }
 
-// The healthiest seat of an engine: ready with the most room below its own stop across both windows.
+// The healthiest seat of an engine: ready with the highest remaining weekly allowance per time until reset, then room across both windows.
 // The intercom (the board's chat with the CEO, and call summaries) may also use a draining seat: its reserve
 // keeps the board's conversation from waiting for a reset behind the team's jobs. So is the voice line
 // (voiceSeat). The reserve holds because a Claude seat that drains also stops the jobs running on it, at their next step
@@ -654,8 +654,8 @@ async function namesLoop() {
   }
 }
 
-// The board's handwriting read into type (the coordinator's handwriting.ts) and the book's judge (bookjudge.ts): the
-// board waits for the words as it writes, and for the answer a verdict starts, so the loop asks often and makes its calls
+// The board's ink read for a call's agent (the coordinator's ink/inkread.ts) and the book's judge (bookjudge.ts): the
+// agent waits for the readings as it reads the page, and the board for the answer a verdict starts, so the loop asks often and makes its calls
 // as they come, READS_AT_ONCE at most (smallturns.ts).
 const READ_POLL_MS = 1_000, READS_AT_ONCE = 3;
 function readLoop() {
@@ -1678,6 +1678,7 @@ const AUTO_MODE = { environment: ['$defaults',
 
 // adopted: a run another worker process launched and handed over (a reload, detached.ts), taken over where it got to.
 async function runJobIn(seat: Seat, job: Job, slot: string, me: Me, spent: Spent, launches: Launched[], adopted: RunRecord | undefined, tooling: ReturnType<typeof measurement>): Promise<Record<string, unknown>> {
+  if (adopted) engineStarted(spent);
   const mode = runModeOf(job), { reviewing, meeting, trying } = mode;
   const branch = job.branch ?? `job/${job.id}`;
   if (!reviewing && !workRunsOn(branch, job.pr)) throw new Error(`Refused branch ${branch}: work jobs only run on job/<n>, or a profile pull request's fix on its profile/<n>`);   // (workRunsOn)
@@ -1715,6 +1716,7 @@ async function runJobIn(seat: Seat, job: Job, slot: string, me: Me, spent: Spent
   // own process never stops it (detached.ts).
   const launch = (name: string, args: string[], input: string, cwd: string, e: Awaited<ReturnType<typeof launchEnv>>) => {
     assertOwned();
+    engineStarted(spent);
     const { child, launched } = launchDetached(RUNS, name, other?.bin ?? cli, args,
       { cwd, env: e.env, uid: me.uid, gid: me.gid, fd3: e.signIn !== undefined });
     capacityTrial.note(`Job #${job.id}: CLI launched, pid ${launched.pid}, run ${name}`);

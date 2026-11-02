@@ -101,8 +101,8 @@ function choose(me, button) {
   if (button.dataset.device) me.picked = { ...me.picked, device: button.dataset.device };
   if (button.dataset.book) {
     me.picked = { ...me.picked, book: button.dataset.book };
-    // (Over told once the book's on its way shut, so HQ's page dissolves into its whole width with the swing rather
-    // than fading into it first. company: job #15360)
+    // Over is told once the book's on its way shut, so HQ's page dissolves into its whole width with the swing rather
+    // than fading into it first.
     if (me.picked.book === 'beside') openBook();
     else foldBook();
     tellBook(me);

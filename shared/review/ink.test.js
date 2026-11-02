@@ -326,9 +326,15 @@ test("a highlighter's live line has no white edge", () => {
   assert.deepEqual(union(wet), new Set(shapes(inkjs.outline(stroke))));
 });
 
-// The pin's strip offers the notebook's pens (HQ's bookpalette.js reads PENS), red first: a call's only ink
+// The pin's strip offers four of the notebook's pens (HQ's bookpalette.js reads PENS), red first: a call's only ink
+// (a few of the twelve, on a small strip)
 test("the strip's inks are the notebook's pens, red first", () => {
   const pens = inkjs.INKS.filter(k => !(k.alpha < 1));
-  assert.deepEqual(pens.map(k => k.color).sort(), inkjs.PENS.map(p => p.color).sort());
+  assert.equal(pens.length, 4);
+  for (const k of pens)
+    assert.ok(
+      inkjs.PENS.some(p => p.color === k.color && p.name === k.name),
+      k.name,
+    );
   assert.equal(inkjs.INKS[0].name, 'Red');
 });

@@ -1,5 +1,4 @@
 // The projects view's levels drawn: each level's head and its keys, from the board's work as projects.js holds it.
-import { projectCostHtml } from './costs.js';
 import * as keys from './projectkeys.js';
 import { threadBrief, threadTile } from './threadtile.js';
 import * as levels from './levels.js';
@@ -53,7 +52,7 @@ export function levelHtml(l, { view, board, opening }) {
       ? p.done.map(t => keys.doneThreadTile(t, opening?.project === p.id ? opening : null))
       : inEtaOrder(p).map(t => threadTile(t, p, openThread));
     return `${keys.head({ back, over, title: nameText(p, 'name'), marks: keys.projectMarks(p), keys: switches })}
-      ${projectCostHtml(p.cost)}<div class="pj-level pj-grid">${tiles.join('') || '<p class="pj-none">No ongoing deliverables.</p>'}</div>`;
+      <div class="pj-level pj-grid">${tiles.join('') || '<p class="pj-none">No ongoing deliverables.</p>'}</div>`;
   }
   // A completed thread waits on no decision. Back goes to the list it was opened from, if any.
   const t = l.t,

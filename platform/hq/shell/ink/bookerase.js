@@ -4,6 +4,7 @@
 // (bookgroups.js), or Select's Delete. A rub, however long, is one step for Undo and Redo (bookedit.js).
 import { rub } from './bookstrokes.js';
 import { followPress } from './bookpress.js';
+import { remade } from './bookedit.js';
 
 // a quick flick reports points far apart: the rub goes every STEP of its radius between them
 const STEP = 0.5;
@@ -30,6 +31,7 @@ function rubbing(book, hooks, r, e, at) {
         done = rub(page.ink, a, b, r);
       if (!done) continue;
       page.ink.splice(0, page.ink.length, ...done.ink);
+      for (const [stroke, piece] of done.made) remade(stroke, piece);
       hooks.redraw(view, done.box);
     }
     last = to;

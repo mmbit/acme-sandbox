@@ -186,26 +186,33 @@
   }
 }
 
-/* a page sent: locked, its tools gone, a quiet lock and its words in the tools' place (bookcontrols.js) */
+/* a page sent: locked, its tools gone, a quiet lock and its words in the middle of their room (bookcontrols.js). The
+   tools keep their room, unseen, so the rail's head keeps its size as the pages turn. The lock wears the toolbar's
+   look. */
+#book .bk-column[data-locked] .bk-strip {
+  position: relative;
+}
+#book .bk-column[data-locked] .bk-strip > :not(.bk-locked) {
+  visibility: hidden;
+}
 #book .bk-locked {
+  position: absolute;
+  inset: 0;
   display: none;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
   gap: 4px;
-  width: 44px;
-  margin: 6px 0;
-  color: var(--bk-muted);
-  font: 600 11px/1.2 var(--bk-font);
+  margin: 0;
+  color: var(--bk-ui-muted);
+  font: 600 11px/1.2 var(--bk-ui-font);
   text-align: center;
 }
 #book .bk-locked svg {
   width: 20px;
   height: 20px;
 }
-#book .bk-column[data-locked] > .bk-strip {
-  display: none;
-}
-#book .bk-column[data-locked] > .bk-locked {
+#book .bk-column[data-locked] .bk-locked {
   display: flex;
 }
 

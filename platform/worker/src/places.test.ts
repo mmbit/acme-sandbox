@@ -36,6 +36,13 @@ test('a seat approaching its own stop admits one claim including a claim still i
   tight.week = 0.8;
   assert.equal(places.roomOn(tight), false, 'a ready row at its configured stop cannot start work');
   assert.equal(places.roomOn(tight, true), true);
+  const fullPlan = { ...tight, id: 'claude-2', drainAt: 1, week: 0.995 };
+  assert.equal(places.roomOn(fullPlan), true, 'the last percent is available to work');
+  places.take(fullPlan);
+  assert.equal(places.roomOn(fullPlan), false, 'near the limit, one job at a time');
+  places.release(fullPlan);
+  fullPlan.week = 1;
+  assert.equal(places.roomOn(fullPlan), false, 'a full week admits no new work');
 });
 
 test('the approach limit counts adopted runs and held meetings and lifts when usage resets', () => {

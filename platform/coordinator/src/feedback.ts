@@ -45,7 +45,7 @@ import { deployed } from './wakes.ts';
 import * as storage from './storage.ts';
 import * as profiles from './profiles.ts';
 import { readBody } from '../../../shared/routes/routes.ts';
-import { REVIEW_PARTS, extraFile } from '../../hq/extras.mjs';
+import { REVIEW_PARTS, RECORDER_MODULES, extraFile } from '../../hq/extras.mjs';
 import { V as ANCHOR, noKeys } from '../../../shared/review/anchor.js';
 import * as sorting from './sorting.ts';
 import { productProject } from './made.ts';
@@ -70,6 +70,7 @@ const VOICE_PER_HOUR = 40, voicing = new Map<string, { busy: boolean; times: num
 // A sent note's screenshot stays for its owner's job (hq note), then goes.
 const SHOT_DAYS = 30;
 mkdirSync(SHOTS, { recursive: true });
+const RECORDER_PARTS = Object.fromEntries(RECORDER_MODULES.map(name => [`/__review/${name}`, `shared/watchalong/${name}`]));
 // Review notes.
 // - status: sent (job), or from before the book: outside (a share's, until gathered), discarded, pending (waited in
 //   HQ), moved (a pending one, now in the book: bookreview.ts).
@@ -219,11 +220,8 @@ export async function product(req: IncomingMessage, res: ServerResponse) {
   // thumbnails, the pen (also HQ's Sketchbook), the anchor (also the watch-along's ink and the book) and the paper
   if (open) return reply(res, 200, await readFile(`${REPO_DIR}/${open}`), 'text/javascript; charset=utf-8');
   // the watch-along's recorder, for a page HQ shows in its viewer while a call watches along: library code, for anyone
-  if (path === '/__review/watchalong.js' && req.method === 'GET')
-    return reply(res, 200, await readFile(`${REPO_DIR}/shared/watchalong/watchalong.js`), 'text/javascript; charset=utf-8');
-  // (its pen strokes' kind and the top layer's, which it imports)
-  if ((path === '/__review/strokes.js' || path === '/__review/toplayer.js') && req.method === 'GET')
-    return reply(res, 200, await readFile(`${REPO_DIR}/shared/watchalong/${path.slice('/__review/'.length)}`), 'text/javascript; charset=utf-8');
+  const recorder = req.method === 'GET' && extraFile(RECORDER_PARTS, path);
+  if (recorder) return reply(res, 200, await readFile(`${REPO_DIR}/${recorder}`), 'text/javascript; charset=utf-8');
   if (path === '/__review/vendor/rrweb-record.js' && req.method === 'GET')
     return reply(res, 200, await readFile(watchalong.RECORDER), 'text/javascript; charset=utf-8');
   if (path === '/__review/profile' && req.method === 'POST') return profiled(req, res);

@@ -4,7 +4,7 @@
 // A ring round something on HQ's page off a call opens its post-it, and Save puts it in the Notebook as a scrap on its
 // newest page with its photo (the pin flow). On a call (Moss's), the pen rested,
 // it goes into the book as a note with its snip, no post-it and no Send, on the call's page, with the words the call
-// heard (the book shows a call's notes once they have a notebook of their own: job #20753). Nothing of it is left on
+// heard (the book shows a call's notes once they have a notebook of their own). Nothing of it is left on
 // HQ's page (rule zero: bookink.mjs), so the board rings the next thing at once, and a line drawn beside where one was
 // is a note of its own. On a call, the pen held still while talking leaves a voice note there with the words the call
 // heard.
@@ -65,7 +65,7 @@ async function offCallStory(c) {
     assert.ok(!c.posts.slice(from).some(p => p.path === '/api/notebooks/groups/edit'), 'no note changed by it');
     await cleared(page, 'the line beside');
     await c.shot('circle-off-call', page);
-    // (above where its post-it opens: a finger there is the post-it's. job #12594)
+    // Above where its post-it opens: a finger there is the post-it's.
     await ringCarried(c, page, { x: 250, y: 190, rx: 80, ry: 45 });
     c.noErrorsIn(errors);
   } finally {
@@ -252,7 +252,7 @@ async function tapStory(c) {
     await tap(c, page, '#tap-dialog');
     assert.equal(c.posts.length, from, 'nothing went to the book');
     assert.equal(await page.evaluate(() => window.micsAsked), 0, 'nor to the microphone: a tap is heard by nobody');
-    // a ring's line doesn't listen either: its post-it's mic does, once tapped (the board, call 154)
+    // a ring's line doesn't listen either: its post-it's mic does, once tapped
     await page.evaluate(() => document.querySelector('dialog').close());
     await pressAlong(page, c.ring(400, 640, 80, 45));
     await page.locator(ui('.sheet')).waitFor({ state: 'visible', timeout: 15_000 });

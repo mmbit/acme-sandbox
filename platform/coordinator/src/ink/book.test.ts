@@ -678,22 +678,6 @@ test("a question corrected before the send goes as it reads now; a page with not
   assert.equal((await h.board('/api/book/page/delete', { id: page.id })).status, 200, 'sent, the page can go');
 });
 
-test('words read late replace only the words they were read for: the board typed others since, they stay', async () => {
-  const page = await newPage({ kind: 'sheet', owner: 'dex', url: '/?open=ops' });
-  const { note } = (await addNote({ page: page.id, said: 'written' })).body;
-  const read = (words: string, was: string) =>
-    h.board('/api/book/note/edit', { id: note.id, words, said: 'written', was });
-  assert.equal((await read('Lighter ink', '')).body.note.words, 'Lighter ink', 'still wordless: the words go in');
-  await h.board('/api/book/note/edit', { id: note.id, words: 'Darker, please', said: 'typed' });
-  const late = await read('Lighter ink again', 'Lighter ink');
-  assert.equal(late.status, 409);
-  assert.deepEqual(
-    [booknotes.note(note.id)!.words, booknotes.note(note.id)!.said],
-    ['Darker, please', 'typed'],
-    "the board's words stay",
-  );
-});
-
 test("a question on a Codex agent's page is a quick run on Claude as that agent, taken by the chat slot's claim", async () => {
   const page = await newPage({ kind: 'sheet', owner: 'nib', url: '/?open=reviews' });
   const asked = (await addNote({ page: page.id, words: 'Which round is this?' })).body;

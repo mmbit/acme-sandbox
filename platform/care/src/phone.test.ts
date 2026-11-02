@@ -107,20 +107,18 @@ const hqServer = createServer((req, res) => {
 });
 await new Promise<void>(r => hqServer.listen(0, '127.0.0.1', r));
 
-const PORT = 20000 + Math.floor(Math.random() * 20000),
-  PHONE_PORT = PORT + 1;
 const PHONE_TOKEN = 'phone-test-line-token';
 const url = (s: any) => `http://127.0.0.1:${(s.address() as any).port}`;
 Object.assign(process.env, {
   DATA_DIR: mkdtempSync(join(tmpdir(), 'care-phone-')),
-  PORT: String(PORT),
+  PORT: '0',
   CARE_LOCAL: '1',
   CARE_PROVIDER: 'fake',
   CARE_APPS: JSON.stringify({ shop: url(shopA), shop2: url(shopB), 'shop@preview': url(shopP) }),
   CARE_TOKENS: JSON.stringify({ shop: TOKEN, shop2: TOKEN, 'shop@preview': TOKEN }),
   CARE_SHOPS: JSON.stringify({ front: ['shop', 'shop2'], 'front@preview': ['shop@preview'] }),
   CARE_NAMES: JSON.stringify({ shop: 'Shop', shop2: 'Shop Two', front: 'The Front' }),
-  CARE_PHONE_PORT: String(PHONE_PORT),
+  CARE_PHONE_PORT: '0',
   CARE_PHONE_TOKEN: PHONE_TOKEN,
   CARE_CAP_PHONE_MONTH: '8',
   CARE_HQ_URL: url(hqServer),
@@ -135,13 +133,13 @@ const phone = await import('./phone.ts');
 const phonecall = await import('./phonecall.ts');
 const numbers = await import('./numbers.ts');
 const { sweep } = await import('./db.ts');
-await import('./server.ts');
+const { bound } = await import('./server.ts');
 // the company's order references (the plug-in's `orderRef`): here, the ones this file says
 const REFS = new Set(['48291736', BASKET]);
 (await import('./company.ts')).use({ orderRef: d => REFS.has(d) });
 const { t } = await import('./texts.ts');
 const { TURN_ROUNDS } = await import('./model.ts');
-await new Promise(r => setTimeout(r, 150));
+const { port: PORT, phone: PHONE_PORT } = await bound;
 
 // ---- the voice line's side: the three routes
 const BASE = `http://127.0.0.1:${PHONE_PORT}`;

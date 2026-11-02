@@ -9,7 +9,7 @@ import { org } from '../company.ts';
 import { BOARD } from './book.ts';
 import { answerNow } from './bookanswer.ts';
 import { asksPage } from './askpages.ts';
-import { byHand, pageRow, shut, type NotebookPage } from '../notebook.ts';
+import { pageRow, shut, type NotebookPage } from '../notebook.ts';
 import { insertGroup, partsOf, row, shown, write, type Group, type Parts } from '../notebookgroups.ts';
 import { forGuest, whoOf, type Membership } from '../notebookmembers.ts';
 import { DIR } from '../pagescraps.ts';
@@ -124,11 +124,11 @@ function copied(page: number, file: string) {
 }
 
 // ---------------------------------------------------------------- in step
-// A scrap or a copy of it written on (notebookgroups.ts editGroup, by: whose hand): the same ink, words, pictures and
-// places on the original and every other copy (all in their unit's px), as a change of that hand's there, so each
-// screen's Undo takes it back as one step. Each side then reads as changed, so a screen that wrote on what it read
+// A scrap or a copy of it written on (notebookgroups.ts editGroup): the same ink, words, pictures and
+// places on the original and every other copy (all in their unit's px), as a change of that hand's there: no step of
+// another screen's Undo, which takes back only its own. Each side then reads as changed, so a screen that wrote on what it read
 // before is refused to read again (editGroup's since).
-export function keepInStep(g: Group, by: string) {
+export function keepInStep(g: Group) {
   const back = db.prepare('select * from notebook_assigns where copy = ?').get(g.id) as Assign | undefined;
   const original = back ? row(back.grp)! : g;
   const parts = partsOf(g);
@@ -137,18 +137,18 @@ export function keepInStep(g: Group, by: string) {
   if (back && written(parts, partsOf(original)))
     db.prepare('update notebook_assigns set answered = 1 where id = ?').run(back.id);
   const sides = [original, ...copiesOf(original.id).map(a => row(a.copy!)!)];
-  for (const to of sides.filter(x => x.id !== g.id)) mirror(g, parts, to, by);
+  for (const to of sides.filter(x => x.id !== g.id)) mirror(g, parts, to);
 }
 const written = (theirs: Parts, board: Parts) =>
   theirs.ink.length !== board.ink.length ||
   theirs.pictures.length !== board.pictures.length ||
   textOf(theirs) !== textOf(board);
 const textOf = (parts: Parts) => (parts.texts as { text?: string }[]).map(t => t.text).join('\n');
-function mirror(from: Group, parts: Parts, to: Group, by: string) {
+function mirror(from: Group, parts: Parts, to: Group) {
   const p = pageRow(to.page, null);
   if (to.deleted !== null || !p || shut(p)) return;
   const pictures = parts.pictures.map(c => ({ ...c, file: twinOf(from.id, c.file, to) }));
-  byHand(by, () => write(to.id, { ...parts, pictures }, { words: from.words, said: from.said }));
+  write(to.id, { ...parts, pictures }, { words: from.words, said: from.said });
 }
 const copiesOf = (grp: number) =>
   db.prepare('select * from notebook_assigns where grp = ? and copy is not null').all(grp) as Assign[];

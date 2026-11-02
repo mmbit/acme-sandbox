@@ -6,9 +6,9 @@
 // and the scrap shows; shut, it stays shut (it never opens by itself), and the pull tab's one tap opens it at the
 // scrap. In the book its words stay editable (groups/edit, typed) and a pen's line drawn from inside its photo joins it
 // (groups/edit with the ink): one group. The same from an artifact, a preview in HQ's viewer: its words said on the iPad
-// and the desktop (HQ recording them, the preview never once asking for the microphone: the board, call 154), typed on
-// the phone; its post-it's Save goes to the preview's /__review/notes, which the coordinator makes a scrap on the same
-// page. Cancel: the mark gone, nothing saved.
+// and the desktop (HQ recording them, the preview never once asking for the microphone), typed on the phone; its
+// post-it's Save goes to the preview's /__review/notes, which the coordinator makes a scrap on the same page. Cancel:
+// the mark gone, nothing saved.
 import assert from 'node:assert/strict';
 import { nothingDrawn } from './bookink.mjs';
 import { groupsOf, newestPage, shownScrap } from './bookplayed.mjs';
@@ -21,8 +21,8 @@ const IPAD_SCREEN = { name: 'ipad', viewport: MINI, more: {}, starts: 'open', ha
   PHONE_SCREEN = {
     name: 'phone',
     viewport: { width: 390, height: 844 },
-    // (2x, not an iPhone's 3x: HQ's scene drawn without a GPU at 3x took a second a frame on a loaded worker, the
-    // book's swing open half a minute. job #12594)
+    // 2x, not an iPhone's 3x: HQ's scene drawn without a GPU at 3x takes a second a frame on a loaded worker, and the
+    // book's swing open half a minute.
     more: { deviceScaleFactor: 2 },
     starts: 'folded',
     hand: 'touch',
@@ -35,7 +35,7 @@ const IPAD_SCREEN = { name: 'ipad', viewport: MINI, more: {}, starts: 'open', ha
     hand: 'mouse',
   };
 // How long a saved mark's ink may take to fly into the book: its flight is half a second, but HQ's scene drawn without a
-// GPU on a loaded worker holds the page's frames up for seconds (job #12594's desktop run: past the default's 0.9 s)
+// GPU on a loaded worker holds the page's frames up for seconds, past the default's 0.9 s.
 const FLIGHT_MS = 4000;
 
 // c: book-check's { hqIn, base, reviewJs, settled, ring, posts, hush, shot, noErrorsIn }
@@ -61,7 +61,8 @@ async function pinFlow(c, screen) {
   try {
     await page.goto(`${c.base}/?intro=0`);
     await page.waitForSelector('#loading.gone');
-    await page.waitForSelector('review-mode .fab', { state: 'attached' }); // (away till summoned: job #20358)
+    // attached, not shown: the review button is away till summoned
+    await page.waitForSelector('review-mode .fab', { state: 'attached' });
     await c.settled(page, screen.starts);
     const s = { ...c, page, screen, play: context.notebook, named: what => `scrap-${screen.name}-${what}` };
     // on HQ: the book as the device starts it (open on an iPad and a desktop, shut on a phone)
@@ -198,7 +199,7 @@ async function edited(s, scrap) {
     from = s.posts.length,
     // (a scrap's words in its body: .bk-words.)
     words = page.locator(`#book .bk-words[data-g="${scrap.id}"] textarea.bk-scrap-words`);
-  // (a finger's tap first on a touch screen: till one its words are the pen's to strike, penwords.js)
+  // (a finger's tap first on a touch screen: till one its words are the pen's to draw over, bookgroups.js)
   if (s.screen.hand !== 'mouse') await words.tap();
   await words.fill('Shorter, and in the house font');
   const edit = await posted(s, from, '/api/notebooks/groups/edit', "the scrap's words edited are saved");
@@ -302,7 +303,7 @@ async function fromArtifact(s, { spoken }) {
 // ---- helpers
 const bookMode = page => page.evaluate(() => document.documentElement.dataset.book);
 // The book swung or slid to a mode after a tap, then laid out (a loaded worker's WebKit can take far past book-check's
-// settle for the swing alone: the story then read a book still swinging shut as open. job #12594)
+// settle for the swing alone, and a story would read a book still swinging shut as open).
 async function turned(c, page, mode) {
   await page.waitForFunction(m => document.documentElement.dataset.book === m, mode);
   await c.settled(page, mode);

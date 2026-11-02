@@ -67,7 +67,7 @@ test("each line keeps when it was said, through the hand-over and a late one; a 
   assert.equal(timesOf(short.call), null);
   // the sweep ends a lost line's call (an item recorded keeps it); its transcript comes later, with its times
   const lost = await h.liveCall('kit');
-  await agent('item', lost.token, { kind: 'promise', owner: 'kit', what: 'Send the note', quote: 'I will send it' });
+  await agent('item', lost.token, { kind: 'task', owner: 'kit', what: 'Send the note', quote: 'I will send it' });
   ledger.sweep(Date.now() + 3 * 3_600_000 + 60_000);
   await end('kit', lost, ['Board: late'], [1_900_000_009_000]);
   assert.equal(timesOf(lost.call), '[1900000009000]');

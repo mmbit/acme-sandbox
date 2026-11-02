@@ -1,7 +1,7 @@
 // A thread's end (../docs/projects.md, "Deliverables in order"): a merge clears the thread's branch and wakes the owner of
 // each thread with nothing left open to judge it (threadjudge.ts).
 // (its messages say deliverable, the board's word for a thread)
-import { db, once, planChange } from './db.ts';
+import { db, once, pendingPr, planChange } from './db.ts';
 import * as reviewclosure from './reviewclosure.ts';
 import * as jobs from './jobs.ts';
 import { tasksOf, type Task } from './threadorder.ts';
@@ -51,6 +51,15 @@ function closeIfDone(id: string, failedEnds = false) {
     (t.status === 'done' && ['merged', 'dropped'].includes(latestPr(t) ?? 'merged'));
   if (!tasks.length || !tasks.every(settled)) return;
   close(thread);
+}
+// A task's latest review can still be open after its deliverable lost its branch pointer.
+export function pendingReview(thread: string) {
+  return db
+    .prepare(
+      `select p.number from jobs j join prs p on p.number = ${pendingPr('j')}
+      where j.thread = ? and j.kind = 'work' and j.pr is null order by p.number limit 1`,
+    )
+    .get(thread) as { number: number } | undefined;
 }
 // HQ's close of a thread, its plan saying why (threadjudge.ts ended too)
 export const close = (thread: Thread, what = 'deliverable done: its work settled') => {

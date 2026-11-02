@@ -5,14 +5,15 @@ from pathlib import Path
 HQ_TOOLS = [sys.executable, str(Path(__file__).with_name('hq_tools.py'))]
 # (when: eta)
 # (git, report; ask_to_see, draw; drive, open_work; the pins' removal)
-# (scrap and title_page: the call's notes page, callnotes.py; change_page, mark_page, read_page and try: the agent working
-# it.) (try)
+# (write_down and title_notes: the call's notes, callnotes.py; change_note, mark_notes, read_notes and try: the
+# agent working it.) (try) (write_down is also how a promise goes on the
+# call's list)
 # (name_voice: voices.py)
 # (save_voice, forget_voice: voices.py's saved voices)
-CALL_TOOLS = ['add', 'ask_to_see', 'call', 'change_page', 'draw', 'drive', 'estimate', 'eta', 'expedite',
-              'forget_voice', 'git', 'hang_up', 'history', 'intercom', 'job', 'manage', 'mark_page', 'name_voice',
-              'open_work', 'promise', 'reach', 'read_page', 'replace', 'report', 'save_voice', 'scrap', 'screen',
-              'search', 'sketch', 'title_page', 'try', 'waiting', 'when']
+CALL_TOOLS = ['add', 'ask_to_see', 'call', 'change_note', 'draw', 'drive', 'estimate', 'eta', 'expedite',
+              'forget_voice', 'git', 'hang_up', 'history', 'intercom', 'job', 'manage', 'mark_notes', 'name_voice',
+              'open_work', 'reach', 'read_notes', 'replace', 'report', 'save_voice', 'screen',
+              'search', 'sketch', 'title_notes', 'try', 'waiting', 'when', 'write_down']
 PARTNER_TOOLS = ['hang_up', 'no_transcript', 'note', 'screen']
 # Off limits to Read, Grep and Glob, where a set has them
 FENCED = ('/proc', '/seat', '/data', '/dev', '/sys', '/etc', '/models', '/tmp')
@@ -34,9 +35,9 @@ def cli_tools(names, builtin, tool_set=None):
 
 
 # The board's call agent has the tools a job's agent has but a shell: it reads the company's
-# files (main, read only), hands work on with hq job (and adds to it), puts promises and corrections on the call's list,
-# manages the company's work with hq's management commands and reads (manage), looks things up with hq search, history,
-# call, intercom and projects (eta), reads the server's status report (report) and every branch's code (git: the
+# files (main, read only), hands work on with hq job (and adds to it), writes down what's to be done and its
+# corrections on the call's list, manages the company's work with hq's management commands and reads (manage), looks
+# things up with hq search, history, call, intercom and projects (eta), reads the server's status report (report) and every branch's code (git: the
 # worker's mirror, read only), searches and fetches the web (WebSearch runs at Anthropic; WebFetch from this container,
 # as a job's does from the worker), and sees the caller's screen on a walk-through (screen) and the board's sketches
 # (sketch), asks to see the board's screen (ask_to_see) and rings things on its page (draw), suggests opening a piece of

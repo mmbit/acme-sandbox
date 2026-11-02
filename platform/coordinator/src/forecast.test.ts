@@ -10,11 +10,18 @@ const forecast = await import('./forecast.ts');
 forecast.start();
 const SETTLE_MS = 10_000;
 
+// The timer's play, kept once its turns are done (forecast.ts refreshInTurns).
+async function playedAfter(ms: number) {
+  const before = forecast.lastPlayed();
+  mock.timers.tick(ms);
+  while (forecast.lastPlayed() === before) await new Promise(setImmediate);
+}
+
 test("a running job's steps and status keep the latest forecast; a job queued plays the queue again a moment later", async () => {
   mock.timers.enable({ apis: ['setTimeout'] });
   try {
     const job = await h.start({ agent: 'bolt' });
-    mock.timers.tick(SETTLE_MS);
+    await playedAfter(SETTLE_MS);
     const latest = forecast.current();
     for (const body of [
       { type: 'log', text: 'Bash: npm run gates' },
@@ -25,7 +32,7 @@ test("a running job's steps and status keep the latest forecast; a job queued pl
     assert.equal(forecast.current(), latest, 'the same play');
     h.queue({ agent: 'wren' });
     assert.equal(forecast.current(), latest, 'a request reads the latest play');
-    mock.timers.tick(SETTLE_MS);
+    await playedAfter(SETTLE_MS);
     const again = forecast.current();
     assert.notEqual(again, latest, 'played again');
     assert.ok(

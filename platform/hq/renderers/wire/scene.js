@@ -10,7 +10,7 @@ import { contrastChannels } from '/contrast.js'; // WCAG's contrast ratio (share
 import { WAY, colourways, pickColourway, darkGround, inlineLogo } from './colourways.js';
 import { EMOTES, fade } from '../../world/emotes.js';
 import { companyFormats } from '../../world/clock.js';
-import { makeLook, spriteFrame, catFrame, penguinFrame } from '../brownstone/sprites.js';
+import { makeLook, spriteFrame, catFrame, penguinFrame, BELOW_FEET } from '../brownstone/sprites.js';
 import { loadWork, loadJobs, loadJobLog } from '../../shell/data.js';
 import { titleHtml } from '../../shell/jobs.js';
 import { jobNameLink } from '../../shell/prose.js';
@@ -1084,6 +1084,7 @@ function anchor({ kind, id }) {
   const r = spot.getBoundingClientRect();
   return r.bottom < S.top || r.top > innerHeight ? null : { x: r.left + r.width / 2, y: r.top };
 }
+// (foot: how much of an agent's picture lies below their feet, where the call's floor meets them)
 function portrait({ kind, id }) {
   if (kind === 'mascot') {
     const m = world.mascots.find(x => x.id === id),
@@ -1093,7 +1094,7 @@ function portrait({ kind, id }) {
   const A = world.agents.get(id);
   if (!A) return null;
   const look = makeLook(A.data);
-  return { img: sprite(spriteFrame(id, look, 'stand', true, true), 'portrait'), accent: look.shirt };
+  return { img: sprite(spriteFrame(id, look, 'stand', true, true), 'portrait'), accent: look.shirt, foot: BELOW_FEET };
 }
 
 // ---------------------------------------------------------------- the world's signals (after the shell's)

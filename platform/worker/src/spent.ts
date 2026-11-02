@@ -9,6 +9,7 @@ import { count, sumUsage, usageOf, type Usage } from './usage.ts';
 // (a run taken over reads it again), and always for another CLI than Claude Code, whose stream alone is read for it. A
 // model a shell command starts itself isn't in any stream. messages: the main thread's message ids seen so far.
 export type Spent = {
+  noEngine?: boolean;
   usage?: Usage & Main & { resumed: boolean; lastTurn?: number };
   before?: Usage;
   delegated: boolean;
@@ -24,11 +25,20 @@ export type Spent = {
 // figures the session's running totals.
 export type Main = { opening?: number; openingWritten?: number; turns?: number };
 
-export const spentOn = (cli: string): Spent => ({ delegated: cli !== 'claude', main: {}, messages: new Set() });
+export const spentOn = (cli: string): Spent => ({
+  noEngine: true,
+  delegated: cli !== 'claude',
+  main: {},
+  messages: new Set(),
+});
+export const engineStarted = (spent: Spent) => {
+  spent.noEngine = false;
+};
 
 // Each event of the run's stream, as worker.ts reads it (another CLI's as the Claude Code events it stands for); `model`
 // names Codex's model (usageOf). `now`: when it came, or none for an event read again (a run taken over).
 export function see(spent: Spent, e: any, model: string | null | undefined, resumed: boolean, now?: number) {
+  engineStarted(spent);
   if (mayDelegate(e)) spent.delegated = true;
   measure(spent, e);
   if (now !== undefined && replied(e)) spent.lastTurn = now;
@@ -69,7 +79,11 @@ export const relaunched = (spent: Spent) => {
 };
 
 // What the finish report carries of it.
-export const report = (spent: Spent) => ({ usage: spent.usage, solo: !spent.delegated });
+export const report = (spent: Spent) => ({
+  usage: spent.usage,
+  solo: !spent.delegated,
+  ...(spent.noEngine && { no_engine: true }),
+});
 
 // Whether a Claude Code event may mean someone else holds the run's token: an event from inside another call (a member,
 // a workflow's agent, a skill run apart: any parent_tool_use_id), or a call to a tool not known to work alone, Agent and

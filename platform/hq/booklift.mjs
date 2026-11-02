@@ -165,8 +165,8 @@ async function shows(page, { id, page: on, picture }, what) {
 // The layer moved from the ink towards where it lands: halfway through its frames it's nearer there than it started
 function towards({ from, land, path, up }, what) {
   assert.ok(path.length >= 1 || up, `${what}: a flight of its own`);
-  // (on a loaded worker Save's photo, cut as the ink flies, can hold every frame of the flight up: its path is judged
-  // where its frames are seen, and said when they aren't. job #12594)
+  // On a loaded worker Save's photo, cut as the ink flies, can hold every frame of the flight up: its path is judged
+  // where its frames are seen, and said when they aren't.
   if (path.length < 4)
     return console.log(`     ${what}: the flight's frames unseen (${path.length}), its path not judged`);
   const to = centre(land),

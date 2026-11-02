@@ -130,6 +130,44 @@ test('default reserve relaxation and Codex continuation stay distinct from confi
   );
 });
 
+test('idle Claude work waits for the recovery read after its default reserve relaxes', () => {
+  const HOUR = 60 * MINUTE;
+  const input = snapshot([work(1, { engine: 'claude', for_seat: 'claude' })]);
+  Object.assign(input.seats[1], { week: 0.95, stop: 0.9, stopConfigured: false, weekResets: 20 * HOUR });
+  assert.equal(play(input, sizes([[1, 1]])).get(1)!.start, 8 * HOUR + 10 * MINUTE);
+});
+
+for (const reverse of [false, true]) {
+  for (const recovery of ['wake', 'wake between reads', 'relax', 'reset'] as const) {
+    test(`pinned Claude work uses peer ${recovery} on a recovery read with reversed seats ${reverse}`, () => {
+      const HOUR = 60 * MINUTE;
+      const input = snapshot([work(1, { engine: 'claude', for_seat: 'claude' })]);
+      const own = input.seats[1];
+      const wakes = recovery === 'wake' || recovery === 'wake between reads';
+      Object.assign(own, {
+        week: 0.95,
+        stop: 0.9,
+        stopConfigured: false,
+        weekResets: (wakes ? 20 : 72) * HOUR,
+      });
+      const peer = { ...own, id: 'claude-peer' };
+      if (wakes)
+        Object.assign(peer, {
+          state: 'sleeping',
+          until: HOUR + (recovery === 'wake between reads' ? MINUTE : 0),
+          week: 0.2,
+        });
+      if (recovery === 'relax') peer.weekResets = 30 * HOUR;
+      if (recovery === 'reset') Object.assign(peer, { week: 1, weekResets: HOUR });
+      input.seats.push(peer);
+      if (reverse) input.seats.reverse();
+      const expected =
+        recovery === 'relax' ? 18 * HOUR + 10 * MINUTE : HOUR + (recovery === 'wake between reads' ? 10 * MINUTE : 0);
+      assert.equal(play(input, sizes([[1, 1]])).get(1)!.start, expected);
+    });
+  }
+}
+
 test('paused Claude work resumes on recovery reads as its default weekly reserve relaxes', () => {
   const HOUR = 60 * MINUTE;
   const input = snapshot([work(1, { engine: 'claude', for_seat: 'claude' })]);
@@ -137,7 +175,7 @@ test('paused Claude work resumes on recovery reads as its default weekly reserve
   input.rates = { claude: { five: { claude: 0 }, week: 0.02 } };
   const seen = inspect(input, sizes([[1, 60]]));
   const forecast = seen.outlooks.get(1)!;
-  assert.ok(Math.abs(forecast.start! - 8 * HOUR) < 2);
+  assert.equal(forecast.start, 8 * HOUR + 10 * MINUTE);
   assert.ok(forecast.done! >= 12.8 * HOUR && forecast.done! < 13 * HOUR);
   const events = seen.seats.find(seat => seat.seat === 'claude')!.events;
   const resumes = events.filter(event => event.type === 'resume');

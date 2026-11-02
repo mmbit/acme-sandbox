@@ -1,8 +1,8 @@
-// A notebook page's cards as bookunits.js lays them: the page's title, its days' dates, and a card for every unit (the
+// A notebook page's cards as bookunits.js lays them: the page's title with its first day, its later days' dates, and a card for every unit (the
 // scrap's paper, its room to write and the handle at its foot to drag that room taller or shorter), what hangs under
 // each moved to its foot. The board's own drawings get no paper and no handle.
 import { bodyIn, drawing, heightOf, partsOf, wordsOf } from './bookunits.js';
-import { resized } from './scrapunit.js';
+import { heightFor } from './scrapunit.js';
 import { ask } from './notebookdata.js';
 import { nameOf } from './bookhead.js';
 import { esc } from '../../util.js';
@@ -14,7 +14,7 @@ import { hangUnder } from './bookunder.js';
 // Words the board reads (a heading, a date), marked so a minimised call covers as little of them as it can: by their own
 // box, not the page-wide line.
 const seen = words => `<span data-keep-in-sight>${esc(words)}</span>`;
-// The page's title, its days' dates, and a card for every unit (the scrap's paper, its room to write and the handle
+// The page's title with its first day, its later days' dates, and a card for every unit (the scrap's paper, its room to write and the handle
 // at its foot), what hangs under each moved to its foot
 export function drawCards(view) {
   const page = view.page;
@@ -34,7 +34,7 @@ export function drawCards(view) {
   }
   const open = !(page.sending || page.sent || page.readonly);
   layer.style.height = `${page.h}px`;
-  layer.innerHTML = `<h2 class="bk-page-title" style="width:${page.w}px">${seen(nameOf(page))}</h2>${page.headers
+  layer.innerHTML = `<h2 class="bk-page-title" style="width:${page.w}px">${seen(nameOf(page))}</h2>${headDay(page)}${page.headers
     .map(h => `<p class="bk-day" style="top:${h.y}px;width:${page.w}px">${seen(dayWords(h.day))}</p>`)
     .join('')}${page.places
     .map(p => {
@@ -74,10 +74,16 @@ function placeHandles(layer, places) {
   }
   for (const b of had.values()) b.remove();
 }
+// The page's first day in its head, under its title and kept with it: none on a call's page, whose title starts with
+// the call's date and time (the store's callnotes.ts)
+const headDay = page =>
+  page.day && page.kind !== 'call'
+    ? `<p class="bk-day bk-head-day" style="width:${page.w}px">${seen(dayWords(page.day))}</p>`
+    : '';
 // A page's day in the book's language, no comma: "Sat 31 Oct", "za 31 okt"
 const dayWords = day => companyFormats().day(day, bookLang(), { weekday: true, short: true }).replace(',', '');
 
-// A unit's handle dragged: its height follows (never into what's drawn: resized), the masonry laid again as it goes,
+// A unit's handle dragged: its height follows (never into what's drawn: heightFor), the masonry laid again as it goes,
 // and saved as it's let go (/api/notebooks/groups/resize)
 function dragged(view, layer) {
   layer.addEventListener('pointerdown', e => {
@@ -96,7 +102,8 @@ function dragged(view, layer) {
     const move = m => {
       if (m.pointerId !== pointer) return;
       // (in the store's terms: the words drawn in its body aside)
-      const h = resized(partsOf(page, id), from + (m.clientY - y0) / (page.scale ?? 1)) - wordsOf(page, id);
+      const h =
+        heightFor(partsOf(page, id), Math.round(from + (m.clientY - y0) / (page.scale ?? 1))) - wordsOf(page, id);
       page.resizing = { id, h: Math.max(1, h) };
       view.relay?.();
     };
@@ -108,8 +115,12 @@ function dragged(view, layer) {
       const h = page.resizing?.h;
       if (h === undefined) return;
       try {
-        const done = await ask(view.dev, '/api/notebooks/groups/resize', null, { id, since: g.updated, h });
-        Object.assign(g, { h: done.h ?? h, updated: done.updated ?? g.updated });
+        // (after a save of its ink under way, as the store has it then: drawn on and dragged at once, the resize goes
+        // with the group the save left, never one it changed since.)
+        await page.saving?.catch(() => {});
+        const now = page.groups.get(id) ?? g,
+          done = await ask(view.dev, '/api/notebooks/groups/resize', null, { id, since: now.updated, h });
+        Object.assign(now, { h: done.h ?? h, updated: done.updated ?? now.updated });
       } catch (err) {
         view.refuse?.(err.message);
       }

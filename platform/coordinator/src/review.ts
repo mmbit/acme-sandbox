@@ -1,7 +1,7 @@
 // The review panel: independent reviews, verified rulings, author fixes and merges.
 // (its messages say deliverable, the board's word for a thread)
 import { readFileSync } from 'node:fs';
-import { db, inOneStep, redactedJson, setting, remember } from './db.ts';
+import { db, afterStep, inOneStep, redactedJson, setting, remember } from './db.ts';
 import { publish, KEYS } from './events.ts';
 import * as secrets from './secrets.ts';
 import { markMerged } from './work.ts';
@@ -20,6 +20,7 @@ import { TRUST_RULE, FINDING, FINDING_NOTES, CONSOLIDATOR_TRUST, BLOCKING, DISMI
 import * as findings from './findings.ts';
 import * as reviewsources from './reviewsources.ts';
 import * as panel from './panel.ts';
+import * as capacity from './panelcapacity.ts';
 import * as engineOnly from './engineonly.ts';
 import { runner } from './models.ts';
 import * as decisions from './decisions.ts';
@@ -516,7 +517,7 @@ function panelCalledBack(push: Push & { sha: string }, round: number, files: str
   const { agent, name } = ruler(called.id);
   const text = `PR #${pr}: ${name} called the panel back on round ${round}, so the push goes to it`;
   publish({ type: 'log', agent, text });
-  queueTriage(pr, branch, sha, round, files, links, `The earlier risk recall still applies: ${called.output}`);
+  triageOfPush({ pr, branch, sha, round, files, links, note: `The earlier risk recall still applies: ${called.output}`, fixesFrom: null });
   return true;
 }
 
@@ -534,7 +535,7 @@ function reviewRound(
   const fixesFrom = before?.decision === 'changes' ? base ?? null : null;
   db.prepare("update prs set panel = 'triage', fixes_from = ? where number = ?").run(fixesFrom, pr);
   const note = touchup?.head ? panelTouchupNote(touchup, author, listed(parse(before!.output).blocking), before!.output) : '';
-  queueTriage(pr, branch, sha, round, fixes ?? files, links, note, fixesFrom);
+  triageOfPush({ pr, branch, sha, round, files: fixes ?? files, links, note, fixesFrom });
 }
 
 // A push over an unruled round voids its running check before prs.since moves past it.
@@ -564,8 +565,7 @@ function sendBack(push: { pr: number; branch: string; author: string; sha?: stri
   recordSentBack(push);
   // The fix job reads these files to choose its engine and previews step.
   if (files) db.prepare('update prs set files = ? where number = ?').run(JSON.stringify(files), pr);
-  if (prev?.status === 'open' && prev.sha !== (sha ?? null) && !ruled(pr, prev.round, prev.sha) && db.prepare(`select 1 from jobs
-    where pr = ? and round = ? and kind in ('review', 'consolidate') and status in ('queued', 'running') and id > ?`).get(pr, prev.round, prev.since)) {
+  if (prev?.status === 'open' && prev.sha !== (sha ?? null) && !ruled(pr, prev.round, prev.sha) && roundUnderWay(pr, prev)) {
     leaveBehind(pr, prev);
     db.prepare('update prs set sha = ?, since = (select coalesce(max(id), 0) from jobs) where number = ?').run(sha ?? null, pr);
     db.prepare("update jobs set status = 'cancelled', finished = ? where pr = ? and kind in ('review', 'consolidate') and status = 'queued'")
@@ -584,6 +584,14 @@ function recordSentBack(push: Pick<Push, 'pr' | 'branch' | 'author' | 'sha'>) {
     sha ?? null,
   );
   ledger.prOpened(branch);
+}
+
+// A round is under way while its review or consolidation is queued or running. It is also under way while its hand-off
+// is still in its turns with nothing queued yet (triageInTurns).
+function roundUnderWay(pr: number, prev: { sha: string | null; round: number; since: number }) {
+  const queuedOrRunning = db.prepare(`select 1 from jobs where pr = ? and round = ? and kind in ('review', 'consolidate')
+    and status in ('queued', 'running') and id > ?`).get(pr, prev.round, prev.since);
+  return !!queuedOrRunning || triageWaits(pr, prev.round, prev.sha);
 }
 
 // The gates' or the tests' report on a push, from the worker: passed, failed, or not run (null).
@@ -614,16 +622,61 @@ function changedFrom(pr: number, sha: string, files: string[]) {
   return row ? [...new Set([...JSON.parse(row.files) as string[], ...files])] : undefined;
 }
 
+// A push's round to the panel, as the worker's finish reports it (handingOn): its triage's projections (panelcapacity.ts
+// playAhead) take turns of HQ's thread once the finish is kept, and the triage is queued after them with what they
+// found, if its round still waits for it (a later push took the pull request on, or `hq review` ran it). Anywhere else,
+// queued now. A coordinator that stops in between leaves the round with nothing queued: the revive sweep brings it back
+// (reviveRounds).
+type Handoff = { pr: number; branch: string; sha: string; round: number; files: string[]; links: string[]; note: string;
+  fixesFrom: string | null };
+let handing: Promise<void>[] | undefined;
+export function handingOn<T>(run: () => T) {
+  const was = handing,
+    handed: Promise<void>[] = [];
+  handing = handed;
+  try {
+    return { answer: run(), handed: () => Promise.all(handed) };
+  } finally {
+    handing = was;
+  }
+}
+function triageOfPush(handoff: Handoff) {
+  const handed = handing;
+  if (!handed) return void triageNow(handoff);
+  triagePanel(handoff.pr, handoff.fixesFrom);
+  afterStep(() => handed.push(triageInTurns(handoff)));
+}
+const triageNow = ({ pr, branch, sha, round, files, links, note, fixesFrom }: Handoff) =>
+  queueTriage(pr, branch, sha, round, files, links, note, fixesFrom);
+async function triageInTurns(handoff: Handoff) {
+  const { pr, round, sha } = handoff;
+  try {
+    const projections = await capacity.playAhead(pr, panel.consolidators(pr), ['ruling', 'triage']);
+    inOneStep(() => {
+      if (triageWaits(pr, round, sha)) capacity.withProjections(projections, () => triageNow(handoff));
+    });
+  } catch (err) {
+    console.error(`PR #${pr}: round ${round}'s triage wasn't queued:`, err);
+  }
+}
+// (a round handed on with nothing queued for it yet: its hand-off is in its turns, or was lost)
+const triageWaits = (pr: number, round: number, sha: string | null) =>
+  !!db.prepare(`select 1 from prs p where number = ? and round = ? and sha is ? and panel = 'triage'
+    and not exists (select 1 from jobs where pr = p.number and kind in ('review', 'consolidate') and id > p.since)`).get(pr, round, sha);
+
 // Panel membership is a recorded judgment, never inferred from paths or line counts.
 // (retry: the triage it runs again for, retriage.)
 function queueTriage(pr: number, branch: string, sha: string, round: number, files: string[], links: string[], note = '', fixesFrom: string | null = null, retry?: Run) {
-  if (!retry) db.prepare("update prs set panel = 'triage', review_class = 'triage', fixes_from = ? where number = ?").run(fixesFrom, pr);
+  if (!retry) triagePanel(pr, fixesFrom);
   const made = roundJob({ pr, round, sha, judges: files, stage: 'triage', step: 'Choosing the reviewers',
     ...(retry && { insteadOf: retry.id, queuedBy: retry.queued_by ?? undefined }),
     prompt: reviewtriage.brief(pr, branch, files, links, fixesFrom) + note + boardWords(branch, 'triage') });
   triagebriefs.keep(made.id, links, note);
   return made;
 }
+
+const triagePanel = (pr: number, fixesFrom: string | null) =>
+  db.prepare("update prs set panel = 'triage', review_class = 'triage', fixes_from = ? where number = ?").run(fixesFrom, pr);
 
 // A triage runs again briefed and run on who may review and rule now: a copy of its old brief could offer a consolidator
 // the read refuses, and keep the runner chosen for it. One queued before its brief was kept takes its old prompt along
@@ -754,15 +807,18 @@ function misjudged(j: { id: number; pr: number; round: number; stage: string | n
     ?? untitled(j, v, touchedUp) ?? (decision === 'changes' ? unblocked(j, v, touchedUp) : undefined);
 }
 // A "changes" with no blocking finding. From a later round on only blocking findings hold the merge, so it should have
-// merged.
+// merged. Pushed touch-ups still need their author's check before merging.
 // On a first round, a thread's "changes" whose owner gets nothing to draw a fix task for (ownerFindings): no touch-ups the
 // worker pushed and no nonblocking one sent to the author. Work with no thread goes to its author at once, under its
 // work's title.
 function unblocked(j: { id: number; pr: number; round: number }, v: ReturnType<typeof parse>, touchedUp: boolean) {
-  if (listed(v.blocking)) return undefined;
+  if (listed(v.blocking) || touchupOf(j.id)?.head) return undefined;
   const branch = followups.branchOf(j.pr);
-  if (stageFor(branch, j.round) !== 'first')
+  if (stageFor(branch, j.round) !== 'first') {
+    if (listed(v.touchups))
+      return 'from a later round on touch-ups cover only blockers: with none, drop the touch-ups and decide "merge"';
     return 'from a later round on only blocking findings hold the merge: with none, decide "merge", whatever nonblocking ones are listed';
+  }
   if (!toOwner(branch) || touchedUp || listed(v.nonblocking)) return undefined;
   return 'a "changes" with no blocking finding and no touch-ups pushed has nothing to fix';
 }

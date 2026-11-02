@@ -36,23 +36,34 @@ export function take<T extends Claim>(
   let picked = queue.runs[queue.next];
   const { seat: available, roomSeat } = choose(picked.row, picked.order);
   const seat = !('id' in available) && available.on === 'queue' ? roomSeat : available;
-  const limit = 'id' in seat ? (limits[seat.engine] ?? Infinity) : Infinity;
-  if ('id' in seat && reviewroom.shared(limit)) {
-    const order = reviewroom.claimOrder(
-      occupants(seat.id),
-      limit,
-      queue.base,
-      row => queue.orders.get(row.id)!.latestStart !== null,
-    );
-    const spare = spareOnly(picked.row, picked.order);
-    for (const group of groupsOn(queue, seat, seats, limits)) {
-      if (group.spare && !spare) continue;
-      while (group.next < group.runs.length && !queue.pending.has(group.runs[group.next])) group.next++;
-      const candidate = group.runs[group.next];
-      if (candidate && order(candidate.row, picked.row) < 0) picked = candidate;
-    }
-  }
+  if ('id' in seat) picked = preferReview(queue, seats, limits, occupants(seat.id), seat, picked);
   queue.pending.delete(picked);
+  return picked;
+}
+
+function preferReview<T extends Claim>(
+  queue: Queue<T>,
+  seats: capacity.Moment,
+  limits: Record<string, number>,
+  occupants: { kind: string }[],
+  seat: capacity.Seat,
+  picked: T,
+) {
+  const configuredLimit = limits[seat.engine] ?? Infinity;
+  if (!reviewroom.shared(configuredLimit)) return picked;
+  const order = reviewroom.claimOrder(
+    occupants,
+    configuredLimit,
+    queue.base,
+    row => queue.orders.get(row.id)!.latestStart !== null,
+  );
+  const spare = spareOnly(picked.row, picked.order);
+  for (const group of groupsOn(queue, seat, seats, limits)) {
+    if (group.spare && !spare) continue;
+    while (group.next < group.runs.length && !queue.pending.has(group.runs[group.next])) group.next++;
+    const candidate = group.runs[group.next];
+    if (candidate && order(candidate.row, picked.row) < 0) picked = candidate;
+  }
   return picked;
 }
 

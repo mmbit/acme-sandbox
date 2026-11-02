@@ -4,7 +4,7 @@
 import { anchorOf, dataUrlPicture, inkOf, picturesOf, refuse, textsOf, wordsOf } from './notebookplaychecks.js';
 import { emptyGroup, hasAny, picks, typedBoxes } from './notebookparts.js';
 import { boxOf, scrapSize } from './notebookstack.js';
-import { ROOM, UNIT_W, heightFor, resized, unitOf } from './scrapunit.js';
+import { ROOM, UNIT_W, heightFor, unitOf } from './scrapunit.js';
 import { answersOf } from './notebookplayanswers.js';
 import { assignedOf } from './notebookplaypeople.js';
 
@@ -39,17 +39,17 @@ function editGroup(s, b) {
   const parts = elementsOf(s, b, partsOf(g)),
     said = b.words === undefined ? { words: g.words, said: g.said } : wordsOf(b.words, b.said);
   if (!hasAny(parts) && g.kind !== 'scrap') refuse(400, 'an empty group is deleted instead');
-  write(s, g, parts, { ...said, h: g.h === null ? null : heightFor(parts, g.h) });
+  write(s, g, parts, said); // (its height as set)
   return shown(s, g);
 }
-// An open unit made h tall by hand, down no further than its parts reach. since: as edit's.
+// An open unit made h tall by hand (its room's foot, the post-it words aside: scrapunit.js heightFor). since: as edit's.
 function resizeGroup(s, b) {
   const g = openGroup(s, b?.id);
   if (g.parent !== null) refuse(400, "a reply isn't a unit: it has no height of its own");
   if (b.since !== g.updated) refuse(409, CHANGED);
   const h = Number(b.h);
   if (b.h === null || !Number.isFinite(h) || h <= 0) refuse(400, 'h is a positive number');
-  write(s, g, partsOf(g), { h: resized(partsOf(g), h) });
+  write(s, g, partsOf(g), { h: Math.round(h) });
   return shown(s, g);
 }
 // An open unit onto an open page, as it was: its last, right after unit `after` there, or its first for after 'start'
@@ -134,7 +134,7 @@ function splitGroup(s, b) {
     pictures: parts.pictures.filter((_, i) => !out.pictures.includes(i)),
   };
   if (!hasAny(out) || (!hasAny(left) && g.kind !== 'scrap')) refuse(400, 'a split leaves something on each side');
-  write(s, g, left, { h: heightFor(left, g.h) });
+  write(s, g, left, {}); // (its height as set)
   const p = s.page(g.page),
     unit = unitOf({
       ink: out.ink.map(i => parts.ink[i]),

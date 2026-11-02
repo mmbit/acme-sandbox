@@ -8,16 +8,16 @@
 // make. Each asserts what the board sees: the buttons' names, boxes, the controls' words.
 import assert from 'node:assert/strict';
 import { errorsOf, openPage, until } from '../../shared/browser/browser.mjs';
-import { DESKTOP, MINI } from './bookkit.mjs';
+import { DESKTOP, MINI, OVERVIEW } from './bookkit.mjs';
 import { press } from './bookbar.mjs';
 
 // a home-screen app's blurred strip at the top (style.css's standalone --sat: 48 px under the status bar)
 const SAT_PX = 72;
-// the tool rail at the foot, left to right: the tools, then Undo and Redo (bookstrip.js, the board's call 170)
-const RAIL = ['Select', 'Pen', 'Marker', 'Eraser', /^Shapes/, 'Text', 'Undo', 'Redo'],
+// the tools on the rail, top to bottom, then Undo and Redo (bookstrip.js, the board's call 170): the pen and the marker
+// one tool, the marker beside the pen only where the rail has room (bookbar.mjs)
+const RAIL = ['Select', 'Pen', 'Eraser', /^Shapes/, 'Text', 'Undo', 'Redo'],
   // what the column over the paper's right edge may hold
-  CONTROLS = ['Send', 'Tips', 'Invite'],
-  OVERVIEW = "The overview: the notebook's pages, and the Shelf";
+  CONTROLS = ['Send', 'Tips', 'Invite'];
 
 // c: book-check.mjs's helpers: { base, hqIn(browser, viewport), settled(page, mode), shot, settle }
 export function chromeStories(c) {
@@ -48,9 +48,7 @@ async function column(browser, c) {
   const { page, errors, done } = await onMini(browser, c);
   try {
     const names = await columnNames(page),
-      rail = await page
-        .locator('#book [data-island=tools] button')
-        .evaluateAll(all => all.filter(b => b.getBoundingClientRect().width).map(b => b.getAttribute('aria-label')));
+      rail = (await shownNames(page.locator('#book [data-island=tools] button'))).filter(name => name !== 'Marker');
     assert.deepEqual(
       names.filter(name => !CONTROLS.includes(name)),
       [],
@@ -85,17 +83,16 @@ async function overview(browser, c) {
   const { page, errors, done } = await onMini(browser, c);
   try {
     const foot = page.locator('#book nav [data-island=pages]'),
-      over = foot.getByRole('button', { name: /^The overview/ });
-    // (from More where the rail has folded it away: WebKit's iPad mini rail is tighter.)
+      over = foot.locator('.bk-btn[aria-label^="The overview"]');
+    // (from More where the rail has folded it away: WebKit's iPad mini rail is tighter. It stays there in the overview,
+    // as the rail keeps one layout on a device.)
+    const onRail = await over.isVisible();
     await press(page, OVERVIEW);
     await page.waitForTimeout(c.settle);
     const far = page.getByRole('list', { name: 'The overview' });
     assert.ok(await far.isVisible(), 'the overview opened');
     assert.equal(await over.getAttribute('aria-pressed'), 'true');
-    const shown = await foot
-      .getByRole('button')
-      .evaluateAll(all => all.filter(b => b.getBoundingClientRect().width).map(b => b.getAttribute('aria-label')));
-    assert.deepEqual(shown, [await over.getAttribute('aria-label')], `the foot shows only the overview: ${shown}`);
+    await footOnly(foot, onRail ? [await over.getAttribute('aria-label')] : []);
     // Search in its head, nothing to draw with
     assert.ok(await far.getByRole('searchbox', { name: 'Search the book' }).isVisible(), 'Search in the overview');
     await nothingToDraw(page, 'in the overview');
@@ -316,16 +313,24 @@ async function onMini(browser, c) {
   return { page, errors, done: () => context.close() };
 }
 export const button = (page, name, exact = false) => page.locator('#book').getByRole('button', { name, exact });
-// The names of the book's own buttons on the rail (Send, Tips, invites) that show
+// The overview's foot: only its own key, where its page showed it on the rail (names).
+async function footOnly(foot, names) {
+  const shown = await shownNames(foot.getByRole('button'));
+  assert.deepEqual(shown, names, `the foot shows only the overview, where its page showed it: ${shown}`);
+}
 // The overview or the Shelf: no tools, Undo, Redo or dog-ear, with nothing to draw on
 async function nothingToDraw(page, where) {
   assert.ok(!(await page.locator('#book [data-island=tools]').isVisible()), `no tools, Undo or Redo ${where}`);
   assert.ok(!(await page.locator('#book .bk-dogear').isVisible()), `no dog-ear ${where}`);
 }
+// The names of the book's own buttons on the rail (Send, Tips, invites) that show
 const columnNames = page =>
-  page
-    .locator('#book .bk-column :is([data-island=send], [data-island=book]) button')
-    .evaluateAll(all => all.filter(b => b.getBoundingClientRect().width).map(b => b.getAttribute('aria-label')));
+  shownNames(page.locator('#book .bk-column :is([data-island=send], [data-island=book]) button'));
+// The labels of the buttons found that show (on the rail, a hidden one keeps its slot unseen).
+const shownNames = buttons =>
+  buttons.evaluateAll(all =>
+    all.filter(b => b.checkVisibility({ visibilityProperty: true })).map(b => b.getAttribute('aria-label')),
+  );
 // Every visible control, field and send stamp starts below the strip
 async function clearOfTheStrip(page, when) {
   const under = await page.evaluate(() =>

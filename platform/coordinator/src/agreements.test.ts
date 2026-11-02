@@ -55,7 +55,7 @@ test("the board's words show only from a call hq call shows the check: not a liv
   reset();
   const fixture = await h.start({ agent: ceo(), title: 'A customer call follow-up' });
   await h.finish(fixture);
-  db.prepare('update jobs set customers = 1 where id = ?').run(fixture.id);
+  h.markCustomer('jobs', fixture.id);
   const followedUp = agreed({ quote: 'Refund the customer at the old address' }, t0, ceo(), { job: fixture.id });
   const earlier = agreed({ kind: 'task', quote: 'n/a' }, t0 - HOUR, ceo(), { job: fixture.id });
   agreed({ quote: 'Carry on with that customer as said before' }, t0, ceo(), { resumes: [earlier.call] });
@@ -76,7 +76,7 @@ test("handled summaries of a call marked before as a customer's stay with jobs a
   reset();
   const fixture = await h.start({ agent: ceo() });
   await h.finish(fixture);
-  db.prepare('update jobs set customers = 1 where id = ?').run(fixture.id);
+  h.markCustomer('jobs', fixture.id);
   agreed({ status: 'handled', what: 'Private customer decision' }, t0, ceo(), { job: fixture.id });
   const task = agreed({ kind: 'task', status: 'handled', what: 'Private customer task' }, t0, 'chime', {
     job: fixture.id,

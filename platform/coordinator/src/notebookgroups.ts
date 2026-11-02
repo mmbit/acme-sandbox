@@ -14,7 +14,7 @@ import { existsSync, rmSync } from 'node:fs';
 import { ours, pictureUrl } from './notebookpictures.ts';
 import { emptyGroup, hasAny, joined, picks } from '../../hq/shell/ink/notebookparts.js';
 import { boxOf } from '../../hq/shell/ink/notebookstack.js';
-import { heightFor, resized, unitOf } from '../../hq/shell/ink/scrapunit.js';
+import { heightFor, unitOf } from '../../hq/shell/ink/scrapunit.js';
 import { firstPos, lastPos, posAfter } from './notebookorder.ts';
 import { db, inOneStep, lacks } from './db.ts'; // (lacks)
 import { BOARD } from './ink/book.ts';
@@ -100,7 +100,6 @@ export function listGroups(b: any, who = BOARD) {
     page: p.id,
     notebook: p.notebook,
     title: p.label,
-    handed: p.handed,
     groups: kept.filter(g => g.parent === null).map(g => groupOf(g, replies, listed)),
   };
 }
@@ -138,11 +137,12 @@ export function editGroup(b: any, who = BOARD, by = who) {
   if (!hasAny(parts) && g.kind !== 'scrap') return [400, 'an empty group is deleted instead', 'noteDelete'] as Refused;
   write(g.id, parts, { words: said.words, said: said.said });
   if (by === BOARD) judgeEdited(g, said.words, parts.texts); // (bookjudge.ts)
-  keepInStep(row(g.id)!, by); // (a scrap handed to guests and their copies)
+  keepInStep(row(g.id)!); // (a scrap handed to guests and their copies)
   return shown(row(g.id)!);
 }
-// POST /api/notebooks/groups/resize { id, since, h }: an open unit's height set by hand (its room to write dragged),
-// never shorter than what's on it. since: as edit's
+// POST /api/notebooks/groups/resize { id, since, h }: an open unit's height set by hand (its room to write dragged), as
+// the page has it without the post-it words; it's never shown shorter than what's on it (scrapunit.js heightFor), since:
+// as edit's.
 export function resizeGroup(b: any, who = BOARD) {
   const g = openGroup(Number(b?.id), who);
   if (isRefused(g)) return g;
@@ -151,7 +151,7 @@ export function resizeGroup(b: any, who = BOARD) {
   const h = Number(b.h);
   if (!Number.isFinite(h) || h <= 0) return [400, 'h is a positive number'] as Refused;
   db.prepare('update notebook_groups set h = ?, updated = ? where id = ?').run(
-    resized(partsOf(g), h),
+    Math.round(h), // (as dragged)
     new Date().toISOString(),
     g.id,
   );
@@ -293,15 +293,15 @@ export function insertGroup(
   return row(id)!;
 }
 export const partsJson = (parts: Parts) => [parts.ink, parts.texts, parts.pictures].map(x => JSON.stringify(x));
-// A group's parts written, a unit as tall as they reach at least
+// A group's parts written. Its height stays as made or dragged: each reader floors it at its parts (scrapunit.js
+// heightFor).
 export function write(id: number, parts: Parts, more: { words?: string; said?: string | null }) {
-  const g = row(id)!,
-    h = g.parent === null ? heightFor(parts, g.h!) : null;
+  const g = row(id)!;
   db.prepare(
-    'update notebook_groups set ink = ?, texts = ?, pictures = ?, words = ?, said = ?, h = ?, updated = ? where id = ?',
+    'update notebook_groups set ink = ?, texts = ?, pictures = ?, words = ?, said = ?, updated = ? where id = ?',
   ).run(
     ...partsJson(parts),
-    ...[more.words ?? g.words, more.said === undefined ? g.said : more.said, h, new Date().toISOString(), id],
+    ...[more.words ?? g.words, more.said === undefined ? g.said : more.said, new Date().toISOString(), id],
   );
   const p = pageRow(g.page, null)!;
   changed(p.notebook, p.id);

@@ -1,13 +1,37 @@
 /* The book's tools (booktools.js): the tool's card over the rail, the cursors over the paper, and the boxes
    of words typed on a page (booktexts.js). */
 
-/* ---- the colours: a card over the rail (bookstrip.css places it), the colour in use ringed in ink */
+/* ---- the colours: a card over the rail (bookstrip.css places it), the colour in use ringed in ink. Its lines one
+   under another (what draws, the colours six to a line, the widths and smoothing), a rule between them and between
+   two rows on one line. */
 .bk-palette {
   pointer-events: auto;
   display: flex;
-  gap: 2px;
+  flex-direction: column;
   padding: 4px;
   animation: bk-palette-in 0.12s ease-out;
+}
+.bk-palette-line,
+.bk-palette-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.bk-palette-row[data-colours] {
+  display: grid;
+  grid-template-columns: repeat(6, auto);
+  justify-content: start;
+}
+.bk-palette hr {
+  margin: 3px 6px;
+  border: 0;
+  border-top: 1px solid var(--bk-ui-line);
+}
+.bk-palette-line > hr {
+  align-self: stretch;
+  margin: 6px 3px;
+  border-top: 0;
+  border-left: 1px solid var(--bk-ui-line);
 }
 @keyframes bk-palette-in {
   from {
@@ -19,9 +43,10 @@
 .bk-palette .bk-btn[aria-pressed='false'] {
   background: transparent;
 }
+/* (in the controls' own ink, which reads on a dark look's card too.) */
 .bk-palette .bk-btn[aria-pressed='true'] {
-  color: var(--bk-ink, #2a2352);
-  box-shadow: inset 0 0 0 2px var(--bk-ink, #2a2352);
+  color: var(--bk-ui-ink);
+  box-shadow: inset 0 0 0 2px var(--bk-ui-ink);
 }
 @media (hover: hover) {
   .bk-palette .bk-btn:hover {
@@ -43,7 +68,8 @@
 }
 
 /* ---- words typed on a page: the page's own ink, set in the book's face (booktexts.js TEXT: 18 px, a line 1.4) */
-/* (a click on its words edits them and a drag over them draws, a strike or a slice: bookamend.js; Select moves it.) */
+/* (a click or a tap on its words edits them, the caret there, and a drag over them draws ink; Select or its grip moves
+   it.) */
 .bk-typed {
   position: absolute;
   z-index: 2;
@@ -83,14 +109,9 @@
   background: rgba(255, 250, 240, 0.55);
   box-shadow: inset 0 0 0 1.5px rgba(42, 35, 82, 0.32);
 }
-/* its words, being typed, reach a line round them: handwriting that starts beside them is theirs (Apple's Scribble
-   reads it into them), never ink or a new box. */
-.bk-typed[data-editing] .bk-typed-words {
-  margin: -1em;
-  padding: 1em;
-}
-/* the keys a Pencil has no keyboard for (delete a letter, a space), under its right end while it's typed in, their
-   size on screen at any zoom, on an island of the look's (bookui.css.) */
+/* the bin that deletes the box, under its right end while it's typed in, its size on screen at any zoom, on an
+   island of the look's (bookui.css). Clear of the words being typed: Scribble would take a Pencil's tap that starts by
+   them for handwriting. */
 .bk-typed-keys {
   position: absolute;
   top: 100%;
@@ -98,7 +119,7 @@
   display: none;
   gap: 2px;
   padding: 2px;
-  margin-top: 6px;
+  margin-top: 12px;
   border: var(--bk-ui-border);
   border-radius: var(--r-lg, 11px);
   background: var(--bk-ui-bg);
@@ -109,8 +130,39 @@
 .bk-typed[data-editing] .bk-typed-keys {
   display: flex;
 }
+/* its grip: a few dots outside its left edge, by its first line, clear of the words and of the bin, its size on screen
+   at any zoom, and room round it for a Pencil's tip. Shown on a touch screen (no hover: the Pencil takes it straight
+   away), else on hover and while it's typed in. A press there moves the box: booktexts.js. */
+.bk-typed-grip {
+  position: absolute;
+  right: calc(100% + 4px);
+  top: 3px;
+  width: 10px;
+  height: 22px;
+  border-radius: 4px;
+  background: radial-gradient(circle, rgb(42 35 82 / 45%) 1.2px, transparent 1.6px) 0 1px / 5px 5px;
+  cursor: grab;
+  transform-origin: 100% 0;
+  scale: calc(1 / var(--bk-scale, 1));
+  transition: opacity 0.12s;
+}
+.bk-typed-grip::after {
+  content: '';
+  position: absolute;
+  inset: -6px -4px -6px -10px;
+}
+@media (hover: hover) {
+  .bk-typed-grip {
+    opacity: 0;
+  }
+  .bk-typed:hover .bk-typed-grip,
+  .bk-typed[data-editing] .bk-typed-grip {
+    opacity: 1;
+  }
+}
 @media (prefers-reduced-motion: reduce) {
   .bk-typed,
+  .bk-typed-grip,
   .bk-palette {
     transition: none;
     animation: none;

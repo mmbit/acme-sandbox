@@ -6,6 +6,8 @@ export const DESKTOP = { width: 1440, height: 900 },
   // an iPad mini in landscape, and held upright
   MINI = { width: 1133, height: 744 },
   UPRIGHT = { width: MINI.height, height: MINI.width };
+// The label of the overview's key on the book's rail (bookcontrols.js).
+export const OVERVIEW = "The overview: the notebook's pages, and the Shelf";
 // how long a story waits to be sure something didn't happen (the page is saved this soon after a change), and what the
 // stand-in microphone hears
 export const QUIET_MS = 1200,
@@ -35,6 +37,22 @@ export const bookAtRest = (page, mode) =>
       getComputedStyle(document.body).visibility !== 'hidden',
     mode,
   );
+
+// Open or fold the Notebook and wait until HQ is visible again.
+export async function bookOpen(page, open, mouse = false) {
+  const closed = await page.evaluate(() => ['folded', 'shut'].includes(document.documentElement.dataset.book));
+  if (closed === open) {
+    const lip = page.locator('#book .bk-lip');
+    if (mouse) await lip.click();
+    else await lip.tap();
+  }
+  await page.waitForFunction(
+    open => !['folded', 'shut'].includes(document.documentElement.dataset.book) === open,
+    open,
+  );
+  const mode = await page.evaluate(() => document.documentElement.dataset.book);
+  await bookAtRest(page, mode);
+}
 
 // Whether a box on the screen ({ x, y, width, height }) lies clear of every one of the book's islands
 export const islandsClearOf = (page, box) =>
@@ -318,4 +336,42 @@ export async function previewServed(c, context) {
     if (path.startsWith('/__review/')) return r.fulfill({ json: { show: false } });
     return r.fulfill({ contentType: 'text/html', body: PREVIEW_PAGE });
   });
+}
+
+// This device's pen used before, as the board's iPad has it: a finger then moves the page while the pen writes
+export const penPans = page =>
+  page.evaluate(() => localStorage.setItem('ink.prefs', JSON.stringify({ penSeen: true, penPans: true })));
+// How many strokes the store keeps on a call's notes page (booknotespage.mjs callSeed): what the page saved
+export const strokes = page =>
+  page
+    .context()
+    .notebook.route('/api/notebooks/pages/groups', { page: 9101 })
+    .groups.reduce((n, g) => n + g.ink.length, 0);
+
+// (each function below runs in the page, with page.evaluate, so it names what it reads itself.)
+// A note on the screen by its unit id
+export function unitOf(g) {
+  const r = document.querySelector(`#book .bk-unit[data-unit="${g}"]`).getBoundingClientRect();
+  return { g, x: r.left, y: r.top, w: r.width, h: r.height };
+}
+// How many inked pixels the shown page's canvases have in a box on the screen
+export function inkAt(box) {
+  let n = 0;
+  for (const cv of document.querySelectorAll('#book .bk-page:not([hidden]) canvas.bk-ink')) {
+    const r = cv.getBoundingClientRect(),
+      k = cv.width / r.width,
+      [x0, y0] = [Math.max(box.x, r.left), Math.max(box.y, r.top)],
+      [x1, y1] = [Math.min(box.x + box.w, r.right), Math.min(box.y + box.h, r.bottom)];
+    if (x1 - x0 < 1 || y1 - y0 < 1) continue;
+    const { data } = cv
+      .getContext('2d')
+      .getImageData(
+        Math.floor((x0 - r.left) * k),
+        Math.floor((y0 - r.top) * k),
+        Math.ceil((x1 - x0) * k),
+        Math.ceil((y1 - y0) * k),
+      );
+    for (let i = 3; i < data.length; i += 4) if (data[i] > 128) n++;
+  }
+  return n;
 }

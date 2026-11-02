@@ -9,6 +9,7 @@ const line = (at: string, used: unknown, extra: object = {}) => JSON.stringify({
   payload: { type: 'token_count', rate_limits: { primary: { used_percent: used, window_minutes: 300, resets_at: 1790000000, ...extra },
     secondary: { used_percent: 3, window_minutes: 10080 } } } });
 const NOW = Date.parse('2026-09-29T12:00:00Z');
+const HOUR_MS = 3600_000;
 
 test("a Codex reading: the 5-hour window's share, written since the run started", () => {
   assert.deepEqual(codexReading(line('2026-09-29T11:59:00Z', 42), NOW - 3600e3, 0, NOW),
@@ -54,36 +55,34 @@ test("a plan that reports only the week: no 5-hour figure, and the week isn't re
 });
 
 test('a seat drains at 90% of either window, until that window resets', () => {
-  const H = 3600e3;
   assert.equal(drainUntil({ resets: 0, weekResets: 0 }, NOW), 0, 'not measured');
-  assert.equal(drainUntil({ util: 0.89, resets: NOW + H, week: 0.5, weekResets: NOW + 50 * H }, NOW), 0);
-  assert.equal(drainUntil({ util: 0.9, resets: NOW + H, week: 0.5, weekResets: NOW + 50 * H }, NOW), NOW + H);
-  assert.equal(drainUntil({ util: 0.2, resets: NOW + H, week: 0.92, weekResets: NOW + 50 * H }, NOW), NOW + 50 * H);
+  assert.equal(drainUntil({ util: 0.89, resets: NOW + HOUR_MS, week: 0.5, weekResets: NOW + 50 * HOUR_MS }, NOW), 0);
+  assert.equal(drainUntil({ util: 0.9, resets: NOW + HOUR_MS, week: 0.5, weekResets: NOW + 50 * HOUR_MS }, NOW), NOW + HOUR_MS);
+  assert.equal(drainUntil({ util: 0.2, resets: NOW + HOUR_MS, week: 0.92, weekResets: NOW + 50 * HOUR_MS }, NOW), NOW + 50 * HOUR_MS);
   // both full: the later reset, so a full week isn't taken back at the 5-hour reset
-  assert.equal(drainUntil({ util: 0.95, resets: NOW + H, week: 0.92, weekResets: NOW + 50 * H }, NOW), NOW + 50 * H);
+  assert.equal(drainUntil({ util: 0.95, resets: NOW + HOUR_MS, week: 0.92, weekResets: NOW + 50 * HOUR_MS }, NOW), NOW + 50 * HOUR_MS);
   // Codex on 2026-09-30: the week alone, at 100%, back on 3 October at 18:38 UTC
   assert.equal(drainUntil({ resets: 0, week: 1, weekResets: 1791052696e3 }, NOW), Date.parse('2026-10-03T18:38:16Z'));
   // a window that has reset since doesn't hold it; one with no known reset holds it for a recheck
-  assert.equal(drainUntil({ util: 0.95, resets: NOW, week: 0.3, weekResets: NOW + H }, NOW), 0);
+  assert.equal(drainUntil({ util: 0.95, resets: NOW, week: 0.3, weekResets: NOW + HOUR_MS }, NOW), 0);
   assert.equal(drainUntil({ resets: 0, week: 0.95, weekResets: 0 }, NOW), NOW + DRAIN_RECHECK);
 });
 
 test("a seat's own drain level, and a week's reserve that shrinks in its last day", () => {
-  const H = 3600e3;
   // a big plan's seat runs to its own level (SEATS' claude-1:claude:95)
-  assert.equal(drainUntil({ util: 0.2, resets: NOW + H, week: 0.92, weekResets: NOW + 50 * H, drainAt: 0.95 }, NOW), 0);
-  assert.equal(drainUntil({ util: 0.2, resets: NOW + H, week: 0.95, weekResets: NOW + 50 * H, drainAt: 0.95 }, NOW), NOW + 50 * H);
+  assert.equal(drainUntil({ util: 0.2, resets: NOW + HOUR_MS, week: 0.92, weekResets: NOW + 50 * HOUR_MS, drainAt: 0.95 }, NOW), 0);
+  assert.equal(drainUntil({ util: 0.2, resets: NOW + HOUR_MS, week: 0.95, weekResets: NOW + 50 * HOUR_MS, drainAt: 0.95 }, NOW), NOW + 50 * HOUR_MS);
   // The default reserve halves with 12 hours left. A configured stop stays fixed.
-  assert.equal(drainLevel({ weekResets: NOW + 12 * H }, true, NOW), 0.95);
-  assert.equal(drainLevel({ weekResets: NOW + 12 * H, drainAt: 0.95 }, true, NOW), 0.95);
-  assert.equal(drainUntil({ resets: 0, week: 0.93, weekResets: NOW + 12 * H }, NOW), 0, 'the board, 14 Oct: the last 10% may go');
-  assert.equal(drainUntil({ resets: 0, week: 0.96, weekResets: NOW + 12 * H }, NOW), NOW + 12 * H);
+  assert.equal(drainLevel({ weekResets: NOW + 12 * HOUR_MS }, true, NOW), 0.95);
+  assert.equal(drainLevel({ weekResets: NOW + 12 * HOUR_MS, drainAt: 0.95 }, true, NOW), 0.95);
+  assert.equal(drainUntil({ resets: 0, week: 0.93, weekResets: NOW + 12 * HOUR_MS }, NOW), 0, 'the board, 14 Oct: the last 10% may go');
+  assert.equal(drainUntil({ resets: 0, week: 0.96, weekResets: NOW + 12 * HOUR_MS }, NOW), NOW + 12 * HOUR_MS);
   // the 5-hour window keeps its level: it resets soon anyway
-  assert.equal(drainLevel({ weekResets: NOW + 12 * H }, false, NOW), 0.9);
+  assert.equal(drainLevel({ weekResets: NOW + 12 * HOUR_MS }, false, NOW), 0.9);
 });
 
 test("a seat ahead of its week's pace is paced until its weekly reset, once it would stop more than 3 hours early", () => {
-  const H = 3600e3, D = 24 * H, at = (week: number, daysLeft: number) => pacedUntil({ week, weekResets: NOW + daysLeft * D }, 0.9, NOW);
+  const D = 24 * HOUR_MS, at = (week: number, daysLeft: number) => pacedUntil({ week, weekResets: NOW + daysLeft * D }, 0.9, NOW);
   assert.equal(at(0.3, 6.5), undefined, 'not a day gone: no pace to go by');
   // three days gone, four to go, and the room to 88% (2 points under the stop) that has to last them
   assert.equal(at(0.37, 4), undefined, 'on pace: the room lasts past the reset');
@@ -94,13 +93,13 @@ test("a seat ahead of its week's pace is paced until its weekly reset, once it w
   assert.equal(at(0.54, 3), NOW + 3 * D);
   assert.equal(at(0.62, 2), undefined);
   // A configured 95% stop stays fixed with nine hours remaining.
-  assert.equal(pacedUntil({ week: 0.95, weekResets: NOW + 9 * H, drainAt: 0.95 }, 0.95, NOW), NOW + 9 * H);
+  assert.equal(pacedUntil({ week: 0.95, weekResets: NOW + 9 * HOUR_MS, drainAt: 0.95 }, 0.95, NOW), NOW + 9 * HOUR_MS);
   // Only a default pacing target relaxes near the weekly reset.
-  assert.equal(pacedUntil({ week: 0.9, weekResets: NOW + 9 * H }, 0.9, NOW), undefined);
-  assert.equal(pacedUntil({ week: 0.9, weekResets: NOW + 9 * H, drainAt: 0.9 }, 0.9, NOW), NOW + 9 * H);
+  assert.equal(pacedUntil({ week: 0.9, weekResets: NOW + 9 * HOUR_MS }, 0.9, NOW), undefined);
+  assert.equal(pacedUntil({ week: 0.9, weekResets: NOW + 9 * HOUR_MS, drainAt: 0.9 }, 0.9, NOW), NOW + 9 * HOUR_MS);
   // a seat that runs to its limit while another keeps the reserve paces to its limit, not to 90%
-  assert.equal(pacedUntil({ week: 0.85, weekResets: NOW + 24.5 * H }, 0.9, NOW), NOW + 24.5 * H);
-  assert.equal(pacedUntil({ week: 0.85, weekResets: NOW + 24.5 * H }, 1, NOW), undefined);
+  assert.equal(pacedUntil({ week: 0.85, weekResets: NOW + 24.5 * HOUR_MS }, 0.9, NOW), NOW + 24.5 * HOUR_MS);
+  assert.equal(pacedUntil({ week: 0.85, weekResets: NOW + 24.5 * HOUR_MS }, 1, NOW), undefined);
   assert.equal(pacedUntil({ weekResets: NOW + 3 * D }, 0.9, NOW), undefined, 'the week not measured');
   // A configured target stays at its stop beside a reserve peer and on credits. Pacing off has no target.
   const seat = { resets: 0, week: 0.7, weekResets: NOW + 3 * D, drainAt: 0.95 };
@@ -109,15 +108,15 @@ test("a seat ahead of its week's pace is paced until its weekly reset, once it w
 });
 
 test("a paced seat's pacing lifts as an idle week goes on, before its reset, when the time left meets the stop its pace leads to", () => {
-  const H = 3600e3, D = 24 * H, week = { week: 0.5, weekResets: NOW + 4 * D };
+  const D = 24 * HOUR_MS, week = { week: 0.5, weekResets: NOW + 4 * D };
   assert.equal(pacedUntil(week, 0.9, NOW), NOW + 4 * D, 'half the week used with four days to go: paced');
   const lifts = paceChange(week, 0.9, NOW)!;
-  assert.ok(lifts > NOW + 21 * H && lifts < NOW + 22 * H, `it lifts after some 22 hours, not at the reset (${(lifts - NOW) / H} h)`);
+  assert.ok(lifts > NOW + 21 * HOUR_MS && lifts < NOW + 22 * HOUR_MS, `it lifts after some 22 hours, not at the reset (${(lifts - NOW) / HOUR_MS} h)`);
   assert.equal(pacedUntil(week, 0.9, lifts - 60_000), NOW + 4 * D);
   assert.equal(pacedUntil(week, 0.9, lifts + 60_000), undefined);
   assert.equal(paceChange(week, 0.9, lifts + 60_000), undefined, 'and with its use as it is, no pacing again');
-  const late = { week: 0.8, weekResets: NOW + 48 * H }, lastDay = paceChange(late, 0.9, NOW)!;
-  assert.ok(lastDay > NOW + 24 * H, "one that lifts in the week's last day, its reserve shrinking meanwhile");
+  const late = { week: 0.8, weekResets: NOW + 48 * HOUR_MS }, lastDay = paceChange(late, 0.9, NOW)!;
+  assert.ok(lastDay > NOW + 24 * HOUR_MS, "one that lifts in the week's last day, its reserve shrinking meanwhile");
   assert.equal(pacedUntil(late, 0.9, lastDay - 2000), late.weekResets);
   assert.equal(pacedUntil(late, 0.9, lastDay), undefined);
   assert.equal(paceChange({ week: 0.1, weekResets: NOW + 6.5 * D }, 0.9, NOW), NOW + 0.5 * D, 'once a day has gone it may start');
@@ -125,7 +124,7 @@ test("a paced seat's pacing lifts as an idle week goes on, before its reset, whe
 });
 
 test('one seat of an engine keeps the reserve: the others run to their limit', () => {
-  const H = 3600e3, seat = (engine: string, state: string, util?: number) => ({ engine, state, util, resets: NOW + H, weekResets: 0 });
+  const seat = (engine: string, state: string, util?: number) => ({ engine, state, util, resets: NOW + HOUR_MS, weekResets: 0 });
   const full = seat('claude', 'ready', 0.95), other = seat('claude', 'ready', 0.5);
   assert.equal(reserveElsewhere(full, [full, other], NOW), true, 'the other one keeps it');
   assert.equal(reserveElsewhere(full, [full, seat('claude', 'ready', 0.92)], NOW), false, 'both past it: this one drains');
@@ -134,7 +133,7 @@ test('one seat of an engine keeps the reserve: the others run to their limit', (
   assert.equal(reserveElsewhere(full, [full, seat('claude', 'ready')], NOW), false, 'nor one never measured');
   assert.equal(reserveElsewhere(full, [full], NOW), false, 'a lone seat drains as before');
   // a seat full for the week takes the reserve back once its last day's drain level rises past its use (drainLifts)
-  const week = { engine: 'claude', state: 'ready', resets: 0, week: 0.95, weekResets: NOW + 20 * H }, lifts = drainLifts(week, NOW)!;
+  const week = { engine: 'claude', state: 'ready', resets: 0, week: 0.95, weekResets: NOW + 20 * HOUR_MS }, lifts = drainLifts(week, NOW)!;
   assert.ok(lifts > NOW && lifts < week.weekResets);
   assert.equal(reserveElsewhere(full, [full, week], lifts - 1000), false, 'full for the week till then');
   assert.equal(reserveElsewhere(full, [full, week], lifts), true, 'under its level at the event');
@@ -189,9 +188,9 @@ test('a limit never wakes a seat before the drain its windows call for (PR #262 
 });
 
 test("a held Codex seat lets one job through an hour, so a line a job planted can't keep it out", () => {
-  const H = 3600e3, codex = (o: object) => ({ engine: 'codex', state: 'draining', until: NOW + 50 * H, checked: NOW - H, ...o });
+  const codex = (o: object) => ({ engine: 'codex', state: 'draining', until: NOW + 50 * HOUR_MS, checked: NOW - HOUR_MS, ...o });
   assert.equal(checkDue(codex({}), NOW), true);
-  assert.equal(checkDue(codex({ checked: NOW - H + 1 }), NOW), false, 'within the hour of the last one, or of the hold starting');
+  assert.equal(checkDue(codex({ checked: NOW - HOUR_MS + 1 }), NOW), false, 'within the hour of the last one, or of the hold starting');
   assert.equal(checkDue(codex({ state: 'sleeping' }), NOW), true, 'a sleep past the limit, too');
   assert.equal(checkDue(codex({ until: NOW }), NOW), false, 'a hold that has ended: the seat is ready again anyway');
   assert.equal(checkDue(codex({ state: 'ready' }), NOW), false);
@@ -202,16 +201,16 @@ test("a held Codex seat lets one job through an hour, so a line a job planted ca
     primary: { used_percent: 100, window_minutes: 10080, resets_at: NOW / 1000 + 7 * 86400 } } } }), 0, 0, NOW)!;
   const until = drainUntil({ resets: 0, ...forged, weekResets: forged.weekResets ?? 0 }, NOW);
   assert.equal(until, NOW + 7 * 86400e3);
-  assert.equal(checkDue(codex({ until, checked: NOW }), NOW + H - 1), false);
-  assert.equal(checkDue(codex({ until, checked: NOW }), NOW + H), true);
+  assert.equal(checkDue(codex({ until, checked: NOW }), NOW + HOUR_MS - 1), false);
+  assert.equal(checkDue(codex({ until, checked: NOW }), NOW + HOUR_MS), true);
 });
 
 test("the panel sees a held Codex seat as out only until its next check, so a normal round's review can be the check", () => {
-  const H = 3600e3, seat = { engine: 'codex', state: 'draining', until: NOW + 50 * H, checked: NOW };
-  assert.equal(reportedUntil(seat, NOW), NOW + H);
-  assert.equal(reportedUntil({ ...seat, state: 'sleeping', checked: NOW - 2 * H }, NOW), NOW - H, 'due: out no longer');
-  assert.equal(reportedUntil({ ...seat, until: NOW + H / 2 }, NOW), NOW + H / 2, 'a hold ending sooner than the check');
-  assert.equal(reportedUntil({ ...seat, engine: 'claude' }, NOW), NOW + 50 * H);
+  const seat = { engine: 'codex', state: 'draining', until: NOW + 50 * HOUR_MS, checked: NOW };
+  assert.equal(reportedUntil(seat, NOW), NOW + HOUR_MS);
+  assert.equal(reportedUntil({ ...seat, state: 'sleeping', checked: NOW - 2 * HOUR_MS }, NOW), NOW - HOUR_MS, 'due: out no longer');
+  assert.equal(reportedUntil({ ...seat, until: NOW + HOUR_MS / 2 }, NOW), NOW + HOUR_MS / 2, 'a hold ending sooner than the check');
+  assert.equal(reportedUntil({ ...seat, engine: 'claude' }, NOW), NOW + 50 * HOUR_MS);
   assert.equal(reportedUntil({ ...seat, state: 'ready', until: 0 }, NOW), 0);
 });
 
@@ -342,12 +341,12 @@ sleep 60
 });
 
 test("the account's read as a reading: its windows and credits as of now, as a session log's line gives them", () => {
-  const H = 3600e3, read = (credits: object | null, secondary: object | null = null) => limitsReading({ rateLimits: {
-    primary: { usedPercent: 100, windowDurationMins: 10080, resetsAt: (NOW + 50 * H) / 1000 }, secondary, credits } }, NOW);
+  const read = (credits: object | null, secondary: object | null = null) => limitsReading({ rateLimits: {
+    primary: { usedPercent: 100, windowDurationMins: 10080, resetsAt: (NOW + 50 * HOUR_MS) / 1000 }, secondary, credits } }, NOW);
   assert.deepEqual(read({ hasCredits: true, unlimited: false, balance: '500' }),
-    { at: NOW, week: 1, weekResets: NOW + 50 * H, credits: true, creditsLeft: 500 });
+    { at: NOW, week: 1, weekResets: NOW + 50 * HOUR_MS, credits: true, creditsLeft: 500 });
   assert.deepEqual(read(null, { usedPercent: 40, windowDurationMins: 300, resetsAt: null }),
-    { at: NOW, util: 0.4, resets: undefined, week: 1, weekResets: NOW + 50 * H }, 'no credits said, a reset unknown');
+    { at: NOW, util: 0.4, resets: undefined, week: 1, weekResets: NOW + 50 * HOUR_MS }, 'no credits said, a reset unknown');
   assert.equal(limitsReading({ rateLimits: { primary: null, secondary: null } }, NOW), undefined);
   assert.equal(limitsReading(undefined, NOW), undefined);
 });
@@ -422,9 +421,8 @@ test('a deadline heartbeat requests an immediate stop and can withdraw it when t
 });
 
 test('a configured stop holds beside a ready peer and throughout the last day', () => {
-  const H = 3600_000;
   const stopped = { id: 'claude-1', engine: 'claude', state: 'ready', drainAt: 0.8,
-    util: 0.2, resets: NOW + H, week: 0.8, weekResets: NOW + 12 * H };
+    util: 0.2, resets: NOW + HOUR_MS, week: 0.8, weekResets: NOW + 12 * HOUR_MS };
   const peer = { ...stopped, id: 'claude-3', drainAt: 0.99, week: 0.9 };
   const runs = new Map([['slot1', { seat: stopped.id, job: 1 }], ['chat', { seat: stopped.id, job: 2 }]]);
   assert.equal(reserveElsewhere(stopped, [stopped, peer], NOW), false);
@@ -432,7 +430,7 @@ test('a configured stop holds beside a ready peer and throughout the last day', 
   assert.equal(drainLifts(stopped, NOW), undefined);
   assert.deepEqual(drainOf(stopped, [stopped, peer], runs, 'chat', NOW), { until: stopped.weekResets, pause: [1] });
   assert.deepEqual(drainOf({ ...stopped, engine: 'codex' }, [{ ...stopped, engine: 'codex' }], runs, 'chat', NOW).pause, [1]);
-  const held = { ...stopped, engine: 'codex', state: 'draining', until: stopped.weekResets, checked: NOW - H };
+  const held = { ...stopped, engine: 'codex', state: 'draining', until: stopped.weekResets, checked: NOW - HOUR_MS };
   assert.deepEqual([checkDue(held, NOW), readDue(held, NOW)], [false, true], 'a configured stop is checked without spending a job');
   stopped.state = 'draining';
   assert.deepEqual(drainOf(stopped, [stopped, peer], runs, 'chat', NOW).pause, [1]);
@@ -445,4 +443,37 @@ test('ordinary seat choice prefers room below each stop over a lower absolute pe
   assert.equal(healthiest([tight, roomy], 'claude', false, undefined, NOW)?.id, roomy.id);
   const credited = { ...roomy, week: 1, credits: true };
   assert.equal(healthiest([credited, tight], 'claude', false, undefined, NOW)?.id, tight.id, 'plan room comes before credit overage');
+});
+
+test('work spends a nearly finished week before an under-pace peer, even at a higher percentage', () => {
+  const early = { ...seat('claude-1', 'ready', 0.2), drainAt: 0.99, week: 0.88, weekResets: NOW + 5 * 24 * HOUR_MS };
+  const near = { ...early, id: 'claude-3', week: 0.95, weekResets: NOW + 4 * HOUR_MS };
+  const later = { ...early, id: 'claude-4', week: 0.92, weekResets: NOW + 12 * HOUR_MS };
+  const seats = [early, later, near];
+  assert.equal(healthiest(seats, 'claude', false, undefined, NOW)?.id, near.id);
+  assert.equal(healthiest(seats, 'claude', false, near, NOW)?.id, later.id);
+  near.state = 'draining';
+  assert.equal(healthiest(seats, 'claude', false, undefined, NOW)?.id, later.id);
+  near.state = 'ready';
+  early.week = 0.1;
+  assert.equal(healthiest(seats, 'claude', false, undefined, NOW)?.id, near.id);
+  near.week = 0.9;
+  early.week = 0.4;
+  early.weekResets = NOW + 3 * 24 * HOUR_MS;
+  assert.equal(healthiest([early, near], 'claude', false, undefined, NOW)?.id, near.id);
+  near.week = 0.989;
+  assert.equal(healthiest([early, near], 'claude', false, undefined, NOW)?.id, early.id, 'remaining allowance per time decides, not reset order alone');
+});
+
+test('weekly choice uses each stop and falls back to room when the weekly timing is unknown', () => {
+  const small = { ...seat('claude-small', 'ready', 0.05), drainAt: 0.2, week: 0.1, weekResets: NOW + 3 * 24 * HOUR_MS };
+  const large = { ...small, id: 'claude-large', drainAt: 0.99, week: 0.6 };
+  assert.equal(healthiest([large, small], 'claude', false, undefined, NOW)?.id, large.id);
+  const unknown = [{ ...small, weekResets: 0 }, { ...large, weekResets: 0 }];
+  assert.equal(healthiest(unknown, 'claude', false, undefined, NOW)?.id, large.id);
+  assert.equal(healthiest([unknown[1], small], 'claude', false, undefined, NOW)?.id, small.id);
+  const reset = { ...large, week: 0.99, weekResets: NOW };
+  assert.equal(healthiest([small, reset], 'claude', false, undefined, NOW)?.id, reset.id);
+  const near = { ...large, week: 0.95, weekResets: NOW + 4 * HOUR_MS };
+  assert.equal(healthiest([reset, near], 'claude', false, undefined, NOW)?.id, near.id, 'an expired reading starts a fresh week of room');
 });

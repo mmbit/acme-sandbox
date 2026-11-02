@@ -24,6 +24,15 @@ export const ask = {
                                                      [--note <n> | --page <address> | --book <project | journal | n>]
                                                      [--at <address> --spot <selector>]
                                                      ask the board now; prints the request id (session stays alive).
+                                                     Where org.yaml names a card reader (roles.cards, the CEO
+                                                     usually), your card goes to them first unless it's about a board
+                                                     note, page or book, names --decides, comes from a job about
+                                                     customers, or is the reader's own. They read it as the
+                                                     board will, on a tablet and without having followed the work:
+                                                     one plain question in everyday words reads at once. They pass it
+                                                     on, in your words or plainer ones, or answer it in the board's
+                                                     place when it isn't the board's to decide. Either answer
+                                                     reaches you as the board's does.
                                                      Every card has a topic, a word or two the board's list of open
                                                      cards groups it under (e.g. billing, hosting): an open card's
                                                      where one fits (hq requests shows them), else a new one.
@@ -168,9 +177,11 @@ export const ask = {
       "The coordinator didn't take the request. A --topic is 1 to 40 characters. Photo, document and zip fields need 1 to 8 different labels of 1 to 80 characters, and can't go with keys or an approval; --documents-to names one of the company's own addresses, not one for the board alone; an approval grants live:<slug> or site:<slug> only (several slugs comma-separated); --product and --back name products (products/<slug>), never on a card for keys; --address goes on a credential card asking for four of a company tool's own keys; --decides names an awaited CEO decision or your review-assigned visual decision; a notice asks nothing (no keys, approval, fields or --decides); --note names a note of the board's sent to you, by its number in your brief, --page a path on HQ or a preview's https address, --book a project, journal or a guest's book's number (a design ask: no keys, approval, uploads, files or steps), one of them at most."; // (--note, --page, --book)
     const filed = await api.orStop(api.postJson('request', api.withSpeaker(card.request)), refusal, true);
     const id = text(filed.id);
+    const reading = filed.reading ? [readingLine(id, text(filed.reading))] : [];
     if (filed.held)
       return print(
         `Request #${id} is held off the board's desk phone until ${text(filed.held)} is merged and deployed; then it shows as a new card.`,
+        ...reading,
         `Queue the step that needs the answer: hq job --after request:${id} <agent> "title" <brief>, and finish this job.`,
       );
     const book = filed.book
@@ -183,12 +194,18 @@ export const ask = {
         ]
       : [];
     print(
-      `Request #${id} is on the board's desk phone. Run: hq wait ${id}`,
+      reading.length
+        ? `${reading[0]} Run: hq wait ${id}`
+        : `Request #${id} is on the board's desk phone. Run: hq wait ${id}`,
       ...book,
       `If only a later step needs the answer, queue that step instead: hq job --after request:${id} <agent> "title" <brief>`,
     );
   },
 };
+
+// A colleague's card waits for the card reader before the desk phone (the coordinator's cardread.ts)
+const readingLine = (id: string, reader: string) =>
+  `Request #${id} goes to ${reader} first, who reads it as the board will: ${reader} passes it on to the desk phone, in your words or plainer ones, or answers it in the board's place when it isn't the board's to decide. Either answer reaches you the same way.`;
 
 export const request = {
   help: `
@@ -197,7 +214,8 @@ export const request = {
                                                      with work that isn't in review yet files nothing at first: parking
                                                      would hold that work, and the jobs after it, until the answer. Use hq
                                                      ask and queue the step that needs the answer (hq job --after
-                                                     request:<id>), or add --park when nothing can go on without it`,
+                                                     request:<id>), or add --park when nothing can go on without it.
+                                                     It follows the same card reader flow and exceptions as hq ask`,
 
   async run(given: string[]) {
     const park = given.includes('--park');
@@ -565,7 +583,8 @@ export const wait = {
       const card = JSON.parse(reply.body);
       if (card.status !== 'open') {
         const answer = typeof card.answer === 'string' ? card.answer : JSON.stringify(card.answer ?? null, null, 2);
-        return print(`The board answered: ${answer}`);
+        const by = typeof card.settled === 'string' ? `${card.settled}, in the board's place,` : 'The board';
+        return print(`${by} answered: ${answer}`);
       }
       await new Promise(resolve => setTimeout(resolve, 10_000));
     }
@@ -630,12 +649,13 @@ export const requests = {
       const later = card.hidden_until ? ` (for later: off the desk phone until ${text(card.hidden_until)})` : '';
       // a held card: until the work it waits for is live
       const held = card.held ? ` (held: off the desk phone until ${text(card.held)} is live)` : '';
+      const reading = card.reading ? ` (held: off the desk phone until ${text(card.reading)} has read it)` : '';
       // its questions, as fields under the text
       const asked = Array.isArray(card.questions)
         ? `Questions:\n${card.questions.map((q: { title?: unknown }, k: number) => `${k + 1}. ${text(q.title)}`).join('\n')}\n`
         : '';
       print(
-        `#${card.id} ${text(card.kind)} from ${text(card.agent ?? 'hq')} · ${text(card.title)} [${text(card.topic ?? 'no topic')}]${held}${later}\n${text(body)}\n${asked}`,
+        `#${card.id} ${text(card.kind)} from ${text(card.agent ?? 'hq')} · ${text(card.title)} [${text(card.topic ?? 'no topic')}]${held}${reading}${later}\n${text(body)}\n${asked}`,
       );
     }
   },
@@ -643,13 +663,25 @@ export const requests = {
 
 export const rewrite = {
   help: `
-   hq rewrite <id> <body-file>                       replace your own open request's text (the CEO: any request's)`,
+   hq rewrite <id> <body-file> [--questions <file.json>]
+                                                     replace your own open request's text (the CEO: any request's;
+                                                     the card reader: a request waiting for their read), and with
+                                                     --questions its question fields too, in hq ask's shape`,
 
-  async run([id, bodyPath]: string[]) {
-    if (!/^[0-9]+$/.test(id ?? '') || !isFile(bodyPath ?? '')) stop('usage: hq rewrite <id> <body-file>');
-    await checkCard(bodyPath, [], { id: Number(id) });
-    const body = api.withSpeaker({ id: Number(id), body: readText(bodyPath) });
-    await api.orStop(api.post('request-rewrite', body), `Couldn't rewrite #${id}: it must be open and yours.`);
+  async run([id, bodyPath, ...rest]: string[]) {
+    const usage = 'usage: hq rewrite <id> <body-file> [--questions <file.json>]';
+    if (!/^[0-9]+$/.test(id ?? '') || !isFile(bodyPath ?? '')) stop(usage);
+    if (rest.length && (rest.length !== 2 || rest[0] !== '--questions')) stop(usage);
+    const questions = rest.length ? questionsIn(rest[1]) : undefined;
+    await checkCard(bodyPath, [], { id: Number(id), questions });
+    const body = api.withSpeaker({
+      id: Number(id),
+      body: readText(bodyPath),
+      ...(questions !== undefined && { questions }),
+    });
+    const reply = await api.call('request-rewrite', { body });
+    if (!api.isSuccess(reply.status))
+      stop(`Couldn't rewrite #${id}: ${api.errorIn(reply.body, 'it must be open and yours')}.`);
     print(`Request #${id} rewritten.`);
   },
 };
