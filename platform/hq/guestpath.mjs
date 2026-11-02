@@ -3,7 +3,7 @@
 // email-code sign-in by their link, a typed scrap and a page closed. state: bookguestserver.mjs's (h, mail, origin,
 // opened).
 import assert from 'node:assert/strict';
-import { fulfilResponse } from './bookguestserver.mjs';
+import { fulfilResponse } from './originroute.mjs';
 import { readyHQ } from './bookinvitechecks.mjs';
 import { named, pointOnPaper } from './bookguestscreen.mjs';
 import { until } from '../../shared/browser/browser.mjs';

@@ -11,6 +11,9 @@ export function moving(stage, on) {
   stage?.cover(on, 'book');
   if (on) held();
 }
+// The book lying over the whole of HQ's page (the spread), or no longer: the stage under it only updates, at its resting
+// rate
+export const lying = (stage, on) => stage?.cover(on, 'spread');
 // The book moving by the board's hand or sliding: no layout ahead till it rests again
 export const held = () => clearTimeout(aheadTimer);
 // state: what the book asks for. mode: the one drawn. given: the room HQ's page gives up for a layout (book.js's)

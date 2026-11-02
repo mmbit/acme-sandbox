@@ -12,7 +12,7 @@ import * as jam from './jam.ts';
 import type { Memory } from './eta.ts';
 import * as lowmemory from './lowmemory.ts';
 import * as meetingroom from './meetingroom.ts';
-import { roomReported } from './startholds.ts';
+import { roomReported, slotsReported } from './startholds.ts';
 import { reportWorkerRecords, STALE_MS } from './roomretention.ts';
 import { inspectReportBoundary } from './inspection.ts';
 import type { WorkerRecords } from '../../worker/src/roomrecords.ts';
@@ -144,10 +144,18 @@ export function reportRoom(
   };
   retainReports(workerReport, lastReport.free, now);
   roomReported(short, since, now);
+  slotsTaken(now);
   const s = starved(now);
   if (s && setting('room.told') !== String(s.since)) tell(s, now);
   jam.watch(s && { since: s.since, free: s.free, waiting: s.waiting, jobs: lastReport.jobs }, now);
   return { waiting, ...meetingStatus(now) };
+}
+
+// Whether every work slot was taken, as this report's capacity has it: its running jobs with the slots held for a
+// meeting's seats (startholds.ts)
+function slotsTaken(now: number) {
+  const slots = capacity?.at === now ? capacity.reading.memory : undefined;
+  slotsReported(!!slots && Object.keys(slots.runningMb).length + slots.heldSlots >= slots.totalSlots, now);
 }
 
 function retainReports(workerReport: Parameters<typeof reportRoom>[0], freeMb: number, now: number) {

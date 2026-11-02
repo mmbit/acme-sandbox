@@ -25,13 +25,14 @@ export function devicesFor(w) {
   return ['here', 'desktop', 'tablet', 'phone'];
 }
 
-// The layout in a stage w × h px for a device, with live beside staging (two) or staging alone:
+// The layout in a stage w × h px for a device, with live or an earlier version beside staging (two) or staging alone,
+// and a choice of what's beside it in a head row over them (choice: there even with staging alone, as it can be picked.):
 // { columns: both shown at once, column: each one's width, width: the page's own width in its frame, scale: what the
 // frame is drawn at, height: the page's own height in its frame, head: whether a head row sits over the frames, pad:
 // the room round them }. This device in tabs goes edge to edge, as the page would on it.
-export function fit(w, h, device, two) {
+export function fit(w, h, device, two, choice = false) {
   const d = DEVICES[device],
-    head = two || device !== 'here',
+    head = two || choice || device !== 'here',
     across = (n, pad) => Math.floor((w - 2 * pad - (n - 1) * GAP) / n),
     columns = two && across(2, GAP) >= d.least,
     pad = columns || device !== 'here' ? GAP : 0,

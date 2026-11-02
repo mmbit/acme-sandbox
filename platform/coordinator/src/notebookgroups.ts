@@ -180,12 +180,13 @@ export function moveGroup(b: any, who = BOARD) {
   changed(to.notebook, to.id);
   return shown(row(g.id)!);
 }
-// POST /api/notebooks/groups/delete { id }: an open group gone, kept aside for Undo (a reply: notebooksend.ts
-// deleteReply)
+// POST /api/notebooks/groups/delete { id, since? }: an open group gone, kept aside for Undo (a reply: notebooksend.ts
+// deleteReply); since: as edit's, so a screen deletes only what it has read.
 export function deleteGroup(b: any, who = BOARD) {
   const g = row(Number(b?.id));
   const p = g && pageRow(g.page, who);
   if (!g || !p || g.deleted !== null) return 404;
+  if (b.since !== undefined && b.since !== g.updated) return [409, CHANGED, 'noteChanged'] as Refused;
   if (g.kind === 'reply') return [409, 'a reply is taken back with /api/notebooks/replies/delete'] as Refused;
   if (g.status !== 'open' || shut(p))
     return [409, 'a sent page is read-only: what the board wrote there stays', 'pageReadonly'] as Refused;

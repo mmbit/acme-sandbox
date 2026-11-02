@@ -34,23 +34,29 @@ type Threads = {
   line_split: Record<'line' | 'line_review', Record<LineHold, { minutes: number; share: number | null }>>;
   side_by_side: Record<'held' | 'apart' | 'shared_files' | 'one_pr' | 'unknown', Minutes & { count: number }>;
 };
-type WaitPart = 'line' | 'line_review' | 'order' | 'after' | 'card_or_time' | 'fix_drawn' | 'other';
+type WaitPart =
+  'line' | 'line_review' | 'order' | 'needs' | 'after' | 'card_or_time' | 'paused' | 'fix_drawn' | 'other';
 // What each part of the threads' waiting is, in the words the split prints (the coordinator's threadwaits.ts)
 const WAIT_WORDS: Record<WaitPart, string> = {
   line: 'in line for a start (the machine)',
   line_review: 'only review steps in that line',
   order: 'held for the task before (deliverables in order)',
+  needs: 'a deliverable it needs, still to merge',
   after: "another branch's job, its review and merge",
   card_or_time: 'a card, a time or an event',
+  paused: 'a pause of its deliverable or project',
   fix_drawn: 'a fix still to be drawn',
   other: 'nothing queued otherwise',
 };
 // What stood in the way of the line's ready jobs (threadwaits.ts lineHolds), each a share of its line
-type LineHold = 'seats' | 'memory' | 'slots' | 'unrecorded';
+// (downtime and unexplained)
+type LineHold = 'seats' | 'memory' | 'slots' | 'downtime' | 'unexplained' | 'unrecorded';
 const LINE_WORDS: Record<LineHold, string> = {
   seats: 'no ready seat for its engine (draining, a limit, a paced week)',
   memory: 'the worker short of memory',
   slots: 'every slot taken',
+  downtime: 'downtime work waiting for a seat with spare room',
+  unexplained: 'not started, for a reason not recorded',
   unrecorded: 'before seats and memory were recorded',
 };
 type Calibration = {

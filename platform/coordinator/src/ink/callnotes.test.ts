@@ -6,6 +6,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import sharp from 'sharp';
 import { harness } from '../harness.ts';
 import { ROOM } from '../../../hq/shell/ink/scrapunit.js';
+import { boxOf } from '../../../hq/shell/ink/notebookstack.js';
 
 const h = await harness('callnotes');
 const { db } = h;
@@ -684,10 +685,10 @@ test("a note the call corrects says its new words on the page, the board's own l
   const { call, token, page, scrap } = await scrapped({ owner: 'wren' });
   const icon = written(call, 'moss', 'Draw the new basket icon'),
     typed = groupOf(icon);
-  // (the board types a line of its own into each first)
+  // (the board types a line of its own into each first: the typed note's right under its words)
   for (const id of [scrap, typed]) {
     const g = (await groups(page)).find(g => g.id === id);
-    const box = { x: 0, y: 400, w: 300, color: '#202020' };
+    const box = { x: 0, y: id === typed ? bottomOf(g.texts) : 400, w: 300, color: '#202020' };
     const edited = await h.board('/api/notebooks/groups/edit', {
       id,
       since: g.updated,
@@ -701,23 +702,32 @@ test("a note the call corrects says its new words on the page, the board's own l
     return r.body.id as number;
   };
   const smaller = await correct(ledger.items(call)[0].id, 'Make the price a little smaller');
-  const round = await correct(icon, 'Draw the basket icon round');
+  const round = await correct(icon, ROUND);
   const now = await groups(page);
   const lines = (id: number) => now.find(g => g.id === id).texts.map((t: { text: string }) => t.text);
   assert.equal(now.find(g => g.id === scrap).words, 'Make the price a little smaller', "a scrap's post-it");
   assert.deepEqual(lines(scrap), ['and in blue']);
-  assert.deepEqual(lines(typed), ['Draw the basket icon round', 'and in blue'], 'a typed note');
+  assert.deepEqual(lines(typed), [ROUND, 'and in blue'], 'a typed note');
+  const [corrected, boards] = now.find(g => g.id === typed).texts;
+  assert.ok(boards.y >= bottomOf([corrected]), "the board's line moves down under the longer words");
   assert.deepEqual([groupOf(smaller), groupOf(round)], [scrap, typed]);
   await ends(page, token);
   assert.deepEqual(
     [smaller, round].map(i => [itemOf(call, i).what, itemOf(call, i).status]),
     [
       ['Make the price a little smaller', 'open'],
-      ['Draw the basket icon round', 'open'],
+      [ROUND, 'open'],
     ],
     'the corrections, with their words, are what the follow-up hands out',
   );
 });
+// A correction long enough to take more lines than the words it corrects
+const ROUND = 'Draw the basket icon round, with a soft shadow under it and a handle thick enough to read on a phone';
+// Where a group's typed lines end
+const bottomOf = (texts: object[]) => {
+  const box = boxOf({ ink: [], texts, pictures: [] })!;
+  return box.y + box.h;
+};
 
 test('a note written down carries its time, checked before anything is written in', async () => {
   const { call, page } = await scrapped({ owner: 'wren' });

@@ -15,14 +15,34 @@ const STRAIGHT = 0.18;
 const MIN_SIDE_PX = 12;
 
 // Whether a point [x, y] is inside a polygon (a list of points, closed back to its first)
-export function inside(poly, [x, y]) {
-  let isIn = false;
-  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
-    const [xi, yi] = poly[i],
-      [xj, yj] = poly[j];
-    if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) isIn = !isIn;
+export const inside = (poly, p) => insideOf(poly)(p);
+
+// A polygon made ready to be asked of many points (a loop's of every point on a page): → whether a point [x, y] is
+// inside it, as a ray to its right crosses its edges an odd number of times. Its edges are sorted into as many bands
+// across its height as it has, so a point asks only the few in its band, and one outside its box asks none. A band
+// keeps its edges as plain numbers, four to an edge (xi, yi, xj, yj), the quickest for a page of points to read.
+export function insideOf(poly) {
+  const n = poly.length,
+    [xs, ys] = [poly.map(p => p[0]), poly.map(p => p[1])],
+    box = { x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys) },
+    tall = (box.y1 - box.y0) / n || 1,
+    bands = Array.from({ length: n }, () => []);
+  const bandAt = y => Math.min(n - 1, Math.floor((y - box.y0) / tall));
+  for (let i = 0, j = n - 1; i < n; j = i++) {
+    const [lo, hi] = [ys[i], ys[j]].sort((a, b) => a - b);
+    // (a level edge is never crossed)
+    if (lo < hi) for (let k = bandAt(lo); k <= bandAt(hi); k++) bands[k].push(xs[i], ys[i], xs[j], ys[j]);
   }
-  return isIn;
+  return ([x, y]) => {
+    if (!(x >= box.x0 && x <= box.x1 && y >= box.y0 && y <= box.y1)) return false;
+    const edges = bands[bandAt(y)];
+    let isIn = false;
+    for (let k = 0; k < edges.length; k += 4) {
+      const [xi, yi, xj, yj] = [edges[k], edges[k + 1], edges[k + 2], edges[k + 3]];
+      if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) isIn = !isIn;
+    }
+    return isIn;
+  };
 }
 
 // What a drag on bare paper draws (its path, page px): { kind: 'box', poly } when it went roughly straight from one
@@ -50,11 +70,12 @@ export const boxPoly = ([x0, y0], [x1, y1]) => [
 // What a loop takes in of a page's things: { ink, scraps, texts }, each a list of the page's own objects. A stroke is in
 // when most of its points are, a picture or a box of words when its middle is.
 export function picked(poly, { ink, scraps, texts }, boxOfText) {
-  const most = s => s.points.filter(p => inside(poly, p)).length * 2 > s.points.length;
+  const isIn = insideOf(poly),
+    most = s => s.points.reduce((n, p) => n + isIn(p), 0) * 2 > s.points.length;
   return {
     ink: ink.filter(most),
-    scraps: scraps.filter(s => inside(poly, [s.x + s.w / 2, s.y + s.h / 2])),
-    texts: texts.filter(t => inside(poly, middle(boxOfText(t)))),
+    scraps: scraps.filter(s => isIn([s.x + s.w / 2, s.y + s.h / 2])),
+    texts: texts.filter(t => isIn(middle(boxOfText(t)))),
   };
 }
 const middle = b => [(b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2];
@@ -72,6 +93,8 @@ export function topAt(at, { ink, scraps, texts }, boxOfText, near) {
   return k >= 0 ? { kind: 'scraps', item: scraps[k] } : null;
 }
 export const within = (b, [x, y]) => x >= b.x0 && x <= b.x1 && y >= b.y0 && y <= b.y1;
+// Whether two boxes overlap
+export const meets = (a, b) => a.x0 <= b.x1 && b.x0 <= a.x1 && a.y0 <= b.y1 && b.y0 <= a.y1;
 // A thing on a page with the rest of its group ({ ink, scraps, texts }), or the thing alone when it has none yet (not
 // saved) or the page has no groups
 export function groupOf(page, { kind, item }) {

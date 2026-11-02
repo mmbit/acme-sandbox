@@ -24,6 +24,7 @@ const review = await import('./review.ts');   // its sweeps, which the server ru
 const { unreadable, missing } = await import('./company.ts');
 const { reading } = await import('./outcomes.ts');
 const reviewrefusals = await import('./reviewrefusals.ts');
+const jobs = await import('./jobs.ts');
 
 const newSha = () => randomBytes(20).toString('hex');
 const CODEX = 'codex-1';
@@ -2284,21 +2285,27 @@ test('a pass held in merge order merges once the one before it lands, with nobod
   assert.equal(why(second), null);
 });
 
-for (const waiting of ['running task', 'queued task', 'visual approval'])
-  test(`an older merge ruling waiting for its own ${waiting} holds no newer approved pull request`, async () => {
-    const first = 9686 + ['running task', 'queued task', 'visual approval'].indexOf(waiting) * 2, second = first + 1;
+// A queued task may finish before the test ends and let the first merge too, so that case doesn't check it stays open.
+for (const { waiting, ruling, visual, first, second, status, hold: holdThread, firstMayMerge } of [
+  { waiting: 'running task', ruling: 'merge', visual: false, first: 9686, second: 9687, status: 'open', hold: (thread: string) => h.start({ agent: 'bolt', thread }) },
+  { waiting: 'queued task', ruling: 'merge', visual: false, first: 9688, second: 9689, status: 'open', hold: (thread: string) => h.queue({ agent: 'bolt', thread, title: 'Finish this deliverable' }), firstMayMerge: true },
+  { waiting: 'visual approval', ruling: 'merge', visual: true, first: 9690, second: 9691, status: 'open' },
+  { waiting: 'board answer', ruling: 'board', visual: false, first: 9692, second: 9693, status: 'board' },
+])
+  test(`an older ${ruling} ruling waiting for its own ${waiting} holds no newer approved pull request`, async () => {
     const files = ['platform/coordinator/src/order.ts'];
     const thread = h.dueThread({ deadline: Date.now() - 3_600_000 });
     const work = await h.start({ agent: 'bolt', branch: `review/${first}`, thread });
     await submit(first, { files }, work);
     cutOff(first);
-    await decide(first, 'merge', waiting === 'visual approval');
+    await decide(first, ruling, visual);
     hold = undefined;
-    if (waiting === 'running task') await h.start({ agent: 'bolt', thread });
-    if (waiting === 'queued task') h.queue({ agent: 'bolt', thread, title: 'Finish this deliverable' });
+    await holdThread?.(thread);
+    assert.deepEqual(prs(first), { round: 1, status });
+    if (visual) assert.match(why(first)!, /visual decision/);
     await submit(second, { files });
     await decide(second, 'merge');
-    if (waiting !== 'queued task') assert.equal(github.pr(first).merged, false);
+    if (!firstMayMerge) assert.equal(github.pr(first).merged, false);
     assert.deepEqual(prs(second), { round: 1, status: 'merged' }, `held: ${why(second)}`);
   });
 
@@ -4742,10 +4749,12 @@ test("a decision's card job's pull request with a live file besides its pictures
 test("the CEO settles a visual hold citing the board's word: the merge goes on, the card job and open card end; no other word does", async () => {
   const held = (n: number) => db.prepare(`select d.id, d.card_job, d.request from decisions d
     join decision_merges m on m.decision = d.id where m.pr = ?`).get(n) as { id: number; card_job: number; request: number | null };
-  const card = (status: string, settled: string | null = null) => Number(db.prepare(`insert into requests (created, agent, kind, title, body, status, answer, settled)
-    values ('2026-10-27T00:00:00Z', 'kit', 'decision', 'Build it tonight?', 'x', ?, 'Yes', ?)`).run(status, settled).lastInsertRowid);
-  // (byReader: answered in the board's place by the card reader, jobs.ts settleRequest)
-  const [answered, unanswered, byReader] = [card('answered'), card('open'), card('answered', 'juno')];
+  const card = (status: string) => Number(db.prepare(`insert into requests (created, agent, kind, title, body, status, answer)
+    values ('2026-10-27T00:00:00Z', 'kit', 'decision', 'Build it tonight?', 'x', ?, 'Yes')`).run(status).lastInsertRowid);
+  const [answered, unanswered] = [card('answered'), card('open')];
+  // (byReader: answered in the board's place by the card reader while it waits for their read, cardread.ts)
+  const { id: byReader } = jobs.createRequest({ kind: 'decision', agent: 'kit', title: 'Build it tonight?', body: 'x', holds: ['read:1'] }) as { id: number };
+  assert.deepEqual(jobs.settleRequest(byReader, 'Yes', 'juno'), { ok: true });
   const call = Number(db.prepare("insert into calls (ts, agent, lines) values ('2026-10-27T00:00:00Z', 'juno', '[]')").run().lastInsertRowid);
   const item = (status: string) => Number(db.prepare(`insert into call_items (call, kind, owner, what, quote, status, ts)
     values (?, 'task', 'juno', 'Build it tonight, no sign-off needed', 'just build whatever seems sensible', ?, 'x')`).run(call, status).lastInsertRowid);

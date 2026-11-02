@@ -1,6 +1,7 @@
 // A page's parts as a save or a new page brings them (book.ts), and a note's (booknotes.ts), each checked, or refused
 // with why: a page is kept whole or not at all.
 import * as pictures from './pictures.ts';
+import { inOneStep } from './db.ts';
 import { MAX_SCRAPS } from './pagescraps.ts';
 import { noKeys } from '../../../shared/review/anchor.js';
 import { TEXT_MAX } from '../../hq/shell/ink/notebookparts.js';
@@ -38,6 +39,24 @@ export const FULL = 'This page is full: start a new page to keep drawing (undo t
 // The optional reason lets a guest page word a refusal in its own language.
 export type Refused = [number, string, string?];
 export const isRefused = (v: unknown): v is Refused => Array.isArray(v) && typeof v[0] === 'number';
+// A refusal thrown out of a step done in one (db.ts inOneStep), which takes back what the step wrote, for its caller to
+// answer with
+export class RefusedError extends Error {
+  refused: Refused;
+  constructor(refused: Refused) {
+    super(refused[1]);
+    this.refused = refused;
+  }
+}
+// A step done in one, or the refusal a RefusedError thrown in it carried (what the step wrote taken back)
+export function refusableStep<T>(run: () => T): T | Refused {
+  try {
+    return inOneStep(run);
+  } catch (err) {
+    if (err instanceof RefusedError) return err.refused;
+    throw err;
+  }
+}
 
 // A page's side: whole CSS px within PAGE, or the refusal
 export const pageSide = (v: unknown): number | Refused =>
@@ -75,7 +94,10 @@ export function inkOf(v: unknown): Stroke[] | Refused {
   for (const s of v) {
     const stroke = strokeOf(s);
     if (!stroke)
-      return [400, 'a stroke is { color: "#rrggbb", size, alpha?, fill?: true, points: [[x, y, pressure, t], ...] }'];
+      return [
+        400,
+        'a stroke is { color: "#rrggbb", size, alpha?, fill?: true, cut?, points: [[x, y, pressure, t], ...] }',
+      ];
     points += stroke.points.length;
     if (points > MAX_POINTS) return [413, FULL, 'pageFull'];
     strokes.push(stroke);
@@ -117,10 +139,13 @@ function strokeOf(s: any) {
   const point = (p: unknown) => Array.isArray(p) && p.length === 4 && p.every(Number.isFinite);
   if (!Array.isArray(s.points) || !s.points.length || !s.points.every(point)) return null;
   if (s.fill !== undefined && s.fill !== true) return null;
+  // (the eraser's pieces of one see-through stroke share a number, so they're filled as one: inkshape.js fills.
+  if (s.cut !== undefined && !(Number.isInteger(s.cut) && s.cut > 0 && s.cut < 2 ** 31)) return null;
+  const cut = s.cut === undefined ? {} : { cut: s.cut as number };
   const alpha = s.alpha === undefined ? {} : { alpha: s.alpha };
   // (a filled shape: its line and its inside, ink.js.)
   const fill = s.fill ? { fill: true as const } : {};
-  return { color: s.color.toLowerCase(), size: s.size, ...alpha, ...fill, points: s.points as number[][] };
+  return { color: s.color.toLowerCase(), size: s.size, ...alpha, ...fill, ...cut, points: s.points as number[][] };
 }
 // A data URL's picture, read by its bytes and stripped as an upload is (pictures.ts), or the refusal
 export function dataUrlPicture(v: unknown): Refused | { type: string; clean: Buffer } {

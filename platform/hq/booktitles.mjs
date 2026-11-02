@@ -8,7 +8,7 @@
 import assert from 'node:assert/strict';
 import { errorsOf, until } from '../../shared/browser/browser.mjs';
 import { button, namedNotebook } from './bookchrome.mjs';
-import { DESKTOP, MINI } from './bookkit.mjs';
+import { DESKTOP, MINI, OVERVIEW } from './bookkit.mjs';
 
 const nameIn = page => page.locator('#book .bk-where'),
   titleField = page => page.getByRole('textbox', { name: 'Page title' });
@@ -146,7 +146,7 @@ async function savedOrKept(page, c, { touch, mode, viewport }, sent) {
   await open(page, touch);
   await page.keyboard.press('Escape');
   assert.equal(sent.length, before + 1, 'an unchanged title sends nothing');
-  await button(page, /^The overview/).click();
+  await button(page, OVERVIEW, true).click();
   await page.getByRole('button', { name: 'Planting plan', exact: true }).click();
   await c.settled(page, mode);
   assert.ok((await name.innerText()).includes('Planting plan'));
@@ -207,7 +207,7 @@ async function pageGoes(page, c, { touch, mode }) {
     title = 'Plans from another screen';
   for (const [leave, back] of [
     ['The page before', () => button(page, 'The page after').click()],
-    [/^The overview/, () => page.getByRole('button', { name: title, exact: true }).click()],
+    [OVERVIEW, () => page.getByRole('button', { name: title, exact: true }).click()],
   ]) {
     let refuse;
     const held = new Promise(resolve => (refuse = resolve)),

@@ -4093,6 +4093,10 @@ class BoardCallNotes(Juno):
         if path in ('page', 'mark', 'change'):
             self.asked.append((method, path, body))
             return {'ok': '#5 yours note: “Smaller price”\n#6 yours drawing' if path == 'page' else 'Done.'}
+        if path == 'drawing':
+            self.asked.append((method, path, body))
+            return {'ok': 'Your drawing is in the call\'s notes (#8).', 'id': 8,
+                    'picture': {'type': 'image/jpeg', 'data': 'AAAA'}}
         if path == 'try':
             self.asked.append((method, path, body))
             if body['id'] == 9:
@@ -4148,10 +4152,12 @@ class BoardCallNotes(Juno):
     async def test_what_the_page_cannot_take_is_refused_in_words(self):
         tool = self.call.page.write_down_tool
         box = {'x': 0, 'y': 0, 'width': 0.5, 'height': 1}
-        for wrong in ({'from': 'the pricing page', 'region': box, 'words': 'x'}, {'from': 'note 2', 'region': {**box, 'x': 0.8}, 'words': 'x'},
-                      {'from': 'note 2', 'region': box, 'words': ''}, {'from': 'note 2', 'region': box, 'words': 'x', 'colour': 'red'},
+        for wrong in ({'from': 'the pricing page', 'region': box, 'words': 'x', 'goal': 'y'},
+                      {'from': 'note 2', 'region': {**box, 'x': 0.8}, 'words': 'x', 'goal': 'y'},
+                      {'from': 'note 2', 'region': box, 'words': '', 'goal': 'y'},
+                      {'from': 'note 2', 'region': box, 'words': 'x', 'goal': 'y', 'colour': 'red'},
                       {'from': 'note 2', 'region': box, 'words': 'x'}):
-            self.assertEqual(await tool({'scrap': wrong}), {'error': server.WRITE_DOWN_WORDS['shape']})
+            self.assertEqual(await tool({'write_down': wrong}), {'error': server.WRITE_DOWN_WORDS['shape']})
         self.assertEqual(await tool({'write_down': {'from': 'note 9', 'region': box, 'words': 'x', 'goal': 'y'}}),
                          {'error': 'The board has no note 9 with a picture on this call.'})
         self.assertEqual(await self.call.page.title_tool({'title_notes': 'a title of far more than eight words for this one call'}),
@@ -4205,6 +4211,29 @@ class BoardCallNotes(Juno):
         self.call.ended = True
         self.assertEqual(await page.try_tool({'try': {'id': 5, 'why': 'x'}}), {'error': server.TRY_WORDS['gone']})
         self.assertEqual(len(self.asked), asked)
+
+    async def test_the_agents_drawing_goes_to_the_store_and_its_picture_comes_back_to_it(self):
+        """draw_picture: the svg straight to the store, which draws it in the company's look and puts it on the page;
+        the agent gets the picture with its line, through the line's socket as its tool asks."""
+        socket_path = Path(self.tmp.name) / 'screen.sock'
+        screens = await server.serve_screens(socket_path)
+        self.addAsyncCleanup(screens.wait_closed)
+        self.addCleanup(screens.close)
+        self.call.new_screen_key()
+        svg = '<svg viewBox="0 0 640 480"><rect x="10" y="10" width="200" height="80" class="accent"/></svg>'
+        reader, writer = await asyncio.open_unix_connection(str(socket_path))
+        writer.write((json.dumps({'draw_picture': {'svg': f'  {svg}\n'}, 'key': self.call.screen_key}) + '\n').encode())
+        self.assertEqual(json.loads(await reader.read()), {'line': "Your drawing is in the call's notes (#8).",
+                                                           'picture': {'type': 'image/jpeg', 'data': 'AAAA'}})
+        writer.close()
+        self.assertEqual(self.asked, [('POST', 'drawing', {'call': 7, 'svg': svg})])
+        for wrong in ({'svg': 'a box and an arrow'}, {'svg': svg, 'words': 'The model'}, {}):
+            self.assertEqual(await self.call.page.drawing_tool({'draw_picture': wrong}),
+                             {'error': server.DRAW_WORDS['shape']})
+        self.call.callout = 12
+        self.assertEqual(await self.call.page.drawing_tool({'draw_picture': {'svg': svg}}),
+                         {'error': server.DRAW_WORDS['none']})
+        self.assertEqual(len(self.asked), 1)
 
     def test_the_call_engine_reads_nothing_of_the_page(self):
         """The engine's split: the line's drawing and driving halves, and the screen tool, import nothing of the notes

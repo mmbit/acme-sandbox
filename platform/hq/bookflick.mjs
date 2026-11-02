@@ -3,8 +3,7 @@
 // page of scraps, a pen used on this iPad first (so a finger pans: prefs.js penUsed), then 16 flicks each way round,
 // half begun on a scrap's words and half on bare paper, each lifted a ms later after a frame (so at every ms of one),
 // every other pair with the page kept busy 40 ms after the lift. Each glides on well past where the finger lifted. A
-// tap on a scrap's words still puts the caret in them, and a finger held on them brings no Paste bubble, nor once the
-// page is sent.
+// tap on a scrap's words still puts the caret in them, and a finger held still on bare paper brings no Paste bubble.
 import assert from 'node:assert/strict';
 import { MINI, UPRIGHT, until } from './bookkit.mjs';
 import { callSeed, fillCall } from './booknotespage.mjs';
@@ -28,26 +27,16 @@ async function flicks(browser, c, viewport, held) {
     for (let k = 0; k < FLICKS; k++) await glides(page, held, k);
     await c.shot(`book-flick-${held}`, page);
     // (a tap on a scrap's words is still theirs: the caret in them)
-    const words = await page.evaluate(startOn, 'words');
+    const words = await wordsInSight(page);
     await page.touchscreen.tap(...words.at);
     await until(
       () => page.evaluate(() => document.activeElement?.matches('.bk-words textarea')),
       "the caret in the scrap's words",
       5000,
     );
-    // (a finger held still brings the Paste bubble on bare paper, never on a scrap's words)
+    // (a finger held still on bare paper brings nothing: Paste is Select's tap, bookselect.js)
     const paper = await page.evaluate(startOn, 'paper');
-    assert.ok(await page.evaluate(offersPaste, paper), 'a hold on paper offers Paste');
-    assert.ok(!(await page.evaluate(offersPaste, words)), "a hold on a scrap's words offers no Paste");
-    // (nor on them once the page is sent, its words no longer a field: HQ opened again, the book as it was left)
-    context.notebook.route('/api/notebooks/pages/send', {}, { id: 9101 });
-    await page.reload();
-    await page.waitForSelector('#book .bk-desk', { timeout: 30_000 });
-    await c.settled(page, held === 'landscape' ? 'open' : 'spread');
-    await page.waitForSelector('#book [data-page="9101"] .bk-words p.bk-scrap-words', { timeout: 30_000 });
-    await page.waitForTimeout(1500);
-    const sent = await page.evaluate(startOn, 'words');
-    assert.ok(!(await page.evaluate(offersPaste, sent)), "a hold on a sent page's scrap words offers no Paste");
+    assert.ok(!(await page.evaluate(offersPaste, paper)), 'a hold on paper offers no Paste');
     c.noErrorsIn(errors);
   } catch (e) {
     await c.shot(`book-flick-${held}-failed`, page);
@@ -104,6 +93,17 @@ async function glides(page, held, k) {
     `flick ${k + 1} (${held}, from ${on}, ${k} ms after a frame${busy ? ', busy' : ''}) glides on: ` +
       `${went} px past the lift, ${JSON.stringify({ from, lifted, rest })}`,
   );
+}
+// A scrap's words in sight to tap and hold on: the page flicked back up from bare paper while none show (flicked to
+// its end, the screen is nearly all empty page under the last note, bookview.js FOOT_SHOWN.)
+async function wordsInSight(page) {
+  for (let k = 0; k < 8; k++) {
+    const words = await page.evaluate(startOn, 'words');
+    if (words.at) return words;
+    await page.evaluate(flick, { ...(await page.evaluate(startOn, 'paper')), ms: 0, busy: false });
+    await restOf(page);
+  }
+  assert.fail("a scrap's words in sight, the page flicked back up to them");
 }
 // The page at rest after a glide: the call page's top on the screen once ten frames in a row leave it where it was
 // (counted in frames, not time: headless WebKit's come a third of a second apart at times, which a clock would take
@@ -191,7 +191,7 @@ async function flick({ at: [x, y], dir, ms, busy }) {
   if (busy) wait(40);
   return { top, before, pan, on: `${el.tagName}.${el.className}` };
 }
-// A finger held still a second where a flick would begin, then lifted: whether the Paste bubble came (booktape.js)
+// A finger held still a second where a flick would begin, then lifted: whether a Paste bubble came
 async function offersPaste({ at: [x, y] }) {
   const el = document.elementFromPoint(x, y),
     fire = type =>

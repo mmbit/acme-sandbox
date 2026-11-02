@@ -2,9 +2,10 @@
 // in use, both side by side only where the rail has room), the eraser, shapes and Text, and beside the rail the tool's
 // own card: what draws (the pen, the pencil, the brush or the marker), its colours, its line's width, the eraser's
 // size, a shape's kind and whether it's filled, the pen's smoothing. The pencil and the brush are the pen's nibs, in
-// its colours. The tool in use pressed again, or any tool held, opens its card; the keys a drawing app has do the same
-// on a desktop. Every setting is remembered in this browser, and the book opens on the pen or the marker, whichever
-// was last in use. (the pen one tool; the nibs and the card in lines)
+// its colours. The tool in use pressed again opens its card, the marker's way in from the pen (no long press on a
+// tool); the keys a drawing app has do the same on a desktop. Every setting is remembered in this browser, and the book
+// opens on the pen or the marker, whichever was last in use. (the pen one tool; the nibs and the card in lines. The
+// card by a press again)
 //
 // st: booktools.js's state; this keeps st.mode and the settings on it, and calls st.changedTool(mode) when the tool
 // changes.
@@ -12,16 +13,12 @@ import { store } from '../../util.js';
 import { button, island, setPressed, hide, besideRail } from './bookui.js';
 import { MARKERS, MARKER_ALPHA, PENCIL_ALPHA, SHAPES, WIDTHS } from './bookinkmath.js';
 import { word } from './bookscope.js';
-import { ICONS, INK_WORDS, colourKey, swatch, widthIcon, ringIcon } from './bookpaletteart.js';
+import { ICONS, INK_WORDS, swatch, widthIcon, ringIcon, cursorIcon } from './bookpaletteart.js';
 // The pens' inks, from the book's own Night: review mode's pin offers the same
 import { PENS } from '/__review/ink.js';
 
 // The eraser's sizes (across, on screen: a fine one for a letter, a wide one for a line of them)
 const ERASERS = [12, 28, 56];
-// A press held this long on a tool opens its card (the marker's way in from the pen)
-const HOLD_MS = 400;
-// a held press that moves this far (px) is a slide along the rail (bookstrip.js), not a hold
-const HOLD_SLIP_PX = 6;
 // The pen's smoothing: how far each point goes towards the pointer (ink.js's follow): steady, or as the hand went
 const SMOOTH = { on: 0.42, off: 0.75 };
 
@@ -78,14 +75,16 @@ export function mountPalette(st) {
   keys(st);
   setMode(st, st.mode);
 }
-// The ink the tool draws with now: { color, size, alpha?, follow? } (page px)
+// The ink the tool draws with now: { color, size, alpha?, follow? } (page px). Shapes and Text draw in the pen's
+// own, as their cards' widths are (the nib in pen mode only)
 export function inkOf(st) {
   if (st.mode === 'highlighter')
     return { color: st.marker, size: WIDTHS.highlighter[st.widths.highlighter], alpha: MARKER_ALPHA };
-  const alpha = NIBS[st.nib].alpha;
+  const nib = nibOf(st),
+    alpha = NIBS[nib].alpha;
   return {
     color: st.pen,
-    size: WIDTHS[st.nib][st.widths[st.nib]],
+    size: WIDTHS[nib][st.widths[nib]],
     ...(alpha ? { alpha } : {}),
     follow: st.smooth ? SMOOTH.on : SMOOTH.off,
   };
@@ -109,34 +108,11 @@ function makeIsland(st) {
   });
   island('tools').prepend(...own, document.createElement('hr'));
 }
-// A tap picks the tool, or opens its card when it's in use; a hold opens its card at once, the tool picked. (held: the
-// click that ends a hold goes.)
+// A tap picks the tool, or opens its card when it's in use. Nothing waits on a hold (board, the Ink 1.1 deck.)
 function pressing(st, b, mode) {
-  let timer = 0,
-    from = null,
-    held = false;
-  const stop = () => clearTimeout(timer);
-  b.addEventListener('pointerdown', e => {
-    if (!e.isPrimary || e.button > 0 || mode === 'select') return;
-    from = { x: e.clientX, y: e.clientY };
-    held = false;
-    timer = setTimeout(() => {
-      held = true;
-      setMode(st, mode);
-      card(st);
-    }, HOLD_MS);
-  });
-  b.addEventListener('pointermove', e => {
-    if (from && Math.hypot(e.clientX - from.x, e.clientY - from.y) > HOLD_SLIP_PX) stop();
-  });
-  for (const type of ['pointerup', 'pointercancel', 'pointerleave']) b.addEventListener(type, stop);
   // (a long press on a phone is no context menu here)
   b.addEventListener('contextmenu', e => e.preventDefault());
-  b.addEventListener('click', () => {
-    if (held) return (held = false);
-    if (st.mode === mode) card(st);
-    else setMode(st, mode);
-  });
+  b.addEventListener('click', () => (st.mode === mode ? card(st) : setMode(st, mode)));
 }
 
 // (keep: what's picked stays picked, a Ctrl-held Select's tool back: booktools.js.)
@@ -157,7 +133,11 @@ export function setMode(st, mode, { keep = false } = {}) {
 const inksOf = st => (st.mode === 'highlighter' ? MARKERS : PENS);
 const colourOf = st => (st.mode === 'highlighter' ? st.marker : st.pen);
 const coloured = st => !['select', 'eraser'].includes(st.mode);
-const widthsOf = st => (st.mode === 'highlighter' ? 'highlighter' : st.mode === 'pen' ? st.nib : 'pen');
+// the nib drawing now: the one picked in pen mode, the pen's own for the other tools
+const nibOf = st => (st.mode === 'pen' ? st.nib : 'pen');
+const widthsOf = st => (st.mode === 'highlighter' ? 'highlighter' : nibOf(st));
+// a colour's key: 1 to 9, then 0 (the colours after the tenth have none)
+const colourKey = i => (i < 9 ? String(i + 1) : i === 9 ? '0' : '');
 
 function setColour(st, color) {
   if (st.mode === 'highlighter') st.marker = color;
@@ -192,21 +172,7 @@ function show(st) {
   st.buttons.pen.setAttribute('aria-label', word(NIBS[st.nib].word));
   st.buttons.pen.style.setProperty('--bk-dot', st.pen);
   st.buttons.highlighter.style.setProperty('--bk-dot', st.marker);
-  st.book.desk.style.setProperty('--bk-tool-cursor', cursorOf(st, colourOf(st)));
-}
-function cursorOf(st, color) {
-  if (st.mode === 'eraser') {
-    const d = ERASERS[st.eraser],
-      s = d + 4,
-      c = s / 2;
-    const ring = `<svg xmlns="http://www.w3.org/2000/svg" width="${s}" height="${s}"><circle cx="${c}" cy="${c}" r="${d / 2}" fill="rgba(255,250,240,.35)" stroke="#fffaf0" stroke-width="2.5"/><circle cx="${c}" cy="${c}" r="${d / 2}" fill="none" stroke="#2a2352" stroke-opacity=".7" stroke-width="1"/></svg>`;
-    return `url("data:image/svg+xml,${encodeURIComponent(ring)}") ${c} ${c}`;
-  }
-  const svgCursor =
-    st.mode === 'highlighter'
-      ? `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="22"><rect x="2" y="2" width="10" height="18" rx="2" fill="${color}" fill-opacity=".6" stroke="#2a2352" stroke-opacity=".5"/></svg>`
-      : `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><circle cx="8" cy="8" r="5.5" fill="none" stroke="#fffaf0" stroke-width="2"/><circle cx="8" cy="8" r="5.5" fill="none" stroke="${color}" stroke-opacity=".55"/><circle cx="8" cy="8" r="2.2" fill="${color}"/></svg>`;
-  return `url("data:image/svg+xml,${encodeURIComponent(svgCursor)}") ${st.mode === 'highlighter' ? '7 11' : '8 8'}`;
+  st.book.desk.style.setProperty('--bk-tool-cursor', cursorIcon(st.mode, colourOf(st), ERASERS[st.eraser]));
 }
 const remember = st =>
   store.set('book.tools', {
@@ -251,18 +217,22 @@ function card(st) {
 function fillCard(st) {
   const lines = [];
   if (INKS.includes(st.mode)) lines.push([inkChoice(st)]);
-  if (st.mode === 'shapes') lines.push(shapeRows(st));
+  if (st.mode === 'shapes') lines.push(shapeLine(st));
   if (st.mode === 'eraser') lines.push([eraserRow(st)]);
-  else lines.push(...inkRows(st));
+  else lines.push(...inkLines(st));
   st.card.replaceChildren(
-    ...lines.flatMap((rows, i) => {
-      const line = document.createElement('div');
-      line.className = 'bk-palette-line';
-      line.append(...rows.flatMap((r, j) => (j ? [document.createElement('hr'), r] : [r])));
-      return i ? [document.createElement('hr'), line] : [line];
-    }),
+    ...ruled(
+      lines.map(rows => {
+        const line = document.createElement('div');
+        line.className = 'bk-palette-line';
+        line.append(...ruled(rows));
+        return line;
+      }),
+    ),
   );
 }
+// the elements with a rule between each two
+const ruled = els => els.flatMap((el, i) => (i ? [document.createElement('hr'), el] : [el]));
 // A row of choices, each a button pressed when it's the one in use
 function row(name, items) {
   const r = document.createElement('div');
@@ -301,7 +271,8 @@ function pickNib(st, nib) {
   }
   changed(st);
 }
-const shapeRows = st => [
+// The shapes' line: a shape's kind, and filled or not
+const shapeLine = st => [
   row(
     'shape',
     SHAPES.map(k => ({ icon: ICONS[k], ...KINDS[k], on: st.shape === k, pick: () => pickShape(st, k) })),
@@ -322,8 +293,8 @@ const eraserRow = st =>
       pick: () => ((st.eraser = i), changed(st)),
     })),
   );
-// The colours, six to a line; the widths but for typed words, the pen's smoothing beside them
-function inkRows(st) {
+// The colours' line, six to a row; the widths' but for typed words, the pen's smoothing beside them
+function inkLines(st) {
   const marker = st.mode === 'highlighter',
     k = widthsOf(st);
   const colours = row(
@@ -340,7 +311,7 @@ function inkRows(st) {
   const widths = row(
     'width',
     WIDTHS[k].map((w, i) => ({
-      icon: widthIcon(w, WIDTHS[k].at(-1), colourOf(st), marker ? 0.6 : (NIBS[k]?.alpha ?? 1)),
+      icon: widthIcon(w, WIDTHS[k].at(-1), colourOf(st), marker ? 0.6 : (NIBS[k].alpha ?? 1)),
       word: ['widthFine', 'widthMedium', 'widthBold'][i],
       keys: ['[', '', ']'][i],
       on: st.widths[k] === i,
@@ -355,7 +326,8 @@ function inkRows(st) {
       pick: () => ((st.smooth = !st.smooth), changed(st)),
     },
   ]);
-  return [[colours], ...(st.mode === 'text' ? [] : [[widths, ...(st.mode === 'pen' ? [smooth] : [])]])];
+  if (st.mode === 'text') return [[colours]];
+  return [[colours], st.mode === 'pen' ? [widths, smooth] : [widths]];
 }
 function pickShape(st, kind) {
   st.shape = kind;
@@ -366,7 +338,9 @@ function setFill(st, fill) {
   st.fill = fill;
   changed(st);
 }
+// (its tooltip with it, or one left open stays over the paper)
 function closeCard(st) {
+  hide();
   st.card?.remove();
   st.card = null;
   st.opener?.setAttribute('aria-expanded', 'false');

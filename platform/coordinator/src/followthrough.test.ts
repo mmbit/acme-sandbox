@@ -177,6 +177,94 @@ test("the check's prompt carries the company's own words for it (org.yaml's foll
   }
 });
 
+// The next look an on-track check names: an hour's check whose verdict was ok,
+// set to look again at t0 + 10 min + `next`, with the work the board agreed still standing.
+function onTrack(next: string) {
+  reset();
+  agreed();
+  followThroughSweep(t0);
+  const [first] = checks();
+  db.prepare("update jobs set status = 'done' where id = ?").run(first.job);
+  assert.deepEqual(recordVerdict(first.job, 'ok', '', next, t0 + 10 * MIN), {
+    ok: true,
+    next: new Date(t0 + 10 * MIN + 3 * HOUR).toISOString(),
+  });
+}
+
+test('an ok with its next look three hours on skips the hours between while the summary holds, then the check comes', () => {
+  onTrack('3h');
+  // (the agreement's line ages from minutes to hours meanwhile: the same line)
+  for (const at of [t0 + HOUR, t0 + HOUR + MIN, t0 + 2 * HOUR, t0 + 3 * HOUR, t0 + 3 * HOUR + 9 * MIN])
+    followThroughSweep(at);
+  assert.equal(checks().length, 1);
+  assert.match(
+    read({ id: 0, agent: ceo() }),
+    /found all on track, and named its next look \d{4}-\d\d-\d\d \d\d:10 UTC/,
+  );
+  followThroughSweep(t0 + 3 * HOUR + 10 * MIN);
+  assert.equal(checks().length, 2);
+  // an acted check keeps the next hour's
+  assert.match(
+    String(recordVerdict(checks()[1].job, 'acted', 'Woke the idle job', '3h')),
+    /acted check gets the next hour/,
+  );
+  recordVerdict(checks()[1].job, 'acted', 'Woke the idle job');
+  followThroughSweep(t0 + 4 * HOUR);
+  assert.equal(checks().length, 3);
+  assert.match(String(recordVerdict(checks()[2].job, 'ok', '', 'soon')), /can't read the next look "soon"/);
+});
+
+test("a next look inside the check's own hour is refused, the next hour's start is the earliest", () => {
+  reset();
+  agreed();
+  followThroughSweep(t0);
+  const [first] = checks();
+  const hour = new Date(t0 + HOUR).toISOString().slice(0, 16).replace('T', ' ');
+  assert.equal(
+    recordVerdict(first.job, 'ok', '', '20m', t0 + 10 * MIN),
+    `the next look can't fall inside this check's own hour: the earliest is ${hour} UTC`,
+  );
+  assert.deepEqual(recordVerdict(first.job, 'ok', '', '50m', t0 + 10 * MIN), {
+    ok: true,
+    next: new Date(t0 + HOUR).toISOString(),
+  });
+  followThroughSweep(t0 + HOUR);
+  assert.equal(checks().length, 2);
+});
+
+test('a new ask of the board brings the next look forward to the hour after it', () => {
+  onTrack('3h');
+  followThroughSweep(t0 + HOUR);
+  agreed({ what: 'The trial results by Friday' }, t0 + HOUR + 5 * MIN);
+  followThroughSweep(t0 + HOUR + 6 * MIN); // (the summary is compared once an hour while the look waits)
+  assert.equal(checks().length, 1);
+  followThroughSweep(t0 + 2 * HOUR);
+  assert.equal(checks().length, 2);
+  assert.match(
+    (db.prepare('select prompt from jobs where id = ?').get(checks()[1].job) as { prompt: string }).prompt,
+    /The trial results by Friday/,
+  );
+});
+
+test("a check brought by its next look still alarms when it doesn't start, run on or say", () => {
+  const at = t0 + 3 * HOUR + 10 * MIN;
+  for (const [problem, line] of [
+    ['not started', /hasn't started 15 min after it was queued/],
+    ['overran', /has run 45 min without a verdict/],
+    ['no verdict', /ended \(done\) without a verdict/],
+  ] as const) {
+    onTrack('3h');
+    followThroughSweep(at);
+    const check = checks()[1].job;
+    if (problem === 'overran')
+      db.prepare("update jobs set status = 'running', started = ? where id = ?").run(new Date(at).toISOString(), check);
+    if (problem === 'no verdict') db.prepare("update jobs set status = 'done' where id = ?").run(check);
+    followThroughSweep(at + (problem === 'overran' ? FINISH_MS : START_MS));
+    assert.match(alarm(), line, problem);
+    assert.equal(told().length, 1, problem);
+  }
+});
+
 test('a company pause gives an unstarted check time to start after work resumes', () => {
   reset();
   agreed();
@@ -363,7 +451,10 @@ test('a check that ends without a verdict is an alarm, and the next hour queues 
     (await h.hq(next, 'followthrough')).out,
     /The last check \(\d\d:00 UTC\) recorded no verdict: .*ended \(done\)/,
   );
-  await h.hq(next, 'followthrough', 'ok');
+  assert.match(
+    (await h.hq(next, 'followthrough', 'ok', '--next', '2h')).out,
+    /Recorded: on track\. The next look is at \d{4}-\d\d-\d\d \d\d:\d\d UTC, sooner if the summary gets a new line/,
+  );
   assert.equal(alarm(), null);
 });
 

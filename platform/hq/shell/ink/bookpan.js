@@ -100,7 +100,14 @@ function pressed(table, e, drawing) {
   // (the middle button's own scrolling, and a drag's text selection, are the pan's)
   if (e.pointerType === 'mouse') e.preventDefault();
   table.stop();
-  table.drag = { id: e.pointerId, from: [e.clientX, e.clientY], pan: { ...book.pan }, finger, trail: [] };
+  table.drag = {
+    id: e.pointerId,
+    from: [e.clientX, e.clientY],
+    pan: { ...book.pan },
+    heldPastEnd: book.heldPastEnd,
+    finger,
+    trail: [],
+  };
   // (a finger's moves come to its field, and on to here, by themselves.)
   if (!(finger && e.target.closest?.(FIELDS))) table.desk.setPointerCapture(e.pointerId);
   table.desk.dataset.pan = 'moving';
@@ -164,11 +171,13 @@ function letGo(table) {
   table.book.remember();
 }
 // A pen, or a second finger, coming down ends a finger's pan: a pen puts the page back where the finger found it
-// (that finger was the hand resting on the glass)
+// (that finger was the hand resting on the glass), held past its end as the finger found it
 function putBack(table) {
   table.stop();
   if (!table.drag?.finger) return;
-  setView(table.book, { pan: table.drag.pan });
+  table.book.heldPastEnd = table.drag.heldPastEnd;
+  table.book.pan = { ...table.drag.pan };
+  setView(table.book);
   end(table);
 }
 

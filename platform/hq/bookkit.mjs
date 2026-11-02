@@ -1,13 +1,16 @@
 // What book-check.mjs's story files share: the screens they play on, a wait, the Pencil and fingers, the iPad mini and
 // the microphone's stand-in, review mode's parts and a preview in HQ's viewer.
 import { fulfilPart } from '../../shared/review/parts.mjs';
+import { en } from './shell/ink/notebookwordsen.js';
 
 export const DESKTOP = { width: 1440, height: 900 },
   // an iPad mini in landscape, and held upright
   MINI = { width: 1133, height: 744 },
   UPRIGHT = { width: MINI.height, height: MINI.width };
 // The label of the overview's key on the book's rail (bookcontrols.js).
-export const OVERVIEW = "The overview: the notebook's pages, and the Shelf";
+export const OVERVIEW = en.allPages;
+// The cog's label on the rail, in the words the board's book shows
+export const PREFERENCES = en.preferences;
 // how long a story waits to be sure something didn't happen (the page is saved this soon after a change), and what the
 // stand-in microphone hears
 export const QUIET_MS = 1200,
@@ -86,10 +89,9 @@ export async function pixelsIn(page, clip) {
 
 // A pointer pressed at the first point and moved along the rest, as Safari hands the Pencil over (type 'touch': a
 // finger), and let go at the last unless lift is false. Held, it's moved on along(more points) and let go by up(), or
-// in the page by window.__lift() (to see the very frame of the lift). on: a page or a frame. doubleTap: a tap at the
-// first point just before, in the same go, as a double tap's
-export async function pressAlong(on, points, { lift = true, type = 'pen', doubleTap = false } = {}) {
-  await on.evaluate(sendPointer, { points, press: true, lift, type, doubleTap });
+// in the page by window.__lift() (to see the very frame of the lift). on: a page or a frame.
+export async function pressAlong(on, points, { lift = true, type = 'pen' } = {}) {
+  await on.evaluate(sendPointer, { points, press: true, lift, type });
   return {
     along: more => on.evaluate(sendPointer, { points: more, press: false, lift: false, type }),
     up: () => on.evaluate(() => window.__lift()),
@@ -98,7 +100,7 @@ export async function pressAlong(on, points, { lift = true, type = 'pen', double
 // (in the page) Every event goes to what was under the press, inside review mode's shadow root too, as the page's
 // pointer capture sends a real pointer's: a made-up one can't be captured. Points are filled in to no more than STEP_PX
 // apart, as a Pencil reports them, its pressure rising and falling along the line and none at the lift.
-function sendPointer({ points, press, lift, type, doubleTap }) {
+function sendPointer({ points, press, lift, type }) {
   const STEP_PX = 8;
   const deepest = ([x, y]) => {
     let under = document.elementFromPoint(x, y) ?? document.body;
@@ -116,10 +118,6 @@ function sendPointer({ points, press, lift, type, doubleTap }) {
       );
     window.__pressed = held;
     window.__lift = () => held.send('pointerup', held.last, 0);
-    if (doubleTap) {
-      held.send('pointerdown', points[0], 0.4);
-      held.send('pointerup', points[0], 0);
-    }
     held.send('pointerdown', points[0], 0.4);
   }
   const held = window.__pressed;
@@ -138,8 +136,7 @@ function sendPointer({ points, press, lift, type, doubleTap }) {
 // Chromium's own Pencil (cdp: the page's CDP session), whose events are trusted: their clicks and pointer capture are
 // the browser's. Chromium only.
 export function chromiumPen(cdp) {
-  // (timestamp: when the hand did it, in s since 1970, else as it's sent)
-  const send = (type, [x, y], down, timestamp) =>
+  const send = (type, [x, y], down) =>
     cdp.send('Input.dispatchMouseEvent', {
       type,
       x,
@@ -149,7 +146,6 @@ export function chromiumPen(cdp) {
       clickCount: 1,
       pointerType: 'pen',
       force: down ? 0.5 : 0,
-      ...(timestamp && { timestamp }),
     });
   const pen = {
     down: at => send('mousePressed', at, true),
@@ -162,14 +158,6 @@ export function chromiumPen(cdp) {
       await pen.up(points.at(-1));
     },
     tap: at => pen.stroke([at]),
-    // A double tap pressed on, let go by up(): a 60 ms tap and the press 120 ms after its lift, in the times the page
-    // reads (tap.js, bookinput.js) however late a loaded worker hands them on
-    doubleTap: async at => {
-      const t = Date.now() / 1000;
-      await send('mousePressed', at, true, t);
-      await send('mouseReleased', at, false, t + 0.06);
-      await send('mousePressed', at, true, t + 0.18);
-    },
   };
   return pen;
 }
@@ -267,8 +255,9 @@ export const pinOn = (page, on = true) =>
     dispatchEvent(new CustomEvent('review:summon', { detail: on }));
   }, on);
 
-// The next crumple (bookpaper.js) as it starts: whether it plays on a picture of what was deleted, and, with it held
-// and stepped through its length, how far its middle goes sideways and how far down (px).
+// The next crumple (bookpaper.js) as it starts: whether it plays on a picture of what was deleted (drawn, or a page's
+// tile in the overview), and, with it held and stepped through its length, how far its middle goes sideways and how
+// far down (px). Watched for on the whole document: the open book can sit outside body.
 export const crumpled = page =>
   page.evaluate(
     () =>
@@ -297,8 +286,8 @@ export const crumpled = page =>
             if (down > 40) shown ??= +getComputedStyle(scrap).opacity;
           }
           ball.play();
-          done({ picture: !!scrap.querySelector('canvas'), aside, down, shown });
-        }).observe(document.body, { childList: true, subtree: true }),
+          done({ picture: !!scrap.querySelector('canvas, .bk-tile-paper'), aside, down, shown });
+        }).observe(document.documentElement, { childList: true, subtree: true }),
       ),
   );
 

@@ -6,7 +6,7 @@
 // while the page is idle is scrolled to and pops in; one whose slide a scroll stops on the way shows at once; one added
 // while the Pencil is down moves nothing.
 import assert from 'node:assert/strict';
-import { MINI, UPRIGHT, mini, middleOf, until } from './bookkit.mjs';
+import { MINI, UPRIGHT, mini, until } from './bookkit.mjs';
 import { TALL_WORDS, callSeed, fillCall } from './booknotespage.mjs';
 import { TALL } from './shell/ink/notebookstack.js';
 
@@ -108,10 +108,10 @@ async function stoppedOnTheWay({ page }, put) {
   await page.waitForTimeout(1000);
   assert.deepEqual(await page.evaluate(heldOf, STOPPED), [], 'the note stopped on its way shows whole');
 }
-// The board writes a scrap's words longer (a finger's tap in them, the keyboard): every card still apart
+// The board writes a scrap's words in sight longer (a finger's tap in them, the keyboard): every card still apart
 async function written({ page, touch }, c, held) {
-  const field = page.locator('[data-page="9101"] .bk-words textarea').first(),
-    at = middleOf(await field.boundingBox());
+  const at = await wordsInSight(page);
+  assert.ok(at, "a scrap's words in sight");
   await touch.stroke([at], [at]);
   await page.keyboard.press('End');
   await page.keyboard.type(` ${LONGER}`);
@@ -119,6 +119,25 @@ async function written({ page, touch }, c, held) {
   await page.waitForTimeout(1500);
   await c.shot(`book-notes-apart-${held}-written`, page);
   readApart(await cards(page), 'with a scrap’s words written longer');
+}
+// The middle of a scrap's words in sight, the page scrolled back up to one as the board would (null: none)
+async function wordsInSight(page) {
+  const paper = await page.locator('#book .bk-desk').boundingBox();
+  for (let k = 0; k < 12; k++) {
+    const at = await page.evaluate(() => {
+      for (const t of document.querySelectorAll('[data-page="9101"] .bk-words textarea')) {
+        const r = t.getBoundingClientRect(),
+          mid = [r.x + r.width / 2, r.y + r.height / 2];
+        if (document.elementFromPoint(...mid)?.closest('.bk-words')) return mid;
+      }
+      return null;
+    });
+    if (at) return at;
+    await page.mouse.move(paper.x + paper.width / 2, paper.y + paper.height / 2);
+    await page.mouse.wheel(0, -300);
+    await page.waitForTimeout(400);
+  }
+  return null;
 }
 
 const LONGER =

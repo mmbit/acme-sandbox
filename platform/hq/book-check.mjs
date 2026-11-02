@@ -29,6 +29,9 @@
 // A lone picture, a scrap of its own, moved to another page and deleted from Select's bar (booknotebookselect.mjs).
 // A scrap assigned to a person by the Pencil's circle and line, and by Select's Assign, More… and a search
 // (bookassign.mjs).
+// A lasso round a page drawn like the board's sketches, marker fills and all, drawn and let go without a stall, timed
+// (booklasso.mjs.), and the eraser rubbed through its brow and a fill, each
+// frame's work timed, the marker it cut still one even colour, and the marker scribbled over one place for ten seconds, each frame and the lift timed
 // Search (bookfind.mjs): a word said while drawing yesterday found as it's written, an answer by its words, and the
 // find opening its page at the note, its number lit. On a desktop, the caret in
 // the field, Search put away with the book and back with it.
@@ -40,7 +43,7 @@
 // The tool strip's cards (bookcards.mjs): the preferences and the colours whole on the iPad mini, upright, on its side
 // and on a screen short enough that the strip scrolls, and on a desktop.
 // The pen box (bookpenbox.mjs): the pen, the pencil, the brush and the marker in every colour, drawn, saved and in
-// Lyra's picture the same, with a mouse and the Pencil; the pencil's scribble kept as ink.
+// the agent's picture the same, with a mouse and the Pencil; the pencil's scribble kept as ink.
 // The tips book (booktips.mjs): the Tips control brings up a hard cover in the middle that opens to two-page spreads,
 // the index first, a leaf turning over the spine to each tip, never waited on; closed again, put away.
 // The pin (bookpin.mjs): away as HQ loads on a desktop, an iPad and a phone, the book open or folded, and the book
@@ -63,6 +66,16 @@
 // line, its tap a click.
 // A note sent from review mode (booknewest.mjs): it lands under the newest thing on the current page, the book opens to
 // it, and HQ's book link in a tab of its own opens there. On a desktop, an iPad mini and a phone.
+// Where the board left off (bookplace.mjs): a first open on the notebook's last page, then put away and opened, and HQ
+// reloaded, on the page last open. On an iPad mini both ways and a desktop.
+// Each tab keeps its page (booktabpages.mjs): Calls on page 20, Sketch and Asks, then Calls on page 20 again. On an iPad
+// mini both ways and a desktop.
+// The page arrows stay within the tab (bookpagearrows.mjs): off, and looking it, at Calls 20/20, on Asks and at Sketch
+// 2/2, a press there turning nothing. On an iPad mini both ways and a desktop.
+// The overview split as the book is (bookoverviewsplit.mjs): Sketch, Asks and Calls, each page under its tab, a page
+// opened from it in its tab. On an iPad mini both ways and a desktop.
+// No blank page left behind (bookblankpages.mjs): New page twice makes one, which goes once the page before is turned
+// to. On an iPad mini both ways and a desktop.
 // Ink answers any note (bookanswers.mjs): the agent's face and dots, then its answer written in by a pen beside the note,
 // never over the board's ink; a symbol in its reply area reaching the agent; a drawing, a form and a question; the
 // overview's open list; a call's page. A note's versions (bookversions.mjs): under it, dots while one comes, each frame
@@ -85,6 +98,7 @@ import { inkStaysStories } from './bookinkstays.mjs';
 import { flickStories } from './bookflick.mjs';
 import { roomBelowStories } from './bookroombelow.mjs';
 import { agentPageStories } from './bookagentpage.mjs';
+import { noteRewordStories } from './booknotereword.mjs';
 import { walkStory } from './bookwalk.mjs';
 import { findStory, keptStory } from './bookfind.mjs';
 import { writtenStory } from './bookwritten.mjs';
@@ -127,6 +141,7 @@ import { wheelStories } from './bookwheel.mjs';
 import { barStories, press } from './bookbar.mjs';
 import { micStories } from './bookmic.mjs';
 import { webkitStories } from './bookwebkit.mjs';
+import { lassoStories } from './booklasso.mjs';
 import { editStories } from './bookedits.mjs';
 import { notebookPlay } from './shell/ink/notebookplay.js';
 import { notebookRoute } from './notebookroute.mjs';
@@ -146,6 +161,14 @@ import { assignStories } from './bookassign.mjs';
 import { moveStories } from './bookmove.mjs';
 import { nativeStories } from './booknative.mjs';
 import { newestStories } from './booknewest.mjs';
+import { placeStories } from './bookplace.mjs';
+import { overviewSplitStories } from './bookoverviewsplit.mjs';
+import { archivePageStories } from './bookarchivepage.mjs';
+import { tabPagesStories } from './booktabpages.mjs';
+import { pageArrowsStories } from './bookpagearrows.mjs';
+import { pageListStories } from './bookpagelist.mjs';
+import { titleTapStories } from './booktitletap.mjs';
+import { blankPagesStories } from './bookblankpages.mjs';
 import { callSizesStories } from './bookcallsizes.mjs';
 import { overlayStories, mediaStories } from './bookoverlays.mjs';
 import { pictureStories } from './bookpicture.mjs';
@@ -609,6 +632,22 @@ function STORIES() {
     ...nativeStories({ hqIn, base, settled, shot, noErrorsIn }),
     // (a note sent from review mode finds the board.)
     ...newestStories({ hqIn, base, settled, shot, noErrorsIn, shots, org }),
+    // (the Notebook opening where the board left off.)
+    ...placeStories({ hqIn, base, settled, shot, noErrorsIn }),
+    // (each of the book's tabs keeping its page.)
+    ...tabPagesStories({ hqIn, base, shot, noErrorsIn }),
+    // (the page arrows staying within the tab.)
+    ...pageArrowsStories({ hqIn, base, shot, noErrorsIn }),
+    // (the page list showing only the tab's pages.)
+    ...pageListStories({ hqIn, base, shot, noErrorsIn }),
+    // (a page's title looking editable, the page count closing its list.)
+    ...titleTapStories({ hqIn, base, shot, noErrorsIn }),
+    // (the overview split as the book is.)
+    ...overviewSplitStories({ hqIn, base, shot, noErrorsIn }),
+    // (a page archived crumples away.)
+    ...archivePageStories({ hqIn, base, shot, noErrorsIn }),
+    // (no blank page left behind.)
+    ...blankPagesStories({ hqIn, base, settled, shot, noErrorsIn }),
     // (the book's tools with a mouse on a desktop.)
     ...mouseStories({
       hqIn,
@@ -640,6 +679,7 @@ function STORIES() {
     // (the microphone asked for only at a mic's tap)
     ...micStories({ hqIn, base, reviewJs, posts, settled, ring, noErrorsIn, notebook, pages }),
     ...webkitStories({ hqIn, base, store, pages, notebook, shot, settled }),
+    ...lassoStories({ hqIn, base, pages, notebook, settled }),
     // (the pen and the mouse over words: ink, the words as they were. snipPng)
     ...editStories({ hqIn, base, store, pages, notebook, shot, settled, noErrorsIn, snipPng }),
     // (what lands from outside: pictures by address and file, pasted words and links.)
@@ -675,6 +715,7 @@ function STORIES() {
     ...messageStories({ hqIn, base, settled, shot, noErrorsIn, shots, reviewJs }),
     ...pictureStories({ hqIn, base, shot, noErrorsIn, shots }),
     ...agentPageStories({ hqIn, base, shot, settled, noErrorsIn, DESKTOP }),
+    ...noteRewordStories({ hqIn, base, shot, settled, noErrorsIn, DESKTOP }),
     // (the drawing tools: the eraser, shapes, Select, Undo and Redo, with a mouse and the Pencil.)
     ...drawStories({ hqIn, base, store, pages, notebook, shot, settled, settle: SETTLE_MS }),
     ...highlightStories({ hqIn, base, pages, notebook, shot, settled }),

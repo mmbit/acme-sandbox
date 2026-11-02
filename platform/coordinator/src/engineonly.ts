@@ -6,6 +6,8 @@ import { matchesGlob } from 'node:path';
 import { db } from './db.ts';
 import { yamlFile } from './company.ts';
 import type { Seat } from './panel.ts';
+import * as screens from './screens.ts';
+import { reviewSettings } from './reviewsettings.ts';
 
 export type EngineOnly = { id: string; what: string; engine: string; model: string; paths: string[] };
 
@@ -26,7 +28,8 @@ export function ruleFor(files: string[]) {
   }
 }
 
-// The rule a job on this pull request or branch falls under: by every file its pushes changed
+// The rule a job on this pull request or branch falls under: by every file its pushes changed, or, when a push of it
+// changed the board's screens (screens.ts), the screens' rule
 export function onWork(pr?: number | null, branch?: string | null) {
   if (!pr && !branch) return undefined;
   const rows = db
@@ -35,7 +38,11 @@ export function onWork(pr?: number | null, branch?: string | null) {
       union all select s.files from pushes s join prs p on p.number = s.pr where p.number = $pr or p.branch = $branch`,
     )
     .all({ pr: pr ?? null, branch: branch ?? null }) as { files: string }[];
-  return ruleFor([...new Set(rows.flatMap(row => JSON.parse(row.files) as string[]))]);
+  const rule = ruleFor([...new Set(rows.flatMap(row => JSON.parse(row.files) as string[]))]);
+  if (rule) return rule;
+  if (!screens.changedOn(pr, branch)) return undefined;
+  const screensRule = byId(reviewSettings().screens?.rule);
+  return screensRule ? { ...screensRule, files: [] } : undefined;
 }
 
 // Queued work that a push shows to be the rule's moves to its engine and model before any seat takes it: the jobs on the

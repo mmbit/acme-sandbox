@@ -65,7 +65,7 @@ export async function initBook({ scope = null } = {}) {
     redo: () => pages.redo(),
   });
   const calls = scope ? null : await import('../calldrop.js');
-  pages = mountPages(parts.paper, { dev: world.dev, shape, calls });
+  pages = mountPages(parts.paper, { dev: world.dev, calls });
   if (!scope) mountBookmarks(parts.leaf, pages); // (the board's books' chapters: bookmarks.js)
   // (Search, in the overview's head: a find opens its page at its note.)
   if (!scope) mountSearch(island('overview'), { dev: world.dev, find: at => pages.find(at) });
@@ -374,6 +374,7 @@ function show(l, { fade = false } = {}) {
   parts.leaf.inert = l.mode === 'folded';
   parts.edge.inert = l.mode === 'folded';
   coverPage(l.mode === 'spread');
+  bookstage.lying(stage, l.mode === 'spread');
   document.dispatchEvent(new CustomEvent('book:layout', { detail: l }));
 }
 

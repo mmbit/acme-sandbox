@@ -194,12 +194,11 @@ export function portrait(col, kind, sprite) {
   for (let y = 0; y < 112; y += 3) g.fillRect(0, y, 56, 1);
   return c;
 }
-// a person's hologram: their sprite at UP times its size, TOP px down its picture
 const UP = 3, TOP = 6;
-// how much of that picture lies below their feet: the call's floor meets them there (scene.js portrait)
+// how much of a person's hologram (hologramOf's picture) lies below their feet: the call's floor meets them there (scene.js portrait)
 export const HOLOGRAM_FOOT = 1 - (TOP + UP * FOOT) / 96;
-// A person: their pixel avatar (the brownstone's sprite, 14×28, so the same face in every look) at three times its
-// size, six px down a 48×96 picture as the panel shows it, so it stays crisp: lit in their room's colour by its own light
+// A person: their pixel avatar (the brownstone's sprite, 14×28, so the same face in every look) at UP times its
+// size, TOP px down a 48×96 picture as the panel shows it, so it stays crisp: lit in their room's colour by its own light
 // and dark (with some of its own colours, so a face stays theirs), every other row dimmed, a soft glow round it, over a
 // projector's beam
 function hologramOf(sprite, col) {

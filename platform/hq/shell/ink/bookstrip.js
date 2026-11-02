@@ -1,8 +1,9 @@
 // The tools on the rail at the paper's right edge (bookui.js), one column that fits and never scrolls: Select, the pen
-// (the marker the same tool, by a hold or its card: bookpalette.js), the eraser, shapes, Text, then Undo and Redo
-// (bookrail.js). A tap picks a tool at once. A finger, a pen or the mouse pressed on the rail and slid along it shows
-// the tool under it and picks it on the lift. The tool in use pressed again opens its card (bookpalette.js). Ctrl held
-// and the wheel over the page steps through the tools (bookpan.js asks cycle()). (the rail at the spine)
+// (the marker the same tool, by its card: bookpalette.js), the eraser, shapes, Text, the mic (bookvoice.js),
+// then Undo and Redo (bookrail.js). A tap picks a tool at once. A finger, a pen or the mouse pressed on the rail and
+// slid along it shows the tool under it and picks it on the lift. The tool in use pressed again opens its card
+// (bookpalette.js). Ctrl held and the wheel over the page steps through the tools (bookpan.js asks cycle()). (the rail
+// at the spine)
 //
 // st: booktools.js's state (book, mode, buttons); setMode: bookpalette.js's.
 import { stylesheet } from '../../util.js';

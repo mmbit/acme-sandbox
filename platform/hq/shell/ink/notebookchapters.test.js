@@ -2,7 +2,7 @@
 // chapter (notebookchapters.js.)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chapterOf, chaptersOf, inChapters } from './notebookchapters.js';
+import { chapterOf, chaptersOf, inChapters, indexesIn, shownAfter } from './notebookchapters.js';
 
 test("every page's chapter, by its kind and its book's", () => {
   for (const book of ['mine', 'project', 'invited']) {
@@ -36,4 +36,22 @@ test("a book's pages in their chapters' order, each chapter's in the book's own"
     [1, 2, 3, 4, 5],
     'the list given stays as it was',
   );
+});
+
+test("a chapter's pages by their index, and the page a book goes to when the one shown goes", () => {
+  const page = (id, chapter) => ({ id, chapter });
+  const book = [page(1, 'sketch'), page(2, 'sketch'), page(3, 'asks'), page(4, 'calls'), page(5, 'calls')];
+  assert.deepEqual(indexesIn(book, 'calls'), [3, 4]);
+  // (the id of the page shown once page id has gone)
+  const after = id => {
+    const pages = book.filter(p => p.id !== id);
+    return pages[shownAfter(book, book[id - 1], pages)].id;
+  };
+  // (the next in its chapter; at the chapter's end the one before it there, never into the next tab)
+  assert.equal(after(1), 2, "Sketch's first: the next sketch");
+  assert.equal(after(2), 1, "Sketch's last: the sketch before, not Asks");
+  assert.equal(after(5), 4, "Calls' last: the call before");
+  // (a chapter left empty: the page now at its place)
+  assert.equal(after(3), 4, 'Asks emptied: the page at its place');
+  assert.equal(shownAfter(book, book[4], []), 0);
 });

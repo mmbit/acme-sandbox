@@ -5,9 +5,9 @@ import { turn, zoom } from './bookflip.js';
 import { saved } from './booksave.js';
 import { viewOf } from './bookview.js';
 
-// book: bookpages.js's. goTo(book, place), openNotebook(book, id, place): bookpages.js's, a page of the notebook shown,
-// a notebook opened at a page.
-export const mountFar = (book, paper, { goTo, openNotebook }) =>
+// book: bookpages.js's. goTo(book, place), openNotebook(book, id, place), pagesAgain(book): bookpages.js's, a page of
+// the notebook shown, a notebook opened at a page, its pages read again.
+export const mountFar = (book, paper, { goTo, openNotebook, pagesAgain }) =>
   mountZoom(paper.querySelector('.bk-pages'), {
     desk: book.desk,
     dev: book.dev,
@@ -20,6 +20,8 @@ export const mountFar = (book, paper, { goTo, openNotebook }) =>
       id === book.notebook && book.views.some(v => v.page.id === page.id)
         ? goTo(book, { page: page.id })
         : openNotebook(book, id, { page: page.id }),
+    // (a page archived or brought back)
+    archived: () => pagesAgain(book),
     turn: (dir, midway) => turn(paper, { dir, midway }),
     zoom: (coming, midway, dir, at) => zoom(paper, { coming, midway, dir, at }),
     changed: level => farAt(paper, level, book),

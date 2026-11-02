@@ -11,6 +11,7 @@ import { begin } from './bookedit.js';
 import { mountPalette, inkOf, eraserRadius, setMode, gestures } from './bookpalette.js';
 import { mountStrip } from './bookstrip.js';
 import { mountInput } from './bookinput.js';
+import { mountVoice } from './bookvoice.js';
 import { mountSelect } from './bookselect.js';
 import { mountShapes } from './bookshapes.js';
 import { mountEraser } from './bookerase.js';
@@ -23,11 +24,11 @@ const DOUBLE_MS = 450,
 
 // book: bookpages.js's (at(), scale, views, steps, desk, ink, shown()). paper: the book's paper. hooks: { lay() (the
 // page laid again, grown to hold what's on it), changed(page) (saved soon), redraw(view, box) (the strips a box of a
-// page crosses drawn again), refresh(view) }.
+// page crosses drawn again), rubbed(view, box) (only that box painted again), refresh(view) }.
 export function mountTools(book, paper, hooks) {
   stylesheet('shell/ink/booktools.css');
   const st = { book, paper, hooks, last: null }; // (last: the last press on bare paper, for a double click)
-  st.texts = mountTexts(book, { changed: hooks.changed, color: () => st.pen });
+  st.texts = mountTexts(book, { changed: hooks.changed, boxLeft: hooks.boxLeft, color: () => st.pen });
   // (Select, shapes and the eraser: bookselect.js, bookshapes.js, bookerase.js; each change one step for Undo and Redo,
   // bookedit.js.)
   const edits = { ...hooks, begin: view => begin(book, view, hooks) };
@@ -41,8 +42,9 @@ export function mountTools(book, paper, hooks) {
   // (a tool put down lets its selection go)
   st.changedTool = () => st.select.settle();
   mountPalette(st);
-  // (the rail, and a press held: a voice note or the radial menu, and whether a finger draws.)
+  // (the rail, its mic after Text, and whether a finger draws.)
   st.strip = mountStrip(st, setMode);
+  mountVoice(book, st.buttons.text);
   mountInput(book);
   // (pages read before the tools were here: their words now)
   for (const view of book.views) st.texts.added(view);
@@ -66,13 +68,10 @@ function toolsOf(st) {
     put: (...a) => st.texts.put(...a),
     // One tool on or back along the rail (Ctrl and the wheel: bookpan.js).
     cycle: by => st.strip.cycle(by),
-    // A tool picked (the radial menu), and the dot a first tap drew taken off (bookinput.js, with the book's last step
-    // as that tap pressed)
-    use: mode => setMode(st, mode),
-    buttons: () => st.buttons,
-    undot: stepAtPress => undot(st, stepAtPress),
-    // (whether words are being typed in a box: a page read again leaves its boxes as they are.)
-    editing: () => st.texts.editing(),
+    // (whether words are being typed in a box: a page read again waits for it to be left. leave: a caret alone gives
+    // way to the read, and comes back after it.)
+    typing: () => st.texts.typing(),
+    leave: () => st.texts.leave(),
     // (before Undo or Redo: the words being typed kept, a selection let go.)
     settle() {
       st.texts.done();
@@ -174,8 +173,7 @@ function doubled(st, e, at) {
   st.texts.place(at, roomTo(st, e));
   return true;
 }
-// The dot a first press drew taken off (a double click's, and a double tap's that holds for a voice note:
-// bookinput.js): the book's last step, if it's a stroke of a few px made since that press, undone as Undo would.
+// The dot a double click's first press drew taken off: the book's last step, if it's a stroke of a few px made since that press, undone as Undo would.
 // Known by its step, not by where it is: a new unit's dot moves with it once the page is saved and laid again.
 function undot(st, stepAtPress) {
   const steps = st.book.steps,

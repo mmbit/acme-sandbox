@@ -17,6 +17,8 @@ export type Job = {
   // (its place in its thread and its end, for threadwaits.ts)
   seq: number;
   finished: number | null;
+  // (spare-capacity work, jobs.ts DOWNTIME_UNDER, for threadwaits.ts's line)
+  downtime: number;
 };
 export type Group = { key: string; prs: Merge[]; tasks: Job[]; work: Job[]; reviews: Job[] };
 

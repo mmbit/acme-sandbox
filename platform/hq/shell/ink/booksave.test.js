@@ -77,7 +77,8 @@ function storeOf(refuse = new Set()) {
 function bookOf(page) {
   const view = {
     page,
-    el: {},
+    // (its element: a page not laid, with no head to write its title in)
+    el: { querySelector: () => null },
     place() {},
     redraw: () => view.redraws++,
     redraws: 0,

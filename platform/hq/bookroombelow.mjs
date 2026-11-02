@@ -84,7 +84,7 @@ async function stretched({ page, pen }, c, held, last, paper) {
   assert.ok(now.h > last.h + reach - 60, `the note stretched as far: ${JSON.stringify({ last, now, reach })}`);
   assert.equal(await page.evaluate(pageTop), top, 'the page where it was once the note is stretched');
   await c.shot(`book-room-below-${held}-stretched`, page);
-  // (and dragged back up, shorter than it was at first: the page still holds where it is till the handle's let go)
+  // (and dragged back up, shorter than it was at first: the page still holds where it is, the handle let go too)
   const back = [grip[0], grip[1] + reach],
     to = Math.max(paper.y + 20, grip[1] - last.h / 2);
   await pen.down(back);
@@ -96,6 +96,7 @@ async function stretched({ page, pen }, c, held, last, paper) {
   assert.ok(short.h < last.h, `dragged shorter than it was at first: ${JSON.stringify({ last, short })}`);
   await pen.up([back[0], to]);
   await page.waitForTimeout(1500);
+  assert.equal(await page.evaluate(pageTop), top, 'the page where it was once the shorter note is let go');
 }
 // A scribble under the stretched note, in the room still below it: drawn and kept, the page held where it was
 async function written({ page, pen }, c, held, paper) {

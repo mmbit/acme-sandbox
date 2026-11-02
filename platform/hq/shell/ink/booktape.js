@@ -1,17 +1,18 @@
 // What lands in the book from outside: pictures, words and links pasted with Cmd/Ctrl+V while the book is open, dropped
-// on its paper (files, or an <img>, a link or words dragged from another tab or app), pasted from the Paste bubble a
-// finger held still on a page brings, or carried in from HQ's page (a ring the Pencil drew, lifted by a finger:
-// shared/review/carry.js, heard as 'book:tape' events). bookbrought.js reads what came. A picture lands a touch askew in
-// a white border with a strip of tape (bookscrapdraw.js drawScrap, as bookpage.js draws a page's scraps); one at an
-// address on another site comes through the coordinator (bookfetch.ts). Words land in a box at a readable width
-// (booktexts.js put), a link as its picture when it is one, else as its words. Files of another kind are refused,
-// saying so. Each landing is one step Undo takes back.
+// on its paper (files, or an <img>, a link or words dragged from another tab or app), pasted from Select's Paste bubble a
+// tap on bare paper brings (bookselectclip.js, which reads the clipboard: book.tape.land), or carried in from HQ's page
+// (a ring the Pencil drew, lifted by a finger: shared/review/carry.js, heard as 'book:tape' events). bookbrought.js
+// reads what came. A picture lands a touch askew in a white border with a strip of tape (bookscrapdraw.js drawScrap, as
+// bookpage.js draws a page's scraps); one at an address on another site comes through the coordinator (bookfetch.ts).
+// Words land in a box at a readable width (booktexts.js put), a link as its picture when it is one, else as its words.
+// Files of another kind are refused, saying so. Each landing is one step Undo takes back.
 //
-// Where it lands: pasted, on the page in view, or under the point when dropped or held (the notebook's current page when
-// that page has been sent); carried, on the current page.
+// Where it lands: pasted, on the page in view, or under the point when dropped or tapped (the notebook's current page
+// when that page has been sent); carried, on the current page. Words with no point land as a voice note's do, under the
+// line drawn last where it's in sight (landing()).
 // (words, links and pictures by address, and bookbrought.js reading what came)
 import { refused } from '../data.js';
-import { scopedUrl, word } from './bookscope.js';
+import { scopedUrl } from './bookscope.js';
 import { stylesheet } from '../../util.js';
 import { sfx } from '../audio.js';
 import { keepPicture } from './notebookdata.js';
@@ -25,10 +26,6 @@ import { downToClear } from './bookwords.js';
 import * as brought from './bookbrought.js';
 
 const IMAGE = /^image\//;
-// a finger held this long, this still, on a page brings the Paste bubble; it goes again after BUBBLE_MS
-const HOLD_MS = 500,
-  HOLD_PX = 8,
-  BUBBLE_MS = 5000;
 // words landed keep this far inside the paper shown (page px)
 const EDGE = 24;
 
@@ -37,7 +34,7 @@ const EDGE = 24;
 // current page, read: { v, i }, a promise) }
 export function mountTape(book, paper, pages) {
   stylesheet('shell/ink/booktape.css');
-  const tape = { book, paper, pages, bubble: null };
+  const tape = { book, paper, pages };
   // (on the window: after the document's own, so a paste the select tool took for its clip stays its own)
   addEventListener('paste', e => pasted(tape, e));
   paper.addEventListener('dragover', e => {
@@ -50,8 +47,10 @@ export function mountTape(book, paper, pages) {
     e.preventDefault();
     land(tape, brought.whatCame(brought.carried(e.dataTransfer)), { at: [e.clientX, e.clientY] });
   });
-  held(tape);
   document.addEventListener('book:tape', e => carried(tape, e));
+  // (what the clipboard held, read for Select's Paste bubble, landed at a point on screen: bookselectclip.js; and a voice
+  // note's words: bookvoice.js)
+  book.tape = { land: (got, at) => fromClipboard(tape, got, at), words: words => wordsIn(tape, words, {}) };
 }
 
 // ---- the ways in
@@ -72,65 +71,16 @@ function pasted(tape, e) {
   land(tape, came, {});
 }
 
-// A finger held still on a page: a Paste bubble there, which reads the clipboard when tapped (Safari asks first)
-function held(tape) {
-  const desk = tape.book.desk;
-  let hold = null;
-  const away = () => {
-    clearTimeout(hold?.timer);
-    hold = null;
-  };
-  desk.addEventListener('pointerdown', e => {
-    away();
-    // (a sheet's note no longer holds the press)
-    if (e.pointerType !== 'touch' || !e.isPrimary) return;
-    // (nor a press in a field, which paste and drop leave alone too, nor on a scrap's words, a field or not: a sent
-    // page's are Safari's to select.)
-    if (theirs(e) || e.target.closest('.bk-words')) return;
-    // (nor is a press another part of the book claims: a voice note's, a tool strip's, a radial menu's)
-    if (tape.book.input?.claims?.(e)) return;
-    if (onPage(tape.book, e) < 0) return;
-    hold = { id: e.pointerId, from: [e.clientX, e.clientY] };
-    hold.timer = setTimeout(() => {
-      const at = hold.from;
-      hold = null;
-      offerPaste(tape, at);
-    }, HOLD_MS);
-  });
-  desk.addEventListener('pointermove', e => {
-    if (hold && e.pointerId === hold.id && Math.hypot(e.clientX - hold.from[0], e.clientY - hold.from[1]) > HOLD_PX)
-      away();
-  });
-  desk.addEventListener('pointerup', away);
-  desk.addEventListener('pointercancel', away);
-}
-function offerPaste(tape, [x, y]) {
-  tape.bubble?.remove();
-  const box = tape.paper.getBoundingClientRect();
-  const bubble = Object.assign(document.createElement('button'), { className: 'bk-paste', textContent: word('paste') });
-  Object.assign(bubble.style, { left: `${x - box.left}px`, top: `${y - box.top}px` });
-  tape.paper.append((tape.bubble = bubble));
-  sfx.tick();
-  const gone = e => {
-    if (e?.target === bubble) return;
-    bubble.remove();
-    if (tape.bubble === bubble) tape.bubble = null;
-    removeEventListener('pointerdown', gone, true);
-  };
-  addEventListener('pointerdown', gone, true);
-  setTimeout(gone, BUBBLE_MS);
-  bubble.onclick = async () => {
-    gone();
-    const i = onPage(tape.book, { clientX: x, clientY: y });
-    let came;
-    try {
-      came = brought.whatCame(await brought.clipboard());
-    } catch {
-      return tell(tape, i, 'The clipboard can’t be read here: paste with ⌘V or Ctrl+V.');
-    }
-    if (!came) return tell(tape, i, 'Nothing to paste: copy a picture or some words first.');
-    land(tape, came, { at: [x, y] });
-  };
+// What the clipboard held (bookbrought.js clipboard), landed at [x, y] on screen
+function fromClipboard(tape, got, at) {
+  const came = brought.whatCame(got);
+  if (!came)
+    return tell(
+      tape,
+      onPage(tape.book, { clientX: at[0], clientY: at[1] }),
+      'Nothing to paste: copy a picture or some words first.',
+    );
+  land(tape, came, { at });
 }
 
 // Carried in from HQ's page: 'over' asks whether a point is the paper's (cancelled: yes), 'drop' tapes it there
@@ -184,8 +134,9 @@ async function pictureAt(url) {
   return blob;
 }
 
-// Words onto the book in boxes (booktexts.js put): their middle under the point when dropped, else a little above the
-// middle of the page in view, wrapping at a readable width and kept inside the paper shown. One step Undo takes back.
+// Words onto the book in boxes (booktexts.js put), where landing() puts them on the page pageFor finds, wrapping at a
+// readable width and kept inside the paper shown. One step Undo takes back. A voice note's words land here too
+// (bookvoice.js, book.tape.words).
 async function wordsIn(tape, words, { at = null }) {
   const { book } = tape;
   const found = await pageFor(tape, { at });
@@ -198,16 +149,19 @@ async function wordsIn(tape, words, { at = null }) {
     if (k < 0) return; // (the book went to another notebook meanwhile)
     const point = found.at && book.at(at[0], at[1]),
       view = k === book.cur ? book.shown() : pageBox(page),
-      half = Math.max(0, Math.min(READ / 2, (view.x1 - view.x0) / 2 - EDGE));
-    const [x, y] = point?.i === k ? [point.x, point.y] : [(view.x0 + view.x1) / 2, view.y0 + (view.y1 - view.y0) * 0.4];
-    const texts = book.tools.put({ view: v, x, y }, words, x + half, { centre: true });
+      half = Math.max(0, Math.min(READ / 2, (view.x1 - view.x0) / 2 - EDGE)),
+      spot = landing(v, view, point?.i === k ? [point.x, point.y] : null);
+    const texts = spot.centre
+      ? book.tools.put({ view: v, x: spot.x, y: spot.y }, words, spot.x + half, { centre: true })
+      : book.tools.put({ view: v, x: spot.x, y: spot.y }, words, view.x1 - EDGE);
     if (!texts.length) return;
-    // (moved as one inside the paper shown, its first line never above it, and pasted, below what's there already)
+    // (moved as one inside the paper shown, its first line never above it, and in the middle, below what's there
+    // already)
     const left = texts[0].x,
       right = left + texts[0].w,
       dx = Math.max(view.x0 + EDGE - left, Math.min(0, view.x1 - EDGE - right)),
       down = Math.max(0, view.y0 + EDGE - texts[0].y),
-      dy = down + (point ? 0 : below(v, texts, [dx, down]));
+      dy = down + (point || !spot.centre ? 0 : below(v, texts, [dx, down]));
     if (dx || dy) {
       texts.forEach(t => Object.assign(t, { x: round(t.x + dx), y: round(t.y + dy) }));
       book.tools.added(v);
@@ -225,6 +179,17 @@ async function wordsIn(tape, words, { at = null }) {
   } catch (e) {
     said(book, page, `Those words didn’t stay: ${e.message}`);
   }
+}
+// Where words land on a view's page, of which the paper shows box (page px): their middle on a point given (dropped or
+// tapped); else into the scrap of the line drawn last, under it from where it starts on the left (a point of its own, so
+// the scrap is its: bookunits.js pointUnit) where that start is in sight, so the Pencil pastes or dictates right after
+// scribbling; else their middle a little above the middle of box. { x, y, centre }
+function landing(v, box, point) {
+  if (point) return { x: point[0], y: point[1], centre: true };
+  const start = (v.page.ink.at(-1)?.points ?? []).reduce((a, p) => (!a || p[0] < a[0] ? p : a), null);
+  if (start && start[0] >= box.x0 && start[0] <= box.x1 && start[1] >= box.y0 && start[1] <= box.y1)
+    return { x: start[0], y: start[1], centre: false };
+  return { x: (box.x0 + box.x1) / 2, y: box.y0 + (box.y1 - box.y0) * 0.4, centre: true };
 }
 // How far words just put on a view's page, moved by [dx, dy], must move down to clear its other boxes of words and
 // its pictures and send stamp.
@@ -317,7 +282,7 @@ async function tapeIn(tape, file, { at = null, i = 0, today = false }) {
     said(book, page, `That picture didn’t stay: ${e.message}`);
   }
 }
-// The page's groups read, so a picture joins what's there
+// The page's groups read, so what lands joins what's there
 async function ready(book, v) {
   await v.reading;
   if (!v.page.ink) throw refused(0, 'this page couldn’t be read. Try again.');

@@ -279,3 +279,51 @@ test("a form clipped onto an answer is drawn under its words in the agent's ink:
   assert.ok(count(answered, TEAL) > 200 && count(answered, TEAL) < count(open, TEAL), "the answers in Lyra's ink");
   assert.ok(open.info.height > bare.info.height + 100, `grown down to it (${bare.info.height}, ${open.info.height})`);
 });
+
+test("a marker's pieces cut by the eraser are one even colour where they overlap, as the book draws them", async () => {
+  // (two pieces of one see-through scribble lying over each other from x 100 to 200, and a third stroke of the same
+  // marker, not a piece of it, over them at x 150: that one still lies over them, as it always has)
+  const marker = { color: '#3da2e0', size: 20, alpha: 0.42 },
+    run = (x0: number, x1: number, y: number) =>
+      Array.from({ length: 11 }, (_, i) => [x0 + ((x1 - x0) * i) / 10, y, 0.5, i * 10]),
+    ink = [
+      { ...marker, cut: 7, points: run(40, 200, 100) },
+      { ...marker, cut: 7, points: run(100, 260, 102) },
+      { ...marker, points: run(150, 150.1, 101) },
+    ],
+    drawn = await pixels(await render({ w: 400, h: 300, ink, scraps: [] }, '.'));
+  // (twice the page's px)
+  const once = at(drawn, 140, 202),
+    twice = at(drawn, 240, 202),
+    third = at(drawn, 300, 202),
+    paper = at(drawn, 140, 400);
+  assert.ok(paper[0] - once[0] > 40, `coloured: ${once} on ${paper}`);
+  assert.deepEqual(twice, once, 'where the pieces overlap, the same colour');
+  assert.ok(once[0] - third[0] > 20, `another stroke over them still shows: ${third} against ${once}`);
+});
+
+test("a marker's pieces in two units lie one over the other, as the book's canvases of the units do", async () => {
+  const marker = { color: '#3da2e0', size: 20, alpha: 0.42, cut: 7 },
+    run = (x0: number, x1: number, y: number) =>
+      Array.from({ length: 11 }, (_, i) => [x0 + ((x1 - x0) * i) / 10, y, 0.5, i * 10]),
+    ink = [
+      { ...marker, unit: 1, points: run(40, 200, 100) },
+      { ...marker, unit: 2, points: run(100, 260, 102) },
+    ],
+    drawn = await pixels(await render({ w: 400, h: 300, ink, scraps: [] }, '.'));
+  // (twice the page's px)
+  const once = at(drawn, 140, 202),
+    twice = at(drawn, 240, 202);
+  assert.ok(once[0] - twice[0] > 20, `laid twice where they overlap: ${twice} against ${once}`);
+});
+
+test("a later unit's highlighter lies under an earlier unit's pen line, as the book's canvases of the units do", async () => {
+  const run = (y: number) => Array.from({ length: 11 }, (_, i) => [100 + 20 * i, y, 0.5, i * 10]),
+    ink = [
+      { color: '#000000', size: 4, unit: 1, points: run(100) },
+      { color: '#ffd23f', size: 20, alpha: 0.42, unit: 2, points: run(100) },
+    ],
+    drawn = await pixels(await render({ w: 400, h: 300, ink, scraps: [] }, '.'));
+  // (twice the page's px)
+  assert.ok(at(drawn, 300, 200)[0] < 30, `the line clean on top: ${at(drawn, 300, 200)}`);
+});

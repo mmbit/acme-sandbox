@@ -26,6 +26,7 @@ import { runner } from './models.ts';
 import * as decisions from './decisions.ts';
 import * as visualapproval from './visualapproval.ts';
 import * as visual from './visual.ts';
+import * as screens from './screens.ts';
 import * as threadorder from './threadorder.ts';
 import * as reviewinbox from './reviewinbox.ts';
 import * as tasktitles from './tasktitles.ts';
@@ -38,6 +39,7 @@ import * as reviewpushes from './reviewpushes.ts';
 import * as boardmerges from './boardmerges.ts';
 import * as mergeorder from './mergeorder.ts';
 import * as rulingjobs from './rulingjobs.ts';
+import * as authorwork from './authorwork.ts';
 import { AGENT_CONFIG, GATES_CONFIG } from './reviewfloor.ts';
 
 // A pull request merged: marked so, what its reviews left into its author's separate follow-up deliverable before
@@ -154,10 +156,12 @@ export function startReview(
   tests?: Check,
   lines?: findings.ChangedLines,
   job?: number,
+  screensCheck?: Check,
 ) {
   // (settings; lines)
   sha = /^[0-9a-f]{40}([0-9a-f]{24})?$/.test(sha ?? '') ? sha : undefined;
   if (sha) recordPush(pr, sha, files, lines, gates?.passed === true && tests?.passed === true);
+  if (sha) screens.record(pr, sha, screensCheck, files);
   // (gate_fails; tests_incomplete)
   reviewPush({ pr, branch, author, files, sha, links, frontmatter, knowledge, pushedSince, gates, tests, lines, job });
 }
@@ -183,6 +187,8 @@ function reviewPush(pushed: reviewpushes.Push) {
   if (expedites(branch)) {
     if (checksOwn(files))
       publish({ type: 'log', agent: author, text: `PR #${pr} is expedited, but it changes its own gates and tests: it merges after its review` });
+    else if (screens.owed(pr, sha) !== undefined)
+      publish({ type: 'log', agent: author, text: `PR #${pr} is expedited, but it changes what HQ shows the board: it merges after its look` });
     else if (checksPassed(pr, sha)) return void mergeExpedited(pr, () => reviewRound(pinned, { round, base, before }, files, links, pushedSince));
     else publish({ type: 'log', agent: author, text: `PR #${pr} is expedited, but its gates and tests didn't both pass on this push: it merges after its review` });
   }
@@ -782,6 +788,7 @@ const missingReview = (looker: string | null | undefined) => (j: { agent: string
   unreported(j) || (j.agent === looker && visual.visualFor(JSON.parse(j.judges ?? '[]')).length > 0 && !visual.sawPreviews(j.output));
 const lookerOf = (pr: number, round: number, sha: string | null) => reviewtriage.selected(pr, round, sha)?.looker;
 
+const shaOf = (job: number) => (db.prepare('select sha from jobs where id = ?').get(job) as { sha: string | null } | undefined)?.sha ?? null;
 // What's wrong with a deciding verdict's outcomes, sources, diagnosis, tasks or findings. An unreadable ruling
 // decides nothing. Accepted rulings retain their judgment except for unread findings and a merge's visual judgment.
 // A merge check judges only findings and their tasks.
@@ -798,6 +805,8 @@ function misjudged(j: { id: number; pr: number; round: number; stage: string | n
   // (a merge check's "changes" names its fix tasks as a ruling's does)
   if (j.stage === 'merge') return untitled(j, v, false);
   if (typeof v.major_visual !== 'boolean') return 'the required "major_visual" judgment must be true or false';
+  const unlooked = j.stage === 'ruling' ? screens.lookProblem(j.pr, shaOf(j.id), v) : undefined;
+  if (unlooked) return unlooked;
   if (findings.accepted(j.id)) return undefined;
   const sources = reviewsources.problem(v, j.id);
   const undiagnosed = owesDiagnosis(j.id) && !(typeof v.upstream === 'string' && v.upstream.trim());
@@ -1031,8 +1040,9 @@ function triageFinished(job: { id: number; pr: number; round: number; sha: strin
 function roundJob(job: Omit<Parameters<typeof createJob>[0], 'title' | 'agent'> & { pr: number; round: number; step: string; agent?: string }) {
   const { branch, checks_note, files, since } = db.prepare('select branch, checks_note, files, since from prs where number = ?').get(job.pr) as Pr;
   const previews = previewsStep(job, JSON.parse(files));
+  // (screens.rulingStep)
   const made = createJob({ agent: panel.consolidator(job.pr, job.stage), kind: 'consolidate', branch, downtime: downtime(branch),
-    ...named(job.step, branch, job.pr), ...job, prompt: job.prompt + visualapproval.reviewStep(job.round, job.stage) + previews + checks_note + boardDecisions(job.pr) });
+    ...named(job.step, branch, job.pr), ...job, prompt: job.prompt + visualapproval.reviewStep(job.round, job.stage) + screens.rulingStep(job) + previews + checks_note + boardDecisions(job.pr) });
   if ((job.kind ?? 'consolidate') === 'consolidate' && !['merge', 'triage'].includes(job.stage ?? ''))
     reviewsources.record(made.id, roundReviews(job.pr, job.round, job.sha ?? null, since));
   // a consolidation briefed for the upstream round is asked what went wrong before review, and owes it (owesDiagnosis)
@@ -1478,6 +1488,8 @@ async function expeditePr(n: number) {
     return `PR #${n}'s last push didn't pass its gates and tests, so it isn't merged ahead of its review: a later push that passes them merges`;
   if (checksOwn(JSON.parse(pr.files)))
     return `PR #${n} changes its own gates and tests (shared/gates or their config), so it merges after its review, not on them`;
+  if (screens.owed(n, pr.sha) !== undefined)
+    return `PR #${n} changes what HQ shows the board, so it merges after its look, not on its checks`;
   if (deciding.has(n)) return `PR #${n} is being merged already: if it hasn't merged in a few minutes, run hq expedite again`;
   const merged = await mergeExpedited(n, () => {
     db.prepare('update prs set since = (select coalesce(max(id), 0) from jobs) where number = ?').run(n);
@@ -1615,18 +1627,18 @@ export function sweepAction(
     // (one whose entries aren't findings, delivered before misjudged refused it, goes back to its consolidator:
     // reviewFinished.)
     if (!misjudged(saved.job)) return undefined;
-    return { kind: 'ruling' as const, ...saved, author: authorSince(pr.branch, saved.job.id), merges: false };
+    return { kind: 'ruling' as const, ...saved, author: authorwork.since(pr.branch, saved.job.id), merges: false };
   }
   if (officeOnly(pr.author, pr.branch, JSON.parse(pr.files), JSON.parse(pr.links), pr.number))
-    return { kind: 'office' as const, author: authorSince(pr.branch, pr.since), merges: true };
+    return { kind: 'office' as const, author: authorwork.since(pr.branch, pr.since), merges: true };
   const judged = ruling(pr.number, pr.round, pr.sha);
   const merges = judged?.decision === 'merge' && !changedFor(judged.id).length;
-  if (keptTouchup(pr)) return { kind: 'kept' as const, author: authorSince(pr.branch, pr.since), merges };
+  if (keptTouchup(pr)) return { kind: 'kept' as const, author: authorwork.since(pr.branch, pr.since), merges };
   if (!saved) return undefined;
   return {
     kind: 'ruling' as const,
     ...saved,
-    author: authorSince(pr.branch, saved.job.id),
+    author: authorwork.since(pr.branch, saved.job.id),
     merges: merges && judged?.id === saved.job.id,
   };
 }
@@ -1653,15 +1665,6 @@ function sweepRuling(pr: Pick<Pr, 'number' | 'round' | 'sha' | 'since'>) {
   const decision = job && parse(job.output ?? '').decision;
   if (!job || replacementOf(job.id) || !acts(job.stage, decision)) return undefined;
   return { job, decision };
-}
-
-function authorSince(branch: string, since: number) {
-  return db
-    .prepare(
-      `select id, status, status in ('queued', 'running', 'blocked') going from jobs where kind = 'work'
-    and branch = ? and (id > ? or status in ('queued', 'running', 'blocked')) order by going desc, id desc limit 1`,
-    )
-    .get(branch, since) as { id: number; status: string; going: number } | undefined;
 }
 
 // What holds a pull request nobody is on, as HQ last found it, for STATUS.md's "nobody is on" list (prs.why): why it's

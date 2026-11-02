@@ -192,6 +192,30 @@ test("the reader reads a card's questions whole and rewrites them in plain words
   );
   const unreadable = await h.hq(juno, 'rewrite', String(filed.id), file('Done?'), '--questions', file('[]'));
   assert.equal(unreadable.code, 1, 'refused as hq ask refuses it');
+
+  const notice = await h.hq(
+    kit,
+    'ask',
+    'notice',
+    'today',
+    'Seats stop sooner',
+    file('Seats now stop near their limit.'),
+    '--topic',
+    'seats',
+  );
+  assert.equal(notice.code, 0, notice.out);
+  const news = card('Seats stop sooner');
+  const reader = await h.claimJob(readJob(news.id).id);
+  const asking = await h.hq(
+    reader,
+    'rewrite',
+    String(news.id),
+    file('Seats stop sooner.'),
+    '--questions',
+    file(JSON.stringify(plain)),
+  );
+  assert.equal(asking.code, 1, 'a notice asks nothing, as hq ask refuses it');
+  assert.equal(card('Seats stop sooner').questions, null);
 });
 
 test('a parked card (hq request) waits for the reader the same way', async () => {

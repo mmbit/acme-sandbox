@@ -1195,8 +1195,8 @@ export function pauseHolds(p: string) {
 }
 // Whether pause `p` (its row's alias) is on thread `thread` (an SQL expression; null: the desk): the thread itself, or
 // its whole project. The one copy the claim, the plan's edges and the heartbeat's suspension read, so they hold the same
-// work.
-function pauseCovers(p: string, thread: string) {
+// work. (Exported for threadwaits.ts's pauses)
+export function pauseCovers(p: string, thread: string) {
   return `${p}.project = coalesce(substr(${thread}, 1, instr(${thread}, '/') - 1), '${DESK}')
     and (${p}.thread is null or ${p}.thread = ${thread})`;
 }
@@ -2377,6 +2377,7 @@ type RunEnd = {
   lines?: ChangedLines;
   gates?: Check;
   tests?: Check;
+  screens?: Check; // (screens.ts.)
   carry?: carries.Checked['carry'];
   // a task's own profile lines, sent to main on a branch of their own (the worker's profile split).
   profile?: { pr: number; branch: string; sha: string; files: string[] };
@@ -2677,7 +2678,8 @@ function handOn(job: Job, r: RunEnd) {
       r.tests,
       r.lines,
       job.id,
-    ); // (settings; gates; lines)
+      r.screens,
+    ); // (settings; gates; lines; screens)
   // (a thread task that ended without a push lets go of a push held for it: review.ts heldForThread)
   if (threadorder.isTask(job) && !(r.status === 'done' && r.pr)) threadTaskEnded(job.thread);
   if (job.kind === 'chat') chatEnded(job, r.status, r.result, r.overtime === true);
@@ -3484,7 +3486,7 @@ const answeredBy = (by?: string) =>
 
 const answerAudience = (by?: string) =>
   by
-    ? `${findAgent(by)!.name} answered in the board's place. The board never saw the card. Nobody reads your messages here live: write them as a report on the work.`
+    ? `${findAgent(by)!.name} answered in the board's place, and the board never saw the card. ${SESSION_REPORT_GUIDANCE}`
     : AUDIENCE;
 
 // The board's answer to a card that no job heard, which open proposals may hold for its asker (inbox.ts holdAnswer): the
@@ -3534,9 +3536,12 @@ export function discussRequest(id: number, brief: string, call: number) {
   return { ok: true, job };
 }
 
+// How a parked job's session reports on its work. A card the reader answered (answerAudience) says it too, after its
+// own line on who answered.
+const SESSION_REPORT_GUIDANCE =
+  "Nobody reads your messages here live: they go to the job's log, so write them as a report on the work, not as a reply to the board. If something needs the board's judgment, file it with hq ask or hq request; thanks, acknowledgements and \"we're on it\" go nowhere.";
 // A parked job resumes with the answer as its next turn, which reads like the board talking in the session: it isn't.
-export const AUDIENCE =
-  "The board isn't in this session: it answered on the desk phone and has moved on, and nobody reads your messages here live. They go to the job's log, so write them as a report on the work, not as a reply to the board. If something needs the board's judgment, file it with hq ask or hq request; thanks, acknowledgements and \"we're on it\" go nowhere.";
+export const AUDIENCE = `The board isn't in this session: it answered on the desk phone and has moved on. ${SESSION_REPORT_GUIDANCE}`;
 
 // After a call, the board reads a reply kept as short as the intercom's, in the little Markdown HQ shows as such. A work
 // follow-up sets it (hq reply, ledger.ts reply), and its last message is its report for the log (WORK_REPORT); the
@@ -3624,8 +3629,8 @@ export const agentCard = (id: number) => {
 
 // An agent rewrites its own open request (hq rewrite). The CEO may rewrite any an agent filed, and the card reader any
 // waiting for their read, to keep the desk phone short. questions: its question fields in their place, as hq ask's
-// --questions. Never on a card for keys, an approval or a sign-in (answerBox), nor
-// one whose questions a merge decision gave it (decisions.ts mergeQuestions).
+// --questions, never on a notice. Never on a card for keys, an
+// approval or a sign-in (answerBox), nor one whose questions a merge decision gave it (decisions.ts mergeQuestions).
 // team: a team member's own request is the one its job filed (its name may be another job's member's too).
 export function rewriteRequest(
   id: number,
@@ -3640,14 +3645,22 @@ export function rewriteRequest(
   const reader = !team && agent === roles().cards && later.awaitsRead(id);
   const theirs = db
     .prepare(
-      `select secrets, approves, seat from requests where id = ? and status = 'open' and (agent = ? or ? = ? or ?)
-      and (? = 0 or job = ?)`,
+      `select kind, secrets, approves, seat from requests where id = @id and status = 'open'
+      and (agent = @agent or @asCeo = @ceo or @reader) and (@team = 0 or job = @from)`,
     )
-    .get(id, agent, team ? '' : agent, ceo(), reader ? 1 : 0, team ? 1 : 0, from ?? 0) as
-    { secrets: string | null; approves: string | null; seat: string | null } | undefined;
+    .get({
+      id,
+      agent,
+      asCeo: team ? '' : agent,
+      ceo: ceo(),
+      reader: reader ? 1 : 0,
+      team: team ? 1 : 0,
+      from: from ?? 0,
+    }) as { kind: string; secrets: string | null; approves: string | null; seat: string | null } | undefined;
   if (!theirs) return 404;
   const asked = questions === undefined ? undefined : asking.questions(questions);
   if (typeof asked === 'string') return [400, `its --questions: ${asked}`] as const;
+  if (asked && theirs.kind === 'notice') return [400, 'a notice asks nothing: rewrite its text only'] as const;
   if (asked && (theirs.secrets || theirs.approves || theirs.seat || decisions.mergeCard(id)))
     return [
       409,
@@ -3680,10 +3693,11 @@ function newBody(id: number, body: string, questions?: string) {
   const now = new Date().toISOString();
   const r = db
     .prepare(
-      `update requests set body = ?, questions = coalesce(?, questions), changed = ? where id = ?
-      and (body != ? or ? is not null and questions is not ?) returning kind, title, urgency, approves, hidden_until`,
+      `update requests set body = @body, questions = coalesce(@questions, questions), changed = @now where id = @id
+      and (body != @body or @questions is not null and questions is not @questions)
+      returning kind, title, urgency, approves, hidden_until`,
     )
-    .get(body, questions ?? null, now, id, body, questions ?? null, questions ?? null) as
+    .get({ body, questions: questions ?? null, now, id }) as
     { kind: string; title: string; urgency: string; approves: string | null; hidden_until: string | null } | undefined;
   if (r && !later.held(id) && !later.isHidden(r.hidden_until, now))
     announceRequest({

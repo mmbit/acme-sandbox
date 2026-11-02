@@ -2,6 +2,8 @@
 // the CEO's summary (summary.ts) has something to look at (an open goal always has), HQ queues the CEO a short check with the summary in it that sets them
 // against the work actually running, to make sure work gets done, and alarms when a check doesn't start, finish or say: the Process team gets a job to
 // mend it. It's the one way HQ's picture reaches the CEO: nothing else makes a job of a slip, a stall or a wait.
+// A check found on track can name its next look, the CEO's judgment: until then HQ queues none, unless the summary gets a
+// new line.
 import { db, inOneStep, remember, setting } from './db.ts';
 import { publish } from './events.ts';
 import * as jobs from './jobs.ts';
@@ -13,6 +15,7 @@ import * as forecast from './forecast.ts';
 import * as summary from './summary.ts';
 import { checkPrompt } from './heartbeat.ts';
 import { made, madeCode } from './made.ts'; // (madeCode)
+import { parse as parseTime } from './windows.ts';
 
 export const START_MS = 15 * 60_000,
   FINISH_MS = 45 * 60_000,
@@ -23,7 +26,16 @@ const READY_SHOWN = 15;
 const ALARM = 'followthrough.alarm';
 
 export type Verdict = 'ok' | 'acted';
-type Check = { slot: string; job: number; created: string; verdict: Verdict | null; said: string | null };
+type Check = {
+  slot: string;
+  job: number;
+  created: string;
+  verdict: Verdict | null;
+  said: string | null;
+  seen: string | null;
+  next: string | null;
+  compared: string | null;
+};
 type Problem = { kind: 'not started' | 'overran' | 'no verdict'; line: string };
 // since: when the checks stopped working (the first alarm since the last verdict); told: the Process team's job about it
 type Alarm = Problem & { slot: string; since: string; told?: number; toldAt?: string; carded?: number };
@@ -40,11 +52,20 @@ export function followThroughSweep(t = Date.now()) {
   // (an open pause is checked as an agreement is)
   const open = stillOpen(t);
   const slot = new Date(t).toISOString().slice(0, 13);
-  const due = !open && !findCheck(slot);
+  const hourFree = !open && !findCheck(slot);
+  // (waiting: the check whose named next look hasn't come yet. Until it has, the summary is compared (compares) with the
+  // one it was queued with once an hour, and only a line new since then brings the check forward. An acted check, or one
+  // that said no time, gets the next hour's.)
+  const waiting = hourFree && last?.verdict === 'ok' && last.next && t < Date.parse(last.next) ? last : undefined;
+  const compares = hourFree && waiting?.compared !== slot;
   const standing = agreements().length > 0 || pauses.anyOpen();
-  // (the summary is read only where it decides: for the hour's check to queue, or, with nothing else standing, whether a
-  // check that ended without its verdict is still watched.)
-  const picture = due || (!standing && !open && last && !last.verdict) ? summary.read(forecast.current(t)) : undefined;
+  // (the summary is read only where it decides: for the hour's check to queue, once an hour while a check waits for its
+  // next look, or, with nothing else standing, whether a check that ended without its verdict is still watched.)
+  const picture =
+    compares || (!standing && !open && last && !last.verdict) ? summary.read(forecast.current(t)) : undefined;
+  if (waiting && compares)
+    db.prepare('update followthrough_checks set compared = ? where job = ?').run(slot, waiting.job);
+  const due = !!picture && compares && (!waiting || newLine(picture.looks, waiting));
   if (!standing && !open && !picture?.worth) {
     remember(ALARM, null);
     return;
@@ -62,16 +83,36 @@ export function followThroughSweep(t = Date.now()) {
       check: true,
     });
     made('checks', 'hq', { id }, hourEnd(Date.parse(`${slot}:00Z`)));
-    db.prepare('insert into followthrough_checks (slot, job, created) values (?, ?, ?)').run(
+    db.prepare('insert into followthrough_checks (slot, job, created, seen) values (?, ?, ?, ?)').run(
       slot,
       id,
       new Date(t).toISOString(),
+      JSON.stringify(substance(picture.looks)),
     );
   });
 }
 
-// hq followthrough ok | acted "line": the running check's verdict. Only a check records one, once.
-export function recordVerdict(job: number, verdict: Verdict, said: string) {
+// The summary's lines for the CEO to look at (summary.ts looks) with their numbers masked (ages, times, spans, counts,
+// percents: all but #ids; "1 h 20 min" is one), so a line that only aged or ticked on is the same line, and a new one is
+// new work to look at.
+const substance = (looks: string[]) => [
+  ...new Set(
+    looks.map(line =>
+      line
+        .replace(/\b(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun) (?=\d)/g, '')
+        .replace(/(?<![#\w-])\d+(?:[.:,/-]\d+)*(?:\s?(?:min|h|d|s|[AP]M)\b|%)?/g, '…')
+        .replace(/…(?: …)+/g, '…'),
+    ),
+  ),
+];
+const newLine = (looks: string[], since: Check) => {
+  const seen = new Set(JSON.parse(since.seen ?? '[]') as string[]);
+  return substance(looks).some(line => !seen.has(line));
+};
+
+// hq followthrough ok [--next <when>] | acted "line": the running check's verdict. Only a check records one, once.
+// `next`: when an on-track check says the next look is worth it (windows.ts parse reads it).
+export function recordVerdict(job: number, verdict: Verdict, said: string, next = '', now = Date.now()) {
   const check = db.prepare('select * from followthrough_checks where job = ?').get(job) as Check | undefined;
   if (!check) return "only HQ's follow-through check records a verdict, and this job isn't one";
   if (check.verdict) return `this check already recorded "${check.verdict}"`;
@@ -79,14 +120,22 @@ export function recordVerdict(job: number, verdict: Verdict, said: string) {
   if (verdict === 'acted' && !line)
     return 'say in one line what was off and what you did: hq followthrough acted "..."';
   if (line.length > SAID_MAX) return LONG_LINE;
-  db.prepare('update followthrough_checks set verdict = ?, said = ?, at = ? where job = ?').run(
+  if (next && verdict === 'acted') return "an acted check gets the next hour's look: --next goes with ok";
+  const at = next ? parseTime(next, now, false, 'the next look') : null;
+  if (typeof at === 'string') return at;
+  // (one check an hour: a look inside this check's own hour couldn't queue before the next)
+  const earliest = hourEnd(Date.parse(`${check.slot}:00Z`)).deadline;
+  if (at !== null && at < earliest)
+    return `the next look can't fall inside this check's own hour: the earliest is ${new Date(earliest).toISOString().slice(0, 16).replace('T', ' ')} UTC`;
+  db.prepare('update followthrough_checks set verdict = ?, said = ?, at = ?, next = ? where job = ?').run(
     verdict,
     line || null,
-    new Date().toISOString(),
+    new Date(now).toISOString(),
+    at === null ? null : new Date(at).toISOString(),
     job,
   );
   remember(ALARM, null);
-  return { ok: true };
+  return { ok: true, ...(at !== null && { next: new Date(at).toISOString() }) };
 }
 
 // A check that hasn't recorded its verdict yet: only that one hands failed work back (takeover.ts).
@@ -305,6 +354,8 @@ function lastPart(last: Check | undefined) {
   if (!last) return 'The last check: none yet.';
   const when = `${last.slot.slice(11)}:00 UTC`;
   if (last.verdict === 'acted') return `The last check (${when}) acted: ${last.said}`;
+  if (last.verdict && last.next)
+    return `The last check (${when}) found all on track, and named its next look ${last.next.slice(0, 16).replace('T', ' ')} UTC (sooner on a new line in the summary).`;
   if (last.verdict) return `The last check (${when}) found all on track.`;
   return `The last check (${when}) recorded no verdict: ${currentAlarm()?.line ?? 'it may still be running'}.`;
 }

@@ -186,15 +186,20 @@ it's the page's width and the book's spread covers it with the page; over a dial
   changes nothing, and the step stays to take back.
 - The document hears `pencil:note` (`{ id, n, page, call }`) as each note goes into the book, for the book and a call.
 
-**The system's Undo** (`systemundo.js`): the system's own Undo and Redo (the Apple Pencil Pro's squeeze palette, the
-iPad's shortcut bar, Edit › Undo) reach a page with an undo of its own. Safari hands a page those only as an input
-event (`historyUndo`, `historyRedo`) on an editable with steps in the browser's undo history, so a hidden one keeps a
-step each way: the system's Undo takes back the page's last step, and the hidden step is put back at once, ready for
-the next. `systemUndo({ undo, redo }, { focused })` takes the page's own two; `focused` keeps the hidden editable
-focused (its keyboard stays down). It returns `{ arm(), armed(), stop() }`: `arm()` makes the two steps (with
-`focused`, it puts the focus back on them too), inside a touch or a click, as Safari focuses nothing otherwise, and
-again after any other edit on the page, which drops the browser's redo; `stop()` takes the editable and its
-listeners away.
+**The system's Undo** (`systemundo.js`) lets the system's own Undo and Redo reach a page with an undo of its own.
+They come from the Apple Pencil Pro's squeeze palette, the iPad's shortcut bar or Edit › Undo. Safari hands them to a
+page only as an input event (`historyUndo`, `historyRedo`), and only on an editable with steps in the browser's undo
+history. So a hidden editable keeps one step each way. The system's Undo takes back the page's last step, and the
+hidden step is put back at once, ready for the next.
+
+- `systemUndo({ undo, redo }, { focused })` takes the page's own undo and redo functions. With `focused`, the hidden
+  editable keeps the focus, and the keyboard stays down.
+- It returns `{ arm(), armed(), stop() }`.
+- `arm()` makes the two hidden steps. Call it inside a touch or a click, as Safari focuses nothing otherwise. Call it
+  again after any other edit on the page, which drops the browser's redo. With `focused`, it also puts the focus back
+  on the hidden editable.
+- `armed()` says whether the steps are in place.
+- `stop()` removes the hidden editable and its listeners.
 
 **On a call** (`callnotes.js`; HQ's `shell/ink/calldraw.js` tells it through `call:on`, `call:off`, `call:heard` and `call:had`;
 Ink's folder): a mark goes on the call's page in the book (`kind: 'call'`, made

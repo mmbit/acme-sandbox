@@ -2,14 +2,18 @@
 // it crosses is cut there and the rest stays, a filled shape it touches goes whole (bookstrokes.js rub). Pictures,
 // typed words and post-its are never its: they go with a scratch-out over their group or its clip's Delete
 // (bookgroups.js), or Select's Delete. A rub, however long, is one step for Undo and Redo (bookedit.js).
+//
+// It keeps up with the pen over any ink: each step cuts only the strokes near it, and the page is painted again once a
+// frame, only where ink went (bookpage.js rubbed), however many steps and coalesced points the frame brought.
 import { rub } from './bookstrokes.js';
 import { followPress } from './bookpress.js';
 import { remade } from './bookedit.js';
+import { union } from './bookselectmath.js';
 
 // a quick flick reports points far apart: the rub goes every STEP of its radius between them
 const STEP = 0.5;
 
-// book: bookpages.js's. hooks: { begin(view), redraw(view, box) }. radius(): the eraser's on screen (CSS px).
+// book: bookpages.js's. hooks: { begin(view), rubbed(view, box) }. radius(): the eraser's on screen (CSS px).
 // Returns { press(e, at) }.
 export function mountEraser(book, hooks, radius) {
   return { press: (e, at) => rubbing(book, hooks, radius() / (book.scale || 1), e, at) };
@@ -23,6 +27,15 @@ function rubbing(book, hooks, r, e, at) {
   let last = [at.x, at.y];
   // (a Pencil has no cursor: a ring the eraser's size follows its tip while it rubs)
   const ring = e.pointerType === 'mouse' ? null : ringAt(book, r * book.scale, e);
+  // (where ink went since the last paint, painted at the next frame, and at the lift)
+  let gone = null,
+    frame = 0;
+  const paint = () => {
+    cancelAnimationFrame(frame);
+    frame = 0;
+    if (gone) hooks.rubbed(view, gone);
+    gone = null;
+  };
   const pass = to => {
     const n = Math.max(1, Math.ceil(Math.hypot(to[0] - last[0], to[1] - last[1]) / (r * STEP)));
     for (let i = 1; i <= n; i++) {
@@ -32,7 +45,8 @@ function rubbing(book, hooks, r, e, at) {
       if (!done) continue;
       page.ink.splice(0, page.ink.length, ...done.ink);
       for (const [stroke, piece] of done.made) remade(stroke, piece);
-      hooks.redraw(view, done.box);
+      gone = gone ? union(gone, done.box) : done.box;
+      frame ||= requestAnimationFrame(paint);
     }
     last = to;
   };
@@ -44,6 +58,7 @@ function rubbing(book, hooks, r, e, at) {
       if (ring) place(book, ring, m);
     },
     up: () => {
+      paint();
       ring?.remove();
       change.end();
     },

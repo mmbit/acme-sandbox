@@ -4,7 +4,7 @@
 import { bodyIn, drawing, heightOf, partsOf, wordsOf } from './bookunits.js';
 import { heightFor } from './scrapunit.js';
 import { ask } from './notebookdata.js';
-import { nameOf } from './bookhead.js';
+import { PENCIL, nameOf } from './bookhead.js';
 import { esc } from '../../util.js';
 // (bookLang and companyFormats write a page's day in the book's language)
 import { bookLang, word } from './bookscope.js';
@@ -31,10 +31,12 @@ export function drawCards(view) {
     handles.className = 'bk-handles';
     view.el.append(handles);
     dragged(view, handles);
+    // (a press on the title is the title's: no stroke, no pan)
+    handles.addEventListener('pointerdown', e => e.target.closest('.bk-title-tap') && e.stopPropagation());
   }
   const open = !(page.sending || page.sent || page.readonly);
   layer.style.height = `${page.h}px`;
-  layer.innerHTML = `<h2 class="bk-page-title" style="width:${page.w}px">${seen(nameOf(page))}</h2>${headDay(page)}${page.headers
+  layer.innerHTML = `${headDay(page)}${page.headers
     .map(h => `<p class="bk-day" style="top:${h.y}px;width:${page.w}px">${seen(dayWords(h.day))}</p>`)
     .join('')}${page.places
     .map(p => {
@@ -46,6 +48,7 @@ export function drawCards(view) {
       return `<div class="bk-unit"${ink ? ' data-drawing' : ''} data-keep-in-sight data-unit="${p.id}" style="left:${p.x}px;top:${p.y}px;width:${p.w}px;height:${p.h}px">${room}</div>`;
     })
     .join('')}`;
+  titleIn(handles, page);
   // (no room to drag on the board's own drawing)
   placeHandles(handles, open ? page.places.filter(p => !drawing(page, p.id)) : []);
   for (const p of page.places) {
@@ -57,9 +60,25 @@ export function drawCards(view) {
     if (tags) Object.assign(tags.style, { left: `${p.x + p.w}px`, top: `${p.y + p.h}px` });
   }
 }
+// The page's title in its head, over the paper with the handles so a tap on it, a finger's or the Pencil's, is its own:
+// it opens the notebook's pages with the title to write in (bookcontrols.js), a pencil by it saying it can be changed
+// (board, call 178.)
+function titleIn(layer, page) {
+  if (!layer) return;
+  let head = layer.querySelector(':scope > .bk-page-title');
+  if (!head) {
+    head = document.createElement('h2');
+    head.className = 'bk-page-title';
+    layer.prepend(head);
+  }
+  head.style.width = `${page.w}px`;
+  head.innerHTML = `<button type="button" class="bk-title-tap" title="${esc(word('changeTitle'))}">${seen(nameOf(page))}${PENCIL}</button>`;
+}
+// The page's title in its head as it's named now (booksave.js named)
+export const retitle = view => titleIn(view.el.querySelector(':scope > .bk-handles'), view.page);
 // A handle at every unit's foot, each kept as the page is laid again (the one held keeps its pointer)
 function placeHandles(layer, places) {
-  const had = new Map([...layer.children].map(b => [b.dataset.unit, b]));
+  const had = new Map([...layer.querySelectorAll(':scope > .bk-room-handle')].map(b => [b.dataset.unit, b]));
   for (const p of places) {
     let b = had.get(String(p.id));
     had.delete(String(p.id));

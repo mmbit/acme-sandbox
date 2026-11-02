@@ -18,7 +18,8 @@
   display: flex;
   pointer-events: none;
 }
-#book .bk-marks button {
+/* (a chapter's tab, a bookmark or the overview's, bookmarks.js chapterTab: bookshelf.css places the overview's.) */
+#book .bk-mk-tab {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -27,6 +28,18 @@
   background: var(--bk-mk-paper);
   color: rgba(42, 35, 82, 0.66);
   font: 600 14px/1 var(--bk-font);
+}
+#book .bk-mk-tab[aria-current='page'] {
+  border-color: color-mix(in srgb, var(--bk-mk-lit), #2a2352 18%);
+  background: var(--bk-mk-lit);
+  color: #2a2352;
+  font-weight: 700;
+}
+/* (a chapter with no pages yet: there, dim, unless it's the one shown.) */
+#book .bk-mk-tab[data-empty]:not([aria-current]) {
+  color: rgba(42, 35, 82, 0.38);
+}
+#book .bk-marks button {
   cursor: pointer;
   pointer-events: auto;
   transition:
@@ -38,14 +51,6 @@
 }
 #book .bk-marks button[aria-current='page'] {
   z-index: 2;
-  border-color: color-mix(in srgb, var(--bk-mk-lit), #2a2352 18%);
-  background: var(--bk-mk-lit);
-  color: #2a2352;
-  font-weight: 700;
-}
-/* (a chapter with no pages yet: there, dim, unless it's the one shown.) */
-#book .bk-marks button[data-empty]:not([aria-current]) {
-  color: rgba(42, 35, 82, 0.38);
 }
 #book .bk-mk-count {
   display: inline-grid;

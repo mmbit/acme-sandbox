@@ -1,9 +1,11 @@
 // The overview's two screens, drawn on the book's paper (bookzoom.js steps between them and the page): a notebook's
 // pages as a grid, and the Shelf of every notebook with the Archive beside it.
-// - The pages: each a small picture of the page in the notebook's order, its title under it and a stamp on one that
-//   was sent; a tap opens it. New page at the end (in My journal). A page dragged to another place (held a moment
+// - The pages: split as the book is, under its chapters' tabs (bookshelftiles.js), each a small picture of the page
+//   in the notebook's order, its title under it and a stamp on one that was sent; a tap opens it, in its chapter. New
+//   page at Sketch's end (in My journal). A page dragged to another place (held a moment
 //   first with a finger, so a finger still scrolls) or moved with Alt and the arrows takes it; a page's small box
-//   archives it, Undo a tap away, and the notebook's archived pages show behind "Archived".
+//   archives it, crumpled away as a deleted thing is, Undo a tap away, and the
+//   notebook's archived pages show behind "Archived".
 // - My shelf: every notebook a big book with its cover standing on a shelf board, as many to a row as fit, My journal
 //   first, the newest next (bookshelfbooks.js); a tap opens its pages. Its Archive: the archived notebooks, the same
 //   way. A book's own menu changes its cover (bookshelfcover.js), archives it or brings it back (never My journal).
@@ -23,11 +25,12 @@ import {
   orderPages,
 } from './notebookdata.js';
 import { gridOf, moved, shelfOrder } from './bookshelfgrid.js';
-import { ICONS, pageTile } from './bookshelftiles.js';
+import { ICONS, chapterGrids, pageTile } from './bookshelftiles.js';
 import { shelfRows } from './bookshelfbooks.js';
 import { mountCover } from './bookshelfcover.js';
 import { cancel, drags, flip } from './bookshelfdrag.js';
-import { stamp } from './bookpaper.js';
+import { crumple, stamp } from './bookpaper.js';
+import { sfx } from '../audio.js';
 import { mountOpen } from './bookshelfopen.js';
 import { mountRounds } from './bookshelfround.js';
 import { mountTold, told } from './bookshelftold.js';
@@ -45,15 +48,15 @@ const HTML = `<div class="bk-far-head" role="presentation"><nav class="bk-far-na
 // far: the overview's element, empty. dev: on mock data. current(): the notebook the book shows, a promise of its id
 // (null: none on the Shelf, whose pages are then the Shelf); page(): the page it shows (its id); saved(): what's drawn
 // saved in the store, before each read. open(page, id): a page of notebook id opened; shelf(): the Shelf;
-// notebook(id): a notebook's pages.
+// notebook(id): a notebook's pages; archived(): a page archived or brought back.
 // Returns { show(level, id), again(), hide() }: show draws 'pages' (notebook id's; null: current()'s) or 'shelf', at
 // once from what it read before, and resolves once it's read (the first time only, FIRST_MS at most: a turn never
 // waits on the store).
-export function mountScreens(far, { dev, current, page, saved, open, shelf, notebook }) {
+export function mountScreens(far, { dev, current, page, saved, open, shelf, notebook, archived }) {
   far.innerHTML = HTML;
   const s = {
     ...{ far, dev, current, page, saved },
-    hooks: { open, shelf, notebook },
+    hooks: { open, shelf, notebook, archived },
     head: far.querySelector('.bk-far-nav'),
     body: far.querySelector('.bk-far-body'),
     undo: document.createElement('div'),
@@ -82,7 +85,7 @@ export function mountScreens(far, { dev, current, page, saved, open, shelf, note
   // (a review round's Close and its envelope: bookshelfround.js; a book's cover: bookshelfcover.js)
   const ui = { draw: () => draw(s), refresh: () => refresh(s), told: words => told(s, words) };
   Object.assign(s, { rounded: mountRounds(s, ui), cover: mountCover(s, ui) });
-  drags(s, (from, to) => reorder(s, from, to));
+  drags(s, (from, to, chapter) => reorder(s, from, to, chapter));
   // (the store's notebooks changed: read again while it shows)
   for (const name of ['book:changed', 'book:notebook']) document.addEventListener(name, () => s.level && refresh(s));
   // (a wider or narrower book: the grids' columns again)
@@ -157,7 +160,8 @@ function draw(s) {
   columns(s);
 }
 
-// The notebook's pages: its head (back to the Shelf, its name, its archived pages), its grid, then New page
+// The notebook's pages: its head (back to the Shelf, its name, its archived pages), its chapters' grids (New page at
+// Sketch's end), then its archived pages
 function drawPages(s) {
   const read = s.read.books.get(s.id),
     book =
@@ -176,15 +180,13 @@ function drawPages(s) {
   }`;
   if (!read) return void (s.body.innerHTML = '');
   stamped(s, read);
-  const here = s.id === s.here ? s.page() : null,
-    adds = book?.kind === 'mine';
-  s.body.innerHTML = `<div class="bk-grid" data-grid="pages" role="presentation">${read.pages
-    .map((p, i) => pageTile(p, i, { here, drag: !scope, manage: !scope }))
-    .join('')}${
-    adds
-      ? `<div class="bk-tile bk-tile-new" role="listitem"><button type="button" class="bk-tile-open" data-new aria-label="${word('newPage')}"><span class="bk-tile-paper">${ICONS.add}</span><span class="bk-tile-name"><span>${word('newPage')}</span></span></button></div>`
-      : ''
-  }</div>${!read.pages.length && !adds ? `<p class="bk-far-none">${word('noPages')}</p>` : ''}${
+  const here = s.id === s.here ? s.page() : null;
+  s.body.innerHTML = `${chapterGrids(read.notebook ?? book, read.pages, {
+    here,
+    drag: !scope,
+    manage: !scope,
+    adds: book?.kind === 'mine',
+  })}${
     s.archived && archived.length
       ? `<h3 class="bk-far-sub">${word('archived')}</h3><div class="bk-grid" data-grid="pages" role="presentation">${archived
           .map((p, i) => pageTile(p, i, { here, archived: true }))
@@ -294,11 +296,12 @@ function switchTab(s, tab) {
   flip(s, () => draw(s));
 }
 
-// A page archived (or brought back): gone from the grid at once, Undo offered; the store's word read in once it's
-// answered. A refusal puts it back, saying why.
+// A page archived (or brought back): gone from the grid at once, an archived one's picture crumpled away over it, Undo
+// offered; the store's word read in once it's answered. A refusal puts it back, saying why.
 async function archive(s, p, archived) {
   const id = s.id,
     read = s.read.books.get(id);
+  if (archived) crumpled(s, p);
   flip(s, () => {
     read.pages = archived ? read.pages.filter(x => x !== p) : [...read.pages, { ...p, archived }];
     read.archived = archived ? [...read.archived, { ...p, archived }] : read.archived.filter(x => x !== p);
@@ -311,7 +314,15 @@ async function archive(s, p, archived) {
   } catch (e) {
     told(s, e.message);
   }
+  s.hooks.archived();
   if (s.id === id) refresh(s);
+}
+// A page's tile's picture as it goes, crumpled up and dropped off (bookpaper.js, as a deleted thing; nothing waits on it)
+function crumpled(s, p) {
+  const paper = s.body.querySelector(`.bk-tile[data-id="${CSS.escape(String(p.id))}"] .bk-tile-paper`);
+  if (!paper) return;
+  crumple(paper.getBoundingClientRect(), paper.cloneNode(true));
+  sfx.tick();
 }
 // A notebook archived or back on the Shelf, the same way
 async function putAway(s, n, archived) {
@@ -341,13 +352,18 @@ async function newPage(s) {
     told(s, e.message);
   }
 }
-// A page moved from one place to another in the grid: the grid in its new order at once, the store's after
-async function reorder(s, from, to) {
+// A page moved from one place to another in its chapter's grid: the grid in its new order at once, the store's after
+async function reorder(s, from, to, chapter) {
   const id = s.id,
     read = s.read.books.get(id);
   if (from === to || !read) return;
   flip(s, () => {
-    read.pages = moved(read.pages, from, to);
+    const order = moved(
+      read.pages.filter(p => p.chapter === chapter),
+      from,
+      to,
+    );
+    read.pages = read.pages.map(p => (p.chapter === chapter ? order.shift() : p));
     draw(s);
   });
   try {
@@ -378,6 +394,6 @@ function keyed(s, e) {
   const tiles = [...tile.parentElement.querySelectorAll('.bk-tile[data-drag]')],
     from = tiles.indexOf(tile),
     to = Math.max(0, Math.min(tiles.length - 1, from + step));
-  reorder(s, from, to);
+  reorder(s, from, to, tile.parentElement.dataset.chapter);
   s.body.querySelector(`.bk-tile[data-id="${CSS.escape(tile.dataset.id)}"] .bk-tile-open`)?.focus();
 }

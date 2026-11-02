@@ -40,7 +40,10 @@ export function inkOf(v) {
   return v.map(s => {
     const stroke = strokeOf(s);
     if (!stroke)
-      refuse(400, 'a stroke is { color: "#rrggbb", size, alpha?, fill?: true, points: [[x, y, pressure, t], ...] }');
+      refuse(
+        400,
+        'a stroke is { color: "#rrggbb", size, alpha?, fill?: true, cut?, points: [[x, y, pressure, t], ...] }',
+      );
     points += stroke.points.length;
     if (points > MAX_POINTS) refuse(413, FULL);
     return stroke;
@@ -53,9 +56,12 @@ function strokeOf(s) {
   const point = p => Array.isArray(p) && p.length === 4 && p.every(Number.isFinite);
   if (!Array.isArray(s.points) || !s.points.length || !s.points.every(point)) return null;
   if (s.fill !== undefined && s.fill !== true) return null;
+  // (the eraser's pieces of one see-through stroke share a number, as pagechecks.ts keeps it.)
+  if (s.cut !== undefined && !(Number.isInteger(s.cut) && s.cut > 0 && s.cut < 2 ** 31)) return null;
   const alpha = s.alpha === undefined ? {} : { alpha: s.alpha },
-    fill = s.fill ? { fill: true } : {};
-  return { color: s.color.toLowerCase(), size: s.size, ...alpha, ...fill, points: s.points };
+    fill = s.fill ? { fill: true } : {},
+    cut = s.cut === undefined ? {} : { cut: s.cut };
+  return { color: s.color.toLowerCase(), size: s.size, ...alpha, ...fill, ...cut, points: s.points };
 }
 // The words typed on a page: [{ x, y, w, text, color }]
 export function textsOf(v) {

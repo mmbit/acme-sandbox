@@ -68,7 +68,7 @@ export function drag(sel, e, { corner, then = null }) {
 // the rest of its scrap staying), and let go once it lands unless Select is the tool (keep).
 export function grab(sel, box, e, { keep }) {
   e.preventDefault();
-  sel.clip.away();
+  sel.clip.settle();
   // (a box just typed and emptied is gone by now: booktexts.js commit)
   if (!box.isConnected || !box.view.page.ink) return true;
   letGo(sel);

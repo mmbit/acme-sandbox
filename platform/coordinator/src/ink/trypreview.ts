@@ -7,21 +7,18 @@
 // isn't worth it yet, so it shows its picture alone (DECISIONS, 2026-10-30). Caddy's one site for the try hosts
 // (infra/products.py) gets each host's certificate when it's first asked for, if tryHost() says the version is there.
 // The preview goes with the branch (trybranch.ts dropBranch): a cleared version's host serves nothing.
-import { execFile } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { promisify } from 'node:util';
-import { ORIGIN, PREVIEW, REPO_DIR, ZONE } from '../config.ts';
+import { PREVIEW, REPO_DIR, ZONE } from '../config.ts';
 import { db } from '../db.ts';
 import { isProduct } from '../owedproducts.ts';
 import { DIR } from '../pagescraps.ts';
-import { boardOn } from '../preview.ts';
 import { typeOf } from '../types.ts';
+import { decoded, gitShow, opened } from '../versionhost.ts';
 import { answer, mockFiles } from '../../../hq/serve.mjs';
 import type { Slip } from './bookslips.ts';
 import { applied } from './trybranch.ts';
 
-const run = promisify(execFile);
 const HOST = /^try-([1-9][0-9]{0,9})$/;
 // A version's preview host, or none without a domain (a run on one's own machine)
 export const hostOf = (slip: number) => (ZONE ? `try-${slip}${PREVIEW}` : null);
@@ -80,27 +77,15 @@ const reader = (base: string, overlay: Map<string, string | null>) => async (pat
     if (text == null) throw new Error('removed');
     return Buffer.from(text);
   }
-  const { stdout } = await run('git', ['-c', `safe.directory=${REPO_DIR}`, '-C', REPO_DIR, 'show', `${base}:${path}`], {
-    encoding: 'buffer',
-    maxBuffer: 256 << 20,
-    timeout: 20_000,
-  });
-  return stdout;
+  return gitShow(base, path);
 };
 let mock: Promise<Record<string, string>> | null = null;
 
 // A request on a try host: the board's only, and only the version's own files (no API of HQ's: dev mode's mock data)
 export async function serveTry(req: IncomingMessage, res: ServerResponse, id: number) {
-  const host = String(req.headers.host ?? '').toLowerCase();
-  if (!boardOn(req, host)) return void res.writeHead(403, { 'content-type': 'text/plain' }).end('not allowed');
-  // No service worker on a try host: a version's own one could catch the preview login's code on its way in
-  if (req.headers['service-worker'] === 'script')
-    return void res.writeHead(403, { 'content-type': 'text/plain' }).end('no service workers on a version');
+  if (!opened(req, res, 'a version')) return;
   const s = live(id);
   if (!s) return void res.writeHead(404, { 'content-type': 'text/plain' }).end('This version was cleared.');
-  // HQ's viewer frames it; nothing else may
-  res.setHeader('content-security-policy', `frame-ancestors 'self' ${ORIGIN}`);
-  res.setHeader('cache-control', 'no-cache');
   const read = reader(s.base!, overlayOf(s));
   const path = new URL(req.url ?? '/', 'http://x').pathname.slice(1);
   if (!path.startsWith('products/_cycles/'))
@@ -110,10 +95,3 @@ export async function serveTry(req: IncomingMessage, res: ServerResponse, id: nu
   const body = !file || file.includes('..') ? null : await read(file).catch(() => null);
   res.writeHead(body ? 200 : 404, { 'content-type': (file && typeOf(file)) ?? 'application/octet-stream' }).end(body);
 }
-const decoded = (path: string) => {
-  try {
-    return decodeURIComponent(path);
-  } catch {
-    return null;
-  }
-};

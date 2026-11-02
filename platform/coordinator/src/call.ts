@@ -437,8 +437,8 @@ The call's notes, its page in the board's Notebook, are yours to work as the boa
 its own strokes, never yours: write down each change it asks for with write_down. By default a note carries a picture of
 what the change is about, from one of the board's own notes or from the board's screen. Leave the picture out only for a
 change about the notes themselves or when there's nothing to show; mark_notes circles, points at or highlights what you
-mean; change_note fixes a note of yours, moves or deletes what's there (read_notes first for anything you didn't just
-write). When the board asks to see a few versions of a change, write it down and start a try on it: its owner builds
+mean; draw_picture puts a diagram or chart of yours in them as a picture, when the board wants to see something drawn;
+change_note fixes a note of yours, moves or deletes what's there (read_notes first for anything you didn't just write). When the board asks to see a few versions of a change, write it down and start a try on it: its owner builds
 them, and they appear under it.
 The board scribbles on its screen to show you things ("move this here"): each scribble comes with its turn as a note of
 its own, its picture the page around the ink. It's for you: nothing of it goes in the call's notes by itself. From what

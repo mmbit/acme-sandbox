@@ -4,7 +4,7 @@ import { randomBytes } from 'node:crypto';
 import { keepPicture } from './notebookpictures.ts';
 import { emptyGroup, typedBoxes } from '../../hq/shell/ink/notebookparts.js';
 import { scrapSize } from '../../hq/shell/ink/notebookstack.js';
-import { ROOM, UNIT_W, unitOf } from '../../hq/shell/ink/scrapunit.js';
+import { NOTE_TEXT, ROOM, bodyOf, unitOf } from '../../hq/shell/ink/scrapunit.js';
 import { findAgent } from './jobs.ts';
 import { pictureSize } from '../../../shared/pictures/size.ts';
 import { BOARD } from './ink/book.ts';
@@ -85,16 +85,16 @@ export function addWords(
 ) {
   const texts = typedNote(words);
   if (isRefused(texts)) return texts;
-  return addUnit(p, 'note', who, { ...emptyGroup, texts }, more);
+  const parts = { ...emptyGroup, texts };
+  return insertGroup(p, 'note', who, parts, { ...more, h: bodyOf(parts) + ROOM });
 }
 // What someone puts on a page as a unit of its own, with room to write under it
 const addUnit = (p: NotebookPage, kind: 'scrap' | 'note', who: string, parts: Parts, more: object) => {
   const unit = unitOf(parts, ROOM);
   return insertGroup(p, kind, who, unit.parts as Parts, { ...more, h: unit.h });
 };
-const NOTE_INK = '#1d1a2f'; // (a typed note's ink: the post-it's, shared/review/postit.js)
-// A typed note's words as boxes from the unit's top-left, a unit wide, or the refusal (a call's agent's words typed
-// again: ink/callpage.ts). Each box a line of its own id, which a call's page ties its ask to (ink/callasks.ts)
-export const typedNote = (words: string) =>
-  textsOf(typedBoxes(words, { x: 0, w: UNIT_W, color: NOTE_INK }).map(t => ({ ...t, id: lineId() })))!;
-const lineId = () => randomBytes(6).toString('hex');
+// A typed note's words as boxes from the unit's top, WORDS_IN from its sides as HQ's page lays them (one laid anew
+// there reads as the board's change, and is saved over a newer one), or the refusal. Each box a line of its own id
+// (lineId), which a call's page ties its ask to (ink/callasks.ts).
+export const typedNote = (words: string) => textsOf(typedBoxes(words, NOTE_TEXT).map(t => ({ ...t, id: lineId() })))!;
+export const lineId = () => randomBytes(6).toString('hex');

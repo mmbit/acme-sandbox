@@ -82,22 +82,23 @@
   align-self: stretch;
   margin: 3px 5px;
 }
+/* (its size the device's: book.css --bk-key, slimmer on a phone.) */
 #book .bk-column .bk-btn {
-  width: 40px;
-  height: 40px;
+  width: var(--bk-key);
+  height: var(--bk-key);
   border-radius: 10px;
 }
 #book .bk-column .bk-btn svg {
-  width: 22px;
-  height: 22px;
+  width: var(--bk-key-icon);
+  height: var(--bk-key-icon);
 }
-/* (44 px to the touch, past the toolbar's edge) */
+/* (--bk-touch across, past the toolbar's edge) */
 #book .bk-column .bk-btn::after {
-  inset: -2px;
+  inset: -2px calc((var(--bk-key) - var(--bk-touch)) / 2);
 }
 /* where the page is, between its arrows: "2/8" */
 #book .bk-column .bk-btn.bk-where {
-  height: 36px;
+  height: calc(var(--bk-key) - 4px);
   font: 600 12px/1 var(--bk-ui-font);
   font-variant-numeric: tabular-nums;
   color: var(--bk-ui-ink);
@@ -108,7 +109,7 @@
 #book .bk-column .bk-guest-marked {
   width: 100%;
   height: auto;
-  min-height: 40px;
+  min-height: var(--bk-key);
   padding: 6px 2px;
   box-sizing: border-box;
   display: flex;
@@ -117,7 +118,7 @@
   gap: 2px;
   white-space: normal;
   text-align: center;
-  font-size: 11px;
+  font-size: var(--bk-key-words);
   line-height: 1.15;
   hyphens: auto;
   overflow-wrap: anywhere;
@@ -142,7 +143,7 @@
 }
 /* (an icon key only: a word key grows to its lines in every fit) */
 #book .bk-column[data-fit='tight'] .bk-btn:not(.bk-text) {
-  height: 36px;
+  height: calc(var(--bk-key) - 4px);
 }
 #book .bk-column[data-fit='tight'] .bk-island hr {
   margin-block: 2px;

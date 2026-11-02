@@ -79,9 +79,10 @@ function resize(w, h, dpr) {
 // ---------------------------------------------------------------- resolution
 // Render px per CSS px: as high as the device keeps up with. A frame is late when the GPU hadn't finished the last one
 // by the time it starts (its fence: sync objects work in Safari, timer queries don't), or when it comes more than
-// SLOW_MS after the last (a GPU that stalls the CPU instead, or the CPU itself). Mostly late over a window: a step
-// down, and that scale is remembered as too slow until the next resize; late no more than a hitch or two over a few
-// windows: a step back up (a heavy moment passed, the phone cooled).
+// SLOW_MS after the last (a GPU that stalls the CPU instead, or the CPU itself), counted past the spacing a shell's cap
+// on the rate adds to 60 fps (a call on, a window over the deck). Mostly late
+// over a window: a step down, and that scale is remembered as too slow until the next resize; late no more than a
+// hitch or two over a few windows: a step back up (a heavy moment passed, the phone cooled).
 const RS_MAX = 3, RS_MIN = 1, RS_STEP = 0.25, WINDOW = 40, LATE = WINDOW / 4, HITCH = 2, QUIET = 3, SLOW_MS = 40;
 // MSAA samples: at 2 px per CSS px and up, 2 smooth the lines as well as 4 did at 1.5, and halve the multisampled
 // targets (at a phone's 3, 4× float colour and depth came to ~140 MB)
@@ -95,10 +96,10 @@ function scaleTo(rs) {
 // before a frame: how the last one went (dev frames, dt 0, aren't judged: tests get the same pixels every time; nor
 // is the first after a pause or a hidden page)
 function judge() {
-  const now = performance.now(), gap = now - fit.at;
+  const now = performance.now(), gap = now - fit.at, spaced = Math.max(0, 1000 / shell.capped() - 1000 / 60);
   fit.at = now;
   if (fit.fence) {
-    if (camDt > 0 && gap < 1000) { fit.n++; fit.busy += gl.getSyncParameter(fit.fence, gl.SYNC_STATUS) !== gl.SIGNALED || gap > SLOW_MS; }
+    if (camDt > 0 && gap < 1000) { fit.n++; fit.busy += gl.getSyncParameter(fit.fence, gl.SYNC_STATUS) !== gl.SIGNALED || gap > SLOW_MS + spaced; }
     gl.deleteSync(fit.fence); fit.fence = null;
   }
   if (fit.held || fit.n < WINDOW) return;

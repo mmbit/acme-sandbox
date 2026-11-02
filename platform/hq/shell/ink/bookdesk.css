@@ -154,18 +154,20 @@
   left: 0;
   right: 0;
   text-align: center;
-  color: var(--bk-ink);
-  caret-color: var(--bk-ink);
+  /* (in the card's own ink, as its rows are: the page's ink hardly showed on a dark card. Board, call 178.) */
+  color: var(--bk-ui-ink);
+  caret-color: var(--bk-ui-ink);
   cursor: text;
-  /* (the line it's written on: faint until it's being written on) */
-  background: linear-gradient(var(--bk-edge), var(--bk-edge)) no-repeat center bottom 20% / calc(100% - 20px) 1.5px;
+  /* (the line it's written on, plain enough to read as one to write on, ink while it's written on: board, call 178) */
+  background: linear-gradient(var(--bk-ui-muted), var(--bk-ui-muted)) no-repeat center bottom 20% / calc(100% - 20px)
+    1.5px;
   -webkit-tap-highlight-color: transparent;
 }
 #book .bk-title input:focus {
-  background-image: linear-gradient(var(--bk-ink), var(--bk-ink));
+  background-image: linear-gradient(var(--bk-ui-ink), var(--bk-ui-ink));
 }
 #book .bk-title input::placeholder {
-  color: var(--bk-muted);
+  color: var(--bk-ui-muted);
   opacity: 1;
 }
 #book .bk-title input[aria-invalid='true'] {
@@ -176,7 +178,7 @@
 #book .bk-title input {
   box-sizing: border-box;
   height: var(--bk-title-h);
-  padding: 0 10px;
+  padding: 0 34px;
   font: 700 14px/var(--bk-title-h) var(--bk-font, system-ui, sans-serif);
 }
 /* 16px on a touch screen: under it iOS Safari zooms in on a focused field */
@@ -185,6 +187,21 @@
   #book .bk-title input {
     font-size: 16px;
   }
+}
+/* (the field's pencil, at its line's right end: the title can be changed.) */
+#book .bk-title-pencil {
+  position: absolute;
+  top: calc(var(--bk-title-h) / 2 - 9px);
+  right: 14px;
+  width: 16px;
+  height: 16px;
+  color: var(--bk-ui-muted);
+  pointer-events: none;
+}
+#book .bk-title-pencil svg {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 #book .bk-title-error {
   display: block;

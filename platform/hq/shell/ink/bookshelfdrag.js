@@ -42,7 +42,7 @@ export function drags(s, dropped) {
     // (the click that follows a drop opens nothing)
     s.swallow = true;
     setTimeout(() => (s.swallow = false));
-    dropped(from, to);
+    dropped(from, to, d.grid.dataset.chapter);
   };
   addEventListener('pointerup', up);
   addEventListener('pointercancel', up);

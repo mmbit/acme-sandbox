@@ -120,6 +120,27 @@
 #book .bk-far-lost {
   cursor: pointer;
 }
+/* a notebook's chapters, split as the book is (bookshelftiles.js): each under its bookmark, the tab in the bookmarks'
+   own paper and lime (bookmarks.css) standing on a line of page edge, lit where the page shown is */
+#book .bk-far-chapter + .bk-far-chapter {
+  margin-top: 30px;
+}
+#book .bk-far-mark {
+  display: flex;
+  margin: 4px 0 14px;
+  border-bottom: 1px solid var(--bk-mk-edge);
+}
+/* (its tab drawn as a bookmark is, bookmarks.css .bk-mk-tab, standing on the line.) */
+#book .bk-far-mark h3.bk-mk-tab {
+  margin: 0 0 -1px;
+  padding: 9px 16px 8px;
+  border-bottom-color: transparent;
+  border-radius: 8px 8px 0 0;
+}
+#book .bk-far-none.bk-far-empty {
+  margin: 6px 0 0 2px;
+  text-align: left;
+}
 
 /* ---- the grids: as many columns as fit (bookshelf.js sets --cols and --cell) */
 #book .bk-grid {

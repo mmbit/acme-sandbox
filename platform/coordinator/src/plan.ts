@@ -13,6 +13,7 @@ import { addNeed, newThread } from './newthread.ts';
 import { boardHold, drawnWords } from './boardheld.ts';
 import { checkThreadName, noProject, placeOf, projectClash, taskClash, threadClash } from './names.ts';
 import { newId } from './regroup.ts';
+import { needDropped } from './threadneeds.ts';
 import { DESK, OPEN_JOBS, OPEN_PRS, nameOf, type Named } from './jobs.ts';
 // (who may change a plan: threadorder.ts, which the claim's refusals read too.)
 import { refusal, inNeedsOrder } from './threadorder.ts';
@@ -131,6 +132,7 @@ export function unneed(id: string, needs: string, agent: string, why: unknown) {
   const [from, to] = [own.thread.id, needed.id];
   if (!db.prepare('delete from thread_needs where thread = ? and needs = ?').run(from, to).changes)
     return `${from} doesn't need ${to}`;
+  needDropped(from, to); // (its spell)
   planChange({ project: own.project.id, thread: from, what: `no longer needs ${to}: ${reason}`, by: agent });
   return { ok: true as const };
 }

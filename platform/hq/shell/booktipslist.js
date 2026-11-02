@@ -159,7 +159,7 @@ export const TIPS = [
     part: 'The pen and the page',
     title: 'Hold the pen still and talk to add your words',
     words:
-      'Hold the Pencil still on HQ and talk: what you say goes into the notebook with your mark. In the notebook, hold a press still on the page to leave words there.',
+      'Hold the Pencil still on HQ and talk: what you say goes into the notebook with your mark. In the notebook, tap the mic on the rail, talk, and tap it again: your words land under what you wrote last.',
     from: 'shared/review/pentouch.js, platform/hq/shell/ink/bookvoice.js',
     picture: 'tip-voice',
     alt: 'The Pencil held still on HQ, the words said written out beside the mark',
@@ -175,7 +175,7 @@ export const TIPS = [
   {
     part: 'The pen and the page',
     title: 'Paste or drop a picture on a page',
-    words: `Copy a picture anywhere and paste it in the notebook (${MOD}+V), or drop a picture file on it: it lands on the page you’re on.`,
+    words: `Copy a picture anywhere and paste it in the notebook (${MOD}+V, or with Select, tap the paper and then Paste), or drop a picture file on it: it lands on the page you’re on.`,
     from: 'platform/hq/shell/ink/booktape.js',
     picture: 'tip-paste',
     alt: 'A picture pasted onto the page as a print',

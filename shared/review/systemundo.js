@@ -23,13 +23,13 @@ export function systemUndo(page, { focused = false } = {}) {
       if (focused) el.focus({ preventScroll: true });
       return;
     }
-    const focusedBefore = document.activeElement,
-      before = el.textContent.length;
+    const focusedBefore = document.activeElement;
+    const lengthBefore = el.textContent.length;
     el.focus({ preventScroll: true });
     step(el, state);
     step(el, state);
     run(state, 'undo');
-    state.armed = el.textContent.length === before + 1;
+    state.armed = el.textContent.length === lengthBefore + 1;
     if (!focused) giveBack(el, focusedBefore);
   };
   const stop = () => {

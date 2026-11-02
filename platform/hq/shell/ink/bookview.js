@@ -2,8 +2,8 @@
 // under it to match (so the page has no edge anywhere), a point on screen as the page's px, a quick slide to a place,
 // and its dry ink drawn sharp again at the zoom it comes to rest at.
 //
-// book (bookpages.js): { desk, world, views, cur, size, pan, scale, drawn }. The paper's px are CSS px from the desk's
-// top-left; the page's are its own (bookrow.js).
+// book (bookpages.js): { desk, world, views, cur, size, pan, scale, drawn, heldPastEnd }. The paper's px are CSS px
+// from the desk's top-left; the page's are its own (bookrow.js).
 import { dotsShown, drawScale, pageAt, shownBox } from './bookrow.js';
 
 // the paper's dot grid, one dot every DOT_PX of the page (bookdesk.css)
@@ -30,9 +30,12 @@ export function setView(book, { pan = book.pan, scale = book.scale } = {}) {
   const zoomed = scale !== book.scale;
   book.scale = scale;
   // (scrolled on past the page's foot by about a screen, never moved there by itself: a unit's room dragged shorter
-  // leaves the page where it is, kept on it once let go.)
-  const end = (v.page.h ?? 0) - Math.min(book.size.h, FOOT_SHOWN) / scale;
-  book.pan = { x: 0, y: Math.max(0, v.page.resizing ? pan.y : Math.min(pan.y, end)) };
+  // leaves the page where it is, past its end, and from there it scrolls back up but no further down.)
+  const end = (v.page.h ?? 0) - Math.min(book.size.h, FOOT_SHOWN) / scale,
+    held = v.page.resizing || book.heldPastEnd === v.page ? book.pan.y : 0,
+    lowest = Math.max(end, held);
+  book.pan = { x: 0, y: Math.max(0, Math.min(pan.y, lowest)) };
+  book.heldPastEnd = book.pan.y > end ? v.page : null;
   draw(book);
   if (zoomed) {
     clearTimeout(book.rest);

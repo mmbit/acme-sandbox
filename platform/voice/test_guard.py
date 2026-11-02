@@ -319,7 +319,7 @@ class HqTools(unittest.TestCase):
         self.assertEqual([t['name'] for t in json.loads(r.stdout)['result']['tools']], ['job', 'replace', 'expedite', 'add', 'reach', 'search', 'history', 'call', 'intercom', 'eta', 'estimate', 'when', 'report', 'git', 'manage', 'waiting', 'hang_up', 'screen', 'sketch',
                                                                                 'ask_to_see', 'draw', 'open_work', 'drive', 'write_down', 'title_notes',
                                                                                 'read_notes', 'mark_notes', 'change_note', 'try',
-                                                                                'name_voice',
+                                                                                'draw_picture', 'name_voice',
                                                                                 'save_voice', 'forget_voice'])
         self.assertTrue(out[1]['result']['isError'])
 

@@ -61,13 +61,14 @@ async function jobsOn(lately: Merge[], turn: Turn) {
 const SLICE = 1000;
 
 // (this file's jobs read from db.ts jobs_listed, or jobs_report where it has their columns: a row's brief and report are
-// seconds off a cold disk)
+// seconds off a cold disk; downtime)
 const jobsById = (ids: number[]) =>
   (
     db
       .prepare(
         `select id, kind, agent, engine, pr, round, created, after, thread, coalesce(branch, 'job/' || id) branch,
-        coalesce(seq, id) seq, finished from jobs indexed by jobs_listed where id in (select value from json_each(?))`,
+        coalesce(seq, id) seq, finished, downtime from jobs indexed by jobs_listed
+        where id in (select value from json_each(?))`,
       )
       .all(JSON.stringify(ids)) as (Omit<Job, 'created' | 'finished'> & { created: string; finished: string | null })[]
   ).map(r => ({ ...r, created: Date.parse(r.created), finished: r.finished === null ? null : Date.parse(r.finished) }));

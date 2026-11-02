@@ -3,7 +3,7 @@ import { assignments } from './costowners.ts';
 import { costPhase, phaseOf } from './taskphases.ts';
 import { db } from './db.ts';
 import { workBranch } from './jobs.ts';
-import { featurePlan, canonicalThread } from './featureplan.ts';
+import { featurePlan } from './featureplan.ts';
 import { emptyCost, addSpend, addCost, type Cost, jobSpends } from './costspend.ts';
 
 export type CostJob = {
@@ -26,15 +26,7 @@ type Book = ReturnType<typeof costBook>;
 function costBook() {
   const plan = featurePlan();
   const threads = db.prepare('select id, project from threads').all() as { id: string; project: string }[];
-  // jobs_play (db.ts) covers these columns, so the scan reads no job's brief or report pages
-  const jobs = db
-    .prepare(
-      `select j.id, j.thread, ${workBranch('j')} branch, j.kind, j.stage, j.pr, j.round,
-    exists(select 1 from card_jobs c join jobs card on card.id = c.job where ${workBranch('card')} = ${workBranch('j')}) preview,
-    exists(select 1 from review_fix_tasks f where f.job = j.id union select 1 from review_followup_jobs f where f.job = j.id) fix
-    from jobs j indexed by jobs_play`,
-    )
-    .all() as CostJob[];
+  const jobs = costJobs();
   const assigned = assignments(jobs);
   const readSpend = jobSpends();
   const own = new Map(threads.map(thread => [thread.id, emptyCost()]));
@@ -55,17 +47,65 @@ function costBook() {
       }
     }
   const grouped = groupCosts(plan, own);
-  return { plan, threads, own, grouped, reviewRounds, jobs, assigned, readSpend, intervals: new Map<string, Cost>() };
+  return { plan, threads, own, grouped, reviewRounds, jobs, assigned, readSpend, ...lookups(plan, threads) };
 }
 
-const featureOf = (thread: string, book: Book) => book.plan.membership.get(thread)?.feature ?? thread;
+// Every job with what its cost's phase and owner need. jobs_play (db.ts) covers these columns, so the scan reads no
+// job's brief or report pages. The previews' branches and the fixes are read once each and looked up per job: a
+// subquery per job would read them again for every job
+function costJobs(): CostJob[] {
+  const previews = new Set(
+    (
+      db.prepare(`select ${workBranch('card')} branch from card_jobs c join jobs card on card.id = c.job`).all() as {
+        branch: string;
+      }[]
+    ).map(row => row.branch),
+  );
+  const fixes = new Set(
+    (
+      db.prepare('select job from review_fix_tasks union select job from review_followup_jobs').all() as {
+        job: number;
+      }[]
+    ).map(row => row.job),
+  );
+  return (
+    db
+      .prepare(
+        `select j.id, j.thread, ${workBranch('j')} branch, j.kind, j.stage, j.pr, j.round from jobs j indexed by jobs_play`,
+      )
+      .all() as Omit<CostJob, 'preview' | 'fix'>[]
+  ).map(job => ({ ...job, preview: previews.has(job.branch) ? 1 : 0, fix: fixes.has(job.id) ? 1 : 0 }));
+}
+
+// Each feature's members, its milestones and the threads' aliases, read once for the book's every report, not again
+// per report
+function lookups(plan: ReturnType<typeof featurePlan>, threads: { id: string }[]) {
+  const aliases = new Map(
+    (db.prepare('select old, id from thread_aliases').all() as { old: string; id: string }[]).map(row => [
+      row.old,
+      row.id,
+    ]),
+  );
+  const canonical = (id: string) => aliases.get(id) ?? id;
+  const featureOf = (thread: string) => plan.membership.get(thread)?.feature ?? thread;
+  const milestones = new Map<string, string>();
+  for (const row of plan.milestones) {
+    const key = `${row.milestone} ${canonical(row.thread)}`;
+    if (!milestones.has(key)) milestones.set(key, row.at);
+  }
+  const members = Map.groupBy(
+    threads.map(thread => thread.id),
+    featureOf,
+  );
+  return { canonical, featureOf, members, milestones, intervals: new Map<string, Cost>() };
+}
+
 function featureReport(id: string, book: Book) {
-  id = canonicalThread(id);
-  const feature = featureOf(id, book);
-  const { plan, threads, own, grouped, reviewRounds } = book;
-  const members = threads.filter(thread => featureOf(thread.id, book) === feature).map(thread => thread.id);
-  const milestone = (kind: string) =>
-    plan.milestones.find(row => canonicalThread(row.thread) === feature && row.milestone === kind)?.at ?? null;
+  id = book.canonical(id);
+  const feature = book.featureOf(id);
+  const { plan, own, grouped, reviewRounds } = book;
+  const members = book.members.get(feature) ?? [];
+  const milestone = (kind: string) => book.milestones.get(`${kind} ${feature}`) ?? null;
   const firstDelivery = milestone('delivered'),
     approved = milestone('approved');
   if (firstDelivery && !book.intervals.has(feature))
@@ -92,7 +132,7 @@ function featureReport(id: string, book: Book) {
 function projectReport(id: string, book: Book) {
   const { threads, grouped, plan } = book;
   const members = threads.filter(thread => thread.project === id);
-  const roots = [...new Set(members.map(member => featureOf(member.id, book)))];
+  const roots = [...new Set(members.map(member => book.featureOf(member.id)))];
   const used = emptyCost();
   for (const root of roots) addCost(used, grouped.get(root)!);
   const expected = roots.flatMap(root => plan.expected.get(root) ?? []);

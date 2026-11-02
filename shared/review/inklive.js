@@ -1,16 +1,17 @@
-// The pen's live line on its canvases (ink.js's pen): what each pointer event repaints, in one box of whole device px,
-// filled from the stroke's own shapes (inkshape.js's, which draw() fills too) so the live line is the dry one, and the
-// tail drawn ahead of it.
+// The pen's live line on its canvases (ink.js's pen): what a frame's pointer events repaint, in one box of whole device
+// px, filled from the stroke's own shapes (inkshape.js's, which draw() fills too) so the live line is the dry one, and
+// the tail drawn ahead of it.
 import { HALO, HALO_ALPHA, band, disc, outline, radius } from './inkshape.js';
 
-// What a pointer event repaints, for a canvas k device px to the CSS px: one box of whole device px around the new
-// points' discs and bands, the tail drawn last time (was) and the one drawn now (tail), and their white edge (grow);
+// What a frame's pointer events repaint, for a canvas k device px to the CSS px: one box of whole device px around the
+// new points' discs and bands, the tail drawn last time (was) and the one drawn now (tail), and their white edge (grow);
 // in it, the stroke's every disc and band that reaches into it, as outline() has them, and the new tail. Inside the
 // box the canvas is cleared and those are filled again together, so each pixel there is filled once, by the very
 // shapes and in the very way draw() fills the whole stroke: pieces filled one over another would add up their soft
 // edges, and the line would thin and lighten as it goes dry. A tail's pixels are wiped by the next event's box. Only
 // a few shapes are filled, each found by a box test over the stroke's points (cheap, though it grows with the line).
-// (one box per event, and the tail)
+// A marker scribbled over one place has most of its passes in any box, so it's filled once a frame, never once an
+// event: a Pencil's four a frame each filling much the same box made a long fill fall behind the pen.
 function piece(stroke, kept, { was = null, tail = null, grow = 0, k = 1 } = {}) {
   const pts = stroke.points,
     size = stroke.size,
@@ -43,15 +44,34 @@ function piece(stroke, kept, { was = null, tail = null, grow = 0, k = 1 } = {}) 
 }
 
 // The line's new points on its canvases, and its tail (ahead) in place of the last (null: all of it again, a
-// rectangle's)
-export function show(line, kept, tail = null) {
-  if (!kept) return paint(line, null, outline(line.stroke), line.halo ? outline(line.stroke, HALO) : '');
-  const was = line.tail;
+// rectangle's), painted at the next frame with every other event's before it, or now (the lift's)
+export function show(line, kept, tail = null, now = false) {
+  if (!kept) {
+    stop(line);
+    return paint(line, null, outline(line.stroke), line.halo ? outline(line.stroke, HALO) : '');
+  }
   line.tail = tail;
+  (line.waiting ??= []).push(...kept);
+  if (now) return shown(line);
+  line.frame ??= requestAnimationFrame(() => shown(line));
+}
+// What's waiting, painted: the tail drawn last (drawn) wiped and the newest put
+function shown(line) {
+  const kept = line.waiting ?? [],
+    was = line.drawn ?? null,
+    tail = line.tail;
+  stop(line);
+  line.drawn = tail;
   if (!kept.length && !was && !tail) return;
   const k = line.g.getTransform().a,
     p = piece(line.stroke, kept, { was, tail, grow: line.halo ? HALO : 0, k });
   paint(line, p.box, p.ink, p.halo);
+}
+// What's waiting dropped, its frame with it: a line cancelled is wiped, and nothing may paint it again after
+export function stop(line) {
+  cancelAnimationFrame(line.frame);
+  line.frame = null;
+  line.waiting = null;
 }
 
 // The samples a pointer event brings: those a fast hand left between two frames, else the event itself. The list can

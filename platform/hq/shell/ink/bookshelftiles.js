@@ -1,8 +1,11 @@
-// The overview's page tiles as HTML (bookshelf.js draws them; a notebook on the Shelf: bookshelfbooks.js), and its
-// icons.
+// The overview's page tiles as HTML, under their chapters' tabs (bookshelf.js draws them; a notebook on the Shelf:
+// bookshelfbooks.js), and its icons.
 import { esc } from '../../util.js';
 import { lineIcon as svg } from './bookui.js';
 import { untitledPage } from './bookhead.js';
+import { word } from './bookscope.js';
+import { tabsOf } from './notebookchapters.js';
+import { chapterTab } from './bookmarks.js';
 
 export const ICONS = {
   shelf: svg('<path d="M5 4v16M9.5 4v16"/><path d="M13.6 5.3l3.8-1 3.7 14.4-3.8 1z"/><path d="M3 20.2h18"/>'),
@@ -42,3 +45,30 @@ export function pageTile(p, i, { here, drag = false, archived = false, manage = 
       : ''
   }</div>`;
 }
+
+// A notebook's pages split as the book is: each of its chapters in the book's order under its bookmark's tab
+// (bookmarks.js chapterTab), then its pages' grid, numbered within it (a page dragged moves within its chapter); a
+// chapter with no pages yet a dim tab and a word. book: the notebook ({ kind, round, asks }); here: the page shown (its
+// id); adds: New page at Sketch's end.
+export function chapterGrids(book, pages, { here, drag, manage, adds }) {
+  const shown = pages.find(p => String(p.id) === String(here))?.chapter;
+  return tabsOf(book)
+    .map(c => {
+      const in_ = pages.filter(p => p.chapter === c),
+        add = adds && c === 'sketch';
+      return `<section class="bk-far-chapter" role="presentation"><div class="bk-far-mark">${chapterTab(book, c, {
+        lit: c === shown,
+        empty: !in_.length,
+        tag: 'h3',
+      })}</div>${
+        in_.length || add
+          ? `<div class="bk-grid" data-grid="pages" data-chapter="${c}" role="presentation">${in_
+              .map((p, i) => pageTile(p, i, { here, drag, manage }))
+              .join('')}${add ? newTile() : ''}</div>`
+          : `<p class="bk-far-none bk-far-empty">${esc(word('noPages'))}</p>`
+      }</section>`;
+    })
+    .join('');
+}
+const newTile = () =>
+  `<div class="bk-tile bk-tile-new" role="listitem"><button type="button" class="bk-tile-open" data-new aria-label="${word('newPage')}"><span class="bk-tile-paper">${ICONS.add}</span><span class="bk-tile-name"><span>${word('newPage')}</span></span></button></div>`;

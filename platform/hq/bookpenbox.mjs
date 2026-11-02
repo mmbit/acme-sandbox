@@ -2,8 +2,9 @@
 // The pen's card offers the pen, the pencil, the brush and the marker, the pen's twelve colours and the marker's six
 // (shell/ink/bookpalette.js): each nib and each of its colours picked from the card draws a line, saved as that ink
 // (its colour, its width, the pencil's and the marker's see-through), drawn on the book's paper in its colour and in
-// Lyra's picture of the page (the coordinator's bookrender.ts) in the very same one. Only the pen's own line is a
-// gesture: the pencil's hatching stays ink.
+// the agent's picture of the page (the coordinator's bookrender.ts) in the very same one. Each ink's card is shot with
+// its colours and widths. Only the pen's own line is a gesture: the pencil's hatching stays ink. (the agent's picture
+// and the cards' shots)
 import assert from 'node:assert/strict';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -30,34 +31,41 @@ const LEFT = 40,
   DOWN = 40,
   LONG = 14;
 
-// What a story draws: [row, ink, its colours]. With a mouse every ink in every colour; with the Pencil (a lighter
-// run, for the iPad's memory) each nib in four of the pen's colours, all twelve among them, and the marker in its six.
-const plan = pencil =>
-  INKS.map((ink, row) => [row, ink, pencil && ink.colours === PENS ? PENS.slice(row * 4, row * 4 + 4) : ink.colours]);
+// What a story draws: [row, ink, its colours]. With a mouse every ink in every colour; on the iPad (a lighter run, for
+// its memory) the pen's colours shared out among its nibs, every one drawn by one of them, and the marker in its six.
+const NIB_COUNT = INKS.filter(ink => ink.colours === PENS).length,
+  SHARE = Math.ceil(PENS.length / NIB_COUNT);
+const plan = onIpad =>
+  INKS.map((ink, row) => [
+    row,
+    ink,
+    onIpad && ink.colours === PENS ? PENS.slice(row * SHARE, (row + 1) * SHARE) : ink.colours,
+  ]);
 
 export function penBoxStories(c) {
   return {
-    'pen box: every nib and colour draws, saves and shows the same for Lyra, with a mouse': browser =>
+    "pen box: every nib and colour draws, saves and shows the same in the agent's picture, with a mouse": browser =>
       everyInk(browser, c, false),
-    'pen box: every nib and colour draws, saves and shows the same for Lyra, with the Pencil on the iPad mini':
+    "pen box: every nib and colour draws, saves and shows the same in the agent's picture, with the Pencil on the iPad mini":
       browser => everyInk(browser, c, true),
     "pen box: the pencil's scribble stays ink, where the pen's scratches out": browser => scribbles(browser, c),
   };
 }
 
-async function everyInk(browser, c, pencil) {
-  const free = freePage(c);
-  const opened = pencil ? await mini(browser, c, { viewport: MINI }) : await onDesk(browser, c, { viewport: DESKTOP });
+async function everyInk(browser, c, onIpad) {
+  const free = freePage(c),
+    device = onIpad ? 'mini' : 'desktop';
+  const opened = onIpad ? await mini(browser, c, { viewport: MINI }) : await onDesk(browser, c, { viewport: DESKTOP });
   const { page, errors, done } = opened;
-  const tap = async locator => (pencil ? opened.pen.tap(middleOf(await locator.boundingBox())) : locator.click());
+  const tap = async locator => (onIpad ? opened.pen.tap(middleOf(await locator.boundingBox())) : locator.click());
   try {
     const paper = await paperBox(page),
       top = Math.max(await clearBelow(page), paper.y + 160) + DOWN,
       drawn = [];
-    for (const [row, ink, colours] of plan(pencil))
+    for (const [row, ink, colours] of plan(onIpad))
       for (const [col, colour] of colours.entries()) {
         await card(page, tap);
-        if ((await item(page, ink.name).getAttribute('aria-pressed')) !== 'true') await tap(item(page, ink.name));
+        await pickInk(page, tap, ink.name);
         // (the marker picked from the pen's card opens its own)
         if (!(await item(page, colour.name).isVisible())) await card(page, tap);
         // (the card stays open for a width too: the press on the paper puts it away)
@@ -65,23 +73,28 @@ async function everyInk(browser, c, pencil) {
         const x = paper.x + LEFT + col * ACROSS,
           y = top + row * DOWN,
           points = [0, 0.5, 1].map(f => [x + f * LONG, y]);
-        // (in one go in the page: on a loaded machine a mouse's moves come a second apart, a press held for a voice note)
-        await pressAlong(page, points, { type: pencil ? 'pen' : 'mouse' });
+        // (in one go in the page: on a loaded machine a mouse's moves come a second apart)
+        await pressAlong(page, points, { type: onIpad ? 'pen' : 'mouse' });
         drawn.push({ ink, colour, at: [x + LONG / 2, y] });
         await savedWhere(c, free.id, p => p.ink.length === drawn.length);
       }
     await page.mouse.move(paper.x + 8, paper.y + 8);
-    await page.waitForTimeout(c.settle ?? 600);
+    await page.waitForTimeout(c.settle);
     const saved = c.pages.find(p => p.id === free.id);
     assert.deepEqual(
       saved.ink.map(s => [s.color, s.size, s.alpha]),
       drawn.map(d => [d.colour.color, d.ink.size, d.ink.alpha]),
       'each line saved in its colour, width and alpha',
     );
-    await c.shot(`book-penbox-${pencil ? 'mini' : 'desktop'}`, page);
-    await sameForLyra(page, saved, drawn);
-    await card(page, tap);
-    await c.shot(`book-penbox-${pencil ? 'mini' : 'desktop'}-card`, page);
+    await c.shot(`book-penbox-${device}`, page);
+    await sameInPicture(page, saved, drawn);
+    // (each ink's card: the pen's twelve colours in two rows, each nib's and the marker's widths)
+    for (const ink of INKS) {
+      await card(page, tap);
+      await pickInk(page, tap, ink.name);
+      await card(page, tap);
+      await c.shot(`book-penbox-${device}-card-${ink.name.toLowerCase()}`, page);
+    }
     assert.deepEqual(errors, []);
   } finally {
     await done();
@@ -89,18 +102,18 @@ async function everyInk(browser, c, pencil) {
   }
 }
 
-// The book's paper and Lyra's picture of the page: each line in the same colour on each
-async function sameForLyra(page, saved, drawn) {
+// The book's paper and the agent's picture of the page: each line in the same colour on each
+async function sameInPicture(page, saved, drawn) {
   const book = await pixels(await page.screenshot()),
-    lyra = await lyraSees(saved);
+    agent = await agentSees(saved);
   for (const [i, d] of drawn.entries()) {
     const mid = saved.ink[i].points[Math.floor(saved.ink[i].points.length / 2)],
       want = d.colour.color,
       onBook = deepest(book, d.at),
-      onLyra = deepest(lyra.img, [(mid[0] - lyra.x) * lyra.k, (mid[1] - lyra.y) * lyra.k]);
+      onAgent = deepest(agent.img, [(mid[0] - agent.x) * agent.k, (mid[1] - agent.y) * agent.k]);
     const what = `${d.ink.name} in ${d.colour.name}`;
     same(onBook, blend(want, d.ink.alpha, onBook.paper), `${what} on the book's paper`);
-    same(onLyra, blend(want, d.ink.alpha, onLyra.paper), `${what} in Lyra's picture`);
+    same(onAgent, blend(want, d.ink.alpha, onAgent.paper), `${what} in the agent's picture`);
   }
 }
 
@@ -174,9 +187,14 @@ const card = async (page, tap) => {
   return open;
 };
 const item = (page, name) => page.locator('#book .bk-palette').getByRole('menuitemradio', { name, exact: true });
+// An ink picked in the pen's card, its card open after (another tool's ink opens its own)
+async function pickInk(page, tap, name) {
+  if ((await item(page, name).getAttribute('aria-pressed')) !== 'true') await tap(item(page, name));
+  assert.equal(await item(page, name).getAttribute('aria-pressed'), 'true', `${name}'s card open`);
+}
 
-// Lyra's picture of the page: { img, x, y, k } (the page's top-left and the picture's px a page px)
-async function lyraSees(saved) {
+// The agent's picture of the page: { img, x, y, k } (the page's top-left and the picture's px a page px)
+async function agentSees(saved) {
   const x = saved.x ?? 0,
     y = saved.y ?? 0,
     drawn = { x, y, w: saved.w, h: saved.h, ink: saved.ink, scraps: [] };

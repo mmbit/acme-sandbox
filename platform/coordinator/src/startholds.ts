@@ -1,6 +1,8 @@
 // What stood in the way of a ready job's start, over time, for hq estimate --calibration's line (threadwaits.ts): each
 // seat's state as the worker reported it (jobs.ts setSeat), a spell per state, and the worker's spells short of memory
-// (room.ts reportRoom's short and since). The seats table and room.ts keep only the last report, so these are the record.
+// (room.ts reportRoom's short and since), and its spells with every work slot taken (its capacity report's running and held
+// slots). The seats table and room.ts keep only the last report, so these are the
+// record.
 // A seat's spell: its state as reported ('ready', 'draining' at its drain level, 'sleeping' at a limit, 'closed',
 // 'login', 'paused') and whether it was paced (its week ahead of pace, so it took only work due before its reset). A
 // state lasts until the next report changes it; the worker reports every minute. Kept KEEP_MS after they end.
@@ -10,7 +12,8 @@ const KEEP_MS = 60 * 24 * 60 * 60_000;
 db.exec(`create table if not exists seat_spells (id integer primary key, seat text not null, engine text not null,
     state text not null, paced integer not null, began integer not null, ended integer);
   create index if not exists seat_spells_open on seat_spells (seat, ended);
-  create table if not exists room_spells (id integer primary key, began integer not null, ended integer)`);
+  create table if not exists room_spells (id integer primary key, began integer not null, ended integer);
+  create table if not exists slot_spells (id integer primary key, began integer not null, ended integer)`);
 
 type SeatSpell = { id: number; engine: string; state: string; paced: number };
 
@@ -50,6 +53,16 @@ export function roomReported(short: boolean, since: number | undefined, now = Da
   db.prepare('delete from room_spells where ended < ?').run(now - KEEP_MS);
 }
 
+// The worker's slots as its room report gave them: every one taken opens a
+// spell, unless one is open; a free one ends it
+export function slotsReported(full: boolean, now = Date.now()) {
+  const open = db.prepare('select id from slot_spells where ended is null').get() as { id: number } | undefined;
+  if (!full && open) db.prepare('update slot_spells set ended = ? where id = ?').run(now, open.id);
+  if (!full || open) return;
+  db.prepare('insert into slot_spells (began) values (?)').run(now);
+  db.prepare('delete from slot_spells where ended < ?').run(now - KEEP_MS);
+}
+
 // The spells over a span, and from when they say anything (null: nothing recorded yet)
 export function spellsOver(from: number, to: number, now = Date.now()) {
   const first = (db.prepare('select min(began) began from seat_spells').get() as { began: number | null }).began;
@@ -58,6 +71,9 @@ export function spellsOver(from: number, to: number, now = Date.now()) {
     .all(to, to + 1, from) as { engine: string; state: string; paced: number; began: number; ended: number | null }[];
   const short = db
     .prepare('select began, ended from room_spells where began < ? and coalesce(ended, ?) > ?')
+    .all(to, to + 1, from) as { began: number; ended: number | null }[];
+  const full = db
+    .prepare('select began, ended from slot_spells where began < ? and coalesce(ended, ?) > ?')
     .all(to, to + 1, from) as { began: number; ended: number | null }[];
   const end = (t: number | null) => t ?? Infinity;
   return {
@@ -70,6 +86,7 @@ export function spellsOver(from: number, to: number, now = Date.now()) {
       ended: end(s.ended),
     })),
     short: short.map(s => ({ began: s.began, ended: end(s.ended) })),
+    full: full.map(s => ({ began: s.began, ended: end(s.ended) })),
   };
 }
 export type Spells = ReturnType<typeof spellsOver>;

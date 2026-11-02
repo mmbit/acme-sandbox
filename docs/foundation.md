@@ -34,7 +34,6 @@ where it suffices.
   never arms automatically, extends a saved attempt or allows rearming. The single attempt retains two write-once
   receipts and one terminal disposition. See `platform/coordinator/docs/inspection.md` for the operations.
 
-
 - **Feature membership**: optional `company/features.yaml` groups initial deliverables and labelled feedback rounds
   under their original feature for cost accounting. Missing configuration leaves each deliverable separate. Live
   links override these historical entries. See `platform/coordinator/docs/feature-cost.md` for its schema and commands.
@@ -123,6 +122,12 @@ where it suffices.
   company runs it from its `company/schedule.yaml` and keeps its numbers in its own note. The first has no setting;
   the second is a routine like any other. Before they carry, Knop's agreement is asked through the Overseer; a switch
   only if Knop asks for one.
+- The Notebook has no long press, for every company, with no setting (Ink 1.1's deck: no long press anywhere): a voice
+  note is the rail mic's tap (`ink/bookvoice.js`), which waits for a call's own microphone while it starts
+  (`callmic.js`); Paste is a tap on bare paper with Select, the Pencil's or a finger's (`ink/bookselectpaste.js`), the
+  held finger's bubble gone (`ink/booktape.js`); and the radial menu and its preference are gone (`ink/bookinput.js`,
+  `shared/review/prefs.js`). The cog keeps review mode's pen hold time. Carried to Onlyonery too
+  (2 November): the board's own Notebook, and no code of Onlyonery's used them (job #17795).
 - Ink's customer-call marking is gone, for every company, with no setting. A call's notebook pages and their tries'
   versions pages read like any page, by every job. The tasks and try runs a call's notes make mark nothing. Only a call
   about a card for keys keeps its pages, versions pages included, for its own agent (`ink/bookreads.ts` callRead),

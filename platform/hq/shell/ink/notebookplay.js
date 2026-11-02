@@ -19,6 +19,7 @@ import { BOARD, GROUP_ROUTES, groupOf, insertGroup, keepPicture, pictureUrl, put
 import { seededGroup, unitsOn } from './notebookplaygroups.js';
 import { search } from './notebookplaysearch.js';
 import { PEOPLE_ROUTES } from './notebookplaypeople.js';
+import { TIDY_ROUTES } from './notebookplaytidy.js';
 import { closeRound, unwrapRound } from './notebookplayrounds.js';
 import { setCover, shelfOf } from './notebookplayshelf.js';
 import { ANSWER_ROUTES, groupOn, ran, rootOf, slipRow } from './notebookplayanswers.js';
@@ -67,7 +68,8 @@ export function notebookPlay({ seed, now = () => Date.now(), sendMs = 10_000 } =
       s.page(id).kind = 'call';
       return id;
     },
-    // The board's routes as a call's agent works the page through them (ink/callpage.ts): agent, its id
+    // The board's routes as a call's agent works the page through them, and its change of a note's words
+    // (ink/callpage.ts): agent, its id
     by: (agent, path, body) => routed(s, path, {}, body),
     // fn({ notebook, page }) after every change, as the coordinator's `book` event with text `notebook` (page null: a
     // notebook's order)
@@ -192,6 +194,7 @@ const ROUTES = {
   'POST /api/notebooks/pages/archive': (s, b) => pageChanged(s, b, p => (p.archived = archived(b.archived))),
   'POST /api/notebooks/pages/title': (s, b) => pageChanged(s, b, p => (p.label = labelOf(b?.title))),
   'POST /api/notebooks/pages/zoom': zoomPage,
+  ...TIDY_ROUTES,
   'POST /api/notebooks/pages/send': (s, b) => pageOf(s, sendPage(s, pageRow(s, b?.id), b?.aside)),
   'GET /api/notebooks/pages/groups': listGroups,
   ...GROUP_ROUTES,

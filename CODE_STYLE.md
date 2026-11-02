@@ -50,6 +50,8 @@ For comments, docs, commit messages and UI text alike.
 - **A comment says what the code needs today.** Never history: no earlier versions, roads not taken, or the job, card
   or call behind a change. Git keeps that. A comment may point to a rule that decides it (`(house rule 7)`). The one
   number allowed is the foundation's `company: job #<n>, not upstream yet` tag.
+- **A rule the board set is written down once, as the rule.** It goes in the area's README, and a comment that needs it
+  says the rule or names that section: "(the board, call 176)" is the history of a rule, not the rule.
 - **The test for a comment:** would the code as it stands raise this question on its own? If not, delete it.
 - **A file opens with one line on what it's for** (Python: a docstring). A manual goes in the README. A test file's
   first line says how to run it: `// node --test src/usage.test.ts   (uses a throwaway DATA_DIR)`.

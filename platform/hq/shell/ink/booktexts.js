@@ -13,11 +13,11 @@ import { followPress } from './bookpress.js';
 import { button } from './bookui.js';
 import { boxesOf } from './bookwords.js';
 import { word } from './bookscope.js';
-import { landing } from './bookgroupmath.js';
+import { keyOf, landing } from './bookgroupmath.js';
 import { arrive } from './bookarrive.js';
 import { toward } from './bookedit.js';
 import { footOf, pointUnit } from './bookunits.js';
-import { UNIT_W } from './scrapunit.js';
+import { UNIT_W, WORDS_IN } from './scrapunit.js';
 
 // The words' size and line in page px (bookrender.ts TEXT), and the room round them inside the box, for the caret
 export const TEXT = { size: 18, line: 1.4 };
@@ -25,8 +25,6 @@ const PAD = 4;
 // a new box wraps at this width, or less where the paper shown ends sooner, never less than NARROW
 const WIDE = 360,
   NARROW = 160;
-// typed words keep this far in from their scrap's sides (page px)
-const UNIT_PAD = 12;
 // a press on a box draws once it has moved this far (screen px): less is a click, which edits it (a Pencil's: once it
 // has gone past a tap, tap.js wandered)
 const DRAG_PX = 3;
@@ -50,6 +48,12 @@ export function mountTexts(book, hooks) {
     // The box being typed in kept as it is (a press elsewhere, a key)
     done: () => tx.editing?.words.blur(),
     editing: () => !!tx.editing,
+    // Whether the box being edited has words typed in it, or is a new one: more than a caret put there by a click.
+    typing: () => !!tx.editing && typedIn(tx.editing, wordsIn(tx.editing.el)),
+    // The box being typed in left for a read of the page (booksave.js readNow), and what gives it its caret back once
+    // the read has drawn the boxes again: where it was, if its line's words are as they were, else at the end of its
+    // line, or of its note's last line if the line is gone.
+    leave: () => leave(tx),
     // The colour picked while a box is being typed in is that box's
     recolor(color) {
       if (!tx.editing) return;
@@ -134,7 +138,7 @@ function place(tx, { view, x, y }, right) {
   edit(tx, boxFor(tx, view, t), { fresh: true });
 }
 // The box made editable with the caret in it (at a point on screen, else at its end); left, it's kept (commit)
-function edit(tx, el, { fresh = false, at = null } = {}) {
+function edit(tx, el, { fresh = false, at = null, index = null } = {}) {
   if (tx.editing?.el === el) return;
   tx.editing?.words.blur();
   const words = el.words,
@@ -145,7 +149,7 @@ function edit(tx, el, { fresh = false, at = null } = {}) {
   // (a browser without plain-text editing still edits; its pasted styles are dropped as it's kept: innerText)
   if (words.contentEditable !== 'plaintext-only') words.contentEditable = 'true';
   words.focus({ preventScroll: true });
-  caretAt(words, at);
+  caretAt(words, at, index);
   const keys = e => {
     // (the book's own keys never hear what's typed here)
     e.stopPropagation();
@@ -160,15 +164,18 @@ function edit(tx, el, { fresh = false, at = null } = {}) {
       delete el.dataset.editing;
       if (tx.editing === ed) tx.editing = null;
       commit(tx, el, ed);
+      tx.hooks.boxLeft();
     },
     { once: true },
   );
 }
-function caretAt(words, at) {
+// (at an index of its words, else at a point on screen, else at their end)
+function caretAt(words, at, index) {
   const sel = getSelection(),
     range = document.createRange();
   const pos = at && document.caretPositionFromPoint?.(at[0], at[1]);
-  if (pos && words.contains(pos.offsetNode)) range.setStart(pos.offsetNode, pos.offset);
+  if (index !== null) range.setStart(words.firstChild ?? words, index);
+  else if (pos && words.contains(pos.offsetNode)) range.setStart(pos.offsetNode, pos.offset);
   else {
     range.selectNodeContents(words);
     range.collapse(false);
@@ -177,14 +184,46 @@ function caretAt(words, at) {
   sel.removeAllRanges();
   sel.addRange(range);
 }
+// The box being typed in left, and what opens its line's box again after a read with the caret where it was: a line
+// of the store's by its id, one not saved yet by its place and words, with the space or newline the board put at its
+// end (the store keeps words trimmed, so only the box holds it). A line the read changed: by its id, the caret at its
+// end (another screen's edit), else its note's last line, the caret at its end (a call's agent reworded the note, its
+// lines typed again under new ids). Nothing being typed in: nothing to open.
+function leave(tx) {
+  const ed = tx.editing;
+  if (!ed) return () => {};
+  const t = ed.el.typed,
+    view = ed.el.view,
+    sel = getSelection(),
+    before = document.createRange(),
+    words = ed.words.textContent;
+  before.selectNodeContents(ed.words);
+  if (sel.rangeCount && ed.words.contains(sel.getRangeAt(0).startContainer))
+    before.setEnd(sel.getRangeAt(0).startContainer, sel.getRangeAt(0).startOffset);
+  const index = before.toString().length,
+    same = t.id === undefined ? x => keyOf(x) === keyOf(t) : x => x.id === t.id && x.text === t.text;
+  ed.words.blur();
+  return () => {
+    const boxes = [...view.el.querySelectorAll(':scope > .bk-typed')],
+      el = boxes.find(b => same(b.typed));
+    if (!el) {
+      const line =
+        (t.id !== undefined && boxes.find(b => b.typed.id === t.id)) ||
+        (t.g > 0 && boxes.findLast(b => b.typed.g === t.g));
+      return void (line && edit(tx, line));
+    }
+    el.words.textContent = words;
+    edit(tx, el, { index });
+  };
+}
 // What was typed kept: a new box with words joins its page, an emptied one leaves it, a changed one changes; each one
 // step Undo takes back. Nothing changed: no step.
 function commit(tx, el, ed) {
   const t = el.typed,
     page = el.view.page,
-    text = el.words.innerText.replace(/\s+$/, '');
+    text = wordsIn(el);
   if (ed.fresh && !text) return el.remove();
-  if (!ed.fresh && text === ed.was.text && ed.color === ed.was.color) return setBox(el, t);
+  if (!typedIn(ed, text)) return setBox(el, t);
   Object.assign(t, { text, color: ed.color });
   const texts = page.texts;
   if (ed.fresh) {
@@ -208,6 +247,9 @@ function commit(tx, el, ed) {
   setBox(el, t);
   step(tx, el.view, () => Object.assign(t, ed.was));
 }
+// A box's words as typed, and whether its edit has made them (or its colour) other than they were, or is a new box
+const wordsIn = el => el.words.innerText.replace(/\s+$/, '');
+const typedIn = (ed, text) => ed.fresh || text !== ed.was.text || ed.color !== ed.was.color;
 // A change made: the page saved soon, and its step for Undo, after which the page's boxes are made again from its texts
 function step(tx, view, undo) {
   tx.hooks.changed(view.page);
@@ -318,7 +360,7 @@ function put(tx, { view, x, y }, words, right, centre) {
 function inUnit(page, x, y) {
   const g = pointUnit(page, x, y),
     o = page.origins?.get(g) ?? { x: 0 };
-  return { g, left: o.x + UNIT_PAD, edge: o.x + UNIT_W - UNIT_PAD };
+  return { g, left: o.x + WORDS_IN, edge: o.x + UNIT_W - WORDS_IN };
 }
 // The widest line of the words in a box's face (page px)
 function widest(words, texts) {

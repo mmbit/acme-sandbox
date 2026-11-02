@@ -64,13 +64,26 @@ export function grownTo(page, box) {
   return { x, y, w, h };
 }
 // Where a stroke's ink is, in its page's px: { x0, y0, x1, y1 }, its widest line's half on every side (ink.js draws a
-// point at most three quarters of the ink's size across)
+// point at most three quarters of the ink's size across). Found once for its points (a changed stroke has new ones,
+// a line still drawn only grows): every paint and every pass of the eraser asks it of each stroke on the page
+// (bookstrokes.js).
 export function boxOf(stroke) {
+  const pts = stroke.points,
+    held = boxes.get(pts);
+  if (held?.n === pts.length && held.size === stroke.size) return { ...held.box };
   const r = stroke.size * 0.75 + 1,
-    xs = stroke.points.map(p => p[0]),
-    ys = stroke.points.map(p => p[1]);
-  return { x0: Math.min(...xs) - r, y0: Math.min(...ys) - r, x1: Math.max(...xs) + r, y1: Math.max(...ys) + r };
+    box = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };
+  for (const [x, y] of pts) {
+    if (x < box.x0) box.x0 = x;
+    if (x > box.x1) box.x1 = x;
+    if (y < box.y0) box.y0 = y;
+    if (y > box.y1) box.y1 = y;
+  }
+  Object.assign(box, { x0: box.x0 - r, y0: box.y0 - r, x1: box.x1 + r, y1: box.y1 + r });
+  boxes.set(pts, { n: pts.length, size: stroke.size, box });
+  return { ...box };
 }
+const boxes = new WeakMap();
 // A scrap's reach on its page, turned any way: its centre and half its diagonal
 export function scrapBoxOf(s) {
   const cx = s.x + s.w / 2,

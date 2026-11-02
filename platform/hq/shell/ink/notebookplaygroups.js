@@ -4,7 +4,7 @@
 import { anchorOf, dataUrlPicture, inkOf, picturesOf, refuse, textsOf, wordsOf } from './notebookplaychecks.js';
 import { emptyGroup, hasAny, picks, typedBoxes } from './notebookparts.js';
 import { boxOf, scrapSize } from './notebookstack.js';
-import { ROOM, UNIT_W, heightFor, unitOf } from './scrapunit.js';
+import { NOTE_TEXT, ROOM, bodyOf, heightFor, retypedNote, unitOf } from './scrapunit.js';
 import { answersOf } from './notebookplayanswers.js';
 import { assignedOf } from './notebookplaypeople.js';
 
@@ -22,6 +22,7 @@ export const GROUP_ROUTES = {
   'POST /api/notebooks/groups/delete': deleteGroup,
   'POST /api/notebooks/groups/restore': restoreGroup,
   'POST /api/notebooks/groups/split': splitGroup,
+  'POST /api/voice/change': changeWords,
 };
 // A drawing on an open page, its parts in its own scrap px: a unit right after unit `after`, or at the page's end, kept
 // in its `column` when given
@@ -41,6 +42,15 @@ function editGroup(s, b) {
   if (!hasAny(parts) && g.kind !== 'scrap') refuse(400, 'an empty group is deleted instead');
   write(s, g, parts, said); // (its height as set)
   return shown(s, g);
+}
+// A call's agent's note in new words ({ id, words }), typed again where its lines stood as the store types them
+// (ink/callpage.ts change: scrapunit.js retypedNote), every line of it the agent's own.
+function changeWords(s, b) {
+  const g = openGroup(s, b?.id);
+  if (typeof b.words !== 'string' || !b.words.trim()) refuse(400, 'words: one line');
+  const { texts } = partsOf(g);
+  editGroup(s, { id: g.id, since: g.updated, texts: retypedNote(texts, texts, b.words.trim()).texts });
+  return { ok: `#${g.id} says it now.` };
 }
 // An open unit made h tall by hand (its room's foot, the post-it words aside: scrapunit.js heightFor). since: as edit's.
 function resizeGroup(s, b) {
@@ -70,6 +80,7 @@ function deleteGroup(s, b) {
   const g = s.group(Number(b?.id));
   const p = g && s.page(g.page);
   if (!p || g.deleted !== null) refuse(404);
+  if (b.since !== undefined && b.since !== g.updated) refuse(409, CHANGED);
   if (g.kind === 'reply') refuse(409, 'a reply is taken back with /api/notebooks/replies/delete');
   if (g.status !== 'open' || s.shut(p)) refuse(409, SENT);
   putAside(s, g, p);
@@ -109,13 +120,13 @@ function createScrap(s, b) {
   return shown(s, insertGroup(s, p, 'scrap', BOARD, unit.parts, more));
 }
 // A note with no picture: its words typed in the post-it's ink, a unit at the page's end as a scrap is
-// (notebookscraps.ts addWords)
+// (notebookscraps.ts addWords).
 function typedNote(s, nb, said, more) {
   if (!said.words) refuse(400, 'a note with no picture holds words');
-  const texts = textsOf(typedBoxes(said.words, { x: 0, w: UNIT_W, color: '#1d1a2f' })),
+  const texts = textsOf(typedBoxes(said.words, NOTE_TEXT)),
     p = s.page(s.currentPage(nb.id)),
-    unit = unitOf({ ...emptyGroup, texts }, ROOM);
-  return shown(s, insertGroup(s, p, 'note', BOARD, unit.parts, { ...more, pos: endOf(s, p), h: unit.h }));
+    parts = { ...emptyGroup, texts };
+  return shown(s, insertGroup(s, p, 'note', BOARD, parts, { ...more, pos: endOf(s, p), h: bodyOf(parts) + ROOM }));
 }
 // The elements named (their indexes in the group) lifted out into a unit of their own right after it
 function splitGroup(s, b) {

@@ -22,6 +22,7 @@ import { noProject, placeOf, taskClash } from './names.ts';
 import { oneTaskSql } from './made.ts';
 import { refusal } from './threadorder.ts';
 import { waitsUntil } from './wakes.ts';
+import { needDrawn } from './threadneeds.ts';
 import { boardHold, cardHeld, drawnWords, holdAndAge } from './boardheld.ts';
 import { SIDE_BY_SIDE } from '../../worker/hq/levels.ts';
 
@@ -178,7 +179,8 @@ function chainWords(thread: string, { paused, passed: held }: Chain): string | u
 }
 
 export function addNeed(thread: Thread, needs: string, by: string) {
-  db.prepare('insert or ignore into thread_needs (thread, needs) values (?, ?)').run(thread.id, needs);
+  const drawn = db.prepare('insert or ignore into thread_needs (thread, needs) values (?, ?)').run(thread.id, needs);
+  if (drawn.changes) needDrawn(thread.id, needs); // (its spell)
   planChange({ project: thread.project, thread: thread.id, what: `needs ${needs}`, by });
 }
 

@@ -1,4 +1,4 @@
-import { test } from 'node:test';
+import { mock, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { harness } from './harness.ts';
 
@@ -78,8 +78,10 @@ test("hq estimate --calibration splits the threads' waiting by what held them, a
     line: { minutes: 186, share: 0.24 },
     line_review: { minutes: 30, share: 0.04 },
     order: { minutes: 0, share: 0 },
+    needs: { minutes: 0, share: 0 },
     after: { minutes: 360, share: 0.47 },
     card_or_time: { minutes: 12, share: 0.02 },
+    paused: { minutes: 0, share: 0 },
     fix_drawn: { minutes: 54, share: 0.07 },
     other: { minutes: 120, share: 0.16 },
   });
@@ -99,6 +101,8 @@ test("hq estimate --calibration splits the threads' waiting by what held them, a
 // ---- one thread at a time, through waitingSplit: what held a job, as the claim let it go
 
 const { waitingSplit } = await import('./threadwaits.ts');
+const projects = await import('./projects.ts');
+const plan = await import('./plan.ts');
 const X = T0 - 40 * HOUR;
 const at = (minute: number) => new Date(X + minute * MIN).toISOString();
 
@@ -108,7 +112,7 @@ function split(tasks: { id: number; run: [number, number]; again?: [number, numb
   const rows = h.db
     .prepare(
       `select id, kind, agent, engine, pr, round, created, after, thread, coalesce(branch, 'job/' || id) branch,
-      coalesce(seq, id) seq, finished from jobs where id in (select value from json_each(?)) order by id`,
+      coalesce(seq, id) seq, finished, downtime from jobs where id in (select value from json_each(?)) order by id`,
     )
     .all(ids) as any[];
   const jobs = rows.map(r => ({ ...r, created: Date.parse(r.created), finished: Date.parse(r.finished) }));
@@ -322,7 +326,8 @@ test("the line splits by what stood in the way: a minute with every seat drained
   });
   const { parts, inLine } = split([{ id, run: [90, 100] }]);
   assert.deepEqual(parts, { line: 90, other: 20 });
-  assert.deepEqual(inLine, { seats: 60, memory: 20, slots: 10 });
+  // (no report had every slot taken: the last 10 minutes held it for a reason not recorded)
+  assert.deepEqual(inLine, { seats: 60, memory: 20, unexplained: 10 });
   // a job of another engine had no seat at all; one queued before the records began is unrecorded
   const codex = h.pastJob({
     agent: 'kit',
@@ -333,4 +338,261 @@ test("the line splits by what stood in the way: a minute with every seat drained
   });
   assert.deepEqual(split([{ id: codex, run: [90, 100] }]).inLine, { unrecorded: 30, seats: 90 });
   h.db.exec('delete from seat_spells; delete from room_spells');
+});
+
+// (pauses, and the slots only as the worker reported them)
+test("a paused deliverable's ready task waits for its pause, not in the line", () => {
+  // hq/held is paused from minute 0 to 60 (its project paused too from 20, resumed at 40, inside it); the task starts at 90
+  const id = h.pastJob({
+    agent: 'kit',
+    thread: 'hq/held',
+    created: X,
+    run: { started: X + 90 * MIN, ended: X + 100 * MIN },
+  });
+  const pause = h.db.prepare(
+    "insert into pauses (project, thread, why, by, at, resumed) values ('hq', ?, 'Waits for the board', 'juno', ?, ?)",
+  );
+  pause.run('hq/held', at(0), at(60));
+  pause.run(null, at(20), at(40));
+  assert.deepEqual(split([{ id, run: [90, 100] }]).parts, { paused: 60, line: 30, other: 20 });
+  // a pause waiting for the board's decision lets go when the board answers it, though nobody resumes it
+  const decision = h.db
+    .prepare("insert into decisions (name, by, at, answered) values ('Which?', 'juno', ?, ?)")
+    .run(at(0), at(30)).lastInsertRowid;
+  const asked = h.pastJob({
+    agent: 'kit',
+    thread: 'margin/asked',
+    created: X,
+    run: { started: X + 90 * MIN, ended: X + 100 * MIN },
+  });
+  h.db
+    .prepare(
+      "insert into pauses (project, thread, why, by, at, decision) values ('margin', 'margin/asked', 'Asks', 'juno', ?, ?)",
+    )
+    .run(at(0), decision);
+  assert.deepEqual(split([{ id: asked, run: [90, 100] }]).parts, { paused: 30, line: 60, other: 20 });
+  // a job in no thread waits for the desk's pause
+  const loose = h.pastJob({ agent: 'kit', created: X, run: { started: X + 90 * MIN, ended: X + 100 * MIN } });
+  h.db
+    .prepare("insert into pauses (project, why, by, at, resumed) values ('unsorted', 'Waits', 'juno', ?, ?)")
+    .run(at(0), at(60));
+  assert.deepEqual(split([{ id: loose, run: [90, 100] }]).parts, { paused: 60, line: 30, other: 20 });
+  h.db.exec('delete from pauses; delete from decisions');
+});
+
+test("a ready job with free slots isn't 'every slot taken': only the worker's report of every slot taken is", async () => {
+  const { seatReported, slotsReported } = await import('./startholds.ts');
+  h.db.prepare("insert into seats (id, engine, state) values ('free-1', 'claude', 'ready')").run();
+  seatReported('free-1', X - 60 * MIN);
+  // every slot taken from minute 20 to 50, as the room reports said
+  slotsReported(true, X + 20 * MIN);
+  slotsReported(true, X + 21 * MIN);
+  slotsReported(false, X + 50 * MIN);
+  assert.deepEqual(
+    h.db
+      .prepare('select began, ended from slot_spells')
+      .all()
+      .map(s => ({ ...s })),
+    [{ began: X + 20 * MIN, ended: X + 50 * MIN }],
+    'a spell, not a report',
+  );
+  const id = h.pastJob({
+    agent: 'kit',
+    thread: 'hq/free',
+    created: X,
+    run: { started: X + 90 * MIN, ended: X + 100 * MIN },
+  });
+  assert.deepEqual(split([{ id, run: [90, 100] }]).inLine, { slots: 30, unexplained: 60 });
+  // downtime work waits for a seat with spare room
+  const spare = h.pastJob({
+    agent: 'kit',
+    thread: 'hq/spare',
+    created: X,
+    run: { started: X + 90 * MIN, ended: X + 100 * MIN },
+  });
+  h.db.prepare('update jobs set downtime = 1 where id = ?').run(spare);
+  assert.deepEqual(split([{ id: spare, run: [90, 100] }]).inLine, { slots: 30, downtime: 60 });
+  h.db.exec("delete from seat_spells; delete from slot_spells; delete from seats where id = 'free-1'");
+});
+
+test('a task held behind a deliverable it needs waits for its merge, not in the line', () => {
+  // hq/needed's task is queued at minute 0, runs 50-60 and merges at 70; hq/needing's task, queued at 0, starts at 90
+  h.pastJob({
+    agent: 'ada',
+    thread: 'hq/needed',
+    created: X,
+    run: { started: X + 50 * MIN, ended: X + 60 * MIN },
+    merged: X + 70 * MIN,
+    byBranch: true,
+  });
+  const id = h.pastJob({
+    agent: 'kit',
+    thread: 'hq/needing',
+    created: X,
+    run: { started: X + 90 * MIN, ended: X + 100 * MIN },
+  });
+  const parts = () => split([{ id, run: [90, 100] }]).parts;
+  const edge = (drawn: number | null, dropped: number | null) => {
+    h.db.exec("delete from thread_needs; delete from need_spells; delete from threads where id = 'hq/needed'");
+    if (dropped === null)
+      h.db.prepare("insert into thread_needs (thread, needs) values ('hq/needing', 'hq/needed')").run();
+    if (drawn !== null || dropped !== null)
+      h.db
+        .prepare("insert into need_spells (thread, needs, drawn, dropped) values ('hq/needing', 'hq/needed', ?, ?)")
+        .run(drawn === null ? null : at(drawn), dropped === null ? null : at(dropped));
+  };
+  edge(10, null);
+  assert.deepEqual(parts(), { line: 30, needs: 60, other: 20 }, 'from the edge drawn at 10 until the merge');
+  edge(10, 40);
+  assert.deepEqual(parts(), { line: 60, needs: 30, other: 20 }, 'until hq plan unneed at 40');
+  edge(null, null);
+  assert.deepEqual(parts(), { line: 20, needs: 70, other: 20 }, 'an edge drawn before the recording, as it reads now');
+  edge(null, 30);
+  assert.deepEqual(parts(), { line: 60, needs: 30, other: 20 }, 'and one dropped since');
+  // the needed deliverable closed at 40 without its merge holds nothing after
+  edge(10, null);
+  h.db
+    .prepare(
+      "insert into threads (id, project, name, goal, status, created, done) values ('hq/needed', 'hq', 'N', 'G', 'done', ?, ?)",
+    )
+    .run(at(0), at(40));
+  assert.deepEqual(parts(), { line: 60, needs: 30, other: 20 });
+  // a deliverable with no task drawn yet holds it until its first is queued, at 20 here
+  h.db.prepare("update jobs set created = ? where thread = 'hq/needed'").run(at(20));
+  h.db.exec("delete from threads where id = 'hq/needed'");
+  assert.deepEqual(parts(), { line: 30, needs: 60, other: 20 }, 'held from 10 throughout');
+  h.db.exec(
+    "delete from thread_needs; delete from need_spells; update jobs set thread = null where thread = 'hq/needed'",
+  );
+});
+
+test("a deliverable it needs holds only its thread's next task to start: the task before it holds it first", () => {
+  // hq/ordered's A runs 0-50; B, queued at 0, waits for A and then for hq/also-needed, which merges at 70
+  h.pastJob({
+    agent: 'ada',
+    thread: 'hq/also-needed',
+    created: X,
+    run: { started: X + 60 * MIN, ended: X + 65 * MIN },
+    merged: X + 70 * MIN,
+    byBranch: true,
+  });
+  const a = h.pastJob({
+    agent: 'kit',
+    thread: 'hq/ordered',
+    seq: 1,
+    created: X,
+    run: { started: X, ended: X + 50 * MIN },
+  });
+  const b = h.pastJob({
+    agent: 'kit',
+    thread: 'hq/ordered',
+    seq: 2,
+    branch: `job/${a}`,
+    created: X,
+    run: { started: X + 90 * MIN, ended: X + 100 * MIN },
+  });
+  h.db.prepare("insert into thread_needs (thread, needs) values ('hq/ordered', 'hq/also-needed')").run();
+  const { parts, held } = split([
+    { id: a, run: [0, 50] },
+    { id: b, run: [90, 100] },
+  ]);
+  assert.deepEqual(parts, { needs: 20, line: 20, other: 20 });
+  assert.equal(held, 1, 'B held behind A, never behind the other deliverable');
+  h.db.exec("delete from thread_needs; update jobs set thread = null where thread = 'hq/also-needed'");
+});
+
+test('a deliverable it needs settles as the claim reads it: done with nothing to merge, called off, or failed', () => {
+  // hq/settled's task is queued at 0 and ends at 20; hq/settling's, queued at 0, starts at 90
+  const needed = h.pastJob({
+    agent: 'ada',
+    thread: 'hq/settled',
+    created: X,
+    run: { started: X + 10 * MIN, ended: X + 20 * MIN },
+  });
+  const id = h.pastJob({
+    agent: 'kit',
+    thread: 'hq/settling',
+    created: X,
+    run: { started: X + 90 * MIN, ended: X + 100 * MIN },
+  });
+  h.db.prepare("insert into thread_needs (thread, needs) values ('hq/settling', 'hq/settled')").run();
+  const parts = (status: string) => {
+    h.db.prepare('update jobs set status = ? where id = ?').run(status, needed);
+    return split([{ id, run: [90, 100] }]).parts;
+  };
+  assert.deepEqual(parts('done'), { needs: 20, line: 70, other: 20 }, 'done with no pull request: until its end');
+  h.db
+    .prepare("insert into prs (number, branch, author, status) values (9480, ?, 'ada', 'dropped')")
+    .run(`job/${needed}`);
+  assert.deepEqual(parts('done'), { needs: 20, line: 70, other: 20 }, 'its latest pull request dropped');
+  h.db.exec("update prs set status = 'open' where number = 9480");
+  assert.deepEqual(parts('done'), { needs: 90, other: 20 }, 'one still in review holds on');
+  h.db.exec('delete from prs where number = 9480');
+  assert.deepEqual(parts('cancelled'), { needs: 20, line: 70, other: 20 }, 'called off: only that, it holds nothing');
+  assert.deepEqual(parts('failed'), { needs: 90, other: 20 }, 'failed: held on past its end');
+  // its redo, queued at 30 and merged at 50, doesn't settle it: the deliverable holds until it closes, at 60 here
+  h.pastJob({
+    agent: 'ada',
+    thread: 'hq/settled',
+    created: X + 30 * MIN,
+    run: { started: X + 40 * MIN, ended: X + 45 * MIN },
+    merged: X + 50 * MIN,
+    byBranch: true,
+  });
+  assert.deepEqual(parts('stopped'), { needs: 90, other: 20 });
+  h.db
+    .prepare(
+      "insert into threads (id, project, name, goal, status, created, done) values ('hq/settled', 'hq', 'S', 'G', 'done', ?, ?)",
+    )
+    .run(at(0), at(60));
+  assert.deepEqual(parts('stopped'), { needs: 60, line: 30, other: 20 });
+  h.db.exec(
+    "delete from thread_needs; delete from threads where id = 'hq/settled'; update jobs set thread = null where thread = 'hq/settled'",
+  );
+});
+
+test('an edge drawn and dropped through the plan holds its spell, and one drawn before the recording from the start', () => {
+  // office/drawn's task is queued at 0 and merges at 70; office/drawing's, queued at 0, starts at 90
+  for (const slug of ['drawn', 'drawing'])
+    assert.equal(typeof projects.createThread({ project: 'office', name: slug, goal: 'It works', slug }), 'object');
+  h.pastJob({
+    agent: 'ada',
+    thread: 'office/drawn',
+    created: X,
+    run: { started: X + 50 * MIN, ended: X + 60 * MIN },
+    merged: X + 70 * MIN,
+    byBranch: true,
+  });
+  const id = h.pastJob({
+    agent: 'kit',
+    thread: 'office/drawing',
+    created: X,
+    run: { started: X + 90 * MIN, ended: X + 100 * MIN },
+  });
+  const parts = () => split([{ id, run: [90, 100] }]).parts;
+  const [need, unneed] = [
+    () => plan.need('office/drawing', 'office/drawn', 'juno'),
+    () => plan.unneed('office/drawing', 'office/drawn', 'juno', 'Apart'),
+  ];
+  // an edge an older coordinator drew, with no spell recorded, holds from the start, as the claim reads it now
+  h.db.prepare("insert into thread_needs (thread, needs) values ('office/drawing', 'office/drawn')").run();
+  assert.deepEqual(parts(), { line: 20, needs: 70, other: 20 });
+  mock.timers.enable({ apis: ['Date'], now: X + 30 * MIN });
+  try {
+    assert.deepEqual(unneed(), { ok: true });
+    assert.deepEqual(parts(), { line: 60, needs: 30, other: 20 }, 'until hq plan unneed at 30');
+    mock.timers.setTime(X + 40 * MIN);
+    assert.deepEqual(need(), { ok: true });
+    assert.deepEqual(
+      parts(),
+      { line: 30, needs: 60, other: 20 },
+      'and again from the edge drawn at 40 until the merge',
+    );
+    mock.timers.setTime(X + 60 * MIN);
+    assert.deepEqual(unneed(), { ok: true });
+    assert.deepEqual(parts(), { line: 40, needs: 50, other: 20 }, 'until its drop at 60');
+  } finally {
+    mock.timers.reset();
+  }
+  h.db.exec("delete from thread_needs; update jobs set thread = null where thread = 'office/drawn'");
 });

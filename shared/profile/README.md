@@ -61,3 +61,8 @@ helper (`hq run --kind render -- node platform/hq/profile-session.mjs`).
 pull tab open and shut over and over, with the building drawing, paused or hidden in turns, and prints the frames under
 the finger and in the swing after, what the frames' script spent and, in Chromium, a trace's main thread and longest
 tasks.
+
+`node platform/hq/profile-covered.mjs [--engine chromium|webkit] [--look brownstone]` measures HQ's scene under what
+covers it (the book beside it, the intercom, a call small and its window, the book's spread): how often the scene
+draws, the time its update and draw take, the browser's CPU (its GPU process too) and, in Chromium, the renderer's
+main thread.

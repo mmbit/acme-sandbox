@@ -38,11 +38,13 @@ export function track(page) {
 
 // Real time for what the paused clock doesn't cover, so it lands at the same point on every run: input (Chromium hands
 // pointer moves, wheels and keys to the page at its next real frame, after Playwright's call has returned), requests
-// (mock data, images) and what the page does with their answers. A 50 ms Web Animation runs on the real timeline.
-export async function settle(page) {
+// (mock data, images) and what the page does with their answers. A 50 ms Web Animation runs on the real timeline, or,
+// where the caller holds the page's animations (held: a held one would never end), a 50 ms timer here.
+export async function settle(page, { held = false } = {}) {
   progress();
   do {
-    await page.evaluate(() => document.body.animate([], 50).finished);
+    if (held) await new Promise(r => setTimeout(r, 50));
+    else await page.evaluate(() => document.body.animate([], 50).finished);
     while (page.inflight.size) await new Promise(r => setTimeout(r, 10));
     await page.evaluate(() =>
       Promise.all([

@@ -4,6 +4,16 @@ import { yamlFile } from './company.ts';
 // A visual check (visual.ts): the paths (those in except aside), the command that renders their previews, what to look
 // for in them, and the folder the author's records go in.
 export type VisualCheck = { paths: string[]; except?: string[]; run: string; look: string; record: string };
+// The board's screens, rendered before and after whatever a change touches (screens.ts): the rule its work then falls
+// under (org.yaml engineOnly), the command that renders them, what to judge them against, and the looks and devices
+// (Playwright context options, by name) that command shoots them in
+export type ScreensCheck = {
+  rule: string;
+  run: string;
+  look: string;
+  looks: string[];
+  devices: Record<string, object>;
+};
 // The rounds' stages (reviewrounds.ts): the round from which only blocking findings hold the merge (reviewrounds.ts says
 // what blocks), the one from which a pull request shows something went wrong before review, and how near a thread's deadline
 // turns its first round into a later one
@@ -15,6 +25,7 @@ export function reviewSettings() {
   return {
     rounds: { ...ROUNDS, ...r.rounds } as typeof ROUNDS,
     visual: (r.visual ?? []) as VisualCheck[],
+    screens: r.screens as ScreensCheck | undefined,
     // A description for reviewer judgment, never a path rule.
     live: String(r.live ?? "Public sites and apps already in use, and HQ's own look."),
     // What keeps a release bar of its own (reviewrounds.ts): a description for reviewer judgment, never a path rule.

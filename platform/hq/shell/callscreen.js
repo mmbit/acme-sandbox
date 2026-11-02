@@ -11,7 +11,7 @@ import { startWatchalong } from './data.js';
 import { cue } from './audio.js';
 import { CallBubble } from './callbubble.js';
 import * as world from '../world/world.js';
-import { scene } from './stage.js';
+import { scene, ease, CALL_FPS, REST_FPS } from './stage.js';
 import { icon } from './icons.js';
 import { tell } from './desk.js';
 
@@ -66,10 +66,17 @@ export function openLayer(c) {
   $('#call-min').onclick = () => minimise(c);
   $('#call-screenshare').onclick = () => showScreen(c);
   cue('open');
+  ease(CALL_FPS, 'call');
+  inFront(true);
 }
+// HQ's scene draws at its call rate while a call goes on, and at its resting rate while the call's window lies over it
+// (stage.js)
+const inFront = on => ease(on ? REST_FPS : null, 'call window');
 // Its little screen switches off first, if the agent's on it (the board hung up), as the hang-up's sound plays: the layer
 // goes once it has, taking no taps meanwhile.
 export function closeLayer(c) {
+  ease(null, 'call');
+  inFront(false);
   const layer = c.layer;
   if (!layer) return;
   if (c.small) return layer.remove();
@@ -146,6 +153,7 @@ export function turnTakenBack(c) {
 export async function minimise(c) {
   if (c.small) return;
   c.small = true;
+  inFront(false);
   const device = c.layer.querySelector('.device'),
     from = device.getBoundingClientRect();
   c.bubble ??= newBubble(c);
@@ -170,6 +178,7 @@ function bubbleShift(c, from) {
 export function expand(c) {
   if (!c.small) return;
   c.small = false;
+  inFront(true);
   c.layer.hidden = false;
   // (the transcript went on while it was hidden, where nothing scrolls: it opens at its newest line, and so follows on.
   const lines = c.layer.querySelector('#call-lines');

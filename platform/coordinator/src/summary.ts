@@ -30,10 +30,10 @@ const QUEUE_HOURS = 6;
 
 type Part = { head: string; lines: string[] };
 
-// The summary as hq summary prints it, and whether anything in it is for the CEO to look at (the follow-through check
-// is queued for it): an open goal, or a line in any part but the news, where only finished work carrying the board's
-// word counts (a finished thread of the company's own is news, not a reason to look, and so are the kits' numbers and
-// the meetings closed). The queue's line is always there.
+// The summary as hq summary prints it, and its lines for the CEO to look at (`looks`, each after its part's head): the
+// follow-through check is queued for them, and a new one brings a later check forward (followthrough.ts.). They are an open goal, or a line in any part but the news, where only finished
+// work carrying the board's word counts (a finished thread of the company's own is news, not a reason to look, and so
+// are the kits' numbers and the meetings closed). The queue's line is always there.
 export function read(f: Forecast) {
   const done = finished.lines(f.now);
   const news: Part = { head: 'Finished since the last check (merged and deployed)', lines: done.map(d => d.line) };
@@ -59,8 +59,11 @@ export function read(f: Forecast) {
     { head: "Proposed, each for its project's owner (hq inbox --all)", lines: proposals.waiting() },
   ];
   const shown = parts.filter(p => p.lines.length).map(p => `${p.head}:\n${p.lines.map(l => `- ${l}`).join('\n')}`);
-  const worth = parts.some(p => !told.includes(p) && p.lines.length > 0) || done.some(d => d.board);
-  return { text: [...shown, queueLine(f.now)].join('\n\n'), worth };
+  const looks = [
+    ...parts.filter(p => !told.includes(p)).flatMap(p => p.lines.map(l => `${p.head}: ${l}`)),
+    ...done.filter(d => d.board).map(d => `${news.head}: ${d.line}`),
+  ];
+  return { text: [...shown, queueLine(f.now)].join('\n\n'), worth: looks.length > 0, looks };
 }
 
 // The call items still open, ready for the board's yes, or whose work is open (agreements.ts: a decision handled is a

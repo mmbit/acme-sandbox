@@ -2410,8 +2410,13 @@ const GATES = 'shared/gates/gates.ts';
 const GATES_HELPER_MS = 5 * 60_000;
 const gatesLentMs = (takeMinutes: number) => takeMinutes * 60_000 + GATES_HELPER_MS + 60_000;
 const TESTS = 'shared/gates/tests.ts';
-type CheckName = 'gates' | 'tests';   // (each one's field in the finish report)
-const CHECKS: Record<CheckName, string> = { gates: GATES, tests: TESTS };
+// A pull request's push also renders the board's screens on main and on the push, each on its own coordinator, in the
+// tests' checkout, and says which differ (the coordinator's screens.ts). The render waits for the machine's one browser
+// slot itself (shared/browser/render.ts), and a change to nothing HQ runs answers at once, rendering nothing. It never
+// fails a push: its answer is for the review.
+const SCREENS = 'platform/hq/screens-compare.mjs';
+type CheckName = 'gates' | 'tests' | 'screens';   // (each one's field in the finish report)
+const CHECKS: Record<CheckName, string> = { gates: GATES, tests: TESTS, screens: SCREENS };
 // Two pushes' tests at a time here, the rest waiting their turn: a node --test run takes every core, so more at once
 // slow each other down. While a lent machine has a helper of the `tests` kind (the coordinator's runs.ts), they go
 // there instead, with no turn: tests.ts --helper sends them as a run of the job, waits for it while it's there, and runs
@@ -2483,7 +2488,7 @@ const testsCheckout = (job: Job, me: Me, tested: TestedCode) => testsAt(TESTED, 
 async function afterPush(job: Job, me: Me, dir: string, checks: Checks, keep: (checks: Checks) => void, launches: Launched[]) {
   // (the pushed commit, tested as such against its base, in a checkout of its own)
   const at = testsCheckout(job, me, flow.testedCode(String(checks.body.sha)));
-  const body = await pushChecks(job, me, dir, at, { checks, keep, launches });
+  const body = await pushChecks(job, me, dir, at, { checks, keep, launches, screens: true });
   await keepRendersOf(job, me, dir, checks.body.files as string[]);
   return body;
 }
@@ -2512,9 +2517,9 @@ async function carryChecks(job: Job, me: Me, launches: Launched[]) {
 }
 
 // A push's gates and tests (pushchecks.ts) on the commit `at` checks out, the gates in `dir` against `gatesBase` (main,
-// unless it's given).
+// unless it's given), and with `screens` a pull request's screens against the tests' base.
 async function pushChecks(job: Job, me: Me, dir: string, at: TestsCheckout,
-  { checks, keep, launches, gatesBase }: { checks: Checks; keep: (checks: Checks) => void; launches: Launched[]; gatesBase?: string }) {
+  { checks, keep, launches, gatesBase, screens }: { checks: Checks; keep: (checks: Checks) => void; launches: Launched[]; gatesBase?: string; screens?: boolean }) {
   const takeMinutes = await testsHelper(job);
   assertOwned();
   const helper = takeMinutes !== undefined;
@@ -2530,7 +2535,9 @@ async function pushChecks(job: Job, me: Me, dir: string, at: TestsCheckout,
     { args: [...helper ? ['--helper'] : [], ...at.args], base: at.tested.base, env: comparison, where: at.launching });
   const gates = checkSpec(job, me, dir, 'gates', launches, undefined,
     { args: [], base: gatesBase, env: {}, lent: helper ? { args: ['--helper'], env: lent, ms: gatesLentMs(takeMinutes) } : undefined });
-  const specs = [gates, tests];
+  const screensCheck = screens ? checkSpec(job, me, dir, 'screens', launches, undefined,
+    { args: [], base: at.tested.base, env: {}, where: at.launching }) : undefined;
+  const specs = [gates, tests, screensCheck];
   const body = await waitOwned(runChecks(job.id, checks, specs.filter(spec => spec !== undefined), { runs: RUNS, keep,
     watch: (pid, check) => checking.set(pid, check), unwatch: pid => checking.delete(pid),
     said: (name, words) => log(`job #${job.id}: ${CHECKS[name]} ${words}`), signal: ownershipSignal(), reachable: hqAnswers,

@@ -83,7 +83,7 @@ async function overview(browser, c) {
   const { page, errors, done } = await onMini(browser, c);
   try {
     const foot = page.locator('#book nav [data-island=pages]'),
-      over = foot.locator('.bk-btn[aria-label^="The overview"]');
+      over = foot.getByRole('button', { name: OVERVIEW, exact: true });
     // (from More where the rail has folded it away: WebKit's iPad mini rail is tighter. It stays there in the overview,
     // as the rail keeps one layout on a device.)
     const onRail = await over.isVisible();
@@ -147,10 +147,7 @@ async function shelfZoom(browser, c, viewport, reduced = false) {
     await until(page, '#loading.gone');
     if (viewport.width < 500) await page.locator('#book .bk-lip').tap();
     await c.settled(page, viewport.width < 500 ? 'spread' : 'open');
-    await page
-      .locator('#book')
-      .getByRole('button', { name: /^The overview/ })
-      .click();
+    await page.locator('#book').getByRole('button', { name: OVERVIEW, exact: true }).click();
     await page.waitForTimeout(c.settle);
     const far = page.getByRole('list', { name: 'The overview' });
     const mine = far.locator('.bk-book[data-book="1"]'),
@@ -165,7 +162,7 @@ async function shelfZoom(browser, c, viewport, reduced = false) {
     await c.shot(`shelf-open-${label}`, page);
     await shelfTransition(page, far.getByRole('button', { name: /^The Shelf/ }));
     await page.waitForTimeout(c.settle);
-    const overview = page.locator('#book').getByRole('button', { name: /^The overview/ }),
+    const overview = page.locator('#book').getByRole('button', { name: OVERVIEW, exact: true }),
       home = await shelfTransition(page, overview);
     assert.equal(home.leaf, false, "the overview's button on the Shelf zooms back to the page, no leaf");
     await page.waitForTimeout(c.settle);

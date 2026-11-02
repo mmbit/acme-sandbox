@@ -151,6 +151,35 @@ test('the planner uses reported slots and memory room, and an old report becomes
   assert.equal(plannerCapacity(at)?.room, 0, 'no memory room remains a measured zero');
 });
 
+test("the worker's slots all taken, its running jobs with the slots held for seats, open a spell; a free one ends it", () => {
+  const at = Date.now();
+  const memory = (running: number, held: number) => ({
+    at,
+    availableMb: 3000,
+    freeReserveMb: 1500,
+    defaultRunMb: 700,
+    totalSlots: 4,
+    heldSlots: held,
+    heldMb: 0,
+    starting: [],
+    runningMb: Object.fromEntries(Array.from({ length: running }, (_, i) => [900000 + i, 700])),
+  });
+  const report = (running: number, held: number, now: number) =>
+    reportRoom({ capacity: { slots: { claude: 4 }, seatRuns: {}, room: 0, memory: memory(running, held) } }, now);
+  const spells = () =>
+    h.db
+      .prepare('select began, ended from slot_spells order by id')
+      .all()
+      .map(s => ({ ...s }));
+  report(3, 0, at);
+  assert.deepEqual(spells(), [], 'a slot free');
+  report(3, 1, at + 60_000);
+  report(4, 0, at + 120_000);
+  report(2, 0, at + 180_000);
+  assert.deepEqual(spells(), [{ began: at + 60_000, ended: at + 180_000 }]);
+  h.db.exec('delete from slot_spells');
+});
+
 test("a job's measured memory: its own peak, else its agent's median for its kind, else unmeasured", async () => {
   const { measuredMb } = await import('./room.ts');
   const done = async (peak: number | null, kind = 'work', agent = 'juno') => {

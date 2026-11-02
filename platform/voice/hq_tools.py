@@ -8,8 +8,9 @@ import yaml
 import reads
 from drawing import ASK_WORDS, BESIDE_MOST, INK_WORDS, WHAT_MOST, ink_asked, what_asked
 from driving import BY, DRIVE_WORDS, OPEN_WORDS, move_asked, work_asked
-from callnotes import (CHANGE_WORDS, GOAL, MARK_WORDS, MARKS, PAGE_WORDS, TITLE_WORDS_SAID, TOPIC_MOST, TRY_WORDS, WHAT,
-                       WRITE_DOWN_WORDS, change_asked, mark_asked, title_asked, try_asked, written_asked)
+from callnotes import (CHANGE_WORDS, DRAW_WORDS, GOAL, MARK_WORDS, MARKS, PAGE_WORDS, TITLE_WORDS_SAID, TOPIC_MOST,
+                       TRY_WORDS, WHAT, WRITE_DOWN_WORDS, change_asked, drawing_asked, mark_asked, note_asked, title_asked,
+                       try_asked)
 from voices import NAME_LENGTH, VOICE_WORDS
 from voices import ENROL_WORDS, FORGET_WORDS
 
@@ -592,6 +593,24 @@ TOOLS += [
          'why': {'type': 'string', 'minLength': 1, 'maxLength': WHAT,
                  'description': "what the board asked to see, in its own words, one plain line"}}}},
 ]
+# A drawing of the agent's own, a picture in the call's notes in the company's look (callnotes.py; the coordinator's
+# drawing.ts).
+TOOLS += [
+    {'name': 'draw_picture', 'description': "Draw a picture into the call's notes: a diagram, a chart, a sketch of how "
+     'something fits together, whenever the board asks to see something drawn or a drawing says it better than words. '
+     'Write it as one SVG, <svg viewBox="0 0 640 480">…</svg>: 640 wide and about as tall or less. The notes show it '
+     'at about half that size, so keep words few and at font-size 28 or more, about 0.55 of the font-size wide a '
+     "letter. The notes draw it in the company's own look, so give no colours, line widths or fonts: every shape is "
+     "an outline in one ink, its words in the company's type. A class says more: accent fills the one shape the "
+     'picture is about (one a picture), shade fills a shape with dots (never under words), arrow puts an arrowhead at '
+     'the end of a line or path, thin draws a line at half weight, and muted makes words quieter. It goes at the end '
+     'of the notes as a picture the board can draw on, as the board watches, and asks for nothing: what the team must '
+     'do is written down (write_down). Its answer shows you the picture as the board sees it: if words overlap or run '
+     'off it, delete it (change_note) and draw it again.',
+     'inputSchema': {'type': 'object', 'required': ['svg'], 'additionalProperties': False, 'properties': {
+         'svg': {'type': 'string', 'minLength': 1,
+                 'description': 'the drawing, from <svg viewBox="0 0 640 480"> to its </svg>'}}}},
+]
 
 # Several people in the board's room, told apart by their voices (voices.py).
 TOOLS += [
@@ -1172,7 +1191,7 @@ def write_down_in_hq(a):
     note is written in (or why not). On the phone it's hq's (write_down_by_phone)."""
     if refused := note_refusal(a):
         return False, [{'type': 'text', 'text': refused}]
-    if not (asked := written_asked(a)):
+    if not (asked := note_asked(a)):
         return False, [{'type': 'text', 'text': WRITE_DOWN_WORDS['shape']}]
     return said(line_asked({'write_down': asked}))
 
@@ -1203,6 +1222,15 @@ def try_versions(a):
     if not (asked := try_asked(a)):
         return False, [{'type': 'text', 'text': TRY_WORDS['shape']}]
     return page_said({'try': asked}, TRY_WORDS)
+
+
+def draw_picture(a):
+    """(ok, content) of the draw_picture tool: the picture as it went in the call's notes, and its line."""
+    if not (asked := drawing_asked(a)):
+        return False, [{'type': 'text', 'text': DRAW_WORDS['shape']}]
+    if not SCREEN_SOCKET or not SCREEN_KEY:
+        return False, [{'type': 'text', 'text': DRAW_WORDS['none']}]
+    return shown(line_asked({'draw_picture': asked}))
 
 
 def page_said(asked, words):
@@ -1300,7 +1328,7 @@ def outcome(future):
 # The board's tools that the voice line answers, in words or a picture, by name
 LINE_TOOLS = {'sketch': sketch, 'ask_to_see': ask_to_see, 'draw': draw, 'open_work': open_work, 'drive': drive,
               'write_down': write_down_in_hq, 'title_notes': title_notes, 'read_notes': read_notes, 'mark_notes': mark_notes,
-              'change_note': change_note, 'try': try_versions, 'name_voice': name_voice,
+              'change_note': change_note, 'try': try_versions, 'draw_picture': draw_picture, 'name_voice': name_voice,
               'save_voice': save_voice, 'forget_voice': forget_voice}
 
 

@@ -4,10 +4,11 @@
 // The page is its units (bookunits.js): each draws its pictures and dry ink on a canvas of its own at its place, as
 // big as the unit and what's drawn on it. (were tiles across an endless page; what's drawn)
 import { draw } from '/__review/ink.js';
+import { layered } from '/__review/inkshape.js';
 import { drawScrap, drawnBox } from './bookscrapdraw.js';
 import { picture } from '../../util.js';
-import { pageBox } from './bookrow.js';
-import { union } from './bookselectmath.js';
+import { boxOf, pageBox } from './bookrow.js';
+import { meets, union } from './bookselectmath.js';
 import { landing } from './bookgroupmath.js';
 import { mountAnswers } from './bookanswers.js';
 import { nameOf } from './bookhead.js';
@@ -55,6 +56,7 @@ export function pageView(page, held = false) {
     },
     addInk: tiles.addInk,
     redraw: tiles.redraw,
+    rubbed: tiles.rubbed,
     drop: tiles.drop,
     hold: tiles.hold,
     refuse(words) {
@@ -79,6 +81,11 @@ function unitInk(el, page, held) {
     for (const [id, u] of st.units) if (!places.has(id)) drop(u.canvas, st.units, id);
     for (const p of places.values()) paint(st, p);
   };
+  // (the units' canvases painted again only in a box, where ink went and nothing moved)
+  const paintIn = box => {
+    if (st.held || !st.shown) return void (st.stale = true);
+    for (const p of page.places ?? []) paint(st, p, box);
+  };
   const tiles = {
     show(box) {
       const shown = Boolean(box);
@@ -90,6 +97,9 @@ function unitInk(el, page, held) {
     // A stroke just dried, a stroke undone, a picture loaded: the units drawn again
     addInk: () => paintAll(),
     redraw: () => paintAll(),
+    // The eraser's rub (bookerase.js): ink gone from a box of the page, nothing moved, so only that box is painted
+    // again, as a page of overlapping ink has most of it under any rub
+    rubbed: box => paintIn(box),
     drop() {
       for (const [id, u] of st.units) drop(u.canvas, st.units, id);
     },
@@ -105,35 +115,59 @@ function unitInk(el, page, held) {
   return tiles;
 }
 // A unit's canvas painted: its pictures, then a highlighter's strokes under the ink, as on paper; what's landing is
-// drawn once it's down (bookarrive.js)
-function paint(st, p) {
+// drawn once it's down (bookarrive.js). box: only what's in it (page px), on the canvas as it is while all that's
+// drawn still fits it
+function paint(st, p, box = null) {
   const { page, units } = st;
   if (!units.has(p.id)) {
     const canvas = document.createElement('canvas');
     canvas.className = 'bk-ink';
+    // (under the canvases already there: the units painted in their order lie each over the ones after it, as the
+    // page picture stacks them, bookrender.ts inkSvg)
     st.el.prepend(canvas);
     units.set(p.id, { canvas, id: p.id });
   }
   // (as big as the unit, and further wherever its ink, a scrap's tape or its shadow reaches past it: nothing drawn is
   // cut.)
   const scraps = page.scraps.filter(s => s.g === p.id && !landing(page, s)),
-    { canvas } = units.get(p.id),
+    u = units.get(p.id),
+    { canvas } = u,
     r = scraps.map(drawnBox).reduce(union, reachOn(page, p)),
-    [x, y] = [Math.floor(r.x0), Math.floor(r.y0)],
-    [cw, ch] = [Math.ceil(r.x1) - x, Math.ceil(r.y1) - y],
     k = devicePixelRatio || 1,
+    part = box && u.at && u.k === k && holds(u.at, r);
+  if (part && !meets(u.at, box)) return;
+  const [x, y] = part ? [u.at.x0, u.at.y0] : [Math.floor(r.x0), Math.floor(r.y0)],
+    [cw, ch] = part ? [u.at.x1 - x, u.at.y1 - y] : [Math.ceil(r.x1) - x, Math.ceil(r.y1) - y],
     w = Math.round(cw * k),
     h = Math.round(ch * k);
+  Object.assign(u, { at: { x0: x, y0: y, x1: x + cw, y1: y + ch }, k });
   if (canvas.width !== w || canvas.height !== h) Object.assign(canvas, { width: w, height: h });
   Object.assign(canvas.style, { left: `${x}px`, top: `${y}px`, width: `${cw}px`, height: `${ch}px` });
   const g = canvas.getContext('2d');
+  g.save();
   g.setTransform(1, 0, 0, 1, 0, 0);
-  g.clearRect(0, 0, w, h);
+  // (a box: in whole device pixels, cleared and clipped so its edge leaves no seam, and in it what reaches in, its soft
+  // edge a device pixel)
+  let clip = null;
+  if (part) {
+    const x0 = Math.max(0, Math.floor((box.x0 - x) * k)),
+      y0 = Math.max(0, Math.floor((box.y0 - y) * k)),
+      x1 = Math.min(w, Math.ceil((box.x1 - x) * k)),
+      y1 = Math.min(h, Math.ceil((box.y1 - y) * k));
+    g.beginPath();
+    g.rect(x0, y0, x1 - x0, y1 - y0);
+    g.clip();
+    g.clearRect(x0, y0, x1 - x0, y1 - y0);
+    clip = { x0: x + (x0 - 1) / k, y0: y + (y0 - 1) / k, x1: x + (x1 + 1) / k, y1: y + (y1 + 1) / k };
+  } else g.clearRect(0, 0, w, h);
   g.setTransform(k, 0, 0, k, -x * k, -y * k);
-  for (const s of scraps) drawScrap(g, withPicture(st, s));
-  const here = page.ink.filter(s => s.g === p.id && !landing(page, s));
-  draw(g, [...here.filter(s => s.alpha < 1), ...here.filter(s => !(s.alpha < 1))]);
+  const shows = b => !clip || meets(b, clip);
+  for (const s of scraps) if (shows(drawnBox(s))) drawScrap(g, withPicture(st, s));
+  const here = page.ink.filter(s => s.g === p.id && !landing(page, s) && shows(boxOf(s)));
+  draw(g, layered(here));
+  g.restore();
 }
+const holds = (outer, b) => b.x0 >= outer.x0 && b.y0 >= outer.y0 && b.x1 <= outer.x1 && b.y1 <= outer.y1;
 // a scrap's picture, drawn again once it has loaded
 function withPicture(st, s) {
   if (s.img) return s;
