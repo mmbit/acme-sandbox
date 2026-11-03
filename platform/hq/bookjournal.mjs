@@ -1,6 +1,6 @@
 // book-check.mjs's My journal, the notebook the tab stories run on (booktabpages.mjs and its kin): two sketch pages,
-// its Asks page and twenty calls' notes pages, HQ opened on it and the page landed on as the rail and the lit tab read
-// it.
+// its Asks page and twenty calls' notes pages, HQ opened on it, a chapter picked by its bookmark (two taps where they
+// lie folded: a page upright) and the page landed on as the bar's count and the bookmarks read it.
 import assert from 'node:assert/strict';
 import { until } from './bookkit.mjs';
 
@@ -36,17 +36,19 @@ const SEED = {
 };
 
 // A story on My journal as SEED has it: HQ in a fresh context (options: its own), the book open, then walk(p, { press,
-// play }) (press: a tap with touch, else a click; play: the context's played store); no page errors. A failure is shot
-// as `${story}-${name}-failed`.
-export async function onJournal(browser, c, { viewport, name, options, story }, walk) {
+// play, tab }) (press: a tap with touch, else a click; play: the context's played store; tab(chapter): its bookmark
+// picked); no page errors. A failure is shot as `${story}-${name}-failed`. init: a script run in the page before HQ's
+// own.
+export async function onJournal(browser, c, { viewport, name, options, story, init }, walk) {
   const context = await c.hqIn(browser, viewport, { notebooks: structuredClone(SEED), ...options });
   const p = await context.newPage(),
     errors = [];
+  if (init) await p.addInitScript(init);
   p.on('pageerror', e => errors.push(e.message));
   const press = loc => (options.hasTouch ? loc.tap({ timeout: LOADED_MS }) : loc.click({ timeout: LOADED_MS }));
   try {
     await opened(p, c.base, press);
-    await walk(p, { press, play: context.notebook });
+    await walk(p, { press, play: context.notebook, tab: chapter => picked(p, press, chapter) });
     c.noErrorsIn(errors);
   } catch (e) {
     await c.shot(`${story}-${name}-failed`, p).catch(() => {});
@@ -82,18 +84,31 @@ const atRest = p =>
   p.waitForFunction(() => document.documentElement.dataset.book && !document.querySelector('#book.bk-swinging'), null, {
     timeout: LOADED_MS,
   });
-// The page shown is title, the rail counting where within its chapter, and chapter's tab lit
+// A chapter's bookmark picked, as the board does: where they lie folded at the page's left edge (a page upright), a
+// tap on them brings them out first, and the pick folds them away again
+export async function picked(p, press, chapter) {
+  const tab = p.locator(`#book .bk-marks [data-chapter=${chapter}]`),
+    out = p.locator('#book .bk-marks[data-out]');
+  if (await p.evaluate(() => matchMedia('(orientation: portrait)').matches)) {
+    // (the sliver: the tab's icon, the rest of it past the screen's edge. Out already, a pull brought them out.)
+    if (!(await out.count())) await press(tab.locator('.bk-mk-icon'));
+    await out.waitFor({ timeout: LOADED_MS });
+    await press(tab);
+    await out.waitFor({ state: 'detached', timeout: LOADED_MS });
+  } else await press(tab);
+}
+// The page shown is title, the bar counting where within its chapter ("2 / 20"), and chapter's bookmark the page's own
 export async function landed(p, chapter, title, where, what) {
   const shown = () =>
     p.evaluate(() => ({
       title: document.querySelector('#book .bk-page:not([hidden]) .bk-page-title')?.textContent ?? '',
-      where: document.querySelector('#book .bk-where small')?.textContent || null,
-      lit: document.querySelector('#book .bk-marks [aria-current=page]')?.dataset.chapter ?? null,
+      where: document.querySelector('#book .bk-where')?.textContent || null,
+      here: document.querySelector('#book .bk-marks [aria-current=page]')?.dataset.chapter ?? null,
     }));
   await until(async () => (await shown()).title === title, what, LOADED_MS);
   await until(async () => {
     const s = await shown();
-    return s.where === where && s.lit === chapter;
-  }, `${what}: ${where}, ${chapter} lit`);
-  assert.deepEqual(await shown(), { title, where, lit: chapter }, what);
+    return s.where === where && s.here === chapter;
+  }, `${what}: ${where}, ${chapter} the page's own`);
+  assert.deepEqual(await shown(), { title, where, here: chapter }, what);
 }

@@ -168,15 +168,18 @@ export function choose(
   // (downtime work behind other work, on an open seat, waits in the queue too)
   if (eligible) return { on: 'queue', engine: row.engine, minutes: 0 };
   // (an open seat that doesn't take it is paced, so it aims somewhere: it may take it once its pacing lifts)
-  const own = seats.filter(s => fits(s, row) || fallsBackOnto(s, row));
+  const primary = seats.filter(s => fits(s, row));
+  const own = primary.some(s => available(s, now, seats))
+    ? primary
+    : seats.filter(s => fits(s, row) || fallsBackOnto(s, row));
   const returns = own
-    .flatMap(s =>
-      available(s, now, seats)
-        ? [pacingLifts(windowsOf(s), moment.aims.get(s)!, now)]
-        : [s.until, s.fiveHourResets, s.weekResets, s.recheckAt],
-    )
-    .filter((t): t is number => t !== null && t > now);
-  if (returns.length) return { on: 'seats', engine: row.engine, until: Math.min(...returns) };
+    .flatMap(seat => {
+      const open = available(seat, now, seats);
+      const until = open ? pacingLifts(windowsOf(seat), moment.aims.get(seat)!, now) : holding(seat, now, seats)?.until;
+      return until && until > now ? [{ until, reason: open ? ('pacing' as const) : ('unavailable' as const) }] : [];
+    })
+    .sort((a, b) => a.until - b.until);
+  if (returns.length) return { on: 'seats', engine: row.engine, from: now, ...returns[0] };
   return {
     on: 'stalled',
     why: own.length ? `The ${row.engine} seats have no reported return` : `No ${row.engine} seat has reported`,

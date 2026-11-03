@@ -154,19 +154,23 @@ test('work for a CLI no ready seat runs is not waiting', () => {
   assert.notEqual(spell(), null);
 });
 
-test("a paced seat's work that must start before its weekly reset is waiting, and undated work isn't", () => {
+test("a paced seat's urgent work is waiting, and work with a deadline or none isn't", async () => {
   reset();
+  const { setUrgent } = await import('./urgency.ts');
   jobs.setSeat('codex-1', 'codex', 'ready', 0, undefined, { week: 0.6, weekResets: WEEK_RESETS, pace: true });
   jobs.createJob({ agent: 'bolt', title: 'Undated work', prompt: 'x', engine: 'codex' });
   stallSweep();
   assert.equal(spell(), null);
-  jobs.createJob({
+  const due = jobs.createJob({
     agent: 'bolt',
     title: 'Due work',
     prompt: 'x',
     engine: 'codex',
     thread: h.dueThread({ deadline: Date.now() + 3600_000 }),
   });
+  stallSweep();
+  assert.equal(spell(), null, 'a deadline orders work within the pace');
+  assert.equal(typeof setUrgent('task', String(due.id), true, ceo()), 'object');
   stallSweep();
   assert.notEqual(spell(), null);
   assert.equal(startsAny(), true);

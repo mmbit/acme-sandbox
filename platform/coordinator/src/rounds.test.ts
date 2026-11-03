@@ -307,11 +307,12 @@ test('occupants outside the modeled queue keep their worker slots and memory', (
   );
 });
 
-test('projected reviews, fixes and rulings carry a board item through paced seats', () => {
+test('projected reviews, fixes and rulings carry explicit urgency through paced seats', () => {
   const minute = 60_000;
   const owner = work(1, {
     board: 1,
     itemWork: true,
+    urgent: true,
     due: null,
     reviewPlan: {
       panel: 'check',
@@ -332,7 +333,7 @@ test('projected reviews, fixes and rulings carry a board item through paced seat
   for (const pace of ['usual', 'slow'] as const) {
     assert.equal(play(input, sizes, { pace }).get(1)!.merged, input.now + 4 * minute);
     const ordinary = structuredClone(input);
-    ordinary.jobs[0].itemWork = false;
+    ordinary.jobs[0].urgent = false;
     assert.ok(play(ordinary, sizes, { pace }).get(1)!.merged! > input.now + 60 * minute);
   }
 });
@@ -395,3 +396,20 @@ function overdueRound() {
   const sizes = new Map(input.jobs.map(job => [job.id, { agent_ms: minute }]));
   return { input, sizes };
 }
+
+test('projected reviews inherit source urgency without marking sibling work urgent', () => {
+  const owner = work(1, {
+    status: 'done',
+    finished: 0,
+    urgent: false,
+    reviewUrgent: true,
+    reviewPlan: { panel: 'one', count: 1, terminal: 'read', stages: [stage('read', 'review', 'reader')] },
+  });
+  const input = snapshot([owner]);
+  input.pacing = true;
+  Object.assign(input.seats[0], { week: 0.8, weekResets: 48 * 3_600_000 });
+  const sizes = new Map([[1, { agent_ms: 0 }]]);
+  assert.equal(play(input, sizes).get(1)!.merged, 60_000);
+  owner.reviewUrgent = false;
+  assert.ok(play(input, sizes).get(1)!.merged! > 3_600_000);
+});

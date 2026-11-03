@@ -1,8 +1,11 @@
 // The Notebook's paper feel: quick stationery effects that play on a copy over everything, never on the thing itself.
-// The change they show is already made underneath before they start, each returns at once, nothing waits on one (but
-// what land() holds back till it's down), and no press is ever taken by one (bookpaper.css: the layer takes none). Each
-// is over within about a third of a second, and with reduced motion each is a short crossfade.
-//   crumple(rect, picture): what was deleted balls up and drops off
+// The change they show is already made underneath before they start. Each returns at once and nothing waits on one,
+// except land(): its promise holds what's landing back till it's down. None ever takes a press (bookpaper.css: the
+// layer takes none). Each is over within about a third of a second, except a crumple with its throw (three quarters
+// of a second) and a plane's flight (one second). With reduced motion each is a short crossfade. The crumple and the
+// fold are heard as they play, from booksounds.js.
+//   crumple(rect, picture): what was deleted or archived balls up and is thrown off the screen, a crunch then the
+//     ball landing out of sight
 //   land(rect, picture, delay): what arrives is set down on the paper from just above, turning flat as it presses on
 //     (a promise: done once it's down, its copy gone.)
 //   fold(rect, picture, to): a page folds in half as it's shared, and goes into where it was shared (to, a box)
@@ -13,10 +16,12 @@
 // rect and to are boxes on the screen (getBoundingClientRect()); picture an element (a canvas, a copy of a page),
 // taken over and removed once it has played.
 import { crumpleOutline, letterStep, tornOutline } from './bookpapermath.js';
+import { heard } from './booksounds.js';
 
-// how long each takes (ms): a crumple, a fold, a tear, a stamp, a letter's ink coming up, reduced motion's crossfade,
-// and a landing (what's landing waits on it: bookarrive.js)
-const CRUMPLE_MS = 340,
+// how long each takes (ms): a crumple (to the ball), its throw, a fold, a tear, a stamp, a letter's ink coming up,
+// reduced motion's crossfade, and a landing (what's landing waits on it: bookarrive.js)
+const CRUMPLE_MS = 260,
+  THROW_MS = 480,
   FOLD_MS = 330,
   TEAR_MS = 260,
   STAMP_MS = 230,
@@ -25,45 +30,67 @@ const CRUMPLE_MS = 340,
   PLANE_MS = 1000;
 const FOLD_EASE = 'cubic-bezier(.4,0,.3,1)';
 export const LAND_MS = 380;
-// the ball a crumple ends as, at most this across (px), and how far it drops
+// the ball a crumple ends as, at most this across (px). Its throw: how high it flies over where it was balled up, how
+// far below there it ends, and how far right it goes at least (px). It goes further on a wide screen, always past the
+// screen's edge.
 const BALL_PX = 64,
-  DROP_PX = 90;
+  ARC_PX = 110,
+  FALL_PX = 70,
+  ASIDE_PX = 240;
 // how far above the paper a landing starts (px), and its turn then at most (deg)
 const LIFT_PX = 16,
   LAND_TURN = 3;
 
 export function crumple(rect, picture) {
   if (!shows(rect)) return;
+  heard('crumple');
   const sheet = sheetAt(rect, picture);
   sheet.classList.add('bk-fx-scrap'); // (what's deleted torn out on its bit of paper)
   if (still()) return gone(sheet, fadeOut(sheet));
+  heard('thrown', (CRUMPLE_MS + THROW_MS) / 1000);
   const seed = Math.floor(Math.random() * 2 ** 31),
     outline = t => polygon(crumpleOutline(t, seed)),
     k = Math.min(1, BALL_PX / (0.46 * Math.max(rect.width, rect.height))),
-    turn = Math.random() < 0.5 ? -1 : 1;
+    turn = Math.random() < 0.5 ? -1 : 1,
+    total = CRUMPLE_MS + THROW_MS,
+    balled = CRUMPLE_MS / total;
   sheet.insertAdjacentHTML('beforeend', `<svg class="bk-fx-creases" viewBox="0 0 100 100">${creases()}</svg>`);
-  sheet.lastChild.animate([{ opacity: 0 }, { opacity: 1, offset: 0.5 }, { opacity: 1 }], CRUMPLE_MS);
+  sheet.lastChild.animate([{ opacity: 0 }, { opacity: 1, offset: 0.5 }, { opacity: 1 }], {
+    duration: CRUMPLE_MS,
+    fill: 'forwards',
+  });
   const ball = sheet.animate(
     [
       { clipPath: outline(0), transform: 'none', easing: 'cubic-bezier(.3,.6,.5,1)' },
-      // (opacity stays 1 to the ball)
-      { clipPath: outline(0.6), transform: `scale(${(1 + k) / 2}) rotate(${turn * 6}deg)`, opacity: 1, offset: 0.25 },
+      // (each a translate, a scale and a turn, so the throw's spin turns round rather than taking the short way)
       {
-        clipPath: outline(1),
-        transform: `scale(${k}) rotate(${turn * -10}deg)`,
-        opacity: 1,
-        offset: 0.5,
-        easing: 'ease-in',
+        clipPath: outline(0.6),
+        transform: `translate(0px) scale(${(1 + k) / 2}) rotate(${turn * 6}deg)`,
+        offset: balled / 2,
       },
-      {
-        clipPath: outline(1),
-        transform: `translateY(${DROP_PX}px) scale(${k * 0.9}) rotate(${turn * 40}deg)`,
-        opacity: 0,
-      },
+      { clipPath: outline(1), transform: `translate(0px) scale(${k}) rotate(${turn * -10}deg)`, offset: balled },
+      ...thrown(rect, { clipPath: outline(1), k, turn }, balled),
     ],
-    { duration: CRUMPLE_MS, fill: 'forwards' },
+    { duration: total, fill: 'forwards' },
   );
   gone(sheet, ball);
+}
+// The ball's throw, from where it was balled up: up in an arc and down off the screen's right edge, spinning, at an
+// even pace across as a ball thrown flies (its height a parabola), fading only as it goes: the keyframes after offset
+// from (of the whole crumple)
+function thrown(rect, { clipPath, k, turn }, from) {
+  const aside = Math.max(ASIDE_PX, innerWidth - rect.left - rect.width / 2 + BALL_PX);
+  return Array.from({ length: 8 }, (_, i) => {
+    const u = (i + 1) / 8,
+      x = aside * u,
+      y = FALL_PX * u - 4 * ARC_PX * u * (1 - u);
+    return {
+      clipPath,
+      transform: `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px) scale(${k * (1 - 0.15 * u)}) rotate(${turn * (-10 + 400 * u)}deg)`,
+      opacity: u < 0.75 ? 1 : 1 - (u - 0.75) / 0.25,
+      offset: from + (1 - from) * u,
+    };
+  });
 }
 
 export function land(rect, picture, delay = 0) {
@@ -103,6 +130,7 @@ export function land(rect, picture, delay = 0) {
 
 export function fold(rect, picture, to = null) {
   if (!shows(rect)) return;
+  heard('fold');
   const sheet = sheetAt(rect, picture);
   if (still()) return gone(sheet, fadeOut(sheet));
   // (its top half folds down over its bottom: the front shrinking to the crease, then its back coming down past it)

@@ -34,7 +34,7 @@ export async function sendPage(page) {
   const response = page.waitForResponse(
     response => response.url().endsWith('/guest/notebooks/api/pages/send') && response.request().method() === 'POST',
   );
-  await page.locator('#book .bk-island button.bk-send').click();
+  await page.locator('#book .bk-bar [data-island=send] .bk-send').click();
   const sent = await response;
   assert.equal(sent.status(), 200, 'the page is sent');
 }
@@ -43,16 +43,23 @@ export const reopenPage = page => page.locator('[data-notebook-undo]').click();
 export const snapshot = async (state, name, page) =>
   state.shots && page.screenshot({ path: `${state.shots}/${name}.png` });
 
-// The page's arrows and where it is between them on the rail, where they show (the screen's px), and whether Send shows
-// (on the rail, a hidden one keeps its slot unseen.)
-export const arrowsOf = page =>
-  page.evaluate(() => ({
+// The page's arrows and where it is between them in the bar's middle, where they show (the screen's px), and whether
+// Send shows (on the bar's right, before the dots); once the bar is laid out, the three in a row.
+export async function arrowsOf(page) {
+  await page.waitForFunction(() => {
+    const tops = [...document.querySelectorAll('#book .bk-bar [data-island=pages] > *')].map(
+      b => b.getBoundingClientRect().top,
+    );
+    return tops.length === 3 && tops.every(top => top === tops[0]);
+  });
+  return page.evaluate(() => ({
     send: !!document.querySelector('#book .bk-send')?.checkVisibility({ visibilityProperty: true }),
-    arrows: [...document.querySelectorAll('#book .bk-column .bk-turns')].map(b => {
+    arrows: [...document.querySelectorAll('#book .bk-bar [data-island=pages] > *')].map(b => {
       const r = b.getBoundingClientRect();
       return [Math.round(r.x), Math.round(r.y), Math.round(r.width), Math.round(r.height)];
     }),
   }));
+}
 
 export async function firstPage(page) {
   await page.locator('#book .bk-where').click();
@@ -111,7 +118,8 @@ const underWords = page =>
     return Math.max(...[...paper.querySelectorAll('.bk-typed, .bk-unit')].map(el => el.getBoundingClientRect().bottom));
   });
 
-// The select tool's bar round the lassoed note and lines, and the cog's card, in the guest's words
+// The select tool's bar round the lassoed note and lines, and the preferences' card from the bar's dots, in the guest's
+// words
 export async function selectionAndPrefs(page) {
   const book = page.locator('#book');
   await book.getByRole('button', { name: await named(page, 'toolSelect'), exact: true }).click();
@@ -126,7 +134,8 @@ export async function selectionAndPrefs(page) {
   assert.deepEqual(await bar.locator('button:not([hidden])').allInnerTexts(), acts);
   await page.keyboard.press('Escape');
   const cog = await named(page, 'preferences');
-  await book.getByRole('button', { name: cog, exact: true }).click();
+  await book.locator('.bk-more').click();
+  await page.locator('#book .bk-more-card').getByRole('menuitem', { name: cog, exact: true }).click();
   const card = await page.getByRole('dialog', { name: cog, exact: true }).innerText();
   for (const key of ['onThisDevice', 'penPans']) assert.ok(card.includes(await named(page, key)), `${key} in ${card}`);
   await page.keyboard.press('Escape');
@@ -148,7 +157,7 @@ const aroundUnits = page =>
 // The new page after a send, untitled: its name in the bar and the pages menu, and the title field, in the guest's words
 export async function untitledPage(page) {
   const untitled = await named(page, 'untitledPage');
-  // (the rail's page button shows where it is, its name is in its label.)
+  // (the bar's page button shows where it is, its name is in its label.)
   await page.waitForFunction(
     name => document.querySelector('#book .bk-where')?.getAttribute('aria-label').includes(name),
     untitled,

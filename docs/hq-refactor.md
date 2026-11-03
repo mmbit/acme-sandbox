@@ -142,7 +142,9 @@ export const info = { id, name, context: '2d' | 'webgl2', label };
 export async function createScene({ canvas, world, brand, settings, shell }) → scene
 // settings: theme/hq.yaml's [name] section + { intro }
 // shell: { sound: { play(name, ...a), weather(rain, dark, snow), ready() }, toast(html, onTap), card(target, title, sub, s),
-//          chrome() → { top, bottom, panel: { open, wide, right, share } } (CSS px), store: { get, set }, later(fn, ms) }
+//          chrome() → { top, bottom, panel: { open, wide, right, share } } (CSS px), store: { get, set }, later(fn, ms),
+//          intercomSounds({ agent, to }) → boolean }
+// intercomSounds: the open intercom chimes for this message, so its arrival in the scene plays no sound of its own
 scene = {
   update(dt), draw(t),                 // dt ≤ 0.1 s; t = shell time in s; draw sizes/places its own canvas
   hit(x, y) → { kind: 'agent'|'mascot'|'room'|'object', id, room? } | null,        // CSS px, no side effects

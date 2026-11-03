@@ -135,7 +135,8 @@ const shutting = () => $('#projects').classList.contains('pj-shut');
 function switched(on) {
   if (!on) shownProject(null);
   $('#projects').hidden = !on;
-  cover(on, 'projects'); // (the deck dimmed under it draws nothing while it's out: Holo's costs a slow device's frames)
+  // (the deck dimmed under it updates but draws nothing while it's out: Holo's drawing costs a slow device's frames)
+  cover(on, 'projects', { updating: true });
   $('#projects').classList.remove('pj-shut');
   document.body.classList.toggle('projects', on);
   $('#btn-projects').setAttribute('aria-pressed', on);

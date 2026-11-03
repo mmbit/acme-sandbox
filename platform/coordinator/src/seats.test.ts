@@ -22,8 +22,48 @@ const seat = async (id: string) => (await seats()).find(s => s.id === id);
 // (pacing)
 const list = async () => (await worker('seat-list')).body as { seats: any[]; actions: any[]; pacing: boolean };
 const settle = (id: number, status: string, words?: string) => worker('seat-action', { id, status, words });
-const forSeat = (job: number) => (h.db.prepare('select for_seat from jobs where id = ?').get(job) as any).for_seat as string | null;
+const forSeat = (job: number) =>
+  (h.db.prepare('select for_seat from jobs where id = ?').get(job) as any).for_seat as string | null;
 const openCards = async (id: string) => ((await board('/api/requests')).body as any[]).filter(c => c.seat === id);
+
+test('seat status separates active runs from the admission of non-urgent work', async () => {
+  h.cancelQueued();
+  const now = Date.now(),
+    hour = 3_600_000;
+  await worker('seat', {
+    seat: 'claude-status',
+    engine: 'claude',
+    state: 'ready',
+    week: 0.1,
+    weekResets: now + 5 * 24 * hour,
+  });
+  const running = await h.start({ agent: 'bolt', engine: 'claude' }, { seat: 'claude-status' });
+  await worker('seat', {
+    seat: 'claude-status',
+    engine: 'claude',
+    state: 'ready',
+    week: 0.5,
+    weekResets: now + 5 * 24 * hour,
+  });
+  const paced = await seat('claude-status');
+  assert.equal(paced.status.admission, 'paced');
+  assert.equal(paced.status.running, 1);
+  assert.ok(paced.status.until > now && paced.status.until < now + 5 * 24 * hour);
+  await worker('seat', { seat: 'claude-status', engine: 'claude', state: 'sleeping', until: now + hour, week: 0.5 });
+  assert.equal((await seat('claude-status')).status.admission, 'unavailable');
+  await h.finish(running);
+  await worker('seat', {
+    seat: 'claude-status',
+    engine: 'claude',
+    state: 'ready',
+    week: 0.1,
+    weekResets: now + 7 * 24 * hour,
+  });
+  const ready = await seat('claude-status');
+  assert.equal(ready.status.admission, 'open');
+  assert.equal(ready.status.running, 0);
+  await worker('seat', { seat: 'claude-status', engine: 'claude', state: 'closed' });
+});
 
 test("the worker's list at its first start is the board's first list, taken once", async () => {
   await worker('seat', { seat: 'claude-1', engine: 'claude', state: 'ready', util: 0.4 });
@@ -58,7 +98,9 @@ test("the providers: the platform's and the company's file (a bad entry left out
   const google = r.providers.find((p: any) => p.id === 'google');
   assert.deepEqual([google.cli, google.engine, google.sign_in], ['agy', 'codex', 'login']);
   assert.deepEqual(
-    ['mistral', 'elsewhere'].map(id => r.providers.find((p: any) => p.id === id)).map(p => [p.cli, p.engine, p.sign_in]),
+    ['mistral', 'elsewhere']
+      .map(id => r.providers.find((p: any) => p.id === id))
+      .map(p => [p.cli, p.engine, p.sign_in]),
     [
       ['vibe', 'codex', 'key'],
       ['claude', 'claude', 'key'],
@@ -226,7 +268,10 @@ test("pause: the worker hears it, and a paused seat's waiting jobs go to any sea
 });
 
 test("a high-risk round's Codex review runs on Codex alone: never pinned to or claimed by another family's seat", async () => {
-  for (const [id, provider] of [['mistral-2', 'mistral'], ['google-1', 'google']])
+  for (const [id, provider] of [
+    ['mistral-2', 'mistral'],
+    ['google-1', 'google'],
+  ])
     assert.equal((await board('/api/seats/add', { id, provider, key: KEY })).body.ok, true);
   h.db.prepare("update jobs set status = 'cancelled' where status = 'queued'").run();
   const report = (seat: string, state: string) =>
@@ -234,7 +279,14 @@ test("a high-risk round's Codex review runs on Codex alone: never pinned to or c
   try {
     for (const s of ['mistral-2', 'google-1']) await report(s, 'ready');
     await report('codex-1', 'sleeping');
-    const high = h.jobs.createJob({ agent: 'bolt', kind: 'review', title: 'High', prompt: 'x', engine: 'codex', cli: 'codex' });
+    const high = h.jobs.createJob({
+      agent: 'bolt',
+      kind: 'review',
+      title: 'High',
+      prompt: 'x',
+      engine: 'codex',
+      cli: 'codex',
+    });
     assert.equal(forSeat(high.id), 'codex-1', "Codex's own seat, though another family's is ready");
     h.db.prepare('update jobs set for_seat = null where id = ?').run(high.id);
     for (const s of ['mistral-2', 'google-1'])
@@ -251,7 +303,7 @@ test("a high-risk round's Codex review runs on Codex alone: never pinned to or c
   }
 });
 
-test("the voice line counts subscription seats only: a ready key seat is no room for it", async () => {
+test('the voice line counts subscription seats only: a ready key seat is no room for it', async () => {
   const before = (await seat('claude-1')).state;
   const until = 8e15;
   await worker('seat', { seat: 'claude-1', engine: 'claude', state: 'sleeping', until });
@@ -268,7 +320,9 @@ test("the voice line counts subscription seats only: a ready key seat is no room
 });
 
 test("remove: off the worker's list at once, gone from HQ once the worker has removed it", async () => {
-  const running = h.jobs.createJob({ agent: 'bolt', title: 'Running on it', prompt: 'x', engine: 'codex' }) as { id: number };
+  const running = h.jobs.createJob({ agent: 'bolt', title: 'Running on it', prompt: 'x', engine: 'codex' }) as {
+    id: number;
+  };
   h.db.prepare("update jobs set status = 'running', for_seat = 'claude-k' where id = ?").run(running.id);
   await worker('seat', { seat: 'claude-k', engine: 'claude', state: 'ready' });
   await worker('seat', { seat: 'claude-k', engine: 'claude', state: 'login' });
@@ -383,10 +437,13 @@ test('pacing: on until the board turns it off, for every seat, and a waiting cha
   assert.deepEqual([(await shown()).on, (await shown()).action.words], [true, 'Pacing is on.']);
 });
 
-test("credits past the plan: off for every seat until the board lets one spend them, and the worker hears it", async () => {
+test('credits past the plan: off for every seat until the board lets one spend them, and the worker hears it', async () => {
   assert.equal((await seat('codex-1')).use_credits, false);
   assert.equal((await list()).seats.find(s => s.id === 'codex-1').use_credits, false);
-  assert.equal((await board('/api/seats/credits', { seat: 'codex-1', on: 'yes' })).body.error, 'Say whether it may spend credits.');
+  assert.equal(
+    (await board('/api/seats/credits', { seat: 'codex-1', on: 'yes' })).body.error,
+    'Say whether it may spend credits.',
+  );
   assert.equal((await board('/api/seats/credits', { seat: 'codex-x', on: true })).body.error, "There's no such seat.");
   const on = (await board('/api/seats/credits', { seat: 'codex-1', on: true })).body;
   assert.equal((await seat('codex-1')).use_credits, true);
@@ -418,9 +475,22 @@ test("a seat's name: dash-separated lowercase parts with digits anywhere after t
     assert.equal((await board('/api/seats/add', { id, provider: 'anthropic-key', key: KEY })).body.ok, true, id);
   assert.ok((await list()).seats.some(s => s.id === 'claude-team-2'));
   for (const id of ['codex-team-b-3', 'claude-1', 'codex-board', 'mistral-1']) assert.ok(SEAT_ID.test(id), id);
-  for (const id of ['claude', '2claude-1', 'claude--2', '-claude-2', 'claude-2-', 'Claude-2', 'claude 2', 'claude_2', 'claude-2/x'])
+  for (const id of [
+    'claude',
+    '2claude-1',
+    'claude--2',
+    '-claude-2',
+    'claude-2-',
+    'Claude-2',
+    'claude 2',
+    'claude_2',
+    'claude-2/x',
+  ])
     assert.ok(!SEAT_ID.test(id), id);
-  assert.equal((await board('/api/seats/add', { id: 'claude--2', provider: 'anthropic-key', key: KEY })).body.error, SEAT_RULE);
+  assert.equal(
+    (await board('/api/seats/add', { id: 'claude--2', provider: 'anthropic-key', key: KEY })).body.error,
+    SEAT_RULE,
+  );
 });
 
 test('a seat pin holds only for a seat of its own engine that is there, and work no seat takes reads as stuck', async () => {
@@ -431,7 +501,13 @@ test('a seat pin holds only for a seat of its own engine that is there, and work
   await worker('seat', { seat: 'codex-1', engine: 'codex', state: 'ready', util: 0.1 });
   try {
     // a retry's Codex pin, the retry made on Claude: no pin, and a Claude seat takes it
-    const moved = h.jobs.createJob({ agent: 'bolt', title: 'Moved', prompt: 'x', engine: 'claude', forSeat: 'codex-1' });
+    const moved = h.jobs.createJob({
+      agent: 'bolt',
+      title: 'Moved',
+      prompt: 'x',
+      engine: 'claude',
+      forSeat: 'codex-1',
+    });
     assert.equal(forSeat(moved.id), null);
     assert.equal(h.jobs.seatReadyFor(moved.id, Date.now(), 'claude-1'), true);
     // a pin to a seat that's gone: a Codex seat that's there

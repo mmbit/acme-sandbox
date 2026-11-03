@@ -1,9 +1,10 @@
 // What lands in the book from outside: pictures, words and links pasted with Cmd/Ctrl+V while the book is open, dropped
 // on its paper (files, or an <img>, a link or words dragged from another tab or app), pasted from Select's Paste bubble a
-// tap on bare paper brings (bookselectclip.js, which reads the clipboard: book.tape.land), or carried in from HQ's page
-// (a ring the Pencil drew, lifted by a finger: shared/review/carry.js, heard as 'book:tape' events). bookbrought.js
-// reads what came. A picture lands a touch askew in a white border with a strip of tape (bookscrapdraw.js drawScrap, as
-// bookpage.js draws a page's scraps); one at an address on another site comes through the coordinator (bookfetch.ts).
+// tap on bare paper brings (bookselectpaste.js, which reads the clipboard: book.tape.fromClipboard), or carried in from
+// HQ's page (a ring the Pencil drew, lifted by a finger: shared/review/carry.js, heard as 'book:tape' events).
+// bookbrought.js reads what came. A picture lands a touch askew in a white border with a strip of tape
+// (bookscrapdraw.js drawScrap, as bookpage.js draws a page's scraps); one at an address on another site comes through
+// the coordinator (bookfetch.ts).
 // Words land in a box at a readable width (booktexts.js put), a link as its picture when it is one, else as its words.
 // Files of another kind are refused, saying so. Each landing is one step Undo takes back.
 //
@@ -21,7 +22,6 @@ import { grownTo, pageBox, scrapBoxOf } from './bookrow.js';
 import { shrink } from './bookscrapdraw.js';
 import { placeScrap } from './bookscrap.js';
 import { arrive } from './bookarrive.js';
-import { READ } from './booktexts.js';
 import { downToClear } from './bookwords.js';
 import * as brought from './bookbrought.js';
 
@@ -48,9 +48,9 @@ export function mountTape(book, paper, pages) {
     land(tape, brought.whatCame(brought.carried(e.dataTransfer)), { at: [e.clientX, e.clientY] });
   });
   document.addEventListener('book:tape', e => carried(tape, e));
-  // (what the clipboard held, read for Select's Paste bubble, landed at a point on screen: bookselectclip.js; and a voice
-  // note's words: bookvoice.js)
-  book.tape = { land: (got, at) => fromClipboard(tape, got, at), words: words => wordsIn(tape, words, {}) };
+  // (what the clipboard held, read for Select's Paste bubble, landed at a point on screen: bookselectpaste.js; and a
+  // voice note's words: bookvoice.js)
+  book.tape = { fromClipboard: (got, at) => fromClipboard(tape, got, at), words: words => wordsIn(tape, words, {}) };
 }
 
 // ---- the ways in
@@ -149,11 +149,8 @@ async function wordsIn(tape, words, { at = null }) {
     if (k < 0) return; // (the book went to another notebook meanwhile)
     const point = found.at && book.at(at[0], at[1]),
       view = k === book.cur ? book.shown() : pageBox(page),
-      half = Math.max(0, Math.min(READ / 2, (view.x1 - view.x0) / 2 - EDGE)),
       spot = landing(v, view, point?.i === k ? [point.x, point.y] : null);
-    const texts = spot.centre
-      ? book.tools.put({ view: v, x: spot.x, y: spot.y }, words, spot.x + half, { centre: true })
-      : book.tools.put({ view: v, x: spot.x, y: spot.y }, words, view.x1 - EDGE);
+    const texts = book.tools.put({ view: v, x: spot.x, y: spot.y }, words, view.x1 - EDGE, { centre: spot.centre });
     if (!texts.length) return;
     // (moved as one inside the paper shown, its first line never above it, and in the middle, below what's there
     // already)

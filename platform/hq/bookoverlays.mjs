@@ -32,12 +32,7 @@ async function mediaPicture(browser, c, viewport) {
     await page.locator('#book .bk-lip').click();
     await page.waitForFunction(() => !['folded', 'shut'].includes(document.documentElement.dataset.book));
     await page.waitForTimeout(900);
-    const button = page.locator('#book').getByRole('button', { name: 'Pen', exact: true, includeHidden: true });
-    if (await button.isVisible()) await button.click();
-    else {
-      await page.locator('#book .bk-more').click();
-      await page.locator('.bk-more-card').getByRole('menuitem', { name: 'Pen', exact: true }).click();
-    }
+    await page.locator('#book [data-island=tools]').getByRole('button', { name: 'Pen', exact: true }).click();
     const control = page.locator('.bk-palette').getByRole('menuitemradio', { name: 'Blue', exact: true });
     await control.waitFor();
     const centre = middleOf(await control.boundingBox());
@@ -89,7 +84,7 @@ async function overlays(browser, c, viewport) {
   const line = await prepare(s);
   try {
     await bookOpen(page, true);
-    await railButton(page, 'Tips');
+    await controlTapped(page, 'Tips');
     await page.waitForSelector('.tb-book:not(.tb-shut)');
     await page.waitForTimeout(900);
     await marked(s, line, '.tb-title', 'tips');
@@ -103,8 +98,8 @@ async function overlays(browser, c, viewport) {
     await page.waitForTimeout(450); // Let the pen tap's native click finish before the next finger tap.
     await page.keyboard.press('Escape');
     await page.waitForSelector('.tb', { state: 'detached' });
-    await rail(s, line, PREFERENCES, '.bk-prefs', 'preferences');
-    await rail(s, line, 'Pen', '.bk-palette', 'colours');
+    await cardMarked(s, line, PREFERENCES, '.bk-prefs', 'preferences');
+    await cardMarked(s, line, 'Pen', '.bk-palette', 'colours');
     await bookOpen(page, false);
     await pageOverlays(s, line);
     await dialogs(s, line);
@@ -180,17 +175,19 @@ async function prepare(s, mouse = false) {
   return line;
 }
 
-async function rail(s, line, name, selector, label) {
-  await railButton(s.page, name);
+// A card of the book's controls opened and marked by the pen
+async function cardMarked(s, line, name, selector, label) {
+  await controlTapped(s.page, name);
   await marked(s, line, selector, label);
   await s.page.keyboard.press('Escape');
 }
 
-async function railButton(page, name) {
-  const button = page.locator('#book').getByRole('button', { name, exact: true, includeHidden: true });
+// A control of the book's tapped: its key on the islands, or its row in the bar's dots menu
+async function controlTapped(page, name) {
+  const button = page.locator('#book .bk-controls').getByRole('button', { name, exact: true });
   if (await button.isVisible()) return button.tap();
   await page.locator('#book .bk-more').tap();
-  await page.locator('.bk-more-card').getByRole('menuitem', { name, exact: true }).tap();
+  await page.locator('#book .bk-more-card').getByRole('menuitem', { name, exact: true }).tap();
 }
 
 async function marked(s, line, selector, name) {

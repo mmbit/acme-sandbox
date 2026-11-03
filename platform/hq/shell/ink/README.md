@@ -10,9 +10,9 @@ the right of HQ's screen, its rail, pages, tools, sheets and Search. Invited peo
 scoped pages. (HQ's Sketchbook app on the computer, `sketch*`, is gone: the book is the one notebook.)
 
 - `book.js` opens the book beside HQ's page. `bookpages.js`, `bookpage.js` and `booksave.js` draw and keep its pages,
-  `bookgroups.js` a page's groups, a paperclip on each of two or more things, and the answers under them, `bookdogear.js` and `bookpagesend.js` a page torn out onto Submit (a guest's, its Send),
+  `bookgroups.js` a page's groups, a paperclip on each of two or more things, and the answers under them, `booktear.js` and `bookpagesend.js` a page torn off at its right edge, where the spine is, onto Submit, PDF or PNG (a guest's, its Send),
   `bookforyou.js` what's still the board's to answer (an open ask edged "for you", counted over the page's name, its arrows going to each),
-  `bookrail.js` Undo and Redo, `bookshelf*.js` the overview and the Shelf, `booksearch*.js` Search. `notebook*.js` read
+  `bookrail.js` Undo and Redo on the bar and Close notebook in its dots menu, `bookshelf*.js` the overview and the Shelf, `booksearch*.js` Search. `notebook*.js` read
   and write the Notebook's routes (`notebookdata.js`), and play them in dev mode and book-check (`notebookplay*.js`).
   (the Notebook's groups and the sheets gone)
 - `bookanswers*.js` draw a try's versions on a notebook page and what the board writes on them, and a slip's form

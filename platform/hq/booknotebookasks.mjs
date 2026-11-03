@@ -14,7 +14,7 @@
 //     again shows it.
 import assert from 'node:assert/strict';
 import { open } from './booknotebook.mjs';
-import { turnTo, where } from './booknotebookscreen.mjs';
+import { pageAt, turnTo } from './booknotebookscreen.mjs';
 import { DESKTOP, MINI, until } from './bookkit.mjs';
 
 // the seed's sent page (the first of My journal's), the group the card's about, and the note that group went as
@@ -229,7 +229,7 @@ async function stroke(page, r, points) {
 
 const asksOf = play => play.route('/api/notebooks/pages/groups', { page: SENT }).groups.find(g => g.id === GROUP).asks;
 // The page shown, by its place in the notebook (1: its first)
-const at = async page => Number(/(\d+)\/\d+$/.exec(await where(page))?.[1]);
+const at = async page => (await pageAt(page))?.[0];
 // The book turned to the sent page with the foot row's arrows
 async function turnToSent(page) {
   for (let i = 0; i < 8 && (await at(page)) !== SENT; i++) {

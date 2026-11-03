@@ -1,11 +1,11 @@
 // book-check.mjs's story of a page archived from the overview (shell/ink/bookshelf.js), on bookjournal.mjs's My
 // journal (two sketch pages, its Asks page, twenty calls' notes pages), the book open on Calls' page 20: on an iPad
-// mini with touch, on its side and upright, and on a desktop, the page's archive box crumples its tile up and drops
-// it off as a deleted thing does (bookpaper.js), the tile gone from the grid at once and the page archived in the
+// mini with touch, on its side and upright, and on a desktop, the page's archive box crumples its tile up and throws
+// it away as a deleted thing does (bookpaper.js), the tile gone from the grid at once and the page archived in the
 // store; Undo brings it back. Archived again, the book behind shows Calls' page 19, not the notebook's first page;
-// Sketch's last page archived, Sketch's page before it, not Asks.
+// Sketch's last page archived, Sketch's page before it, not Asks. Sketch is picked by its bookmark, two taps upright.
 import assert from 'node:assert/strict';
-import { DESKTOP, MINI, OVERVIEW, UPRIGHT, crumpled, until } from './bookkit.mjs';
+import { DESKTOP, MINI, OVERVIEW, UPRIGHT, crumpled, thrownAway, until } from './bookkit.mjs';
 import { CALLS, LOADED_MS, landed, onJournal } from './bookjournal.mjs';
 
 // c: book-check.mjs's hqIn, base, shot, noErrorsIn
@@ -27,29 +27,24 @@ const CALLS_LAST = 3 + CALLS,
   SKETCH_LAST = 2;
 
 const archived = (browser, c, viewport, name, options) =>
-  onJournal(browser, c, { viewport, name, options, story: 'archive' }, async (p, { press, play }) => {
+  onJournal(browser, c, { viewport, name, options, story: 'archive' }, async (p, { press, play, tab }) => {
     const far = p.getByRole('list', { name: 'The overview' }),
       tileOf = id => far.locator(`.bk-far-chapter .bk-tile[data-id="${id}"]`),
       last = tileOf(CALLS_LAST),
-      overview = () => p.locator(`#book .bk-column .bk-btn[aria-label="${OVERVIEW}"]`).dispatchEvent('click');
-    // the page's archive box pressed: its tile crumples and drops off, gone from the grid at once (undo: Undo pressed
-    // as it's offered)
+      overview = () => p.locator(`#book .bk-bar .bk-btn[aria-label="${OVERVIEW}"]`).dispatchEvent('click');
+    // the page's archive box pressed: its tile crumples and is thrown away, gone from the grid at once (undo: Undo
+    // pressed as it's offered)
     const archive = async (what, { undo = false, tile = last } = {}) => {
-      const dropped = crumpled(p),
+      const thrown = crumpled(p),
         undone = undo && undoneAsTold(p);
-      dropped.catch(() => {}); // (a failure below shows first; awaiting it later still throws)
+      thrown.catch(() => {}); // (a failure below shows first; awaiting it later still throws)
       await press(tile.locator('.bk-tile-act'));
       const told = undo ? await undone : { gone: !(await tile.count()) };
       assert.ok(told.gone, `${name}: ${what}: its tile gone from the grid at once`);
       if (undo) assert.deepEqual(told, { gone: true, words: 'Page archived.', over: null }, `${name}: Undo, uncovered`);
-      const { picture, down, aside, shown } = await dropped;
-      assert.ok(
-        picture && down > 40 && aside < 2,
-        `${name}: ${what}: crumpled and dropped (${down} down, ${aside} aside)`,
-      );
-      assert.ok(shown > 0.4, `${name}: ${what}: still shown as it drops (${shown})`);
+      thrownAway(await thrown, `${name}: ${what}`);
     };
-    await landed(p, 'calls', `Call ${CALLS}`, `${CALLS}/${CALLS}`, `${name}: the book opens on Calls' last page`);
+    await landed(p, 'calls', `Call ${CALLS}`, `${CALLS} / ${CALLS}`, `${name}: the book opens on Calls' last page`);
     await overview();
     await last.waitFor({ timeout: LOADED_MS });
     await until(async () => (await p.locator('#book .bk-turn-leaf').count()) === 0, `${name}: the leaf landed`);
@@ -59,17 +54,18 @@ const archived = (browser, c, viewport, name, options) =>
     await until(() => isArchived(play), `${name}: archived in the store`);
     await c.shot(`archive-${name}`, p);
     await overview();
-    await landed(p, 'calls', `Call ${CALLS - 1}`, `${CALLS - 1}/${CALLS - 1}`, `${name}: the book on the page before`);
-    // (Sketch's last page archived: the book stays in Sketch, on the page before, not on Asks after it.)
-    await press(p.locator('#book .bk-marks [data-chapter=sketch]'));
+    const before = `${CALLS - 1} / ${CALLS - 1}`;
+    await landed(p, 'calls', `Call ${CALLS - 1}`, before, `${name}: the book on the page before`);
+    // (Sketch's last page archived: the book stays in Sketch, on the page before, not on Asks after it)
+    await tab('sketch');
     await press(p.locator('#book .bk-btn[aria-label="The page after"]'));
-    await landed(p, 'sketch', 'Shop page', '2/2', `${name}: Sketch's last page`);
+    await landed(p, 'sketch', 'Shop page', '2 / 2', `${name}: Sketch's last page`);
     await overview();
     await tileOf(SKETCH_LAST).waitFor({ timeout: LOADED_MS });
     await until(async () => (await p.locator('#book .bk-turn-leaf').count()) === 0, `${name}: the leaf landed again`);
     await archive("Sketch's last archived", { tile: tileOf(SKETCH_LAST) });
     await overview();
-    await landed(p, 'sketch', 'Ideas', '1/1', `${name}: the book still in Sketch, on the page before`);
+    await landed(p, 'sketch', 'Ideas', '1 / 1', `${name}: the book still in Sketch, on the page before`);
   });
 // The overview's Undo pressed in the page once it's offered: whether the page's tile was gone then, Undo's words, and
 // what's over it (null: nothing). It lasts six seconds, which a busy browser's round trips can outlast.

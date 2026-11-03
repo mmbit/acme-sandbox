@@ -12,6 +12,20 @@
   position: absolute;
   pointer-events: auto;
 }
+/* a tie from a note to what hangs under it past its row (bookunder.js): one line in the book's ink, its ends and turns
+   round, nothing to press */
+#book .bk-tie {
+  position: absolute;
+  overflow: visible;
+  width: 1px;
+  height: 1px;
+  fill: none;
+  stroke: var(--bk-ink, #2a2352);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
 
 #book .bk-group-menu {
   position: fixed;
@@ -75,8 +89,8 @@
   cursor: pointer;
 }
 
-/* ---- the page's units (bookunits.js): each a sticky note on the paper, its corner turned, the room to write under
-   its body a quiet band, a handle at its foot to drag that room. Under the ink (the world's own layer, behind it). */
+/* ---- the page's units (bookunits.js): each a note on the paper, the room to write under its body plain page, a
+   handle at its foot to drag that room. Under the ink (the world's own layer, behind it). */
 #book .bk-units {
   position: absolute;
   inset: 0 auto auto 0;
@@ -90,8 +104,7 @@
   pointer-events: none;
 }
 /* The page's head (bookunits.js TITLE_H) has room for one title line, at its left as the Ink deck draws it, in line
-   with the scraps. At its right it ends 4 px short of the dog-ear at the screen's scale, so a long title's ellipsis
-   never runs under the fold; while the open asks' counter shows (the book's own, not a page turn's picture of it), it
+   with the scraps. At its right it ends 4 px short of the writing paper's edge at the screen's scale; while the open asks' counter shows (the book's own, not a page turn's picture of it), it
    ends 8 px short of the counter's left edge instead (its place and width bookforyou.css's), so the two never touch.
    The title stays where it is, only ending sooner. */
 #book {
@@ -103,7 +116,7 @@
   left: 0;
   box-sizing: border-box;
   margin: 0;
-  padding: 0 calc((var(--bk-ear) + 4px) / var(--bk-scale)) 0 calc(var(--bk-head-inset) / var(--bk-scale));
+  padding: 0 calc(4px / var(--bk-scale)) 0 calc(var(--bk-head-inset) / var(--bk-scale));
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -163,50 +176,33 @@
 #book .bk-unit {
   position: absolute;
   box-sizing: border-box;
-  border-radius: 3px 3px 3px 3px;
+}
+/* the note's paper, as tall as its body (what an agent put down), lying on the page with its own soft shadow; no
+   turned corner. The board's own drawing has none (bookunitcards.js). (board, call 190.) */
+#book .bk-unit-paper {
+  position: absolute;
+  inset: 0 0 auto;
+  border-radius: 3px;
   background: linear-gradient(180deg, #fffdf4, #fffaea);
   box-shadow:
     0 1px 2px rgba(42, 35, 82, 0.16),
     0 4px 14px rgba(42, 35, 82, 0.16);
-  /* (the turned corner: cut off here, drawn by ::after) */
-  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 18px), calc(100% - 18px) 100%, 0 100%);
 }
-/* the board's own drawing: ink on the page, no paper under it (bookunits.js.) */
-#book .bk-unit[data-drawing] {
-  background: none;
-  box-shadow: none;
-  clip-path: none;
-}
-#book .bk-unit[data-drawing]::after {
-  content: none;
-}
-#book .bk-unit::after {
-  content: '';
-  position: absolute;
-  right: 0;
-  bottom: 0;
-  width: 18px;
-  height: 18px;
-  background: linear-gradient(135deg, #efe6c8 0 50%, transparent 50%);
-  box-shadow: -1px -1px 2px rgba(42, 35, 82, 0.12);
-}
-/* the room to write: a pad of whiter lined paper pressed into the card, its edge and its shadow plain to see, so where
-   it ends reads at a glance (the board, call 174) */
+/* the room to write under it: plain page, its dots and all, no inner shadow and no corner; its handle at its foot
+   says where it ends (the board, call 190) */
 #book .bk-room {
   position: absolute;
-  inset: auto 14px 14px;
-  bottom: 14px;
+  inset: auto 0 0;
 }
-/* the room's lined paper, and a slip's room's pulled out (bookslipreply.css) */
-#book .bk-room,
+/* a slip's room pulled out (bookslipreply.css): its lined paper */
 #book .bk-slip-room[data-open] .bk-slip-room-paper {
   border: 1px solid rgba(42, 35, 82, 0.3);
   border-radius: 3px;
   background: #fff repeating-linear-gradient(180deg, transparent 0 31px, rgba(42, 35, 82, 0.1) 31px 32px);
-  box-shadow: inset 0 2px 5px rgba(42, 35, 82, 0.14);
 }
-/* the room's handle: a short quiet bar at the unit's foot, a 44 px target round it for a finger and the Pencil; a
-   slip's room's handle the same bar, placed by bookslipreply.css */
+/* the room's handle: a short quiet bar at the unit's foot, a 44 px target round it for a finger and the Pencil, its
+   size on screen at any zoom, so zoomed in it never takes the room's writing;
+   a slip's room's handle the same bar, placed by bookslipreply.css */
 #book .bk-room-handle,
 #book .bk-slip-room-pull {
   all: unset;
@@ -214,6 +210,7 @@
   width: 88px;
   height: 44px;
   margin: -22px 0 0 -44px;
+  scale: calc(1 / var(--bk-scale, 1));
   pointer-events: auto;
   cursor: ns-resize;
   touch-action: none;

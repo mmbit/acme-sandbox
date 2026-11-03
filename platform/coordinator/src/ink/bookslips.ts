@@ -14,7 +14,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { db, lacks, once, redacted, redactedJson } from '../db.ts'; // (lacks, once)
 import { publish } from '../events.ts';
 import { ceo } from '../company.ts';
-import { findAgent, jobAgent, notePage } from '../jobs.ts';
+import { agentName, jobAgent, notePage } from '../jobs.ts';
 import { keepFile } from '../uploads.ts';
 import { BOARD } from './book.ts';
 import { addNote, note, sheetRow } from './booknotes.ts';
@@ -34,10 +34,13 @@ export const SLIP_MAX = 4000,
 // source: where a picture's numbers came from (a chart). A version's branch (trybranch.ts branchVersion), when the board
 // crossed it out, and when its branch and preview were cleared (bookpick.ts).
 // base: the commit its branch was made on, which its preview serves with its patch (trypreview.ts.). branch_failed: why GitHub refused its branch (trybranch.ts.)
+// fix: a fix's one line, the change its words or drawing propose, which the board ticks to have built; built: the job its
+// page's send handed the build to (bookfix.ts).
 const SLIPS = `create table if not exists book_slips (id integer primary key autoincrement, note integer, by text not null,
   job integer, text text not null, picture text, link text, created text not null, ticked text, artifact text, now text,
   now_at text, grp integer, style text, version text, patch text, ink text, form text, form_answer text,
-  picked text, source text, branch text, crossed text, cleared text, base text, branch_failed text)`;
+  picked text, source text, branch text, crossed text, cleared text, base text, branch_failed text, fix text,
+  built integer)`;
 db.exec(`${SLIPS}; create index if not exists book_slips_note on book_slips (note)`);
 once('2026-10-26-book-slips-previews', () => {
   for (const column of ['artifact', 'now', 'now_at'])
@@ -61,8 +64,12 @@ once('2026-10-30-book-slips-versions', () => {
   for (const column of ['source', 'branch', 'crossed', 'cleared', 'base', 'branch_failed'])
     if (lacks('book_slips', column)) db.exec(`alter table book_slips add column ${column} text`);
 });
+once('2026-11-03-book-slips-fixes', () => {
+  for (const column of ['fix text', 'built integer'])
+    if (lacks('book_slips', column.split(' ')[0])) db.exec(`alter table book_slips add column ${column}`);
+});
 db.exec('create index if not exists book_slips_grp on book_slips (grp)');
-redacted('book_slips', 'text', 'link', 'version', 'source');
+redacted('book_slips', 'text', 'link', 'version', 'source', 'fix');
 redactedJson('book_slips', 'form', 'form_answer');
 
 export type Slip = {
@@ -92,6 +99,8 @@ export type Slip = {
   cleared: string | null;
   base: string | null;
   branch_failed: string | null;
+  fix: string | null;
+  built: number | null;
 };
 // An artifact's id as artifacts.ts makes them: an app's slug, top/path for an artifact.yaml, a company artifact's open
 // (an address, hence the colon).
@@ -103,14 +112,14 @@ export const ARTIFACT = /^[A-Za-z0-9._/:-]{1,200}$/;
 // POST /api/agent/answer (hq answer): bookanswer.ts answer (moved there, with an
 // answer on a group, its ink, form, versions and who may answer)
 // (more: an answer's picture, link and artifact, and the rest of an answer's,
-// bookanswer.ts: its group, style, version, patch file, ink, form and source as stored, JSON as JSON text)
-type Stored = 'grp' | 'style' | 'version' | 'patch' | 'ink' | 'form' | 'source';
+// bookanswer.ts: its group, style, version, patch file, ink, form, source and fix as stored, JSON as JSON text)
+type Stored = 'grp' | 'style' | 'version' | 'patch' | 'ink' | 'form' | 'source' | 'fix';
 export type More = {
   picture?: { type: string; clean: Buffer } | null;
   link?: string | null;
   artifact?: string | null;
 } & Partial<Record<Stored, string | number | null>>;
-const STORED: Stored[] = ['grp', 'style', 'version', 'patch', 'ink', 'form', 'source'];
+const STORED: Stored[] = ['grp', 'style', 'version', 'patch', 'ink', 'form', 'source', 'fix'];
 export function addSlip(noteId: number | null, by: string, job: number | null, text: string, more: More = {}) {
   const id = Number(
     db
@@ -189,12 +198,13 @@ export const slipRow = (id: number, who: string) => {
     .get(slip.grp, who);
   return mine ? slip : undefined;
 };
-// (preview, now, now_at; grp to picked, an answer's in a notebook)
+// (preview, now, now_at; grp to picked, an answer's in a notebook; builder: the name of who builds its fix (its job's
+// agent), null until it goes)
 export const slipOf = (s: Slip, listed = listedOnce()) => ({
   id: s.id,
   note: s.note,
   by: s.by,
-  name: findAgent(s.by)?.name ?? s.by,
+  name: agentName(s.by),
   text: s.text,
   picture: s.picture ? `/api/book/slip/picture?id=${s.id}` : null,
   link: s.link,
@@ -217,6 +227,8 @@ export const slipOf = (s: Slip, listed = listedOnce()) => ({
   crossed: s.crossed,
   cleared: s.cleared,
   branch_failed: s.branch_failed,
+  fix: s.fix,
+  builder: s.built === null ? null : agentName(jobAgent(s.built)!),
 });
 // The artifact a slip names, as HQ shows it: its running preview (open) and cover (picture, HQ's address), or pending
 // while it isn't listed yet (the work that answered is still in review, or not running).
@@ -241,7 +253,7 @@ export const going = (job: number | null | undefined) =>
   !!job && !!db.prepare("select 1 from jobs where id = ? and status in ('queued', 'running')").get(job);
 const byOf = (job: number) => {
   const by = jobAgent(job) ?? ceo();
-  return { by, name: findAgent(by)?.name ?? by };
+  return { by, name: agentName(by) };
 };
 type Asking = { asked?: number | null };
 // The face a group shows for an answer not on it yet: the one coming, else why its ended ask brought none (quickruns.ts

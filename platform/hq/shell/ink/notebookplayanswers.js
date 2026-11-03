@@ -1,12 +1,16 @@
 // The Notebook store's answers, played (notebookplay.js): the agents' answers on a group as HQ reads them with it
-// (groupanswers.ts answersOf: its children, the answer still coming, its try), a form answered and an answer ticked or
-// a version picked (bookanswer.ts answerForm and tickAnswer, bookpick.ts pick), the open list (bookanswer.ts
+// (groupanswers.ts answersOf: its children, the answer still coming, its try, its seen tick), a form answered and an
+// answer ticked, a version picked or a fix ticked to be built (bookanswer.ts answerForm and tickAnswer, bookpick.ts
+// pick, bookfix.ts), the open list (bookanswer.ts
 // openList) and a card under a group answered on the desk phone, with the coordinator's answers and refusals. The runs
 // an answer comes from aren't played: a seeded group (or play.asking and play.trying) says where they are.
 //   - group.asking: its owner's quick run going, { by, reason? } (bookslips.ts comingOf); an answer on the group
 //     ends it.
 //   - group.tried: its try run, { by, expect, going, said? } (booktry.ts): going while it makes versions, said its last
 //     line once it ended (groupanswers.ts endedEmpty).
+//   - group.seen: the agent it went to, as if the judge read it as needing nothing back (groupanswers.ts seenTick).
+//   - an answer's fix: built once its page is sent ticked, by who proposed the first ticked on its thread (notebookplay.js
+//     sendPage).
 import { given } from '../questions.js';
 import { refuse } from './notebookplaychecks.js';
 
@@ -14,7 +18,7 @@ import { refuse } from './notebookplaychecks.js';
 const SLIP = { note: null, grp: null, text: '', picture: null, link: null, preview: null, now: null, now_at: null };
 Object.assign(SLIP, { ticked: null, face: null, style: 'text', ink: null, form: null, form_answer: null });
 Object.assign(SLIP, { version: null, patch: false, picked: null, source: null, branch: null });
-Object.assign(SLIP, { crossed: null, cleared: null, branch_failed: null });
+Object.assign(SLIP, { crossed: null, cleared: null, branch_failed: null, fix: null, builder: null });
 export const slipRow = (s, x) => ({ ...SLIP, ...x, name: x.name ?? s.name(x.by) });
 
 // A group's run said where it is (play.asking, play.trying): run, its asking or tried
@@ -33,7 +37,8 @@ export const ANSWER_ROUTES = {
 };
 
 // A group's answers (on the notes it and its replies went as, or on the groups themselves, each once), the answer
-// still coming on it or a reply of its, its try and the cards on its notes: { answers, waiting, try, asks }
+// still coming on it or a reply of its, its try, its seen tick and the cards on its notes: { answers, seen, waiting, try,
+// asks }
 export function answersOf(s, g, replies) {
   const notes = [g, ...replies].flatMap(x => (x.note ? [x.note] : [])),
     ids = [g, ...replies].map(x => x.id);
@@ -41,12 +46,18 @@ export function answersOf(s, g, replies) {
   const top = g.parent === null;
   return {
     answers,
+    seen: top ? seenTick(s, g, answers) : null,
     waiting: top ? ([g, ...replies].map(x => x.asking && comingOf(s, x.asking)).find(w => w) ?? null) : null,
     try: top ? tryOf(s, g, answers) : null,
     // (or the design ask it is, on an Asks page: askpages.ts, its group.)
     asks: [...notes.flatMap(n => s.asks.filter(a => a.note === n)), ...s.asks.filter(a => a.group === g.id)],
   };
 }
+// A group's or a reply's seen tick, when nothing answers it
+export const seenTick = (s, g, answers) =>
+  g.seen && !answers.some(a => a.grp === g.id || (g.note != null && a.note === g.note))
+    ? { by: g.seen, name: s.name(g.seen) }
+    : null;
 const comingOf = (s, { by, reason }) => ({
   by,
   name: s.name(by),
@@ -96,11 +107,16 @@ function answerForm(s, b) {
   changedOn(s, slip);
   return { answer: { ...slip } };
 }
-// A tick closes an answer; on a version it picks it, the rest of its set not (false: open again, unpicked)
+// A tick closes an answer; on a version it picks it, the rest of its set not (false: open again, unpicked); a fix only
+// while its scrap is on its page, and kept once built (bookfix.ts tickRefused)
 function tickAnswer(s, b) {
   const slip = slipById(s, b?.id);
   if (!slip) refuse(404);
   if (typeof b.ticked !== 'boolean') refuse(400, 'ticked is true or false');
+  if (slip.fix && slip.builder) refuse(409, 'this fix has gone to be built');
+  const g = slip.fix && groupOn(s, slip);
+  if (g && b.ticked && rootOf(s, g).status !== 'open')
+    refuse(409, 'this page has been sent: write under the fix to have it built');
   const when = b.ticked ? s.stamp() : null;
   if (slip.style === 'version' && when) pick(s, slip, when);
   else slip[slip.style === 'version' ? 'picked' : 'ticked'] = when;

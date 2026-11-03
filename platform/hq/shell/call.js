@@ -80,8 +80,10 @@ export async function callAgent(
   // (it rings in the call's sound, opened in the tap, while the microphone starts.)
   c.audio.open();
   ring(c);
+  // (callmic.js's share reads it from here on, so it's set before anything waits)
+  c.started = c.audio.start();
   try {
-    await (c.started = c.audio.start());
+    await c.started;
     gotStream();
   } catch {
     return endCall(`The microphone didn’t start. Check ${names.hq}’s microphone permission.`);

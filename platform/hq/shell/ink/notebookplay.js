@@ -41,20 +41,13 @@ export function notebookPlay({ seed, now = () => Date.now(), sendMs = 10_000 } =
     route: (path, query = {}, body = undefined) => routed(s, path, query, body),
     // An agent's answer on a group, sent or not (group: its id): a slip as bookslips.ts's slipOf lists it ({ by, text,
     // name?, style?, picture?, link?, preview?, ink?, form?, version? … }), its id, grp and note filled in; the
-    // answer coming on the group ends. → the slip
-    answer(group, slip) {
-      const g = s.group(Number(group));
-      if (!g) throw new Error(`no group ${group} to answer`);
-      const answered = slipRow(s, { ...slip, id: s.next('slip'), grp: g.id, note: g.note, created: s.stamp() });
-      s.slips.push(answered);
-      g.asking = null;
-      s.changed(s.page(g.page).notebook, g.page);
-      return JSON.parse(JSON.stringify(answered));
-    },
-    // The owner's quick run on a group going, its answer coming ({ by, reason? }: bookslips.ts comingOf; null:
-    // none), and a group's try run ({ by, expect, going, said? }: groupanswers.ts tryOf), as the group's read shows them
+    // answer coming on the group ends; a fix only while its page isn't sent (bookanswer.ts). → the slip
+    answer: (group, slip) => answerOn(s, group, slip),
+    // As the group's read shows them: the owner's quick run going ({ by, reason? }: bookslips.ts comingOf), its try
+    // run ({ by, expect, going, said? }: groupanswers.ts tryOf), who read it needing nothing back (seenTick), or null
     asking: (group, face) => ran(s, group, { asking: face }),
     trying: (group, tried) => ran(s, group, { tried }),
+    seen: (group, by) => ran(s, group, { seen: by }),
     // An agent's desk-phone card about a sent group's note (group: its id), as bookasks.ts's asksOn lists it ({ agent,
     // kind, title, body, questions? }), its id, note and name filled in. → the card.
     ask: (group, card) => askAbout(s, group, card),
@@ -80,6 +73,17 @@ export function notebookPlay({ seed, now = () => Date.now(), sendMs = 10_000 } =
     // A picture uploaded this session: { bytes, type }, or null (a seeded one's file is mock/'s)
     picture: file => s.files.get(file) ?? null,
   };
+}
+// play.answer: a fix only while its page isn't sent, as bookanswer.ts refuses one after
+function answerOn(s, group, slip) {
+  const g = s.group(Number(group));
+  if (!g) throw new Error(`no group ${group} to answer`);
+  if (slip.fix && rootOf(s, g).status !== 'open') throw new Error(`group ${group}'s page has been sent: no fix there`);
+  const answered = slipRow(s, { ...slip, id: s.next('slip'), grp: g.id, note: g.note, created: s.stamp() });
+  s.slips.push(answered);
+  g.asking = null;
+  s.changed(s.page(g.page).notebook, g.page);
+  return JSON.parse(JSON.stringify(answered));
 }
 
 // ---------------------------------------------------------------- the store's state
@@ -307,6 +311,11 @@ function sendPage(s, p, aside = []) {
     g.note = s.next('note');
     g.status = 'sent';
     s.notes.set(g.note, at);
+    // (the fixes ticked on its thread go to be built, by who proposed the first ticked: bookfix.ts fixerOf, fixesWent)
+    const thread = s.groups.filter(x => (x.id === g.id || x.parent === g.id) && x.deleted === null).map(x => x.id);
+    const fixes = s.slips.filter(a => a.fix && a.ticked && !a.builder && thread.includes(a.grp));
+    const builder = fixes.toSorted((a, b) => a.ticked.localeCompare(b.ticked) || a.id - b.id)[0]?.name;
+    for (const a of fixes) a.builder = builder;
   }
   p.send_at = at;
   s.changed(p.notebook, p.id);

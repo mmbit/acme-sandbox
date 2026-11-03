@@ -57,7 +57,7 @@ export function chapterGrids(book, pages, { here, drag, manage, adds }) {
       const in_ = pages.filter(p => p.chapter === c),
         add = adds && c === 'sketch';
       return `<section class="bk-far-chapter" role="presentation"><div class="bk-far-mark">${chapterTab(book, c, {
-        lit: c === shown,
+        here: c === shown,
         empty: !in_.length,
         tag: 'h3',
       })}</div>${

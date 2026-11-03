@@ -14,6 +14,7 @@ import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { playwright, openPage } from '../browser/browser.mjs';
 import { RECORDER_MODULES } from '../../platform/hq/extras.mjs';
+import { scriptForHq } from '../review/parts.mjs';
 
 const REPO = new URL('../..', import.meta.url).pathname;
 const MODULES = `${REPO}/platform/coordinator/node_modules`;
@@ -329,9 +330,7 @@ window.inked = (events, time, x, y) => {
 
 // Review mode as the coordinator serves it to the board, with the watch-along's answer after it, HQ's origin filled in: the desk's
 function reviewMode(deskOrigin) {
-  return ['review/review.js', 'watchalong/framed.js']
-    .map(file => readFileSync(`${REPO}/shared/${file}`, 'utf8').replace('{{HQ_ORIGIN}}', deskOrigin))
-    .join('');
+  return scriptForHq('review/review.js', deskOrigin) + scriptForHq('watchalong/framed.js', deskOrigin);
 }
 
 function recorderFile(path) {

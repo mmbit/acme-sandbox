@@ -2,6 +2,7 @@
 // with a goal, in HQ's db, which any agent starts) and each project's sentence on where it stands, by its owner. A job
 // serves one thread (jobs.thread), and the work it leads to inherits it (jobs.ts threadFrom).
 // (its messages say deliverable, the board's word for a thread)
+import { threadUrgent } from './urgency.ts';
 import { db, prepared } from './db.ts';
 import { ceo, projects, type Project } from './company.ts';
 import { deskLets, loopJobs, OPEN_JOBS, threadOf, WORK_LEAD } from './jobs.ts';
@@ -35,6 +36,7 @@ export type Thread = {
   branch: string | null;
   // the job HQ queued its owner to judge it once its work merged (threadjudge.ts).
   judge: number | null;
+  urgent: number;
 };
 
 const SENTENCE_MAX = 400;
@@ -46,11 +48,19 @@ export const slugRefusal = (slug: string | undefined) =>
 export const findProject = (id: string): Project | undefined => projects().list.find(p => p.id === id);
 // A thread moved to another project (regroup.ts) keeps answering to its old id, which queued briefs name.
 db.exec('create table if not exists thread_aliases (old text primary key, id text not null)');
+// Its window as thread_windows gives it, read up its own deadline_from line to the thread that sets it rather than
+// through the view, which works out every thread's: the play asks once per thread it places.
+// None at the line's top, as the view leaves out a thread whose line breaks or
+// loops.
 export function findThread(id: string): Thread | undefined {
   return prepared(
-    `select t.id, t.project, t.name, t.goal, t.status, t.created, t.by, t.done, t.branch, t.judge, t.deadline_from,
-      w.deadline, w.aim, w.deadline_by from threads t join thread_windows w on w.id = t.id
-      where t.id = coalesce((select id from thread_aliases where old = $id), $id)`,
+    `with recursive line(id, deadline_from) as (
+        select id, deadline_from from threads where id = coalesce((select id from thread_aliases where old = $id), $id)
+        union select t.id, t.deadline_from from threads t join line l on t.id = l.deadline_from
+      )
+      select t.id, t.project, t.name, t.goal, t.status, (select urgent from urgent_threads where id=t.id) urgent, t.created, t.by, t.done, t.branch, t.judge, t.deadline_from,
+        w.deadline, w.aim, w.deadline_by from threads t, line l join threads w on w.id = l.id
+      where t.id = coalesce((select id from thread_aliases where old = $id), $id) and l.deadline_from is null`,
   ).get({ id }) as Thread | undefined;
 }
 export const isOpen = (id: string) => findThread(id)?.status === 'open';
@@ -127,7 +137,7 @@ export function listThreads(o: { project?: string; all?: boolean } = {}) {
     Thread,
     'id' | 'project' | 'name' | 'goal' | 'status'
   > & { open: number })[];
-  return rows.map(t => ({ ...t, owner: ownerOf(t) }));
+  return rows.map(t => ({ ...t, urgent: threadUrgent(t.id), owner: ownerOf(t) }));
 }
 
 // hq project say: the project's sentence, by its owner or the CEO

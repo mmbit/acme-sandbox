@@ -153,13 +153,23 @@ function fitsAfterPauses(
   return memory.canStart(available, waiting.row) && onEngine < engineSlots && onSeat < admissionLimit;
 }
 
+// A seat hold that starts, ends or changes reason closes the previous wait
 export function hold(run: Run, now: number, by: Wait) {
+  if (run.held && seatHoldOf(run.held.by) !== seatHoldOf(by)) releaseHold(run, now);
+  if (by.on === 'seats') by = { ...by, from: run.held?.since ?? now };
   if (run.held) run.held.by = by;
   else run.held = { since: now, by };
 }
 export function releaseHold(run: Run, now: number) {
   if (!run.held) return;
   const { since, by } = run.held;
-  run.waits.push(by.on === 'queue' ? { ...by, minutes: Math.round((now - since) / 60_000) } : by);
+  run.waits.push(
+    by.on === 'queue'
+      ? { ...by, minutes: Math.round((now - since) / 60_000) }
+      : by.on === 'seats'
+        ? { ...by, from: since, until: now }
+        : by,
+  );
   run.held = null;
 }
+const seatHoldOf = (wait: Wait) => (wait.on === 'seats' ? `seats ${wait.reason}` : undefined);

@@ -128,7 +128,7 @@ function listPage(list, setup) {
   const gone = [...ui.removed].filter(([, r]) => r.at).map(([id]) => said('done', `✓ ${id} removed.`)).join('');
   const seatRow = s => `<li data-seat="${esc(s.id)}"><button data-open="${esc(s.id)}"${s.removing ? ' disabled' : ''}><b>${engineMark(s.cli ?? s.engine)}${esc(s.id)}</b><span class="to">${now(s)}${s.removing ? '' : ' ›'}</span></button></li>`;
   const pace = setup.pacing ? `<ul class="rows settings"><li class="switch-row"><b id="pace-label">Pace each week</b>${toggle('pacing', pacingOn(setup), 'pace-label', ui.sending.has('pacing'))}
-    ${outcome(setup.pacing.action, 'pacing')}</li></ul><p class="seat-foot">When a seat would run out before its weekly reset, it takes only your work and what must start before then.</p>` : '';
+    ${outcome(setup.pacing.action, 'pacing')}</li></ul><p class="seat-foot">When a seat would run out before its weekly reset, it takes only urgent work and your conversations until its pace lets the rest start.</p>` : '';
   return `${gone}<p class="cap"><i class="prompt">&gt; </i>SEATS</p><ul class="rows settings seats">${list.map(seatRow).join('')}
     <li><button data-add><b>+ Add a seat</b><span class="to">›</span></button></li></ul>${pace}`;
 }

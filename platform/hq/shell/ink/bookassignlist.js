@@ -116,16 +116,24 @@ let given = null;
 export const freshTag = (g, to, at) => (given = { g, to, at });
 
 // A group's tags, at its unit's bottom-right corner (bookunits.js places them): an initial in a circle for each person
-// it went to, with a tick by it once they've answered
+// it went to, with a tick by it once they've answered; and the seen tick of the agent it went to, when it needs
+// nothing back (groupanswers.ts seenTick)
 export function tagsHtml(g) {
-  if (scope || !g.assigned?.length) return '';
-  const tags = g.assigned.map(p => {
+  const seen = g.seen && !g.assigned?.some(p => p.to === g.seen.by) ? seenHtml(g.seen) : '';
+  if (scope || (!g.assigned?.length && !seen)) return '';
+  const tags = (g.assigned ?? []).map(p => {
     const label = p.answered ? word('nameAnswered', { name: p.name }) : word('assignedTo', { name: p.name });
     const fresh = popping(g, p) ? ` data-new style="--wait:${Math.round(given.at - performance.now())}ms"` : '';
     return `<span class="bk-tag" title="${esc(label)}" aria-label="${esc(label)}"${fresh}>${p.answered ? TICK : ''}<span
       class="bk-face">${esc(initial(p.name))}</span></span>`;
   });
-  return `<div class="bk-tags" data-g="${g.id}">${tags.join('')}</div>`;
+  return `<div class="bk-tags" data-g="${g.id}">${tags.join('')}${seen}</div>`;
+}
+// Seen: a small tick with the initial of the agent who read it, in the brand's colour
+export function seenHtml(seen) {
+  const label = word('seenBy', { name: seen.name });
+  return `<span class="bk-tag" data-seen title="${esc(label)}" aria-label="${esc(label)}" role="img">${TICK}<span
+      class="bk-face">${esc(initial(seen.name))}</span></span>`;
 }
 // (drawn again after it has popped in, it's just there)
 const popping = (g, p) => given?.g === g.id && given.to === p.to && performance.now() < given.at;

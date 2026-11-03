@@ -82,3 +82,30 @@ test("a slip in the reader's words, its agent's name marked as an AI's", () => {
   // (no field to type a reply in: the reader answers in its own room, drawn.)
   assert.doesNotMatch(unmarked + html, /<(textarea|input)\b/);
 });
+
+test("a fix: its box beside its line, or round its drawing, saying what the tick does; a picture's source under it", () => {
+  const say = (key, places = {}) =>
+    `${key}${places.fix ? ` ${places.fix}` : ''}${places.name ? ` ${places.name}` : ''}`;
+  const written = slipHtml({ id: 2, name: 'Joost', text: 'It keeps every stroke', fix: 'Free strokes' }, {}, { say });
+  assert.match(written, /data-fix/);
+  assert.match(
+    written,
+    /<div class="slip-fix"><button class="slip-tick"[^>]*aria-label="slipFixTick">/,
+    'the box by its line',
+  );
+  assert.match(written, /<b class="slip-fix-words">slipFix Free strokes<\/b>/);
+  assert.match(written, /<p class="slip-fix-said">slipFixSend<\/p>/);
+  assert.equal(written.match(/class="slip-tick"/g).length, 1, 'one box: none at the corner');
+  const drawn = slipHtml({ id: 3, name: 'Joost', text: '', fix: 'Room', ticked: 'x' }, {}, { say, art: '<svg></svg>' });
+  assert.match(drawn, /<div class="slip-fix-art"><svg><\/svg><button class="slip-tick"/, 'the box at its drawing');
+  assert.match(drawn, /slipFixTicked/);
+  const built = slipHtml({ id: 4, name: 'Vera', text: '', fix: 'Room', ticked: 'x', builder: 'Joost' }, {}, { say });
+  assert.match(built, /<button class="slip-tick"[^>]*disabled>/);
+  assert.match(built, /slipFixBuilt Joost/, 'who builds it, not who proposed it');
+  const chart = slipHtml(
+    { id: 5, name: 'Joost', text: 'Faster', picture: '/c.png', source: 'HQ, 7 days' },
+    {},
+    { say },
+  );
+  assert.match(chart, /<img class="slip-pic"[^>]*><p class="slip-source">HQ, 7 days<\/p>/);
+});

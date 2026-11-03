@@ -24,24 +24,26 @@ import { mountGroups } from './bookgroups.js';
 import { sendShown, stamped } from './bookpagesend.js';
 import { mountControls } from './bookcontrols.js';
 import { turn } from './bookflip.js';
-import { at, away, draw, halt, setView, shown, slideTo, viewOf } from './bookview.js';
+import { at, away, draw, fitOf, halt, setView, shown, slideTo, viewOf } from './bookview.js';
 import { placeIn, showsBox } from './bookrow.js';
 import { recordOf, summaryOf } from './bookrecords.js';
 import { stepList, undo, redo } from './bookedit.js';
 import { mountMessages } from './bookmessages.js';
 import { INK, drawable, dried, endLostLines } from './bookwrite.js';
 import { tidy } from './booktidy.js';
+import { opensAt } from './bookunits.js';
+import { isCanvas } from './sketchcanvas.js';
 import { remember, remembered, shownPage } from './bookplace.js';
 
 const HTML = `<div class="bk-pages">
   <div class="bk-desk"><div class="bk-world"></div><canvas class="bk-wet"></canvas><p class="bk-lost" hidden></p></div>
 </div>`;
 
-// paper: the book's paper, empty. dev: on mock data. undo() takes back the book's last step; page() is the page shown
-// (its summary).
-export function mountPages(paper, { dev, calls = null }) {
+// paper: the book's paper, empty. dev: on mock data. shelf(): the book shut and the Shelf shown (book.js). undo()
+// takes back the book's last step; page() is the page shown (its summary).
+export function mountPages(paper, { dev, calls = null, shelf = null }) {
   paper.innerHTML = HTML;
-  const book = bookOf(paper, { dev, calls });
+  const book = { ...bookOf(paper, { dev, calls }), shelf };
   if (!scope) mountMessages(book);
   book.steps = stepList(book);
   // (what the mouse's tools and the pages' parts ask of the page: booktools.js, booktape.js)
@@ -68,7 +70,7 @@ export function mountPages(paper, { dev, calls = null }) {
   if (window.webkit?.messageHandlers?.shell) import('./booknative.js').then(m => m.mountNative(book));
   mountTape(book, paper, { lay, inView, current }); // (pictures taped in.)
   book.groups = mountGroups(book, groupHooks(book));
-  if (!scope) import('./bookdogear.js').then(m => m.mountDogEar(book)); // (a page shared by its corner)
+  if (!scope) import('./booktear.js').then(m => m.mountTear(book)); // (a page torn off at its spine and shared)
   book.zoom = mountFar(book, paper, { goTo, openNotebook, pagesAgain }); // (the overview.)
   book.controls = mountControls(book, controlsOf(book));
   // (the mouse's tools, once they're there: booktools.js)
@@ -95,6 +97,9 @@ const asked = book => ({
   made: id => made(book, id),
   dev: book.dev,
   opened: book.opened, // (the notebook remembered, open)
+  notebook: () => book.notebook,
+  // (a notebook tapped on the Shelf, at its newest page; a returned round's at its Advice page, read again)
+  open: (id, page = null) => (page !== null || id !== book.notebook) && openNotebook(book, id, page && { page }),
   away: on => away(book, on),
 });
 // A page made outside the book (a call's, a scrap's on a fresh current page): the notebook's pages read again and that
@@ -212,10 +217,11 @@ export const newestOf = pages => landingPage(pages, shut)?.id ?? pages.at(-1)?.i
 // A page as the book keeps it while it shows: its summary, and its groups' ink, pictures and typed words once read
 function viewFor(book, page) {
   const v = pageView(page, book.away);
-  Object.assign(v, { dev: book.dev, relay: () => lay(book) }); // (a unit's room dragged: bookunits.js)
+  // (relay: a unit's room dragged; pinned: a sketch page's units placed, bookunits.js)
+  Object.assign(v, { dev: book.dev, relay: () => lay(book), pinned: () => changed(book, page) });
   v.el.hidden = true;
   book.world.append(v.el);
-  v.place();
+  v.place(book.size.w); // (laid at the paper's width once it has one: resized)
   book.groups.added(v);
   book.tools?.added?.(v);
   stamped(book, page, false, v.el);
@@ -248,10 +254,12 @@ async function current(book) {
 
 // ---- the page shown
 
-// Page i of the notebook shown, at a place on it ({ x, y, s }), or as it was left this visit, or at its top-left
+// Page i of the notebook shown, at a place on it ({ x, y, z }), or as it was left this visit, or at its top-left (a
+// sketch page at the zoom it opens at: bookunits.js; a page of units at its fit). z: how far it's zoomed past its fit
+// (bookview.js), kept as the page is laid at another width
 function show1(book, i, place = null) {
   const old = viewOf(book);
-  if (old) book.cams.set(old.page, { pan: { ...book.pan }, scale: book.scale });
+  if (old) book.cams.set(old.page, { pan: { ...book.pan }, z: book.scale / fitOf(old.page) });
   halt(book);
   // (a finger's pan or pinch on the page before ends with it.)
   book.table.letGo();
@@ -260,7 +268,9 @@ function show1(book, i, place = null) {
   const v = viewOf(book);
   if (!v) return;
   // (at a place on it, or as it was left this visit, or at its top)
-  setView(book, place ? { pan: { x: 0, y: place.y ?? 0 } } : (book.cams.get(v.page) ?? { pan: { x: 0, y: 0 } }));
+  const to = place ? { pan: { x: place.x ?? 0, y: place.y ?? 0 }, z: place.z } : book.cams.get(v.page),
+    opening = isCanvas(v.page.chapter) ? opensAt(book.size.w) : 1;
+  setView(book, { pan: to?.pan ?? { x: 0, y: 0 }, scale: (to?.z ?? opening) * fitOf(v.page) });
   if (!v.page.ink) read(book, v);
   remember(book);
   book.controls?.update();
@@ -274,9 +284,12 @@ async function turnTo(book, i, place = null) {
 }
 // The page laid again (its size, as it has grown) and drawn where it is
 function lay(book) {
-  // (its units laid as a masonry at the paper's width, bookunits.js; the tools' layer drawn again where units moved.
+  // (its units laid as a masonry at the paper's width, bookunits.js; the tools' layer drawn again where units moved;
+  // the page shown as far zoomed past its fit as before.)
+  const page = viewOf(book)?.page,
+    z = book.scale / fitOf(page);
   for (const v of book.views) if (v.place(book.size.w)) book.tools?.added?.(v);
-  setView(book);
+  setView(book, { scale: z * fitOf(page) });
 }
 // A page's groups read, drawn and given to the tools
 function read(book, v) {
@@ -293,14 +306,14 @@ function read(book, v) {
     },
   ));
 }
-// A remembered place ({ page: an id, x, y, s }) in the notebook, or its current page when that's gone. Found when the
+// A remembered place ({ page: an id, x, y, z }) in the notebook, or its current page when that's gone. Found when the
 // paper has a size, so a notebook that changed while it had none can't leave it pointing past its end.
 function goTo(book, place) {
   if (!book.size.w) return (book.waiting = place);
   const ids = book.views.map(v => v.page.id),
     { i, at: on } =
       place && ids.includes(place.page) ? placeIn(ids, place) : { i: ids.indexOf(newest(book)), at: null };
-  show1(book, i, on && { x: 0, y: on.y ?? 0 });
+  show1(book, i, on && { x: on.x ?? 0, y: on.y ?? 0, z: on.z });
 }
 // The paper's size taken, and a place waiting for it opened
 function resized(book) {
@@ -363,7 +376,7 @@ function show(book, id, y = 0) {
   const i = indexOf(book, id);
   if (i < 0) return;
   book.zoom.near();
-  return turnTo(book, i, { x: 0, y: Math.max(0, y), s: book.scale });
+  return turnTo(book, i, { x: 0, y: Math.max(0, y) });
 }
 // Search's find, or a card's Open in the book: its page, its notebook opened at it first where it's another's (from
 // the Shelf too: brought near.)
@@ -378,7 +391,7 @@ async function inView(book, i, box) {
     x: (box.x0 + box.x1) / 2 - book.size.w / book.scale / 2,
     y: (box.y0 + box.y1) / 2 - book.size.h / book.scale / 2,
   };
-  if (i !== book.cur) return turnTo(book, i, { ...centre, s: book.scale });
+  if (i !== book.cur) return turnTo(book, i, { ...centre, z: book.scale / fitOf(viewOf(book)?.page) });
   if (!showsBox(box, book.pan, book.scale, book.size)) slideTo(book, { pan: centre }, () => remember(book));
   else draw(book);
 }

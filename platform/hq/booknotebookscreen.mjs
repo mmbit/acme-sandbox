@@ -50,12 +50,17 @@ async function shownPoint(page, unit) {
 // The groups of two or more things, which have a clip, by group
 export const held = groups =>
   groups.filter(g => (g.ink?.length ?? 0) + (g.texts?.length ?? 0) + (g.pictures?.length ?? 0) > 1).map(g => g.id);
-// The page shown: its title at its head and where it is on the rail ("Ideas 2/3")
+// The page shown: its title at its head and where it is in its chapter, on the bar ("Ideas 2 / 3")
 export const where = page =>
   page.evaluate(
     () =>
       `${document.querySelector('#book .bk-page:not([hidden]) .bk-page-title')?.textContent ?? ''} ${document.querySelector('#book .bk-where')?.textContent ?? ''}`,
   );
+// Where the page shown is in its chapter, as the bar counts it: [2, 3] for "2 / 3" (null: no count yet)
+export const pageAt = async page => {
+  const m = /(\d+) \/ (\d+)$/.exec(await where(page));
+  return m && [Number(m[1]), Number(m[2])];
+};
 export const stamp = page =>
   page.evaluate(() => {
     const shown = [...document.querySelectorAll('#book .bk-page')].find(p => !p.hidden);
@@ -105,11 +110,15 @@ export const clearPlace = page =>
     if (low.bottom + 28 < shown.getBoundingClientRect().bottom - 8) return [low.left + 40, low.bottom + 28, low.unit];
     return [column[0].left + 40, (column[0].bottom + column[1].top) / 2, column[0].unit];
   });
-export const tool = (page, name) => page.locator('#book').getByRole('button', { name, exact: true }).click();
+// A tool picked: pressed only when it isn't in use already (a press on the tool in use opens its card, over the paper)
+export async function tool(page, name) {
+  const key = page.locator('#book').getByRole('button', { name, exact: true });
+  if ((await key.getAttribute('aria-pressed')) !== 'true') await key.click();
+}
 // The page at a place in the notebook (1: its first; the seed's pages' ids are theirs), turned to with the foot row's
 // arrows
 export async function turnTo(page, id) {
-  const n = () => where(page).then(w => Number(/(\d+)\/\d+$/.exec(w)?.[1]));
+  const n = () => pageAt(page).then(at => at?.[0]);
   for (let i = 0, turns = 0; i < 60 && turns < 8 && (await n()) !== id; i++) {
     const was = await n(),
       arrow = page.locator('#book').getByRole('button', { name: was > id ? 'The page before' : 'The page after' });

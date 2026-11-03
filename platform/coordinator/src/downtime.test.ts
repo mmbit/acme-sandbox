@@ -23,6 +23,8 @@ const { db, jobs } = h;
 const schedule = await import('./schedule.ts');
 const { retryAt, checkDue, sleepUntil } = await import('../../worker/src/downtime.ts');
 const ledger = await import('./ledger.ts');
+const { setUrgent } = await import('./urgency.ts');
+const { ceo } = await import('./company.ts');
 
 const H = 3600e3;
 const reset = () => db.exec("delete from review_triage; delete from calls; delete from call_items; delete from jobs; delete from prs; delete from seats where id in ('ready-claude', 'codex-1')");
@@ -55,6 +57,9 @@ const item = (call: number, kind = 'task') => {
   assert.ok(typeof i === 'object');
   return i.id;
 };
+// The board's word for work that must happen now, as the CEO records it: the one thing that crosses a seat's pace
+const urgent = (level: 'job' | 'task', id: number | string) =>
+  assert.equal(typeof setUrgent(level, String(id), true, ceo()), 'object');
 // downtime work of bolt's that ended with its pull request: the review round it gets, as HQ lists it
 async function reviewed(pr: number, o: { downtime?: boolean } = { downtime: true }) {
   const job = await h.start({ agent: 'bolt', title: 'Refactoring pass', ...o }, { util: 0.1 });
@@ -85,7 +90,7 @@ test('downtime needs headroom: under 60% of the 5-hour window, and never on an u
   assert.equal((await claim(0.85))?.id, normal);
 });
 
-test("a seat ahead of its week's pace takes, until its weekly reset, the board's word and work that must start before it", async () => {
+test("a seat ahead of its week's pace takes only urgent work: the board's word and a deadline wait for the pace", async () => {
   reset();
   const reset2 = Date.now() + 2 * 24 * H;
   const undated = queue('Tidy the docs'), spare = queue('Log scan', { downtime: true });
@@ -99,13 +104,19 @@ test("a seat ahead of its week's pace takes, until its weekly reset, the board's
   const dropped = queue('The fence, dropped since', { item: fence, queuedBy: 'bolt' });
   assert.deepEqual((ledger.drop(fence, 'The board took it back', board) as { cancelled: number[] }).cancelled, [dropped]);
   const paced = async () => (await claim(0.2, { pacedUntil: reset2 }))?.id;
-  assert.deepEqual([await paced(), await paced(), await paced(), await paced()], [board, carries, due, undefined], 'the rest waits for the reset');
+  assert.equal(await paced(), undefined, 'the board lane and a deadline order work within the pace');
+  urgent('task', due);
+  assert.deepEqual([await paced(), await paced()], [due, undefined], 'urgent work alone crosses it');
   assert.equal(h.job(later).status, 'queued');
   const unpaced = async () => (await claim(0.2))?.id;
-  assert.deepEqual([await unpaced(), await unpaced(), await unpaced()], [later, undated, spare], 'not paced: all');
+  assert.deepEqual(
+    [await unpaced(), await unpaced(), await unpaced(), await unpaced(), await unpaced()],
+    [board, carries, later, undated, spare],
+    'not paced: all, the board lane first',
+  );
 });
 
-test("a board item's pull request keeps the board's word on a paced seat until it merges: its fixes and its reviews", async () => {
+test("a board item's pull request keeps the board lane but waits for the pace; urgent, its fixes and reviews cross it", async () => {
   reset();
   const reset2 = Date.now() + 2 * 24 * H;
   const followUp = h.ended({ agent: 'bolt', title: 'The call followed up' });
@@ -125,7 +136,8 @@ test("a board item's pull request keeps the board's word on a paced seat until i
   // (the work the item was handed to queued the job that made the pull request, carrying it on: hq job passes it on)
   const passedOn = item(call);
   ledger.finished({ id: handed(passedOn), kind: 'work' }, 'done');
-  const carries = pr(9001, 'open', h.ended({ agent: 'bolt', title: 'The gate, painted', item: passedOn }));
+  const painted = h.ended({ agent: 'bolt', title: 'The gate, painted', item: passedOn });
+  const carries = pr(9001, 'open', painted);
   const decided = pr(9002, 'stuck', handed(item(call, 'decision')));
   const withBoard = pr(9006, 'board', handed(item(call)));
   // (handed to a job that failed: the work in its place made the pull request)
@@ -141,8 +153,10 @@ test("a board item's pull request keeps the board's word on a paced seat until i
   const board = (id: number) => (db.prepare(`select ${jobs.BOARD_CALL('j')} board from jobs j where id = ?`).get(id) as { board: number }).board;
   assert.deepEqual([carries, decided, withBoard, replaced, review, merged, dropped, plain].map(board), [1, 1, 1, 1, 1, 0, 0, 0]);
   const paced = async () => (await claim(0.2, { pacedUntil: reset2 }))?.id;
-  const taken = [await paced(), await paced(), await paced(), await paced(), await paced(), await paced()];
-  assert.deepEqual(taken, [carries, decided, withBoard, replaced, review, undefined], 'the rest waits for the reset');
+  assert.equal(await paced(), undefined, 'the board lane orders work within the pace');
+  urgent('task', painted);
+  const taken = [await paced(), await paced(), await paced()];
+  assert.deepEqual(taken, [carries, review, undefined], "the urgent work's fix and review, then nothing");
 });
 
 // A ruled round restarted on its own number (review.ts openRound for a merge check or a kept touch-up's push) moves
@@ -155,7 +169,7 @@ const planned = async (author: number) => {
   return { stages: plan.stages.map(stage => stage.key), terminal: plan.terminal };
 };
 
-test("a deadline's pull request whose ruled round a merge check restarted: the check carries the deadline onto a paced seat", async () => {
+test("an urgent pull request whose ruled round a merge check restarted: the check carries its urgency onto a paced seat", async () => {
   reset();
   const reset2 = Date.now() + 2 * 24 * H;
   const author = h.ended({ agent: 'bolt' });
@@ -164,12 +178,13 @@ test("a deadline's pull request whose ruled round a merge check restarted: the c
   restarted(9010, h.ended({ ...round, sha: 'b'.repeat(40), stage: 'ruling' }, 'done', 'merge'));
   const check = h.queue({ ...round, sha: 'c'.repeat(40), stage: 'merge' });
   const walk = queue('The walk the board waits on', { after: author, thread: h.dueThread({ deadline: Date.now() + 6 * H }) });
+  urgent('task', author);
   const paced = async () => (await claim(0.2, { pacedUntil: reset2 }))?.id;
   assert.deepEqual([await paced(), await paced()], [check, undefined], 'the check, then nothing till the merge');
   assert.equal(h.job(walk).status, 'queued');
 });
 
-test("a deadline's pull request whose ruled round a kept touch-up's push restarted: its triage, then the readers it picks carry the deadline", async () => {
+test("an urgent pull request whose ruled round a kept touch-up's push restarted: its triage, then the readers it picks carry its urgency", async () => {
   reset();
   const reset2 = Date.now() + 2 * 24 * H;
   const author = h.ended({ agent: 'bolt' });
@@ -179,6 +194,7 @@ test("a deadline's pull request whose ruled round a kept touch-up's push restart
   restarted(9011, h.ended({ ...round, sha: 'b'.repeat(40), stage: 'ruling' }, 'done', 'merge'));
   const triage = h.queue({ ...round, sha: 'c'.repeat(40), stage: 'triage' });
   const walk = queue('The walk the board waits on', { after: author, thread: h.dueThread({ deadline: Date.now() + 6 * H }) });
+  urgent('task', author);
   const paced = async () => (await claim(0.2, { pacedUntil: reset2 }))?.id;
   // rook's read from before the restart is no read of this round's: the triage picks its readers, as in any round
   assert.deepEqual(await planned(author), { stages: ['2:triage', '2:ruling'], terminal: '2:ruling' });
@@ -190,7 +206,7 @@ test("a deadline's pull request whose ruled round a kept touch-up's push restart
   assert.equal(h.job(walk).status, 'queued');
 });
 
-test("a deadline's pull request whose ruling couldn't be read: its retry is the plan's last stage and carries the deadline", async () => {
+test("an urgent pull request whose ruling couldn't be read: its retry is the plan's last stage and carries its urgency", async () => {
   reset();
   const reset2 = Date.now() + 2 * 24 * H;
   const author = h.ended({ agent: 'bolt' });
@@ -201,6 +217,7 @@ test("a deadline's pull request whose ruling couldn't be read: its retry is the 
   db.prepare("update jobs set output = '{}' where id = ?").run(refused);
   const retry = h.queue({ ...round, sha: 'c'.repeat(40), stage: 'ruling' });
   const walk = queue('The walk the board waits on', { after: author, thread: h.dueThread({ deadline: Date.now() + 6 * H }) });
+  urgent('task', author);
   assert.deepEqual(await planned(author), { stages: [`2:check:${retry}`], terminal: `2:check:${retry}` });
   const paced = async () => (await claim(0.2, { pacedUntil: reset2 }))?.id;
   assert.deepEqual([await paced(), await paced()], [retry, undefined], 'the retry, then nothing till the merge');

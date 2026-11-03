@@ -1,9 +1,10 @@
 // node --test shared/browser/render.test.ts   (throwaway repos, real supervisors, no heavy renders)
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcessByStdio } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import type { Readable } from 'node:stream';
 import { test } from 'node:test';
 import { clone, playedHq } from '../gates/fixture.ts';
 import { supervise } from './supervise.ts';
@@ -38,6 +39,7 @@ function repository() {
       'platform/worker/hq/unpack.ts',
       'shared/browser/render.ts',
       'shared/browser/supervise.ts',
+      'shared/browser/reaper.pl',
       'shared/browser/onhelper.ts',
     ].map(name => [name, readFileSync(join(root, name), 'utf8')]),
   );
@@ -53,21 +55,23 @@ function repository() {
 }
 
 function run(dir: string, args: string[], env = {}) {
-  const child = spawn(process.execPath, ['shared/browser/fixture.mjs', ...args], {
-    cwd: dir,
-    env: { ...process.env, ...noHelper, ...env },
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
+  return outcome(
+    spawn(process.execPath, ['shared/browser/fixture.mjs', ...args], {
+      cwd: dir,
+      env: { ...process.env, ...noHelper, ...env },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }),
+  );
+}
+
+// A child's exit, with everything it wrote
+function outcome(child: ChildProcessByStdio<null, Readable, Readable>) {
   let output = '';
-  child.stdout.on('data', chunk => {
-    output += chunk;
-  });
-  child.stderr.on('data', chunk => {
-    output += chunk;
-  });
-  return new Promise<{ code: number | null; output: string }>(resolve => {
-    child.once('exit', code => resolve({ code, output }));
-  });
+  child.stdout.on('data', chunk => (output += chunk));
+  child.stderr.on('data', chunk => (output += chunk));
+  return new Promise<{ code: number | null; output: string }>(resolve =>
+    child.once('exit', code => resolve({ code, output })),
+  );
 }
 
 test('independent harness runs use one worker render slot when the helper is absent', async () => {
@@ -176,13 +180,7 @@ test('ending the dispatch process ends its running render and detached descendan
     const child=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{detached:true,stdio:'ignore'});
     writeFileSync('child.pid',String(child.pid)); setInterval(()=>{},1000);
   `);
-  const driver = join(dir, 'driver.mjs');
-  writeFileSync(
-    driver,
-    `import {supervise} from ${JSON.stringify(join(root, 'shared/browser/supervise.ts'))};
-    process.exitCode = await supervise(${JSON.stringify(file)}, [], {cwd:${JSON.stringify(dir)},lock:true});`,
-  );
-  const child = spawn(process.execPath, [driver], { stdio: 'ignore' });
+  const child = spawn(process.execPath, [driver(file, { lock: true })], { stdio: 'ignore' });
   const pidFile = join(dir, 'child.pid');
   for (let i = 0; i < 200 && !existsSync(pidFile); i++) await new Promise(resolve => setTimeout(resolve, 25));
   assert.equal(existsSync(pidFile), true);
@@ -192,4 +190,90 @@ test('ending the dispatch process ends its running render and detached descendan
   assert.equal(stopped(pid), true);
   const next = processFixture('process.exit(0)');
   assert.equal(await supervise(next.file, [], { cwd: next.dir, lock: true, idleMs: 1000 }), 0);
+});
+
+type Supervision = { lock?: boolean; idleMs?: number; minutes?: number };
+
+// A script that runs supervise() in a process of its own
+function driver(file: string, options: Supervision) {
+  const path = join(dirname(file), 'driver.mjs');
+  writeFileSync(
+    path,
+    `import {supervise} from ${JSON.stringify(join(root, 'shared/browser/supervise.ts'))};
+    process.exitCode = await supervise(${JSON.stringify(file)}, [], ${JSON.stringify({ cwd: dirname(file), ...options })});`,
+  );
+  return path;
+}
+
+// supervise() in a process of its own, for what it says: its exit and everything it and the render wrote
+function supervised(file: string, options: Supervision) {
+  return outcome(spawn(process.execPath, [driver(file, options)], { stdio: ['ignore', 'pipe', 'pipe'] }));
+}
+
+// The supervisor's stop line, for what it names rather than how it says it
+function stopLine(output: string) {
+  const line = output.split('\n').find(line => line.startsWith('Render stopped'));
+  assert.ok(line, output);
+  return line;
+}
+
+test('a render whose browser keeps dying ends at its bound, says what hung, and leaves no dead processes behind', async () => {
+  // Each launch's browser dies at once and its helper a moment later, orphaned; each launch counts as progress.
+  const { dir, file } = processFixture(`
+    import {spawn} from 'node:child_process'; import {readdirSync, readFileSync, writeFileSync} from 'node:fs';
+    const parentOf = pid => readFileSync('/proc/'+pid+'/stat','utf8').split(') ')[1].split(' ');
+    const supervisor = [process.ppid, Number(parentOf(process.ppid)[1])];
+    for (let launches = 1; ; launches++) {
+      const browser = spawn('sh', ['-c', 'sleep 0.05 & exit 1'], {stdio: 'ignore'});
+      await new Promise(resolve => browser.once('exit', resolve));
+      process.send({render: 'progress'});
+      await new Promise(resolve => setTimeout(resolve, 200));
+      const dead = readdirSync('/proc').filter(pid => {
+        try { const [state, parent] = parentOf(pid); return state === 'Z' && supervisor.includes(Number(parent)); }
+        catch { return false; }
+      });
+      writeFileSync('dead.json', JSON.stringify({launches, dead: dead.length}));
+    }
+  `);
+  const began = Date.now();
+  const ran = await supervised(file, { idleMs: 1000, minutes: 0.05 });
+  assert.equal(ran.code, 124, ran.output);
+  assert.ok(Date.now() - began < 10_000, `${Date.now() - began} ms`);
+  const line = stopLine(ran.output);
+  for (const named of ['fixture.mjs', '0.05 min']) assert.ok(line.includes(named), line);
+  const { launches, dead } = JSON.parse(readFileSync(join(dir, 'dead.json'), 'utf8'));
+  assert.ok(launches >= 5, `${launches} launches`);
+  assert.equal(dead, 0);
+});
+
+test('a render waiting for the browser slot ends at its bound, never sits behind a hung one', async () => {
+  const { dir, file } = processFixture('process.exit(0)');
+  const held = join(dir, 'held');
+  const holder = spawn('flock', ['--exclusive', '/run/lock', 'sh', '-c', `touch '${held}'; sleep infinity`], {
+    detached: true,
+    stdio: 'ignore',
+  });
+  try {
+    // (the slot is the machine's: the holder may wait for other jobs' renders first)
+    while (!existsSync(held) && holder.exitCode === null) await new Promise(resolve => setTimeout(resolve, 25));
+    assert.equal(existsSync(held), true);
+    const ran = await supervised(file, { lock: true, minutes: 0.02 });
+    assert.equal(ran.code, 124, ran.output);
+    const line = stopLine(ran.output);
+    for (const named of ['fixture.mjs', '0.02 min', 'browser slot']) assert.ok(line.includes(named), line);
+  } finally {
+    process.kill(-holder.pid!, 'SIGKILL'); // (its shell and sleep too: they hold the lock as well)
+  }
+});
+
+test('an idle render says which script made no progress, and what it had running', async () => {
+  const { file } = processFixture(`
+    import {spawn} from 'node:child_process';
+    spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], {stdio: 'ignore'});
+    setInterval(()=>{},1000);
+  `);
+  const ran = await supervised(file, { idleMs: 1000 });
+  assert.equal(ran.code, 124, ran.output);
+  const line = stopLine(ran.output);
+  for (const named of ['fixture.mjs, node', 'no harness progress', '1 s']) assert.ok(line.includes(named), line);
 });

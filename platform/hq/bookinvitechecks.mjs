@@ -1,7 +1,7 @@
 // Guest and Reviews invitations through their shared controls, on desktop and phone.
 import assert from 'node:assert/strict';
 import { until } from '../../shared/browser/browser.mjs';
-import { OVERVIEW } from './bookkit.mjs';
+import { shelfKey } from './bookkit.mjs';
 // An invited notebook for one person, through the coordinator's route (guests are invited from the work: no form)
 export async function createNotebook(state, name, person) {
   const created = await state.h.board('/api/notebooks/guests', {
@@ -80,13 +80,16 @@ export async function createReviewRound(state, board) {
   return round;
 }
 
-// The board's Shelf, from the open book's overview
+// The board's Shelf, in its own window from HQ's Shelf key (an open book shut first). A spread covers HQ's keys: the board shuts it by its tab first.
 export async function openShelf(board) {
-  await board.getByRole('button', { name: OVERVIEW, exact: true }).click();
-  await settledTurn(board);
-  await board.locator('[data-go=shelf]').click();
-  await settledTurn(board);
-  await board.locator('button.bk-far-go[data-tab=archive]').waitFor();
+  if ((await board.evaluate(() => document.documentElement.dataset.book)) === 'spread') {
+    await board.locator('#book .bk-lip').click();
+    await board.waitForFunction(
+      () => document.documentElement.dataset.book === 'folded' && !document.querySelector('#book.bk-swinging'),
+    );
+  }
+  await (await shelfKey(board)).click();
+  await board.locator('#book .bk-shelf-window button.bk-far-go[data-tab=archive]').waitFor();
 }
 
 function settledBook(page, mode) {
@@ -98,9 +101,6 @@ function settledBook(page, mode) {
       getComputedStyle(document.body).opacity === '1',
     mode,
   );
-}
-function settledTurn(page) {
-  return page.waitForFunction(() => !document.querySelector('#book .bk-turn-picture'));
 }
 
 export async function readyHQ(page) {

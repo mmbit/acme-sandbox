@@ -110,7 +110,7 @@ open plan and judges which deliverable's goal it serves. A follow-up needed to m
 blocking fix, joins that deliverable. Non-blocking review follow-ups after its merge get their own one-task
 deliverable in the same project. They do not hold deliverables that need the merged work or inherit its deadline.
 Every task inherits its own deliverable's deadline, so `hq job` asks for no task-level time, even when the deliverable has
-none. The plan, live claim, reviews, fixes and seat pacing read the same deadline through `jobs.thread`. Changing
+none. The plan, live claim, reviews and fixes read the same deadline through `jobs.thread`. Changing
 it updates all that work on the next plan read, without copied task deadlines. The CEO's summary, plan and board's
 deliverable view say "no deadline set" once for the deliverable. The CEO settles that gap for the whole. A task
 in no deliverable takes `--by <when>`, `--by <project>/<slug>` or `--by none`. Outside a live call, an unfiled board
@@ -258,8 +258,8 @@ is brought up to date onto the work that went first. Explicit dependencies betwe
   request is stuck: that one holds only its own files, so what needs it runs beside it and merges after it only where the
   two share files (`threadorder.ts needsOpen`, `mergeorder.ts`), and the stuck one goes to its author at the stuck sweep
   (`review.ts stuckToAuthor`, once for each state it's stuck in). A task before it that failed with nothing in its
-  place holds it when it was drawn before that failure, counting on its work; one drawn since (a redo queued without
-  `--lands`, the next step) is the owner's call, made knowing it failed, and goes on. A replacement (`--lands`) takes the failed task's place. A failed task whose branch has an open pull
+  place holds it when it was drawn before that failure, counting on its work; one drawn since (the next step, or a failed
+  task's redo queued without `--lands`) is the owner's call, made knowing it failed, and goes on. A replacement takes the failed task's place: a job queued with `--lands`, or for a stopped task the one job its agent queued in the deliverable since it started, whether that job came before the stop or after it (`takeover.ts stopFor`, `placeQueued`). A replacement of a task still being stopped waits behind that task in the deliverable's order until its run ends. Where the agent queued several jobs there, `hq stop`'s and `hq job`'s answers name them, and `hq stop <task> "why" --for <job>` says which one takes the place. A failed task whose branch has an open pull
   request (open, stuck or with the board) holds nothing, since the deliverable's later tasks still push there (`jobs.ts`
   `failedAside`); once that pull request merges or closes, the failed task again holds the tasks drawn before it failed and the deliverable stays
   open. A task waiting for a time still to come
@@ -449,3 +449,14 @@ A hold the board agrees on a call is recorded as the pause, and its item linked 
 `hq item link <item> pause:<project or deliverable>` (a decision already handled goes on it as it is). The follow-through
 read then shows the board's words beside the pause. A task or promise it carries stays on the hourly check while the
 pause holds, and after a resume by hand until the jobs the pause waited for are merged.
+
+## Urgent work
+
+A deadline orders work within seat pacing. Only work the board marks urgent bypasses pacing, and expedited work
+counts as urgent.
+`hq urgent milestone|job|task <id> on|off` sets or clears urgency in one step. The call agent uses the same command
+with its manage tool. Off a call the CEO records it. On a live board call, that call’s agent records it.
+Until the work model names migrate, milestone identifiers are project keys, job identifiers are `project/slug`,
+and task identifiers are task numbers. Clearing a child flag leaves urgency inherited from its parent or source work, and an expedited task stays urgent. Milestone urgency passes to its jobs and tasks. Job urgency passes to its tasks.
+Reviews and fixes read the urgency of their source work, so clearing its flag clears that inheritance too.
+The flag stays on the existing work tables as the hierarchy names migrate.

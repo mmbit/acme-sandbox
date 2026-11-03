@@ -8,7 +8,7 @@
 //   - a group left with nothing is deleted, kept aside by the store; Undo putting its elements back restores it;
 //   - a scrap's words typed (bookgroups.js) are edited on their own, kept as typed until the store has them.
 // A sent page's own groups are read-only: nothing on it is saved. (groups)
-import { createGroup, deleteGroup, editGroup, loadGroups, restoreGroup } from './notebookdata.js';
+import { createGroup, deleteGroup, editGroup, loadGroups, placeGroups, restoreGroup } from './notebookdata.js';
 import { changesOf, emptyParts, keyOf } from './bookgroupmath.js';
 import { arrive } from './bookarrive.js';
 import { laidOf, localOf, madeUnit } from './bookunits.js';
@@ -72,6 +72,7 @@ async function put(book, page) {
   // (a refused restore's elements left the page's lists: drawn again)
   if (refused) drawn(book, page);
   const news = await makeUnits(dev, page, elementsOf(page));
+  await pinUnits(dev, page);
   const base = new Map([...page.groups.values()].map(g => [g.id, g.base])),
     now = new Map();
   for (const x of elementsOf(page)) {
@@ -120,8 +121,8 @@ async function restoreGone(dev, page) {
     }
   return refused;
 }
-// The units drawn here, below the last: made in the store as the page's last kept in the column they're drawn in, their
-// elements in their own px (bookunits.js); the ones made.
+// The units drawn here, below the last: made in the store as the page's last kept in the column they're drawn in (on a
+// sketch page, at the place they're drawn), their elements in their own px (bookunits.js); the ones made.
 async function makeUnits(dev, page, els) {
   const news = [...(page.pending ?? [])];
   for (const unit of news) {
@@ -131,11 +132,26 @@ async function makeUnits(dev, page, els) {
       continue;
     }
     const parts = partsOf(page, items),
-      made = await createGroup(dev, page.id, { ...parts, column: unit.column });
+      made = await createGroup(dev, page.id, {
+        ...parts,
+        ...(unit.place ? { place: unit.place } : { column: unit.column }),
+      });
     madeUnit(page, unit.id, made.id);
     keep(page, made, parts);
   }
   return news;
+}
+// The places this screen gave a sketch page's units that had none (bookunits.js page.pins), kept by the store. The
+// first screen's place stands, and every screen takes the store's.
+async function pinUnits(dev, page) {
+  const places = [...(page.pins ?? [])]
+    .filter(([id]) => page.groups.has(id) && !page.groups.get(id).place)
+    .map(([id, place]) => ({ id, ...place }));
+  if (!places.length) return;
+  for (const g of await placeGroups(dev, page.id, places)) {
+    keep(page, g);
+    page.pins.delete(g.id);
+  }
 }
 // A scrap's words typed, as the store keeps them: trimmed, and said as its words first came, else typed. What's typed
 // is let go once the store has it (a space at its end under the caret stays in the field: bookgroups.js caretBack),

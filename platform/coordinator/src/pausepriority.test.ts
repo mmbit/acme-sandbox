@@ -1,4 +1,5 @@
-// node --test src/pausepriority.test.ts (throwaway DATA_DIR): pause release chains and open reviews cross seat pacing.
+// node --test src/pausepriority.test.ts (throwaway DATA_DIR): pause release chains, windows and board items order work,
+// and cross seat pacing only once the board's word makes their work urgent (urgency.ts).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -16,6 +17,8 @@ const plan = await import('./plan.ts');
 const pauses = await import('./pauses.ts');
 const forecast = await import('./forecast.ts');
 const wakes = await import('./wakes.ts');
+const { setUrgent } = await import('./urgency.ts');
+const { ceo } = await import('./company.ts');
 const HOUR = 3_600_000;
 let count = 0;
 const pendingPrs: number[] = [];
@@ -47,6 +50,8 @@ async function review(pr: number, kind: 'review' | 'work' = 'review') {
   });
   return { build, author, round };
 }
+// A deliverable made urgent, as the CEO records the board's word: its work, and the reviews and fixes of its pull request
+const urgent = (thread: string) => assert.equal(typeof setUrgent('job', thread, true, ceo()), 'object');
 async function paced(engine = 'codex') {
   await h.capacity({ codex: 1, claude: 1 });
   const reset = Date.now() + 5 * 24 * HOUR;
@@ -68,9 +73,9 @@ async function paced(engine = 'codex') {
 }
 
 for (const scope of ['thread', 'project'] as const) {
-  test(`a ${scope} pause gives its release chain priority through needs, after, deployment and PR rounds`, async () => {
+  test(`a ${scope} pause's release chain waits for the pace through needs, after, deployment and PR rounds, unless urgent`, async () => {
     h.cancelQueued();
-    const { author, round } = await review(scope === 'thread' ? 901 : 902);
+    const { build, author, round } = await review(scope === 'thread' ? 901 : 902);
     const acceptance = thread(),
       comparison = thread(),
       release = thread(),
@@ -86,29 +91,25 @@ for (const scope of ['thread', 'project'] as const) {
     const target = scope === 'thread' ? { thread: held } : { project: 'game' };
     const ask = { ...target, why: 'Wait for the comparison', until: [until] };
     assert.equal(typeof pauses.pause(ask, 'juno'), 'object');
-    const now = Date.now();
-    const urgent = forecast.play(now).usual.get(author.id)!.merged!;
     assert.equal(h.job(waiting).ready, 0, 'the pause still holds its work');
-    assert.equal(typeof pauses.resume(target, 'juno'), 'object');
-    assert.ok(
-      forecast.play(now).usual.get(author.id)!.merged! > urgent,
-      'the play advances the review only while the pause holds',
-    );
-    assert.equal(typeof pauses.pause(ask, 'juno'), 'object');
+    assert.equal(await h.claim('codex', seat), null, 'a pause orders its release chain, never past the pace');
+    urgent(build);
     const claimed = await h.claim('codex', seat);
-    assert.equal(claimed?.id, round, 'the paced seat claims the review that releases the pause');
+    assert.equal(claimed?.id, round, 'urgent, the paced seat claims the review that releases the pause');
     await h.finish(claimed!);
     pauses.resume(target, 'juno');
   });
 }
 
-test('a pause tied to work already in review gives that PR its priority at the merge endpoint', async () => {
+test('a pause tied to work already in review waits for the pace at its merge endpoint, unless urgent', async () => {
   h.cancelQueued();
-  const { author, round } = await review(904);
+  const { build, author, round } = await review(904);
   const held = thread('game');
   const seat = await paced();
   assert.equal(await h.claim('codex', seat), null);
   assert.equal(typeof pauses.pause({ thread: held, why: 'Wait for the build', until: [author.id] }, 'juno'), 'object');
+  assert.equal(await h.claim('codex', seat), null, 'the pause gives no way past the pace');
+  urgent(build);
   const claimed = await h.claim('codex', seat);
   assert.equal(claimed?.id, round);
   await h.finish(claimed!);
@@ -116,7 +117,7 @@ test('a pause tied to work already in review gives that PR its priority at the m
 });
 
 for (const kind of ['review', 'work'] as const) {
-  test(`a done thread with an open PR takes a window by thread, job or PR and its ${kind === 'work' ? 'fix' : 'review'} crosses pacing`, async () => {
+  test(`a done thread with an open PR takes a window by thread, job or PR, and its ${kind === 'work' ? 'fix' : 'review'} crosses pacing once urgent`, async () => {
     h.cancelQueued();
     const { build, author, round } = await review(kind === 'review' ? 903 : 905, kind);
     h.closedThreads(build);
@@ -131,9 +132,13 @@ for (const kind of ['review', 'work'] as const) {
         changed.body.misses.some((miss: { thread: string }) => miss.thread === build),
         'an impossible window still reports its missed deadline while the PR is open',
       );
-      const now = Date.now();
-      assert.ok(forecast.play(now).usual.get(author.id)!.merged! < pacedMerge, 'the saved window advances the review');
     }
+    assert.equal(await h.claim('codex', seat), null, 'a window orders work within the pace');
+    urgent(build);
+    assert.ok(
+      forecast.play().usual.get(author.id)!.merged! < pacedMerge,
+      'urgent, the play no longer waits for the pace',
+    );
     const claimed = await h.claim('codex', seat);
     assert.equal(claimed?.id, round);
     await h.finish(claimed!);
@@ -141,7 +146,7 @@ for (const kind of ['review', 'work'] as const) {
 }
 
 for (const live of [true, false])
-  test(`a PR's findings ${live ? 'carrying a live board item bypass its paced sort' : 'whose board item was dropped keep the ordinary sort'}`, async t => {
+  test(`a PR's findings ${live ? 'carrying a live board item skip the owner sort, and cross pacing once urgent' : 'whose board item was dropped keep the ordinary sort'}`, async t => {
     const org = `${h.repo}/company/org.yaml`,
       before = readFileSync(org, 'utf8');
     writeFileSync(org, before + '\nreview:\n  drawWindowedChanges: true\n');
@@ -192,6 +197,8 @@ for (const live of [true, false])
     }
     assert.equal(fixes.length, 1, 'the author gets a fix without an owner sort');
     assert.equal(h.job(sort).status, 'queued');
+    assert.equal(await h.claim(engine, seat), null, 'the board item orders the fix, never past the pace');
+    urgent(build);
     const now = Date.now();
     const pacedPlay = forecast.play(now);
     assert.equal((await h.board('/api/seats/pacing', { on: false })).status, 200);
@@ -214,7 +221,7 @@ for (const live of [true, false])
 
 for (const started of [false, true])
   for (const later of [false, true])
-    test(`item work joining ${started ? 'a started' : 'an unstarted'} thread keeps ${later ? 'a later ordinary task' : 'its own task'} review unpaced`, async () => {
+    test(`urgent item work joining ${started ? 'a started' : 'an unstarted'} thread keeps ${later ? 'a later task' : 'its own task'} review unpaced`, async () => {
       h.cancelQueued();
       assert.equal((await h.board('/api/seats/pacing', { on: false })).status, 200);
       const build = thread();
@@ -229,6 +236,7 @@ for (const started of [false, true])
         await h.finish(claimed!, { branch: `job/${first}`, sha: 'a'.repeat(40) });
       }
       assert.equal(h.job(carrier).branch, null, 'the queued carrier has not acquired the thread branch');
+      urgent(build);
       await paced('claude');
       assert.equal(
         (await h.worker('seat', { seat: 'capacity-codex', engine: 'codex', state: 'ready', util: 0, week: 0 })).status,

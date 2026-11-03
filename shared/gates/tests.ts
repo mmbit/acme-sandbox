@@ -2,8 +2,10 @@
 // goes back to its author before any review, and what ran goes to the reviewers, who read the code instead of running
 // it again. npm run tests [-- --base <ref>]   (CODE_STYLE.md, "Tests"). --all: every area's, as the nightly run on main
 // takes them (shared/routines/tests.md). --helper: on a lent machine instead (onHelper, lent.ts), as the worker sends a
-// push's tests while one has a helper of the `tests` kind. Here every suite runs to its end: they're our own code, so a
-// slow one is fixed where it is, and its time is on its line of the report (describeRun). On the helper they stop just before its limit, and fail as too slow for it (reportStopped).
+// push's tests to a helper of the `tests` kind. They never come back here, where they'd take the worker's memory and a
+// worker short of it stops them. Here every suite runs to its end: they're our own code, so a slow one is fixed where
+// it is, and its time is on its line of the report (describeRun). On the helper they stop just before its limit, and
+// fail as too slow for it (reportStopped).
 //
 // An area is a folder as the refactoring passes take them (repo.ts areaOf), and its suites are its test files, each run
 // the way its authors run it (SUITES). A test that fails counts only when it passes at the base: main's own
@@ -32,6 +34,13 @@ import { helperBundle } from './bundle.ts';
 import { changeAt, noTests, SUITES, type Run } from './suites.ts';
 import type { FileEnd } from './timings.ts';
 
+// How long after it starts a --helper run, still waiting with no helper of the kind there to take it, stops. The tests
+// are left incomplete in about a review round's time, the board's aim of roughly 15 minutes (knowledge/notes/
+// engineering/test-speed.md), instead of waiting on for a helper that's gone (lent.ts absentUntilMs). A helper that's
+// there, busy or not, is waited for, and a run it took ends at its own limit (HELPER_MINUTES). TESTS_HELPER_ABSENT_MS:
+// this file's tests' shorter one.
+const HELPER_ABSENT_MS = Number(process.env.TESTS_HELPER_ABSENT_MS ?? 15 * 60_000);
+const absentUntilMs = Date.now() + HELPER_ABSENT_MS;
 const REPORT_LINES = 25; // of each failure's own output
 const INSTALL_LINES = 6; // of npm's words when it fails (its usage follows)
 const NPM_CI = ['ci', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund']; // without install scripts, as the tools'
@@ -130,11 +139,12 @@ async function onHelper(): Promise<number | undefined> {
     bring: [OUTCOMES_FILE],
     ...bundleFor(change.runs),
     limitIsResult: true,
-    // (while a helper of the kind is there, they wait for it, its helpers busy with other pushes' tests or not: run here
-    // instead they'd take the worker's memory, and a worker short of it stops them)
+    // (while a helper of the kind is there, they wait for it, its helpers busy with other pushes' tests or not)
     waitWhilePresent: true,
+    absentUntilMs,
+    fallback: false,
   });
-  if (!ran) return undefined;
+  if (!ran) throw new Error('Tests incomplete: the helper supplied no result');
   if (ran.timedOut) {
     console.log(`${tooSlow(ran.machine)}, before they could say which files were still running.\n`);
     console.log(tail(ran.output));

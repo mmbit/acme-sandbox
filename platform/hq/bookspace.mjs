@@ -41,19 +41,21 @@ async function upAndLeft(browser, c) {
     const origin = await originAt(page),
       start = [origin.x - 150, origin.y - 90];
     await pen(Array.from({ length: 16 }, (_, i) => [start[0] + i * 8, start[1] + 3 * Math.sin(i / 2)]));
-    const saved = await savedWhere(c, free.id, p => p.ink.length === 1);
+    await savedWhere(c, free.id, p => p.ink.length === 1);
+    // (kept in its unit's own px, the unit at its place on the sketch page)
+    const unit = c.notebook.route('/api/notebooks/pages/groups', { page: free.id }).groups.find(g => g.ink.length),
+      written = unit.ink[0].points.map(([x, y]) => [x + unit.place.x, y + unit.place.y]);
     assert.ok(
-      saved.ink[0].points.every(([x, y]) => x < 0 && y < 0),
-      `the ink above and left of the origin, where it was written: ${JSON.stringify(saved.ink[0].points[0])}`,
+      written.every(([x, y]) => x < 0 && y < 0),
+      `the ink above and left of the origin, where it was written: ${JSON.stringify(written[0])}`,
     );
-    assert.ok(saved.x < 0 && saved.y < 0, `the page grew up and left to hold it: ${saved.x}, ${saved.y}`);
     await c.shot('book-space-up-left', page);
     c.noErrorsIn(pad.errors);
     await pad.done();
     // read again: the page opens where it was left, its ink where it was written, above and left of its origin
     pad = await onPad(browser, c, { keep: true });
     const again = await originAt(pad.page),
-      [px, py] = saved.ink[0].points[8],
+      [px, py] = written[8],
       at = [again.x + px, again.y + py];
     assert.ok(at[0] < again.x && at[1] < again.y);
     assert.ok((await blueAround(pad.page, at)) > 20, `the blue line where it was written after a reload, at ${at}`);

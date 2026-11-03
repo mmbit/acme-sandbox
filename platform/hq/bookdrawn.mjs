@@ -5,6 +5,7 @@
 // empty, opening its own empty page. Recorded with --shots.
 import assert from 'node:assert/strict';
 import { freePage } from './bookmouse.mjs';
+import { toChapter } from './bookchrome.mjs';
 
 // c: book-check.mjs's hqIn, base, pages, notebook, shot, noErrorsIn
 export function drawnPageStories(c) {
@@ -63,8 +64,8 @@ async function drawnAt(browser, c, name, size, { crowded = false } = {}) {
     }));
     assert.deepEqual(shown, { scraps: 0, arrows: false }, `${name}: no paper scrap under the drawing, no arrows`);
     if (crowded) return c.noErrorsIn(errors);
-    // (Asks, a chapter with no pages yet: its own empty page, its tab lit)
-    await page.locator('#book .bk-marks [data-chapter="asks"]').click();
+    // (Asks, a chapter with no pages yet: its own empty page, its tab the page's own)
+    await toChapter(page, 'asks');
     await page.waitForTimeout(500);
     await c.shot(`drawn-${name}-asks`, page);
     await page.locator('#book .bk-mk-blank').waitFor({ timeout: 3000 });

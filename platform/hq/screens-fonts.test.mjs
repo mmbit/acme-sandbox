@@ -3,14 +3,22 @@
 // and gets the kit's file, at an address HQ's CSP lets it load, so the screen is shot in Pixelify, not a fallback
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { launched, openPage } from '../../shared/browser/browser.mjs';
 
 process.env.HQ_RENDER_CHILD = '1'; // (the harness it imports runs here, never sent on to the render helper)
 const { fulfilFonts, keptFonts } = await import('./screens-shots.mjs');
-const KITS = new URL('../../kits', import.meta.url).pathname;
+// A kits folder of the test's own that keeps a Pixelify Sans (the Notebook's Caveat under its name: the page needs a
+// real font file, not Pixelify's glyphs), so it passes at a company whose kits keep none, and with no way out to
+// Google
+const KITS = mkdtempSync(join(tmpdir(), 'screens-fonts-kits-'));
+mkdirSync(join(KITS, 'pixel', 'fonts'), { recursive: true });
+copyFileSync(
+  new URL('shell/ink/fonts/caveat-latin.woff2', import.meta.url),
+  join(KITS, 'pixel', 'fonts', 'pixelify-sans.woff2'),
+);
 // (HQ's font and style sources, csp() in platform/coordinator/src/pages.ts)
 const CSP =
   "default-src 'self'; style-src 'self' https://fonts.googleapis.com; style-src-attr 'unsafe-inline';" +

@@ -1,7 +1,8 @@
 // The Shelf's books as HTML (bookshelf.js draws them in rows, each row on its shelf board; bookshelfbooks.css): each
-// a hard book standing up, its spine at its left and its pages' edges at its right and foot, a picture in a frame on
-// its front (the one the board gave it, its project's, or a quiet drawing), its name under it and one line of news;
-// its asks counted on its corner; its own small menu (Change cover, Archive, Close the round). A review round away to
+// the notebook itself standing up, its black cloth cover, its spine at its left and its pages' edges at its right, the
+// picture the board or its project gave it pasted on its front, and a paper label with its name and one line of news
+//;
+// its asks counted on its corner; its own small menu (Change cover, Close the round, Archive or Back on the Shelf). A review round away to
 // the CEO, or back, is its brown envelope standing there instead.
 import { esc } from '../../util.js';
 import { ICONS } from './bookshelftiles.js';
@@ -38,9 +39,9 @@ function shelfBook(n, { here, menu, asking, playing }) {
     r ? ` data-state="${r.state}"` : ''
   }${here ? ' aria-current="true"' : ''}><button type="button" class="bk-tile-open" aria-label="${esc(
     `${n.name}, ${said.words}${asks && !asks.open ? `, ${asks.said}` : ''}, ${pages}`,
-  )}"><span class="bk-cover"><span class="bk-cover-frame">${coverArt(n)}</span><b class="bk-cover-title">${esc(
+  )}"><span class="bk-cover">${coverArt(n)}<span class="bk-cover-label"><b class="bk-cover-title">${esc(
     n.name,
-  )}</b><span class="bk-cover-line"${said.red ? ' data-red' : ''}>${esc(said.words)}</span>${
+  )}</b><span class="bk-cover-line"${said.red ? ' data-red' : ''}>${esc(said.words)}</span></span>${
     asks ? asks.html : ''
   }${here ? '<i class="bk-ribbon"></i>' : ''}</span></button>${bookMenu(n, menu)}${
     asking == null ? '' : roundAsk(asking)
@@ -52,7 +53,8 @@ function bookMenu(n, open) {
   const items = [
     ['data-shelf="cover"', 'Change cover'],
     ...(n.round?.state === 'open' ? [['data-round="close"', 'Close the round']] : []),
-    ...(n.kind === 'mine' || n.round?.state === 'open'
+    // (an open round too: its guests write on in the Archive)
+    ...(n.kind === 'mine'
       ? []
       : [[`data-shelf="${n.archived ? 'restore' : 'archive'}"`, n.archived ? 'Back on the Shelf' : 'Archive']]),
   ];
@@ -98,30 +100,13 @@ function asksOf(n) {
 
 // ---- covers
 
-// A book's picture: the board's or its project's, or one drawn in the line style: a round's two pages, My journal's
-// pen, another's one of DRAWN by its name, the same each time
+// A book's picture, the board's or its project's, pasted on its cover as a print; none, and the cloth is bare but for
+// its label, as the notebook's own is
 function coverArt(n) {
-  if (n.cover) return `<img src="${esc(n.cover)}" alt="" draggable="false" decoding="async">`;
-  const art = n.kind === 'round' ? ROUND : n.kind === 'mine' ? PEN : DRAWN[hashOf(String(n.name)) % DRAWN.length];
-  return `<svg class="bk-cover-art" viewBox="0 0 100 100" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">${art}</g></svg>`;
+  return n.cover
+    ? `<span class="bk-cover-frame"><img src="${esc(n.cover)}" alt="" draggable="false" decoding="async"></span>`
+    : '';
 }
-const hashOf = s => [...s].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7);
-// (each 100 square, drawn in currentColor; a part filled with the paper sits over what's behind it)
-const PAPER = 'fill="var(--bk-paper, #fbf8f2)"';
-// My journal's: a fountain pen writing its lines
-const PEN = `<path d="M18 74h34M18 84h24" stroke-dasharray="1 0"/><path d="M60 82c6-2 10-6 12-12" stroke-dasharray="3 5"/><path ${PAPER} d="M72 14l14 14-30 30-18 4 4-18z"/><path d="M66 20l14 14M42 52l6 6"/><circle cx="47" cy="53" r="2"/>`;
-// A review round's: two pages laid over each other, a speech mark on the front one
-const ROUND = `<path ${PAPER} d="M22 20l30-5 7 46-30 5z"/><path d="M30 30l17-3M31.5 39l17-3"/><rect ${PAPER} x="44" y="26" width="36" height="48" rx="2"/><path d="M52 39h20a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H62l-6 5v-5h-4a2 2 0 0 1-2-2V41a2 2 0 0 1 2-2z"/><path d="M52 66h18"/>`;
-const DRAWN = [
-  // a sprout
-  `<path d="M50 84V48"/><path ${PAPER} d="M50 60c-16 0-24-9-24-22 16 0 24 9 24 22z"/><path ${PAPER} d="M50 50c0-16 9-24 24-24 0 15-8 24-24 24z"/><path d="M28 84h44"/><path d="M36 90h28" stroke-dasharray="2 4"/>`,
-  // hills under the sun
-  `<circle cx="70" cy="28" r="9"/><path d="M70 12v-4M84 28h4M80 18l3-3"/><path ${PAPER} d="M10 80l26-34 16 18 10-12 28 28z"/><path d="M30 54l6-8 6 7" stroke-dasharray="2 3"/>`,
-  // a paper plane and its trail
-  `<path ${PAPER} d="M14 46l72-24-22 56-14-20z"/><path d="M50 58l36-36M50 58l-2 16 10-9"/><path d="M12 76c10 8 22 6 28-2" stroke-dasharray="3 5"/>`,
-  // a cup, steaming
-  `<path ${PAPER} d="M26 46h42v14a21 21 0 0 1-42 0z"/><path d="M68 50h6a8 8 0 0 1 0 16h-8"/><path d="M20 86h56"/><path d="M38 38c-4-6 4-9 0-15M50 38c-4-6 4-9 0-15M62 38c-4-6 4-9 0-15"/>`,
-];
 
 // ---- a review round's book away to the CEO, or back
 

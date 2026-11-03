@@ -289,6 +289,8 @@ const pagesOf = (notebook: number): NotebookPage[] =>
   );
 const kindOf = (notebook: number | null) =>
   (db.prepare('select kind from notebooks where id = ?').get(notebook) as { kind: string } | undefined)?.kind;
+// A page's chapter in its notebook (notebookchapters.js)
+export const pageChapter = (p: NotebookPage): string => chapterIn(p.kind, kindOf(p.notebook));
 // Whether a page's own content is read-only: it's sending or sent
 export const shut = (p: NotebookPage) => p.send_at !== null;
 // Whether a page sent has gone: its seconds are up, or a sheet of its has been delivered already
@@ -320,7 +322,7 @@ const notebookOf = (n: Notebook) => ({
 // A page's chapter, its bookmark (notebookchapters.js): in a round's book a guest's page (with whose), its Asks or its
 // Advice; in every other its Sketch, Asks or Calls
 function chapterOf(p: NotebookPage) {
-  const chapter = chapterIn(p.kind, kindOf(p.notebook));
+  const chapter = pageChapter(p);
   if (chapter !== 'guests') return { chapter };
   const g = db.prepare('select guest from notebook_guests where page = ?').get(p.id) as { guest: string } | undefined;
   return { chapter, guest: g?.guest ?? null };

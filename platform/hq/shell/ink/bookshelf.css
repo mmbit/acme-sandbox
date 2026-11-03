@@ -9,8 +9,8 @@
   overscroll-behavior: contain;
   display: flex;
   flex-direction: column;
-  /* (its right clear of the rail at the paper's right edge: book.css --bk-rail-width.) */
-  --bk-far-right: calc(var(--bk-rail-width) + 24px);
+  /* (the tools' island is away in the overview: its right as its left.) */
+  --bk-far-right: calc(28px + env(safe-area-inset-right, 0px));
   --bk-far-left: 28px;
   padding: 18px var(--bk-far-right) 88px var(--bk-far-left);
   background-color: var(--bk-paper2);

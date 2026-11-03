@@ -6,6 +6,7 @@ import { thingsPicture } from './bookpaperdraw.js';
 import { boundsOf } from './bookselectmath.js';
 import { keyOf, landing } from './bookgroupmath.js';
 import { bringIntoSight } from './bookgroupshow.js';
+import { isCanvas } from './sketchcanvas.js';
 import { picture } from '../../util.js';
 
 // each group arriving at once lands this long after the one before (ms); a picture not loaded within LOAD_MS lands
@@ -65,6 +66,21 @@ export function arrive(book, view, els, { show = false } = {}) {
     };
   if (!(show && idle() && book.views[book.cur] === view && bringIntoSight(view, last, landed, there))) landed();
 }
+
+// A face or an answer an agent hangs by a note on a view's sketch page, just drawn (bookgroups.js): on a page the board
+// has left idle, the paper slid to the note with it, as to what lands on one: hung beside its note, it's often past the
+// paper's edge. What hangs under each group is kept on the view to tell what's come since
+export function hung(book, view) {
+  const was = view.hanging;
+  view.hanging = new Map([...(view.page.groups?.values() ?? [])].map(g => [g.id, hangingOf(g)]));
+  if (!was || !isCanvas(view.page.chapter) || !idle() || book.views[book.cur] !== view) return;
+  const come = [...view.hanging].filter(
+    ([id, now]) => (now.waiting && !was.get(id)?.waiting) || now.answers > (was.get(id)?.answers ?? 0),
+  );
+  if (come.length) bringIntoSight(view, come.at(-1)[0]);
+}
+// (what an agent hangs under a group: its face while an answer comes, and how many answers)
+const hangingOf = g => ({ waiting: !!g.waiting, answers: (g.children ?? []).filter(c => c.kind !== 'reply').length });
 
 async function landGroup(book, view, els, delay) {
   const page = view.page,

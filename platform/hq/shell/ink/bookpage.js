@@ -15,6 +15,13 @@ import { nameOf } from './bookhead.js';
 import { layUnits, reachOn } from './bookunits.js';
 import { drawCards } from './bookunitcards.js';
 
+// zoomed in, a unit's canvas holds what's this share of the view's size beyond each of its sides too, so a pan paints
+// it again only now and then
+const NEAR = 0.25;
+// the most device px a unit's canvas has (an iPad's tab holds few, and none past 16.7 million): past it, it's drawn a
+// little softer
+const MOST_PX = 8_000_000;
+
 // The page record (bookpages.js): { id (null while it waits blank), kind ('free' | 'sheet' | 'call' | 'guest'), owner,
 // label, x, y, w, h (its box: bookrow.js), ink (null until read), scraps: [{ file, url, x, y, w, h, tilt }], texts, error }.
 // held: the book out of sight as it's made.
@@ -71,10 +78,11 @@ export function pageView(page, held = false) {
 
 // A page's dry ink and pictures, one canvas per unit at its place (bookunits.js), each drawing only its own elements
 // in its own px: a unit 'id' → { canvas, id }. Held (the book shut out of sight), nothing is painted: what changed
-// meanwhile is painted once it shows. A unit's canvas is let go when the unit goes, and every canvas when another page
+// meanwhile is painted once it shows. A canvas is drawn for the zoom the view rests at (r, bookview.js): zoomed in past
+// 1, only round what the paper shows, painted again as the view moves on past it. A unit's canvas is let go when the unit goes, and every canvas when another page
 // shows: the book keeps a view of each of a notebook's pages, and an iPad's tab holds few canvases
 function unitInk(el, page, held) {
-  const st = { el, page, units: new Map(), held, shown: false, stale: false };
+  const st = { el, page, units: new Map(), held, shown: false, stale: false, box: null, r: 1 };
   const paintAll = () => {
     if (st.held || !st.shown) return void (st.stale = true);
     const places = new Map((page.places ?? []).map(p => [p.id, p]));
@@ -87,12 +95,18 @@ function unitInk(el, page, held) {
     for (const p of page.places ?? []) paint(st, p, box);
   };
   const tiles = {
-    show(box) {
-      const shown = Boolean(box);
-      if (shown === st.shown) return;
-      st.shown = shown;
-      if (shown) paintAll();
-      else tiles.drop();
+    show(box, r = 1) {
+      const shown = Boolean(box),
+        zoomed = r !== st.r;
+      Object.assign(st, { box, r });
+      if (shown !== st.shown) {
+        st.shown = shown;
+        return shown ? paintAll() : tiles.drop();
+      }
+      if (!shown || st.held) return;
+      if (zoomed) return paintAll();
+      // (zoomed in: a canvas whose unit shows past what it holds)
+      for (const p of page.places ?? []) if (r > 1 && !holdsShown(st, st.units.get(p.id))) paint(st, p);
     },
     // A stroke just dried, a stroke undone, a picture loaded: the units drawn again
     addInk: () => paintAll(),
@@ -132,15 +146,15 @@ function paint(st, p, box = null) {
   const scraps = page.scraps.filter(s => s.g === p.id && !landing(page, s)),
     u = units.get(p.id),
     { canvas } = u,
-    r = scraps.map(drawnBox).reduce(union, reachOn(page, p)),
-    k = devicePixelRatio || 1,
-    part = box && u.at && u.k === k && holds(u.at, r);
+    reach = scraps.map(drawnBox).reduce(union, reachOn(page, p)),
+    { at, k } = canvasAt(st, reach),
+    part = box && u.at && u.k === k && same(u.at, at);
   if (part && !meets(u.at, box)) return;
-  const [x, y] = part ? [u.at.x0, u.at.y0] : [Math.floor(r.x0), Math.floor(r.y0)],
-    [cw, ch] = part ? [u.at.x1 - x, u.at.y1 - y] : [Math.ceil(r.x1) - x, Math.ceil(r.y1) - y],
+  const { x0: x, y0: y } = at,
+    [cw, ch] = [at.x1 - x, at.y1 - y],
     w = Math.round(cw * k),
     h = Math.round(ch * k);
-  Object.assign(u, { at: { x0: x, y0: y, x1: x + cw, y1: y + ch }, k });
+  Object.assign(u, { at, k, reach });
   if (canvas.width !== w || canvas.height !== h) Object.assign(canvas, { width: w, height: h });
   Object.assign(canvas.style, { left: `${x}px`, top: `${y}px`, width: `${cw}px`, height: `${ch}px` });
   const g = canvas.getContext('2d');
@@ -167,7 +181,36 @@ function paint(st, p, box = null) {
   draw(g, layered(here));
   g.restore();
 }
+// What of a unit's reach (page px) its canvas holds, in whole px, and how many device px a page px is on it: the zoom
+// the view rests at (st.r); zoomed in past 1, only what's within NEAR of the paper's view; never more than MOST_PX
+function canvasAt(st, reach) {
+  const near = st.r > 1 && st.box && grown(st.box, NEAR),
+    r = near ? within(reach, near) : reach,
+    at = { x0: Math.floor(r.x0), y0: Math.floor(r.y0) };
+  Object.assign(at, { x1: Math.max(at.x0, Math.ceil(r.x1)), y1: Math.max(at.y0, Math.ceil(r.y1)) });
+  const area = Math.max(1, (at.x1 - at.x0) * (at.y1 - at.y0));
+  return { at, k: Math.min((devicePixelRatio || 1) * st.r, Math.sqrt(MOST_PX / area)) };
+}
+// Whether a unit's canvas holds all of it the paper shows (none painted yet: it does not)
+function holdsShown(st, u) {
+  if (!u?.reach) return false;
+  const shows = within(u.reach, st.box);
+  return shows.x1 <= shows.x0 || shows.y1 <= shows.y0 || holds(u.at, shows);
+}
 const holds = (outer, b) => b.x0 >= outer.x0 && b.y0 >= outer.y0 && b.x1 <= outer.x1 && b.y1 <= outer.y1;
+const same = (a, b) => a.x0 === b.x0 && a.y0 === b.y0 && a.x1 === b.x1 && a.y1 === b.y1;
+// A box cut to another, and one grown by a share of its size each way
+const within = (a, b) => ({
+  x0: Math.max(a.x0, b.x0),
+  y0: Math.max(a.y0, b.y0),
+  x1: Math.min(a.x1, b.x1),
+  y1: Math.min(a.y1, b.y1),
+});
+const grown = (b, by) => {
+  const dx = (b.x1 - b.x0) * by,
+    dy = (b.y1 - b.y0) * by;
+  return { x0: b.x0 - dx, y0: b.y0 - dy, x1: b.x1 + dx, y1: b.y1 + dy };
+};
 // a scrap's picture, drawn again once it has loaded
 function withPicture(st, s) {
   if (s.img) return s;

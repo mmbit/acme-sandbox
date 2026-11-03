@@ -8,10 +8,12 @@
 // other words copied since are no paste here. A picture is on its page once (pagescraps.ts), so a pasted one is
 // uploaded again for its page (booktape.js keepAgain), unless it was cut from that page and isn't back on it.
 import { button, MOD } from './bookui.js';
+import { carried } from './bookbrought.js';
 import { sfx } from '../audio.js';
 import { keepAgain } from './booktape.js';
 import { mountTapPaste } from './bookselectpaste.js';
-import { crumple } from './bookpaper.js'; // (what's deleted balls up and drops off)
+// (what's deleted balls up and is thrown away)
+import { crumple } from './bookpaper.js';
 import { thingsPicture } from './bookpaperdraw.js';
 import { said } from './booksave.js';
 import { word } from './bookscope.js';
@@ -37,7 +39,7 @@ export function mountClip(sel) {
   following(clip);
   // (the bubble's Paste: the clip where the clipboard's words still name it, its middle on a point of the page shown)
   const tapped = mountTapPaste(sel, {
-    named: text => !!clip.held && text === clip.word,
+    named: got => named(clip, got),
     pasteAt: at => paste(clip, clip.held, null, at),
   });
   return {
@@ -57,7 +59,6 @@ function copy(clip) {
   clip.held = { ...snapshot(sel), cut: false };
   clip.word = `book-selection-${Date.now().toString(36)}`;
   clip.again = null;
-  sfx.tick();
   offered(clip);
   return true;
 }
@@ -74,6 +75,12 @@ function cut(clip) {
   if (!copy(clip)) return false;
   clip.held.cut = true;
   return remove(clip, false);
+}
+// A copy or cut from a key, heard as it's taken: the bar's Cut and Copy are heard as presses (booksounds.js)
+function taken(clip, cutting) {
+  if (!(cutting ? cut(clip) : copy(clip))) return false;
+  sfx.tick();
+  return true;
 }
 // (deleted: it crumples; cut: it's kept in the clip. One whole group of a Notebook page goes as its clip's Delete does,
 // Undo in a toast too: bookgroups.js)
@@ -253,7 +260,7 @@ function clipboard(clip) {
   const took = e => {
     if (!ours(clip, e)) return;
     clip.key = null;
-    if (!(e.type === 'cut' ? cut(clip) : copy(clip))) return;
+    if (!taken(clip, e.type === 'cut')) return;
     e.clipboardData.setData('text/plain', clip.word);
     e.preventDefault();
   };
@@ -262,12 +269,15 @@ function clipboard(clip) {
   document.addEventListener('paste', e => {
     if (!ours(clip, e)) return;
     clip.key = null;
-    const pictures = [...(e.clipboardData?.files ?? [])].some(f => f.type.startsWith('image/'));
-    if (pictures || !clip.held || e.clipboardData?.getData('text/plain') !== clip.word) return;
+    if (!named(clip, carried(e.clipboardData))) return;
     e.preventDefault();
     paste(clip);
   });
 }
+// Whether what the clipboard holds ({ files, text }) is the clip: its word still there, and no picture copied since.
+// ⌘V and the Paste bubble both ask this.
+const named = (clip, { files, text }) =>
+  !!clip.held && text === clip.word && !files.some(f => f.type.startsWith('image/'));
 // Safari fires no copy or cut while no words are selected, and no paste outside a field: a key whose event didn't come
 // does its work itself, the clip's word put on the clipboard as it can
 function later(clip, k) {
@@ -276,7 +286,7 @@ function later(clip, k) {
     if (clip.key !== k) return;
     clip.key = null;
     if (k === 'v') return paste(clip);
-    if (k === 'c' ? copy(clip) : cut(clip)) copied(clip);
+    if (taken(clip, k !== 'c')) copied(clip);
   });
 }
 // Where the pointer was last over the paper, for a paste

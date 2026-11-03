@@ -332,9 +332,27 @@ function printQueued(
     print(`It carries item #${item}: handled when #${id} ends done (it hasn't started yet).`, ...stopped(queued));
   }
   if (lands !== undefined) print(`It takes over #${lands}'s work.`);
+  printUnplaced(id, agent, queued);
   // the threads it moves
   if (Array.isArray(queued.moves))
     print(...changeLines(queued as { moves: Move[]; deadlines: Deadline[] }, 'this job'));
+}
+
+// A task of the agent's in its deliverable stopped with nothing in its place, whose place this job takes, or the agent's
+// tasks there that stopped or failed with nothing in their place, each with the way this job takes its place (takeover.ts
+// placeQueued).
+function printUnplaced(id: string, agent: string, queued: Record<string, unknown>) {
+  if (present(queued.takesPlaceOf))
+    return print(
+      `It takes the place of #${text(queued.takesPlaceOf)}, ${agent}'s task stopped in this deliverable: it does its ` +
+        `work again, and the tasks drawn before #${text(queued.takesPlaceOf)} ended wait for it.`,
+    );
+  const unplaced = Array.isArray(queued.unplaced) ? (queued.unplaced as unknown[]).map(Number) : [];
+  for (const u of unplaced)
+    print(
+      `#${u}, ${agent}'s task in this deliverable, ended with nothing in its place, and the tasks drawn before it ended ` +
+        `wait for it. If #${id} does its work again: hq stop ${u} "why" --for ${id}.`,
+    );
 }
 
 // The target's open jobs come first, so an overlap is seen before a parallel job is added. If it has any, nothing is
@@ -418,17 +436,32 @@ export const expedite = {
 
 export const stopJob = {
   help: `
-   hq stop <job id> "why"                            end a running job of yours now (the CEO: anyone's), instead of it
+   hq stop <job id> "why" [--for <job>]              end a running job of yours now (the CEO: anyone's), instead of it
                                                      polling or going on with work that's no longer wanted. It ends stopped,
                                                      keeps its commits on its branch and opens no pull request. Its item
                                                      stays open for its owner to judge. Within a minute; a paused
                                                      job stops as it starts again. The reason is logged. A job that never
                                                      ran: hq cancel. A review or ruling on a paused deliverable pauses at
-                                                     its next step instead, and goes on once the pause lifts`,
+                                                     its next step instead, and goes on once the pause lifts.
+                                                     A deliverable's task: the one job its agent has queued there
+                                                     since it started, or the next one queued there for them, does its
+                                                     work again and takes its place, and its later tasks wait for it.
+                                                     --for <job>: which one, of several queued (same agent, same
+                                                     deliverable, not started); also on a job stopped or failed already`,
 
-  async run([id, why = '', ...rest]: string[]) {
-    if (!/^[0-9]+$/.test(id ?? '') || !why.trim() || rest.length) stop('usage: hq stop <job id> "why"');
-    const answer = await api.change('stop', { body: { id: Number(id), why } });
+  // --for, and a deliverable's task's answer
+  async run(given: string[]) {
+    const {
+      values: { for: replacement },
+      args: [id, why = '', ...rest],
+    } = takeValues(given, ['--for'], 'Nothing stopped');
+    if (!/^[0-9]+$/.test(id ?? '') || !why.trim() || rest.length)
+      stop('usage: hq stop <job id> "why" [--for <job id>]');
+    if (replacement !== undefined && !/^[0-9]+$/.test(replacement))
+      stop('Nothing stopped: --for names a job by its number');
+    const answer = await api.change('stop', {
+      body: { id: Number(id), why, ...(replacement !== undefined && { for: Number(replacement) }) },
+    });
     const stopping = api.parseOrNull(answer.body);
     if (shown(stopping?.ok) !== 'true') stop(`Couldn't stop #${id}: ${api.errorIn(answer.body, 'no answer')}`);
     // (paused: a review or ruling held with its thread, jobs.ts suspendReview)
@@ -436,9 +469,24 @@ export const stopJob = {
     print(
       paused
         ? `#${id} pauses at its next step, within a few minutes, and goes on in its session once ${paused} resumes.`
-        : shown(stopping.running) === 'true'
-          ? `#${id} stops within a minute; it ends stopped, its work kept without opening a pull request.`
-          : `#${id} is paused: it stops as it starts again, its work kept.`,
+        : shown(stopping.ended) === 'true'
+          ? `#${id} had ended already.`
+          : shown(stopping.running) === 'true'
+            ? `#${id} stops within a minute; it ends stopped, its work kept without opening a pull request.`
+            : `#${id} is paused: it stops as it starts again, its work kept.`,
+    );
+    // (a deliverable's task: the job of its agent's that does its work again takes its place, takeover.ts stopFor)
+    if (present(stopping.replacement))
+      return print(
+        `#${text(stopping.replacement)} takes its place and does its work again: the tasks drawn after #${id} wait for it.`,
+      );
+    if (!present(stopping.deliverable)) return;
+    const queued = Array.isArray(stopping.queued) ? (stopping.queued as unknown[]).map(Number) : [];
+    print(
+      `It's a task of ${text(stopping.deliverable)}, whose tasks drawn after it wait for it until a job takes its place. ` +
+        (queued.length
+          ? `If ${queued.map(q => `#${q}`).join(' or ')}, queued there since it started, does its work again: hq stop ${id} "why" --for <that job>.`
+          : `The next job queued there for its agent does its work again and takes its place (hq job, with --after request:<card> or --when for what it waits on).`),
     );
   },
 };
@@ -621,9 +669,8 @@ export const window = {
   help: `
    hq window ${TARGET} <deadline | none> [--aim <time>] [--board-set] [--try]
                                                      a deliverable's window (named by it, or a job or PR on it), the way
-                                                     to put work first: the scheduler makes room for it, taking the seat
-                                                     from work in its way when its time needs it and giving it back
-                                                     after, by itself (never a pause for it). The deadline,
+                                                     to order work within seat pacing. Only urgent work bypasses pacing
+                                                     (hq urgent milestone|job|task <id> on|off). The deadline,
                                                      the latest it may be merged and deployed and still be what was
                                                      agreed, orders its work; --aim, the time we said, at or before it
                                                      (else the aim stays, or is the deadline). 2h, 90m or 1h30m from now;

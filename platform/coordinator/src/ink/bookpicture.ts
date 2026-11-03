@@ -5,15 +5,18 @@ import { existsSync, rmSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { db } from '../db.ts';
 import { keepFile } from '../uploads.ts';
-import { render, underHigh, type Drawn, type Said } from './bookrender.ts';
+import { render, underHigh, type Drawn, type Said, type Under } from './bookrender.ts';
 import { DIR, notFound, serveFile } from '../pagescraps.ts';
 import { BOARD, drawnOf, row, type Page } from './book.ts';
-import { partsOf, shown, type Group } from '../notebookgroups.ts';
-import { CAPTION, slipsUnder, underAt } from '../../../hq/shell/ink/notebookstack.js';
+import { partsOf, shown, type Group, type Parts } from '../notebookgroups.ts';
+import { CAPTION, boxOf, slipsUnder, underAt } from '../../../hq/shell/ink/notebookstack.js';
 import { shifted } from '../../../hq/shell/ink/notebookparts.js';
 import { UNIT_W, heightFor } from '../../../hq/shell/ink/scrapunit.js';
 import type { Stroke, Typed } from '../pagechecks.ts';
-import { layout, widthFor } from '../../../hq/shell/ink/masonry.js';
+import { MARGIN, layout, widthFor } from '../../../hq/shell/ink/masonry.js';
+import { canvasOf } from '../../../hq/shell/ink/sketchcanvas.js';
+import { onCanvas } from '../notebookplaces.ts';
+import { pageRow } from '../notebook.ts';
 import { inkOf } from '../../../hq/shell/ink/agentink.js';
 import { parseCard } from '../../../hq/shell/card.js';
 import { WORDS as ASKING, said } from '../../../hq/shell/questions.js';
@@ -73,17 +76,17 @@ function bookPage(p: Page): Drawn {
 // (notebookstack.js slipsUnder), each unit as tall in the layout as it and what's under it stand, a drawing under the
 // unit before it (bookunits.js unitsOf). A reply's ink is its own group's, drawn by HQ, not on the picture (one on a version: over its
 // frame, triedOf).
-async function unitsPage(page: number): Promise<Drawn> {
+export async function unitsPage(page: number): Promise<Drawn> {
   const tops = db
     .prepare('select * from notebook_groups where page = ? and parent is null and deleted is null order by pos, id')
     .all(page) as Group[];
-  const units = [];
+  const units: Unit[] = [];
   for (const g of tops) {
     const parts = partsOf(g),
       h = heightFor(parts, g.h!),
       read = shown(g),
-      slips: Said[] = slipsUnder(read.children)
-        .map(c =>
+      slips = slipsUnder(read.children)
+        .map((c): Said =>
           c.kind === 'reply'
             ? { name: null, text: c.words || (c.ink.length ? 'Written reply' : '') }
             : { name: c.name, text: c.text, ...slipPicture(c.id), ...formOf(c) },
@@ -95,24 +98,63 @@ async function unitsPage(page: number): Promise<Drawn> {
       tried = triedOf(read);
     const under =
       text || slips.length || asks.length || tried
-        ? { ...underAt({ x: 0, y: 0, w: UNIT_W, h }, g.kind), text, slips, asks, ...(tried ? { tried } : {}) }
+        ? { ...underAt({ x: 0, y: 0, w: UNIT_W, h: 0 }, g.kind), text, slips, asks, ...(tried ? { tried } : {}) }
         : null;
     const below = under ? CAPTION.top + (await underHigh(under, DIR)) : 0;
-    units.push({ id: g.id, h: h + below, parts, under, follows: units.length > 0 && g.kind === 'drawing' });
+    const place = g.place ? JSON.parse(g.place) : undefined,
+      box = boxOf(parts),
+      wide = box ? Math.max(UNIT_W, box.x + box.w) : UNIT_W;
+    units.push({ id: g.id, h, w: wide, below, parts, under, follows: units.length > 0 && g.kind === 'drawing', place });
   }
-  // (two columns wide: the picture agents read of a page, at scale 1)
+  // (two columns wide: the picture agents read of a page, at scale 1; what's under a unit at its foot, or on a sketch
+  // page by its unit where it covers no other: sketchcanvas.js)
   const w = widthFor(2),
-    { places, height } = layout(units, w),
-    on = units.map((u, i) => ({ ...u, parts: shifted(u.parts, places[i].x, places[i].y), at: places[i] }));
+    sketch = onCanvas(pageRow(page, null)!),
+    grown = units.map(u => ({ ...u, h: u.h + u.below })),
+    masonry = sketch ? null : layout(grown, w),
+    places = masonry
+      ? masonry.places.map((p, i) => ({ ...p, hung: { x: p.x, y: p.y + units[i].h, w: UNIT_W, h: units[i].below } }))
+      : canvasOf(units, w).places,
+    on = units.map((u, i) => ({ ...u, parts: shifted(u.parts, places[i].x, places[i].y), at: places[i] })),
+    size = masonry ? { w, h: masonry.height } : cropped(on);
   return {
-    ...{ x: 0, y: 0, w, h: height },
+    ...{ x: 0, y: 0, ...size },
     // (each stroke with its unit, painted as the book paints it: bookrender.ts.)
     ink: on.flatMap(u => (u.parts.ink as Stroke[]).map(s => ({ ...s, unit: u.id }))),
     scraps: on.flatMap(u => u.parts.pictures),
     texts: on.flatMap(u => u.parts.texts) as Typed[],
-    under: on.flatMap(u => (u.under ? [{ ...u.under, x: u.under.x + u.at.x, y: u.under.y + u.at.y }] : [])),
+    under: on.flatMap(u => (u.under ? [{ ...u.under, x: u.under.x + u.at.hung.x, y: u.under.y + u.at.hung.y }] : [])),
   };
 }
+// A unit of a notebook page: h tall and w wide (its parts', page px), with what's under it below tall (unitsPage)
+type Unit = { id: number; h: number; w: number; below: number; parts: Parts; under: Under | null; follows: boolean } & {
+  place?: { x: number; y: number };
+};
+// A sketch page's units (on: each at its place, its parts with it) moved in together, MARGIN from the picture's
+// top-left with what hangs under them, and the picture as big as they reach
+function cropped(on: { parts: Parts; at: { x: number; y: number; hung: Box }; h: number }[]) {
+  if (!on.length) return { w: widthFor(2), h: 2 * MARGIN };
+  const reach = on.map(u => union(union(boxOf(u.parts), { x: u.at.x, y: u.at.y, w: UNIT_W, h: u.h }), u.at.hung)),
+    dx = MARGIN - Math.min(...reach.map(r => r.x)),
+    dy = MARGIN - Math.min(...reach.map(r => r.y));
+  for (const u of on) {
+    const { x, y, hung } = u.at;
+    u.parts = shifted(u.parts, dx, dy);
+    u.at = { x: x + dx, y: y + dy, hung: { ...hung, x: hung.x + dx, y: hung.y + dy } };
+  }
+  return {
+    w: Math.max(widthFor(2), ...reach.map(r => r.x + r.w + dx + MARGIN)),
+    h: Math.max(...reach.map(r => r.y + r.h + dy + MARGIN)),
+  };
+}
+// The box round two (the first null when there's nothing in it)
+function union(a: Box | null, b: Box): Box {
+  if (!a) return b;
+  const x = Math.min(a.x, b.x),
+    y = Math.min(a.y, b.y);
+  return { x, y, w: Math.max(a.x + a.w, b.x + b.w) - x, h: Math.max(a.y + a.h, b.y + b.h) - y };
+}
+type Box = { x: number; y: number; w: number; h: number };
 // An answer's picture's file
 function slipPicture(slip: number) {
   const { picture } = (db.prepare('select picture from book_slips where id = ?').get(slip) ?? {}) as {

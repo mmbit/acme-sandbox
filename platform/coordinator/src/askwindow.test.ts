@@ -266,7 +266,7 @@ test('work a timed thread with no task yet needs takes its window: the claim giv
   assert.ok(latest != null && latest < thread(meeting).deadline!, 'its latest start comes before the meeting');
 });
 
-test('follow-ups inherit one changing deliverable deadline through the plan and pacing', async () => {
+test('follow-ups inherit one changing deliverable deadline while remaining within seat pacing', async () => {
   const deliverable = opened();
   const owner = await h.start({ agent: 'moss', title: 'Make the shop', thread: deliverable });
   const queued = await h.agent('job', owner.token, { agent: 'kit', title: 'Draw the sign', prompt: 'x' });
@@ -284,7 +284,7 @@ test('follow-ups inherit one changing deliverable deadline through the plan and 
     for (const id of ids) assert.equal(snapshot.jobs.find(j => j.id === id)?.due, due);
     const timing = ordering.current().timings.get(queued.body.id)!;
     assert.ok(timing.latestStart != null && timing.latestStart < due!);
-    assert.equal(planner.pacedTakes(timing, due!), true, 'the inherited deadline passes pacing');
+    assert.equal(planner.pacedTakes(timing, due!), false, 'the inherited deadline orders work within pacing');
     assert.equal(
       threats.lines(forecast.refresh()).some(line => line.includes(deliverable) && line.includes('no deadline set')),
       false,

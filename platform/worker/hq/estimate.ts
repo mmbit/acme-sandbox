@@ -2,6 +2,7 @@
 // from, and what the seats have left of their week; or how well past estimates held (--accuracy). When new work
 // could be done is hq when's (when.ts).
 import { TOKEN_ESTIMATE_GUIDANCE } from './estimating.ts';
+import { seatStatusWords } from './seatwords.ts';
 import { budgetLine, confidenceLine } from './costs.ts';
 import type { Confidence } from '../../coordinator/src/confidence.ts';
 import type { TokenBudget } from '../../coordinator/src/tokenbudget.ts';
@@ -105,6 +106,7 @@ function takeFlags(given: string[]) {
 // ---- estimate types
 
 type Seat = {
+  status?: import('./seatwords.ts').SeatStatus;
   id: string;
   engine: string;
   state: string;
@@ -227,7 +229,10 @@ export const waitWords = (w: Wait) => wordsOf(w, at);
 
 function printSeats({ seats, engines }: Found['seats']) {
   print('The seats now (the week, then the 5-hour window):');
-  for (const s of seats) print(`  ${s.id} (${s.engine}, ${s.state}): ${seatLine(s)}`);
+  for (const s of seats) {
+    const status = s.status ? `. ${seatStatusWords(s.status, at)}` : '';
+    print(`  ${s.id} (${s.engine}, ${s.state}): ${seatLine(s)}${status}`);
+  }
   for (const e of engines) print(engineLine(e));
 }
 

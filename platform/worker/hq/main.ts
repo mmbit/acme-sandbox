@@ -39,6 +39,7 @@ import { when } from './when.ts';
 import { studio } from './studio.ts';
 import { seatWarning } from './seatwarning.ts';
 import { complete } from './completion.ts';
+import { urgent } from './urgency.ts';
 
 // run: what it ends hq with (a command it runs for the agent: that command's exit code), or nothing for 0.
 type Command = { help: string; run: (args: string[]) => Promise<void | number> };
@@ -62,6 +63,7 @@ const COMMANDS: Record<string, Command> = {
   waits: jobs.waits,
   review: jobs.review,
   window: jobs.window,
+  urgent,
   when,
   plan,
   deliverable: projects.deliverable,

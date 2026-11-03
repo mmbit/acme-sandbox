@@ -8,6 +8,7 @@ import { readFile, readdir } from 'node:fs/promises';
 import { parseArgs } from 'node:util';
 import { openProfiled } from './profile-browser.mjs';
 import { playLine } from './bookcall.mjs';
+import { bookAtRest } from './bookkit.mjs';
 
 const { values: options } = parseArgs({
   options: {
@@ -35,12 +36,7 @@ const meter = () =>
   });
 const inPage = code => page.evaluate(code);
 const book = (call, mode) =>
-  inPage(`import('/shell/ink/book.js').then(m => m.${call}())`).then(() =>
-    page.waitForFunction(
-      m => document.documentElement.dataset.book === m && !document.querySelector('#book.bk-swinging'),
-      mode,
-    ),
-  );
+  inPage(`import('/shell/ink/book.js').then(m => m.${call}())`).then(() => bookAtRest(page, mode));
 // Each phase: its name and what brings it on
 const PHASES = [
   ['nothing over it (book folded)', () => book('foldBook', 'folded')],

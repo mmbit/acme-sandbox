@@ -2,9 +2,10 @@
    (bookview.js sets the dots' size and place), its send stamp at its top-left; and the
    controls for moving about (bookcontrols.js, on the rail). (the overview: bookshelf.css.) The book's own look, the same on every HQ look. (was book.css's and booklook.css's head strip, table and row of pages) */
 
+/* (under the status bar's blur only the paper: the page starts below it, --sat.) */
 #book .bk-pages {
   position: absolute;
-  inset: 0;
+  inset: var(--sat, 0px) 0 0;
   background-color: var(--bk-paper);
 }
 /* the paper: endless, its dots moving with the page. The Pencil and a mouse write; a finger, the middle button, Space

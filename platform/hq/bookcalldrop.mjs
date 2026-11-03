@@ -1,7 +1,10 @@
 // node platform/hq/book-check.mjs --stories 'a page reaches the waiting call' [--webkit] [--shots dir]
+// A page torn off at its spine (shell/ink/booktear.js) with the Pencil and a finger, carried onto a minimised call's
+// bubble and let go there.
 import assert from 'node:assert/strict';
 import { playLine } from './bookcall.mjs';
-import { cornerOf, shownOnCall } from './bookshare.mjs';
+import { shownOnCall } from './bookshare.mjs';
+import { spineOf } from './booktearing.mjs';
 import { inputs } from './bookhands.mjs';
 import { minimiseCall } from './bookcallview.mjs';
 import { MINI, UPRIGHT, middleOf, until } from './bookkit.mjs';
@@ -87,8 +90,8 @@ async function dropPages(hand, page, line, c, viewport) {
 
 async function ontoCall(hand, page, type, c, name) {
   const target = middleOf(await page.locator('.cb-face').boundingBox()),
-    from = middleOf(await (await cornerOf(page)).boundingBox()),
-    peeled = [from[0] - 45, from[1] + 35];
+    from = await spineOf(page),
+    peeled = [from[0] - 60, from[1] + 12];
   const pointer = await hand.hold(type, from);
   await pointer.move(peeled);
   await page.locator('#book .bk-share[data-mode=carrying]').waitFor();

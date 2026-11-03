@@ -1,15 +1,16 @@
 // book-check.mjs's stories of the book as an object on a desktop, with a mouse (shell/ink/book.js, bookui.js,
-// pair.js's card; Ink's folder): one object under a strong shadow, its controls
-// floating over its paper with the book's own tooltips; the cover's edge let go where it was dragged, never sliding
-// back first; the book opening straight onto its page, no cover, in well under a second (a crossfade with reduced
-// motion); and the Devices card whole at the book's widest and narrowest; on a laptop-height window,
-// every control whole (a second column). Each asserts what the board sees: boxes, pixels, words. (the short window)
+// pair.js's card; Ink's folder): one object under a strong shadow, its controls floating over its paper in two islands
+// (the tools upright at its right, the bar along its foot) with the book's own tooltips; the cover's edge let go where
+// it was dragged, never sliding back first; the book opening straight onto its page, no cover, in well under a second
+// (a crossfade with reduced motion); and the Devices card whole at the book's widest and narrowest; on a laptop-height
+// window, every control whole, the tools never scrolling. Each asserts what the board sees: boxes, pixels, words. (the
+// two islands)
 import assert from 'node:assert/strict';
 import { shutBook } from './bookchrome.mjs';
 import { DESKTOP, MINI, OVERVIEW } from './bookkit.mjs';
 
 // Laptops' windows under their browser's bars: a 768 px screen's, a 13-inch's with its bookmarks and Dock, and one
-// with its developer tools docked below, the one short enough for the stack's second column
+// with its developer tools docked below
 const SHORT = [
   { width: 1366, height: 650 },
   { width: 1280, height: 600 },
@@ -19,14 +20,14 @@ const SHORT = [
 // c: book-check.mjs's helpers: { hq(browser, viewport, options), shot(name, page), settled(page, mode), settle }
 export function frameStories(c) {
   return {
-    'the book as one object: a strong shadow on HQ beside it, its controls floating over its paper, no column':
+    'the book as one object: a strong shadow on HQ beside it, its controls floating over its paper in two islands':
       browser => oneObject(browser, c),
     "the cover's edge let go stays where it was let go: no slide back to where it began": browser => letGo(browser, c),
     'opening the book: straight onto its page, no cover, in well under a second; reduced motion, a crossfade':
       browser => opening(browser, c),
     'the Devices card whole at any book width: its QR, its words and Close never clipped': browser =>
       pairCard(browser, c),
-    "a laptop-height window: every control in the book's islands whole, Undo and Redo at their foot among them":
+    "a laptop-height window: every control in the book's two islands whole, none scrolling, Undo and Redo at the bar's left":
       browser => shortWindow(browser, c),
     "a hardcover: the black board on the outer edge beside HQ's page, the pages the screen's height; upright, the page fills the screen":
       browser => hardcover(browser, c),
@@ -42,21 +43,21 @@ async function oneObject(browser, c) {
       spine = await box(page, '#book [role=separator]'),
       hqWidth = await page.evaluate(() => document.body.getBoundingClientRect().width);
     assert.ok(Math.abs(hqWidth - spine.x) <= 1, `HQ's page ends at the cover's edge (${hqWidth} vs ${spine.x})`);
-    // the controls: small islands over the paper's right edge, no full-height column of their own
-    const islands = await page.$$eval('#book nav [role=toolbar]', all =>
-      all.map(el => el.getBoundingClientRect().toJSON()).filter(r => r.width),
-    );
-    assert.ok(islands.length >= 3, `${islands.length} islands of controls`);
-    for (const r of islands) {
+    // the controls: two islands over the paper, the tools upright at its right, short, and the bar along its foot
+    const [tools, bar] = await islandsOf(page);
+    for (const r of [tools, bar])
       assert.ok(r.left >= paper.x && r.right <= paper.x + paper.width, `an island off the paper: ${JSON.stringify(r)}`);
-      assert.ok(r.height < DESKTOP.height * 0.6, `an island ${Math.round(r.height)} px tall, a column`);
-    }
-    // ...in one stack, a second column only for a short window (shortWindow)
-    const lefts = new Set((await stackOf(page)).map(r => Math.round(r.left)));
-    assert.equal(lefts.size, 1, `the stack in ${lefts.size} columns at ${DESKTOP.width} × ${DESKTOP.height}`);
-    // the shadow: HQ's page darker just beside the book than a little further off, on the same row
-    const near = await meanLight(page, { x: spine.x - 8, y: 300, width: 6, height: 300 }),
-      far = await meanLight(page, { x: spine.x - 70, y: 300, width: 6, height: 300 });
+    assert.ok(tools.height > tools.width && tools.height < DESKTOP.height * 0.6, `the tools ${JSON.stringify(tools)}`);
+    assert.ok(
+      bar.width > bar.height && bar.bottom > DESKTOP.height - 40 && tools.left > bar.left,
+      `the bar along the foot ${JSON.stringify(bar)}, the tools at the right ${JSON.stringify(tools)}`,
+    );
+    // the shadow: HQ's page darker just beside the book than a little further off, on the same rows, below the
+    // bookmarks and the pull tab over HQ's side there
+    const over = [await box(page, '#book .bk-marks'), await box(page, '#book .bk-lip')],
+      y = Math.max(...over.map(b => b.y + b.height)) + 20,
+      near = await meanLight(page, { x: spine.x - 8, y, width: 6, height: 250 }),
+      far = await meanLight(page, { x: spine.x - 70, y, width: 6, height: 250 });
     assert.ok(near < far * 0.6, `the book's shadow on HQ: ${near} beside the book, ${far} further off`);
     // the book's own tooltip on a control, never the browser's title
     const undo = page.locator('#book').getByRole('button', { name: 'Undo' });
@@ -170,24 +171,22 @@ async function pairCard(browser, c) {
     await done();
   }
 }
-// A laptop-height window: the stack too tall for one column goes on in a second, so every control in it and in the
-// pages' row is whole in the window and on the paper, no island over another, Undo and Redo (the book's own island, at
-// the stack's foot) among them
+// A laptop-height window: every control in the two islands whole in the window and on the paper, the tools' island
+// scrolling none of them away, the islands clear of each other, Undo and Redo the bar's first keys
 async function shortWindow(browser, c) {
   for (const viewport of SHORT) {
     const { page, errors, done } = await onDesk(browser, c, {}, viewport);
     const at = `${viewport.width} × ${viewport.height}`;
     try {
       const paper = await box(page, '#book section > div'),
-        islands = await page.$$eval('#book nav [role=toolbar]', all =>
-          all.map(el => el.getBoundingClientRect().toJSON()).filter(r => r.width),
-        ),
-        // (the faces scroll in their island: theirs is the island's box)
+        islands = await islandsOf(page),
         controls = await page.$$eval('#book nav [role=toolbar] button', all =>
           all
-            .filter(b => b.getClientRects().length && !b.matches('.bk-face'))
+            .filter(b => b.getClientRects().length)
             .map(b => ({ name: b.getAttribute('aria-label'), ...b.getBoundingClientRect().toJSON() })),
-        );
+        ),
+        scrolls = await page.$eval('#book .bk-strip', el => el.scrollHeight > el.clientHeight + 1);
+      assert.equal(scrolls, false, `${at}: the tools scroll`);
       const inside = r =>
         r.left >= paper.x - 1 &&
         r.right <= paper.x + paper.width + 1 &&
@@ -201,11 +200,12 @@ async function shortWindow(browser, c) {
           .slice(i + 1)
           .forEach(b => assert.ok(!over(a, b), `${at}: an island over another: ${JSON.stringify([a, b])}`)),
       );
-      for (const name of ['Undo', 'Redo'])
-        assert.ok(
-          controls.some(r => r.name === name),
-          `${at}: no ${name}`,
-        );
+      const bar = controls.filter(r => islands[1].left <= r.left && r.top >= islands[1].top);
+      assert.deepEqual(
+        bar.slice(0, 2).map(r => r.name),
+        ['Undo', 'Redo'],
+        `${at}: Undo and Redo at the bar's left`,
+      );
       if (viewport === SHORT[0]) await c.shot('book-frame-short', page);
       assert.deepEqual(errors, []);
     } finally {
@@ -278,11 +278,9 @@ async function onDesk(browser, c, options = {}, viewport = DESKTOP) {
   return opened;
 }
 const box = (page, selector) => page.locator(selector).first().boundingBox();
-// The boxes of the islands' stack that show, one column or two
-const stackOf = page =>
-  page.$$eval('#book nav .bk-column [role=toolbar]', all =>
-    all.map(el => el.getBoundingClientRect().toJSON()).filter(r => r.width),
-  );
+// The two islands' boxes: the tools', and the bar's
+const islandsOf = page =>
+  page.$$eval('#book .bk-strip, #book .bk-bar', all => all.map(el => el.getBoundingClientRect().toJSON()));
 const spineLeft = page =>
   page.evaluate(() => Math.round(document.querySelector('#book [role=separator]').getBoundingClientRect().left));
 // The mean lightness (0-255) of a box on the screen, read from a screenshot of it

@@ -12,9 +12,7 @@
 // A page's sides as the store makes one, and the most a page grows to either way (pagechecks.ts PAGE and GROWN_MAX)
 export const SIDE = { min: 100, max: 4000 };
 export const GROWN_MAX = 20_000;
-// the closest the zoom goes in. The furthest out shows the whole page, and at least half size, so a page no bigger than
-// the paper still shows paper round it to draw big on. (was the page's width,
-// past which the overview took over)
+// the closest the zoom goes in (zoomWithin)
 export const ZOOM_MAX = 4;
 // The zooms a page is kept at for a screen's shape (bookpagezoom.js; the store's notebook.ts zoomPage): ZOOM_MAX in, and
 // out as far as a page GROWN_MAX long shows whole on a screen 100 px tall
@@ -28,6 +26,38 @@ export const pageBox = page => {
     y0 = page.y ?? 0;
   return { x0, y0, x1: x0 + page.w, y1: y0 + page.h };
 };
+
+// A sketch page's zoom (bookview.js.): in to ZOOM_MAX, and out to ZOOM_OUT, or
+// further where what's drawn needs it to show whole, so the canvas reaches as far as it's drawn on
+export const ZOOM_OUT = 0.25;
+export const zoomWithin = (s, page, view) =>
+  Math.min(ZOOM_MAX, Math.max(Math.min(ZOOM_OUT, view.w / page.w, view.h / page.h), s));
+// How far a sketch page pans at a zoom of s: any way, till only edge px (on screen) of its box (the first screen at
+// least) is left at the paper's side, so a screen of fresh paper is always beyond what's drawn to draw on. → { x0, x1,
+// y0, y1 }, the pan's least and most
+export function canvasPans(page, view, s, edge) {
+  const p = pageBox(page),
+    b = { x0: Math.min(0, p.x0), y0: Math.min(0, p.y0), x1: Math.max(view.w, p.x1), y1: Math.max(view.h, p.y1) },
+    ex = Math.min(edge, view.w) / s,
+    ey = Math.min(edge, view.h) / s;
+  return { x0: b.x0 - view.w / s + ex, x1: b.x1 - ex, y0: b.y0 - view.h / s + ey, y1: b.y1 - ey };
+}
+// A page of scraps' zoom (bookview.js.): out to its masonry's fit, the paper's
+// width (bookunits.js), and in to ZOOM_MAX, or its fit where that's closer, so the board writes big on a scrap. Within
+// SNAP of the fit it's the fit: two fingers scrolling never zoom the page by their wobble.
+const SNAP = 1.03;
+export const unitsZoom = (s, fit) => (s < fit * SNAP ? fit : Math.min(Math.max(ZOOM_MAX, fit), s));
+// How far a page of scraps pans at a zoom of s: across its width as far as it's zoomed past it, and down to its foot
+// with foot px (on screen) of it left. → { x0, x1, y0, y1 }, the pan's least and most
+export const unitsPans = (page, view, s, foot) => ({
+  x0: 0,
+  x1: Math.max(0, page.w - view.w / s),
+  y0: 0,
+  y1: page.h - Math.min(view.h, foot) / s,
+});
+// The pan that keeps a point on the paper (CSS px from its top-left) over the same spot of the page as the zoom goes
+// from s0 to s1: a pinch's middle, the pointer under a trackpad's pinch
+export const zoomAt = (pan, s0, s1, at) => ({ x: pan.x + at.x / s0 - at.x / s1, y: pan.y + at.y / s0 - at.y / s1 });
 
 // A point on the paper (CSS px from its top-left) as the page's px
 export const pageAt = (pan, scale, at) => ({ x: pan.x + at.x / scale, y: pan.y + at.y / scale });

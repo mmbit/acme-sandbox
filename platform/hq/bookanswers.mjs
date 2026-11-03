@@ -2,13 +2,14 @@
 // (shell/ink/bookgroups.js and bookanswers.js; the coordinator's ink/bookjudge.ts, bookanswer.ts and booktry.ts), each on
 // a Notebook of its own played by HQ's one stand-in (bookanswersplay.mjs). A board's note on a page: the agent's face
 // and its pencil dots under the note's unit while the answer comes, or why none came, then the answer slipped there,
-// as the store keeps them (no spot): in the unit's column, clear of every other unit, at every width the board reads on.
+// as the store keeps them (no spot): by the unit, under it or beside it, clear of every other unit, at every width the
+// board reads on.
 // A drawing, its strokes on its slip under the note, a form there too (answered and sent) and an agent's question;
 // the overview lists what's open (a note's versions: bookversions.mjs). The board answers one by drawing, in the room
 // pulled out under its slip. On a call's page, the call's agent's answer
 // lands the same way. On an iPad mini, a phone and a desktop. (Its Notebook played by notebookOn)
 import assert from 'node:assert/strict';
-import { FEED_MS, notebookOn, opened, underItsNote } from './bookanswersplay.mjs';
+import { FEED_MS, inSight, notebookOn, opened, shownByItsNote, underItsNote } from './bookanswersplay.mjs';
 import { press } from './bookbar.mjs';
 import { OVERVIEW } from './bookkit.mjs';
 
@@ -19,14 +20,22 @@ export function answerStories(c) {
   return {
     "an answer: the face and its dots under the note's unit, why none came, then its slip there, clear of every other note":
       browser => answered(browser, c, c.MINI, 'mini'),
-    'an answer on a phone, an iPad upright and a desktop, its book narrow and spread wide, under its note in its column':
+    'an answer on a phone, an iPad upright and a desktop, its book narrow and spread wide, by its note':
       async browser => {
         await answered(browser, c, c.PHONE, 'phone', { hasTouch: true, isMobile: true });
         await answered(browser, c, { width: 744, height: 1133 }, 'mini-upright');
         await answered(browser, c, c.DESKTOP, 'desktop', { hasTouch: false, deviceScaleFactor: 1 });
-        // (its columns side by side)
+        // (its columns side by side, the note asked about in the middle of a full row: its answer past the row, tied
+        // to it)
         const wide = { hasTouch: false, deviceScaleFactor: 1, book: 1100 };
-        await answered(browser, c, { width: 1920, height: 1080 }, 'desktop-wide', wide);
+        await answered(browser, c, { width: 1920, height: 1080 }, 'desktop-wide', wide, { at: 1 });
+        // (a staggered masonry: the note asked about boxed in by a short note over it and one under it and a tall
+        // drawing either side, its tie climbing round the one over it)
+        await answered(browser, c, { width: 1920, height: 1080 }, 'desktop-staggered', wide, STAGGERED);
+        // (four columns, three rows: the second row's two middle notes boxed in, one asked about, the other answered
+        // already, both ties over the gap under the row above, none through a note)
+        const wider = { ...wide, book: 1600 };
+        await answered(browser, c, { width: 1920, height: 1080 }, 'desktop-rows', wider, ROWS);
       },
     'an agent’s drawing, form and question; the form answered; the overview lists what’s open': browser =>
       kinds(browser, c),
@@ -67,21 +76,38 @@ async function postOf(c, from, path) {
 // An answer's slip under its note, as the page draws it (in .bk-under: bookgroups.js)
 const slipOf = (page, g, id) => page.locator(`#book .bk-under[data-g="${g.id}"] .answer-slip[data-slip="${id}"]`);
 
-// The note asked about first on a page of short notes, each drawn in one of three columns (the board's drawing keeps
-// the column it was drawn in, where the page has it), so a wide book lays them side by side, one under another:
-// whatever hangs under a note must push the one under it down, at every width
-async function answered(browser, c, viewport, size, options = {}) {
+// The note asked about (at: the first unless named) on a page of notes (each in the column it was drawn in, where the
+// page has it; tall: a drawing down it, three short notes tall; answered: its answer come already). A wide book lays
+// them side by side, one under another, a gap apart, and pins them there: whatever hangs under a note reads as its own
+// at every width, beside it where no answer fits under it, tied to it past its row where neither side is clear, the
+// tie over clear paper
+async function answered(browser, c, viewport, size, options = {}, { at = 0, notes = GRID } = {}) {
   const nb = notebookOn(c),
-    notes = ['Is this live yet?', ...Array.from({ length: 8 }, (_, i) => `and the header colour, ${i + 1}`)].map(
-      (words, i) => Object.assign(nb.typed(4100 + i, words, 60, 60), { column: i % 3 }),
+    groups = notes.map(({ column, tall }, i) =>
+      Object.assign(nb.typed(4100 + i, i === at ? 'Is this live yet?' : `and the header colour, ${i}`, 60, 60), {
+        column,
+        ...(tall && { ink: [{ color: '#2b2230', size: 3, points: [20, 300].map((y, k) => [24, y, 0.5, k * 40]) }] }),
+      }),
     ),
-    [asked] = notes;
-  nb.groups.push(...notes);
+    asked = groups[at],
+    before = notes.flatMap(({ answered }, i) => (answered ? [groups[i]] : []));
+  nb.groups.push(...groups);
+  nb.seed.slips.push(...before.map((g, k) => ({ id: 4190 + k, ...nb.answer(g, 'text', WENT_LIVE) })));
   await inStory(browser, c, { viewport, nb, options }, async (page, play) => {
     await waitingFor(c, nb, play, page, asked, size);
     await slipped(c, nb, play, page, asked, size);
+    for (const [k, g] of before.entries()) await underItsNote(page, g, `.answer-slip[data-slip="${4190 + k}"]`);
   });
 }
+// (nine short notes in three columns)
+const GRID = Array.from({ length: 9 }, (_, i) => ({ column: i % 3 }));
+// (a tall drawing, a short note, a tall drawing; under the short one the note asked about, and another under that)
+const STAGGERED = {
+  at: 3,
+  notes: [{ column: 0, tall: true }, { column: 1 }, { column: 2, tall: true }, { column: 1 }, { column: 1 }],
+};
+// (three rows of four short notes; the second row's two middle ones asked about and answered already)
+const ROWS = { at: 6, notes: Array.from({ length: 12 }, (_, i) => ({ column: i % 4, answered: i === 5 })) };
 // The book reads its page as HQ loads, before the scene has placed anyone: an answer coming shows the agent's initial,
 // then their face once the room is placed (stage.js stage:look). The look's scene held back till the initial is seen.
 async function placedLate(browser, c) {
@@ -116,7 +142,8 @@ async function placedLate(browser, c) {
     await context.close();
   }
 }
-// the verdict's in: the face and three pencil dots under the note, where its answer will come; why, where none came
+// the verdict's in: the face and three pencil dots by the note, the paper slid to both, where its answer will come;
+// why, where none came
 async function waitingFor(c, nb, play, page, asked, size) {
   play.asking(asked.id, { by: nb.ceo });
   const selector = `.bk-answer-waiting[data-group="${asked.id}"]`,
@@ -124,6 +151,7 @@ async function waitingFor(c, nb, play, page, asked, size) {
   await waiting.waitFor({ timeout: FEED_MS });
   assert.ok(await waiting.locator('.bk-answer-face').count(), "the agent's face");
   assert.ok(await waiting.locator('.bk-answer-dots').count(), 'its pencil dots');
+  await shownByItsNote(page, asked, selector);
   await underItsNote(page, asked, selector);
   for (const reason of ['Waiting for my turn to answer.', "I couldn't answer that. Ask again."]) {
     play.asking(asked.id, { by: nb.ceo, reason });
@@ -135,13 +163,14 @@ async function waitingFor(c, nb, play, page, asked, size) {
   await waiting.locator('.bk-answer-dots').waitFor({ timeout: FEED_MS });
   await c.shot(`answers-waiting-${size}`, page);
 }
-// the answer: its slip under the note, the dots gone
+// the answer: its slip by the note, the paper slid to both, the dots gone
 async function slipped(c, nb, play, page, asked, size) {
   const { id } = play.answer(asked.id, nb.answer(asked, 'text', WENT_LIVE));
   const slip = slipOf(page, asked, id);
   await slip.waitFor({ timeout: FEED_MS });
   await page.locator('#book .bk-answer-waiting').waitFor({ state: 'detached', timeout: FEED_MS });
   assert.match(await slip.locator('.slip-text').innerText(), /went live this morning/);
+  await shownByItsNote(page, asked, `.answer-slip[data-slip="${id}"]`);
   await underItsNote(page, asked, `.answer-slip[data-slip="${id}"]`);
   await c.shot(`answers-slipped-${size}`, page);
 }
@@ -265,6 +294,8 @@ const TILT = 3;
 // the form answered, and sent
 async function formSent(c, page, sheet) {
   await sheet.scrollIntoViewIfNeeded();
+  // (its slip beside its note, past the paper's side: panned to)
+  await inSight(page, '.answer-slip[data-slip="4311"]');
   await sheet.getByRole('button', { name: 'Warm' }).click();
   await c.shot('answers-form', page);
   const from = c.posts.length;
@@ -303,6 +334,7 @@ async function onCall(browser, c) {
   await inStory(browser, c, { viewport: c.MINI, nb }, async (page, play) => {
     const { id } = play.answer(asked.id, nb.answer(asked, 'text', 'People who saw it at least once, not views.'));
     await slipOf(page, asked, id).waitFor({ timeout: FEED_MS });
+    await shownByItsNote(page, asked, `.answer-slip[data-slip="${id}"]`);
     await underItsNote(page, asked, `.answer-slip[data-slip="${id}"]`);
     await c.shot('answers-call', page);
   });

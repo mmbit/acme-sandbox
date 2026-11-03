@@ -453,12 +453,12 @@ body.touring #card {
   .tools :is(#btn-sound, #btn-music, #btn-tour) {
     order: 5; /* (open, on a row of their own under the rest) */
   }
-  /* HQ's search key: the row has room for six keys (the board's five and More), so it goes first in the drawer.
-     */
-  .tools #btn-find {
+  /* HQ's search and Shelf keys: the row has room for six keys (the board's five and More), so they go first in the
+     drawer (the Shelf's). */
+  .tools :is(#btn-shelf, #btn-find) {
     order: 5;
   }
-  .tools:not(.more-open) #btn-find {
+  .tools:not(.more-open) :is(#btn-shelf, #btn-find) {
     display: none;
   }
   .tools.more-open::before {

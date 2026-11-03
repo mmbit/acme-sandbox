@@ -465,7 +465,6 @@ test("a profile branch's repair goes back as one commit on main's head, and chan
 });
 
 test("an archive past Node's 1 MiB output buffer still goes to main whole, with the task's line", async () => {
-  // (ENOBUFS at the push before: the profile split reads each file whole, job #18718)
   const old = `# Ana, archived\n${'- an old line of the track record, kept\n'.repeat(40_000)}`;
   onMain({ [archive]: old });
   await firstTask(260, { 'notes/nine.md': 'nine\n' });

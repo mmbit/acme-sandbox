@@ -1,20 +1,18 @@
 // The book's controls, one style for all of them (bookui.css): a button with its icon or its word and the book's own
-// tooltip, and the rail floating over the paper's right margin, two toolbars in HQ's look that hold every control
-// there is: at its head the tools (bookstrip.js) and Send, at its foot the page's controls (bookcontrols.js), the
-// book's own island (Tips and invites) and, where the rail is too short for them all, More with the rarely used ones.
-// What's written ends left of the rail (--bk-rail-width), so no control ever sits over it. Every part of the book
-// makes its controls here, so they look and answer alike. Only the page is paper; the controls are HQ's (board, call
-// 174). (one floating rail)
+// tooltip, and the two islands floating over the paper as the board drew the real book (call 190, card 341's mock-up):
+// the tools on the right, upright and centred (bookstrip.js), and one bar along the foot between the screen's
+// corners, Undo and Redo at its left by the thumb, the page's arrows and "3 / 12" in its middle, its dots menu at its
+// right with whatever there's no room for (bookcontrols.js). What's written ends left of the tools (--bk-rail-width),
+// the paper running on under them to the screen's edge. Every part of the book makes its controls here, so they look
+// and answer alike. Only the page is paper; the controls are HQ's (board, call 174).
 import { esc } from '../../util.js';
 import { word } from './bookscope.js';
 
-// The rail's islands top to bottom: the tools, Send, the page's controls, then the book's own (Tips); the overview's
-// own tools (in its head, bookzoom.js). Each part appends its controls to its own.
-const RAIL = ['tools', 'send', 'pages', 'book'],
+// The islands and their groups: the tools; on the bar Undo and Redo (history), the page's arrows and where it is
+// (pages), the page's own keys where there's room (keys: the overview, New page), a guest's Send; the dots menu's own
+// rows (menu: the page's, book: the book's, Preferences to Close); the overview's tools in its head (bookzoom.js).
+const BAR = ['history', 'pages', 'keys', 'send', 'menu', 'book'],
   OVERVIEW = 'overview';
-// How the rail fits, the roomiest that does (bookstrip.css): the pen and the marker side by side, the one in use alone,
-// the rarely used folded into More, the page's arrows in More too, and those left closer together
-const FITS = ['roomy', 'full', 'more', 'least', 'tight'];
 // A tooltip shows after the pointer rests this long on a control (at once on a keyboard's focus, and on the next
 // control while one is showing)
 const TIP_MS = 350;
@@ -24,7 +22,8 @@ export const MOD = /Mac|iP(hone|ad|od)/.test(navigator.platform || navigator.use
 
 // A control: <button class="bk-btn"> with icon (an SVG string) or text (a word: the variant with its label on it),
 // named label for a screen reader and in its tooltip (keys after it, quieter; a new aria-label is the tooltip's too). pressed (true or false) makes it a
-// toggle (aria-pressed: setPressed). onClick(e) when it's pressed.
+// toggle (aria-pressed: setPressed). onClick(e) when it's pressed, heard as every press in the book is (booksounds.js:
+//).
 export function button({ icon = '', text = '', label = text, keys = '', onClick, pressed } = {}) {
   const b = document.createElement('button');
   b.type = 'button';
@@ -42,132 +41,146 @@ export const setPressed = (b, on) => b.setAttribute('aria-pressed', on ? 'true' 
 export const lineIcon = d =>
   `<svg viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${d}</g></svg>`;
 
-// The island named (on the rail, or overview the overview's head): made once, in its place (islands(), which
-// bookrail.js puts over the paper). An island with nothing in it doesn't show.
-let controls;
+// The island or group named: made once, in its place (islands(), which bookrail.js puts over the paper)
+let controls, more;
 const made = new Map();
 export function island(name) {
-  if (![...RAIL, OVERVIEW].includes(name)) throw new Error(`No island ${name} in the book`);
+  if (!['tools', ...BAR, OVERVIEW].includes(name)) throw new Error(`No island ${name} in the book`);
   islands();
   return made.get(name);
 }
-// The rail over the paper's right margin, for bookrail.js to place: its column of islands (.bk-column), in a toolbar
-// at its head and one at its foot with More. Cards, the page's targets and their asks hang on the rail beside the
-// column (.bk-controls), over the paper.
+// The controls over the paper, for bookrail.js to place: the tools' island (.bk-strip) and the bar along the foot
+// (.bk-bar), its three parts laid out so the page's arrows and where it is sit in its very middle. Cards hang beside
+// them (beside()), over the paper.
 export function islands() {
   if (controls) return controls;
-  const div = name => Object.assign(document.createElement('div'), { className: name }),
-    one = (name, orientation = 'vertical') => {
+  const div = (className, html = '') => Object.assign(document.createElement('div'), { className, innerHTML: html }),
+    one = (name, { role = 'group', orientation = 'horizontal' } = {}) => {
       const el = div('bk-island');
       el.dataset.island = name;
-      el.setAttribute('role', 'toolbar');
-      el.setAttribute('aria-orientation', orientation);
+      el.setAttribute('role', role);
+      if (role === 'toolbar') el.setAttribute('aria-orientation', orientation);
       made.set(name, el);
       return el;
     };
   controls = div('bk-controls');
-  const column = div('bk-column'),
-    head = div('bk-rail-head'),
-    foot = div('bk-rail-foot'),
-    strip = div('bk-strip');
-  column.setAttribute('data-no-ink', '');
-  column.setAttribute('data-keep-clear', ''); // (a minimised call keeps clear of it.)
-  strip.append(one('tools'));
-  // (the tools and Send at the rail's head, the page's controls at its foot: whatever comes and goes at the head, the
-  // page's arrows stay where they are.)
-  head.append(strip, one('send'));
-  foot.append(one('pages'), one('book'), moreButton());
-  column.append(head, foot);
-  controls.append(column);
-  one(OVERVIEW, 'horizontal').classList.add('bk-far-tools');
-  watchFit(column);
+  const strip = div('bk-strip'),
+    foot = div('bk-foot'),
+    bar = div('bk-bar'),
+    [start, middle, end] = ['start', 'middle', 'end'].map(part => div(`bk-bar-${part}`)),
+    hidden = div('bk-menu-only');
+  for (const el of [strip, bar]) {
+    el.setAttribute('data-no-ink', '');
+    el.setAttribute('data-keep-clear', ''); // (a minimised call keeps clear of them.)
+  }
+  bar.setAttribute('role', 'toolbar');
+  bar.setAttribute('aria-orientation', 'horizontal');
+  bar.setAttribute('aria-label', word('notebookPages'));
+  strip.append(one('tools', { role: 'toolbar', orientation: 'vertical' }));
+  hidden.hidden = true;
+  hidden.append(one('menu'), one('book'));
+  more = moreButton();
+  start.append(one('history'));
+  middle.append(one('pages'));
+  end.append(one('keys'), one('send'), more, hidden);
+  bar.append(start, middle, end);
+  foot.append(bar);
+  controls.append(strip, foot);
+  one(OVERVIEW, { role: 'toolbar' }).classList.add('bk-far-tools');
   return controls;
 }
-// The rail fitted (data-fit) whenever it or what's on it changes: the roomiest of FITS that's no taller than it. What
-// a page doesn't show keeps its room unseen (bookstrip.css), so the fit is the device's alone: a page's coming and
-// going never changes it, Undo, Redo and the page's arrows never move, and More stays a menu on every page.
-function watchFit(column) {
-  let frame = 0;
-  const fit = () => {
-    frame = 0;
-    if (!column.offsetHeight) return;
-    for (const level of FITS) {
-      column.dataset.fit = level;
-      if (column.scrollHeight <= column.clientHeight) break;
-    }
-  };
-  // (fitted in the frame after, never in the observer's own call: what fit sets sizes what it watches)
-  const soon = () => (frame ||= requestAnimationFrame(fit));
-  new ResizeObserver(soon).observe(column);
-  new MutationObserver(soon).observe(column, { subtree: true, childList: true, attributeFilter: ['hidden'] });
-}
-// More: the rarely used controls the rail has folded away (bookstrip.css .bk-rare), on a card beside it, each
-// pressing its own on the rail
+// The dots at the bar's right end: a menu of the page's keys there's no room for on the bar (.bk-rare), then the
+// page's own rows (Tear off and send) and the book's (Preferences, Tips, Close notebook), each pressing its own
 function moreButton() {
-  const more = button({
+  const b = button({
     icon: lineIcon(
-      '<circle cx="12" cy="5.5" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="12" cy="18.5" r="1.2"/>',
+      '<circle cx="5.5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="18.5" cy="12" r="1.2"/>',
     ),
     label: word('more'),
-    onClick: () => moreCard(more),
+    onClick: () => moreCard(b),
   });
-  more.classList.add('bk-more');
-  more.setAttribute('aria-haspopup', 'menu');
-  return more;
+  b.classList.add('bk-more');
+  b.setAttribute('aria-haspopup', 'menu');
+  return b;
 }
-function moreCard(more) {
-  if (more.card) return more.card.close();
+function moreCard(from) {
+  if (from.card) return from.card.close();
   hide();
-  const folded = [...controls.querySelectorAll('.bk-column .bk-btn')].filter(
-    b => b !== more && b.offsetParent === null && !b.closest('[hidden]') && b.matches(FOLDED),
-  );
+  const usable = b => !b.disabled && !b.hidden,
+    folded = [...made.get('keys').querySelectorAll('.bk-rare')].filter(b => usable(b) && b.offsetParent === null),
+    // (Close notebook last of the book's rows, whatever came after it: Tips)
+    book = [...made.get('book').children].sort((a, b) => a.matches('.bk-close') - b.matches('.bk-close')),
+    groups = [folded, [...made.get('menu').children], book]
+      .map(list => list.filter(usable))
+      .filter(list => list.length);
   const card = Object.assign(document.createElement('div'), { className: 'bk-card bk-menu bk-more-card' });
   card.setAttribute('role', 'menu');
   card.setAttribute('aria-label', word('more'));
-  for (const real of folded) {
-    const label = real.getAttribute('aria-label'),
-      item = Object.assign(document.createElement('button'), { type: 'button' });
-    item.setAttribute('role', 'menuitem');
-    item.innerHTML = `${real.querySelector('svg')?.outerHTML ?? ''}<span>${esc(label)}</span>`;
-    item.addEventListener('click', () => {
-      close();
-      real.click();
-    });
-    card.append(item);
-  }
+  groups.forEach((list, i) => {
+    if (i) card.append(document.createElement('hr'));
+    for (const real of list) {
+      const item = Object.assign(document.createElement('button'), { type: 'button' });
+      item.setAttribute('role', 'menuitem');
+      item.innerHTML = `${real.querySelector('svg')?.outerHTML ?? ''}<span>${esc(real.getAttribute('aria-label'))}</span>`;
+      item.addEventListener('click', () => {
+        close();
+        real.click();
+      });
+      card.append(item);
+    }
+  });
   const away = e => {
-    if (e.type === 'keydown' ? e.key === 'Escape' : !(card.contains(e.target) || more.contains(e.target))) close();
+    if (e.type === 'keydown' ? e.key === 'Escape' : !(card.contains(e.target) || from.contains(e.target))) close();
   };
   const close = () => {
     card.remove();
-    more.card = null;
-    more.setAttribute('aria-expanded', 'false');
+    from.card = null;
+    from.setAttribute('aria-expanded', 'false');
     removeEventListener('pointerdown', away, true);
     removeEventListener('keydown', away, true);
   };
-  more.card = { close };
-  more.setAttribute('aria-expanded', 'true');
-  besideRail(card, more);
+  from.card = { close };
+  from.setAttribute('aria-expanded', 'true');
+  beside(card, from);
   card.querySelector('button')?.focus({ preventScroll: true });
   addEventListener('pointerdown', away, true);
   addEventListener('keydown', away, true);
 }
-// What More can fold away (bookstrip.css hides them on the rail as it fits)
-const FOLDED = '.bk-rare, .bk-turns, [data-island=book] > *';
-// A card of the rail's (a tool's colours and widths, this device's preferences, the pages, More): on the paper left
-// of the rail, level with from, the control that opened it (More's, when the rail has folded it away). It hangs on
-// the rail, never in an island, and CSS keeps it beside it (bookstrip.css).
-export function besideRail(card, from) {
+// A card of the controls' (a tool's colours and widths, this device's preferences, the pages, the dots menu): on the
+// paper beside from, the control that opened it (the dots, when it's one of their rows): left of the tools, level
+// with it; above the bar, its right edge at the control's. It stays on the screen, under nothing, placed again while
+// it's open as the screen turns or the book's width changes.
+export function beside(card, from) {
   controls.append(card);
-  const at = from.offsetParent ? from : controls.querySelector('.bk-more'),
-    rail = controls.getBoundingClientRect(),
+  placed(card, from);
+  const again = new ResizeObserver(() => (card.isConnected ? placed(card, from) : again.disconnect()));
+  again.observe(controls);
+}
+function placed(card, from) {
+  const at = from.offsetParent ? from : more,
+    room = controls.getBoundingClientRect(),
     r = at.getBoundingClientRect(),
-    middle = r.top + r.height / 2 - rail.top,
-    top = Math.max(8, Math.min(rail.height - card.offsetHeight - 8, middle - card.offsetHeight / 2));
-  card.style.top = `${Math.round(top)}px`;
+    gap = 8,
+    bar = !at.closest('.bk-strip') && at.closest('.bk-bar').getBoundingClientRect();
+  // (a bar's card ends above the bar, scrolling where it's taller than the room there: the control that opened it
+  // stays in reach to close it.)
+  if (bar) card.style.maxHeight = `${Math.round(bar.top - room.top - 2 * gap)}px`;
+  const w = card.offsetWidth,
+    h = card.offsetHeight;
+  let left, top;
+  if (!bar) {
+    const tools = at.closest('.bk-strip').getBoundingClientRect();
+    left = tools.left - gap - w - room.left;
+    top = r.top + r.height / 2 - h / 2 - room.top;
+  } else {
+    left = r.right + 6 - w - room.left;
+    top = bar.top - gap - h - room.top;
+  }
+  card.style.left = `${Math.round(Math.max(gap, Math.min(room.width - w - gap, left)))}px`;
+  card.style.top = `${Math.round(Math.max(gap, Math.min(room.height - h - gap, top)))}px`;
 }
 // The book's tooltip on any element (a button, a face): its label, its keys quieter, beside it on the side with room
-// (left of the rail; above the overview's row), on hover and on a keyboard's focus; never title=. label
+// (left of the tools; above a row: the bar, the overview's), on hover and on a keyboard's focus; never title=. label
 // may be a function, read each time.
 let tipEl, shown, timer;
 export function tip(el, label, keys = '') {
@@ -193,7 +206,7 @@ export function hide() {
   // a moment's grace: the next control's tip shows at once
   timer = setTimeout(() => (shown = false), 200);
 }
-// An element's tooltip at once, wherever the pointer is (a finger sliding along the rail: bookstrip.js).
+// An element's tooltip at once, wherever the pointer is (a finger sliding along the tools: bookstrip.js).
 export function showTip(el) {
   clearTimeout(timer);
   if (el?.bkTip) open(el, ...el.bkTip());

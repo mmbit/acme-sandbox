@@ -53,6 +53,10 @@ banners.jobs.push({
   request_title: 'Pebblet’s test posters arrived',
   finished: null,
 });
+// urgent work, the board's call: the gift wrap, and with it each of its tasks (the coordinator's urgency.ts)
+const wrap = board.projects[0].threads.find(t => t.id === 'shop/wrap');
+wrap.urgent = true;
+for (const j of wrap.jobs) j.urgent = true;
 // a paused project and a paused thread
 board.projects[2].pause = {
   why: 'Hold the newsletter until the shop opens',
@@ -487,6 +491,14 @@ for (const look of RENDERERS)
       /^(\d+ min|[\d½]+ h|\d{2}:\d{2}|[A-Z][a-z]{2}(?: \d{1,2} [A-Z][a-z]+| \d{2}:\d{2})?)$/,
       `${at}: when it's done, the planner's`,
     );
+    // an urgent deliverable with the alert sign on its project's tile
+    assert.deepEqual(
+      await page.$$eval('[data-project] .pj-deliverables li', l =>
+        l.map(e => Boolean(e.querySelector('.pj-urgent-icon'))),
+      ),
+      [true, false, false],
+      `${at}: the urgent deliverable marked`,
+    );
     await shot('business');
     // the board sorts them by dragging one held still, and a drag opens nothing (the order kept: the coordinator's
     // projects test)
@@ -607,6 +619,11 @@ for (const look of RENDERERS)
     for (const time of times) assert.match(time, /^Done about /, `${at}: when it's done, the planner's`);
     assert.match(sums[0], /No deadline set\./, `${at}: an untimed deliverable shows its missing deadline once`);
     assert.match(sums[1], /of agent time left\. .* past its deadline /, `${at}: the agent time left and its window`);
+    assert.deepEqual(
+      await page.$$eval(box('[data-thread]'), l => l.map(e => e.querySelector('.pj-tile-top .pj-urgent')?.textContent)),
+      [undefined, 'Urgent'],
+      `${at}: urgent work says so beside its people`,
+    );
     assert.deepEqual(await offScreen(), [], at);
     await shot('project');
 
@@ -797,6 +814,22 @@ for (const look of RENDERERS)
       at,
     );
     assert.deepEqual(await reds(), [], `${at}: a later time is never red`);
+    // urgent in its head, and on each task's row until it's finished (a task done and in review still says so: its
+    // review runs on it), never again on the reviews and fixes under it
+    assert.deepEqual(await texts(page, '.pj-head .pj-marks .pj-urgent'), ['Urgent'], `${at}: urgent in its head`);
+    assert.deepEqual(
+      await page.$$eval('.pj-level > li', l =>
+        l.map(li => [li.querySelector('[data-job]')?.dataset.job, Boolean(li.querySelector('.pj-urgent'))]),
+      ),
+      [
+        ['50', true],
+        ['57', false],
+        ['58', false],
+        ['54', true],
+      ],
+      `${at}: urgent on its tasks' rows, not their steps`,
+    );
+    await shot('urgent');
 
     // a running task opens its agent's card, the very one the home page shows, over the view; it closes back to the
     // view as it was

@@ -8,6 +8,7 @@ import {
   changedWindowReadings,
 } from './seatobservations.ts';
 import { mixRates, type MixRate, type MixInterval } from './workmix.ts';
+import { seatStatuses } from './seatstatus.ts';
 
 const HOUR_MS = 3_600_000,
   DAY_MS = 24 * HOUR_MS,
@@ -55,8 +56,10 @@ export function recordSeatReading(seat: string, times: import('./seatobservation
 
 export function seatHeadroom(at = Date.now()) {
   const prices = readingRates(at);
+  const statuses = seatStatuses(db, at);
   const seats = seatRows().map(seat => ({
     ...seat,
+    status: statuses.get(seat.id),
     five_hour_per_hour: prices.get(seat.id)?.five ?? null,
     week_per_hour: prices.get(seat.id)?.week ?? null,
   }));

@@ -1,7 +1,7 @@
 // A review round's book on the Shelf (bookshelf.js draws it, bookshelfbooks.js its book): Close the round (its menu),
 // asking first while asks are open; the book wrapped in its envelope and away to the CEO; back, its string pulled, unwrapped
 // and opened at its first Advice page. Each moment of the envelope's played softly, heard as paper.
-import { foley } from '../audio.js';
+import { heard } from './booksounds.js';
 import { closeRound, loadPages, unwrapRound } from './notebookdata.js';
 
 // s: the overview's state (bookshelf.js mountScreens). ui: { draw(), refresh(), told(words) }, the overview's own.
@@ -57,21 +57,14 @@ async function unwrap(s, ui, n) {
     ui.refresh();
   }
 }
-// An envelope's moment on the Shelf, heard softly: wrapped, the cover goes in, the flap folds down and the string
-// winds round (1.4 s); unwrapped, the other way (1.6 s). Without motion, straight to the end.
+// An envelope's moment on the Shelf, heard softly (booksounds.js): wrapped, the cover goes in, the flap folds down and
+// the string winds round (1.4 s); unwrapped, the other way (1.6 s). Without motion, straight to the end.
 const PLAYS = { wrap: 1400, unwrap: 1600 };
 async function played(s, ui, n, kind) {
   const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
   s.playing = still ? null : { id: n.id, kind };
-  if (kind === 'wrap') {
-    if (n.round) n.round = { ...n.round, state: 'away' };
-    foley('slide', { dur: 0.45, material: 'paper', size: 0.8 }, { vol: 0.35 });
-    foley('hit', { material: 'card', size: 1.8, force: 0.2 }, { vol: 0.18, at: 0.62 });
-    foley('slide', { dur: 0.35, material: 'paper', size: 0.3 }, { vol: 0.15, at: 0.9 });
-  } else {
-    foley('slide', { dur: 0.5, material: 'paper', size: 0.3 }, { vol: 0.18 });
-    foley('slide', { dur: 0.5, material: 'paper', size: 0.8 }, { vol: 0.32, at: 0.6 });
-  }
+  if (kind === 'wrap' && n.round) n.round = { ...n.round, state: 'away' };
+  heard(kind);
   ui.draw();
   if (still) return;
   await new Promise(res => setTimeout(res, PLAYS[kind]));

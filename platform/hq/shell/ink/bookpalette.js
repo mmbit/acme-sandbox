@@ -1,6 +1,5 @@
-// The book's tools on the rail (bookstrip.js): Select, the pen (the marker the same tool: one button, showing the one
-// in use, both side by side only where the rail has room), the eraser, shapes and Text, and beside the rail the tool's
-// own card: what draws (the pen, the pencil, the brush or the marker), its colours, its line's width, the eraser's
+// The book's tools on their island (bookstrip.js): the pen (the marker the same tool: one button, showing the one in
+// use), shapes, the eraser, Select and Text, and beside the island the tool's own card: what draws (the pen, the pencil, the brush or the marker), its colours, its line's width, the eraser's
 // size, a shape's kind and whether it's filled, the pen's smoothing. The pencil and the brush are the pen's nibs, in
 // its colours. The tool in use pressed again opens its card, the marker's way in from the pen (no long press on a
 // tool); the keys a drawing app has do the same on a desktop. Every setting is remembered in this browser, and the book
@@ -10,7 +9,7 @@
 // st: booktools.js's state; this keeps st.mode and the settings on it, and calls st.changedTool(mode) when the tool
 // changes.
 import { store } from '../../util.js';
-import { button, island, setPressed, hide, besideRail } from './bookui.js';
+import { button, island, setPressed, hide, beside } from './bookui.js';
 import { MARKERS, MARKER_ALPHA, PENCIL_ALPHA, SHAPES, WIDTHS } from './bookinkmath.js';
 import { word } from './bookscope.js';
 import { ICONS, INK_WORDS, swatch, widthIcon, ringIcon, cursorIcon } from './bookpaletteart.js';
@@ -22,14 +21,16 @@ const ERASERS = [12, 28, 56];
 // The pen's smoothing: how far each point goes towards the pointer (ink.js's follow): steady, or as the hand went
 const SMOOTH = { on: 0.42, off: 0.75 };
 
-// The tools down the rail (the pen and the marker one tool: the one not in use shows only where there's room).
-// Every word here, and every row's name, is a key of the guest words (notebookwords.js).
+// The tools down their island, as the board ordered them (card 341's call): the pen, one tool with its card for what
+// draws, its colour and its width (the pen and the marker one key: the one in use shows), then shapes, the eraser,
+// Select and Text (the mic after it: bookvoice.js). Every word here, and every row's name, is a key of the guest words
+// (notebookwords.js).
 export const TOOLS = [
-  { mode: 'select', word: 'toolSelect', key: 'V' },
   { mode: 'pen', word: 'toolPen', key: 'P' },
   { mode: 'highlighter', word: 'toolMarker', key: 'M' },
-  { mode: 'eraser', word: 'toolEraser', key: 'E' },
   { mode: 'shapes', word: 'toolShapes', key: 'S' },
+  { mode: 'eraser', word: 'toolEraser', key: 'E' },
+  { mode: 'select', word: 'toolSelect', key: 'V' },
   { mode: 'text', word: 'toolText', key: 'T' },
 ];
 const INKS = ['pen', 'highlighter'];
@@ -94,9 +95,9 @@ export const gestures = st => st.mode === 'pen' && st.nib === 'pen';
 // The eraser's radius on screen
 export const eraserRadius = st => ERASERS[st.eraser] / 2;
 
-// ---- the rail's tools
+// ---- the island's tools
 
-// The tools put first on the rail, before Undo and Redo (bookrail.js)
+// The tools on their island
 function makeIsland(st) {
   const own = TOOLS.map(t => {
     const b = button({ icon: ICONS[t.mode], label: word(t.word), keys: t.key, pressed: false });
@@ -106,7 +107,7 @@ function makeIsland(st) {
     pressing(st, b, t.mode);
     return b;
   });
-  island('tools').prepend(...own, document.createElement('hr'));
+  island('tools').prepend(...own);
 }
 // A tap picks the tool, or opens its card when it's in use. Nothing waits on a hold (board, the Ink 1.1 deck.)
 function pressing(st, b, mode) {
@@ -122,7 +123,7 @@ export function setMode(st, mode, { keep = false } = {}) {
   st.mode = mode;
   if (INKS.includes(mode)) st.ink = mode;
   for (const [m, b] of Object.entries(st.buttons)) setPressed(b, m === mode);
-  // (the ink not in use: shown only where the rail has room, bookstrip.css)
+  // (the ink not in use: in the pen's card, bookstrip.css)
   for (const m of INKS) st.buttons[m].toggleAttribute('data-spare', m !== st.ink);
   st.book.desk.dataset.tool = mode;
   if (st.card) closeCard(st);
@@ -187,7 +188,7 @@ const remember = st =>
     smooth: st.smooth,
   });
 
-// ---- the tool's card, beside the rail
+// ---- the tool's card, beside the tools
 
 function card(st) {
   if (st.card) return closeCard(st);
@@ -201,7 +202,7 @@ function card(st) {
   st.opener.setAttribute('aria-expanded', 'true');
   st.card = el;
   fillCard(st);
-  besideRail(el, st.opener);
+  beside(el, st.opener);
   el.querySelector('[aria-pressed=true]')?.focus({ preventScroll: true });
   // (a press anywhere else, or Escape, closes it)
   st.away = e => {

@@ -121,7 +121,8 @@ function step(dt) {
     if (Math.random() < dt * 40) S.parts.push({ k: 'confetti', sx: b.x0 + Math.random() * (b.x1 - b.x0), sy: b.y0 + 20, vx: (Math.random() - 0.5) * 20, vy: 12, g: 16, life: 5, c: CONFETTI[Math.random() * 5 | 0] });
     if (S.party <= 0) setParty(false);
   }
-  fx.planes = fx.planes.filter(p => { p.t += dt / p.dur; if (p.t >= 1) { burst(p.B, '!'); play('pop'); return false; } return true; });
+  // (a quiet plane lands silent: the open intercom chimes for it.)
+  fx.planes = fx.planes.filter(p => { p.t += dt / p.dur; if (p.t >= 1) { burst(p.B, '!'); if (!p.quiet) play('pop'); return false; } return true; });
   // typing ticks from working agents on screen, only when zoomed in
   if (ready() && cam.z / dpr >= 3 && Math.random() < dt * 5 && [...S.people.values()].some(A => A.pose === 'type' && onScreen(A.x, A.y, A.lvl))) play('tick');
   shell.sound.weather(S.weather.rain * (cam.z / dpr < 6 ? 1 : 0.6), darkness(h), S.weather.snow);

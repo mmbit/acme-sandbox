@@ -1,7 +1,7 @@
 // book-check.mjs's stories of the board's controls (shell/ink/bookstrip.js, bookinput.js, bookvoice.js, bookpan.js,
 // booktools.js, bookprefs.js): on a desktop with a mouse, the pen in use as the book opens (the rail: bookbar.mjs; the wheel: bookwheel.mjs),
 // Ctrl's drag selecting and giving the tool back, a tap on the rail's mic a voice note at once whose words land under
-// the line drawn last, a press held still only a dot, the cog's preferences kept on this device; on a touch screen
+// the line drawn last, a press held still only a dot, the preferences (in the dots) kept on this device; on a touch screen
 // (Chromium's own touch and pen events, trusted), one finger drawing and two moving the page with no stray line, a
 // slide along the rail picking a tool, drifting off it too, the Pencil tapping the mic right after writing, the
 // Pencil held still only ink, and a finger that pans once the pen's been used, as the preferences have it unless
@@ -19,7 +19,7 @@ export function stripStories(c) {
     'controls with a mouse: the pen in use, Ctrl selects': browser => mouse(browser, c),
     'controls with a mouse: one tap on the mic listens, a second puts the words under the line drawn last; Undo takes them back; a press held still is a dot':
       browser => voiceByMouse(browser, c),
-    "controls with a mouse: the cog's preferences stick on this device": browser => preferences(browser, c),
+    'controls with a mouse: Preferences, from the dots, stick on this device': browser => preferences(browser, c),
     'controls on a touch screen: one finger draws, two move the page, a slide along the rail picks a tool': browser =>
       fingers(browser, c),
     'controls with the Pencil: a tap on the mic right after writing dictates under it, the Pencil held still is only ink, a finger pans once the pen is in use':
@@ -94,7 +94,7 @@ async function voiceByMouse(browser, c) {
 async function preferences(browser, c) {
   let { page, errors, done } = await desk(browser, c);
   try {
-    await page.locator('#book').getByRole('button', { name: PREFERENCES }).click();
+    await press(page, PREFERENCES);
     const card = page.getByRole('dialog', { name: PREFERENCES });
     // (whether touch scrolls, and the pen's voice note hold outside the notebook: no radial menu)
     assert.equal(await card.locator('input').count(), 4, 'touch scrolls, and three hold times');
@@ -106,7 +106,7 @@ async function preferences(browser, c) {
     assert.deepEqual(errors, []);
     await done();
     ({ page, errors, done } = await desk(browser, c, { keep: true }));
-    await page.locator('#book').getByRole('button', { name: PREFERENCES }).click();
+    await press(page, PREFERENCES);
     const kept = page.getByRole('dialog', { name: PREFERENCES });
     assert.equal(await kept.getByLabel('Touch always scrolls').isChecked(), true, 'kept on this device');
     assert.equal(await kept.getByLabel('Long').isChecked(), true, 'the hold kept on this device');

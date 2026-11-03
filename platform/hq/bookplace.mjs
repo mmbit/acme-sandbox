@@ -4,7 +4,7 @@
 // it's still there, and on the iPad still there once it's turned upright and HQ reloaded again (one place a device).
 import assert from 'node:assert/strict';
 import { open } from './booknotebook.mjs';
-import { where } from './booknotebookscreen.mjs';
+import { pageAt } from './booknotebookscreen.mjs';
 import { DESKTOP, MINI, UPRIGHT, until } from './bookkit.mjs';
 
 // c: book-check.mjs's hqIn, base, settled, shot, noErrorsIn
@@ -62,13 +62,9 @@ async function tapLip(page, mode) {
   await page.locator('#book .bk-lip').dispatchEvent('click');
   await atRest(page, mode);
 }
-// The page shown and the notebook's page count, as the rail reads them ("2/3")
-const at = page =>
-  until(async () => {
-    const m = /(\d+)\/(\d+)$/.exec(await where(page));
-    return m && [Number(m[1]), Number(m[2])];
-  }, "the rail's page");
-// Turned back to page n by the rail's arrow
+// The page shown and its chapter's page count, as the bar reads them ("2 / 3": [2, 3])
+const at = page => until(() => pageAt(page), "the bar's page");
+// Turned back to page n by the bar's arrow
 async function turnTo(page, n) {
   for (let i = 0; i < 8 && (await at(page))[0] > n; i++) {
     const [was] = await at(page);

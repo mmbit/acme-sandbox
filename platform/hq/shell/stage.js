@@ -10,6 +10,7 @@ import { panelOpen } from './panel.js';
 import { brand, theme } from './brand.js';
 import { wearIcons } from './icons.js';
 import { pageWidth, onPageResize } from './page.js';
+import { intercomSounds } from './desk.js';
 import * as notebook from './ink/notebooklink.js';
 
 // Every renderer HQ ships, as the server reads their folders (looks.mjs): [{ name, dressed }]. theme/hq.yaml picks the
@@ -27,18 +28,19 @@ export let paused = false; // dev: tests hold the loop and drive frames themselv
 export const pause = on => { paused = on; };
 // The preview viewer fills the screen over the stage: nothing behind it updates or draws until it closes, as with the
 // tab hidden (the scene's resizes go on). by: what covers it (the viewer, the call player, the projects view, the book
-// lying over HQ's page in its spread), so one closing leaves the stage under another covered. Under the projects view
-// or the spread alone the scene still updates, at its resting rate, so what the world's events start plays out and
-// ends on time, and only its drawing waits. (by, the projects view)
-const covers = new Set();
-export const cover = (on, by) => { covers[on ? 'add' : 'delete'](by); };
-const UPDATING = new Set(['projects', 'spread']);
-// How often the scene draws at most, in frames a second: what eases it, by what (a call on, a window over most of the
-// stage), its fps; null takes that back, and with nothing left the scene draws at full rate from its next frame. The
-// lowest wins.
+// lying over HQ's page in its spread), so one closing leaves the stage under another covered. updating: under this
+// cover the scene still updates, at its resting rate, so what the world's events start plays out and ends on time,
+// and only its drawing waits (the projects view, the spread). One cover without updating holds both the update and the
+// drawing, whatever else covers the stage. (by, the projects view; updating)
+const covers = new Map(); // by → updating
+export const cover = (on, by, { updating = false } = {}) => { if (on) covers.set(by, updating); else covers.delete(by); };
+// The most frames a second the scene draws at while something in front of it asks for fewer. fps: that rate, or null
+// to take the ask back. by: what asks (a call on, a window or tool in front of the stage). The lowest ask wins, and
+// with none left the scene draws at full rate from its next frame. CALL_FPS is a call's rate, REST_FPS a stage looked
+// past (and a cover's that only updates).
 export const CALL_FPS = 30, REST_FPS = 10;
-const eased = new Map();
-export const ease = (fps, by) => { if (fps) eased.set(by, fps); else eased.delete(by); };
+const fpsCaps = new Map();
+export const capFps = (fps, by) => { if (fps) fpsCaps.set(by, fps); else fpsCaps.delete(by); };
 // A hand pulling the notebook out or in pauses the scene, its update and its drawing, till it lets go, however the
 // notebook ends up
 notebook.on('pull', () => cover(true, 'notebook'));
@@ -66,7 +68,7 @@ export async function mount(name, intro = false) {
       ...links.map(loaded),
     ]);
     style = sceneModule.style;
-    fresh = await sceneModule.createScene({ canvas: next, world, brand, settings: { ...theme[name], intro }, shell: { sound, toast, card: overlay.card, tap: press, chrome, store, later: timer(mine), capped: () => capped } });
+    fresh = await sceneModule.createScene({ canvas: next, world, brand, settings: { ...theme[name], intro }, shell: { sound, toast, card: overlay.card, tap: press, chrome, store, later: timer(mine), maxFps: () => maxFps, intercomSounds } }); // (maxFps)
   } catch (e) {
     links.forEach(l => l.remove());
     if (!scene) throw e;
@@ -165,19 +167,19 @@ export function resize() { scene.resize(pageWidth(), viewHeight(), pixelRatio())
 export function prepare(w) { scene?.prepare?.(w, viewHeight(), pixelRatio()); }
 
 // ---------------------------------------------------------------- loop
-// capped: the most frames a second asked for now, eased or only updating under a cover (Infinity: none).
-let last = 0, acc = 0, cost = 8, capped = Infinity;
+// maxFps: the most frames a second asked for now, by capFps or a cover that only updates (Infinity: none).
+let last = 0, acc = 0, cost = 8, maxFps = Infinity;
 export function loop(t) {
   requestAnimationFrame(loop);
   // (a look's own key out big over a cover, an agent's card over the projects view, draws on)
   const held = covers.size && !scene?.carded?.();
-  if (document.hidden || paused || (held && [...covers].some(by => !UPDATING.has(by)))) { last = t; return; }
+  if (document.hidden || paused || (held && [...covers.values()].some(updating => !updating))) { last = t; return; }
   const dt = Math.min(0.1, (t - last) / 1000 || 0);
   last = t; acc += dt;
-  // 60 fps when the device keeps up, 30 when it doesn't: kind to tablets, smooth for recordings. Less while eased, or
+  // 60 fps when the device keeps up, 30 when it doesn't: kind to tablets, smooth for recordings. Less while capped, or
   // only updating under a cover. (1.07: a frame due a hair early still counts, so a 60 Hz display gives 60, not 30.)
-  capped = Math.min(held ? REST_FPS : Infinity, ...eased.values());
-  const fps = Math.min(cost > 12 ? 30 : 60, capped);
+  maxFps = Math.min(held ? REST_FPS : Infinity, ...fpsCaps.values());
+  const fps = Math.min(cost > 12 ? 30 : 60, maxFps);
   if (acc < 1 / (fps * 1.07)) return;
   const t0 = performance.now();
   step(acc); acc = 0;

@@ -1,37 +1,32 @@
 // book-check.mjs's stories of the book's chrome on an iPad mini (shell/ink/bookui.js, bookcontrols.js, bookzoom.js,
-// booksearch.js, bookhead.js, bookpages.js; Ink's folder): the column holds the
-// faces, the tools, Undo and Redo and the book's own controls, and nothing else; nothing of the book sits under Safari's blurred strip at the
-// top; the page arrows clear the column at any width; the overview opens from the foot, with Search in it and
-// nothing to draw with, only its own button left in the foot, a page that went stamped and
-// the Shelf a tap away, its Search saying what it searches there; and the pages keep one
-// name each from the moment they show, a call's saying who it was with and when, with no blank page the board didn't
-// make. Each asserts what the board sees: the buttons' names, boxes, the controls' words.
+// booksearch.js, bookhead.js, bookpages.js; Ink's folder): the two islands hold the tools, the page's keys and the
+// dots, and nothing else, the dots menu the book's own rows; nothing of the book sits under Safari's blurred strip at
+// the top; the islands clear of each other at any width; the overview opens from the bar, with Search in it and
+// nothing to draw with, only its own key left on the bar, a page that went stamped, and its Search opening a find
+// (the Shelf has its own window: bookshelfwindow.mjs); and the pages keep one name each from the moment they show, a
+// call's saying who it was with and when, with no blank page the board didn't make. Each asserts what the board sees:
+// the buttons' names, boxes, the controls' words. (the islands)
 import assert from 'node:assert/strict';
 import { errorsOf, openPage, until } from '../../shared/browser/browser.mjs';
-import { DESKTOP, MINI, OVERVIEW } from './bookkit.mjs';
+import { MINI, OVERVIEW, PREFERENCES } from './bookkit.mjs';
 import { press } from './bookbar.mjs';
 
 // a home-screen app's blurred strip at the top (style.css's standalone --sat: 48 px under the status bar)
 const SAT_PX = 72;
-// the tools on the rail, top to bottom, then Undo and Redo (bookstrip.js, the board's call 170): the pen and the marker
-// one tool, the marker beside the pen only where the rail has room (bookbar.mjs)
-const RAIL = ['Select', 'Pen', 'Eraser', /^Shapes/, 'Text', 'Undo', 'Redo'],
-  // what the column over the paper's right edge may hold
-  CONTROLS = ['Send', 'Tips', 'Invite'];
+// what each island may hold, in its order: the tools top to bottom (the pen and the marker one tool, the mic where the
+// device records: bookpalette.js, bookvoice.js); the bar left to right (the overview and New page only where the paper
+// is wide: bookbar.mjs); and the dots menu's rows, the book's own
+const TOOLS = [/^(Pen|Marker)$/, /^Shapes/, 'Eraser', 'Select', 'Text', 'Voice note'],
+  BAR = ['Undo', 'Redo', 'The page before', /^The notebook's pages/, 'The page after', OVERVIEW, 'New page', 'More'],
+  ROWS = ['Tear off and send', PREFERENCES, 'Tips', 'Close notebook'];
 
 // c: book-check.mjs's helpers: { base, hqIn(browser, viewport), settled(page, mode), shot, settle }
 export function chromeStories(c) {
   return {
-    "the book's column: only the tools and Undo and Redo; nothing under Safari's top strip; the foot clear of it at any width":
-      browser => column(browser, c),
-    "the overview from the foot: Search in it, no tools, the foot only its own button, pressed; the Shelf's Search naming your notebooks":
+    "the book's islands: only the tools, the page's keys and the dots, the book's own rows in the dots; nothing under Safari's top strip; the islands clear of each other at any width":
+      browser => islandsOnly(browser, c),
+    'the overview from the bar: Search in it, no tools, the bar only its own key, pressed; a find opens its page':
       browser => overview(browser, c),
-    'the Shelf on a desktop: a notebook opens by zooming into its tile and back out to it; Archive moves one to the Archive':
-      browser => shelfZoom(browser, c, DESKTOP),
-    'the Shelf on a phone: a notebook opens by zooming into its tile and back out to it; Archive moves one to the Archive':
-      browser => shelfZoom(browser, c, { width: 390, height: 844 }),
-    'the Shelf with reduced motion: a notebook opens with a fade, no zoom; Archive moves one to the Archive': browser =>
-      shelfZoom(browser, c, MINI, true),
     "the pages' names stay put: a titled page's, an untitled one's from its first moment, written on or not": browser =>
       names(browser, c),
   };
@@ -41,24 +36,33 @@ export function chromeStories(c) {
 export async function shutBook(page) {
   await page.locator('#book .bk-lip').click();
 }
+// A chapter's bookmark tapped (tap([x, y]): the mouse's click unless given), at the part of it that shows: where the
+// page is the whole screen (upright) they lie folded at its left edge, and the first tap brings them out, the second
+// picks the chapter (bookmarks.js)
+export async function toChapter(page, chapter, tap = ([x, y]) => page.mouse.click(x, y)) {
+  const tab = page.locator(`#book .bk-marks [data-chapter="${chapter}"]`),
+    shows = async () => {
+      const b = await tab.boundingBox();
+      return [(Math.max(b.x, 0) + b.x + b.width) / 2, b.y + b.height / 2];
+    };
+  await tap(await shows());
+  const out = () => page.evaluate(() => document.querySelector('#book .bk-marks').hasAttribute('data-out'));
+  if (!(await out())) return;
+  // (out over the margin: their slide over)
+  await page.waitForTimeout(400);
+  await tap(await shows());
+}
 
 // ---- the stories
 
-async function column(browser, c) {
+async function islandsOnly(browser, c) {
   const { page, errors, done } = await onMini(browser, c);
   try {
-    const names = await columnNames(page),
-      rail = (await shownNames(page.locator('#book [data-island=tools] button'))).filter(name => name !== 'Marker');
-    assert.deepEqual(
-      names.filter(name => !CONTROLS.includes(name)),
-      [],
-      `the column holds only the book's own controls: ${names.join(', ')}`,
-    );
-    assert.equal(rail.length, RAIL.length, `the rail: ${rail.join(', ')}`);
-    rail.forEach((name, i) => assert.ok(RAIL[i].test?.(name) ?? RAIL[i] === name, `the rail: ${rail.join(', ')}`));
+    await holdsOnly(page, 'at its open width');
+    assert.deepEqual(await menuRows(page), ROWS, "the dots menu: the book's own rows");
     await clearOfTheStrip(page, 'open');
-    await c.shot('chrome-column', page);
-    await footClear(page, 'at its open width');
+    await c.shot('chrome-islands', page);
+    await islandsApart(page, 'at its open width');
     // the cover's edge dragged right to the book's narrowest
     const edge = await page.locator('#book [role=separator]').boundingBox();
     await page.mouse.move(edge.x + 3, 450);
@@ -67,7 +71,8 @@ async function column(browser, c) {
     await page.waitForTimeout(200);
     await page.mouse.up();
     await c.settled(page, 'open');
-    await footClear(page, 'at its narrowest');
+    await holdsOnly(page, 'at its narrowest');
+    await islandsApart(page, 'at its narrowest');
     await clearOfTheStrip(page, 'at its narrowest');
     await c.shot('chrome-narrow', page);
     assert.deepEqual(errors, []);
@@ -76,23 +81,20 @@ async function column(browser, c) {
   }
 }
 
-// (overview and names, in headless WebKit, fail with two or three page views at once (.bk-dogear, .bk-desk) once a turn
+// (overview and names, in headless WebKit, fail with two or three page views at once (.bk-desk) once a turn
 // has swung: the harness's known fault, a swing that stays upright and never finishes there, on main too; Chromium
 // passes.)
 async function overview(browser, c) {
   const { page, errors, done } = await onMini(browser, c);
   try {
-    const foot = page.locator('#book nav [data-island=pages]'),
-      over = foot.getByRole('button', { name: OVERVIEW, exact: true });
-    // (from More where the rail has folded it away: WebKit's iPad mini rail is tighter. It stays there in the overview,
-    // as the rail keeps one layout on a device.)
-    const onRail = await over.isVisible();
+    const bar = page.locator('#book .bk-bar'),
+      over = bar.getByRole('button', { name: OVERVIEW, exact: true, includeHidden: true });
     await press(page, OVERVIEW);
     await page.waitForTimeout(c.settle);
     const far = page.getByRole('list', { name: 'The overview' });
     assert.ok(await far.isVisible(), 'the overview opened');
     assert.equal(await over.getAttribute('aria-pressed'), 'true');
-    await footOnly(foot, onRail ? [await over.getAttribute('aria-label')] : []);
+    await barOnly(bar, [OVERVIEW]);
     // Search in its head, nothing to draw with
     assert.ok(await far.getByRole('searchbox', { name: 'Search the book' }).isVisible(), 'Search in the overview');
     await nothingToDraw(page, 'in the overview');
@@ -104,13 +106,7 @@ async function overview(browser, c) {
       .evaluateAll(all => all.map(f => f.getAttribute('aria-label')));
     assert.ok(pages.includes('Cover ideas, sent'), `a page that went is stamped: ${pages}`);
     assert.equal(await far.locator('.bk-stamp').count(), pages.filter(w => w.endsWith(', sent')).length);
-    // the Shelf: My journal first
-    await far.getByRole('button', { name: /^The Shelf/ }).click();
-    await page.waitForTimeout(c.settle);
-    assert.match(await far.locator('.bk-book .bk-tile-open').first().getAttribute('aria-label'), /^My journal, /);
-    await nothingToDraw(page, 'on the Shelf');
-    await c.shot('chrome-shelf', page);
-    await far.getByRole('searchbox', { name: 'Search your notebooks' }).fill('warmer');
+    await far.getByRole('searchbox', { name: 'Search the book' }).fill('warmer');
     const find = far.locator('.bk-found button').first();
     await find.waitFor({ timeout: 3000 });
     await c.shot('chrome-search', page);
@@ -120,120 +116,12 @@ async function overview(browser, c) {
     await far.waitFor({ state: 'hidden', timeout: 5000 }).catch(() => {});
     assert.ok(!(await far.isVisible()), 'a find opens its page');
     assert.equal(await over.getAttribute('aria-pressed'), 'false');
-    assert.ok(await foot.getByRole('button', { name: /^The notebook's pages/ }).isVisible(), "the page's name back");
+    assert.ok(await bar.getByRole('button', { name: /^The notebook's pages/ }).isVisible(), "the page's count back");
     assert.deepEqual(errors, []);
   } finally {
     await done();
   }
 }
-
-// A notebook opens from the Shelf by zooming into its tile (the point that stays put as the view grows is inside it),
-// and leaving it draws back out to that tile; never a leaf turned. With reduced motion it fades, nothing grows. Its
-// Archive box moves a notebook into the Archive; the overview's button on the Shelf zooms back to the page too.
-async function shelfZoom(browser, c, viewport, reduced = false) {
-  const seed = namedNotebook();
-  seed.notebooks.push({ id: 2, kind: 'call', name: 'Call with Ansel', created: new Date().toISOString() });
-  const context = await c.hqIn(browser, viewport, {
-    notebooks: seed,
-    deviceScaleFactor: 1,
-    hasTouch: viewport.width < 500,
-    isMobile: viewport.width < 500,
-    reducedMotion: reduced ? 'reduce' : 'no-preference',
-  });
-  const page = await context.newPage(),
-    label = reduced ? 'reduced' : viewport.width < 500 ? 'phone' : 'desktop';
-  try {
-    await page.goto(`${c.base}/?intro=0&renderer=wire`);
-    await until(page, '#loading.gone');
-    if (viewport.width < 500) await page.locator('#book .bk-lip').tap();
-    await c.settled(page, viewport.width < 500 ? 'spread' : 'open');
-    await page.locator('#book').getByRole('button', { name: OVERVIEW, exact: true }).click();
-    await page.waitForTimeout(c.settle);
-    const far = page.getByRole('list', { name: 'The overview' });
-    const mine = far.locator('.bk-book[data-book="1"]'),
-      outward = await shelfTransition(page, far.getByRole('button', { name: /^The Shelf/ }));
-    await page.waitForTimeout(c.settle);
-    const tile = await mine.boundingBox();
-    await shelfArchive(page, far, c, label, viewport);
-    const inward = await shelfTransition(page, far.getByRole('button', { name: /^My journal,/ }));
-    zoomedRound(tile, { inward, outward, reduced });
-    await page.waitForTimeout(c.settle);
-    assert.ok(await far.locator('.bk-tile[data-id="1"]').isVisible(), 'the notebook opens to its pages');
-    await c.shot(`shelf-open-${label}`, page);
-    await shelfTransition(page, far.getByRole('button', { name: /^The Shelf/ }));
-    await page.waitForTimeout(c.settle);
-    const overview = page.locator('#book').getByRole('button', { name: OVERVIEW, exact: true }),
-      home = await shelfTransition(page, overview);
-    assert.equal(home.leaf, false, "the overview's button on the Shelf zooms back to the page, no leaf");
-    await page.waitForTimeout(c.settle);
-    assert.ok(await far.isHidden(), 'back on the page');
-  } finally {
-    await context.close();
-  }
-}
-
-// The book's own menu archives the notebook, which then appears in the Archive.
-async function shelfArchive(page, far, c, label, viewport) {
-  if (viewport.width >= 500) await far.locator('.bk-book[data-book="2"]').hover();
-  await far.getByRole('button', { name: 'More: Call with Ansel', exact: true }).click();
-  await c.shot(`shelf-${label}`, page);
-  await far.getByRole('menuitem', { name: 'Archive', exact: true }).click();
-  await page.waitForTimeout(c.settle);
-  await far.getByRole('button', { name: /^Archive/ }).click();
-  await page.waitForTimeout(c.settle);
-  assert.ok(await far.getByRole('button', { name: /^Call with Ansel,/ }).isVisible());
-  await far.getByRole('button', { name: 'My shelf', exact: true }).click();
-  await page.waitForTimeout(c.settle);
-}
-
-// The step to or from the Shelf as the board sees it: whether a leaf turns, and where the view zooms round (the point
-// on the screen the outgoing view's picture grows or shrinks about, read from its box halfway through its animation,
-// seeked there: a loaded machine's WebKit may draw no frame between its first and its end; null if it never grows or
-// shrinks)
-async function shelfTransition(page, control) {
-  await page.waitForFunction(() => !document.querySelector('#book .bk-turn-picture, #book .bk-turn-leaf'));
-  await page.evaluate(() => {
-    const seen = (window.__shelfStep = { leaf: false, still: null, began: false, over: false });
-    const watch = () => {
-      const picture = document.querySelector('#book .bk-turn-picture'),
-        leaf = document.querySelector('#book .bk-turn-leaf');
-      seen.leaf ||= !!leaf;
-      if (picture || leaf) seen.began = true;
-      else if (seen.began) return void (seen.over = true);
-      const going = picture?.getAnimations()[0];
-      if (going && !seen.still) {
-        const now = going.currentTime;
-        going.currentTime = going.effect.getTiming().duration / 2;
-        const p = picture.parentElement.getBoundingClientRect(),
-          r = picture.getBoundingClientRect(),
-          k = r.width / p.width;
-        going.currentTime = now;
-        if (Math.abs(1 - k) > 0.01)
-          seen.still = { x: (r.left - k * p.left) / (1 - k), y: (r.top - k * p.top) / (1 - k) };
-      }
-      requestAnimationFrame(watch);
-    };
-    requestAnimationFrame(watch);
-  });
-  await control.click();
-  await page.waitForFunction(() => window.__shelfStep.over, null, { timeout: 30_000 });
-  return page.evaluate(() => {
-    const { leaf, still } = window.__shelfStep;
-    return { leaf, still };
-  });
-}
-// Into the notebook's tile and back out to it, never a leaf; with reduced motion nothing grows or shrinks
-function zoomedRound(tile, { inward, outward, reduced }) {
-  assert.equal(inward.leaf, false, 'opening a notebook never turns a leaf on the Shelf');
-  assert.equal(outward.leaf, false, 'closing to the Shelf uses a zoom');
-  if (reduced) return assert.deepEqual([inward.still, outward.still], [null, null], 'reduced motion only fades');
-  for (const [way, { still }] of Object.entries({ into: inward, 'back out to': outward }))
-    assert.ok(
-      still && inside(still, tile),
-      `the view zooms ${way} the notebook's tile ${JSON.stringify(tile)}: round ${JSON.stringify(still)}`,
-    );
-}
-const inside = (pt, box) => pt.x >= box.x && pt.x <= box.x + box.width && pt.y >= box.y && pt.y <= box.y + box.height;
 
 // (My journal: a page sent yesterday with its title, and today's untitled one)
 export function namedNotebook() {
@@ -267,7 +155,7 @@ async function names(browser, c) {
     const where = () => button(page, /^The notebook's pages/).getAttribute('aria-label');
     assert.equal(await where(), "The notebook's pages: Untitled page, 2 of 2", 'the newest page, untitled');
     await c.shot('chrome-names', page);
-    // (New page and the overview from More where the rail has folded them away.)
+    // (New page and the overview from the dots menu where the bar has folded them away.)
     await press(page, 'New page');
     await button(page, "The notebook's pages: Untitled page, 3 of 3", true).waitFor({ state: 'attached' });
     assert.equal(await where(), "The notebook's pages: Untitled page, 3 of 3");
@@ -310,20 +198,41 @@ async function onMini(browser, c) {
   return { page, errors, done: () => context.close() };
 }
 export const button = (page, name, exact = false) => page.locator('#book').getByRole('button', { name, exact });
-// The overview's foot: only its own key, where its page showed it on the rail (names).
-async function footOnly(foot, names) {
-  const shown = await shownNames(foot.getByRole('button'));
-  assert.deepEqual(shown, names, `the foot shows only the overview, where its page showed it: ${shown}`);
+// The overview's bar: only its own key (names), wherever its page showed it
+async function barOnly(bar, names) {
+  const shown = await shownNames(bar.locator('.bk-btn'));
+  assert.deepEqual(shown, names, `the bar shows only the overview's key: ${shown}`);
 }
-// The overview or the Shelf: no tools, Undo, Redo or dog-ear, with nothing to draw on
+// The overview or the Shelf: no tools, no Undo or Redo, and no dots with Tear off and send, with nothing to draw on
 async function nothingToDraw(page, where) {
-  assert.ok(!(await page.locator('#book [data-island=tools]').isVisible()), `no tools, Undo or Redo ${where}`);
-  assert.ok(!(await page.locator('#book .bk-dogear').isVisible()), `no dog-ear ${where}`);
+  const shown = await shownNames(page.locator('#book .bk-controls .bk-btn'));
+  for (const name of ['Pen', 'Undo', 'Redo', 'More'])
+    assert.ok(!shown.includes(name), `no ${name} ${where}: ${shown.join(', ')}`);
 }
-// The names of the book's own buttons on the rail (Send, Tips, invites) that show
-const columnNames = page =>
-  shownNames(page.locator('#book .bk-column :is([data-island=send], [data-island=book]) button'));
-// The labels of the buttons found that show (on the rail, a hidden one keeps its slot unseen).
+// Each island holds only its own controls, in their order (a key may be folded away: the bar's rare ones)
+async function holdsOnly(page, when) {
+  for (const [island, allowed] of [
+    ['.bk-strip', TOOLS],
+    ['.bk-bar', BAR],
+  ]) {
+    const names = await shownNames(page.locator(`#book ${island} .bk-btn`));
+    let at = 0;
+    for (const name of names) {
+      while (at < allowed.length && !(allowed[at].test?.(name) ?? allowed[at] === name)) at++;
+      assert.ok(at++ < allowed.length, `${when}: ${island} holds only its own, in order: ${names.join(', ')}`);
+    }
+  }
+}
+// The dots menu's rows, opened and put away again
+async function menuRows(page) {
+  const menu = page.locator('#book .bk-more-card');
+  await page.locator('#book .bk-more').click();
+  const rows = await menu.getByRole('menuitem').evaluateAll(all => all.map(b => b.textContent));
+  await page.keyboard.press('Escape');
+  await menu.waitFor({ state: 'detached' });
+  return rows;
+}
+// The labels of the buttons found that show (a hidden one keeps its slot unseen).
 const shownNames = buttons =>
   buttons.evaluateAll(all =>
     all.filter(b => b.checkVisibility({ visibilityProperty: true })).map(b => b.getAttribute('aria-label')),
@@ -341,8 +250,8 @@ async function clearOfTheStrip(page, when) {
   );
   assert.deepEqual(under, [], `${when}: under Safari's strip (${SAT_PX} px)`);
 }
-// The foot's row clear of every island in the column
-async function footClear(page, when) {
+// The bar clear of the tools' island
+async function islandsApart(page, when) {
   const boxes = await page.evaluate(() =>
     [...document.querySelectorAll('#book nav [role=toolbar]')]
       .map(el => ({
@@ -351,9 +260,9 @@ async function footClear(page, when) {
       }))
       .filter(({ r }) => r.width),
   );
-  for (const { r: foot } of boxes.filter(b => b.across))
+  for (const { r: bar } of boxes.filter(b => b.across))
     for (const { r } of boxes.filter(b => !b.across)) {
-      const apart = foot.right <= r.left || r.right <= foot.left || foot.bottom <= r.top || r.bottom <= foot.top;
-      assert.ok(apart, `${when}: the foot ${JSON.stringify(foot)} over the column's ${JSON.stringify(r)}`);
+      const apart = bar.right <= r.left || r.right <= bar.left || bar.bottom <= r.top || r.bottom <= bar.top;
+      assert.ok(apart, `${when}: the bar ${JSON.stringify(bar)} over the tools' ${JSON.stringify(r)}`);
     }
 }

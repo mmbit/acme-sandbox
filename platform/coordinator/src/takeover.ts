@@ -3,11 +3,15 @@
 // --lands: a job lands saved work or retries a thread task that failed without saving work.
 // (its messages say deliverable, the board's word for a thread)
 import { execFileSync } from 'node:child_process';
-import { db } from './db.ts';
+import { db, planChange } from './db.ts';
 import * as jobs from './jobs.ts';
+import * as engineOnly from './engineonly.ts';
 import { agreements, oneLine } from './agreements.ts';
 import { checkUnderWay, LONG_LINE, SAID_MAX } from './followthrough.ts';
 import { ceo, roles } from './company.ts';
+import { publish } from './events.ts';
+import { writePlan } from './redraws.ts';
+import { jobRefusal } from './threadorder.ts';
 
 const WORK_MIRROR_DIR = process.env.WORK_MIRROR_DIR!;
 
@@ -73,16 +77,22 @@ export function requeue(checkJob: number, failed: number, said: string) {
 // job landing them replaces it, carrying its call and item. Its agent is the failed job's own, who worked for
 // that call already; only that agent, whoever queued the failed job, the CEO or the process role queues it. Work with a
 // pull request goes on there (review.ts decide), unless a thread task saved nothing of its own. The answer supplies
-// its original brief and the saved branch if any.
+// its original brief and the saved branch if any. A job being stopped (hq stop, still running or paused) is landed as
+// it ends: a job that stops itself queues its redo before its run is over, and a deliverable's task order holds the
+// landing until it has ended (threadorder.ts follows).
 export function landing(failed: number, agent: string, by: string) {
   const job = db
     .prepare(
       `select agent, queued_by, coalesce(branch, 'job/' || id) branch, prompt, thread, pr, started, finished from jobs
-      where id = ? and kind = 'work' and status in ('failed', 'stopped')`,
+      where id = ? and kind = 'work' and (status in ('failed', 'stopped') or (stopping is not null and status in ${jobs.OPEN_JOBS}))`,
     )
     .get(failed) as LandingJob | undefined;
-  if (!job)
-    return `job #${failed} isn't failed or stopped work: --lands names a failed or stopped job whose saved work this one lands`;
+  if (!job) {
+    const running = db.prepare("select 1 from jobs where id = ? and kind = 'work' and status = 'running'").get(failed);
+    return running
+      ? `job #${failed} is still running: stop it first (hq stop ${failed} "why"), and the job landing its work takes its place as it ends`
+      : `job #${failed} isn't failed or stopped work: --lands names a failed or stopped job whose saved work this one lands`;
+  }
   const pr = db
     .prepare(`select number, status in ${jobs.OPEN_PRS} as open from prs where branch = ? order by number desc limit 1`)
     .get(job.branch) as { number: number; open: number } | undefined;
@@ -100,6 +110,133 @@ export function landing(failed: number, agent: string, by: string) {
     return `only ${job.agent}, whoever queued #${failed}, the CEO or the process role lands its work`;
   return { branch: empty ? null : job.branch, prompt: job.prompt };
 }
+// The line a landing's brief gains when the work it lands was saved on a branch of its own
+export const savedWorkLine = (failed: number, branch: string | null) =>
+  branch ? `\n\nThis job takes over the saved work of #${failed}: \`git fetch origin refs/outgoing/${branch}\`.` : '';
+
+// hq stop <job> "why" [--for <job>]: stops a job still running or paused (jobs.ts stopJob). A deliverable's task stopped
+// that its agent has queued again takes its place as the stop is recorded, so the tasks drawn after it wait for the redo
+// rather than for a task that won't run again: the job --for names (also on a task stopped or failed already), else the
+// one job of its agent's queued there since it started (placeFor). Several are left to --for, which the answer names.
+// Placing one changes the deliverable's plan, so only its project's owner or the CEO does (threadorder.ts jobRefusal);
+// a refusal undoes the stop with it.
+export function stopFor(id: number, replacement: number | undefined, by: string, why: string) {
+  try {
+    return writePlan(() => {
+      const was = db.prepare('select status, stopping, thread from jobs where id = ?').get(id) as
+        { status: string; stopping: string | null; thread: string | null } | undefined;
+      const going = !!was && ['running', 'queued'].includes(was.status);
+      const stopped =
+        replacement === undefined || (going && !was.stopping)
+          ? jobs.stopJob(id, by, why)
+          : { ok: true as const, running: was?.status === 'running' };
+      if (typeof stopped === 'string') throw new RefusedError(stopped);
+      if (replacement !== undefined) {
+        const placed = jobRefusal(by, jobs.threadOf(replacement)) ?? takesPlace(id, replacement, by);
+        if (typeof placed === 'string') throw new RefusedError(placed);
+        return { ...stopped, ...placed, ended: !going };
+      }
+      const offer = placeFor(id);
+      if (!offer) return stopped;
+      const redo = onlyRedo(offer);
+      if (redo !== undefined && !jobRefusal(by, offer.deliverable)) {
+        const placed = takesPlace(id, redo, by);
+        if (typeof placed === 'object') return { ...stopped, ...placed };
+      }
+      return { ...stopped, ...offer };
+    });
+  } catch (err) {
+    if (err instanceof RefusedError) return err.message;
+    throw err;
+  }
+}
+class RefusedError extends Error {}
+
+// hq job: a job queued where its agent's task in that deliverable was stopped with nothing in its place takes that
+// task's place, the stop's other order (stopFor), when it's the one job of theirs queued there since the task started
+// (placeFor). Otherwise the answer names the agent's tasks there that stopped or failed with nothing in their place, for
+// hq stop --for.
+export function placeQueued(id: number, by: string) {
+  const job = db.prepare('select agent, thread from jobs where id = ?').get(id) as {
+    agent: string;
+    thread: string | null;
+  };
+  const left = unplaced(job.thread, job.agent);
+  const stopped = left.filter(t => t.status === 'stopped' || t.stopping !== null);
+  const redoes = stopped.filter(t => onlyRedo(placeFor(t.id)) === id);
+  if (redoes.length === 1 && typeof takesPlace(redoes[0].id, id, by) === 'object')
+    return { takesPlaceOf: redoes[0].id };
+  return left.length ? { unplaced: left.map(t => t.id) } : {};
+}
+
+// A job queued already does the stopped (or failed) job's work again and takes its place, as one queued with --lands
+// would (landing): it stands in for it (jobs.ts standsIn), carries its code and the engine rule it ran under where it
+// has none of its own (as createJob gives one queued with --lands: codeFrom, onlyFor), and its brief gains the saved
+// work's branch. Only work of the same agent in the same deliverable that hasn't started (its brief still to be read),
+// placed by whoever may land the stopped job's work.
+function takesPlace(stopped: number, replacement: number, by: string) {
+  const next = db
+    .prepare(
+      `select id, agent, thread, engine_only from jobs
+      where id = ? and kind = 'work' and pr is null and status = 'queued' and session is null`,
+    )
+    .get(replacement) as { id: number; agent: string; thread: string | null; engine_only: string | null } | undefined;
+  if (!next || next.id === stopped)
+    return `#${replacement} isn't work queued that never ran: --for names the queued job that does #${stopped}'s work again`;
+  const source = landing(stopped, next.agent, by);
+  if (typeof source === 'string') return source;
+  const thread = jobs.threadOf(stopped);
+  if (thread !== next.thread)
+    return `#${replacement} is in ${next.thread ?? 'no deliverable'}, #${stopped} in ${thread ?? 'none'}: the job taking its place is in its deliverable`;
+  jobs.standsIn(replacement, [stopped]);
+  const was = db.prepare('select code, engine_only from jobs where id = ?').get(stopped) as {
+    code: string | null;
+    engine_only: string | null;
+  };
+  db.prepare('update jobs set code = coalesce(code, ?) where id = ?').run(was.code, replacement);
+  const rule = next.engine_only ? undefined : engineOnly.byId(was.engine_only);
+  if (rule) engineOnly.pin(replacement, rule);
+  db.prepare('update jobs set prompt = prompt || ? where id = ?').run(
+    savedWorkLine(stopped, source.branch),
+    replacement,
+  );
+  if (thread)
+    planChange({ project: thread.split('/')[0], thread, what: `task #${replacement} takes #${stopped}'s place`, by });
+  publish({ type: 'log', agent: by, text: `#${replacement} takes the place of #${stopped} (${next.agent})` });
+  return { ok: true as const, replacement };
+}
+// A deliverable's task stopped (or being stopped) or failed, with nothing in its place, holds the tasks drawn before it
+// ended (threadorder.ts failed): its deliverable, and its agent's work queued there since it started that may take its
+// place.
+function placeFor(stopped: number) {
+  const job = db
+    .prepare(
+      `select id, agent, thread, coalesce(started, created) since from jobs j
+      where id = ? and kind = 'work' and pr is null and thread is not null and not ${jobs.hasReplacement('j.id')}`,
+    )
+    .get(stopped) as { id: number; agent: string; thread: string; since: string } | undefined;
+  if (!job) return undefined;
+  const queued = db
+    .prepare(
+      `select id from jobs where thread = ? and agent = ? and kind = 'work' and pr is null and status = 'queued'
+      and session is null and instead_of is null and id != ? and created >= ? order by id`,
+    )
+    .all(job.thread, job.agent, job.id, job.since) as { id: number }[];
+  return { deliverable: job.thread, queued: queued.map(q => q.id) };
+}
+// The one job of its agent's queued there since the task started, which takes its place without --for
+const onlyRedo = (offer: ReturnType<typeof placeFor>) => (offer?.queued.length === 1 ? offer.queued[0] : undefined);
+// The agent's tasks in a deliverable that stopped or failed (or are being stopped) with nothing in their place.
+function unplaced(thread: string | null, agent: string) {
+  if (!thread) return [];
+  return db
+    .prepare(
+      `select id, status, stopping from jobs j where thread = ? and agent = ? and kind = 'work' and pr is null
+      and (status in ('failed', 'stopped') or (stopping is not null and status in ${jobs.OPEN_JOBS}))
+      and not ${jobs.hasReplacement('j.id')} and not ${jobs.failedAside('j')} order by id`,
+    )
+    .all(thread, agent) as { id: number; status: string; stopping: string | null }[];
+}
 
 type LandingJob = {
   agent: string;
@@ -109,7 +246,7 @@ type LandingJob = {
   thread: string | null;
   pr: number | null;
   started: string | null;
-  finished: string;
+  finished: string | null; // (null: still being stopped)
 };
 
 // A task that never started saved nothing. The pull request's last push before it started is where earlier tasks'
@@ -139,7 +276,7 @@ function emptyThreadTask(job: LandingJob, pr: number) {
     { encoding: 'utf8', timeout: 10_000, stdio: ['ignore', 'pipe', 'pipe'] },
   );
   const started = Math.floor(Date.parse(job.started) / 1000),
-    finished = Math.floor(Date.parse(job.finished) / 1000);
+    finished = Math.floor((job.finished ? Date.parse(job.finished) : Date.now()) / 1000);
   return !commits
     .split('\n')
     .filter(Boolean)

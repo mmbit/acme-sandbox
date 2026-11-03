@@ -417,6 +417,16 @@ test('a permanent invite sends pages and reads answers while the board watches, 
   assert.equal((await h.board(`/api/notebooks/guests/groups?page=${page}`)).status, 200);
 });
 
+test("an invited guest's sketch page pins its units where their screen laid them", async () => {
+  const invited = await create('invited', ['Pia']);
+  const pia = await signIn(invited.people[0].link);
+  const page = invited.pages[0].id;
+  const unit = (await pia(`${api}/groups/create`, { page, ink: [stroke] })).body;
+  const placed = await pia(`${api}/groups/place`, { page, places: [{ id: unit.id, x: 30, y: 90 }] });
+  assert.equal(placed.status, 200, JSON.stringify(placed.body));
+  assert.deepEqual(placed.body.groups[0].place, { x: 30, y: 90 });
+});
+
 test('revoking an invite during page rendering prevents sending, and removing a pending guest frees a round', async () => {
   const invited = await create('invited', ['Iris']);
   const iris = await signIn(invited.people[0].link);

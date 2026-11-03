@@ -20,6 +20,7 @@ const { PROMPT_CHARS } = await import('./smallmodel.ts');
 const summary = await import('./summary.ts');
 const forecast = await import('./forecast.ts');
 const ledger = await import('./ledger.ts');
+const { setUrgent } = await import('./urgency.ts');
 
 beforeEach(async () => {
   db.exec(`delete from jobs; delete from messages; delete from meetings; delete from meeting_seats; delete from meeting_lines;
@@ -138,8 +139,14 @@ test('a hold is on its runner: one that hits its limit after the hold loses it, 
   assert.equal((await claimIn('claude#3', 'claude-2'))?.kind, 'meeting');
 });
 
-test('a due meeting keeps its holds on paced runners and gathers before ordinary work', async () => {
-  const { meeting } = await setMeeting();
+// The board's word that work must happen now, recorded by the CEO: the one thing a paced seat takes
+const urgent = (...ids: number[]) => {
+  for (const id of ids) assert.equal(typeof setUrgent('task', String(id), true, company.ceo()), 'object');
+};
+
+test('an urgent due meeting keeps its holds on paced runners and gathers before ordinary work', async () => {
+  const { meeting, seats } = await setMeeting();
+  urgent(...seats.map(s => s.job));
   const week = Date.now() + 2 * 24 * 3_600_000;
   assert.ok(await holds('claude#1'));
   await h.worker('seat', {
@@ -151,7 +158,7 @@ test('a due meeting keeps its holds on paced runners and gathers before ordinary
     weekResets: week,
     pace: true,
   });
-  assert.ok((await claimIn('claude#1', 'claude-1', week))?.held, 'its set time is before the reset');
+  assert.ok((await claimIn('claude#1', 'claude-1', week))?.held, 'urgent, it crosses the pace');
   assert.ok((await claimIn('claude#2', 'claude-1', week))?.held);
   assert.equal((await claimIn('claude#3', 'claude-1', week))?.kind, 'meeting');
   assert.equal(meetingStatus(meeting), 'live');
@@ -159,13 +166,18 @@ test('a due meeting keeps its holds on paced runners and gathers before ordinary
   assert.equal((await claimIn('claude#2', 'claude-1', week))?.kind, 'meeting');
 });
 
-test('a due meeting gathers on paced seats, and its live seats follow earlier dated work without a board item', async () => {
+test('a due meeting waits for the pace like any work: its set time orders it, never past the pace', async () => {
+  const { claim } = await dueBesideDated(false);
+  assert.equal(await claim('claude#1'), null, 'nothing on the paced seat holds a seat or starts');
+});
+
+test('an urgent due meeting gathers on paced seats, and its live seats follow earlier dated work without a board item', async () => {
   const { meeting, dated, claim } = await dueBesideDated();
   await gathers(meeting, claim);
   assert.equal((await claim('claude#4'))?.id, dated, 'dated admission alone does not grant the board lane');
 });
 
-test("a due meeting's board item keeps its live seats ahead of earlier dated work on paced seats", async () => {
+test("an urgent due meeting's board item keeps its live seats ahead of earlier dated work on paced seats", async () => {
   const { meeting, seats, dated, followUp, claim } = await dueBesideDated();
   h.carriedItem(followUp, 'juno');
   const started = await gathers(meeting, claim);
@@ -176,7 +188,7 @@ test("a due meeting's board item keeps its live seats ahead of earlier dated wor
   assert.equal(status(dated), 'queued');
 });
 
-test("a due meeting's board item leaves its seats once the follow-up carrying it is cancelled", async () => {
+test("an urgent due meeting's board item leaves its seats once the follow-up carrying it is cancelled", async () => {
   const { meeting, dated, followUp, claim } = await dueBesideDated();
   h.carriedItem(followUp, 'juno');
   assert.ok(ledger.cancelJob(followUp, 'The plan was made on the call'));
@@ -184,9 +196,9 @@ test("a due meeting's board item leaves its seats once the follow-up carrying it
   assert.equal((await claim('claude#4'))?.id, dated, 'nothing waits for the seats: the earlier dated work goes first');
 });
 
-// A meeting due on a paced runner, dated work queued before it, and the chair's follow-up after its seat. claim is a
-// slot's claim on that runner.
-async function dueBesideDated() {
+// A meeting due on a paced runner, dated work queued before it, and the chair's follow-up after its seat; the seats and
+// the dated work urgent unless `marked` is false. claim is a slot's claim on that runner.
+async function dueBesideDated(marked = true) {
   const { meeting, seats } = await setMeeting();
   const week = Date.now() + 2 * 24 * 3_600_000;
   await h.worker('seat', {
@@ -201,13 +213,14 @@ async function dueBesideDated() {
   const dated = h.queue({ agent: 'moss', engine: 'claude', thread: h.dueThread({ deadline: Date.now() + 60_000 }) });
   const chairSeat = seats.find(s => s.agent === 'juno')!.job;
   const followUp = h.queue({ agent: 'juno', title: 'The plan from the meeting', after: chairSeat });
+  if (marked) urgent(...seats.map(s => s.job), dated);
   const claim = (slot: string) => claimIn(slot, 'claude-1', week);
   return { meeting, seats, dated, followUp, claim };
 }
 
 // Two paced slots hold the meeting's seats by its set time, and the third starts it.
 async function gathers(meeting: number, claim: (slot: string) => ReturnType<typeof claimIn>) {
-  assert.equal((await claim('claude#1'))?.held?.meeting, meeting, 'the set time admits paced seats');
+  assert.equal((await claim('claude#1'))?.held?.meeting, meeting, 'urgent, it gathers on paced seats');
   assert.equal((await claim('claude#2'))?.held?.meeting, meeting);
   const started = await claim('claude#3');
   assert.equal(started?.kind, 'meeting');

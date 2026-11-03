@@ -523,3 +523,29 @@ test("a marker's pieces cut by the eraser keep their number, as the coordinator 
     e => e.status === 400,
   );
 });
+
+test('a seen tick on a group judged to need nothing back, gone once answered; a fix built once its page is sent ticked', () => {
+  const { post, groups, page, play } = played();
+  const g = post('groups/create', { page, texts: [{ x: 60, y: 60, w: 260, color: '#2b2230', text: 'mooi' }] });
+  play.seen(g.id, 'moss');
+  assert.deepEqual(groups()[0].seen, { by: 'moss', name: 'moss' });
+  const fix = play.answer(g.id, { by: 'moss', text: 'Too cramped', fix: 'Room to breathe' });
+  assert.equal(groups()[0].seen, null, 'answered: no tick');
+  const other = play.answer(g.id, { by: 'juno', text: 'Or this', fix: 'Smaller pen' });
+  const tick = ticked => post('answers/tick', { id: fix.id, ticked });
+  assert.equal(tick(true).answer.builder, null, 'ticked: not built yet');
+  post('answers/tick', { id: other.id, ticked: true });
+  const late = play.answer(g.id, { by: 'moss', text: 'And this', fix: 'Bigger keys' });
+  post('pages/send', { id: page });
+  assert.deepEqual(
+    groups()[0].children.map(c => c.builder),
+    ['moss', 'moss', null],
+    'sent ticked: both built, by who proposed the first ticked; the one not ticked stays',
+  );
+  assert.throws(() => tick(false), refusal(409, 'this fix has gone to be built'));
+  assert.throws(() => play.answer(g.id, { by: 'moss', text: 'Too', fix: 'Later' }), /page has been sent: no fix/);
+  assert.throws(
+    () => post('answers/tick', { id: late.id, ticked: true }),
+    refusal(409, 'this page has been sent: write under the fix to have it built'),
+  );
+});

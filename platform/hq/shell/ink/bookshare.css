@@ -1,65 +1,15 @@
-/* A page sent or shared by its corner (bookdogear.js, bookshare.js): the corner turned down at the paper's top-right,
-   the page held by it, torn out at the spine, and the three targets it's let go on in the rail's place, a menu too; the
-   card that asks first when asks are still open on it (bookpagesend.js). The book's own look, the deck's shapes. */
+/* A page sent or shared by tearing it off at its spine (booktear.js, bookshare.js): the page held by its spine's edge,
+   torn out there, and the three targets it's let go on, over the middle of the paper while the islands make way, a
+   menu too; the card that asks first when asks are still open on it (bookpagesend.js). The book's own look, the
+   deck's shapes. No dog-ear (board, call 190). */
 
-/* the page's corner: turned down at the paper's top-right, the page under it showing; the controls' islands start
-   below it (book.css) */
-#book {
-  --bk-ear: 30px;
-}
-#book .bk-dogear {
-  all: unset;
-  position: absolute;
-  top: 0;
-  /* (the writing paper's corner, left of the rail) */
-  right: var(--bk-rail-width, 0px);
-  z-index: 6;
-  width: var(--bk-ear);
-  height: var(--bk-ear);
-  cursor: grab;
+/* the paper's right edge, where the spine is, right of what's written (.bk-desk): a finger or the Pencil drawn away
+   from it tears the page off, never starts the browser's pan, which would cancel the press */
+#book .bk-paper {
   touch-action: none;
-  -webkit-user-select: none;
-  user-select: none;
-}
-#book .bk-dogear[hidden] {
-  display: none;
-}
-/* (in hand: the page's copy has it) */
-#book .bk-dogear[data-lifted] i {
-  opacity: 0;
-}
-/* (a finger finds it: the touch target reaches further along the top than it shows) */
-#book .bk-dogear::after {
-  content: '';
-  position: absolute;
-  right: 0;
-  top: 0;
-  width: 46px;
-  height: 40px;
-}
-#book .bk-dogear i {
-  position: absolute;
-  inset: 0;
-  transform-origin: 100% 0;
-  /* the page under it, then the turned-down flap: the paper's back, shaded towards its fold */
-  background:
-    linear-gradient(225deg, rgba(42, 35, 82, 0.13) 0 50%, transparent 50%),
-    linear-gradient(45deg, #efe3c8 0, #fbf3e2 46%, transparent 50%);
-  filter: drop-shadow(-2px 3px 2px rgba(29, 26, 47, 0.28));
-}
-#book .bk-dogear:focus-visible i {
-  outline: 2px solid var(--bk-night);
-  outline-offset: 2px;
-}
-@media (hover: hover) {
-  #book .bk-dogear:hover i {
-    scale: 1.25;
-    transition: scale 0.15s ease-out;
-  }
 }
 
-/* the page in hand: a small copy held tilted by its corner, that corner turned, its spine's edge torn (bookpaper.js's
-   tear() draws the edge) */
+/* the page in hand: a small copy held tilted by its spine's edge, torn there (bookpaper.js's tear() draws the edge) */
 #book > .bk-held {
   position: fixed;
   z-index: 70;
@@ -89,33 +39,22 @@
   background-color: var(--bk-paper);
   background-image: var(--bk-dots);
   background-size: 22px 22px;
-  clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 0 100%);
 }
-/* (its turned corner: the paper's back, as on the page) */
-#book .bk-held::after {
-  content: '';
-  position: absolute;
-  top: 0;
-  right: 0;
-  width: 14px;
-  height: 14px;
-  background: linear-gradient(45deg, #efe3c8 0, #fbf3e2 50%, transparent 50%);
-}
-/* over a target: drawn in towards it by its corner, the target's word in sight */
+/* over a target: drawn in towards it by its edge, the target's word in sight */
 #book .bk-held[data-over] {
   scale: 0.45;
   opacity: 0.75;
 }
 
-/* the targets: a column on the rail, its controls making way for it while it shows, its right at the rail's: Submit,
-   big, its CEO on a disc; PDF and PNG, small, each a finger wide; lit under the page. (on the rail, a panel of the look's:
-   bookui.css .bk-card.) */
-#book .bk-controls[data-targets] > .bk-column > * {
+/* the targets: a column over the middle of the paper, the islands making way while it shows, away from the spine's
+   edge the page was torn from: Submit, big, its CEO on a disc; PDF and PNG, small, each a finger wide; lit under the
+   page. (a panel of the look's: bookui.css .bk-card.) */
+#book .bk-controls[data-targets] > :is(.bk-strip, .bk-foot) {
   visibility: hidden;
 }
 #book .bk-share {
   position: absolute;
-  right: 4px;
+  left: 50%;
   top: 50%;
   z-index: 8;
   display: flex;
@@ -123,7 +62,7 @@
   align-items: stretch;
   gap: 6px;
   padding: 6px;
-  translate: 0 -50%;
+  translate: -50% -50%;
   pointer-events: auto;
   animation: bk-share-in 0.16s ease-out;
 }
@@ -186,24 +125,20 @@
   }
 }
 
-/* a page sent: locked, its tools gone, a quiet lock and its words in the middle of their room (bookcontrols.js). The
-   tools keep their room, unseen, so the rail's head keeps its size as the pages turn. The lock wears the toolbar's
-   look. */
-#book .bk-column[data-locked] .bk-strip {
-  position: relative;
-}
-#book .bk-column[data-locked] .bk-strip > :not(.bk-locked) {
-  visibility: hidden;
+/* a page sent: locked, its tools gone, a quiet lock and its words in their island's place (bookcontrols.js). The lock
+   wears the island's look. */
+#book .bk-strip[data-locked] > .bk-island {
+  display: none;
 }
 #book .bk-locked {
-  position: absolute;
-  inset: 0;
   display: none;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 4px;
+  width: var(--bk-key);
   margin: 0;
+  padding: 8px 0;
   color: var(--bk-ui-muted);
   font: 600 11px/1.2 var(--bk-ui-font);
   text-align: center;
@@ -212,17 +147,17 @@
   width: 20px;
   height: 20px;
 }
-#book .bk-column[data-locked] .bk-locked {
+#book .bk-strip[data-locked] .bk-locked {
   display: flex;
 }
 
-/* asks still open as the page is let go on Submit: a small card over the targets, at the rail's right, its tail down
-   at Submit, the page in view behind it; Send now lit as the one to press. A panel of the look's, as the targets are
-   (bookui.css .bk-card.). (above the targets' column, half of its three 46 px
-   targets, their gaps and edge, and 12 px clear) */
+/* asks still open as the page is let go on Submit: a small card over the targets, its tail down at Submit, the page
+   in view behind it; Send now lit as the one to press. A panel of the look's, as the targets are (bookui.css
+   .bk-card.). (above the targets' column, half of its three 46 px targets, their gaps and edge, and 12 px clear) */
 #book .bk-asks-open {
   position: absolute;
-  right: 4px;
+  left: 50%;
+  translate: -50% 0;
   bottom: calc(50% + 94px);
   z-index: 9;
   box-sizing: border-box;
@@ -292,7 +227,6 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  #book .bk-dogear i,
   #book .bk-share button {
     transition: none;
   }

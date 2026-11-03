@@ -10,18 +10,25 @@ import { chmodSync, createWriteStream, existsSync, mkdirSync, renameSync, rmSync
 
 const SIDE = '.render.json';
 export const RENDER_MAX = 2 ** 30; // (a film is tens of MB: a gigabyte is no render)
+const READ_MS = 60_000; // (a file reads in seconds at most: a minute is a FIFO or a device that never ends)
 
-type Who = { uid?: number; gid?: number; env: Record<string, string> };
+export type Who = { uid?: number; gid?: number; env: Record<string, string> };
 
-export async function keepRenders(store: string, who: Who, dir: string, files: string[]) {
+export async function keepRenders(store: string, who: Who, dir: string, files: string[], ms = READ_MS) {
   const left: string[] = [];
   mkdirSync(store, { recursive: true });
   for (const side of files.filter(f => f.endsWith(SIDE))) {
-    let note: { blob?: string; sha256?: string; bytes?: number };
+    let text: string, note: { blob?: string; sha256?: string; bytes?: number };
     try {
-      note = JSON.parse(await read(who, `${dir}/${side}`, 1 << 20).then(b => b.toString('utf8')));
+      text = (await read(who, `${dir}/${side}`, 1 << 20, ms)).toString('utf8');
+    } catch (err) {
+      left.push(`${side}: not read (${(err as Error).message})`);
+      continue;
+    }
+    try {
+      note = JSON.parse(text);
     } catch {
-      left.push(`${side}: not read`);
+      left.push(`${side}: not JSON`); // (the parser's message quotes the file)
       continue;
     }
     const { sha256, bytes } = note;
@@ -38,56 +45,71 @@ export async function keepRenders(store: string, who: Who, dir: string, files: s
     }
     if (existsSync(`${store}/${sha256}`)) continue;
     const tmp = `${store}/.${randomBytes(6).toString('hex')}`;
-    const kept = await copy(who, `${dir}/${side.slice(0, -SIDE.length)}`, tmp, sha256!, bytes);
-    if (kept) {
+    try {
+      await copy(who, `${dir}/${side.slice(0, -SIDE.length)}`, tmp, sha256!, bytes, ms);
       chmodSync(tmp, 0o444);
       renameSync(tmp, `${store}/${sha256}`);
-    } else {
+    } catch (err) {
       rmSync(tmp, { force: true });
-      left.push(`${side}: its render isn't what it names, not kept`);
+      left.push(`${side}: ${(err as Error).message}, not kept`);
     }
   }
   return left;
 }
 
-// a file read as its owner, up to max bytes
-function read(who: Who, path: string, max: number) {
-  return new Promise<Buffer>((resolve, reject) => {
-    const cat = spawn('cat', ['--', path], {
-      env: who.env,
-      uid: who.uid,
-      gid: who.gid,
-      stdio: ['ignore', 'pipe', 'ignore'],
-    });
-    const parts: Buffer[] = [];
-    let size = 0;
-    cat.stdout.on('data', (d: Buffer) => {
-      if ((size += d.length) > max) cat.kill('SIGKILL');
-      else parts.push(d);
-    });
-    cat.on('close', code =>
-      code === 0 && size <= max ? resolve(Buffer.concat(parts)) : reject(new Error(`couldn't read ${path}`)),
-    );
+// a file read as its owner, up to max bytes and within ms
+export async function read(who: Who, path: string, max: number, ms = READ_MS) {
+  const parts: Buffer[] = [],
+    run = cat(who, path, ms);
+  let size = 0;
+  run.stdout.on('data', (d: Buffer) => {
+    if ((size += d.length) > max) run.stop();
+    else parts.push(d);
   });
+  const ended = await run.ended;
+  if (ended.timedOut) throw new Error(`${path} didn't read within ${ms / 1000} s`);
+  if (size > max) throw new Error(`${path} is over ${max} bytes`);
+  if (ended.code !== 0) throw new Error(`couldn't read ${path}`);
+  return Buffer.concat(parts);
 }
 
-// a file copied as its owner into `to`, whole and only when it has the sha256 and size given
-function copy(who: Who, from: string, to: string, sha256: string, bytes: number) {
-  return new Promise<boolean>(resolve => {
-    const cat = spawn('cat', ['--', from], {
-      env: who.env,
-      uid: who.uid,
-      gid: who.gid,
-      stdio: ['ignore', 'pipe', 'ignore'],
-    });
-    const out = createWriteStream(to, { mode: 0o600 }),
-      hash = createHash('sha256');
-    let size = 0;
-    cat.stdout.on('data', (d: Buffer) => {
-      if ((size += d.length) > bytes) cat.kill('SIGKILL');
-      else hash.update(d);
-    });
-    cat.stdout.pipe(out);
-    cat.on('close', code => out.end(() => resolve(code === 0 && size === bytes && hash.digest('hex') === sha256)));
+// a file copied as its owner into `to`, whole, within ms and only when it has the sha256 and size given
+async function copy(who: Who, from: string, to: string, sha256: string, bytes: number, ms: number) {
+  const out = createWriteStream(to, { mode: 0o600 }),
+    hash = createHash('sha256'),
+    run = cat(who, from, ms);
+  let size = 0;
+  run.stdout.on('data', (d: Buffer) => {
+    if ((size += d.length) > bytes) run.stop();
+    else hash.update(d);
   });
+  run.stdout.pipe(out);
+  const ended = await run.ended;
+  await new Promise(done => out.end(done));
+  if (ended.timedOut) throw new Error(`its render didn't read within ${ms / 1000} s`);
+  if (ended.code !== 0 || size !== bytes || hash.digest('hex') !== sha256)
+    throw new Error("its render isn't what it names");
+}
+
+// `cat` of a file as its owner, killed when it runs past ms: a FIFO or a device that never ends
+function cat(who: Who, path: string, ms: number) {
+  const run = spawn('cat', ['--', path], {
+    env: who.env,
+    uid: who.uid,
+    gid: who.gid,
+    stdio: ['ignore', 'pipe', 'ignore'],
+  });
+  const stop = () => run.kill('SIGKILL');
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    stop();
+  }, ms);
+  const ended = new Promise<{ code: number | null; timedOut: boolean }>(resolve =>
+    run.on('close', code => {
+      clearTimeout(timer);
+      resolve({ code, timedOut });
+    }),
+  );
+  return { stdout: run.stdout, stop, ended };
 }

@@ -6,7 +6,7 @@
 // (playtypes.ts).
 export type Wait =
   | { on: 'board'; request?: number; at?: number; paused?: true }
-  | { on: 'seats'; engine: string; until: number }
+  | { on: 'seats'; engine: string; until: number; from?: number; reason?: 'pacing' | 'unavailable' }
   | { on: 'queue'; engine: string; minutes: number; pausing?: true }
   | { on: 'job'; job: number }
   | { on: 'deploy' }
@@ -18,7 +18,12 @@ export function waitWords(w: Wait, at: (ms: number) => string) {
     return w.paused
       ? "the board's pause of the company"
       : `the board's answer${w.request ? ` on card #${w.request}` : ''}${w.at ? `, expected about ${at(w.at)}` : ''}`;
-  if (w.on === 'seats') return `the ${w.engine} seats, out until ${at(w.until)}`;
+  if (w.on === 'seats') {
+    const interval = `${w.from === undefined ? 'until' : `from ${at(w.from)} until`} ${at(w.until)}`;
+    return w.reason === 'pacing'
+      ? `${w.engine} seat pacing for this non-urgent work ${interval} (urgent work may use paced seats)`
+      : `a matching ${w.engine} seat becoming available ${interval}`;
+  }
   if (w.on === 'queue' && w.pausing)
     return `pausing lower-order work for the ${w.engine} seats (${duration(w.minutes)})`;
   if (w.on === 'queue')

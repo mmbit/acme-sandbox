@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, cpSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -27,6 +27,72 @@ test('--helper runs the tests on a lent machine and brings back its report, and 
   assert.match(lent.out, /\(on attic\)$/m);
   assert.deepEqual(passed('lent.json'), { passed: 1 });
 });
+
+test('a push whose tests helper is briefly absent waits on and runs there, never here', async () => {
+  const { run } = absentHelperCase();
+  const env = await playedHq(
+    [
+      { state: 'waiting', machine: 'attic', helperPresent: false },
+      { state: 'done', machine: 'attic' },
+    ],
+    { HELPER_TAKE_MINUTES: '0.001' },
+  );
+  const ran = run(env, 'tests.ts', ['--helper']);
+  assert.equal(ran.status, 0, ran.out);
+  assert.match(ran.out, /1 passed/);
+  assert.match(ran.out, /on attic/);
+  assert.doesNotMatch(ran.out, /They run here instead/);
+});
+
+for (const state of ['withdrawn', 'waiting']) {
+  test(`a ${state} helper run with no helper there leaves an incomplete report by its deadline, without local tests`, async () => {
+    const { dir, run } = absentHelperCase();
+    const outcomes = join(dir, 'outcomes.json');
+    const env = await playedHq([{ state, machine: 'attic', helperPresent: false }], {
+      TESTS_HELPER_ABSENT_MS: '1',
+      HELPER_TAKE_MINUTES: '0.001',
+    });
+    const ran = run(env, 'tests.ts', ['--helper', '--outcomes', outcomes]);
+    assert.equal(ran.status, 2, ran.out);
+    assert.match(
+      ran.out,
+      state === 'withdrawn' ? /no helper ran them/ : /no tests helper was there to take it in time/,
+    );
+    assert.doesNotMatch(ran.out, /Tests passed:|They run here instead/);
+    assert.equal(existsSync(outcomes), false);
+    const response = await fetch(`${env.HQ_URL}/api/agent/runs/1`, {
+      headers: { authorization: `Bearer ${env.HQ_TOKEN}` },
+    });
+    assert.equal((await response.json()).state, state === 'withdrawn' ? state : 'stopped');
+  });
+}
+
+test('past the deadline, a run waits for a present busy helper and runs on to its result', async () => {
+  const { run } = absentHelperCase();
+  const env = await playedHq(
+    [
+      { state: 'waiting', machine: 'attic', helperPresent: true },
+      { state: 'running', machine: 'attic' },
+      { state: 'done', machine: 'attic' },
+    ],
+    { TESTS_HELPER_ABSENT_MS: '1', HELPER_TAKE_MINUTES: '0.001' },
+  );
+  const ran = run(env, 'tests.ts', ['--helper']);
+  assert.equal(ran.status, 0, ran.out);
+  assert.match(ran.out, /1 passed/);
+  assert.match(ran.out, /on attic/);
+});
+
+function absentHelperCase() {
+  return clone(
+    {
+      'shared/gates/tests-on-helper.sh': ON_HELPER,
+      'kits/absent/sum.ts': sum('a + b'),
+      'kits/absent/sum.test.ts': nodeTest('sums two numbers', 'assert.equal(sum(1, 2), 3);'),
+    },
+    { 'kits/absent/notes.md': 'touched\n' },
+  );
+}
 
 test('browser test areas receive executable runtime assets and their shared libraries, while other areas do not', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'tests-browsers-'));

@@ -115,36 +115,31 @@ const statusLine = (state, text) => `${STATUS_LOG[state] || state}${text ? ': ' 
 // shell reads the org again). Two feelings follow from events on their own: a job finished (working to idle) is happy,
 // a post of one's own a celebration.
 export function apply(ev) {
-  const A = agents.get(ev.agent), B = agents.get(ev.to), was = A?.state;
+  const A = agents.get(ev.agent), B = agents.get(ev.to);
+  logged(ev, A, B);
+  // The feed's replay on (re)connecting is history, which only fills the logs. A message or a post shown again would
+  // read as a new one. The current statuses follow the replay.
+  if (!ev.history) happened(ev, A);
+  return { unknown: (ev.agent && !A && ev.agent !== 'board') || (ev.to && !B && ev.to !== 'board') };
+}
+// The lines an event adds to the logs of those it's about
+function logged(ev, A, B) {
   const log = (X, type, txt) => { if (!X) return; X.logs.push({ ts: ev.ts || Date.now(), type, text: txt }); if (X.logs.length > LOG_MAX) X.logs.shift(); };
-  // (the feed's replay on (re)connecting: what was, for the logs; its current statuses follow.)
-  if (ev.type === 'status' && A && ev.history) log(A, 'status', statusLine(ev.state || A.state, ev.text));
-  else if (ev.type === 'status' && A) {
-    const task = A.task;
-    A.heard = Date.now();
-    if (ev.state) A.state = ev.state;
-    A.task = ev.text || (ev.state === 'idle' ? '' : A.task);
-    // (since: a job's own start, when the status gives one: its clock goes on across its runs.)
-    if (A.state === 'working' && (ev.since || was !== 'working' || A.task !== task)) A.since = Date.parse(ev.since ?? ev.ts) || Date.now();
-    if (A.state !== 'working') A.lines = A.tokens = undefined;   // (a job's lines and tokens stay with it while it's at work)
-    A.jobs = A.state !== 'working' ? undefined : ev.jobs ?? said(A.jobs, ev);
-    const of = A.jobs?.find(j => j.id === ev.job);   // (with its jobs, the lines of the one it's of.)
-    if (of) A.lines = of.lines;
-    log(A, 'status', statusLine(A.state, ev.text));
-    sleepCheck();
-    emit('status', { agent: A.id, was });
-    if (was === 'working' && A.state === 'idle') emote(A.id, 'happy');
-  } else if (ev.type === 'chat' && A) {
+  if (ev.type === 'status' && A) log(A, 'status', statusLine(ev.state || A.state, ev.text));
+  else if (ev.type === 'chat' && A) {
     log(A, 'chat', `To ${B?.data.name || ev.to || 'everyone'}: ${ev.text}`);
     log(B, 'chat', `From ${A.data.name}: ${ev.text}`);
-    emit('say', { agent: A.id, to: ev.to, text: ev.text });
-  } else if (ev.type === 'post') {
-    log(A, 'post', `Published “${ev.text}”`);
+  } else if (ev.type === 'post') log(A, 'post', `Published “${ev.text}”`);
+  else if (ev.type === 'log') log(A, 'log', ev.text);
+}
+// What a live event changes, and what the looks hear of it
+function happened(ev, A) {
+  if (ev.type === 'status' && A) takeChange(A, ev);
+  else if (ev.type === 'chat' && A) emit('say', { agent: A.id, to: ev.to, text: ev.text });
+  else if (ev.type === 'post') {
     emit('post', { agent: ev.agent, title: ev.text, board: ev.state === 'board' });
     emote(ev.agent, 'celebrate');
   } else if (ev.type === 'log' && A) {
-    log(A, 'log', ev.text);
-
     if (A.data.steps && A.state === 'working' && ev.text) A.task = ev.text;
     emit('log', { agent: A.id, text: ev.text, tests: ev.tests || 0 });
   } else if (ev.type === 'lines' && A) {   // the lines their job's branch changes so far (the worker reads its clone)
@@ -160,7 +155,22 @@ export function apply(ev) {
   else if (ev.type === 'machines') setMachines(ev.machines);
   else if (ev.type === 'studio') setStudio(ev.studio);
   else if (ev.type === 'statuses') hydrate(ev.statuses);
-  return { unknown: (ev.agent && !A && ev.agent !== 'board') || (ev.to && !B && ev.to !== 'board') };
+}
+// One status change as the feed tells it: its state, words, clock, jobs and lines
+function takeChange(A, ev) {
+  const was = A.state, task = A.task;
+  A.heard = Date.now();
+  if (ev.state) A.state = ev.state;
+  A.task = ev.text || (ev.state === 'idle' ? '' : A.task);
+  // (since: a job's own start, when the status gives one: its clock goes on across its runs.)
+  if (A.state === 'working' && (ev.since || was !== 'working' || A.task !== task)) A.since = Date.parse(ev.since ?? ev.ts) || Date.now();
+  if (A.state !== 'working') A.lines = A.tokens = undefined;   // (a job's lines and tokens stay with it while it's at work)
+  A.jobs = A.state !== 'working' ? undefined : ev.jobs ?? said(A.jobs, ev);
+  const of = A.jobs?.find(j => j.id === ev.job);   // (with its jobs, the lines of the one it's of.)
+  if (of) A.lines = of.lines;
+  sleepCheck();
+  emit('status', { agent: A.id, was });
+  if (was === 'working' && A.state === 'idle') emote(A.id, 'happy');
 }
 // An agent's running jobs (the coordinator's events.ts RunningJob: id, task, project, thread, since, lines), newest
 // first, once it said what it's doing in one of them: that one reads its words.
@@ -173,12 +183,12 @@ export function setStatuses(org, asked) {
   for (const d of org.departments || []) for (const a of d.agents || []) {
     const A = agents.get(a.id), s = a.status;
     if (!A || !s?.state || (A.heard ?? 0) > asked) continue;
-    take(A, s);
+    takeWhole(A, s);
   }
   emit('read', { asked });
 }
-// One's status as the coordinator has it now, whole (events.ts Status)
-function take(A, s) {
+// One's status as the coordinator has it now, whole (events.ts Status) (the name)
+function takeWhole(A, s) {
   const was = A.state, now = { state: s.state, task: s.task ?? '', since: Date.parse(s.since) || undefined, jobs: s.jobs };
   if (JSON.stringify(now) === JSON.stringify({ state: A.state, task: A.task ?? '', since: A.since, jobs: A.jobs })) return;
   Object.assign(A, now, { lines: s.lines, tokens: s.tokens });
@@ -193,7 +203,7 @@ function hydrate(statuses) {
     const s = statuses[A.id] ?? (A.data.temp || A.data.board ? null : { state: 'idle' });
     if (!s) continue;
     A.heard = Date.now();
-    take(A, s);
+    takeWhole(A, s);
   }
 }
 export function setRequests(n) { requests = n; }

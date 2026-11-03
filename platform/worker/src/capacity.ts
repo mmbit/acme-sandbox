@@ -2,7 +2,7 @@
 import { appendFileSync, chmodSync, closeSync, mkdirSync, openSync } from 'node:fs';
 import { join } from 'node:path';
 import type { JobUse } from './shares.ts';
-import type { SeatState } from './worker.ts';
+import type { SeatState } from '../hq/seatwords.ts';
 import { decimal, readCgroup, workerMemory } from './memory.ts';
 
 type Occupant = { job: number; slot: string; uid: number; seat: string; engine: string; kind: string; cliPid?: number };

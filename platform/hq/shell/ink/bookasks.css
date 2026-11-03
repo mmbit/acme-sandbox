@@ -44,6 +44,10 @@
   font-weight: 700;
   white-space: normal;
   cursor: pointer;
+  /* (over the room's handle under them, a finger's size at any zoom, bookgroups.css: zoomed out to show a card hung
+     beside its note, it reaches up over them.) */
+  position: relative;
+  z-index: 1;
 }
 #book .ask-slip .chip.on {
   background: var(--bk-cloth);

@@ -1,6 +1,8 @@
 // A minimised call floats over the page. Its first position keeps clear of controls and readable content.
 // A pen or finger can then put it anywhere. The chosen position survives layout changes, clamped to the visible screen.
 // HQ and the join page supply their face, words, icons and callbacks, and can keep the position in localStorage.
+// Pause is a key of the page's icons where it gives them (icons.pause, and icons.resume while paused), its words its
+// label and tooltip; its words otherwise.
 import { clearSpot, floating, inSight, keptClear, room } from './floating.js';
 
 // A shorter movement is a tap, so opening the call never competes with dragging it.
@@ -11,6 +13,7 @@ export class CallBubble {
     this.words = words;
     this.keep = keep;
     this.onSound = onSound;
+    this.pauseIcons = icons.pause && { pause: icons.pause, resume: icons.resume ?? icons.pause };
     this.position = readPosition(keep);
     this.reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
     const el = (this.el = document.createElement('div'));
@@ -22,12 +25,13 @@ export class CallBubble {
     el.innerHTML = `<button type="button" class="cb-face" aria-label="${attr(words.open)}" title="${attr(words.open)}"></button>
       <span class="cb-eye" role="img" aria-label="${attr(words.watched)}" title="${attr(words.watched)}" hidden>${icons.eye ?? EYE}</span>
       <div class="cb-keys">
-        <button type="button" class="cb-pause" hidden>${attr(words.pause)}</button>
+        <button type="button" class="cb-pause" hidden></button>
         <button type="button" class="cb-hangup" aria-label="${attr(words.hangUp)}" title="${attr(words.hangUp)}">${icons.hangUp ?? HANG_UP}</button>
       </div>`;
     el.querySelector('.cb-face').append(face);
     this.pauseKey = el.querySelector('.cb-pause');
     this.pauseKey.onclick = () => (this.isPaused ? onResume?.() : onPause?.());
+    this.watching('off');
     el.querySelector('.cb-hangup').onclick = () => onHangUp?.();
     this.onOpen = onOpen;
     this.wireDrag();
@@ -107,7 +111,13 @@ export class CallBubble {
     this.isPaused = state === 'paused';
     this.el.querySelector('.cb-eye').hidden = state !== 'watched';
     this.pauseKey.hidden = state === 'off';
-    this.pauseKey.textContent = this.isPaused ? this.words.resume : this.words.pause;
+    const says = this.isPaused ? this.words.resume : this.words.pause;
+    if (!this.pauseIcons) this.pauseKey.textContent = says;
+    else if (this.pauseKey.title !== says) {
+      this.pauseKey.innerHTML = this.isPaused ? this.pauseIcons.resume : this.pauseIcons.pause;
+      this.pauseKey.title = says;
+      this.pauseKey.setAttribute('aria-label', says);
+    }
     this.pauseKey.setAttribute('aria-pressed', String(this.isPaused));
     this.el.classList.toggle('paused', this.isPaused);
   }

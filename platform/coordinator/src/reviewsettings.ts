@@ -5,8 +5,9 @@ import { yamlFile } from './company.ts';
 // for in them, and the folder the author's records go in.
 export type VisualCheck = { paths: string[]; except?: string[]; run: string; look: string; record: string };
 // The board's screens, rendered before and after whatever a change touches (screens.ts): the rule its work then falls
-// under (org.yaml engineOnly), the command that renders them, what to judge them against, and the looks and devices
-// (Playwright context options, by name) that command shoots them in
+// under (org.yaml engineOnly), the command a ruling renders them with (on the render helper: the push check's own render
+// runs on the worker), what to judge them against, and the looks and devices (Playwright context options, by name) both
+// shoot them in
 export type ScreensCheck = {
   rule: string;
   run: string;

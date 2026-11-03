@@ -3,9 +3,10 @@
 The company supplies general review candidates in `roles.reviewers` and eligible consolidators in
 `roles.consolidator` (one ID or a preference list). Each round's triage goes to the eligible consolidator whose
 seats start it soonest: the fewest review runs ahead of it per ready seat of its engine, the list's order breaking
-ties. Running reviews count ahead. Queued runs count ahead according to the shared plan's board lane, latest
-start and job order. A paced seat counts when the prospective run's shared scheduling key passes
-`planner.pacedTakes`: its latest start precedes the weekly reset, or it serves the board lane (`panel.ts`).
+ties. Running reviews count ahead. Queued runs count ahead according to the shared plan's board lane, urgency,
+latest start and job order. A paced seat counts when the prospective run's shared scheduling key passes
+`planner.pacedTakes`: the work is urgent, marked or expedited (`panel.ts`). A deadline orders work within pacing
+and waits for an available paced seat. The board can mark or clear urgent work at milestone, job or task level.
 The default is the company's CEO. Co-authors may review and rule on work they wrote together. A sole author is
 excluded from panel and consolidator candidates, including the CEO and on retries. If the listed consolidators
 are ineligible, general reviewers are considered next, then other Claude or Codex staff.

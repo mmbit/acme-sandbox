@@ -45,15 +45,24 @@ export function onWork(pr?: number | null, branch?: string | null) {
   return screensRule ? { ...screensRule, files: [] } : undefined;
 }
 
+// A queued job on the rule's engine and model, as jobs.ts engineFor gives a new one: no other engine's cli or seat, and
+// no lighter model of its queuer's
+const PIN = 'engine = $engine, cli = null, for_seat = null, model = $model, engine_only = $id, light = 0';
+const pinOf = (rule: EngineOnly) => ({ engine: rule.engine, model: rule.model, id: rule.id });
+
+export function pin(job: number, rule: EngineOnly) {
+  db.prepare(`update jobs set ${PIN} where id = $job`).run({ ...pinOf(rule), job });
+}
+
 // Queued work that a push shows to be the rule's moves to its engine and model before any seat takes it: the jobs on the
 // pull request or branch and the tasks of its thread that haven't started. A review's own files decided its engine.
 export function repin(pr: number, branch: string, rule: EngineOnly) {
   db.prepare(
-    `update jobs set engine = $engine, cli = null, for_seat = null, model = $model, engine_only = $id
+    `update jobs set ${PIN}
     where status = 'queued' and started is null and kind != 'review' and engine_only is null
     and (branch = $branch or pr = $pr or thread in (select id from threads where branch = $branch
       union select thread from jobs where thread is not null and coalesce(branch, 'job/' || id) = $branch))`,
-  ).run({ engine: rule.engine, model: rule.model, id: rule.id, branch, pr });
+  ).run({ ...pinOf(rule), branch, pr });
 }
 
 // A review panel's seats, with work only one engine does judged on that engine alone. A seat on another engine that has

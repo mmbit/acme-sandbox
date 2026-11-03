@@ -22,7 +22,9 @@ const RENDERERS = process.argv[2]?.split(',') ?? lookNames(); // (node seats-che
 // (and claude-1's week resetting in 2.5 days, so its even pace is 64% of the week gone)
 const mockSeats = JSON.parse(readFileSync(new URL('./mock/seats.json', import.meta.url)));
 import { lookNames } from './looks.mjs';
+// (its pace lets non-urgent work start again in two days, before that reset)
 mockSeats.find(s => s.id === 'claude-1').week_resets = Date.now() + 2.5 * 864e5;
+mockSeats.find(s => s.id === 'claude-1').status.until = Date.now() + 2 * 864e5;
 const files = {
   'mock/seats.json': Buffer.from(JSON.stringify(mockSeats)),
   'mock/requests.json': Buffer.from(
@@ -121,7 +123,7 @@ for (const look of RENDERERS)
     );
     assert.match(
       await text(page, '.seat-status [data-seat="claude-2"]'),
-      /until (\w{3} )?\d\d:\d\d\s*5-hour\s*91%\s*↻ (\w{3} )?\d\d:\d\d\s*Week\s*71%\s*↻/,
+      /nothing running · new work from (\w{3} )?\d\d:\d\d\s*5-hour\s*91%\s*↻ (\w{3} )?\d\d:\d\d\s*Week\s*71%\s*↻/i,
       at,
     );
     assert.equal(
@@ -130,13 +132,22 @@ for (const look of RENDERERS)
       at,
     );
     assert.doesNotMatch(await text(page, '.seat-status'), /Waiting for the board/, `${at}: no sentences`);
-    // claude-1 is paced: what it still takes till its week resets as its tooltip, and its week past an even pace
+    // claude-1 is paced: what it still takes and till when as its tooltip, and its week past an even pace
     const paced = await page.$eval('.seat-status [data-seat="claude-1"]', li => ({
       says: li.querySelector('.st').title,
       tick: parseFloat(li.querySelector('.pace-at').style.left),
       week: parseFloat(li.querySelectorAll('.bar i')[1].style.width),
     }));
-    assert.match(paced.says, /^Takes only your work and what must start before \S/, at);
+    assert.match(paced.says, /^Takes only urgent work and your conversations until \S.*, at its use so far$/, at);
+    // what runs on each seat apart from what new work waits for: a paced seat with work running isn't out
+    const now = {
+      'claude-1': /^5 running · urgent only until (\w{3} )?\d\d:\d\d$/i,
+      'claude-key-1': /^1 running · takes new work$/i,
+      'mistral-1': /^nothing running · takes new work$/i,
+    };
+    for (const [id, re] of Object.entries(now))
+      assert.match(await text(page, `.seat-status [data-seat="${id}"] .seat-until`), re, `${at}: ${id}`);
+    assert.equal(await page.$('.seat-status [data-seat="claude-3"] .seat-until'), null, `${at}: signed out says so`);
     assert.ok(
       paced.tick > 50 && paced.tick < paced.week,
       `${at}: the week (${paced.week}%) past its even pace (${paced.tick}%)`,

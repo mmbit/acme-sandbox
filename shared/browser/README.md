@@ -83,12 +83,19 @@ container. If no lent render helper is present, the caller runs on the worker un
 shared `/run/lock` directory. Every job and checkout uses that same inode, across slot users. The supervisor holds the
 lock until its render and all descendants have stopped. No lock file can go stale or be removed by job cleanup.
 
-The supervisor uses Linux's child subreaper facility to collect detached Chromium descendants. An idle render stops
-with exit 124 after 120 seconds without harness progress (four default 30-second Playwright operation budgets), or at
-the 30-minute run budget shared with the test helper. Harness operations report progress over IPC, independent of
-console output. Cancellation, script failures and normal exits also clean up descendants before releasing the slot.
-Pixel comparisons run two scenarios at once, with two pages per comparison, instead of increasing their page count
-with the host's core count. Room previews retain their two-page pool.
+
+The supervisor's parent is a small reaper (`reaper.pl`), Linux's child subreaper for the render: detached Chromium
+descendants are adopted into it, so cleanup still finds them, and each one is collected as it dies. Every browser leaves
+a few behind as it ends, more as it crashes: uncollected, they would pile up against the job's process limit until no
+new browser could start. An idle render stops with exit 124 after 120 seconds without harness progress (four default
+30-second Playwright operation budgets). Every render has one 30-minute bound, shared with the test helper, from when it
+asks for the slot: the wait for the slot counts, so renders queued behind one that hangs end with it rather than sit,
+and can be run again. A stopped render names what it still had running, its script and the cause, with the time spent
+waiting for the slot when it reached its bound (`Render stopped with screens-compare.mjs, chrome-headless-shell ×4
+running: screens-compare.mjs made no harness progress for 120 s`). Harness operations report progress over IPC,
+independent of console output. Cancellation, script failures and normal exits also clean up descendants before releasing
+the slot. Pixel comparisons run two scenarios at once, with two pages per comparison, instead of increasing their page
+count with the host's core count. Room previews retain their two-page pool.
 
 Pixel comparisons capture the visible viewport through Playwright, including DOM, 2D and WebGL renderers. Each shot
 compares the selected reference's page with the working tree's page. The dev fixture's `mock/brand.json` picks the
@@ -99,7 +106,7 @@ step with the worker image and the company's render image. The official Playwrig
 fonts and system libraries. `onhelper.sh` installs only the pinned npm packages through the existing helper proxy.
 The pictures use the same software browser rendering as the worker, without GPU access.
 
-Run `node --test shared/browser/render.test.ts` for concurrency, snapshot, artifact, failure and cleanup checks.
+Run `node --test shared/browser/render.test.ts` for concurrency, snapshot, artifact, failure, bound and cleanup checks.
 
 ## Push tests
 

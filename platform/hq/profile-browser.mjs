@@ -8,7 +8,7 @@ export const SAMPLE_MS = 5000; // (the profiler's own is 20 s: a session here is
 export const IPAD_MINI = { viewport: { width: 1133, height: 744 }, deviceScaleFactor: 2, hasTouch: true };
 
 // HQ open in this look and loaded. samples fills with the profiler's samples as the page sends them. initScripts run
-// after the profiler's, before HQ's own. before: what's set up on the browser's context before HQ opens (its routes).
+// after the profiler's, before HQ's own. before: what's set up on the browser's context before HQ opens, its routes.
 // cdp is Chromium's DevTools session on the page (null in WebKit).
 export async function openProfiled({ engine, look, initScripts = [], before = async () => {} }) {
   // (the profiler reads its sample and send times from window.__profileTimes)

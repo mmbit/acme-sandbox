@@ -1,12 +1,14 @@
 // book-check.mjs's story of My shelf (shell/ink/bookshelf.js, bookshelfbooks.js, bookshelfcover.js): big books with
-// covers, as the deck's shelf. The board gives My journal a cover from its menu (a picture picked on the device); a
-// project's book wears its project's cover, another a quiet drawing; each says its one line under its name and counts
-// its asks on its corner; a round back from Lyra stands there in its envelope. At a phone, an iPad mini upright and
-// sideways, and a desktop with a narrow and a wide notebook: every book whole on the paper, clear of the controls and
-// of each other, its name and line unclipped, standing on its board; a book opens to its pages as before.
+// covers, drawn like the notebook itself (board, call 178). The board gives My journal a cover from its menu (a
+// picture picked on the device); a project's book wears its project's cover, another its bare cloth and its label
+//; each says its one line under its name and counts
+// its asks on its corner; a round back from Lyra stands there in its envelope. In the Shelf's own window from HQ's
+// Shelf key (bookshelfwindow.js), at a phone, an iPad mini upright and sideways,
+// and a desktop: every book whole on the paper, clear of each other, its name and line unclipped, standing on its
+// board; a book tapped opens in the book.
 import assert from 'node:assert/strict';
 import { errorsOf, until } from '../../shared/browser/browser.mjs';
-import { DESKTOP, MINI, OVERVIEW, UPRIGHT } from './bookkit.mjs';
+import { DESKTOP, MINI, UPRIGHT, shelfKey } from './bookkit.mjs';
 
 const PHONE = { width: 390, height: 844 };
 const DAY = 86_400_000,
@@ -22,55 +24,46 @@ export function myShelfStories(c) {
 
 async function shelves(browser, c) {
   const picture = await lighthouse(browser);
-  for (const [label, viewport, wider] of [
-    ['mini-upright', UPRIGHT, 0],
-    ['phone', PHONE, 0],
-    ['mini-sideways', MINI, 0],
-    ['desktop-narrow', DESKTOP, 0],
-    ['desktop-wide', DESKTOP, 900],
+  for (const [label, viewport] of [
+    ['mini-upright', UPRIGHT],
+    ['phone', PHONE],
+    ['mini-sideways', MINI],
+    ['desktop', DESKTOP],
   ])
-    await shelfAt(browser, c, { label, viewport, wider, picture, upload: label === 'mini-upright' });
+    await shelfAt(browser, c, { label, viewport, picture, upload: label === 'mini-upright' });
 }
 
-async function shelfAt(browser, c, { label, viewport, wider, picture, upload }) {
+async function shelfAt(browser, c, { label, viewport, picture, upload }) {
   const seed = shelfSeed(upload ? null : `data:image/png;base64,${picture.toString('base64')}`);
   const touch = viewport.width < 800;
   const context = await c.hqIn(browser, viewport, { notebooks: seed, hasTouch: touch, isMobile: touch });
   const page = await context.newPage(),
     errors = errorsOf(page);
   try {
-    const far = await openShelf(page, c, wider);
+    const far = await openShelf(page, c);
     if (upload) await giveCover(page, far, c, label, picture);
     await page.waitForFunction(() =>
       [...document.querySelectorAll('#book .bk-cover-frame img')].every(i => i.complete && i.naturalWidth),
     );
     shelfChecked(await shelfSeen(page), label);
     await c.shot(`myshelf-${label}`, page);
-    // a book opens to its pages as before
+    // a book opens in the book, the window away
     await far.getByRole('button', { name: /^My journal,/ }).click();
-    await page.waitForTimeout(c.settle);
-    assert.equal(await page.evaluate(() => document.querySelector('#book .bk-far').dataset.level), 'pages');
+    await page.waitForFunction(() => ['open', 'spread'].includes(document.documentElement.dataset.book));
+    assert.equal(await page.locator('#book .bk-shelf-window').isVisible(), false, 'the Shelf put away');
     assert.deepEqual(errors, []);
   } finally {
     await context.close();
   }
 }
 
-// HQ's book open (lifted where it starts folded), made wider by dx if asked, and the overview on My shelf
-async function openShelf(page, c, wider) {
+// HQ's Shelf key pressed: My shelf in its own window
+async function openShelf(page, c) {
   await page.goto(`${c.base}/?intro=0&renderer=wire`);
   await until(page, '#loading.gone');
-  if ((await page.evaluate(() => document.documentElement.dataset.book)) === 'folded') {
-    await page.locator('#book .bk-lip').click();
-    await page.waitForFunction(() => !['folded', undefined].includes(document.documentElement.dataset.book));
-  }
-  await page.waitForFunction(() => !document.querySelector('#book.bk-swinging'));
-  if (wider) await widen(page, wider);
-  await page.locator('#book').getByRole('button', { name: OVERVIEW, exact: true }).click();
+  await (await shelfKey(page)).click();
   await page.waitForTimeout(c.settle);
-  const far = page.getByRole('list', { name: 'The overview' });
-  await far.getByRole('button', { name: /^The Shelf/ }).click();
-  await page.waitForTimeout(c.settle);
+  const far = page.getByRole('dialog', { name: 'The Shelf' }).getByRole('list', { name: 'The overview' });
   assert.equal(await far.locator('.bk-shelf-title').textContent(), 'My shelf');
   assert.equal(await far.locator('.bk-shelf-count').textContent(), '5 books');
   return far;
@@ -134,24 +127,11 @@ function shelfChecked(seen, label) {
   console.log(`  ${label}: books ${seen.width} px, ${seen.across} to a row`);
 }
 
-// The cover's edge dragged left by dx: the notebook wider
-async function widen(page, dx) {
-  const r = await page.locator('#book [role=separator]').boundingBox(),
-    x = r.x + r.width / 2,
-    y = page.viewportSize().height * 0.66;
-  await page.mouse.move(x, y);
-  await page.mouse.down();
-  await page.mouse.move(x - dx, y, { steps: 12 });
-  await page.waitForTimeout(250);
-  await page.mouse.up();
-  await page.waitForTimeout(600);
-}
-
 // What the Shelf shows: the paper's span clear of the controls, and each book's box, name, line, count, picture and
 // the board it stands on
 const shelfSeen = page =>
   page.evaluate(() => {
-    const far = document.querySelector('#book .bk-far'),
+    const far = document.querySelector('#book .bk-shelf-window .bk-far'),
       r = far.getBoundingClientRect(),
       style = getComputedStyle(far);
     const books = [...far.querySelectorAll('.bk-book')].map(el => {

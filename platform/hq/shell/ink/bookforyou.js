@@ -13,7 +13,7 @@ const ICONS = {
   next: lineIcon('<path d="M6 9l6 6 6-6"/>'),
 };
 
-// book: bookpages.js's: the counter in its paper's head, left of the dog-ear, kept where it is as the page pans and
+// book: bookpages.js's: the counter in its paper's head, at its right, kept where it is as the page pans and
 // zooms under it. Returns { update(far) }: the counter as the page shown is now (far: the overview open, where it's
 // away).
 export function mountForYou(book) {

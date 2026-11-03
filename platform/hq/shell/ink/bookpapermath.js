@@ -1,4 +1,4 @@
-// The paper effects' plain numbers (bookpaper.js, bookpaperdraw.js, bookdogear.js): how fast words are written, the
+// The paper effects' plain numbers (bookpaper.js, bookpaperdraw.js, booktear.js): how fast words are written, the
 // outline of a sheet balling up, of a page torn out at the spine, and words wrapped in a box. No DOM.
 
 // Writing: a letter this often, and a whole line done within this however long it is

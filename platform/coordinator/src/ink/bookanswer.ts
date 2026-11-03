@@ -3,7 +3,8 @@
 // run (chat.ts), and while it goes the group shows the owner's face and pencil dots under it, where the answer will slip
 // What an answer holds is its style: 'text' (words, a picture or a preview's link), 'drawing' (ink), 'form' (questions,
 // questions.js's, the board fills in), 'question' (the agent asks the board), 'version' (a try run's frame of the thing
-// changed, with its patch: booktry.ts). It slips under the scrap it's on. The
+// changed, with its patch: booktry.ts). A text or drawing may be a fix, a change the board ticks to have built
+// (bookfix.ts). It slips under the scrap it's on. The
 // board ticks it (a version: picks it), writes a reply under it (notebooksend.ts replyTo) or
 // answers its form; the open list is the forms and questions still waiting on the board.
 //   - Every change is a 'book' event with text 'notebook' and the page (notebook.ts changed).
@@ -24,6 +25,7 @@ import { onCall, rootOn, tryHolds } from './booktry.ts';
 import { pick } from './bookpick.ts';
 import { branchVersion, overMain } from './trybranch.ts';
 import { partsOfAnswer } from './answerparts.ts';
+import { tickRefused } from './bookfix.ts';
 import { isRefused, type Refused } from '../pagechecks.ts';
 import { DIR } from '../pagescraps.ts';
 import { changed, pageRow } from '../notebook.ts';
@@ -63,11 +65,14 @@ export function answerNow(t: Target, verdict: { id: number; why: string }) {
   return job;
 }
 const ANSWER_FIRST = `Answer it now: your final message is the answer, exactly as the board reads it, written in beside \
-its note. Plain words, the answer first, about 60 words. If it needs work rather than an answer, say what you'd do: the \
-board sends it. Don't queue work or change files.`;
+its note. Plain words, the answer first, about 60 words. Don't queue work or change files.`;
 const RICHER = (target: string) => `If words aren't the best answer, clip one with \`hq answer ${target}\` instead \
 (then your final message isn't shown): --ink <strokes.json> a drawing, --form <questions.json> a few questions for \
 the board to fill in, --asks your own question to the board, --picture <png> a picture.`;
+// (a group's whose page isn't sent yet: if it needs work, the fix the board ticks to have it built, bookfix.ts)
+const FIX = (target: string) => `If it needs work rather than an answer, clip it as a fix: \`hq answer ${target} \
+"<why, in a sentence>" --fix "<the change, in a line>"\`, with --ink <strokes.json> for a drawing of the after. The \
+board ticks it and sends its page to have you build it.`;
 function groupBrief(g: Group, top: Group, page: number, why: string) {
   const box = boxOf(partsOf(top)) ?? { x: 0, y: 0, w: 0, h: 0 };
   const typed = (JSON.parse(g.texts) as { text: string }[]).map(x => x.text).join('\n');
@@ -76,7 +81,7 @@ function groupBrief(g: Group, top: Group, page: number, why: string) {
     g.parent !== null ? ' It replies to an answer under a note of the board’s: the page shows the thread.' : '';
   return `The board wrote a note in its notebook, in HQ, for you.${reply} ${ANSWER_FIRST} \`hq sketch ${page}\` saves \
 its page; the note is at x ${Math.round(box.x)}, y ${Math.round(box.y)}, ${Math.round(box.w)} × ${Math.round(box.h)} px \
-on it. ${RICHER(`g${g.id}`)}
+on it. ${RICHER(`g${g.id}`)}${top.status === 'open' ? ` ${FIX(`g${g.id}`)}` : ''}
 
 Why it calls for an answer: ${why}
 
@@ -84,7 +89,8 @@ The note's words, the board's (typed or said; its handwriting is ink, on the pag
 ${words}`;
 }
 const noteBrief = (review: number, text: string, why: string) => `The board wrote a note on a page in HQ, in its book, \
-for you. ${ANSWER_FIRST} \`hq note ${review}\` saves the note's snip (the page around its mark). ${RICHER(String(review))}
+for you. ${ANSWER_FIRST} If it needs work rather than an answer, say what you'd do: the board sends it. \
+\`hq note ${review}\` saves the note's snip (the page around its mark). ${RICHER(String(review))}
 
 Why it calls for an answer: ${why}
 
@@ -215,6 +221,10 @@ export function answer(b: any, me: Reader) {
   }
   const parts = partsOfAnswer(b);
   if (isRefused(parts)) return parts;
+  if (parts.more.fix && !target.group)
+    return [400, 'a fix goes on a note in the notebook, whose page the board sends to have it built'] as Refused;
+  if (parts.more.fix && top && top.status !== 'open')
+    return [409, 'this page has been sent, so a fix here could never be ticked: answer without --fix'] as Refused;
   // (a version's patch must make its branch: trybranch.ts.)
   const version = parts.patch === null ? null : overMain(parts.patch);
   if (typeof version === 'string') return [400, version] as Refused;
@@ -285,11 +295,14 @@ export function answerForm(b: any, who = BOARD) {
   return { answer: slipOf(slipRow(slip.id, who)!) };
 }
 // POST /api/notebooks/answers/tick { id, ticked }: a tick closes an answer (its note's too, once none of its answers is
-// open); on a version it picks it, the rest of its set not (bookpick.ts pick; false: open again, unpicked)
+// open); on a version it picks it, the rest of its set not (bookpick.ts pick; false: open again, unpicked); on a fix
+// it's to be built when the page is sent (bookfix.ts)
 export function tickAnswer(b: any, who = BOARD) {
   const slip = slipRow(Number(b?.id), who);
   if (!slip) return 404;
   if (typeof b.ticked !== 'boolean') return [400, 'ticked is true or false'] as Refused;
+  const refused = slip.fix === null ? null : tickRefused(slip, b.ticked);
+  if (refused) return refused;
   const when = b.ticked ? new Date().toISOString() : null;
   if (slip.style === 'version' && when) pick(slip);
   else

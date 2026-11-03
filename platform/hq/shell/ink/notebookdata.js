@@ -66,6 +66,10 @@ export const createGroup = (dev, page, parts) => ask(dev, '/api/notebooks/groups
 // since: the group's updated as this screen read it; one changed since is refused (409)
 export const editGroup = (dev, id, since, parts) =>
   ask(dev, '/api/notebooks/groups/edit', null, { id, since, ...parts });
+// A sketch page's units placed where they have no place yet ([{ id, x, y }], the page's px) → the groups named, each at
+// the place the store keeps
+export const placeGroups = async (dev, page, places) =>
+  (await ask(dev, '/api/notebooks/groups/place', null, { page, places })).groups;
 // To the page's end, or right after unit after there ('start': its first).
 export const moveGroup = (dev, id, page, after) => ask(dev, '/api/notebooks/groups/move', null, { id, page, after });
 // since: as edit's, so a screen deletes only what it has seen.

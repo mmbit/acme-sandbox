@@ -72,6 +72,7 @@ import * as overseer from './overseer.ts';
 import * as oversight from './oversight.ts';
 import * as profiles from './profiles.ts';
 import * as windows from './windows.ts';
+import * as urgency from './urgency.ts';
 import * as askwindow from './askwindow.ts';
 import * as wakes from './wakes.ts';
 import * as work from './work.ts';
@@ -128,6 +129,7 @@ import * as notebookrounds from './notebookrounds.ts';
 import * as viewmarks from './viewmarks.ts';
 import * as notebook from './notebook.ts';   // the Notebook: notebooks and their pages
 import * as notebookgroups from './notebookgroups.ts';   // and the groups on its pages
+import * as notebookplaces from './notebookplaces.ts';   // and a sketch page's units' places
 import * as notebooktidy from './notebooktidy.ts';   // and its blank pages let go once left
 import './notebookunits.ts';   // the groups from before scrap units carried into them, once
 import { createScrap } from './notebookscraps.ts';   // a scrap stacked on one
@@ -505,6 +507,7 @@ const api: Record<string, BoardRoute> = {
   'POST /api/notebooks/groups/restore': (q, s, b) => refusal(notebookgroups.restoreGroup(b)),
   'POST /api/notebooks/groups/resize': (q, s, b) => refusal(notebookgroups.resizeGroup(b)),
   'POST /api/notebooks/groups/split': (q, s, b) => refusal(notebookgroups.splitGroup(b)),
+  'POST /api/notebooks/groups/place': (q, s, b) => refusal(notebookplaces.placeGroups(b)),
   // the agents' answers: a form answered, an answer ticked (a version picked), and what waits on the board (bookanswer.ts;
   'POST /api/notebooks/answers/form': (q, s, b) => refusal(bookanswer.answerForm(b)),
   'POST /api/notebooks/answers/tick': (q, s, b) => refusal(bookanswer.tickAnswer(b)),
@@ -600,9 +603,8 @@ const worker: Record<string, (b: any) => unknown> = {
   // seat was already past DOWNTIME_UNDER.
   // room: the worker is below its room line with that many MB free, so a job starts only when its measured memory fits
   // (jobs.ts claim).
-  // pacedUntil: the seat's week is running ahead of its pace, so until that weekly reset it takes only the board's word
-  // and work that must start before it (the worker's pacedUntil)
-  // (a pull request's review, ruling or fix with the board's word from a call as it stands)
+  // pacedUntil: the seat's week is running ahead of its pace, so until pacing lifts it takes only urgent work (the
+  // worker's pacedUntil; planner.ts pacedTakes), a pull request's review, ruling or fix with its source's urgency
   // ownsProject: the project its agent owns through its thread, whose sentence its briefing asks it to keep true
   // (projects.ts withOwnedProject, the worker's closing.ts).
   // resize: a work job's size, for its briefing's line on re-sizing it (sizes.ts withSize).
@@ -770,11 +772,11 @@ function jobOrigin(b: any, me: Me) {
   const landingItem = landingSource ? ledger.carried(failedJobId!) : undefined;
   // An own brief takes the place of the failed job's, which carried its goal
   const landingGoal = brief && landingItem ? ledger.goalLine(landingItem) : '';
-  const landingBrief = `${landingSource?.branch ? `\n\nThis job takes over the saved work of #${failedJobId}: \`git fetch origin refs/outgoing/${landingSource.branch}\`.` : ''}${landingGoal ? `\n\n${landingGoal}` : ''}`;
+  const landingBrief = `${landingSource ? takeover.savedWorkLine(failedJobId!, landingSource.branch) : ''}${landingGoal ? `\n\n${landingGoal}` : ''}`;
   const ownBrief = brief || landingSource?.prompt;
   // hq job --after request:<id>: it waits for the card's answer (jobs.ts addCardWait)
   const card = b.afterRequest == null ? undefined : Number(b.afterRequest);
-  const cardRefused = card !== undefined && jobs.whyNotCardWait(card, me.agent);
+  const cardRefused = card !== undefined && jobs.whyNotCardWait(card, me.agent, String(b.agent));
   if (cardRefused) return new Refused(409, cardRefused);
   // hq job --when: it starts once those events have happened (wakes.ts)
   const when = wakes.readWhen(b.when);
@@ -1055,7 +1057,9 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
     // (an item's time: the board's when it set it itself, ledger.ts dueBy)
     const deadline = jobDeadline(job.id, placement, ownThread, byCall ? ledger.dueBy(carried!.item) : me.agent);
     const ask = untimed ? askedForTime(me, { id: job.id, agent: String(b.agent), title }, untimed) : source ? servesOther(job.id) : {};
-    const due = { ...deadline, ...ask, ...untilEnd.length && { untilCall: me.callId }, ...shownThread(job.id, { newThread: b.newThread, ownThread }), ...followOn, ...pauses.heldBy(job.id), ...moves.since(earlier), ...lighter && { lighter: lighter.name }, chain };  // (chain)
+    // (a task of its agent's there stopped with nothing in its place: this one takes it, or the answer names those left;
+    const placed = failedJobId === undefined && !fix ? takeover.placeQueued(job.id, me.agent) : {};
+    const due = { ...deadline, ...ask, ...untilEnd.length && { untilCall: me.callId }, ...shownThread(job.id, { newThread: b.newThread, ownThread }), ...followOn, ...pauses.heldBy(job.id), ...moves.since(earlier), ...lighter && { lighter: lighter.name }, chain, ...placed };  // (chain)
     return b.item != null || noted ? { ...job, ...due, ...ledger.handedOut(carried!.item, job.id, me.call ? null : me.id) } : { ...job, ...due };
   }),
   // hq thread list, and hq project say: a project's threads and its owner's sentence (projects.ts), as the speaker (a
@@ -1087,6 +1091,7 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
     const agent = speaker(b.as, me);
     return agent ? refusal(plan.rename(String(b.thread ?? ''), { name: b.name, goal: b.goal, slug: b.slug }, agent)) : 403;
   },
+  'POST /api/agent/urgent': (b, me) => { const agent = speaker(b.as, me); return agent ? refusal(urgency.setUrgent(b.level, String(b.id ?? ''), b.urgent, agent, me.call === true)) : 403; },
   'POST /api/agent/plan/title': (b, me) => { const agent = speaker(b.as, me); return agent ? refusal(plan.title(Number(b.id), b.title, agent)) : 403; },
   'POST /api/agent/projects/rename': (b, me) => { const agent = speaker(b.as, me); return agent ? refusal(plan.renameProject(String(b.id ?? ''), b.name, agent)) : 403; },
   'POST /api/agent/projects/done': (b, me) => { const agent = speaker(b.as, me); return agent ? refusal(plan.projectDone(String(b.id ?? ''), agent)) : 403; },
@@ -1238,10 +1243,13 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
     const done = await review.expedite(Number(b.id), me.agent);
     return typeof done === 'string' ? new Refused(409, done) : { ok: true, ...done };
   },
+  // --for <job>: the job queued already that does its work again and takes its place (takeover.ts stopFor).
   'POST /api/agent/stop': (b, me) => {
     const why = String(b.why ?? '').trim();
     if (!why) return new Refused(400, 'say why: hq stop <job> "why"');
-    return refusal(jobs.stopJob(Number(b.id), me.agent, why));
+    const replacement = b.for == null ? undefined : Number(b.for);
+    if (replacement !== undefined && !Number.isSafeInteger(replacement)) return new Refused(400, '--for names a job by its number');
+    return refusal(takeover.stopFor(Number(b.id), replacement, me.agent, why));
   },
   // hq revert <commit>... "why": the CEO's, commits reverted on main by the server within a minute (reverts.ts); hq
   // revert alone lists the requests and the server's answers.
@@ -1691,7 +1699,7 @@ const MANAGE_ROUTES = ['POST /api/agent/cancel', 'POST /api/agent/stop', 'POST /
   'POST /api/agent/plan/move', 'POST /api/agent/plan/drop', 'POST /api/agent/plan/done', 'POST /api/agent/plan/rename', 'POST /api/agent/plan/title',
   'POST /api/agent/threads/feature', 'POST /api/agent/threads/cost', 'POST /api/agent/threads/milestone',
   'GET /api/agent/threads', 'GET /api/agent/thread', 'POST /api/agent/threads/move', 'POST /api/agent/pauses', 'POST /api/agent/pauses/resume',
-  'GET /api/agent/projects', 'POST /api/agent/project-notes', 'POST /api/agent/projects/new', 'POST /api/agent/projects/code',
+  'POST /api/agent/urgent', 'GET /api/agent/projects', 'POST /api/agent/project-notes', 'POST /api/agent/projects/new', 'POST /api/agent/projects/code',
   'POST /api/agent/projects/owner', 'POST /api/agent/projects/rename', 'POST /api/agent/projects/done', 'POST /api/agent/decisions',
   'POST /api/agent/decisions/link', 'POST /api/agent/decisions/settle', 'GET /api/agent/proposals', 'POST /api/agent/proposals/accept', 'POST /api/agent/proposals/drop',
   'GET /api/agent/meetings', 'GET /api/agent/meetings/one', 'GET /api/agent/meetings/asks', 'POST /api/agent/meetings/ask', 'POST /api/agent/meetings/set',
@@ -1768,7 +1776,7 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
   if (version !== null && path !== '/api/preview/check' && path !== '/__preview') return trypreview.serveTry(req, res, version);
   // An earlier version of a cycles page, the same way
   const back = earlierVersions.backAt(String(req.headers.host ?? ''));
-  if (back !== null && path !== '/api/preview/check' && path !== '/__preview') return earlierVersions.serveEarlier(req, res, back);
+  if (back !== null && path !== '/api/preview/check' && path !== '/__preview') return earlierVersions.serveEarlier(req, res);
   res.setHeader('content-security-policy', PAGE_CSP[path] ?? (/^\/(knowledge|cycles)\//.test(path) ? 'sandbox'
     : path.startsWith('/pay/imitation/') ? checkoutCsp : HQ_CSP)); // the test checkout: its own inline style, and Pay redirects to the product
   return anyHost(req, res, url);

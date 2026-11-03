@@ -24,9 +24,9 @@ import {
   turnTo,
   where,
 } from './booknotebookscreen.mjs';
-import { DESKTOP, MINI, crumpled, until } from './bookkit.mjs';
+import { DESKTOP, MINI, crumpled, thrownAway, until } from './bookkit.mjs';
 import { press } from './bookbar.mjs';
-import { dragTo } from './bookshare.mjs';
+import { dragTo } from './booktearing.mjs';
 
 const SEED = JSON.parse(await readFile(new URL('./mock/notebook.json', import.meta.url), 'utf8'));
 // the seed's pages, and its groups on the newest (mock/notebook.json)
@@ -70,14 +70,14 @@ async function onMini(browser, c) {
 
 async function deleteAndUndo(page, play, c) {
   // Delete from Select's bar: gone at once, gone from the store, back with Undo
-  const dropped = crumpled(page);
-  dropped.catch(() => {}); // a failure below shows first; awaiting it later still throws
+  const thrown = crumpled(page);
+  thrown.catch(() => {}); // a failure below shows first; awaiting it later still throws
   await fromBar(page, WAVE, 'Delete', 'tap');
   await c.shot('notebook-mini-menu', page);
-  const { picture, down, aside, shown } = await dropped;
+  const answer = await thrown;
   assert.ok(!(await clipped(page)).includes(WAVE), 'the unit goes with its group at once');
-  assert.ok(picture && down > 40 && aside < 2, `crumpled and dropped straight down (${down} down, ${aside} aside)`);
-  assert.ok(shown > 0.4, `still shown as it drops (${shown})`);
+  thrownAway(answer, 'the group');
+  assert.ok(answer.length <= 2000, `over within two seconds (${answer.length} ms)`);
   await page.locator('#toasts .toast', { hasText: 'Deleted' }).waitFor();
   await until(() => !ids(play, NEWEST).includes(WAVE), 'the group deleted in the store');
   await c.shot('notebook-mini-deleted', page);

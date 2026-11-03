@@ -56,6 +56,8 @@ compose="docker compose -f $root/infra/compose.yaml -f $root/infra/generated/pro
   echo; echo "== board requests and seats"
   $compose exec -T coordinator node --disable-warning=ExperimentalWarning --input-type=module -e "
     import { DatabaseSync } from 'node:sqlite'; const db = new DatabaseSync('/data/hq.db', { timeout: 5000 });
+    const { seatStatuses } = await import('/app/platform/coordinator/src/seatstatus.ts');
+    const { seatStatusWords } = await import('/app/platform/worker/hq/seatwords.ts');
     // its statements over 100 ms, shown under HQ's speed: one on HQ's own tables holds HQ's writes back that long
     const SLOW_MS = 100, slow = [], prepare = db.prepare.bind(db);
     const timed = (sql, run) => (...params) => {
@@ -73,9 +75,12 @@ compose="docker compose -f $root/infra/compose.yaml -f $root/infra/generated/pro
     const secs = (from, to) => \`round((julianday(\${to}) - julianday(\${from})) * 86400, 1)\`;
     console.table(db.prepare('select id, created, kind, seat, status, title, customers from requests order by id').all());
     console.log('company paused:', db.prepare(\"select value from settings where key = 'company.paused'\").get()?.value ?? 'no');
-    // a seat's windows: the share used of each, and whether its week is paced (it takes only the board's word and work
-    // that must start before its weekly reset).
-    console.table(db.prepare(\"select id, engine, state, round(util * 100) || '%' as five_hour, round(week * 100) || '%' as week, case when pace is not null then 'till ' || datetime(week_resets / 1000, 'unixepoch') end as paced, note, case when until > 0 then datetime(until / 1000, 'unixepoch') end as until_utc from seats\").all());
+    // a seat's windows (the share used of each) and what new work waits for (coordinator seatstatus.ts)
+    const statuses = seatStatuses(db);
+    const at = ms => new Date(ms).toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
+    const pct = share => (share === null ? null : Math.round(share * 100) + '%');
+    console.table(db.prepare('select id, engine, state, util, week, note from seats').all().map(seat => ({ id: seat.id, engine: seat.engine,
+      state: seat.state, five_hour: pct(seat.util), week: pct(seat.week), admission: seatStatusWords(statuses.get(seat.id), at), note: seat.note })));
     // an engine whose seat is ready and whose work waits, yet has started nothing for 15 minutes (coordinator stalls.ts)
     console.log('engines stalled:', db.prepare(\"select value from settings where key like 'stall.%'\").all().map(r => JSON.parse(r.value).line).filter(Boolean).join(' ') || 'none');
     // work a kind of run holds until the lent machine has finished one, then the runs open or ended in the last day, with why

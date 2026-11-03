@@ -1,7 +1,7 @@
 // The shared Notebook's guest scope and its authenticated routes. The server owns page access.
 import { act, refused } from '../data.js';
 import { scopedPath } from './bookroutes.js';
-import { refusal, words } from './notebookwords.js';
+import { filled, refusal, words } from './notebookwords.js';
 
 export let scope = null;
 export const setScope = value => {
@@ -15,7 +15,7 @@ export function word(key, places = {}) {
   const lang = bookLang(),
     said = words[lang][key];
   if (said === undefined) throw new Error(`notebookwords${lang}.js has no “${key}”`);
-  return said.replace(/\{(\w+)\}/g, (_, k) => places[k]);
+  return filled(said, places);
 }
 // What follows an agent's name in a guest's book to say it's an AI's, in the guest's language; nothing in the board's
 // own book (charter rule 5.)

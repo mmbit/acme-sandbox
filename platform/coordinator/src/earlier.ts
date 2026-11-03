@@ -10,11 +10,12 @@ import { readFile } from 'node:fs/promises';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { dirname } from 'node:path';
 import { ORIGIN, PREVIEW, REPO_DIR, ZONE } from './config.ts';
-import { withReviewMode } from './feedback.ts';
+import { reviewPaths, withReviewMode } from './feedback.ts';
 import { rangeOf } from './files.ts';
 import { CYCLES } from './owed.ts';
 import { typeOf } from './types.ts';
 import { decoded, git, gitShow, opened } from './versionhost.ts';
+import { routes } from '../../../shared/routes/routes.ts';
 
 // Each earlier-<n> host takes a certificate of its own the first time it's opened, for every page at once, which Caddy
 // then renews. They come from Let's Encrypt's 50 new certificates a week for the zone, which every try version's host
@@ -72,14 +73,25 @@ export async function listEarlierVersions(url: string) {
   return { versions, unlisted: all - commits.length };
 }
 
-// A request on an earlier version's host: the board's only, its cycle's files as they were n changes back. Its review
-// mode is the scroll link alone (no notes on a version that's gone), and /__hq-origin names HQ as on the cycles' host.
-export async function serveEarlier(req: IncomingMessage, res: ServerResponse, back: number) {
+// An earlier version's host: its review mode is the scroll link alone (no notes on a version that's gone), and
+// /__hq-origin names HQ as on the cycles' host.
+const earlierRoutes = routes({
+  ...reviewPaths(
+    async ({ req, res }) =>
+      reply(req, res, await readFile(`${REPO_DIR}/shared/watchalong/scrolllink.js`), 'text/javascript'),
+    ({ req, res }) => reply(req, res, Buffer.from(ORIGIN), 'text/plain; charset=utf-8'),
+  ),
+  '* /*': ({ req, res, url }) => serveFile(req, res, decoded(url.pathname)),
+});
+// A request on an earlier version's host: the board's only, its cycle's files as they were n changes back (server.ts
+// checks the host is one, backAt, before it calls this)
+export async function serveEarlier(req: IncomingMessage, res: ServerResponse) {
   if (!opened(req, res, 'an earlier version')) return;
-  const path = decoded(new URL(req.url ?? '/', 'http://x').pathname);
-  if (path === '/__review/review.js')
-    return reply(req, res, await readFile(`${REPO_DIR}/shared/watchalong/scrolllink.js`), 'text/javascript');
-  if (path === '/__hq-origin') return reply(req, res, Buffer.from(ORIGIN), 'text/plain; charset=utf-8');
+  return earlierRoutes(req, res);
+}
+// A file of the cycle a path is in, as it was as many changes back as the host is
+async function serveFile(req: IncomingMessage, res: ServerResponse, path: string | null) {
+  const back = backAt(String(req.headers.host ?? ''))!;
   const cycle = path && !path.includes('..') ? cycleOf(path) : null;
   const commit = cycle ? (await historyOf(cycle)).commits[back] : undefined;
   if (!commit) return void res.writeHead(404, { 'content-type': 'text/plain' }).end('No such version.');

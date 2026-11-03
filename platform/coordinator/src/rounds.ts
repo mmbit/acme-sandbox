@@ -185,6 +185,7 @@ function synthetic(
     seat: null,
     for_seat: null,
     board: Number(owner.itemWork ?? false),
+    urgent: owner.reviewUrgent ?? owner.urgent,
     followThrough: false,
     after: 'released',
     follows: undefined,

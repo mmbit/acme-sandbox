@@ -333,7 +333,7 @@ TOOLS += [
 # only these commands' routes to a call's token (server.ts MANAGE_ROUTES).
 # overseer, route, items and the estimate checks are the reads a job has, the call's too: the notes to the Overseer,
 # the notes routed to jobs, every call's open items (one line each), the timing checks
-MANAGE = {'cancel': None, 'stop': None, 'waits': None, 'window': None, 'review': None, 'job': {'move'}, 'plan': None,
+MANAGE = {'urgent': None, 'cancel': None, 'stop': None, 'waits': None, 'window': None, 'review': None, 'job': {'move'}, 'plan': None,
           'deliverable': None, 'project': None, 'decision': None, 'inbox': {'', '#', 'accept', 'drop', '--all'},
           'meeting': {'', '#', 'ask', 'asks', 'set', 'join', 'drop'}, 'jobs': None, 'requests': None, 'close': None,
           'topic': None, 'summary': None, 'followthrough': {''}, 'seat-warning': None, 'owed': {'', 'close'},
@@ -343,7 +343,7 @@ TOOLS += [
     # the same rule).
     {'name': 'manage', 'description': "Manage the company's work now, as you would with hq off the call, when the "
      'board decides it or it is yours to do: cancel a queued job that never ran (cancel <job> "why"), stop a running one '
-     '(stop), put work first with a window, the only way to (window <project>/<slug> | <job> <time>, or none to '
+     '(stop), mark or clear the board’s urgent work (urgent milestone|job|task <id> on|off). Only urgent work bypasses seat pacing. Order work within seat pacing with a window (window <project>/<slug> | <job> <time>, or none to '
      'lift it; the scheduler makes room for it and gives the seat back after, by itself), pause or resume a deliverable '
      'or project only for work that must wait on a condition (something from the board, a decision it has to make, a '
      'hold it asked for), never to put other work first (deliverable pause <project>/<slug> "why" with --until <job>, '
