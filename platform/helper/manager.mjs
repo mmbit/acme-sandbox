@@ -149,13 +149,16 @@ async function pull(image) {
   log(`pulling ${image}`);
   // (one pinned by its digest goes whole)
   const [name, tag = 'latest'] = image.includes('@') ? [image, ''] : image.split(/:(?=[^/:]+$)/);
-  await docker(
+  // (Docker answers a failed pull with a 200 too, its error on the stream's last line: a refused sign-in, an unknown
+  // digest, a full disk)
+  const done = await docker(
     'POST',
     `/images/create?fromImage=${encodeURIComponent(name)}${tag ? `&tag=${encodeURIComponent(tag)}` : ''}`,
     undefined,
     await signIn(image),
   );
-  if (!(await docker('GET', `/images/${encodeURIComponent(image)}/json`))) throw new Error(`${image} didn't pull`);
+  if (!(await docker('GET', `/images/${encodeURIComponent(image)}/json`)))
+    throw new Error(`${image} didn't pull${done?.error ? `: ${done.error}` : ''}`);
 }
 
 // Docker's sign-in for a kind's image on a private registry, from HQ for this pull alone, never kept (runs.ts pullAuth).
@@ -182,7 +185,8 @@ async function ensure(name, spec, keep = false) {
     if (!have.State.Running) await docker('POST', `/containers/${name}/start`);
     return;
   }
-  if (have && keep) return log(`${name}: waits for its run to end before it changes`);
+  // (a problem HQ shows, as a stale run would hold it for good)
+  if (have && keep) throw new Error('waits for its run to end before it changes');
   await pull(spec.Image);
   if (have) await docker('DELETE', `/containers/${name}?force=true`);
   await docker('POST', `/containers/create?name=${name}`, { ...spec, Labels: { 'hq.spec': want, 'hq.manager': NAME } });
@@ -205,13 +209,16 @@ const CODE = createHash('sha256')
   .update(readFileSync(new URL(import.meta.url)))
   .digest('hex');
 
+// Why a helper isn't in step, as the last tick found it ({ name: message }): HQ shows them, so nobody needs this log
+let problems = {};
+
 // What HQ wants on this machine: its kinds, and which helpers here have a run ({ kind, slot })
 async function setup() {
   const res = await fetch(`${HQ_URL}/api/helper/setup`, {
     method: 'POST',
     redirect: 'error',
     headers: { authorization: `Bearer ${key()}`, 'content-type': 'application/json' },
-    body: JSON.stringify({ code: CODE }),
+    body: JSON.stringify({ code: CODE, problems }),
     signal: AbortSignal.timeout(60_000),
   });
   if (!res.ok) throw new Error(`HQ said ${res.status} to the setup`);
@@ -239,6 +246,7 @@ async function tick() {
   await ensureNetwork();
   await ensure(PROXY, proxySpec());
   const wanted = new Set([MANAGER, PROXY]);
+  const now = {};
   for (const kind of kinds) {
     if (!SAFE.test(kind.name) || typeof kind.image !== 'string') {
       log(`left out a kind HQ named oddly: ${kind.name}`);
@@ -248,9 +256,13 @@ async function tick() {
       const name = helperName(kind.name, slot);
       wanted.add(name);
       const running = busy.some(one => one.kind === kind.name && one.slot === slot);
-      await ensure(name, helperSpec(kind, slot), running).catch(error => log(`${name}: ${error.message}`));
+      await ensure(name, helperSpec(kind, slot), running).catch(error => {
+        log(`${name}: ${error.message}`);
+        now[name] = error.message;
+      });
     }
   }
+  problems = now;
   // helpers of kinds HQ no longer has, and ones an old start command made by hand, go
   const { made, byHand } = await ours();
   for (const name of [...made.filter(name => !wanted.has(name)), ...byHand]) {

@@ -151,9 +151,12 @@ export const stored = (names: string[]) => names.filter(n => validNames(n) && ex
 // a key for the coordinator's own use (the phone line's), or '' when the board hasn't entered it
 export const secret = (name: string) => { try { return readFileSync(`${DIR}/${name}`, 'utf8').trim(); } catch { return ''; } };
 
-// a server key HQ makes itself rather than the board (the Overseer's): written like a saved one, and masked from then on
+// The key HQ calls a linked company with, one per link (links.ts): made by that company's HQ, kept here like a made key
+export const LINK_KEY = /^LINK_[0-9]{1,9}_KEY$/;
+// a server key HQ makes itself rather than the board (the Overseer's, a link's): written like a saved one, and masked
+// from then on
 export const keepMadeKey = (name: string, value: string) => {
-  if (!Object.hasOwn(OWN, name) || !fits(name, value)) throw new Error(`secrets: ${name} can't hold this key`);
+  if (!(Object.hasOwn(OWN, name) || LINK_KEY.test(name)) || !fits(name, value)) throw new Error(`secrets: ${name} can't hold this key`);
   writeFileSync(`${DIR}/${name}`, value, { mode: 0o600 });
   held = null;
 };
@@ -166,8 +169,8 @@ export function serverKey(name: string) {
   return readFileSync(file, 'utf8').trim();
 }
 
-// delete keys whose job is done (a one-off delivery address once its parcel has shipped)
-export const forget = (names: string[]) => { for (const n of names) if (validNames(n)) rmSync(`${DIR}/${n}`, { force: true }); held = null; };
+// delete keys whose job is done (a one-off delivery address once its parcel has shipped, an unlinked company's)
+export const forget = (names: string[]) => { for (const n of names) if (validNames(n) || LINK_KEY.test(n)) rmSync(`${DIR}/${n}`, { force: true }); held = null; };
 
 // the board's saved delivery addresses (addresses.ts), one file each, its four
 // parts on four lines, kept like a key: never a name a card can ask for (validNames), never handed to a job (testSecrets),

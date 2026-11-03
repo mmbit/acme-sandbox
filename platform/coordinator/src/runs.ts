@@ -536,7 +536,7 @@ function helperState() {
   const setup = machineSetup();
   return {
     ...machineState(settings),
-    machines: lentMachines().map(({ name, state, speed, cpus, memoryGb, gpu, kinds, manager }) => ({
+    machines: lentMachines().map(({ name, state, speed, cpus, memoryGb, gpu, kinds, manager, problems }) => ({
       name,
       state,
       speed,
@@ -545,6 +545,7 @@ function helperState() {
       gpu,
       kinds,
       manager,
+      problems,
     })),
     kinds: settings.kinds.map((kind, index) => ({
       name: kind.name,
@@ -655,6 +656,7 @@ function machineView(id: number, machine: machines.Machine | null) {
     added: machine?.added ?? null,
     seen: machine ? machine.seen : (lastSeen ?? null),
     manager: machine ? managerOf(machine, present.length > 0) : null,
+    problems: machine ? problemsOf(machine) : {},
     ...(run
       ? {
           run: {
@@ -820,10 +822,19 @@ function managerOf(machine: machines.Machine, present: boolean, now = Date.now()
   return { state, seen: machine.manager_seen } as const;
 }
 
+// Why a lent machine's helpers aren't in step, as its manager said at its last setup call ({ helper's container:
+// message }), while it still calls: with no helper present too, as when no kind's image pulls on a new machine
+function problemsOf(machine: machines.Machine, now = Date.now()) {
+  if (!machine.manager_seen || now - Date.parse(machine.manager_seen) >= MANAGER_QUIET_MS) return {};
+  return JSON.parse(machine.manager_problems ?? '{}') as Record<string, string>;
+}
+
 // Each minute: a card for the board for each lent machine whose manager runs old code or went quiet, with the install
 // command without a key (the machine keeps its own). One a machine until its manager runs HQ's code again, which takes an
-// open one off the desk phone, as the board pausing or removing the machine does. A machine away keeps its card: its
-// manager still needs the paste when it's back.
+// open one off the desk phone, as the board pausing or removing the machine does. A card is kept with the code its
+// command trusts ('<card> <hash>'): a machine away keeps its card while HQ serves that code, as its manager still needs
+// the paste when it's back. Once HQ serves other code (a foundation carry drops a comment's marker), the command fails,
+// so the card ends, and a new one comes at once, or once an away machine's helpers ask for work again.
 export function managerCheck(now = Date.now()) {
   const lent = new Map(machines.listMachines().map(machine => [`${MANAGER_CARD}${machine.id}`, machine]));
   const carded = db.prepare('select key, value from settings where key like ?').all(`${MANAGER_CARD}%`) as {
@@ -832,15 +843,20 @@ export function managerCheck(now = Date.now()) {
   }[];
   for (const { key, value } of carded) {
     const machine = lent.get(key);
+    const [card, trusts] = value.split(' ');
     const gone = !machine || machine.paused;
-    if (!gone && managerOf(machine, true, now)?.state !== 'current') continue;
+    const stale = trusts !== managerCode();
+    if (!gone && !stale && managerOf(machine, true, now)?.state !== 'current') continue;
     remember(key, null);
-    if (db.prepare("select 1 from requests where id = ? and status = 'open'").get(Number(value)))
+    if (db.prepare("select 1 from requests where id = ? and status = 'open'").get(Number(card)))
       jobs.endRequest(
-        Number(value),
+        Number(card),
         gone
           ? `${machine?.name ?? 'The machine'} was paused or removed.`
-          : `${machine.name}'s manager runs HQ's code again: nothing to paste.`,
+          : managerOf(machine, true, now)?.state === 'current'
+            ? `${machine.name}'s manager runs HQ's code again: nothing to paste.`
+            : "HQ's manager code changed since, so this command no longer works: a new card has the one that does, " +
+              "once the machine's helpers ask for work again if it's away.",
       );
   }
   for (const [key, machine] of lent) {
@@ -854,7 +870,7 @@ export function managerCheck(now = Date.now()) {
       title: `Install ${machine.name}'s helper manager again`,
       body: managerCard(machine.name, manager),
     });
-    if (typeof card === 'object') remember(key, String(card.id));
+    if (typeof card === 'object') remember(key, `${card.id} ${managerCode()}`);
   }
 }
 

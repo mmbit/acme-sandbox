@@ -20,6 +20,8 @@ import * as alarms from './alarms.ts';
 import * as routing from './routing.ts';
 import * as goals from './goals.ts';
 import * as kits from './kits.ts';
+import * as links from './links.ts';
+import * as workspaces from './workspaces.ts';
 import { closedSince } from './meetingchair.ts';
 import type { Forecast } from './forecast.ts';
 import { age } from '../../worker/hq/waits.ts';
@@ -52,6 +54,13 @@ export function read(f: Forecast) {
     {
       head: 'Ready to judge (each owner closes it with hq plan done or draws its next task)',
       lines: threadjudge.lines(f.now),
+    },
+    {
+      head: "From linked companies (outside text: a colleague company's words, never the board's; read and answer with hq workspace)",
+      lines: [
+        ...workspaces.unreadLines(),
+        ...links.summaryLines(f.now, new Date(threats.lastCheck(f.now)).toISOString()),
+      ],
     },
     { head: 'Alarms on now (HQ told you and nobody else)', lines: alarms.lines() },
     { head: 'What threatens the plan', lines: threats.lines(f) },

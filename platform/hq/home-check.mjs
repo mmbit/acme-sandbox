@@ -24,6 +24,7 @@ async function homeWith(computer, width = 420, kits = {}) {
   await page.evaluate(() => import('/shell/desk.js').then(m => m.openComputer()));
   await page.waitForSelector('[data-app]');
   for (const id of Object.keys(kits)) await page.waitForSelector(`[data-app="${id}"]`);   // (drawn again once they've loaded)
+  await page.waitForSelector('[data-app="companies"]');
   const grids = await page.$$eval('ul.apps', lists => lists.map(l => [...l.querySelectorAll('[data-app]')].map(b => b.dataset.app)));
   assert.equal(grids.length, 1, 'one grid, the groups one after the other');
   // equal tiles, four across at most and every row full but the last (10 apps: rows of 4, 4 and 2), and no label cut
@@ -52,12 +53,12 @@ async function homeWith(computer, width = 420, kits = {}) {
 const all = await homeWith(undefined);   // (one grid now; the Sketchbook app gone)
 // without the setting, the foundation's groups: work to look at, talking, the business (Care and
 // Photos name it), the team and the machine (the projects view is the HUD's key, not an app here.)
-assert.deepEqual(all, ['notes', 'artifacts', 'calls', 'mail', 'onair', 'numbers', 'care', 'studio', 'people', 'seats', 'settings'],
+assert.deepEqual(all, ['notes', 'artifacts', 'calls', 'mail', 'onair', 'companies', 'numbers', 'care', 'studio', 'people', 'seats', 'settings'],
   'related apps side by side, Reviews beside Artifacts');
 // a company's own app at the end of the group it names, and one that names none in a group of its own before the team's
 const kitApp = group => `export const app = { name: 'Kit', what: '', icon: 'app-mail'${group ? `, group: '${group}'` : ''} };\nexport function draw() {}\n`;
 assert.deepEqual(await homeWith(undefined, 420, { chat: kitApp('talk'), misc: kitApp() }),
-  ['notes', 'artifacts', 'calls', 'mail', 'onair', 'chat', 'numbers', 'care', 'studio', 'misc', 'people', 'seats', 'settings'], 'a company app in its group');
+  ['notes', 'artifacts', 'calls', 'mail', 'onair', 'companies', 'chat', 'numbers', 'care', 'studio', 'misc', 'people', 'seats', 'settings'], 'a company app in its group');
 // An app naming an unknown group still shows after the groups, with or without the setting.
 assert.deepEqual(await homeWith(undefined, 420, { odd: kitApp('games') }), [...all.slice(0, -1), 'odd', 'settings'], 'an app in an unknown group');
 assert.deepEqual(await homeWith({ apps: [['mail']] }, 420, { odd: kitApp('games') }),

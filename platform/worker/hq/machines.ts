@@ -28,6 +28,9 @@ export type Machine = {
     kinds: string[];
     // its manager while its helpers ask: in step, on code HQ no longer serves, or not heard from for hours (null: none)
     manager?: { state: 'current' | 'old' | 'quiet'; seen: string } | null;
+    // why its helpers aren't in step, as its manager last said while it still calls, helpers present or not: { helper's
+    // container: message }
+    problems?: Record<string, string>;
   }[];
   kinds: (Presence & {
     name: string;
@@ -58,7 +61,10 @@ export async function showHelper() {
     machine.lent
       ? `${machine.name}: ${lent} (the board's, in HQ's Settings › Machines), one helper per kind of run on each`
       : `${machine.name}: no machine yet (the board adds them in HQ's Settings › Machines)`,
-    ...machine.machines.map(one => `  ${one.name}: ${one.state}${machineLine(one)}${managerLine(one)}`),
+    ...machine.machines.flatMap(one => [
+      `  ${one.name}: ${one.state}${machineLine(one)}${managerLine(one)}`,
+      ...Object.entries(one.problems ?? {}).map(([helper, why]) => `    ${helper} isn't in step: ${why}`),
+    ]),
     ...machine.kinds.map(kind => `  ${kind.name}: ${asking(kind.present)}${presenceLine(kind)}`),
     ...machine.leftOut.map(kind => `  ${kind.name}: left out of org.yaml's runs.kinds: ${kind.why}`),
     `${SERVER}, one per kind of run in the kind's image:`,

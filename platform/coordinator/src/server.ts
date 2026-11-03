@@ -69,6 +69,10 @@ import * as owed from './owed.ts';
 import * as routing from './routing.ts';
 import * as holds from './noteholds.ts';
 import * as overseer from './overseer.ts';
+import * as links from './links.ts';   // linked companies, and the workspaces shared with them
+import * as workspaces from './workspaces.ts';
+import * as workspaceposts from './workspaceposts.ts';
+import * as workspaceentries from './workspaceentries.ts';
 import * as oversight from './oversight.ts';
 import * as profiles from './profiles.ts';
 import * as windows from './windows.ts';
@@ -316,6 +320,8 @@ const send = (res: ServerResponse, code: number, body: unknown, type = 'applicat
 
 // the routes whose JSON carries files (cardfiles.ts JSON_MAX): a card's, and a guest checklist's items' (guests.ts)
 const FILE_ROUTES = new Set(['POST /api/agent/request', 'POST /api/agent/guest', 'POST /api/agent/guest-add']);
+// a version of a workspace's file, in base64 (workspaces.ts FILE_MAX_BYTES)
+const WORKSPACE_PUT = 'POST /api/agent/workspaces/put';
 // Streams a file, honouring a single byte range: Safari won't play a video without one (the cycle presentations).
 // Its tag (size and modified time) lets a browser check a copy it holds: a no-cache file it already has comes back as a
 // bodiless 304, never sent again. (Its lookup, findFile, is shared with cyclePage. files.ts)
@@ -397,6 +403,14 @@ const api: Record<string, BoardRoute> = {
   // (oversight.ts)
   'GET /api/oversight': () => oversight.forBoard(),
   'POST /api/oversight/renew': () => oversight.renew(),
+  // Settings › Companies: our links to other companies, an invitation made or withdrawn, theirs accepted, and an unlink;
+  // the Companies app: every workspace whole (links.ts, workspaces.ts)
+  'GET /api/links': () => workspaces.linksWithCounts(),
+  'POST /api/links/invite': () => links.invite(),
+  'POST /api/links/withdraw': (q, s, b) => refusal(links.withdraw(Number(b.invitation))),
+  'POST /api/links/join': async (q, s, b) => refusal(await links.join(b.invitation)),
+  'POST /api/links/unlink': async (q, s, b) => refusal(await links.unlink(Number(b.link))),
+  'GET /api/workspaces': () => ({ workspaces: workspaces.summaries() }),
   'GET /api/work': () => ({ days: work.days(), agents: work.agents() }),
   'GET /api/work/piles': () => work.piles(), // (HQ's throughput, hud.js)
   'GET /api/jobs/find': q => ({ job: boardJob(jobs.findJob(Number(new URL(q.url ?? '/', 'http://x').searchParams.get('id')))) }),
@@ -690,6 +704,8 @@ const colleague = (id: string) => staff(id) || jobs.boardId(id);
 const speaker = (as: unknown, me: Me) => jobs.boardId(me.agent) ? undefined : as == null || as === me.agent ? me.agent
   : me.call ? undefined
   : inTeam(me.id, String(as)) && !colleague(String(as)) ? String(as) : undefined;
+// Who posts in a workspace: the job, and its agent or the team member speaking (workspaces.ts)
+const poster = (b: { as?: unknown }, me: Me) => ({ job: me.id, agent: speaker(b.as, me) ?? me.agent });
 // A card that brings a product back (its --back slugs, or the open card's own, for hq rewrite: b.id) recommends nothing
 // (cardcheck.js cardProblem)
 const bringsBack = (b: any) => Array.isArray(b.back) && b.back.length > 0 || owed.productsOf(Number(b.id) || 0).some(p => p.back);
@@ -1459,6 +1475,18 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
   'POST /api/agent/overseer': (b, me) => refusal(overseer.send(String(b.text ?? ''), me, speaker(b.as, me))),
   'GET /api/agent/overseer': () => overseer.list(),
   'GET /api/agent/claim-plans': () => ({ cohorts: claimobservation.listCohorts() }),
+  // hq workspace: the workspaces shared with linked companies, read, posted to and filed in (workspaces.ts)
+  'GET /api/agent/workspaces': () => ({ links: workspaces.linksWithCounts().links.map(({ id, name, state }) => ({ id, name, state })), workspaces: workspaces.summaries() }),
+  'POST /api/agent/workspaces/open': (b, me) => refusal(workspaceposts.openWorkspace(b.company, b.title, poster(b, me))),
+  'POST /api/agent/workspaces/read': (b, me) => refusal(workspaces.readFor(Number(b.workspace), b.thread == null ? undefined : Number(b.thread), poster(b, me))),
+  'POST /api/agent/workspaces/post': (b, me) => refusal(workspaceposts.post(b, poster(b, me))),
+  'POST /api/agent/workspaces/put': (b, me) => refusal(workspaceposts.putFile(b, poster(b, me))),
+  'GET /api/agent/workspaces/file': b => {
+    const file = workspaces.fileOf(Number(b.workspace), String(b.path ?? ''), b.version ? Number(b.version) : undefined);
+    if (!file) return new Refused(404, `Workspace #${b.workspace} has no ${b.version ? `version ${b.version} of ` : ''}${b.path}.`);
+    const { bytes, ...about } = file;
+    return { ...about, data: bytes.toString('base64') };
+  },
   // hq profile on|off [<where>]: the profiler's switch for the board's pages on HQ or a product's host; hq profile: each
   // profiled page's session since a time, or one session's samples (profiles.ts).
   'POST /api/agent/profile': b => {
@@ -1844,7 +1872,7 @@ const forAgent: Wrap<(b: any, me: Me) => unknown> = (key, handle) => request => 
   if (me.call && !CALL_ROUTES.has(key)) return send(request.res, 403, { error: "a call can't do this, as none of the call's tools reaches it: the call's follow-up does it" });
   if (me.callout && !PARTNER_ROUTES.has(key)) return send(request.res, 403, { error: ERRORS[403] });
   // (a card's files come in its JSON: cardfiles.ts JSON_MAX)
-  return answered(request, b => handle(b, me), FILE_ROUTES.has(key) ? cardFiles.JSON_MAX : undefined, () => me.id || undefined);
+  return answered(request, b => handle(b, me), FILE_ROUTES.has(key) ? cardFiles.JSON_MAX : key === WORKSPACE_PUT ? workspaces.ENTRIES_JSON_MAX : undefined, () => me.id || undefined);
 };
 // A job's token, a live call's (call.ts) or a call out's (callline.ts)
 function agentOf(token: string): Me | undefined {
@@ -1919,6 +1947,19 @@ const extraRoutes = (table: Record<string, string>): RouteTable => Object.fromEn
 // The board's own rows, from HQ's pages and its apps (kits.ts)
 const board: RouteTable = {
   '* /api/events': ({ res }) => subscribe(res),
+  // a workspace whole, and one version of its file, for the Companies app (workspaces.ts)
+  'GET /api/workspaces/file': ({ res, url }) => {
+    const q = url.searchParams;
+    const file = workspaces.fileOf(Number(q.get('workspace')), String(q.get('path') ?? ''), q.get('version') ? Number(q.get('version')) : undefined);
+    if (!file) return send(res, 404, 'not found', 'text/plain');
+    res.setHeader('content-disposition', `attachment; filename*=UTF-8''${encodeURIComponent(file.path.split('/').at(-1)!)}`);
+    res.setHeader('cache-control', 'private, no-store');
+    return send(res, 200, file.bytes, 'application/octet-stream');
+  },
+  'GET /api/workspaces/:id(\\d+)': ({ res, params }) => {
+    const workspace = workspaces.findWorkspace(Number(params.id));
+    return workspace ? send(res, 200, workspace) : send(res, 404, { error: 'no such workspace' });
+  },
   ...kits.routeTable('board'),
   'GET /api/care/numbers': ({ res, url }) => { // (Care › Numbers: the board's)
     const r = careNumbers.board(Object.fromEntries(url.searchParams));
@@ -2064,6 +2105,19 @@ const hq = routes({
     res.setHeader('cache-control', 'private, no-store');
     if (reading.asOf) res.setHeader('x-as-of', reading.asOf);
     return send(res, reading.status, reading.text, 'text/markdown; charset=utf-8');
+  },
+  // A linked company's HQ (links.ts): its accept of our invitation, its pushes of entries and its unlink, each with the
+  // key it calls us with, never the board's session; nothing here reads anything of ours
+  'POST /api/peer/accept': async ({ res, jsonBody }) => answer(res, refusal(links.accept((await jsonBody()) ?? {}))),
+  'POST /api/peer/entries': async ({ req, res, jsonBody }) => {
+    const link = links.peerOf(req.headers.authorization);
+    if (typeof link === 'number') return send(res, link, { error: link === 410 ? 'unlinked' : 'link key' });
+    const body = await jsonBody(workspaces.ENTRIES_JSON_MAX);
+    return answer(res, refusal(body ? links.receive(link, body, workspaceentries.apply) : [400, 'the body: JSON']));
+  },
+  'POST /api/peer/unlink': ({ req, res }) => {
+    const link = links.peerOf(req.headers.authorization);
+    return typeof link === 'number' ? send(res, link, { error: 'link key' }) : send(res, 200, links.peerUnlinked(link));
   },
   // Runs (runs.ts): agents' with their job's token, the helper's with its own key, from outside.
   ...runs.routeTable,
@@ -2264,6 +2318,7 @@ if (import.meta.main) server.listen(PORT, () => {  // tests import app without s
   setInterval(crashSweep, 60_000); // a service that keeps crashing is the process role's job, one per service (crashes.ts)
   setInterval(followThroughCheck, 60_000); // while the board's agreements are open or the summary has something, the CEO's hourly check, and its alarm (followthrough.ts)
   setInterval(overseerSweep, 60_000); // the CEO's notes a run cut off left held go (overseer.ts)
+  setInterval(() => links.sweep().catch(err => console.error('Links: the push sweep failed:', err)), 60_000); // our entries a linked company's HQ hasn't taken yet go again (links.ts)
   review.actOnRulings(); setInterval(review.actOnRulings, review.RULING_SWEEP_MS); // a ruling a restart cut off is acted on after all
   diskCheck(); setInterval(diskCheck, 10 * 60_000); // an alarm for the CEO once the disk is 85% full (disk.ts)
   setInterval(() => { try { awayCheck(); } catch (err) { console.error('Away check:', err); } }, 60_000); // a lent machine away half an hour (away.ts)

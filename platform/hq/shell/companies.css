@@ -1,0 +1,304 @@
+/* Settings › Companies (companylinks.js) and HQ-OS › Companies (companies.js, workspace.js) on the computer's screen,
+   over Settings' own rows and buttons (style.css .seats-app). Colours come from the look's variables, in px as all of
+   HQ-OS is. Long names, paths and messages wrap, never run off. */
+
+/* the computer is wider while Companies is open, and as tall as what's on it up to the device's height less its header
+   and frame (96px, as for Photos): a short list leaves no empty screen under it */
+.device.computer.co-wide {
+  width: min(780px, 100%);
+}
+.co-wide .crt .screen {
+  height: auto;
+  max-height: min(calc(var(--tool-h, 100dvh) - 96px), 1000px);
+  overscroll-behavior: contain;
+}
+
+.companies,
+.co-app {
+  /* urgent: a dark screen's orange, or the look's own alarm (controls.css): its ink on its fill, in its line */
+  --co-urgent: var(--alarm-ink, #ff9b4a);
+  --co-urgent-line: var(--alarm, #ff9b4a);
+  --co-urgent-fill: var(--alarm-fill, transparent);
+  container-type: inline-size;
+  overflow-wrap: anywhere;
+}
+.companies > p:not(.cap) {
+  margin: 0 0 8px;
+}
+.companies .cap,
+.co-app .cap {
+  margin: 22px 0 10px;
+}
+.co-app > .cap:first-child {
+  margin-top: 0;
+}
+.co-us {
+  font-size: 16px;
+}
+.co-us b,
+.co-links b {
+  font-weight: 400;
+  color: var(--scr-hi);
+}
+.companies .dim,
+.co-app .dim {
+  font-size: 13px;
+  color: var(--scr-dim);
+}
+.co-links li,
+.co-invitations li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
+}
+.co-invitations li {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+.co-invitations .msg {
+  grid-column: 1 / -1;
+}
+.co-acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+.co-invitations .co-acts {
+  margin-top: 0;
+}
+.co-waiting {
+  font-size: 13px;
+  color: var(--scr-hi);
+}
+.companies .msg {
+  min-height: 17px;
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: var(--scr-hi);
+}
+.companies .msg[hidden] {
+  display: none;
+}
+.co-made {
+  margin: 0 0 12px;
+}
+.co-made b {
+  font-weight: 400;
+  color: var(--scr-hi);
+}
+.co-made .acts,
+.companies > .acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 12px;
+}
+.companies textarea {
+  box-sizing: border-box;
+  width: 100%;
+  font: inherit;
+  font-size: 16px;
+  color: var(--scr-hi);
+  background: var(--scr-ink);
+  border: 1px solid var(--scr);
+  border-radius: var(--r-sm);
+  padding: 6px 8px;
+  resize: none;
+}
+.co-field {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.co-field input {
+  flex: 1 1 220px;
+  width: auto;
+}
+.co-gone li {
+  opacity: 0.7;
+}
+.co-gone b {
+  color: var(--scr-soft);
+}
+
+/* ---- the list of workspaces */
+.co-list :is(.dim, .co-new, .co-unlinked) {
+  grid-column: 1;
+}
+.co-list .co-new {
+  font-size: 13px;
+  color: var(--scr-hi);
+}
+/* urgent, in the list and on a message: a tag in the look's alarm, read at a glance */
+.co-list em,
+.co-urgent {
+  padding: 0 4px;
+  font-style: normal;
+  color: var(--co-urgent);
+  background: var(--co-urgent-fill);
+  border: 1px solid var(--co-urgent-line);
+  border-radius: var(--r-sm);
+}
+.co-unlinked {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--scr-dim);
+}
+.co-list .co-quiet b {
+  color: var(--scr-soft);
+}
+.co-list button > b {
+  overflow-wrap: anywhere;
+}
+.co-foot {
+  margin-top: 16px;
+}
+
+/* ---- a workspace: its threads and messages */
+.co-workspace .seat-top {
+  flex-wrap: wrap;
+  align-items: baseline;
+}
+.co-workspace .seat-name {
+  flex: 1 1 260px;
+  min-width: 0;
+}
+.co-workspace > .dim {
+  margin-top: 4px;
+}
+.co-gone-note {
+  margin-top: 10px;
+  padding: 8px 10px;
+  font-size: 13px;
+  color: var(--scr-soft);
+  border: 1px dashed var(--scr-dim);
+  border-radius: var(--r-sm);
+}
+.co-thread {
+  margin: 0 0 18px;
+}
+/* (a thread's subject, not a section's cap as .crt section h3 has it) */
+.crt .co-thread h3 {
+  margin: 0 0 8px;
+  font-size: 15px;
+  font-weight: 400;
+  color: var(--scr-hi);
+  text-transform: none;
+  letter-spacing: 0;
+  border: 0;
+}
+.co-messages,
+.co-files,
+.co-versions {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+.co-msg {
+  padding: 8px 10px;
+  border-left: 2px solid var(--scr-dim);
+  border-radius: var(--r-sm);
+  background: color-mix(in srgb, var(--scr) 5%, transparent);
+}
+.co-msg.ours {
+  margin-left: 24px;
+  border-left-color: var(--scr);
+  background: color-mix(in srgb, var(--scr) 11%, transparent);
+}
+.co-msg.urgent {
+  border-left-color: var(--co-urgent-line);
+}
+.co-msg p {
+  margin: 0;
+}
+.co-msg p + p {
+  margin-top: 4px;
+}
+.co-who {
+  font-size: 13px;
+}
+.co-who b {
+  font-weight: 400;
+  color: var(--scr-hi);
+}
+.co-company {
+  color: var(--scr-soft);
+}
+.co-who em {
+  margin-left: 6px;
+  font-size: 12px;
+  font-style: normal;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.co-unread {
+  color: var(--scr-hi);
+}
+.co-text {
+  white-space: pre-wrap;
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--scr-soft);
+}
+.co-msg .co-where {
+  font-size: 12px;
+}
+
+/* ---- its files: each path with its versions, newest first */
+.co-files > li {
+  display: grid;
+  gap: 6px;
+  padding-bottom: 10px;
+  border-bottom: 1px dashed color-mix(in srgb, var(--scr) 18%, transparent);
+}
+.co-path {
+  font-weight: 400;
+  color: var(--scr-hi);
+}
+.co-versions {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 6px 10px;
+}
+.co-versions li {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: subgrid;
+  row-gap: 4px;
+  align-items: center;
+  font-size: 13px;
+}
+.co-v {
+  color: var(--scr-dim);
+}
+.co-fact {
+  white-space: nowrap;
+}
+.co-vtext b {
+  font-weight: 400;
+  color: var(--scr-hi);
+}
+.co-note {
+  display: block;
+  color: var(--scr-soft);
+}
+.co-app .co-get {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+}
+@container (max-width: 420px) {
+  .co-versions {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .co-app .co-get {
+    grid-column: 2;
+    justify-self: start;
+  }
+  .co-msg.ours {
+    margin-left: 12px;
+  }
+}

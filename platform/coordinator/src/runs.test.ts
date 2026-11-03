@@ -1485,13 +1485,33 @@ test("a machine set up with its install command: one command with its key, the m
   await h.finish(job);
 });
 
+// A Docker Engine on a socket for the manager: it has the manager's own image and
+// makes containers, but a kind's image never pulls, its error on the stream's last line with a 200, as Docker answers one
+function fakeDocker(t: TestContext, socket: string) {
+  const docker = createServer((req, res) => {
+    const path = decodeURIComponent(req.url!.replace(/^\/v[\d.]+/, '').split('?')[0]);
+    const send = (status: number, body = '') => res.writeHead(status).end(body);
+    if (req.method === 'POST' && req.url!.includes('/images/create'))
+      return send(
+        200,
+        '{"status":"Pulling from library/node"}\n{"errorDetail":{"message":"manifest unknown"},"error":"manifest unknown"}\n',
+      );
+    if (req.method === 'GET' && path === '/images/node:24.22.1-slim/json') return send(200, '{}');
+    if (req.method === 'GET' && path === '/containers/json') return send(200, '[]');
+    if (req.method === 'GET') return send(404);
+    send(200, '{}');
+  });
+  docker.listen(socket);
+  t.after(() => docker.close());
+}
+
 test("a lent machine's manager: HQ keeps its setup calls with the code it runs, shows one on old code or quiet while its helpers ask, and cards the board once with the install command without a key, taken away once it runs HQ's code again", async t => {
   h.declareKinds(t, TESTS_KIND);
   await lendNone();
   const added = await lend('the rig');
   lentKey = added.key;
-  const managerOf = async () =>
-    (await h.board('/api/machines')).body.find((one: { id: unknown }) => one.id === added.id).manager;
+  const machine = async () => (await h.board('/api/machines')).body.find((one: { id: unknown }) => one.id === added.id);
+  const managerOf = async () => (await machine()).manager;
   const cards = () =>
     h.db.prepare("select * from requests where title like '%the rig%' order by id").all() as {
       id: number;
@@ -1509,6 +1529,7 @@ test("a lent machine's manager: HQ keeps its setup calls with the code it runs, 
   const bootstrap = / -e "(.*)"$/.exec(install)![1];
   const state = mkdtempSync(`${tmpdir()}/manager-`);
   writeFileSync(`${state}/key`, `${lentKey}\n`);
+  fakeDocker(t, `${state}/docker.sock`);
   const manager = spawn(process.execPath, ['-e', bootstrap], {
     env: {
       PATH: process.env.PATH,
@@ -1516,15 +1537,28 @@ test("a lent machine's manager: HQ keeps its setup calls with the code it runs, 
       HQ_URL: h.base,
       HQ_PRIVATE: '1',
       KEY_FILE: `${state}/key`,
-      DOCKER_SOCKET: `${state}/no-docker.sock`,
+      DOCKER_SOCKET: `${state}/docker.sock`,
+      TICK_MS: '200',
     },
     stdio: 'ignore',
   });
   t.after(() => manager.kill());
   await until(async () => (await managerOf())?.state === 'current', 'the manager calls with its code', 15_000);
+  // why its helpers aren't in step, in Docker's own words, at its next call
+  await until(async () => Object.keys((await machine()).problems).length === 2, 'its problems', 15_000);
   manager.kill();
+  const tests1 = Object.keys((await machine()).problems).find(name => name.endsWith('-tests_1'))!;
+  assert.equal((await machine()).problems[tests1], "node:24.22.1-bookworm didn't pull: manifest unknown");
+  const looker = await h.start({ agent: 'bolt' });
+  assert.match(
+    (await hqIn(tmpdir(), looker, 'run', 'helper')).out,
+    new RegExp(`the rig: taking.*\\n    ${tests1} isn't in step: node:24.22.1-bookworm didn't pull: manifest unknown`),
+  );
+  await h.finish(looker);
   runs.managerCheck();
   assert.deepEqual(cards(), [], 'nothing to card');
+  await asHelper('/api/helper/setup', { problems: { 'a b': 'x', ok: 7, 'hq-tests_2': 'one\nline' } });
+  assert.deepEqual((await machine()).problems, { 'hq-tests_2': 'one line' }, 'its own names and words alone');
 
   // one on code HQ no longer serves: one card, with the install command that keeps the machine's key
   assert.equal((await asHelper('/api/helper/setup', { code: 'f'.repeat(64) })).status, 200);
@@ -1539,14 +1573,24 @@ test("a lent machine's manager: HQ keeps its setup calls with the code it runs, 
   const job = await h.start({ agent: 'bolt' });
   assert.match((await hqIn(tmpdir(), job, 'run', 'helper')).out, /the rig: taking.*its manager runs old code/);
 
+  // HQ serves other code since (or the card is from before it kept the code): its command fails, a new card replaces it
+  h.db.prepare('update settings set value = ? where key like ?').run(String(old.id), 'runs.manager.%');
+  runs.managerCheck();
+  assert.equal(cards()[0].status, 'done');
+  assert.match(cards()[0].closing!, /no longer works/);
+  assert.equal(cards()[1].status, 'open');
+  assert.ok(cards()[1].body.includes(install));
+  runs.managerCheck();
+  assert.equal(cards().length, 2, 'once');
+
   // back on HQ's code: the card leaves the desk phone
   const code = createHash('sha256')
     .update(await fetch(`${h.base}/api/helper/manager`).then(r => r.text()))
     .digest('hex');
   await asHelper('/api/helper/setup', { code });
   runs.managerCheck();
-  assert.equal(cards()[0].status, 'done');
-  assert.match(cards()[0].closing!, /runs HQ's code again/);
+  assert.equal(cards()[1].status, 'done');
+  assert.match(cards()[1].closing!, /runs HQ's code again/);
 
   // quiet for hours while its helpers ask: a new card; none for one that's away (away.ts tells of that)
   t.mock.timers.enable({ apis: ['Date'], now: Date.now() - 3 * 3600_000 });
@@ -1556,19 +1600,52 @@ test("a lent machine's manager: HQ keeps its setup calls with the code it runs, 
   assert.equal((await managerOf()).state, 'quiet');
   assert.match((await hqIn(tmpdir(), job, 'run', 'helper')).out, /its manager stopped \(last heard/);
   runs.managerCheck();
-  assert.equal(cards().length, 2);
-  assert.match(cards()[1].body, /hasn't checked in since/);
+  assert.equal(cards().length, 3);
+  assert.match(cards()[2].body, /hasn't checked in since/);
   runs.managerCheck(Date.now() + 10 * 60_000);
-  assert.equal(cards()[1].status, 'open', 'its helpers gone too: away, the card waits for it');
+  assert.equal(cards()[2].status, 'open', 'its helpers gone too: away, the card waits for it');
+  // HQ serves other code while it's away: its card ends, and a new one comes once its helpers ask again
+  h.db.prepare('update settings set value = ? where key like ?').run(String(cards()[2].id), 'runs.manager.%');
+  runs.managerCheck(Date.now() + 10 * 60_000);
+  assert.equal(cards()[2].status, 'done');
+  assert.match(cards()[2].closing!, /no longer works: .* once the machine's helpers ask for work again if it's away/);
+  assert.equal(cards().length, 3, 'none while away');
+  await ask();
+  runs.managerCheck();
+  assert.equal(cards().length, 4);
+  assert.equal(cards()[3].status, 'open');
   // an old manager (no hash) on a paused machine: shown, never carded, and its card ends
   await h.board('/api/machines/pause', { machine: added.id, paused: true });
   await asHelper('/api/helper/setup', {});
   await ask();
   assert.equal((await managerOf()).state, 'old');
   runs.managerCheck();
-  assert.equal(cards().length, 2);
-  assert.equal(cards()[1].status, 'done');
-  assert.match(cards()[1].closing!, /was paused or removed/);
+  assert.equal(cards().length, 4);
+  assert.equal(cards()[3].status, 'done');
+  assert.match(cards()[3].closing!, /was paused or removed/);
+  await h.finish(job);
+});
+
+test("a lent machine's manager that calls before any of its helpers asks for work: why they aren't in step, shown while it calls", async t => {
+  h.declareKinds(t, TESTS_KIND);
+  await lendNone();
+  const added = await lend('the new rig');
+  lentKey = added.key;
+  const machine = async () => (await h.board('/api/machines')).body.find((one: { id: unknown }) => one.id === added.id);
+  const problems = { 'hq-tests_1': "node:24.22.1-bookworm didn't pull: manifest unknown" };
+  await asHelper('/api/helper/setup', { problems });
+  assert.equal((await machine()).manager, null, 'no helper present: no word on its manager');
+  assert.deepEqual((await machine()).problems, problems);
+  const job = await h.start({ agent: 'bolt' });
+  assert.match(
+    (await hqIn(tmpdir(), job, 'run', 'helper')).out,
+    /the new rig: away.*\n {4}hq-tests_1 isn't in step: node:24.22.1-bookworm didn't pull: manifest unknown/,
+  );
+  // a manager quiet for hours: its last words are old, so none
+  h.db
+    .prepare('update machines set manager_seen = ? where id = ?')
+    .run(new Date(Date.now() - 3 * 3600_000).toISOString(), added.id);
+  assert.deepEqual((await machine()).problems, {});
   await h.finish(job);
 });
 
