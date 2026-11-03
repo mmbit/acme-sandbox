@@ -25,6 +25,8 @@ import { mountTones, tones, cover } from './booktable.js';
 import { namePhone } from './bookasks.js';
 import * as bookstage from './bookstage.js';
 import { undoKeys } from './bookundokeys.js';
+import { mountShelfWindow, openShelf } from './bookshelfwindow.js';
+import { pressesHeard } from './booksounds.js';
 
 // How long the book slides from one open width to another, pushed aside quick and soft (the swing's: bookswing.js)
 const SLIDE_MS = 240,
@@ -60,13 +62,10 @@ export async function initBook({ scope = null } = {}) {
   mountRoot();
   state = recall(store, shape());
   if (scope) state.mode = 'open';
-  mountRail(parts.rail, {
-    undo: () => pages.undo(),
-    redo: () => pages.redo(),
-  });
+  mountRail(parts.rail, { undo: () => pages.undo(), redo: () => pages.redo(), close: () => foldBook() });
   const calls = scope ? null : await import('../calldrop.js');
-  pages = mountPages(parts.paper, { dev: world.dev, calls });
-  if (!scope) mountBookmarks(parts.leaf, pages); // (the board's books' chapters: bookmarks.js)
+  pages = mountPages(parts.paper, { dev: world.dev, calls, shelf: scope ? null : openShelf });
+  if (!scope) mountBookmarks(parts, pages); // (the board's books' chapters: bookmarks.js)
   // (Search, in the overview's head: a find opens its page at its note.)
   if (!scope) mountSearch(island('overview'), { dev: world.dev, find: at => pages.find(at) });
   // (a note or page asked from elsewhere, the desk phone's Open in the book: the book lands on it as on a find, its day's
@@ -84,6 +83,7 @@ export async function initBook({ scope = null } = {}) {
   mountHandle(parts.lip, { open: openBook, fold: foldBook, openOn, shut: shutOrShutting });
   mountLanding({ pages, lip: parts.lip, paper: parts.paper, layout: bookLayout });
   if (!scope) mountNewest(pages, openBook); // (the note the board just pinned, shown as the book opens)
+  if (!scope) mountShelfWindow(root, { dev: world.dev, pages, open: openBook, fold: foldBook }); // (the Shelf)
   watchSize();
 }
 // A turn or a new window size: the shape's own remembered state, laid out at once (nothing slides). Watched on <html>'s
@@ -101,19 +101,20 @@ function watchSize() {
   }).observe(document.documentElement);
 }
 
-// The book's table, its cover's edge, leaf (the cover with its paper and spine), the page's left edge a swipe closes it
-// from (the stack), rail and pull tab (the lip, kept clear), on <html>
+// The book's table, its cover's edge (the page block, its bookmarks: bookmarks.js; its grip resizes the book), leaf,
+// the page's left edge a swipe closes it from (the stack), the controls and pull tab (the lip, kept clear), on <html>
 function mountRoot() {
   root = document.createElement('div');
   root.id = 'book';
   root.style.cssText = PAPER;
-  root.innerHTML = `<div class="bk-table" data-no-ink></div><div class="bk-edge" data-no-ink role="separator" aria-orientation="vertical"
-    aria-label="${word('notebookEdge')}"></div>
+  root.innerHTML = `<div class="bk-table" data-no-ink></div><div class="bk-edge" data-no-ink><span class="bk-edge-grip" role="separator"
+    aria-orientation="vertical" aria-label="${word('notebookEdge')}"></span></div>
     <section class="bk-leaf" aria-label="${word('theNotebook')}"><div class="bk-paper" data-no-ink></div><div class="bk-stack" data-no-ink></div><nav class="bk-rail" aria-label="${word(
       'notebookControls',
     )}"></nav></section>
     <button class="bk-lip" aria-label="${word('notebookLip')}" data-keep-clear data-no-ink></button>`;
   document.documentElement.append(root);
+  pressesHeard(root);
   parts = Object.fromEntries(
     ['table', 'edge', 'leaf', 'paper', 'stack', 'rail', 'lip'].map(k => [k, root.querySelector(`.bk-${k}`)]),
   );
@@ -386,10 +387,10 @@ export function coverPage(covered) {
 
 // The cover's outer edge: dragged, it resizes the open book, the edge following the finger (or the mouse) while held
 // and the book never narrower than it can be drawn on; let go, the book stays that wide, HQ's page laid out beside it
-// (or under it, where it would be too narrow: the spread). It never closes the book (booklayout.js's released).
-// (the open book's pull tab pulled left first resizes it the same way: bookswing.js)
+// (or under it, where it would be too narrow: the spread). It never closes the book (booklayout.js's released). Its
+// bookmarks press and pull as themselves (bookmarks.js); its pull tab pulled left first resizes it too (bookswing.js).
 function dragEdge() {
-  follow(parts.edge, { start: tones, move: edgeMove, end: edgeEnd });
+  follow(parts.edge, { takes: e => !e.target.closest?.('.bk-marks'), start: tones, move: edgeMove, end: edgeEnd });
 }
 function edgeMove(dx) {
   const from = placeOf(drawn),

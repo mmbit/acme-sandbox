@@ -1,6 +1,6 @@
 // A Notebook page sent whole (knowledge/notes/platform/notebook.md), each of its groups as a note to the agent whose
 // work it was cut from (or as the CEO's routing check decides). The board's goes one way only: a copy torn from the
-// dog-ear and let go on Submit (bookdogear.js). It goes at once, never undone; the copy folds into a paper plane and
+// edge and let go on Submit (booktear.js). It goes at once, never undone; the copy folds into a paper plane and
 // flies off from where it was let go, with a whoosh, and the page itself stays where it is: the Sent stamp is pressed
 // on it as the plane goes, and it's locked (no tools come back on it: bookcontrols.js). Asks still open on it, a small
 // card over Submit asks first: send now, the open asks moved to a new page to answer there, or answer them first.
@@ -11,6 +11,7 @@
 import { esc } from '../../util.js';
 import { foley } from '../audio.js';
 import { toast } from '../toast.js';
+import { toastHeard } from './booksounds.js';
 import { plane, stamp } from './bookpaper.js';
 import { picture } from './bookflip.js';
 import { keep } from './bookedit.js';
@@ -64,7 +65,7 @@ export async function submit(book, v, copy, aside = []) {
 export const openAsks = page =>
   [...(page.groups?.values() ?? [])].filter(g => (g.asks ?? []).some(a => a.status !== 'answered'));
 
-// The card that opens from Submit when asks are still open on the page (lane: the rail the targets show on, bookui.js;
+// The card that opens from Submit when asks are still open on the page (lane: the controls the targets show on, bookui.js;
 // at: Submit's box on the screen): whether to send now, those asks moved to a new page (true), or answer them first
 // (false, as Escape or a tap away). The page stays in view behind it.
 export function askedFirst(lane, at, asks) {
@@ -123,7 +124,8 @@ export async function sendShown(book, hooks) {
   keep(book.steps, s => s.page !== page);
   book.steps.push(step);
   went(book, page, answer);
-  toast(word('sentToast'), () => {
+  // (its tap heard)
+  toastHeard(word('sentToast'), () => {
     if (book.steps.includes(step)) keep(book.steps, s => s !== step);
     step.undo();
   });

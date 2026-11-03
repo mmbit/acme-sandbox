@@ -24,6 +24,7 @@ import { keep } from './booksheets.ts';
 import type { Anchor } from '../pagechecks.ts';
 import { DIR } from '../pagescraps.ts';
 import { quotedPatch } from './bookpick.ts';
+import { ownerOf } from './groupanswers.ts';
 
 // book_notes.tried: the try run started for an old book's note, the latest (notebook_groups.tried, a group's, is
 // notebookgroups.ts's)
@@ -47,7 +48,7 @@ export function rootOn(t: Target): Root | null {
   if (g) {
     const root = rootOf(g),
       page = pageRow(root.page, null);
-    return page ? { kind: 'group', root, target: g, page, owner: root.owner ?? page.owner ?? ceo() } : null;
+    return page ? { kind: 'group', root, target: g, page, owner: ownerOf(root) } : null;
   }
   const target = t.note ? noteRow(t.note) : undefined;
   if (!target) return null;

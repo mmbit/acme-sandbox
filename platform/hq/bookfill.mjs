@@ -1,12 +1,13 @@
 // book-check.mjs's story of the notebook on the board's iPad, held and used by hand: HQ as a home-screen app with iOS's
 // blurred band at the top (style.css's --sat), sideways (1133 × 744) and upright (744 × 1133), with Chromium's own
 // Pencil and fingers (trusted). Upright, a finger's tap on the pull tab opens the book. Each way up, the paper runs
-// from the band's foot to the screen's, its head never below HQ's buttons. The scraps spread across the page's width.
-// The bookmarks stand along the top, tucked behind the page, each reaching out a step less than the one before, and a
-// finger's tap turns to a chapter and back. A call's page has one title, the Pencil near it changing nothing there.
-// The tool rail floats: slim toolbars in HQ's look, in from the paper's edges, the paper running on under them and
-// what's written ending left of them, the page's controls in the one at the rail's foot; the Pencil's tap and a
-// finger's each pick a tool on it.
+// from the screen's top, under the band, to its foot, the page on it from the band's foot, its head never below HQ's
+// buttons. The scraps spread across the page's width. The bookmarks under the band: sideways out of the page block to
+// the book's left, upright folded at the screen's left edge (a finger's tap brings them out); a finger's tap turns to
+// a chapter and back. A call's page has one title, the Pencil near it changing nothing there. The two islands float:
+// HQ's panels, the tools slim and upright by the paper's right edge, the bar along its foot, in from the paper's edges,
+// the paper running on under them and what's written ending left of the tools; the Pencil's tap and a finger's each
+// pick a tool. (the islands and the bookmarks)
 // The Pencil's line in a scrap's room is saved as that scrap's ink. The Pencil's arrow begun by the page's left edge
 // draws, the book staying open; a finger's taps, each where the page arrows were at the start, turn to a read-only
 // call's page and back, the arrows never moving; and a finger's swipe from that edge still closes the book (board,
@@ -16,13 +17,14 @@ import { MINI, UPRIGHT, chromiumPen, middleOf, touchOf, until } from './bookkit.
 import { SEED, units } from './bookunitspage.mjs';
 import { UNIT_W } from './shell/ink/scrapunit.js';
 import { bareOf } from './bookdrawn.mjs';
-import { picksByHand, railFloats } from './bookfillrail.mjs';
+import { picksByHand, islandsFloat } from './bookfillislands.mjs';
+import { toChapter } from './bookchrome.mjs';
 
 // an iPad's home-screen app: its status bar and iOS's blurred band under it (style.css)
 const BAND = 24 + 48;
 // the agent's scraps three times over, so the page is longer than the screen either way up, on a call's notes page titled
 // as the store titles one: the call's date and time, then its topic (callnotes.ts). After it, a later call's page,
-// read-only till its follow-up goes (as a page sent: the rail's tools give way to a lock).
+// read-only till its follow-up goes (as a page sent: the tools give way to a lock).
 const T1 = '2026-10-30T11:00:00.000Z';
 const LONG = {
   ...SEED,
@@ -73,8 +75,8 @@ async function byHand(browser, c, name, viewport, columns) {
     await fillsHeight(page);
     await fillsWidth(page);
     if (columns) await scrapColumns(page, columns);
-    await tabsOnTop(page, hand);
-    await railFloats(page);
+    await tabsBeside(page, hand, viewport);
+    await islandsFloat(page);
     await picksByHand(page, hand);
     await oneTitle(page, hand);
     await writes(page, context, hand);
@@ -105,23 +107,25 @@ async function opened(page, c, { touch }, viewport) {
   await until(async () => (await units(page)).length === LONG.groups.length, 'the scraps drawn');
 }
 
-// The book's pages from the blurred band's foot to the screen's: their head (the bookmarks' where they stand on the
-// paper, upright) no lower than HQ's buttons
+// The book's paper from the screen's top, under the blurred band, to its foot; the page on it from the band's foot, its
+// head no lower than HQ's buttons
 async function fillsHeight(page) {
   const seen = await page.evaluate(() => {
-    const paper = document.querySelector('#book .bk-paper').getBoundingClientRect(),
-      marks = document.querySelector('#book .bk-marks').getBoundingClientRect(),
-      buttons = [...document.querySelectorAll('#hud button')].map(b => b.getBoundingClientRect()).filter(r => r.width);
-    return {
-      head: Math.min(paper.top, marks.top),
-      foot: paper.bottom,
-      buttons: Math.min(...buttons.map(r => r.top)),
-      screen: innerHeight,
-    };
-  });
-  assert.ok(seen.head >= BAND - 1, `the book's head under the blur (${JSON.stringify(seen)})`);
-  assert.ok(seen.head <= seen.buttons + 1, `the book's head no lower than HQ's buttons (${JSON.stringify(seen)})`);
-  assert.ok(seen.foot >= seen.screen - 1, `the paper down to the screen's foot (${JSON.stringify(seen)})`);
+      const paper = document.querySelector('#book .bk-paper').getBoundingClientRect(),
+        buttons = [...document.querySelectorAll('#hud button')]
+          .map(b => b.getBoundingClientRect())
+          .filter(r => r.width);
+      return {
+        paper: [paper.top, paper.bottom],
+        head: document.querySelector('#book .bk-pages').getBoundingClientRect().top,
+        buttons: Math.min(...buttons.map(r => r.top)),
+        screen: innerHeight,
+      };
+    }),
+    said = JSON.stringify(seen);
+  assert.ok(seen.paper[0] <= 1 && seen.paper[1] >= seen.screen - 1, `the paper the screen's height (${said})`);
+  assert.ok(Math.abs(seen.head - BAND) <= 1, `the page from the blur's foot (${said})`);
+  assert.ok(seen.head <= seen.buttons + 1, `the page's head no lower than HQ's buttons (${said})`);
 }
 
 // The scraps' columns across the whole page left of the tools: on each side a margin, never room for a fifth of a scrap
@@ -161,12 +165,18 @@ async function edgeDraws(page, { pen }) {
     was = await mode(),
     paper = await page.locator('#book .bk-paper').boundingBox(),
     x = paper.x + 14,
-    y = paper.y + paper.height * 0.55,
+    y = await byTheEdge(page, paper),
     shaft = Array.from({ length: 12 }, (_, k) => [x + k * 8, y]);
   await pen.stroke([...shaft, [x + 70, y - 14], [x + 60, y - 22]]);
   await page.waitForTimeout(800);
   assert.equal(await mode(), was, "the book left as it was by the Pencil's arrow by its edge");
   assert.deepEqual(await bareOf(page, [shaft[0], shaft[6]]), [], "the Pencil's arrow by the edge drawn where it went");
+}
+
+// A height by the page's left edge, a little over halfway down, below the pull tab where it lies over that edge
+async function byTheEdge(page, paper) {
+  const lip = await page.locator('#book .bk-lip').boundingBox();
+  return Math.max(paper.y + paper.height * 0.55, lip.y + lip.height + 30);
 }
 
 // The page arrows where they were whatever page they turn to: a finger's taps, each where the arrow was at the start,
@@ -176,11 +186,11 @@ async function arrowsStay(page, c, name, { touch }) {
   const arrows = () =>
       page.evaluate(() =>
         ['The page before', 'The page after'].map(label => {
-          const r = document.querySelector(`#book .bk-column [aria-label="${label}"]`).getBoundingClientRect();
+          const r = document.querySelector(`#book .bk-bar [aria-label="${label}"]`).getBoundingClientRect();
           return [Math.round(r.x), Math.round(r.y), Math.round(r.width), Math.round(r.height)];
         }),
       ),
-    where = () => page.locator('#book .bk-column .bk-where small').textContent(),
+    where = () => page.locator('#book .bk-bar .bk-where').textContent(),
     was = await arrows(),
     drawn = (await units(page)).length,
     at = ([x, y, w, h]) => [x + w / 2, y + h / 2],
@@ -193,11 +203,11 @@ async function arrowsStay(page, c, name, { touch }) {
         8000,
       );
     };
-  assert.equal(await where(), '1/2', "the call's page first");
-  await tap(at(was[1]), '2/2');
+  assert.equal(await where(), '1 / 2', "the call's page first");
+  await tap(at(was[1]), '2 / 2');
   await c.shot(`fill-${name}-3-read-only`, page);
   assert.deepEqual(await arrows(), was, 'the page arrows where they were on the read-only page');
-  await tap(at(was[0]), '1/2');
+  await tap(at(was[0]), '1 / 2');
   assert.deepEqual(await arrows(), was, 'the page arrows where they were back on the call page');
   await until(async () => (await units(page)).length === drawn, "the call's page back");
 }
@@ -205,58 +215,54 @@ async function arrowsStay(page, c, name, { touch }) {
 // A finger's swipe right from the page's left edge still closes the book: the board following it, folded once let go
 async function fingerCloses(page, c, { touch }) {
   const paper = await page.locator('#book .bk-paper').boundingBox(),
-    y = paper.y + paper.height * 0.55;
+    y = await byTheEdge(page, paper);
   await touch.down([[paper.x + 14, y]]);
   await touch.move([[paper.x + 14 + paper.width * 0.8, y]], 20);
   await touch.up();
   await c.settled(page, 'folded');
 }
 
-// The tabs along the top under the blur, behind the paper: each reaching out a step less than the one before it, the lit
-// one too, and the paper over their feet, the lit one's too. A finger's tap on Sketch lights it, one on Calls brings
-// the call's page back.
-async function tabsOnTop(page, { touch }) {
+// The bookmarks under the blur, Sketch, Asks and Calls: sideways out of the page block to the book's left, over HQ's
+// side; upright folded against the screen's left edge, slivers. The call's page under Calls; a finger's tap on Sketch
+// (upright, its first tap bringing them out) turns there, one on Calls brings the call's page back.
+async function tabsBeside(page, { touch }, viewport) {
   const seen = () =>
       page.evaluate(() => {
         const paper = document.querySelector('#book .bk-paper').getBoundingClientRect();
-        return [...document.querySelectorAll('#book .bk-marks button')].map(b => {
-          const r = b.getBoundingClientRect(),
-            under = document.elementFromPoint(r.left + r.width / 2, paper.top + 2);
+        return [...document.querySelectorAll('#book .bk-marks [data-chapter]')].map(b => {
+          const r = b.getBoundingClientRect();
           return {
             chapter: b.dataset.chapter,
-            lit: b.getAttribute('aria-current') === 'page',
-            box: { x: r.left, y: r.top, width: r.width, height: r.height },
-            reach: paper.top - r.top,
-            tucked: r.bottom > paper.top && !b.contains(under),
+            here: b.getAttribute('aria-current') === 'page',
+            ...{ top: r.top, left: r.left, right: r.right, paper: paper.left },
           };
         });
       }),
     tabs = await seen(),
-    said = JSON.stringify(tabs.map(({ chapter, reach, tucked }) => ({ chapter, reach, tucked })));
+    said = JSON.stringify(tabs),
+    upright = viewport.height > viewport.width;
   assert.deepEqual(
     tabs.map(t => t.chapter),
     ['sketch', 'asks', 'calls'],
     said,
   );
   assert.ok(
-    tabs.every(t => t.box.y >= BAND - 1),
+    tabs.every(t => t.top >= BAND - 1),
     `the tabs under the blur: ${said}`,
   );
-  assert.ok(
-    tabs.every(t => t.tucked),
-    `the paper over every tab's foot: ${said}`,
-  );
-  assert.ok(
-    tabs.every((t, i) => !i || t.reach < tabs[i - 1].reach),
-    `each tab reaching out less than the one before: ${said}`,
-  );
-  assert.equal(tabs.find(t => t.lit)?.chapter, 'calls', "the call's page under Calls");
+  const placed = upright
+    ? tabs.every(t => t.right > 8 && t.right <= 30)
+    : tabs.every(t => t.left < t.paper && t.right <= t.paper + 1);
+  assert.ok(placed, `the tabs ${upright ? "folded at the screen's left edge" : "out of the book's left"}: ${said}`);
+  assert.equal(tabs.find(t => t.here)?.chapter, 'calls', "the call's page under Calls");
   const tap = async chapter => {
-    await touch.down([middleOf(tabs.find(t => t.chapter === chapter).box)]);
-    await touch.up();
+    await toChapter(page, chapter, async at => {
+      await touch.down([at]);
+      await touch.up();
+    });
     await until(
-      async () => (await seen()).find(t => t.lit)?.chapter === chapter,
-      `a finger's tap on ${chapter} lights it`,
+      async () => (await seen()).find(t => t.here)?.chapter === chapter,
+      `a finger's tap turning to ${chapter}`,
       8000,
     );
   };

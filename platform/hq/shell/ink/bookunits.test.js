@@ -109,6 +109,31 @@ const PAGES = {
       created: YESTERDAY,
     },
   ],
+  // (sketch pages from before canvases: an agent's scrap, and the board's word beside it in the right column)
+  5: [
+    { scrap: true, ink: [], h: 160 },
+    {
+      column: 1,
+      ink: [
+        [
+          [20, 20],
+          [120, 50],
+        ],
+      ],
+    },
+  ],
+  6: [
+    { scrap: true, ink: [], h: 160 },
+    {
+      column: 1,
+      ink: [
+        [
+          [20, 20],
+          [120, 50],
+        ],
+      ],
+    },
+  ],
 };
 const SEED = {
   notebooks: [{ id: 1, kind: 'mine', name: 'My journal', created: NOW, updated: NOW }],
@@ -319,4 +344,73 @@ test("a line low in a scrap's room, its post-it words drawn, grows it only past 
   ]);
   await save(shown);
   assert.equal(heightOf(page, 400), tall + 40 + 4, 'grown to the line and its pen, no further');
+});
+
+// A sketch page (a canvas: sketchcanvas.js) shown at width, which a test changes as the board resizes the notebook
+async function sketchOf(id, width) {
+  const page = { id, chapter: 'sketch' },
+    view = {
+      page,
+      width,
+      el: element(),
+      place: () => layUnits(view, view.width),
+      pinned() {},
+      redraw() {},
+      refuse: words => (view.said = words),
+    },
+    book = { dev: true, views: [view] };
+  await readPage(book, page);
+  view.place();
+  return { book, view };
+}
+// The notebook made as narrow as a phone's page, and as wide as a desktop's
+const NARROW = widthFor(1) + 16,
+  WIDE = widthFor(4) + 16;
+
+test("a sketch's strokes stay where they were drawn at any notebook width, the old ones as first shown", async () => {
+  const shown = await sketchOf(5, WIDTH),
+    { view } = shown,
+    { page } = view,
+    first = inked(page);
+  const masonry = await pageOf(6);
+  assert.deepEqual(first, inked(masonry.view.page), 'an old sketch shows as it did at this width');
+  assert.deepEqual([...page.pins.keys()], [500, 501], 'and keeps those places');
+  // (a word written on the right, as the board did)
+  draw(view, [
+    [
+      [520, 300],
+      [640, 330],
+    ],
+  ]);
+  await save(shown);
+  assert.ok(
+    page.places.every(p => page.groups.get(p.id).place),
+    'every unit has its place in the store',
+  );
+  const drawn = inked(page);
+  for (const width of [NARROW, WIDE, WIDTH]) {
+    view.width = width;
+    view.place();
+    assert.deepEqual(inked(page), drawn, `nothing moves at ${width} px`);
+    assert.equal(page.scale, 1, 'drawn at its own size');
+  }
+  view.width = NARROW;
+  view.place();
+  assert.ok(page.w >= 640 + 2, 'the page reaches the word on the right, past a narrow paper');
+  await readAgain(shown.book, page);
+  view.place();
+  assert.deepEqual(inked(page), drawn, 'read again, everything where it was');
+  // (a word written up and left of the page's origin, the board's zoom panned there)
+  draw(view, [
+    [
+      [-300, -200],
+      [-180, -170],
+    ],
+  ]);
+  await save(shown);
+  view.place();
+  const far = page.places.find(p => p.x < 0);
+  assert.ok(far && page.groups.get(far.id).place.y < 0, 'a unit of its own where it was drawn, kept by the store');
+  assert.ok(page.x <= -300 && page.y <= -200, `the page reaches it up and left: ${page.x}, ${page.y}`);
+  assert.deepEqual(inked(page).slice(0, drawn.length), drawn, 'and nothing else moved');
 });

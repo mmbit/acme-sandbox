@@ -1,0 +1,116 @@
+/* The Shelf's own window, floating over HQ (bookshelfwindow.js): the book's
+   paper in a sheet with rounded corners, in the middle of the screen below Safari's strip, as tall as its shelves (the
+   screen's height at most, scrolling then), and HQ dimmed behind it. Its screen is bookshelf.css's overview, clear of
+   no rail; its Close at its head's end. Its potted plant stands on its top edge, above it: the window keeps
+   --bk-plant-room clear over it. */
+#book .bk-shelf-window {
+  --bk-plant-room: 72px;
+  position: fixed;
+  inset: calc(var(--sat, 0px) + var(--bk-plant-room)) 0 0;
+  width: min(1080px, 100% - 32px);
+  max-width: none;
+  height: fit-content;
+  max-height: calc(100% - var(--sat, 0px) - var(--bk-plant-room) - 32px);
+  margin: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 18px;
+  overflow: visible; /* (the plant over its edge: its overview scrolls and rounds its own corners) */
+  background: var(--bk-paper2);
+  color: var(--bk-night);
+  box-shadow:
+    0 28px 70px -12px rgba(10, 8, 20, 0.6),
+    0 0 0 1px rgba(10, 8, 20, 0.14);
+}
+#book .bk-shelf-window::backdrop {
+  background: rgba(14, 11, 22, 0.42);
+  animation: bk-shelf-dim 0.22s ease-out;
+}
+#book .bk-shelf-window.bk-sinking::backdrop {
+  opacity: 0;
+  transition: opacity 0.16s ease-in;
+}
+@keyframes bk-shelf-dim {
+  from {
+    opacity: 0;
+  }
+}
+#book .bk-shelf-window[open] {
+  display: flex;
+  flex-direction: column;
+}
+#book .bk-shelf-window .bk-far {
+  position: relative;
+  inset: auto;
+  flex: 0 1 auto;
+  min-height: 0;
+  border-radius: inherit;
+  --bk-far-right: 28px;
+  padding-bottom: 72px; /* (room for Undo over its foot) */
+}
+#book .bk-shelf-window .bk-far-head {
+  flex-direction: row;
+  align-items: flex-start;
+}
+#book .bk-shelf-window .bk-far-nav {
+  flex: 1;
+  min-width: 0;
+}
+#book .bk-shelf-window .bk-shelf-close {
+  justify-content: center;
+  width: 44px;
+  min-height: 44px;
+  margin-right: -10px;
+  padding: 0;
+}
+#book .bk-shelf-window .bk-shelf-close svg {
+  width: 22px;
+  height: 22px;
+}
+/* the plant on the top edge, in from the right corner past Close; the book's ink, paper and a leaf green */
+#book .bk-shelf-window .bk-shelf-plant {
+  position: absolute;
+  right: 34px;
+  bottom: calc(100% - 1px);
+  width: 60px;
+  height: 75px;
+  overflow: visible;
+  pointer-events: none;
+  fill: none;
+  stroke: var(--bk-night);
+  stroke-width: 1.2px; /* (in the drawing's units: about the book's 1.5px line) */
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+#book .bk-shelf-plant .bk-plant-leaves {
+  fill: #a9c46a;
+}
+#book .bk-shelf-plant .bk-plant-pot {
+  fill: var(--bk-paper);
+}
+#book .bk-shelf-plant .bk-plant-shade {
+  fill: url(#bk-plant-dots);
+  stroke: none;
+}
+#book .bk-shelf-plant pattern circle {
+  fill: var(--bk-night);
+  stroke: none;
+}
+#book .bk-shelf-window .bk-told {
+  bottom: calc(24px + var(--sab, 0px));
+}
+/* a phone: nearly all of the screen */
+@media (max-width: 560px) {
+  #book .bk-shelf-window {
+    width: calc(100% - 16px);
+    max-height: calc(100% - var(--sat, 0px) - var(--bk-plant-room) - 16px);
+    border-radius: 14px;
+  }
+  #book .bk-shelf-window .bk-shelf-plant {
+    right: 22px;
+  }
+  #book .bk-shelf-window .bk-far {
+    --bk-far-left: 18px;
+    --bk-far-right: 18px;
+  }
+}

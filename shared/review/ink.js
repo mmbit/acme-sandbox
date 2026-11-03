@@ -156,7 +156,8 @@ export function pen(surface, wet, opts) {
   };
   function finish(e) {
     if (!line || e.pointerId !== line.id) return;
-    show(line, follow(line, e, 'end'), null, true); // (no tail, and all of it now: the dry ink takes it from here)
+    // (no tail, and all of it painted now, not at the next frame: the dry ink takes it from here.)
+    show(line, follow(line, e, 'end'), null, true);
     tell('end', line);
     const done = line.stroke;
     line = null;
@@ -165,16 +166,13 @@ export function pen(surface, wet, opts) {
   const cancel = e => {
     if (!line || (e && e.pointerId !== line.id)) return;
     tell('cancel', line);
-    stop(line);
+    stop(line); // (no frame paints it after the wipe.)
     line = null;
     clear();
     opts.cancel?.();
   };
   const clear = () => [wet, under].forEach(c => c && fit(c));
-  surface.addEventListener('pointerdown', e => start(e) && e.preventDefault());
-  surface.addEventListener('pointermove', move);
-  surface.addEventListener('pointerup', finish);
-  surface.addEventListener('pointercancel', cancel);
+  listen(surface, { start, move, finish, cancel });
   return {
     start,
     move,
@@ -187,6 +185,12 @@ export function pen(surface, wet, opts) {
   };
 }
 
+const listen = (surface, on) => {
+  surface.addEventListener('pointerdown', e => on.start(e) && e.preventDefault());
+  surface.addEventListener('pointermove', on.move);
+  surface.addEventListener('pointerup', on.finish);
+  surface.addEventListener('pointercancel', on.cancel);
+};
 const capture = (surface, id) => {
   try {
     surface.setPointerCapture(id);

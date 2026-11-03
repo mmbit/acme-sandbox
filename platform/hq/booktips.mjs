@@ -1,6 +1,5 @@
-// book-check.mjs's tips story (shell/booktips.js, booktipslist.js): the Tips control among the notebook's controls
-// brings up a real book in the middle of the screen, on an iPad mini, a phone and a desktop. It comes up shut, a hard
-// cover, which swings open by itself onto two-page spreads: the title inside the cover and the index on the right,
+// book-check.mjs's tips story (shell/booktips.js, booktipslist.js): Tips in the bar's dots menu brings up a real book
+// in the middle of the screen, on an iPad mini, a phone and a desktop. It comes up shut, a hard cover, which swings open by itself onto two-page spreads: the title inside the cover and the index on the right,
 // listing every tip by its chapter, then a spread a tip (its chapter, title and words on the left, the Ink deck's
 // picture or motion study of it on the right, every one served). A turn is a leaf printed on both sides going over the spine; nothing waits on one (two keys in quick
 // succession land two spreads on). An index line turns to its tip, Contents and Home back to the index, and back from
@@ -51,11 +50,10 @@ export async function tipsStory(c) {
   await stillScenes(c);
 }
 
-// The Tips control, on the rail or, where the rail folds it away (an iPad mini), in More
+// Tips, a row of the bar's dots menu that presses the control
 async function tips(page) {
-  if (await page.locator(CONTROL).isVisible()) return page.click(CONTROL);
   await page.click('#book .bk-more');
-  await page.click('.bk-more-card [role="menuitem"]:has-text("Tips")');
+  await page.locator('#book .bk-more-card').getByRole('menuitem', { name: 'Tips', exact: true }).click();
 }
 // What leaves turn from now on: whether one was the cover, and the most sides one had (seen as they're put in: a turn
 // may be over by the time a press returns)

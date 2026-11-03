@@ -17,6 +17,7 @@ import { posAfter } from './notebookorder.ts';
 import { groupOn, insertGroup, partsOf, putAside, rootOf, row, type Group } from './notebookgroups.ts';
 import { boxOf } from '../../hq/shell/ink/notebookstack.js';
 import { judgeLater } from './ink/bookjudge.ts';
+import { fixerOf } from './ink/bookfix.ts';
 import { replySnip, sentSnip } from './ink/bookpick.ts';
 import { frameOf } from '../../hq/shell/ink/bookversionframes.js';
 import { inkOf, isRefused, wordsOf, type Anchor, type Refused } from './pagechecks.ts';
@@ -93,13 +94,14 @@ function setAside(p: NotebookPage, groups: Group[]) {
 }
 // Groups as notes on a sheet of this send's for each owner, their seconds started: when they go (inside inOneStep). A
 // call about a card for keys keeps every group on its pages for its own agent, whoever a group names, however the page
-// was made (memory.ts keysAgent, as bookreads.ts callRead keeps it for reads); elsewhere a group nobody owns is its
-// page's owner's, as an old book's note is (booknotes.ts addNote).
+// was made (memory.ts keysAgent, as bookreads.ts callRead keeps it for reads); elsewhere a group with a fix ticked on it
+// goes to the agent who proposed it, to build (bookfix.ts), and a group nobody owns is its page's owner's, as an old
+// book's note is (booknotes.ts addNote).
 function asNotes(who: string, groups: Group[], snips: ({ type: string; clean: Buffer } | null)[], atOnce = false) {
   const sheets = new Map<string | null, number>();
   groups.forEach((g, i) => {
     const page = pageRow(g.page, null)!;
-    const owner = (page.call === null ? null : keysAgent(page.call)) ?? g.owner ?? page.owner;
+    const owner = (page.call === null ? null : keysAgent(page.call)) ?? fixerOf(g) ?? g.owner ?? page.owner;
     const sheet = sheets.get(owner) ?? newSheet(who, owner, g.page);
     sheets.set(owner, sheet);
     const id = insertNote(sheet, g.page, g.by, anchorOf(g), saidOf(g), snips[i], null);

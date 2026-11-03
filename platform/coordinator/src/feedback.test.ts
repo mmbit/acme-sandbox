@@ -7,6 +7,7 @@ import { basename } from 'node:path';
 import { createServer, request } from 'node:http';
 import { fixtureRepo } from './fixture.ts';
 import { framedAnswer, reviewModeOff } from './testreview.ts';
+import { scriptForHq } from '../../../shared/review/parts.mjs';
 import { REVIEW_PARTS, RECORDER_MODULES } from '../../hq/extras.mjs';
 
 fixtureRepo();
@@ -92,11 +93,10 @@ const GENERAL_MARK = { el: null, view: VIEW, ink: [], kind: 'general', area: nul
 const GENERAL = JSON.stringify({ v: 1, url: `${ORIGIN}/`, el: null, view: { w: 0, h: 0, x: 0, y: 0, dpr: 1 }, ink: [], kind: 'general', area: null, html: '' });
 
 test('the script is the real tool only for the board, on an existing product preview host', async () => {
-  const real = readFileSync(new URL('../../../shared/review/review.js', import.meta.url), 'utf8');
   const on = await call('/__review/review.js');
-  assert.ok(real.includes("const HQ = '{{HQ_ORIGIN}}'"));
   // HQ's origin filled in, for its preview viewer
-  const tool = real.replace('{{HQ_ORIGIN}}', 'https://hq.company.test');
+  const tool = scriptForHq('review/review.js', 'https://hq.company.test');
+  assert.ok(tool.includes("const HQ = 'https://hq.company.test'"));
   assert.equal(on.text, tool + framedAnswer());   // the watch-along's answer after it
   assert.equal(on.headers['cache-control'], 'no-store');
   assert.equal(on.headers.vary, 'cookie');

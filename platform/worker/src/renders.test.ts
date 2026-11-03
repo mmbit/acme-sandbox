@@ -1,10 +1,11 @@
 // node --test src/renders.test.ts   (as one uid: the uid switch itself is the worker's, slots.test.ts covers it)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { keepRenders } from './renders.ts';
+import { keepRenders, read } from './renders.ts';
 
 test('a push keeps each render it names, once, by its sha256; one that isn’t what it names, or from history, isn’t kept', async () => {
   const dir = mkdtempSync(`${tmpdir()}/renders-clone-`),
@@ -66,4 +67,27 @@ test('an empty log is kept with an explicit nonnegative integer size', async () 
   writeFileSync(`${dir}/${side}`, JSON.stringify({ sha256, bytes: 0 }));
   assert.deepEqual(await keep(), []);
   assert.equal(readFileSync(`${store}/${sha256}`).length, 0);
+});
+
+test("a file that never ends, such as a FIFO with no writer, isn't read past the time limit", async () => {
+  const fifo = `${mkdtempSync(`${tmpdir()}/renders-clone-`)}/sheet.png`;
+  execFileSync('mkfifo', [fifo]);
+  await assert.rejects(read({ env: { PATH: process.env.PATH! } }, fifo, 1 << 20, 200), /didn't read within 0\.2 s/);
+});
+
+test("a render that never ends, a FIFO named by its .render.json, isn't copied past the time limit, and says so", async () => {
+  const dir = mkdtempSync(`${tmpdir()}/renders-clone-`),
+    store = mkdtempSync(`${tmpdir()}/renders-store-`);
+  execFileSync('mkfifo', [`${dir}/film.mp4`]);
+  writeFileSync(`${dir}/film.mp4.render.json`, JSON.stringify({ sha256: '3'.repeat(64), bytes: 10 }));
+  const left = await keepRenders(store, { env: { PATH: process.env.PATH! } }, dir, ['film.mp4.render.json'], 200);
+  assert.deepEqual(left, ["film.mp4.render.json: its render didn't read within 0.2 s, not kept"]);
+});
+
+test("a .render.json that isn't JSON is left out without its text, which a log mustn't carry", async () => {
+  const dir = mkdtempSync(`${tmpdir()}/renders-clone-`),
+    store = mkdtempSync(`${tmpdir()}/renders-store-`);
+  writeFileSync(`${dir}/film.mp4.render.json`, 'PRIVATE_FIXTURE_MARKER');
+  const left = await keepRenders(store, { env: { PATH: process.env.PATH! } }, dir, ['film.mp4.render.json']);
+  assert.deepEqual(left, ['film.mp4.render.json: not JSON']);
 });

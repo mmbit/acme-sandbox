@@ -78,12 +78,15 @@ const labelled = (s: Sketch) => (s.label ? ` “${oneLine(s.label)}”` : '');
 const pictured = (s: Sketch, gap: string) => (s.pictures ? `${gap}${plural(s.pictures, 'picture')}` : '');
 
 // (--artifact; a group's g<id>, --ink, --form, --asks, --version, --patch,
-// --expect; --source)
-const FLAGS = ['--picture', '--source', '--link', '--artifact', '--ink', '--form', '--version', '--patch', '--expect'];
+// --expect; --source; --fix)
+const FLAGS = [
+  ...['--picture', '--source', '--link', '--artifact', '--ink', '--form', '--version', '--patch', '--expect'],
+  '--fix',
+];
 const USAGE =
   'usage: hq answer <note|g<group>> ["<answer>"] [--picture <file> [--source "<where its numbers came from>"]] ' +
   '[--link <https url>] [--artifact <id>] [--ink <strokes.json>] [--form <questions.json>] [--asks] ' +
-  '[--version "<two words>" --picture <file> --patch <file>] [--expect <n>]';
+  '[--version "<two words>" --picture <file> --patch <file>] [--expect <n>] [--fix "<the change, in a line>"]';
 export const answer = {
   help: `
    hq answer <note> "<answer>" [--picture <file>]   clip your answer onto a note the board sent you from its book (its
@@ -92,7 +95,7 @@ export const answer = {
        [--ink <strokes.json>] [--form <q.json>]      or two for the board; a picture (png or jpg, 2 MB at most) or a
        [--asks] [--version "<two words>"             running preview's link to show it; --source: where a picture's
        --picture <file> --patch <file>]              numbers came from, one line under it (a chart: shared/scrapchart);
-       [--expect <n>]                                --artifact: something new that runs (an app, a page), by its id in
+       [--expect <n>] [--fix "<the change>"]         --artifact: something new that runs (an app, a page), by its id in
                                                      HQ's artifacts (an app's slug, a path for an artifact.yaml), shown
                                                      once it's merged and running;
                                                      --ink: a drawing (ink.js strokes, px from its own top-left);
@@ -101,8 +104,11 @@ export const answer = {
                                                      --asks: the words are your question to the board; --version: a
                                                      try's frame, its two-word name, with its picture and --patch (the
                                                      change, kept for a pick); --expect: how many versions the try makes
-                                                     (alone, before the first). The board ticks it (a version: picks
-                                                     it), or writes a reply under it, which comes back to you as a note`,
+                                                     (alone, before the first); --fix: a change you'd make, in a line
+                                                     (beside your words, or --ink drawing the after), shown as a box:
+                                                     ticked and its page sent, the build comes to you as a task. The
+                                                     board ticks it (a version: picks it; a fix: to have it built), or
+                                                     writes a reply under it, which comes back to you as a note`,
 
   async run(args: string[]) {
     const target = (args[0] ?? '').replace(/^#/, ''),
@@ -117,7 +123,7 @@ export const answer = {
     }
     const grp = /^g[0-9]+$/.test(target);
     if (!(grp || /^[0-9]+$/.test(target)) || !known) stop(USAGE);
-    if (!words.trim() && !['--picture', '--ink', '--version', '--expect'].some(f => flags.has(f))) stop(USAGE);
+    if (!words.trim() && !['--picture', '--ink', '--version', '--expect', '--fix'].some(f => flags.has(f))) stop(USAGE);
     const body: Record<string, unknown> = grp ? { grp: Number(target.slice(1)) } : { note: Number(target) };
     if (words) body.text = words;
     if (asks) body.asks = true;
@@ -126,7 +132,7 @@ export const answer = {
     if (file !== undefined && !bytes) stop(`hq answer: can't read ${file}`);
     const type = bytes && bytes[0] === 0x89 ? 'png' : 'jpeg';
     if (bytes) body.picture = `data:image/${type};base64,${bytes.toString('base64')}`;
-    for (const f of ['--source', '--link', '--artifact', '--version'])
+    for (const f of ['--source', '--link', '--artifact', '--version', '--fix'])
       if (flags.has(f)) body[f.slice(2)] = flags.get(f);
     for (const f of ['--ink', '--form']) if (flags.has(f)) body[f.slice(2)] = jsonOf(flags.get(f)!);
     if (flags.has('--patch')) {
@@ -139,7 +145,11 @@ export const answer = {
     if (!isSuccess(answer.status)) stop(`Nothing written: ${errorIn(answer.body, 'HQ refused it')}`);
     const on = grp ? `group ${target}` : `note #${target}`;
     print(
-      words || bytes || flags.has('--ink') ? `Answer clipped onto ${on}.` : `${on}: ${body.expect} versions coming.`,
+      flags.has('--fix')
+        ? `Fix clipped onto ${on}: once the board ticks it and sends its page, its build comes to you.`
+        : words || bytes || flags.has('--ink')
+          ? `Answer clipped onto ${on}.`
+          : `${on}: ${body.expect} versions coming.`,
     );
   },
 };

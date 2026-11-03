@@ -31,6 +31,7 @@ type Outlook = {
   stall: string | null;
 };
 type Job = {
+  urgent?: boolean;
   id: number;
   code: string | null;
   agent: string;
@@ -46,6 +47,7 @@ type Job = {
 // (ready: its work is in with nothing open, for its owner to judge: the coordinator's threadjudge.ts)
 type Ready = { since: number | null; judge: number | null };
 type Line = {
+  urgent?: boolean;
   cost?: FeatureCost;
   id: string;
   name: string;
@@ -116,7 +118,7 @@ function projectLine(t: Line) {
   const next = t.next
     ? `; next ${jobWords(t.next.id, t.next.code)} ${text(t.next.agent)} (${t.next.status}): ${text(t.next.title)}`
     : '';
-  return `${text(t.id)}  ${text(t.name)} (${text(t.owner)}): ${t.ready ? readyWords(t, t.ready) : outlookWords(t.outlook, t.id)}${next}`;
+  return `${text(t.id)}  ${text(t.name)}${t.urgent ? ' [urgent]' : ''} (${text(t.owner)}): ${t.ready ? readyWords(t, t.ready) : outlookWords(t.outlook, t.id)}${next}`;
 }
 
 const readyWords = (t: Line, ready: Ready) => {
@@ -167,7 +169,9 @@ export async function thread(id: string) {
   const t = api.parseOrNull(answer.body) as Detail | null;
   if (!api.isSuccess(answer.status) || !t) stop(`Couldn't read ${id}: ${api.errorIn(answer.body, 'no answer')}`);
   const o = t.outlook;
-  print(`${text(t.id)}  ${text(t.name)} (${text(t.owner)}, ${text(t.status)}), done when ${text(t.goal)}`);
+  print(
+    `${text(t.id)}  ${text(t.name)}${t.urgent ? ' [urgent]' : ''} (${text(t.owner)}, ${text(t.status)}), done when ${text(t.goal)}`,
+  );
   print(t.ready ? readyWords(t, t.ready) : outlookWords(o, t.id));
   print(...costLines(t.cost));
   print(...missLines(boardMisses(o) ? [t.id] : []));
@@ -194,7 +198,7 @@ export async function thread(id: string) {
     const merged = j.merged === null ? 'no merge in sight' : `merged about ${at(j.merged)}`;
     const waits = j.waits.filter(w => w.on !== 'horizon').map(waitWords);
     print(
-      `  ${jobWords(j.id, j.code)} ${text(j.agent)} (${statusWord(j.status)}${j.pr ? `, PR #${j.pr}` : ''}): ${text(j.title)}`,
+      `  ${jobWords(j.id, j.code)} ${text(j.agent)} (${statusWord(j.status)}${j.pr ? `, PR #${j.pr}` : ''}): ${text(j.title)}${j.urgent ? ' [urgent]' : ''}`,
       `    ${size}${duration(j.left_ms / 60_000)} left; ${start}${merged}${waits.length ? `. Waits on ${waits.join('; ')}` : ''}`,
     );
   }

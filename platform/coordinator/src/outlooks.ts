@@ -2,6 +2,7 @@
 // and planned finish against its window (windows.ts) with the slack it has, the agent time its open work has left, what
 // it waits on and the chain of jobs that sets its finish.
 // (its messages say deliverable, the board's word for a thread)
+import { projectUrgent, threadUrgent, taskUrgent } from './urgency.ts';
 import { featureCosts } from './featurecost.ts';
 import { db } from './db.ts';
 import { findThread, ownerOf, type Thread } from './projects.ts';
@@ -85,17 +86,23 @@ function stallOf(o: ThreadOutlook, booked: number | null) {
 // past the play's horizon (bookedStart).
 // (start and done; left_ms and finish)
 type BoardJob = { id: number; status: string };
-export function withOutlooks<B extends { projects: { threads: { id: string; jobs: BoardJob[] }[] }[] }>(
+export function withOutlooks<B extends { projects: { id: string; threads: { id: string; jobs: BoardJob[] }[] }[] }>(
   board: B,
   f: Forecast,
 ) {
-  const estimated = (job: BoardJob) => (isOpenJob(job) ? { ...job, estimate: estimateOf(job.id, f) } : job);
+  const estimated = (job: BoardJob) => ({
+    ...job,
+    urgent: taskUrgent(job.id),
+    ...(isOpenJob(job) ? { estimate: estimateOf(job.id, f) } : {}),
+  });
   return {
     ...board,
     projects: board.projects.map(p => ({
       ...p,
+      urgent: projectUrgent(p.id),
       threads: p.threads.map(t => ({
         ...t,
+        urgent: threadUrgent(t.id),
         jobs: t.jobs.map(estimated),
         outlook: outlookOf(t.id, f),
       })),
@@ -129,7 +136,15 @@ export function lines(f: Forecast) {
   return threads.map(t => {
     const outlook = outlookOf(t.id, f);
     const next = outlook?.next == null ? null : jobLine(outlook.next, f);
-    return { ...t, cost: costs.report(t.id), owner: ownerOf(t), outlook, next, ready: readyOf(t) };
+    return {
+      ...t,
+      urgent: threadUrgent(t.id),
+      cost: costs.report(t.id),
+      owner: ownerOf(t),
+      outlook,
+      next,
+      ready: readyOf(t),
+    };
   });
 }
 
@@ -144,7 +159,16 @@ export function detail(id: string, f: Forecast) {
   const jobs = (outlook?.jobs ?? []).map(job => jobLine(job, f));
   const held = heldThrough(t.id, f);
   const through = held && throughWords(t.id, held, f.now);
-  return { ...t, cost: featureCosts().report(t.id), owner: ownerOf(t), outlook, jobs, ready: readyOf(t), through };
+  return {
+    ...t,
+    urgent: threadUrgent(t.id),
+    cost: featureCosts().report(t.id),
+    owner: ownerOf(t),
+    outlook,
+    jobs,
+    ready: readyOf(t),
+    through,
+  };
 }
 
 function jobLine(id: number, f: Forecast) {
@@ -153,7 +177,15 @@ function jobLine(id: number, f: Forecast) {
   // (a thread's placeholder has no row, so no code: threadorder.ts placeholders)
   const code = job.placeholder ? null : codeOf(id);
   return {
-    ...{ id, code, agent: job.agent, title: nameOf(job), status: job.status, pr: job.review?.pr ?? job.pr },
+    ...{
+      id,
+      code,
+      urgent: taskUrgent(id),
+      agent: job.agent,
+      title: nameOf(job),
+      status: job.status,
+      pr: job.review?.pr ?? job.pr,
+    },
     ...{ size_ms: f.sizes.usual.get(id)?.agent_ms ?? null, left_ms: o.left_ms, start: o.start, merged: o.merged },
     waits: o.waits,
   };
@@ -200,6 +232,7 @@ export function findOutlooks(words: string, f: Forecast) {
       id: t.id,
       cost: costs.report(t.id),
       name: t.name,
+      urgent: threadUrgent(t.id),
       owner: project.owner,
       outlook: outlook && { ...outlook, waits },
       next,

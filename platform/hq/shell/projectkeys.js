@@ -112,11 +112,12 @@ export function groupTiles(groupRows) {
   return groupRows.map(r => jobTile(r, null)).join('') || '<p class="pj-none">Nothing here right now.</p>';
 }
 // A group's job: who, its title, its state (with its step, for one of the review loop's) and its open reviews and fixes
-// as a quiet line, its size and code
+// as a quiet line, that it's urgent until it's finished, its size and code
 function jobTile(j, t) {
   const s = stateOf(j),
     kind = kindOf(j),
-    steps = stepsOf(j, t).filter(x => !finished(x)).length;
+    steps = stepsOf(j, t).filter(x => !finished(x)).length,
+    urgent = j.urgent && !finished(j);
   const what = s === 'you' ? '' : (j.asks ?? asksOf([j])).length ? 'After your answer' : null;
   // (a wait in words in the label, with its hourglass on the tile: waitOf.)
   const where = [
@@ -128,7 +129,7 @@ function jobTile(j, t) {
   const lands = planned(j.lead ?? j).done;
   return tile({
     attrs: `data-job="${Number(j.id)}" data-owner="${esc(j.agent ?? '')}"`,
-    label: [nameText(j), ...where.map(x => x.text ?? x), lands].filter(Boolean).join(', '),
+    label: [nameText(j), urgent && 'urgent', ...where.map(x => x.text ?? x), lands].filter(Boolean).join(', '),
     state: { lit: s === 'you', words: 'Waits for you' },
     top: whoTop(j.agent),
     name: nameHtml(j),
@@ -136,7 +137,7 @@ function jobTile(j, t) {
       (where.length
         ? `<span class="pj-state">${s === 'working' ? pulse(1) : ''}<span>${where.map(x => x.html ?? withJobLinks(x)).join(' · ')}</span></span>` // (one line of text, its links in it)
         : '') + (lands ? `<span class="pj-state">${esc(cap(lands))}</span>` : ''),
-    foot: (size(j) ? `<span class="pj-size">${esc(size(j))}</span>` : '') + code(j),
+    foot: urgentMark(urgent) + (size(j) ? `<span class="pj-size">${esc(size(j))}</span>` : '') + code(j),
   });
 }
 // Recurring and work being placed beside the businesses, a business's tile: its cover (or its icon on the ground), the
@@ -177,11 +178,19 @@ export function head({ back = '', over = '', title, marks = '', keys = '' }) {
 // hover)
 export const litMark = words =>
   words ? `<span class="pj-mark you" title="${esc(words)}">${icon('phone', '', esc(words))}</span>` : '';
-// A project's marks: its owner, crowned, a routine's interval and next run, then what waits on the board and its pause
-// (a goal the CEO marked)
+// Urgent work, as the board called it (a project, a deliverable or a task, and all that's in it, with its reviews and
+// fixes: the coordinator's urgency.ts): the one work that may start on a seat past its week's pace. Its word and the
+// alert sign, never lit, since lit is what waits on the board; what it means said on hover (words).
+const URGENT = 'Urgent: may run past the seats’ pace',
+  PROJECT_URGENT = 'Urgent, all its work: may run past the seats’ pace';
+export const urgentMark = (on, words = URGENT) =>
+  on ? `<span class="pj-note pj-urgent" title="${esc(words)}">${icon('alert')}<span>Urgent</span></span>` : '';
+// A project's marks: its owner, crowned, a goal the CEO marked, that it's urgent, a routine's interval and next run,
+// then what waits on the board and its pause
 export const projectMarks = p =>
   person(p.owner, true) +
   (p.goal ? `<span class="pj-note">${icon('finish')}<span>Goal</span></span>` : '') +
+  urgentMark(p.urgent, PROJECT_URGENT) +
   (p.schedule
     ? `<span class="pj-note pj-schedule">${icon('group-recurring')}<span>${esc(scheduled(p.schedule))}</span></span>`
     : '') +
@@ -189,9 +198,13 @@ export const projectMarks = p =>
   pausedMark(p.pause);
 // a routine's interval and next run: "daily 07:00 · next tomorrow 07:00"
 const scheduled = s => [s.when, s.next && `next ${s.next}`].filter(Boolean).join(' · ');
-// A thread's: its owner, what waits on the board and its pause, and its time, always
-export const threadMarks = (t, p) =>
-  face(t.owner) + (threadLit(t, p) ? litMark(threadLine(t, p).words) : '') + pausedMark(t.pause ?? p.pause) + eta(t);
+// A thread's: its owner, that it's urgent (an open one's), what waits on the board and its pause, and its time, always
+export const threadMarks = (t, p, open = true) =>
+  face(t.owner) +
+  urgentMark(open && t.urgent, p.urgent ? 'Urgent with all its project: may run past the seats’ pace' : URGENT) +
+  (threadLit(t, p) ? litMark(threadLine(t, p).words) : '') +
+  pausedMark(t.pause ?? p.pause) +
+  eta(t);
 // A thread's live estimate (threads.js threadEta): when it's done, a key that shows on a tap the agent time its open
 // work has left and how that sits in its window, or why it has no time yet; a quiet mark while it has no open work.
 // Never in alarm colours: a later time is news.
@@ -267,16 +280,20 @@ export const mark = state =>
 // Someone's face with their name on hover, an owner with a crown, one at work marked so
 const person = (id, owner = false, on = false) =>
   `<span class="pj-person${owner ? ' pj-owner' : ''}" data-name="${esc(who(id))}${owner ? ', owner' : ''}">${owner ? icon('crown', 'pj-crown') : ''}${face(id, on ? 'on' : '')}</span>`;
-// A project's deliverables, after a routine's interval and next run: those with work running (their bars first), then
-// those up next, each in its page's order (inEtaOrder), with when (the planner's), at least three; or its two latest
-// done ones, the last finished first (projects.ts tally's finished), each with a tick.
+// A project's deliverables, after that it's urgent and a routine's interval and next run (a line each): those with work
+// running (their bars first), then those up next, each in its page's order (inEtaOrder), with when (the planner's), an
+// urgent one with the alert sign, at least three; or its two latest done ones, the last finished first (projects.ts
+// tally's finished), each with a tick.
 function deliverables(p) {
   const on = projectNow(p),
     rest = p.threads.filter(t => !on.includes(t));
   const next = [...inEtaOrder(p, on), ...inEtaOrder(p, rest)].slice(0, Math.max(3, on.length));
-  const routine = p.schedule ? [`<li class="pj-schedule"><span>${esc(scheduled(p.schedule))}</span></li>`] : [];
+  const routine = p.schedule ? [`<li class="pj-schedule"><span>${esc(scheduled(p.schedule))}</span></li>`] : [],
+    urgent = p.urgent ? [`<li>${urgentMark(true, PROJECT_URGENT)}</li>`] : [];
   const items = next.length
-    ? next.map(t => `<li>${pulse(running([t]))}<span>${nameHtml(t, 'name')}</span>${when(t, p)}</li>`)
+    ? next.map(
+        t => `<li>${pulse(running([t]))}<span>${nameHtml(t, 'name')}</span>${urgentSign(t, p)}${when(t, p)}</li>`,
+      )
     : p.done
         .slice()
         .sort((a, b) => b.finished.localeCompare(a.finished))
@@ -286,8 +303,10 @@ function deliverables(p) {
           t =>
             `<li class="pj-was"><span>${nameHtml(t, 'name')}</span><small>${endOf(t) === 'done' ? icon('tick', 'pj-done', 'Done') : endWord(t)}</small></li>`,
         );
-  return `<ul class="pj-next pj-deliverables">${[...routine, ...items].join('')}</ul>`;
+  return `<ul class="pj-next pj-deliverables">${[...urgent, ...routine, ...items].join('')}</ul>`;
 }
+// An urgent deliverable's alert sign on its project's tile, where the project isn't urgent as a whole (its own mark says so)
+const urgentSign = (t, p) => (t.urgent && !p.urgent ? icon('alert', 'pj-urgent-icon', 'Urgent') : '');
 // When a deliverable's done, by the planner (its line's finish, threadLine's, from now), or that it waits on the board,
 // or a pause sign
 function when(t, p) {

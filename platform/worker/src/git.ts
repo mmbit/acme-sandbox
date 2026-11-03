@@ -17,6 +17,10 @@ import { MARKS, countedLines, markedPaths, numstatRow, type FileLines } from './
 
 const execFileAsync = promisify(execFile);
 
+// The most output a buffered command read keeps (git's file and patch reads, and runAs's commands): 64 MiB, raised
+// from Node's 1 MiB default, caps the worker memory each of these reads may hold.
+const COMMAND_OUTPUT_MAX_BYTES = 64 * 1024 * 1024;
+
 export type Agent = { uid?: number; gid?: number; env: Record<string, string> };
 
 // The token lives only in the root worker's environment; no URL or config file ever holds it.
@@ -157,7 +161,7 @@ export const runAs = (agent: Agent, cmd: string, args: string[], input?: string)
     gid: agent.gid,
     input,
     stdio: ['pipe', 'pipe', 'pipe'],
-    maxBuffer: 1 << 26,
+    maxBuffer: COMMAND_OUTPUT_MAX_BYTES,
   });
 };
 
@@ -423,7 +427,7 @@ export function gitFlow(o: {
           main,
           head,
         ]),
-        { encoding: 'utf8', env, maxBuffer: 1 << 26 },
+        { encoding: 'utf8', env, maxBuffer: COMMAND_OUTPUT_MAX_BYTES },
       );
       // -z: the tree, then each file that conflicts (exit 1)
       const [tree, ...conflicts] = r.stdout.split('\0').filter(Boolean);
@@ -689,7 +693,7 @@ export function gitFlow(o: {
         '-U0',
         `refs/heads/${base}...${sha}`,
       ];
-      const r = spawnSync('git', inMirror(diff), { encoding: 'utf8', env, maxBuffer: 1 << 26 });
+      const r = spawnSync('git', inMirror(diff), { encoding: 'utf8', env, maxBuffer: COMMAND_OUTPUT_MAX_BYTES });
       if (r.status !== 0)
         throw new Error(
           `Couldn't read the diff's lines: ${redact(String(r.stderr || r.error))
@@ -829,7 +833,7 @@ export function gitFlow(o: {
       const read = (blob: string) =>
         execFileSync('git', ['--git-dir', mirror, 'cat-file', 'blob', blob], {
           encoding: 'utf8',
-          maxBuffer: 1 << 26,
+          maxBuffer: COMMAND_OUTPUT_MAX_BYTES,
           stdio: ['ignore', 'pipe', 'pipe'],
         });
       const take = (path: string, src: string) => {
@@ -902,7 +906,7 @@ export function gitFlow(o: {
         try {
           const src = execFileSync('git', ['--git-dir', mirror, 'cat-file', 'blob', blob], {
             encoding: 'utf8',
-            maxBuffer: 1 << 26,
+            maxBuffer: COMMAND_OUTPUT_MAX_BYTES,
             stdio: ['ignore', 'pipe', 'pipe'],
           });
           return src.length > 65_536 || (total += src.length) > 131_072 ? null : src;

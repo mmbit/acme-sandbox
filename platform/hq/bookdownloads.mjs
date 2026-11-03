@@ -2,7 +2,10 @@
 import assert from 'node:assert/strict';
 import { playLine } from './bookcall.mjs';
 import { MINI, UPRIGHT, until } from './bookkit.mjs';
-import { cornerOf, dragTo } from './bookshare.mjs';
+import { dragTo, tearOffMenu } from './booktearing.mjs';
+
+// how long a finger rests on the target before it lifts
+const REST_MS = 400;
 
 export function downloadStories(c) {
   return Object.fromEntries(
@@ -91,13 +94,13 @@ async function downloadEnvironment(context, c) {
 }
 
 async function savePage(page, kind, gesture, picture) {
-  const arriving = page.waitForEvent('download', { timeout: 15_000 });
-  if (gesture === 'drag') await dragTo(page, 'touch', kind);
-  else {
-    await (await cornerOf(page)).tap();
-    await page.locator(`#book .bk-share [data-share=${kind}]`).tap();
-  }
-  const download = await arriving;
+  const pressed = async () => {
+    // (the finger rests on its target before it lifts: one lifted still moving starts Chromium's fling, which swallows
+    // the next tap's click; Safari has no fling where nothing scrolls)
+    if (gesture === 'drag') await dragTo(page, 'touch', kind, () => page.waitForTimeout(REST_MS));
+    else await (await tearOffMenu(page, 'tap')).locator(`[data-share=${kind}]`).tap();
+  };
+  const [download] = await Promise.all([page.waitForEvent('download', { timeout: 15_000 }), pressed()]);
   assert.equal(await download.failure(), null, 'the browser completes its download');
   assert.ok(download.suggestedFilename().endsWith(`.${kind}`), 'the file keeps its format and name');
   const chunks = [];

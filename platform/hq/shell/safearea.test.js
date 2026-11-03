@@ -8,7 +8,8 @@ const REPO = join(import.meta.dirname, '../../..');
 // HQ's own page and its apps. theme/hq/classic is the classic HQ, a page of its own with no style.css.
 const ROOTS = [
   'platform/hq',
-  ...readdirSync(join(REPO, 'kits'))
+  // (a company's kits' HQ apps: the foundation alone has none)
+  ...(existsSync(join(REPO, 'kits')) ? readdirSync(join(REPO, 'kits')) : [])
     .map(kit => `kits/${kit}/hq`)
     .filter(dir => existsSync(join(REPO, dir))),
 ];

@@ -164,7 +164,7 @@ const born = (db.prepare("select name from sqlite_master where type = 'table' an
 //
 // seats: each seat as the worker last reported it.
 // - util, week: windows used (0 to 1), with each reset time in resets and week_resets (ms).
-// - pace: 1 while its week runs ahead of its pace (only the board's word and work due before its reset can start).
+// - pace: 1 while its week runs ahead of its pace (only explicitly urgent work can start).
 // - credits: 1 while it may run on credits past its limits (the board's switch and its account's credits), not that it
 //   does: it runs on them only once a window is full (playseats.ts).
 //
@@ -262,7 +262,7 @@ db.exec(`
     is_check integer not null default 0, seq real, suspending text, step text,
     code text, landing text, engine_only text, judges text, off_worker integer not null default 0,
     expedite integer not null default 0, carry text, light integer not null default 0, up text,
-    incident integer not null default 0);
+    incident integer not null default 0, urgent integer not null default 0);
   create table if not exists seats (id text primary key, engine text not null, state text not null,
     until integer, note text, updated integer, util real, resets integer, week real, week_resets integer, pace integer,
     credits integer, cli text);
@@ -612,7 +612,7 @@ db.exec(`create table if not exists seat_list (id text primary key, provider tex
 // Release follow-ups read the window of deadline_from until given their own.
 db.exec(`create table if not exists threads (id text primary key, project text not null, name text not null,
   goal text not null, status text not null default 'open', created text not null, by integer, done text, deadline integer,
-  deadline_by text, aim integer, branch text, judge integer, deadline_from text)`);
+  deadline_by text, aim integer, branch text, judge integer, deadline_from text, urgent integer not null default 0)`);
 // The resolved window, shared by every reader, including follow-ups through finished threads.
 db.exec(`create view if not exists thread_windows as
   with recursive windows(id, deadline, aim, deadline_by) as (
@@ -629,7 +629,7 @@ db.exec(`create view if not exists thread_windows as
 // who made it and the meeting it came from. code: the prefix of its tasks' codes (jobcodes.ts),
 // two or three capitals, unique. goal: when the CEO marked it one of the company's goals (goals.ts), else null
 db.exec(`create table if not exists projects (id text primary key, name text not null, owner text not null, business text,
-    product text, status text not null default 'open', created text not null, by text not null, done text, code text, goal text);
+    product text, status text not null default 'open', created text not null, by text not null, done text, code text, goal text, urgent integer not null default 0);
   create table if not exists thread_needs (thread text not null, needs text not null, primary key (thread, needs));
   create table if not exists need_spells (thread text not null, needs text not null, drawn text, dropped text);
   create index if not exists need_spells_thread on need_spells (thread, needs);
@@ -916,6 +916,9 @@ once('2026-10-26-threads-judge', () => lacks('threads', 'judge') && db.exec('alt
 // An item's time the board set itself, not one it was given (ledger.ts add; windows.ts BOARD)
 once('2026-10-31-due-board', () => lacks('call_items', 'due_board') && db.exec('alter table call_items add column due_board integer not null default 0'));
 once('2026-10-30-deadline-from', () => lacks('threads', 'deadline_from') && db.exec('alter table threads add column deadline_from text'));
+// thread_windows' step seeks a thread's followers: without it each read of the view scanned every thread once per thread
+// (68 ms at 2,300 threads)
+db.exec('create index if not exists threads_deadline_from on threads (deadline_from) where deadline_from is not null');
 db.exec('create index if not exists threads_judge on threads (judge) where judge is not null');
 // A live call handed a customer's details by a look-up, set before 31 Oct only (memory.ts CALLS customer_read).
 once('2026-10-24-calls-customers', () => {
@@ -1000,4 +1003,9 @@ once('2026-10-31-jobs-work-branch-thread', () => {
 once('2026-11-02-followthrough-next-look', () => {
   for (const column of ['seen', 'next', 'compared'])
     if (lacks('followthrough_checks', column)) db.exec(`alter table followthrough_checks add column ${column} text`);
+});
+
+once('2026-11-02-urgent-work', () => {
+  for (const table of ['projects', 'threads', 'jobs'])
+    if (lacks(table, 'urgent')) db.exec(`alter table ${table} add column urgent integer not null default 0`);
 });

@@ -7,9 +7,9 @@ import { publish } from './events.ts';
 import { ORIGIN } from './config.ts';
 import { secret } from './secrets.ts';
 import { companyTime } from './company.ts';
-import { answerRequest } from './jobs.ts';
+import { agentName, answerRequest } from './jobs.ts';
 import { hoursText } from './callrules.ts';
-import { agentName, byRequest, end, HOUR, linkToken, list, MINUTE, sha256, view, type Callout } from './callouts.ts';
+import { byRequest, end, HOUR, linkToken, list, MINUTE, sha256, view, type Callout } from './callouts.ts';
 import { dialDue } from './callsweep.ts';
 
 export function card(c: any) {

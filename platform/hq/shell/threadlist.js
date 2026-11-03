@@ -5,7 +5,7 @@
 import { esc } from '../util.js';
 import { covered, withJobLinks } from './prose.js';
 import { nameHtml, nameText } from './jobs.js';
-import { face, pulse, waitOf } from './projectkeys.js';
+import { face, pulse, urgentMark, waitOf } from './projectkeys.js';
 import { ROW_MARKS } from './tasks.js';
 import { waitsOf } from './threadtile.js';
 import {
@@ -94,7 +94,14 @@ function runningRow({ t, p, s }, projects) {
     when = eta?.time ?? '';
   const lit = threadLit(t, p),
     look = running.length ? `working${lit ? ' lit' : ''}` : lit ? 'board lit' : LOOK[s];
-  return row(t, p, { look: `pj-task ${look}`, who, mark: lit ? 'board' : MARK[s], says: doing, when });
+  return row(t, p, {
+    look: `pj-task ${look}`,
+    who,
+    mark: lit ? 'board' : MARK[s],
+    says: doing,
+    when,
+    urgent: t.urgent,
+  });
 }
 
 // The threads finished in the last day, the latest first, the completed projects' too (all their threads are done)
@@ -124,13 +131,14 @@ function finishedRow({ t, p, at }, opening) {
   });
 }
 
-// A thread's row: its face with its state's mark, its name, under it its project and what it says, and its time
-const row = (t, p, { look, who, mark, says, when }) =>
+// A thread's row: its face with its state's mark, its name, under it its project and what it says, and its time, after
+// that it's urgent (a running one's: a finished one's is spent)
+const row = (t, p, { look, who, mark, says, when, urgent = false }) =>
   `<li>${covered(
     look,
     `data-thread="${esc(t.id)}" data-in="${esc(p.id)}"`,
-    `${nameText(t, 'name')}, ${nameText(p, 'name')}${when ? `, ${when}` : ''}`,
+    [nameText(t, 'name'), nameText(p, 'name'), urgent && 'urgent', when].filter(Boolean).join(', '),
     `<span class="pj-task-who">${face(who)}${ROW_MARKS[mark] ?? ''}</span>
     <span class="pj-task-text"><b>${nameHtml(t, 'name')}</b><small><span class="pj-in">${esc(nameText(p, 'name'))}</span>${says ? ` · ${says}` : ''}</small></span>
-    <span class="pj-task-side">${when ? `<span class="pj-when">${esc(when)}</span>` : ''}</span>`,
+    <span class="pj-task-side">${urgentMark(urgent)}${when ? `<span class="pj-when">${esc(when)}</span>` : ''}</span>`,
   )}</li>`;

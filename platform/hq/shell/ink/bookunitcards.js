@@ -41,11 +41,14 @@ export function drawCards(view) {
     .join('')}${page.places
     .map(p => {
       const body = bodyIn(page, p.id) + wordsOf(page, p.id),
-        room = body > 0 && p.h - body > 8 ? `<div class="bk-room" style="top:${body}px"></div>` : '',
-        // (the board's own drawing is ink on the page: no paper.)
-        ink = drawing(page, p.id);
+        roomy = body > 0 && p.h - body > 8,
+        room = roomy ? `<div class="bk-room" style="top:${body}px"></div>` : '',
+        // (the board's own drawing is ink on the page: no paper. Else the note's paper, as tall as its body, plain
+        // page under it to write on: board, call 190.)
+        ink = drawing(page, p.id),
+        paper = ink ? '' : `<div class="bk-unit-paper" style="height:${roomy ? body : p.h}px"></div>`;
       // (what the board reads: a minimised call covers as little of it as it can.)
-      return `<div class="bk-unit"${ink ? ' data-drawing' : ''} data-keep-in-sight data-unit="${p.id}" style="left:${p.x}px;top:${p.y}px;width:${p.w}px;height:${p.h}px">${room}</div>`;
+      return `<div class="bk-unit"${ink ? ' data-drawing' : ''} data-keep-in-sight data-unit="${p.id}" style="left:${p.x}px;top:${p.y}px;width:${p.w}px;height:${p.h}px">${paper}${room}</div>`;
     })
     .join('')}`;
   titleIn(handles, page);
@@ -107,48 +110,56 @@ const dayWords = day => companyFormats().day(day, bookLang(), { weekday: true, s
 function dragged(view, layer) {
   layer.addEventListener('pointerdown', e => {
     const b = e.target.closest('.bk-room-handle');
-    if (!b) return;
+    // (a second finger is the page's pinch: bookpan.js)
+    if (!b || (e.pointerType === 'touch' && !e.isPrimary)) return;
     e.stopPropagation();
     e.preventDefault();
     const page = view.page,
       id = Number(b.dataset.unit),
       g = page.groups.get(id);
     if (!g) return;
+    // (the page's px on screen: its masonry's scale, or a sketch page's zoom.)
     const from = heightOf(page, id),
       y0 = e.clientY,
-      pointer = e.pointerId;
+      pointer = e.pointerId,
+      scale = view.el.getBoundingClientRect().width / view.el.offsetWidth;
     b.setPointerCapture(pointer);
     const move = m => {
       if (m.pointerId !== pointer) return;
       // (in the store's terms: the words drawn in its body aside)
-      const h =
-        heightFor(partsOf(page, id), Math.round(from + (m.clientY - y0) / (page.scale ?? 1))) - wordsOf(page, id);
+      const h = heightFor(partsOf(page, id), Math.round(from + (m.clientY - y0) / scale)) - wordsOf(page, id);
       page.resizing = { id, h: Math.max(1, h) };
       view.relay?.();
     };
-    const up = async u => {
+    const up = u => {
       if (u.pointerId !== pointer) return;
       removeEventListener('pointermove', move);
       removeEventListener('pointerup', up);
       removeEventListener('pointercancel', up);
-      const h = page.resizing?.h;
-      if (h === undefined) return;
-      try {
-        // (after a save of its ink under way, as the store has it then: drawn on and dragged at once, the resize goes
-        // with the group the save left, never one it changed since.)
-        await page.saving?.catch(() => {});
-        const now = page.groups.get(id) ?? g,
-          done = await ask(view.dev, '/api/notebooks/groups/resize', null, { id, since: now.updated, h });
-        Object.assign(now, { h: done.h ?? h, updated: done.updated ?? now.updated });
-      } catch (err) {
-        view.refuse?.(err.message);
-      }
-      page.resizing = null;
-      view.relay?.();
+      letGo(view, id, g, u.unmade);
     };
     // (followed on the window, wherever the pointer is as the masonry's laid again under it)
     addEventListener('pointermove', move);
     addEventListener('pointerup', up);
     addEventListener('pointercancel', up);
   });
+}
+// A unit's handle let go: its height saved; let go unmade, as a second finger comes down to pinch, the room as it was
+async function letGo(view, id, g, unmade) {
+  const page = view.page,
+    h = page.resizing?.h;
+  if (h === undefined) return;
+  if (!unmade)
+    try {
+      // (after a save of its ink under way, as the store has it then: drawn on and dragged at once, the resize goes
+      // with the group the save left, never one it changed since.)
+      await page.saving?.catch(() => {});
+      const now = page.groups.get(id) ?? g,
+        done = await ask(view.dev, '/api/notebooks/groups/resize', null, { id, since: now.updated, h });
+      Object.assign(now, { h: done.h ?? h, updated: done.updated ?? now.updated });
+    } catch (err) {
+      view.refuse?.(err.message);
+    }
+  page.resizing = null;
+  view.relay?.();
 }

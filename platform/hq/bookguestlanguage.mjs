@@ -4,7 +4,7 @@ import { named, addNote, sendPage, snapshot } from './bookguestscreen.mjs';
 import { openVisitor } from './bookguestserver.mjs';
 import { reviewInvite } from './bookinvitechecks.mjs';
 import { until } from '../../shared/browser/browser.mjs';
-import { words } from './shell/ink/notebookwords.js';
+import { filled, words } from './shell/ink/notebookwords.js';
 
 // An agent's answer slip on a guest's page: its name marked as an AI's, to the eye and to a screen reader, and the room
 // to answer it in, in the guest's language
@@ -16,7 +16,7 @@ export async function markedSlip(page, lang) {
     name = head.split(' · ')[0];
   assert.equal(await page.locator('html').getAttribute('lang'), lang);
   assert.equal(head, `${name} · ${words[lang].aiAgent}`, `${head}: an agent's answer is marked as an AI's`);
-  const said = async (key, who) => (await named(page, key)).replace('{name}', who);
+  const said = async (key, who) => filled(await named(page, key), { name: who });
   assert.equal(await slip.getAttribute('aria-label'), await said('slipAnswer', head));
   // (answered in the room pulled out under it, drawn: no field to type in.)
   assert.equal(await slip.locator('.bk-slip-room-pull').getAttribute('aria-label'), await said('slipRoom', name));
@@ -34,9 +34,9 @@ export async function pageDate(page, lang) {
   assert.ok(!shown.includes(english), `${shown}: not the board's English`);
 }
 
-// Two more of the round's guests, their words on the rail in German and Dutch on a phone held sideways, where the rail
-// is at its tightest: Mark done, then Marked done and Undo, each broken inside its key, none running out of it
-// (signIn: bookguests.mjs's)
+// Two more of the round's guests, their words on the bar in German and Dutch on a phone held sideways, where the bar
+// is at its tightest: Mark done, then Marked done and Undo, on the bar's right before its dots, each broken inside its
+// key, none running out of it (signIn: bookguests.mjs's.)
 export async function roundWords(state, board, signIn) {
   const people = [
     ['Dirk', 'de'],
@@ -64,11 +64,19 @@ export async function roundWords(state, board, signIn) {
     await snapshot(state, `round-words-${lang}-sideways`, guest.page);
   }
 }
-// Every word key shown on the tight rail with each line of its word inside it
+// Every word key the guest has on the bar: on its right, clear of the page's arrows in its middle and before its dots,
+// on the bar's row and on the screen, each line of its word inside its key
 async function wordsInKeys(page, what) {
-  await page.waitForFunction(() => document.querySelector('#book .bk-column').dataset.fit === 'tight');
-  const out = await page.evaluate(() =>
-    [...document.querySelectorAll('#book .bk-column .bk-text')]
+  await page.waitForFunction(() =>
+    [...document.querySelectorAll('#book .bk-bar [data-island=send] .bk-text')].some(key => key.offsetParent),
+  );
+  const seen = await page.evaluate(() => {
+    const bar = document.querySelector('#book .bk-bar'),
+      [send, pages, dots] = ['[data-island=send]', '[data-island=pages]', '.bk-more'].map(s =>
+        bar.querySelector(s).getBoundingClientRect(),
+      ),
+      row = bar.getBoundingClientRect();
+    const keys = [...bar.querySelectorAll('[data-island=send] .bk-text')]
       .filter(key => key.offsetParent)
       .map(key => {
         const k = key.getBoundingClientRect(),
@@ -78,8 +86,18 @@ async function wordsInKeys(page, what) {
           Math.max(k.top - r.top, r.bottom - k.bottom, k.left - r.left, r.right - k.right),
         );
         return [key.textContent, Math.max(0, ...past)];
-      }),
-  );
-  assert.ok(out.length, `${what}: a word key on the rail`);
-  for (const [word, past] of out) assert.ok(past <= 0.5, `${what}: "${word}" runs ${past} px out of its key`);
+      });
+    return {
+      keys,
+      placed: {
+        'clear of the arrows': send.left >= pages.right - 0.5,
+        'before the dots': send.right <= dots.left + 0.5,
+        'on the bar': send.top >= row.top - 0.5 && send.bottom <= row.bottom + 0.5,
+        'and the dots on the screen': dots.right <= innerWidth + 0.5,
+      },
+    };
+  });
+  assert.ok(seen.keys.length, `${what}: a word key on the bar`);
+  for (const [word, past] of seen.keys) assert.ok(past <= 0.5, `${what}: "${word}" runs ${past} px out of its key`);
+  for (const [where, ok] of Object.entries(seen.placed)) assert.ok(ok, `${what}: its keys ${where}`);
 }

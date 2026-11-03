@@ -58,7 +58,15 @@ test("a push whose screens changed is ruled on the screens' model, which opens e
   const ruling = await toRuling(701, CHANGED);
   assert.equal(ruling.model, MODEL, 'the ruling runs on the rule’s model, though no file is a visual path');
   assert.match(ruling.prompt, /## The board's screens, before and after/);
-  assert.match(ruling.prompt, /projects \(brownstone, tablet\).*`node compare\.mjs`.*against the brand guide/s);
+  // (the sheets the check made, which the worker kept: no render of its own unless one is gone)
+  assert.match(
+    ruling.prompt,
+    /projects \(brownstone, tablet\)\. Open the sheets the push's check made: \/tmp\/screens\//,
+  );
+  assert.match(
+    ruling.prompt,
+    /Only if one is gone: Render them yourself: `node compare\.mjs`.*against the brand guide/s,
+  );
 
   const run = await h.claim('claude');
   assert.equal(run?.id, ruling.id);
@@ -80,6 +88,7 @@ test("a changed screen with no picture on either side is owed until the ruling's
   const ruling = await toRuling(707, said({ rendered: true, changed: [CHANGED_SHOT, blank], same: 22 }));
   assert.equal(ruling.model, MODEL);
   assert.match(ruling.prompt, /no picture on either side of home \(brownstone, phone\): its fonts didn't load/);
+  assert.match(ruling.prompt, /Your own render \(`node compare\.mjs`\) must show each one/);
   assert.match(ruling.prompt, /refused: projects-brownstone-tablet-sheet\.png, home-brownstone-phone-sheet\.png/);
   const run = await h.claim('claude');
   assert.equal(run?.id, ruling.id);
@@ -113,7 +122,7 @@ test("a push whose check couldn't run, or that changes the check, is ruled on wh
   ] as const) {
     const ruling = await toRuling(pr, screens, [...files]);
     assert.equal(ruling.model, MODEL, `#${pr}`);
-    assert.match(ruling.prompt, /screens check couldn't tell/, `#${pr}`);
+    assert.match(ruling.prompt, /screens check couldn't tell.*Render them yourself: `node compare\.mjs`/s, `#${pr}`);
     const run = await h.claim('claude');
     assert.equal(run?.id, ruling.id, `#${pr}`);
     const review = await import('./review.ts');

@@ -55,6 +55,7 @@ function unplanned(row: Row): QueuedJob {
     ...{ id: row.id, agent: row.agent, title: row.title, kind: row.kind, origin: row.origin, status: row.status },
     ...{ engine: row.engine, for_seat: row.for_seat, cli: row.cli, downtime: row.downtime },
     fallsBack: !!row.falls_back,
+    urgent: !!row.urgent,
     ...{ created: Date.parse(row.created), finished: row.finished === null ? null : Date.parse(row.finished) },
     ...{ notBefore: row.held_by ? 0 : row.not_before, seat: row.seat, pr: row.pr, board: row.board },
     ...(row.follow_through ? { followThrough: true } : {}),

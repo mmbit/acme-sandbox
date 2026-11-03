@@ -1,172 +1,174 @@
-/* A book's chapters as its bookmarks (bookmarks.js): along the book's top wherever the screen is tall enough, its paper
-   trimmed to make room under Safari's blurred strip; sideways on a screen too short for that, small tabs peek out
-   between the pages of a thick white stack of page edges at the book's left. The trim and the stack are only for a book
-   with bookmarks (.bk-marked on #book), on its page: never on the overview or the shelf (data-far, bookpagesfar.js),
-   which show none. The tabs are tucked behind the page and staggered evenly, as index tabs, and the chapter shown is lit
-   in the deck's lime, as a chosen version is (bookversions.css), with no dark outline: paper, not a button. */
+/* A book's chapters as its bookmarks (bookmarks.js), on the cover's edge (book.js) so they move and swing with the
+   book: real bookmarks, each its own card colour for good, never lit (board, call 190). The page's own chapter shows
+   by depth, its tab nearest the page and a little longer, the others from deeper in. Beside HQ's page they stick out
+   of the page block to the left; on a page that is the whole screen they lie folded against its left edge like the
+   pull tab, slivers with their icons, out over the margin while one is picked (the board's pick on card 341). None on
+   the overview or the shelf (data-far, bookpagesfar.js). Never under the status bar's blur (--sat). */
 #book {
-  --bk-mk-paper: #f3ecdf;
-  --bk-mk-edge: #cdbd9f;
-  --bk-mk-lit: var(--bk-chosen, #d6ea3c);
+  --bk-mk-edge: rgba(60, 45, 20, 0.28);
+  --bk-mk-ink: #2a2352;
 }
 #book[data-far] :is(.bk-marks, .bk-mk-guests) {
   display: none;
 }
-#book .bk-marks {
-  position: absolute;
-  z-index: 8;
-  display: flex;
-  pointer-events: none;
-}
-/* (a chapter's tab, a bookmark or the overview's, bookmarks.js chapterTab: bookshelf.css places the overview's.) */
+/* a chapter's tab, a bookmark or the overview's (bookmarks.js chapterTab: bookshelf.css places the overview's): its
+   colour its chapter's, always */
 #book .bk-mk-tab {
+  --bk-mk-card: #e6d9bd;
   display: inline-flex;
   align-items: center;
-  justify-content: center;
   gap: 6px;
+  box-sizing: border-box;
   border: 1px solid var(--bk-mk-edge);
-  background: var(--bk-mk-paper);
-  color: rgba(42, 35, 82, 0.66);
-  font: 600 14px/1 var(--bk-font);
+  background: var(--bk-mk-card);
+  color: var(--bk-mk-ink);
+  font: 600 13px/1 var(--bk-font);
+  letter-spacing: 0.03em;
+  white-space: nowrap;
 }
-#book .bk-mk-tab[aria-current='page'] {
-  border-color: color-mix(in srgb, var(--bk-mk-lit), #2a2352 18%);
-  background: var(--bk-mk-lit);
-  color: #2a2352;
-  font-weight: 700;
+#book .bk-mk-tab[data-chapter='asks'] {
+  --bk-mk-card: #c4e2dc;
 }
-/* (a chapter with no pages yet: there, dim, unless it's the one shown.) */
+#book .bk-mk-tab[data-chapter='calls'] {
+  --bk-mk-card: #e8ccd4;
+}
+#book .bk-mk-tab[data-chapter='guests'] {
+  --bk-mk-card: #d8d3ec;
+}
+#book .bk-mk-tab[data-chapter='advice'] {
+  --bk-mk-card: #dfe5bf;
+}
+/* (a chapter with no pages yet: there, its words dim, unless it's the page's own) */
 #book .bk-mk-tab[data-empty]:not([aria-current]) {
-  color: rgba(42, 35, 82, 0.38);
+  color: rgba(42, 35, 82, 0.45);
 }
-#book .bk-marks button {
-  cursor: pointer;
-  pointer-events: auto;
-  transition:
-    background-color 0.15s,
-    transform 0.12s;
-}
-#book .bk-marks button:active {
-  transform: scale(0.96);
-}
-#book .bk-marks button[aria-current='page'] {
-  z-index: 2;
+#book .bk-mk-icon {
+  flex: none;
+  width: 14px;
+  height: 14px;
 }
 #book .bk-mk-count {
-  display: inline-grid;
-  place-items: center;
-  min-width: 18px;
-  height: 18px;
-  padding: 0 5px;
-  box-sizing: border-box;
-  border-radius: 9px;
-  background: var(--bk-red);
-  color: #fff;
-  font-size: 11px;
   font-weight: 700;
 }
 
-/* Along the top wherever the screen is tall enough for them (both ways up on an iPad, upright on a phone, a desktop):
-   standing on the cover's head under Safari's blurred strip, from the paper's left, clear of the dog-ear at its right,
-   their feet tucked under the paper's head; the paper, the controls' lane and the page's left edge start under them.
-   The page keeps its whole width. 521 px splits phones on their side (430 tall at most) from iPads (744 at least).
-   The side stack's query below and the guests' sheet's take the same split.
-   The rail starts under them in the overview too, where they're away, so it has the same room and keeps its layout.
- */
-@media (orientation: portrait), (min-height: 521px) {
-  #book.bk-marked {
-    --bk-mk-head: 34px;
-  }
-  #book.bk-marked:not([data-far]) :is(.bk-paper, .bk-stack, .bk-mk-blank),
-  #book.bk-marked .bk-rail {
-    top: calc(var(--bk-board) + var(--bk-mk-head));
-  }
-  /* (behind the paper: z-index under its 0, in the leaf's own stacking, book.css) */
-  #book .bk-marks {
-    z-index: -1;
-    top: var(--bk-board);
-    left: calc(var(--bk-pages) + 12px);
-    right: 56px;
-    height: calc(var(--bk-mk-head) + var(--bk-mk-tuck));
-    align-items: flex-end;
-    gap: 6px;
-  }
-  #book .bk-marks button {
-    flex: 0 1 auto;
-    min-width: 0;
-    height: calc(var(--bk-mk-reach) + var(--bk-mk-tuck));
-    padding: 0 14px var(--bk-mk-tuck);
-    border-bottom: 0;
-    border-radius: 8px 8px 0 0;
-    box-shadow: 0 -1px 3px rgba(42, 35, 82, 0.12);
-  }
+#book .bk-marks {
+  position: absolute;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  pointer-events: none;
+}
+#book .bk-marks button {
+  position: relative;
+  pointer-events: auto;
+  cursor: pointer;
+  touch-action: none;
+  transition:
+    translate 0.22s cubic-bezier(0.2, 0.8, 0.3, 1),
+    box-shadow 0.22s;
+}
+/* (wider to the touch than they show) */
+#book .bk-marks button::after {
+  content: '';
+  position: absolute;
+  inset: -3px -14px -3px -4px;
 }
 
-/* Sideways on a screen too short for them along the top (a phone): a thicker stack of page edges at the book's left,
-   white so no dark strip shows there, the tabs peeking out of it one under another from its head, tucked in under its
-   last few pages */
-@media (orientation: landscape) and (max-height: 520px) {
-  #book.bk-marked:not([data-far]) {
-    --bk-pages: 30px;
-  }
+/* Beside HQ's page: out of the page block at the book's outer edge, over the table, one under another below the blur,
+   each from its own place in the block: the page's own from its top page, the others a page or two deeper */
+@media (orientation: landscape) {
   #book .bk-marks {
-    top: var(--bk-board);
-    bottom: var(--bk-board);
-    left: 0;
-    width: var(--bk-pages);
-    flex-direction: column;
-    gap: 10px;
-    padding-top: 14px;
-    box-sizing: border-box;
-  }
-  /* (the stack starts in from the leaf's edge: the cover's inside shows there, under the tabs reaching furthest) */
-  #book .bk-marks::before {
-    content: '';
-    position: absolute;
-    inset: 0 0 0 7px;
-    background: repeating-linear-gradient(90deg, #fffaf0 0 2px, #d9cbb0 2px 3px);
-  }
-  /* (the last pages over the tabs' ends, the chapter shown's too, so they read as between the pages) */
-  #book .bk-marks::after {
-    content: '';
-    position: absolute;
-    z-index: 3;
-    top: 0;
-    right: 0;
-    bottom: 0;
-    width: 6px;
-    background: repeating-linear-gradient(90deg, #fffaf0 0 2px, #d9cbb0 2px 3px);
+    --bk-mk-reach: 30px;
+    /* (below HQ's own keys at the top of its page, above the book's pull tab at its middle) */
+    top: calc(var(--sat, 0px) + 96px);
+    right: calc(-1 * var(--bk-pages) + 1px);
+    gap: 6px;
+    align-items: flex-end;
   }
   #book .bk-marks button {
-    position: relative;
-    flex-direction: column-reverse;
-    width: var(--bk-mk-reach);
-    min-height: 84px;
-    margin-left: calc(var(--bk-pages) - var(--bk-mk-reach));
-    padding: 8px 6px 8px 0;
+    flex-direction: column;
+    justify-content: flex-start;
+    gap: 4px;
+    width: calc(var(--bk-mk-reach) + 12px);
+    /* (as long as its icon and upright words take, three of them still above the book's pull tab on an iPad
+       sideways) */
+    min-height: 72px;
+    padding: 6px 12px 5px 0;
     border-right: 0;
-    border-radius: 7px 0 0 7px;
-    box-shadow: -1px 1px 2px rgba(42, 35, 82, 0.14);
-    font-size: 13px;
+    border-radius: 9px 0 0 9px;
+    box-shadow: -1px 1px 2px rgba(42, 35, 82, 0.18);
+    /* (deeper in the block: under a page or two, so a few px short of the paper) */
+    margin-right: 4px;
+  }
+  #book .bk-marks button:nth-child(3) {
+    margin-right: 6px;
+  }
+  #book .bk-marks button[aria-current='page'] {
+    z-index: 2;
+    width: calc(var(--bk-mk-reach) + 15px);
+    margin-right: 0;
+    box-shadow: -2px 1px 3px rgba(42, 35, 82, 0.28);
   }
   #book .bk-marks button span {
     writing-mode: vertical-rl;
     rotate: 180deg;
+    font-size: 11px;
+  }
+  /* (a phone on its side: HQ's keys run down its page's right, so only icons, between its header keys and its zoom
+     keys; the book's pull tab moves down out of their way, book.css) */
+  @media (max-height: 520px) {
+    #book .bk-marks {
+      top: calc(var(--sat, 0px) + 96px);
+    }
+    #book .bk-marks button {
+      min-height: 38px;
+      padding-top: 11px;
+    }
+    #book .bk-marks button span {
+      display: none;
+    }
   }
 }
-/* (staggered evenly, as index tabs cut one step apart: the first reaches out furthest, each after it one step less;
-   the chapter shown is lit, never further out nor over the page) */
-#book .bk-marks {
-  --bk-mk-tuck: 4px;
-}
-#book .bk-marks button {
-  --bk-mk-reach: 28px;
-}
-#book .bk-marks button:nth-child(2) {
-  --bk-mk-reach: 25px;
-}
-#book .bk-marks button:nth-child(n + 3) {
-  --bk-mk-reach: 22px;
+
+/* A page the whole screen: folded against its left edge, slivers of each with its icon, the page's own a little
+   further out and in front; a tap or a pull brings them out over the margin, their words read, folded away again
+   once one is picked or the page is touched */
+@media (orientation: portrait) {
+  #book .bk-marks {
+    --bk-mk-out: 112px;
+    left: 100%;
+    top: calc(var(--sat, 0px) + 96px);
+    gap: 6px;
+  }
+  #book .bk-marks button {
+    flex-direction: row-reverse;
+    justify-content: flex-start;
+    width: var(--bk-mk-out);
+    height: 54px;
+    padding: 0 5px 0 0;
+    border-left: 0;
+    border-radius: 0 9px 9px 0;
+    translate: calc(18px - var(--bk-mk-out)) 0;
+    box-shadow: 1px 0 2px rgba(42, 35, 82, 0.2);
+  }
+  #book .bk-marks button[aria-current='page'] {
+    z-index: 2;
+    translate: calc(21px - var(--bk-mk-out)) 0;
+    box-shadow: 1px 1px 4px rgba(42, 35, 82, 0.3);
+  }
+  #book .bk-marks button span {
+    flex: 1;
+    text-align: right;
+    font-size: 14px;
+  }
+  #book .bk-marks[data-out] button {
+    translate: 0 0;
+    padding-right: 10px;
+    box-shadow: 2px 3px 8px -2px rgba(42, 35, 82, 0.35);
+  }
+  #book .bk-marks[data-out] button[aria-current='page'] {
+    width: calc(var(--bk-mk-out) + 6px);
+  }
 }
 
 /* a chapter with no pages yet: its own empty page over the page shown, the paper bare under its name (bookmarks.js),
@@ -174,7 +176,7 @@
 #book .bk-mk-blank {
   position: absolute;
   z-index: 1;
-  inset: var(--bk-board) 0 var(--bk-board) var(--bk-pages);
+  inset: var(--sat, 0px) 0 0 var(--bk-pages);
   background-color: var(--bk-paper);
   background-image: var(--bk-dots);
   background-size: 22px 22px;
@@ -193,12 +195,12 @@
 /* a round's guests: a small sheet of paper beside the tabs */
 #book .bk-mk-guests {
   position: absolute;
-  /* (over the controls while it's open: the rail's 8, book.css) */
+  /* (over the controls while it's open: the controls' 8, book.css) */
   z-index: 9;
-  top: calc(var(--bk-board) + 12px);
-  left: calc(var(--bk-pages) + 10px);
+  top: calc(var(--sat, 0px) + 72px);
+  left: calc(var(--bk-pages) + 12px);
   width: min(340px, calc(100% - 28px - var(--bk-pages)));
-  max-height: calc(100% - var(--bk-board) * 2 - 60px);
+  max-height: calc(100% - var(--sat, 0px) - 140px);
   overflow-y: auto;
   padding: 6px 12px;
   border: 1px solid var(--bk-mk-edge);
@@ -208,10 +210,9 @@
   color: var(--bk-ink, #2a2352);
   font: 15px/1.3 var(--bk-font);
 }
-@media (orientation: portrait), (min-height: 521px) {
+@media (orientation: portrait) {
   #book .bk-mk-guests {
-    top: calc(var(--bk-board) + var(--bk-mk-head) + 6px);
-    left: 12px;
+    left: 124px;
   }
 }
 #book .bk-mk-guest {

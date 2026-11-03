@@ -345,8 +345,19 @@ test("a failed answer says why until the thread moves on: the next ask's face, t
   assert.equal((await groupOn(page, g.id)).waiting, null, 'no failure left under the note');
 });
 
-// A question typed on the current page and the judge's call on it, an answer (any other words it reads first, none:
-// bookjudge.ts), until the note shows a face
+// The judge's call on the note with exactly these words, as the worker's small model would make it (bookjudge.ts):
+// reply for it, and none for any other words it reads first
+async function judgedAs(words: string, reply: string) {
+  await until(async () => {
+    const c = (await h.worker('reads/claim')).body;
+    if (!c.reading || !JSON.parse(c.schema).properties.reply) return false;
+    const mine = c.content.at(-1).text.includes(JSON.stringify(words));
+    const structured_output = { reply: mine ? reply : 'none', why: 'What the board wrote calls for it.' };
+    await h.worker('reads/answer', { reading: c.reading, result: { is_error: false, structured_output } });
+    return mine;
+  }, `the judge's reading of ${words}`);
+}
+// A question typed on the current page and the judge's call on it, an answer, until the note shows a face
 async function typedQuestion(words: string) {
   const page = await currentPage();
   const made = (
@@ -356,14 +367,7 @@ async function typedQuestion(words: string) {
       texts: [{ x: 40, y: 60, w: 300, text: words, color: '#2a2352' }],
     })
   ).body;
-  await until(async () => {
-    const c = (await h.worker('reads/claim')).body;
-    if (!c.reading || !JSON.parse(c.schema).properties.reply) return false;
-    const mine = c.content.at(-1).text.includes(JSON.stringify(words));
-    const structured_output = { reply: mine ? 'answer' : 'none', why: 'The board asks a plain question.' };
-    await h.worker('reads/answer', { reading: c.reading, result: { is_error: false, structured_output } });
-    return mine;
-  }, `the judge's reading of ${words}`);
+  await judgedAs(words, 'answer');
   const group = () => groupOn(page, made.id);
   await until(async () => (await group()).waiting, 'its face');
   return group;
@@ -445,4 +449,132 @@ test('hq answer --source: kept with its picture and read back; refused without a
   });
   assert.equal(long.status, 400);
   await h.finish(run);
+});
+
+// (these last: one sends its page, so they start on a page of their own)
+test('a seen tick: a note judged to need nothing back shows who it went to; an answer, or a later verdict, takes it away', async () => {
+  const { ceo } = await import('../company.ts');
+  const page = (await h.board('/api/notebooks/pages/create', { notebook: await myNotebook() })).body.id;
+  const g = await draw(page, 40, 60, [{ x: 40, y: 100, w: 200, text: 'mooi', color: '#2a2352' }]);
+  const seenOn = async (id: number) => (await groupOn(page, id)).seen;
+  assert.equal(await seenOn(g.id), null, 'not judged yet: no tick');
+  await judgedAs('mooi', 'none');
+  const { findAgent } = await import('../jobs.ts');
+  const seen = { by: ceo(), name: findAgent(ceo())?.name ?? ceo() };
+  await until(async () => JSON.stringify(await seenOn(g.id)) === JSON.stringify(seen), 'the CEO, who routes it');
+  // (its words edited: judged again)
+  const rewrite = async (text: string) => {
+    const { updated } = db.prepare('select updated from notebook_groups where id = ?').get(g.id) as any;
+    const texts = [{ x: 40, y: 100, w: 200, text, color: '#2a2352' }];
+    assert.equal((await h.board('/api/notebooks/groups/edit', { id: g.id, since: updated, texts })).status, 200);
+  };
+  await rewrite('mooi, maar waarom zo?');
+  await judgedAs('mooi, maar waarom zo?', 'answer');
+  await until(async () => (await seenOn(g.id)) === null, 'judged again for an answer: no tick');
+  await rewrite('mooi!');
+  await judgedAs('mooi!', 'none');
+  await until(async () => (await seenOn(g.id)) !== null, 'judged again for nothing back: its tick');
+  const run = await h.start({ agent: 'juno' });
+  db.prepare('update notebook_groups set asked = ? where id = ?').run(run.id, g.id);
+  const slip = (await agent('answer', run.token, { grp: g.id, text: 'Thanks!' })).body.slip;
+  assert.equal((await groupOn(page, g.id)).seen, null, 'answered: the answer shows, no tick');
+  // a reply under the answer that needs nothing back: its tick is the answerer's
+  await h.board('/api/notebooks/groups/reply', { answer: slip.id, words: 'ok doe maar' });
+  await judgedAs('ok doe maar', 'none');
+  const replySeen = async () => (await groupOn(page, g.id)).children.find((c: any) => c.kind === 'reply').seen;
+  await until(async () => (await replySeen())?.by === 'juno', 'the reply’s tick');
+  assert.deepEqual(await replySeen(), { by: 'juno', name: 'Juno' });
+  await h.finish(run);
+});
+
+test('a fix: a box the board ticks; its page sent, the scrap goes to who proposed it with the fix to build, and the slip says so', async () => {
+  const { mkdtempSync, writeFileSync } = await import('node:fs');
+  const dir = mkdtempSync(`${h.dataDir}/hq-fix-`);
+  const page = (await h.board('/api/notebooks/pages/create', { notebook: await myNotebook() })).body.id;
+  const { g, run } = await asked('why is the iPad slow after an hour?');
+  const prompt = (db.prepare('select prompt from jobs where id = ?').get(run.id) as any).prompt;
+  assert.match(prompt, new RegExp(`hq answer g${g.id} "<why, in a sentence>" --fix`), 'its brief offers a fix');
+  // (a try run's agent answers too, so the build goes to the one who proposed it, not the scrap's owner)
+  const tryRun = await h.start({ agent: 'juno' });
+  db.prepare('update notebook_groups set tried = ? where id = ?').run(tryRun.id, g.id);
+  const why = 'The building view keeps every stroke in memory, so it slows down.';
+  const clipped = await h.hq(tryRun, 'answer', `g${g.id}`, why, '--fix', '  Free strokes\n once saved ');
+  assert.equal(clipped.code, 0, clipped.out);
+  assert.match(clipped.out, /Fix clipped onto group/);
+  writeFileSync(`${dir}/ink.json`, JSON.stringify([stroke(0, 0)]));
+  const drawn = await h.hq(tryRun, 'answer', `g${g.id}`, '--ink', `${dir}/ink.json`, '--fix', 'Room to breathe');
+  assert.equal(drawn.code, 0, 'a sketched fix: ink alone with its line');
+  for (const [extra, error] of [
+    [{ asks: true, text: 'Now?' }, /never a form, a question or a version/],
+    [{ text: 'Why', fix: 'x'.repeat(201) }, /a fix is one line of at most 200 characters/],
+    [{ text: 'Why', fix: ' ' }, /a fix is one line/],
+  ] as const) {
+    const refused = await agent('answer', tryRun.token, { grp: g.id, fix: 'Do it', ...extra });
+    assert.equal(refused.status, 400);
+    assert.match(refused.body.error, error);
+  }
+  const [written, sketched] = (await groupOn(page, g.id)).children;
+  assert.deepEqual(
+    [written.style, written.fix, written.builder, sketched.style, sketched.fix],
+    ['text', 'Free strokes once saved', null, 'drawing', 'Room to breathe'],
+  );
+  const tick = (id: number, ticked: boolean) => h.board('/api/notebooks/answers/tick', { id, ticked });
+  // a fix on a reply, ticked first, then the reply taken back: nothing of it goes
+  const withdrawn = (await h.board('/api/notebooks/groups/reply', { answer: written.id, words: 'en de pen?' })).body;
+  db.prepare('update notebook_groups set asked = ? where id = ?').run(run.id, withdrawn.id);
+  const gone = (await agent('answer', run.token, { grp: withdrawn.id, text: 'The pen too', fix: 'Withdrawn fix' })).body
+    .slip;
+  assert.ok((await tick(gone.id, true)).body.answer.ticked);
+  assert.equal((await h.board('/api/notebooks/replies/delete', { id: withdrawn.id })).status, 200);
+  // ticked, then not, then ticked: nothing goes until the page does
+  assert.ok((await tick(written.id, true)).body.answer.ticked);
+  assert.equal((await tick(written.id, false)).body.answer.ticked, null);
+  await tick(written.id, true);
+  // (another agent's fix, ticked after it: it goes with the first's, to who proposed that)
+  const second = (await agent('answer', run.token, { grp: g.id, text: 'Keys too', fix: 'Bigger keys' })).body.slip;
+  await tick(second.id, true);
+  const before = db.prepare("select count(*) n from jobs where agent = 'juno' and kind != 'chat'").get() as any;
+  assert.equal((await h.board('/api/notebooks/pages/send', { id: page })).status, 200);
+  booksheets.deliverDue(Date.now() + booknotes.SEND_MS);
+  const built = db
+    .prepare("select id, prompt from jobs where agent = 'juno' and kind != 'chat' order by id desc")
+    .all() as { id: number; prompt: string }[];
+  assert.equal(built.length, before.n + 1, 'one task for who proposed it');
+  assert.match(
+    built[0].prompt,
+    /The board ticked Juno’s fix “Free strokes once saved” \(its answer: “The building view/,
+  );
+  assert.match(built[0].prompt, /build it, to review and live/);
+  assert.match(built[0].prompt, /fix “Bigger keys”/);
+  assert.doesNotMatch(built[0].prompt, /Room to breathe/, 'the fix not ticked stays out');
+  assert.doesNotMatch(built[0].prompt, /Withdrawn fix/, 'nor the taken-back reply’s');
+  const after = (await groupOn(page, g.id)).children.filter((c: any) => c.kind === 'answer');
+  assert.deepEqual(
+    after.map((c: any) => [c.id, c.builder]),
+    [
+      [written.id, 'Juno'],
+      [sketched.id, null],
+      [second.id, 'Juno'],
+    ],
+    'each slip names who builds it',
+  );
+  assert.equal((db.prepare('select built from book_slips where id = ?').get(gone.id) as any).built, null);
+  assert.equal((db.prepare('select built from book_slips where id = ?').get(written.id) as any).built, built[0].id);
+  const untick = await tick(written.id, false);
+  assert.equal(untick.status, 409, 'gone to be built: its tick stays');
+  assert.match(untick.body.error, /gone to be built/);
+  const late = await tick(sketched.id, true);
+  assert.equal(late.status, 409, 'its page sent: nobody to hand it to');
+  assert.match(late.body.error, /write under the fix/);
+  // a reply under it now, on a sent page: no fix offered, none taken, as none could be ticked
+  const later = (await h.board('/api/notebooks/groups/reply', { answer: written.id, words: 'en nu?' })).body;
+  const replyRun = answerNow({ grp: later.id }, { id: 1, why: 'a plain question' })!;
+  const replyBrief = (db.prepare('select prompt from jobs where id = ?').get(replyRun) as any).prompt;
+  assert.doesNotMatch(replyBrief, /--fix/, 'its brief offers none');
+  db.prepare('update notebook_groups set asked = ? where id = ?').run(run.id, later.id);
+  const noFix = await agent('answer', run.token, { grp: later.id, text: 'Why', fix: 'Do it' });
+  assert.equal(noFix.status, 409);
+  assert.match(noFix.body.error, /answer without --fix/);
+  await h.finish(run);
+  await h.finish(tryRun);
 });

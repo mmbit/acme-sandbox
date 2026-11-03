@@ -234,7 +234,7 @@ start there).
 ## On a phone, and inside HQ
 
 - **HQ's preview viewer** (where the desk phone, the Library and decks open previews) is a frame. There the tool
-  runs only right inside HQ: the coordinator writes HQ's origin into the script (`{{HQ_ORIGIN}}`), the script says
+  runs only right inside HQ: the coordinator writes HQ's origin into the script (`{{HQ_ORIGIN}}`, parts.mjs `scriptForHq`, which the checks call too), the script says
   hello to it, and it starts once HQ answers from that origin. A page that frames another preview gets no pin.
   The viewer bar then shows a red **Note** button that starts a note in the frame. HQ asks every page its frame loads, and the page's review mode answers with its
   hello: Note stays only where review mode runs, after any move to another page (a page's goodbye as it unloads

@@ -1,15 +1,16 @@
-// The book zoomed out past a page: the overview. First the notebook's pages as a grid; zoomed out again, the Shelf of
-// every notebook, with the Archive beside it (both drawn by bookshelf.js). A page tapped there opens it; a notebook
-// tapped opens its pages; zoomed in, it comes back to the page. Two fingers' pinch over the overview, a trackpad's
-// pinch (a wheel with Ctrl), Safari's gesture events and the view's controls (bookcontrols.js) step it; each step
-// turns a leaf within the notebook (bookflip.js), as a page change does. A pinch on the page itself never opens the
-// overview (only its button and the keys do: bookpages.js). To and from the Shelf, the view zooms instead (bookflip.js),
-// into the notebook's own tile there and back out to it.
+// The book zoomed out past a page: the overview, the notebook's pages as a grid (drawn by bookshelf.js). A page tapped
+// there opens it; zoomed in, it comes back to the page; its Shelf, or a step out past it, shuts the book and shows the
+// Shelf in its own window over HQ (book.js). Two fingers' pinch over the
+// overview, a trackpad's pinch (a wheel with Ctrl), Safari's gesture events and the view's controls (bookcontrols.js)
+// step it; each step turns a leaf within the notebook (bookflip.js), as a page change does. A pinch on the page itself
+// never opens the overview (only its button and the keys do: bookpages.js).
 import { mountScreens } from './bookshelf.js';
+import { mountOpen } from './bookshelfopen.js';
+import { island } from './bookui.js';
 import { scope } from './bookscope.js';
 
-// the views, nearest first: the page itself (bookpages.js), the notebook's pages, the Shelf
-const LEVELS = ['page', 'pages', 'shelf'];
+// the views, nearest first: the page itself (bookpages.js), the notebook's pages
+const LEVELS = ['page', 'pages'];
 // how far two fingers close (or open) before the overview steps out (or in): one step a pinch
 const OUT = 0.78,
   IN = 1.28;
@@ -17,32 +18,18 @@ const OUT = 0.78,
 const WHEEL_STEP = 50,
   WHEEL_REST_MS = 260;
 
-// paper: the book's pages (bookpages.js's .bk-pages). desk: the page's own layer in it, what the view zooms in to
-// from the Shelf. dev: on mock data. notebook(): the notebook the book shows now
-// (its id, or a promise of it; null: none on the Shelf); page(): the page it shows (its id); saved(): what's drawn
+// paper: the book's pages (bookpages.js's .bk-pages). dev: on mock data. notebook(): the notebook the book shows now
+// (its id; null: none on the Shelf); page(): the page it shows (its id); saved(): what's drawn
 // saved in the store, a promise. open(page, notebook): that page shown, of that notebook (notebookdata.js's page).
-// archived(): a page archived or brought back from the grid.
-// turn(dir, midway): a leaf turned over the paper, midway() swapping what's under it (bookflip.js). zoom(coming,
-// midway, dir, at): the same swap with the view zooming out (dir -1) or in (dir 1), at() the notebook's tile on the
-// Shelf it zooms round. changed(level): the overview opened,
-// stepped or closed.
-export function mountZoom(paper, { desk, dev, notebook, page, saved, open, archived, turn, zoom, changed }) {
+// archived(): a page archived or brought back from the grid. shelf(): the book shut and the Shelf shown, a promise
+// once it's shut (none in a guest's book). turn(dir, midway): a leaf turned over the paper, midway() swapping what's
+// under it (bookflip.js). changed(level): the overview opened, stepped or closed.
+export function mountZoom(paper, { dev, notebook, page, saved, open, archived, shelf, turn, changed }) {
   const far = document.createElement('div');
   far.className = 'bk-far';
   far.hidden = true;
   paper.append(far);
-  const z = {
-    far,
-    desk,
-    open,
-    turn,
-    zoom,
-    changed,
-    level: 0,
-    notebook: null,
-    used: false,
-    max: scope?.singlePage ? 0 : scope ? 1 : 2,
-  };
+  const z = { far, open, shelf, turn, changed, level: 0, used: false, max: scope?.singlePage ? 0 : 1 };
   Object.assign(z, { touches: new Map(), wheel: 0, rest: 0 });
   z.screens = mountScreens(far, {
     dev,
@@ -50,13 +37,15 @@ export function mountZoom(paper, { desk, dev, notebook, page, saved, open, archi
     page,
     saved,
     open: (page, id) => back(z, { page, id }),
-    shelf: () => go(z, 2),
-    notebook: id => go(z, 1, id),
+    shelf: () => toShelf(z),
     archived,
   });
+  // (its head: Search and the phone, then the open forms and questions)
+  far.querySelector('.bk-far-head').prepend(island('overview'));
+  if (!scope) mountOpen(far.querySelector('.bk-far-head'), { open: (page, id) => back(z, { page, id }) });
   pinches(paper, z);
   return {
-    // 'page', 'pages' or 'shelf'
+    // 'page' or 'pages'
     level: () => LEVELS[z.level],
     // read and drawn again (the book's pages changed)
     again: () => z.level && z.screens.again(),
@@ -144,59 +133,40 @@ function pinched(z, scale) {
   z.used = true;
   step(z, scale <= OUT ? 1 : -1);
 }
-// One step out or in
+// One step out or in: out past the notebook's pages, to the Shelf
 function step(z, by) {
+  if (by > 0 && z.level === z.max && z.level && z.shelf) return toShelf(z);
   const level = Math.max(0, Math.min(z.max, z.level + by));
   if (level === z.level) return;
   if (!level) return back(z);
-  go(z, level, z.notebook);
+  go(z, level);
 }
 
 // ---- the views
 
-// The overview at a level (the notebook's pages: that notebook's, the book's own (null) by default): out to the Shelf
-// the view zooms, in from the Shelf it zooms back. Within the notebook a leaf turns
-function go(z, level, id = null) {
-  const from = z.level,
-    dir = level > from ? -1 : 1;
+// The overview at a level, a leaf turning to it
+function go(z, level) {
+  const dir = level > z.level ? -1 : 1;
   z.level = level;
-  z.notebook = id ?? z.notebook;
   z.changed(LEVELS[level]);
-  if (LEVELS[level] === 'shelf' || LEVELS[from] === 'shelf')
-    return z.zoom(
-      z.far,
-      () => show(z),
-      dir,
-      () => tileOf(z),
-    );
   return z.turn(dir, () => show(z));
 }
-// The notebook's tile on the Shelf (the one the book shows where it names none), as a box on the screen: what the
-// view zooms into and back out to
-const tileOf = z =>
-  z.far
-    .querySelector(
-      z.notebook == null ? '.bk-book[aria-current]' : `.bk-book[data-book="${CSS.escape(String(z.notebook))}"]`,
-    )
-    ?.getBoundingClientRect() ?? null;
 function show(z) {
   z.far.hidden = false;
   z.far.dataset.level = LEVELS[z.level];
-  return z.screens.show(LEVELS[z.level], z.notebook);
+  return z.screens.show(LEVELS[z.level]);
 }
-// Back to the page: a page tapped in the grid (to: { page, id }), or the page as it was. From the notebook's pages a
-// leaf turns to it; from the Shelf the view zooms in to it.
+// Back to the page: a page tapped in the grid (to: { page, id }), or the page as it was, a leaf turning to it
 function back(z, to = null) {
-  const midway = () => {
+  return z.turn(1, () => {
     close(z);
     if (to) return z.open(to.page, to.id);
-  };
-  if (LEVELS[z.level] === 'shelf') return z.zoom(z.desk, midway, 1, () => tileOf(z));
-  return z.turn(1, midway);
+  });
 }
+// To the Shelf: the book shuts, and its overview is put away once it has, so the book opens again on its page
+const toShelf = z => Promise.resolve(z.shelf?.()).then(() => z.level && close(z));
 function close(z) {
   z.level = 0;
-  z.notebook = null;
   z.far.hidden = true;
   delete z.far.dataset.level;
   z.screens.hide();

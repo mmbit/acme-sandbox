@@ -97,7 +97,7 @@ export const TIPS = [
     title: 'Tear a page off by its corner to send it',
     words:
       'Drag the turned-down corner of a page onto Submit: the copy flies off as a paper plane, and the page is stamped Sent and locked. Drop it on PDF or PNG to keep a copy instead.',
-    from: 'platform/hq/shell/ink/bookdogear.js, platform/hq/shell/ink/bookshare.js, platform/hq/shell/ink/bookpagesend.js',
+    from: 'platform/hq/shell/ink/booktear.js, platform/hq/shell/ink/bookshare.js, platform/hq/shell/ink/bookpagesend.js',
     picture: 'tear',
     alt: 'The corner pulled onto Submit, the paper plane flying off, the page stamped and locked',
   },

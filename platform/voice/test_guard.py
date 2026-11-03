@@ -1141,6 +1141,26 @@ class CallsList(unittest.TestCase):
         for t in (other, token):
             self.voice('call-end', {'agent': 'juno' if t == token else 'kit', 'lines': [], 'token': t})
 
+    def test_a_call_agent_marks_and_clears_the_boards_urgent_work_at_every_level(self):
+        token, _ = self.start('juno')
+        drawn = self.tools(token, 'juno', ('manage', {'command': ['plan', 'deliverable', 'office',
+                           'Urgent repair', 'The repair is live', '--slug', 'urgent-repair']}))
+        self.assertFalse(drawn[0][0], drawn)
+        queued = self.tools(token, 'juno', ('job', {'goal': 'Repair now', 'agent': 'moss', 'code': 'URGENT',
+                            **ESTIMATE, 'title': 'Repair the outage', 'brief': 'Repair',
+                            'deliverable': 'office/urgent-repair'}))
+        task = int(re.search(r'Queued job #(\d+)', queued[0][1])[1])
+        self.voice('call-end', {'agent': 'juno', 'lines': [], 'token': token})
+        token, _ = self.start('kit')
+        for level, identifier, table in [('milestone', 'office', 'projects'),
+                                         ('job', 'office/urgent-repair', 'threads'), ('task', str(task), 'jobs')]:
+            for state in ('on', 'off'):
+                changed = self.tools(token, 'kit', ('manage', {'command': ['urgent', level, identifier, state]}))
+                self.assertFalse(changed[0][0], changed)
+                self.assertEqual(self.db(f'select urgent from {table} where id = ?', identifier),
+                                 [(int(state == 'on'),)])
+        self.voice('call-end', {'agent': 'kit', 'lines': [], 'token': token})
+
     def test_the_boards_correction_replaces_an_open_item_on_the_line(self):
         first, call1 = self.start('moss')
         self.tools(first, 'moss', ('write_down', {'goal': 'g', 'owner': 'moss', 'words': 'Brand films A2 and D'}))

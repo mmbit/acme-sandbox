@@ -96,7 +96,7 @@ function scaleTo(rs) {
 // before a frame: how the last one went (dev frames, dt 0, aren't judged: tests get the same pixels every time; nor
 // is the first after a pause or a hidden page)
 function judge() {
-  const now = performance.now(), gap = now - fit.at, spaced = Math.max(0, 1000 / shell.capped() - 1000 / 60);
+  const now = performance.now(), gap = now - fit.at, spaced = Math.max(0, 1000 / shell.maxFps() - 1000 / 60);
   fit.at = now;
   if (fit.fence) {
     if (camDt > 0 && gap < 1000) { fit.n++; fit.busy += gl.getSyncParameter(fit.fence, gl.SYNC_STATUS) !== gl.SIGNALED || gap > SLOW_MS + spaced; }
@@ -122,7 +122,7 @@ function update(dt) {
     const to = S.people.get(f.b)?.room ?? (f.b === 'board' ? S.core : f.room);
     if (to) to.flash = 1;
     S.pulses.push({ c: flightEnds(S, f)[2], r: 0.08, t0: S.t, col: f.col });
-    play('pop');
+    if (!f.quiet) play('pop');
   }
   S.flights = S.flights.filter(f => S.t - f.t0 < f.dur * 1.25);
   // a busy loading dock sends parcels out over the table's edge
@@ -222,10 +222,14 @@ function listen() {
   return [
     world.on('status', ({ agent, was }) => { const P = S.people.get(agent); if (P && was !== P.state) S.pulses.push({ c: agentAt(S, P), r: 0.05, t0: S.t, col: P.state === 'waiting' ? AMBER : WHITE }); }),
     world.on('say', ({ agent, to }) => {
-      if (!S.people.has(agent) || !(S.people.has(to) || to === 'board')) { play('blip'); return; }
-      const [p0, , p2] = flightEnds(S, { a: agent, b: to });
-      S.flights.push({ a: agent, b: to, t0: S.t, dur: clamp(Math.hypot(...sub(p2, p0)) * 0.5, 0.8, 2.2), col: to === 'board' || S.people.get(to).room === S.core ? WHITE : AMBER });
-      play('whoosh');
+      const flies = S.people.has(agent) && (S.people.has(to) || to === 'board');
+      // quiet: the open intercom chimes for it, so neither the send nor the landing sounds
+      const quiet = shell.intercomSounds({ agent, to });
+      if (flies) {
+        const [p0, , p2] = flightEnds(S, { a: agent, b: to });
+        S.flights.push({ a: agent, b: to, t0: S.t, dur: clamp(Math.hypot(...sub(p2, p0)) * 0.5, 0.8, 2.2), col: to === 'board' || S.people.get(to).room === S.core ? WHITE : AMBER, quiet });
+      }
+      if (!quiet) play(flies ? 'whoosh' : 'blip');
     }),
     // a post flies to the newsstand (or up to the crown, where there's none)
     world.on('post', ({ agent }) => { play('jingle'); S.flights.push({ a: agent, b: null, room: S.rooms.find(r => r.w.features.includes('gazette-newsstand')), t0: S.t, dur: 1.6, col: GOLD }); }),

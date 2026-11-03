@@ -12,6 +12,7 @@ import { openPhone, openIntercom, openComputer, ceoName } from './desk.js';
 import { loadPiles } from './data.js';
 import { openProjects, closeProjects, toggleProjects } from './projects.js'; // (closeProjects, toggleProjects)
 import { names } from './brand.js';
+import { openShelf } from './ink/bookshelfwindow.js';
 export { toast } from './toast.js';
 
 const $ = s => document.querySelector(s);
@@ -29,6 +30,7 @@ export function bindHud() {
   $('#btn-computer').onclick = () => openComputer();
   $('#btn-news').onclick = () => openGazette();
   $('#btn-projects').onclick = e => toggleProjects(e.currentTarget);
+  $('#btn-shelf').onclick = () => openShelf();
   // (the projects view's list of the threads behind what was tapped: those done in a day, or those running and waiting;
   const jobsAt = e => { const from = e.target.closest('[data-jobs]'); if (from) openProjects({ from, group: from.dataset.jobs === 'done' ? 'finished' : 'running' }); };
   $('#status').onclick = jobsAt;

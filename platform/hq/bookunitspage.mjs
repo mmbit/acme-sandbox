@@ -5,8 +5,10 @@
 // scrap. At a phone, an iPad mini upright
 // and sideways, and a wide desktop. Each time: no two units (with what hangs under them) overlap, the space between
 // units in a column is the same, nothing scrolls sideways, each line between scraps stays under the scrap it was
-// written under, the room grows as its handle's dragged, and the last unit scrolls clear of the tools. The wide desktop
-// is then made narrower and opened again: its lines still under their scraps in fewer columns. Recorded with --shots.
+// written under, the room grows as its handle's dragged, and the last unit scrolls clear of the tools. Each note's
+// paper is as tall as its body, and the room to write under it is plain page: no shadow, edge or turned corner. The
+// wide desktop is then made narrower and opened again: its lines still under their scraps in fewer columns. Recorded
+// with --shots.
 import assert from 'node:assert/strict';
 import { until } from './bookkit.mjs';
 import { typedBoxes } from './shell/ink/notebookparts.js';
@@ -104,6 +106,7 @@ async function atSize(browser, c, name, size) {
     await page.waitForTimeout(400);
     await sound(page, `${name}, as the call left it`);
     await boardDays(page, name);
+    await plainRooms(page, name);
     await c.shot(`units-${name}-1-call`, page);
     const low = await annotate(page, name);
     await page.waitForTimeout(900);
@@ -126,6 +129,32 @@ async function boardDays(page, name) {
   const days = await page.evaluate(() => [...document.querySelectorAll('#book .bk-day')].map(d => d.textContent));
   assert.ok(days.length, `${name}: the book shows a page day`);
   for (const day of days) assert.match(day, /^[A-Z][a-z]{2} \d{1,2} [A-Z][a-z]{2}$/, `${name}: the board's page day`);
+}
+// Each unit bare (no paper, shadow, clip or turned corner of its own), its note's paper as tall as its body and ending
+// where its room starts, and the room plain page: no shadow, edge or paper
+async function plainRooms(page, name) {
+  const seen = await page.evaluate(() =>
+    [...document.querySelectorAll('#book .bk-page:not([hidden]) .bk-unit')].map(u => {
+      const [look, after] = [getComputedStyle(u), getComputedStyle(u, '::after')],
+        paper = u.querySelector(':scope > .bk-unit-paper').getBoundingClientRect(),
+        room = u.querySelector(':scope > .bk-room'),
+        at = getComputedStyle(room);
+      return {
+        unit: u.dataset.unit,
+        bare: [look.boxShadow, look.backgroundImage, look.backgroundColor, look.clipPath, after.content],
+        room: [at.boxShadow, at.borderTopWidth, at.borderLeftWidth, at.backgroundImage, at.backgroundColor],
+        paperEnds: Math.round(room.getBoundingClientRect().top - paper.bottom),
+      };
+    }),
+  );
+  assert.equal(seen.length, 6, `${name}: the six units`);
+  const clear = 'rgba(0, 0, 0, 0)';
+  for (const u of seen) {
+    const what = `${name}: unit ${u.unit} (${JSON.stringify(u)})`;
+    assert.deepEqual(u.bare, ['none', 'none', clear, 'none', 'none'], `${what}: no paper, shadow, clip or corner`);
+    assert.deepEqual(u.room, ['none', '0px', '0px', 'none', clear], `${what}: its room plain page`);
+    assert.ok(Math.abs(u.paperEnds) <= 1, `${what}: its note's paper ends where its room starts`);
+  }
 }
 // The book open, tapped open from its tab where it starts folded (a phone's), its n units drawn
 async function opened(page, n) {
@@ -278,7 +307,7 @@ async function dragRoom(page, name) {
   // The press is the handle's, never the pen's.
   await until(async () => (await tall()) >= was + 70, `${name}: the room dragged 80 px taller`, 4000);
 }
-// Scrolled to its foot: the last unit up on the page, and every unit clear of the rail
+// Scrolled to its foot: the last unit up on the page, and every unit clear of the tools
 async function atFoot(page, c, name) {
   // (over the notebook's paper: beside HQ, the screen's middle is HQ's)
   const desk = await page.locator('#book .bk-desk').boundingBox();
@@ -286,19 +315,19 @@ async function atFoot(page, c, name) {
   for (let k = 0; k < 12; k++) await page.mouse.wheel(0, 600);
   await page.waitForTimeout(500);
   await c.shot(`units-${name}-3-foot`, page);
-  // (the paper the page scrolls in ends left of the rail of controls, and the last unit scrolls up into it.)
+  // (what's written ends left of the tools' island, and the last unit scrolls up into the paper's view.)
   const foot = await page.evaluate(() => {
-    const rail = document.querySelector('#book .bk-column').getBoundingClientRect(),
+    const tools = document.querySelector('#book .bk-strip').getBoundingClientRect(),
       desk = document.querySelector('#book .bk-desk').getBoundingClientRect(),
       all = [...document.querySelectorAll('#book .bk-page:not([hidden]) .bk-unit')].map(u => u.getBoundingClientRect());
     return {
       last: Math.max(...all.map(u => u.bottom)),
       right: Math.max(...all.map(u => u.right)),
       desk: { bottom: desk.bottom, right: desk.right },
-      rail: rail.left,
+      tools: tools.left,
     };
   });
-  const clear = foot.desk.right <= foot.rail + 1 && foot.right <= foot.rail + 1 && foot.last <= foot.desk.bottom + 1;
+  const clear = foot.desk.right <= foot.tools + 1 && foot.right <= foot.tools + 1 && foot.last <= foot.desk.bottom + 1;
   assert.ok(clear, `${name}: the last unit clear of the tools (${JSON.stringify(foot)})`);
 }
 

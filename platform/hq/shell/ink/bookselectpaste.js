@@ -17,8 +17,9 @@ const BUBBLE_MS = 5000;
 // what a finger's tap is on when it isn't bare paper: a field, a control, a box of words, a scrap's words, review mode
 const NOT_BARE = 'input, textarea, select, button, a, label, [contenteditable], .bk-typed, .bk-words, review-mode';
 
-// sel: bookselect.js's. clip: bookselectclip.js's { named(text) (whether the clipboard's words name its clip),
-// pasteAt([x, y] | null) (its clip pasted there, page px) }. Returns { offer([clientX, clientY]) (the bubble there) }
+// sel: bookselect.js's. clip: bookselectclip.js's { named(got) (whether what the clipboard holds is its clip, as ⌘V
+// judges), pasteAt([x, y] | null) (its clip pasted there, page px) }. Returns { offer([clientX, clientY]) (the bubble
+// there) }
 export function mountTapPaste(sel, clip) {
   const tp = { sel, clip, bubble: null };
   fingerTaps(tp);
@@ -64,8 +65,8 @@ function offer(tp, [x, y]) {
     } catch {
       return said(book, (on?.view ?? book.view()).page, `The clipboard can’t be read here: paste with ${MOD}+V.`);
     }
-    if (clip.named(got.text)) return clip.pasteAt(on && [on.x, on.y]);
-    book.tape.land(got, [x, y]);
+    if (clip.named(got)) return clip.pasteAt(on && [on.x, on.y]);
+    book.tape.fromClipboard(got, [x, y]);
   };
   bubble.timer = setTimeout(() => gone(tp), BUBBLE_MS);
 }

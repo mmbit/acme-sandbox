@@ -14,7 +14,8 @@ export const newestPage = play =>
   landingPage(play.route('/api/notebooks/pages', { notebook: mineOf(play) }).pages, p => p.sending || !!p.sent);
 const mineOf = play => play.route('/api/notebooks').shelf.find(n => n.kind === 'mine').id;
 // A scrap as the page shown draws it, on screen: its photo (one of the page's pictures), the right edge of it and its
-// words under it, those words, the paper, and the left of the islands over its right edge (null: not drawn there yet)
+// words under it, those words, the paper, and the left of the tools' island over its right edge (null: not drawn there
+// yet)
 export const shownScrap = (page, g) =>
   page.evaluate(g => {
     const el = document.querySelector('#book .bk-world .bk-page:not([hidden])'),
@@ -30,6 +31,6 @@ export const shownScrap = (page, g) =>
       right: Math.max(photo.x + photo.w, under.getBoundingClientRect().right),
       words: words?.value ?? words?.textContent ?? '',
       paper: document.querySelector('#book .bk-desk').getBoundingClientRect().toJSON(),
-      tools: document.querySelector('#book .bk-column').getBoundingClientRect().left,
+      tools: document.querySelector('#book .bk-strip').getBoundingClientRect().left,
     };
   }, g);

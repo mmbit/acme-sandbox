@@ -23,7 +23,7 @@ import { createServer } from 'node:http';
 import { connect } from 'node:net';
 import { tmpdir } from 'node:os';
 import { playwright, errorsOf } from '../../shared/browser/browser.mjs';
-import { reviewPart } from '../../shared/review/parts.mjs';
+import { scriptForHq, reviewPart } from '../../shared/review/parts.mjs';
 
 const { chromium, webkit } = playwright();
 const SHOTS = process.argv[2] ?? mkdtempSync(`${process.env.TMPDIR ?? tmpdir()}/join-shots-`);
@@ -118,8 +118,6 @@ async function watchAlong(req, res, url) {
 // watch-along's answer after it, which says hello to the page framing it and records itself when that page asks
 // (feedback.ts serves them the same way); for a guest who sent their notes (reviewOff) the tool is off and only the
 // answer comes
-const REVIEW = readFileSync(new URL('../../shared/review/review.js', import.meta.url), 'utf8');
-const FRAMED = readFileSync(new URL('../../shared/watchalong/framed.js', import.meta.url), 'utf8');
 let reviewOff = false;
 const previewServer = createServer((req, res) => {
   const path = new URL(req.url, 'http://x').pathname;
@@ -129,8 +127,8 @@ const previewServer = createServer((req, res) => {
   };
   if (path === '/__review/review.js')
     return script(
-      (reviewOff ? '/* review mode: off */\n' : REVIEW.replace('{{HQ_ORIGIN}}', base)) +
-        FRAMED.replace('{{HQ_ORIGIN}}', base),
+      (reviewOff ? '/* review mode: off */\n' : scriptForHq('review/review.js', base)) +
+        scriptForHq('watchalong/framed.js', base),
     );
   // (review mode's parts beside it)
   const part = path === '/__review/review.js' || reviewOff ? null : reviewPart(path);

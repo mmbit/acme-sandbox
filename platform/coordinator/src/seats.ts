@@ -6,6 +6,7 @@ import { yamlFile } from './company.ts';
 import { createRequest, endRequest, releaseSeat, setSeat } from './jobs.ts';
 import { SEAT_ID, SEAT_RULE } from '../../worker/src/seatid.ts';
 import { seatsGone } from './startholds.ts';
+import { seatStatuses } from './seatstatus.ts';
 
 // The work the worker runs comes in two engines: `claude`, the company's own work, and `codex`, the share a model of
 // another family takes (the second opinion in reviews). A seat runs one CLI at one provider, and takes its provider's
@@ -120,8 +121,8 @@ type ListedSeat = {
 
 // A seat's stop level: the share of its windows it runs to before it takes no new work, in percent. A seat the board
 // hasn't set runs to the worker's own level, DRAIN_AT (downtime.ts), which this mirrors for HQ's rows. Pacing (the
-// worker's pacedUntil: a week running ahead of its pace takes only the board's word and work that must start before its
-// reset) is on for all seats unless the board turned it off. A seat whose account has credits keeps to its plan all the
+// worker's pacedUntil: a week running ahead of its pace takes only urgent work and board conversations) is on for all
+// seats unless the board turned it off. A seat whose account has credits keeps to its plan all the
 // same, paced and stopping at its level, unless the board lets it spend them (use_credits): spending past the plan is
 // the board's choice, never a default.
 export const STOP_DEFAULT = 90;
@@ -226,8 +227,12 @@ const seeded = () => !!db.prepare("select 1 from settings where key = 'seats.see
 // Every seat with what the worker last reported of it, the board's last change to it and its sign-in. Before the worker
 // first sent its list, the seats it reported.
 export function listSeats() {
-  const reported = new Map(
-    (db.prepare('select * from seats').all() as Record<string, unknown>[]).map(s => [s.id as string, s]),
+  const statuses = seatStatuses(db);
+  const reported = new Map<string, Record<string, unknown>>(
+    (db.prepare('select * from seats').all() as Record<string, unknown>[]).map(s => [
+      s.id as string,
+      { ...s, status: statuses.get(s.id as string) },
+    ]),
   );
   if (!seeded()) return [...reported.values()];
   return listed().map(seat => {

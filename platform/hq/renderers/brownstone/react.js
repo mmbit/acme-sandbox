@@ -27,8 +27,11 @@ export function listen() {
       lightState();
     }),
     world.on('say', ({ agent, to }) => {
-      const A = S.people.get(agent), B = S.people.get(to);
-      if (B && A.hit && B.hit) { fx.planes.push({ A, B, t: 0, dur: clamp(Math.hypot(B.hit.sx - A.hit.sx, B.hit.y0 - A.hit.y0) / 70, 0.8, 3), arc: 12 + Math.abs(B.hit.sx - A.hit.sx) * 0.15 }); shell.sound.play('whoosh'); } else shell.sound.play('blip');
+      const A = S.people.get(agent), B = S.people.get(to), flies = B && A.hit && B.hit;
+      // quiet: the open intercom chimes for it, so neither the send nor the landing sounds
+      const quiet = shell.intercomSounds({ agent, to });
+      if (flies) fx.planes.push({ A, B, t: 0, dur: clamp(Math.hypot(B.hit.sx - A.hit.sx, B.hit.y0 - A.hit.y0) / 70, 0.8, 3), arc: 12 + Math.abs(B.hit.sx - A.hit.sx) * 0.15, quiet });
+      if (!quiet) shell.sound.play(flies ? 'whoosh' : 'blip');
       onChat(S, A, B);
     }),
     world.on('post', () => { shell.sound.play('jingle'); newsBurst(); onPost(S, shell.later); }),

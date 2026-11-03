@@ -1,6 +1,6 @@
 // book-check.mjs's story of the book lying over HQ (the spread) on the iPad mini: drawn out to the screen's full width
 // on its side, and opened upright, nothing of HQ's page (its logo, menus, unread badges) shows round the book, its
-// head still clear of Safari's top strip; the table round it comes in over HQ as the book lowers; and opened, the
+// paper running on under Safari's top strip; the table round it comes in over HQ as the book lowers; and opened, the
 // book is one size from the moment it shows till after it lands. The
 // board saw HQ's buttons peeking over the notebook; a book that grew as it landed wouldn't feel like one (the board's
 // call 161). Run it in WebKit too (--webkit).
@@ -83,8 +83,8 @@ const watched = page =>
     return { sizes: [...sizes], cover };
   });
 
-// Nothing of HQ's page at any point round the book, and its head where book.css puts it (its pages under Safari's
-// strip, style.css's --sat)
+// Nothing of HQ's page at any point round the book, and its head at the screen's top: the paper runs on under Safari's
+// strip (book.css; board, call 190.)
 async function covered(page, when) {
   const seen = await page.evaluate(GRID => {
     const book = document.querySelector('#book .bk-leaf').getBoundingClientRect(),
@@ -94,15 +94,10 @@ async function covered(page, when) {
         const hit = document.elementFromPoint(x, y);
         if (!hit?.closest('#book')) peeks.push(`${x},${y} ${hit?.tagName.toLowerCase()}.${hit?.className}`);
       }
-    const probe = document.createElement('div');
-    probe.style.cssText = 'position: fixed; top: var(--bk-top)';
-    document.getElementById('book').append(probe);
-    const head = probe.getBoundingClientRect().top;
-    probe.remove();
-    return { peeks, top: book.top, head };
+    return { peeks, top: book.top };
   }, GRID);
   assert.deepEqual(seen.peeks.slice(0, 8), [], `HQ's page shows round the book ${when}: ${seen.peeks.length} points`);
-  assert.equal(seen.top, seen.head, `the book's head ${when}`);
+  assert.equal(seen.top, 0, `the book's head at the screen's top, its paper under the blur ${when}`);
 }
 
 // The book at rest in a mode, or what it is instead

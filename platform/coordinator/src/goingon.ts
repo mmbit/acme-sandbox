@@ -10,6 +10,8 @@ import * as redraws from './redraws.ts';
 import { teamMembers } from './team.ts';
 import { awaitsRead, heldFor, isHidden } from './later.ts';
 import type { Forecast } from './forecast.ts';
+import { seatStatuses } from './seatstatus.ts';
+import { seatStatusWords } from '../../worker/hq/seatwords.ts';
 
 type Run = {
   id: number;
@@ -45,6 +47,8 @@ export function words(f: Forecast, now = Date.now()) {
   return `Going on right now, as of ${companyTime(now)}. It changes during the call: the eta tool with no query reads it
 again, fresh, whenever the board asks who's at work, whether a hold leaks or what a card holds up.
 ${atWork(holds)}
+Seats now:
+${[...seatStatuses(db, now)].map(([seat, status]) => `- ${seat}: ${seatStatusWords(status, companyTime)}`).join('\n')}
 Waiting on the board's desk phone, each with the work that waits on it:
 ${cards(f, holds.pauses)}`;
 }

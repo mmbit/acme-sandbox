@@ -830,10 +830,12 @@ body.touring #zoom, body.touring #status, body.touring #hint { display: none; }
 @keyframes call-layer-in { from { background-color: transparent; } }
 @keyframes call-layer-out { to { background-color: transparent; } }
 /* the bubble: the agent's face in a little monitor, the live eye in its corner while the page is seen, Pause and hang up
-   under it. Its place is a transform (dragged, then sprung into a corner); the look draws the rest. */
-.callbubble { position: fixed; left: 0; top: 0; z-index: 45; display: grid; gap: 6px; width: 124px; padding: 6px; touch-action: none; user-select: none; -webkit-user-select: none;
+   under it, two icon keys. Its place is a transform (dragged, then sprung into a corner); the look draws the rest.
+   --cb-lip is how far the look's keys stand out below them (their shadow or lip): the bubble's foot keeps that much
+   more, so the keys sit as clear of its bottom edge as the face of its sides. */
+.callbubble { position: fixed; left: 0; top: 0; z-index: 45; display: grid; gap: 6px; width: 124px; padding: var(--cb-pad) var(--cb-pad) calc(var(--cb-pad) + var(--cb-lip)); touch-action: none; user-select: none; -webkit-user-select: none;
   background: var(--paper); color: var(--ink); border: var(--bw-lg) solid var(--line); border-radius: var(--r-lg); box-shadow: var(--shadow-lg); cursor: grab;
-  --cb-accent: var(--gold); --cb-level: 0;
+  --cb-accent: var(--gold); --cb-level: 0; --cb-pad: 6px; --cb-lip: var(--px-sm); --cb-key: 34px;
   transition: box-shadow .15s steps(2), scale .15s steps(2); will-change: transform; }
 .callbubble.held { cursor: grabbing; scale: 1.06; box-shadow: var(--shadow-xl); }
 /* a picture or a page over the call's window, to let go there (shell/calldrop.js): its screen or bubble lit, ringed in
@@ -849,41 +851,38 @@ body.touring #zoom, body.touring #status, body.touring #hint { display: none; }
 .callbubble[data-state=thinking] .cb-face > img { animation: cb-think 1.6s steps(4) infinite; }
 @keyframes cb-talk { 50% { transform: scaleY(1.04); } }
 @keyframes cb-think { 50% { transform: skewX(-4deg); } }
-.callbubble .cb-eye { position: absolute; left: 10px; top: 10px; display: grid; place-items: center; width: 26px; height: 20px; color: #fff; background: var(--red);
-  border: var(--bw) solid var(--ink); border-radius: var(--r-sm); pointer-events: none; }
+/* (the eye is flat, a mark on the screen: it can't be pressed, so nothing about it looks like a key) */
+.callbubble .cb-eye { position: absolute; left: 13px; top: 12px; display: grid; color: var(--red); pointer-events: none; }
 .callbubble .cb-eye[hidden] { display: none; }
 .callbubble .cb-eye svg { width: 16px; height: 16px; fill: currentColor; shape-rendering: var(--icons, crispEdges); animation: cb-blink 4.2s steps(1) infinite; }
 @keyframes cb-blink { 0%, 94% { transform: none; } 95%, 98% { transform: scaleY(.15); } }
-.callbubble .cb-keys { display: flex; gap: 6px; }
-.callbubble .cb-keys button { flex: 1; min-height: 34px; padding: 0 6px; font: inherit; font-size: 13px; color: var(--ink); background: var(--paper); border: var(--bw) solid var(--line);
-  border-radius: var(--r-sm); box-shadow: var(--shadow-sm); cursor: pointer; white-space: nowrap; }
+.callbubble .cb-keys { display: flex; justify-content: center; gap: 10px; }
+.callbubble .cb-keys button { display: grid; place-items: center; width: var(--cb-key); height: var(--cb-key); padding: 0; color: var(--ink); background: var(--paper); border: var(--bw) solid var(--line);
+  border-radius: var(--r-sm); box-shadow: var(--shadow-sm); cursor: pointer; }
 .callbubble .cb-keys button:active { transform: translate(1px, 1px); box-shadow: none; }
 .callbubble .cb-keys button[hidden] { display: none; }
 .callbubble .cb-keys .cb-pause[aria-pressed=true] { background: var(--gold); color: var(--on-accent); }
-.callbubble .cb-keys .cb-hangup { flex: none; width: 38px; background: var(--red); color: #fff; }
-.callbubble .cb-hangup svg { width: 18px; height: 18px; fill: currentColor; shape-rendering: var(--icons, crispEdges); }
+.callbubble .cb-keys .cb-hangup { background: var(--red); color: #fff; }
+.callbubble .cb-keys svg { width: 18px; height: 18px; fill: currentColor; shape-rendering: var(--icons, crispEdges); }
 .callbubble.paused .cb-face { filter: grayscale(.6); }
 /* One form all call: on a small screen (a phone either way round) the same bubble, drawn smaller so the face covers
    less of the page. */
 @media (max-width: 599px), (max-height: 499px) {
-  .callbubble { width: 108px; gap: 4px; padding: 4px; }
+  .callbubble { width: 108px; gap: 4px; --cb-pad: 4px; --cb-key: 30px; }
   .callbubble .cb-face { height: 62px; --cb-portrait-height: 52px; }
   .callbubble .cb-face > img { width: 26px; }
   .callbubble .cb-face > .cb-initial { font-size: 26px; }
-  .callbubble .cb-keys { gap: 4px; }
-  .callbubble .cb-keys button { min-height: 30px; font-size: 12px; }
-  .callbubble .cb-keys .cb-hangup { width: 32px; }
-  .callbubble .cb-eye { left: 7px; top: 7px; width: 22px; height: 17px; }
-  .callbubble .cb-eye svg { width: 13px; height: 13px; }
+  .callbubble .cb-keys { gap: 8px; }
+  .callbubble .cb-keys svg { width: 16px; height: 16px; }
+  .callbubble .cb-eye { left: 10px; top: 9px; }
+  .callbubble .cb-eye svg { width: 14px; height: 14px; }
 }
 /* and on a short one (a phone on its side) smaller still: the book's page there has little room clear of its heading,
    dates and scraps (floating.js clearSpot). */
 @media (max-height: 499px) {
-  .callbubble { width: 96px; }
+  .callbubble { width: 96px; --cb-key: 28px; }
   .callbubble .cb-face { height: 52px; --cb-portrait-height: 44px; }
   .callbubble .cb-face > img { width: 22px; }
-  .callbubble .cb-keys button { padding: 0 3px; font-size: 11px; }
-  .callbubble .cb-keys .cb-hangup { width: 28px; }
 }
 @media (prefers-reduced-motion: reduce) { .callbubble .cb-face > *, .callbubble .cb-eye svg, .intercom .call .cf-figure > *, .intercom .call .lines li { animation: none !important; } #call-layer, #call-layer.leaving { animation: none; } } /* (the little screen, the lines.) */
 /* A call's cards (shell/ink/calldraw.js; Ink's folder): the agent's ask to see,
@@ -905,12 +904,11 @@ body.keys #call-cards .call-card button:is(:active, .down) { transform: var(--ke
 body.keys.keys #call-cards .call-card :is([data-show], [data-keep], [data-open]) { background: var(--key-on-bg); color: var(--key-on-ink); box-shadow: var(--key-on-lip); --hover-lip: var(--key-on-hover-lip); }
 body.keys.keys #call-cards .call-card :is([data-show], [data-keep], [data-open]):is(:active, .down) { box-shadow: var(--key-on-down-lip); }
 /* Wire: the bubble is a key itself, its face set in, its keys with a lip that press down */
-body.keys .callbubble { background: var(--key-bg); border: 1.5px solid var(--key-edge); border-radius: 22px; box-shadow: var(--key-lip), 0 18px 40px rgba(0, 0, 0, .22); transition: box-shadow .2s, scale .2s cubic-bezier(.2, 1.4, .4, 1); }
+body.keys .callbubble { --cb-lip: var(--depth-button); background: var(--key-bg); border: 1.5px solid var(--key-edge); border-radius: 22px; box-shadow: var(--key-lip), 0 18px 40px rgba(0, 0, 0, .22); transition: box-shadow .2s, scale .2s cubic-bezier(.2, 1.4, .4, 1); }
 body.keys .callbubble.held { box-shadow: var(--key-lip), 0 26px 50px rgba(0, 0, 0, .28); }
 body.keys .callbubble .cb-face { border-radius: 16px; border: 0; }
 body.keys .callbubble.talking .cb-face > :is(img, .cb-initial) { animation: cb-talk-smooth .5s ease-in-out infinite; }
 @keyframes cb-talk-smooth { 50% { transform: scaleY(1.03); } }
-body.keys .callbubble .cb-eye { border: 0; border-radius: 999px; box-shadow: 0 2px 0 color-mix(in srgb, var(--red) 60%, #000); }
 body.keys .callbubble .cb-eye svg { fill: none; stroke: currentColor; }
 body.keys .callbubble .cb-keys button { background: var(--key-bg); color: var(--key-ink); border: 1.5px solid var(--key-edge); border-radius: var(--key-r); box-shadow: var(--key-lip); }
 body.keys .callbubble .cb-keys button:active { transform: var(--key-down); box-shadow: var(--key-down-lip); }
@@ -1815,6 +1813,10 @@ body.projects :is(#zoom, #hint, #status, #bubbles, #namecard, #card) { display: 
 .pj-was .pj-done { width: 15px; height: 15px; vertical-align: -3px; }
 .pj-deliverables .pj-you { color: inherit; font-weight: 700; }
 .pj-paused-icon { display: block; width: 13px; height: 13px; }
+/* urgent work: its word and alert sign in the ink, a step up from a quiet note
+   but never lit, which is the board's; on a project's tile, an urgent deliverable's sign beside its name */
+.pj-urgent { color: var(--pj-ink); }
+.pj-urgent-icon { display: block; flex: none; width: 14px; height: 14px; color: var(--pj-ink); }
 /* what a tile's state means to the board, a mark in its corner (on a cover, over the picture): never a key */
 .pj-mark { display: grid; place-items: center; width: 30px; height: 30px; flex: none; border-radius: 50%; background: var(--pj-tile); color: var(--pj-ink); }
 .pj-mark svg { width: 16px; height: 16px; }

@@ -5,17 +5,17 @@
 // the board circles afresh. A second mark stays while the first goes. Hung up, any left goes too (the board, call 161).
 //   node shared/review/callink-check.mjs [--shots dir]
 import assert from 'node:assert/strict';
-import { readFile, mkdir } from 'node:fs/promises';
+import { mkdir } from 'node:fs/promises';
 import { playwright, errorsOf, until } from '../browser/browser.mjs';
-import { serve, ROOT } from '../../platform/hq/serve.mjs';
-import { fulfilPart } from './parts.mjs';
+import { serve } from '../../platform/hq/serve.mjs';
+import { scriptForHq, fulfilPart } from './parts.mjs';
 
 const shots = process.argv.includes('--shots') ? process.argv[process.argv.indexOf('--shots') + 1] : null;
 if (shots) await mkdir(shots, { recursive: true });
 const shot = async name => shots && (await page.screenshot({ path: `${shots}/${name}.png` }));
 const server = await serve(),
   base = `http://localhost:${server.address().port}`;
-const reviewJs = (await readFile(`${ROOT}/shared/review/review.js`, 'utf8')).replace('{{HQ_ORIGIN}}', base);
+const reviewJs = scriptForHq('review/review.js', base);
 const CALL = 5,
   PAGE = 7;
 

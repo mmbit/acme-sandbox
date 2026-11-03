@@ -51,6 +51,7 @@ async function twoOpen(page, count, c, name) {
   assert.equal(await count.locator('.bk-open').textContent(), '2 open');
   const edged = await edges(page);
   assert.deepEqual([...edged].sort(), [2, 3], 'the two groups with an open ask edged "for you", the answered one not');
+  for (const id of edged) assert.ok(await ringed(page, id), `group ${id}'s ring round its unit and its cards`);
   await c.shot(`for-you-${name}-open`, page);
   for (const id of edged) {
     await count.getByRole('button', { name: 'The next open ask' }).tap();
@@ -118,6 +119,20 @@ const edges = page =>
       .sort((a, b) => a.offsetTop - b.offsetTop || a.offsetLeft - b.offsetLeft)
       .map(e => Number(e.dataset.g));
   });
+// Whether a group's "for you" ring on the page shown takes in its unit and every card hung by it, wherever it hangs
+// (bookgroupshow.js reachOf.)
+const ringed = (page, id) =>
+  page.evaluate(id => {
+    const shown = [...document.querySelectorAll('#book .bk-page')].find(p => !p.hidden),
+      box = el => el.getBoundingClientRect(),
+      ring = box(shown.querySelector(`:scope > .bk-groups > .bk-for-you[data-g="${id}"]`)),
+      inside = [`.bk-unit[data-unit="${id}"]`, `:scope > .bk-groups > .bk-under[data-g="${id}"]`].map(at =>
+        box(shown.querySelector(at)),
+      );
+    return inside.every(
+      r => r.left >= ring.left - 1 && r.right <= ring.right + 1 && r.top >= ring.top - 1 && r.bottom <= ring.bottom + 1,
+    );
+  }, id);
 // Whether a group on the page shown (what's drawn round it: its box with its answers and cards) lies whole on the
 // paper, clear of the counter and of every control over the paper
 const inView = async (page, selector) => {

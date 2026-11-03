@@ -814,6 +814,7 @@ function step(by) {
 // A slip with its first words flies on an arc from the sender's key to the one it's for (the intercom, for the board),
 // which goes down under it like a pressed key and shows the message, who it's from and all its words, for a while.
 function message({ agent: from, to, text }) {
+  const quiet = shell.intercomSounds({ agent: from, to }); // (the open intercom chimes for it)
   const at = id => S.tiles.find(t => t.kind === 'agent' && t.id === id)?.el,
     a = at(from),
     b = at(to) ?? document.querySelector('#btn-intercom');
@@ -846,7 +847,7 @@ function message({ agent: from, to, text }) {
   ).onfinish = () => {
     slip.remove();
     pressBriefly(b, { soft: true });
-    keys.land();
+    if (!quiet) keys.land();
     const t = S.tiles.find(x => x.el === b);
     if (t) shows(t, from, words);
   };

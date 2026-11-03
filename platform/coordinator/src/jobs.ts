@@ -12,6 +12,7 @@ import * as redraws from './redraws.ts';
 import { lastPlayed } from './forecast.ts';
 import { deadlinePressure, pacedTakes, spareOnly, type Order } from './planner.ts';
 import { measuredMb, plannerCapacity, pauseBudget } from './room.ts';
+import { taskUrgent } from './urgency.ts';
 import { db, inOneStep, mergePending, once, OPEN_PRS, planChange, prepared, scrub, workBranch } from './db.ts';
 export { OPEN_PRS, workBranch } from './db.ts';
 import { codeIn, codeOf, numbered } from './jobcodes.ts';
@@ -224,7 +225,7 @@ export function noSeat(agent: string) {
   );
 }
 
-// What a job is made of (createJob). (stage: review.ts Stage; forSeat: a retry keeps its seat, codexShare; cli: the CLI it must run on; thread, from: threadFrom; check: hq job --check; insteadOf: replacedWork; step: review.ts named)
+// What a job is made of (createJob). (stage: review.ts Stage; forSeat: a retry keeps its seat, codexShare; cli: the CLI it must run on; thread, from: threadFrom; check: hq job --check; insteadOf: standsIn; step: review.ts named)
 // code: its task's code as its queuer claimed it (jobcodes.ts claim), or the task it follows on from; word: the word of a
 // standing task of HQ's, which each run of it carries, in its thread's project. A step of a task (a retry, a review
 // loop's run) carries the task's (codeFrom). With none of them, the agent doing it names it (jobcodes.ts name).
@@ -273,7 +274,6 @@ export function createJob(j: NewJob) {
   const unrun = !j.engine && (j.kind ?? 'work') === 'work' && noSeat(j.agent);
   if (unrun) throw new NoSeat(unrun);
   const predecessors = Array.isArray(j.insteadOf) ? j.insteadOf : j.insteadOf ? [j.insteadOf] : [];
-  const primary = predecessors[0];
   // (an expedited job is in no thread: a thread's tasks share its branch, and it merges alone.)
   const thread = j.expedite ? null : j.thread !== undefined ? j.thread : threadFrom(j);
   const runsOn = engineFor(j, thread);
@@ -281,13 +281,7 @@ export function createJob(j: NewJob) {
   if (j.size) sizes.recordQueued(id, (j.plannedBy ?? j.queuedBy)!, j.prompt, j.size);
   predictions.recordQueued(id, Date.now(), j.schedule);
   if (runsOn.forSeat && runsOn.forSeat !== j.forSeat) shareTo(runsOn.forSeat, id);
-  // (a task in place of one that failed takes its place in their thread: threadorder.ts.)
-  for (const prior of predecessors.slice(1))
-    db.prepare('insert into job_replacements (job, replaces) values (?, ?)').run(id, prior);
-  if (primary)
-    db.prepare(
-      'update jobs set seq = (select coalesce(seq, id) from jobs where id = $was and thread is $thread) where id = $id and thread is not null',
-    ).run({ was: primary, id, thread: j.thread !== undefined ? j.thread : threadOf(id) });
+  if (predecessors.length) standsIn(id, predecessors);
   if ((j.kind ?? 'work') === 'work' && !j.pr) taskAdded(id, j);
   publish({
     type: 'log',
@@ -328,19 +322,15 @@ const onlyOf = (job: number) =>
   (db.prepare('select engine_only from jobs where id = ?').get(job) as { engine_only: string | null } | undefined)
     ?.engine_only;
 
-// The job's row: a replacement (insteadOf) keeps the call and item of the work it replaces, unless it names its own, and
-// a mark set before 31 Oct on that work (customers): its brief comes with it (a retry's, a landing's), so the copy keeps
-// the row's check (holdsCustomerData).
+// The job's row (what a replacement carries of the work it replaces: standsIn).
 function insertJob(
   j: NewJob,
   thread: string | null,
   { engine, cli, forSeat, model, only }: ReturnType<typeof engineFor>,
 ) {
-  const primary = Array.isArray(j.insteadOf) ? j.insteadOf[0] : j.insteadOf;
-  const replaced = primary ? replacedWork(primary) : undefined;
   const { lastInsertRowid } = db
     .prepare(
-      'insert into jobs (created, agent, title, prompt, engine, kind, pr, round, branch, after, sha, queued_by, customers, call, item, downtime, model, effort, stage, step, writes, for_seat, cli, thread, is_check, instead_of, code, engine_only, judges, expedite, carry, light, incident) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'insert into jobs (created, agent, title, prompt, engine, kind, pr, round, branch, after, sha, queued_by, call, item, downtime, model, effort, stage, step, writes, for_seat, cli, thread, is_check, code, engine_only, judges, expedite, carry, light, incident) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
     )
     .run(
       new Date().toISOString(),
@@ -355,9 +345,8 @@ function insertJob(
       j.after ?? null,
       j.sha ?? null,
       j.queuedBy ?? null,
-      replaced?.customers ?? 0,
-      j.call ?? replaced?.call ?? null,
-      j.item ?? replaced?.item ?? null,
+      j.call ?? null,
+      j.item ?? null,
       j.downtime ? 1 : 0,
       model ?? null,
       j.effort ?? null,
@@ -368,7 +357,6 @@ function insertJob(
       cli ?? null,
       thread,
       j.check ? 1 : 0,
-      primary ?? null,
       j.code ?? codeFrom(j) ?? (j.word ? codeIn(thread, j.word) : null),
       only,
       j.judges ? JSON.stringify(j.judges) : null,
@@ -398,11 +386,28 @@ function taskAdded(id: number, j: { title: string; queuedBy?: string; plannedBy?
 
 // ---- replacements
 // A job in place of one that failed or was set aside (jobs.instead_of): a review's automatic retry (review.ts again) or a
-// job taking over failed work (takeover.ts). It carries the failed job's call and its item, so the item's work goes on
-// with it (its thread's deadline goes on by itself: threadFrom). A replacement that's cancelled hands the work back.
-const replacedWork = (id: number) =>
-  db.prepare('select call, item, customers from jobs where id = ?').get(id) as
-    { call: number | null; item: number | null; customers: number } | undefined;
+// job taking over failed work (takeover.ts). The work goes on with it (standsIn; its thread's deadline by itself:
+// threadFrom), and a replacement that's cancelled hands the work back.
+// Job `id` stands in for those `replaced` names (jobs.instead_of for the first, job_replacements for the rest, or all of
+// them for a job that replaces another already): it takes the first's turn in their thread (threadorder.ts), and carries
+// its call and item where it has none of its own, and a mark set before 31 Oct on that work (customers): its brief comes
+// with it (a retry's, a landing's), so the copy keeps the row's check (holdsCustomerData). Its code and engine rule come
+// as it's made (codeFrom, onlyFor), or from takeover.ts takesPlace for a job queued already.
+export function standsIn(id: number, replaced: number[]) {
+  const [first] = replaced;
+  const linked = (db.prepare('select instead_of from jobs where id = ?').get(id) as { instead_of: number | null })
+    .instead_of;
+  if (linked === null) db.prepare('update jobs set instead_of = ? where id = ?').run(first, id);
+  for (const prior of linked === null ? replaced.slice(1) : replaced)
+    db.prepare('insert into job_replacements (job, replaces) values (?, ?)').run(id, prior);
+  db.prepare(
+    `update jobs set call = coalesce(jobs.call, w.call), item = coalesce(jobs.item, w.item),
+    customers = max(jobs.customers, w.customers),
+    seq = case when jobs.thread is not null and jobs.thread is w.thread then w.place else jobs.seq end
+    from (select call, item, customers, thread, coalesce(seq, id) place from jobs where id = $first) w
+    where jobs.id = $id`,
+  ).run({ first, id });
+}
 // (kept prepared: the follow-through read asks it for each ended job carrying the board's items).
 export const replacementOf = (job: number) =>
   (
@@ -1018,11 +1023,15 @@ export function dropWait(job: number, from: number, by: string, why = '') {
 // A card a job waits for (hq job --after request:<id>, hq waits <job> add request:<id>): only the step that needs the
 // board's answer waits for it, and the work before that goes on to review. The card's answer goes into the job's prompt
 // (tellWaiting), so the job must not have started. Nothing moves a card wait: a card taken off the desk phone releases
-// its jobs, and each reads why and can ask again.
+// its jobs, and each reads why and can ask again. The CEO or Process gives the wait to a job of the card's filer (one
+// taking a stopped job's place, whose wait the filer can't carry over: whyNotAgentCard).
 export function addCardWait(job: number, request: number, by: string, why = '') {
   why = oneLine(why);
   const refused =
-    whyNotYours(job, by, null) ?? whyMadeByHq(job, by, why) ?? whyStarted(job) ?? whyNotAgentCard(request, by);
+    whyNotYours(job, by, null) ??
+    whyMadeByHq(job, by, why) ??
+    whyStarted(job) ??
+    whyNotAgentCard(request, by, agentOf(job));
   if (refused) return refused;
   holdForCard(job, request);
   publishWaitChange(job, by, `#${job} waits for card #${request} too now${why ? `: ${why}` : ''}`);
@@ -1055,15 +1064,19 @@ function whyStarted(job: number) {
       'needs it as a new job, --after the card'
     );
 }
-// Only an open card the caller filed. A customer card's answer stays with the job working on it.
-export function whyNotAgentCard(request: number, by: string) {
+// Only an open card the caller filed, or for the CEO and Process one the waiting job's agent filed (`agent`): its answer
+// reaches only the agent who asked. A customer card's answer stays with the job working on it.
+export function whyNotAgentCard(request: number, by: string, agent?: string) {
   const open = db.prepare("select 1 from requests where id = ? and status = 'open'").get(request);
-  if (!open || !agentCard(request) || customerCard(request) || !askedBy(request, by))
-    return `card #${request} isn't an open card you filed`;
+  const asker = askedBy(request, by) || (!!agent && (by === ceo() || inProcess(by)) && askedBy(request, agent));
+  if (!open || !agentCard(request) || customerCard(request) || !asker)
+    return `card #${request} isn't an open card you filed${agent && agent !== by ? ` or ${agent} did (the CEO or Process gives its wait to their job)` : ''}`;
 }
-// hq job and hq propose --after request:<id>: why work may not wait for that card, if it may not
-export const whyNotCardWait = (request: number, by: string) =>
-  Number.isSafeInteger(request) ? whyNotAgentCard(request, by) : 'cards are named by their numbers';
+const agentOf = (job: number) =>
+  (db.prepare('select agent from jobs where id = ?').get(job) as { agent: string } | undefined)?.agent;
+// hq job and hq propose --after request:<id>: why work (for `agent`, hq job's) may not wait for that card, if it may not
+export const whyNotCardWait = (request: number, by: string, agent?: string) =>
+  Number.isSafeInteger(request) ? whyNotAgentCard(request, by, agent) : 'cards are named by their numbers';
 export function holdForCard(job: number, request: number) {
   db.prepare('insert or ignore into request_waits (job, request) values (?, ?)').run(job, request);
 }
@@ -1386,6 +1399,7 @@ function listedRows(rows: Listed[], t: number, runsHold: ReturnType<typeof held>
   const places = queuePlaces(rows, t);
   return rows.map(row => ({
     ...row,
+    urgent: taskUrgent(row.id),
     ...(row.ready && inOrder(row).length && { ready: 0 }),
     triage: row.triage ? JSON.parse(row.triage) : null,
     waits: JSON.parse(row.waits),
@@ -1482,8 +1496,8 @@ const CARD_COLUMNS = `(select json_group_array(json_object('id', c.id, 'title', 
 // (server.ts), but only work: a review or the consolidator's check doesn't yield (heartbeat), so it could run on a seat
 // that's already full. `room`: the claim is below the worker's room line, with that many MB free, so a job starts only
 // when its measured memory fits (room.ts measuredMb), whatever its kind. `pacedUntil`: the seat's week runs ahead of its
-// pace (the worker's pacedUntil, while the board has pacing on), so until that weekly reset it takes only the board's
-// word and work whose latest start comes before it (planner.ts pacedTakes). Jobs abandoned by a crashed worker are
+// pace (the worker's pacedUntil, while the board has pacing on), so it admits only urgent work
+// until pacing lifts (planner.ts pacedTakes). Jobs abandoned by a crashed worker are
 // requeued first.
 // settings 'company.paused': {"since": "...", "allow": [job ids], "prs": [pull request numbers]} while the board has the
 // company paused, else absent.
@@ -1637,7 +1651,7 @@ function inClaimOrder(
   gathering = false,
 ) {
   // An expedited job starts before anything else, whatever the plan, pacing or room freed for another says (the board,
-  // call 118).
+  // call 118): it counts as urgent (urgency.ts).
   const expedited = fits.filter(j => j.expedite && j.ready).sort((a, b) => a.id - b.id);
   if (expedited.length) return expedited;
   const plan = ordering.current();
@@ -1689,7 +1703,7 @@ function claimOrderOn(
   const limit = plannerCapacity()?.seatRuns[engine] ?? Infinity;
   const base = ordering.claimOrder(plan.timings);
   // (a run that would yield started already, what it needed first met: an expedited one keeps its place, so it never
-  // makes room for other work)
+  // makes room for other work. Expedited work is urgent, so pacing never holds it: inClaimOrder.)
   return (fits: (Claimable & { spare: number; ready: number; yielding?: number })[], yielding: number[] = []) => {
     const expedited = fits.filter(j => j.expedite && (j.ready || j.yielding)).sort((a, b) => a.id - b.id);
     if (expedited.length) return expedited;
@@ -1835,14 +1849,13 @@ export const SEAT_READY = "(state = 'ready' or state in ('draining', 'sleeping')
 export function seatReadyFor(job: number, t = now(), on: string | null = null, plan = () => ordering.current(t)) {
   const seats = db
     .prepare(
-      `select iif(s.pace is null or s.week_resets <= $now, null, s.week_resets) until, ${LANE('j')} board, j.expedite from jobs j
+      `select iif(s.pace is null or s.week_resets <= $now, null, s.week_resets) until, ${LANE('j')} board from jobs j
     join (select * from seats where ${SEAT_READY}) s on ${seatTakes('s.id', 'coalesce(s.cli, s.engine)', 's.engine')}
     and ($on is null or s.id = $on)
     where j.id = $job`,
     )
-    .all({ job, now: t, on }) as { until: number | null; board: number; expedite: number }[];
-  // (pacing holds no expedited job)
-  if (!seats.length || seats.some(s => s.until === null || s.expedite)) return seats.length > 0;
+    .all({ job, now: t, on }) as { until: number | null; board: number }[];
+  if (!seats.length || seats.some(s => s.until === null)) return seats.length > 0;
   const order = ordering.key(job, seats[0].board, plan().timings);
   return seats.some(s => pacedTakes(order, s.until!));
 }
@@ -1957,6 +1970,8 @@ export function findAgent(id: string) {
         };
       }
 }
+// An agent's name as people read it, its id for one org.yaml no longer lists
+export const agentName = (agent: string) => String(findAgent(agent)?.name ?? agent);
 
 // Whether an agent is on the team that runs the foundation here:
 // the department of org.yaml's process role, whatever the company calls it. It asks for the server's GitHub key and can

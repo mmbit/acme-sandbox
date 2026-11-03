@@ -16,11 +16,13 @@ import { readAs, returnSignIn } from './signin.ts';
 import { REFRESH_URL_VAR, codexRefreshes, exchangeWithOpenAI, serveRefreshes } from './refreshes.ts';
 import { measurement } from '../tooling/metrics.ts';
 import { DEFAULT_ESTIMATE_SCALE, TOKEN_ESTIMATE_GUIDANCE } from '../hq/estimating.ts';
+import type { SeatState } from '../hq/seatwords.ts';
 import { handedUpLines, lighterLine, lightLines } from './lighter.ts';
 import { execFile, execFileSync, spawn, spawnSync } from 'node:child_process';
 import { availableParallelism } from 'node:os';
 import { existsSync, mkdirSync, chmodSync, lchownSync, lstatSync, readdirSync, readFileSync, realpathSync, renameSync, utimesSync, writeFileSync } from 'node:fs';
 import { keepRenders } from './renders.ts';
+import { keepScreens } from './screens.ts';
 import { agentEnv, redact, redactJson, PROFILE_BRANCH, workRunsOn, BRANCH_CONFIG, REVIEW_STRIP, claudeArgs, codexAskArgs, SIGN_IN } from './safety.ts';
 import { TOUCHUP_LINES, FetchUnreachedError, PushUnreachedError, answerMainMerge, branchLines, gitFlow, pinnedGitEnv, runAs } from './git.ts';   // (pinnedGitEnv)
 import { see as account, engineStarted, relaunched, report, spentOn, type Spent } from './spent.ts';
@@ -83,7 +85,6 @@ const hq = {
   blocked: (body: Record<string, unknown>, signal?: AbortSignal) => transport.blocked(body, requestSignal(signal)),
 };
 const BASE = process.env.BASE_BRANCH ?? process.env.BRANCH ?? 'main';
-export type SeatState = 'login' | 'ready' | 'draining' | 'sleeping' | 'closed';   // (HQ also hears 'paused': reportSeat)
 // util: the share of the 5-hour window used, unknown until the seat reports it (its first run or recheck after a
 // start), and for a Codex seat whose plan reports no 5-hour window (only the week);
 // week: the weekly window's share, when the seat reports one (downtime work counts the fuller of the two, windowUsed);
@@ -398,6 +399,9 @@ const agentApi = (token: string, path: string, body: unknown) => ownershipSignal
 // a job reads them here as HQ_RENDERS (shared/demo/renders.mjs fetch), so a fix round on a branch HQ hasn't merged
 // takes the last round's renders instead of making them all again
 const RENDERS = `${WORK}/renders`;
+// The before|after sheets of the board's screens a push's check found changed, by the pushed commit (screens.ts): the
+// ruling of its round opens them here instead of rendering them again.
+const SCREENS_KEPT = `${WORK}/screens`;
 // The runs a stop cut off, until the next start hands them back (handback.ts): root's alone.
 const HANDBACK = `${WORK}/handback.json`;
 // Each run's output, record and marker (detached.ts): root's alone.
@@ -410,6 +414,7 @@ function takeVolumes(taken: Map<string, RunRecord>) {
   lchownSync('/seats', KEEPER, KEEPER); chmodSync('/seats', 0o700);
   if (existsSync(VOICE_SEAT)) { lchownSync(VOICE_SEAT, KEEPER, KEEPER); chmodSync(VOICE_SEAT, 0o700); }
   rootDir(RENDERS, 0o755);
+  rootDir(SCREENS_KEPT, 0o755);
   for (const d of ['jobs', 'homes', 'asks', 'tests']) {   // (tests)
     const p = `${WORK}/${d}`;
     rootDir(p, 0o711);
@@ -2413,15 +2418,15 @@ const TESTS = 'shared/gates/tests.ts';
 // A pull request's push also renders the board's screens on main and on the push, each on its own coordinator, in the
 // tests' checkout, and says which differ (the coordinator's screens.ts). The render waits for the machine's one browser
 // slot itself (shared/browser/render.ts), and a change to nothing HQ runs answers at once, rendering nothing. It never
-// fails a push: its answer is for the review.
+// fails a push: its answer is for the review, with the sheets it names kept for the ruling (screens.ts).
 const SCREENS = 'platform/hq/screens-compare.mjs';
 type CheckName = 'gates' | 'tests' | 'screens';   // (each one's field in the finish report)
 const CHECKS: Record<CheckName, string> = { gates: GATES, tests: TESTS, screens: SCREENS };
 // Two pushes' tests at a time here, the rest waiting their turn: a node --test run takes every core, so more at once
 // slow each other down. While a lent machine has a helper of the `tests` kind (the coordinator's runs.ts), they go
-// there instead, with no turn: tests.ts --helper sends them as a run of the job, waits for it while it's there, and runs
-// them here only once it's gone.
-// The gates go there too (gates.ts --helper), when their type check runs.
+// there instead, with no turn. tests.ts --helper sends them as a run of the job and waits for it while it's there. They
+// never run here: a helper that's gone leaves them incomplete. The gates go there too (gates.ts --helper), when their
+// type check runs.
 const testsTurn = fewAtOnce(2);
 const TESTS_KIND = 'tests';
 // HQ's takeMinutes while a lent machine has a helper of the kind, else undefined
@@ -2542,6 +2547,8 @@ async function pushChecks(job: Job, me: Me, dir: string, at: TestsCheckout,
     watch: (pid, check) => checking.set(pid, check), unwatch: pid => checking.delete(pid),
     said: (name, words) => log(`job #${job.id}: ${CHECKS[name]} ${words}`), signal: ownershipSignal(), reachable: hqAnswers,
     roomy: roomBack }));
+  // (its sheets out of the tests' checkout before it goes.)
+  if (body.screens) body.screens = await keepScreens(SCREENS_KEPT, me, at.tested.sha, body.screens as CheckOutcome);
   removeTested(job);
   return body;
 }
@@ -2663,7 +2670,7 @@ async function loginLoop(seat: Seat) {
 }
 
 // A slot's claim on a seat (the coordinator's claim): the seat's window used, and the week's pace: while the seat is
-// paced, only the board's word and work that must start before its weekly reset, unless it's the intercom's turn.
+// paced, only explicitly urgent work starts. The intercom and incident slots keep their own room.
 const claimOn = (seat: Seat, engine: string, kind?: string) => ({ seat: seat.id, engine, kind, util: windowUsed(seat),
   pacedUntil: kind === 'chat' || kind === 'incident' ? undefined : pacedOf(seat) });
 

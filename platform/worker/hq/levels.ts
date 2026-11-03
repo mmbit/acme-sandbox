@@ -12,13 +12,14 @@ export const ONE_DEADLINE =
   "deliverable's done when, including a blocking fix, joins that deliverable's work in flight and inherits its " +
   'deadline, with no --by needed. Non-blocking ' +
   'review follow-ups after a merge get their own deliverable and do not hold work that needs the merged one. ' +
-  'The plan and seat pacing read the deliverable’s time for all its tasks, reviews ' +
+  'The plan reads the deliverable’s time for all its tasks, reviews ' +
   'and fixes. A deliverable with no deadline of its own or through work that needs it reads as no deadline set: ' +
   'settle that gap once for the deliverable. --by <when> sets or tightens the filed task’s deliverable deadline, ' +
   'never loosens it. --by <project>/<slug> takes that deliverable’s window. A call item’s time goes on its ' +
   'deliverable. A task in no deliverable takes --by <when>, --by <project>/<slug> or --by none. Outside a live call, ' +
   'an unfiled board ask without --by asks the CEO for its time, and the CEO’s own ask is refused. Filing is judgment. ' +
-  'The plan and pacing are algorithms.';
+  'A deadline orders work within seat pacing. Only work the board marks urgent bypasses pacing ' +
+  '(hq urgent milestone|job|task <id> on|off). The plan and pacing are algorithms.';
 
 // How related work is drawn, the planner's judgment and never a count or a refusal (board, call 152): the levels' deliverable line, the CEO's hourly check and a meeting's review of the plans
 export const RELATED_WORK =
@@ -41,8 +42,8 @@ export const SIDE_BY_SIDE =
 // Two copies keep their own words and change with these: hq pause's help column and its answer's window line
 // (worker/hq/pauses.ts), and the voice manage tool's description (platform/voice/hq_tools.py).
 export const WINDOW_FIRST =
-  'A window is how work goes first, and only ever that: the scheduler makes room for it, taking the seat from work ' +
-  'in its way when its time needs it, and gives the seat back after, by itself.';
+  'A window orders work within seat pacing. Only work the board marks urgent bypasses pacing ' +
+  '(hq urgent milestone|job|task <id> on|off).';
 export const PAUSE_FOR =
   'A pause is only for work that must wait on a condition (something from the board, a decision it has to make, a ' +
   'hold it asked for), never to put other work first.';

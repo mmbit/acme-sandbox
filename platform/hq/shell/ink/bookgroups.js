@@ -10,7 +10,7 @@
 import { aiMark, notebookRequest, word } from './bookscope.js';
 import { esc, stylesheet } from '../../util.js';
 import { toast } from '../toast.js';
-import { sfx } from '../audio.js';
+import { toastHeard } from './booksounds.js';
 import { crumple } from './bookpaper.js';
 import { thingsPicture } from './bookpaperdraw.js';
 import { boundsOf, union } from './bookselectmath.js';
@@ -20,13 +20,14 @@ import { scratched } from './bookgroupmath.js';
 import { boxOf, slipsUnder } from './notebookstack.js';
 import { edit, keep } from './bookedit.js';
 import { readAgain, saved, shut, typed } from './booksave.js';
+import { hung } from './bookarrive.js';
 import { deleteReply, moveGroup, reply } from './notebookdata.js';
 import { answering, slipRoomHtml, wireRooms } from './bookslipreply.js';
 import { nameOf } from './bookhead.js';
 import { asksHtml, wireAsks } from './bookasks.js';
 import { mountShow } from './bookgroupshow.js';
 import { markOpen } from './bookforyou.js';
-import { tagsHtml } from './bookassignlist.js';
+import { seenHtml, tagsHtml } from './bookassignlist.js';
 import { formHtml, formsIn, wireForms } from './bookanswerreply.js';
 import { sendForm, sendReply } from './bookanswersdata.js';
 import { waitingHtml } from './bookanswers.js';
@@ -122,6 +123,7 @@ function draw(gs, view) {
   // What hangs under each unit is counted in its place and moved to its foot (bookunits.js).
   view.relay?.();
   markOpen(view, layer);
+  hung(gs.book, view);
   gs.book.controls?.update();
 }
 // A press on a scrap's words or its answers, kept from the page unless it's the page's: the pen's strokes over words
@@ -193,12 +195,12 @@ function wordsHtml(page, g, open) {
       )}</textarea></div>`
     : '';
 }
-// The board's reply under an answer, its words and its ink as drawn, and its Undo while it's in its seconds
+// The board's reply under an answer: its words and ink as drawn, its Undo in its seconds, its seen tick
 function replyHtml(r) {
   const fresh = Date.now() - Date.parse(r.created) < REPLY_MS;
   return `<div class="bk-reply" data-reply="${r.id}"><b>${word('you')}</b> ${esc(r.words ?? '')}${
     fresh ? ` <button type="button" class="bk-unreply" data-unreply="${r.id}">${word('undo')}</button>` : ''
-  }${r.ink?.length ? slipInkHtml(r.ink) : ''}</div>`;
+  }${r.seen ? seenHtml(r.seen) : ''}${r.ink?.length ? slipInkHtml(r.ink) : ''}</div>`;
 }
 // A group's elements as they are on the page now: their box, for where its clip and answers go (null: none), how
 // many there are, whether it has a clip, and themselves by kind
@@ -211,19 +213,19 @@ function partsNow(page, id) {
 
 // ---- the answers
 
-// A group's children slipped under it, its answers and replies (notebookstack.js slipsUnder), an answer's drawing and
-// form on its slip under its words (bookanswerart.js slipInkHtml, bookanswerreply.js formHtml), then the answer still
-// coming; at each slip's foot the room to answer it in (bookslipreply.js), pulled out as it was (rooms: answer id →
-// height).
+// A group's answers and replies slipped under it (notebookstack.js slipsUnder), an answer's drawing and form under its
+// words (bookanswerart.js slipInkHtml, bookanswerreply.js formHtml), a fix's drawing in its box (slipExtras), then the
+// answer still coming; at each slip's foot its room to answer in (bookslipreply.js), as pulled (rooms: id → h).
 const slipsHtml = (g, rooms) =>
   slipsUnder(g.children ?? [])
-    .map(c => (c.kind === 'reply' ? replyHtml(c) : slipHtml(c, {}, { ...slipWords(), more: moreOf(c, rooms) })))
+    .map(c => (c.kind === 'reply' ? replyHtml(c) : slipHtml(c, {}, { ...slipWords(), ...slipExtras(c, rooms) })))
     .join('') + (g.waiting ? waitingHtml(g) : '');
-const moreOf = (c, rooms) =>
-  (c.ink?.length ? slipInkHtml(c.ink) : '') + (c.form ? formHtml(c) : '') + slipRoomHtml(c, rooms);
+function slipExtras(c, rooms) {
+  const ink = c.ink?.length ? slipInkHtml(c.ink) : '';
+  return { more: (c.fix ? '' : ink) + (c.form ? formHtml(c) : '') + slipRoomHtml(c, rooms), art: c.fix ? ink : '' };
+}
 // (the slip in the reader's words, and to a guest its agent's name says it's an AI's: charter rule 5.)
 const slipWords = () => ({ say: word, mark: aiMark() });
-
 // (a tick on the answers' route, which takes an answer not sent yet)
 const slipsOn = gs => ({
   tick: (id, ticked) =>
@@ -328,7 +330,7 @@ function lone(gs, view, picked) {
 
 // A group deleted: its elements off the page at once as one step (booksave.js deletes it in the store, and restores
 // it when Undo puts them back), the page drawn again without its ink and highlights, a copy of it crumpled up and
-// dropped, and Undo in a toast
+// thrown away, and Undo in a toast
 function remove(gs, view, id) {
   const { book, hooks } = gs,
     { box, parts } = partsNow(view.page, id);
@@ -343,9 +345,8 @@ function remove(gs, view, id) {
   // (its unit's card goes with it, not when the save deletes the group in the store: bookunits.js unitsOf;
   view.page.groups.get(id).vanished = true;
   hooks.refresh(view);
-  drop(gs, view, box, parts);
-  sfx.tick();
-  toast(word('deletedToast'), () => takeBack(book, step));
+  throwAway(gs, view, box, parts);
+  toastHeard(word('deletedToast'), () => takeBack(book, step));
 }
 // A step taken back from a toast: Undo's own when it's the last, else on its own and off the list
 function takeBack(book, step) {
@@ -353,8 +354,8 @@ function takeBack(book, step) {
   keep(book.steps, s => s !== step);
   step.undo();
 }
-// The group's things as they were, crumpled up and dropped (bookpaper.js; nothing waits on it)
-function drop(gs, view, box, { ink, texts, pictures }) {
+// The group's things as they were, crumpled up and thrown away, heard as it goes (bookpaper.js; nothing waits on it)
+function throwAway(gs, view, box, { ink, texts, pictures }) {
   if (!box) return;
   // (the group's box, and the pictures' turned corners if they go past it)
   const drawn = boundsOf({ ink, scraps: pictures }, null),
@@ -389,7 +390,7 @@ async function moveTo(gs, view, id, to) {
     return toast(esc(e.message));
   }
   book.steps.push({ page: from, undo: () => go(id, to, from, place), redo: () => go(id, from, to) });
-  toast(word('movedToast', { name: esc(nameOf(to)) }), () => gs.hooks.turnTo(to));
+  toastHeard(word('movedToast', { name: esc(nameOf(to)) }), () => gs.hooks.turnTo(to));
 }
 // The unit right before unit id in its page's order, its id (undefined: id is the first)
 function unitBefore(page, id) {

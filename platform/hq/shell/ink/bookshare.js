@@ -1,8 +1,8 @@
-// Where a page goes by its folded corner (bookdogear.js): three targets in the rail's place over the page bar, Submit to
+// Where a page goes torn off at its spine (booktear.js): three targets over the middle of the paper, Submit to
 // the CEO (bookpagesend.js), PDF and PNG. They show as drop targets while the page is carried, or as a small menu (the
-// corner pressed with a key, or tapped). PDF and PNG download the page's picture, for the board to keep or share from
+// dots menu's Tear off and send). PDF and PNG download the page's picture, for the board to keep or share from
 // its downloads. A page that can't be sent (sent already, or a call's notes page) has only PDF and PNG. Its look:
-// bookshare.css. (Submit in the rail's place, the call's target gone)
+// bookshare.css.
 import * as world from '../../world/world.js';
 import { esc } from '../../util.js';
 import { callAgent, ceoName } from '../desk.js';
@@ -17,7 +17,7 @@ const JPEG_QUALITY = 0.92;
 // and a picture can be 2400 wide.
 const STRIP_PX = 4000;
 
-// The three targets on lane (the rail, bookui.js islands()), hidden. act(kind, box) a target
+// The three targets on lane (the controls, bookui.js islands()), hidden. act(kind, box) a target
 // taken ('submit' | 'pdf' | 'png', its box on the screen); closed() the menu put away with a key. Returns
 // { carrying(sendable), menu(sendable), under(x, y), over(item), take(item), hide(), shown() }.
 export function mountTargets(lane, { act, closed }) {
@@ -57,7 +57,7 @@ function words(kind) {
   return `<i class="bk-share-face" aria-hidden="true">${esc(ceo.charAt(0).toUpperCase())}</i>Submit → ${esc(ceo)}`;
 }
 
-// (the rail's controls make way for them: bookshare.css)
+// (the islands make way for them: bookshare.css)
 function show({ lane, row, items }, mode, sendable) {
   items.forEach(item => {
     item.innerHTML = words(item.dataset.share);

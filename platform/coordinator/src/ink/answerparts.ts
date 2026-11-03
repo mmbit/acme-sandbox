@@ -4,9 +4,11 @@ import { ARTIFACT, LINK_MAX, SLIP_MAX, type More } from './bookslips.ts';
 import { dataUrlPicture, GROWN_MAX, inkOf, isRefused, type Refused, type Stroke } from '../pagechecks.ts';
 import { boxOf } from '../../../hq/shell/ink/notebookstack.js';
 
-// A patch kept with a version, and a picture's source line (where a chart's numbers came from)
+// A patch kept with a version, a picture's source line (where a chart's numbers came from) and a fix's line (the
+// change it proposes, in the box the board ticks to have it built: bookfix.ts)
 const PATCH_MAX = 1_000_000,
-  SOURCE_MAX = 200;
+  SOURCE_MAX = 200,
+  FIX_MAX = 200;
 
 export function partsOfAnswer(b: any): { text: string; more: More; patch: string | null } | Refused {
   const text = typeof b.text === 'string' ? b.text.trim() : '';
@@ -34,8 +36,11 @@ export function partsOfAnswer(b: any): { text: string; more: More; patch: string
     return [400, `a patch (at most ${PATCH_MAX} bytes) goes with a version`];
   const source = sourceOf(b.source, !!picture);
   if (isRefused(source)) return source;
+  const fix = fixOf(b.fix, !!(version || form || b.asks));
+  if (isRefused(fix)) return fix;
   const style = version ? 'version' : form ? 'form' : b.asks ? 'question' : ink ? 'drawing' : 'text';
-  if (!text && !picture && !ink?.length && !version) return [400, 'an answer is text, a picture, ink or a version'];
+  if (!text && !picture && !ink?.length && !version && !fix)
+    return [400, 'an answer is text, a picture, ink, a version or a fix'];
   if ((style === 'form' || style === 'question') && !text) return [400, `a ${style} has words: what it asks`];
   const far = ink && inkTooFar(ink);
   if (far) return far;
@@ -51,6 +56,7 @@ export function partsOfAnswer(b: any): { text: string; more: More; patch: string
       ink: ink && JSON.stringify(ink),
       form: form && JSON.stringify(form),
       source,
+      fix,
     },
   };
 }
@@ -62,6 +68,15 @@ function sourceOf(given: unknown, pictured: boolean): string | null | Refused {
   if (!source || source.length > SOURCE_MAX)
     return [400, `a source is one line of at most ${SOURCE_MAX} characters: where the numbers came from`];
   return pictured ? source : [400, 'a source goes under a picture: where its numbers came from'];
+}
+
+// A fix's line: the change, written beside its words or drawn (ink, a picture), as the board ticks it (null: no fix).
+function fixOf(given: unknown, other: boolean): string | null | Refused {
+  if (given == null) return null;
+  const fix = String(given).replace(/\s+/g, ' ').trim();
+  if (!fix || fix.length > FIX_MAX)
+    return [400, `a fix is one line of at most ${FIX_MAX} characters: the change, as the board ticks it`];
+  return other ? [400, 'a fix is words or a drawing: never a form, a question or a version'] : fix;
 }
 
 // An answer's ink no bigger than a page grows and no further from the answer's top-left (its picture a page's size:

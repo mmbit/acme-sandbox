@@ -7,7 +7,7 @@
 //   - a phone: a scrap sent with the book folded, the pull tab opens the spread at it.
 import assert from 'node:assert/strict';
 import { open } from './booknotebook.mjs';
-import { where } from './booknotebookscreen.mjs';
+import { pageAt, where } from './booknotebookscreen.mjs';
 import { DESKTOP, MINI, until } from './bookkit.mjs';
 
 const PHONE = { width: 390, height: 844 };
@@ -139,7 +139,7 @@ async function landed(page, { id, page: on }) {
 }
 // The pages' row turned back to page n, its arrow's own click in the page (tap)
 async function turnBack(page, n) {
-  const at = () => where(page).then(w => Number(/(\d+)\/\d+$/.exec(w)?.[1]));
+  const at = () => pageAt(page).then(n => n?.[0]);
   for (let i = 0; i < 8 && (await at()) > n; i++) {
     const was = await at();
     await page.locator('#book').getByRole('button', { name: 'The page before' }).dispatchEvent('click');
@@ -167,7 +167,7 @@ const tap = (page, selector) => page.locator(selector).dispatchEvent('click');
 
 const groupsOn = (play, page) => play.route('/api/notebooks/pages/groups', { page }).groups;
 // The group's unit, as the page lays it, whole in the paper's view on its page, shown (its groups' layer), clear of the
-// tool strip, the islands and the pages' row (the book slides there: wait on it, as frames come late on a loaded
+// tools' island and the bar along the foot (the book slides there: wait on it, as frames come late on a loaded
 // machine).
 async function inView(page, id, what) {
   const on = NEWEST;
@@ -180,10 +180,7 @@ async function inView(page, id, what) {
         if (!unit) return false;
         const r = unit.getBoundingClientRect();
         const desk = document.querySelector('#book .bk-desk').getBoundingClientRect(),
-          over = [
-            // (the tool's name beside the strip is never in a press's way, and fades: bookstrip.css)
-            ...document.querySelectorAll('#book .bk-column > :not(.bk-locked)'),
-          ]
+          over = [...document.querySelectorAll('#book .bk-controls :is(.bk-strip, .bk-bar)')]
             .filter(el => el.offsetWidth)
             .map(el => el.getBoundingClientRect())
             .filter(b => b.left < r.right && r.left < b.right && b.top < r.bottom && r.top < b.bottom);

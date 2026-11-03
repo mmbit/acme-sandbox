@@ -1,8 +1,7 @@
 // A leaf of the book turning: the one quick page-turn every change of page uses (a page to the next, to and from the
-// overview), so they all feel the same; to and from the Shelf the view zooms instead (zoom). turn(paper, { dir,
-// midway }): forward (dir 1) the page shown lifts at its outer edge and turns over towards the spine, the new page
-// already under it; back (dir -1)
-// the page before swings back from the spine onto the page shown: the same turn played backwards, frame for frame.
+// overview), so they all feel the same. turn(paper, { dir, midway }): forward (dir 1) the page shown lifts at its
+// outer edge and turns over towards the spine, the new page already under it; back (dir -1) the page before swings
+// back from the spine onto the page shown: the same turn played backwards, frame for frame.
 // midway() swaps what's under the leaf while the leaf hides it (it may return a promise). The leaf is a picture of a page
 // (its parts copied, its canvases' pixels too), so nothing on the page flashes or jumps. Transforms and opacity only:
 // the compositor's. Reduced motion: the page shown fades into the new one. Either way with the faintest swish of paper.
@@ -15,10 +14,6 @@ export const TURN = { ms: 300, easing: 'cubic-bezier(0.42, 0.05, 0.72, 0.62)' };
 const FADE_MS = 140;
 // The turn's sound: a breath of air off the leaf as long as the turn, well under the book's thud
 const SWISH = { dur: TURN.ms / 1000, material: 'paper', size: 0.8 };
-// To and from the Shelf: as quick as a turn, eased out. Drawn back to the Shelf, the view left shrinks to away and the
-// Shelf settles from near; into a notebook, the same played the other way: the Shelf grows to near as the notebook's
-// view comes in from away
-const ZOOM = { ms: 280, easing: 'cubic-bezier(.3,.7,.25,1)', away: 0.84, near: 1.06 };
 
 const running = new WeakMap(); // (el → the turn under way, finished at once if another starts)
 
@@ -148,58 +143,3 @@ function pair(a, b, scrolled) {
   for (let i = 0; i < ka.length && i < kb.length; i++) pair(ka[i], kb[i], scrolled);
 }
 const frame = () => new Promise(r => requestAnimationFrame(() => r()));
-
-// The view zooms out to the Shelf (dir -1), or in to a notebook (dir 1). Both use the same scales and timing,
-// in opposite directions. midway() swaps the view under its picture. at(): the notebook's tile on the Shelf (a box on
-// the screen, or none), what the view zooms into from where it lies, read while the Shelf shows: so opening a notebook
-// goes into the one tapped, and leaving it draws back to it. Reduced motion
-// uses the cross-fade alone. Every keyframe says its scale: WebKit draws an implicit one's zoom back out as a plain fade.
-export async function zoom(el, { coming, midway, dir = -1, at = () => null }) {
-  running.get(el)?.finish();
-  if (!el.isConnected || !el.clientWidth) {
-    await midway();
-    return;
-  }
-  const anims = [],
-    done = { finish: () => anims.forEach(a => a.finish()) };
-  running.set(el, done);
-  const into = dir > 0 ? at() : null,
-    shown = picture(el);
-  el.append(shown);
-  try {
-    await midway();
-    const still = matchMedia('(prefers-reduced-motion: reduce)').matches,
-      opts = { duration: ZOOM.ms, easing: ZOOM.easing, fill: 'both' },
-      leaving = dir < 0 ? ZOOM.away : ZOOM.near,
-      arriving = dir < 0 ? ZOOM.near : ZOOM.away,
-      tile = into ?? (dir < 0 ? at() : null),
-      // (each scaled round the tile's middle, in its own box; the middle of the view without one)
-      round = box => (tile ? `${tile.x + tile.width / 2 - box.x}px ${tile.y + tile.height / 2 - box.y}px` : '50% 50%'),
-      from = round(shown.getBoundingClientRect()),
-      to = round(coming.getBoundingClientRect());
-    anims.push(
-      shown.animate(
-        [
-          { opacity: 1, transform: 'scale(1)', transformOrigin: from },
-          { opacity: 0, transform: `scale(${still ? 1 : leaving})`, transformOrigin: from },
-        ],
-        opts,
-      ),
-    );
-    if (!still)
-      anims.push(
-        coming.animate(
-          [
-            { transform: `scale(${arriving})`, transformOrigin: to },
-            { transform: 'scale(1)', transformOrigin: to },
-          ],
-          opts,
-        ),
-      );
-    await Promise.all(anims.map(a => a.finished.catch(() => {})));
-  } finally {
-    shown.remove();
-    anims.forEach(a => a.cancel());
-    if (running.get(el) === done) running.delete(el);
-  }
-}

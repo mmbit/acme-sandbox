@@ -2,10 +2,13 @@
 // the job (the coordinator's runs.ts, with the job's HQ_URL and HQ_TOKEN): the repo at the base and as it is now go in a
 // git bundle, and tests-on-helper.sh runs the check's own script there, against that base. HQ takes a run back from a
 // lent helper that went quiet, for another take, and refuses what that one sends after. The run's report, exit code and
-// the files it brings back are the check's, taken once it's done. Run here instead (undefined) when no helper takes it
-// in time, it's lost, or it couldn't run there. The command has the end of the helper's limit in LENT_UNTIL (seconds on
-// the helper's clock), for a check that stops itself in time to say how far it got. A run the helper stopped at the
-// limit is that check's result (limitIsResult), never one to run again here, where nothing would stop it.
+// the files it brings back are the check's, taken once it's done. Run here instead (undefined), or left incomplete for a
+// check that can't move here (fallback: false), when no helper takes it in time, it's lost, or it couldn't run there.
+// In time is within the helper's take window, or by its deadline for a check with one (absentUntilMs). Either way, with
+// waitWhilePresent a helper of the kind that's there is waited for past it. The command has the end of the helper's
+// limit in LENT_UNTIL (seconds on the helper's clock), for a check that stops itself in time to say how far it got. A
+// run the helper stopped at the limit is that check's result (limitIsResult), never one to run again here, where
+// nothing would stop it.
 import { execFile, execFileSync } from 'node:child_process';
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -51,6 +54,7 @@ export type LentCheck = {
   binary?: string[];
   exitIsResult?: true;
   waitWhilePresent?: true;
+  absentUntilMs?: number; // replaces the take window: a run still waiting then, with no helper there, stops
   base: string;
   tree: string;
   script: string;
@@ -131,11 +135,13 @@ async function outcomeOf(call: Call, sent: number, check: LentCheck, said: (why:
     await new Promise(resolve => setTimeout(resolve, POLL_MS));
     const run = (await reaching(() => call(`/api/agent/runs/${sent}`).then(answer => answer.json()))) as RunState;
     if (run.state === 'running') waitingSince = Date.now();
-    if (
-      run.state === 'waiting' &&
-      Date.now() - waitingSince > run.helper.takeMinutes * 60_000 &&
-      !(check.waitWhilePresent && run.helper.present)
-    ) {
+    const unattended = run.state === 'waiting' && !(check.waitWhilePresent && run.helper.present);
+    if (unattended && check.absentUntilMs !== undefined) {
+      if (Date.now() >= check.absentUntilMs) {
+        await reaching(() => call(`/api/agent/runs/${sent}/stop`, { method: 'POST' }));
+        return said(`no ${check.kind ?? 'tests'} helper was there to take it in time`);
+      }
+    } else if (unattended && Date.now() - waitingSince > run.helper.takeMinutes * 60_000) {
       await reaching(() => call(`/api/agent/runs/${sent}/withdraw`, { method: 'POST' }));
       continue;
     }

@@ -79,9 +79,8 @@ if (!shelved.ok || (response && (!response.ok || !read.notebooks.length))) {
   undo.dataset.notebookUndo = '';
   undo.classList.add('bk-guest-undo');
   undo.hidden = true;
-  // (Marked done and Undo belong to a round. Other books leave them off the rail, where a hidden control would still
-  // keep its slot.)
-  if (round) island('pages').append(marked, undo);
+  // (Marked done and Undo belong to a round, beside its Send on the bar.)
+  if (round) island('send').append(marked, undo);
   status.className = 'bk-guest-status';
   document.querySelector('#book .bk-paper').append(status);
   let stopped = false;

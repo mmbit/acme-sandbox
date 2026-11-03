@@ -7,7 +7,8 @@ import { readAgain } from './booksave.js';
 import { loadGroups } from './notebookdata.js';
 import { store } from '../../util.js';
 
-// room left of a scrap shown when the paper must pan to it (page px)
+// room left of a scrap shown when the paper must pan to it (screen px: as much zoomed out to show a note with what
+// hangs beside it, clear of the book's lip.)
 const ROOM = 24;
 
 let book = null; // (bookpages.js's, once the groups are mounted: bookgroups.js)
@@ -52,21 +53,32 @@ async function turnTo(pages, page) {
   const { notebook } = await loadGroups(pages.dev, page);
   return notebook === book.notebook ? pages.made(page) : pages.find({ page, notebook });
 }
-// A unit's place with its answers under it (bookunits.js places both), in the page's px. bookforyou.js reads it too.
+// A unit's place with what hangs under it (bookunits.js places both, beside it on a sketch page: sketchcanvas.js), the
+// box round both, in the page's px. bookforyou.js reads it too.
 export function reachOf(v, id) {
   const p = v.page.places?.find(q => q.id === id),
     under = v.el.querySelector(`:scope > .bk-groups > .bk-under[data-g="${id}"]`);
   if (!p) return null;
-  return { x: p.x, y: p.y, w: p.w, h: under ? under.offsetTop + under.offsetHeight - p.y : p.h };
+  if (!under) return { x: p.x, y: p.y, w: p.w, h: p.h };
+  const x = Math.min(p.x, under.offsetLeft),
+    y = Math.min(p.y, under.offsetTop);
+  return {
+    x,
+    y,
+    w: Math.max(p.x + p.w, under.offsetLeft + under.offsetWidth) - x,
+    h: Math.max(p.y + p.h, under.offsetTop + under.offsetHeight) - y,
+  };
 }
 // Where the paper shows a group: zoomed out (never in) till it fits the paper with a little room,
-// and panned only as far as it must to show it there, its top a quarter down (less, if its foot would be hidden)
+// and panned only as far as it must to show it there with that room, its top a quarter down (less, if its foot would be
+// hidden)
 function inSight(r) {
   const paper = book.size,
-    s = Math.min(book.scale, paper.w / (r.w + 2 * ROOM), paper.h / (r.h + 2 * ROOM)),
+    s = Math.min(book.scale, (paper.w - 2 * ROOM) / r.w, (paper.h - 2 * ROOM) / r.h),
+    room = ROOM / s,
     seen = { x0: book.pan.x, x1: book.pan.x + paper.w / s, h: paper.h / s },
     { y } = book.pan;
-  const across = r.x >= seen.x0 && r.x + r.w <= seen.x1 ? book.pan.x : r.x - ROOM,
-    down = r.y >= y && r.y + r.h <= y + seen.h ? y : r.y - Math.min(seen.h / 4, seen.h - r.h - ROOM);
+  const across = r.x - room >= seen.x0 && r.x + r.w + room <= seen.x1 ? book.pan.x : r.x - room,
+    down = r.y - room >= y && r.y + r.h + room <= y + seen.h ? y : r.y - Math.min(seen.h / 4, seen.h - r.h - room);
   return { pan: { x: across, y: down }, scale: s };
 }

@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { mkdir, readFile } from 'node:fs/promises';
 import { serve, mockFiles, ROOT } from './serve.mjs';
 import { playwright, openPage, until } from '../../shared/browser/browser.mjs';
-import { fulfilPart } from '../../shared/review/parts.mjs';
+import { scriptForHq, fulfilPart } from '../../shared/review/parts.mjs';
 import { bookAtRest } from './bookkit.mjs';
 import { lookNames } from './looks.mjs';
 
@@ -18,7 +18,7 @@ const STAGING = 'https://shop.preview.test',
   LIVE = 'https://www.shop.test/shop';
 const scrollLink = await readFile(`${ROOT}/shared/watchalong/scrolllink.js`, 'utf8');
 // staging runs review mode (the bar's Note), as a preview does for the board; live the scroll link alone
-const reviewJs = (await readFile(`${ROOT}/shared/review/review.js`, 'utf8')).replace('{{HQ_ORIGIN}}', base);
+const reviewJs = scriptForHq('review/review.js', base);
 // A tall shop page: staging has the shipping banner live hasn't yet
 const shopPage = banner => `<!doctype html><meta name="viewport" content="width=device-width"><title>Shop</title>
   <body style="margin:0;font:18px system-ui;background:#fbf8f1">

@@ -18,6 +18,7 @@ import { linksOf, setLink, withLinks } from './booklinks.ts';
 import { outsideBrief, outsidersOn } from './bookguests.ts'; // (invited people's notes on the board's sheet)
 import { listedOnce } from './bookslips.ts';
 import { picksWent, withPicks } from './bookpick.ts';
+import { fixesWent, withFixes } from './bookfix.ts';
 
 // GET /api/book/sheets: the open sheets (and those in their seconds to undo), then the latest SENT_LISTED sent, each
 // with its notes and their slips (the artifacts their slips name listed once for them all)
@@ -114,6 +115,7 @@ function deliver(id: number) {
   const kept = notes.map(n => keep(n, null));
   const job = jobFor(s, notes, kept);
   picksWent(notes); // (the versions not picked cleared: bookpick.ts.)
+  fixesWent(notes, job); // (the fixes ticked on them, being built: bookfix.ts.)
   for (const k of kept) feedback.fromBook(k.from, job);
   db.prepare("update book_sheets set status = 'sent', sent = ?, job = ?, send_at = null where id = ?").run(
     new Date().toISOString(),
@@ -135,8 +137,8 @@ function deliver(id: number) {
 // notes the CEO's own there: the CEO hands them to whoever makes it (hq job --notes), and that job answers them. Returns
 // its job. (the CEO's)
 function jobFor(s: Sheet, notes: Note[], kept: ReturnType<typeof keep>[]) {
-  // (and the version the board picked on a note, with its patch: bookpick.ts.)
-  const texts = withPicks(notes, withLinks(notes, kept));
+  // (and the version the board picked on a note, with its patch: bookpick.ts; the fixes it ticked: bookfix.ts.)
+  const texts = withFixes(notes, withPicks(notes, withLinks(notes, kept)));
   const outsiders = outsidersOn(notes); // (invited people's notes on it, outside text: bookguests.ts)
   if (s.owner && s.owner !== ceo())
     try {

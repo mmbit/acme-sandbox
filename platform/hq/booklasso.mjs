@@ -86,13 +86,13 @@ async function rubbed(browser, c) {
     await page.locator('#book .bk-strip').getByRole('button', { name: 'Eraser', exact: true }).tap();
     const at = await page.evaluate(onScreen, rub());
     const before = await inked(page),
-      twiceBefore = await page.evaluate(markerTwice);
+      twiceBefore = await page.evaluate(markerTwice, FACE_MARKER);
     const paper = await paperBox(page);
     assert.ok(
       at.every(
         ([x, y]) => x > paper.x + 40 && x < paper.x + paper.width - 60 && y > paper.y && y < paper.y + paper.height,
       ),
-      'the rub is on the paper, clear of the rail',
+      'the rub is on the paper, clear of the tools',
     );
     await pressAlong(page, at.slice(0, 1), { lift: false });
     const took = await page.evaluate(timedAlong, { at, MOVES, MOVE_PX });
@@ -108,13 +108,13 @@ async function rubbed(browser, c) {
     assert.ok(before - after > before / 20, 'the eraser took ink where it went');
     // (the marker fill it went through cut in pieces that lie over one another all along: still one even colour, its
     // colour laid twice only where another fill of it already lay.)
-    const twice = await page.evaluate(markerTwice);
+    const twice = await page.evaluate(markerTwice, FACE_MARKER);
     assert.ok(twice <= twiceBefore, `the marker one even colour: ${twice} px of it laid twice, ${twiceBefore} before`);
     const whole = await asWhole(page);
     // (a clipped paint's soft edges may shade apart from a whole one's: at most 64 in WebKit, 80 in Chromium at a pixel
     // or two. A coat of the marker missing or left behind on paper is 107, a pen's line 255.)
     assert.ok(whole.most <= 96, `painted only where it went, the page as painted whole: ${JSON.stringify(whole)}`);
-    assert.ok((await page.evaluate(markerTwice)) <= twiceBefore, 'one even colour painted whole too');
+    assert.ok((await page.evaluate(markerTwice, FACE_MARKER)) <= twiceBefore, 'one even colour painted whole too');
     assert.deepEqual(errors, []);
   } finally {
     await context.close();
@@ -144,7 +144,7 @@ async function scribbled(browser, c) {
       at.every(
         ([x, y]) => x > paper.x + 40 && x < paper.x + paper.width - 60 && y > paper.y && y < paper.y + paper.height,
       ),
-      'the scribble is on the paper, clear of the rail',
+      'the scribble is on the paper, clear of the tools',
     );
     const ink = free.ink.length,
       twiceBefore = await page.evaluate(markerTwice, MARKERS[0].color);
@@ -173,11 +173,18 @@ async function scribbled(browser, c) {
     await context.close();
   }
 }
-// The marker picked on the rail, its card (which picking it opens) put away again
+// The marker picked in the pen's card (the pen in use tapped again), its card put away again (the pen and the marker are
+// one key on the tools: bookpalette.js.)
 async function markerInHand(page) {
-  const marker = page.locator("#book .bk-column [data-island=tools] [data-mode='highlighter']");
-  await marker.tap();
-  if (await page.locator('#book .bk-palette').isVisible()) await marker.tap();
+  const ink = page.locator(
+      "#book [data-island=tools] .bk-btn:is([data-mode='pen'], [data-mode='highlighter']):not([data-spare])",
+    ),
+    card = page.locator('#book .bk-palette');
+  await ink.tap();
+  if (!(await card.isVisible())) await ink.tap();
+  await card.getByRole('menuitemradio', { name: 'Marker', exact: true }).tap();
+  await page.keyboard.press('Escape');
+  await card.waitFor({ state: 'detached' });
 }
 // (in the page) Page px on the screen, from the unit's canvas: its place on the page and on the screen
 function onScreen(points) {
@@ -199,36 +206,36 @@ async function timedAlong({ at, MOVES, MOVE_PX }) {
       n = Math.max(1, Math.round(Math.hypot(x1 - x0, y1 - y0) / MOVE_PX));
     for (let k = 1; k <= n; k++) moves.push([x0 + ((x1 - x0) * k) / n, y0 + ((y1 - y0) * k) / n]);
   }
-  const step = async these => {
+  // (act's own work, own, and that with the next frame's paint, shown.)
+  const timed = act => {
     let painting = 0;
     requestAnimationFrame(() => (painting = performance.now()));
     const t = performance.now();
+    act();
+    const own = performance.now() - t;
+    return new Promise(done => requestAnimationFrame(() => done({ own, shown: own + performance.now() - painting })));
+  };
+  const moved = these => () => {
     for (const m of these) {
       held.send('pointermove', m, 0.6);
       held.last = m;
     }
-    const sent = performance.now() - t;
-    return new Promise(done => requestAnimationFrame(() => done(sent + performance.now() - painting)));
   };
+  const step = async these => (await timed(moved(these))).shown;
   const work = [],
     idle = [];
   await step([]);
   for (let i = 0; i < moves.length; i += MOVES) work.push(await step(moves.slice(i, i + MOVES)));
   for (let i = 0; i < 20; i++) idle.push(await step([]));
-  let painting = 0;
-  requestAnimationFrame(() => (painting = performance.now()));
-  const t = performance.now();
-  window.__lift();
-  const lift = performance.now() - t;
-  const shown = await new Promise(done => requestAnimationFrame(() => done(lift + performance.now() - painting)));
+  const { own: lift, shown } = await timed(() => window.__lift());
   return { work, idle: idle.sort((a, b) => a - b)[10], lift, shown };
 }
-// What differs once the page is painted whole (Undo and Redo, which paint all of it again): inkAgainst's
+// What differs once the page is painted whole (Undo and Redo on the bar, which paint all of it again): inkAgainst's
 async function asWhole(page) {
   await page.evaluate(inkAgainst, true);
-  const strip = page.locator('#book .bk-strip');
+  const bar = page.locator('#book .bk-bar');
   const tap = async name => {
-    await strip.getByRole('button', { name, exact: true }).tap();
+    await bar.getByRole('button', { name, exact: true }).tap();
     await page.evaluate(() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done))));
     return page.evaluate(inkAgainst, false);
   };
@@ -272,9 +279,9 @@ function inkAgainst(keep) {
   }
   return { n, most, box, some };
 }
-// (in the page) The pixels of a marker's colour laid twice (the face's pink unless another): its 0.42 laid once is
-// alpha 107, twice 169, its colour within 20 a channel (one marker over another's is neither)
-function markerTwice(color = '#ff7eb3') {
+// (in the page) The pixels of a marker's colour laid twice: its 0.42 laid once is alpha 107, twice 169, its colour
+// within 20 a channel (one marker over another's is neither)
+function markerTwice(color) {
   const want = [1, 3, 5].map(i => parseInt(color.slice(i, i + 2), 16));
   let n = 0;
   for (const canvas of document.querySelectorAll('#book canvas.bk-ink')) {
@@ -315,6 +322,9 @@ function tongue() {
 
 const points = ink => ink.reduce((n, s) => n + s.points.length, 0);
 
+// The face's marker fills' colour
+const FACE_MARKER = MARKERS.find(m => m.name === 'Pink').color;
+
 // The board's kind of sketch, in a 440 × 480 px box from (60, 60) on its page: 24 pen lines of 300 points, a brow of six
 // thick lines scribbled over one another, a greeting written in 12 strokes, and three marker fills scribbled back and
 // forth for ten seconds each (a Pencil's 240 points a second)
@@ -338,7 +348,7 @@ function face() {
   const greeting = Array.from({ length: 12 }, (_, s) =>
     line(150, 2.5, i => [20 + s * 30 + 12 * Math.sin(i / 10), 10 + i * 0.5]),
   );
-  const marker = { color: '#ff7eb3', alpha: 0.42 };
+  const marker = { color: FACE_MARKER, alpha: MARKER_ALPHA };
   const fills = Array.from({ length: 3 }, (_, s) =>
     line(
       2400,

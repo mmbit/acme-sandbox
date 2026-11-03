@@ -1,10 +1,11 @@
-// book-check.mjs's story of the two cards over the tool rail (shell/ink/bookprefs.js, bookpalette.js): the page bar's
-// cog's preferences and the pen's colours (the pen in use pressed again) open whole on the iPad mini upright, on its
-// side and on a short screen (a finger's tap and the Pencil's), and on a desktop (a mouse), the rail never scrolling;
-// and what's picked in them takes; a tooltip goes with its card; and each left open while the iPad turns on its side and
-// its screen gets shorter.
+// book-check.mjs's story of the two cards beside the book's islands (shell/ink/bookprefs.js, bookpalette.js): the
+// preferences (from the bar's dots menu) and the pen's colours (the pen in use pressed again) open whole on the iPad
+// mini upright, on its side and on a short screen (a finger's tap and the Pencil's), and on a desktop (a mouse), the
+// tools never scrolling; and what's picked in them takes; a tooltip goes with its card; and each left open while the
+// iPad turns on its side and its screen gets shorter. (the islands)
 import assert from 'node:assert/strict';
 import { onDesk } from './bookmouse.mjs';
+import { press } from './bookbar.mjs';
 import { MINI, PREFERENCES, UPRIGHT, middleOf, mini } from './bookkit.mjs';
 
 const SHORT = { width: MINI.width, height: 560 };
@@ -12,9 +13,9 @@ const SHORT = { width: MINI.width, height: 560 };
 // c: book-check.mjs's played store and helpers
 export function cardStories(c) {
   return {
-    "the rail's cards: the preferences and the colours open whole on the iPad mini and a desktop": browser =>
+    "the islands' cards: the preferences and the colours open whole on the iPad mini and a desktop": browser =>
       cards(browser, c),
-    "the rail's cards: the preferences and the colours stay whole while the iPad mini turns": browser =>
+    "the islands' cards: the preferences and the colours stay whole while the iPad mini turns": browser =>
       turned(browser, c),
   };
 }
@@ -23,10 +24,10 @@ async function cards(browser, c) {
   for (const viewport of [UPRIGHT, MINI, SHORT]) await onIPad(browser, c, viewport);
   const { page, errors, done } = await onDesk(browser, c);
   try {
-    await strip(page, PREFERENCES).click();
+    await press(page, PREFERENCES);
     await whole(page, '.bk-prefs', 'the preferences on a desktop');
     await page.keyboard.press('Escape');
-    await strip(page, 'Pen').click();
+    await press(page, 'Pen');
     await whole(page, '.bk-palette', 'the colours on a desktop');
     await tipGoes(page);
     assert.deepEqual(errors, []);
@@ -39,8 +40,8 @@ async function onIPad(browser, c, viewport) {
     { page, errors, done } = pad,
     size = `${viewport.width}x${viewport.height}`;
   try {
-    const scrolls = await page.locator('#book .bk-strip .bk-island').evaluate(el => el.scrollWidth > el.clientWidth);
-    assert.equal(scrolls, false, `the rail never scrolls (${size})`);
+    const scrolls = await page.locator('#book .bk-strip').evaluate(el => el.scrollHeight > el.clientHeight + 1);
+    assert.equal(scrolls, false, `the tools never scroll (${size})`);
     await preferencesTapped(pad, size);
     await c.shot(`book-prefs-${size}`, page);
     await page.keyboard.press('Escape');
@@ -59,7 +60,7 @@ async function turned(browser, c) {
   ]) {
     const { page, touch, errors, done } = await mini(browser, c, { viewport: UPRIGHT });
     try {
-      await tapped(touch, await at(page, name));
+      await tapOn(page, point => tapped(touch, point), name);
       await whole(page, selector, `${selector} upright`);
       for (const viewport of [MINI, SHORT]) {
         const size = `${viewport.width}x${viewport.height}`;
@@ -74,15 +75,16 @@ async function turned(browser, c) {
     }
   }
 }
-// The cog's card opened by a finger and by the Pencil, a hold time picked by the finger
+// The preferences opened from the dots menu by a finger and by the Pencil, a hold time picked by the finger
 async function preferencesTapped({ page, pen, touch }, size) {
   const long = () => page.locator('#book .bk-prefs').getByLabel('Long');
-  await tapped(touch, await at(page, PREFERENCES));
+  await tapOn(page, point => tapped(touch, point), PREFERENCES);
   await whole(page, '.bk-prefs', `the preferences at ${size}, a finger's tap`);
   await tapped(touch, middleOf(await long().boundingBox()));
   assert.equal(await long().isChecked(), true, 'Long picked by a finger');
-  await tapped(touch, await at(page, PREFERENCES));
-  await pen.tap(await at(page, PREFERENCES));
+  await page.keyboard.press('Escape');
+  await page.locator('#book .bk-prefs').waitFor({ state: 'detached' });
+  await tapOn(page, pen.tap, PREFERENCES);
   await whole(page, '.bk-prefs', `the preferences at ${size}, the Pencil's tap`);
 }
 // The colours opened by the Pencil and by a finger (the pen's in hand: penOnOpen), each picking one
@@ -108,11 +110,19 @@ async function tipGoes(page) {
   assert.equal(await page.locator('#bk-tip').isHidden(), true, "the colour's tooltip gone with its card");
 }
 
-// (a button of the rail's or the page bar's)
-const strip = (page, name) => page.locator('#book .bk-column .bk-island').getByRole('button', { name, exact: true });
+// (a key on the book's islands)
+const key = (page, name) => page.locator('#book .bk-controls').getByRole('button', { name, exact: true });
 const ink = (page, name) => page.locator('#book .bk-palette').getByRole('menuitemradio', { name, exact: true });
-// A rail's or bar's button's middle on the screen
-const at = async (page, name) => middleOf(await strip(page, name).boundingBox());
+// A key's middle on the screen
+const at = async (page, name) => middleOf(await key(page, name).boundingBox());
+// A control tapped by a finger or the Pencil (tap(point)): its key on the islands, or its row in the dots menu
+async function tapOn(page, tap, name) {
+  if (await key(page, name).isVisible()) return tap(await at(page, name));
+  await tap(await at(page, 'More'));
+  const row = page.locator('#book .bk-more-card').getByRole('menuitem', { name, exact: true });
+  await row.waitFor({ timeout: 5000 });
+  await tap(middleOf(await row.boundingBox()));
+}
 async function tapped(touch, point) {
   await touch.down([point]);
   await touch.up();

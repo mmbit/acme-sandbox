@@ -12,6 +12,7 @@ import * as bookpicture from './ink/bookpicture.ts';
 import * as slips from './ink/bookslips.ts';
 import * as notebook from './notebook.ts';
 import * as groups from './notebookgroups.ts';
+import * as notebookplaces from './notebookplaces.ts';
 import * as sending from './notebooksend.ts';
 import * as rounds from './notebookrounds.ts';
 import * as answers from './ink/bookanswer.ts';
@@ -89,6 +90,8 @@ const room = routes({
   [`POST ${API}/groups/move`]: onPage(byGroup, moveGroup),
   [`POST ${API}/groups/resize`]: onPage(byGroup, (b, on) => groups.resizeGroup(b, on.who)),
   [`POST ${API}/groups/split`]: onPage(byGroup, (b, on) => groups.splitGroup(b, on.who)),
+  // (a sketch page's units pinned where the guest's screen laid them.)
+  [`POST ${API}/groups/place`]: onPage(byPage, (b, on) => notebookplaces.placeGroups(b, on.who)),
   [`POST ${API}/groups/reply`]: onPage(bySlip('answer'), (b, on) => sending.replyTo(b, on.who, on.stillOpen), ANSWERS),
   [`POST ${API}/replies/delete`]: onPage(byGroup, (b, on) => sending.deleteReply(b, on.who), ANSWERS),
   [`POST ${API}/answers/form`]: onPage(bySlip('id'), (b, on) => answers.answerForm(b, on.who), ANSWERS),

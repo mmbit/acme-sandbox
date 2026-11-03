@@ -17,7 +17,7 @@ import { sfx, hush } from './audio.js';
 import { callAgent, inCall, callInFront, minimiseCall } from './call.js';   // (a call, over whatever is open).
 import * as world from '../world/world.js';
 import { ago, companyFormats, dayTime, timeOf } from '../world/clock.js';
-import { scene, look, pick, lookName, looks, dressed, cover, ease, REST_FPS } from './stage.js';   // (cover; looks; ease)
+import { scene, look, pick, lookName, looks, dressed, cover, capFps, REST_FPS } from './stage.js';   // (cover; looks; capFps)
 import { toast, flyTo, visitMascot } from './hud.js';
 import { openLibraryDoc } from './news.js';   // (Team's Gazette and Library buttons gone)
 import { onDirective } from './events.js';
@@ -143,12 +143,14 @@ function show(kind, html, force = false) {
   el.innerHTML = `<div class="device ${kind}" role="dialog" aria-modal="true" data-keep-clear>${html}</div>`;   // (a minimised call steps clear of it: callbubble.js.)
   if (!was) sfx.open(); else sfx.blip();
   clearInterval(timer); timer = null; homeFit?.disconnect(); homeFit = null;   // (homeFit)
+  // The board's eyes are on the tool (the intercom, phone or computer), however much of the stage it hides: the scene
+  // behind it draws at its resting rate till it closes.
+  capFps(REST_FPS, 'tool');
   opened(kind);
   return true;
 }
-// What's open on HQ's page told on the document (hq:open: { open, app }), for a second screen to follow (pair.js). A tool
-// open lies over most of the stage, which draws at its resting rate meanwhile.
-const opened = kind => { ease(kind ? REST_FPS : null, 'tool'); document.dispatchEvent(new CustomEvent('hq:open', { detail: { open: kind, ...(kind === 'computer' && { app: tab }) } })); };
+// What's open on HQ's page told on the document (hq:open: { open, app }), for a second screen to follow (pair.js).
+const opened = kind => document.dispatchEvent(new CustomEvent('hq:open', { detail: { open: kind, ...(kind === 'computer' && { app: tab }) } }));
 export const toolOpen = () => !!open;
 const previews = previewsOn(location.hostname, local);
 const trusts = origin => PREVIEW.test(`${origin}/`);
@@ -500,6 +502,7 @@ export function closeTool() {   // (exported for calldrive.js and a second scree
   open = null; clearInterval(timer); timer = null; homeFit?.disconnect(); homeFit = null;   // (homeFit)
   if (voice) { voice.rec.cancel(); voice = null; }
   const el = root(); el.hidden = true; el.innerHTML = ''; sfx.close();
+  capFps(null, 'tool');
   opened(null);
 }
 // Nothing re-renders an overlay while the board is typing in it (an answer on the phone, a directive on
@@ -2104,18 +2107,25 @@ const pausedLine = (p, ceo) => p.why === 'restarting' ? `Paused: restarting. ${c
 let notesDue = 0;
 export const notesComing = () => { notesDue = Date.now(); };
 export const intercomOpen = () => open === 'intercom';
+// Whether a message is the CEO's reply to the board while the intercom is open. The intercom chimes for it, so the
+// scene's arrival stays silent.
+export const intercomSounds = ({ agent, to }) => to === 'board' && agent === world.company.ceo && intercomOpen();
 // The intercom shows a loader until its history is in, and this only once it came back empty.
 const chatHint = ceo => `<li class="hint">Talk with ${ceo}: ask, discuss, decide. ${cap(ceo)} remembers the conversation and puts the team to work.</li>`;
 function paintChat(c) {
   const list = $('#chat'); if (!list || !c) return;
+  // A poll asked before the board's line went can answer after it, without that line. Its answer is older than what's
+  // shown, so it's skipped. Shown, it would chime the CEO's reply before the line a second time.
+  const last = c.messages.at(-1)?.id ?? 0, lastShown = list.dataset.last;
+  if (lastShown && +last < +lastShown) return;
   chatLines = c.messages;
   // shown: seen (once the marks have loaded, as the count waits for them; not during a call, which hides the chat)
   if (seen && !inCall() && !document.hidden && c.messages.length) markSeen('intercom', Math.max(...c.messages.map(m => Number(m.id))));
   if (notesDue && (Date.now() - notesDue > 120e3 || c.messages.some(m => m.who === 'call' && new Date(m.ts) > notesDue - 60e3))) notesDue = 0;
   c.thinking = c.thinking || !!notesDue && 'notes';
-  const last = c.messages.at(-1)?.id ?? 0, fresh = list.dataset.last && +list.dataset.last !== last && c.messages.at(-1)?.who === world.company.ceo;
+  const fresh = lastShown && +lastShown !== last && c.messages.at(-1)?.who === world.company.ceo;
   const state = `${c.thinking} ${JSON.stringify(c.paused ?? null)}`;
-  if (list.dataset.last === String(last) && list.dataset.thinking === state) return;
+  if (lastShown === String(last) && list.dataset.thinking === state) return;
   list.dataset.last = last; list.dataset.thinking = state; list.removeAttribute('aria-busy');
   const ceo = esc(ceoName()), hint = c.messages.length ? '' : list.querySelector('.hint')?.outerHTML ?? chatHint(ceo);
   // (the board's own lines break where it typed them, an agent's wrapped ones join); a guest's. The CEO's line with its

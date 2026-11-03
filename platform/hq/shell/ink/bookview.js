@@ -4,7 +4,8 @@
 //
 // book (bookpages.js): { desk, world, views, cur, size, pan, scale, drawn, heldPastEnd }. The paper's px are CSS px
 // from the desk's top-left; the page's are its own (bookrow.js).
-import { dotsShown, drawScale, pageAt, shownBox } from './bookrow.js';
+import { canvasPans, dotsShown, drawScale, pageAt, shownBox, unitsPans, unitsZoom, zoomWithin } from './bookrow.js';
+import { isCanvas } from './sketchcanvas.js';
 
 // the paper's dot grid, one dot every DOT_PX of the page (bookdesk.css)
 const DOT_PX = 22;
@@ -19,23 +20,35 @@ const FOOT_SHOWN = 120;
 // The page shown
 export const viewOf = book => book.views[book.cur] ?? null;
 
+// A page's fit: the scale a page of units is laid at to the paper's width (bookunits.js), the least it zooms out to; a
+// sketch page's 1, its own px
+export const fitOf = page => page?.scale ?? 1;
+// The zoom a page is shown at when asked for s, every page pinch-zooming: a sketch page's within its reach (bookrow.js zoomWithin); a page of units' from its fit in (unitsZoom)
+export const zoomOf = (book, s) => {
+  const page = viewOf(book)?.page;
+  if (!page) return s;
+  return isCanvas(page.chapter) ? zoomWithin(s, page, book.size) : unitsZoom(s, fitOf(page));
+};
+
 // The view set: the page panned to pan at zoom scale, kept on the page, drawn. (a
 // pinch never goes past the page's zoom on its way to the overview)
 export function setView(book, { pan = book.pan, scale = book.scale } = {}) {
   const v = viewOf(book);
   if (!v || !book.size.w) return;
-  // (a page of units has no zoom of its own: drawn at its masonry's scale, scrolled down only (the paper ends above
-  // the tools: bookgroups.css).)
-  scale = v.page.scale ?? 1;
+  // (a sketch page zooms and pans any way, a near-endless canvas; a page of units zooms in from its masonry's scale and
+  // pans across it as far as it's zoomed past its width, and down, the paper ending above the tools (bookgroups.css).)
+  scale = zoomOf(book, scale);
   const zoomed = scale !== book.scale;
   book.scale = scale;
   // (scrolled on past the page's foot by about a screen, never moved there by itself: a unit's room dragged shorter
   // leaves the page where it is, past its end, and from there it scrolls back up but no further down.)
-  const end = (v.page.h ?? 0) - Math.min(book.size.h, FOOT_SHOWN) / scale,
-    held = v.page.resizing || book.heldPastEnd === v.page ? book.pan.y : 0,
-    lowest = Math.max(end, held);
-  book.pan = { x: 0, y: Math.max(0, Math.min(pan.y, lowest)) };
-  book.heldPastEnd = book.pan.y > end ? v.page : null;
+  const reach = isCanvas(v.page.chapter)
+      ? canvasPans(v.page, book.size, scale, FOOT_SHOWN)
+      : unitsPans(v.page, book.size, scale, FOOT_SHOWN),
+    held = v.page.resizing || book.heldPastEnd === v.page ? book.pan.y : -Infinity,
+    lowest = Math.max(reach.y1, held);
+  book.pan = { x: Math.max(reach.x0, Math.min(pan.x, reach.x1)), y: Math.max(reach.y0, Math.min(pan.y, lowest)) };
+  book.heldPastEnd = book.pan.y > reach.y1 ? v.page : null;
   draw(book);
   if (zoomed) {
     clearTimeout(book.rest);

@@ -1,8 +1,10 @@
-/* My shelf's books (bookshelfbooks.js), on the overview's paper (bookshelf.css): big hard books standing in rows, each
-   row on its shelf board, as the deck's shelf. A book: its spine a dotted band at its left with the hinge's groove
-   beside it, its pages' edges dotted at its right and foot, a picture in a frame on its front, its name and one line
-   under it, its asks counted on its corner. Its own small menu at its frame's corner. Sizes follow the book's own
-   width (a container), so a phone's one book to a row and a wide notebook's six read alike.
+/* My shelf's books (bookshelfbooks.js), on the overview's paper (bookshelf.css): big books standing in rows, each row
+   on its wooden shelf board. Each is the notebook itself (booklook.css: its black cloth over board, its grain and lit
+   rim, its ribbon in the brand's accent), seen from the front and a little to
+   its right: its rounded spine and the hinge's groove at its left, its pages' edges at its right, the picture it was
+   given pasted on its front and a paper label with its name and one line, its asks counted on its corner. Its own small
+   menu at its cover's corner. Sizes follow the book's own width (a container), so a phone's one book to a row and a
+   wide notebook's six read alike.
  */
 #book .bk-far-nav:has(.bk-shelf-title) {
   flex-wrap: wrap;
@@ -45,7 +47,7 @@
 #book .bk-shelf-row[data-cols='1'] {
   --bk-book-most: 300px;
 }
-/* (the board, and its shadow dotted under it) */
+/* (the board: pale oak, its top lit and its front edge in the grain, its shadow soft on the paper under it) */
 #book .bk-shelf-row::after,
 #book .bk-shelf-row::before {
   content: '';
@@ -57,87 +59,107 @@
 #book .bk-shelf-row::after {
   bottom: 0;
   height: 12px;
-  box-sizing: border-box;
-  border: 1.5px solid var(--bk-night);
   border-radius: 2px;
-  background: var(--bk-paper);
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.32), rgba(255, 255, 255, 0.2)) 0 0 / 100% 4px no-repeat,
+    linear-gradient(transparent 4px, rgba(70, 40, 15, 0.25) 4px 5px, transparent 5px),
+    repeating-linear-gradient(transparent 0 2px, rgba(110, 70, 30, 0.12) 2px 3px),
+    repeating-linear-gradient(
+      90deg,
+      transparent 0 40px,
+      rgba(110, 70, 30, 0.08) 40px 90px,
+      transparent 90px 130px,
+      rgba(255, 240, 210, 0.1) 130px 170px
+    ),
+    linear-gradient(#cfa676, #b4875a);
+  box-shadow:
+    inset 0 -1px 0 rgba(70, 40, 15, 0.3),
+    0 1px 1px rgba(40, 25, 10, 0.25);
 }
 #book .bk-shelf-row::before {
-  bottom: -9px;
-  height: 8px;
-  background: radial-gradient(circle, var(--bk-night) 0.9px, transparent 1.2px) 0 0 / 6px 6px;
-  opacity: 0.45;
+  bottom: -16px;
+  height: 16px;
+  background: linear-gradient(rgba(40, 28, 16, 0.22), transparent);
+  clip-path: inset(0 6px);
 }
 
-/* ---- a book */
+/* ---- a book, over the board (its ribbon hangs over the board's edge); one with its menu or Close asking over the
+   books in the rows under it */
 #book .bk-book {
+  z-index: 1;
   container-type: inline-size;
+}
+#book .bk-book:has(.bk-book-menu, .bk-round-ask) {
+  z-index: 2;
 }
 #book .bk-book .bk-tile-open {
   display: block;
   position: relative;
   isolation: isolate;
 }
+/* its front: the notebook's cloth, lit from the upper left, its outer edge catching the light, its shadow on the board
+   and the paper behind it */
 #book .bk-cover {
   position: relative;
   display: flex;
   flex-direction: column;
-  margin: 0 7px 7px 0;
-  padding: 7cqi 7cqi 6cqi 14cqi;
-  border: 1.5px solid var(--bk-night);
-  border-radius: 4px 9px 9px 4px;
-  /* (the hinge's groove beside the spine) */
+  box-sizing: border-box;
+  aspect-ratio: 5 / 7;
+  margin-right: 7px;
+  padding: 9cqi 8cqi 9cqi 16cqi;
+  border-radius: 3px 5px 5px 3px;
   background:
-    linear-gradient(
-        90deg,
-        transparent calc(8cqi + 4px),
-        var(--bk-muted) calc(8cqi + 4px) calc(8cqi + 5px),
-        transparent calc(8cqi + 5px)
-      )
-      0 6px / 100% calc(100% - 12px) no-repeat,
-    var(--bk-paper);
+    radial-gradient(130% 60% at 0% 0%, rgba(255, 255, 255, 0.07), transparent 60%), var(--bk-grain), var(--bk-cloth);
+  box-shadow:
+    var(--bk-rim-head),
+    var(--bk-rim-foot),
+    inset -1px 0 0 rgba(255, 255, 255, 0.12),
+    0 1px 1px rgba(0, 0, 0, 0.35),
+    5px 4px 12px -5px rgba(20, 14, 10, 0.55);
   color: var(--bk-night);
 }
-/* its spine: a dotted band, its cloth's two bands across */
+/* its spine, rounded at the left, and the hinge's groove pressed in beside it */
 #book .bk-cover::before {
   content: '';
   position: absolute;
   top: 0;
   bottom: 0;
   left: 0;
-  width: 8cqi;
-  border-right: 1.5px solid var(--bk-night);
+  width: 10cqi;
   border-radius: 3px 0 0 3px;
-  background:
-    linear-gradient(
-      transparent 11%,
-      var(--bk-night) 11% calc(11% + 1.5px),
-      transparent 0 calc(89% - 1.5px),
-      var(--bk-night) 0 89%,
-      transparent 0
-    ),
-    radial-gradient(circle, var(--bk-muted) 0.8px, transparent 1.1px) 1px 2px / 5px 5px;
+  background: linear-gradient(90deg, rgba(0, 0, 0, 0.5), rgba(255, 255, 255, 0.07) 40%, rgba(0, 0, 0, 0.15));
+  box-shadow:
+    1px 0 0 rgba(0, 0, 0, 0.55),
+    2px 0 0 rgba(255, 255, 255, 0.08);
 }
-/* its pages' edges at its right and foot, dotted, behind the boards */
+/* its pages' edges at its right, between the boards and a little short of them, turned away; the back board's edge
+   beyond */
 #book .bk-cover::after {
   content: '';
   position: absolute;
   z-index: -1;
-  top: 7px;
-  left: 12cqi;
+  top: 3px;
+  bottom: 2px;
   right: -7px;
-  bottom: -7px;
-  border: 1.5px solid var(--bk-night);
-  border-radius: 0 8px 8px 0;
-  background: radial-gradient(circle, var(--bk-muted) 0.8px, transparent 1.1px) 0 0 / 4px 4px var(--bk-paper2);
+  width: 11px;
+  border-radius: 0 2px 2px 0;
+  background:
+    linear-gradient(90deg, rgba(40, 30, 20, 0.45), rgba(40, 30, 20, 0.12) 60%, transparent),
+    linear-gradient(90deg, transparent calc(100% - 2px), var(--bk-cloth) 0),
+    repeating-linear-gradient(90deg, #cfc2a8 0 0.7px, #ebe2cf 0.7px 1.8px);
+  box-shadow: inset 0 1px 0 rgba(0, 0, 0, 0.18);
+  clip-path: polygon(0 0, 100% 3px, 100% calc(100% - 1px), 0 100%);
 }
+/* the picture it was given, a print pasted on the cloth */
 #book .bk-cover-frame {
   display: block;
-  aspect-ratio: 1;
+  flex: 1 1 0;
+  min-height: 0;
   overflow: hidden;
-  border: 1.5px solid var(--bk-night);
-  border-radius: 4px;
-  background: #fbf8f2;
+  border: 1.2cqi solid #f7f2e8;
+  border-radius: 2px;
+  background: #f7f2e8;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
 }
 #book .bk-cover-frame img {
   display: block;
@@ -146,13 +168,22 @@
   object-fit: cover;
   pointer-events: none;
 }
-#book .bk-cover-art {
-  display: block;
-  width: 100%;
-  height: 100%;
-  padding: 12%;
-  box-sizing: border-box;
-  overflow: visible;
+/* its label: paper pasted on, a fine rule printed round its edge, its name and line on it; high on a bare cover */
+#book .bk-cover-label {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  margin-top: 6cqi;
+  padding: 3.5cqi 4cqi 4cqi;
+  border-radius: 2px;
+  background: linear-gradient(170deg, #fdfaf3, #f1ebdf);
+  box-shadow:
+    inset 0 0 0 1.6cqi #fbf7ef,
+    inset 0 0 0 calc(1.6cqi + 1px) rgba(42, 35, 82, 0.3),
+    0 1px 2px rgba(0, 0, 0, 0.5);
+}
+#book .bk-cover:not(:has(.bk-cover-frame)) .bk-cover-label {
+  margin: 30cqi 2cqi 0;
 }
 #book .bk-cover-title,
 #book .bk-cover-line {
@@ -162,14 +193,13 @@
   text-align: center;
 }
 #book .bk-cover-title {
-  margin-top: 5cqi;
   font-weight: 700;
-  font-size: clamp(15px, 8.6cqi, 22px);
+  font-size: clamp(15px, 8.2cqi, 21px);
   line-height: 1.25;
 }
 #book .bk-cover-line {
   margin-top: 0.5cqi;
-  font-size: clamp(12.5px, 6.4cqi, 16px);
+  font-size: clamp(12px, 6cqi, 15px);
   font-weight: 700;
   line-height: 1.3;
   color: var(--bk-muted);
@@ -211,25 +241,29 @@
   background: #b4432f;
   color: #fff;
 }
-/* the notebook open in the book: its ribbon out at the foot, in the book's accent */
+/* the notebook open in the book: its ribbon, sewn in at the spine's head, out from between the pages at the foot and
+   hanging over the board's edge, in the brand's accent as the notebook's pull tab is */
 #book .bk-ribbon {
   position: absolute;
-  right: 22%;
-  bottom: -7px;
-  width: 9px;
-  height: 20px;
-  background: var(--bk-accent, var(--bk-gold));
-  clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 78%, 0 100%);
+  top: calc(100% - 2px);
+  left: 30%;
+  width: max(9px, 4.4cqi);
+  height: 26px;
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.22), transparent 45%, rgba(0, 0, 0, 0.25)),
+    linear-gradient(rgba(0, 0, 0, 0.35), transparent 5px 12px, rgba(0, 0, 0, 0.18) 12px 14px, transparent 16px),
+    var(--bk-accent, var(--bk-gold));
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 80%, 0 100%);
 }
 
-/* ---- its own menu: a paper button at its frame's corner (on hover or focus with a mouse, always to the touch), its
+/* ---- its own menu: a paper button at its cover's corner (on hover or focus with a mouse, always to the touch), its
    list under it */
 #book .bk-book-more {
   all: unset;
   box-sizing: border-box;
   position: absolute;
-  top: calc(7cqi + 6px);
-  left: calc(14cqi + 6px);
+  top: calc(9cqi + 6px);
+  left: calc(16cqi + 6px);
   z-index: 1;
   display: grid;
   place-items: center;
@@ -267,8 +301,8 @@
 }
 #book .bk-book-menu {
   position: absolute;
-  top: calc(7cqi + 44px);
-  left: calc(14cqi + 2px);
+  top: calc(9cqi + 44px);
+  left: calc(16cqi + 2px);
   z-index: 4;
   display: flex;
   flex-direction: column;

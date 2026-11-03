@@ -24,6 +24,7 @@ await h.worker('seat', { seat: 'claude-1', engine: 'claude', state: 'ready' });
 const { db } = h;
 const review = await import('./review.ts');
 const panel = await import('./panel.ts');
+const urgency = await import('./urgency.ts');
 const reviewtriage = await import('./reviewtriage.ts');
 const files = ['platform/hq/room.js'];
 const sha = () => randomBytes(20).toString('hex');
@@ -1149,7 +1150,7 @@ test('an original finder retained by engine constraints needs no omission reason
   assert.equal(rows[0].triage.selection.looker, 'rook');
 });
 
-// The seats' state for one test: paused ones take nothing, a paced one only work whose latest start precedes its reset
+// The seats' state for one test: paused ones take nothing, a paced one takes only explicitly urgent work
 async function seatsFor(states: Record<string, 'ready' | 'paused' | 'paced'>, body: () => Promise<void>) {
   const set = async (seat: string, state: 'ready' | 'paused' | 'paced') => {
     await h.worker('seat', {
@@ -1191,7 +1192,7 @@ test('rounds open at once go to more than one consolidator while more than one s
   });
 });
 
-test('a round follows projected queue waits, and a paced seat takes a round whose latest start precedes reset', async () => {
+test('a round follows projected queue waits, with deadline work paced and urgent work admitted', async () => {
   await routingRoom();
   await seatsFor({ 'codex-1': 'paused' }, async () => {
     for (const pr of [165, 166, 167]) await pushDue(pr, 1);
@@ -1208,7 +1209,19 @@ test('a round follows projected queue waits, and a paced seat takes a round whos
     assert.deepEqual([173, 174].map(triager), ['nib', 'nib'], 'the paced seat takes no undated round');
     await seatsFor({ 'codex-1': 'paused' }, async () => {
       await pushDue(175, 2);
-      assert.equal(triager(175), 'quill', 'a round due before the reset is one the paced seat takes');
+      assert.equal(
+        await h.claim('claude', { seat: 'claude-1', pacedUntil: Date.now() + 24 * 3_600_000 }),
+        null,
+        'a deadline alone does not pass pacing',
+      );
+      const triage = pending(175).find(job => job.stage === 'triage')!;
+      assert.equal(typeof urgency.setUrgent('job', triage.thread!, true, 'juno'), 'object');
+      assert.equal(triager(175), 'quill');
+      assert.equal(
+        (await h.claim('claude', { seat: 'claude-1', pacedUntil: Date.now() + 24 * 3_600_000 }))?.id,
+        triage.id,
+        'the urgent round passes pacing',
+      );
     });
   });
 });

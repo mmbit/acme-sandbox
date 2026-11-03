@@ -19,7 +19,7 @@ import { readFile, mkdir, rm } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { serve, ROOT } from './serve.mjs';
 import { playwright, openPage, until } from '../../shared/browser/browser.mjs';
-import { fulfilPart } from '../../shared/review/parts.mjs';
+import { scriptForHq, fulfilPart } from '../../shared/review/parts.mjs';
 import { pinOn } from './bookkit.mjs';
 
 const shots = process.argv.includes('--shots') ? process.argv[process.argv.indexOf('--shots') + 1] : null;
@@ -28,7 +28,7 @@ const server = await serve(),
   base = `http://localhost:${server.address().port}`;
 const PRODUCT = 'https://hello.preview.test',
   DAY = '2026-10-26';
-const reviewJs = (await readFile(`${ROOT}/shared/review/review.js`, 'utf8')).replace('{{HQ_ORIGIN}}', base);
+const reviewJs = scriptForHq('review/review.js', base);
 // (as the coordinator serves it to an outside reviewer on a share: guests.ts)
 const outsideJs = reviewJs.replace("'{{OUTSIDE}}'", "'Testco'");
 const PAGE = `<!doctype html><meta name="viewport" content="width=device-width, initial-scale=1"><title>Hello</title>

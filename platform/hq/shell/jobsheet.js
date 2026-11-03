@@ -60,7 +60,8 @@ export function jobSheet(j, all, { back = false, findings = null, facts = null }
     ${reverse ? `<button class="pj-turns" data-turn aria-label="${turned ? 'Turn back to its front' : 'Turn over: its record and steps'}">${icon('redo')}</button>` : ''}</article></div>`;
 }
 
-// The front: its code and title, who, where it is, when it starts and is done, and what it waits for first
+// The front: its code and title, who, where it is, that it's urgent, when it starts and is done, and what it waits for
+// first
 function frontOf(j, row) {
   const s = stateOf(j),
     kind = kindOf(j),
@@ -80,9 +81,11 @@ function frontOf(j, row) {
   // (a review loop job's in plain words, doingOf; one at work its size with what's left of it.)
   const work = size(j) && `About ${size(j)} of work${s === 'working' && left(j) ? `, ${left(j)} left` : ''}`;
   const what = [j.review ? doingOf(j) : kind === 'work' ? '' : cap(kind), work];
-  // the planner's times: when it starts, for one not started yet, and its one finish, its work live (threads.js planned)
+  // that it's urgent while it isn't finished (the board's word lets it start past the seats' pace), then the planner's
+  // times: when it starts, for one not started yet, and its one finish, its work live (threads.js planned)
   const { start, done } = planned(j);
   const times = [
+    j.urgent && !finished(j) && { words: 'Urgent: may run past the seats’ pace', icon: 'alert' },
     s !== 'working' && start && { words: start, icon: 'tour' },
     done && { words: done, icon: 'finish' },
   ].filter(Boolean);

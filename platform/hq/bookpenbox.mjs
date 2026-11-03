@@ -64,12 +64,7 @@ async function everyInk(browser, c, onIpad) {
       drawn = [];
     for (const [row, ink, colours] of plan(onIpad))
       for (const [col, colour] of colours.entries()) {
-        await card(page, tap);
-        await pickInk(page, tap, ink.name);
-        // (the marker picked from the pen's card opens its own)
-        if (!(await item(page, colour.name).isVisible())) await card(page, tap);
-        // (the card stays open for a width too: the press on the paper puts it away)
-        await tap(item(page, colour.name));
+        await inkPicked(page, tap, ink, colour);
         const x = paper.x + LEFT + col * ACROSS,
           y = top + row * DOWN,
           points = [0, 0.5, 1].map(f => [x + f * LONG, y]);
@@ -172,20 +167,30 @@ const clearBelow = page =>
     ),
   );
 
-// The pen's card open (the pen, the pencil or the brush on the rail: whichever it shows, or the marker's), and it
+// The pen's card open (the pen's key on the tools, the pen's or the marker's: whichever is in hand), and it
 const card = async (page, tap) => {
   const open = page.locator('#book .bk-palette');
   if (await open.isVisible()) return open;
   const ink = page.locator(
-    "#book .bk-column [data-island=tools] [aria-pressed=true]:is([data-mode='pen'], [data-mode='highlighter'])",
+    "#book [data-island=tools] .bk-btn:is([data-mode='pen'], [data-mode='highlighter']):not([data-spare])",
   );
-  if (await ink.count()) await tap(ink);
-  else await tap(page.locator("#book .bk-column [data-island=tools] [data-mode='pen']"));
+  await tap(ink);
   // (a tool not in hand picked by the first tap: the second opens its card)
-  if (!(await open.isVisible())) await tap(page.locator("#book .bk-column [data-island=tools] [data-mode='pen']"));
+  if (!(await open.isVisible())) await tap(ink);
   await open.waitFor();
   return open;
 };
+// An ink in a colour picked in the pen's card, the card put away after (it stays open for a width, and can hang over
+// where the line goes, left of the tools)
+async function inkPicked(page, tap, ink, colour) {
+  await card(page, tap);
+  await pickInk(page, tap, ink.name);
+  // (the marker picked from the pen's card opens its own)
+  if (!(await item(page, colour.name).isVisible())) await card(page, tap);
+  await tap(item(page, colour.name));
+  await page.keyboard.press('Escape');
+  await page.locator('#book .bk-palette').waitFor({ state: 'detached' });
+}
 const item = (page, name) => page.locator('#book .bk-palette').getByRole('menuitemradio', { name, exact: true });
 // An ink picked in the pen's card, its card open after (another tool's ink opens its own)
 async function pickInk(page, tap, name) {

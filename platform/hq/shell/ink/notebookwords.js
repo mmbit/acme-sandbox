@@ -6,6 +6,9 @@ import { de } from './notebookwordsde.js';
 
 export const words = { en, nl, de };
 
+// A word's {places} filled from places
+export const filled = (said, places = {}) => said.replace(/\{(\w+)\}/g, (_, k) => places[k]);
+
 // A refusal's words in the reader's language, a limit's filled in from the server's (the list's limits)
 export function refusal(lang, reason, limits) {
   const said = words[lang]?.refusals[reason];

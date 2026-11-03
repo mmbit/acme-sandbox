@@ -1,35 +1,37 @@
-// book-check.mjs's story of the rail floating by the paper's right edge (shell/ink/bookui.js, bookstrip.js,
-// bookcontrols.js): on a phone and an iPad mini both ways and a desktop with the notebook wide and narrow, every
-// control the page has on the floating toolbars just in from the paper's right edge, nothing scrolling and no other
-// island over the page; the tools first, the pen one tool (the marker beside it only where the rail has room), each
-// 44 px to the touch across; the page's scroll area ending left of the rail, so no control sits over what's written;
-// the cog's and the pen's cards whole on the screen beside it. Press and slide: a press on Select slid down to Text
-// picks Text the moment it lifts, with no hold (the mouse, and in Chromium a finger). No long press: a tool held picks
-// it and opens nothing, its card a second tap away. Run with --webkit for the same in the iPad's engine.
-// (the rail at the right edge, floating: board, call 174)
+// book-check.mjs's story of the book's two islands over its paper (shell/ink/bookui.js, bookstrip.js,
+// bookcontrols.js, bookrail.js): on a phone (under a home-screen app's blurred strip) and an iPad mini both ways and a
+// desktop with the notebook wide and narrow. The tools upright at the paper's right, centred in the room above the bar,
+// in their order with one pen, and well under half a phone's height; the bar along the foot, Undo and Redo at its left,
+// the page's arrows and where it is ("3 / 12") in its very middle, its dots at its right. The overview and New page on
+// the bar where the paper is 460 px wide or more, else in the dots menu, every row of which does what it says. No
+// island scrolls or leaves the screen, each key is 44 px to the touch, nothing pressable sits above --sat, and what's
+// written ends left of the tools. Undo, Redo and the page's keys never move. A tool's card opens left of the tools and
+// the bar's above the bar, whole. Press and slide: a press on the pen slid down to Text picks Text the moment it lifts,
+// with no hold (the mouse, and in Chromium a finger). No long press: a tool held picks it and opens nothing. Run with
+// --webkit for the same in the iPad's engine. (the islands: board, call 190.)
 import assert from 'node:assert/strict';
 import { freePage } from './bookmouse.mjs';
 import { OVERVIEW, PREFERENCES, touchOf, until } from './bookkit.mjs';
+import { fits } from './bookbarfits.mjs';
 
+// (sat: a home-screen app's blurred strip at the top, px: style.css's --sat)
 const SIZES = [
-  { name: 'phone', viewport: { width: 390, height: 844 }, touch: true },
+  { name: 'phone', viewport: { width: 390, height: 844 }, touch: true, sat: 47 },
   { name: 'phone-sideways', viewport: { width: 844, height: 390 }, touch: true },
   { name: 'mini-upright', viewport: { width: 744, height: 1133 }, touch: true },
   { name: 'mini-sideways', viewport: { width: 1133, height: 744 }, touch: true },
   { name: 'desktop-wide', viewport: { width: 1920, height: 1080 }, touch: false },
   { name: 'desktop-narrow', viewport: { width: 1920, height: 1080 }, touch: false, narrow: 420 },
 ];
-// the rail's tools, top to bottom (the ink not in use, Marker, only where the rail is roomy)
-const TOOLS = ['Select', 'Pen', 'Eraser', /^Shapes/, 'Text', 'Undo', 'Redo'];
-// a rail key's reach to the touch across, the narrowest a finger needs (px; book.css --bk-touch.)
-const TOUCH_PX = 44;
+// the dots menu's own rows, after the page's keys folded into it on a narrow paper (bookui.js)
+const ROWS = ['Tear off and send', PREFERENCES, 'Tips', 'Close notebook'];
 // a slide's lift picks its tool this soon (ms)
 const PICK_MS = 100;
 
 // c: book-check.mjs's played store and helpers
 export function barStories(c) {
   return {
-    "the rail: every control on one column at the paper's right edge at every size, no scrolling, clear of the page, one pen; press and slide picks with no hold":
+    "the islands: the tools at the paper's right and the bar along its foot at every size, the page's count in the bar's middle, the rest in its dots, none scrolling; press and slide picks with no hold":
       async browser => {
         for (const size of SIZES)
           try {
@@ -47,19 +49,26 @@ async function atSize(browser, c, size) {
   const context = await c.hqIn(browser, size.viewport, { hasTouch: size.touch, deviceScaleFactor: 1 }),
     page = await context.newPage(),
     errors = [];
+  if (size.sat)
+    await context.addInitScript(px => {
+      document.addEventListener('DOMContentLoaded', () =>
+        document.documentElement.style.setProperty('--sat', `${px}px`),
+      );
+    }, size.sat);
   page.on('pageerror', e => errors.push(e.message));
   try {
     await page.goto(`${c.base}/?intro=0`);
     await page.waitForSelector('#book .bk-lip', { timeout: 30_000 });
     await opened(page);
     if (size.narrow) await narrowed(page, size.narrow);
-    await fitted(page);
-    await c.shot(`book-rail-${size.name}`, page);
-    await fits(page);
+    await atRest(page);
+    await c.shot(`book-islands-${size.name}`, page);
+    const wide = await fits(page, size);
     await keysStay(page, size);
     await cards(page, c, size);
     await slides(page, size, browser);
     await noHold(page);
+    await menuRows(page, c, size, wide);
     assert.deepEqual(errors, []);
   } finally {
     await context.close();
@@ -85,49 +94,102 @@ async function narrowed(page, width) {
   await page.mouse.up();
   await page.waitForTimeout(300);
 }
-// The book at rest and its rail fitted to it (data-fit, a frame after it resizes; on a loaded machine, frames come
-// late), nothing in the column past its foot
-const fitted = page =>
+// The book at rest, its swing over and both islands laid out (on a loaded machine, frames come late)
+const atRest = page =>
   until(
     () =>
-      page.evaluate(() => {
-        const column = document.querySelector('#book .bk-column');
-        return (
+      page.evaluate(
+        () =>
           !document.querySelector('#book.bk-swinging') &&
-          !!column?.dataset.fit &&
-          column.scrollHeight <= column.clientHeight + 1
-        );
-      }),
-    'the book at rest, its rail fitted',
+          ['.bk-strip', '.bk-bar'].every(s => document.querySelector(`#book ${s}`).getBoundingClientRect().width),
+      ),
+    'the book at rest, its islands laid out',
   );
 
-// A control on the rail pressed: on the rail, or from More's card where the rail has folded it away (the book's other
-// checks' too)
+// A control of the book's pressed: on its islands, or from the dots menu where the bar has folded it away (the book's
+// other checks' too)
 export async function press(page, name) {
-  const own = page.locator('#book .bk-column').getByRole('button', { name, exact: true });
+  const own = page.locator('#book .bk-controls').getByRole('button', { name, exact: true });
   if (await own.isVisible()) return own.click();
-  await page.locator('#book .bk-column').getByRole('button', { name: 'More', exact: true }).click();
+  await page.locator('#book .bk-more').click();
   await page.locator('#book .bk-more-card').getByRole('menuitem', { name, exact: true }).click();
 }
 
-// The cog's preferences and the pen's card (the pen in use pressed again) open beside the rail, whole on the screen
+// ---- what stays where it was
+
+// Undo, Redo and the page's keys (the bar's left and middle), where they are on the screen (px)
+const keysOf = page =>
+  page.evaluate(() =>
+    [...document.querySelectorAll('#book .bk-bar :is(.bk-bar-start, .bk-bar-middle) .bk-btn')].map(b => {
+      const r = b.getBoundingClientRect();
+      return [b.className.split(' ').find(n => n !== 'bk-btn') ?? '', ...[r.x, r.y, r.width, r.height].map(Math.round)];
+    }),
+  );
+// Undo, Redo and the page's keys never move, so a tap does what the board meant: where they were at rest with another
+// tool in use and with each card open; and in the overview the bar only its own key, pressed, which brings the page
+// back with them where they were
+async function keysStay(page, size) {
+  const rest = await keysOf(page),
+    stays = async state =>
+      assert.deepEqual(await keysOf(page), rest, `${size.name}, ${state}: Undo, Redo and the page's keys moved`);
+  const tools = page.locator('#book [data-island=tools]');
+  for (const name of ['Eraser', 'Text', 'Pen']) {
+    await tools.getByRole('button', { name, exact: true }).click();
+    await stays(`${name} in use`);
+  }
+  for (const [name, opened, selector] of [
+    [PREFERENCES, () => press(page, PREFERENCES), '.bk-prefs'],
+    ['Pen', () => press(page, 'Pen'), '.bk-palette'],
+    ['the pages', () => page.locator('#book .bk-where').click(), '.bk-pages-menu'],
+    ['More', () => press(page, 'More'), '.bk-more-card'],
+  ]) {
+    await opened();
+    await page.locator(`#book ${selector}`).waitFor({ state: 'visible', timeout: 5000 });
+    await stays(`${name}'s card open`);
+    await page.keyboard.press('Escape');
+    await page.locator(`#book ${selector}`).waitFor({ state: 'detached', timeout: 5000 });
+  }
+  await press(page, OVERVIEW);
+  await page.locator('#book[data-far]').waitFor({ state: 'attached', timeout: 5000 });
+  const far = await page.evaluate(() => ({
+    tools: document.querySelector('#book .bk-strip').checkVisibility(),
+    bar: [...document.querySelectorAll('#book .bk-bar .bk-btn')]
+      .filter(b => b.checkVisibility({ visibilityProperty: true }))
+      .map(b => [b.getAttribute('aria-label'), b.getAttribute('aria-pressed')]),
+  }));
+  assert.deepEqual(far, { tools: false, bar: [[OVERVIEW, 'true']] }, 'the overview: its own key alone, pressed');
+  await press(page, OVERVIEW);
+  await until(() => page.evaluate(() => !document.querySelector('#book[data-far]')), 'the page back');
+  await atRest(page);
+  await stays('back from the overview');
+}
+
+// ---- the cards
+
+// The preferences and the pen's card (the pen in use pressed again) whole on the screen and on top: the pen's left of
+// the tools, the preferences above the bar
 async function cards(page, c, size) {
-  for (const [name, selector] of [
-    [PREFERENCES, '.bk-prefs'],
-    ['Pen', '.bk-palette'],
+  for (const [name, selector, side] of [
+    [PREFERENCES, '.bk-prefs', 'above the bar'],
+    ['Pen', '.bk-palette', 'left of the tools'],
   ]) {
     await press(page, name);
     const card = page.locator(`#book ${selector}`);
     await card.waitFor({ state: 'visible', timeout: 5000 });
     await page.waitForTimeout(300);
-    await c.shot(`book-rail-${size.name}-${selector.slice(4)}`, page);
-    const [b, rail] = [await card.boundingBox(), await page.locator('#book .bk-column').boundingBox()],
+    await c.shot(`book-islands-${size.name}-${selector.slice(4)}`, page);
+    const [b, strip, bar] = [
+        await card.boundingBox(),
+        await page.locator('#book .bk-strip').boundingBox(),
+        await page.locator('#book .bk-bar').boundingBox(),
+      ],
       view = page.viewportSize();
     assert.ok(
       b.x >= 0 && b.y >= 0 && b.x + b.width <= view.width && b.y + b.height <= view.height,
       `${name}'s card on the screen: ${JSON.stringify(b)}`,
     );
-    assert.ok(b.x + b.width <= rail.x + 1, `${name}'s card beside the rail, left of it`);
+    const beside = side === 'above the bar' ? b.y + b.height <= bar.y + 1 : b.x + b.width <= strip.x + 1;
+    assert.ok(beside, `${name}'s card ${side}: ${JSON.stringify({ card: b, strip, bar })}`);
     const mine = await card.evaluate(el => {
       const r = el.getBoundingClientRect();
       return el.contains(document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2));
@@ -138,156 +200,82 @@ async function cards(page, c, size) {
   }
 }
 
-// Every control the rail shows (its label: where it is on the screen, px), and its fit
-const railOf = page =>
-  page.evaluate(() => {
-    const column = document.querySelector('#book .bk-column'),
-      keys = {};
-    for (const b of column.querySelectorAll('.bk-btn'))
-      if (b.checkVisibility({ visibilityProperty: true })) {
-        const r = b.getBoundingClientRect();
-        keys[b.getAttribute('aria-label')] = [r.x, r.y, r.width, r.height].map(Math.round);
-      }
-    const r = column.getBoundingClientRect();
-    return { fit: column.dataset.fit, rail: [r.y, r.height].map(Math.round), keys };
-  });
-// Undo, Redo and the page's arrows, top to bottom, where they are on the screen (px, null off the rail), and its fit
-const KEYS = ['Undo', 'Redo', 'The page before', 'The page after'];
-const keysOf = async page => {
-  const { fit, keys } = await railOf(page);
-  return { fit, keys: KEYS.map(name => keys[name] ?? null) };
-};
-// Undo, Redo and the page's arrows never move or swap places, so a tap does what the board meant: each on the rail, in
-// that order, and where it was at rest with another tool in use and with each of the rail's cards open.
-async function keysStay(page, size) {
-  const rest = await keysOf(page),
-    said = state => `${size.name}, ${state}: ${KEYS.join(', ')}`;
-  // (the page's arrows folded into More only where the rail is shortest: a phone on its side)
-  const shown = rest.keys.filter(Boolean),
-    folded = ['least', 'tight'].includes(rest.fit) ? 2 : 0;
-  assert.ok(
-    shown.length === KEYS.length - folded && shown.every((k, i) => !i || k[1] >= shown[i - 1][1] + shown[i - 1][3]),
-    `${said('at rest')} each on the rail, one under the other (${JSON.stringify(rest)})`,
-  );
-  const stays = async state =>
-    assert.deepEqual((await keysOf(page)).keys, rest.keys, `${said(state)} where they were at rest (${rest.fit})`);
-  const tools = page.locator('#book [data-island=tools]');
-  for (const name of ['Eraser', 'Text', 'Pen']) {
-    await tools.getByRole('button', { name, exact: true }).click();
-    await stays(`${name} in use`);
-  }
-  for (const [name, key, selector] of [
-    [PREFERENCES, `[aria-label='${PREFERENCES}']`, '.bk-prefs'],
-    ['Pen', "[data-island=tools] [data-mode='pen']", '.bk-palette'],
-    ['Pages', '.bk-where', '.bk-pages-menu'],
-    ['More', '.bk-more', '.bk-more-card'],
-  ]) {
-    const on = page.locator(`#book .bk-column ${key}`).first();
-    if (!(await on.isVisible())) continue;
-    await on.click();
-    await page.locator(`#book ${selector}`).waitFor({ state: 'visible', timeout: 5000 });
-    await stays(`${name}'s card open`);
-    await page.keyboard.press('Escape');
-    await page.locator(`#book ${selector}`).waitFor({ state: 'detached', timeout: 5000 });
-  }
-  await overviewStays(page, size);
-}
-// The rail keeps one layout on a device: in the overview, with the tools, Undo, Redo and the page's arrows gone, it
-// fits as on the page, every control it still shows where it was there, and More a menu wherever it's one on the page,
-// not spread out for the room.
-async function overviewStays(page, size) {
-  const onPage = await railOf(page);
-  await press(page, OVERVIEW);
-  await page.locator('#book[data-far]').waitFor({ state: 'attached', timeout: 5000 });
-  await refitted(page);
-  const far = await railOf(page),
-    said = `${size.name}, the overview against the page (${JSON.stringify({ onPage, far })})`;
-  assert.equal(far.fit, onPage.fit, `${said}: one fit`);
-  assert.equal(!!far.keys.More, !!onPage.keys.More, `${said}: More where it was`);
-  for (const [name, at] of Object.entries(far.keys))
-    assert.deepEqual(at, onPage.keys[name], `${said}: ${name} where it was`);
-  await press(page, OVERVIEW);
-  await until(() => page.evaluate(() => !document.querySelector('#book[data-far]')), 'the page back');
-  await fitted(page);
-}
-// The rail fitted again to what it shows: two frames on
-async function refitted(page) {
-  await page.evaluate(() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done))));
-  await page.waitForTimeout(100);
-}
+// ---- the dots menu
 
-// Where the rail and the page are, and what's on the rail (the screen's px)
-const measured = page =>
-  page.evaluate(touchPx => {
-    const box = el => el && el.getBoundingClientRect().toJSON(),
-      column = document.querySelector('#book .bk-column');
-    return {
-      fit: column.dataset.fit,
-      paper: box(document.querySelector('#book .bk-paper')),
-      desk: box(document.querySelector('#book .bk-pages .bk-desk')),
-      column: box(column),
-      scrolls: column.scrollHeight > column.clientHeight + 1 || column.scrollWidth > column.clientWidth + 1,
-      // (reach: a press 44 px across, centred on the key, lands on it. A disabled key, such as The page before on the
-      // first page, needs no reach.)
-      buttons: [...column.querySelectorAll('.bk-btn')]
-        .filter(b => b.checkVisibility({ visibilityProperty: true }))
-        .map(b => {
-          const r = b.getBoundingClientRect(),
-            on = dx => document.elementFromPoint(r.x + r.width / 2 + dx, r.y + r.height / 2)?.closest('.bk-btn') === b;
-          return {
-            name: b.getAttribute('aria-label'),
-            reach: b.disabled || (on(1 - touchPx / 2) && on(touchPx / 2 - 1)),
-            ...box(b),
-          };
-        }),
-      // (the overview's own tools are in its head)
-      floating: [...document.querySelectorAll('#book .bk-island')]
-        .filter(el => el.getBoundingClientRect().width && !el.closest('.bk-column, .bk-far-head'))
-        .map(el => el.dataset.island),
+// The dots menu's rows, the page's keys first where the bar has no room for them; each row does what it says: the
+// overview, New page, the tear's targets, the preferences, the tips book, and Close notebook folding the book (last).
+async function menuRows(page, c, size, wide) {
+  const dots = page.locator('#book .bk-more'),
+    menu = page.locator('#book .bk-more-card'),
+    row = name => menu.getByRole('menuitem', { name, exact: true }),
+    picked = async name => {
+      await dots.click();
+      await row(name).click();
+      await menu.waitFor({ state: 'detached', timeout: 5000 });
     };
-  }, TOUCH_PX);
-
-// Every control on the column, one above the other, whole on the screen and 44 px to the touch across; the column
-// floating just in from the paper's right edge, scrolling nothing; the tools first in their order, the pen one tool;
-// the page's scroll area ending left of it; no control anywhere else over the page
-async function fits(page) {
-  const m = await measured(page),
-    view = page.viewportSize(),
-    names = m.buttons.map(b => b.name),
-    mid = r => (r.left + r.right) / 2;
-  assert.ok(!m.scrolls, `the rail scrolls nothing (${m.fit})`);
-  const inFrom = Math.min(m.paper.right, view.width) - m.column.right;
-  assert.ok(
-    inFrom >= 2 && inFrom <= 16,
-    `the rail floating just in from the paper's right edge: ${m.column.right} ${m.paper.right}`,
-  );
-  for (const b of m.buttons) {
-    assert.ok(Math.abs(mid(b) - mid(m.column)) < 2, `${b.name} on the rail's one column: ${mid(b)} ${mid(m.column)}`);
-    assert.ok(b.height >= 32 && b.reach, `${b.name} big enough to tap: ${b.width}x${b.height}, ${TOUCH_PX} px across`);
-    assert.ok(b.top >= 0 && b.bottom <= view.height && b.right <= view.width, `${b.name} on the screen`);
+  await dots.click();
+  await menu.waitFor({ timeout: 5000 });
+  await c.shot(`book-islands-${size.name}-more`, page);
+  const rows = await menu.getByRole('menuitem').evaluateAll(all => all.map(b => b.textContent));
+  assert.deepEqual(rows, [...(wide ? [] : [OVERVIEW, 'New page']), ...ROWS], "the dots menu's rows");
+  await page.keyboard.press('Escape');
+  await menu.waitFor({ state: 'detached', timeout: 5000 });
+  if (!wide) {
+    await picked(OVERVIEW);
+    await page.locator('#book[data-far]').waitFor({ state: 'attached', timeout: 5000 });
+    await press(page, OVERVIEW);
+    await until(() => page.evaluate(() => !document.querySelector('#book[data-far]')), 'the page back');
+    const where = () => page.locator('#book .bk-where').textContent(),
+      [, n] = (await where()).match(/\/ (\d+)$/);
+    // (a blank page is New page's own: a line on it first)
+    await written(page);
+    await picked('New page');
+    await until(
+      async () => (await where()) === `${+n + 1} / ${+n + 1}`,
+      () => `New page making page ${+n + 1}`,
+    );
   }
-  m.buttons.slice(1).forEach((b, i) => assert.ok(b.top >= m.buttons[i].bottom - 1, `${b.name} under the one above`));
-  const tools = names.filter(n => n !== 'Marker' && TOOLS.some(t => t.test?.(n) ?? t === n));
-  assert.equal(tools.length, TOOLS.length, `the rail's tools: ${names.join(', ')}`);
-  tools.forEach((n, i) => assert.ok(TOOLS[i].test?.(n) ?? TOOLS[i] === n, `the rail's tools: ${names.join(', ')}`));
-  assert.ok(
-    m.fit === 'roomy' || !names.includes('Marker'),
-    `one pen: the marker shows only where it's roomy (${m.fit})`,
+  for (const [name, shows, gone] of [
+    ['Tear off and send', '#book .bk-share:not([hidden])', '#book .bk-share:not([hidden])'],
+    [PREFERENCES, '#book .bk-prefs', '#book .bk-prefs'],
+    ['Tips', '.tb-book', '.tb'],
+  ]) {
+    await picked(name);
+    await page.locator(shows).waitFor({ state: 'visible', timeout: 10_000 });
+    await page.keyboard.press('Escape');
+    await page.locator(gone).waitFor({ state: 'detached', timeout: 10_000 });
+  }
+  await picked('Close notebook');
+  await until(
+    () => page.evaluate(() => ['folded', 'shut'].includes(document.documentElement.dataset.book)),
+    'Close notebook folding the book',
   );
-  assert.ok(m.desk.right <= m.column.left + 1, `the page ends left of the rail: ${m.desk.right} ${m.column.left}`);
-  assert.deepEqual(m.floating, [], 'no island of controls floats over the page');
 }
 
-// A press on Select slid down the rail to Text, then let go: Text in use within PICK_MS of the lift, with no hold
+// A line with the mouse across the page's middle, the pen in hand
+async function written(page) {
+  await page.locator('#book [data-island=tools]').getByRole('button', { name: 'Pen', exact: true }).click();
+  const desk = await page.locator('#book .bk-paper').first().boundingBox(),
+    [x, y] = [desk.x + desk.width * 0.2, desk.y + desk.height * 0.5];
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  for (let i = 1; i <= 12; i++) await page.mouse.move(x + i * 10, y + 8 * Math.sin(i / 2));
+  await page.mouse.up();
+  await page.waitForTimeout(600);
+}
+
+// ---- the tools picked
+
+// A press on the pen slid down the tools to Text, then let go: Text in use within PICK_MS of the lift, with no hold
 // before the slide; by the mouse everywhere, and by a finger in Chromium on a touch screen. Then a plain tap on the
 // pen picks it.
 async function slides(page, size, browser) {
-  const rail = page.locator('#book [data-island=tools]'),
+  const tools = page.locator('#book [data-island=tools]'),
     at = async name => {
-      const b = await rail.getByRole('button', { name, exact: true }).boundingBox();
+      const b = await tools.getByRole('button', { name, exact: true }).boundingBox();
       return [b.x + b.width / 2, b.y + b.height / 2];
     },
-    pressed = () => rail.locator('[aria-pressed=true]').getAttribute('aria-label');
+    pressed = () => tools.locator('[aria-pressed=true]').getAttribute('aria-label');
   const watch = () =>
     page.evaluate(() => {
       const text = document.querySelector('#book [data-island=tools] [data-mode=text]');
@@ -304,21 +292,21 @@ async function slides(page, size, browser) {
     const t = await page.evaluate(() => window.__slid);
     assert.ok(t.picked - t.up < PICK_MS, `${how}: Text in use ${Math.round(t.picked - t.up)} ms after the lift`);
   };
-  const [select, text] = [await at('Select'), await at('Text')];
+  const [pen, text] = [await at('Pen'), await at('Text')];
   await watch();
-  await page.mouse.move(...select);
+  await page.mouse.move(...pen);
   await page.mouse.down();
   await page.mouse.move(...text, { steps: 8 });
   await page.mouse.up();
   await picked('the mouse');
   // a tap picks at once
-  await rail.getByRole('button', { name: 'Pen', exact: true }).click();
+  await tools.getByRole('button', { name: 'Pen', exact: true }).click();
   await until(async () => (await pressed()) === 'Pen', 'the pen picked by a tap', 2000);
   if (!size.touch || browser.browserType().name() !== 'chromium') return;
   const touch = touchOf(await page.context().newCDPSession(page));
   await watch();
-  await touch.down([select]);
-  // (drifting a little left of the rail as it goes: the tool level with the finger)
+  await touch.down([pen]);
+  // (drifting a little left of the island as it goes: the tool level with the finger)
   await touch.move([[text[0] - 30, text[1]]], 8);
   await until(
     async () => ((await page.locator('#bk-tip').textContent()) ?? '').startsWith('Text'),
@@ -329,7 +317,7 @@ async function slides(page, size, browser) {
   await picked('a finger');
 }
 
-// No long press on the rail (board, the Ink 1.1 deck: "One rail, no scrolling"): the eraser held well past a long
+// No long press on the tools (board, the Ink 1.1 deck: "One rail, no scrolling"): the eraser held well past a long
 // press picks it and opens no card.
 async function noHold(page) {
   const eraser = page.locator('#book [data-island=tools] [data-mode=eraser]'),

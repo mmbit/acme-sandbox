@@ -272,9 +272,10 @@ export function holding(thread: string | null) {
 // Every thread's holding() from one read of the open pauses: the play asks it of each open job's thread, and a read
 // builds the redraws' relations whole (redraws.ts query).
 export function holdings() {
-  // (kept prepared: on every play of the queue.)
+  // (kept prepared: on every play of the queue. A pause's own jobs first: on stale statistics the planner read every job
+  // and asked each whether it had merged, 0.36 s a play at 23,300 jobs.)
   const rows = prepared(
-    redraws.query(`select p.project, p.thread, coalesce(p.thread, p.project) target, (select json_group_array(${redraws.current('u.job')}) from pause_until u join jobs prior
+    redraws.query(`select p.project, p.thread, coalesce(p.thread, p.project) target, (select json_group_array(${redraws.current('u.job')}) from pause_until u cross join jobs prior
         on prior.id = u.job where u.pause = p.id and not ${jobs.merged('prior')}) until, p.until_time,
         (select d.request from decisions d where d.id = p.decision and d.answered is null and d.released is null) card
       from pauses p where ${jobs.pauseHolds('p')} order by p.id`),

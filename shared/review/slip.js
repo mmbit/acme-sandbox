@@ -2,10 +2,12 @@
 // under a paper clip, with "then and now": the note's snip as it was marked beside the running preview of something
 // new, or a cut of the same place kept from before rule zero (a page no longer cuts one: nothing of a note follows it
 // on the page). A tick in its box closes the note; the reader's reply is its own (the book's: drawn in the room it
-// pulls out under the slip, `more`). The book (HQ's bookgroups.js) draws it with slipHtml and wires it with
-// wireSlips; isTick, the Pencil's tick written on a slip in the book, is plain maths (slip.test.js).
-// Its words come from the caller in the reader's language: say(key, places), a word by its key with its {places}
-// filled (HQ's book: notebookwords.js, slip* keys).
+// pulls out under the slip, `more`). A fix (slip.fix, the change it proposes) has its box beside its line instead,
+// round its drawing when it's drawn: ticked, it's built once the page is sent. A picture says where its numbers came
+// from under it (slip.source). The book (HQ's bookgroups.js) draws it with
+// slipHtml and wires it with wireSlips; isTick, the Pencil's tick written on a slip in the book, is plain maths
+// (slip.test.js). Its words come from the caller in the reader's language: say(key, places), a word by its key with
+// its {places} filled (HQ's book: notebookwords.js, slip* keys).
 
 // The look: the book's paper and indigo, the answer typed
 export const CSS = `
@@ -20,6 +22,19 @@ export const CSS = `
       .slip-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere;
         font-family: "American Typewriter", "Courier Prime", "Courier New", ui-monospace, monospace; font-size: 13.5px; }
       .slip-pic { display: block; max-width: 100%; margin-top: 8px; border-radius: 2px; }
+      .slip-source { margin: 3px 0 0; font-size: 11.5px; line-height: 1.35; color: #5a5478; }
+      .answer-slip[data-fix][data-ticked] { opacity: 1; }
+      .slip-fix { position: relative; display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+      .slip-fix .slip-tick { position: relative; right: auto; top: auto; flex: none; background: var(--bk-chosen, #d6ea3c); }
+      .slip-fix .slip-tick svg { stroke: #2a2352; }
+      .slip-fix .slip-tick:disabled { cursor: default; }
+      .slip-fix-words { font-weight: 700; font-size: 14px; line-height: 1.3; }
+      .slip-fix[data-art] { flex-direction: column; align-items: flex-start; gap: 14px; }
+      .slip-fix-art { position: relative; box-sizing: border-box; max-width: 100%; padding: 16px; border-radius: 3px;
+        cursor: pointer; box-shadow: inset 0 0 0 1.5px #2a2352; transition: background-color .2s ease-out; }
+      .slip-fix-art .slip-tick { position: absolute; right: -10px; bottom: -10px; }
+      .answer-slip[data-ticked] .slip-fix-art { background: var(--bk-chosen, #d6ea3c); }
+      .slip-fix-said { margin: 6px 0 0; font-size: 12px; color: #5a5478; }
       .slip-then { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
       .slip-then figure { margin: 0; min-width: 0; }
       .slip-then img, .slip-then .slip-none { display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: cover;
@@ -64,18 +79,44 @@ export function nowOf(slip, say) {
 
 // One slip under its note (note: the store's, with its snip), as HTML. say: the reader's words; mark: what follows the
 // agent's name to say it's an AI (a guest's book: charter rule 5); more: the reader's own HTML under its words (a
-// notebook answer's form, and the room to answer in).
-export function slipHtml(slip, note, { say, mark = '', more = '' }) {
-  const now = nowOf(slip, say),
-    ticked = Boolean(slip.ticked),
+// notebook answer's form, and the room to answer in); art: a fix's drawing, drawn inside its box.
+export function slipHtml(slip, note, { say, mark = '', more = '', art = '' }) {
+  const ticked = Boolean(slip.ticked),
     name = slip.name ?? slip.by,
     marked = mark ? `${name} · ${mark}` : name;
   // its words in the reader's language, named before the markup they go in
   const label = esc(say('slipAnswer', { name: marked })),
     by = esc(marked),
-    tick = esc(tickWords(ticked, say)),
-    made = esc(say('slipMade', { name })),
-    thenAlt = esc(say('slipThenAlt')),
+    tick = esc(tickWords(ticked, say, Boolean(slip.fix), slip.builder)),
+    made = esc(say('slipMade', { name }));
+  const marks = `${ticked ? ' data-ticked' : ''}${slip.fix ? ' data-fix' : ''}`;
+  const box = `<button class="slip-tick" type="button" aria-pressed="${ticked}" aria-label="${tick}"${
+    slip.builder ? ' disabled' : ''
+  }>${TICK}</button>`;
+  const words = `<b class="slip-by">${by}</b><p class="slip-text">${esc(slip.text)}</p>`;
+  const picture = slip.picture ? `<img class="slip-pic" src="${esc(slip.picture)}" alt="" loading="lazy">` : '';
+  const source = slip.picture && slip.source ? `<p class="slip-source">${esc(slip.source)}</p>` : '';
+  const fix = slip.fix ? fixHtml(slip, box, art, say) : '';
+  const link = slip.link
+    ? `<p class="slip-said"><a href="${esc(slip.link)}" target="_blank" rel="noopener">${made}</a></p>`
+    : '';
+  const then = thenHtml(note, nowOf(slip, say), say);
+  return `<section class="answer-slip" data-slip="${slip.id}"${marks} aria-label="${label}">${CLIP}${
+    slip.fix ? '' : box
+  }${words}${picture}${source}${fix}${link}${then}${more}<p class="slip-said" hidden></p></section>`;
+}
+// A fix's box beside its line, or at the corner of its drawing, and what its tick does under it
+function fixHtml(slip, box, art, say) {
+  const line = `<b class="slip-fix-words">${esc(say('slipFix', { fix: slip.fix }))}</b>`;
+  const fix = art
+    ? `<div class="slip-fix" data-art><div class="slip-fix-art">${art}${box}</div>${line}</div>`
+    : `<div class="slip-fix">${box}${line}</div>`;
+  return `${fix}<p class="slip-fix-said">${esc(fixWords(Boolean(slip.ticked), say, slip.builder))}</p>`;
+}
+// The note's snip as it was marked beside what's there now (nowOf), or nothing when the note has no snip
+function thenHtml(note, now, say) {
+  if (!note.snip) return '';
+  const thenAlt = esc(say('slipThenAlt')),
     thenCaption = esc(say('slipThen')),
     nowAlt = esc(say('slipNowAlt'));
   const nowPic =
@@ -84,19 +125,17 @@ export function slipHtml(slip, note, { say, mark = '', more = '' }) {
       ? `<img src="${esc(now.src)}" alt="${nowAlt}" loading="lazy">`
       : `<span class="slip-none">${esc(now.empty)}</span>`);
   const nowFig = now?.href ? `<a href="${esc(now.href)}" target="_blank" rel="noopener">${nowPic}</a>` : nowPic;
-  const then = note.snip
-    ? `<div class="slip-then"><figure><img src="${esc(note.snip)}" alt="${thenAlt}" loading="lazy"><figcaption>${thenCaption}</figcaption></figure>${
-        now ? `<figure>${nowFig}<figcaption>${esc(now.label)}</figcaption></figure>` : ''
-      }</div>`
-    : '';
-  const link = slip.link
-    ? `<p class="slip-said"><a href="${esc(slip.link)}" target="_blank" rel="noopener">${made}</a></p>`
-    : '';
-  return `<section class="answer-slip" data-slip="${slip.id}"${ticked ? ' data-ticked' : ''} aria-label="${label}">${CLIP}<button class="slip-tick" type="button" aria-pressed="${ticked}" aria-label="${tick}">${TICK}</button><b class="slip-by">${by}</b><p class="slip-text">${esc(slip.text)}</p>${
-    slip.picture ? `<img class="slip-pic" src="${esc(slip.picture)}" alt="" loading="lazy">` : ''
-  }${link}${then}${more}<p class="slip-said" hidden></p></section>`;
+  const then = `<figure><img src="${esc(note.snip)}" alt="${thenAlt}" loading="lazy"><figcaption>${thenCaption}</figcaption></figure>`;
+  return `<div class="slip-then">${then}${
+    now ? `<figure>${nowFig}<figcaption>${esc(now.label)}</figcaption></figure>` : ''
+  }</div>`;
 }
-const tickWords = (ticked, say) => say(ticked ? 'slipTicked' : 'slipTick');
+// What a slip's box says (fix: a fix's box, which says what its tick does; builder: who's building it)
+const tickWords = (ticked, say, fix, builder = null) =>
+  fix ? fixWords(ticked, say, builder, 'slipFixTick') : say(ticked ? 'slipTicked' : 'slipTick');
+// What a fix's tick does: built once the page is sent, or being built (builder: by whom)
+const fixWords = (ticked, say, builder = null, unticked = 'slipFixSend') =>
+  builder ? say('slipFixBuilt', { name: builder }) : say(ticked ? 'slipFixTicked' : unticked);
 
 // The slips under root wired: a tap on a tick box ticks it (or takes the tick back). on: { tick(id, ticked) }, a
 // promise; refused, the slip says why and stays as it was. say: the reader's words, as slipHtml's.
@@ -110,15 +149,21 @@ export function wireSlips(root, on, say) {
     box.addEventListener('click', () =>
       tickBox(slip, on, !slip.hasAttribute('data-ticked'), say).catch(e => tell(e.message)),
     );
+    // (a fix's drawing ticks it too, a tap on it: a finger still moves the page from it)
+    slip.querySelector('.slip-fix-art')?.addEventListener('click', e => e.target.closest('.slip-tick') || box.click());
   }
 }
 // A slip ticked (or not), its box at once, back as it was if the store refuses
 export async function tickBox(slip, on, ticked, say) {
-  const box = slip.querySelector('.slip-tick');
+  const box = slip.querySelector('.slip-tick'),
+    fix = slip.hasAttribute('data-fix'),
+    said = slip.querySelector('.slip-fix-said');
+  // (a built fix's box is disabled: it never comes here)
   const show = t => {
     slip.toggleAttribute('data-ticked', t);
     box.setAttribute('aria-pressed', String(t));
-    box.setAttribute('aria-label', tickWords(t, say));
+    box.setAttribute('aria-label', tickWords(t, say, fix));
+    if (said) said.textContent = fixWords(t, say);
   };
   show(ticked);
   try {

@@ -14,6 +14,7 @@ export type Order = {
   orderId?: number;
   created?: number;
   board: number | boolean;
+  urgent?: number | boolean;
   followThrough?: number | boolean; // the CEO's hourly check (jobs.ts FOLLOW_THROUGH), first in the lane (compare)
   latestStart: number | null;
   missed?: boolean;
@@ -29,6 +30,7 @@ const tier = (o: Order) => (o.latestStart === null ? 2 : o.missed ? 1 : 0);
 export function compare(a: Order, b: Order) {
   if (!!a.board !== !!b.board) return a.board ? -1 : 1;
   if (!!a.followThrough !== !!b.followThrough) return a.followThrough ? -1 : 1;
+  if (!!a.urgent !== !!b.urgent) return a.urgent ? -1 : 1;
   if (tier(a) !== tier(b)) return tier(a) - tier(b);
   const x = a.latestStart ?? Infinity,
     y = b.latestStart ?? Infinity;
@@ -37,10 +39,8 @@ export function compare(a: Order, b: Order) {
 
 export const spareOnly = (row: { downtime: number }, order: Order) =>
   !!row.downtime && !order.board && order.latestStart === null;
-// What a paced seat takes (the worker's pacedUntil, its weekly reset: jobs.ts claim): the board's word, and work that has
-// to start before the week turns over to keep its window. Undated work, spare downtime work with it, waits for the reset.
-export const pacedTakes = (order: Order, until: number | undefined) =>
-  until === undefined || !!order.board || (order.latestStart !== null && order.latestStart < until);
+// Only explicit urgency bypasses seat pacing. Windows order work within the pace.
+export const pacedTakes = (order: Order, until: number | undefined) => until === undefined || !!order.urgent;
 
 // A room pause stops work. Deadline pressure also stops reviews and rulings, but never the board's or CEO's follow-through
 // check. The check runs its few minutes to its end: paused, it went back behind the work it made room for, in the jam
@@ -143,6 +143,7 @@ export function backward(
       orderId: row.orderId,
       created: row.created,
       board: row.board,
+      ...(row.urgent && { urgent: true }),
       ...(row.followThrough && { followThrough: true }),
       latestStart: finish === Infinity ? null : finish - duration,
       latestFinish: finish === Infinity ? null : finish,

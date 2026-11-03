@@ -4,6 +4,7 @@
 // against it; a stroke as Safari hands a pen's over; a note tried in versions.
 import assert from 'node:assert/strict';
 import { boxOf } from './shell/ink/notebookstack.js';
+import { until } from './bookkit.mjs';
 
 // How long a story waits on what the store brings (a face, an answer, a reply drawn) or the pen writes in: HQ reads
 // its page again only once the store's event reaches it, and on a loaded machine under the 3D scene that read comes
@@ -109,41 +110,129 @@ export async function underUnit(page, g, selector) {
           return { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
         },
         unit = document.querySelector(`#book .bk-unit[data-unit="${id}"]`),
-        at = document.querySelector(sel);
+        at = document.querySelector(sel),
+        tie = document.querySelector(`#book .bk-tie[data-g="${id}"] polyline`);
       const others = [...unit.closest('.bk-page').querySelectorAll('.bk-unit[data-unit], .bk-under[data-g]')]
         .filter(el => (el.dataset.unit ?? el.dataset.g) !== String(id))
         .map(el => ({ id: el.dataset.unit ?? el.dataset.g, ...box(el) }));
-      return { at: at && box(at), unit: box(unit), others };
+      // (a tie's points on the screen)
+      const tied = tie && [...tie.points].map(p => new DOMPoint(p.x, p.y).matrixTransform(tie.getScreenCTM()));
+      return { at: at && box(at), unit: box(unit), others, tie: tied?.map(p => [p.x, p.y]) };
     },
     [g.id, sel],
   );
 }
 // Two boxes on the screen that share some of it
 const overlapping = (a, b) => a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
-// What hangs under group g's unit (selector, in its .bk-under) where the board reads it at every width: under the unit
-// and in its column (a slip's half-degree tilt aside), clear of every other unit and what hangs under it, and on the
-// paper left of the tools
+// What hangs under group g's unit (selector, in its .bk-under) where the board reads it as its note's at every width: by
+// its own unit, under it in its column or level with it beside it (a slip's half-degree tilt aside), with no other unit
+// nor what hangs under one between them or over it; or past its row, tied to it (tiedToItsNote); and on the paper left
+// of the tools
 export async function underItsNote(page, g, selector) {
-  const { at, unit, others } = await underUnit(page, g, selector),
-    shown = JSON.stringify({ at, unit });
-  assert.ok(at.top >= unit.bottom, `under its note's unit: ${shown}`);
-  assert.ok(at.left >= unit.left - TILT && at.right <= unit.right + TILT, `in its unit's column: ${shown}`);
+  const { at, unit, others, tie } = await underUnit(page, g, selector),
+    shown = JSON.stringify({ at, unit, tie }),
+    under = at.top >= unit.bottom && at.left >= unit.left - TILT && at.right <= unit.right + TILT,
+    beside = at.top < unit.bottom && unit.top < at.bottom && (at.left >= unit.right || at.right <= unit.left);
   for (const o of others) assert.ok(!overlapping(at, o), `clear of ${o.id} at ${JSON.stringify(o)}: ${shown}`);
+  if (tie) tiedToItsNote({ at, unit, others, tie }, shown);
+  else {
+    assert.ok(under || beside, `under its note's unit or beside it: ${shown}`);
+    // (the paper between them: down from the unit to the slip, or across from it, where both are)
+    const between = under
+      ? { left: Math.max(at.left, unit.left), top: unit.bottom, right: Math.min(at.right, unit.right), bottom: at.top }
+      : {
+          ...{ left: Math.min(at.right, unit.right), right: Math.max(at.left, unit.left) },
+          ...{ top: Math.max(at.top, unit.top), bottom: Math.min(at.bottom, unit.bottom) },
+        };
+    for (const o of others)
+      assert.ok(!overlapping(between, o), `${o.id} at ${JSON.stringify(o)} between it and its note: ${shown}`);
+  }
+  await inSight(page, `.bk-under[data-g="${g.id}"] ${selector}`);
   await clearOfTools(page, `.bk-under[data-g="${g.id}"] ${selector}`);
 }
+// A tie (bookunder.js .bk-tie, screen px) from the top of its note's unit to the top of what hangs under it, over no
+// other unit nor what hangs under one
+function tiedToItsNote({ at, unit, others, tie }, shown) {
+  const [[x0, y0], [x1, y1]] = [tie[0], tie.at(-1)];
+  assert.ok(Math.abs(y0 - unit.top) <= 1 && x0 > unit.left && x0 < unit.right, `tied from its note's top: ${shown}`);
+  assert.ok(Math.abs(y1 - at.top) <= TILT && x1 > at.left && x1 < at.right, `tied to its top: ${shown}`);
+  for (const [[ax, ay], [bx, by]] of tie.slice(1).map((pt, k) => [tie[k], pt])) {
+    const line = { left: Math.min(ax, bx), top: Math.min(ay, by), right: Math.max(ax, bx), bottom: Math.max(ay, by) };
+    for (const o of others) assert.ok(!overlapping(line, o), `the tie over ${o.id} at ${JSON.stringify(o)}: ${shown}`);
+  }
+}
+// What came under group g's unit (selector, in its .bk-under), its unit and the tie between them where there's one
+// (bookunder.js) on one screen, on the paper left of the tools: the paper slides to them as a face or an answer comes
+// (bookarrive.js hung), never panned to here. Waited on, the slide taking its time on a loaded machine; whether it
+// reads as its note's is underItsNote's
+export async function shownByItsNote(page, g, selector) {
+  const sels = [`.bk-under[data-g="${g.id}"] ${selector}`, `.bk-unit[data-unit="${g.id}"]`],
+    tie = `.bk-tie[data-g="${g.id}"] polyline`;
+  let seen;
+  const read = async () => ({
+    desk: (await page.locator('#book .bk-desk').boundingBox()).x,
+    tools: await toolsLeft(page),
+    boxes: await page.evaluate(
+      ([sels, tie]) =>
+        [...sels.map(sel => document.querySelector(`#book ${sel}`)), document.querySelector(`#book ${tie}`)]
+          .filter((el, i) => i < sels.length || el)
+          .map(el => el.getBoundingClientRect().toJSON()),
+      [sels, tie],
+    ),
+  });
+  await until(
+    async () => {
+      seen = await read();
+      return seen.boxes.every(b => b.left >= seen.desk - TILT && b.right <= seen.tools);
+    },
+    () => `on the paper left of the tools, on one screen: ${JSON.stringify(seen)}`,
+    FEED_MS,
+  );
+}
+// The page panned across by the wheel, as a trackpad pans it, till what's at selector in the book shows on the paper
+// left of the tools: what hangs beside a note past the paper's edge
+export async function inSight(page, selector) {
+  const slip = page.locator(`#book ${selector}`);
+  // (the wheel's px for a screen px of pan: the page's zoom, learned from the first turn)
+  let per = 1;
+  for (let tries = 0; tries < 4; tries++) {
+    const desk = await page.locator('#book .bk-desk').boundingBox(),
+      tools = await toolsLeft(page),
+      at = await slip.boundingBox(),
+      by = at.x + at.width > tools - PAD ? at.x + at.width - tools + PAD : Math.min(0, at.x - desk.x - PAD);
+    if (Math.abs(by) < 1) return;
+    await page.mouse.move(desk.x + desk.width / 2, desk.y + desk.height / 2);
+    await page.mouse.wheel(by * per, 0);
+    await stillAt(page, `#book ${selector}`);
+    const moved = at.x - (await slip.boundingBox()).x;
+    if (moved) per = (by * per) / moved;
+  }
+}
+// (how far inside the paper's side and the tools inSight brings a slip, screen px)
+const PAD = 8;
+// Once what's at sel stays where it is from one frame to the next
+const stillAt = (page, sel) =>
+  page.waitForFunction(
+    sel => {
+      const x = () => document.querySelector(sel)?.getBoundingClientRect().x,
+        before = x();
+      return new Promise(go => requestAnimationFrame(() => requestAnimationFrame(() => go(x() === before))));
+    },
+    sel,
+    { timeout: FEED_MS },
+  );
 // (how far past its column a slip's tilt takes its corners, screen px: shared/review/slip.js rotates it half a degree)
 const TILT = 3;
-// Every element at selector in the book left of the tools floating at the paper's right, the islands' stack and the
-// tool strip beside it
+// Every element at selector in the book left of the tools' island floating upright at the paper's right
 export async function clearOfTools(page, selector) {
-  const tools = await page
-      .locator('#book .bk-column .bk-island')
-      .evaluateAll(els => Math.min(...els.filter(el => el.offsetWidth).map(el => el.getBoundingClientRect().left))),
+  const tools = await toolsLeft(page),
     rights = await page
       .locator(`#book ${selector}`)
       .evaluateAll(els => els.map(el => el.getBoundingClientRect().right));
   assert.ok(rights.length && rights.every(x => x <= tools), `clear of the tools: ${JSON.stringify([rights, tools])}`);
 }
+// (where the tools' island starts, screen px.)
+const toolsLeft = page => page.locator('#book .bk-strip').evaluate(el => el.getBoundingClientRect().left);
 // A stroke in screen px, as Safari hands a pen's over (or a mouse's, on a desktop); pace: ms between its points, as a
 // hand draws it (0, at once)
 export async function stroke(page, points, type = 'pen', pace = 0) {

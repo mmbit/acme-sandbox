@@ -1,161 +1,75 @@
-/* The rail by the paper's right edge (bookui.js): two floating toolbars of every control the book has, the tools
-   (bookstrip.js) and Send in the one at its head, the page's controls (bookcontrols.js) and the book's own (Tips) in
-   the one at its foot. They are HQ's own on-screen controls in the look HQ wears (bookui.css .bk-island), never a
-   piece of the book: only the page is paper. They float over the paper's margin, the paper running
-   on under them to the book's edge and what's written ending left of them (--bk-rail-width, book.css), so nothing
-   ever sits under them. Each is as tall as what's on it, the foot's anchored at the rail's foot, so the page's arrows
-   stay put whatever the head shows (the tools, a lock, Send or none.). The rail
-   fits by data-fit (bookui.js), one fit on a device: the pen and the marker side by side where there's room, the
-   rarely used folded into More where there isn't, the page's arrows too at the least, and its controls closer at the
-   very least (a phone on its side). The cards of the rail (a tool's, the preferences, the pages, More) open beside
-   it, on the paper. */
+/* The book's two islands (bookui.js), floating over the paper as the board drew the real book (call 190, card 341's
+   mock-up): the tools upright on the right, roughly centred and short (bookstrip.js); one bar along the foot between
+   the screen's curved corners, Undo and Redo at its left, the page's arrows and where it is in its very middle, the
+   page's keys and its dots at its right. They are HQ's own on-screen controls in the look HQ wears (bookui.css
+   .bk-island), never a piece of the book: only the page is paper. The paper runs on under them to the screen's edges;
+   what's written ends left of the tools (--bk-rail-width, book.css). Nothing of them sits under the status bar's blur
+   (--sat). The cards they open (a tool's, the preferences, the pages, the dots menu) hang beside them, on the paper.
+ */
 #book .bk-controls {
   position: absolute;
-  top: var(--bk-rail-gap);
-  right: calc(var(--bk-rail-gap) + env(safe-area-inset-right, 0px));
-  bottom: max(var(--bk-rail-gap), env(safe-area-inset-bottom));
-  width: var(--bk-rail-slim);
+  inset: var(--sat, 0px) 0 0;
   pointer-events: none;
 }
-#book .bk-column {
+/* the two islands' card: the look's panel, its line, corners and shadow */
+#book :is(.bk-strip, .bk-bar) {
   box-sizing: border-box;
-  width: 100%;
-  height: 100%;
   display: flex;
-  flex-direction: column;
-  gap: 3px;
-  overflow: hidden;
-}
-/* (each toolbar as tall as what's on it, never squeezed: what doesn't fit makes the rail fit closer) */
-#book .bk-column > :is(.bk-rail-head, .bk-rail-foot) {
-  box-sizing: border-box;
-  flex: none;
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
   gap: 2px;
-  padding: 3px;
+  padding: 4px;
   border: var(--bk-ui-border);
-  border-radius: var(--r-lg, 13px);
+  border-radius: calc(var(--bk-key) / 2 + 5px);
   background: var(--bk-ui-bg);
   box-shadow: var(--shadow-sm, var(--bk-lift));
   pointer-events: auto;
 }
-/* (where they meet, no taller than the rule between two islands was: the rail fits as it did) */
-#book .bk-column > .bk-rail-head {
-  padding-bottom: 1px;
-}
-#book .bk-column > .bk-rail-foot {
-  margin-top: auto;
-  padding-top: 1px;
-}
-/* (the overview: nothing at the head, its tools and Send unseen in their room.) */
-#book[data-far] .bk-column > .bk-rail-head {
-  visibility: hidden;
-}
-/* One layout on a device: a control a page doesn't show (Send on a call's page, the arrows in the overview) keeps its
-   slot on the rail, unseen, so nothing on it moves from page to page, and the rail fits by the device's room alone,
-   More a menu on every page wherever it's one on any */
-#book .bk-column [hidden] {
-  visibility: hidden;
-}
-/* (the islands are the toolbars' own groups: no card of their own, a rule between them) */
-#book .bk-column .bk-island {
-  padding: 0;
+/* (the groups in them are theirs: no card of their own) */
+#book :is(.bk-strip, .bk-bar) .bk-island {
+  display: flex;
+  flex-direction: row;
   gap: 2px;
+  padding: 0;
   border: 0;
   background: none;
   box-shadow: none;
   border-radius: 0;
 }
-#book .bk-column > * > :is(.bk-island, .bk-more):not(:first-child) {
-  margin-top: 3px;
-  padding-top: 3px;
-  border-top: 1px solid var(--bk-ui-line);
-}
-#book .bk-column .bk-more {
-  box-sizing: content-box;
-}
-#book .bk-column .bk-island hr {
-  display: block;
-  align-self: stretch;
-  margin: 3px 5px;
-}
-/* (its size the device's: book.css --bk-key, slimmer on a phone.) */
-#book .bk-column .bk-btn {
+#book :is(.bk-strip, .bk-bar) .bk-btn {
   width: var(--bk-key);
   height: var(--bk-key);
-  border-radius: 10px;
+  border-radius: 50%;
 }
-#book .bk-column .bk-btn svg {
+#book :is(.bk-strip, .bk-bar) .bk-btn svg {
   width: var(--bk-key-icon);
   height: var(--bk-key-icon);
 }
-/* (--bk-touch across, past the toolbar's edge) */
-#book .bk-column .bk-btn::after {
-  inset: -2px calc((var(--bk-key) - var(--bk-touch)) / 2);
+/* (--bk-touch across, past the island's edge) */
+#book :is(.bk-strip, .bk-bar) .bk-btn::after {
+  inset: calc((var(--bk-key) - var(--bk-touch)) / 2);
 }
-/* where the page is, between its arrows: "2/8" */
-#book .bk-column .bk-btn.bk-where {
-  height: calc(var(--bk-key) - 4px);
-  font: 600 12px/1 var(--bk-ui-font);
-  font-variant-numeric: tabular-nums;
-  color: var(--bk-ui-ink);
-}
-/* a word on the rail (a guest's Mark done and Undo): on two lines if it must, the toolbar's width, a word wider
-   than the key broken inside it (hyphenated in the page's language) */
-#book .bk-column .bk-btn.bk-text,
-#book .bk-column .bk-guest-marked {
-  width: 100%;
-  height: auto;
-  min-height: var(--bk-key);
-  padding: 6px 2px;
-  box-sizing: border-box;
-  display: flex;
+
+/* ---- the tools: upright on the right, centred in the room above the bar */
+#book .bk-strip {
+  position: absolute;
+  right: calc(var(--bk-rail-gap) + env(safe-area-inset-right, 0px));
+  top: calc((100% - var(--bk-key) - 10px - var(--bk-foot)) / 2);
+  translate: 0 -50%;
   flex-direction: column;
-  justify-content: center;
-  gap: 2px;
-  white-space: normal;
-  text-align: center;
-  font-size: var(--bk-key-words);
-  line-height: 1.15;
-  hyphens: auto;
-  overflow-wrap: anywhere;
+  max-height: calc(100% - var(--bk-key) - 10px - var(--bk-foot) - 2 * var(--bk-rail-gap));
+  overflow-y: auto;
+  scrollbar-width: none;
 }
-/* (Marked done is a label, not a key: the toolbar's whole width, so English "Marked" stays one word) */
-#book .bk-column .bk-guest-marked {
-  padding-inline: 0;
-}
-
-/* ---- the fits: the ink not in use only where there's room; More only where the rarely used fold into it */
-#book .bk-column:not([data-fit='roomy']) .bk-btn[data-spare],
-#book .bk-column:not([data-fit='more'], [data-fit='least'], [data-fit='tight']) .bk-more,
-#book
-  .bk-column:is([data-fit='more'], [data-fit='least'], [data-fit='tight'])
-  :is(.bk-rare, [data-island='book'], [data-island='pages'] hr),
-#book .bk-column:is([data-fit='least'], [data-fit='tight']) .bk-turns {
-  display: none;
-}
-#book .bk-column[data-fit='tight'] > *,
-#book .bk-column[data-fit='tight'] .bk-island {
-  gap: 0;
-}
-/* (an icon key only: a word key grows to its lines in every fit) */
-#book .bk-column[data-fit='tight'] .bk-btn:not(.bk-text) {
-  height: calc(var(--bk-key) - 4px);
-}
-#book .bk-column[data-fit='tight'] .bk-island hr {
-  margin-block: 2px;
-}
-
-/* ---- the tools */
 #book .bk-strip .bk-island {
+  flex-direction: column;
   /* (a finger or a pen slides along it: nothing here scrolls, so no hold) */
   touch-action: none;
   user-select: none;
   -webkit-user-select: none;
   -webkit-touch-callout: none;
+}
+/* (the pen and the marker are one tool: the one in use shows, the other is in its card, bookpalette.js) */
+#book .bk-strip .bk-btn[data-spare] {
+  display: none;
 }
 /* the pen's and the marker's colour as a dot at the foot of its button (bookpalette.js --bk-dot), ringed in the
    pressed key's own colour on the one in use */
@@ -176,7 +90,7 @@
 #book .bk-strip .bk-btn[aria-pressed='true']::before {
   box-shadow: 0 0 0 1.5px var(--bk-ui-on-lit);
 }
-/* a slide along the rail: the tool under the finger or the pen inked lightly */
+/* a slide along the tools: the tool under the finger or the pen inked lightly */
 #book .bk-strip .bk-btn[data-sliding]:not([aria-pressed='true']) {
   background-color: var(--bk-ui-wash);
   color: var(--bk-ui-ink);
@@ -184,14 +98,141 @@
 #book .bk-strip .bk-island[data-sliding] .bk-btn:active {
   transform: none;
 }
+/* (the overview has no tools) */
+#book[data-far] .bk-strip {
+  display: none;
+}
 
-/* ---- a card beside the rail, on the paper left of it, level with what opened it (bookui.js besideRail): a tool's
-   colours and widths (bookpalette.js), this device's preferences (bookprefs.js), the pages, More */
+/* ---- the bar along the foot: three parts, the outer two as wide as each other, so the middle is the bar's own */
+#book .bk-foot {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: var(--bk-foot);
+  display: flex;
+  justify-content: center;
+  padding: 0 var(--bk-rail-gap);
+  pointer-events: none;
+}
+/* (a page wide enough: centred on the paper left of the tools) */
+@container bk-rail (min-width: 700px) {
+  #book .bk-foot {
+    padding-right: var(--bk-rail-width);
+  }
+}
+#book .bk-bar {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  max-width: 100%;
+}
+#book .bk-bar > * {
+  display: flex;
+  align-items: center;
+}
+#book .bk-bar-start {
+  justify-self: start;
+}
+#book .bk-bar-end {
+  justify-self: end;
+}
+/* (a quiet rule between the parts) */
+#book .bk-bar-middle {
+  padding: 0 4px;
+  margin: 0 4px;
+  border-inline: 1px solid var(--bk-ui-line);
+}
+#book .bk-bar .bk-island[data-island='keys']:has(.bk-btn:not([hidden])) {
+  margin-right: 4px;
+  padding-right: 4px;
+  border-right: 1px solid var(--bk-ui-line);
+}
+#book .bk-bar .bk-btn[hidden],
+#book .bk-menu-only {
+  display: none;
+}
+/* where the page is, between its arrows: "3 / 12", its figures one width so the arrows never move */
+#book .bk-bar .bk-btn.bk-where {
+  width: 64px;
+  border-radius: calc(var(--bk-key) / 2);
+  font: 600 15px/1 var(--bk-ui-font);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  color: var(--bk-ui-ink);
+}
+/* (a phone's page, or a narrow one: the overview and New page in the dots menu; on the paper beside HQ's page on an
+   iPad, at the bar's right) */
+@container bk-rail (max-width: 459px) {
+  #book .bk-bar .bk-rare {
+    display: none;
+  }
+}
+/* (a one-page book's bar, a guest's: nothing in its middle, its two ends side by side) */
+#book .bk-bar:not(:has(.bk-bar-middle .bk-btn)) {
+  display: flex;
+}
+#book .bk-bar:not(:has(.bk-bar-middle .bk-btn)) .bk-bar-middle {
+  display: none;
+}
+#book .bk-bar:not(:has(.bk-bar-middle .bk-btn)) .bk-bar-start {
+  margin-right: 4px;
+  padding-right: 4px;
+  border-right: 1px solid var(--bk-ui-line);
+}
+/* a word on the bar (a guest's Send, Mark done and Undo), on two lines where the page is narrow */
+#book .bk-bar .bk-btn.bk-text,
+#book .bk-bar .bk-guest-marked {
+  width: auto;
+  height: var(--bk-key);
+  padding: 0 12px;
+  border-radius: calc(var(--bk-key) / 2);
+  font-size: 14px;
+}
+@container bk-rail (max-width: 459px) {
+  #book .bk-bar .bk-btn.bk-text,
+  #book .bk-bar .bk-guest-marked {
+    max-width: 104px;
+    padding: 0 10px;
+    font-size: 13px;
+    line-height: 1.1;
+    white-space: normal;
+    text-align: center;
+  }
+}
+#book .bk-bar .bk-guest-marked {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+#book .bk-bar .bk-guest-marked svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+}
+/* the overview: only its own key, pressed, to come back by */
+#book[data-far] .bk-bar {
+  display: flex;
+}
+#book[data-far] .bk-bar :is(.bk-bar-start, .bk-bar-middle, .bk-btn:not(.bk-overview-key)) {
+  display: none;
+}
+#book[data-far] .bk-bar .bk-overview-key {
+  display: grid;
+}
+#book[data-far] .bk-bar .bk-island[data-island='keys']:has(.bk-btn) {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+/* ---- a card beside an island, on the paper (bookui.js beside()): a tool's colours and widths (bookpalette.js), this
+   device's preferences (bookprefs.js), the pages, the dots menu */
 #book .bk-controls > .bk-card {
   position: absolute;
-  right: calc(100% + 8px);
   width: max-content;
-  max-width: calc(100vw - var(--bk-rail-width) - 16px);
+  max-width: calc(100% - 16px);
   max-height: calc(100% - 16px);
   overflow-y: auto;
   pointer-events: auto;
@@ -202,9 +243,14 @@
   height: 20px;
   flex: none;
 }
+#book .bk-more-card hr {
+  margin: 4px 8px;
+  border: 0;
+  border-top: 1px solid var(--bk-ui-line);
+}
 @media (pointer: coarse) {
   #book .bk-more-card > button {
-    min-height: 44px;
+    min-height: 46px;
   }
 }
 #book .bk-prefs {

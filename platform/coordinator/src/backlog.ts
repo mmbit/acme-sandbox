@@ -1,6 +1,7 @@
 // The play's live input: jobs, waits, seats, capacity and measured sizes, review runs and delays.
 // The play itself reads only this snapshot, never the database or the clock.
 import { db, prepared } from './db.ts';
+import { branchUrgent, threadUrgent } from './urgency.ts';
 import { whole, type Parts } from './latency.ts';
 import * as jobs from './jobs.ts';
 import * as pauses from './pauses.ts';
@@ -49,6 +50,8 @@ export type Row = {
   seat: string | null;
   thread: string | null;
   board: number;
+  urgent?: number;
+  source_urgent?: number; // (its own or its parents' flag, which its branch's reviews and fixes carry: urgency.ts)
   follow_through: number;
   pause_lets: number; // (what no pause holds: jobs.ts pauseLets)
   sorter: number | null; // (the owner's job its sort waits for: sorting.ts)
@@ -153,7 +156,9 @@ export function* orderingInParts(
   for (const [index, row] of rows.entries()) {
     const job = queuedJob(row, { open, waits, answers, lag, paused, due, held, now, byPr, holds, inOrder, branchTask });
     if (row.id < 0) job.orderId = lastId + index + 1;
-    job.itemWork = itemBranches.has(placement.place(row)?.branch ?? jobs.workBranchOf(row));
+    const at = placedAt(row, placement.place);
+    job.itemWork = itemBranches.has(at.branch);
+    Object.assign(job, urgencyOf(row, at, prospective?.id, placement.place, open));
     job.reviewPlan = rounds(row);
     job.opensReview = job.reviewPlan !== undefined;
     job.placeholder = planned.find(p => p.id === row.id)?.placeholder;
@@ -166,9 +171,42 @@ export function* orderingInParts(
   return { now, planner: 3, windows: threadWindows, pauseUntil: pauses.untilJobs(), jobs: queued, deployLagMs: lag };
 }
 
+// A row's branch and the task before it in its thread, as its thread places it
+type Place = ReturnType<typeof threadorder.placing>['place'];
+function placedAt(row: Row, place: Place) {
+  const placed = place(row);
+  return { branch: placed?.branch ?? jobs.workBranchOf(row), follows: placed?.follows };
+}
+
+// A review or fix carries the urgency of work on its branch: work there already (branchUrgent), and open work before it
+// in its thread on the same branch, which joins the branch before the review runs
+function urgencyOf(
+  row: Row,
+  at: ReturnType<typeof placedAt>,
+  prospectiveId: number | undefined,
+  place: Place,
+  open: Map<number, Row>,
+) {
+  const { branch, follows } = at;
+  const sourceUrgent = branchUrgent(branch) || urgentBefore(follows, branch, place, open);
+  const urgent = !!row.urgent || (row.id === prospectiveId && sourceUrgent);
+  return { urgent, reviewUrgent: urgent || sourceUrgent };
+}
+
+function urgentBefore(follows: number | undefined, branch: string, place: Place, open: Map<number, Row>) {
+  while (follows !== undefined) {
+    const before = open.get(follows);
+    const placed = before && place(before);
+    if (!placed || placed.branch !== branch) return false;
+    if (before.kind === 'work' && before.source_urgent) return true;
+    follows = placed.follows;
+  }
+  return false;
+}
+
 // The branches of the work that carries call items (jobs.ts itemWorkCarriers), each as its thread places it
 // (out of orderingInParts)
-function itemBranchesOf(rows: Row[], place: ReturnType<typeof threadorder.placing>['place']) {
+function itemBranchesOf(rows: Row[], place: Place) {
   const itemCarriers = jobs.itemWorkCarriers();
   const itemBranches = new Set(itemCarriers.values());
   for (const row of rows) {
@@ -190,6 +228,8 @@ function queueRows(now: number) {
   // (board: the order's first lane, jobs.ts LANE; cli, falls_back: the seats it may run on, playseats.ts)
   const columns = `j.id, j.agent, j.title, j.step, j.round, j.kind, j.status, j.engine, j.for_seat, j.cli,
     ${jobs.FALLS_BACK} falls_back, j.downtime,
+    coalesce((select urgent from urgent_tasks where id = j.id), 0) urgent,
+    coalesce((select urgent from urgent_work where id = j.id), 0) source_urgent,
     j.after, j.request, j.not_before, j.held_by, j.created, j.branch, j.pr, j.seat, j.thread,
     coalesce(j.finished, (select max(ended) from runs where job = j.id)) finished,
     (select coalesce(sum((julianday(coalesce(ended, $now)) - julianday(started)) * 86400000), 0) from runs where job = j.id) spent_ms,
@@ -269,6 +309,7 @@ const plannedRow = (p: Omit<Planned, 'size'>, now: number): Row => ({
   },
   ...{ id: p.id, agent: p.agent, title: p.title, engine: p.engine, after: p.after ?? null },
   thread: p.thread ?? null,
+  urgent: p.thread ? Number(threadUrgent(p.thread)) : 0,
 });
 
 function currentMemory(memory: Memory): Memory {

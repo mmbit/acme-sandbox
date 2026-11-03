@@ -5,6 +5,7 @@ import { onPublish } from './events.ts';
 import * as latency from './latency.ts';
 import * as claimobservation from './claimobservation.ts';
 import * as jobs from './jobs.ts';
+import { taskUrgent } from './urgency.ts';
 import * as redraws from './redraws.ts';
 import { recordFor, sizesFor } from './predictions.ts';
 import { expand } from './rounds.ts';
@@ -154,6 +155,7 @@ function* playedInParts(now: number) {
     timings.set(seat.id, {
       id: seat.id,
       board: timings.get(seat.id)!.board,
+      urgent: timings.get(seat.id)!.urgent,
       latestStart: seat.notBefore,
       latestFinish: null,
       duration: 0,
@@ -222,7 +224,7 @@ function latestStarts(queue: OrderingSnapshot, now: number) {
   return { timings: backward(expanded.snapshot, expanded.sizes, expanded.terminals), jobs: expanded.snapshot.jobs };
 }
 export const key = (id: number, board: boolean | number, timings: ReadonlyMap<number, Timing>) =>
-  timings.get(id) ?? { id, board, latestStart: null };
+  timings.get(id) ?? { id, board, urgent: taskUrgent(id), latestStart: null };
 // The base order, also HQ's queue rank: planner.compare over each job's key, spare downtime work after the rest.
 // The claim shares a multi-run seat through reviewroom.ts.
 export function claimOrder(timings: ReadonlyMap<number, Timing>) {

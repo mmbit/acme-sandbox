@@ -5,7 +5,7 @@ import { icon } from './icons.js';
 import { names } from './brand.js';
 import { nameHtml, nameText } from './jobs.js';
 import { covered, withJobLinks } from './prose.js';
-import { faces, mark, lines, pausedWords, pulse, waitOf } from './projectkeys.js';
+import { faces, mark, lines, pausedWords, pulse, urgentMark, waitOf } from './projectkeys.js';
 import {
   atWork,
   boardPart,
@@ -27,7 +27,8 @@ import { fromNow } from '../world/clock.js';
 // up next (when it starts, or what it waits on), what the thread itself waits on (the board's part, a pause, the
 // threads it needs, or why it has no time), its tasks as a strip, one mark each in its state, and its time: when it's
 // done, the agent time its open work has left and how that sits in its window. What waits on the board or is paused is
-// also a mark in its corner. threadOf: an open thread by its id, anywhere on the board (a need's name).
+// also a mark in its corner, and urgent work says so beside its people. threadOf: an open thread by its id, anywhere
+// on the board (a need's name).
 export function threadTile(t, p, threadOf = () => null) {
   const state = threadLine(t, p),
     on = atWork([t]),
@@ -48,8 +49,8 @@ export function threadTile(t, p, threadOf = () => null) {
   return covered(
     `pj-tile pj-thread pj-rich${state.lit ? ' lit' : ''}`,
     `data-thread="${esc(t.id)}"`,
-    [nameText(t, 'name'), state.words].join(', '),
-    `<span class="pj-tile-top">${faces(people, on)}${mark(state)}</span><b>${nameHtml(t, 'name')}</b>
+    [nameText(t, 'name'), t.urgent && 'urgent', state.words].filter(Boolean).join(', '),
+    `<span class="pj-tile-top">${faces(people, on)}${urgentMark(t.urgent)}${mark(state)}</span><b>${nameHtml(t, 'name')}</b>
     <span class="pj-goal">${t.goal ? esc(nameText(t, 'goal')) : ''}</span>
     <span class="pj-tile-rows">${rows.length ? `<ul class="pj-next pj-now">${rows.join('')}</ul>` : ''}</span>
     <span class="pj-tile-rows">${threadWaits(t, p, threadOf)}</span>

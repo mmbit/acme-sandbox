@@ -54,10 +54,15 @@ export function levelHtml(l, { view, board, opening }) {
     return `${keys.head({ back, over, title: nameText(p, 'name'), marks: keys.projectMarks(p), keys: switches })}
       <div class="pj-level pj-grid">${tiles.join('') || '<p class="pj-none">No ongoing deliverables.</p>'}</div>`;
   }
-  // A completed thread waits on no decision. Back goes to the list it was opened from, if any.
+  return threadLevel(l, p, view);
+}
+// A thread's level: its head and brief over its tasks. A completed thread waits on no decision, and its urgency is
+// spent. Back goes to the list it was opened from, if any.
+function threadLevel(l, p, view) {
   const t = l.t,
-    decision = p.threads.includes(t) ? keys.decisionKey(t.pause ?? p.pause) : '';
-  return `${keys.head({ back: LISTS[l.list] ?? nameText(p, 'name'), over: nameText(p, 'name'), title: nameText(t, 'name'), marks: keys.threadMarks(t, p), keys: keys.foldKeys(t, view) + decision })}
+    open = p.threads.includes(t),
+    decision = open ? keys.decisionKey(t.pause ?? p.pause) : '';
+  return `${keys.head({ back: LISTS[l.list] ?? nameText(p, 'name'), over: nameText(p, 'name'), title: nameText(t, 'name'), marks: keys.threadMarks(t, p, open), keys: keys.foldKeys(t, view) + decision })}
     ${threadBrief(t)}<ol class="pj-level pj-tasks">${taskRows(t, p, view)}</ol>`;
 }
 // Home: a business each, then Recurring and the work outside the projects, each a plain tile, and at its head the keys

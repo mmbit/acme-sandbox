@@ -91,7 +91,7 @@ four-in-five time as its new window without --board-set: it is ours from then on
 a call or the intercom already, only set the new window.
 ${ONE_DEADLINE}
 Work already queued: \`hq window <deliverable | job | pr:<n>> <when>\`. When the board says a line of work is urgent,
-its window's deadline is now: \`hq window <deliverable> 1m\`.
+record it with \`hq urgent milestone|job|task <id> on\`. Clear it with the same command and off.
 ${WINDOW_FIRST} ${PAUSE_FOR}
 New work shifts other work, and the board knows it: say nothing about shifts unless a time the board set itself will be
 missed or the board asks. \`hq job\`, \`hq cancel\` and \`hq when\` give each agreed deadline (a deliverable's window) its finish, its

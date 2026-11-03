@@ -11,7 +11,7 @@ import { startWatchalong } from './data.js';
 import { cue } from './audio.js';
 import { CallBubble } from './callbubble.js';
 import * as world from '../world/world.js';
-import { scene, ease, CALL_FPS, REST_FPS } from './stage.js';
+import { scene, capFps, CALL_FPS, REST_FPS } from './stage.js';
 import { icon } from './icons.js';
 import { tell } from './desk.js';
 
@@ -66,17 +66,14 @@ export function openLayer(c) {
   $('#call-min').onclick = () => minimise(c);
   $('#call-screenshare').onclick = () => showScreen(c);
   cue('open');
-  ease(CALL_FPS, 'call');
-  inFront(true);
+  capFps(CALL_FPS, 'call');
+  restUnderWindow(true);
 }
-// HQ's scene draws at its call rate while a call goes on, and at its resting rate while the call's window lies over it
-// (stage.js)
-const inFront = on => ease(on ? REST_FPS : null, 'call window');
 // Its little screen switches off first, if the agent's on it (the board hung up), as the hang-up's sound plays: the layer
 // goes once it has, taking no taps meanwhile.
 export function closeLayer(c) {
-  ease(null, 'call');
-  inFront(false);
+  capFps(null, 'call');
+  restUnderWindow(false);
   const layer = c.layer;
   if (!layer) return;
   if (c.small) return layer.remove();
@@ -153,7 +150,7 @@ export function turnTakenBack(c) {
 export async function minimise(c) {
   if (c.small) return;
   c.small = true;
-  inFront(false);
+  restUnderWindow(false);
   const device = c.layer.querySelector('.device'),
     from = device.getBoundingClientRect();
   c.bubble ??= newBubble(c);
@@ -178,7 +175,7 @@ function bubbleShift(c, from) {
 export function expand(c) {
   if (!c.small) return;
   c.small = false;
-  inFront(true);
+  restUnderWindow(true);
   c.layer.hidden = false;
   // (the transcript went on while it was hidden, where nothing scrolls: it opens at its newest line, and so follows on.
   const lines = c.layer.querySelector('#call-lines');
@@ -193,6 +190,9 @@ export function expand(c) {
     easing: 'cubic-bezier(.2, 1.2, .4, 1)',
   });
 }
+// The call's window open over HQ's scene, or no longer: the scene draws at its resting rate under it, and at the call's
+// rate again once it goes small
+const restUnderWindow = on => capFps(on ? REST_FPS : null, 'call window');
 
 function newBubble(c) {
   const face = faceOf(c);
@@ -205,7 +205,8 @@ function newBubble(c) {
       open: `Open the call with ${c.name}`,
       watched: `${c.name} sees this page`,
     },
-    icons: { eye: icon('eye'), hangUp: icon('hangup') },
+    // (Show again wears the call screen's Show my screen eye)
+    icons: { eye: icon('eye'), hangUp: icon('hangup'), pause: icon('pause'), resume: icon('eye') },
     face,
     keep: 'callPosition',
     onPause: () => pauseWatch(c, true),

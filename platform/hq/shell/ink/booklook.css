@@ -1,38 +1,44 @@
-/* The Notebook's own look (book.css lays it out): its pages bound in a black cover, the same on every HQ look. The
-   cover shows round the pages at their head, foot and outer edge (the binding on HQ's side), never at the spine, which
-   is past the screen's right edge; its one colour is the pull
-   tab's, the brand's accent (brand.yaml's colours.notebook, set at onboarding; --notebook on :root, main.js), never a
-   colour of the platform's own. No cover title: the book opens straight onto its page (the page and the overview are
-   bookdesk.css's). (the hardcover; the spine past the screen and the smaller pull tab's corners) */
+/* The Notebook's own look (book.css lays it out), the same on every HQ look: a real book seen from the side, its
+   pages in a black cover that shows only as a few px at the page block's outer edge, beside HQ's page; never at the
+   head or foot, nor at the spine past the screen's right edge. Its one colour is the pull tab's, the brand's accent
+   (brand.yaml's colours.notebook, set at onboarding; --notebook on :root, main.js), never a colour of the platform's
+   own. No cover title: the book opens straight onto its page (the page and the overview are bookdesk.css's).
+ */
 #book {
-  /* the board: a black book cloth over board, its grain fine and quiet */
+  /* the cover: a black book cloth over board */
   --bk-cloth: #151517;
-  --bk-grain:
-    repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.025) 0 1px, transparent 1px 3px),
-    repeating-linear-gradient(90deg, rgba(0, 0, 0, 0.18) 0 1px, transparent 1px 3px);
-  /* the board's rim at its head and foot, lit (its outer edge's: .bk-edge) */
-  --bk-rim-head: inset 0 1px 0 rgba(255, 255, 255, 0.14);
-  --bk-rim-foot: inset 0 -1px 0 rgba(255, 255, 255, 0.08);
+  /* the page block's edges seen from the side: a page's edge, then the shade between it and the next */
+  --bk-block: repeating-linear-gradient(90deg, #fffaf0 0 2px, #d8cab0 2px 3px);
   /* (without a brand setting, HQ's own ink: never a colour picked here) */
   --bk-accent: var(--notebook, var(--ink, #1d1a2f));
 }
 
-/* the binding: the cover's board, lit softly from the upper left, square at its corners like the paper beside it (a
-   rounded one let the table show there) */
+/* the outer edge: 3 px of cover, lit on its rim, then the page block's edges to the paper (the last of them on the
+   leaf, book.css --bk-pages). Upright it's past the screen's left, out of sight. */
 #book .bk-edge {
   background:
-    radial-gradient(130% 60% at 0% 0%, rgba(255, 255, 255, 0.07), transparent 60%), var(--bk-grain), var(--bk-cloth);
-  box-shadow:
-    var(--bk-rim-head),
-    var(--bk-rim-foot),
-    inset 1px 0 0 rgba(255, 255, 255, 0.14);
+    linear-gradient(90deg, var(--bk-cloth) 0 2px, rgba(255, 255, 255, 0.16) 2px 3px, transparent 3px),
+    linear-gradient(90deg, transparent 3px, rgba(60, 45, 20, 0.12)), var(--bk-block);
 }
-/* the rest of the board, under the paper and showing round it: never under the leaf's margin to the screen's edge (its
-   transparent border, book.css). Its rim catches the light, so the board stands off a dark scene round it. */
 #book .bk-leaf {
-  background: var(--bk-grain), var(--bk-cloth);
-  background-clip: padding-box;
-  box-shadow: var(--bk-rim-head), var(--bk-rim-foot);
+  background: var(--bk-block);
+}
+/* (the paper's own edge where it meets the block) */
+#book .bk-paper {
+  box-shadow: -1px 0 0 rgba(60, 45, 20, 0.25);
+}
+/* (the gutter darkening softly into the spine at the screen's right edge, over the paper and whatever lies on it,
+   under the controls) */
+#book .bk-leaf::after {
+  content: '';
+  position: absolute;
+  z-index: 7;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 44px;
+  background: linear-gradient(90deg, rgba(60, 45, 20, 0), rgba(60, 45, 20, 0.1));
+  pointer-events: none;
 }
 /* the pull tab: a ribbon of fabric in the brand's accent, stitched round its edge, sewn to the cover's outer edge and
    hanging out of it over HQ's page (at the screen's edge while the book's shut). No outline: its stitching shows it on

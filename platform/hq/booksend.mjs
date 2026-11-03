@@ -1,14 +1,14 @@
-// book-check.mjs's story of a page torn to Submit (shell/ink/bookdogear.js, bookpagesend.js), on the played Notebook
+// book-check.mjs's story of a page torn to Submit (shell/ink/booktear.js, bookpagesend.js), on the played Notebook
 // seeded as dev mode's (My journal's three pages, the first sent), on a phone, the iPad mini upright and on its side,
-// and a desktop: the dog-ear drawn away, a torn copy carried over Submit, PDF and PNG in the rail's place, never over the
-// tools; let go on Submit, it folds into a paper plane and flies off, and the page stays shown, stamped SENT and the time
-// within about two seconds, locked (the tools gone, "Sent, locked" in their place), no page made, none turned to. With
-// asks still open on it a card asks first: Answer them first sends nothing, Send now moves them to a new page and sends
-// the rest.
+// and a desktop: the page torn off at its spine, a small copy carried over Submit, PDF and PNG over the paper while the
+// controls' islands make way; let go on Submit, it folds into a paper plane and flies off, and the page stays shown,
+// stamped SENT and the time within about two seconds, locked (the tools gone, "Sent, locked" in their place), no page
+// made, none turned to; the dots' Tear off and send then offers only PDF and PNG. With asks still open on it a card
+// asks first: Answer them first sends nothing, Send now moves them to a new page and sends the rest.
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { clipped, turnTo, where } from './booknotebookscreen.mjs';
-import { cornerOf, dragTo } from './bookshare.mjs';
+import { dragTo, targetsShown, tearOffMenu } from './booktearing.mjs';
 import { DESKTOP, MINI, UPRIGHT, until } from './bookkit.mjs';
 
 const SEED = JSON.parse(await readFile(new URL('./mock/notebook.json', import.meta.url), 'utf8'));
@@ -64,19 +64,16 @@ async function torn(browser, c, size) {
     await done();
   }
 }
-// The copy carried over the targets, in view and clear of the rail's controls, and let go on Submit: a plane
+// The copy carried over the targets, over the paper in view while the islands make way, and let go on Submit: a plane
 async function carried(c, page, size) {
   await watch(page, true);
   await dragTo(page, size.touch ? 'touch' : 'mouse', 'submit', async () => {
-    const m = await lane(page);
+    const m = await targetsOf(page),
+      shown = await targetsShown(page);
     assert.match(m.submit, /^\w ?Submit → \w+$/, `Submit names the CEO (${size.name}): ${m.submit}`);
     assert.deepEqual(m.kinds, ['submit', 'pdf', 'png'], `Submit, PDF and PNG (${size.name})`);
-    assert.deepEqual(m.covering, [], `clear of the rail's controls: the tools, the page bar, More (${size.name})`);
-    const t = m.targets;
-    assert.ok(
-      t.left >= 0 && t.top >= 0 && t.right <= m.view.width && t.bottom <= m.view.height,
-      `whole in view (${size.name}): ${JSON.stringify(m)}`,
-    );
+    assert.ok(shown.overPaper, `over the paper, whole in view (${size.name})`);
+    assert.deepEqual(shown.islands, [], `the islands made way: the tools, the bar (${size.name})`);
     await c.shot(`tear-carried-${size.name}`, page);
   });
   await page.waitForFunction(() => window.__sent.held, null, { timeout: 10_000 });
@@ -84,7 +81,7 @@ async function carried(c, page, size) {
   await page.evaluate(() => window.__sent.held.forEach(a => a.play()));
 }
 // The page sent: locked (the tools gone, "Sent, locked" in their place), the stamp in view over nothing written; no
-// Send key, and the corner's menu without Submit
+// Send key, and the dots' Tear off and send without Submit
 async function locked(c, page, size) {
   // (the stamp pressed all the way down)
   await page.evaluate(() =>
@@ -101,9 +98,7 @@ async function locked(c, page, size) {
   assert.ok(!s.over.some(b => overlaps(s.box, b)), `the stamp over nothing written (${size.name})`);
   await c.shot(`tear-stamped-${size.name}`, page);
   assert.equal(await page.locator('#book .bk-send').count(), 0, `no Send key (${size.name})`);
-  await (await cornerOf(page)).click();
-  const menu = page.getByRole('menu', { name: 'Where this page goes' });
-  await menu.waitFor({ timeout: 10_000 });
+  const menu = await tearOffMenu(page);
   const kinds = await menu
     .getByRole('menuitem')
     .evaluateAll(items => items.filter(i => !i.hidden).map(i => i.dataset.share));
@@ -111,8 +106,8 @@ async function locked(c, page, size) {
   await page.keyboard.press('Escape');
 }
 
-// Asks still open on the page: a card from Submit asks first. Answer them first: nothing sent, the copy back in the
-// corner. Send now (from the corner's menu): the open ask moved to a new page, the rest sent.
+// Asks still open on the page: a card from Submit asks first. Answer them first: nothing sent, the copy back at the
+// spine. Send now (from the dots' Tear off and send): the open ask moved to a new page, the rest sent.
 async function withAsks(browser, c) {
   const seed = structuredClone(SEED);
   Object.assign(
@@ -134,8 +129,7 @@ async function withAsks(browser, c) {
       await card.getByRole('button', { name: 'Answer it first' }).click();
       await until(async () => !(await page.locator('#book > .bk-held').count()), `the copy back (${size.name})`);
       assert.ok(!pageOf(play, SECOND).sent, `nothing sent (${size.name})`);
-      await (await cornerOf(page)).click();
-      await page.getByRole('menuitem', { name: /Submit/ }).click();
+      await (await tearOffMenu(page)).getByRole('menuitem', { name: /Submit/ }).click();
       await card.getByRole('button', { name: 'Send now, move it to a new page' }).click();
       await until(() => pageOf(play, SECOND).sent, `sent (${size.name})`);
       const moved = play.route('/api/notebooks/pages/groups', { page: pagesOf(play).at(-1).id }).groups;
@@ -203,24 +197,11 @@ const watch = (page, hold = false) =>
       }
     }).observe(document.getElementById('book'), { childList: true, subtree: true });
   }, hold);
-// The lane while the copy is carried: the targets and what shows on them, the rail's controls still showing over
-// them, the screen
-const lane = page =>
+// The targets while the copy is carried: their kinds shown and Submit's words
+const targetsOf = page =>
   page.evaluate(() => {
-    const box = r => ({ left: r.left, top: r.top, right: r.right, bottom: r.bottom }),
-      overlaps = (a, b) => a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom,
-      targets = document.querySelector('#book .bk-share'),
-      at = box(targets.getBoundingClientRect()),
-      shown = [...targets.querySelectorAll('[data-share]')].filter(b => !b.hidden);
-    return {
-      kinds: shown.map(b => b.dataset.share),
-      submit: shown[0].innerText.replace(/\s+/g, ' ').trim(),
-      targets: at,
-      covering: [...document.querySelector('#book .bk-column').children]
-        .filter(el => el.checkVisibility({ visibilityProperty: true }) && overlaps(box(el.getBoundingClientRect()), at))
-        .map(el => el.dataset.island ?? el.className),
-      view: { width: innerWidth, height: innerHeight },
-    };
+    const shown = [...document.querySelectorAll('#book .bk-share [data-share]')].filter(b => !b.hidden);
+    return { kinds: shown.map(b => b.dataset.share), submit: shown[0].innerText.replace(/\s+/g, ' ').trim() };
   });
 // The shown page's stamp: its words and box, the paper's, what's written on the page (its title and units), and whether
 // it's locked
@@ -240,7 +221,6 @@ const stampOf = page =>
         return box(el.matches('.bk-unit') ? el.getBoundingClientRect() : words.getBoundingClientRect());
       }),
       locked: !!document.querySelector('#book .bk-locked')?.checkVisibility(),
-      // (the tools keep their room, unseen: bookshare.css)
       toolsHidden: !document
         .querySelector("#book .bk-island[data-island='tools']")
         ?.checkVisibility({ visibilityProperty: true }),

@@ -30,7 +30,7 @@ import { ORIGIN } from './config.ts';
 import { publish } from './events.ts';
 import { secret, serverKey } from './secrets.ts';
 import { ceo, timeZone } from './company.ts';
-import { boardId, closeRequest, createJob, createRequest, findAgent } from './jobs.ts';
+import { agentName, boardId, closeRequest, createJob, createRequest, findAgent } from './jobs.ts';
 import { atTime, dialable, hoursText } from './callrules.ts';
 import * as words from './callwords.ts';
 import { codeOf } from './jobcodes.ts';
@@ -307,7 +307,6 @@ export function end(c: Callout, status: Status, outcome: string) {
 }
 // Who hears it: the agent who filed it, or the CEO once that agent has left org.yaml
 const filer = (c: Pick<Callout, 'agent'>) => (findAgent(c.agent) ? c.agent : ceo());
-export const agentName = (agent: string) => String(findAgent(agent)?.name ?? agent);
 export const list = (json: string | null) => (json ? (JSON.parse(json) as string[]) : []);
 const line = (v: unknown) => (typeof v === 'string' && !/[\r\n]/.test(v.trim()) ? v.trim() : '');
 // What the board's card and the agent see: never the number, only its last 3 digits

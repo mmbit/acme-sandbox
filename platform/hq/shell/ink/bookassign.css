@@ -266,6 +266,16 @@
   stroke-linecap: round;
   stroke-linejoin: round;
 }
+/* seen (a note that needs nothing back): the tick and the initial of the agent who read it, its face in the deck's
+   lime, as a chosen version is (bookversions.css); in a reply's line, after its words */
+.bk-tag[data-seen] .bk-face {
+  background: var(--bk-chosen, #d6ea3c);
+}
+.bk-reply .bk-tag[data-seen] {
+  display: inline-flex;
+  vertical-align: middle;
+  margin-left: 6px;
+}
 .bk-tag[data-new] {
   animation: bk-assign-row 0.3s cubic-bezier(0.2, 0.8, 0.3, 1.6) backwards;
   animation-delay: var(--wait, 0ms);

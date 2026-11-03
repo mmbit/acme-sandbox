@@ -44,9 +44,10 @@ import { FRONT } from './approvals.ts';   // the front's door
 import { deployed } from './wakes.ts';
 import * as storage from './storage.ts';
 import * as profiles from './profiles.ts';
-import { readBody } from '../../../shared/routes/routes.ts';
+import { readBody, routes, type RouteHandler, type RouteTable } from '../../../shared/routes/routes.ts';
 import { REVIEW_PARTS, RECORDER_MODULES, extraFile } from '../../hq/extras.mjs';
 import { V as ANCHOR, noKeys } from '../../../shared/review/anchor.js';
+import { scriptForHq } from '../../../shared/review/parts.mjs';
 import * as sorting from './sorting.ts';
 import { productProject } from './made.ts';
 import * as watchalong from './watchalong.ts';   // (the recorder).
@@ -175,8 +176,7 @@ export const withReviewMode = (html: string) => html.includes('/__review/review.
 // The watch-along's answer in a page HQ frames (shared/watchalong/framed.js), HQ's origin filled in, and its scroll
 // link for the viewer's live page beside it (scrolllink.js): served after review.js, the tool or not.
 const framedAnswer = async () =>
-  (await readFile(`${REPO_DIR}/shared/watchalong/framed.js`, 'utf8')).replace('{{HQ_ORIGIN}}', ORIGIN) +
-  (await readFile(`${REPO_DIR}/shared/watchalong/scrolllink.js`, 'utf8'));
+  scriptForHq('watchalong/framed.js', ORIGIN, REPO_DIR) + (await readFile(`${REPO_DIR}/shared/watchalong/scrolllink.js`, 'utf8'));
 
 // An outsider's tool draws in their colour (INK), the one their book has (sketchpeople.ts give: everyone invited), and
 // its caption links back to their page in that book (BACK).
@@ -188,61 +188,77 @@ const inBook = (tool: string, share: shares.Session) => {
     .replace('{{BACK}}', member ? `${ORIGIN}/guest/notebooks/?notebook=${member.notebook}` : '');
 };
 
-// /__review/* on a product host (no HQ session here).
+// Review mode's paths on a page's host: one table, which each host spreads into its routes with its own answers. The
+// tool is the board's on a product's preview, and the scroll link alone on an earlier version (earlier.ts). HQ's
+// origin is only where the host names it itself: on a product's host Caddy does (infra/products.py).
+export const reviewPaths = (tool: RouteHandler, origin?: RouteHandler): RouteTable => ({
+  'GET /__review/review.js': tool,
+  ...(origin && { 'GET /__hq-origin': origin }),
+});
+
+// The tool on a product host: vary: cookie, so no cache ever hands the board's copy to someone else (and no-store on top)
+async function reviewTool(req: IncomingMessage, res: ServerResponse) {
+  const on = reviewerOn(req);
+  const tool = on && scriptForHq('review/review.js', ORIGIN, REPO_DIR);
+  const js = !tool ? '/* review mode: off */\n' : on.share ? inBook(tool.replace('{{OUTSIDE}}', companyInJs), on.share) : tool;
+  // the watch-along's answer to HQ's frame, on or off
+  const framed = await framedAnswer();
+  // what goes after the tool: on a shared link's page an outsider's thank-you for a fix of theirs gone live, and on
+  // the board's own pages the profiler while it's on
+  let after = '';
+  if (on && on.share) after = await thanksFor(on.share);
+  else if (on) after = await profiles.scriptFor(on.slug);
+  return reply(res, 200, js + framed + after, 'text/javascript; charset=utf-8', { vary: 'cookie' });
+}
+// Review mode on a product host: the tool, its parts, and the notes and clips it sends.
+const productRoutes = routes({
+  ...reviewPaths(({ req, res }) => reviewTool(req, res)),
+  'GET /__review/vendor/rrweb-record.js': async ({ res }) =>
+    reply(res, 200, await readFile(watchalong.RECORDER), 'text/javascript; charset=utf-8'),
+  'GET /__review/:part([a-z]+).js': ({ req, res, url, params }) => reviewPart(req, res, url.pathname, params.part),
+  'POST /__review/profile': ({ req, res }) => profiled(req, res),
+  'POST /__review/:post(notes|voice|thanked|coach)': ({ req, res, params }) => reviewPost(req, res, params.post),
+  '* /*': ({ res }) => json(res, 404, { error: 'not found' }),
+});
+
+// /__review/* on a product host (no HQ session here), a shelf's base taken off
 export async function product(req: IncomingMessage, res: ServerResponse) {
-  // a shelf's base taken off
-  const pathname = new URL(req.url ?? '/', 'http://x').pathname;
-  const base = productOf(req)?.base ?? '';
-  const path = pathname.slice(base.length);
-  if (path === '/__review/review.js' && req.method === 'GET') {
-    // vary: cookie, so no cache ever hands the board's copy to someone else (and no-store on top)
-    // HQ's origin goes in, so the tool also runs inside HQ's preview viewer (a frame), and only there
-    const on = reviewerOn(req);
-    const tool = on && (await readFile(`${REPO_DIR}/shared/review/review.js`, 'utf8')).replace('{{HQ_ORIGIN}}', ORIGIN);
-    const js = !tool ? '/* review mode: off */\n' : on.share ? inBook(tool.replace('{{OUTSIDE}}', companyInJs), on.share) : tool;
-    // the watch-along's answer to HQ's frame, on or off
-    const framed = await framedAnswer();
-    // what goes after the tool: on a shared link's page an outsider's thank-you for a fix of theirs gone live, and on
-    // the board's own pages the profiler while it's on
-    let after = '';
-    if (on && on.share) after = await thanksFor(on.share);
-    else if (on) after = await profiles.scriptFor(on.slug);
-    return reply(res, 200, js + framed + after, 'text/javascript; charset=utf-8', { vary: 'cookie' });
-  }
-  // the tool's parts beside it (tool.js and the modules it imports): the tool's own logic, so only for whoever gets the
-  // tool.
-  const part = req.method === 'GET' ? /^\/__review\/([a-z]+)\.js$/.exec(path)?.[1] : undefined,
-    open = part && extraFile(REVIEW_PARTS, path);   // (HQ's extras.)
-  if (part && !open && !['review', 'thanks'].includes(part) && existsSync(`${REPO_DIR}/shared/review/${part}.js`))
-    return reviewerOn(req) ? reply(res, 200, await readFile(`${REPO_DIR}/shared/review/${part}.js`), 'text/javascript; charset=utf-8', { vary: 'cookie' })
-      : json(res, 404, { error: 'not found' });
+  const url = new URL(req.url ?? '/', 'http://x');
+  url.pathname = url.pathname.slice((productOf(req)?.base ?? '').length);
+  return productRoutes(req, res, url);
+}
+// A part of review mode beside the tool on a product host
+async function reviewPart(req: IncomingMessage, res: ServerResponse, path: string, part: string) {
   // pure geometry and drawing, for anyone and on HQ's host too: the framing rule its polaroid shares with HQ's note
-  // thumbnails, the pen (also HQ's Sketchbook), the anchor (also the watch-along's ink and the book) and the paper
+  // thumbnails, the pen (also HQ's Sketchbook), the anchor (also the watch-along's ink and the book), the paper and the
+  // watch-along's recorder, for a page HQ shows in its viewer while a call watches along
+  const open = extraFile(REVIEW_PARTS, path) || extraFile(RECORDER_PARTS, path);
   if (open) return reply(res, 200, await readFile(`${REPO_DIR}/${open}`), 'text/javascript; charset=utf-8');
-  // the watch-along's recorder, for a page HQ shows in its viewer while a call watches along: library code, for anyone
-  const recorder = req.method === 'GET' && extraFile(RECORDER_PARTS, path);
-  if (recorder) return reply(res, 200, await readFile(`${REPO_DIR}/${recorder}`), 'text/javascript; charset=utf-8');
-  if (path === '/__review/vendor/rrweb-record.js' && req.method === 'GET')
-    return reply(res, 200, await readFile(watchalong.RECORDER), 'text/javascript; charset=utf-8');
-  if (path === '/__review/profile' && req.method === 'POST') return profiled(req, res);
-  if (req.method !== 'POST' || !['/__review/notes', '/__review/voice', '/__review/thanked', '/__review/coach'].includes(path)) return json(res, 404, { error: 'not found' });
+  // the tool's parts beside it (tool.js and the modules it imports): the tool's own logic, so only for whoever gets the
+  // tool
+  if (reviewerOn(req) && !['review', 'thanks'].includes(part) && existsSync(`${REPO_DIR}/shared/review/${part}.js`))
+    return reply(res, 200, await readFile(`${REPO_DIR}/shared/review/${part}.js`), 'text/javascript; charset=utf-8', { vary: 'cookie' });
+  return json(res, 404, { error: 'not found' });
+}
+// A note, a clip, an outsider's thanks seen or the coach's question, from the board's page or a shared link's
+async function reviewPost(req: IncomingMessage, res: ServerResponse, post: string) {
   const p = reviewerOn(req);
   if (!p) return json(res, 403, { error: 'review mode is for the board' });
   // SameSite=Lax keeps the cookie off cross-site posts, but other products share the site: the page must be this one.
   if (req.headers.origin !== (p.slug === HQ ? ORIGIN : `https://${p.host}`)) return json(res, 403, { error: 'origin' });
-  if (path === '/__review/voice') { const r = await voice(p.slug, req, !!p.share); return typeof r === 'number' ? json(res, r, { error: 'voice' }) : json(res, 200, r); }
+  if (post === 'voice') { const r = await voice(p.slug, req, !!p.share); return typeof r === 'number' ? json(res, r, { error: 'voice' }) : json(res, 200, r); }
   if (!/^application\/json\b/.test(String(req.headers['content-type'] ?? ''))) return json(res, 415, { error: 'json only' });
   // (an outsider's book, as the request began: checked again past the body, intoBook; one without a book can't write
   // a note.)
   const granted = p.share && sketchPeople.grantOf(p.share.guest);
-  const raw = await readBody(req, path === '/__review/thanked' ? 64 * 1024 : MAX_BODY);
+  const raw = await readBody(req, post === 'thanked' ? 64 * 1024 : MAX_BODY);
   if (!raw) return json(res, 413, { error: 'too large' });
   let body: any;
   try { body = JSON.parse(raw.toString('utf8')); } catch { return json(res, 400, { error: 'bad json' }); }
   // the share as it is now, past the last await: one removed or ended while the body came in does nothing more
   if (p.share && !shares.fromSession(cookie(req, 'ps'), p.host)) return json(res, 403, { error: 'the link has ended' });
-  if (path === '/__review/thanked') return p.share ? json(res, 200, thanked(p.share, body?.ids)) : json(res, 404, { error: 'not found' });
-  if (path === '/__review/coach') return json(res, 200, coach(p, body));
+  if (post === 'thanked') return p.share ? json(res, 200, thanked(p.share, body?.ids)) : json(res, 404, { error: 'not found' });
+  if (post === 'coach') return json(res, 200, coach(p, body));
   if (p.share && !noteOpens(p.share, p.host, body?.page)) return json(res, 403, { error: 'not a page this link opens' });
   if (p.share && !granted) return json(res, 409, { error: 'that note didn’t go through: write it again' });
   const r = await saveNote(p.slug, p.host, body, p.base, granted ? intoBook(req, p.host, granted, p.share!) : null);

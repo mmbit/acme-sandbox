@@ -2,9 +2,10 @@
 // check renders the board's screens on main and on the pushed commit, each on its own coordinator and pages, and compares
 // them (platform/hq/screens-compare.mjs). A push whose screens differ, or whose check couldn't tell, is work of the
 // screens' engine-only rule (engineonly.ts onWork: its ruling and fixes run on that model), merges only after that look
-// (an expedited one too), and its ruling opens every before and after itself and names them in its answer. A push that
-// changes the check's own code can't vouch for its screens, so its check couldn't tell. A push that changes no screen
-// costs nothing more.
+// (an expedited one too), and its ruling opens every before and after itself and names them in its answer: the sheets
+// the check made, which the worker keeps for it (its screens.ts), and only what the check couldn't picture or tell
+// rendered again, on the render helper (org.yaml review.screens run). A push that changes the check's own code can't
+// vouch for its screens, so its check couldn't tell. A push that changes no screen costs nothing more.
 import { basename } from 'node:path';
 import { db } from './db.ts';
 import { reviewSettings } from './reviewsettings.ts';
@@ -89,39 +90,52 @@ export function rulingStep(job: { pr: number; sha?: string; stage?: string }) {
   const shots = job.stage === 'ruling' ? owed(job.pr, job.sha) : undefined,
     settings = reviewSettings().screens;
   if (shots === undefined || !settings) return '';
-  const { found, owes } = shots === null ? UNTOLD : told(shots);
+  const render = `\`${settings.run}\``;
+  const { found, open, owes } = shots === null ? untold(render) : told(shots, render);
   return `
 
 ## The board's screens, before and after
-${found} Render them yourself: \`${settings.run}\`. Open every sheet it lists (Read each PNG: a sheet you didn't open isn't
-checked) and judge each after against its before: ${settings.look}
+${found} ${open} (Read each PNG: a sheet you didn't open isn't checked) and judge each after against its before:
+${settings.look}
 Anything a screen gets wrong is a blocking finding, in every round. Add to your answer, beside "decision":
    "screens": [{"sheet": "<the path you opened>", "saw": "<one line: what changed and whether it holds up>"}]
 ${owes}`;
 }
 
+// The ruling's own render, and where its sheets are: a render run elsewhere (hq run) lists them by that machine's paths,
+// and brings them back under its --bring folder by the same names
+const yourRender = (render: string) =>
+  `Render them yourself: ${render}. Open every sheet it lists. A render on a helper prints the helper's paths: open ` +
+  'each sheet by its file name in the folder it brought back';
+
 // The push check couldn't tell: the ruling owes the sheets its own render lists
-const UNTOLD = {
+const untold = (render: string) => ({
   found:
     "This push's screens check couldn't tell whether it changes what HQ shows the board (it couldn't run, or the " +
     "pull request changes the check's own code).",
+  open: yourRender(render),
   owes: `   "screens_render": <your render's last line, the JSON object as it printed it>
 "screens" is [] only when that line says nothing changed. A ruling without every sheet its render lists is refused.`,
-};
+});
 
-// The push check's changed screens: the ruling owes every one's sheet, and its own render of those the check got no
-// picture of
-function told(shots: Shot[]) {
+// The push check's changed screens: the ruling owes every one's sheet, which the check made and the worker kept, and its
+// own render of those the check got no picture of
+function told(shots: Shot[], render: string) {
   const found = `This push changes what HQ shows the board: ${named(shots)}.`,
     owes = `A ruling without every one of these sheets is refused: ${shots.map(sheetOf).join(', ')}.`;
+  const kept = shots.flatMap(shot => (shot.sheet ? [shot.sheet] : []));
+  const open = kept.length
+    ? `Open the sheets the push's check made: ${kept.join(', ')}. Only if one is gone: ${yourRender(render)}`
+    : yourRender(render);
   const blank = unpictured(shots);
-  if (!blank.length) return { found, owes };
+  if (!blank.length) return { found, open, owes };
   return {
     found,
+    open,
     owes: `${owes}
-The check got no picture on either side of ${whyOf(blank)}. Your render must show each one: its sheet in "screens", or,
-where your render finds it the same, add "screens_render": <your render's last line, the JSON object as it printed it>.
-Render again until it does: ${BROKEN}.`,
+The check got no picture on either side of ${whyOf(blank)}. Your own render (${render}) must show each one: its sheet in
+"screens", or, where your render finds it the same, add "screens_render": <your render's last line, the JSON object as
+it printed it>. Render again until it does: ${BROKEN}.`,
   };
 }
 

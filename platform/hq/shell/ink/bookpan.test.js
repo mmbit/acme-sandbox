@@ -13,13 +13,13 @@ globalThis.cancelAnimationFrame = () => frames.splice(0);
 const { panning } = await import('./bookpan.js');
 const { setView } = await import('./bookview.js');
 
-// The paper and a long page on it, a finger moving it (as on the board's iPad once a pen was used)
-function paper() {
+// The paper and a long page on it (or another page), a finger moving it (as on the board's iPad once a pen was used)
+function paper(page = { w: 800, h: 20_000 }) {
   const on = {},
     desk = {
       dataset: {},
       style: { setProperty() {} },
-      addEventListener: (type, f) => (on[type] = f),
+      addEventListener: (type, f) => (on[type] ??= []).push(f),
       setPointerCapture() {},
       hasPointerCapture: () => false,
       getBoundingClientRect: () => ({ left: 0, top: 0 }),
@@ -28,7 +28,7 @@ function paper() {
     book = {
       desk,
       world: { style: {} },
-      views: [{ page: { h: 20_000 }, show() {} }],
+      views: [{ page, show() {} }],
       cur: 0,
       size: { w: 800, h: 700 },
       pan: { x: 0, y: 0 },
@@ -40,20 +40,18 @@ function paper() {
   // (bare paper)
   const target = { closest: () => null };
   // (a finger's events: the first one down, unless id says another)
+  const fire = (type, e) => on[type].forEach(f => f({ type, target, ...e }));
   const finger = (type, y, timeStamp, id = 1) =>
-    on[type]({
-      type,
+    fire(type, {
       pointerId: id,
       pointerType: 'touch',
       isPrimary: id === 1,
       clientX: 300 + 100 * id,
       clientY: y,
       timeStamp,
-      target,
     });
   // (the Pencil coming down)
-  const pen = y =>
-    on.pointerdown({ type: 'pointerdown', pointerId: 9, pointerType: 'pen', clientX: 300, clientY: y, target });
+  const pen = y => fire('pointerdown', { pointerId: 9, pointerType: 'pen', clientX: 300, clientY: y });
   return { book, finger, pen };
 }
 // Frames at a whole ms each, every 16 ms from the first: Safari's clocks
@@ -155,4 +153,23 @@ test('two fingers flicked glide on as one does', () => {
   const lifted = book.pan.y;
   play(51, 30);
   assert.ok(book.pan.y > lifted + 200, `glided on from ${lifted}: at ${book.pan.y}`);
+});
+
+test('a quick pinch lifted while the fingers still spread stays where it zoomed', () => {
+  // (a sketch page)
+  const { book, finger } = paper({ chapter: 'sketch', x: 0, y: 0, w: 800, h: 2_000 });
+  setView(book, { pan: { x: 0, y: 0 }, scale: 2.5 });
+  finger('pointerdown', 600, 0);
+  finger('pointerdown', 600, 0, 2);
+  // (spread apart about a still middle, fast to the last)
+  for (let t = 10; t <= 50; t += 10) {
+    finger('pointermove', 600 - 4 * t, t);
+    finger('pointermove', 600 + 4 * t, t, 2);
+  }
+  clock = 50;
+  finger('pointerup', 400, 50);
+  const lifted = { ...book.pan, scale: book.scale };
+  assert.ok(lifted.scale > 2.5, `zoomed in: ${lifted.scale}`);
+  play(50, 30);
+  assert.deepEqual({ ...book.pan, scale: book.scale }, lifted, 'no glide');
 });

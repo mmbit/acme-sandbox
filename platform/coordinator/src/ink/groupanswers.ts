@@ -1,14 +1,19 @@
 // A notebook group's answers as HQ reads them with the group (notebookgroups.ts groupOf): the slips on the notes it and
 // its replies went as, the answers made on it before or after its page was sent, each once; the answer still coming on
 // it or a reply of its (the writing placeholder); its try (booktry.ts), whose versions are among its answers and drawn
-// under it (bookversions.js), or null; and the agents' desk-phone cards on those notes (bookasks.ts).
+// under it (bookversions.js), or null; the agents' desk-phone cards on those notes (bookasks.ts); and its seen tick.
+//   - seen: the board's note judged to need nothing back (its latest verdict none, bookjudge.ts) with nothing answering
+//     it, and who it went to, whose initial the tick at its corner carries (bookassignlist.js): a scrap's owner (else
+//     its page's, else the CEO, as booktry.ts rootOn), a reply's the agent it answers.
 import { db } from '../db.ts';
-import { findAgent, jobAgent } from '../jobs.ts';
+import { agentName, jobAgent } from '../jobs.ts';
 import { ceo } from '../company.ts';
 import { answersOnGroups, comingOf, going, slipsOf, waitingOf, type Listed } from './bookslips.ts';
 import { asksBy, asksOn } from './bookasks.ts';
 import { assignedOf } from './bookassign.ts';
 import type { Group } from '../notebookgroups.ts';
+import { pageRow } from '../notebook.ts';
+import { verdictOf } from './bookjudge.ts';
 
 // What HQ reads of a group with its answers: its own parts (head), its owner and the
 // agent's name, and its children, the answers and the board's replies under them, in the order they came
@@ -21,7 +26,7 @@ export function readOf<H extends object, A extends { created: string }, R extend
   return {
     ...head,
     owner,
-    owner_name: owner ? (findAgent(owner)?.name ?? owner) : null,
+    owner_name: owner ? agentName(owner) : null,
     children: [
       ...answers.map(a => ({ kind: 'answer' as const, ...a })),
       ...replies.map(r => ({ ...r, kind: 'reply' as const })),
@@ -37,18 +42,33 @@ export function answersOf(g: Group, replies: Group[], listed: Listed) {
     listed,
   ).filter(a => !onNotes.some(n => n.id === a.id));
   const top = g.parent === null,
-    asking = top ? [g, ...replies] : [];
+    asking = top ? [g, ...replies] : [],
+    answers = [...onNotes, ...onGroups];
   return {
-    answers: [...onNotes, ...onGroups],
+    answers,
+    seen: top ? seenTick(g, answers) : null,
     // (an answer coming on the note or a reply before why an ended ask brought none)
     waiting: asking.map(comingOf).find(w => w) ?? asking.map(waitingOf).find(w => w) ?? null,
-    try: top ? tryOf(g, [...onNotes, ...onGroups]) : null,
+    try: top ? tryOf(g, answers) : null,
     // (and the card it is, an agent's design ask on an Asks page: askpages.ts)
     asks: [...(g.request && top ? asksBy(g.request) : []), ...notes.flatMap(asksOn)],
     // (who it was handed to, for its tags)
     assigned: top ? assignedOf(g.id) : [],
   };
 }
+// Who answers a board's note on its group (top): the group's owner, else its page's, else the CEO (booktry.ts rootOn)
+export const ownerOf = (top: Group) => top.owner ?? pageRow(top.page, null)?.owner ?? ceo();
+// A group's or a reply's seen tick: { by, name } of who read it (a reply's: who wrote the answer it's under), or null
+export function seenTick(g: Group, answers: { grp: number | null; note: number | null }[]) {
+  if (answers.some(a => a.grp === g.id || (g.note !== null && a.note === g.note))) return null;
+  if (verdictOf({ grp: g.id })?.reply !== 'none') return null;
+  const by = g.parent === null ? ownerOf(g) : answererOf(g);
+  return by ? { by, name: agentName(by) } : null;
+}
+const answererOf = (reply: Group) =>
+  reply.answers === null
+    ? undefined
+    : (db.prepare('select by from book_slips where id = ?').get(reply.answers) as { by: string } | undefined)?.by;
 // A group's try (booktry.ts), as its versions block shows it under the group: coming while its run is queued or going
 // (a frame of pencil dots for each version said and not made yet), made once it ended with versions, and empty once it
 // ended with none, saying why in plain words. So a try never shows a count of versions that don't exist. null: never
@@ -59,7 +79,7 @@ export function tryOf(g: Tried, answers: { style: string }[]) {
   const job = db.prepare('select status, result from jobs where id = ?').get(g.tried) as
     { status: string; result: string | null } | undefined;
   const by = jobAgent(g.tried) ?? g.owner ?? ceo(),
-    name = findAgent(by)?.name ?? by;
+    name = agentName(by);
   const made = answers.filter(a => a.style === 'version').length;
   const state = going(g.tried) ? 'coming' : made ? 'made' : 'empty';
   return { state, expect: g.expect, by, name, reason: state === 'empty' ? endedEmpty(name, job) : null };

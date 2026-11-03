@@ -91,4 +91,12 @@ body.brownstone #btn-more[aria-expanded='true'] {
   body.brownstone .tools > :is(.board-tool, #btn-find) {
     order: 0;
   }
+  /* (the walls key folds behind More with sound, music and the tour, so the board's six keys, search and More keep to
+     two rows) */
+  body.brownstone .tools > #btn-walls {
+    order: 5;
+  }
+  body.brownstone:not(.touring) .tools:not(.more-open) > #btn-walls {
+    display: none;
+  }
 }

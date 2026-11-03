@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { clone, playedHq, ON_HELPER, nodeTest, sum } from './fixture.ts';
 
-test('local and helper pushes reuse base outcomes only within the same environment, including local fallback', async () => {
+test('local and helper pushes reuse base outcomes only within the same environment, without moving lost helper runs locally', async () => {
   const { repo, run, marker } = await comparisonCase({
     RUN_STATES: JSON.stringify([
       [{ state: 'done', machine: 'attic' }],
@@ -31,9 +31,9 @@ test('local and helper pushes reuse base outcomes only within the same environme
   assert.match(await run(true), /Base comparison: 2 kept, 0 run/);
   assert.equal(readFileSync(marker, 'utf8'), 'base\n'.repeat(2));
   repo.change({ 'kits/old/mode': 'helper lost push' });
-  const fallback = await run(true);
-  assert.match(fallback, /They run here instead/);
-  assert.match(fallback, /Base comparison: 2 kept, 0 run/);
+  const incomplete = await run(true, 2);
+  assert.match(incomplete, /no helper ran them/);
+  assert.doesNotMatch(incomplete, /Base comparison:/);
   assert.equal(readFileSync(marker, 'utf8'), 'base\n'.repeat(2));
 });
 
@@ -62,7 +62,7 @@ test('a new base runs its comparison and incomplete comparisons remain retryable
   assert.equal(readFileSync(marker, 'utf8'), 'base\n'.repeat(4));
 });
 
-test('a parent ticket stays with its runner through suites with nested fixtures and local helper fallback', async () => {
+test('a parent ticket stays with its runner through suites with nested fixtures', async () => {
   const { repo, run } = await comparisonCase({ RUN_STATES: JSON.stringify([[{ state: 'lost', machine: 'attic' }]]) });
   const nested = `import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -82,10 +82,8 @@ test('nested fixture compares its own base', () => {
   const local = await run();
   assert.match(local, /shared\/gates .*1 passed/);
   assert.doesNotMatch(local, /Failing on main too: shared\/gates/);
-  const fallback = await run(true);
-  assert.match(fallback, /They run here instead/);
-  assert.match(fallback, /shared\/gates .*1 passed/);
-  assert.match(fallback, /Base comparison: 2 kept, 0 run/);
+  const incomplete = await run(true, 2);
+  assert.doesNotMatch(incomplete, /They run here instead|Base comparison:/);
 });
 
 test('a ticket for another base still leaves its owning comparison incomplete', () => {

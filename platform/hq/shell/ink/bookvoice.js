@@ -1,4 +1,4 @@
-// A voice note: the mic on the rail, after Text. One tap, by a finger, the Pencil or the mouse, and the book listens at
+// A voice note: the mic on the tools' island, after Text. One tap, by a finger, the Pencil or the mouse, and the book listens at
 // once, the words showing beside the mic as they're heard, by a red dot and bars moving with the voice; a second tap,
 // and they land on the page as pasted words do (booktape.js, book.tape.words): a box of words under the line drawn last,
 // where it's in sight, so the Pencil dictates right after scribbling; else a little above the middle of the paper
@@ -26,7 +26,7 @@ const MIC = lineIcon(
 
 let lang = null;
 
-// book: bookpages.js's; after: the rail's button it goes after (Text's). Where nothing can record, no mic.
+// book: bookpages.js's; after: the tools' button it goes after (Text's). Where nothing can record, no mic.
 export function mountVoice(book, after) {
   if (!canRecord) return;
   stylesheet('shell/ink/bookvoice.css');

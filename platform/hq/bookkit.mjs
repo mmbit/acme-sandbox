@@ -1,7 +1,9 @@
 // What book-check.mjs's story files share: the screens they play on, a wait, the Pencil and fingers, the iPad mini and
 // the microphone's stand-in, review mode's parts and a preview in HQ's viewer.
+import assert from 'node:assert/strict';
 import { fulfilPart } from '../../shared/review/parts.mjs';
 import { en } from './shell/ink/notebookwordsen.js';
+import { filled } from './shell/ink/notebookwords.js';
 
 export const DESKTOP = { width: 1440, height: 900 },
   // an iPad mini in landscape, and held upright
@@ -9,6 +11,15 @@ export const DESKTOP = { width: 1440, height: 900 },
   UPRIGHT = { width: MINI.height, height: MINI.width };
 // The label of the overview's key on the book's rail (bookcontrols.js).
 export const OVERVIEW = en.allPages;
+// A word of the book's by its key, as it says it in English with its {places} filled (notebookwords.js): a copy edit
+// there changes no story
+export const say = (key, places) => filled(en[key], places);
+// HQ's Shelf key, More opened first where it's folded behind it (Wire's phone row)
+export async function shelfKey(page) {
+  const key = page.locator('#btn-shelf');
+  if (!(await key.isVisible())) await page.locator('#btn-more').click();
+  return key;
+}
 // The cog's label on the rail, in the words the board's book shows
 export const PREFERENCES = en.preferences;
 // how long a story waits to be sure something didn't happen (the page is saved this soon after a change), and what the
@@ -30,8 +41,8 @@ export async function until(read, what, ms = 30_000) {
 // The book at rest in a mode, its swing over and laid out, and HQ's page shown again: lifted from shut, the book is
 // 'folded' all the while it swings, so its mode alone says nothing; landed or shut, the swing keeps HQ's page hidden a
 // few frames longer while it lays itself out (bookswing.js settleIn). However long the engine takes to draw the swing:
-// headless WebKit's frames come slowly under HQ's scene, a few a second while HQ's page blurs. (book-check's and
-// viewer-check's one wait for it.)
+// headless WebKit's frames come slowly under HQ's scene, a few a second while HQ's page blurs. (The one wait for it
+// in book-check, viewer-check and profile-covered.)
 export const bookAtRest = (page, mode) =>
   page.waitForFunction(
     m =>
@@ -256,8 +267,9 @@ export const pinOn = (page, on = true) =>
   }, on);
 
 // The next crumple (bookpaper.js) as it starts: whether it plays on a picture of what was deleted (drawn, or a page's
-// tile in the overview), and, with it held and stepped through its length, how far its middle goes sideways and how
-// far down (px). Watched for on the whole document: the open book can sit outside body.
+// tile in the overview), and, with it held and stepped through its length, how far its middle goes sideways, how far
+// up and how far down (px), how far past the screen's right edge it ends (px), its opacity once it's well on its way
+// aside, and its length (ms). Watched for on the whole document: the open book can sit outside body. (thrown, not dropped)
 export const crumpled = page =>
   page.evaluate(
     () =>
@@ -276,20 +288,33 @@ export const crumpled = page =>
           ball.currentTime = 0;
           const start = middle();
           let aside = 0,
+            up = 0,
             down = 0,
-            shown = null; // (its opacity once it's well on its way down)
+            shown = null;
           for (let t = 0; t <= length; t += length / 80) {
             ball.currentTime = t;
             const now = middle();
             aside = Math.max(aside, Math.abs(now.x - start.x));
+            up = Math.max(up, start.y - now.y);
             down = Math.max(down, now.y - start.y);
-            if (down > 40) shown ??= +getComputedStyle(scrap).opacity;
+            if (aside > 100) shown ??= +getComputedStyle(scrap).opacity;
           }
+          ball.currentTime = length;
+          const past = middle().x - innerWidth;
           ball.play();
-          done({ picture: !!scrap.querySelector('canvas, .bk-tile-paper'), aside, down, shown });
+          done({ picture: !!scrap.querySelector('canvas, .bk-tile-paper'), aside, up, down, past, shown, length });
         }).observe(document.documentElement, { childList: true, subtree: true }),
       ),
   );
+// That crumpled()'s answer is what was deleted, balled up and thrown in an arc off the screen's right edge, still shown
+// as it flies (what: whose throw, for the messages)
+export const thrownAway = ({ picture, aside, up, past, shown }, what) => {
+  assert.ok(
+    picture && aside > 200 && up > 40 && past > 0,
+    `${what}: crumpled and thrown in an arc off the screen's right edge (${aside} aside, ${up} up, ${past} past)`,
+  );
+  assert.ok(shown > 0.4, `${what}: still shown as it flies (${shown})`);
+};
 
 // ---- a preview in HQ's viewer, review mode running in its frame
 export const PREVIEW = 'https://scrap.preview.test';

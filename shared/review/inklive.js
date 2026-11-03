@@ -4,14 +4,13 @@
 import { HALO, HALO_ALPHA, band, disc, outline, radius } from './inkshape.js';
 
 // What a frame's pointer events repaint, for a canvas k device px to the CSS px: one box of whole device px around the
-// new points' discs and bands, the tail drawn last time (was) and the one drawn now (tail), and their white edge (grow);
+// new points' discs and bands, the tail painted last (was) and the one painted now (tail), and their white edge (grow);
 // in it, the stroke's every disc and band that reaches into it, as outline() has them, and the new tail. Inside the
 // box the canvas is cleared and those are filled again together, so each pixel there is filled once, by the very
 // shapes and in the very way draw() fills the whole stroke: pieces filled one over another would add up their soft
-// edges, and the line would thin and lighten as it goes dry. A tail's pixels are wiped by the next event's box. Only
-// a few shapes are filled, each found by a box test over the stroke's points (cheap, though it grows with the line).
-// A marker scribbled over one place has most of its passes in any box, so it's filled once a frame, never once an
-// event: a Pencil's four a frame each filling much the same box made a long fill fall behind the pen.
+// edges, and the line would thin and lighten as it goes dry. A tail's pixels are wiped by the next paint's box. The
+// shapes are found by a box test over the stroke's points; how many reach into the box depends on the line: few for a
+// pen's, most of its passes for a marker scribbled over one place.
 function piece(stroke, kept, { was = null, tail = null, grow = 0, k = 1 } = {}) {
   const pts = stroke.points,
     size = stroke.size,
@@ -44,34 +43,37 @@ function piece(stroke, kept, { was = null, tail = null, grow = 0, k = 1 } = {}) 
 }
 
 // The line's new points on its canvases, and its tail (ahead) in place of the last (null: all of it again, a
-// rectangle's), painted at the next frame with every other event's before it, or now (the lift's)
+// rectangle's), painted once a frame with every other event's that frame, or now (the lift's). Never once an event: a
+// Pencil sends about four a frame, and where each box holds most of a marker's passes, a fill per event grows with
+// the stroke until the line falls behind the pen.
 export function show(line, kept, tail = null, now = false) {
   if (!kept) {
     stop(line);
     return paint(line, null, outline(line.stroke), line.halo ? outline(line.stroke, HALO) : '');
   }
   line.tail = tail;
-  (line.waiting ??= []).push(...kept);
-  if (now) return shown(line);
-  line.frame ??= requestAnimationFrame(() => shown(line));
+  (line.unpainted ??= []).push(...kept);
+  if (now) return flush(line);
+  line.paintFrame ??= requestAnimationFrame(() => flush(line));
 }
-// What's waiting, painted: the tail drawn last (drawn) wiped and the newest put
-function shown(line) {
-  const kept = line.waiting ?? [],
-    was = line.drawn ?? null,
+// What's unpainted, painted: the tail on the canvas (tailPainted) wiped and the newest put
+function flush(line) {
+  const unpainted = line.unpainted ?? [],
+    was = line.tailPainted ?? null,
     tail = line.tail;
   stop(line);
-  line.drawn = tail;
-  if (!kept.length && !was && !tail) return;
+  line.tailPainted = tail;
+  if (!unpainted.length && !was && !tail) return;
   const k = line.g.getTransform().a,
-    p = piece(line.stroke, kept, { was, tail, grow: line.halo ? HALO : 0, k });
+    p = piece(line.stroke, unpainted, { was, tail, grow: line.halo ? HALO : 0, k });
   paint(line, p.box, p.ink, p.halo);
 }
-// What's waiting dropped, its frame with it: a line cancelled is wiped, and nothing may paint it again after
+// The unpainted points dropped, and the frame asked to paint them: a line cancelled is wiped, and nothing may paint it
+// again after
 export function stop(line) {
-  cancelAnimationFrame(line.frame);
-  line.frame = null;
-  line.waiting = null;
+  cancelAnimationFrame(line.paintFrame);
+  line.paintFrame = null;
+  line.unpainted = null;
 }
 
 // The samples a pointer event brings: those a fast hand left between two frames, else the event itself. The list can
@@ -84,7 +86,7 @@ export const samples = e => {
 
 // Where the pen is about to be: the browser's predicted points (getPredictedEvents, in Chromium and in Safari where
 // it has them), drawn as a tail from the line's end through the pen's last sample to them, with the end's pressure.
-// It's drawn only until the next event (show), never kept in the stroke; with no predicted points there's none.
+// It's drawn only until the next paint (show), never kept in the stroke; with no predicted points there's none.
 // Only a pen's: a mouse's or a finger's are guessed from a jerkier hand, and overshoot in odd directions past it
 export function ahead(line, e) {
   const next = e.getPredictedEvents?.(),

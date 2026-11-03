@@ -12,6 +12,7 @@ const h = await harness('panel', {
   },
 });
 const panel = await import('./panel.ts');
+const urgency = await import('./urgency.ts');
 const minute = 60_000;
 afterEach(scenarioCleanup(h.db));
 
@@ -32,9 +33,9 @@ async function seats(paced = false) {
       seat: `${engine}-1`,
       engine,
       state: 'ready',
-      week: paced && engine === 'claude' ? 0.5 : 0,
+      week: paced && engine === 'claude' ? 0.8 : 0,
       pace: paced && engine === 'claude',
-      weekResets: paced && engine === 'claude' ? Date.now() + 5 * minute : null,
+      weekResets: paced && engine === 'claude' ? Date.now() + 48 * 60 * minute : null,
     });
 }
 
@@ -67,16 +68,23 @@ test('round routing counts latest starts when finish deadlines cross their order
   }
 });
 
-test('a paced seat takes a round whose latest start precedes its reset but whose finish follows it', async () => {
+test('a deadline round waits for the fallback while explicit urgency lets the paced seat take it', async () => {
   await seats(true);
-  queued(round(185, 200), 'codex', 'consolidate', 'ruling');
-  round(186, 10);
-  assert.equal(panel.consolidator(186, 'merge'), 'quill');
-  await seats();
+  try {
+    queued(round(185, 200), 'codex', 'consolidate', 'ruling');
+    const { branch } = round(186, 10);
+    assert.equal(panel.consolidator(186, 'merge'), 'nib', 'the deadline stays within seat pacing');
+    const marked = urgency.setUrgent('task', branch.slice('job/'.length), true, 'juno');
+    assert.equal(typeof marked, 'object');
+    assert.equal(panel.consolidator(186, 'merge'), 'quill', 'urgent work bypasses pacing');
+  } finally {
+    await seats();
+  }
 });
 
 test('equal starts follow weekly room against resets and reverse when the engines change places', async () => {
   await seats();
+  await h.board('/api/seats/pacing', { on: false });
   const now = Date.now();
   const day = 24 * 60 * minute;
   round(187, 200);
@@ -122,6 +130,7 @@ test('equal starts follow weekly room against resets and reverse when the engine
     });
     assert.equal(panel.consolidator(187), 'nib');
   } finally {
+    await h.board('/api/seats/pacing', { on: true });
     for (const seat of ['claude-2', 'claude-3']) await h.worker('seat', { seat, engine: 'claude', state: 'closed' });
     await h.worker('seat', { seat: 'claude-1', engine: 'claude', state: 'ready', week: null, weekResets: null });
     await h.worker('seat', { seat: 'codex-1', engine: 'codex', state: 'ready', week: null, weekResets: null });

@@ -3,8 +3,7 @@
 // artifact's page's in HQ's viewer as its review mode tells it, else HQ's dark backdrop), and the page dissolving into
 // that same colour; the book's one shadow on it.
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
-import { fulfilPart } from '../../shared/review/parts.mjs';
+import { scriptForHq, fulfilPart } from '../../shared/review/parts.mjs';
 import { seen, tabAt } from './bookopen.mjs';
 import { pixelsIn } from './bookkit.mjs';
 
@@ -86,11 +85,11 @@ const ARTIFACT = 'https://lift.preview.test';
 async function artifactServed(page) {
   const context = page.context(),
     base = new URL(page.url()).origin,
-    reviewJs = await readFile(new URL('../../shared/review/review.js', import.meta.url), 'utf8');
+    reviewJs = scriptForHq('review/review.js', base);
   await context.route(/\/api\/preview\/link$/, r => r.fulfill({ json: { url: r.request().postDataJSON().url } }));
   await context.route(`${ARTIFACT}/**`, r => {
     const path = new URL(r.request().url()).pathname;
-    if (fulfilPart(r, path, reviewJs.replace('{{HQ_ORIGIN}}', base))) return;
+    if (fulfilPart(r, path, reviewJs)) return;
     if (path.startsWith('/__review/')) return r.fulfill({ json: { show: false } });
     return r.fulfill({
       contentType: 'text/html',

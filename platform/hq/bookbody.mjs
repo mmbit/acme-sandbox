@@ -3,7 +3,7 @@
 // it at its own width, tapped open and shut, and a mark landing in it showing its snip; the cover's edge let go
 // anywhere staying there, with HQ at a phone's width beside it, and never closing the book; the table where the book
 // moves off it in HQ's own ground; the book opening straight onto its page, HQ's page fading into its room; on
-// a phone the book over HQ, its tab in reach; a touch on the tab taken from the browser's swipe between pages; a page turned forward and back by one turn played either way. Each
+// a phone the book over HQ, its page the whole screen, its tab in reach; a touch on the tab taken from the browser's swipe between pages; a page turned forward and back by one turn played either way. Each
 // asserts what the board sees: boxes, frames, words. (the hardcover's tab and edge)
 import assert from 'node:assert/strict';
 import { MINI, middleOf, pixelsIn, touchOf } from './bookkit.mjs';
@@ -27,8 +27,8 @@ export function bodyStories(c) {
       table(browser, c),
     "the book's body: the book opens straight onto its page, no cover, and HQ fades into its room as it lands":
       browser => opening(browser, c),
-    "the book's body: on a phone the open book lies over HQ, its black board round the page and its tab in reach":
-      browser => phone(browser, c),
+    "the book's body: on a phone the open book lies over HQ, its page the whole screen and its tab in reach": browser =>
+      phone(browser, c),
     "the book's body: a page turned forward and back is the one 3D turn, played either way": browser =>
       turning(browser, c),
   };
@@ -267,9 +267,9 @@ async function phone(browser, c) {
     await c.settled(page, 'spread');
     const paper = await page.locator('#book .bk-paper').boundingBox(),
       box = await tab.boundingBox();
-    // the board shows round the page: at its head, its foot and its outer edge, the spine at the right
+    // the page is the whole screen, no cover round it, the spine past its right edge (board, call 190.)
     assert.ok(
-      paper.y >= 6 && paper.x >= 10 && paper.x + paper.width <= PHONE.width - 4,
+      paper.y <= 0 && paper.x <= 0 && paper.x + paper.width >= PHONE.width && paper.y + paper.height >= PHONE.height,
       `the paper at ${JSON.stringify(paper)}`,
     );
     assert.ok(box.x >= 0 && box.x + box.width <= PHONE.width, `the tab in reach: ${JSON.stringify(box)}`);

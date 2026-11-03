@@ -1,12 +1,12 @@
-// The page's controls on the rail at the paper's right edge (bookui.js), under the tools: the page before, where it is
-// in its chapter ("2/3", which opens the notebook's pages by name, the page's title at their head to write in) and the
-// page after, then the overview, New page and the cog for this device's preferences (bookprefs.js), which fold into
-// More where the rail is short. The page's name is its title, drawn at its
-// head (bookunits.js), and its control's label. The board's page
-// goes by its dog-ear onto Submit (bookdogear.js), and once sent it's locked: the rail gives way to a quiet "Sent,
-// locked". An invited person's page goes by its Send key (bookpagesend.js), an island on the rail; none on a page
-// sent, nor on a call's notes page.
-import { button, island, setPressed, lineIcon, besideRail } from './bookui.js';
+// The page's controls on the bar along the book's foot (bookui.js): in its middle the page before, where it is in its
+// chapter ("3 / 12", which opens the notebook's pages by name, the page's title at their head to write in) and the
+// page after; at its right the overview and New page where the page is wide enough (else in its dots menu), and in the
+// dots menu Tear off and send (booktear.js) and the cog for this device's preferences (bookprefs.js). The page's name is
+// its title, drawn at its head (bookunits.js), and its control's label. The board's page goes by tearing it off at its
+// spine's edge onto Submit (booktear.js), and once sent it's locked: the tools give way to a quiet "Sent, locked". An
+// invited person's page goes by its Send key on the bar (bookpagesend.js); none on a page sent, nor on a call's notes
+// page.
+import { button, island, setPressed, lineIcon, beside } from './bookui.js';
 import { mountPrefs } from './bookprefs.js';
 import { esc } from '../../util.js';
 import { nameOf } from './bookhead.js';
@@ -36,21 +36,23 @@ import { scope, word } from './bookscope.js';
 // book (bookpages.js): { views, cur }. act: what the controls do, bookpages.js's: overview(), level(), turnTo(i),
 // newPage(), send() (an invited person's). Returns { update() }: the controls say where the book is now.
 export function mountControls(book, act) {
-  const pages = island('pages'),
-    over = button({
+  const over = button({
       icon: ICONS.overview,
       label: word('allPages'),
       onClick: () => act.overview(),
       pressed: false,
     }),
     cog = button({ icon: ICONS.cog, label: word('preferences') });
-  over.classList.add('bk-rare');
-  cog.classList.add('bk-cog', 'bk-rare');
+  over.classList.add('bk-rare', 'bk-overview-key');
+  cog.classList.add('bk-cog');
   mountPrefs(cog);
-  const { before, after, name, add } = pageButtons(book, act),
-    rule = document.createElement('hr');
-  // (a one-page book has no overview or New page: none on its rail, where a control hidden keeps its slot.)
-  pages.append(before, after, name, rule, ...(scope?.singlePage ? [] : [over, add]), cog);
+  const { before, after, name, add } = pageButtons(book, act);
+  // (a one-page book, a guest's, has nothing to turn: no arrows, no count, no overview or New page)
+  if (!scope?.singlePage) {
+    island('pages').append(before, name, after);
+    island('keys').append(over, add);
+  }
+  island('book').prepend(cog);
   titleTaps(book, act, name);
   // (the asks still open on the page, counted by its title; in a guest's book, the scraps handed to them.)
   const forYou = mountForYou(book);
@@ -60,11 +62,8 @@ export function mountControls(book, act) {
     update() {
       const far = act.level() !== 'page',
         page = book.views[book.cur]?.page;
+      // (the overview open: only its own key, pressed, to come back by: bookstrip.css)
       setPressed(over, far);
-      // (the overview open: only its own button, pressed, to come back by)
-      for (const el of [before, name, after, rule]) el.hidden = far;
-      add.hidden = far;
-      cog.hidden = far;
       if (send) send.hidden = far || !page || shut(page) || page.kind === 'call';
       locked?.(!far && !!page && shut(page) && (page.sent || page.sending ? 'Sent, locked' : 'Locked'));
       before.disabled = mate(book, -1) < 0;
@@ -86,17 +85,17 @@ function titleTaps(book, act, name) {
     e => e.target.closest('.bk-title-tap') && !name.disabled && menu(book, act, name, true),
   );
 }
-// Where the page is in its chapter on the rail ("2/8"), its name in the label (and the tooltip)
+// Where the page is in its chapter on the bar ("3 / 12"), its name in the label (and the tooltip)
 function named(name, page, at, n) {
-  name.innerHTML = `<small>${at}/${n}</small>`;
+  name.textContent = `${at} / ${n}`;
   name.setAttribute(
     'aria-label',
     word('notebookPagesAt', { page: nameOf(page) }) + (n > 1 ? word('pageOfPages', { at, n }) : ''),
   );
 }
 
-// The pages' buttons: the page before and after, where it is (the notebook's pages), and New page (.bk-turns: what
-// More takes last, .bk-rare first: bookui.js)
+// The pages' buttons: the page before and after, where it is (the notebook's pages), and New page (.bk-rare: in the
+// dots menu where the page is narrow, bookstrip.css)
 function pageButtons(book, act) {
   const name = button({ label: word('notebookPages'), onClick: () => menu(book, act, name) }),
     before = button({ icon: ICONS.before, label: word('pageBefore'), onClick: () => turnOn(book, act, -1) }),
@@ -109,7 +108,6 @@ function pageButtons(book, act) {
     });
   name.classList.add('bk-where');
   name.setAttribute('aria-haspopup', 'menu');
-  for (const b of [before, name, after]) b.classList.add('bk-turns');
   add.classList.add('bk-rare');
   return { before, after, name, add };
 }
@@ -123,7 +121,7 @@ function turnOn(book, act, step) {
   const i = mate(book, step);
   if (i >= 0) act.turnTo(i);
 }
-// An invited person's Send, its own island on the rail
+// An invited person's Send, on the bar before its dots
 function sendKey(act) {
   const send = button({
     icon: ICONS.send,
@@ -139,12 +137,12 @@ function sendKey(act) {
 // the tools' place, its words its tooltip, the tools unseen in their room while it shows (bookshare.css). Returns
 // locked(words, or false).
 function lockLine() {
-  const line = island('tools').closest('.bk-column'),
+  const line = island('tools').closest('.bk-strip'),
     lock = document.createElement('p');
   lock.className = 'bk-locked';
   lock.innerHTML = `${ICONS.lock}<span></span>`;
   lock.setAttribute('role', 'status');
-  island('tools').parentElement.append(lock);
+  line.append(lock);
   return words => {
     line.toggleAttribute('data-locked', !!words);
     if (words) lock.lastChild.textContent = words;
@@ -168,7 +166,7 @@ function menu(book, act, from, write = false) {
     if (ended) titling = null;
     close();
   });
-  besideRail(card, from);
+  beside(card, from);
   card.addEventListener('click', e => {
     const b = e.target.closest('button');
     if (!b) return;

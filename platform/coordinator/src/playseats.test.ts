@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { drainUntil } from '../../worker/src/downtime.ts';
 import { at, available, binding, burnRates, choices, consume, drained, seatEvent, seatsOf } from './playseats.ts';
 import type { Snapshot } from './eta.ts';
+import { waitWords } from '../../worker/hq/waits.ts';
 
 const HOUR = 3_600_000,
   now = Date.parse('2026-10-24T08:00:00Z');
@@ -83,6 +84,7 @@ test('missing prices and unidentifiable mixes remain explicit while known usage 
 test("a seat takes work as claim does: its engine's on its CLI, else its agent's fallback's while its own is out", () => {
   const input = snapshot();
   input.seats[0].cli = 'claude';
+  input.pacing = true;
   input.seats.push({ ...input.seats[0], id: 'codex-1', engine: 'codex', cli: 'codex', fallbacks: ['bolt'] });
   const seats = seatsOf(input);
   const order = { id: 1, board: 0, latestStart: null };
@@ -96,11 +98,47 @@ test("a seat takes work as claim does: its engine's on its CLI, else its agent's
     job: 2,
   });
   assert.equal((pick({ id: 3, agent: 'bolt', cli: 'nowhere', fallsBack: true }) as { id: string }).id, 'codex-1');
+  seats[0].week = 0.5;
+  seats[0].weekResets = now + 5 * 24 * HOUR;
+  const paced = pick({ id: 4, agent: 'bolt', fallsBack: true });
+  assert.ok('on' in paced && paced.on === 'seats' && paced.reason === 'pacing');
+  assert.ok(paced.until > now + HOUR, 'an ineligible fallback does not invent an immediate pacing return');
+  seats[0].week = 0.1;
   // its own seat asleep: the fallback's while it's out, and without one it waits for the seat's return
   seats[0].state = 'sleeping';
   seats[0].until = now + HOUR;
   assert.equal((pick({ id: 4, agent: 'bolt', fallsBack: true }) as { id: string }).id, 'codex-1');
-  assert.deepEqual(pick({ id: 5, agent: 'wren' }), { on: 'seats', engine: 'claude', until: now + HOUR });
+  assert.deepEqual(pick({ id: 5, agent: 'wren' }), {
+    on: 'seats',
+    engine: 'claude',
+    from: now,
+    until: now + HOUR,
+    reason: 'unavailable',
+  });
+});
+
+test('a plan distinguishes pacing for this work from unavailable seats and names the binding return', () => {
+  const input = snapshot();
+  input.pacing = true;
+  input.seats[0].week = 0.5;
+  input.seats[0].weekResets = now + 5 * 24 * HOUR;
+  const seats = seatsOf(input);
+  const order = { id: 1, board: 0, latestStart: null };
+  const row = { id: 1, agent: 'bolt', engine: 'claude', for_seat: null, downtime: 0 };
+  const pick = () => choices(at(seats, now), new Map(), {})(row, order).seat;
+  const paced = pick();
+  assert.ok('on' in paced && paced.on === 'seats');
+  assert.equal(paced.reason, 'pacing');
+  assert.ok(paced.until < seats[0].weekResets!);
+  const words = waitWords(paced, ms => new Date(ms).toISOString());
+  assert.match(words, /pacing for this non-urgent work from .* until /);
+  assert.match(words, /urgent work may use paced seats/);
+  seats[0].week = 1;
+  const unavailable = pick();
+  assert.ok('on' in unavailable && unavailable.on === 'seats');
+  assert.equal(unavailable.reason, 'unavailable');
+  assert.equal(unavailable.until, seats[0].weekResets, 'the unrelated five-hour reset cannot end the weekly hold');
+  assert.match(waitWords(unavailable, String), /a matching claude seat becoming available/);
 });
 
 test('the play keeps a tight seat to one job and prefers a peer with room below its own stop', () => {

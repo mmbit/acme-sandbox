@@ -132,10 +132,11 @@ export function reader() {
     // (work not in the thread yet, hq when's: at its end, before the tasks waiting for a time)
     const before = at < 0 ? turn.slice(0, timedFrom) : turn.slice(0, at);
     const next = !before.some(t => OPEN.includes(t.status));
-    // A failed task holds the tasks drawn before it ended, which counted on its work. One drawn since (its redo queued
-    // without --lands, the next step) is its owner's call, made knowing it failed, as is work not drawn yet: held, it
-    // would wait for a replacement that is already there. The failed task still
-    // keeps the deliverable unfinished, and its merge wakes the owner (threadends.ts).
+    // A failed task holds the tasks drawn before it ended, which counted on its work. One drawn since (the next step, a
+    // failed task's redo queued without --lands) is its owner's call, made knowing it failed, as is work not drawn yet:
+    // held, it would wait for a replacement that is already there. (A stopped task's redo takes its place: takeover.ts
+    // stopFor.) The failed task still keeps the deliverable unfinished, and its
+    // merge wakes the owner (threadends.ts).
     const drawnAt = at < 0 ? null : turn[at].created;
     const countedOn = (t: Task) => drawnAt !== null && (t.finished === null || drawnAt < t.finished);
     return {

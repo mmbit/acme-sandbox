@@ -7,7 +7,7 @@
 // on the thread, never on one job. HQ tells nobody by itself: whether the board hears, and the new time it's given, is
 // the CEO's call. Only a time the board set itself (deadline_by BOARD) can be news to it when missed, and once: a time we
 // gave, a planned finish or the new time after a miss, orders the work and is ours to plan with
-// Each task inherits the one deadline through its deliverable membership. The plan and pacing read it afresh,
+// Each task inherits the one deadline through its deliverable membership. The plan reads it afresh,
 // so a deadline change applies to all its work without task-level copies.
 // (its messages say deliverable, the board's word for a thread)
 import { db } from './db.ts';

@@ -8,7 +8,7 @@ import { registerHooks } from 'node:module';
 const REVIEW = new URL('../../../../shared/review/', import.meta.url);
 const module = text => ({ url: `data:text/javascript,${encodeURIComponent(text)}`, shortCircuit: true });
 const STORE = module(
-  ['createGroup', 'deleteGroup', 'editGroup', 'loadGroups', 'restoreGroup']
+  ['createGroup', 'deleteGroup', 'editGroup', 'loadGroups', 'placeGroups', 'restoreGroup']
     .map(name => `export const ${name} = (dev, ...args) => globalThis.store.${name}(...args);`)
     .join('\n'),
 );

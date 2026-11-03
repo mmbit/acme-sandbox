@@ -9,6 +9,7 @@
 import assert from 'node:assert/strict';
 import { playLine } from './bookcall.mjs';
 import { pressAlong, until } from './bookkit.mjs';
+import { toChapter } from './bookchrome.mjs';
 
 // (a tap or a wait on the shared machine under load: taps time out at 30 s there, on main too)
 const LOADED_MS = 90_000;
@@ -120,8 +121,8 @@ async function asked({ p, line, shot, clear }) {
   await ask.locator('[data-not]').click({ timeout: LOADED_MS });
   await ask.waitFor({ state: 'detached', timeout: LOADED_MS });
 }
-// The agent's note on the call's page, and the book opened under Calls (from its lip where it stays shut), the call
-// going on
+// The agent's note on the call's page, and the book opened under Calls (from its lip where it stays shut; upright, the
+// bookmarks brought out first), the call going on
 async function underCalls({ p, line, context, name, shot, clear }, notesPage) {
   context.notebook.note(notesPage, line.hello.agent, {
     texts: [{ x: 80, y: 140, w: 320, color: '#2b2230', text: 'The mugs in teal' }],
@@ -132,7 +133,7 @@ async function underCalls({ p, line, context, name, shot, clear }, notesPage) {
   await p.waitForFunction(() => !['folded', 'shut'].includes(document.documentElement.dataset.book), null, {
     timeout: LOADED_MS,
   });
-  await p.locator('#book .bk-marks [data-chapter=calls]').click({ timeout: LOADED_MS });
+  await toChapter(p, 'calls');
   const title = () =>
     p.evaluate(() => document.querySelector('#book .bk-page:not([hidden]) .bk-page-title')?.textContent ?? '');
   await until(

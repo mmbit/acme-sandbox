@@ -149,8 +149,7 @@ export const paceTo = (s: Windows, pacing: boolean, reserve: boolean) =>
 
 // The week's pace, while the board has pacing on: at the average pace of the week so far, would the seat reach the
 // level its pacing aims for (`to`) more than PACE_EARLY before the weekly reset? Then it's paced until that reset: it
-// takes only the board's word and work that has to start before the week turns over to keep its window (the
-// coordinator's claim, by each job's latest start), and the rest waits, so a few jobs start later rather than everything
+// takes only explicitly urgent work (the coordinator's claim), and the rest waits, so a few jobs start later rather than everything
 // stopping a day or two early (the board, 15 Oct). A stop due only a few hours early costs less than holding work back,
 // so it doesn't pace. It aims PACE_MARGIN under the level, so a week on pace ends just short of it. Before a day of the
 // week has gone there's no pace to go by. `to`: paceTo. Only a default target relaxes in the last day. Undefined: not paced.

@@ -1,7 +1,7 @@
 // node --test src/landing.test.ts   (uses a throwaway DATA_DIR): failed jobs replaced through hq job --lands.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { writeFileSync } from 'node:fs';
+import { appendFileSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { harness } from './harness.ts';
 import { followthroughFixture } from './followthrough.fixture.ts';
@@ -10,6 +10,11 @@ const h = await harness('landing', {
   before: repo => {
     // (bolt's: its call's follow-up hands work into the game's threads, which only their owner draws)
     writeFileSync(`${repo}/company/projects.yaml`, 'projects:\n  - { id: game, name: The game, owner: bolt }\n');
+    // (work only one engine and model do, which a redo carries: engineonly.ts)
+    appendFileSync(
+      `${repo}/company/org.yaml`,
+      '\nengineOnly:\n  - { id: pixels, what: pixel work, engine: claude, model: claude-opus-test, paths: ["pixels/**"] }\n',
+    );
     process.env.WORK_MIRROR_DIR = `${repo}/mirror.git`;
     execFileSync('git', ['init', '--bare', '-q', process.env.WORK_MIRROR_DIR]);
   },
@@ -320,3 +325,174 @@ for (const status of ['handled', 'ready'])
     assert.equal(returned.ready_at, null);
     assert.equal(returned.why, 'stopped: chime: The trial needs a judgment');
   });
+
+// A deliverable of chime's own project: its first task (chime's, or `agent`'s, on the work only one engine does it's
+// declared to do) running, a later one drawn before it started
+const plan = await import('./plan.ts');
+const { ceo } = await import('./company.ts');
+async function runningTask(agent = 'chime', only?: string) {
+  reset();
+  if (!projects.findProject('ads'))
+    assert.equal(
+      typeof plan.newProject({ id: 'ads', name: 'Ads', owner: 'chime', code: 'AD' }, ceo(), () => true),
+      'object',
+    );
+  const made = projects.createThread({ project: 'ads', name: 'The round', goal: 'The ads run' });
+  if (typeof made === 'string') throw new Error(made);
+  const first = h.queue({ agent, title: 'Act on the card', thread: made.id, only });
+  const later = h.queue({ agent: 'chime', title: 'Read the spend', thread: made.id });
+  const act = (await h.claim(h.job(first).engine))!;
+  assert.equal(act.id, first);
+  return { thread: made.id, act, later };
+}
+// What holds a queued task in its deliverable's order, in hq jobs' words (threadorder.ts words)
+const heldBy = async (id: number) => {
+  const threadorder = await import('./threadorder.ts');
+  return threadorder.words()(
+    db.prepare('select id, kind, pr, thread, branch, status from jobs where id = ?').get(id) as any,
+  );
+};
+// chime's redo, queued from a running job into its task's deliverable (hq job): its number and hq job's answer
+const redo = async (by: Running, ...where: string[]) => {
+  const queued = await h.hq(by, 'job', '--new', ...where, 'chime', 'Act on the card');
+  assert.equal(queued.code, 0, queued.out);
+  return { next: Number(/Queued job #(\d+)/.exec(queued.out)![1]), out: queued.out };
+};
+type Running = NonNullable<Awaited<ReturnType<typeof h.claim>>>;
+// Once the stopped run has ended: the later task waits for the redo, which runs
+async function redoesIt(act: Running, next: number, later: number) {
+  await h.finish(act, { status: 'stopped', result: 'Stopped by chime' });
+  assert.deepEqual(await heldBy(later), [`after #${next} in its deliverable`], 'the later task waits for the redo');
+  assert.deepEqual(await heldBy(next), []);
+  assert.equal((await h.claimJob(next))?.id, next);
+}
+
+test('a task that queues its redo and then stops itself: the redo takes its place, the deliverable unheld', async () => {
+  const { act, later, thread } = await runningTask();
+  const { codeOf } = await import('./jobcodes.ts');
+  // (a redo with no code of its own goes on under the task's)
+  const next = h.queue({ agent: 'chime', title: 'Act on the card', thread, word: undefined } as any);
+  assert.equal(codeOf(next), null);
+  const stopped = await h.hq(act, 'stop', String(act.id), 'Started before the card was answered');
+  assert.equal(stopped.code, 0, stopped.out);
+  assert.match(stopped.out, new RegExp(`#${next} takes its place and does its work again`));
+  assert.equal(h.jobs.replacementOf(act.id), next);
+  assert.ok(codeOf(act.id));
+  assert.equal(codeOf(next), codeOf(act.id));
+  assert.deepEqual(await heldBy(next), [`after #${act.id} in its deliverable`], 'behind the run still ending');
+  assert.equal(await h.claimJob(next), null);
+  await redoesIt(act, next, later);
+});
+
+test('a redo queued with no engine rule of its own goes on under the one its stopped task ran under', async () => {
+  const { act, later, thread } = await runningTask('chime', 'pixels');
+  const next = h.queue({ agent: 'chime', title: 'Act on the card', thread });
+  const pin = (id: number) => ({ ...db.prepare('select engine, model, engine_only from jobs where id = ?').get(id) });
+  assert.deepEqual(pin(act.id), { engine: 'claude', model: 'claude-opus-test', engine_only: 'pixels' });
+  assert.match(String(pin(next).engine), /^engine-/, 'queued on its own engine, with no rule');
+  assert.deepEqual([pin(next).model, pin(next).engine_only], [null, null]);
+  assert.equal((await h.hq(act, 'stop', String(act.id), 'Started before the card was answered')).code, 0);
+  assert.equal(h.jobs.replacementOf(act.id), next);
+  assert.deepEqual(pin(next), { engine: 'claude', model: 'claude-opus-test', engine_only: 'pixels' });
+  await h.finish(act, { status: 'stopped', result: 'Stopped by chime' });
+  assert.deepEqual(await heldBy(later), [`after #${next} in its deliverable`]);
+});
+
+test('a task that stops itself and then queues its redo: the redo takes its place as it is queued', async () => {
+  const { act, later } = await runningTask();
+  const stopped = await h.hq(act, 'stop', String(act.id), 'Wait for the card');
+  assert.equal(stopped.code, 0, stopped.out);
+  assert.match(stopped.out, /The next job queued there for its agent does its work again and takes its place/);
+  const { next, out } = await redo(act);
+  assert.match(out, new RegExp(`It takes the place of #${act.id}, chime's task stopped in this deliverable`));
+  assert.equal(h.jobs.replacementOf(act.id), next);
+  await redoesIt(act, next, later);
+});
+
+test('the redo queued after the stopped task ended takes its place too', async () => {
+  const { act, later, thread } = await runningTask();
+  assert.equal((await h.hq(act, 'stop', String(act.id), 'Wait for the card')).code, 0);
+  await h.finish(act, { status: 'stopped', result: 'Stopped by chime' });
+  assert.deepEqual(await heldBy(later), [`task #${act.id} before it failed`], 'nothing in its place yet');
+  const chime = await h.start({ agent: 'chime', title: 'Sort the round' });
+  const { next, out } = await redo(chime, '--deliverable', thread);
+  assert.match(out, new RegExp(`It takes the place of #${act.id}`));
+  assert.deepEqual(await heldBy(later), [`after #${next} in its deliverable`]);
+});
+
+test('with several jobs queued since it started, hq stop names them and --for picks one, once', async () => {
+  const { act, later } = await runningTask();
+  const one = (await redo(act)).next,
+    two = (await redo(act)).next;
+  const stopped = await h.hq(act, 'stop', String(act.id), 'Started too early');
+  assert.equal(stopped.code, 0, stopped.out);
+  assert.match(
+    stopped.out,
+    new RegExp(
+      `If #${one} or #${two}, queued there since it started, does its work again: hq stop ${act.id} "why" --for`,
+    ),
+  );
+  assert.equal(h.jobs.replacementOf(act.id), null);
+  await h.finish(act, { status: 'stopped', result: 'Stopped by chime' });
+  assert.deepEqual(await heldBy(later), [`task #${act.id} before it failed`]);
+  const chime = await h.start({ agent: 'chime', title: 'Sort the round' });
+  const placed = await h.hq(chime, 'stop', String(act.id), 'Its redo', '--for', String(two));
+  assert.equal(placed.code, 0, placed.out);
+  assert.match(placed.out, new RegExp(`#${act.id} had ended already`));
+  assert.match(placed.out, new RegExp(`#${two} takes its place`));
+  assert.equal(h.jobs.replacementOf(act.id), two);
+  assert.deepEqual(await heldBy(later), [`after #${two} in its deliverable`]);
+  const again = await h.hq(chime, 'stop', String(act.id), 'Again', '--for', String(one));
+  assert.match(again.out, new RegExp(`#${two} has taken over #${act.id}'s work already`));
+});
+
+test("--for names the agent's own unstarted work in the deliverable, placed by the project's owner or the CEO", async () => {
+  const { act, thread } = await runningTask('kit');
+  const theirs = h.queue({ agent: 'kit', title: 'Its redo', thread, queuedBy: 'chime' }),
+    other = h.queue({ agent: 'chime', title: 'Not kit', thread }),
+    elsewhere = h.queue({ agent: 'kit', title: 'Elsewhere' });
+  const kit = await h.start({ agent: 'kit', title: 'Sort it' });
+  for (const replacement of [other, elsewhere, act.id, theirs]) {
+    const r = await h.hq(kit, 'stop', String(act.id), 'Its redo', '--for', String(replacement));
+    assert.notEqual(r.code, 0, `${replacement}: ${r.out}`);
+  }
+  assert.match(
+    (await h.hq(kit, 'stop', String(act.id), 'Its redo', '--for', String(theirs))).out,
+    /drawn by its owner/,
+    "chime's plan: kit doesn't reorder it",
+  );
+  assert.equal((await h.heartbeat(act)).body.stop, undefined, 'the refusal undoes the stop with it');
+  assert.equal(h.jobs.replacementOf(act.id), null);
+  const chief = await h.start({ agent: ceo(), title: 'Follow through' });
+  const placed = await h.hq(chief, 'stop', String(act.id), 'Its redo', '--for', String(theirs));
+  assert.equal(placed.code, 0, placed.out);
+  assert.match((await h.heartbeat(act)).body.stop, /Its redo/);
+  assert.equal(h.jobs.replacementOf(act.id), theirs);
+});
+
+test("the CEO gives a card's wait to a job of the agent who filed it; nobody else's", async () => {
+  const { act } = await runningTask();
+  const card = await h.ask(act);
+  const chief = await h.start({ agent: ceo(), title: 'Follow through' }),
+    kit = await h.start({ agent: 'kit', title: 'Not theirs' });
+  const waits = await h.agent('job', chief.token, {
+    agent: 'chime',
+    title: 'After the card',
+    prompt: 'x',
+    afterRequest: card,
+  });
+  assert.equal(waits.status, 200, JSON.stringify(waits.body));
+  assert.equal(await h.claimJob(waits.body.id), null, 'it waits for the card');
+  assert.equal(
+    (await h.agent('job', chief.token, { agent: 'kit', title: 'Not the filer', prompt: 'x', afterRequest: card }))
+      .status,
+    409,
+  );
+  const plain = h.queue({ agent: 'chime', title: 'Its redo', queuedBy: 'chime' });
+  assert.equal((await h.agent('waits', kit.token, { id: plain, request: card })).status, 409);
+  assert.equal(
+    (await h.agent('waits', chief.token, { id: plain, request: card, why: 'Its redo waits too' })).status,
+    200,
+  );
+  assert.equal(await h.claimJob(plain), null, 'it waits for the card too');
+});

@@ -1,17 +1,22 @@
-// book-check.mjs's stories of a page shared by its corner and of the paper's feel (shell/ink/bookdogear.js, bookshare.js,
-// bookpaper.js), on a desktop in Chromium with the played store. The corner drawn away with a mouse and with a finger
-// shows Submit, PDF and PNG, the page in hand torn out at the spine while the book's stays whole: let go on PNG the
-// page's picture downloads, named for its title and day, and no share sheet opens; on PDF a one-page PDF; let go
-// anywhere else nothing goes (Submit: booksend.mjs). With a call on, the page carried onto the call's window, a picture file dropped there,
-// and a paste once the board pressed in it all go to Juno, the window lit as they come, and the book takes none; a
-// picture taped on the page, picked with Select and carried onto the window or its bubble, goes too, and stays taped
-// where it was. (the call's window; the taped picture, held still) Tapped, the corner opens the same three as a menu, its keys going round it and Escape
-// putting it away. Things deleted crumple over the paper, already gone underneath: the store has them gone at once, a
-// press goes through the crumple, and it's over within half a second. (a long page's: booksharelong.mjs)
+// book-check.mjs's stories of a page torn off at its spine and shared, and of the paper's feel (shell/ink/booktear.js,
+// bookshare.js, bookpaper.js), on a desktop with the played store. A press at the page's right edge, where the spine
+// is, drawn to the left with a finger, the Pencil and a mouse tears a copy off: Submit, PDF and PNG show over the
+// paper while the controls' islands make way, the page in hand torn out at the spine while the book's stays whole. Let
+// go on PNG the page's picture downloads, named for its title and day, and no share sheet opens; on PDF a one-page
+// PDF; let go anywhere else it flies back and nothing goes, nothing drawn where it was pressed (Submit: booksend.mjs).
+// The bar's dots menu's Tear off and send opens the same three as a menu, its keys going round it and Escape putting
+// it away, back on the dots. Moved down the spine it's the page's own (the Pencil draws there); pressed under the
+// status bar's blur or on the tools, nothing tears (on an iPad mini upright). With a call on, the page carried onto the
+// call's window, a picture file dropped there, and a paste once the board pressed in it all go to Juno, the window lit
+// as they come, and the book takes none; a picture taped on the page, picked with Select and carried onto the window
+// or its bubble, goes too, and stays taped where it was. Things deleted crumple over the paper, already gone
+// underneath: the store has them gone at once, a press goes through the crumple, and its throw is over within two seconds.
+// (the gestures and the presses that aren't a tear: booktearing.mjs; a long page's: booksharelong.mjs.)
 import assert from 'node:assert/strict';
 import { playLine } from './bookcall.mjs';
 import { freePage, line, paperBox, pick, savedWhere, tool } from './bookmouse.mjs';
-import { DESKTOP, until } from './bookkit.mjs';
+import { DESKTOP, QUIET_MS, crumpled, until } from './bookkit.mjs';
+import { dragTo, notATearStory, spineOf, targetsShown, tearOffMenu } from './booktearing.mjs';
 
 // longer than a native drag's light lasts (calldrop.js LIT_MS, 300 ms), so a light that goes out is caught
 const HELD_STILL_MS = 650;
@@ -19,8 +24,10 @@ const HELD_STILL_MS = 650;
 // c: book-check.mjs's { hqIn, base, store, pages, shot, settled, noErrorsIn, SNIP }
 export function shareStories(c) {
   return {
-    "a page's corner drawn onto PNG and PDF with a mouse and a finger; tapped, the same as a menu; onto a call's window":
+    "a page torn off at its spine onto PNG and PDF with a finger, a mouse and the Pencil; the dots' Tear off and send, the same as a menu; onto a call's window":
       browser => shareStory(browser, c),
+    'a press moved down the spine, under the blur or on the tools is never a tear': browser =>
+      notATearStory(browser, c),
     'things deleted crumple over the paper, gone at once underneath, never in the way': browser =>
       crumpleStory(browser, c),
   };
@@ -37,8 +44,8 @@ async function shareStory(browser, c) {
   const s = await opened(browser, c);
   const { page } = s;
   try {
-    await (await cornerOf(page)).waitFor({ timeout: 10_000 });
-    await c.shot('share-corner', page);
+    await spineOf(page);
+    await c.shot('share-page', page);
     // PNG with a finger: the page's picture downloads, named for it
     const png = await downloaded(page, () => dragTo(page, 'touch', 'png'));
     assert.deepEqual(
@@ -46,25 +53,23 @@ async function shareStory(browser, c) {
       { name: `Shop the price ${day}.png`, head: [0x89, 0x50, 0x4e, 0x47] },
       'the PNG downloaded, named for its page',
     );
-    // PDF with the mouse: a one-page PDF of it
+    // PDF with the mouse: a one-page PDF of it, the targets over the paper while it's carried
     const pdf = await downloaded(page, () =>
       dragTo(page, 'mouse', 'pdf', async () => {
         await page.waitForTimeout(400);
         await c.shot('share-targets', page);
         assert.ok(await tornInHand(page), 'the page in hand torn out at the spine, the book’s page whole');
+        const shown = await targetsShown(page);
+        assert.ok(shown.overPaper, `the targets over the paper: ${JSON.stringify(shown)}`);
+        assert.deepEqual(shown.islands, [], 'the islands made way for them');
       }),
     );
     assert.equal(pdf.name, `Shop the price ${day}.pdf`);
     assert.equal(pdf.text.slice(0, 8), '%PDF-1.4', 'a PDF');
     assert.match(pdf.text, /\/Count 1/, 'of one page');
     assert.equal(await page.evaluate(() => window.__shared.length), 0, 'no share sheet');
-    // let go off the targets: nothing goes, the corner back
-    await dragTo(page, 'mouse', null);
-    await page.waitForTimeout(600);
-    assert.equal(await page.evaluate(() => window.__downloads.length), 0, 'nothing downloaded');
-    assert.equal(await page.locator('#book > .bk-held').count(), 0, 'the page back in its corner');
-    assert.equal(await page.locator('#book .bk-share').isHidden(), true, 'the targets gone');
-    await menuOfCorner(c, page);
+    await flownBack(c, page, free);
+    await menuOfTheDots(c, page);
     await ontoTheCall(c, s);
     await tapedOntoTheCall(c, s, free);
     c.noErrorsIn(s.errors);
@@ -73,9 +78,20 @@ async function shareStory(browser, c) {
     await s.done();
   }
 }
+// The Pencil's copy let go off the targets: it flies back, nothing goes and the targets are away, and nothing is drawn
+// where it was pressed
+async function flownBack(c, page, free) {
+  await dragTo(page, 'pen', null);
+  await until(async () => !(await page.locator('#book > .bk-held').count()), 'the page flown back');
+  await page.waitForTimeout(QUIET_MS);
+  assert.equal(await page.evaluate(() => window.__downloads.length), 0, 'nothing downloaded');
+  assert.equal(await page.locator('#book .bk-share').isHidden(), true, 'the targets gone');
+  assert.equal(await page.locator('#book .bk-controls[data-targets]').count(), 0, 'the islands back');
+  assert.equal(c.pages.find(p => p.id === free.id).ink.length, 1, 'nothing drawn where the Pencil tore it');
+}
 
-// A call with the CEO (Juno), from the intercom: the corner's own call target gone.
-async function callTheCeo(s) {
+// A call with the CEO (Juno), from the intercom
+export async function callTheCeo(s) {
   const ceo = await s.page.evaluate(async () => {
     const at = p => import(new URL(p, location.href).href);
     (await at('shell/desk.js')).openIntercom();
@@ -85,24 +101,23 @@ async function callTheCeo(s) {
   await until(() => s.line.hello, 'a call started');
   assert.equal(s.line.hello.agent, ceo, 'a call with the CEO');
 }
-// Tapped, the corner opens the same three as a menu, its keys going round it, Escape putting it away on the corner
-async function menuOfCorner(c, page) {
-  await (await cornerOf(page)).click();
-  const menu = page.getByRole('menu', { name: 'Where this page goes' });
-  await menu.waitFor({ timeout: 10_000 });
+// The dots' Tear off and send opens the same three as a menu, its keys going round it, Escape putting it away and the
+// keys back on the dots
+async function menuOfTheDots(c, page) {
+  const menu = await tearOffMenu(page);
   assert.deepEqual(await menu.getByRole('menuitem').evaluateAll(items => items.map(i => i.dataset.share)), [
     'submit',
     'pdf',
     'png',
   ]);
   await c.shot('share-menu', page);
+  assert.equal(await page.evaluate(() => document.activeElement.dataset.share), 'submit', 'the keys on its first');
   await page.keyboard.press('ArrowRight');
   assert.equal(await page.evaluate(() => document.activeElement.dataset.share), 'pdf');
   await page.keyboard.press('Escape');
   assert.equal(await menu.isHidden(), true, 'Escape puts the menu away');
-  assert.equal(await page.evaluate(() => document.activeElement.className), 'bk-dogear', 'back on the corner');
+  assert.ok(await page.evaluate(() => document.activeElement.matches('#book .bk-more')), 'back on the dots');
 }
-
 // With the call on: the page carried onto its window, a picture file dropped there, a paste once the board pressed in
 // it and the page carried onto its bubble once minimised each go to Juno, lit while they're over it; the book takes none
 async function ontoTheCall(c, s) {
@@ -151,8 +166,15 @@ async function ontoTheCall(c, s) {
 // A picture taped on the page, picked with Select and carried onto the call's window, then onto its bubble: each time
 // it goes to Juno, the place lit under it while it's held there, and lands back where it was taped
 async function tapedOntoTheCall(c, s, free) {
-  const { page } = s,
-    box = await paperBox(page);
+  const { page } = s;
+  // (the call turned the book to its notes page: back to the picture's by its chapter's bookmark)
+  await page.locator('#book .bk-mk-tab[data-chapter=sketch]').click();
+  await page.waitForFunction(
+    () =>
+      !document.querySelector('#book .bk-turn-picture') &&
+      document.querySelector('#book .bk-page:not([hidden]) .bk-page-title')?.textContent.includes('Shop: the price'),
+  );
+  const box = await paperBox(page);
   await pick(page, 'Select');
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await page.keyboard.press('Control+a');
@@ -218,10 +240,14 @@ async function crumpleStory(browser, c) {
     await tool(page, 'Select').click();
     await page.mouse.move(box.x + 300, box.y + 400);
     await page.keyboard.press('Control+a');
+    const thrown = crumpled(page);
+    thrown.catch(() => {}); // (a failure below shows first; awaiting it later still throws)
     await page.keyboard.press('Delete');
-    // the crumple plays over the paper, the line already gone underneath and in the store
-    const at = Date.now();
+    // the crumple plays over the paper, the line already gone underneath and in the store, its throw over within two
+    // seconds as every motion in the book
     await page.locator('.bk-fx-sheet').waitFor({ state: 'attached', timeout: 1000 });
+    const { length } = await thrown;
+    assert.ok(length > 0 && length <= 2000, `over within two seconds (${length} ms)`);
     await c.shot('paper-crumple', page);
     assert.equal(
       await page.evaluate(() => getComputedStyle(document.querySelector('.bk-fx')).pointerEvents),
@@ -229,8 +255,7 @@ async function crumpleStory(browser, c) {
       'a press goes through it',
     );
     await savedWhere(c, free.id, p => p.ink.length === 0);
-    await page.locator('.bk-fx-sheet').waitFor({ state: 'detached', timeout: 1500 });
-    assert.ok(Date.now() - at < 900, `over quickly (${Date.now() - at} ms)`);
+    await page.locator('.bk-fx-sheet').waitFor({ state: 'detached', timeout: 2500 });
     c.noErrorsIn(s.errors);
   } finally {
     c.pages.splice(c.pages.indexOf(free), 1);
@@ -242,19 +267,28 @@ async function crumpleStory(browser, c) {
 
 // HQ on the played store on a desktop, the book open on its last page; the store's picture of a page served, the system's
 // share sheet played (what it's given kept: window.__shared), a download's link pressed (the file kept:
-// window.__downloads, as Chromium holds back a second download a played finger starts) and a call's line
+// window.__downloads, as Chromium holds back a second download a played finger starts), a call's line, and the
+// pictures sent to the call (uploads(): their bytes, kept as they're sent, as a route isn't handed a Blob's body)
 export async function opened(browser, c, picture = c.SNIP) {
   const context = await c.hqIn(browser, DESKTOP, { hasTouch: true, deviceScaleFactor: 1 });
   await context.route(`${c.base}/api/book/picture**`, r =>
     r.fulfill({ contentType: 'image/png', body: Buffer.from(picture.split(',')[1], 'base64') }),
   );
-  // (a call's pictures, numbered as they come, their bytes kept)
-  const uploads = [];
-  await context.route(`${c.base}/api/pictures**`, r => {
-    uploads.push(r.request().postDataBuffer());
-    r.fulfill({ json: { id: uploads.length, type: 'image/jpeg' } });
-  });
+  // (a call's pictures, numbered as they come)
+  let sent = 0;
+  await context.route(`${c.base}/api/pictures**`, r => r.fulfill({ json: { id: ++sent, type: 'image/jpeg' } }));
   await context.addInitScript(() => {
+    window.__pictures = [];
+    const open = XMLHttpRequest.prototype.open,
+      send = XMLHttpRequest.prototype.send;
+    XMLHttpRequest.prototype.open = function (method, url, ...more) {
+      this.picture = new URL(url, location.href).pathname === '/api/pictures';
+      return open.call(this, method, url, ...more);
+    };
+    XMLHttpRequest.prototype.send = function (body) {
+      if (this.picture) window.__pictures.push(body.arrayBuffer().then(bytes => [...new Uint8Array(bytes)]));
+      return send.call(this, body);
+    };
     window.__downloads = [];
     const press = HTMLAnchorElement.prototype.click;
     HTMLAnchorElement.prototype.click = function () {
@@ -282,45 +316,10 @@ export async function opened(browser, c, picture = c.SNIP) {
   await page.goto(`${c.base}/?intro=0`);
   await page.waitForSelector('#book .bk-desk', { timeout: 30_000 });
   await c.settled(page, 'open');
+  const uploads = async () => (await page.evaluate(() => Promise.all(window.__pictures))).map(b => Buffer.from(b));
   return { page, errors, line, uploads, done: () => context.close() };
 }
 
-// The corner drawn away and let go on a target ('submit' | 'pdf' | 'png', or the call's window by its selector), or off
-// them all (null): with the mouse, or as a finger (pointer events of that type). held: done while the page is in hand
-// over its target.
-export async function dragTo(page, how, kind, held = async () => {}) {
-  const corner = await (await cornerOf(page)).boundingBox(),
-    from = [corner.x + corner.width - 8, corner.y + 8],
-    peeled = [from[0] - 40, from[1] + 30];
-  if (how === 'mouse') {
-    await page.mouse.move(...from);
-    await page.mouse.down();
-    await page.mouse.move(...peeled, { steps: 6 });
-  } else await pointer(page, how, [from, ...steps(from, peeled, 6)], false);
-  await page.locator('#book .bk-share[data-mode=carrying]').waitFor({ timeout: 10_000 });
-  assert.equal(await page.locator('#book > .bk-held').count(), 1, 'the page in hand');
-  // (a target's kind, or a selector: the call's window)
-  const shareKind = ['submit', 'pdf', 'png'].includes(kind),
-    target = kind && (await page.locator(shareKind ? `#book .bk-share [data-share=${kind}]` : kind).boundingBox()),
-    to = target ? [target.x + target.width / 2, target.y + target.height / 2] : [peeled[0] - 300, peeled[1] + 400];
-  if (how === 'mouse') {
-    await page.mouse.move(...to, { steps: 10 });
-    if (shareKind) assert.equal(await page.locator('#book .bk-share [data-over]').getAttribute('data-share'), kind);
-    await held();
-    await page.mouse.up();
-  } else {
-    await pointer(page, how, steps(peeled, to, 10), false);
-    await held();
-    await pointer(page, how, [to], true);
-  }
-}
-// The page's corner, once nothing's turning: a turn's picture of the page has one too, gone as it ends
-export async function cornerOf(page) {
-  await page.waitForFunction(() => document.querySelectorAll('#book .bk-dogear').length === 1, null, {
-    timeout: 10_000,
-  });
-  return page.locator('#book .bk-dogear');
-}
 // The page in hand torn down its spine's edge (its outline jagged there, its fibres under it), while the page in the
 // book has no tear of its own
 const tornInHand = page =>
@@ -330,8 +329,7 @@ const tornInHand = page =>
     return (
       teeth > 20 &&
       clip(document.querySelector('#book > .bk-held .bk-held-fibres')) !== 'none' &&
-      // (but a unit's own turned corner, bookgroups.css.)
-      [...document.querySelectorAll('#book .bk-desk, #book .bk-desk *:not(.bk-unit)')].every(el => clip(el) === 'none')
+      [...document.querySelectorAll('#book .bk-desk, #book .bk-desk *')].every(el => clip(el) === 'none')
     );
   });
 // The file act() downloads (its link's press, played: opened()): its name, its bytes and their first 1200 as text
@@ -345,36 +343,6 @@ export async function downloaded(page, act) {
   const file = Buffer.from(bytes);
   return { name, bytes: file, text: file.subarray(0, 1200).toString('latin1') };
 }
-const steps = ([x0, y0], [x1, y1], n) =>
-  Array.from({ length: n }, (_, i) => [x0 + ((x1 - x0) * (i + 1)) / n, y0 + ((y1 - y0) * (i + 1)) / n]);
-// A finger's points: the first pressed (when first), each moved over, the last let go (when last)
-const pointer = (page, type, points, last) =>
-  page.evaluate(
-    ([type, points, last]) => {
-      const at = (kind, [x, y]) =>
-        (document.elementFromPoint(x, y) ?? document.body).dispatchEvent(
-          new PointerEvent(kind, {
-            pointerId: 21,
-            pointerType: type,
-            isPrimary: true,
-            clientX: x,
-            clientY: y,
-            pressure: kind === 'pointerup' ? 0 : 0.5,
-            button: kind === 'pointermove' ? -1 : 0,
-            buttons: kind === 'pointerup' ? 0 : 1,
-            bubbles: true,
-            composed: true,
-            cancelable: true,
-          }),
-        );
-      const pressed = !window.__pressing;
-      if (pressed) at('pointerdown', points[0]);
-      window.__pressing = !last;
-      for (const p of pressed ? points.slice(1) : points) at('pointermove', p);
-      if (last) at('pointerup', points.at(-1));
-    },
-    [type, points, last],
-  );
 // A page of the board's writing with a picture taped below it (the picture kept by the played store, the page's own)
 export function tapedPage(c) {
   const free = freePage(c),

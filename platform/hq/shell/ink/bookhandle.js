@@ -8,8 +8,8 @@ import { tip } from './bookui.js';
 import * as link from './notebooklink.js';
 import { TAP_PX } from './bookfollow.js';
 
-// How long a landed snip shows on the handle
-const SNIP_MS = 2600;
+// How long a landed snip shows on the handle, in and away again: within two seconds, as every motion in the book
+const SNIP_MS = 1800;
 
 let handle;
 let landed = null; // (the note that last landed in the folded book, which the tap opens: { id, page, group })

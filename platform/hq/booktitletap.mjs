@@ -1,6 +1,6 @@
 // book-check.mjs's story of a page's title looking editable where it shows (shell/ink/bookunitcards.js, booktitle.js,
 // bookcontrols.js), on bookjournal.mjs's My journal: on an iPad mini with touch, on its side and upright, and on a
-// desktop, the book opens on Calls 20/20 with a pencil by the page's title in its head. The page count tapped opens the
+// desktop, the book opens on Calls 20 / 20 with a pencil by the page's title in its head. The page count tapped opens the
 // page list, its title field with a pencil by it, and tapped again closes it, for good. The title in the page's head
 // tapped opens the list with the field to write in (the keyboard's, on a touch screen too); Enter saves it, read in the
 // page's head and in the page count's label (board, call 178).
@@ -30,7 +30,7 @@ async function walk(p, c, name, press) {
     list = p.locator('#book .bk-pages-menu'),
     field = p.getByRole('textbox', { name: 'Page title' }),
     head = p.locator('#book .bk-page:not([hidden]) .bk-title-tap');
-  await landed(p, 'calls', `Call ${CALLS}`, `${CALLS}/${CALLS}`, `${name}: the book opens on Calls' last page`);
+  await landed(p, 'calls', `Call ${CALLS}`, `${CALLS} / ${CALLS}`, `${name}: the book opens on Calls' last page`);
   assert.ok(await head.locator('svg').isVisible(), `${name}: a pencil by the title in the page's head`);
   // the page count tapped: the list, its title with a pencil; tapped again, closed, and still closed a moment on
   await press(where);
@@ -50,6 +50,6 @@ async function walk(p, c, name, press) {
   await field.fill('Fly sketch');
   await field.press('Enter');
   await until(async () => !(await list.count()), `${name}: Enter closes the list`);
-  await landed(p, 'calls', 'Fly sketch', `${CALLS}/${CALLS}`, `${name}: the title changed in the page's head`);
+  await landed(p, 'calls', 'Fly sketch', `${CALLS} / ${CALLS}`, `${name}: the title changed in the page's head`);
   assert.match(await where.getAttribute('aria-label'), /Fly sketch/, `${name}: and in the page count's label`);
 }

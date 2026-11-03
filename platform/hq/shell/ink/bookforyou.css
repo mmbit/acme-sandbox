@@ -1,13 +1,12 @@
 /* What's still the board's to answer (bookforyou.js): the counter by the page's title, as the Ink deck draws it (a pill:
    a red dot, "2 open", a rule and its two arrows), and the red edge marked "for you" round a group with an open ask,
-   the ring a step reaches pulsing once. The counter stands in the paper's head left of the dog-ear, in the screen's
+   the ring a step reaches pulsing once. The counter stands in the paper's head at its right, in the screen's
    px, where the page pans and zooms under it; while it shows, the title ends 8 px short of its left edge, so the two
    never touch (bookgroups.css reads its place and width here). The edge and the ring are in the page's px: they pan
    and zoom with it. (by the page's title.) */
 #book {
-  /* its right edge from the writing paper's: clear of the dog-ear's touch, which reaches 16 px further along the top
-     than it shows (bookshare.css) */
-  --bk-count-at: calc(var(--bk-ear) + 20px);
+  /* its right edge from the writing paper's */
+  --bk-count-at: 20px;
   --bk-count-w: 136px;
 }
 #book .bk-for-you-count {

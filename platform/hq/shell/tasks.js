@@ -4,7 +4,7 @@ import { esc, cap } from '../util.js';
 import { who } from './desk.js';
 import { names } from './brand.js';
 import { icon } from './icons.js';
-import { face, pulse, code, waitOf } from './projectkeys.js';
+import { face, pulse, code, urgentMark, waitOf } from './projectkeys.js';
 import { nameText } from './jobs.js';
 import { withJobLinks, covered } from './prose.js';
 import {
@@ -59,18 +59,19 @@ export function taskRows(t, p, view) {
   return boardRows(t, p, first) + tasks.join('') || `<li class="pj-none">Nothing open in this ${boardKind(t)}.</li>`;
 }
 // A task's row in its own state (rowState), each its own look: its agent's face with the state's mark, its title (a
-// step's name under its task), who and where it is, with the planner's times until it runs, and its size as a bar and
-// in words, and its code. step: a review, fix or check under its task. Its title's job numbers are links beside its tap
-// target (prose.js covered).
+// step's name under its task), who and where it is, with the planner's times until it runs, that it's urgent until it's
+// finished (its steps are with it, so they don't say it again), and its size as a bar and in words, and its code. step:
+// a review, fix or check under its task. Its title's job numbers are links beside its tap target (prose.js covered).
 function taskRow(j, t, step = false) {
   const s = rowState(j),
-    kind = kindOf(j);
+    kind = kindOf(j),
+    urgent = !step && !finished(j) && j.urgent;
   // (a fix round says what it fixes wherever it shows.)
   const title = step ? withJobLinks(doingOf(j)) : taskHtml(j, t);
   // (a wait in words in its name, with its hourglass on the row: projectkeys.js waitOf.)
   const parts = [who(j.agent), ...rowWords(j, s, t), !step && kind !== 'work' ? kind : ''].filter(Boolean);
   const words = parts.map(x => x.text ?? x).join(' · ');
-  const name = `${step || j.fixes ? doingOf(j) : nameText(j)}, ${words}`;
+  const name = `${step || j.fixes ? doingOf(j) : nameText(j)}, ${urgent ? 'urgent, ' : ''}${words}`;
   return `<li${step ? ' class="pj-step"' : ''}>${covered(
     `pj-task ${s} ${kind}${s === 'board' ? ' lit' : ''}`,
     `data-job="${Number(j.id)}"`,
@@ -78,7 +79,7 @@ function taskRow(j, t, step = false) {
     `
     <span class="pj-task-who">${face(j.agent)}${ROW_MARKS[s] ?? ''}</span>
     <span class="pj-task-text"><b>${title}</b><small>${s === 'working' ? pulse(1) : ''}${parts.map(x => x.html ?? esc(x)).join(' · ')}</small></span>
-    <span class="pj-task-side">${found(j)}${sizeBar(j)}${code(j)}</span>`,
+    <span class="pj-task-side">${urgentMark(urgent)}${found(j)}${sizeBar(j)}${code(j)}</span>`,
   )}</li>`;
 }
 // Where a task is, in a few words: finished (and its review under way), at work and when it's done, or what it waits

@@ -8,7 +8,7 @@ export type Snapshot = {
   seatMeasurements?: Record<string, import('./headroom.ts').Measurement>;
   planner?: 3;
   planningSizes?: [number, Size][];
-  // Active pauses' release jobs. Their merge endpoints and prerequisites must not wait on pacing.
+  // Active pauses' release jobs. Their merge endpoints and prerequisites order the queue.
   pauseUntil?: number[];
   windows?: Record<
     string,
@@ -59,6 +59,7 @@ export type QueuedJob = {
   agent: string;
   title: string;
   reviewPlan?: import('./rounds.ts').ReviewPlan;
+  reviewUrgent?: boolean;
   opensReview?: boolean;
   dependencies?: import('./planner.ts').Dependency[];
   // its thread's order (threadorder.ts placing): the task before it, which it follows once that's done, and the last
@@ -86,6 +87,7 @@ export type QueuedJob = {
   // The board's call follow-up or sent-note routing check, work carrying a call's item, or the CEO's hourly check (jobs.ts
   // LANE), which goes first.
   board: number;
+  urgent?: boolean;
   // Derived from jobs.ts ITEM_WORK, retained by projected PR stages.
   itemWork?: boolean;
   // the CEO's hourly follow-through check (jobs.ts FOLLOW_THROUGH), which no pause stops (planner.ts pausable)

@@ -663,10 +663,10 @@ test('remaining work at the snapshot is preserved across a future seat reset', (
   assert.equal(seen.left_ms, 40 * MINUTE);
 });
 
-test("a paced seat takes the board's word and work due to start before its weekly reset; the rest waits till its pacing lifts", () => {
+test('only urgent work bypasses seat pacing, while deadline and board-origin work wait', () => {
   const HOUR = 60 * MINUTE,
     reset = 48 * HOUR;
-  const input = snapshot([work(1), work(2, { due: 2 * HOUR }), work(3, { board: 1 })]);
+  const input = snapshot([work(1), work(2, { due: 2 * HOUR }), work(3, { urgent: true })]);
   const seat = input.seats.find(s => s.id === 'codex')!;
   Object.assign(seat, { fiveHour: 0.2, week: 0.8, weekResets: reset, stop: 0.9 });
   input.pacing = true;
@@ -678,16 +678,19 @@ test("a paced seat takes the board's word and work due to start before its weekl
   const seen = play(input, sized),
     lifts = paceChange({ week: 0.8, weekResets: reset, drainAt: 0.9 }, 0.9, 0)!;
   assert.equal(seen.get(3)!.start, 0);
-  assert.equal(seen.get(2)!.start, 10 * MINUTE);
+  assert.ok(Math.abs(seen.get(2)!.start! - lifts) <= 1000, 'a deadline waits for the pace');
   assert.ok(lifts > 10 * MINUTE && lifts < reset, 'its pacing lifts before the reset');
   // (to the second, as the worker's pacing lifts: pace.ts paceChange)
-  assert.ok(Math.abs(seen.get(1)!.start! - lifts) <= 1000, 'the undated work starts as the worker would let it');
-  assert.ok(seen.get(1)!.waits.some(w => w.on === 'seats' && Math.abs(w.until - lifts) <= 1000));
+  assert.ok(Math.abs(seen.get(1)!.start! - lifts - 10 * MINUTE) <= 1000, 'deadline work orders the paced queue');
+  assert.ok(seen.get(2)!.waits.some(w => w.on === 'seats' && Math.abs(w.until - lifts) <= 1000));
+  input.jobs[2] = work(3, { board: 1 });
+  assert.ok(play(input, sized).get(3)!.start! >= lifts - 1000, 'a board item alone is not urgent');
+  input.jobs[2] = work(3, { urgent: true });
   input.pacing = false;
   assert.equal(play(input, sized).get(1)!.start, 20 * MINUTE, 'pacing off, it starts after the others');
   Object.assign(input, { pacing: true, seats: [{ ...seat, credits: true }] });
   // (a seat on credits is paced all the same: the board, 22 Oct.)
-  assert.ok(Math.abs(play(input, sized).get(1)!.start! - lifts) <= 1000, 'a seat on credits paces too');
+  assert.ok(Math.abs(play(input, sized).get(2)!.start! - lifts) <= 1000, 'a seat on credits paces too');
 });
 
 test('an idle paced seat lets undated work go once its week evens out, a day before its reset, not at it', () => {

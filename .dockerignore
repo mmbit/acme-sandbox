@@ -89,6 +89,10 @@
 !platform/worker/hq/waits.ts
 # a seat's week as pacing reads it, which HQ's play of the queue paces seats by as the worker does (playseats.ts).
 !platform/worker/src/pace.ts
+# a seat's admission and its running work, and their words, which HQ's seat reports share with the worker
+# (seatstatus.ts, goingon.ts).
+!platform/worker/src/seatstatus.ts
+!platform/worker/hq/seatwords.ts
 # a seat's name, which HQ's Seats checks as the worker does (seats.ts).
 !platform/worker/src/seatid.ts
 # the rude-word check, which the jobs' short codes skip words by (platform/coordinator/src/jobcodes.ts).
@@ -99,6 +103,8 @@
 !platform/hq/shell/tips.js
 # a review mark's anchor, which feedback.ts migrates the stored marks with
 !shared/review/anchor.js
+# the review tool's script for an origin (scriptForHq), which feedback.ts serves it with
+!shared/review/parts.mjs
 # the book's Search matching, which HQ's dev mode shares (platform/coordinator/src/ink/booksearch.ts).
 # (Ink's folder)
 !platform/hq/shell/ink/booksearchwords.js
@@ -124,6 +130,9 @@
 # (scrapunit.js, masonry.js.)
 !platform/hq/shell/ink/scrapunit.js
 !platform/hq/shell/ink/masonry.js
+# a sketch page's units at their own places, which the store keeps them by and the page's picture draws them by
+# (sketchcanvas.js; platform/coordinator/src/notebookplaces.ts, ink/bookpicture.ts.)
+!platform/hq/shell/ink/sketchcanvas.js
 # a page's chapter by its kind, its bookmark, which the store orders a book's pages by and its play shares
 # (notebookchapters.js.)
 !platform/hq/shell/ink/notebookchapters.js
