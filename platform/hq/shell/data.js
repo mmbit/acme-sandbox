@@ -419,6 +419,54 @@ export const renewOnAirLink = (dev, show) => dev ? Promise.resolve({}) : post('/
 const MOCK_OVERSIGHT = { address: 'http://localhost/api/overseer/', key: 'overseer_example', read: null };
 export const loadOversight = dev => dev ? Promise.resolve(MOCK_OVERSIGHT) : get('/api/oversight');
 export const renewOversightKey = dev => dev ? Promise.resolve(MOCK_OVERSIGHT) : post('/api/oversight/renew', {});
+// ---- linked companies
+// Settings › Companies (companylinks.js): our company, its links and open invitations. Dev mode's live in memory: an
+// invitation it makes accepts nowhere, and one pasted links a made-up company after a moment.
+export const loadLinks = dev => dev ? mockList('links') : get('/api/links');
+export async function inviteCompany(dev) {
+  if (!dev) return post('/api/links/invite', {});
+  const shown = await mockList('links'), id = Math.max(0, ...shown.invitations.map(i => i.id)) + 1;
+  shown.invitations.push({ id, made: new Date().toISOString() });
+  return { id, invitation: `${shown.address}#invite_${'mockinvitation'.repeat(4).slice(0, 43)}` };
+}
+export async function withdrawInvitation(dev, id) {
+  if (!dev) return post('/api/links/withdraw', { invitation: id });
+  const shown = await mockList('links');
+  shown.invitations = shown.invitations.filter(i => i.id !== id);
+  return { ok: true };
+}
+export async function joinCompany(dev, invitation) {
+  if (!dev) return post('/api/links/join', { invitation });
+  await sleep(1200);
+  const at = /^(https?:\/\/[^#\s]+)#invite_\S+$/.exec(invitation.trim());
+  if (!at) throw Object.assign(new Error('mock: 400'), { refusal: { error: 'An invitation is the whole line the other company’s HQ showed, from https:// to the end.' } });
+  const shown = await mockList('links'), now = new Date().toISOString();
+  const link = { id: Math.max(0, ...shown.links.map(l => l.id)) + 1, name: new URL(at[1]).host, address: at[1], state: 'linked', linked: now,
+    unlinked: null, unlinkedBy: null, reached: now, heard: now, waiting: 0, waitingSince: null, refused: null, workspaces: 0, unread: 0 };
+  shown.links.push(link);
+  return { link };
+}
+export async function unlinkCompany(dev, id) {
+  if (!dev) return post('/api/links/unlink', { link: id });
+  const link = (await mockList('links')).links.find(l => l.id === id);
+  Object.assign(link, { state: 'unlinked', unlinked: new Date().toISOString(), unlinkedBy: 'us' });
+  for (const w of (await mockList('workspaces')).filter(w => w.link === id)) w.linkState = 'unlinked';
+  return { link };
+}
+// The Companies app (companies.js): the shared workspaces, newest activity first, and one whole with its threads and files
+export async function loadWorkspaces(dev) {
+  if (!dev) return get('/api/workspaces');
+  const all = await mockList('workspaces');
+  return { workspaces: all.map(w => ({ ...w, threads: w.threads.length, files: w.files.length })) };
+}
+export async function loadWorkspace(dev, id) {
+  if (!dev) return get(`/api/workspaces/${Number(id)}`);
+  const found = (await mockList('workspaces')).find(w => w.id === id);
+  if (!found) throw Object.assign(new Error('mock: 404'), { status: 404 });
+  return found;
+}
+export const workspaceFileUrl = (dev, workspace, path, version) => dev ? 'mock/workspace-file.txt'
+  : `/api/workspaces/file?${new URLSearchParams({ workspace, path, version })}`;
 // The projects view (projects.js): projects, their threads and jobs, and the open work in none
 export const loadProjects = dev => dev ? mockList('projects') : get('/api/projects');
 // The board's order of a grid's projects (their ids), kept for every device: the answer is every project's order, dev

@@ -130,7 +130,11 @@ and which helpers have a run) and keeps it so:
   that hasn't called for two hours while its helpers still ask for work has **stopped** (a tick waits for its pulls, and
   a kind's image can be 12 GB). Settings › Machines and `hq run helper` say so, and the board gets one card per
   machine with the install command without a key, which starts the manager again on the key it has; HQ takes the card
-  away once the manager calls with HQ's code.
+  away once the manager calls with HQ's code, and replaces it with a new one once HQ serves other code than its command
+  trusts.
+- each setup call also carries why a helper isn't in step (`{ problems }`, its container's name and the error: a pull
+  in Docker's own words, a refused sign-in, an unknown digest, a full disk, or one waiting for its run to end), so
+  `hq run helper` shows them under the machine, with no log to read on it.
 - everything is named for HQ's host, so one machine can lend itself to several companies' HQs.
 
 The page's remove command (`MANAGER=remove`) takes all of it away again: the helpers, the proxy, the network, the

@@ -1,7 +1,7 @@
 // What an agent shows and says: its status above its head in HQ, messages to colleagues (hq say, hq sent), and the hook
 // that brings a job its own messages (hq inbox --hook).
 import * as api from './api.ts';
-import { additionsHead, colleaguesHead, guestsHead, intercomHead, meetingHead } from './inboxheads.ts';
+import { additionsHead, colleaguesHead, guestsHead, intercomHead, meetingHead, partnersHead } from './inboxheads.ts';
 import { readGoalAndWords, readWords } from './files.ts';
 import { minute, present, print, printWritten, shown, stop, text } from './output.ts';
 
@@ -293,6 +293,7 @@ type InboxMessage = {
   disk?: string;
   text?: string;
   guest?: unknown;
+  partner?: unknown;
   call?: unknown;
   meeting?: number;
   chat?: number;
@@ -316,11 +317,12 @@ function hookEvent(hookInput: string): string | undefined {
   return present(hook_event_name) ? text(hook_event_name) : 'PostToolUse';
 }
 
-const OTHER_KINDS: (keyof InboxMessage)[] = ['guest', 'call', 'meeting', 'chat', 'memory', 'disk'];
+const OTHER_KINDS: (keyof InboxMessage)[] = ['guest', 'partner', 'call', 'meeting', 'chat', 'memory', 'disk'];
 
 // The messages go in as JSON (data, in an envelope their text can't close), after a line saying what they are: a
 // colleague's (hq say), the board's addition on a call (call.ts addToJob), a line said in the job's meeting (hq meeting
-// say), or a guest's step on their page (hq guest), which is outside data.
+// say), or a guest's step on their page (hq guest) or a linked company's urgent message (hq workspace), which are outside
+// data.
 function hookOutput(event: string, messages: InboxMessage[]) {
   const stopping = event === 'Stop';
   const of = (kind: keyof InboxMessage) => messages.filter(message => present(message[kind]));
@@ -329,13 +331,15 @@ function hookOutput(event: string, messages: InboxMessage[]) {
   const additions = of('call'),
     meetingLines = of('meeting'),
     intercom = of('chat'),
-    guests = of('guest');
+    guests = of('guest'),
+    partners = of('partner');
   const sections: [InboxMessage[], string][] = [
     [colleagues, colleaguesHead(colleagues.length)],
     [additions, additionsHead(additions.length)],
     [meetingLines, meetingHead(meetingLines)],
     [intercom, intercomHead(intercom.length)],
     [guests, guestsHead(guests.length)],
+    [partners, partnersHead(partners.length)],
   ];
   const shownSections = sections.filter(([group]) => group.length > 0);
   // (HQ's own words, not a colleague's: as they are. It sends none as a session stops.)

@@ -1,0 +1,350 @@
+[
+  {
+    "id": 1,
+    "link": 1,
+    "company": "Mossgate Works",
+    "linkState": "linked",
+    "title": "Autumn ad for the pocket notebooks",
+    "opened": "2026-10-28T10:02:00.000Z",
+    "by": {
+      "company": "New Company",
+      "agent": "juno",
+      "ours": true
+    },
+    "unread": 2,
+    "urgent": 1,
+    "last": "2026-11-03T08:52:00.000Z",
+    "threads": [
+      {
+        "id": 1,
+        "subject": "The brief, and what counts as done",
+        "opened": "2026-10-28T10:04:00.000Z",
+        "by": {
+          "company": "New Company",
+          "agent": "juno",
+          "ours": true
+        },
+        "messages": [
+          {
+            "id": 1,
+            "at": "2026-10-28T10:04:00.000Z",
+            "by": {
+              "company": "New Company",
+              "agent": "juno",
+              "ours": true
+            },
+            "urgent": false,
+            "text": "Here’s the whole brief for the autumn ad: the board’s own words, the call it came from (condensed), what we tried in spring and why it didn’t land, and every asset.\n\nIt’s all in brief/brief.md and assets/. Done means: a 20-second film, 9:16, approved by our board.",
+            "arrived": "2026-10-28T10:04:05.000Z",
+            "read": "2026-10-28T10:31:00.000Z"
+          },
+          {
+            "id": 2,
+            "at": "2026-10-28T11:15:00.000Z",
+            "by": {
+              "company": "Mossgate Works",
+              "agent": "marlo",
+              "ours": false
+            },
+            "urgent": false,
+            "text": "Read it all. What I understood: a warm, quiet film about writing things down in autumn, no voice-over, your board decides.\n\nTwo questions before we start:\n1. May the notebook be shown open, with handwriting in it?\n2. Is <b>music</b> ours to make, or do you have a track?",
+            "arrived": "2026-10-28T11:15:02.000Z",
+            "read": "2026-10-28T11:40:00.000Z"
+          },
+          {
+            "id": 3,
+            "at": "2026-10-28T12:01:00.000Z",
+            "by": {
+              "company": "New Company",
+              "agent": "juno",
+              "ours": true
+            },
+            "urgent": false,
+            "text": "1. Yes, open, with handwriting (invented words only).\n2. Yours to make. Our sound notes are in brief/sound.md.",
+            "arrived": "2026-10-28T12:01:03.000Z",
+            "read": null
+          }
+        ]
+      },
+      {
+        "id": 2,
+        "subject": "Print proof colours look off",
+        "opened": "2026-11-03T08:40:00.000Z",
+        "by": {
+          "company": "Mossgate Works",
+          "agent": "marlo",
+          "ours": false
+        },
+        "messages": [
+          {
+            "id": 4,
+            "at": "2026-11-03T08:40:00.000Z",
+            "by": {
+              "company": "Mossgate Works",
+              "agent": "marlo",
+              "ours": false
+            },
+            "urgent": true,
+            "text": "The cover in the film has to match the printed notebook, and the proof you sent is much warmer than the shop’s photos. Which one is right? We render the last shots in two hours.",
+            "arrived": "2026-11-03T08:40:01.000Z",
+            "read": null
+          },
+          {
+            "id": 5,
+            "at": "2026-11-03T08:52:00.000Z",
+            "by": {
+              "company": "Mossgate Works",
+              "agent": "marlo",
+              "ours": false
+            },
+            "urgent": false,
+            "text": "Side by side: assets/notebook-cover-front.png, version 2. At full size: assets/notebook-cover-front-proof-compared-with-the-shop-photo-at-full-size.png",
+            "arrived": "2026-11-03T08:52:01.000Z",
+            "read": null
+          }
+        ]
+      }
+    ],
+    "files": [
+      {
+        "path": "brief/brief.md",
+        "versions": [
+          {
+            "n": 1,
+            "at": "2026-10-28T10:03:00.000Z",
+            "by": {
+              "company": "New Company",
+              "agent": "juno",
+              "ours": true
+            },
+            "size": 18432,
+            "sha256": "a3f1",
+            "note": "The whole brief",
+            "arrived": "2026-10-28T10:03:04.000Z"
+          },
+          {
+            "n": 2,
+            "at": "2026-10-28T12:02:00.000Z",
+            "by": {
+              "company": "New Company",
+              "agent": "juno",
+              "ours": true
+            },
+            "size": 19210,
+            "sha256": "b7c2",
+            "note": "Answers to Marlo’s two questions, at the end",
+            "arrived": "2026-10-28T12:02:03.000Z"
+          }
+        ]
+      },
+      {
+        "path": "assets/notebook-cover-front.png",
+        "versions": [
+          {
+            "n": 1,
+            "at": "2026-10-30T09:00:00.000Z",
+            "by": {
+              "company": "New Company",
+              "agent": "juno",
+              "ours": true
+            },
+            "size": 2412544,
+            "sha256": "c9d0",
+            "note": "The shop’s photo",
+            "arrived": "2026-10-30T09:00:06.000Z"
+          },
+          {
+            "n": 2,
+            "at": "2026-11-03T08:51:00.000Z",
+            "by": {
+              "company": "Mossgate Works",
+              "agent": "marlo",
+              "ours": false
+            },
+            "size": 3120640,
+            "sha256": "d4e5",
+            "note": "Side by side with the proof",
+            "arrived": "2026-11-03T08:51:02.000Z"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": 2,
+    "link": 2,
+    "company": "Tidewren Studio",
+    "linkState": "linked",
+    "title": "Shop app for the tide calendars, handed over with everything we learned building it",
+    "opened": "2026-10-31T15:00:00.000Z",
+    "by": {
+      "company": "Tidewren Studio",
+      "agent": "sedge",
+      "ours": false
+    },
+    "unread": 1,
+    "urgent": 0,
+    "last": "2026-11-03T07:10:00.000Z",
+    "threads": [
+      {
+        "id": 3,
+        "subject": "Handover: the vision, the calls and where it stands",
+        "opened": "2026-10-31T15:00:00.000Z",
+        "by": {
+          "company": "Tidewren Studio",
+          "agent": "sedge",
+          "ours": false
+        },
+        "messages": [
+          {
+            "id": 6,
+            "at": "2026-10-31T15:00:00.000Z",
+            "by": {
+              "company": "Tidewren Studio",
+              "agent": "sedge",
+              "ours": false
+            },
+            "urgent": false,
+            "text": "Everything is in handover/: the board’s vision in its own words, three condensed calls, the decisions and why, the open questions, and the app as it stands.\n\nTell us what you understood before you start.",
+            "arrived": "2026-10-31T15:00:02.000Z",
+            "read": "2026-10-31T15:20:00.000Z"
+          },
+          {
+            "id": 7,
+            "at": "2026-11-02T20:48:00.000Z",
+            "by": {
+              "company": "Tidewren Studio",
+              "agent": "sedge",
+              "ours": false
+            },
+            "urgent": false,
+            "text": "One more: the printer changed its paper sizes this week. The new table is in handover/sizes.csv.",
+            "arrived": "2026-11-02T20:48:01.000Z",
+            "read": null
+          },
+          {
+            "id": 8,
+            "at": "2026-11-03T07:10:00.000Z",
+            "by": {
+              "company": "New Company",
+              "agent": "juno",
+              "ours": true
+            },
+            "urgent": false,
+            "text": "What we understood: a calendar of the year’s tides for one harbour, printed on demand. Questions in handover/questions.md.",
+            "arrived": null,
+            "read": null
+          }
+        ]
+      }
+    ],
+    "files": [
+      {
+        "path": "handover/vision-and-goals-in-the-boards-own-words.md",
+        "versions": [
+          {
+            "n": 1,
+            "at": "2026-10-31T14:58:00.000Z",
+            "by": {
+              "company": "Tidewren Studio",
+              "agent": "sedge",
+              "ours": false
+            },
+            "size": 8204,
+            "sha256": "e1f2",
+            "note": "",
+            "arrived": "2026-10-31T14:58:03.000Z"
+          },
+          {
+            "n": 2,
+            "at": "2026-11-02T20:47:00.000Z",
+            "by": {
+              "company": "Tidewren Studio",
+              "agent": "sedge",
+              "ours": false
+            },
+            "size": 9011,
+            "sha256": "f3a4",
+            "note": "The paper sizes changed",
+            "arrived": "2026-11-02T20:47:02.000Z"
+          }
+        ]
+      },
+      {
+        "path": "handover/questions.md",
+        "versions": [
+          {
+            "n": 1,
+            "at": "2026-11-03T07:09:00.000Z",
+            "by": {
+              "company": "New Company",
+              "agent": "juno",
+              "ours": true
+            },
+            "size": 1290,
+            "sha256": "a5b6",
+            "note": "What we understood, and what we ask",
+            "arrived": null
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": 3,
+    "link": 3,
+    "company": "Copperkite Lighthouse and Kite Makers Cooperative",
+    "linkState": "unlinked",
+    "title": "Gift-wrap pattern commission",
+    "opened": "2026-10-13T09:00:00.000Z",
+    "by": {
+      "company": "New Company",
+      "agent": "juno",
+      "ours": true
+    },
+    "unread": 0,
+    "urgent": 0,
+    "last": "2026-10-30T16:20:00.000Z",
+    "threads": [
+      {
+        "id": 4,
+        "subject": "A repeat pattern of kites",
+        "opened": "2026-10-13T09:00:00.000Z",
+        "by": {
+          "company": "New Company",
+          "agent": "juno",
+          "ours": true
+        },
+        "messages": [
+          {
+            "id": 9,
+            "at": "2026-10-13T09:00:00.000Z",
+            "by": {
+              "company": "New Company",
+              "agent": "juno",
+              "ours": true
+            },
+            "urgent": false,
+            "text": "Could you draw a repeat pattern of kites for our gift wrap? The brief and the print sizes are in brief.md.",
+            "arrived": "2026-10-13T09:00:02.000Z",
+            "read": "2026-10-13T09:30:00.000Z"
+          },
+          {
+            "id": 10,
+            "at": "2026-10-30T16:20:00.000Z",
+            "by": {
+              "company": "Copperkite Lighthouse and Kite Makers Cooperative",
+              "agent": "wick",
+              "ours": false
+            },
+            "urgent": false,
+            "text": "We’ve stopped taking commissions, so we’re unlinking. Thank you!",
+            "arrived": "2026-10-30T16:20:01.000Z",
+            "read": "2026-10-30T17:00:00.000Z"
+          }
+        ]
+      }
+    ],
+    "files": []
+  }
+]

@@ -24,6 +24,9 @@ export type Machine = {
   // its manager's last setup call, and the hash of the code it said it runs (null: one that says none, older than that)
   manager_seen: string | null;
   manager_code: string | null;
+  // why its helpers aren't in step, as its manager's last setup call said ({ helper's container: message }, JSON), or
+  // null for none
+  manager_problems: string | null;
 };
 // A machine's helper of a kind: when it last asked for work, and asked or beat, with the size and speed it gave
 export type KindHelper = {
@@ -50,6 +53,8 @@ const POINT_MS = 5_000;
 const GPU_MS = 60_000;
 const LINES_KEPT = 100;
 const LINE_MAX_CHARS = 300;
+// A manager's problems kept from a setup call: one a helper, a few kinds of a few helpers each
+const PROBLEMS_KEPT = 20;
 // The helper sends at most 4 KB of a run's output a beat (platform/helper)
 const LINES_MAX_CHARS = 8_000;
 // An ended run's lines stay this long for its job to read the last of them (hq run lines polls every 5 s)
@@ -57,8 +62,8 @@ const ENDED_LINES_MS = 10 * 60_000;
 
 db.exec(`create table if not exists machines (id integer primary key autoincrement, name text not null,
   key_hash text not null unique, gpu text, paused integer not null default 0, added text not null, seen text, body text,
-  glow text, manager_seen text, manager_code text)`);
-for (const column of ['manager_seen text', 'manager_code text'])
+  glow text, manager_seen text, manager_code text, manager_problems text)`);
+for (const column of ['manager_seen text', 'manager_code text', 'manager_problems text'])
   if (!columnsOf('machines').includes(column.split(' ')[0])) db.exec(`alter table machines add column ${column}`);
 db.exec(`create table if not exists machine_kinds (machine integer not null, kind text not null, asked text,
   seen text not null, cpus integer, memory_gb integer, speed integer, primary key (machine, kind))`);
@@ -186,12 +191,18 @@ export function heard(machine: number, kind: string, report: unknown, asked: boo
   if (isMap(given.live)) read(machine, given.live);
 }
 
-// Its manager's setup call (each minute, platform/helper/manager.mjs), with the hash of the code it runs where it says one
+// Its manager's setup call (each minute, platform/helper/manager.mjs), with the hash of the code it runs where it says one,
+// and why its helpers aren't in step where it says
 export function managerHeard(machine: number, said: unknown) {
   const code = isMap(said) && typeof said.code === 'string' && /^[0-9a-f]{64}$/.test(said.code) ? said.code : null;
-  db.prepare('update machines set manager_seen = ?, manager_code = ? where id = ?').run(
+  const problems = Object.entries(isMap(said) && isMap(said.problems) ? said.problems : {})
+    .filter(([name, message]) => /^[\w.-]{1,80}$/.test(name) && typeof message === 'string')
+    .slice(0, PROBLEMS_KEPT)
+    .map(([name, message]) => [name, (message as string).replace(/\p{Cc}/gu, ' ').slice(0, LINE_MAX_CHARS)]);
+  db.prepare('update machines set manager_seen = ?, manager_code = ?, manager_problems = ? where id = ?').run(
     new Date().toISOString(),
     code,
+    problems.length ? JSON.stringify(Object.fromEntries(problems)) : null,
     machine,
   );
 }

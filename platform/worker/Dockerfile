@@ -1,7 +1,8 @@
 # The worker: runs agent jobs with Claude Code, Codex and the other CLIs a seat can run, plus the tools agents need to build,
 # test and make media (ffmpeg, Playwright + Chromium, ImageMagick, Python, SQLite).
 # Its first layers are a stage of their own, `tests`: the push tests' image on a lent machine (a `tests` run kind's, by
-# digest), so they run there on the same Node, tools and Chromium as here (.github/workflows/tests-image.yml publishes it).
+# digest). .github/workflows/tests-image.yml publishes each build of it, and the tests run on the same Node, tools and
+# Chromium as here only while each new build's digest goes into the company's org.yaml (runs.kinds.tests.image).
 FROM node:24.22.1-bookworm AS tests
 # (python3-yaml: infra's tests, which the worker runs on every push: shared/gates/tests.ts)
 # APT_FRESH reruns this layer for a security fix; libbrotli1 comes with the base image, so it's named to take
@@ -16,7 +17,8 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright DISABLE_AUTOUPDATER=1 CI=1
 RUN npm install -g playwright@1.63.0 && playwright install --with-deps chromium
 
 FROM tests
-# (codex 0.157.1 to 0.160.1: the first that knows GPT-6.1 Sol)
+# Pinned: the worker reads these CLIs' own output (src/verdict.ts, outcome.ts and safety.ts, tested against these
+# versions), and Codex 0.160.1 is the first that knows GPT-6.1 Sol.
 RUN npm install -g @anthropic-ai/claude-code@2.1.293 @openai/codex@0.160.1
 # The other CLIs a seat can run (src/clis/), root's so no job replaces them: Mistral's Vibe (Python 3.12, which uv
 # brings, as Debian 12 has 3.11) and Google's Antigravity CLI (a Go binary, checked against its manifest's sha512; it

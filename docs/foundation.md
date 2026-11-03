@@ -87,6 +87,18 @@ where it suffices.
 
 ## Open
 
+- Companies working together (the board's spec, written with Knop's CEO, 3 November): links between companies' HQs
+  and shared workspaces, each HQ keeping its own copy and the two trading entries directly
+  (`platform/coordinator/docs/companies.md`), the summary's "From linked companies" part and its step in the hourly
+  check (`heartbeat.ts`), for every company with no setting. A company's own part is its copy of
+  `template/company/playbooks/collaboration.md` with "Our part" filled in. Both companies need it before they can link.
+  What both agree, since the two HQs talk to each other: the protocol is the foundation's, the same on both sides (the
+  invitation line, the three peer routes `POST /api/peer/accept`, `/entries` and `/unlink`, the five entry kinds
+  `workspace`, `thread`, `message`, `file` and `read` with their fields, and the limits in `links.ts` and
+  `workspaces.ts`, a file version 50 MB among them). An entry the other side doesn't know yet is refused whole and the
+  link waits on it, so a change to a kind, a field or a limit is agreed by both keepers first and is live at the
+  receiver before the sender relies on it. Each HQ's address (`config.ts ORIGIN`) answers `/api/peer/*` from the
+  internet, with no login in front of it. Each company's executive is its org.yaml `company.ceo`.
 - The guest room's Sketchbook is gone, for every company: an invited person writes in the Notebook room
   (`/guest/notebooks/`), on their own page of a round from Reviews or a notebook the board invited them into, and
   brand.yaml `guest: { sketchbook }` is gone with it (a company that still sets it gets nothing from it). Before it

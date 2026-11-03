@@ -1,0 +1,60 @@
+{
+  "name": "New Company",
+  "address": "https://hq.new-company.example",
+  "links": [
+    {
+      "id": 1,
+      "name": "Mossgate Works",
+      "address": "https://hq.mossgate.example",
+      "state": "linked",
+      "linked": "2026-10-28T09:12:00.000Z",
+      "unlinked": null,
+      "unlinkedBy": null,
+      "reached": "2026-11-03T08:40:00.000Z",
+      "heard": "2026-11-03T08:52:00.000Z",
+      "waiting": 0,
+      "waitingSince": null,
+      "workspaces": 1,
+      "unread": 2,
+      "refused": null
+    },
+    {
+      "id": 2,
+      "name": "Tidewren Studio",
+      "address": "https://hq.tidewren.example",
+      "state": "linked",
+      "linked": "2026-10-31T14:30:00.000Z",
+      "unlinked": null,
+      "unlinkedBy": null,
+      "reached": "2026-11-02T21:05:00.000Z",
+      "heard": "2026-11-02T20:48:00.000Z",
+      "waiting": 2,
+      "waitingSince": "2026-11-03T07:10:00.000Z",
+      "workspaces": 1,
+      "unread": 1,
+      "refused": null
+    },
+    {
+      "id": 3,
+      "name": "Copperkite Lighthouse and Kite Makers Cooperative",
+      "address": "https://hq.copperkite.example",
+      "state": "unlinked",
+      "linked": "2026-10-12T10:00:00.000Z",
+      "unlinked": "2026-10-30T16:45:00.000Z",
+      "unlinkedBy": "them",
+      "reached": "2026-10-30T16:20:00.000Z",
+      "heard": "2026-10-30T16:45:00.000Z",
+      "waiting": 0,
+      "waitingSince": null,
+      "workspaces": 1,
+      "unread": 0,
+      "refused": null
+    }
+  ],
+  "invitations": [
+    {
+      "id": 4,
+      "made": "2026-11-02T16:20:00.000Z"
+    }
+  ]
+}

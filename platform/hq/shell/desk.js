@@ -34,6 +34,7 @@ import { openProjects } from './projects.js';
 import { closePanel } from './panel.js';
 import { onair } from './onair.js';
 import { oversight } from './oversight.js';
+import { companyLinks } from './companylinks.js';
 import { seatSettings, seatsBack, seatsSummary, seatPages } from './seats.js';
 import { machineSettings, machinesBack, machinesSummary, machinePages } from './machines.js';
 import { seatStatus } from './seatstatus.js';
@@ -69,18 +70,32 @@ const $ = s => document.querySelector(s);
 // load is left out, and HQ runs on without it. Loaded once this module has run, never awaited here: an app imports HQ's
 // own modules, and some of those import this one. A home screen opened before they came is drawn again with them.
 // Care (care.js) is the platform's own app on the same interface, when the company runs the care service, and the
-// photo studio's (studio.js), when the company runs the studio.
+// photo studio's (studio.js), when the company runs the studio, and Companies (companies.js), the work shared with linked
+// companies, which every company has.
 let own = [], ownDone = false;
 const kitApps = (Array.isArray(theme.apps) ? theme.apps : []).filter(n => typeof n === 'string' && /^[a-z0-9][a-z0-9-]*$/.test(n)).map(id => [id, `/kits/${id}/app.js`]);
 // (the Sketchbook app is gone: the notebook is the one book.)
-const platformApps = [...(runs.care ? [['care', '/shell/care.js']] : []), ...(runs.studio ? [['studio', '/shell/studio.js']] : [])];
+const platformApps = [...(runs.care ? [['care', '/shell/care.js']] : []), ...(runs.studio ? [['studio', '/shell/studio.js']] : []),
+  ['companies', '/shell/companies.js']];
 const ownLoaded = Promise.resolve().then(() => Promise.all([...platformApps, ...kitApps]
   .map(([id, url]) => import(url).then(mod => mod.app && mod.draw ? { id, mod } : null, e => { console.warn(`[hq] ${url}: its HQ app didn't load`, e); return null; }))))
-  .then(list => { own = list.filter(Boolean); ownDone = true; if (own.length && open === 'computer' && tab === 'home') openComputer('home'); });
-const ownApp = id => own.find(k => k.id === id);
+  .then(list => { own = list.filter(Boolean); own.filter(k => k.mod.shown).forEach(k => hidden.add(k.id)); ownDone = true; if (own.length && open === 'computer' && tab === 'home') openComputer('home'); });
+const ownApp = id => ownShown().find(k => k.id === id);
+// An app that's on the home screen only at times (its shown(dev), a promise of true or false: Companies, while the
+// company has a link or an invitation) is left out until it says it's shown. HQ asks again with the computer's count and
+// after a change in Settings, and draws the home screen again when the answer changes.
+const hidden = new Set();
+const ownShown = () => own.filter(k => !hidden.has(k.id));
+async function askShown() {
+  const asked = own.filter(k => k.mod.shown);
+  const answers = await Promise.all(asked.map(k => Promise.resolve().then(() => k.mod.shown(world.dev)).catch(() => !hidden.has(k.id))));
+  const changed = asked.filter((k, i) => answers[i] === hidden.has(k.id));
+  changed.forEach(k => hidden[hidden.has(k.id) ? 'delete' : 'add'](k.id));
+  if (changed.length && homeShown?.isConnected && open === 'computer' && tab === 'home') home(homeShown);
+}
 // For HQ's search (finder.js): the computer's apps as text (id, name, what), and the company's once loaded, each with what
 // HQ lends it
-export const computerApps = () => [...APPS.map(([id, name, what]) => ({ id, name, what })), ...own.map(k => ({ id: k.id, name: k.mod.app.name, what: k.mod.app.what ?? '' }))];
+export const computerApps = () => [...APPS.map(([id, name, what]) => ({ id, name, what })), ...ownShown().map(k => ({ id: k.id, name: k.mod.app.name, what: k.mod.app.what ?? '' }))];
 export const companyApps = () => ownLoaded.then(() => own.map(k => ({ id: k.id, mod: k.mod, hq: hq() })));
 // what a company app may do in HQ: open a computer app (Mail at a message: { mail: id }; force: move on from a field with
 // text in it, which the app saved first), open one app's dashboard in Numbers with a way back, name an agent, say how long ago
@@ -2267,7 +2282,7 @@ const BELL = icon('bell');
 // The computer: a home screen of apps, each opening full screen with a way back home.
 // (the company's own after them in this list, once they've loaded: apps(), each with the group it names, its app.group,
 // which places it on the home screen: homeGroups)
-const apps = () => [...APPS, ...own.map(k => [k.id, esc(k.mod.app.name), esc(k.mod.app.what ?? ''), icon(k.mod.app.icon), k.mod.app.group])];
+const apps = () => [...APPS, ...ownShown().map(k => [k.id, esc(k.mod.app.name), esc(k.mod.app.what ?? ''), icon(k.mod.app.icon), k.mod.app.group])];
 // Each app's last field is its group, by what the board does with it: work to look at, talking, the business, and the
 // team and the machine (Settings last). The home screen reads them in HOME_GROUPS' order (homeGroups).
 // (the projects view is the HUD's own key, not an app)
@@ -2411,6 +2426,7 @@ function settings(el) {
   if (section === 'sys:voices') { el.innerHTML = '<div></div>'; return voiceSettings(el.firstChild, { dev: world.dev, ago }); }
   if (section === 'sys:tips') { el.innerHTML = '<div></div>'; return tipSettings(el.firstChild, { dev: world.dev }); }
   if (section === 'sys:overseer') { el.innerHTML = '<div></div>'; return oversight(el.firstChild, { dev: world.dev, ago }); }
+  if (section === 'sys:companies') { el.innerHTML = '<div></div>'; return companyLinks(el.firstChild, { dev: world.dev, ago, changed: askShown }); }
   if (section === 'sys:language') { el.innerHTML = '<p class="acts looks"></p><p class="msg"></p>'; return languages(el.firstChild, el.lastChild); }
   if (section === 'sys:look') { el.innerHTML = '<p class="acts looks"></p><section class="look-settings"></section>'; return lookSettings(el.firstChild, el.lastChild); }
   if (section) { el.innerHTML = `<section data-app-settings="${esc(section)}"></section>`; return own.find(k => k.id === section)?.mod.settings(el.firstChild, hq()); } // (a company app's box)
@@ -2437,7 +2453,7 @@ function settings(el) {
 }
 // Settings' sections in its order, each under its caption: the compute, Seats (seats.js, with pages of its own: a seat,
 // Add a seat) and Machines (machines.js, the same way); the company, a company app's box (its settings()) and the
-// Overseer's key (oversight.js) and the board's Language (languages); this device, Notifications, Look and Pin on HQ, a
+// Overseer's key (oversight.js), the linked companies (companylinks.js) and the board's Language (languages); this device, Notifications, Look and Pin on HQ, a
 // switch on its row (on, set); tools, Reload HQ, which runs at once (run). HQ's search finds each by its name, a page in it by the page's name (pages: a seat, a
 // machine) and a section by a choice on it (choices: a language, a look, the one set now first). The built-in ids start
 // "sys:", so a company app can't take one.
@@ -2448,6 +2464,7 @@ export function settingsSections() {
     { caption: 'COMPUTE', id: 'sys:machines', name: 'Machines', pages: () => machinePages(world.dev) },
     ...own.filter(k => k.mod.settings).map(k => ({ caption: 'COMPANY', id: k.id, name: k.mod.app.name })),
     { caption: 'COMPANY', id: 'sys:overseer', name: 'Overseer' },
+    { caption: 'COMPANY', id: 'sys:companies', name: 'Companies' },
     { caption: 'COMPANY', id: 'sys:tips', name: 'Tips' },
     { caption: 'COMPANY', id: 'sys:voices', name: 'Voices' }, // the voices calls recognise (voices.js).
     { caption: 'COMPANY', id: 'sys:language', name: 'Language', choices: async () => {
@@ -2696,6 +2713,7 @@ async function inbox(el) {
 let appsWaiting = 0, mailWaiting = 0, homeShown = null;   // homeShown: the screen home() last drew on
 const waitingTotal = () => appsWaiting + mailWaiting;
 export async function refreshComputerCount() {
+  askShown();
   const [counts, mail] = await Promise.all([ownLoaded.then(() => Promise.all(own.filter(k => k.mod.count).map(k => Promise.resolve().then(() => k.mod.count(world.dev)).then(Number, () => 0)))),
     loadMail(world.dev).catch(() => null)]);
   appsWaiting = counts.reduce((sum, c) => sum + (c || 0), 0);
