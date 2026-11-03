@@ -182,6 +182,11 @@ compose="docker compose -f $root/infra/compose.yaml -f $root/infra/generated/pro
     } catch { /* the table is made when the coordinator starts */ }
     console.log('== mail (latest 10; no words: the sender is its domain only)');
     console.table(db.prepare(\"select id, received, recipient, substr(sender, instr(sender, '@') + 1) sender_domain, size from mail order by id desc limit 10\").all());
+    // Mail's piles (mailsort.ts), counted per address and by who placed it: what the sorter did, never what a mail said
+    try {
+      console.log('== mail by pile (counts only: the last 30 days, per address; by: rule, model, fallback, board, or none yet)');
+      console.table(db.prepare(\"select substr(recipient, 1, instr(recipient, '@')) address, ifnull(pile, '-') pile, ifnull(pile_by, '-') by, count(*) n from mail where received > strftime('%Y-%m-%dT%H:%M:%S', 'now', '-30 days') group by 1, 2, 3 order by 1, 2, 3\").all());
+    } catch { /* the columns come with the coordinator's start */ }
     // mail that arrived while storage was full or the disk low (mail.ts room()):
     // only its attachments' names were kept, or an invoice's or agreement's raw message wasn't, so ask the sender again.
     // (Customer mail past mail.ts's ATTACHMENT_DAYS, 180, keeps names only on purpose: sweep().)

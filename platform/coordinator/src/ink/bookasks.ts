@@ -8,7 +8,7 @@
 //   - asksOn(): a note's cards, as the book reads them under the note's group.
 //   - card(): the desk phone's card with its place: the note's snip, number and words, and the Notebook page its group
 //     is on (Open in the book), or the page's address.
-// The book is Ink Studio, the design stage: nothing in it is built yet (the board, call 167). So a card for a secret, a
+// The book is Ink Studio, the design stage: nothing in it is built yet. So a card for a secret, a
 // step the board takes or built work stays on the desk phone only, its note's place shown there: keys and logins
 // (charter rule 8: a key is typed only where HQ stores keys), photo, document and zip uploads, an approval, files to
 // download, a card with steps, and finished work (a walk-through offered, work brought back).

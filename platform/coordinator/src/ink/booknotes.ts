@@ -74,7 +74,7 @@ once('2026-10-27-book-notes-inkless', forgetLines);
 // the board's own, in HQ), once the request has answered. { note, sheet }.
 // A call's page's notes go on the call's own sheet, never sent; the agent's ink is never a note (bookcalls.ts). The
 // board's note there isn't judged: it's for the call's agent, which decides what becomes of it (a scrap on the call's
-// notes page, or nothing), and no reply or try starts by itself (the board, call 161.).
+// notes page, or nothing), and no reply or try starts by itself.
 // (answers: the slip it's a reply under, replyTo's. by: who wrote it, the book's own person unless an invited guest's
 // note joins the board's sheet: 'guest:<grant>' (feedback.ts, a share's note). Only the board's own notes are judged: a
 // guest's waits for the board's plane like the rest.)

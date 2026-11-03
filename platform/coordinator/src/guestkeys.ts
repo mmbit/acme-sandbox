@@ -13,7 +13,7 @@ import { ORIGIN, PUBLIC_HOST } from './config.ts';
 import { names } from './company.ts';
 import { clientOf } from './auth.ts';
 import * as challenges from './challenges.ts';
-import { JSON_MAX, parseJson, readBody } from '../../../shared/routes/routes.ts';
+import { JSON_MAX, parseJson, readBody, type RouteTable } from '../../../shared/routes/routes.ts';
 
 db.exec(`create table if not exists guest_credentials (
   id text primary key, guest text not null collate nocase, public_key blob not null,
@@ -37,34 +37,42 @@ const live = (identity: Identity) =>
     .get(identity.name, identity.email);
 
 const SCRIPT = readFileSync(new URL('./guestkeys.js', import.meta.url));
-type FindIdentity = (enroll: boolean, token: string) => Context | null;
+type FindIdentity = (req: IncomingMessage, enroll: boolean, token: string) => Context | null;
 type StartSession = (name: string) => { 'set-cookie': string };
-export async function page(req: IncomingMessage, res: ServerResponse, find: FindIdentity, start: StartSession) {
-  const path = new URL(req.url ?? '/', ORIGIN).pathname;
-  if (req.method === 'GET' && path === '/guest/guestkeys.js') {
+// The passkeys' script and their steps as routes: find(req, enroll, token), the guest a step is for; start(name), their
+// session once a sign-in is verified
+export const routeTable = (find: FindIdentity, start: StartSession): RouteTable => ({
+  'GET /guest/guestkeys.js': ({ res }) => {
     res.writeHead(200, { 'content-type': 'text/javascript', 'cache-control': 'no-cache' });
     res.end(SCRIPT);
-    return true;
-  }
-  const match = /^\/guest\/(passkeys\/enroll|[A-Za-z0-9_-]{43}\/passkey)\/(options|verify)$/.exec(path);
-  if (!match) return false;
+  },
+  '* /guest/:scope(passkeys/enroll|[\\w\\-]{43}/passkey)/:step(options|verify)': ({ req, res, params }) =>
+    passkeyStep(req, res, params.scope, params.step, find, start),
+});
+async function passkeyStep(
+  req: IncomingMessage,
+  res: ServerResponse,
+  scope: string,
+  step: string,
+  find: FindIdentity,
+  start: StartSession,
+) {
   if (req.method !== 'POST' || req.headers.origin !== ORIGIN) return respond(res, 403, { error: 'origin' });
-  const enroll = match[1] === enrollmentScope,
-    token = match[1].split('/')[0];
-  const before = find(enroll, token);
+  const enroll = scope === enrollmentScope,
+    token = scope.split('/')[0];
+  const before = find(req, enroll, token);
   if (!before) return respond(res, 403, { error: 'guest' });
   const bytes = await readBody(req, JSON_MAX);
   if (!bytes) return respond(res, 413, { error: 'body' });
   const body = parseJson(bytes);
   if (body === null) return respond(res, 400, { error: 'body' });
-  const person = find(enroll, token);
+  const person = find(req, enroll, token);
   if (!person || person.name !== before.name || person.email !== before.email)
     return respond(res, 403, { error: 'guest' });
-  const answer =
-    match[2] === 'options' ? await options(req, res, person, enroll) : await verify(req, person, enroll, body);
+  const answer = step === 'options' ? await options(req, res, person, enroll) : await verify(req, person, enroll, body);
   if (typeof answer === 'number') return respond(res, answer, { error: 'passkey' });
-  if (!enroll && match[2] === 'verify') {
-    if (!find(enroll, token)) return respond(res, 403, { error: 'guest' });
+  if (!enroll && step === 'verify') {
+    if (!find(req, enroll, token)) return respond(res, 403, { error: 'guest' });
     res.appendHeader('set-cookie', start(person.name)['set-cookie']);
   }
   return respond(res, 200, answer);

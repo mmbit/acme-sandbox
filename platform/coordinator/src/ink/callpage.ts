@@ -6,7 +6,7 @@
 // scraps are callnotes.ts scrap. The page is its scrap units in order (scrapunit.js): the agent reads each in its own
 // px, and a mark goes on the scrap it's about or is a drawing of its own. Each goes through the notebook's own routes
 // (notebookgroups.ts) as the agent's: every screen showing the page reads it as it does another screen's change, and
-// the board's Undo never takes it back (only the board's own steps: the board, call 174), the board deletes or changes
+// the board's Undo never takes it back (it takes back only the board's own steps), the board deletes or changes
 // it as it would its own.
 // What it draws asks for nothing: it stays on the page as sent, unless the board changes it.
 import sharp from 'sharp';

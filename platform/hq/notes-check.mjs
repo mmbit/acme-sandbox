@@ -20,7 +20,7 @@ import { createServer } from 'node:http';
 import { serve, ROOT } from './serve.mjs';
 import { playwright, openPage, until } from '../../shared/browser/browser.mjs';
 import { scriptForHq, fulfilPart } from '../../shared/review/parts.mjs';
-import { pinOn } from './bookkit.mjs';
+import { pinOn } from './book/kit.mjs';
 
 const shots = process.argv.includes('--shots') ? process.argv[process.argv.indexOf('--shots') + 1] : null;
 if (shots) await mkdir(shots, { recursive: true });

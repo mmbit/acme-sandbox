@@ -1,33 +1,20 @@
 // node --test src/ink/bookguests.test.ts (real preview sessions and scoped Ink notebook routes, and hq guestnotes
 // sending the scraps invited people left in the board's Notebook before; throwaway DATA_DIR).
-import { test, after } from 'node:test';
+import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, truncateSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { rmSync, truncateSync, writeFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
-import { createServer, request } from 'node:http';
-import type { AddressInfo } from 'node:net';
 import sharp from 'sharp';
-import { fakeLettermint, fixtureRepo } from '../fixture.ts';
+import { harness, type Sent } from '../harness.ts';
+import { fakeLettermint } from '../fixture.ts';
 import { recordedReviews } from '../reviewfixture.ts';
 
-fixtureRepo();
-process.env.DATA_DIR = mkdtempSync(`${tmpdir()}/bookguests-test-`);
-process.env.SECRETS_DIR = `${process.env.DATA_DIR}/secrets`;
-Object.assign(process.env, {
-  PUBLIC_HOST: 'hq.company.test',
-  WORKER_TOKEN: 'worker-secret',
-  VOICE_TOKEN: 'voice-secret',
-  CADDY_HOST: '127.0.0.1',
-});
-const lettermint = await fakeLettermint(),
-  mails = lettermint.taken;
-lettermint.answer = () => 'take';
+const lettermint = await fakeLettermint();
+const h = await harness('bookguests', { env: { CADDY_HOST: '127.0.0.1', PUBLIC_HOST: 'hq.company.test' } });
+const { db } = h;
 lettermint.on();
-
-const { app } = await import('../server.ts');
+(await import('../storage.ts')).FLOOR.bytes = 0; // (screenshots are kept whatever this machine's disk has free)
 const { ORIGIN } = await import('../config.ts');
-const { db } = await import('../db.ts');
 const feedback = await import('../feedback.ts');
 const booknotes = await import('./booknotes.ts');
 const booksheets = await import('./booksheets.ts');
@@ -35,77 +22,15 @@ const book = await import('./book.ts');
 const notebooksend = await import('../notebooksend.ts');
 const sketchPeople = await import('./sketchpeople.ts');
 const { DIR } = await import('../pagescraps.ts');
-(await import('../storage.ts')).FLOOR.bytes = 0;
-const server = createServer(app).listen(0);
-after(() => server.close());
-const port = (server.address() as AddressInfo).port;
-db.prepare('insert or replace into sessions (token, expires) values (?, ?)').run('board-session', Date.now() + 3600e3);
 
 const HELLO = 'hello.preview.company.test'; // (the fixture's product, its owner bolt)
-type Answer = { status: number; headers: Record<string, any>; text: string; json: () => any };
-// A request as it reaches the coordinator. hold: the body's last bytes wait for it, so something can change meanwhile.
-function call(
-  path: string,
-  o: {
-    host?: string;
-    cookie?: string;
-    origin?: string;
-    body?: unknown;
-    form?: Record<string, string>;
-    type?: string;
-    from?: string;
-  } = {},
-  hold?: Promise<unknown>,
-) {
-  const body = o.form
-    ? new URLSearchParams(o.form).toString()
-    : o.body === undefined
-      ? undefined
-      : Buffer.isBuffer(o.body)
-        ? o.body
-        : JSON.stringify(o.body);
-  return new Promise<Answer>((resolve, reject) => {
-    const q = request(
-      {
-        port,
-        path,
-        method: body === undefined ? 'GET' : 'POST',
-        headers: {
-          host: o.host ?? 'hq.company.test',
-          ...(o.cookie ? { cookie: o.cookie } : {}),
-          ...(o.origin ? { origin: o.origin } : {}),
-          ...(body === undefined
-            ? {}
-            : {
-                'content-type': o.type ?? (o.form ? 'application/x-www-form-urlencoded' : 'application/json'),
-                'content-length': Buffer.byteLength(body),
-              }),
-          ...(o.from ? { 'x-forwarded-for': o.from } : {}),
-        },
-      },
-      res => {
-        let text = '';
-        res
-          .on('data', d => (text += d))
-          .on('end', () =>
-            resolve({ status: res.statusCode!, headers: res.headers, text, json: () => JSON.parse(text) }),
-          );
-      },
-    );
-    q.on('error', reject);
-    if (!hold || body === undefined) return q.end(body);
-    q.write(body.slice(0, 10));
-    hold.then(() => q.end(body.slice(10)));
-  });
-}
-const board = (path: string, body?: unknown) => call(path, { body, cookie: 's=board-session', origin: ORIGIN });
-const cookieOf = (r: Answer) => String(r.headers['set-cookie']?.[0] ?? '').split(';')[0];
+const cookieOf = (r: Sent) => String(r.headers['set-cookie']?.[0] ?? '').split(';')[0];
 let clients = 0;
 const api = '/guest/notebooks/api';
 const sessions = new Map<string, { cookie: string; name: string; share: number; notebook: number; page: number }>();
 const guest = (ps: string, path: string, body?: unknown) =>
-  call(api + path, { cookie: sessions.get(ps)!.cookie, origin: ORIGIN, body });
-const groupsOf = async (ps: string) => (await guest(ps, `/pages/groups?page=${sessions.get(ps)!.page}`)).json().groups;
+  h.send(api + path, { cookie: sessions.get(ps)!.cookie, origin: ORIGIN }, body);
+const groupsOf = async (ps: string) => (await guest(ps, `/pages/groups?page=${sessions.get(ps)!.page}`)).json.groups;
 const send = async (ps: string) => {
   const page = sessions.get(ps)!.page;
   const sent = await guest(ps, '/pages/send', { id: page });
@@ -117,62 +42,59 @@ const send = async (ps: string) => {
 };
 // The board shares the preview with a person; they sign in with their link's code: their `ps` cookie
 async function invited(name: string, email: string) {
-  const r = await board('/api/review/shares', { page: `https://${HELLO}/`, name, email, days: 3 });
-  assert.equal(r.status, 200, r.text);
-  const link = r.json().people.find((p: any) => p.name === name).link,
+  const r = await h.board('/api/review/shares', { page: `https://${HELLO}/`, name, email, days: 3 });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  const link = r.body.people.find((p: any) => p.name === name).link,
     path = new URL(link).pathname,
     from = `192.0.2.${++clients}`;
-  assert.equal((await call(`${path}/send`, { form: {}, origin: ORIGIN, from })).status, 200);
-  const code = /(\d{6})/.exec(mails.at(-1)!.text)![1];
-  const g = cookieOf(await call(`${path}/verify`, { form: { code }, origin: ORIGIN, from }));
-  const go = await call(`${path}/go`, { cookie: g });
+  assert.equal((await h.postForm(`${path}/send`, {}, from)).status, 200);
+  const code = /(\d{6})/.exec(lettermint.taken.at(-1)!.text)![1];
+  const g = cookieOf(await h.postForm(`${path}/verify`, { code }, from));
+  const go = await h.send(`${path}/go`, { cookie: g });
   const handOff = new URL(go.headers.location);
-  const ps = cookieOf(await call(handOff.pathname + handOff.search, { host: handOff.host }));
-  const books = (await call(`${api}/list`, { cookie: g })).json().notebooks;
+  const ps = cookieOf(await h.send(handOff.pathname + handOff.search, { host: handOff.host }));
+  const books = (await h.send(`${api}/list`, { cookie: g })).json.notebooks;
   const notebook = books.find((book: any) => book.kind === 'round');
-  sessions.set(ps, { cookie: g, name, share: r.json().id, notebook: notebook.id, page: notebook.pages[0].id });
+  sessions.set(ps, { cookie: g, name, share: r.body.id, notebook: notebook.id, page: notebook.pages[0].id });
   return ps;
 }
 const close = async (ps: string) => {
   const session = sessions.get(ps)!;
-  const response = await board('/api/review/shares/remove', { id: session.share, name: session.name });
-  assert.equal(response.status, 200, response.text);
+  const response = await h.board('/api/review/shares/remove', { id: session.share, name: session.name });
+  assert.equal(response.status, 200, JSON.stringify(response.body));
 };
 // (shot: the screen it was written on, as a data URL)
 const note = (ps: string, words: string, hold?: Promise<unknown>, shot?: string) =>
-  call(
+  h.send(
     '/__review/notes',
+    { host: HELLO, cookie: ps, origin: `https://${HELLO}` },
     {
-      host: HELLO,
-      cookie: ps,
-      origin: `https://${HELLO}`,
-      body: {
-        note: words,
-        page: `https://${HELLO}/basket`,
-        element: {
-          el: {
-            tag: 'button',
-            text: 'Esmee Visser, Kerkstraat 1',
-            selector: 'main button',
-            box: { x: 10, y: 20, w: 80, h: 30 },
-          },
-          kind: 'circle',
-          view: { w: 390, h: 844, x: 0, y: 0, dpr: 3 },
-          ink: [
-            {
-              color: '#d9480f',
-              size: 5,
-              points: [
-                [12, 22, 0.5, 0],
-                [60, 40, 0.5, 16],
-              ],
-            },
-          ],
+      note: words,
+      page: `https://${HELLO}/basket`,
+      element: {
+        el: {
+          tag: 'button',
+          text: 'Esmee Visser, Kerkstraat 1',
+          selector: 'main button',
+          box: { x: 10, y: 20, w: 80, h: 30 },
         },
-        viewport: { w: 390, h: 844, dpr: 3, x: 0, y: 0 },
-        shot,
+        kind: 'circle',
+        view: { w: 390, h: 844, x: 0, y: 0, dpr: 3 },
+        ink: [
+          {
+            color: '#d9480f',
+            size: 5,
+            points: [
+              [12, 22, 0.5, 0],
+              [60, 40, 0.5, 16],
+            ],
+          },
+        ],
       },
+      viewport: { w: 390, h: 844, dpr: 3, x: 0, y: 0 },
+      shot,
     },
+    'POST',
     hold,
   );
 // An invited person's notes in the board's My journal (scraps, theirs by their grant: by, once it's taken back)
@@ -207,7 +129,7 @@ test('a reviewer’s preview scraps land on their one Ink page, with identity an
   const ps = await invited('Esmee', 'esmee@example.org');
   const grant = sketchPeople.grantOf('Esmee')!;
   const colour = sketchPeople.colourOf(grant);
-  const tool = await call('/__review/review.js', { host: HELLO, cookie: ps });
+  const tool = await h.send('/__review/review.js', { host: HELLO, cookie: ps });
   assert.ok(tool.text.includes(`THEIRS = '${colour}'`));
   const words = ['The price is hard to read', 'Is shipping free?', 'Bigger photo'];
   const screen = await sharp({ create: { width: 390, height: 844, channels: 3, background: '#fff8ec' } })
@@ -231,7 +153,7 @@ test('a reviewer’s preview scraps land on their one Ink page, with identity an
   assert.equal(outsideOf('Esmee'), 0);
   assert.equal(
     (
-      await board('/api/notebooks/groups/create', {
+      await h.board('/api/notebooks/groups/create', {
         page: sessions.get(ps)!.page,
         texts: [{ x: 20, y: 20, w: 300, text: 'Board intrusion' }],
       })
@@ -379,7 +301,7 @@ test("an invited person's note the sheet's job fixed thanks them on the preview 
       job,
     },
   );
-  const tool = () => call('/__review/review.js', { host: HELLO, cookie: ps }).then(r => r.text);
+  const tool = () => h.send('/__review/review.js', { host: HELLO, cookie: ps }).then(r => r.text);
   assert.doesNotMatch(await tool(), /Thanks for spotting/, 'not live yet');
   const merged = new Date(Date.now() - 60_000).toISOString();
   db.prepare("insert into prs (number, branch, author, status, merged_at) values (9481, ?, 'bolt', 'merged', ?)").run(
@@ -395,18 +317,17 @@ test("an invited person's note the sheet's job fixed thanks them on the preview 
   assert.deepEqual(filled, { ids: [pay], notes: [PAY], crew: 'Testco' });
   // someone else on the share isn't thanked for her note
   assert.doesNotMatch(
-    await call('/__review/review.js', { host: HELLO, cookie: await invited('Bas', 'bas@example.org') }).then(
-      r => r.text,
-    ),
+    await h
+      .send('/__review/review.js', { host: HELLO, cookie: await invited('Bas', 'bas@example.org') })
+      .then(r => r.text),
     /Thanks for spotting/,
   );
-  const shown = await call('/__review/thanked', {
-    host: HELLO,
-    cookie: ps,
-    origin: `https://${HELLO}`,
-    body: { ids: [pay, pink] },
-  });
-  assert.deepEqual(shown.json(), { ok: true, count: 1 });
+  const shown = await h.send(
+    '/__review/thanked',
+    { host: HELLO, cookie: ps, origin: `https://${HELLO}` },
+    { ids: [pay, pink] },
+  );
+  assert.deepEqual(shown.json, { ok: true, count: 1 });
   assert.doesNotMatch(await tool(), /Thanks for spotting/, 'once per fix');
   // a fix whose pull request was closed unmerged never goes live, deploys or not
   const jobs = await import('../jobs.ts');
@@ -434,8 +355,8 @@ test('a reviewer removed while the preview body arrives writes nothing', async (
   release();
   assert.equal((await pending).status, 403);
   assert.equal(outsideOf('Noor'), 0);
-  const listed = await board(`/api/notebooks/guests/groups?page=${sessions.get(ps)!.page}`);
-  assert.deepEqual(listed.json().groups, []);
+  const listed = await h.board(`/api/notebooks/guests/groups?page=${sessions.get(ps)!.page}`);
+  assert.deepEqual(listed.body.groups, []);
   assert.deepEqual(theirs('Noor', noor), []);
 });
 
@@ -456,25 +377,25 @@ test('the shared notebook aliases edit only the member’s page and never expose
   const listed = await guest(ps, `/pages?notebook=${session.notebook}`);
   assert.equal(listed.status, 200);
   assert.deepEqual(
-    listed.json().pages.map((page: any) => page.id),
+    listed.json.pages.map((page: any) => page.id),
     [session.page],
   );
-  assert.deepEqual(listed.json().archived, []);
+  assert.deepEqual(listed.json.archived, []);
   assert.equal((await guest(ps, '')).status, 404);
-  const mine = (await board('/api/notebooks')).json().shelf.find((book: any) => book.kind === 'mine');
-  const boardPage = (await board(`/api/notebooks/pages?notebook=${mine.id}`)).json().pages[0].id;
+  const mine = (await h.board('/api/notebooks')).body.shelf.find((book: any) => book.kind === 'mine');
+  const boardPage = (await h.board(`/api/notebooks/pages?notebook=${mine.id}`)).body.pages[0].id;
   assert.equal((await guest(ps, `/pages?notebook=${mine.id}`)).status, 404);
-  const otherGroup = (await guest(other, '/groups/create', typed(foreign.page, 'Bo’s words'))).json();
-  const boardGroup = (await board('/api/notebooks/groups/create', typed(boardPage, 'The board’s words'))).json();
+  const otherGroup = (await guest(other, '/groups/create', typed(foreign.page, 'Bo’s words'))).json;
+  const boardGroup = (await h.board('/api/notebooks/groups/create', typed(boardPage, 'The board’s words'))).body;
   const first = await guest(ps, '/groups/create', typed(session.page, 'Ada’s first words'));
   assert.equal(first.status, 200, first.text);
   const edited = await guest(ps, '/groups/edit', {
-    id: first.json().id,
-    since: first.json().updated,
+    id: first.json.id,
+    since: first.json.updated,
     texts: [...typed(session.page, 'Ada’s edited words').texts, ...typed(session.page, 'Ada’s second words').texts],
   });
   assert.equal(edited.status, 200, edited.text);
-  const split = await guest(ps, '/groups/split', { id: first.json().id, texts: [1] });
+  const split = await guest(ps, '/groups/split', { id: first.json.id, texts: [1] });
   assert.equal(split.status, 200, split.text);
   assert.equal((await guest(ps, '/pages/title', { id: session.page, title: 'Ada’s review' })).status, 200);
   for (const page of [foreign.page, boardPage]) {
@@ -491,7 +412,7 @@ test('the shared notebook aliases edit only the member’s page and never expose
     );
     assert.equal((await guest(ps, '/groups/split', { id: group.id, texts: [0] })).status, 404);
     assert.equal((await guest(ps, '/groups/move', { id: group.id, page: session.page })).status, 404);
-    assert.equal((await guest(ps, '/groups/move', { id: first.json().id, page: group.page })).status, 404);
+    assert.equal((await guest(ps, '/groups/move', { id: first.json.id, page: group.page })).status, 404);
   }
   const ownGroup = (await groupsOf(ps))[0];
   for (const [action, body] of [
@@ -503,7 +424,7 @@ test('the shared notebook aliases edit only the member’s page and never expose
     ['pages/send', { id: session.page }],
     ['pages/undo', { id: session.page }],
   ] as const)
-    assert.equal((await board(`/api/notebooks/${action}`, body)).status, 404, action);
+    assert.equal((await h.board(`/api/notebooks/${action}`, body)).status, 404, action);
   const sent = await guest(ps, '/pages/send', { id: session.page });
   assert.equal(sent.status, 200, sent.text);
   assert.equal((await guest(ps, '/pages/undo', { id: session.page })).status, 200);
@@ -512,19 +433,19 @@ test('the shared notebook aliases edit only the member’s page and never expose
 
 test('the shared move alias stays inside one guest notebook, while invited notebooks allow more pages', async () => {
   const ps = await invited('Cleo', 'cleo@example.org');
-  const created = await board('/api/notebooks/guests', { people: [{ name: 'Cleo' }] });
-  assert.equal(created.status, 200, created.text);
-  const own = created.json().notebook;
+  const created = await h.board('/api/notebooks/guests', { people: [{ name: 'Cleo' }] });
+  assert.equal(created.status, 200, JSON.stringify(created.body));
+  const own = created.body.notebook;
   const page = own.pages[0].id;
   const next = await guest(ps, '/pages/create', { notebook: own.id });
   assert.equal(next.status, 200, next.text);
   const group = await guest(ps, '/groups/create', typed(page, 'Move within this notebook'));
   assert.equal(group.status, 200, group.text);
-  assert.equal((await guest(ps, '/groups/move', { id: group.json().id, page: sessions.get(ps)!.page })).status, 404);
-  const moved = await guest(ps, '/groups/move', { id: group.json().id, page: next.json().id });
+  assert.equal((await guest(ps, '/groups/move', { id: group.json.id, page: sessions.get(ps)!.page })).status, 404);
+  const moved = await guest(ps, '/groups/move', { id: group.json.id, page: next.json.id });
   assert.equal(moved.status, 200, moved.text);
-  assert.equal(moved.json().page, next.json().id);
-  assert.deepEqual((await guest(ps, `/pages/groups?page=${page}`)).json().groups, []);
+  assert.equal(moved.json.page, next.json.id);
+  assert.deepEqual((await guest(ps, `/pages/groups?page=${page}`)).json.groups, []);
 });
 
 async function png() {
@@ -533,9 +454,11 @@ async function png() {
     .toBuffer();
 }
 const upload = (ps: string, page: number, body: Buffer, hold?: Promise<unknown>) =>
-  call(
+  h.send(
     `${api}/pictures?page=${page}`,
-    { cookie: sessions.get(ps)!.cookie, origin: ORIGIN, body, type: 'image/png' },
+    { cookie: sessions.get(ps)!.cookie, origin: ORIGIN, 'content-type': 'image/png' },
+    body,
+    'POST',
     hold,
   );
 
@@ -545,12 +468,12 @@ test('guest picture aliases serve their own upload and refuse other guest and bo
   const picture = await png();
   const uploaded = await upload(ps, sessions.get(ps)!.page, picture);
   assert.equal(uploaded.status, 200, uploaded.text);
-  assert.ok(uploaded.json().url.startsWith(`${api}/pictures?file=`));
-  assert.equal((await call(uploaded.json().url, { cookie: sessions.get(ps)!.cookie })).status, 200);
-  assert.equal((await call(uploaded.json().url, { cookie: sessions.get(other)!.cookie })).status, 404);
+  assert.ok(uploaded.json.url.startsWith(`${api}/pictures?file=`));
+  assert.equal((await h.send(uploaded.json.url, { cookie: sessions.get(ps)!.cookie })).status, 200);
+  assert.equal((await h.send(uploaded.json.url, { cookie: sessions.get(other)!.cookie })).status, 404);
   assert.equal((await upload(ps, sessions.get(other)!.page, picture)).status, 404);
-  const mine = (await board('/api/notebooks')).json().shelf.find((book: any) => book.kind === 'mine');
-  const boardPage = (await board(`/api/notebooks/pages?notebook=${mine.id}`)).json().pages[0].id;
+  const mine = (await h.board('/api/notebooks')).body.shelf.find((book: any) => book.kind === 'mine');
+  const boardPage = (await h.board(`/api/notebooks/pages?notebook=${mine.id}`)).body.pages[0].id;
   assert.equal((await upload(ps, boardPage, picture)).status, 404);
 });
 
@@ -580,14 +503,13 @@ test('a picture arriving after the guest sends the page is refused after its bod
 
 test('guest pen tools use their authenticated transcription and safe picture routes, and nothing reads their ink', async () => {
   const ps = await invited('Oren', 'oren@example.org');
-  // (the pen's ink stays handwriting: no route reads it into words. board, call 176)
+  // (handwriting stays ink: no route reads it into words)
   assert.equal((await guest(ps, '/book/read', { ink: 'not a picture' })).status, 405, 'no such route');
-  const voice = await call(`${api}/voice`, {
-    cookie: sessions.get(ps)!.cookie,
-    origin: ORIGIN,
-    body: Buffer.alloc(20),
-    type: 'audio/webm',
-  });
+  const voice = await h.send(
+    `${api}/voice`,
+    { cookie: sessions.get(ps)!.cookie, origin: ORIGIN, 'content-type': 'audio/webm' },
+    Buffer.alloc(20),
+  );
   assert.equal(voice.status, 400);
   assert.equal((await guest(ps, '/book/fetch?url=http%3A%2F%2F127.0.0.1%2F')).status, 403);
   await close(ps);
@@ -611,7 +533,7 @@ test('a guest’s pictures stop at their book’s room, counted right before eac
   release();
   assert.deepEqual((await Promise.all(both)).map(r => r.status).sort(), [200, 413]);
   const full = await upload(ps, page, picture);
-  assert.deepEqual([full.status, full.json().error], [413, sketchPeople.BOOK_FULL]);
+  assert.deepEqual([full.status, full.json.error], [413, sketchPeople.BOOK_FULL]);
   assert.equal(
     (await note(ps, 'A snip too many', undefined, `data:image/png;base64,${picture.toString('base64')}`)).status,
     413,
@@ -623,9 +545,11 @@ test('voice arriving after a guest’s last membership ends starts no model work
   const ps = await invited('Rik', 'rik@example.org');
   let release!: () => void;
   const held = new Promise<void>(resolve => (release = resolve));
-  const speaking = call(
+  const speaking = h.send(
     `${api}/voice`,
-    { cookie: sessions.get(ps)!.cookie, origin: ORIGIN, body: Buffer.alloc(400), type: 'audio/webm' },
+    { cookie: sessions.get(ps)!.cookie, origin: ORIGIN, 'content-type': 'audio/webm' },
+    Buffer.alloc(400),
+    'POST',
     held,
   );
   await new Promise(resolve => setTimeout(resolve, 50));

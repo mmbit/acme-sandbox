@@ -36,7 +36,7 @@ export function changesOf(base, now) {
     // A unit of words alone, an agent's note, has nothing to lose: it stays.
     if (!KINDS.some(k => was[k].length)) continue;
     if (!KINDS.some(k => parts[k].length)) deletes.push(id);
-    else if (KINDS.some(k => !same(was[k], parts[k].map(keyOf)))) edits.push({ id, parts });
+    else if (!sameParts(was, parts)) edits.push({ id, parts });
   }
   return { edits, deletes };
 }
@@ -50,4 +50,6 @@ export const keyOf = el =>
   );
 // Whether an element of a page is held off it while it lands (bookarrive.js)
 export const landing = (page, el) => !!page.landing?.size && page.landing.has(keyOf(el));
+// Whether a unit's parts are the ones it held as last saved (base: each kind a list of keyOf strings.)
+export const sameParts = (base, parts) => KINDS.every(k => same(base[k], parts[k].map(keyOf)));
 const same = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);

@@ -1,10 +1,16 @@
-// Assigning: one of the board's scraps handed to a person (the store's side: bookassign.ts). With the Pencil, Select's
-// or the Pen's, one stroke circles a scrap and carries on out of the circle: once it has left, the short list pops up at the line's
-// end (bookassignlist.js), the line drawn onto a name lights it, and lifted there the scrap goes to them; lifted
-// anywhere else, the line fades and nothing goes. With a mouse or a finger, Select's bar has Assign while one whole
+// Assigning: a scrap on one of the board's Asks pages handed to a guest (the store's side: bookassign.ts). Only a scrap
+// of an Asks page goes, and only to a guest: a sketch's scraps reach their agent by themselves, so a sketch's selection
+// has no Assign. With the Pencil, Select's or the Pen's, one stroke circles a
+// scrap and carries on out of the circle: once it has left, the short list pops up at the line's end
+// (bookassignlist.js), the line drawn onto a name lights it, and lifted there the scrap goes to them; lifted anywhere
+// else, the line fades and nothing goes. On any other open page the same stroke moves what it circled to another page
+// of its chapter: the list of pages opens over the page bar (bookmoveto.js
+// pagesCard), and lifted on one, a copy flies to it and what was circled moves there, as Select's Move to page… moves
+// it. The line runs under the list, never over it. With a mouse or a finger, Select's bar has Assign while one whole
 // scrap is picked, opening the same list beside it. A pick sends a copy of the scrap flying to the name (a copy that
 // takes no press, as bookpaper.js's do), the list and the line tidy away, and the scrap stays where it is, wearing the
-// person's tag. More… opens everyone, to scroll or search, and a pick there goes the same way. Its look: bookassign.css.
+// guest's tag. More… opens every guest, to scroll or search, and a pick there goes the same way. Its look:
+// bookassign.css.
 //
 // bookselect.js mounts it, hands it each move of a loop being drawn (drew: true when it drew it) and its lift (lifted:
 // true when it took it), and has it fit Assign into the bar beside what's picked. bookwrite.js tells it of each Pen
@@ -12,15 +18,17 @@
 import { esc, stylesheet } from '../../util.js';
 import { foley, sfx } from '../audio.js';
 import { toast } from '../toast.js';
-import { button, lineIcon } from './bookui.js';
+import { button, island, lineIcon } from './bookui.js';
 import { scope, word } from './bookscope.js';
 import { shut } from './booksave.js';
 import { assignGroup, loadPeople } from './notebookdata.js';
-import { membersOf, picked } from './bookselectmath.js';
+import { boundsOf, membersOf, picked } from './bookselectmath.js';
 import { boxOfText, letGo, pageOf } from './bookselect.js';
 import { followPress } from './bookpress.js';
 import { leftRing, ringAt } from './bookassignmath.js';
-import { everyoneSheet, freshTag, light, placeAt, placeBeside, rowAt, shortList } from './bookassignlist.js';
+import { everyoneSheet, freshTag, shortList } from './bookassignlist.js';
+import { light, placeAt, placeBeside, rowAt } from './bookcard.js';
+import { pagesCard, placeOver } from './bookmoveto.js';
 import { flight, lineOver, tidy } from './bookassignfly.js';
 
 // a ring closes where the stroke comes back this near (screen px) to a point at least ROUND_PX before it along the
@@ -30,7 +38,7 @@ const CLOSE_PX = 28,
   LEAVE_PX = 40;
 // the tag pops in this long (ms) after the copy sets off: as it lands and the list has tidied away
 const TAG_MS = 1600;
-// the rows' pops, a note each, as they come in one by one (bookassign.css's 100 ms apart)
+// the rows' pops, a note each, as they come in one by one (bookcard.css's 100 ms apart)
 const NOTES = ['A5', 'C6', 'D6', 'E6', 'G6'];
 const PERSON = lineIcon('<circle cx="12" cy="8" r="4"/><path d="M4.5 20.5c0-4 3.4-6.5 7.5-6.5s7.5 2.5 7.5 6.5"/>');
 
@@ -38,8 +46,9 @@ const PERSON = lineIcon('<circle cx="12" cy="8" r="4"/><path d="M4.5 20.5c0-4 3.
 export function mountAssign(sel) {
   stylesheet('shell/ink/bookassign.css');
   // (shown: the list or sheet open, { card, people, close() }; people: the store's, as last asked)
-  // (claim: whether the Pen's stroke just lifted was the gesture's, ending on the list)
-  const as = { sel, shown: null, people: null, claim: false };
+  // (claim: what the gesture made of the Pen's stroke just lifted: 'used', lifted on the list's row; 'ink', carried out
+  // of its ring and lifted off any; null, never the gesture's)
+  const as = { sel, shown: null, people: null, claim: null };
   // (the Pen tool's strokes too: bookwrite.js tells of one starting, and asks as it dries whether it was the gesture's)
   sel.book.assign = { inking: down => inking(as, down), claim: () => claimed(as) };
   return {
@@ -51,10 +60,11 @@ export function mountAssign(sel) {
 
 // ---- by the Pencil
 
-// A move of a loop being drawn with the Pencil: a ring round one whole scrap first, then a line out of it far enough
-// to be one; from then on the line is drawn here, over the list, lighting the row it's on
+// A move of a loop being drawn with the Pencil: a ring round one whole scrap (on an Asks page; elsewhere, round
+// anything) first, then a line out of it far enough to be one; from then on the line is drawn here, under the list,
+// lighting the row it's on
 function drew(as, loop, m) {
-  if (scope || loop.down.pointerType !== 'pen' || loop.kind !== 'lasso') return false;
+  if (scope || loop.down.pointerType !== 'pen' || loop.kind !== 'lasso' || !openPage(loop.view.page)) return false;
   const a = (loop.assign ??= { checked: 1, ring: null, line: null, list: null, lit: null, done: false });
   const scale = as.sel.book.scale;
   if (!a.line && !a.ring) a.ring = ringed(as, loop, a);
@@ -69,8 +79,9 @@ function drew(as, loop, m) {
   }
   return true;
 }
-// The ring the stroke has closed since last looked, if it holds one whole scrap on an open page (asking the store who
-// it can go to meanwhile): { poly, to (where it closed on the stroke), ...its scrap }, or null
+// The ring the stroke has closed since last looked, if it holds one whole scrap on an open Asks page (asking the store
+// who it can go to meanwhile), or anything on another open page: { poly, to (where it closed on the stroke), view,
+// things, and on an Asks page its scrap's page and id }, or null
 function ringed(as, loop, a) {
   const { path, view } = loop,
     scale = as.sel.book.scale;
@@ -78,29 +89,32 @@ function ringed(as, loop, a) {
     const ring = ringAt(path, a.checked, CLOSE_PX / scale, ROUND_PX / scale);
     if (!ring) continue;
     const poly = path.slice(ring.from, ring.to + 1),
-      scrap = wholeGroup(
-        view,
-        picked(poly, view.page, t => boxOfText(as.sel, t)),
-      );
+      things = picked(poly, view.page, t => boxOfText(as.sel, t));
+    if (!asks(view.page)) {
+      if (things.ink.length + things.scraps.length + things.texts.length) return { poly, to: ring.to, view, things };
+      continue;
+    }
+    const scrap = wholeGroup(view, things);
     if (!scrap) continue;
     asked(as);
     return { poly, to: ring.to, ...scrap };
   }
   return null;
 }
-// The line has left the ring: drawn in ink over everything from now, the loop's dashes gone, and the short list
-// popping up at its end
+// The line has left the ring: drawn in ink over the page from now, the loop's dashes gone, and the short list popping
+// up at its end (off an Asks page, the pages over the page bar)
 function leave(as, loop, a, m) {
   loop.svg?.remove();
   a.line = lineOver(as.sel.book);
+  if (!asks(loop.view.page)) return (a.list = pagesOpened(as, loop.view));
   const end = [m.clientX, m.clientY];
   as.people.then(
     people => !a.done && (a.list = opened(as, a.ring, people, shortList(people.recent, people.everyone.length), end)),
     e => toast(esc(e.message)),
   );
 }
-// The Pencil lifted after its line left the ring: on a name, the scrap goes to them; on More…, everyone; anywhere
-// else, nothing, the line fading
+// The Pencil lifted after its line left the ring: on a name, the scrap goes to them; on More…, everyone; on a page,
+// what's circled moves there; anywhere else, nothing, the line fading
 function lifted(as, loop, u) {
   const a = loop.assign;
   if (!a?.line) return false;
@@ -108,6 +122,7 @@ function lifted(as, loop, u) {
   const row = u.type === 'pointercancel' || !a.list ? null : rowAt(a.list.card, u.clientX, u.clientY);
   a.row = row;
   if (row?.dataset.to) give(as, a.ring, a.list, row, a.line);
+  else if (row?.dataset.page) moved(as, a.ring, a.list, row, a.line);
   else {
     tidy([a.line.el]);
     if (row) everyone(as, a.ring, a.list);
@@ -119,11 +134,11 @@ function lifted(as, loop, u) {
 // A Pen stroke starting: followed as Select's loop is, the same ring and line out of it making the same list. Lifted on
 // the list, the stroke was the gesture's and leaves no ink (claimed); lifted anywhere else, it's ink as ever.
 function inking(as, down) {
-  as.claim = false;
+  as.claim = null;
   const { book } = as.sel,
     at = book.at(down.clientX, down.clientY);
   // (the Pen's alone: a highlighter's, a pencil's or a brush's stroke is always ink.)
-  if (scope || down.pointerType !== 'pen' || !at || !(book.tools?.gestures() ?? true)) return;
+  if (scope || down.pointerType !== 'pen' || !openPage(at?.view.page) || !(book.tools?.gestures() ?? true)) return;
   const loop = { view: at.view, path: [pageOf(book, down)], kind: 'lasso', down, svg: null };
   followPress(down, {
     move: m => {
@@ -132,23 +147,24 @@ function inking(as, down) {
       drew(as, loop, m);
     },
     // (before the pen's own lift: its stroke dries after, asking claimed())
-    up: u => (as.claim = lifted(as, loop, u) && !!loop.assign.row),
+    up: u => (as.claim = lifted(as, loop, u) ? (loop.assign.row ? 'used' : 'ink') : null),
   });
 }
 function claimed(as) {
   const was = as.claim;
-  as.claim = false;
+  as.claim = null;
   return was;
 }
 
 // ---- by the mouse or a finger
 
-// Assign in Select's bar (first, with a person) while one whole scrap of an open page is picked
+// Assign in Select's bar (first, a person's icon) while one whole scrap of an open Asks page is picked
 function fit(as, bar) {
   if (scope) return;
   let b = bar.querySelector('.bk-assign-btn');
   if (!b) {
-    b = button({ icon: PERSON, text: word('assign'), onClick: () => fromBar(as) });
+    // (an icon, as the rest of the bar)
+    b = button({ icon: PERSON, label: word('assign'), onClick: () => fromBar(as) });
     b.classList.add('bk-assign-btn');
     bar.prepend(b);
   }
@@ -247,6 +263,39 @@ async function give(as, scrap, list, row, line = null) {
   as.people = null;
 }
 
+// ---- moved
+
+// The pages of a view's page's chapter over the page bar, the line to be drawn onto one: { card, mates, close() }
+function pagesOpened(as, view) {
+  close(as);
+  const mates = as.sel.book.groups.mates(view),
+    card = pagesCard(mates, view.page);
+  placeOver(card, island('pages').getBoundingClientRect(), as.sel.book.desk.getBoundingClientRect());
+  const list = { card, mates, close: () => tidy([card]) };
+  as.shown = list;
+  card
+    .querySelectorAll('.bk-row')
+    .forEach((_, i) => foley('bubble', { note: NOTES[i % NOTES.length] }, { vol: 0.3, at: 0.05 + i * 0.1 }));
+  return list;
+}
+// What a ring circled moved to the page of a row (new: a new page): a copy flies to it along the line drawn, the list
+// and line tidy away, and the move is Select's Move to page…'s, toasted, Undo a step (bookmoveto.js)
+function moved(as, ring, list, row, line) {
+  const { sel } = as,
+    to = list.mates.find(p => String(p.id) === row.dataset.page) ?? null;
+  if (sel.view === ring.view) letGo(sel);
+  as.shown = null;
+  light(list.card, row);
+  list.card.inert = true;
+  // (the copy's picture taken before the move reads the page again)
+  flight(sel, ring, row, line.screen(line.path.slice(ring.to))).finally(() => {
+    list.close();
+    tidy([line.el]);
+  });
+  const box = boundsOf(ring.things, t => boxOfText(sel, t));
+  sel.book.groups.moveOnto(ring.view, { ...ring.things, box }, to);
+}
+
 // ---- shared
 
 // The box round two boxes on the screen (the frame and its bar: the list goes beside both)
@@ -260,13 +309,17 @@ const union = (a, b) =>
 
 // The store's people, asked again (its short list changes as people are picked)
 const asked = as => (as.people = loadPeople(as.sel.book.dev));
-// Things on a view's page ({ ink, scraps, texts }) when they're one whole group of an open page: { view, page, id,
+// Whether a page is an Asks page, the only one whose scraps are handed over (bookassign.ts assignGroup)
+const asks = page => page?.kind === 'asks';
+// Whether the Pencil's ring and line out of it work on a page: an open Notebook page's (handed over or moved)
+const openPage = page => !!page?.groups && !shut(page);
+// Things on a view's page ({ ink, scraps, texts }) when they're one whole group of an open Asks page: { view, page, id,
 // things }, else null
 function wholeGroup(view, { ink = [], scraps = [], texts = [] }) {
   const page = view?.page,
     els = [...ink, ...scraps, ...texts],
     id = els[0]?.g;
-  if (!page?.groups || shut(page) || !page.groups.has(id) || els.some(el => el.g !== id)) return null;
+  if (!asks(page) || !page.groups || shut(page) || !page.groups.has(id) || els.some(el => el.g !== id)) return null;
   const things = membersOf(page, id);
   return things.ink.length + things.scraps.length + things.texts.length === els.length
     ? { view, page, id, things }

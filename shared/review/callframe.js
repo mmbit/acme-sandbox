@@ -3,7 +3,7 @@
 // nothing into the notebook by itself. Once the pen has rested SETTLE_MS the mark goes to HQ ({ callMark: { id,
 // anchor, snip, ago } }: its anchor, its masked snip, how long ago its first line began), which files it as its own
 // call's mark, with the words the call heard since then (HQ's desk.js, callnotes.js). Its ink stays drawn (r.held)
-// until HQ says the agent's turn on it is done ({ had: note }), or the call ends (the board, call 161.).
+// until HQ says the agent's turn on it is done ({ had: note }), or the call ends.
 //   HQ answers { callMark: { id, note } } once it's on the call's page, or { callMark: { id, failed } } with why not:
 //   then its ink goes and the board is told.
 import { redrawInk, reset } from './acts.js';

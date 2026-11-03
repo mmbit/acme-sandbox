@@ -14,7 +14,7 @@ import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
 import { playwright, errorsOf, until } from '../browser/browser.mjs';
 import { serve } from '../../platform/hq/serve.mjs';
-import { pinOn } from '../../platform/hq/bookkit.mjs';
+import { pinOn } from '../../platform/hq/book/kit.mjs';
 import { lookNames } from '../../platform/hq/looks.mjs';
 import { scriptForHq, fulfilPart } from './parts.mjs';
 
@@ -465,7 +465,7 @@ await page.waitForFunction(() => !document.querySelector('review-mode').shadowRo
 await page.keyboard.press('Escape');
 await dictated();
 
-// ---- the mark starts no mic: its button does, and the words come in as they're said (the board, call 154)
+// ---- the mark starts no mic: its button does, and the words come in as they're said
 async function dictated() {
   frames = 0;
   ended = 0;

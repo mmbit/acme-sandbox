@@ -8,7 +8,7 @@ export const toLogin = () => { location.href = '/login'; return new Promise(() =
 export async function get(url) {
   const res = await fetch(url, { credentials: 'same-origin', headers: { accept: 'application/json' } });
   if (res.status === 401) return toLogin();
-  if (!res.ok) throw new Error(`${url}: ${res.status}`);
+  if (!res.ok) throw Object.assign(new Error(`${url}: ${res.status}`), { status: res.status });
   return res.json();
 }
 
@@ -395,8 +395,9 @@ export async function saveSeen(dev, list, newest) {
   marks[list] = newest;
   return { ...marks };
 }
-// Mail's Send to the team on a mail of the board's own: { job, already } (mail.ts forward). Dev mode makes up a job number.
-export const forwardMail = (dev, id) => dev ? Promise.resolve({ job: 9000 + Number(id), already: false }) : post('/api/mail/forward', { id });
+// Mail's one-tap move to another pile: { pile }, or Team's { job, already } (mail.ts setPile, forward). Dev mode makes up a
+// job number.
+export const moveMail = (dev, id, pile) => dev ? Promise.resolve(pile === 'team' ? { job: 9000 + Number(id), already: false } : { pile }) : post('/api/mail/pile', { id, pile });
 export const loadMailOne = (dev, id) => dev ? Promise.resolve({ id, body: '(mock) The message text shows here.', attachments: '[]' }) : get(`/api/mail/one?id=${id}`);
 export const loadCalls = dev => dev ? mockList('calls').catch(() => []) : get('/api/calls');
 // "We missed something": one item the board adds to a call (a task for the call's agent), and the call is followed up again.

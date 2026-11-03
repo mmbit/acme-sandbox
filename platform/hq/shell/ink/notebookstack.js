@@ -5,7 +5,7 @@
 // A scrap's picture at most this wide, in its unit's px: a little inside the unit (scrapunit.js UNIT_W)
 export const STACK = { w: 313 };
 // A scrap's picture at most this tall (about its width), a tall crop scaled down to it however narrow that makes it: a
-// tall crop is fine, a page it takes over isn't (the board, calls 162 and 174)
+// tall crop is fine, a page it takes over isn't
 export const TALL = { h: 320 };
 // a scrap's post-it words under its picture (bookgroups.js .bk-under, bookgroups.css .bk-scrap-words): this far below
 // it, at least this wide (a scrap's as wide as the stack, anything else's this) and at most that, a line this tall at

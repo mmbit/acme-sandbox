@@ -706,7 +706,7 @@ test("the board hands one of its own mails to the team: one job for mail.forward
   withBrandMail(HANDING);
   try {
     const id = await to('board@testco.example'), hello = await to('hello@testco.example');
-    assert.equal((await forward(hello)).status, 404, "only the board's own mail is handed on this way");
+    assert.equal((await forward(hello + 1000)).status, 404, 'no such mail');   // (any other mail the board may hand on)
     const first = await forward(id);
     assert.equal(first.status, 200); assert.equal(first.body.already, false);
     const job = forwardJob(first.body.job);

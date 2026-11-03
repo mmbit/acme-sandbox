@@ -4,7 +4,7 @@
 // anywhere on the page.
 //
 // bookpages.js mounts them and asks, on a press on the paper: press(e) true: taken here; otherwise the pen draws with
-// ink().
+// ink(). Never on a locked page: bookwrite.js asks none of them there.
 import { stylesheet } from '../../util.js';
 import { mountTexts } from './booktexts.js';
 import { begin } from './bookedit.js';

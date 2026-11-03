@@ -27,7 +27,7 @@ const element = () => ({
   querySelectorAll: () => [],
 });
 globalThis.addEventListener = () => {};
-globalThis.document = { addEventListener: () => {}, dispatchEvent: () => {}, createElement: element };
+globalThis.document = { addEventListener: () => {}, dispatchEvent: () => {}, createElement: element, head: element() };
 globalThis.location = { hostname: '', search: '', pathname: '/' };
 // (dev mode's store, notebookplay.js, seeded with the pages below: each test draws on one of its own)
 globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => SEED });
@@ -135,6 +135,8 @@ const PAGES = {
     },
   ],
 };
+// (the same sketch, shown on two screens)
+PAGES[7] = PAGES[8] = PAGES[5];
 const SEED = {
   notebooks: [{ id: 1, kind: 'mine', name: 'My journal', created: NOW, updated: NOW }],
   pages: Object.keys(PAGES).map((id, k) => ({ id: Number(id), notebook: 1, pos: k, created: NOW, updated: NOW })),
@@ -246,8 +248,6 @@ test("a drawing on a page whose last unit is yesterday's stays where it was draw
   assert.deepEqual(inked(view.page), drawn);
 });
 
-// The board's walk-through on its iPad (call 174): ink drawn beside a scrap followed the scrap's room as it grew and
-// as it was dragged, and a scribble meant for the note at the bottom pushed that note down, an empty gap where it was.
 const placeOf = (page, id) => page.places.find(p => p.id === id);
 // (the page's scraps' places, by id)
 const cards = page => Object.fromEntries(page.places.filter(p => p.id > 400).map(p => [p.id, [p.x, p.y]]));
@@ -413,4 +413,35 @@ test("a sketch's strokes stay where they were drawn at any notebook width, the o
   assert.ok(far && page.groups.get(far.id).place.y < 0, 'a unit of its own where it was drawn, kept by the store');
   assert.ok(page.x <= -300 && page.y <= -200, `the page reaches it up and left: ${page.x}, ${page.y}`);
   assert.deepEqual(inked(page).slice(0, drawn.length), drawn, 'and nothing else moved');
+});
+
+test("a unit another screen wrote on first keeps that screen's strokes as this screen's place for it is saved", async () => {
+  const desk = await sketchOf(7, WIDE),
+    pad = await sketchOf(7, WIDTH);
+  // (the iPad places the page's units, and writes on the board's word)
+  const [x, y] = pad.view.page.ink.find(el => el.g === 701).points[0];
+  draw(pad.view, [
+    [
+      [x + 10, y + 10],
+      [x + 90, y + 30],
+    ],
+  ]);
+  await save(pad);
+  // (the desktop saves its own places for them before it has read the page again)
+  changed(desk.book, desk.view.page);
+  await saved(desk.book, desk.view.page);
+  const { page } = (await sketchOf(7, WIDE)).view;
+  assert.equal(page.groups.get(701).ink.length, 2, "the iPad's stroke stays");
+  assert.deepEqual(page.groups.get(701).place, pad.view.page.groups.get(701).place, "at the iPad's place");
+});
+
+test("a screen that reads its units' places from another before saving its own lets its own go", async () => {
+  const desk = await sketchOf(8, WIDE),
+    pad = await sketchOf(8, WIDTH);
+  await save(pad);
+  await readAgain(desk.book, desk.view.page);
+  desk.view.place();
+  changed(desk.book, desk.view.page);
+  await saved(desk.book, desk.view.page);
+  assert.equal(desk.view.page.pins.size, 0, 'nothing left to save at the next lay');
 });

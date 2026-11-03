@@ -97,8 +97,7 @@ export function compose(r) {
   mark.view = viewNow();
   mark.page = location.href;
   r.shot = shoot(r, mark);
-  // (on a call the call hears the board, and no post-it shows: callnotes.js, and in HQ's viewer callframe.js. Off one the mic starts only at its button on the post-it, never at the mark: the
-  // board, call 154.)
+  // (on a call the call hears the board, and no post-it shows: callnotes.js, and in HQ's viewer callframe.js. Off one the mic starts only at its button on the post-it, never at the mark.)
   if (onCall(r)) return;
   // (a mark on HQ, the Pencil's or a mouse's, has its post-it too, as on any page: its Save puts it in the Notebook as
   // a scrap, the board's pin flow.)

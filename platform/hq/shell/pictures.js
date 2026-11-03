@@ -1,8 +1,12 @@
 // A card's pictures in one viewer over everything: a before-and-after pair shows both in one place at one size, so the
 // change shows when it switches. ← and → (or a sideways swipe) switch before and after, ↑ and ↓ (or a swipe up or down)
-// go to the previous or next pair or picture, and Escape, ✕ or a tap on the picture closes.
+// go to the previous or next pair or picture, and Escape, ✕ or a tap on the picture closes. And the card's pairs and
+// pictures small, each a tap that opens the viewer, the same on the desk phone (desk.js) and a card's slip in the
+// Notebook (ink/bookasks.js).
 import { esc } from '../util.js';
+import { bare } from './prose.js';
 import { sfx } from './audio.js';
+import { PIC, pictureSrc } from './media.js';
 
 // how far a finger moves, in CSS pixels, before a press is a swipe
 const SWIPE = 40;
@@ -13,6 +17,67 @@ export function viewPictures(items, at, side, parent) {
   const viewer = new Viewer(items, at, side);
   parent.append(viewer.box);
   sfx.blip();
+}
+
+// ---------------------------------------------------------------- what a card shows small
+// The pictures a card's text names (media.js PIC), each with its line's words as its title when they're short, else its
+// file's name (slip_front.jpg, "Slip front"). body: the text, its fenced blocks left out (card.js unfenced)
+export const picturesIn = body =>
+  [...new Set(body.match(PIC) ?? [])].map(p => {
+    const line = (body.split('\n').find(l => l.includes(p)) ?? '')
+      .replace(p, '')
+      .replace(/https?:\/\/\S+/g, '')
+      .replace(/[`*_]|^[\s\d.)•*-]+|[\s:–—-]+$/g, '')
+      .trim();
+    return { src: pictureSrc(p), title: line && line.length <= 60 ? line : pictureTitle(p) };
+  });
+const pictureTitle = p => {
+  const name = String(p)
+    .split('/')
+    .pop()
+    .replace(/\.\w+$/, '')
+    .replace(/[-_]+/g, ' ');
+  return name.charAt(0).toUpperCase() + name.slice(1);
+};
+// Pictures ({ src, title }) small, each a tap to show it big
+export const figuresHtml = pics =>
+  pics.length
+    ? `<div class="pics">${pics
+        .map(
+          p =>
+            `<figure><button type="button" data-pic="${esc(p.src)}" data-label="${esc(p.title)}" aria-label="Show ${esc(p.title)} bigger"><img src="${esc(p.src)}" alt="" loading="lazy"></button><figcaption>${esc(p.title)}</figcaption></figure>`,
+        )
+        .join('')}</div>`
+    : '';
+// A card's before-and-after pairs (media.js pairsOf) lead it: each change as it was and as it is now, side by side, a
+// tap showing one big, and its live link under them
+export const pairsHtml = pairs =>
+  pairs.length
+    ? `<div class="pairs">${pairs
+        .map(
+          (p, i) =>
+            `<figure class="pair"><figcaption>${esc(p.label)}</figcaption><div class="ba">${sideHtml(p, i, 'Before', p.before)}${sideHtml(p, i, 'After', p.after)}</div>${
+              p.link ? `<p class="live">${bare(p.link, esc)}</p>` : ''
+            }</figure>`,
+        )
+        .join('')}</div>`
+    : '';
+// (one side of pair p, the i-th: was, Before or After, and its file)
+const sideHtml = (p, i, was, file) =>
+  `<button type="button" data-pic="${esc(pictureSrc(file))}" data-pair="${i}" data-side="${was.toLowerCase()}" aria-label="Show ${esc(p.label)} (${was.toLowerCase()}) bigger"><img src="${esc(pictureSrc(file))}" alt="" loading="lazy"><span>${was}</span></button>`;
+// A tap opens one viewer, in parent, for all the pictures beside it (a card's, or one intercom line's: within `each`):
+// the card's pairs first, as they lead it, a pair's two as one, then its other pictures.
+export function wirePics(el, { pairs = [], each, parent }) {
+  for (const group of each ? el.querySelectorAll(each) : [el]) {
+    const singles = [...group.querySelectorAll('[data-pic]:not([data-pair])')];
+    const items = [
+      ...pairs.map(p => ({ label: p.label, before: pictureSrc(p.before), after: pictureSrc(p.after) })),
+      ...singles.map(b => ({ label: b.dataset.label, src: b.dataset.pic })),
+    ];
+    for (const b of group.querySelectorAll('[data-pair]'))
+      b.onclick = () => viewPictures(items, +b.dataset.pair, b.dataset.side, parent);
+    singles.forEach((b, i) => (b.onclick = () => viewPictures(items, pairs.length + i, 'before', parent)));
+  }
 }
 
 const isPair = item => 'before' in item;

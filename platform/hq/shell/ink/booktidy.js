@@ -1,4 +1,4 @@
-// A blank page isn't kept once it's left (the board's call 175): as a page shows, the notebook's other sketch pages
+// A blank page isn't kept once it's left: as a page shows, the notebook's other sketch pages
 // that had nothing on them when last read, and still have nothing once their saves are in, are let go by the store
 // (notebooktidy.ts), which judges each; the pages are read again when any went. New page tapped twice leaves one, and a
 // book shut on a blank page lets it go the next time another page shows.

@@ -37,7 +37,7 @@ canvas keeps its pixels and needs nothing.
 **On HQ itself** the board always has the same tool, on any of HQ's screens. The coordinator serves it there only
 behind the board's sign-in. Each note is a scrap on the newest page of the board's Notebook, for the agent whose work
 it's on (what's drawn on names them, `data-owner`), else the CEO, as a preview's are for its owner (The flow, below);
-the post-it's line says so, and its button is Save. (the owners: job #19219)
+the post-it's line says so, and its button is Save.
 A `review:cover` event (detail `true`, later `false`) hides the tool while the page frames another page with its own
 pin, as HQ's viewer does around a preview. A note in progress returns when the viewer closes. A page that loads the
 tool itself (its script tag has `data-summoned`) starts with the pin away, and shows it or puts it away
@@ -116,14 +116,13 @@ alone, so the imports form no circle.
   `eraser.js`) and undo (Cmd or Ctrl+Z too), which takes back the last line or the last pass of the eraser. Undoing the first mark goes back to tapping or drawing, the words kept. The page
   refuses a pen's touch moves so it never scrolls under the pen, but never on review mode's own controls: on an iPad a
   touch whose move is refused is no tap, and the Pencil's taps on the strip pressed nothing.
-- **The mic button starts the mic**, where the browser records, on a computer and a tablet alike: a mark never does
-  (the board changed its mind on recording at the mark: call 154). In HQ's viewer the page's frame has no microphone,
-  so while the post-it is open the page tells HQ where its mic is, and HQ lays its own mic key right over it, looking
-  the same: one tap on it records at once, and the Pencil's tap does too (the board, call 170). The page's own script
-  can post the same offer, so HQ records, on its own page, only from the board's tap on that key (never one in its
-  first half second there or since it moved), and sends nothing back before it. The words then come back as they're
-  said, over the same live line as below, on a line (a MessagePort) the page's offer hands over, so only the page that
-  offered hears them; the next page's hello in the frame ends it (HQ's `framemic.js`).
+- **The mic button starts the mic**, where the browser records, on a computer and a tablet alike: a mark never does. In
+  HQ's viewer the page's frame has no microphone, so while the post-it is open the page tells HQ where its mic is, and
+  HQ lays its own mic key right over it, looking the same: one tap on it records at once, and the Pencil's tap does too.
+  The page's own script can post the same offer, so HQ records, on its own page, only from the board's tap on that key
+  (never one in its first half second there or since it moved), and sends nothing back before it. The words then come
+  back as they're said, over the same live line as below, on a line (a MessagePort) the page's offer hands over, so only
+  the page that offered hears them; the next page's hello in the frame ends it (HQ's `framemic.js`).
 - **The words as they're said:** the mic's audio goes as 16 kHz PCM to `/__review/dictate` and each phrase's words come
   back while the reviewer talks (above). The clip is recorded too, and where the line can't be reached (or drops), it's
   transcribed whole by `POST /__review/voice`. Five minutes at most.
@@ -168,7 +167,7 @@ it's the page's width and the book's spread covers it with the page; over a dial
   of a note (the coordinator's `booknotes.ts` stores its anchor without them) and nothing reads a page's notes back to
   draw them, so no tab, screen, reload or call can bring one back. A call's agent's rings go at the end of its turn,
   and so do the board's own marks on a call, which are for the agent (below). `book-check.mjs` asserts it
-  (`bookink.mjs` `nothingDrawn`).
+  (`book/ink.mjs` `nothingDrawn`).
 - **Wipe, undo:** a scribble over the mark being made lets it go, post-it and all. A two-finger tap or Cmd/Ctrl+Z
   takes back the last thing: a line, the mark let go, or the last note sent to its sheet (gone from the book). A finger
   pressed inside a ring still open and dragged onto the open book tapes a cut-out of what it's round there
@@ -179,34 +178,21 @@ it's the page's width and the book's spread covers it with the page; over a dial
 - **Not for ink**: a page's floating control marked `data-no-ink` (HQ's minimised call) takes the pen as a finger, to
   drag or tap, never ink (`pentouch.js` theirs).
 - **Written words** stay ink: the mark's lines are on its note's snip, and whoever reads the note reads them there
-  (a job by its picture, the book's judge with it). Nothing reads them into type (board, call 176).
+  (a job by its picture, the book's judge with it). Nothing reads them into type.
 - **Hold the pen still** on one spot for half a second and talk: a red pulse at its tip, the words landing there as a
   note (a pin on what's under it) as the pen lifts, on a call too (the call's own hearing). Nothing heard, no note.
 - **Ring something** and the mark is on what's inside the ring. Nothing asks "are you sure?". An undo the book refuses
   changes nothing, and the step stays to take back.
 - The document hears `pencil:note` (`{ id, n, page, call }`) as each note goes into the book, for the book and a call.
 
-**The system's Undo** (`systemundo.js`) lets the system's own Undo and Redo reach a page with an undo of its own.
-They come from the Apple Pencil Pro's squeeze palette, the iPad's shortcut bar or Edit › Undo. Safari hands them to a
-page only as an input event (`historyUndo`, `historyRedo`), and only on an editable with steps in the browser's undo
-history. So a hidden editable keeps one step each way. The system's Undo takes back the page's last step, and the
-hidden step is put back at once, ready for the next.
-
-- `systemUndo({ undo, redo }, { focused })` takes the page's own undo and redo functions. With `focused`, the hidden
-  editable keeps the focus, and the keyboard stays down.
-- It returns `{ arm(), armed(), stop() }`.
-- `arm()` makes the two hidden steps. Call it inside a touch or a click, as Safari focuses nothing otherwise. Call it
-  again after any other edit on the page, which drops the browser's redo. With `focused`, it also puts the focus back
-  on the hidden editable.
-- `armed()` says whether the steps are in place.
-- `stop()` removes the hidden editable and its listeners.
+Safari on the iPad hands a page no Undo or Redo from the Pencil Pro's squeeze or the three-finger swipe.
 
 **On a call** (`callnotes.js`; HQ's `shell/ink/calldraw.js` tells it through `call:on`, `call:off`, `call:heard` and `call:had`;
 Ink's folder): a mark goes on the call's page in the book (`kind: 'call'`, made
 at the call's first mark, its notes on a sheet of their own that's never sent: the coordinator's `bookcalls.ts`; the
 book shows them on that page), not on a sheet. No mic of its own: the words the call heard while it was drawn (or while
 the pen was held still, a voice note) are its words; it settles as every mark does, and HQ's call then sends it to the
-agent. It's for the agent (the board, call 161): nothing of it goes into the notebook by itself, the agent makes a scrap
+agent. It's for the agent: nothing of it goes into the notebook by itself, the agent makes a scrap
 of what it judges worth keeping, and its ink doesn't lift: it stays drawn (`r.held`, following the page) until the line
 says the agent's turn on it is done or that it couldn't take it (`call:had`), then goes, so the board circles afresh;
 the call's end takes what's left. `callink-check.mjs` checks it. The agent's ring (its `draw` tool) is not the Pencil's and never in the book: `drive.js` draws it
@@ -215,7 +201,7 @@ the page, following what's under it as the page scrolls and gone with that, at t
 speaks again, or the agent starts its next answer), or with the call. A mark's snip
 goes to the agent with what the watch-along keeps out (`[data-private]`, `[data-watchalong-hide]`) painted over
 (`snapshot(r, { masked })`); lines drawn while a mark goes in are drawn and make the next; a mark the book doesn't take
-stays, the pin's tip says so (the pin back while it speaks, even with the book folded), and it goes in with the next line (tried once more as the call ends). `book-check.mjs` plays it (`bookcall.mjs`).
+stays, the pin's tip says so (the pin back while it speaks, even with the book folded), and it goes in with the next line (tried once more as the call ends). `book-check.mjs` plays it (`book/call.mjs`).
 
 **Answers** (`slip.js`; the coordinator's `bookslips.ts`): an agent's answer clips onto its note in the book as a
 slip, typed under a paper clip, with the note's snip ("then") beside something new's running preview (its picture and
@@ -225,7 +211,7 @@ closes the note; words written under it go as the reply, a new note on the same 
 on a Notebook page, a reply there going to who answered, and a tick going to `/api/notebooks/answers/tick` (the
 coordinator's `bookanswer.ts`). The slip's words are the caller's: `say(key, places)` in the reader's language. HQ's
 feed brings a new answer at once (a `book` event).
-`book-check.mjs` plays it (`booknotebook.mjs`). (the Notebook's groups)
+`book-check.mjs` plays it (`book/notebook.mjs`). (the Notebook's groups)
 
 `platform/hq/book-check.mjs` plays it in WebKit held like an iPad mini, with the book's store and the voice line played,
 and the ring, its number and Send again in Wire (in Chromium: Linux's headless WebKit has no en-CA dates, so Wire can't
@@ -264,7 +250,7 @@ start there).
 1. The board pins a note on `<slug>.preview.<zone>`, or on `cycles.preview.<zone>`, whose notes HQ files by the
    cycle folder the page is in (`cycles/<folder>`), its owner the agent who made the folder: the first agent on a desk
    whose commit added a file to it (`owed.ts` maker()), else the CEO, who hands it on; a page in no folder is
-   **Venture cycle pages**, the CEO's. HQ's own pages are the CEO's unless what's marked names an agent (job #19219).
+   **Venture cycle pages**, the CEO's. HQ's own pages are the CEO's unless what's marked names an agent.
    The board's note goes onto the newest page of its Notebook as a scrap for that owner (`notebookgroups.ts`
    createScrap; a guest's still goes on the board's open sheet for them, `book.ts` sheetPageFor): its anchor, its words, and a snip, the screenshot cut around the mark with the
    pictures added under it (`platform/coordinator/src/ink/bookreview.ts`; Ink's folder). It does **not** go to an agent, and its words ask nothing, a question too: only the board's own words

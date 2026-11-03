@@ -35,7 +35,7 @@ import { serve } from './serve.mjs';
 import { playwright, openPage } from '../../shared/browser/browser.mjs';
 import { lookNames } from './looks.mjs';
 import { notebookPlay } from './shell/ink/notebookplay.js';
-import { notebookRoute } from './notebookroute.mjs';
+import { notebookRoute } from './book/notebookroute.mjs';
 
 const { chromium, webkit } = playwright();
 const frames = JSON.parse(readFileSync(process.argv[2], 'utf8')); // [[seconds after the reply started, base64 PCM16, sentence]]
@@ -1234,7 +1234,7 @@ async function callPage(viewport = { width: 420, height: 912 }) {
     if (path === '/api/language') return r.fulfill({ json: { lang: 'en' } }); // (a call reads it before it dials)
     // (the call's notes page, asked for at pickup: refused, its card covers the call's keys.)
     if (path === '/api/notebooks/call') return r.fulfill({ json: { page: { id: 1 } } });
-    // (the book's store, played as dev mode plays it, notebookroute.mjs: a screen wide enough to show the book open
+    // (the book's store, played as dev mode plays it, book/notebookroute.mjs: a screen wide enough to show the book open
     // reads its newest note at once.)
     if (path.startsWith('/api/notebooks')) return notebookRoute(r, notebook);
     return r.fulfill({ status: 404, body: '' });

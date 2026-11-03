@@ -11,7 +11,7 @@ import { playwright, openPage, until } from '../../shared/browser/browser.mjs';
 import { ASKS } from './shell/tips.js';
 import { lookNames } from './looks.mjs';
 import { notebookPlay } from './shell/ink/notebookplay.js';
-import { notebookRoute } from './notebookroute.mjs';
+import { notebookRoute } from './book/notebookroute.mjs';
 
 const { chromium } = playwright();
 const server = await serve(),
@@ -65,7 +65,7 @@ const REPLIES = [
 ];
 
 // What the rest of HQ reads as it boots, answered quietly: the intercom is all this check looks at. The Notebook's
-// routes go to its store played in memory, as dev mode's (notebookroute.mjs on notebookplay.js), and the work piles
+// routes go to its store played in memory, as dev mode's (book/notebookroute.mjs on notebookplay.js), and the work piles
 // are the mock's.
 const BOOT = {
   '/api/review/products': [],

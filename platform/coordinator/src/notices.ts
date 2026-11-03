@@ -2,7 +2,16 @@
 import { db } from './db.ts';
 import { org } from './company.ts';
 import { createJob } from './jobs.ts';
-import { mailHooks, noticeRules, noticeRule, noticesSince, type IncomingMail, type NoticeRule } from './mail.ts';
+import {
+  handed,
+  mailHooks,
+  noticeRules,
+  noticeRule,
+  noticesSince,
+  setPile,
+  type IncomingMail,
+  type NoticeRule,
+} from './mail.ts'; // (handed, setPile)
 
 // A run of notices (a request retried every few minutes, a day's listing checks) is one job: a service gets a new one
 // only when none of its jobs is waiting to start or running, the last began an hour ago or more, and fewer than four
@@ -16,8 +25,11 @@ const GAP_MS = 60 * 60_000,
 // notice: the entry's name; job: the job that has it, null while it waits
 db.exec('create table if not exists mail_notices (mail integer primary key, notice text not null, job integer)');
 
+// (a notice with an owner is the team's in Mail)
 const record = (mail: number, rule: NoticeRule | undefined) => {
-  if (owned(rule)) db.prepare('insert or ignore into mail_notices (mail, notice) values (?, ?)').run(mail, rule.name);
+  if (!owned(rule)) return;
+  db.prepare('insert or ignore into mail_notices (mail, notice) values (?, ?)').run(mail, rule.name);
+  setPile(mail, 'team', 'rule', ownerOf(rule.owner));
 };
 // an entry with an owner names its service too (brand.yaml)
 const owned = (rule: NoticeRule | undefined): rule is NoticeRule & { name: string; owner: string } => !!rule?.owner;
@@ -67,6 +79,7 @@ export function check(now = Date.now()) {
       prompt: brief(rule, mails),
     });
     db.prepare(`update mail_notices set job = ? where mail in (${mails.map(() => '?').join(',')})`).run(id, ...mails);
+    for (const mail of mails) handed(mail, id);
   }
 }
 

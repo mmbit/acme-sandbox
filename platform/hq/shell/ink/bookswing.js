@@ -360,7 +360,7 @@ function grip(node, { tab }) {
       addEventListener('pointercancel', up, { once: true });
     });
   // (the page's edge takes no press: a finger's on it is read on the leaf, the Pencil and the mouse write there, the
-  // page letting go of the finger's as the leaf takes it. Board, call 174.)
+  // page letting go of the finger's as the leaf takes it.)
   follow(tab ? node : parts.leaf, {
     takes: e => tab || (e.pointerType === 'touch' && !e.target.closest?.('.bk-rail') && within(node, e)),
     start(dx) {

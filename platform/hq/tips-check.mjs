@@ -11,40 +11,27 @@
 // a VP9 copy).
 //   node platform/hq/tips-check.mjs [screenshot-folder]
 import assert from 'node:assert/strict';
-import { serve, ROOT } from './serve.mjs';
+import { ROOT } from './serve.mjs';
 import { playwright, openPage, until } from '../../shared/browser/browser.mjs';
 import { readFile, mkdtemp } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { lookNames } from './looks.mjs';
 import { notebookPlay } from './shell/ink/notebookplay.js';
-import { notebookRoute } from './notebookroute.mjs';
+import { notebookRoute } from './book/notebookroute.mjs';
 import { filmFiles } from './films/listing.mjs';
 import { TIPS, tipOf, filmName } from './shell/tips.js';
-import { pinOn } from './bookkit.mjs';
+import { pinOn } from './book/kit.mjs';
+import { DECISION, LOOKS, NAMES, TABLET, base, mockedApi, ringAndControl, server } from './tips.fixture.mjs';
 
 const { chromium } = playwright();
-const server = await serve(),
-  base = `http://localhost:${server.address().port}`;
-const LOOKS = lookNames();
-// the sample company's names for its desk phone and intercom, the foundation's
-const NAMES = { phone: 'desk phone', intercom: 'intercom' };
-const TABLET = { width: 1180, height: 820 },
-  PHONES = [
-    { width: 375, height: 667 },
-    { width: 360, height: 640 },
-  ]; // (short phones: the film must give up height for the keys)
+const PHONES = [
+  { width: 375, height: 667 },
+  { width: 360, height: 640 },
+]; // (short phones: the film must give up height for the keys)
 const minutesAgo = m => new Date(Date.now() - m * 60_000).toISOString();
-const decision = {
-  id: 3,
-  created: minutesAgo(30),
-  agent: 'wren',
-  kind: 'decision',
-  title: 'A new bench for the garden?',
-  body: 'About a bench.',
-  urgency: 'now', // (on a browser without notifications: their tip)
-};
+// (urgency now: on a browser without notifications, their tip)
+const decision = { ...DECISION, created: minutesAgo(30), urgency: 'now' };
 const REVIEW = new URL('../../shared/review/', import.meta.url);
 // an open notes share with one person still to send (Reviews › Shared, End now's tip)
 const share = {
@@ -141,7 +128,7 @@ async function checkLook(look) {
   const ended = [],
     events = [],
     // the board's notebook, where review mode's newest note is looked for (booknewest.js): the store played, one blank
-    // page (notebookroute.mjs.)
+    // page (book/notebookroute.mjs.)
     notebook = notebookPlay();
   const { context, page, errors } = await openPage(browser, {
     viewport: TABLET,
@@ -172,13 +159,7 @@ async function checkLook(look) {
     if (path === '/api/book/sheets') return r.fulfill({ json: { sent: [] } }); // (Reviews › Sent, empty)
     if (path === '/api/review/notes') return r.fulfill({ json: [] });
     if (path.startsWith('/api/notebooks')) return notebookRoute(r, notebook);
-    if (path === '/api/book') return r.fulfill({ json: { day: null, today: null, days: [], pages: [] } }); // (the board's book, empty)
-    const mocked = await r.fetch({ url: `${base}/mock${path.slice(4)}.json` });
-    if (mocked.ok()) return r.fulfill({ response: mocked });
-    if (path === '/api/seen') return r.fulfill({ json: {} });
-    if (['/api/gazette', '/api/mail', '/api/review/products', '/api/requests/later'].includes(path))
-      return r.fulfill({ json: [] });
-    return r.fulfill({ status: 404, body: '' });
+    return mockedApi(r, path);
   });
   // HQ's pin: review mode from shared/review, with nothing to coach and no notes of the board's
   await context.route(`${base}/__review/**`, async r => {
@@ -252,14 +233,7 @@ async function checkLook(look) {
     await page.waitForSelector('.showme-step:not([hidden])');
     await page.waitForFunction(at => !!document.querySelector(at), at);
     await page.waitForTimeout(300);
-    const [ring, control] = await page.evaluate(
-      at =>
-        [
-          document.querySelector('.showme-ring'),
-          [...document.querySelectorAll(at)].find(e => e.getBoundingClientRect().width > 0),
-        ].map(e => e.getBoundingClientRect().toJSON()),
-      at,
-    );
+    const [ring, control] = await ringAndControl(page, at);
     assert.ok(
       ring.left <= control.left &&
         ring.right >= control.right &&

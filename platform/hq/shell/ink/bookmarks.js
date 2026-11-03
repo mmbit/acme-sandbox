@@ -1,15 +1,16 @@
-// A book's chapters as its bookmarks, the board's on every book of its own (notebookchapters.js): Sketch, Asks and Calls,
-// or a round's (notebookrounds.ts) Guests, Asks and Advice (once the round is done). Real bookmarks (board, call 190):
-// each keeps one card colour for good and never lights up; the page's own chapter shows by depth, its tab out of the
-// block's top page, nearest the page and a little longer, the others from deeper in. Beside HQ's page they stick out
-// of the page block at the book's outer edge; on a page that is the whole screen (a phone, an iPad upright) they lie
-// folded against its left edge like the pull tab, slivers with their icons, and a tap or a pull brings them out over
-// the margin (the board's pick on card 341). They live on the cover's edge (book.js), so they move and swing with the
-// book (bookmarks.css). Asks carries the count of the asks still open ("Asks · 2"). A tab opens the page its chapter
-// was last on, at first its first page, and the page's own its first page;
-// one with no pages yet shows, dim, and opens an empty page of its own, its chapter's name at its head, till another
-// page or tab is chosen. A round's Guests tab also opens a short list of its guests, one line each with how far their
-// page is (nothing yet, its notes, done), a tap opening their page.
+// A book's chapters as its bookmarks, the board's on every book of its own (notebookchapters.js): Sketch, Asks and
+// Calls, or a round's (notebookrounds.ts) Guests, Asks and Advice (once the round is done). Real bookmarks (README, The
+// book's frame): each keeps one card colour for good and never lights up; the
+// page's own chapter shows by depth, its tab out of the block's top page, nearest the page and a little longer, the
+// others from deeper in. Beside HQ's page they stick out of the page block at the book's outer edge; on a page that is
+// the whole screen (a phone, an iPad upright) they lie folded against its left edge like the pull tab, slivers with
+// their icons, and a tap or a pull brings them out over the margin. They live on the cover's edge (book.js), so they
+// move and swing with the book (bookmarks.css). Asks carries the count of the asks still open ("Asks · 2"). A tab opens
+// the page its chapter was last on, at first its first page, and the page's own its first page (over the overview,
+// its chapter there); one with no pages yet
+// shows, dim, and opens an empty page of its own, its chapter's name at its head, till another page or tab is chosen.
+// A round's Guests tab also opens a short list of its guests, one line each with how far their page is (nothing yet,
+// its notes, done), a tap opening their page.
 import { esc } from '../../util.js';
 import { foley } from '../audio.js';
 import { word } from './bookscope.js';
@@ -57,6 +58,9 @@ export function mountBookmarks({ edge, leaf }, pages) {
   s.blank = Object.assign(document.createElement('div'), { className: 'bk-mk-blank', hidden: true });
   edge.append(s.nav);
   leaf.append(s.panel, s.blank);
+  // (their height, which the book's pull tab keeps below: book.css.)
+  const book = leaf.closest('#book');
+  new ResizeObserver(() => book.style.setProperty('--bk-marks-h', `${s.nav.offsetHeight}px`)).observe(s.nav);
   s.nav.addEventListener('click', e => tapped(s, e.target.closest('[data-chapter]')?.dataset.chapter));
   pulling(s);
   s.panel.addEventListener('click', e => chose(s, e.target.closest('[data-name]')));
@@ -174,6 +178,9 @@ function tapped(s, chapter) {
   // (folded, a tap brings them out first: the slivers are too small to pick one by)
   if (matchMedia(FOLDED).matches && !s.nav.hasAttribute('data-out')) return out(s, true);
   out(s, false);
+  // (over the notebook's pages, its overview: there it's scrolled to, bookshelf.js)
+  if (s.nav.closest('#book').dataset.far)
+    return document.dispatchEvent(new CustomEvent('book:chapter', { detail: { chapter } }));
   s.panel.hidden = chapter !== 'guests' || !s.panel.hidden;
   const here = !s.empty && s.pages.page()?.chapter === chapter,
     to = here ? firstOf(s, chapter) : pageOf(s, chapter);

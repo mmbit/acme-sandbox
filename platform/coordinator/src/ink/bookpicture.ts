@@ -18,7 +18,7 @@ import { canvasOf } from '../../../hq/shell/ink/sketchcanvas.js';
 import { onCanvas } from '../notebookplaces.ts';
 import { pageRow } from '../notebook.ts';
 import { inkOf } from '../../../hq/shell/ink/agentink.js';
-import { parseCard } from '../../../hq/shell/card.js';
+import { unfoldedCard } from '../../../hq/shell/card.js';
 import { WORDS as ASKING, said } from '../../../hq/shell/questions.js';
 import { asksOn } from './bookasks.ts';
 import { versionsOf } from '../../../hq/shell/ink/bookversionsof.js';
@@ -115,8 +115,8 @@ export async function unitsPage(page: number): Promise<Drawn> {
     places = masonry
       ? masonry.places.map((p, i) => ({ ...p, hung: { x: p.x, y: p.y + units[i].h, w: UNIT_W, h: units[i].below } }))
       : canvasOf(units, w).places,
-    on = units.map((u, i) => ({ ...u, parts: shifted(u.parts, places[i].x, places[i].y), at: places[i] })),
-    size = masonry ? { w, h: masonry.height } : cropped(on);
+    placed = units.map((u, i) => ({ ...u, parts: shifted(u.parts, places[i].x, places[i].y), at: places[i] })),
+    { on, size } = masonry ? { on: placed, size: { w, h: masonry.height } } : cropped(placed);
   return {
     ...{ x: 0, y: 0, ...size },
     // (each stroke with its unit, painted as the book paints it: bookrender.ts.)
@@ -131,20 +131,24 @@ type Unit = { id: number; h: number; w: number; below: number; parts: Parts; und
   place?: { x: number; y: number };
 };
 // A sketch page's units (on: each at its place, its parts with it) moved in together, MARGIN from the picture's
-// top-left with what hangs under them, and the picture as big as they reach
-function cropped(on: { parts: Parts; at: { x: number; y: number; hung: Box }; h: number }[]) {
-  if (!on.length) return { w: widthFor(2), h: 2 * MARGIN };
+// top-left with what hangs under them, and the picture as big as they reach.
+// → { on: the units moved, size }
+function cropped<U extends { parts: Parts; at: { x: number; y: number; hung: Box }; h: number }>(on: U[]) {
+  if (!on.length) return { on, size: { w: widthFor(2), h: 2 * MARGIN } };
   const reach = on.map(u => union(union(boxOf(u.parts), { x: u.at.x, y: u.at.y, w: UNIT_W, h: u.h }), u.at.hung)),
     dx = MARGIN - Math.min(...reach.map(r => r.x)),
-    dy = MARGIN - Math.min(...reach.map(r => r.y));
-  for (const u of on) {
-    const { x, y, hung } = u.at;
-    u.parts = shifted(u.parts, dx, dy);
-    u.at = { x: x + dx, y: y + dy, hung: { ...hung, x: hung.x + dx, y: hung.y + dy } };
-  }
+    dy = MARGIN - Math.min(...reach.map(r => r.y)),
+    moved = on.map(({ at, ...u }) => ({
+      ...u,
+      parts: shifted(u.parts, dx, dy),
+      at: { ...at, x: at.x + dx, y: at.y + dy, hung: { ...at.hung, x: at.hung.x + dx, y: at.hung.y + dy } },
+    }));
   return {
-    w: Math.max(widthFor(2), ...reach.map(r => r.x + r.w + dx + MARGIN)),
-    h: Math.max(...reach.map(r => r.y + r.h + dy + MARGIN)),
+    on: moved,
+    size: {
+      w: Math.max(widthFor(2), ...reach.map(r => r.x + r.w + dx + MARGIN)),
+      h: Math.max(...reach.map(r => r.y + r.h + dy + MARGIN)),
+    },
   };
 }
 // The box round two (the first null when there's nothing in it)
@@ -175,9 +179,9 @@ function formOf(a: { by: string; form: Asking[] | null; form_answer: string[] | 
   return { form: { color: inkOf(a.by), questions } };
 }
 // A card clipped under a unit as the book shows it (bookasks.js): its summary, its Choose: as chips (a notice's "Got
-// it"), its questions; answered, its answer
+// it"), its questions; answered, its answer. Read without its pictures, as the slip reads it: no path as its words.
 function askedOf(a: Ask): Asked {
-  const c = parseCard(a.body),
+  const c = unfoldedCard(a.body),
     choices = c.choices.length ? c.choices.map((ch: { label: string }) => ch.label) : (c.options as string[]);
   return {
     ...{ name: a.name ?? 'An agent', color: inkOf(a.agent ?? ''), answer: a.answer },

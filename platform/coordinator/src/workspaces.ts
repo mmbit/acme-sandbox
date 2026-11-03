@@ -2,7 +2,7 @@
 // the companies' agents and files with every version kept, as both HQs hold them, and how our side reads them. Our
 // side's posts are workspaceposts.ts, the other company's entries workspaceentries.ts. The design:
 // platform/coordinator/docs/companies.md.
-import { db, inOneStep, redacted } from './db.ts';
+import { db, columnsOf, inOneStep, redacted } from './db.ts';
 import * as links from './links.ts';
 import * as files from './workspacefiles.ts';
 
@@ -17,7 +17,8 @@ const PATH_MAX_CHARS = 300;
 
 // uid: the id both HQs know it by; ours: written by our side; agent: who wrote it (theirs: as their HQ names them);
 // seq: ours, its entry in our log for the link (links.ts takenAt: when their HQ took it). arrived: theirs, when it
-// came. read: a message of theirs, when one of us read it (read_by); one of ours, when they said they had.
+// came. read: a message of theirs, when one of us read it (read_by); one of ours, when they said they had. woke: an
+// urgent one of theirs that woke our executive (workspaceentries.ts wake).
 db.exec(`create table if not exists workspaces (id integer primary key, uid text not null unique, link integer not null,
   title text not null, ours integer not null, agent text not null, at text not null, seq integer, arrived text)`);
 db.exec(`create table if not exists workspace_threads (id integer primary key, uid text not null unique,
@@ -25,7 +26,9 @@ db.exec(`create table if not exists workspace_threads (id integer primary key, u
   seq integer, arrived text)`);
 db.exec(`create table if not exists workspace_messages (id integer primary key, uid text not null unique,
   thread integer not null, text text not null, urgent integer not null default 0, ours integer not null,
-  agent text not null, at text not null, seq integer, arrived text, read text, read_by text)`);
+  agent text not null, at text not null, seq integer, arrived text, read text, read_by text, woke integer)`);
+if (!columnsOf('workspace_messages').includes('woke'))
+  db.exec('alter table workspace_messages add column woke integer');
 db.exec(`create table if not exists workspace_files (id integer primary key, uid text not null unique,
   workspace integer not null, path text not null, sha256 text not null, size integer not null, note text not null,
   ours integer not null, agent text not null, at text not null, seq integer, arrived text)`);

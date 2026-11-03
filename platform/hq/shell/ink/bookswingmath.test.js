@@ -170,8 +170,7 @@ test("the close's dissolve keeps the opening's time: the spring's quicker swing 
   assert.ok(fadeAt(0) === 0 && fadeAt(gone - 2 * FRAME) < 1, 'fading over the fall');
   assert.equal(fadeAt(gone + FRAME), 1, 'gone as the open board is');
   for (const s of [0.1, 0.2, 0.3]) assert.ok(fadeAt(s) <= fadeAt(s + FRAME), 'never back while it goes');
-  // (and gone as long: it gives HQ's page its room when the open board would land, lying still LANDED s: the board's
-  // call 160)
+  // (and gone as long: it gives HQ's page its room when the open board would land, lying still LANDED s)
   let still = 0;
   const lands = run({ a: UPRIGHT, w: NUDGE }, 'fall', {
     done: b => (still = resting(b) ? still + FRAME : 0) > LANDED,

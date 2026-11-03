@@ -11,7 +11,7 @@
 #book .bk-open-head {
   margin: 0 0 4px;
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 400;
   letter-spacing: 0.04em;
   text-transform: uppercase;
   opacity: 0.6;
@@ -38,6 +38,7 @@
   cursor: pointer;
 }
 #book .bk-open-item b {
+  font-weight: 400;
   color: var(--ink);
 }
 #book .bk-open-kind {

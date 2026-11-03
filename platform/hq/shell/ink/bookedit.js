@@ -94,7 +94,7 @@ export function edit(book, view, hooks, act) {
 // deleted on another screen): the page's steps let go of each, and of what a step made it from or into, so neither
 // Undo nor Redo puts back what it replaced or a copy of what replaced it. Undo's steps and Redo's are each walked from
 // the one nearest now outward, so a farther step lets go of what a nearer one let go of too. A step left changing
-// nothing goes, and so does the pen's drawing of a stroke that's lost (bookwrite.js dried). (strokes: job #17706)
+// nothing goes, and so does the pen's drawing of a stroke that's lost (bookwrite.js dried).
 export function forget(book, page, gone) {
   for (const steps of [book.steps, book.undone]) {
     const lost = new Set(gone),

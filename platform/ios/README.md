@@ -65,4 +65,4 @@ An app signed with a personal team runs for 7 days, then needs another Run from 
 Nothing here has been built on a Mac yet. The first Run proves what no check here can: that it compiles, that
 PencilKit's gesture draws from the web view it's moved onto (the canvas's own touch stays off, so fingers reach the
 page), and that the Pencil off the paper still presses the tools. The page's side is checked in a browser
-(`platform/hq/booknative.mjs`, the book's check).
+(`platform/hq/book/native.mjs`, the book's check).

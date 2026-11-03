@@ -7,6 +7,7 @@
 import sharp, { type OverlayOptions } from 'sharp';
 import { DOTS, inkBox, pathsOf } from '../../../hq/shell/ink/bookanswerart.js';
 import { LETTERS } from '../../../hq/shell/ink/bookversionsof.js';
+import { brand } from '../companyfiles.ts';
 import type { Stroke } from '../pagechecks.ts';
 import { block, column, escaped, faceDisc, HAND_FONT, layered, type Part } from './bookrendertext.ts';
 
@@ -38,7 +39,15 @@ const LETTER = { size: 20, line: 1.2 },
   FATE = { size: 14, line: 1.3, ink: '#2b273380', weight: 500 },
   ENDED = { size: 21, line: 1.25, font: HAND_FONT };
 // CHOSEN (bookversions.js STAMP): across the picture's middle, 84% of it and 220 px at most, a little crooked
-const STAMP = { share: 0.84, most: 220, fill: '#d6ea3c' };
+const STAMP = { share: 0.84, most: 220 };
+// its fill, the book's chosen colour (booklook.css --bk-chosen): brand.yaml's colours.chosen, else its accent
+// (colours.notebook, else HQ's ink) under 65% of the paper, the same light tint
+export function stampFill() {
+  const colours = brand().colours ?? {};
+  return colours.chosen
+    ? { fill: colours.chosen, paper: 0 }
+    : { fill: colours.notebook ?? colours.ink ?? '#1d1a2f', paper: 0.65 };
+}
 
 // The block under a unit from top (picture px), as wide as its frames need within the unit's width (x, w in page px),
 // with the board's ink over its frames, where it reaches past them too (as HQ's ink layer over the frames): the block's
@@ -219,8 +228,9 @@ async function edged(W: number, H: number, k: number, on: OverlayOptions[]): Pro
 // CHOSEN across a W × H picture (bookversions.js STAMP, bookversions.css .bk-version-stamp)
 function chosen(W: number, H: number, k: number) {
   const w = Math.min(W * STAMP.share, STAMP.most * k),
-    s = w / 200;
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}"><g transform="translate(${W / 2} ${H * 0.52}) rotate(-8) scale(${s}) translate(-100 -28)"><rect x="3" y="3" width="194" height="50" rx="7" fill="${STAMP.fill}" stroke="${FRAMES.edge}" stroke-width="3"/><rect x="9" y="9" width="182" height="38" rx="4" fill="none" stroke="rgba(43,39,51,0.5)" stroke-width="1.2"/><text x="100" y="39" text-anchor="middle" fill="${FRAMES.edge}" font-family="DejaVu Sans, sans-serif" font-size="30" font-weight="800" letter-spacing="2">CHOSEN</text></g></svg>`;
+    s = w / 200,
+    { fill, paper } = stampFill();
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}"><g transform="translate(${W / 2} ${H * 0.52}) rotate(-8) scale(${s}) translate(-100 -28)"><rect x="3" y="3" width="194" height="50" rx="7" fill="${fill}"/><rect x="3" y="3" width="194" height="50" rx="7" fill="#fffaf0" fill-opacity="${paper}" stroke="${FRAMES.edge}" stroke-width="3"/><rect x="9" y="9" width="182" height="38" rx="4" fill="none" stroke="rgba(43,39,51,0.5)" stroke-width="1.2"/><text x="100" y="39" text-anchor="middle" fill="${FRAMES.edge}" font-family="DejaVu Sans, sans-serif" font-size="30" font-weight="800" letter-spacing="2">CHOSEN</text></g></svg>`;
 }
 // A line of words set in the middle of W px
 async function centred(input: Buffer, W: number) {

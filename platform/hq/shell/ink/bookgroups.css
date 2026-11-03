@@ -27,14 +27,6 @@
   pointer-events: none;
 }
 
-#book .bk-group-menu {
-  position: fixed;
-  z-index: 55;
-  min-width: 180px;
-  max-height: 60vh;
-  overflow: auto;
-}
-
 /* under a group: a scrap's words, its answers and the board's replies */
 #book .bk-under {
   width: 320px;
@@ -178,7 +170,7 @@
   box-sizing: border-box;
 }
 /* the note's paper, as tall as its body (what an agent put down), lying on the page with its own soft shadow; no
-   turned corner. The board's own drawing has none (bookunitcards.js). (board, call 190.) */
+   turned corner. The board's own drawing has none (bookunitcards.js). */
 #book .bk-unit-paper {
   position: absolute;
   inset: 0 0 auto;
@@ -189,7 +181,7 @@
     0 4px 14px rgba(42, 35, 82, 0.16);
 }
 /* the room to write under it: plain page, its dots and all, no inner shadow and no corner; its handle at its foot
-   says where it ends (the board, call 190) */
+   says where it ends */
 #book .bk-room {
   position: absolute;
   inset: auto 0 0;

@@ -220,16 +220,7 @@ test('a card about a note that its agent closes leaves the book too', async () =
 test('a note from the sheet nobody owns is asked about by the job the CEO hands it to, not by the CEO', async () => {
   const { note, review, job: routing } = await sentNote(null, 'Who does the gift card?');
   assert.equal(routing.agent, 'juno', "the CEO's routing check");
-  const task = await h.agent('job', routing.token, {
-    agent: 'kit',
-    title: 'The gift card',
-    prompt: '',
-    notes: [review],
-    by: 'none',
-  });
-  assert.equal(task.status, 200, JSON.stringify(task.body));
-  await h.finish(routing);
-  const kit = await h.claimJob(task.body.id);
+  const kit = await h.handNotes(routing, [review], { agent: 'kit', title: 'The gift card' });
   const id = await ask(kit, CARD, '--note', String(review), '--topic', 'gazette');
   assert.equal(typeof id, 'number', String(id));
   assert.deepEqual(

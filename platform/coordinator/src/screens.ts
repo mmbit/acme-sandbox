@@ -17,9 +17,9 @@ export type Shot = { screen: string; look: string; device: string; sheet?: strin
 type Shown = Shot[] | null;
 
 // The check's own code: screens-compare.mjs and what it runs from, which the worker runs from the pushed checkout (as
-// review.ts checksOwn says of the gates)
+// review.ts checksOwn says of the gates) (book/originroute.mjs)
 const OWN =
-  /^platform\/hq\/(screens-(compare|side|shots|seed)|harness|originroute|room-sheet)\.mjs$|^platform\/coordinator\/src\/harness\.ts$|^platform\/worker\/hq\/unpack\.ts$|^shared\/(browser|gates)\//;
+  /^platform\/hq\/(screens-(compare|side|shots|seed)|harness|room-sheet)\.mjs$|^platform\/hq\/book\/originroute\.mjs$|^platform\/coordinator\/src\/harness\.ts$|^platform\/worker\/hq\/unpack\.ts$|^shared\/(browser|gates)\//;
 
 // What a render's last line says changed (screens-compare.mjs), or null when it isn't one
 function answerOf(said: unknown): Shown {

@@ -1,8 +1,8 @@
-// The call's window as a place to let a picture go (call.js): a Notebook page carried by its folded corner
+// The call's window as a place to let a picture go (call.js): a Notebook page torn off at its right edge
 // (booktear.js), a picture file dragged in from the desktop, or a picture dragged off a page. The window lights while
 // something it takes is over it, its screen or, minimised, its bubble, and what's let go there goes to the agent as an
 // attached picture does (callpictures.js). A paste is the call's too while the board is in its window: pressed or
-// focused there last.
+// focused there last. (the torn page)
 import { showPictures } from './callpictures.js';
 
 const IMAGE = /^image\//;

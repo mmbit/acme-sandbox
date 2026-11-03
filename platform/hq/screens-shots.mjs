@@ -8,7 +8,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { request } from 'node:http';
 import { join } from 'node:path';
 import { pin, track, settle } from './harness.mjs';
-import { routeOrigin } from './originroute.mjs';
+import { routeOrigin } from './book/originroute.mjs';
 import { shapeOf } from './shell/ink/booklayout.js';
 import { playwright, tap } from '../../shared/browser/browser.mjs';
 

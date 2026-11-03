@@ -29,7 +29,7 @@
   // writes either way); the pin starts away there. A 'review:cover' event (detail true, then false) hides the tool while
   // the page frames another page with its own pin. A 'review:pin' event gets the pin itself in its detail.
   // HQ's viewer tells its page whether a call is on (call): then the pin is away there too, and the Pencil inks in red
-  // only ('review:call', detail true or false: pencil.js), for the call's agent (the board, call 161.). Its marks then go to HQ for the call's agent ({ callMark }), never the notebook
+  // only ('review:call', detail true or false: pencil.js), for the call's agent. Its marks then go to HQ for the call's agent ({ callMark }), never the notebook
   // (callframe.js.).
   const summoned = !!document.currentScript?.hasAttribute('data-summoned');
   // ...and data-book: HQ's own pages, where the Pencil writes on the page and its notes go to the board's book

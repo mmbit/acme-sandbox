@@ -1,0 +1,114 @@
+/* A list card in the book (bookcard.js): a card of rows on the look's card, as wide as its longest row and on the
+   screen whole (its max-width: bookcard.js put), its heading muted, the row the line or the pointer is on lit as the
+   look lights a key, the last row under a rule. Its rows pop in one by one (--i), 100 ms apart. The guests to hand a
+   scrap to (bookassign.css) and the pages to move to (bookmoveto.css) are each one. */
+#book > .bk-list {
+  position: fixed;
+  z-index: 56;
+  top: auto;
+  height: auto;
+  width: max-content;
+  min-width: 260px;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  transform-origin: 0 0;
+  animation: bk-list-in 0.22s cubic-bezier(0.2, 0.8, 0.3, 1.25) backwards;
+}
+#book > .bk-list[inert] {
+  pointer-events: none;
+}
+.bk-list-head {
+  margin: 6px 14px 4px;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--bk-ui-muted);
+}
+
+/* a row: 56 px tall, its mark at the left (a person's initial, a page's icon), the name in bold, what it is at the
+   right */
+.bk-list .bk-row {
+  all: unset;
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: 40px 1fr auto;
+  align-items: center;
+  gap: 14px;
+  min-height: 56px;
+  padding: 6px 14px 6px 8px;
+  border: 2px solid transparent;
+  border-radius: 13px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  animation: bk-list-row 0.24s cubic-bezier(0.2, 0.8, 0.3, 1.4) backwards;
+  animation-delay: calc(0.05s + var(--i) * 0.1s);
+}
+.bk-list .bk-row[hidden] {
+  display: none;
+}
+.bk-list .bk-name {
+  font-size: 20px;
+  font-weight: 700;
+  /* (a name too long for the screen wraps: never cut) */
+  overflow-wrap: anywhere;
+}
+.bk-list .bk-kind {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--bk-ui-muted);
+}
+.bk-list .bk-row[data-lit] {
+  background: var(--bk-ui-lit);
+  color: var(--bk-ui-on-lit);
+}
+.bk-list .bk-row[data-lit] .bk-kind {
+  color: inherit;
+}
+/* (a row that can't be picked: muted) */
+.bk-list .bk-row[aria-disabled] {
+  color: var(--bk-ui-muted);
+  cursor: default;
+}
+@media (hover: hover) {
+  .bk-list .bk-row:not([data-lit], [aria-disabled]):hover {
+    background: var(--bk-ui-wash);
+  }
+}
+.bk-list .bk-row:focus-visible {
+  outline: 2px solid var(--bk-ui-ink);
+  outline-offset: -2px;
+}
+
+/* the last row (More…, New page) under a rule */
+.bk-list .bk-list-more {
+  margin-top: 4px;
+  position: relative;
+}
+.bk-list-more::before {
+  content: '';
+  position: absolute;
+  top: -4px;
+  left: 12px;
+  right: 12px;
+  border-top: 1.5px solid var(--bk-ui-line);
+}
+
+@keyframes bk-list-in {
+  from {
+    opacity: 0;
+    scale: 0.9;
+  }
+}
+@keyframes bk-list-row {
+  from {
+    opacity: 0;
+    scale: 0.7;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #book > .bk-list,
+  .bk-list .bk-row {
+    animation: none;
+  }
+}

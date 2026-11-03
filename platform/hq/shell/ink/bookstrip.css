@@ -1,7 +1,7 @@
-/* The book's two islands (bookui.js), floating over the paper as the board drew the real book (call 190, card 341's
-   mock-up): the tools upright on the right, roughly centred and short (bookstrip.js); one bar along the foot between
-   the screen's curved corners, Undo and Redo at its left, the page's arrows and where it is in its very middle, the
-   page's keys and its dots at its right. They are HQ's own on-screen controls in the look HQ wears (bookui.css
+/* The book's two islands (bookui.js), floating over the paper (README, The book's frame): the tools upright on the
+   right, roughly centred and short (bookstrip.js); one bar along the foot between the screen's curved corners, Undo
+   and Redo at its left, the page's arrows and where it is in its very middle, the page's keys and its dots at its
+   right. They are HQ's own on-screen controls in the look HQ wears (bookui.css
    .bk-island), never a piece of the book: only the page is paper. The paper runs on under them to the screen's edges;
    what's written ends left of the tools (--bk-rail-width, book.css). Nothing of them sits under the status bar's blur
    (--sat). The cards they open (a tool's, the preferences, the pages, the dots menu) hang beside them, on the paper.

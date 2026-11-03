@@ -5,7 +5,7 @@
 // back to the page as they're said, over the live line (dictate.js dictateLive). The key turns red and breathes with the
 // voice while it listens, and a tap again stops it, as the page's stop does; every stop is answered, and the key is
 // ready for another go. The Pencil's tap on it is a finger's (data-no-ink), so the board dictates straight after
-// scribbling (the board, call 170). The offer is the offering page's only: it comes with a line of its own (a
+// scribbling. The offer is the offering page's only: it comes with a line of its own (a
 // MessagePort), every answer goes back on it, and nothing on it reaches a page the frame loads after (the frame's
 // window stays the same through them).
 // Another page's hello in the frame (as it starts, before its load event: helloFrom), or the frame's load (a page

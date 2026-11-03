@@ -1,7 +1,7 @@
 // node --test platform/hq/shell/ink/bookshelfgrid.test.js   (the Shelf's and the page grid's maths; no DOM)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { gridOf, moved, shelfOrder, slotAt } from './bookshelfgrid.js';
+import { gridOf, moved, shelfFit, shelfOrder, slotAt } from './bookshelfgrid.js';
 
 test('as many columns as fit at their least width, sharing the width out', () => {
   // a phone's book, an iPad mini's, a desktop's, a wide one
@@ -50,4 +50,11 @@ test('the Shelf: My journal first, then the newest first', () => {
     shelf.map(n => n.id),
     [1, 3, 4, 2],
   );
+});
+
+test('the bookcase: two to a board on a phone, the plant on the last; three on an iPad, the plant beside them', () => {
+  // (the window's boards: a phone 390 wide less its sides and margins, an iPad's 680 wide window less its)
+  assert.deepEqual(shelfFit(334), { cols: 2, book: 150, plant: 'last', inset: 4 });
+  assert.deepEqual(shelfFit(604), { cols: 3, book: 150, plant: 'first', inset: 15 });
+  assert.equal(shelfFit(200).cols, 1, 'a narrow window: one to a board');
 });

@@ -143,7 +143,7 @@ export function makeNotebook(who: string, kind: Notebook['kind'], name: string) 
 
 // ---------------------------------------------------------------- a notebook's pages
 // GET /api/notebooks/pages?notebook=: its pages in their order (one made in a notebook with none), then those archived.
-// A page sent stays where it is, the last too: no page is made after it (the board's call 170); new groups make the current page as they land (currentPage).
+// A page sent stays where it is, the last too: no page is made after it; new groups make the current page as they land (currentPage).
 export function listPages(b: any, who = BOARD) {
   const n = notebookRow(Number(b?.notebook), who);
   if (!n) return 404;

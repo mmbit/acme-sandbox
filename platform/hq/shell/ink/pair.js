@@ -1,8 +1,14 @@
-// A second device signs into the same Notebook with a one-time code.
+// A second device signs into the same Notebook with a one-time code. Sign in another device shows it, in the book bar's
+// dots menu after Preferences (bookcontrols.js).
 import { stylesheet } from '../../util.js';
 import { act } from '../data.js';
 import { qrCode, qrPath } from '/shared/qr/qr.js';
-import { button, island } from './bookui.js';
+import { button, island, lineIcon } from './bookui.js';
+
+// (a phone with a code on its screen)
+const DEVICE = lineIcon(
+  '<rect x="6.5" y="2.5" width="11" height="19" rx="2.4"/><path d="M10.5 18.5h3"/><path d="M9.5 8.5h2v2h-2zM12.5 8.5h2v2h-2zM9.5 11.5h2v2h-2z" stroke-width="1.3"/>',
+);
 
 export function initPair() {
   const leaf = document.querySelector('#book .bk-leaf');
@@ -15,9 +21,9 @@ export function initPair() {
   // its code signs a device in as the board: never in a call's recording (shared/watchalong).
   card.setAttribute('data-watchalong-hide', '');
   leaf.append(card);
-  const shortcut = button({
-    text: 'Devices',
-    label: 'Devices',
+  const row = button({
+    icon: DEVICE,
+    label: 'Sign in another device',
     onClick: () => {
       if (!card.hidden) {
         card.hidden = true;
@@ -26,7 +32,7 @@ export function initPair() {
       showCode(card);
     },
   });
-  island('overview').append(shortcut);
+  island('book').querySelector('.bk-cog').after(row);
 }
 
 // A one-time sign-in code for another device ({ code, expires }) and the link its QR carries. view: a preview's

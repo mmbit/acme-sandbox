@@ -35,7 +35,7 @@ const idle = () => !hands.down.size && performance.now() - hands.at > IDLE_MS;
 
 // Elements just put on a view's page (its ink, scraps and texts), landed group by group. Off the paper shown, or with
 // the book out of sight, they're simply there; with show (an agent's, from the store) on a page the board has left
-// idle, the paper first slides to the last of them so the board sees it land (the board, call 174: never while it
+// idle, the paper first slides to the last of them so the board sees it land (never while it
 // draws). What's held is held by its key (page.landing: bookgroupmath.js landing()), so the page read again meanwhile
 // holds its new copy of it too.
 export function arrive(book, view, els, { show = false } = {}) {

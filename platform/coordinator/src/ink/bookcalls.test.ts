@@ -57,7 +57,7 @@ test("a call's page: the board's notes numbered on it, never on a sheet to send,
   const one = (await note({ page: page.id, words: 'This feels high?', snip: SNIP })).body;
   assert.equal(one.note.n, 1);
   assert.equal(one.note.by, 'board');
-  // (a note on a call isn't judged: it's for the call's agent, who decides what becomes of it. The board, call 161)
+  // (a note on a call isn't judged: it's for the call's agent, who decides what becomes of it)
   await unjudged('This feels high?');
   // (the agent's rings are never kept)
   for (const by of ['juno', 'lark']) {

@@ -38,7 +38,7 @@ import { PUBLIC_HOST, REPO_DIR } from './config.ts';
 import { inside } from './files.ts';
 import { brand, ceo, mailDomains, names } from './company.ts';
 import { answerRequest, closeRequest, createJob, createRequest, findAgent, jobAgent } from './jobs.ts';
-import { fromListedPartner, mailHooks, ownAddress, threadOf, type IncomingMail } from './mail.ts';
+import { fromListedPartner, handed, mailHooks, ownAddress, setPile, threadOf, type IncomingMail } from './mail.ts';   // (handed, setPile)
 import { ATTACH_BYTES, boardName, takes } from './care.ts';
 import * as mailout from './mailout.ts';
 import * as mailpage from './mailpage.ts';
@@ -349,6 +349,7 @@ function answered(m: IncomingMail) {
     : undefined;
   if (delivered) {
     keep.run(m.id, d.id, delivered.job, m.messageId);
+    setPile(m.id, 'team', 'rule', drafter(d)); handed(m.id, delivered.job);
     return;
   }
   const agent = drafter(d);
@@ -356,6 +357,7 @@ function answered(m: IncomingMail) {
     and j.status = 'queued' and j.session is null order by a.mail desc limit 1`).get(d.id, agent) as { job: number } | undefined;
   const job = waiting?.job ?? createJob({ agent, title: 'An answer to an email', prompt: '' }).id;
   keep.run(m.id, d.id, job, m.messageId);
+  setPile(m.id, 'team', 'rule', agent); handed(m.id, job);   // the drafter's, in Mail's Team pile
   const mails = (db.prepare(`select min(mail) as mail from outbox_answers where job = ? group by ifnull(message_id, mail)
     order by mail`).all(job) as { mail: number }[]).map(r => r.mail);
   db.prepare('update jobs set title = ?, prompt = ? where id = ?').run(answerTitle(d, mails), answerBrief(d, mails), job);

@@ -1,63 +1,53 @@
 // node --test src/shares.test.ts   (outside notes: a share's sign-in, its reach, its people and their notes; throwaway
 // DATA_DIR, the real server, a stand-in email service)
-import { test, after, beforeEach } from 'node:test';
+import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { createServer, request } from 'node:http';
-import type { AddressInfo } from 'node:net';
-import { fakeLettermint, fixtureRepo, productHeaders } from './fixture.ts';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { fakeLettermint, productHeaders } from './fixture.ts';
+import { harness, type Sent } from './harness.ts';
 import { reviewModeOff } from './testreview.ts';
 
-const repo = fixtureRepo();
-process.env.DATA_DIR = mkdtempSync(`${tmpdir()}/shares-test-`);
-process.env.SECRETS_DIR = `${process.env.DATA_DIR}/secrets`;
-Object.assign(process.env, {
-  PUBLIC_HOST: 'hq.company.test',
-  WORKER_TOKEN: 'worker-secret',
-  VOICE_TOKEN: 'voice-secret',
-  CADDY_HOST: '127.0.0.1',
-});
-// the email service, keeping the codes it took, and refusing an address it won't take
-const lettermint = await fakeLettermint(),
-  mails = lettermint.taken;
-lettermint.answer = mail => (mail.to.some((a: string) => a.endsWith('@refused.example.org')) ? 'refuse:to.0' : 'take');
+const lettermint = await fakeLettermint();
+const before = (repo: string) => {
+  for (const folder of ['2026-03-01-deck/presentation', '2026-03-02-other']) {
+    mkdirSync(`${repo}/products/_cycles/${folder}`, { recursive: true });
+    writeFileSync(`${repo}/products/_cycles/${folder}/index.html`, '<!doctype html><title>Deck</title><p>Hello');
+  }
+  // a deck whose pages link to demos: a product's preview and another folder's page (a note's link is no page's); and a
+  // product it doesn't link to
+  mkdirSync(`${repo}/products/_cycles/2026-03-03-linked/presentation`, { recursive: true });
+  writeFileSync(
+    `${repo}/products/_cycles/2026-03-03-linked/presentation/deck.json`,
+    JSON.stringify({
+      slides: [
+        { href: 'https://hello.preview.company.test' },
+        { href: 'https://cycles.preview.company.test/2026-03-02-other/demo/?x=1' },
+        { href: 'https://cycles.preview.company.test/2026-03-03-linked/presentation/#2' },
+        { href: 'https://hq.company.test/api/jobs' },
+        { href: 'https://example.org/' },
+      ],
+    }),
+  );
+  writeFileSync(
+    `${repo}/products/_cycles/2026-03-03-linked/presentation/index.html`,
+    '<!doctype html><title>Deck</title>',
+  );
+  writeFileSync(`${repo}/products/_cycles/2026-03-03-linked/BRIEF.md`, 'See https://elsewhere.preview.company.test/');
+  mkdirSync(`${repo}/products/elsewhere`, { recursive: true });
+  writeFileSync(`${repo}/products/elsewhere/product.yaml`, 'name: Elsewhere\n');
+  // the shop, where a tester invite opens
+  mkdirSync(`${repo}/products/front`, { recursive: true });
+  writeFileSync(`${repo}/products/front/product.yaml`, 'name: The shop\nowner: bolt\n');
+  // the company's files a demo loads from the repo (infra/products.py SERVED)
+  writeFileSync(`${repo}/company/infra.env`, 'SERVED_FROM_REPO=/theme/web/*.css\n');
+};
+const h = await harness('shares', { env: { CADDY_HOST: '127.0.0.1', PUBLIC_HOST: 'hq.company.test' }, before });
+const { db, repo } = h;
 lettermint.on();
-for (const folder of ['2026-03-01-deck/presentation', '2026-03-02-other']) {
-  mkdirSync(`${repo}/products/_cycles/${folder}`, { recursive: true });
-  writeFileSync(`${repo}/products/_cycles/${folder}/index.html`, '<!doctype html><title>Deck</title><p>Hello');
-}
-// a deck whose pages link to demos: a product's preview and another folder's page (a note's link is no page's); and a
-// product it doesn't link to
-mkdirSync(`${repo}/products/_cycles/2026-03-03-linked/presentation`, { recursive: true });
-writeFileSync(
-  `${repo}/products/_cycles/2026-03-03-linked/presentation/deck.json`,
-  JSON.stringify({
-    slides: [
-      { href: 'https://hello.preview.company.test' },
-      { href: 'https://cycles.preview.company.test/2026-03-02-other/demo/?x=1' },
-      { href: 'https://cycles.preview.company.test/2026-03-03-linked/presentation/#2' },
-      { href: 'https://hq.company.test/api/jobs' },
-      { href: 'https://example.org/' },
-    ],
-  }),
-);
-writeFileSync(
-  `${repo}/products/_cycles/2026-03-03-linked/presentation/index.html`,
-  '<!doctype html><title>Deck</title>',
-);
-writeFileSync(`${repo}/products/_cycles/2026-03-03-linked/BRIEF.md`, 'See https://elsewhere.preview.company.test/');
-mkdirSync(`${repo}/products/elsewhere`, { recursive: true });
-writeFileSync(`${repo}/products/elsewhere/product.yaml`, 'name: Elsewhere\n');
-// the shop, where a tester invite opens
-mkdirSync(`${repo}/products/front`, { recursive: true });
-writeFileSync(`${repo}/products/front/product.yaml`, 'name: The shop\nowner: bolt\n');
-// the company's files a demo loads from the repo (infra/products.py SERVED)
-writeFileSync(`${repo}/company/infra.env`, 'SERVED_FROM_REPO=/theme/web/*.css\n');
-
-const { app } = await import('./server.ts');
+(await import('./storage.ts')).FLOOR.bytes = 0; // (screenshots are kept whatever this machine's disk has free)
+// the email service, refusing an address it won't take
+lettermint.answer = mail => (mail.to.some((a: string) => a.endsWith('@refused.example.org')) ? 'refuse:to.0' : 'take');
 const { ORIGIN } = await import('./config.ts');
-const { db } = await import('./db.ts');
 const feedback = await import('./feedback.ts');
 const shares = await import('./shares.ts');
 const jobs = await import('./jobs.ts');
@@ -65,73 +55,16 @@ const booknotes = await import('./ink/booknotes.ts');
 const booksheets = await import('./ink/booksheets.ts');
 const guestbooks = await import('./notebookguests.ts');
 const sketchpeople = await import('./ink/sketchpeople.ts');
-(await import('./storage.ts')).FLOOR.bytes = 0; // (screenshots are kept whatever this machine's disk has free)
-const server = createServer(app).listen(0);
-after(() => server.close());
-const port = (server.address() as AddressInfo).port;
-db.prepare('insert or replace into sessions (token, expires) values (?, ?)').run('board-session', Date.now() + 3600e3);
 
 const HELLO = 'hello.preview.company.test',
   CYCLES = 'cycles.preview.company.test';
 
-// A request as it reaches the coordinator (through Caddy: any Host). `from`: the client Caddy names (codes are counted per
-// client and hour).
-type Answer = { status: number; headers: Record<string, any>; text: string; json: () => any };
-function call(
-  path: string,
-  o: {
-    method?: string;
-    host?: string;
-    cookie?: string;
-    origin?: string;
-    body?: unknown;
-    form?: Record<string, string>;
-    headers?: Record<string, string>;
-    from?: string;
-  } = {},
-) {
-  const body = o.form
-    ? new URLSearchParams(o.form).toString()
-    : o.body === undefined
-      ? undefined
-      : JSON.stringify(o.body);
-  return new Promise<Answer>((resolve, reject) => {
-    const q = request(
-      {
-        port,
-        path,
-        method: o.method ?? (body === undefined ? 'GET' : 'POST'),
-        headers: {
-          host: o.host ?? 'hq.company.test',
-          ...(o.cookie ? { cookie: o.cookie } : {}),
-          ...(o.origin ? { origin: o.origin } : {}),
-          ...(body === undefined
-            ? {}
-            : { 'content-type': o.form ? 'application/x-www-form-urlencoded' : 'application/json' }),
-          ...(o.from ? { 'x-forwarded-for': o.from } : {}),
-          ...o.headers,
-        },
-      },
-      res => {
-        let text = '';
-        res
-          .on('data', d => (text += d))
-          .on('end', () =>
-            resolve({ status: res.statusCode!, headers: res.headers, text, json: () => JSON.parse(text) }),
-          );
-      },
-    );
-    q.on('error', reject);
-    q.end(body);
-  });
-}
-const board = (path: string, body: unknown) => call(path, { body, cookie: 's=board-session', origin: ORIGIN });
 // The board's Invite: the share, and the person it invited with their own link (and a book of their own, where their
 // notes go: bookguests.test.ts)
 const invite = async (body: Record<string, unknown>) => {
-  const r = await board('/api/review/shares', body);
-  assert.equal(r.status, 200, r.text);
-  const share = r.json();
+  const r = await h.board('/api/review/shares', body);
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  const share = r.body;
   return {
     ...share,
     person: share.people.find((p: any) => p.name === body.name),
@@ -140,7 +73,7 @@ const invite = async (body: Record<string, unknown>) => {
 };
 const makeShare = (page: string, name = 'Sam', email = 'sam@example.org', days = 3) =>
   invite({ page, name, email, days });
-const cookieOf = (r: Answer) => String(r.headers['set-cookie']?.[0] ?? '').split(';')[0];
+const cookieOf = (r: Sent) => String(r.headers['set-cookie']?.[0] ?? '').split(';')[0];
 
 // The outsider's way in: the link's code by email, the door's Open, and the preview host's hand-off. Returns their `ps`
 // cookie and the hand-off they were sent to.
@@ -148,31 +81,29 @@ let clients = 0;
 async function signIn(link: string, door = /for your notes/) {
   const path = new URL(link).pathname,
     from = `192.0.2.${++clients}`;
-  assert.equal((await call(`${path}/send`, { form: {}, origin: ORIGIN, from })).status, 200);
-  const code = /(\d{6})/.exec(mails.at(-1)!.text)![1];
-  const verified = await call(`${path}/verify`, { form: { code }, origin: ORIGIN, from });
+  assert.equal((await h.postForm(`${path}/send`, {}, from)).status, 200);
+  const code = /(\d{6})/.exec(lettermint.taken.at(-1)!.text)![1];
+  const verified = await h.postForm(`${path}/verify`, { code }, from);
   assert.equal(verified.status, 303);
   const g = cookieOf(verified);
-  const open = await call(path, { cookie: g });
+  const open = await h.send(path, { cookie: g });
   assert.match(open.text, door);
-  const go = await call(`${path}/go`, { cookie: g });
+  const go = await h.send(`${path}/go`, { cookie: g });
   assert.equal(go.status, 302);
   const handOff = new URL(go.headers.location);
-  const landed = await call(handOff.pathname + handOff.search, { host: handOff.host });
+  const landed = await h.send(handOff.pathname + handOff.search, { host: handOff.host });
   assert.equal(landed.status, 302);
   return { ps: cookieOf(landed), handOff, landed, g, path };
 }
 const check = (ps: string, host: string, uri: string, query = '') =>
-  call(`/api/preview/check${query}`, {
-    cookie: ps,
-    headers: { 'x-forwarded-host': host, 'x-forwarded-uri': uri },
-  }).then(r => r.status);
+  h
+    .send(`/api/preview/check${query}`, { cookie: ps, ...{ 'x-forwarded-host': host, 'x-forwarded-uri': uri } })
+    .then(r => r.status);
 const pinNote = (ps: string, host: string, page: string, note = 'The button is hard to find') =>
-  call('/__review/notes', {
-    host,
-    cookie: ps,
-    origin: `https://${host}`,
-    body: {
+  h.send(
+    '/__review/notes',
+    { host, cookie: ps, origin: `https://${host}` },
+    {
       note,
       page,
       element: {
@@ -182,7 +113,7 @@ const pinNote = (ps: string, host: string, page: string, note = 'The button is h
       },
       viewport: { w: 390, h: 844, dpr: 3, x: 0, y: 0 },
     },
-  });
+  );
 const jobsCount = () => (db.prepare('select count(*) n from jobs').get() as { n: number }).n;
 // The board reads retained review groups even after the invitation has ended.
 const bookNotesOf = (name: string) =>
@@ -216,11 +147,11 @@ test('a share signs its person in with the guest desk’s code, and opens only i
   );
   assert.ok(share.link.startsWith(`${ORIGIN}/guest/`));
   // nobody gets past the link without the code: the page asks for one, to the address the board gave
-  const asked = await call(new URL(share.link).pathname);
+  const asked = await h.send(new URL(share.link).pathname);
   assert.match(asked.text, /s••••@example.org/);
   assert.doesNotMatch(asked.text, /for your notes/);
   const { ps, handOff, landed } = await signIn(share.link);
-  assert.equal(mails.at(-1)!.to[0] ?? mails.at(-1)!.to, 'sam@example.org');
+  assert.equal(lettermint.taken.at(-1)!.to[0] ?? lettermint.taken.at(-1)!.to, 'sam@example.org');
   assert.equal(handOff.host, CYCLES);
   assert.equal(handOff.searchParams.get('to'), '/2026-03-01-deck/presentation/');
   assert.equal(handOff.hash, '#4'); // at the slide the board was on
@@ -229,7 +160,7 @@ test('a share signs its person in with the guest desk’s code, and opens only i
   assert.match(set, /^ps=[\w-]{43}; Path=\/; HttpOnly; Secure; SameSite=Lax; Max-Age=(\d+)$/);
   assert.ok(Math.abs(Number(/Max-Age=(\d+)/.exec(set)![1]) - 3 * 86400) < 60);
   assert.equal(landed.headers.location, '/2026-03-01-deck/presentation/');
-  assert.equal((await call(handOff.pathname + handOff.search, { host: CYCLES })).status, 403); // a hand-off works once
+  assert.equal((await h.send(handOff.pathname + handOff.search, { host: CYCLES })).status, 403); // a hand-off works once
   // Caddy's check: its own folder (and the kits a demo loads), nothing else
   assert.equal(await check(ps, CYCLES, '/2026-03-01-deck/presentation/'), 200);
   assert.equal(await check(ps, CYCLES, '/2026-03-01-deck/presentation/video.mp4'), 200);
@@ -282,16 +213,16 @@ test('a share signs its person in with the guest desk’s code, and opens only i
   assert.equal(await check(ps, HELLO, '/'), 302); // another preview host
   assert.equal(await check(ps, CYCLES, '/2026-03-01-deck/', '?board=1'), 403); // the chat's route
   // the cycles' pages the coordinator serves, and review mode with the outsider's words
-  assert.equal((await call('/2026-03-01-deck/presentation/', { host: CYCLES, cookie: ps })).status, 200);
-  assert.equal((await call('/2026-03-02-other/index.html', { host: CYCLES, cookie: ps })).status, 403);
-  const tool = (await call('/__review/review.js', { host: CYCLES, cookie: ps })).text;
+  assert.equal((await h.send('/2026-03-01-deck/presentation/', { host: CYCLES, cookie: ps })).status, 200);
+  assert.equal((await h.send('/2026-03-02-other/index.html', { host: CYCLES, cookie: ps })).status, 403);
+  const tool = (await h.send('/__review/review.js', { host: CYCLES, cookie: ps })).text;
   assert.match(tool, /const OUTSIDE = 'Testco'/);
-  assert.ok(reviewModeOff((await call('/__review/review.js', { host: HELLO, cookie: ps })).text));
+  assert.ok(reviewModeOff((await h.send('/__review/review.js', { host: HELLO, cookie: ps })).text));
   // nothing of HQ: its API, the board's Reviews, the guest desk's board routes
   for (const path of ['/api/review/notes', '/api/review/shares', '/api/jobs', '/api/requests'])
-    assert.equal((await call(path, { cookie: ps })).status, 401, path);
+    assert.equal((await h.send(path, { cookie: ps })).status, 401, path);
   // the board's key still opens everything, as before
-  assert.ok(reviewModeOff((await call('/__review/review.js', { host: CYCLES })).text));
+  assert.ok(reviewModeOff((await h.send('/__review/review.js', { host: CYCLES })).text));
 });
 
 test('a deck’s share opens the demos its pages link to, handed on by the guest desk, and nothing else', async () => {
@@ -308,16 +239,16 @@ test('a deck’s share opens the demos its pages link to, handed on by the guest
   // the deck's session is the deck host's alone: a demo's host asks for the preview sign-in
   assert.equal(await check(ps, HELLO, '/'), 302);
   // ...which sends anyone without the board's session to the guest desk, and the guest's session on to the demo
-  const login = await call(`/preview/login?to=${encodeURIComponent(`https://${HELLO}/try?a=1#go`)}`, { cookie: g });
+  const login = await h.send(`/preview/login?to=${encodeURIComponent(`https://${HELLO}/try?a=1#go`)}`, { cookie: g });
   assert.equal(login.status, 302);
   assert.equal(login.headers.location, `/guest/onward?to=${encodeURIComponent(`https://${HELLO}/try?a=1#go`)}`);
-  const onward = await call(login.headers.location, { cookie: g });
+  const onward = await h.send(login.headers.location, { cookie: g });
   assert.equal(onward.status, 302);
   const handOff = new URL(onward.headers.location);
   assert.deepEqual([handOff.host, handOff.searchParams.get('to'), handOff.hash], [HELLO, '/try?a=1', '#go']);
-  assert.equal((await call(handOff.pathname + handOff.search, { host: CYCLES })).status, 403); // for its own host only
-  const again = new URL((await call(login.headers.location, { cookie: g })).headers.location);
-  const landed = await call(again.pathname + again.search, { host: HELLO });
+  assert.equal((await h.send(handOff.pathname + handOff.search, { host: CYCLES })).status, 403); // for its own host only
+  const again = new URL((await h.send(login.headers.location, { cookie: g })).headers.location);
+  const landed = await h.send(again.pathname + again.search, { host: HELLO });
   assert.equal(landed.headers.location, '/try?a=1');
   const hello = cookieOf(landed);
   assert.equal(await check(hello, HELLO, '/'), 200);
@@ -333,15 +264,15 @@ test('a deck’s share opens the demos its pages link to, handed on by the guest
   assert.equal(await check(ps, CYCLES, '/2026-03-01-deck/'), 302);
   // nothing it doesn't link to (a product named only in a note, HQ), and no one without the guest's session
   const to = (url: string, cookie?: string) =>
-    call(`/guest/onward?to=${encodeURIComponent(url)}`, { cookie }).then(r => r.headers.location);
+    h.send(`/guest/onward?to=${encodeURIComponent(url)}`, cookie ? { cookie } : {}).then(r => r.headers.location);
   assert.equal(await to(`https://${ELSEWHERE}/`, g), '/login');
   assert.equal(await to('https://hq.company.test/api/jobs', g), '/login');
   assert.equal(await to(`http://${HELLO}/`, g), '/login');
   assert.equal(await to(`https://${HELLO}/`), '/login');
   assert.equal(await to(`https://${HELLO}/`, 'g=nonsense'), '/login');
   // the board's own preview sign-in mints its key
-  const boardLogin = await call(`/preview/login?to=${encodeURIComponent(`https://${HELLO}/`)}`, {
-    cookie: 's=board-session',
+  const boardLogin = await h.send(`/preview/login?to=${encodeURIComponent(`https://${HELLO}/`)}`, {
+    cookie: h.boardCookie,
   });
   assert.match(boardLogin.headers.location, /^https:\/\/hello\.preview\.company\.test\/__preview\?c=/);
   // ...on the reviewer's Notebook page
@@ -350,7 +281,7 @@ test('a deck’s share opens the demos its pages link to, handed on by the guest
     ['The button is hard to find'],
   );
   // End stops the demos' sessions and the way on too
-  assert.equal((await board('/api/review/shares/end', { id: share.id })).status, 200);
+  assert.equal((await h.board('/api/review/shares/end', { id: share.id })).status, 200);
   assert.equal(await check(hello, HELLO, '/'), 302);
   assert.equal(await to(`https://${HELLO}/`, g), '/login');
 });
@@ -369,17 +300,17 @@ test('a view-only share opens the same pages without review mode, and takes no n
   assert.deepEqual([share.view, viewOnly.view], [false, true]);
   const path = new URL(viewOnly.link).pathname,
     from = '198.51.100.7';
-  await call(`${path}/send`, { form: {}, origin: ORIGIN, from });
-  const code = /(\d{6})/.exec(mails.at(-1)!.text)![1];
-  const g = cookieOf(await call(`${path}/verify`, { form: { code }, origin: ORIGIN, from }));
+  await h.postForm(`${path}/send`, {}, from);
+  const code = /(\d{6})/.exec(lettermint.taken.at(-1)!.text)![1];
+  const g = cookieOf(await h.postForm(`${path}/verify`, { code }, from));
   // the door asks for nothing: no notes, no pin
-  const door = (await call(path, { cookie: g })).text;
+  const door = (await h.send(path, { cookie: g })).text;
   assert.match(door, /is sharing Hello \(platform test\) with you/);
   assert.doesNotMatch(door, /notes|pin/i);
-  const handOff = new URL((await call(`${path}/go`, { cookie: g })).headers.location);
-  const ps = cookieOf(await call(handOff.pathname + handOff.search, { host: handOff.host }));
+  const handOff = new URL((await h.send(`${path}/go`, { cookie: g })).headers.location);
+  const ps = cookieOf(await h.send(handOff.pathname + handOff.search, { host: handOff.host }));
   assert.equal(await check(ps, HELLO, '/'), 200);
-  assert.ok(reviewModeOff((await call('/__review/review.js', { host: HELLO, cookie: ps })).text));
+  assert.ok(reviewModeOff((await h.send('/__review/review.js', { host: HELLO, cookie: ps })).text));
   assert.equal((await pinNote(ps, HELLO, `https://${HELLO}/`)).status, 403);
   // a second person on the page's view-only share joins it, not the one for notes
   const second = await invite({
@@ -392,8 +323,8 @@ test('a view-only share opens the same pages without review mode, and takes no n
   assert.equal(second.id, viewOnly.id);
   assert.equal(feedback.listShares().find((s: any) => s.id === viewOnly.id)?.view, true);
   // ended, its link says so
-  assert.equal((await board('/api/review/shares/end', { id: viewOnly.id })).status, 200);
-  const shut = await call(path, { cookie: g });
+  assert.equal((await h.board('/api/review/shares/end', { id: viewOnly.id })).status, 200);
+  const shut = await h.send(path, { cookie: g });
   assert.equal(shut.status, 404);
   assert.match(shut.text, /<h1>This invite has ended\.<\/h1>/);
 });
@@ -426,19 +357,19 @@ for (const d of DOORS)
     const notes = await invite({ page, name: d.name, email, days: 1 });
     speaks();
     const them = await signIn(notes.link, d.notes);
-    const door = async () => (await call(them.path, { cookie: them.g })).text;
+    const door = async () => (await h.send(them.path, { cookie: them.g })).text;
     assert.doesNotMatch(await door(), english);
     assert.equal((await pinNote(them.ps, HELLO, page)).status, 200);
     assert.match(await door(), d.notes, 'a note changes nothing on the door');
-    assert.equal((await board('/api/review/shares/end', { id: notes.id })).status, 200);
-    const notesEnded = await call(them.path, { cookie: them.g });
+    assert.equal((await h.board('/api/review/shares/end', { id: notes.id })).status, 200);
+    const notesEnded = await h.send(them.path, { cookie: them.g });
     assert.equal(notesEnded.status, 404);
     assert.match(notesEnded.text, d.ended);
     const view = await invite({ page, name: d.name, email, days: 1, view: true });
     const looking = await signIn(view.link, d.view);
-    assert.doesNotMatch((await call(looking.path, { cookie: looking.g })).text, english);
-    assert.equal((await board('/api/review/shares/end', { id: view.id })).status, 200);
-    const ended = await call(looking.path, { cookie: looking.g });
+    assert.doesNotMatch((await h.send(looking.path, { cookie: looking.g })).text, english);
+    assert.equal((await h.board('/api/review/shares/end', { id: view.id })).status, 200);
+    const ended = await h.send(looking.path, { cookie: looking.g });
     assert.equal(ended.status, 404);
     assert.match(ended.text, d.ended);
     const tester = await invite({
@@ -449,7 +380,7 @@ for (const d of DOORS)
       tester: true,
     });
     const trying = await signIn(tester.link, d.tester);
-    assert.doesNotMatch((await call(trying.path, { cookie: trying.g })).text, english);
+    assert.doesNotMatch((await h.send(trying.path, { cookie: trying.g })).text, english);
     feedback.endShare({ id: tester.id });
   });
 
@@ -467,24 +398,26 @@ test('an outsider’s notes stay on their Notebook page, signed, and nothing of 
   // no notes kept apart to list, send, take up again, change or delete, and no screenshots of them on HQ's host
   for (const path of ['/__review/submit', '/__review/more', '/__review/edit', '/__review/delete'])
     assert.equal(
-      (await call(path, { host: HELLO, cookie: ps, origin: `https://${HELLO}`, body: { id: pinned.json().id } }))
-        .status,
+      (await h.send(path, { host: HELLO, cookie: ps, origin: `https://${HELLO}` }, { id: pinned.json.id })).status,
       404,
       path,
     );
-  assert.equal((await call(`/guest/review-shot/${pinned.json().id}`, { cookie: g })).status, 404);
-  assert.doesNotMatch((await call('/__review/review.js', { host: HELLO, cookie: ps })).text, /\{\{(SENT|IN_BOOK)\}\}/);
+  assert.equal((await h.send(`/guest/review-shot/${pinned.json.id}`, { cookie: g })).status, 404);
+  assert.doesNotMatch(
+    (await h.send('/__review/review.js', { host: HELLO, cookie: ps })).text,
+    /\{\{(SENT|IN_BOOK)\}\}/,
+  );
 });
 
 test('End stops the link everywhere at once, and queues nothing', async () => {
   const share = await makeShare(`https://${HELLO}/about`, 'Kim', 'kim@example.org');
   const { ps, g, path } = await signIn(share.link);
-  const spare = new URL((await call(`${path}/go`, { cookie: g })).headers.location); // an unused hand-off
+  const spare = new URL((await h.send(`${path}/go`, { cookie: g })).headers.location); // an unused hand-off
   assert.equal((await pinNote(ps, HELLO, `https://${HELLO}/about`, 'The price is hidden')).status, 200);
   const had = jobsCount();
-  const ended = await board('/api/review/shares/end', { id: share.id });
+  const ended = await h.board('/api/review/shares/end', { id: share.id });
   assert.equal(ended.status, 200);
-  const row = ended.json();
+  const row = ended.body;
   assert.ok(row.ended && !row.people[0].link);
   assert.equal(row.owner, 'Bolt');
   assert.equal(jobsCount(), had, 'her note waits on her Notebook page until she sends it');
@@ -493,14 +426,14 @@ test('End stops the link everywhere at once, and queues nothing', async () => {
     ['The price is hidden'],
   );
   // the link, the check, the tool, notes and the hand-off: all stop
-  const shut = await call(path, { cookie: g });
+  const shut = await h.send(path, { cookie: g });
   assert.equal(shut.status, 404);
   assert.match(shut.text, /<h1>This invite has ended\.<\/h1>/);
   assert.equal(await check(ps, HELLO, '/about'), 302);
-  assert.ok(reviewModeOff((await call('/__review/review.js', { host: HELLO, cookie: ps })).text));
+  assert.ok(reviewModeOff((await h.send('/__review/review.js', { host: HELLO, cookie: ps })).text));
   assert.equal((await pinNote(ps, HELLO, `https://${HELLO}/about`)).status, 403);
-  assert.equal((await call(spare.pathname + spare.search, { host: HELLO })).status, 403);
-  assert.equal((await board('/api/review/shares/end', { id: share.id })).status, 404); // once
+  assert.equal((await h.send(spare.pathname + spare.search, { host: HELLO })).status, 403);
+  assert.equal((await h.board('/api/review/shares/end', { id: share.id })).status, 404); // once
   feedback.endDue();
   assert.equal(jobsCount(), had);
 });
@@ -596,31 +529,32 @@ test('only a product’s preview, the shop’s or a cycle folder is shared, for 
     `http://${HELLO}/`,
   ])
     assert.equal(
-      (await board('/api/review/shares', { page, name: 'Sam', email: 'sam@example.org', days: 3 })).status,
+      (await h.board('/api/review/shares', { page, name: 'Sam', email: 'sam@example.org', days: 3 })).status,
       400,
       page,
     );
   assert.equal(
-    (await board('/api/review/shares', { page: `https://${HELLO}/`, name: 'Sam', email: 'sam@example.org', days: 2 }))
+    (await h.board('/api/review/shares', { page: `https://${HELLO}/`, name: 'Sam', email: 'sam@example.org', days: 2 }))
       .status,
     400,
   );
   assert.equal(
-    (await board('/api/review/shares', { page: `https://${HELLO}/`, name: 'sam', email: 'sam@example.org', days: 3 }))
+    (await h.board('/api/review/shares', { page: `https://${HELLO}/`, name: 'sam', email: 'sam@example.org', days: 3 }))
       .status,
     400,
   );
   assert.equal(
-    (await board('/api/review/shares', { page: `https://${HELLO}/`, name: 'Sam', email: 'not an address', days: 3 }))
+    (await h.board('/api/review/shares', { page: `https://${HELLO}/`, name: 'Sam', email: 'not an address', days: 3 }))
       .status,
     400,
   );
   assert.equal(
     (
-      await call('/api/review/shares', {
-        origin: ORIGIN,
-        body: { page: `https://${HELLO}/`, name: 'Sam', email: 'sam@example.org', days: 3 },
-      })
+      await h.send(
+        '/api/review/shares',
+        { origin: ORIGIN },
+        { page: `https://${HELLO}/`, name: 'Sam', email: 'sam@example.org', days: 3 },
+      )
     ).status,
     401,
   );
@@ -629,14 +563,14 @@ test('only a product’s preview, the shop’s or a cycle folder is shared, for 
 test('a name the guest desk knows at another address is refused, never moved', async () => {
   const known = await makeShare(`https://${HELLO}/`, 'Anna', 'anna@a.example.org');
   const { ps } = await signIn(known.link);
-  const other = await board('/api/review/shares', {
+  const other = await h.board('/api/review/shares', {
     page: `https://${CYCLES}/2026-03-01-deck/`,
     name: 'Anna',
     email: 'anna@b.example.org',
     days: 3,
   });
   assert.equal(other.status, 409);
-  assert.match(other.json().error, /a••••@a\.example\.org/);
+  assert.match(other.body.error, /a••••@a\.example\.org/);
   // Anna is as she was: her address, her session
   assert.equal(await check(ps, HELLO, '/'), 200);
   assert.equal(
@@ -648,21 +582,21 @@ test('a name the guest desk knows at another address is refused, never moved', a
 test('an address the email service refuses is said plainly, and the board invites the person again under the same name once removed', async () => {
   const first = await makeShare(`https://${HELLO}/`, 'Pim', 'pim@refused.example.org');
   const path = new URL(first.link).pathname;
-  const sent = await call(`${path}/send`, { form: {}, origin: ORIGIN, from: '192.0.2.250' });
+  const sent = await h.postForm(`${path}/send`, {}, '192.0.2.250');
   assert.equal(sent.status, 422);
   assert.match(sent.text, /this email address doesn’t work/);
   // still on the share, the name keeps its address
   assert.equal(
-    (await board('/api/review/shares', { id: first.id, name: 'Pim', email: 'pim@example.org' })).status,
+    (await h.board('/api/review/shares', { id: first.id, name: 'Pim', email: 'pim@example.org' })).status,
     409,
   );
-  assert.equal((await board('/api/review/shares/remove', { id: first.id, name: 'Pim' })).status, 200);
+  assert.equal((await h.board('/api/review/shares/remove', { id: first.id, name: 'Pim' })).status, 200);
   const again = await invite({ id: first.id, name: 'Pim', email: 'pim@example.org' });
   assert.equal(again.person.address, 'p••••@example.org');
   assert.notEqual(again.link, first.link);
   assert.equal(await check((await signIn(again.link)).ps, HELLO, '/'), 200);
-  assert.deepEqual(mails.at(-1)!.to, ['pim@example.org']);
-  assert.equal((await call(path)).status, 404); // the old link opens nothing
+  assert.deepEqual(lettermint.taken.at(-1)!.to, ['pim@example.org']);
+  assert.equal((await h.send(path)).status, 404); // the old link opens nothing
 });
 
 test('a new address for the guest (the checklist card’s) ends their share’s session and an unused hand-off', async () => {
@@ -670,7 +604,7 @@ test('a new address for the guest (the checklist card’s) ends their share’s 
   const share = await makeShare(`https://${HELLO}/`, 'Noor', 'noor@old.example.org');
   const { ps, g, path } = await signIn(share.link);
   assert.equal(await check(ps, HELLO, '/'), 200);
-  const handOff = new URL((await call(`${path}/go`, { cookie: g })).headers.location);
+  const handOff = new URL((await h.send(`${path}/go`, { cookie: g })).headers.location);
   const asked = guests.write({ id: 9999, agent: 'bolt' } as any, 'Noor', 'Your deposit', {
     sections: [{ items: [{ kind: 'question', title: 'Which day suits you?' }] }],
   }) as { request: number };
@@ -678,7 +612,7 @@ test('a new address for the guest (the checklist card’s) ends their share’s 
   assert.deepEqual(guests.setEmail(asked.request, 'noor@new.example.org'), { ok: true });
   assert.equal(await check(ps, HELLO, '/'), 302);
   assert.equal((await pinNote(ps, HELLO, `https://${HELLO}/`)).status, 403);
-  assert.equal((await call(handOff.pathname + handOff.search, { host: HELLO })).status, 403);
+  assert.equal((await h.send(handOff.pathname + handOff.search, { host: HELLO })).status, 403);
   // proving the new address opens it again
   assert.equal(await check((await signIn(share.link)).ps, HELLO, '/'), 200);
 });
@@ -698,8 +632,8 @@ test('several people on one share: each on a link of their own, the board remove
   );
   assert.notEqual(two.link, sam.link);
   // ...and by its id, from Reviews; the same person twice is refused
-  const again = await board('/api/review/shares', { id: sam.id, name: 'Joris', email: 'joris@example.org' });
-  assert.deepEqual([again.status, again.json().error], [409, 'Joris is on it already']);
+  const again = await h.board('/api/review/shares', { id: sam.id, name: 'Joris', email: 'joris@example.org' });
+  assert.deepEqual([again.status, again.body.error], [409, 'Joris is on it already']);
   const saar = await signIn(sam.link),
     joris = await signIn(two.link);
   assert.equal((await pinNote(saar.ps, HELLO, `https://${HELLO}/`, 'Bigger photos')).status, 200);
@@ -720,20 +654,20 @@ test('several people on one share: each on a link of their own, the board remove
     ],
   );
   // Joris removed: their link, check and notes stop at once. The board can still read their page.
-  const removed = await board('/api/review/shares/remove', { id: sam.id, name: 'Joris' });
-  assert.equal(removed.status, 200, removed.text);
+  const removed = await h.board('/api/review/shares/remove', { id: sam.id, name: 'Joris' });
+  assert.equal(removed.status, 200, JSON.stringify(removed.body));
   assert.deepEqual(
-    removed.json().people.map((p: any) => p.name),
+    removed.body.people.map((p: any) => p.name),
     ['Saar'],
   );
   assert.equal(await check(joris.ps, HELLO, '/'), 302);
   assert.equal((await pinNote(joris.ps, HELLO, `https://${HELLO}/`)).status, 403);
-  const shut = await call(new URL(two.link).pathname, { cookie: joris.g });
+  const shut = await h.send(new URL(two.link).pathname, { cookie: joris.g });
   assert.equal(shut.status, 404);
   assert.match(shut.text, /<h1>This invite has ended\.<\/h1>/);
   assert.equal(await check(saar.ps, HELLO, '/'), 200);
   assert.equal(bookNotesOf('Joris').length, 1);
-  assert.equal((await board('/api/review/shares/remove', { id: sam.id, name: 'Joris' })).status, 404); // once
+  assert.equal((await h.board('/api/review/shares/remove', { id: sam.id, name: 'Joris' })).status, 404); // once
   // Wim invited in their place, and Joris back later on a new link (the old one stays shut)
   const wim = await invite({ id: sam.id, name: 'Wim', email: 'wim@example.org' });
   assert.deepEqual(
@@ -742,7 +676,7 @@ test('several people on one share: each on a link of their own, the board remove
   );
   const back = await invite({ id: sam.id, name: 'Joris', email: 'joris@example.org' });
   assert.notEqual(back.link, two.link);
-  assert.equal((await call(new URL(two.link).pathname, { cookie: joris.g })).status, 404);
+  assert.equal((await h.send(new URL(two.link).pathname, { cookie: joris.g })).status, 404);
   row = feedback.listShares().find((s: any) => s.id === sam.id)!;
   assert.deepEqual(
     row.people.map((p: any) => p.name),
@@ -753,31 +687,31 @@ test('several people on one share: each on a link of their own, the board remove
 test('the board’s share box remembers who it shared with for three weeks, by name, with a title for whoever reads their notes', async () => {
   const first = await makeShare(`https://${CYCLES}/2026-03-02-other/`, 'Fenna', 'fenna@example.org');
   // the board's title for her: one line, on whatever name she has
-  const titled = await board('/api/review/people/title', { name: 'fenna', title: '  UX\n specialist ' });
-  assert.deepEqual([titled.status, titled.json()], [200, { name: 'Fenna', title: 'UX specialist' }]);
-  assert.equal((await board('/api/review/people/title', { name: 'Nobody', title: 'Developer' })).status, 404);
+  const titled = await h.board('/api/review/people/title', { name: 'fenna', title: '  UX\n specialist ' });
+  assert.deepEqual([titled.status, titled.body], [200, { name: 'Fenna', title: 'UX specialist' }]);
+  assert.equal((await h.board('/api/review/people/title', { name: 'Nobody', title: 'Developer' })).status, 404);
   assert.equal(feedback.listShares().find((s: any) => s.id === first.id)!.people[0].title, 'UX specialist');
   // Recent: by name and title only, the latest first, for the board alone
-  const recent = await call('/api/review/people', { cookie: 's=board-session' });
-  assert.deepEqual(recent.json()[0], { name: 'Fenna', title: 'UX specialist' });
-  assert.notEqual((await call('/api/review/people')).status, 200);
+  const recent = await h.send('/api/review/people', { cookie: h.boardCookie });
+  assert.deepEqual(recent.json[0], { name: 'Fenna', title: 'UX specialist' });
+  assert.notEqual((await h.send('/api/review/people')).status, 200);
   // invited again on another preview by her name alone, at the address she had; a name nobody shared with lately is not
   const again = await invite({ page: `https://${HELLO}/`, name: 'Fenna', days: 1 });
   assert.equal(again.person.address, 'f••••@example.org');
-  const stranger = await board('/api/review/shares', { page: `https://${HELLO}/`, name: 'Stranger', days: 1 });
+  const stranger = await h.board('/api/review/shares', { page: `https://${HELLO}/`, name: 'Stranger', days: 1 });
   assert.equal(stranger.status, 400);
   // her notes reach their reader with the title, and how to read it; never her own door or tool
   const fenna = await signIn(again.link);
-  assert.doesNotMatch((await call(fenna.path, { cookie: fenna.g })).text, /href="\/guest\/sketchbook\/"/);
-  assert.ok((await call('/guest/sketchbook/api/list', { cookie: fenna.g })).status >= 400);
-  assert.doesNotMatch(fenna.landed.text + (await call(fenna.path, { cookie: fenna.g })).text, /UX specialist/);
+  assert.doesNotMatch((await h.send(fenna.path, { cookie: fenna.g })).text, /href="\/guest\/sketchbook\/"/);
+  assert.ok((await h.send('/guest/sketchbook/api/list', { cookie: fenna.g })).status >= 400);
+  assert.doesNotMatch(fenna.landed.text + (await h.send(fenna.path, { cookie: fenna.g })).text, /UX specialist/);
   assert.equal((await pinNote(fenna.ps, HELLO, `https://${HELLO}/`, 'The steps feel cramped')).status, 200);
   const [hers] = bookNotesOf('Fenna');
-  const handed = await call('/guest/notebooks/api/pages/send', {
-    cookie: fenna.g,
-    origin: ORIGIN,
-    body: { id: hers.page },
-  });
+  const handed = await h.send(
+    '/guest/notebooks/api/pages/send',
+    { cookie: fenna.g, origin: ORIGIN },
+    { id: hers.page },
+  );
   assert.equal(handed.status, 200, handed.text);
   booksheets.deliverDue(Date.now() + booknotes.SEND_MS + 1000);
   const note = bookNotesOf('Fenna').find(group => group.id === hers.id)!.note!;
@@ -789,7 +723,7 @@ test('the board’s share box remembers who it shared with for three weeks, by n
   assert.match(job.prompt, /read their notes in light of it/);
   assert.equal((feedback.forWorker(review) as any).author_title, 'UX specialist');
   // cleared, nothing's said about one
-  assert.deepEqual((await board('/api/review/people/title', { name: 'Fenna', title: ' ' })).json(), {
+  assert.deepEqual((await h.board('/api/review/people/title', { name: 'Fenna', title: ' ' })).body, {
     name: 'Fenna',
     title: null,
   });
@@ -800,17 +734,20 @@ test('the board’s share box remembers who it shared with for three weeks, by n
     new Date(Date.now() - 22 * 864e5).toISOString(),
   );
   assert.ok(!feedback.listPeople().some(p => p.name === 'Fenna'));
-  assert.equal((await board('/api/review/shares/remove', { id: first.id, name: 'Fenna' })).status, 200);
-  assert.equal((await board('/api/review/shares', { id: first.id, name: 'Fenna' })).status, 400);
-  assert.equal((await board('/api/review/shares', { page: `https://${HELLO}/`, name: 'Fenna', days: 1 })).status, 400);
+  assert.equal((await h.board('/api/review/shares/remove', { id: first.id, name: 'Fenna' })).status, 200);
+  assert.equal((await h.board('/api/review/shares', { id: first.id, name: 'Fenna' })).status, 400);
+  assert.equal(
+    (await h.board('/api/review/shares', { page: `https://${HELLO}/`, name: 'Fenna', days: 1 })).status,
+    400,
+  );
 });
 
 test('a person invited again to the same share is remembered from then, and a key in their title is never kept', async () => {
   const share = await makeShare(`https://${CYCLES}/2026-03-02-other/`, 'Sam', 'sam@example.org');
   const sixDaysAgo = new Date(Date.now() - 6 * 864e5).toISOString();
   db.prepare("update review_share_people set added = ? where share = ? and guest = 'Sam'").run(sixDaysAgo, share.id);
-  await board('/api/review/shares/remove', { id: share.id, name: 'Sam' });
-  assert.equal((await board('/api/review/shares', { id: share.id, name: 'Sam' })).status, 200);
+  await h.board('/api/review/shares/remove', { id: share.id, name: 'Sam' });
+  assert.equal((await h.board('/api/review/shares', { id: share.id, name: 'Sam' })).status, 200);
   const last = (
     db.prepare("select added from review_share_people where share = ? and guest = 'Sam'").get(share.id) as any
   ).added;
@@ -818,7 +755,7 @@ test('a person invited again to the same share is remembered from then, and a ke
   const secrets = await import('./secrets.ts'),
     KEY = 'sk_live_' + 'H8'.repeat(10);
   secrets.saveSecrets(['STRIPE_LIVE_SECRET_KEY'], { STRIPE_LIVE_SECRET_KEY: KEY });
-  const titled = (await board('/api/review/people/title', { name: 'Sam', title: KEY })).json();
+  const titled = (await h.board('/api/review/people/title', { name: 'Sam', title: KEY })).body;
   assert.doesNotMatch(JSON.stringify(titled), /sk_live_/);
   assert.match(JSON.stringify(feedback.listPeople()), /\[STRIPE_LIVE_SECRET_KEY\]/);
 });
@@ -831,7 +768,7 @@ test("a tester's first-time bubble is theirs: three pages across the shop and it
   const joost = await signIn(share.link, /to try out/),
     fenna = await signIn(other.link, /to try out/);
   const coach = (ps: string, path = '/__review/coach', body = {}) =>
-    call(path, { host: FRONT, cookie: ps, origin: `https://${FRONT}`, body }).then(r => r.json().show);
+    h.send(path, { host: FRONT, cookie: ps, origin: `https://${FRONT}` }, body).then(r => r.json.show);
   assert.deepEqual(
     [
       await coach(joost.ps),
@@ -851,28 +788,28 @@ test('a phone that opens a preview page’s link gets that page’s access, on i
   const FRONT = 'front.preview.company.test',
     OTHER = 'other.preview.company.test';
   const handOn = (host: string, cookie: string, to: unknown, origin = `https://${host}`) =>
-    call('/__preview/handoff', { host, cookie, origin, body: { to } });
+    h.send('/__preview/handoff', { host, cookie, origin }, { to });
   const open = async (link: string, cookie = '') => {
     const u = new URL(link);
-    return call(u.pathname + u.search, { host: u.host, cookie });
+    return h.send(u.pathname + u.search, { host: u.host, cookie });
   };
-  const maxAge = (r: Answer) => Number(/Max-Age=(\d+)/.exec(String(r.headers['set-cookie']?.[0]))?.[1]);
+  const maxAge = (r: Sent) => Number(/Max-Age=(\d+)/.exec(String(r.headers['set-cookie']?.[0]))?.[1]);
 
   // the board's computer, signed in on the preview the usual way
-  const login = await call(`/preview/login?to=${encodeURIComponent(`https://${HELLO}/`)}`, {
-    cookie: 's=board-session',
+  const login = await h.send(`/preview/login?to=${encodeURIComponent(`https://${HELLO}/`)}`, {
+    cookie: h.boardCookie,
   });
   const pv = cookieOf(await open(login.headers.location));
   const made = await handOn(HELLO, pv, '/pair/?lang=nl');
   assert.equal(made.status, 200, made.text);
   assert.match(
-    made.json().url,
+    made.json.url,
     /^https:\/\/hello\.preview\.company\.test\/__preview\?c=[\w-]+&to=%2Fpair%2F%3Flang%3Dnl$/,
   );
   // the phone opens it 14 minutes later, with no cookie at all: in at the page, with a key for this host alone (no
   // Domain) that lasts an hour from now
   db.prepare('update preview_keys set expires = ? where host is not null').run(Date.now() + 46 * 60e3);
-  const phone = await open(made.json().url);
+  const phone = await open(made.json.url);
   assert.equal(phone.status, 302);
   assert.equal(phone.headers.location, '/pair/?lang=nl');
   assert.match(
@@ -886,8 +823,8 @@ test('a phone that opens a preview page’s link gets that page’s access, on i
   assert.equal(await check(phonePv, OTHER, '/'), 302);
   assert.equal(await check(phonePv, FRONT, '/'), 302);
   // the link works once: a second scan on the phone goes on to the page, anyone else's ends there
-  assert.equal((await open(made.json().url, phonePv)).headers.location, '/pair/?lang=nl');
-  const used = await open(made.json().url);
+  assert.equal((await open(made.json.url, phonePv)).headers.location, '/pair/?lang=nl');
+  const used = await open(made.json.url);
   assert.equal(used.status, 403);
   assert.match(used.text, /Open it again from HQ\.$/);
   // a used link goes on only to a path on this host, as the browser reads it (it drops a tab: "/<tab>/evil.example")
@@ -910,7 +847,7 @@ test('a phone that opens a preview page’s link gets that page’s access, on i
   const { ps } = await signIn(share.link, /to try out/);
   const handed = await handOn(FRONT, ps, '/povpad/pair/?lang=nl');
   assert.equal(handed.status, 200, handed.text);
-  const testerPhone = await open(handed.json().url);
+  const testerPhone = await open(handed.json.url);
   assert.equal(testerPhone.headers.location, '/povpad/pair/?lang=nl');
   assert.ok(Math.abs(maxAge(testerPhone) - 3600) < 60);
   const phonePs = cookieOf(testerPhone);
@@ -924,12 +861,12 @@ test('a phone that opens a preview page’s link gets that page’s access, on i
   assert.equal(await check(phonePs, FRONT, '/'), 302);
   assert.equal(await check(ps, FRONT, '/'), 200);
   // the board's End stops a phone's link not yet opened
-  const unopened = (await handOn(FRONT, ps, '/povpad/pair/')).json().url;
+  const unopened = (await handOn(FRONT, ps, '/povpad/pair/')).json.url;
   // a flood from one session is refused after its own allowance
   let flooded = 0;
   while ((await handOn(FRONT, ps, '/povpad/pair/')).status === 200 && flooded < 100) flooded++;
   assert.ok(flooded > 0 && flooded < 100, `${flooded} links before one was refused`);
-  await board('/api/review/shares/end', { id: share.id });
+  await h.board('/api/review/shares/end', { id: share.id });
   assert.equal((await open(unopened)).status, 403);
 
   // nobody else makes one: no access, another site's page, a path that leaves the host, or HQ itself
@@ -937,7 +874,7 @@ test('a phone that opens a preview page’s link gets that page’s access, on i
   assert.equal((await handOn(HELLO, pv, '/pair/', 'https://evil.example')).status, 403);
   assert.equal((await handOn(HELLO, pv, '//evil.example/')).status, 403);
   assert.equal((await handOn(HELLO, pv, 'https://evil.example/')).status, 403);
-  assert.equal((await handOn('hq.company.test', 's=board-session', '/', ORIGIN)).status, 403);
+  assert.equal((await handOn('hq.company.test', h.boardCookie, '/', ORIGIN)).status, 403);
   assert.equal((await handOn(HELLO, ps, '/pair/')).status, 403); // the tester's session is the shop door's
 });
 
@@ -958,25 +895,26 @@ test("a tester invite on a product with plans: its door says in the product's wo
     cap: 20,
   });
   const wanda = await signIn(share.link, /to try out/);
-  const door = (await call(wanda.path, { cookie: wanda.g })).text;
+  const door = (await h.send(wanda.path, { cookie: wanda.g })).text;
   assert.match(door, /Open the menu in Orbit and type the voucher below under Plans\./);
   assert.match(door, /for one plan up to €20/);
   assert.doesNotMatch(door, /your address|delivery/);
   // the product knows her by the id Caddy hands it, and takes her voucher for her
-  const checked = await call('/api/preview/check', {
+  const checked = await h.send('/api/preview/check', {
     cookie: wanda.ps,
-    headers: { 'x-forwarded-host': HOST, 'x-forwarded-uri': '/' },
+    ...{ 'x-forwarded-host': HOST, 'x-forwarded-uri': '/' },
   });
   const as = await productHeaders();
-  const paid = await call('/api/pay/plans/voucher', {
-    body: { payer: checked.headers['x-viewer'], voucher: shares.people(share.id)[0].voucher, plan: 'crew', period: 3 },
-    headers: as('orbit'),
-  });
+  const paid = await h.send(
+    '/api/pay/plans/voucher',
+    { ...as('orbit') },
+    { payer: checked.headers['x-viewer'], voucher: shares.people(share.id)[0].voucher, plan: 'crew', period: 3 },
+  );
   assert.equal(paid.status, 200, paid.text);
-  assert.match((await call(wanda.path, { cookie: wanda.g })).text, /Your voucher has paid for your plan/);
+  assert.match((await h.send(wanda.path, { cookie: wanda.g })).text, /Your voucher has paid for your plan/);
   // its plans broken since, its door says it can't open rather than promise a plan
   writeFileSync(`${repo}/products/orbit/product.yaml`, 'name: Orbit\nstatus: preview\nowner: bolt\nplans: [crew]\n');
-  assert.equal((await call(wanda.path, { cookie: wanda.g })).status, 503);
+  assert.equal((await h.send(wanda.path, { cookie: wanda.g })).status, 503);
   feedback.endShare({ id: share.id });
 });
 
@@ -996,16 +934,16 @@ test("a share's door offers its walk-through call once the board said Call, thro
     share: share.id,
   }) as { id: number; request: number };
   // the board hasn't said Call yet: the door has only its own Open
-  assert.doesNotMatch((await call(path, { cookie: g })).text, /Talk it through/);
-  assert.equal((await call(`${path}/talk`, { cookie: g })).status, 404);
+  assert.doesNotMatch((await h.send(path, { cookie: g })).text, /Talk it through/);
+  assert.equal((await h.send(`${path}/talk`, { cookie: g })).status, 404);
   const approved = callcard.approve({ id: filed.request }) as { link: string };
-  const door = await call(path, { cookie: g });
+  const door = await h.send(path, { cookie: g });
   assert.match(door.text, new RegExp(`<a class="button" href="${path}/talk">Talk it through with Bolt</a>`));
-  const talk = await call(`${path}/talk`, { cookie: g });
+  const talk = await h.send(`${path}/talk`, { cookie: g });
   assert.equal(talk.status, 302);
   assert.equal(talk.headers.location, approved.link);
   // signed out, the door asks for the code first; the call's end closes it again
-  assert.equal((await call(`${path}/talk`)).status, 401);
+  assert.equal((await h.send(`${path}/talk`)).status, 401);
   callouts.finish(callouts.byId(filed.id)!, 'done', 'the call was held');
-  assert.doesNotMatch((await call(path, { cookie: g })).text, /Talk it through/);
+  assert.doesNotMatch((await h.send(path, { cookie: g })).text, /Talk it through/);
 });

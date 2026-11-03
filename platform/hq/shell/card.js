@@ -7,9 +7,16 @@ import { PIC, CLIP, deckOf, pairsOf } from './media.js';
 // text (and so does a line that only names a picture). Long text folds under More. A card with before-and-after pairs
 // leads with them, and all its text folds under More.
 export const cardOf = body => {
-  const { pairs, rest } = pairsOf(body),
-    c = parseCard(shownText(rest));
-  return pairs.length ? { ...pictured(c), pairs } : { ...folded(c), pairs };
+  const c = unfoldedCard(body);
+  return c.pairs.length ? pictured(c) : folded(c);
+};
+// A card read without its pictures, as cardOf reads it before it folds: its before-and-after pairs (pairs), and its text
+// with a line that only names a picture or a clip gone (shownText). A card's slip under a note shows it unfolded
+// (bookasks.js, and the page's picture, bookpicture.ts), so no picture's path shows as its words; rest: its text with
+// only the pairs gone, where its other pictures are named.
+export const unfoldedCard = body => {
+  const { pairs, rest } = pairsOf(body);
+  return { ...parseCard(shownText(rest)), pairs, rest };
 };
 const media = (l, re) =>
   !l.match(re) ||

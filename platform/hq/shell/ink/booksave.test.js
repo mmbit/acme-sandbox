@@ -25,7 +25,7 @@ registerHooks({
 });
 // (what the modules under it read of the browser as they load)
 globalThis.addEventListener = () => {};
-globalThis.document = { addEventListener: () => {} };
+globalThis.document = { addEventListener: () => {}, createElement: () => ({}), head: { append() {} } };
 globalThis.location = { hostname: '', search: '', pathname: '/' };
 const { changed, readAgain, readPage, saved } = await import('./booksave.js');
 const { edit, redo, remade, stepList, undo } = await import('./bookedit.js');

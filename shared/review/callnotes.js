@@ -4,8 +4,7 @@
 // the call hears the board, and what it hears while a mark is drawn is the note's words. The mark goes into the book as
 // every mark does (settle.js), and HQ's call sends it to the agent ('pencil:note', marks.js). It's for the agent:
 // nothing of it goes into the notebook by itself (the agent makes a scrap of what it judges worth keeping), and its ink
-// stays drawn (r.held) until the agent's turn on it is done, then goes, so the board circles afresh on a clean screen
-// (the board, call 161.).
+// stays drawn (r.held) until the agent's turn on it is done, then goes, so the board circles afresh on a clean screen.
 // The agent's ink isn't the Pencil's: drive.js rings where it aims, over the page, and nothing of it goes in the book
 //   call:on    { call, agent, name, color }  a call is on: its calls row, its agent, its name and its ink
 //   call:off   { done }                       it ended; done() once a mark still settling is in the book

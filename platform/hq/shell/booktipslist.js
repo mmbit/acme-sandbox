@@ -94,12 +94,12 @@ export const TIPS = [
   },
   {
     part: 'The experience',
-    title: 'Tear a page off by its corner to send it',
+    title: 'Tear a page off at its right edge to send it',
     words:
-      'Drag the turned-down corner of a page onto Submit: the copy flies off as a paper plane, and the page is stamped Sent and locked. Drop it on PDF or PNG to keep a copy instead.',
+      "Press at the page's right edge, where the spine is, and pull to the left: a copy tears off in your hand. Drop it on Submit and it flies off as a paper plane, and the page is stamped Sent and locked. Drop it on PDF or PNG to keep a copy instead. Tear off and send in the bar's dots menu does the same.",
     from: 'platform/hq/shell/ink/booktear.js, platform/hq/shell/ink/bookshare.js, platform/hq/shell/ink/bookpagesend.js',
     picture: 'tear',
-    alt: 'The corner pulled onto Submit, the paper plane flying off, the page stamped and locked',
+    alt: 'The page pulled from its right edge onto Submit, the paper plane flying off, the page stamped and locked',
   },
   {
     part: 'The experience',

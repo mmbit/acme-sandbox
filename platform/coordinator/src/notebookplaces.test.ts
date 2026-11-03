@@ -2,10 +2,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { harness } from './harness.ts';
-import { unitsPage } from './ink/bookpicture.ts';
 
 const h = await harness('notebookplaces');
-const { db } = h;
+const { unitsPage } = await import('./ink/bookpicture.ts');
+const { pageFor } = await import('./ink/callnotes.ts');
 
 const stroke = (x: number, y: number) => ({
   color: '#2B2230',
@@ -62,8 +62,8 @@ test("a sketch page's picture holds what's drawn far out every way, each where i
 });
 
 test('a page of scraps places nothing: its masonry lays it', async () => {
-  const page = await newPage(await myNotebook());
-  db.prepare("update book_pages set kind = 'call' where id = ?").run(page);
+  const { call } = await h.liveCall('juno'),
+    page = pageFor(call)!.id;
   const g = (await create({ page, ink: [stroke(0, 0)], place: { x: 5, y: 5 } })).body;
   assert.equal(g.place, null, 'a place given is not kept');
   assert.equal((await place(page, [{ id: g.id, x: 1, y: 2 }])).status, 400, 'only a sketch page places its units');

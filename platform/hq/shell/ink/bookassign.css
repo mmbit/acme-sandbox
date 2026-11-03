@@ -1,56 +1,11 @@
-/* Assigning (bookassign.js, bookassignlist.js, bookassignfly.js): the short list and everyone's sheet, each person's
-   initial in a circle, their whole name and what they are, on the look's card; the row the line or the pointer is on
-   lit as the look lights a key; the line drawn over everything and the copy flying to a name; and the tags a scrap wears for whom it went to.
+/* Assigning (bookassign.js, bookassignlist.js, bookassignfly.js): the short list and everyone's sheet, list cards
+   (bookcard.css) of people, each person's initial in a circle, their whole name and what they are; the line drawn
+   under the list and the copy flying to a name; and the tags a scrap wears for whom it went to.
    The cards and the line live on the screen (fixed), the tags in the page's px with the scrap. (The cards in the look.)
  */
 
-/* ---- a card of people: as wide as its longest name, on the screen whole (its max-width: bookassignlist.js put) */
-#book > .bk-assign {
-  position: fixed;
-  z-index: 56;
-  top: auto;
-  height: auto;
-  width: max-content;
-  min-width: 260px;
-  padding: 6px;
-  display: flex;
-  flex-direction: column;
-  transform-origin: 0 0;
-  animation: bk-assign-in 0.22s cubic-bezier(0.2, 0.8, 0.3, 1.25) backwards;
-}
-#book > .bk-assign[inert] {
-  pointer-events: none;
-}
-.bk-assign-head {
-  margin: 6px 14px 4px;
-  font-size: 15px;
-  font-weight: 700;
-  color: var(--bk-ui-muted);
-}
-
-/* a person: 56 px tall, their initial in a ring, their name in bold, guest or agent at the right */
-.bk-assign .bk-person {
-  all: unset;
-  box-sizing: border-box;
-  display: grid;
-  grid-template-columns: 40px 1fr auto;
-  align-items: center;
-  gap: 14px;
-  min-height: 56px;
-  padding: 6px 14px 6px 8px;
-  border: 2px solid transparent;
-  border-radius: 13px;
-  cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
-}
-.bk-assign-short .bk-person {
-  animation: bk-assign-row 0.24s cubic-bezier(0.2, 0.8, 0.3, 1.4) backwards;
-  animation-delay: calc(0.05s + var(--i) * 0.1s);
-}
-.bk-assign .bk-person[hidden] {
-  display: none;
-}
-.bk-assign .bk-face,
+/* ---- a person's face: their initial in a ring, as on a scrap's tags */
+.bk-list .bk-face,
 .bk-tag .bk-face {
   display: grid;
   place-items: center;
@@ -62,74 +17,34 @@
   line-height: 1;
 }
 /* (in the card, the face in the card's words) */
-.bk-assign .bk-face {
+.bk-list .bk-face {
   border-color: currentColor;
   background: none;
   width: 40px;
   height: 40px;
   font-size: 18px;
 }
-.bk-assign .bk-name {
-  font-size: 20px;
-  font-weight: 700;
-  /* (a name too long for the screen wraps: never cut) */
-  overflow-wrap: anywhere;
-}
-.bk-assign .bk-kind {
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--bk-ui-muted);
-}
-.bk-assign .bk-person[data-lit] {
-  background: var(--bk-ui-lit);
-  color: var(--bk-ui-on-lit);
-}
-.bk-assign .bk-person[data-lit] .bk-kind {
-  color: inherit;
-}
-@media (hover: hover) {
-  .bk-assign .bk-person:not([data-lit]):hover {
-    background: var(--bk-ui-wash);
-  }
-}
-.bk-assign .bk-person:focus-visible {
-  outline: 2px solid var(--bk-ui-ink);
-  outline-offset: -2px;
-}
-
-/* More…: under a rule, three dots in a grey ring, everyone's count beside it */
-.bk-assign .bk-assign-more {
-  margin-top: 4px;
-  position: relative;
-}
-.bk-assign-more::before {
-  content: '';
-  position: absolute;
-  top: -4px;
-  left: 12px;
-  right: 12px;
-  border-top: 1.5px solid var(--bk-ui-line);
-}
-.bk-assign-more .bk-face {
+/* More…: three dots in a grey ring, everyone's count beside it */
+.bk-list-more .bk-face {
   display: flex;
   justify-content: center;
   gap: 4px;
   background: var(--bk-ui-wash);
 }
-.bk-assign-more .bk-face i {
+.bk-list-more .bk-face i {
   width: 4px;
   height: 4px;
   border-radius: 50%;
   background: currentColor;
 }
-.bk-assign-more small {
+.bk-list-more small {
   margin-left: 4px;
   font-size: 15px;
   font-weight: 600;
   color: var(--bk-ui-muted);
 }
 
-/* ---- everyone: Share with and Done, a search, the rows scrolling under them */
+/* ---- everyone: Share with and Done, a search, the rows scrolling under them, all there at once */
 #book > .bk-assign-all {
   min-width: min(340px, calc(100vw - 16px));
   max-height: min(600px, calc(100vh - 16px));
@@ -182,6 +97,9 @@
 .bk-assign-search input::placeholder {
   color: var(--bk-ui-muted);
 }
+.bk-list.bk-assign-all .bk-row {
+  animation: none;
+}
 .bk-assign-rows {
   flex: 1;
   min-height: 0;
@@ -195,12 +113,6 @@
   color: var(--bk-ui-muted);
 }
 
-@keyframes bk-assign-in {
-  from {
-    opacity: 0;
-    scale: 0.9;
-  }
-}
 @keyframes bk-assign-row {
   from {
     opacity: 0;
@@ -208,10 +120,10 @@
   }
 }
 
-/* ---- the line out of the ring, over everything; the copy in flight, over that */
+/* ---- the line out of the ring, over everything but the list it opens; the copy in flight, over all */
 #book > .bk-assign-line {
   position: fixed;
-  z-index: 57;
+  z-index: 55;
   inset: 0;
   width: 100%;
   height: 100%;
@@ -266,10 +178,10 @@
   stroke-linecap: round;
   stroke-linejoin: round;
 }
-/* seen (a note that needs nothing back): the tick and the initial of the agent who read it, its face in the deck's
-   lime, as a chosen version is (bookversions.css); in a reply's line, after its words */
+/* seen (a note that needs nothing back): the tick and the initial of the agent who read it, its face in the chosen
+   colour, as a chosen version is (bookversions.css); in a reply's line, after its words. */
 .bk-tag[data-seen] .bk-face {
-  background: var(--bk-chosen, #d6ea3c);
+  background: var(--bk-chosen);
 }
 .bk-reply .bk-tag[data-seen] {
   display: inline-flex;
@@ -282,8 +194,6 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  #book > .bk-assign,
-  .bk-assign-short .bk-person,
   .bk-tag[data-new] {
     animation: none;
   }

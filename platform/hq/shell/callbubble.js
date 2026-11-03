@@ -1,8 +1,6 @@
 // A minimised call floats over the page. Its first position keeps clear of controls and readable content.
 // A pen or finger can then put it anywhere. The chosen position survives layout changes, clamped to the visible screen.
 // HQ and the join page supply their face, words, icons and callbacks, and can keep the position in localStorage.
-// Pause is a key of the page's icons where it gives them (icons.pause, and icons.resume while paused), its words its
-// label and tooltip; its words otherwise.
 import { clearSpot, floating, inSight, keptClear, room } from './floating.js';
 
 // A shorter movement is a tap, so opening the call never competes with dragging it.
@@ -13,6 +11,9 @@ export class CallBubble {
     this.words = words;
     this.keep = keep;
     this.onSound = onSound;
+    // Pause is an icon key when the page gives its icons (icons.pause, and icons.resume while paused, or the pause
+    // icon both ways without one), with its words as the key's label and tooltip. A page without them, as the join
+    // page, gets a key of words.
     this.pauseIcons = icons.pause && { pause: icons.pause, resume: icons.resume ?? icons.pause };
     this.position = readPosition(keep);
     this.reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -113,6 +114,8 @@ export class CallBubble {
     this.pauseKey.hidden = state === 'off';
     const says = this.isPaused ? this.words.resume : this.words.pause;
     if (!this.pauseIcons) this.pauseKey.textContent = says;
+    // (an icon only when its words change: HQ's icons are an empty <svg data-icon> that icons.js draws in after, and
+    // writing the same one again would blank it until then, a blink at every call of watching)
     else if (this.pauseKey.title !== says) {
       this.pauseKey.innerHTML = this.isPaused ? this.pauseIcons.resume : this.pauseIcons.pause;
       this.pauseKey.title = says;

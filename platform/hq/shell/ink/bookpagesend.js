@@ -27,6 +27,12 @@ const SEND_MS = 10_000,
   AFTER_MS = 600,
   PRESS_MS = 260,
   STAMP_MS = 1300;
+// the stamp: a little crooked (its turn, degrees), 38 px high, turned whole within the room under the title's line and
+// over the first units (bookdesk.css .bk-send-stamp: 48 to 94 px down the page; bookunits.js TITLE_H + MARGIN)
+const TURN = 3,
+  [COS, SIN] = [Math.cos, Math.sin].map(f => f((TURN * Math.PI) / 180)),
+  STAMP_H = 38,
+  ROOM_H = 46;
 
 // The board's page v (the book's view of it, bookpages.js) torn out and let go on Submit: copy, the carried copy (null
 // from the menu: a picture of the page goes), aside, the groups whose asks were still open, set aside on a new page.
@@ -179,7 +185,12 @@ export function stamped(book, page, fresh = false, el = book.views.find(x => x.p
   const label = time ? word('sentAt', { time }) : word('sent');
   const words = `${word('sent').toLocaleUpperCase()} ${when}`.trim(),
     w = 30 + words.length * 15;
-  node.innerHTML = `<svg viewBox="0 0 ${w} 48" width="${Math.round((w * 38) / 48)}" height="38" role="img" aria-label="${esc(label)}"><rect x="2" y="2" width="${w - 4}" height="44" rx="7"/><text x="${w / 2}" y="32" text-anchor="middle">${esc(words)}</text></svg>`;
+  // (turned inside its own box, which holds the whole turned stamp, as the ink's mask paints only within the stamp's
+  // box; and smaller where longer words, turned, would reach past its room.)
+  const [W, H] = [w * COS + 48 * SIN, w * SIN + 48 * COS].map(n => Math.ceil(n)),
+    box = `${(w - W) / 2} ${(48 - H) / 2} ${W} ${H}`,
+    high = Math.min((H * STAMP_H) / 48, ROOM_H);
+  node.innerHTML = `<svg viewBox="${box}" style="height: ${high.toFixed(1)}px" role="img" aria-label="${esc(label)}"><g transform="rotate(${-TURN} ${w / 2} 24)"><rect x="2" y="2" width="${w - 4}" height="44" rx="7"/><text x="${w / 2}" y="32" text-anchor="middle">${esc(words)}</text></g></svg>`;
   node.classList.add('bk-stamped');
   if (fresh) stamp(node);
 }

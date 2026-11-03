@@ -17,13 +17,12 @@
 // Laid again (a room grown, an answer come, a scrap arrived), every unit keeps the column it was in while the page has
 // as many: only what's under a unit that grew moves, and only down.
 // A unit grows to hold whatever goes past its foot (heightOf), and its canvas reaches its ink wherever that goes
-// (bookpage.js): nothing drawn is cut. The board's own drawings are ink on the
-// page, no paper under them; an agent's scrap is a card.
+// (bookpage.js): nothing drawn is cut. The board's own drawings are ink on the page, no paper; an agent's scrap a card.
 // A sketch page is a canvas instead (sketchcanvas.js): each unit at the place the store keeps for it, the same at any
 // width, in page px at the board's own zoom (bookview.js; opening at opensAt), and a stroke drawn apart from every unit,
-// any way from the page's origin, a unit of its own where it's drawn. A unit with no place yet is laid as the masonry lays it, and this screen pins
-// it there (page.pins, saved by booksave.js). What hangs under a unit there covers none of them: at its foot, or the
-// first clear paper below.
+// any way from the page's origin, a unit of its own where it's drawn. A unit with no place yet is laid as the masonry
+// lays it, and this screen pins it there (page.pins, saved by booksave.js). What hangs under a unit there covers none
+// of them: at its foot, or the first clear paper below.
 import { GAP, MARGIN, columnsOf, layout, placeAt, widthFor } from './masonry.js';
 import { UNIT_W, WORDS_IN, bodyOf } from './scrapunit.js';
 import { boxOf as inkBox } from './bookrow.js';
@@ -149,7 +148,7 @@ export function layUnits(view, width) {
   page.columns = l.columns;
   Object.assign(page, { x: 0, y: 0, ...(l.size ?? canvasSize(page, width / l.scale)), scale: l.scale });
   // (a sketch page's units laid where they had no place: kept there, bookpages.js)
-  if (page.pins?.size) view.pinned?.();
+  if (page.pins?.size) view.pinned();
   return moved;
 }
 // The page's units laid as a masonry at width (CSS px), each as tall as it and what hangs under it (below): their
@@ -229,7 +228,7 @@ function placeAmong(page, unit, at) {
 // A place in the masonry's px as the page's own, at the layout's scale
 const onPage = (p, s) => ({ x: (p.x + INSET) / s, y: p.y / s + TITLE_H });
 // Typed words kept inside their unit, WORDS_IN from its sides: a box moved past
-// its right side slides back in at its own width, never squeezed to a sliver (a box's grip, board call 176.)
+// its right side slides back in at its own width, never squeezed to a sliver
 function inside(el, o) {
   el.w = Math.max(40, Math.min(el.w, UNIT_W - 2 * WORDS_IN));
   el.x = Math.max(o.x + WORDS_IN, Math.min(el.x, o.x + UNIT_W - WORDS_IN - el.w));
@@ -326,20 +325,21 @@ export function reachOn(page, p) {
 }
 // A new unit for what's drawn in a box below every scrap: the page's last, today's, kept in the column it's drawn in, at
 // the place the masonry gives it, as layUnits lays it, so what's drawn stays where it was. On a page not laid yet, just
-// above what's drawn.
-function newUnit(page, box) {
-  const id = (page.temp = (page.temp ?? 0) - 1);
+// above what's drawn. Lifted: what's lifted out of others for another page (bookmoveto.js), kept where it is on its own
+// page too.
+export function newUnit(page, box, lifted = false) {
+  const id = (page.temp = (page.temp ?? 0) - 1),
+    here = { x: box.x0 - PAD, y: box.y0 - PAD };
   if (isCanvas(page.chapter)) {
     // (on a canvas, where it's drawn, kept there by the store)
-    const place = { x: box.x0 - PAD, y: box.y0 - PAD };
-    (page.pending ??= []).push({ id, place });
-    page.origins.set(id, place);
+    (page.pending ??= []).push({ id, place: here });
+    page.origins.set(id, here);
     return id;
   }
   const column = columnAt(page, (box.x0 + box.x1) / 2),
     place = placeAmong(page, { id, h: 0, day: today(), column }, page.laid?.units.length);
   (page.pending ??= []).push({ id, column });
-  page.origins.set(id, place ?? { x: 0, y: Math.max(TITLE_H, box.y0 - PAD) });
+  page.origins.set(id, lifted ? here : (place ?? { x: 0, y: Math.max(TITLE_H, here.y) }));
   return id;
 }
 // The masonry's column under an x on the page (its px), the nearest where it's beside the grid

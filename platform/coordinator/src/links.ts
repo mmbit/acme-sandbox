@@ -48,6 +48,7 @@ const CALL_MS = 30_000;
 const NAME_MAX_CHARS = 60;
 const KEY = /^link_[A-Za-z0-9_-]{43}$/;
 const INVITATION = /^invite_[A-Za-z0-9_-]{43}$/;
+export const NOT_ONE_LINE = /[\p{C}\p{Zl}\p{Zp}]/gu; // what a name or title of theirs loses to stay one line
 
 // ---- the board's
 
@@ -157,14 +158,15 @@ export function peerUnlinked(link: LinkRow) {
 // An entry of theirs that can't be applied: the whole push is refused with why
 export class EntryError extends Error {}
 
-// A push of their entries: from the one after the last we took, as the step reads it (410 once unlinked: both can
-// change while its body comes), all in one step or none, the highest we hold answered. A gap ends it: they send again.
-export function receive(given: LinkRow, body: Record<string, unknown>, apply: (link: LinkRow, entry: Entry) => void) {
+// A push of their entries, applied in one step or not at all, to the link as the step reads it (410 once unlinked: it
+// can change while the body comes). Each applies once, in order: one we hold already is skipped, and a gap ends the
+// push there (they send the rest again). Its answer is the highest entry we hold.
+export function receive(peer: LinkRow, body: Record<string, unknown>, apply: (link: LinkRow, entry: Entry) => void) {
   const entries = body.entries;
   if (!Array.isArray(entries)) return [400, 'A push is { entries: [...] }.'] as Refusal;
   try {
-    const refused = inOneStep(() => {
-      const link = findLink(given.id)!;
+    return inOneStep(() => {
+      const link = findLink(peer.id)!;
       if (link.state !== 'linked') return [410, 'unlinked'] as Refusal;
       let received = link.received;
       for (const entry of entries as Entry[]) {
@@ -175,13 +177,12 @@ export function receive(given: LinkRow, body: Record<string, unknown>, apply: (l
         received = entry.seq;
       }
       db.prepare('update links set received = ?, heard = ? where id = ?').run(received, now(), link.id);
+      return { received };
     });
-    if (refused) return refused;
   } catch (err) {
     if (err instanceof EntryError) return [400, `Refused: ${err.message}.`] as Refusal;
     throw err;
   }
-  return { received: findLink(given.id)!.received };
 }
 
 // ---- our entries, and pushing them
@@ -206,13 +207,11 @@ export function record(link: number, body: EntryBody) {
 }
 
 // When their HQ took entry `seq` of ours, or null while it's on its way
-export const takenAt = (link: number, seq: number | null) =>
-  seq === null
-    ? null
-    : ((
-        db.prepare('select taken from link_entries where link = ? and seq = ?').get(link, seq) as
-          { taken: string | null } | undefined
-      )?.taken ?? null);
+export function takenAt(link: number, seq: number | null) {
+  const row =
+    seq === null ? undefined : db.prepare('select taken from link_entries where link = ? and seq = ?').get(link, seq);
+  return (row as { taken: string | null } | undefined)?.taken ?? null;
+}
 
 const pushing = new Set<number>();
 // Our entries their HQ hasn't taken, in order, in pushes of at most PUSH_BYTES, until it has them all or refuses
@@ -224,13 +223,19 @@ export async function push(id: number) {
       const entries = batchOf(link);
       const answer = await call(link.address!, '/api/peer/entries', secrets.secret(keyName(id)), { entries });
       if (answer.status === 410) return markUnlinked(id, 'them');
-      const received = Number(answer.body?.received);
-      if (answer.status !== 200 || !Number.isSafeInteger(received)) {
-        db.prepare('update links set refused = ? where id = ?').run(answer.error, id);
+      const received = Number(answer.body?.received),
+        last = entries.at(-1)!.seq;
+      // (one past our last: an HQ that says it holds more of ours than it was sent, a rewound log of ours or a wrong one)
+      const refused =
+        answer.status !== 200 || !Number.isSafeInteger(received)
+          ? answer.error
+          : received > last && `that it holds our entry ${received}, past our last, ${last}`;
+      if (refused) {
+        db.prepare('update links set refused = ? where id = ?').run(refused, id);
         return;
       }
       tookUpTo(id, received);
-      if (received < entries.at(-1)!.seq) return;
+      if (received < last) return;
     }
   } finally {
     pushing.delete(id);
@@ -297,17 +302,10 @@ function batchOf(link: LinkRow) {
 }
 
 function tookUpTo(id: number, received: number) {
+  const at = now();
   inOneStep(() => {
-    db.prepare('update link_entries set taken = ? where link = ? and seq <= ? and taken is null').run(
-      now(),
-      id,
-      received,
-    );
-    db.prepare('update links set sent = max(sent, ?), reached = ?, refused = null where id = ?').run(
-      received,
-      now(),
-      id,
-    );
+    db.prepare('update link_entries set taken = ? where link = ? and seq <= ? and taken is null').run(at, id, received);
+    db.prepare('update links set sent = max(sent, ?), reached = ?, refused = null where id = ?').run(received, at, id);
   });
 }
 
@@ -351,6 +349,7 @@ async function call(address: string, path: string, key: string | null, body: unk
       method: 'POST',
       headers: { 'content-type': 'application/json', ...(key ? { authorization: `Bearer ${key}` } : {}) },
       body: JSON.stringify(body),
+      redirect: 'manual', // (answered, never followed: what's sent goes to the link's own address alone)
       signal: AbortSignal.timeout(CALL_MS),
     });
     const answer = (await res.json().catch(() => null)) as Record<string, any> | null;
@@ -375,11 +374,11 @@ function invitationOf(given: unknown) {
   }
 }
 
-// An HQ's address: https, or http on this machine (a test's, or HQ run locally)
+// An HQ's address: https, or, when we run on this machine ourselves (a test's HQ, or one run locally), http on it too
 function addressOf(given: unknown) {
   try {
     const url = new URL(String(given));
-    const local = url.protocol === 'http:' && url.hostname === 'localhost';
+    const local = url.protocol === 'http:' && url.hostname === 'localhost' && ORIGIN.startsWith('http://localhost:');
     return url.protocol === 'https:' || local ? url.origin : null;
   } catch {
     return null;
@@ -387,7 +386,7 @@ function addressOf(given: unknown) {
 }
 
 function nameOf(given: unknown) {
-  const name = typeof given === 'string' ? given.replace(/\p{C}/gu, '').trim() : '';
+  const name = typeof given === 'string' ? given.replace(NOT_ONE_LINE, '').trim() : '';
   return name && name.length <= NAME_MAX_CHARS ? name : null;
 }
 

@@ -58,15 +58,8 @@ export async function upload(req: IncomingMessage, res: ServerResponse) {
   const token = callId ? liveToken(callId) : undefined;
   if (callId && !(token && sameKey(token, query.get('key') ?? ''))) return refuse(req, res, 409, 'that call has ended');
   if (full(callId, card)) return refuse(req, res, 429, 'too many pictures at once');
-  const type = String(req.headers['content-type'] ?? '')
-    .split(';')[0]
-    .trim()
-    .toLowerCase();
-  if (type !== 'image/jpeg' && type !== 'image/png') return refuse(req, res, 415, 'a JPEG or PNG only');
-  const raw = await readBody(req, MAX_BYTES);
-  if (!raw) return refuse(req, res, 413, 'too large');
-  const p = picture(raw);
-  if (!p) return reply(res, 400, { error: 'not a picture we can read' }, true);
+  const p = await readUpload(req, res);
+  if (!p) return;
   // Again, with no await before the insert: the call may have ended, and other uploads may have filled the tray or the
   // call's share while this body came in.
   if (callId && liveToken(callId) !== token) return reply(res, 409, { error: 'that call has ended' }, true);
@@ -167,6 +160,21 @@ export function picture(raw: Buffer) {
   }
   const clean = stripPng(raw);
   return clean && { type: 'image/png', clean };
+}
+// An uploaded picture's body, read and cleaned, or null once the upload is refused: a JPEG or PNG by its header, at
+// most MAX_BYTES, and a picture by its bytes. (the notebooks' and the book's uploads too)
+export async function readUpload(req: IncomingMessage, res: ServerResponse) {
+  const type = String(req.headers['content-type'] ?? '')
+    .split(';')[0]
+    .trim()
+    .toLowerCase();
+  if (type !== 'image/jpeg' && type !== 'image/png')
+    return refuse(req, res, 415, 'a JPEG or PNG only').then(() => null);
+  const raw = await readBody(req, MAX_BYTES);
+  if (!raw) return refuse(req, res, 413, 'too large').then(() => null);
+  const p = picture(raw);
+  if (!p) return reply(res, 400, { error: 'not a picture we can read' }, true).then(() => null);
+  return p;
 }
 
 // The pictures the board picked for its next intercom line, or for a card's answer (`card`) (`ids`), and those of them

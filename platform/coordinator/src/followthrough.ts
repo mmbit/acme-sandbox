@@ -46,7 +46,7 @@ export function followThroughSweep(t = Date.now()) {
     restartClock(t);
     return;
   }
-  // (its seats all at their limits: it starts when the first is back, and a repair job would wait for the same seats)
+  // (its seats all at their limits or pace: a repair job would wait on them)
   const last = lastCheck();
   if (last && !last.verdict && jobs.seatsOut(last.job, t)) restartClock(t);
   // (an open pause is checked as an agreement is)

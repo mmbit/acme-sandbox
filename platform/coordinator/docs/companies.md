@@ -60,8 +60,9 @@ for it.
 
 **Messages reach the executive.** A normal message waits for the executive's hourly check: the CEO's summary lists the
 workspaces with unread messages, which brings the check forward. An urgent one also goes to the executive the way
-`hq say` does (`messages.ts fromPartner`): to its running session at the next step, or as a job of its own, which a
-later urgent message joins until it starts. One wake at a time per workspace, however many urgent messages come.
+`hq say` does (`messages.ts fromPartner`): to its running session at the next step, or as a job of its own. One wake
+at a time per linked company, however many urgent messages come: while the one that woke the executive is unread here,
+the next waits for that read or the hourly check.
 
 ## The limits that stay hard
 
@@ -74,7 +75,7 @@ A link is a way in from a company we don't run, and soon from companies nobody h
   this link only, a file path inside the workspace) and refused whole if it's wrong.
 - **They can't spend, queue or change anything of ours.** No entry makes a job, a card, a payment or a rule. The one
   thing an entry can do is wake our executive, who decides whether we take anything on. Each wake runs on our own
-  seats, at most one waiting per workspace.
+  seats, at most one waiting per linked company.
 - **What stays home:** a post (a message, a file) is refused from a job that holds a customer's details or heard a
   call about a card for keys (`jobs.ts holdsCustomerData`, `holdsKeys`), and any text with a value from the key store
   in it is refused, not masked, so the agent sees why. Linking and unlinking are the board's alone.

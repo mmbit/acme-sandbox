@@ -155,7 +155,7 @@
   filter: drop-shadow(0 2px 0 rgba(29, 26, 47, 0.18));
 }
 #book .bk-version-stamp rect:first-child {
-  fill: var(--bk-chosen, #d6ea3c);
+  fill: var(--bk-chosen);
   stroke: #2b2733;
   stroke-width: 3;
 }

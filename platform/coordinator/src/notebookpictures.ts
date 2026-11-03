@@ -5,7 +5,6 @@ import { existsSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import * as pictures from './pictures.ts';
 import { keepFile, refuse, reply } from './uploads.ts';
-import { readBody } from '../../../shared/routes/routes.ts';
 import { BOARD } from './ink/book.ts';
 import { isRefused } from './pagechecks.ts';
 import { DIR, notFound, serveFile, tooBig } from './pagescraps.ts';
@@ -26,15 +25,8 @@ export async function uploadPicture(
 ) {
   const page = Number(new URL(req.url ?? '/', 'http://x').searchParams.get('page'));
   if (isRefused(openPage(page, who))) return refuse(req, res, 404, 'no such open page');
-  const type = String(req.headers['content-type'] ?? '')
-    .split(';')[0]
-    .trim()
-    .toLowerCase();
-  if (type !== 'image/jpeg' && type !== 'image/png') return refuse(req, res, 415, 'a JPEG or PNG only');
-  const raw = await readBody(req, pictures.MAX_BYTES);
-  if (!raw) return refuse(req, res, 413, 'too large');
-  const p = pictures.picture(raw);
-  if (!p) return reply(res, 400, { error: 'not a picture we can read' }, true);
+  const p = await pictures.readUpload(req, res);
+  if (!p) return;
   const big = tooBig(p.clean);
   if (big) return reply(res, big[0], { error: big[1] }, true);
   if (!stillOpen() || isRefused(openPage(page, who)))

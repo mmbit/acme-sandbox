@@ -1264,15 +1264,14 @@ async function onDoor(req: IncomingMessage, res: ServerResponse, token: string, 
   return signIn(req, res, step as 'send' | 'verify', url, ng, body);
 }
 
-function passkeyPage(req: IncomingMessage, res: ServerResponse) {
-  const identity = (enroll: boolean, token: string) => {
-    const person = passkeyGuest(req, enroll, token);
-    if (!person?.email || person.revoked) return null;
-    const scope = enroll ? guestkeys.enrollmentScope : guestkeys.loginScope(token);
-    const session = enroll ? sha256(cookies(req).g ?? '') : '';
-    return { ...person, scope, session };
-  };
-  return guestkeys.page(req, res, identity, startSession);
+// The passkeys' script and steps (guestkeys.ts), routed ahead of page
+export const passkeyRoutes = guestkeys.routeTable(passkeyIdentity, startSession);
+function passkeyIdentity(req: IncomingMessage, enroll: boolean, token: string) {
+  const person = passkeyGuest(req, enroll, token);
+  if (!person?.email || person.revoked) return null;
+  const scope = enroll ? guestkeys.enrollmentScope : guestkeys.loginScope(token);
+  const session = enroll ? sha256(cookies(req).g ?? '') : '';
+  return { ...person, scope, session };
 }
 
 function passkeyGuest(req: IncomingMessage, enroll: boolean, token: string) {
@@ -1284,7 +1283,6 @@ function passkeyGuest(req: IncomingMessage, enroll: boolean, token: string) {
 }
 
 export async function page(req: IncomingMessage, res: ServerResponse) {
-  if (await passkeyPage(req, res)) return;
   const path = new URL(req.url ?? '/', 'http://x').pathname;
   if (path === '/guest/onward' && req.method === 'GET') return handOnward(req, res);
   const room = roomOf(path);

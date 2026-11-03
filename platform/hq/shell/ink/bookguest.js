@@ -14,6 +14,7 @@ import { setTimeZone } from '../../world/clock.js';
 
 const text = words[document.documentElement.lang];
 stylesheet('shell/ink/bookguest.css'); // (its shelf, and a round's Marked done)
+stylesheet('shell/ink/booklook.css'); // (the book's colours, its shelf's lit book too)
 const query = new URLSearchParams(location.search);
 const api = '/guest/notebooks/api';
 const status = document.querySelector('[data-notebook-status]');

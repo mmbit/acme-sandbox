@@ -40,8 +40,8 @@ export function mountZoom(paper, { dev, notebook, page, saved, open, archived, s
     shelf: () => toShelf(z),
     archived,
   });
-  // (its head: Search and the phone, then the open forms and questions)
-  far.querySelector('.bk-far-head').prepend(island('overview'));
+  // (its head: the title line, Search, then the open forms and questions)
+  far.querySelector('.bk-far-head').append(island('overview'));
   if (!scope) mountOpen(far.querySelector('.bk-far-head'), { open: (page, id) => back(z, { page, id }) });
   pinches(paper, z);
   return {
@@ -56,6 +56,13 @@ export function mountZoom(paper, { dev, notebook, page, saved, open, archived, s
     in: () => step(z, -1),
     // the overview from the page, or back to it (the overview's button)
     toggle: () => (z.level ? back(z) : step(z, 1)),
+    // the notebook's pages at once, no leaf (a book opened from the Shelf)
+    pages: () => z.level || atOnce(z),
+    // a page of the notebook archived there, the pages shown at once first (the page's dots menu)
+    archive: async id => {
+      if (!z.level) await atOnce(z);
+      return z.screens.archive(id);
+    },
   };
 }
 
@@ -150,6 +157,12 @@ function go(z, level) {
   z.level = level;
   z.changed(LEVELS[level]);
   return z.turn(dir, () => show(z));
+}
+function atOnce(z) {
+  if (!z.max) return;
+  z.level = 1;
+  z.changed(LEVELS[1]);
+  return show(z);
 }
 function show(z) {
   z.far.hidden = false;

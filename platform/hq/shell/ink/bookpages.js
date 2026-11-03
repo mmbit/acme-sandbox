@@ -6,14 +6,15 @@
 // goes into them as it's saved (booksave.js), each shows its paperclip and its answers (bookgroups.js), and a page is
 // sent whole (bookpagesend.js). Every screen showing a page reads it again when the store says it changed (book:notebook,
 // events.js). Moving about the page is bookpan.js; the overview bookzoom.js; the controls bookcontrols.js; one page's ink
-// bookpage.js; writing bookwrite.js; the maths bookrow.js; saving booksave.js; a blank page left let go booktidy.js;
-// the store's routes notebookdata.js; the mouse's tools booktools.js, asked in this order on a press on the paper: a
-// pan (bookpan.js), then book.tools.press(e), then ink.
+// bookpage.js, read and laid bookpageread.js; writing bookwrite.js; the maths bookrow.js; saving booksave.js; a blank
+// page left let go booktidy.js; the store's routes notebookdata.js; the mouse's tools booktools.js, asked in this order
+// on a press on the paper: a pan (bookpan.js), then book.tools.press(e), then ink.
 import { pen } from '/__review/ink.js';
 import { resizedNextFrame } from '../../util.js';
 import { scope, word } from './bookscope.js';
-import { createPage, loadPages, loadShelf } from './notebookdata.js';
-import { boxLeft, changed, readAgain, readPage, said, saveAll, shut } from './booksave.js';
+import { createPage, duplicatePage, loadPages, loadShelf } from './notebookdata.js';
+import { boxLeft, changed, readAgain, said, saveAll, shut } from './booksave.js';
+import { lay, read } from './bookpageread.js';
 import { pageView } from './bookpage.js';
 import { panning } from './bookpan.js';
 import { mountFar } from './bookpagesfar.js';
@@ -101,6 +102,8 @@ const asked = book => ({
   // (a notebook tapped on the Shelf, at its newest page; a returned round's at its Advice page, read again)
   open: (id, page = null) => (page !== null || id !== book.notebook) && openNotebook(book, id, page && { page }),
   away: on => away(book, on),
+  // (the notebook's pages, its overview: a book tapped on the Shelf opens there.)
+  overview: () => book.zoom.pages(),
 });
 // A page made outside the book (a call's, a scrap's on a fresh current page): the notebook's pages read again and that
 // page turned to, once however many tell of it
@@ -229,13 +232,13 @@ function viewFor(book, page) {
 }
 const drop = v => (v.drop(), v.el.remove());
 const indexOf = (book, id) => book.views.findIndex(v => v.page.id === id);
-// New page: a blank one at the notebook's end, the current page now, turned to
-function newPage(book) {
+// New page: a blank one at the notebook's end (or Duplicate's copy.), turned to
+function newPage(book, made = () => createPage(book.dev, book.notebook)) {
   book.zoom.near();
   return turn(book.paper, {
     midway: async () => {
       try {
-        const p = await createPage(book.dev, book.notebook);
+        const p = await made();
         await pagesAgain(book);
         show1(book, indexOf(book, p.id));
       } catch (e) {
@@ -282,30 +285,6 @@ async function turnTo(book, i, place = null) {
   if (i === book.cur) return place && slideTo(book, { pan: place }, () => remember(book));
   await turn(book.paper, { dir: i > book.cur ? 1 : -1, midway: () => show1(book, i, place) });
 }
-// The page laid again (its size, as it has grown) and drawn where it is
-function lay(book) {
-  // (its units laid as a masonry at the paper's width, bookunits.js; the tools' layer drawn again where units moved;
-  // the page shown as far zoomed past its fit as before.)
-  const page = viewOf(book)?.page,
-    z = book.scale / fitOf(page);
-  for (const v of book.views) if (v.place(book.size.w)) book.tools?.added?.(v);
-  setView(book, { scale: z * fitOf(page) });
-}
-// A page's groups read, drawn and given to the tools
-function read(book, v) {
-  return (v.reading ??= readPage(book, v.page).then(
-    () => {
-      lay(book);
-      v.redraw();
-      book.groups.drawn(v.page);
-      book.tools?.added?.(v);
-    },
-    e => {
-      v.reading = null;
-      said(book, v.page, e.message);
-    },
-  ));
-}
 // A remembered place ({ page: an id, x, y, z }) in the notebook, or its current page when that's gone. Found when the
 // paper has a size, so a notebook that changed while it had none can't leave it pointing past its end.
 function goTo(book, place) {
@@ -333,10 +312,12 @@ const stepped = (book, act) => (book.tools?.settle(), act(book));
 
 // ---- what the other parts ask
 
-// What the groups (bookgroups.js) ask of the book: the page laid again and drawn, the notebook's pages, one turned to
+// What the groups (bookgroups.js, bookmoveto.js) ask of the book: the page laid again and drawn, the notebook's pages
+// (read again: one made.), one turned to
 const groupHooks = book => ({
   ...toolHooks(book),
   pages: () => book.views.map(v => v.page),
+  pagesAgain: () => pagesAgain(book),
   turnTo: page => show(book, page.id),
 });
 // What the mouse's tools (booktools.js) ask of the book: the page laid again, a page saved, a box on a page drawn
@@ -358,12 +339,14 @@ const toolHooks = book => ({
   },
 });
 // What the controls (bookcontrols.js) do: zoom in or out (out of the page's whole width, or in from the overview, a
-// step of the overview), 100%, the overview, a page of the notebook, New page, and an invited person's Send
+// step of the overview), 100%, the overview, a page of the notebook, New page, Duplicate, and an invited person's Send
 const controlsOf = book => ({
   overview: () => book.zoom.toggle(),
   level: () => book.zoom.level(),
+  archive: () => book.zoom.archive(viewOf(book).page.id),
   turnTo: i => turnTo(book, i),
   newPage: () => newPage(book),
+  duplicate: () => newPage(book, () => duplicatePage(book.dev, viewOf(book).page.id)),
   send: () =>
     sendShown(book, {
       pagesAgain: () => pagesAgain(book),

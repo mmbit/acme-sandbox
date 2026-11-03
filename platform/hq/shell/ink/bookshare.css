@@ -1,7 +1,7 @@
 /* A page sent or shared by tearing it off at its spine (booktear.js, bookshare.js): the page held by its spine's edge,
    torn out there, and the three targets it's let go on, over the middle of the paper while the islands make way, a
    menu too; the card that asks first when asks are still open on it (bookpagesend.js). The book's own look, the
-   deck's shapes. No dog-ear (board, call 190). */
+   deck's shapes. Nothing shows at the edge till it's pulled. */
 
 /* the paper's right edge, where the spine is, right of what's written (.bk-desk): a finger or the Pencil drawn away
    from it tears the page off, never starts the browser's pan, which would cancel the press */
@@ -125,9 +125,10 @@
   }
 }
 
-/* a page sent: locked, its tools gone, a quiet lock and its words in their island's place (bookcontrols.js). The lock
-   wears the island's look. */
-#book .bk-strip[data-locked] > .bk-island {
+/* a page locked: its tools gone; read-only, a quiet lock and its word in their island's place; sent, nothing but a
+   sketch's Duplicate, and no island at all where neither shows (bookcontrols.js.). The lock wears the island's look. */
+#book .bk-strip[data-locked] > .bk-island,
+#book .bk-strip[hidden] {
   display: none;
 }
 #book .bk-locked {
@@ -147,7 +148,24 @@
   width: 20px;
   height: 20px;
 }
-#book .bk-strip[data-locked] .bk-locked {
+#book .bk-strip[data-locked] .bk-locked:not([hidden]) {
+  display: flex;
+}
+/* a sketch page's Duplicate in the tools' place: the one to press, lit, its word under its icon as the lock's are
+   (bookcontrols.js.) */
+#book .bk-strip[data-locked] {
+  align-items: center;
+}
+#book .bk-strip .bk-btn.bk-duplicate {
+  display: none;
+  flex-direction: column;
+  gap: 4px;
+  width: auto;
+  height: auto;
+  padding: 8px 6px;
+  font-size: 11px;
+}
+#book .bk-strip[data-locked] .bk-btn.bk-duplicate:not([hidden]) {
   display: flex;
 }
 

@@ -153,16 +153,7 @@ test("a free page sent to the CEO goes through the CEO's routing: handed on with
     routing.prompt,
     new RegExp(`#${review} on page #${page.id} “Gift card” in the board's book: its owner is juno`),
   );
-  const task = await agent('job', routing.token, {
-    agent: 'kit',
-    title: 'The gift card',
-    prompt: '',
-    notes: [review],
-    by: 'none',
-  });
-  assert.equal(task.status, 200, JSON.stringify(task.body));
-  await h.finish(routing);
-  const kit = await h.claimJob(task.body.id);
+  const kit = await h.handNotes(routing, [review], { agent: 'kit', title: 'The gift card' });
   assert.match(
     kit.prompt,
     new RegExp(`\`hq answer ${review} "\\.\\.\\."\`; it is page #${page.id}[^\\n]*\`hq sketch ${page.id}\``),
@@ -235,7 +226,7 @@ test("an answer is the note answered as hq note's is: one line of what shows, cu
   await h.finish(next);
 });
 
-// (the board on call #239: a question typed in a box on the call's page got no answer.)
+// (a question typed in a box on a call's page is answered)
 // The book's judge's call on these words answered with reply, any judged before it (earlier tests' notes) with none
 // (bookjudge.ts)
 async function judgeSays(words: string, reply: 'none' | 'answer' | 'try') {

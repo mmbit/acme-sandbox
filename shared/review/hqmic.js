@@ -6,7 +6,7 @@ import { stopMic, words } from './acts.js';
 // this page sends is taken as the board's word), at once, one tap, and the words come back here as they're said. The
 // offer goes with a line of its own (r.hq.port, a MessagePort), and HQ answers on it alone: a word from an earlier
 // recording is never taken for this one's, and none reaches the page the frame loads after this one. Each recording on
-// it is the offer's rec while it lasts (rec.hq: the offer). (one tap, the board, call 170)
+// it is the offer's rec while it lasts (rec.hq: the offer).
 export function setupHqMic(r) {
   r.hq = null;
   let soon = 0;

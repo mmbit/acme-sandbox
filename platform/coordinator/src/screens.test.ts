@@ -153,6 +153,13 @@ test("a push whose check couldn't run, or that changes the check, is ruled on wh
   }
 });
 
+test("a push that changes how the check opens HQ (book/originroute.mjs) is one its check couldn't tell", async () => {
+  const screens = await import('./screens.ts');
+  const sha = '8'.repeat(40);
+  screens.record(708, sha, said({ rendered: true, changed: [], same: 24 }), [CODE, 'platform/hq/book/originroute.mjs']);
+  assert.equal(screens.owed(708, sha), null);
+});
+
 test('a push that changes no screen, renders none, or comes with no check gets no look and keeps its engines', async () => {
   for (const [pr, screens] of [
     [703, said({ rendered: true, changed: [], same: 24 })],

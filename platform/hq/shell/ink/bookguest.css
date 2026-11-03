@@ -1,6 +1,7 @@
 /* A guest's shelf of books and a book's first page (bookguestshelf.js), the work open beside the book
    (bookguestwork.js), and a round page's Marked done with its Undo (bookguest.js). Line drawings in ink, the lit
-   one in the notebook's lime, asks for them in red. (the shelf, books and work) */
+   one in the brand's chosen colour (booklook.css --bk-chosen), asks for them in red. (the shelf, books and work)
+ */
 @font-face {
   font-family: 'Ink hand';
   font-weight: 400 700;
@@ -72,7 +73,7 @@ main.bk-guest-wide {
   text-decoration: none;
 }
 .bk-guest-book[data-lit] {
-  background: var(--bk-chosen, #d6ea3c);
+  background: var(--bk-chosen);
 }
 .bk-guest-book:focus-visible,
 .bk-guest-open:focus-visible {
@@ -242,7 +243,7 @@ main.bk-guest-wide {
   text-decoration: none;
 }
 .bk-guest-work[data-lit] .bk-guest-open {
-  background: var(--bk-chosen, #d6ea3c);
+  background: var(--bk-chosen);
 }
 .bk-guest-open svg {
   width: 14px;

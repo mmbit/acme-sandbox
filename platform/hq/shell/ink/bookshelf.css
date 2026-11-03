@@ -1,9 +1,11 @@
-/* The overview (bookzoom.js, bookshelf.js), laid on the book's paper: a notebook's pages as a grid of small pictures,
-   and My shelf (its books: bookshelfbooks.css) with its Archive. Its head stays at its top as the grid scrolls under it:
-   Search (bookui.js's overview island, booksearch.css), then the way about. */
+/* The overview (bookzoom.js, bookshelf.js), on the book's paper: a notebook's pages as a grid of small pictures, and My
+   shelf (its bookcase: bookshelfbooks.css) with its Archive. One surface: the page's own paper and dots, the same at
+   the top as under the pages; its head scrolls with them, so the status bar's blurred band (--sat, style.css) shows
+   paper at rest and frosts only what scrolls under it. One type at one weight: the book's (--bk-font). */
 #book .bk-far {
   position: absolute;
-  inset: 0;
+  /* (from the screen's top, the pages scrolling up under the status bar's band: .bk-pages starts below it) */
+  inset: calc(-1 * var(--sat, 0px)) 0 0;
   z-index: 3;
   overflow: auto;
   overscroll-behavior: contain;
@@ -12,10 +14,13 @@
   /* (the tools' island is away in the overview: its right as its left.) */
   --bk-far-right: calc(28px + env(safe-area-inset-right, 0px));
   --bk-far-left: 28px;
-  padding: 18px var(--bk-far-right) 88px var(--bk-far-left);
-  background-color: var(--bk-paper2);
+  padding: calc(var(--sat, 0px) + 6px) var(--bk-far-right) 96px var(--bk-far-left);
+  background-color: var(--bk-paper);
   background-image: var(--bk-dots);
-  background-size: 11px 11px;
+  background-size: 22px 22px;
+  background-attachment: local;
+  font: 400 16px/1.3 var(--bk-font);
+  color: var(--bk-night);
   touch-action: pan-y;
   scrollbar-width: none;
   --bk-stamp: #c2362f;
@@ -24,92 +29,162 @@
   display: none;
 }
 #book .bk-far-head {
-  position: sticky;
-  top: -18px; /* (from the far's very top: a sticky's top counts from inside its padding) */
+  position: relative;
   z-index: 2;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  margin: -18px calc(-1 * var(--bk-far-right)) 0 calc(-1 * var(--bk-far-left));
-  padding: 18px var(--bk-far-right) 12px var(--bk-far-left);
-  background: linear-gradient(var(--bk-paper2) 82%, transparent);
+  gap: 14px;
+  padding-bottom: 18px;
 }
+/* its search: an island in the book's look holding only the search (bookui.css .bk-island) */
 #book .bk-far-head .bk-island {
   width: 100%;
-  max-width: 560px;
   box-sizing: border-box;
-  padding: 4px 4px 4px 12px;
-  gap: 4px;
+  padding: 0 16px;
+  border: 1px solid var(--bk-edge);
+  border-radius: 22px;
+  background: var(--bk-paper);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.9) inset,
+    0 4px 12px -6px rgba(42, 35, 82, 0.3);
 }
+/* the one title line: the way up on the left, the name in the middle, its options on the right */
 #book .bk-far-nav {
-  display: flex;
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
   align-items: center;
-  gap: 6px;
-  min-height: 40px;
-  font-size: 14px;
-  color: var(--bk-muted);
+  min-height: 44px;
+  margin: 0 -8px;
 }
-#book .bk-far-title {
-  flex: 1;
-  min-width: 0;
-  padding: 0 6px;
-  font-size: 19px;
-  font-weight: 700;
-  color: var(--bk-night);
-  white-space: nowrap;
+#book .bk-far-title,
+#book .bk-shelf-title {
+  grid-column: 2;
+  font-weight: 400;
+  max-width: 60vw;
+  margin: 0;
   overflow: hidden;
+  font-size: 19px;
+  line-height: 1.2;
+  text-align: center;
+  white-space: nowrap;
   text-overflow: ellipsis;
+  color: var(--bk-night);
 }
-#book .bk-far-go {
+#book .bk-far-up,
+#book .bk-far-more {
   all: unset;
   box-sizing: border-box;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  flex: none;
-  min-height: 36px;
-  padding: 0 12px;
-  border-radius: 9px;
-  font-weight: 700;
+  gap: 2px;
+  min-height: 44px;
+  border-radius: 22px;
+  font-size: 16px;
   color: var(--bk-night);
   cursor: pointer;
   white-space: nowrap;
 }
-#book .bk-far-go svg {
-  width: 20px;
-  height: 20px;
+#book .bk-far-up {
+  grid-column: 1;
+  justify-self: start;
+  padding: 0 12px 0 4px;
 }
-#book .bk-far-go[data-go] {
-  margin-left: -8px;
-  padding-left: 8px;
+#book .bk-far-more {
+  grid-column: 3;
+  justify-self: end;
+  justify-content: center;
+  width: 44px;
 }
-#book .bk-far-toggle,
-#book .bk-far-go small {
-  font-weight: 400;
-  font-variant-numeric: tabular-nums;
-  color: var(--bk-muted);
+#book .bk-far-up svg,
+#book .bk-far-more svg {
+  width: 22px;
+  height: 22px;
 }
-#book .bk-far-toggle[aria-pressed='true'] {
-  background: var(--bk-ink-wash);
-  color: var(--bk-night);
+#book .bk-far-more svg {
+  stroke-width: 3;
 }
 @media (hover: hover) {
-  #book .bk-far-go:hover {
+  #book :is(.bk-far-up, .bk-far-more):hover {
     background: var(--bk-ink-soft);
   }
 }
-#book .bk-far-go:focus-visible,
+#book :is(.bk-far-up, .bk-far-more):focus-visible,
 #book .bk-tile-open:focus-visible .bk-tile-paper,
 #book .bk-tile-open:focus-visible .bk-cover {
   outline: 2px solid var(--bk-night);
   outline-offset: 3px;
 }
+/* its options: a card lifted off the paper under the dots (bookshelfoptions.js) */
+#book .bk-far-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  min-width: 248px;
+  padding: 6px;
+  border: 1px solid var(--bk-edge);
+  border-radius: 16px;
+  background: var(--bk-paper);
+  box-shadow:
+    0 14px 30px -10px rgba(42, 35, 82, 0.45),
+    0 1px 3px rgba(42, 35, 82, 0.2);
+  animation: bk-told-in 0.14s ease-out;
+}
+#book .bk-far-menu > button {
+  all: unset;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 46px;
+  padding: 0 12px;
+  border-radius: 10px;
+  font-size: 16px;
+  color: var(--bk-night);
+  cursor: pointer;
+  white-space: nowrap;
+}
+#book .bk-far-menu > button span {
+  display: flex;
+  flex: 1;
+}
+#book .bk-far-menu > button small {
+  margin-left: auto;
+  padding-left: 16px;
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+  color: var(--bk-muted);
+}
+#book .bk-far-menu svg {
+  flex: none;
+  width: 21px;
+  height: 21px;
+}
+#book .bk-far-menu > button[aria-checked='true'] {
+  background: var(--bk-ink-soft);
+}
+#book .bk-far-menu > button:focus-visible {
+  outline: 2px solid var(--bk-night);
+  outline-offset: -2px;
+}
+@media (hover: hover) {
+  #book .bk-far-menu > button:hover {
+    background: var(--bk-ink-soft);
+  }
+}
+#book .bk-far-menu .bk-round-ask {
+  position: static;
+  margin: 4px 0 0;
+  box-shadow: none;
+}
 #book .bk-far-sub {
   margin: 34px 0 14px;
-  font-size: 12px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--bk-muted);
+  font-size: 16px;
+  font-weight: 400;
+  color: var(--bk-night);
 }
 #book .bk-far-none {
   margin: 48px auto;
@@ -120,25 +195,36 @@
 #book .bk-far-lost {
   cursor: pointer;
 }
-/* a notebook's chapters, split as the book is (bookshelftiles.js): each under its bookmark, the tab in the bookmarks'
-   own paper and lime (bookmarks.css) standing on a line of page edge, lit where the page shown is */
+/* a notebook's chapters, split as the book is (bookshelftiles.js): each under a plain head, a small ribbon in its
+   bookmark's colour (bookmarks.css --bk-mk-card), its name and its count */
 #book .bk-far-chapter + .bk-far-chapter {
   margin-top: 30px;
 }
 #book .bk-far-mark {
   display: flex;
-  margin: 4px 0 14px;
-  border-bottom: 1px solid var(--bk-mk-edge);
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 14px;
+  font-size: 16px;
+  font-weight: 400;
+  line-height: 1.2;
+  color: var(--bk-night);
 }
-/* (its tab drawn as a bookmark is, bookmarks.css .bk-mk-tab, standing on the line.) */
-#book .bk-far-mark h3.bk-mk-tab {
-  margin: 0 0 -1px;
-  padding: 9px 16px 8px;
-  border-bottom-color: transparent;
-  border-radius: 8px 8px 0 0;
+#book .bk-far-mark small {
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  color: var(--bk-muted);
+}
+#book .bk-far-ribbon {
+  flex: none;
+  width: 12px;
+  height: 20px;
+  background: var(--bk-mk-card, #e6d9bd);
+  filter: saturate(1.6) brightness(0.92);
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 74%, 0 100%);
 }
 #book .bk-far-none.bk-far-empty {
-  margin: 6px 0 0 2px;
+  margin: 0 0 0 2px;
   text-align: left;
 }
 
@@ -173,10 +259,10 @@
   aspect-ratio: 3 / 4;
   border-radius: 3px;
   overflow: hidden;
-  background: var(--bk-paper);
+  background: #fffdf7;
   box-shadow:
-    0 0 0 1px rgba(42, 35, 82, 0.08),
-    0 6px 16px -6px rgba(29, 26, 47, 0.32);
+    0 1px 1.5px rgba(60, 45, 20, 0.16),
+    0 5px 12px -6px rgba(60, 45, 20, 0.32);
   transition:
     transform 0.12s,
     box-shadow 0.12s;
@@ -196,52 +282,40 @@
   }
   #book .bk-tile-open:hover .bk-tile-paper {
     box-shadow:
-      0 0 0 1px rgba(42, 35, 82, 0.12),
-      0 12px 22px -6px rgba(29, 26, 47, 0.38);
+      0 2px 3px rgba(60, 45, 20, 0.16),
+      0 12px 22px -6px rgba(60, 45, 20, 0.38);
   }
 }
-/* the page the book shows: ringed in ink */
-#book .bk-tile[aria-current='page'] .bk-tile-paper {
-  box-shadow:
-    0 0 0 2px var(--bk-night),
-    0 6px 16px -6px rgba(29, 26, 47, 0.32);
-}
+/* its title and its day under it */
 #book .bk-tile-name {
   display: flex;
-  align-items: baseline;
-  gap: 6px;
+  flex-direction: column;
   min-width: 0;
   font-size: 13px;
-  font-weight: 700;
   line-height: 1.25;
   color: var(--bk-night);
 }
-#book .bk-tile-name > span {
+#book .bk-tile-name > * {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-#book .bk-tile-name small {
-  flex: none;
-  font-weight: 400;
-  font-variant-numeric: tabular-nums;
+#book .bk-tile-day {
+  font-size: 12px;
   color: var(--bk-muted);
 }
-/* New page: a blank leaf drawn in dashes */
+/* New page: an empty sheet, fainter */
 #book .bk-tile-new .bk-tile-paper {
-  background: transparent;
-  box-shadow: none;
-  outline: 2px dashed rgba(42, 35, 82, 0.28);
-  outline-offset: -2px;
+  background: color-mix(in srgb, #fffdf7 55%, transparent);
+  box-shadow: 0 1px 1.5px rgba(60, 45, 20, 0.1);
   color: var(--bk-muted);
 }
 #book .bk-tile-new svg {
-  width: 30px;
-  height: 30px;
+  width: 26px;
+  height: 26px;
 }
 #book .bk-tile-new .bk-tile-name {
-  font-weight: 400;
   color: var(--bk-muted);
 }
 /* sent: a rubber stamp on the page's lower corner, a little crooked, its ink sunk into the paper */
@@ -269,7 +343,7 @@
 }
 #book .bk-stamp text {
   fill: currentColor;
-  font: 800 20px/1 var(--bk-font);
+  font: 400 20px/1 var(--bk-font);
   letter-spacing: 0.16em;
 }
 /* still in its seconds to undo: the stamp's ink still wet, fainter */
@@ -277,8 +351,8 @@
   opacity: 0.4;
 }
 
-/* a tile's small box (archive, or back), at its picture's top right corner: on hover or focus with a mouse, always to
-   the touch */
+/* an archived page's small box (back into the notebook), at its picture's top right corner: on hover or focus with a
+   mouse, always to the touch */
 #book .bk-tile-act {
   all: unset;
   box-sizing: border-box;
@@ -377,7 +451,7 @@
   min-height: 34px;
   padding: 0 14px;
   border-radius: 8px;
-  font-weight: 700;
+  font-weight: 400;
   color: var(--bk-lamp);
   cursor: pointer;
 }

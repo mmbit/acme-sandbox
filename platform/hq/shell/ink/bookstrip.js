@@ -1,4 +1,4 @@
-// The tools' island on the right of the paper, roughly centred and short (bookui.js, board, call 190): the pen (the
+// The tools' island on the right of the paper, roughly centred and short (bookui.js): the pen (the
 // marker the same tool, by its card: bookpalette.js), shapes, the eraser, Select, Text and the mic (bookvoice.js). A
 // tap picks a tool at once. A finger, a pen or the mouse pressed on the island and slid along it shows the tool under
 // it and picks it on the lift. The tool in use pressed again opens its card (bookpalette.js). Ctrl held and the wheel

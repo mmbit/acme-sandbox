@@ -1,6 +1,6 @@
 // A sketch page as a canvas: every unit at its own place on the page, whatever the page's width, so nothing drawn there
-// ever rearranges. Pure, shared by HQ's page (bookunits.js), the store (notebookgroups.ts) and the page's picture
-// (bookpicture.ts).
+// ever rearranges. Pure, shared by HQ's page (bookunits.js), the store (notebookplaces.ts), the played store
+// (notebookplaygroups.js) and the page's picture (bookpicture.ts).
 import { GAP, MARGIN, layout } from './masonry.js';
 import { UNIT_W } from './scrapunit.js';
 import { boxOf } from './notebookstack.js';
@@ -9,6 +9,9 @@ import { shifted } from './notebookparts.js';
 // Whether a page in this chapter (notebookchapters.js) is a canvas: the board's own sketches are. A page of scraps (its
 // Asks, a call's notes, a round's guests) stays a masonry.
 export const isCanvas = chapter => chapter === 'sketch';
+// Whether a request's place is one: { x, y }, finite page px
+/** @param {any} v @returns {v is { x: number, y: number }} */
+export const isPlace = v => typeof v === 'object' && Number.isFinite(v?.x) && Number.isFinite(v?.y);
 
 // The units' places on a canvas. units: [{ id, h, w, below, place?, day?, follows?, column? }] in the page's order, h
 // tall and w wide (what's drawn on it too, from its place's left) in page px, below: how tall what hangs under it is

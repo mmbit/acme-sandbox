@@ -1,5 +1,5 @@
 // The groups on a Notebook page as the board sees them (knowledge/notes/platform/notebook.md), each a scrap unit the
-// page lays (bookunits.js): picked with Select (bookselect.js), whose bar has its Move to page… and its Delete. A
+// page lays (bookunits.js): picked with Select (bookselect.js), whose bar has its Delete (Move to page…: bookmoveto.js). A
 // scrap's post-it words in its body under its picture (typed in while its page is open; the pen's strokes over them
 // are ink); and under each unit its answers (review mode's slips: a tick, and the room pulled out under one to
 // answer in, drawn or typed with the text tool: bookslipreply.js) with the board's replies, a reply's Undo there in its seconds, the agent's face and pencil dots while an
@@ -19,11 +19,10 @@ import { scribbled } from '/__review/gestures.js';
 import { scratched } from './bookgroupmath.js';
 import { boxOf, slipsUnder } from './notebookstack.js';
 import { edit, keep } from './bookedit.js';
-import { readAgain, saved, shut, typed } from './booksave.js';
+import { readAgain, shut, typed } from './booksave.js';
 import { hung } from './bookarrive.js';
-import { deleteReply, moveGroup, reply } from './notebookdata.js';
+import { deleteReply, reply } from './notebookdata.js';
 import { answering, slipRoomHtml, wireRooms } from './bookslipreply.js';
-import { nameOf } from './bookhead.js';
 import { asksHtml, wireAsks } from './bookasks.js';
 import { mountShow } from './bookgroupshow.js';
 import { markOpen } from './bookforyou.js';
@@ -33,14 +32,16 @@ import { sendForm, sendReply } from './bookanswersdata.js';
 import { waitingHtml } from './bookanswers.js';
 import { slipInkHtml } from './bookanswerart.js';
 import { CONTROLS } from './bookpan.js';
+import { mountMoveTo } from './bookmoveto.js';
 
 // a reply can be taken back this long after it's written (notebooksend.ts SEND_MS)
 const REPLY_MS = 10_000;
 const LISTS = { ink: 'ink', texts: 'texts', pictures: 'scraps' };
-// book: bookpages.js's. hooks: { lay(), refresh(view), pages() (the notebook's open pages, [page]), turnTo(page) }.
-// Returns { added(view), drawn(page), scratch(view, line), lone(view, picked) }: a view's layer made, a page's groups
-// drawn again (read or saved), a line written over a group that deletes it (true: not ink), and what Select's bar does
-// with one whole group picked.
+// book: bookpages.js's. hooks: { lay(), refresh(view), pages() (the notebook's open pages, [page]), pagesAgain(),
+// turnTo(page) }.
+// Returns { added(view), drawn(page), scratch(view, line), lone(view, picked), ...moves }: a view's layer made, a page's
+// groups drawn again (read or saved), a line written over a group that deletes it (true: not ink), what Select's bar
+// does with one whole group picked, and its Move to page… and the Pencil's (bookmoveto.js mountMoveTo's).
 export function mountGroups(book, hooks) {
   stylesheet('shell/ink/bookgroups.css');
   if (!document.querySelector('style[data-slips]')) {
@@ -63,6 +64,7 @@ export function mountGroups(book, hooks) {
     },
     scratch: (view, line) => scratchOut(gs, view, line),
     lone: (view, picked) => lone(gs, view, picked),
+    ...mountMoveTo(book, hooks),
   };
 }
 
@@ -256,77 +258,20 @@ async function unreply(gs, view, id) {
   readAgain(gs.book, view.page);
 }
 
-// ---- a group's menu
-
-// (moving: opened at the pages a group can go to)
-function menu(gs, view, from, id, moving = false) {
-  shutMenu(gs);
-  const others = elsewhere(gs, view);
-  const card = document.createElement('div');
-  card.className = 'bk-card bk-group-menu';
-  card.setAttribute('role', 'menu');
-  card.innerHTML = `<ul class="bk-menu"><li><button role="menuitem" data-act="delete">${word('delete')}</button></li>${
-    others.length
-      ? `<li><button role="menuitem" data-act="move" aria-expanded="false">${word('moveToPage')}</button></li>`
-      : ''
-  }</ul>`;
-  (view.el.closest('#book') ?? document.body).append(card);
-  if (moving) listPages(card, others);
-  const r = from.getBoundingClientRect();
-  Object.assign(card.style, {
-    left: `${Math.round(Math.min(innerWidth - card.offsetWidth - 8, r.left))}px`,
-    top: `${Math.round(Math.min(innerHeight - card.offsetHeight - 8, r.bottom + 4))}px`,
-  });
-  card.addEventListener('click', e => {
-    const b = e.target.closest('button');
-    if (!b) return;
-    if (b.dataset.act === 'move') return listPages(card, others);
-    shutMenu(gs);
-    if (b.dataset.act === 'delete') remove(gs, view, id);
-    if (b.dataset.page)
-      moveTo(
-        gs,
-        view,
-        id,
-        others.find(p => String(p.id) === b.dataset.page),
-      );
-  });
-  const away = e => !card.contains(e.target) && !from.contains(e.target) && shutMenu(gs);
-  const esc_ = e => e.key === 'Escape' && (shutMenu(gs), from.focus());
-  addEventListener('pointerdown', away, true);
-  addEventListener('keydown', esc_);
-  gs.menu = { card, off: () => (removeEventListener('pointerdown', away, true), removeEventListener('keydown', esc_)) };
-  card.querySelector('button').focus({ preventScroll: true });
-}
-const elsewhere = (gs, view) => gs.hooks.pages().filter(p => p !== view.page && !shut(p));
-function shutMenu(gs) {
-  gs.menu?.off();
-  gs.menu?.card.remove();
-  gs.menu = null;
-}
-// The pages a group can go to, in the menu in place of its first list
-function listPages(card, pages) {
-  card.querySelector('.bk-menu').innerHTML = pages
-    .map(p => `<li><button role="menuitem" data-page="${p.id}">${esc(nameOf(p))}</button></li>`)
-    .join('');
-  card.querySelector('button').focus({ preventScroll: true });
-}
+// ---- Select's bar
 
 // What's picked with Select ({ ink, scraps, texts }, the page's own elements) when it's one whole group on an open
-// page: { move(from) (its menu at the pages, from the button pressed; null: no other open page), remove() }; else null
+// page: { remove() } (its Delete); else null
 function lone(gs, view, picked) {
   const page = view.page;
   if (!page.groups || shut(page)) return null;
   const els = Object.values(LISTS).flatMap(list => picked[list] ?? []),
     id = els[0]?.g;
   if (!page.groups.has(id) || els.some(el => el.g !== id) || partsNow(page, id).things !== els.length) return null;
-  return {
-    move: elsewhere(gs, view).length ? from => menu(gs, view, from, id, true) : null,
-    remove: () => remove(gs, view, id),
-  };
+  return { remove: () => remove(gs, view, id) };
 }
 
-// ---- delete, move, group
+// ---- delete
 
 // A group deleted: its elements off the page at once as one step (booksave.js deletes it in the store, and restores
 // it when Undo puts them back), the page drawn again without its ink and highlights, a copy of it crumpled up and
@@ -371,29 +316,4 @@ function scratchOut(gs, view, line) {
   if (!hit) return false;
   remove(gs, view, hit.id);
   return true;
-}
-// A group onto another page of the notebook, its last unit there, both pages read again; Undo moves it back to its
-// place, right after the unit before it
-async function moveTo(gs, view, id, to) {
-  const { book } = gs,
-    from = view.page;
-  if (!to) return;
-  const go = async (g, a, b, after) => {
-    await saved(book, a);
-    await moveGroup(book.dev, g, b.id, after);
-    for (const p of [a, b]) readAgain(book, p);
-  };
-  const place = unitBefore(from, id) ?? 'start';
-  try {
-    await go(id, from, to);
-  } catch (e) {
-    return toast(esc(e.message));
-  }
-  book.steps.push({ page: from, undo: () => go(id, to, from, place), redo: () => go(id, from, to) });
-  toastHeard(word('movedToast', { name: esc(nameOf(to)) }), () => gs.hooks.turnTo(to));
-}
-// The unit right before unit id in its page's order, its id (undefined: id is the first)
-function unitBefore(page, id) {
-  const { pos } = page.groups.get(id);
-  return [...page.groups.values()].filter(g => g.pos < pos).sort((a, b) => b.pos - a.pos)[0]?.id;
 }

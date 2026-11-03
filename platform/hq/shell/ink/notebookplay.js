@@ -1,6 +1,6 @@
 // The Notebook's store played in memory: every route of the coordinator's (notebook.ts, notebookgroups.ts,
 // notebooksend.ts, notebookpictures.ts) with the same answers and refusals, for dev mode (notebookdata.js, on
-// mock/notebook.json) and every HQ browser check's stand-in (notebookroute.mjs lists them: a change runs those). No
+// mock/notebook.json) and every HQ browser check's stand-in (book/notebookroute.mjs lists them: a change runs those). No
 // DOM: the browser and node import it alike. The board's own notebooks only, every route the board's session.
 // (every HQ browser check's stand-in)
 //   - seed: { notebooks, pages, groups, slips, asks, names, people } as the store keeps them, a group's ink, texts,
@@ -20,6 +20,7 @@ import { seededGroup, unitsOn } from './notebookplaygroups.js';
 import { search } from './notebookplaysearch.js';
 import { PEOPLE_ROUTES } from './notebookplaypeople.js';
 import { TIDY_ROUTES } from './notebookplaytidy.js';
+import { duplicatePage } from './notebookplayduplicate.js';
 import { closeRound, unwrapRound } from './notebookplayrounds.js';
 import { setCover, shelfOf } from './notebookplayshelf.js';
 import { ANSWER_ROUTES, groupOn, ran, rootOf, slipRow } from './notebookplayanswers.js';
@@ -199,6 +200,7 @@ const ROUTES = {
   'POST /api/notebooks/pages/title': (s, b) => pageChanged(s, b, p => (p.label = labelOf(b?.title))),
   'POST /api/notebooks/pages/zoom': zoomPage,
   ...TIDY_ROUTES,
+  'POST /api/notebooks/pages/duplicate': (s, b) => pageOf(s, s.page(duplicatePage(s, b))),
   'POST /api/notebooks/pages/send': (s, b) => pageOf(s, sendPage(s, pageRow(s, b?.id), b?.aside)),
   'GET /api/notebooks/pages/groups': listGroups,
   ...GROUP_ROUTES,

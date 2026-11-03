@@ -1,6 +1,4 @@
-// Strokes in lines of writing: the Notebook carries an old page's ink into drawings by them (notebookcarry.ts). (the
-// sheet's writing read into words beside its notes gone: the pen's ink stays handwriting, read by whoever reads the
-// page. board, call 176)
+// Strokes in lines of writing: the Notebook carries an old page's ink into drawings by them (notebookcarry.ts).
 import type { Stroke } from '../pagechecks.ts';
 
 type Box = { x0: number; y0: number; x1: number; y1: number };

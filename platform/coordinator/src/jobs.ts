@@ -1841,6 +1841,8 @@ const seatTakes = (seat: string, cli: string, engine = '$engine') =>
 export const FALLS_BACK = "j.kind = 'work' and j.session is null and j.engine_only is null";
 // A seat that takes work now: ready, or past the reset its drain or sleep waits for. The statement binds $now. (exported for panel.ts)
 export const SEAT_READY = "(state = 'ready' or state in ('draining', 'sleeping') and until <= $now)";
+// Until when a seat is paced (its weekly reset), or null when it isn't. The statement binds $now.
+const PACED_UNTIL = 'iif(pace is null or week_resets <= $now, null, week_resets)';
 
 // Whether a ready seat takes the job now (seatTakes, and a paced one only what it takes till its weekly reset:
 // pacedTakes, as claim), or that one seat (`on`): a meeting's seats each need one before the meeting gathers, and a slot
@@ -1849,27 +1851,40 @@ export const SEAT_READY = "(state = 'ready' or state in ('draining', 'sleeping')
 export function seatReadyFor(job: number, t = now(), on: string | null = null, plan = () => ordering.current(t)) {
   const seats = db
     .prepare(
-      `select iif(s.pace is null or s.week_resets <= $now, null, s.week_resets) until, ${LANE('j')} board from jobs j
-    join (select * from seats where ${SEAT_READY}) s on ${seatTakes('s.id', 'coalesce(s.cli, s.engine)', 's.engine')}
+      `select s.pacedUntil, ${LANE('j')} board from jobs j
+    join (select *, ${PACED_UNTIL} pacedUntil from seats where ${SEAT_READY}) s on ${seatTakes('s.id', 'coalesce(s.cli, s.engine)', 's.engine')}
     and ($on is null or s.id = $on)
     where j.id = $job`,
     )
-    .all({ job, now: t, on }) as { until: number | null; board: number }[];
-  if (!seats.length || seats.some(s => s.until === null)) return seats.length > 0;
+    .all({ job, now: t, on }) as { pacedUntil: number | null; board: number }[];
+  if (!seats.length || seats.some(s => s.pacedUntil === null)) return seats.length > 0;
   const order = ordering.key(job, seats[0].board, plan().timings);
-  return seats.some(s => pacedTakes(order, s.until!));
+  return seats.some(s => pacedTakes(order, s.pacedUntil!));
 }
 
-// Whether a queued job waits only for seats at their limits: every seat that would take it (seatTakes, or its agent's
-// fallback's before it has started, as claim does) is draining or asleep until a reset still ahead. No seat for it, or
-// one signed out, won't come back by itself: that's no such wait. A paused seat takes no work, so it doesn't count.
+// Whether a queued job waits only for seats at their limits or their pace, read as claim reads them (SEAT_READY,
+// pacedTakes): every seat that would take it (seatTakes, or its agent's fallback's before it has started) is draining
+// or asleep until a time still ahead (a reset, its stop level's), or ready but paced, and this job isn't one it takes
+// before its weekly reset. No seat for it, or one signed out, won't come back by itself: that's no such wait. A
+// paused seat takes no work, so it doesn't count.
 export function seatsOut(job: number, t = now()) {
-  const { agent } = db.prepare('select agent from jobs where id = ?').get(job) as { agent: string };
+  const { agent, board } = db.prepare(`select agent, ${LANE('j')} board from jobs j where id = ?`).get(job) as {
+    agent: string;
+    board: number;
+  };
   const seats = db
     .prepare(
-      `select id, engine, coalesce(cli, engine) cli, state, ${SEAT_READY} ready from seats where state != 'paused'`,
+      `select id, engine, coalesce(cli, engine) cli, state, ${SEAT_READY} ready,
+      ${PACED_UNTIL} pacedUntil from seats where state != 'paused'`,
     )
-    .all({ now: t }) as { id: string; engine: string; cli: string; state: string; ready: number }[];
+    .all({ now: t }) as {
+    id: string;
+    engine: string;
+    cli: string;
+    state: string;
+    ready: number;
+    pacedUntil: number | null;
+  }[];
   const takes = db.prepare(
     `select ${seatTakes('$seat', '$cli')} own, ${FALLS_BACK} fallsBack from jobs j where j.id = $job`,
   );
@@ -1880,7 +1895,16 @@ export function seatsOut(job: number, t = now()) {
     };
     return own || (fallsBack && models.fallingBackTo(s.engine, s.cli).includes(agent));
   });
-  return theirs.length > 0 && theirs.every(s => !s.ready && ['draining', 'sleeping'].includes(s.state));
+  const ready = theirs.filter(s => s.ready);
+  if (
+    !theirs.length ||
+    ready.some(s => s.pacedUntil === null) ||
+    theirs.some(s => !s.ready && !['draining', 'sleeping'].includes(s.state))
+  )
+    return false;
+  if (!ready.length) return true;
+  const order = ordering.key(job, board, ordering.current(t).timings);
+  return ready.every(s => !pacedTakes(order, s.pacedUntil!));
 }
 
 // The model and effort a run asks for, those of the engine and CLI the job is on: its fallback's once it moved there, the
@@ -2127,7 +2151,7 @@ function readySeats(t: number) {
   const seats = db
     .prepare(
       `select id, engine, coalesce(cli, engine) cli, util, resets, week, week_resets,
-      iif(pace is null or week_resets <= $now, null, week_resets) pacedUntil from seats where ${SEAT_READY}`,
+      ${PACED_UNTIL} pacedUntil from seats where ${SEAT_READY}`,
     )
     .all({ now: t }) as {
     id: string;

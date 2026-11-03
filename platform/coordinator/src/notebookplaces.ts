@@ -5,7 +5,7 @@ import { BOARD } from './ink/book.ts';
 import { changed, pageChapter, type NotebookPage } from './notebook.ts';
 import { isRefused, type Refused } from './pagechecks.ts';
 import { isUnitOn, openPage, row, shown, type Group, type Parts } from './notebookgroups.ts';
-import { isCanvas, liftedOut } from '../../hq/shell/ink/sketchcanvas.js';
+import { isCanvas, isPlace, liftedOut } from '../../hq/shell/ink/sketchcanvas.js';
 import { unitOf } from '../../hq/shell/ink/scrapunit.js';
 
 // A unit's place on a canvas: its top-left in the page's px
@@ -43,5 +43,4 @@ export function splitOut(p: NotebookPage, g: Group, parts: Parts) {
   return { parts: lifted.parts as Parts, h: lifted.h, place: lifted.place && placeJson(lifted.place) };
 }
 
-const isPlace = (v: any): v is Place => typeof v === 'object' && Number.isFinite(v?.x) && Number.isFinite(v?.y);
 const placeJson = (place: Place) => JSON.stringify({ x: place.x, y: place.y });

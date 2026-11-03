@@ -1,5 +1,5 @@
-// node --test src/ink/bookassign.test.ts   (a scrap handed to a guest or an agent from the short list: the guest's copy
-// on their Asks page kept in step both ways, the agent's answer asked for at once.)
+// node --test src/ink/bookassign.test.ts   (a scrap on the board's Asks page handed to a guest from the short list: the
+// guest's copy on their Asks page kept in step both ways; never to an agent, nor from a sketch page.)
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { harness } from '../harness.ts';
@@ -8,6 +8,7 @@ const h = await harness('bookassign', { env: { CADDY_HOST: '127.0.0.1' } });
 const { db } = h;
 const { ORIGIN } = await import('../config.ts');
 const { currentPage, mine } = await import('../notebook.ts');
+const { asksPage } = await import('./askpages.ts');
 afterEach(() => h.cancelQueued());
 
 const api = '/guest/notebooks/api';
@@ -71,9 +72,9 @@ async function copyFor(guest: Awaited<ReturnType<typeof invited>>['guest'], note
   const asks = pages.find((p: any) => p.kind === 'asks');
   return (await guest(`${api}/pages/groups?page=${asks.id}`)).body.groups.at(-1);
 }
-// A note of the board's on its own notebook's current page, as the board's screen writes it
-async function boardNote(text: string) {
-  const made = await h.board('/api/notebooks/groups/create', { page: currentPage(mine().id), texts: typed(text) });
+// A note of the board's on its own notebook's Asks page, as the board's screen writes it
+async function boardNote(text: string, page = asksPage(mine().id).id) {
+  const made = await h.board('/api/notebooks/groups/create', { page, texts: typed(text) });
   assert.equal(made.status, 200, JSON.stringify(made.body));
   return made.body;
 }
@@ -89,7 +90,10 @@ test('a scrap handed to a guest lands on their Asks page, and what either side w
   const femke = people.everyone.find((p: any) => p.name === GUEST);
   const book = ((await h.board('/api/book/people')).body as any[]).find(p => p.name === GUEST);
   assert.deepEqual(femke, { to: book.who, name: GUEST, kind: 'guest' }, 'the guest as their own book knows them');
-  assert.ok(people.everyone.some((p: any) => p.to === 'agent:lark' && p.kind === 'agent'));
+  assert.ok(
+    people.everyone.every((p: any) => p.kind === 'guest'),
+    'guests only, never an agent',
+  );
   assert.ok(people.recent.length > 0 && people.recent.length <= 4, 'a short list, topped up');
 
   const original = await boardNote('Tagline OK?');
@@ -216,19 +220,21 @@ test("a picture added, moved, replaced or removed on a guest's copy is on the bo
   assert.deepEqual((await boardSide()).pictures, []);
 });
 
-test('a scrap handed to an agent becomes theirs to answer, at once', async () => {
+test('a scrap goes to no agent, and from no sketch page', async () => {
+  await invited(GUEST);
   const original = await boardNote('Which colour for the button?');
-  const given = await h.board('/api/notebooks/groups/assign', { id: original.id, to: 'agent:lark' });
-  assert.equal(given.status, 200, JSON.stringify(given.body));
-  assert.equal(given.body.group.owner, 'lark');
-  assert.deepEqual(given.body.group.assigned, [{ to: 'agent:lark', name: 'Lark', kind: 'agent', answered: false }]);
-  const run = db.prepare("select agent, kind from jobs where kind = 'chat' order by id desc limit 1").get() as any;
-  assert.deepEqual({ ...run }, { agent: 'lark', kind: 'chat' }, "the agent's quick run, asked for its answer");
+  const agent = await h.board('/api/notebooks/groups/assign', { id: original.id, to: 'agent:lark' });
+  assert.equal(agent.status, 400, JSON.stringify(agent.body));
+  assert.equal(db.prepare('select owner from notebook_groups where id = ?').get(original.id)!.owner, null);
+  const sketch = await boardNote('Hi Lyra', currentPage(mine().id));
+  const fromSketch = await h.board('/api/notebooks/groups/assign', { id: sketch.id, to: await toOf(GUEST) });
+  assert.equal(fromSketch.status, 409, JSON.stringify(fromSketch.body));
+  assert.deepEqual((await groupsOn(sketch.page)).find((g: any) => g.id === sketch.id).assigned, []);
 });
 
 test('a scrap goes only to someone on the list, from an open page', async () => {
   const original = await boardNote('Who takes this?');
   const nobody = await h.board('/api/notebooks/groups/assign', { id: original.id, to: 'guest:Nobody' });
   assert.equal(nobody.status, 400);
-  assert.equal((await h.board('/api/notebooks/groups/assign', { id: 999999, to: 'agent:lark' })).status, 404);
+  assert.equal((await h.board('/api/notebooks/groups/assign', { id: 999999, to: 'guest:Nobody' })).status, 404);
 });
