@@ -1,7 +1,7 @@
 // Words typed on a page of the book: a box placed at a point (the text tool, or a double click on the paper) with the
 // caret in it, typed with the device's keyboard, kept as it's left, edited again by a click or a tap (the caret where
 // it was tapped), moved by Select (bookselect.js) or by its grip with any tool, and gone once it's emptied or binned. The pen writing over a box is
-// ink, never its words: nothing here reads handwriting (board, call 176). Each
+// ink, never its words: nothing here reads handwriting. Each
 // change is one step Undo takes back (book.steps). A page keeps them as texts: [{ x, y, w, text, color }], x and y the
 // words' top-left and w the width they wrap at, in the page's px, saved with its ink (booksave.js) and set
 // in its picture by the store (bookrender.ts: the same size, line and wrap). The boxes are the page's own elements, so

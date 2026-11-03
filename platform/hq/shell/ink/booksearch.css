@@ -24,7 +24,7 @@
   flex: 1;
   min-width: 0;
   height: 44px;
-  font: 19px/44px var(--bk-font);
+  font: 400 16px/44px var(--bk-font);
   color: var(--bk-night);
   -webkit-user-select: text;
   user-select: text;
@@ -107,10 +107,7 @@
   border-radius: 50%;
   background: var(--bk-red);
   color: #fff;
-  font:
-    700 12px/22px system-ui,
-    -apple-system,
-    sans-serif;
+  font: 400 12px/22px var(--bk-font);
   text-align: center;
 }
 #book .bk-found [data-answer] .bk-find-n {

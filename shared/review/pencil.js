@@ -5,8 +5,7 @@
 //   - A mark is the lines drawn while the pen keeps coming back: the words said once its mic button is tapped (on a
 //     call, the call hears them) go in its note. Rest the pen and it lifts
 //     into the book as a note, the page left clean: nothing of it stays drawn (settle.js, marks.js paint: rule zero).
-//     Words written with it stay ink, on the note's snip, for whoever reads the note: nothing reads them into type
-//     (board, call 176).
+//     Words written with it stay ink, on the note's snip, for whoever reads the note: nothing reads them into type.
 //   - Hold the pen still on one spot and talk: a voice note there, its words landing as the pen lifts.
 //   - Scribble over the mark being made: it's let go. Ring something: the mark is on what's inside the ring.
 //   - A two-finger tap takes back the last thing, whatever it was (Cmd or Ctrl+Z too). Nothing asks "are you sure?".

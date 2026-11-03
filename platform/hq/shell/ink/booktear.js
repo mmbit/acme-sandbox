@@ -1,11 +1,10 @@
-// A page sent or shared by tearing it off at its spine (board, card 341's call): a press at the page's right edge,
+// A page sent or shared by tearing it off at its spine (README, The book's frame): a press at the page's right edge,
 // where the spine is, drawn away to the left (a finger, the Pencil or a mouse) tears a copy of the page off with it,
 // its edge jagged, with a soft tear of paper, and it shrinks into the hand as a small page; the page itself stays
 // whole. Three targets come up over the paper (bookshare.js): Submit to the CEO, PDF and PNG. Let go on Submit, the
 // page goes (bookpagesend.js); on PDF or PNG the copy folds into it and the file downloads; anywhere else, it goes back
 // to the spine. Tear off and send in the bar's dots menu opens the same three as a small menu. With a call on, the
-// call's window takes it too (calldrop.js). No dog-ear: nothing shows at the edge (board, call 190). Its look:
-// bookshare.css.
+// call's window takes it too (calldrop.js). Nothing shows at the edge till it's pulled. Its look: bookshare.css.
 import { foley } from '../audio.js';
 import { picture } from './bookflip.js';
 import { fold, tear } from './bookpaper.js';
@@ -27,21 +26,23 @@ const ICON = lineIcon(
   '<path d="M6 21V3h12v18"/><path d="M6 7.5l2-1.2 2 1.2 2-1.2 2 1.2 2-1.2 2 1.2"/><path d="M12 11v6M9.5 14.5L12 17l2.5-2.5"/>',
 );
 
-// book: bookpages.js's. The page's right edge, by the spine, takes the press; the menu's row follows the page shown.
+// book: bookpages.js's. The page's right edge, by the spine, takes the press; the menu's row follows the page shown, as
+// the bar's controls do (bookcontrols.js update(): book.tear), and goes on a page already sent.
 export function mountTear(book) {
   const item = button({ icon: ICON, label: word('tearOff'), onClick: () => menu(spine) });
   item.classList.add('bk-tear');
-  island('menu').append(item);
+  island('menu').prepend(item); // (before Archive this page)
   const spine = { book, item, files: null, lane: islands(), at: null };
   spine.targets = mountTargets(spine.lane, {
     act: (kind, box) => went(spine, kind, box, null),
     closed: () => backOnDots(spine),
   });
   const follow = () => {
-    item.hidden = !shown(book);
-    if (item.hidden) spine.targets.hide();
+    const v = shown(book);
+    item.hidden = !v || !!(v.page.sent || v.page.sending);
+    if (!v) spine.targets.hide();
   };
-  for (const type of ['book:turn', 'book:wrote']) document.addEventListener(type, follow);
+  book.tear = follow;
   follow(); // (mounted late, after the first page's turn)
   book.paper.closest('.bk-leaf').addEventListener('pointerdown', e => pressed(spine, e));
 }

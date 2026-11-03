@@ -6,7 +6,8 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { render } from './bookrender.ts';
-import type { Tried } from './bookrenderversions.ts';
+import { block, escaped, WORDS as SCRAP_WORDS } from './bookrendertext.ts';
+import { stampFill, type Tried } from './bookrenderversions.ts';
 
 const INK = '#2a2352';
 const WORDS = 'The page bar at the bottom grew too tall with the title: make it slim again, and keep the title whole';
@@ -148,7 +149,7 @@ const cross = (x: number, y: number, w: number, h: number) =>
   }));
 
 const GREEN = ([r, g, b]: number[]) => r < 70 && g > 150 && b < 70;
-// A green ring round a box (x, y, w, h), reach px outside it on every side, as bookpicks.mjs's circle
+// A green ring round a box (x, y, w, h), reach px outside it on every side, as book/picks.mjs's circle
 const ring = (x: number, y: number, w: number, h: number, reach: number) => [
   {
     ...{ color: '#20c020', size: 4, alpha: 1 },
@@ -196,9 +197,12 @@ test("a try's versions are drawn under its scrap: each version's picture and let
   assert.ok(drawn.info.height > bare.info.height + 300, `grown down to it (${bare.info.height}, ${drawn.info.height})`);
   assert.equal(count(bare, TEAL), 0);
   assert.ok(count(drawn, TEAL) > 600, "Lyra's face, name and pencil dots");
-  // A's picture with CHOSEN across it (#d6ea3c); B's greyed: no orange left
+  // A's picture with CHOSEN across it, in the company's chosen colour (its brand's colours.chosen, else its accent
+  // under the stamp's paper); B's greyed: no orange left
   assert.ok(count(drawn, ([r, g, b]) => r < 60 && g < 110 && b > 220) > 20_000, "A's picture");
-  assert.ok(count(drawn, ([r, g, b]) => r > 190 && g > 210 && b < 90) > 2_000, 'CHOSEN stamped on it');
+  const { fill, paper } = stampFill(),
+    stamp = [1, 3, 5].map((i, c) => parseInt(fill.slice(i, i + 2), 16) * (1 - paper) + [255, 250, 240][c] * paper);
+  assert.ok(count(drawn, px => px.every((v, c) => Math.abs(v - stamp[c]) < 30)) > 2_000, 'CHOSEN stamped on it');
   assert.equal(
     count(drawn, ([r, g, b]) => r > 230 && g > 110 && g < 160 && b < 40),
     0,
@@ -253,6 +257,21 @@ test("an agent's card clipped under a unit is drawn in its ink: its words, its c
   assert.ok(count(drawn, TEAL) > 600, "in Lyra's ink");
   assert.equal(count(bare, TEAL), 0);
   assert.ok(drawn.info.height > bare.info.height + 100, `grown down to it (${bare.info.height}, ${drawn.info.height})`);
+});
+
+test('words that break inside a long path are set no wider than asked: the slip they go on holds them', async () => {
+  // (Pango sets this a px past 292: a card's slip composited it onto its 292 px and failed, the page's picture with it)
+  const glass = 'products/_cycles/2026-11-02-ink-real-book/glass/';
+  const text = `Before and after: - A Clear frost, the bars close up: ${glass}now-bars.jpg ${glass}a-bars.jpg - A Clear frost, iPhone: ${glass}now-phone.jpg ${glass}a-phone.jpg - B Milk glass, iPad: ${glass}now-ipad.jpg ${glass}b-ipad.jpg`;
+  for (const [w, k] of [
+    [292, 1],
+    [240, 1],
+    [220, 2],
+  ]) {
+    const set = await block(`<span>${escaped(text)}</span>`, w, k, SCRAP_WORDS),
+      { info } = await sharp(set.input).png().toBuffer({ resolveWithObject: true });
+    assert.ok(info.width <= w * k && set.width === info.width, `${info.width} px for ${w * k}`);
+  }
 });
 
 test("a form clipped onto an answer is drawn under its words in the agent's ink: chips and a line, then the answers", async () => {

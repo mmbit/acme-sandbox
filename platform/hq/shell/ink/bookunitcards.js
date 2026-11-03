@@ -44,7 +44,7 @@ export function drawCards(view) {
         roomy = body > 0 && p.h - body > 8,
         room = roomy ? `<div class="bk-room" style="top:${body}px"></div>` : '',
         // (the board's own drawing is ink on the page: no paper. Else the note's paper, as tall as its body, plain
-        // page under it to write on: board, call 190.)
+        // page under it to write on.)
         ink = drawing(page, p.id),
         paper = ink ? '' : `<div class="bk-unit-paper" style="height:${roomy ? body : p.h}px"></div>`;
       // (what the board reads: a minimised call covers as little of it as it can.)
@@ -65,7 +65,6 @@ export function drawCards(view) {
 }
 // The page's title in its head, over the paper with the handles so a tap on it, a finger's or the Pencil's, is its own:
 // it opens the notebook's pages with the title to write in (bookcontrols.js), a pencil by it saying it can be changed
-// (board, call 178.)
 function titleIn(layer, page) {
   if (!layer) return;
   let head = layer.querySelector(':scope > .bk-page-title');

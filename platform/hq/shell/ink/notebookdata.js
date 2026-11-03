@@ -39,6 +39,8 @@ export async function loadPages(dev, notebook) {
 }
 export const archiveNotebook = (dev, id, archived) => ask(dev, '/api/notebooks/archive', null, { id, archived });
 export const createPage = (dev, notebook) => ask(dev, '/api/notebooks/pages/create', null, { notebook });
+// A sketch page's copy to carry on from, at the notebook's end (notebookduplicate.ts.)
+export const duplicatePage = (dev, id) => ask(dev, '/api/notebooks/pages/duplicate', null, { id });
 export const orderPages = (dev, notebook, pages) => ask(dev, '/api/notebooks/pages/order', null, { notebook, pages });
 export const archivePage = (dev, id, archived) => ask(dev, '/api/notebooks/pages/archive', null, { id, archived });
 // { gone }: the notebook's blank pages but the one shown let go (notebooktidy.ts.)
@@ -75,9 +77,9 @@ export const moveGroup = (dev, id, page, after) => ask(dev, '/api/notebooks/grou
 // since: as edit's, so a screen deletes only what it has seen.
 export const deleteGroup = (dev, id, since) => ask(dev, '/api/notebooks/groups/delete', null, { id, since });
 export const restoreGroup = (dev, id) => ask(dev, '/api/notebooks/groups/restore', null, { id });
-// Whom a scrap can be handed to: { recent, everyone }, each person { to, name, kind } (bookassign.js)
+// Whom a scrap of an Asks page can be handed to, the guests: { recent, everyone }, each { to, name, kind } (bookassign.js)
 export const loadPeople = dev => ask(dev, '/api/notebooks/people');
-// A group handed to a person (their to) → { group, to }; it stays where it is, wearing their tag
+// A group handed to a guest (their to) → { group, to }; it stays where it is, wearing their tag
 export const assignGroup = (dev, id, to) => ask(dev, '/api/notebooks/groups/assign', null, { id, to });
 // A reply under an agent's answer (a slip's id) → { id, parent }; taken back in its seconds
 export const reply = (dev, answer, words) => ask(dev, '/api/notebooks/groups/reply', null, { answer, words });

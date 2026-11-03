@@ -54,13 +54,15 @@ export async function pictureAt(file: string, w: number, k: number, fill = false
 // (align: a paragraph's lines, left by default)
 export type Face = { size: number; line: number; font?: string; align?: 'centre' };
 
-// Words in Pango's markup set w page px wide
-export const setMarkup = (markup: string, w: number, k: number, face: Face) =>
-  sharp({
+// Words in Pango's markup set w page px wide. Pango can set a line that breaks inside a long word (an address, a path)
+// a px past the width: that px is cut off, so the words fit what they're laid in.
+export async function setMarkup(markup: string, w: number, k: number, face: Face) {
+  const W = Math.max(1, Math.round(w * k));
+  const set = await sharp({
     text: {
       text: markup,
       font: `${face.font ?? TEXT.font} ${face.size}`,
-      width: Math.max(1, Math.round(w * k)),
+      width: W,
       dpi: Math.round(72 * k),
       rgba: true,
       align: face.align,
@@ -70,6 +72,10 @@ export const setMarkup = (markup: string, w: number, k: number, face: Face) =>
   })
     .png()
     .toBuffer({ resolveWithObject: true });
+  if (set.info.width <= W) return set;
+  const data = await sharp(set.data).extract({ left: 0, top: 0, width: W, height: set.info.height }).png().toBuffer();
+  return { data, info: { ...set.info, width: W } };
+}
 // Words set w page px wide as the book stands them: their picture (width × height), and how tall they stand at the
 // face's line height (half a line's spacing above and below Pango's lines: their ink lead px down)
 export async function block(markup: string, w: number, k: number, face: Face) {

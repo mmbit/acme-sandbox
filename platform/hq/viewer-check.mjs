@@ -7,7 +7,7 @@ import { mkdir, readFile } from 'node:fs/promises';
 import { serve, mockFiles, ROOT } from './serve.mjs';
 import { playwright, openPage, until } from '../../shared/browser/browser.mjs';
 import { scriptForHq, fulfilPart } from '../../shared/review/parts.mjs';
-import { bookAtRest } from './bookkit.mjs';
+import { bookAtRest } from './book/kit.mjs';
 import { lookNames } from './looks.mjs';
 
 const shots = process.argv.includes('--shots') ? process.argv[process.argv.indexOf('--shots') + 1] : null;

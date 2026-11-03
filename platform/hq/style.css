@@ -1186,10 +1186,14 @@ body.keys .rows.settings li > button.danger-row b { color: color-mix(in srgb, #e
 .jb-tabs button + button { border-left: 1px solid currentColor; }
 .jb-tabs [aria-selected=true] { background: var(--scr); color: var(--scr-ink); text-shadow: none; }
 .jb-tabs i { font-style: normal; margin-left: 6px; opacity: .75; }
-/* Mail: the when, the sender and the inbox on one line; the line that says who can read an inbox; the board's lock */
-.rows.mail .mailfrom { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Mail: the when, the sender and whom it's to on one line; the open pile's one line; the board's lock */
+/* (one line: the sender gives way, never whom it's to or the board's lock) */
+.rows.mail .mailfrom { display: flex; align-items: center; min-width: 0; overflow: hidden; white-space: nowrap; }
+.rows.mail .mailfrom > span { overflow: hidden; text-overflow: ellipsis; } .rows.mail .mailfrom > span:first-child { min-width: 0; }
+.rows.mail .mailfrom > .mailto { flex: none; max-width: 50%; padding-left: .3em; }
+.crt .pills.mailpiles button { min-height: 40px; }   /* (Mail's piles are its way round: a finger's tap each) */
 .crt .mailwho { margin: -4px 0 10px; font-size: 12px; color: var(--scr-dim); }
-.rows.mail .lock { width: 7px; height: 8px; margin-left: 6px; fill: currentColor; vertical-align: 0; opacity: .8; }
+.rows.mail .lock { flex: none; width: 7px; height: 8px; margin-left: 6px; fill: currentColor; opacity: .8; }
 /* On Air (shell/onair.js): a show, its buttons in a row, and each episode's player under its words */
 .oa { margin-bottom: 22px; } .oa-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0; }
 .oa .rows li > audio { grid-column: 1 / -1; width: 100%; height: 32px; margin-top: 4px; }
@@ -1279,11 +1283,16 @@ body.keys .push-now { padding: 3px 10px 4px; border-radius: 999px; font-size: 12
 /* a walk-through offered: its own row over the card's answers, the whole width, in words on every screen. */
 .req .btns.walk { margin-bottom: 8px; } .req .btns.walk .talk { flex: 1 1 auto; }
 .req .row.on-air .mic { background: var(--red); color: #fff; }
-/* Send to the team, under a mail of the board's own */
-.mailfwd { margin: 10px 0 2px; }
-.mailfwd .act { font: inherit; font-size: 14px; text-shadow: inherit; min-height: 40px; padding: 4px 14px; color: var(--scr-hi); background: none; border: 1px solid var(--scr-dim); border-radius: var(--r-sm); cursor: pointer; }
-.mailfwd .act:disabled { color: var(--scr-dim); cursor: default; }
-body.keys .mailfwd .act:disabled { transform: var(--key-down); box-shadow: var(--key-down-lip); opacity: .7; }   /* a key that stays down once it went */
+/* Mail's move row under an open mail: its pile pressed, the others one tap each */
+.mailmove { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 18px 0 4px; }   /* (clear of the mail's text) */
+.mailmove .act { font: inherit; font-size: 14px; text-shadow: inherit; min-height: 40px; padding: 4px 12px; color: var(--scr-hi); background: none; border: 1px solid var(--scr-dim); border-radius: var(--r-sm); cursor: pointer; }
+.mailmove .act:disabled { color: var(--scr-dim); cursor: default; }
+.mailmove .act[aria-pressed=true] { color: var(--scr-hi); background: color-mix(in srgb, var(--scr) 20%, transparent); border-color: var(--scr); }
+/* (as keys, the pile it's in latches down, its word bold, as a picked pill does: never dimmed like a key that's off.) */
+body.keys.keys .mailmove .act[aria-pressed=true] { transform: var(--key-down); box-shadow: var(--key-down-lip); font-weight: 750; }
+.mailmove > .dim { flex-basis: 100%; font-size: 13px; }
+.mailmove .msg { flex-basis: 100%; font-size: 13px; color: var(--scr-cap); } .mailmove .msg:empty { display: none; }
+.crt .mailsaid { font-size: 13px; color: var(--scr-cap); }
 .mailbody { white-space: pre-wrap; word-break: break-word; margin: 6px 0 0; font: inherit; opacity: .9; }
 .mailbody a, .cr .txt a { color: var(--scr-cap); text-decoration: underline; }   /* an email's links, in Mail and Care (Care) */
 /* An agent's words as prose (shell/prose.js), wherever HQ shows them: paragraphs and lists close together, a list's

@@ -96,9 +96,7 @@ const room = routes({
   [`POST ${API}/replies/delete`]: onPage(byGroup, (b, on) => sending.deleteReply(b, on.who), ANSWERS),
   [`POST ${API}/answers/form`]: onPage(bySlip('id'), (b, on) => answers.answerForm(b, on.who), ANSWERS),
   [`POST ${API}/answers/tick`]: onPage(bySlip('id'), (b, on) => answers.tickAnswer(b, on.who), ANSWERS),
-  // the shell's own files, as the board's HQ serves them
-  [`GET ${ROOM}/*`]: ({ res, url }) =>
-    files.serveFile(res, url.pathname.slice(ROOM.length)) || reply(res, 404, { error: 'not found' }),
+  ...files.fileRoutes(ROOM),
 });
 
 // A guest's read of their notebooks, its addresses under the scope

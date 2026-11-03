@@ -9,7 +9,7 @@
 // (slip.test.js). Its words come from the caller in the reader's language: say(key, places), a word by its key with
 // its {places} filled (HQ's book: notebookwords.js, slip* keys).
 
-// The look: the book's paper and indigo, the answer typed
+// The look: the book's paper and indigo, the answer typed, a fix's tick in the book's chosen colour
 export const CSS = `
       .answer-slip { position: relative; margin: 12px 0 2px; padding: 14px 12px 10px; background: #fffdf6; color: #2a2352;
         border-radius: 2px; transform: rotate(.5deg); box-shadow: 0 1px 0 rgba(42,35,82,.08), 0 3px 10px rgba(42,35,82,.14);
@@ -25,7 +25,7 @@ export const CSS = `
       .slip-source { margin: 3px 0 0; font-size: 11.5px; line-height: 1.35; color: #5a5478; }
       .answer-slip[data-fix][data-ticked] { opacity: 1; }
       .slip-fix { position: relative; display: flex; align-items: center; gap: 10px; margin-top: 10px; }
-      .slip-fix .slip-tick { position: relative; right: auto; top: auto; flex: none; background: var(--bk-chosen, #d6ea3c); }
+      .slip-fix .slip-tick { position: relative; right: auto; top: auto; flex: none; background: var(--bk-chosen); }
       .slip-fix .slip-tick svg { stroke: #2a2352; }
       .slip-fix .slip-tick:disabled { cursor: default; }
       .slip-fix-words { font-weight: 700; font-size: 14px; line-height: 1.3; }
@@ -33,7 +33,7 @@ export const CSS = `
       .slip-fix-art { position: relative; box-sizing: border-box; max-width: 100%; padding: 16px; border-radius: 3px;
         cursor: pointer; box-shadow: inset 0 0 0 1.5px #2a2352; transition: background-color .2s ease-out; }
       .slip-fix-art .slip-tick { position: absolute; right: -10px; bottom: -10px; }
-      .answer-slip[data-ticked] .slip-fix-art { background: var(--bk-chosen, #d6ea3c); }
+      .answer-slip[data-ticked] .slip-fix-art { background: var(--bk-chosen); }
       .slip-fix-said { margin: 6px 0 0; font-size: 12px; color: #5a5478; }
       .slip-then { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
       .slip-then figure { margin: 0; min-width: 0; }

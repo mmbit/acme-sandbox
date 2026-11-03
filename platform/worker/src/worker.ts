@@ -24,7 +24,8 @@ import { existsSync, mkdirSync, chmodSync, lchownSync, lstatSync, readdirSync, r
 import { keepRenders } from './renders.ts';
 import { keepScreens } from './screens.ts';
 import { agentEnv, redact, redactJson, PROFILE_BRANCH, workRunsOn, BRANCH_CONFIG, REVIEW_STRIP, claudeArgs, codexAskArgs, SIGN_IN } from './safety.ts';
-import { TOUCHUP_LINES, FetchUnreachedError, PushUnreachedError, answerMainMerge, branchLines, gitFlow, pinnedGitEnv, runAs } from './git.ts';   // (pinnedGitEnv)
+import { TOUCHUP_LINES, FetchUnreachedError, answerMainMerge, branchLines, gitFlow, pinnedGitEnv, runAs } from './git.ts';   // (pinnedGitEnv)
+import { pushThrew, snagged, type Landing } from './landing.ts';
 import { see as account, engineStarted, relaunched, report, spentOn, type Spent } from './spent.ts';
 import { handOut, masked, plainName, type Files, type Folders, type Snap } from './copyback.ts';
 import { roomTurns } from './roomturns.ts';
@@ -2279,25 +2280,17 @@ async function pushRun(g: ReturnType<typeof flow.forAgent>, dir: string, branch:
 }
 
 // A run that ended well lands: its work pushed (pushRun), its pull request opened (its body the session's last message,
-// summary), then its push's checks (afterPush). A push that never reached GitHub (git.ts PushUnreachedError), or a pull
-// request GitHub couldn't be reached for, is the worker's own snag, not the agent's: the job goes back in the queue with
-// what landing it takes (jobs.ts finish), and its next run only does this (again), where a clone and branch without the
-// work fail it, visibly.
-type Landing = { summary: string; result: string };
+// summary), then its push's checks (afterPush). A push that never reached GitHub, or a pull request GitHub couldn't be
+// reached for, is the worker's own snag, not the agent's (landing.ts), and its next run only does this (again), where a
+// clone and branch without the work fail it, visibly.
 async function land(o: Landing & { g: ReturnType<typeof flow.forAgent>; dir: string; branch: string; job: Job; me: Me; session?: string; spent: Spent;
   launches: Launched[]; keep: (checks: Checks) => void; failure: (report: string, why: string) => string; again?: boolean }): Promise<Record<string, unknown>> {
   const { g, dir, branch, job, session, summary, result } = o, to: Pushed = {};
   // (its own pushed commit, which a later landing run's push of the same head doesn't report: threads.ts ownCommit)
   const own = () => to.pushed && ownCommit(g, dir, branch, BASE, to.pushed.sha);
-  const snagged = (why: string) => {
-    log(`job #${job.id}: ${why}, so it goes back in the queue to land`);
-    return { status: 'snagged', session, branch, sha: own(), profile: to.profile, result: o.failure(result, why), landing: { summary, result } };
-  };
+  const run = () => ({ job: job.id, session, branch, sha: own(), profile: to.profile, summary, result, failure: o.failure, log });
   try { await pushRun(g, dir, branch, job, to, true); }
-  catch (err) {
-    const why = `the push failed: ${String((err as Error).message ?? err)}`;
-    return err instanceof PushUnreachedError ? snagged(why) : { status: 'failed', session, branch, profile: to.profile, result: o.failure(result, why) };
-  }
+  catch (err) { return pushThrew(run(), err); }
   const { pushed, profile, withdrawn } = to;
   if (!pushed && !withdrawn && o.again) return { status: 'failed', session, branch, profile, result: o.failure(result, 'its work was in neither its clone nor its branch any more, so there was nothing to land') };
   // A thread's task opens the thread's pull request, under the thread's name.
@@ -2305,7 +2298,7 @@ async function land(o: Landing & { g: ReturnType<typeof flow.forAgent>; dir: str
   try { if (pushed && job.inThread) thread = await hq.report('thread-push', { job: job.id }); }
   catch (err) { return { status: 'failed', session, branch, sha: own(), profile, result: o.failure(result, `the deliverable's pull request couldn't be named: ${String((err as Error).message ?? err)}`) }; }
   const pr = pushed ? await openPullRequest(branch, await jobPullRequest(job, summary, thread?.pull)) : undefined;
-  if (pr === 'unreached') return snagged("GitHub couldn't be reached to open its pull request");
+  if (pr === 'unreached') return snagged(run(), "GitHub couldn't be reached to open its pull request");
   // Refused, the work stays on its branch, and the run fails with GitHub's reason: its sha makes the branch its thread's
   // (the coordinator's threadorder.ts pushed), so a task taking its place pushes there and opens the pull request
   if (typeof pr === 'object') return { status: 'failed', session, branch, sha: pushed!.sha, profile, result: o.failure(result, `its work is pushed to ${branch}, but GitHub refused its pull request: ${pr.refused}`) };

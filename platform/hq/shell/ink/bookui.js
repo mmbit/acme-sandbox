@@ -1,10 +1,9 @@
 // The book's controls, one style for all of them (bookui.css): a button with its icon or its word and the book's own
-// tooltip, and the two islands floating over the paper as the board drew the real book (call 190, card 341's mock-up):
-// the tools on the right, upright and centred (bookstrip.js), and one bar along the foot between the screen's
+// tooltip, and the two islands floating over the paper (README, The book's frame): the tools on the right, upright and centred (bookstrip.js), and one bar along the foot between the screen's
 // corners, Undo and Redo at its left by the thumb, the page's arrows and "3 / 12" in its middle, its dots menu at its
 // right with whatever there's no room for (bookcontrols.js). What's written ends left of the tools (--bk-rail-width),
 // the paper running on under them to the screen's edge. Every part of the book makes its controls here, so they look
-// and answer alike. Only the page is paper; the controls are HQ's (board, call 174).
+// and answer alike. Only the page is paper; the controls are HQ's.
 import { esc } from '../../util.js';
 import { word } from './bookscope.js';
 
@@ -40,6 +39,10 @@ export const setPressed = (b, on) => b.setAttribute('aria-pressed', on ? 'true' 
 // An icon in the controls' own line (d: its shapes, on a 24 px square)
 export const lineIcon = d =>
   `<svg viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${d}</g></svg>`;
+// Duplicate's, on Select's bar and a sent sketch page's tools: two sheets, one over the other
+export const DUPLICATE_ICON = lineIcon(
+  '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/>',
+);
 
 // The island or group named: made once, in its place (islands(), which bookrail.js puts over the paper)
 let controls, more;
@@ -149,12 +152,13 @@ function moreCard(from) {
 // A card of the controls' (a tool's colours and widths, this device's preferences, the pages, the dots menu): on the
 // paper beside from, the control that opened it (the dots, when it's one of their rows): left of the tools, level
 // with it; above the bar, its right edge at the control's. It stays on the screen, under nothing, placed again while
-// it's open as the screen turns or the book's width changes.
+// it's open as the screen turns, the book's width changes or the card's own size does.
 export function beside(card, from) {
   controls.append(card);
   placed(card, from);
   const again = new ResizeObserver(() => (card.isConnected ? placed(card, from) : again.disconnect()));
   again.observe(controls);
+  again.observe(card);
 }
 function placed(card, from) {
   const at = from.offsetParent ? from : more,

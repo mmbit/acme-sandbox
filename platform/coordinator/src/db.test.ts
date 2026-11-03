@@ -82,6 +82,19 @@ test("an older database keeps its jobs' codes, and a task's later step shares it
   assert.equal(made.trim(), 'KOHOG');
 });
 
+test("a workspace's messages from before the wake keep their rows and gain its woke column", async () => {
+  const data = mkdtempSync(`${tmpdir()}/db-test-`), repo = fixtureRepo();
+  const old = new DatabaseSync(`${data}/hq.db`);
+  old.exec(`create table workspace_messages (id integer primary key, uid text not null unique,
+    thread integer not null, text text not null, urgent integer not null default 0, ours integer not null,
+    agent text not null, at text not null, seq integer, arrived text, read text, read_by text);
+    insert into workspace_messages (uid, thread, text, urgent, ours, agent, at) values ('m1', 1, 'Hello', 1, 0, 'knop', '2026-11-03')`);
+  old.close();
+  await start(data, repo);
+  const db = new DatabaseSync(`${data}/hq.db`);
+  assert.deepEqual({ ...db.prepare('select uid, woke from workspace_messages').get() }, { uid: 'm1', woke: null });
+});
+
 test('a historical review database keeps its waiting pull request across restarts', async () => {
   const directory = historicalDatabase(), repo = fixtureRepo();
   await start(directory, repo);

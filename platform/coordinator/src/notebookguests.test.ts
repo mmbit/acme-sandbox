@@ -29,18 +29,12 @@ let clients = 0;
 async function signIn(link: string) {
   const door = new URL(link).pathname;
   const from = `192.0.2.${++clients}`;
-  const form = (path: string, fields: Record<string, string>) =>
-    fetch(h.base + path, {
-      method: 'POST',
-      redirect: 'manual',
-      body: new URLSearchParams(fields),
-      headers: { origin: ORIGIN, 'content-type': 'application/x-www-form-urlencoded', 'x-forwarded-for': from },
-    });
+  const form = (path: string, fields: Record<string, string>) => h.postForm(path, fields, from);
   const sent = await form(`${door}/send`, {});
-  const code = /: (\d{6})/.exec(await sent.text())![1];
+  const code = /: (\d{6})/.exec(sent.text)![1];
   const verified = await form(`${door}/verify`, { code });
   assert.equal(verified.status, 303);
-  const cookie = verified.headers.get('set-cookie')!.split(';')[0];
+  const cookie = String(verified.headers['set-cookie']?.[0]).split(';')[0];
   return async (path: string, body?: unknown, contentType = 'application/json') => {
     const response = await fetch(h.base + path, {
       method: body === undefined ? 'GET' : 'POST',

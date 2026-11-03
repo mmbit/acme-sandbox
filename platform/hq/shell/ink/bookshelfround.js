@@ -1,6 +1,6 @@
-// A review round's book on the Shelf (bookshelf.js draws it, bookshelfbooks.js its book): Close the round (its menu),
-// asking first while asks are open; the book wrapped in its envelope and away to the CEO; back, its string pulled, unwrapped
-// and opened at its first Advice page. Each moment of the envelope's played softly, heard as paper.
+// A review round's book (bookshelf.js draws it, bookshelfbooks.js its book on the Shelf): Close the round (its overview's
+// options, bookshelfoptions.js), asking first while asks are open; then the Shelf, the book wrapped in its envelope and
+// away to the CEO; back, its string pulled, unwrapped and opened at its first Advice page. Each moment of the envelope's played softly, heard as paper.
 import { heard } from './booksounds.js';
 import { closeRound, loadPages, unwrapRound } from './notebookdata.js';
 
@@ -21,8 +21,8 @@ function rounded(s, ui, n, what) {
   if (what === 'close' || what === 'anyway') return closeIt(s, ui, n, what === 'anyway');
   if (what === 'unwrap' && n.round.state === 'back') return unwrap(s, ui, n);
 }
-// Close the round: refused while asks are open (asksOpen), the question asked on its tile with the count the Shelf
-// reads again; closed, wrapped in its envelope. Any other refusal is said as it is.
+// Close the round: refused while asks are open (asksOpen), the question asked in its options with the count read
+// again; closed, the Shelf shows it wrapped in its envelope. Any other refusal is said as it is.
 async function closeIt(s, ui, n, anyway) {
   s.asking = null;
   let closed;
@@ -32,12 +32,16 @@ async function closeIt(s, ui, n, anyway) {
     if (e.reason === 'asksOpen' && !anyway) {
       s.asking = { id: n.id };
       await ui.refresh();
-      return s.body.querySelector('.bk-round-ask [data-round=anyway]')?.focus();
+      return s.far.querySelector('.bk-round-ask [data-round=anyway]')?.focus();
     }
     ui.draw();
     return ui.told(e.message);
   }
   n.round = closed; // (the round as the Shelf reads it, away)
+  if (s.level === 'pages') {
+    s.menu = false;
+    return s.hooks.shelf();
+  }
   await played(s, ui, n, 'wrap');
   ui.refresh();
 }

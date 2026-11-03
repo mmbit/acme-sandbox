@@ -5,7 +5,7 @@ import { anchorOf, dataUrlPicture, inkOf, picturesOf, refuse, textsOf, wordsOf }
 import { emptyGroup, hasAny, picks, typedBoxes } from './notebookparts.js';
 import { boxOf, scrapSize } from './notebookstack.js';
 import { NOTE_TEXT, ROOM, bodyOf, heightFor, retypedNote, unitOf } from './scrapunit.js';
-import { isCanvas, liftedOut } from './sketchcanvas.js';
+import { isCanvas, isPlace, liftedOut } from './sketchcanvas.js';
 import { chapterOf } from './notebookchapters.js';
 import { answersOf, seenTick } from './notebookplayanswers.js';
 import { assignedOf } from './notebookplaypeople.js';
@@ -41,8 +41,8 @@ function createGroup(s, b) {
 function placeGroups(s, b) {
   const p = openPage(s, b?.page);
   if (!onCanvas(s, p)) refuse(400, 'only a sketch page places its units');
-  if (!Array.isArray(b.places)) refuse(400, 'places: [{ id, x, y }]');
-  const units = b.places.map(at => ({ at: placeOf(at), g: s.group(Number(at?.id)) }));
+  if (!Array.isArray(b.places) || !b.places.every(isPlace)) refuse(400, 'places: [{ id, x, y }]');
+  const units = b.places.map(at => ({ at: { x: at.x, y: at.y }, g: s.group(Number(at.id)) }));
   if (!units.every(u => u.g?.page === p.id && u.g.parent === null && u.g.deleted === null))
     refuse(400, 'each id is a unit on this page');
   const placed = units.filter(u => !u.g.place);
@@ -182,7 +182,7 @@ function splitGroup(s, b) {
 // Whether a page is a canvas (sketchcanvas.js), and a place as one's unit keeps it ({ x, y }, the page's px)
 const onCanvas = (s, p) => isCanvas(chapterOf(p.kind, s.notebook(p.notebook)?.kind));
 function placeOf(v) {
-  if (!Number.isFinite(v?.x) || !Number.isFinite(v?.y)) refuse(400, 'a place is { x, y }');
+  if (!isPlace(v)) refuse(400, 'a place is { x, y }');
   return { x: v.x, y: v.y };
 }
 // The elements a request gives, each checked, the rest as they were

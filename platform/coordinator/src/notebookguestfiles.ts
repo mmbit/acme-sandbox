@@ -7,7 +7,9 @@ import { brand } from './company.ts';
 import { PREVIEW, REPO_DIR, ZONE } from './config.ts';
 import { hqDir } from './files.ts';
 import { looks } from '../../hq/looks.mjs';
-import { BOARD_EXTRAS, OPEN_EXTRAS, extraFile } from '../../hq/extras.mjs';
+import { BOARD_EXTRAS, OPEN_EXTRAS } from '../../hq/extras.mjs';
+import { reply } from './uploads.ts';
+import type { RouteHandler, RouteTable } from '../../../shared/routes/routes.ts';
 
 const words = {
   en: { title: 'Your notebooks', footer: 'Notes are answered by our AI team.' },
@@ -15,29 +17,39 @@ const words = {
   de: { title: 'Deine Notizbücher', footer: 'Unser KI-Team beantwortet deine Notizen.' },
 };
 export const roomTitle = (lang: guests.Lang) => words[lang].title;
-export function serveFile(res: ServerResponse, path: string) {
-  if (path === '/renderers/looks.json') {
+// The shell's own files under the room's address, as the board's HQ serves them: the looks, HQ's extra modules
+// (extras.mjs), review mode's parts, and the shell's scripts, styles and fonts
+export const fileRoutes = (room: string): RouteTable => ({
+  [`GET ${room}/renderers/looks.json`]: ({ res }) => {
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify(looks(hqDir('/'))));
-    return true;
-  }
-  const shared = extraFile({ ...BOARD_EXTRAS, ...OPEN_EXTRAS }, path);
-  const review = /^\/review\/([a-z]+)\.js$/.exec(path);
-  if (shared?.endsWith('.js') || review) {
-    const file = `${REPO_DIR}/${shared ?? `shared/review/${review![1]}.js`}`;
-    if (!existsSync(file)) return false;
-    res.writeHead(200, { 'content-type': 'text/javascript', 'cache-control': 'no-cache' });
-    res.end(readFileSync(file));
-    return true;
-  }
-  if (!/^\/(?:util\.js|foley\.js|(?:shell|world|renderers)\/[a-zA-Z0-9_/-]+\.(?:js|css|woff2))$/.test(path))
-    return false;
-  const file = path === '/foley.js' ? `${REPO_DIR}/shared/demo/foley.js` : `${hqDir(path)}${path}`;
-  if (!existsSync(file)) return false;
-  const type = path.endsWith('.css') ? 'text/css' : path.endsWith('.woff2') ? 'font/woff2' : 'text/javascript';
+  },
+  ...extraRoutes(room, { ...BOARD_EXTRAS, ...OPEN_EXTRAS }),
+  [`GET ${room}/review/:part([a-z]+).js`]: ({ res, params }) =>
+    sendFile(res, `${REPO_DIR}/shared/review/${params.part}.js`),
+  [`GET ${room}/:path(util\\.js|(?:shell|world|renderers)/[\\w\\/\\-]+\\.(?:js|css|woff2))`]: ({ res, params }) =>
+    sendFile(res, `${hqDir(`/${params.path}`)}/${params.path}`),
+  [`GET ${room}/*`]: ({ res }) => reply(res, 404, { error: 'not found' }),
+});
+// The extras' scripts as routes, a folder's by its scripts' names
+const extraRoutes = (room: string, table: Record<string, string>): RouteTable =>
+  Object.fromEntries(
+    Object.entries(table)
+      .filter(([address, file]) => address.endsWith('/') || file.endsWith('.js'))
+      .map(([address, file]): [string, RouteHandler] =>
+        address.endsWith('/')
+          ? [
+              `GET ${room}${address}:name([a-z]+\\.js)`,
+              ({ res, params }) => sendFile(res, `${REPO_DIR}/${file}${params.name}`),
+            ]
+          : [`GET ${room}${address}`, ({ res }) => sendFile(res, `${REPO_DIR}/${file}`)],
+      ),
+  );
+function sendFile(res: ServerResponse, file: string) {
+  if (!existsSync(file)) return reply(res, 404, { error: 'not found' });
+  const type = file.endsWith('.css') ? 'text/css' : file.endsWith('.woff2') ? 'font/woff2' : 'text/javascript';
   res.writeHead(200, { 'content-type': type, 'cache-control': 'no-cache' });
   res.end(readFileSync(file));
-  return true;
 }
 const imports = JSON.stringify({
   imports: Object.fromEntries([
@@ -46,16 +58,21 @@ const imports = JSON.stringify({
   ]),
 });
 
-// The guest's room around their book: the company's colours, fonts and logo inline, the rest in bookguestroom.css
+// The guest's room around their book: the company's colours, fonts and logo inline, the rest in bookguestroom.css.
+// The book's own colours from brand.yaml: its accent (colours.notebook) and what's picked or done (colours.chosen).
 export function servePage(res: ServerResponse, name: string, lang: guests.Lang) {
-  const notebook = guests.hex(brand().colours?.notebook);
+  const colours = brand().colours ?? {};
+  const bookColours = ['notebook', 'chosen']
+    .filter(key => colours[key])
+    .map(key => `--${key}:${colours[key]};`)
+    .join('');
   const look = guests.look();
   const css =
     guests.palette() +
     look.fonts +
     guests.logoCss('.guest-logo') +
     guests.passkeyCss +
-    `:root{${notebook ? `--notebook:${notebook};` : ''}--guest-font:${look.family}system-ui}`;
+    `:root{${bookColours}--guest-font:${look.family}system-ui}`;
   res.writeHead(200, {
     'content-type': 'text/html; charset=utf-8',
     'cache-control': 'no-store',

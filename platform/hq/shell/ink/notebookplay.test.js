@@ -463,40 +463,52 @@ test("Search: a group's words, the boxes typed on its page and the answers under
   assert.deepEqual(play.route('/api/book/search', { q: '' }), { q: '', found: [], total: 0 });
 });
 
-test('a scrap handed to someone keeps its place and wears their tag; the short list puts them first', () => {
+test('a scrap of an Asks page handed to a guest keeps its place and wears their tag; the short list puts them first', () => {
   const people = [
     { to: 'guest:14', name: 'Femke Jansen-Okafor', kind: 'guest' },
     { to: 'agent:wiebe', name: 'Wiebe', kind: 'agent' },
     { to: 'guest:11', name: 'Annemieke Bos', kind: 'guest' },
   ];
-  const { play, post, groups, page } = played({ people });
+  const made = { created: '2026-10-27T08:00:00.000Z', updated: '2026-10-27T08:00:00.000Z' };
+  const { play, post, groups } = played({
+    people,
+    notebooks: [{ id: 1, kind: 'mine', name: 'My journal', ...made }],
+    pages: [
+      { id: 1, notebook: 1, pos: 0, kind: 'free', label: '', ...made },
+      { id: 2, notebook: 1, pos: 1, kind: 'asks', label: 'Asks', ...made },
+    ],
+  });
+  const [sketch, page] = [1, 2];
   const names = list => list.map(p => p.name);
-  assert.deepEqual(names(play.route('/api/notebooks/people').everyone), [
-    'Annemieke Bos',
-    'Femke Jansen-Okafor',
-    'Wiebe',
-  ]);
+  assert.deepEqual(names(play.route('/api/notebooks/people').everyone), ['Annemieke Bos', 'Femke Jansen-Okafor']);
   const g = post('groups/create', { page, ink: [stroke(10, 10)] });
-  const given = post('groups/assign', { id: g.id, to: 'agent:wiebe' });
-  assert.deepEqual(given.to, people[1]);
+  assert.throws(
+    () => post('groups/assign', { id: g.id, to: 'agent:wiebe' }),
+    e => e.status === 400,
+    'never an agent',
+  );
+  const given = post('groups/assign', { id: g.id, to: 'guest:14' });
+  assert.deepEqual(given.to, people[0]);
   assert.deepEqual(given.group.box, g.box, 'it stays where it is');
-  assert.deepEqual(groups()[0].assigned, [{ ...people[1], answered: false }]);
-  assert.deepEqual(names(play.route('/api/notebooks/people').recent), [
-    'Wiebe',
-    'Annemieke Bos',
-    'Femke Jansen-Okafor',
-  ]);
+  assert.deepEqual(groups(page)[0].assigned, [{ ...people[0], answered: false }]);
+  assert.deepEqual(names(play.route('/api/notebooks/people').recent), ['Femke Jansen-Okafor', 'Annemieke Bos']);
   assert.throws(
     () => post('groups/assign', { id: g.id, to: 'guest:Nobody' }),
     e => e.status === 400,
   );
   assert.throws(
-    () => post('groups/assign', { id: 999, to: 'agent:wiebe' }),
+    () => post('groups/assign', { id: 999, to: 'guest:14' }),
     e => e.status === 404,
+  );
+  // (a sketch's scraps reach their agent by themselves: none is handed over)
+  const drawn = post('groups/create', { page: sketch, ink: [stroke(10, 10)] });
+  assert.throws(
+    () => post('groups/assign', { id: drawn.id, to: 'guest:14' }),
+    e => e.status === 409,
   );
   post('pages/send', { id: page });
   assert.throws(
-    () => post('groups/assign', { id: g.id, to: 'agent:wiebe' }),
+    () => post('groups/assign', { id: g.id, to: 'guest:14' }),
     e => e.status === 409,
   );
 });

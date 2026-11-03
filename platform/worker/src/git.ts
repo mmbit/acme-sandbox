@@ -184,10 +184,16 @@ function lostOnTheWay(e: { killed?: boolean; stderr?: unknown }) {
     )
   );
 }
+// GitHub refusing the worker's own token at the mirror's fetch. Other jobs' fetches with the same token pass a moment
+// before and after it, so it's GitHub's passing fault, not a bad token: a snag too (FetchUnreachedError). A token really
+// revoked still fails each job, once its few runs again are spent.
+const tokenRefused = (e: { stderr?: unknown }) =>
+  /Invalid username or (token|password)|Authentication failed/i.test(String(e.stderr ?? ''));
 // A push that never reached GitHub in all its tries (a refusal is a plain Error): the worker's own snag, so its job goes
-// back in the queue (worker.ts land).
+// back in the queue (landing.ts).
 export class PushUnreachedError extends Error {}
-// The mirror's fetch lost on the way to GitHub (lostOnTheWay), at a job's start: the same snag.
+// The mirror's fetch lost on the way to GitHub (lostOnTheWay) or its token refused for a moment (tokenRefused), at a
+// job's start (worker.ts snagOf) or before a fix round's push (pushUpdated, landing.ts): the same snag.
 export class FetchUnreachedError extends Error {}
 // The pauses before each try again, growing: a few minutes in all
 const PUSH_PAUSES_MS = [15_000, 60_000, 120_000];
@@ -283,9 +289,11 @@ export function gitFlow(o: {
     try {
       root('fetch', '-q', '--prune', 'origin');
     } catch (err) {
-      fetchError = lostOnTheWay(err as { stderr?: unknown })
-        ? new FetchUnreachedError((err as Error).message, { cause: err })
-        : err;
+      const said = err as { stderr?: unknown };
+      fetchError =
+        lostOnTheWay(said) || tokenRefused(said)
+          ? new FetchUnreachedError((err as Error).message, { cause: err })
+          : err;
     }
     releaseKeptTips(fetchError);
   };

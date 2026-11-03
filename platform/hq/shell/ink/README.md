@@ -32,7 +32,7 @@ scoped pages. (HQ's Sketchbook app on the computer, `sketch*`, is gone: the book
 - `agentink.js` is an agent's own ink, and `pagemerge.js` merges two writers' saves of one page.
 - `bookarrive.js` sets down whatever arrives on a page (from the store, or pasted, dropped or heard here) with the
   paper's landing (`bookpaper.js` `land`): held off the page while a copy comes down onto its place. Checked by
-  `bookarrival.mjs`.
+  `book/arrival.mjs`.
 
 A scrap the board just saved (the pin flow) lands in the book: `booklanding.js` lands its ink on its photo
 (`pencil:landing` with `group`) and turns to one saved elsewhere (`book:scrap`); `bookgroupshow.js` turns to its page
@@ -40,10 +40,73 @@ and slides it into view clear of the controls; `notebookstack.js` says where the
 
 The book's routes keep their addresses (`/api/book/…`): they are the Sketchbook's.
 
+## The board's rules
+
+The board set these for Ink. Code and checks that keep one say it, or name it here by its first words.
+
+- **A blank page isn't kept once it's left.** A sketch page with nothing on it goes as another page shows.
+- **Handwriting stays ink.** Nothing turns the board's writing into type, on the page or in what's saved, and the pen
+  never strikes typed words out. Whoever reads a note reads its strokes. Only a call's agent gets them read out for
+  it, by Haiku 5.5 (`platform/coordinator/src/ink/inkread.ts`), and never onto the page.
+- **The Undo takes back only the board's own steps.** An agent's change, or one made on another screen, is no step.
+  The board deletes or changes it as it would its own.
+- **Nothing stays drawn (rule zero).** A mark's ink leaves HQ or an artifact once its note is saved or let go.
+- **On a call the pen is for the call's agent.** HQ's pin, the viewer's pin and the bar's Note go away for the call
+  and come back after it. The board inks in red, and a mark goes to the call's agent with the words the call heard.
+  It never goes into the notebook by itself and is never judged: the agent decides what becomes of it. Its ink stays
+  drawn until the agent's turn on it is done, and anything left goes at the hang-up.
+- **One tap starts the microphone.** Its button asks for it, never a mark, and nothing on a page has to be held down.
+  The Pencil's tap on it counts as a finger's, so the board can dictate straight after scribbling. A preview in HQ's
+  viewer never gets the microphone: HQ records for it.
+- **The book comes in from the right.** Its spine sits just past the screen's right edge at every size, the paper runs
+  on to the screen's edge, and the cover shows only at its head, foot and outer edge. It is one size from the moment
+  it shows, and HQ's buttons never peek over it. Upright on an iPad mini it starts folded and opens as the spread.
+- **Only a deliberate pull moves the book.** A finger's swipe from the page's left edge closes it. The Pencil and the
+  mouse write there as anywhere on the page.
+- **The rail floats.** The tools are toolbars floating over the paper's right edge, never a strip of it: Select, Pen,
+  Eraser, Shapes, Text, then Undo and Redo, with the page's controls at its foot.
+- **The page arrows stay put and within the tab.** They never move as pages turn, and they never turn on into the next
+  tab. The page list shows only the tab's pages, numbered as its counter is.
+- **A title that can change shows a pencil.** A tap on a page's title opens the page list with the title to write in.
+  A call page's longest title shows whole on an iPad mini.
+- **A sent page stays where it is.** No page is made after it, even after the last.
+- **What an agent puts down lands in sight only on an idle page.** The paper never slides to it while the board draws.
+- **Ink stays where it was drawn.** A line beside a scrap stays put as the scrap's room grows or is dragged, and the
+  room's edge reads at a glance.
+- **A tall picture is fine, a page it takes over isn't.** A scrap's picture is at most about its width tall.
+- **A box of words moves by its grip, with any tool.** No Select first, and it is never squeezed to a sliver.
+- **The first pen tap turns on scrolling by touch.** On a fresh device a finger draws until then. Turned off in
+  Preferences, it stays off.
+- **The book is the design stage (Ink Studio).** Nothing in it is built yet, so a card for a secret, a step the board
+  takes or built work stays on the desk phone.
+- **My shelf holds big books with covers,** drawn like the notebook itself.
+
+## The book check
+
+`platform/hq/book-check.mjs` plays Ink as the board lives it: held like an iPad mini in WebKit (touch, 744 × 1133) and
+in Chromium, on desktops and phones, on HQ's mock data, with the Notebook's store played in memory
+(`book/notebookroute.mjs` on `notebookplay.js`). Each story's name says what it checks. `--stories 'words|more words'`
+runs the stories whose names hold them, `--webkit` runs those in WebKit, `--first` the check's first part alone, and
+`--shots dir` keeps their stills. The Pencil on HQ's own page plays first, in `book-check.mjs` itself: a ring with no
+button first, its post-it and Save, a finger's drag drawing nothing, the pen held still taking a voice note, a
+two-finger tap taking it back, and every kind of line the same wet as dry.
+
+The stories are in `platform/hq/book/`, a file for each part of Ink named for it (`lasso.mjs`, `pin.mjs`,
+`notebookasks.mjs`). What two stories need lives in one of three modules, never copied:
+
+- `start.mjs`: the states a story starts from: a page watched for errors, HQ loaded, the book at rest open, the book
+  open on a touch screen with a pen.
+- `kit.mjs`: the screens, waits and readings: the iPad mini both ways, `until`, a screenshot's pixels, the
+  microphone's stand-in, the pin.
+- `hands.mjs`: the pen's and fingers' gestures, the same in either engine.
+
+Guest notebooks run against the real coordinator instead (`book/guests.mjs`, below).
+
 ## A page of scrap units
 
-A notebook page is a column of scrap units laid out as a masonry, never a canvas with marks of its own. Three ideas
-carry it, each in one module that the store, its play and HQ's page share:
+A notebook page holds scrap units, never marks of its own. A page of scraps (its Asks, a call's notes) lays them as a
+masonry, and a Sketch page is a canvas (below). Three ideas carry it, each in one module that the store, its play and
+HQ's page share:
 
 - **A scrap unit** (`scrapunit.js`) is one scrap: its own small canvas, `UNIT_W` scrap px wide and `h` tall. Its
   picture, typed words and ink are in its own px from its top-left, so its ink moves with it wherever the page puts it.
@@ -60,20 +123,73 @@ carry it, each in one module that the store, its play and HQ's page share:
   every place. A new day on the page starts under a date across every column (`headers`). `placeAt` finds the unit under a pen, and `pointIn` turns the pen's point into that unit's px.
 - **The page** is HQ's (`bookunits.js`): it measures its width, calls `layout` again whenever the width or a unit's
   height changes, and draws each unit at its place as a sticky note, the page's title on top and a date where a day
-  starts. It scrolls down only and ends left of the rail of controls (`--bk-rail-width`). A stroke goes to the unit it
+  starts. It pinch-zooms from its fit (the paper's width) in to `ZOOM_MAX`, panning across as far as it's zoomed past
+  its width (`bookview.js`, its limits in `bookrow.js`), and ends left of the rail of controls (`--bk-rail-width`). A stroke goes to the unit it
   starts on, else to the board's own drawing it comes near, else it's a new unit of its own, the page's last, kept in
   the column it was drawn in (masonry's and the store's `column`), its ink where it was drawn; a unit's canvas reaches all its ink. The
   board's own drawings have no paper card. A scrap's words are part of its body; under an agent's body its
   room shows, with a handle at its foot (`heightFor`, saved with `/api/notebooks/groups/resize`). The page's lists hold
   each element at its unit's place on the page; `booksave.js` saves it in the unit's own px.
+- **A Sketch page** is a canvas (`sketchcanvas.js`, shared by the page, the store's `notebookplaces.ts` and the picture
+  agents read): each unit keeps its place in the page's px (`notebook_groups.place`), the same at any width. A stroke
+  apart from every unit is a unit of its own where it's drawn. A unit with no place yet is laid as the masonry lays it
+  and pinned there (`/api/notebooks/groups/place`: the first screen's place stands). What hangs under a unit goes
+  where it covers no other. The page opens at scale 1 (a column's fit on a phone: `opensAt`), zooms from `ZOOM_OUT`
+  (further out where what's drawn needs it) to `ZOOM_MAX`, and pans any way till an edge of what's on it is left.
+
+
+## The book's frame
+
+The board's rules for the book as a real book, seen from the side.
+
+- **The page:** the spine is the screen's right edge, and only the left page shows. The paper runs the screen's whole
+  height, up under the status bar's blur, with no cover band (`book.css`). Upright, on a phone or an iPad, the page is
+  the whole screen. Beside HQ's page a slim page block stands at its outer edge.
+- **Nothing to press under the blur:** the drawable page, the controls and the bookmarks all start below `--sat`.
+- **Two islands** float over the paper, HQ's own controls in HQ's look (`bookui.js`, `bookstrip.css`). Only the page is
+  paper. The tools stand on the right, upright and short: on a phone, well under half the screen's height. The bar runs
+  along the foot between the screen's corners: Undo and Redo at its left, the page's arrows and count exactly in its
+  middle, its dots menu at its right.
+- **The tools,** in order: the pen, shapes, the eraser, Select, Text and the mic (`bookpalette.js`). The pen and the
+  marker are one tool. Its card holds what draws, its colour and its width, one tap away. A tap picks a tool, and
+  nothing waits on a hold.
+- **Notes** lie on the page as plain paper, with no inner shadow or turned corner on the room under them
+  (`bookgroups.css`).
+- **The tear:** a press at the page's right edge, where the spine is, drawn to the left, tears a copy off (`booktear.js`).
+  It shrinks into the hand, to be let go on Submit, PDF or PNG. Nothing shows at the edge till it's pulled. Tear off
+  and send in the bar's dots menu opens the same three.
+- **All pages** (the overview, `bookshelf.js`) is the page's own paper and dots top to bottom, with one title line ("‹
+  Shelf", the notebook's name, its options: Change cover, Archived pages, a project book's Archive this book), the
+  search as an island, plain chapter heads and page pictures with no outline or button on any. A page is archived from
+  the bar's dots menu, where Sign in another device sits under Preferences. One type at one weight, Atkinson
+  (`fonts/`).
+- **My shelf** stays HQ's own window from its Shelf key, and the window is a bookcase (`bookshelfbooks.js`): books
+  covers out on lipped boards, two to a board on a phone and three on an iPad, the Archive a lidded box and the plant
+  on a board, drawn with depth as the books are. No menu on a cover. A book tapped opens on its All pages.
+
+## What a page offers
+
+The board's rules for what a Notebook page lets you do with what's on it.
+
+- **Assign** hands over only a scrap of an Asks page, and only to a guest (`bookassign.js`, the store's
+  `bookassign.ts`). A sketch's scraps reach their agent by themselves, so a sketch's selection has no Assign.
+- **Select's bar** is one line of icons: Duplicate, Move to page… and Delete, with Assign first on an Asks page
+  (`bookselectclip.js`). Duplicate is the copy and paste, Move to page… and a drag the cut.
+- **Moving to a page** takes what's picked to an open page of its chapter, or to a new page, from one list: this page
+  muted, New page last (`bookmoveto.js`). Select's Move to page… opens it under its button, and the Pencil's ring and
+  line out of it opens it over the page bar.
+- **A locked page** (sent, or a call's notes page not yet handed out) takes no tool, key or Paste (`bookwrite.js`
+  `drawable`, `bookselectclip.js`). Once sent it shows no Undo, Redo, or Tear off and send (a guest's page keeps Undo
+  while its send can still be taken back: `bookcontrols.js`), and a sent sketch page offers Duplicate instead: a new
+  open page with everything on it, to carry on from.
 
 ## Bookmarks
 
 Every book of the board's has its chapters as bookmarks (`bookmarks.js`, `notebookchapters.js` shared with the store):
 Sketch, Asks and Calls, a round's Guests, Asks and Advice. A page's chapter comes from its kind, and the store lists a
-book's pages chapter by chapter, so the rail counts within one ("1/4" between the page's arrows). The tabs stand along the
-book's top, tucked behind its page, wherever the screen is tall enough; sideways on a phone they peek out of a thick
-white stack of page edges at its left. A call's notes page is
+book's pages chapter by chapter, so the bar counts within one ("1 / 4" between the page's arrows). Each keeps one colour
+for good and never lights. Beside HQ's page they stick out of the page block to the left. On a page that is the whole
+screen they lie folded at its left edge, slivers with their icons, and a tap brings them out. A call's notes page is
 under Calls, shut at hang-up and stamped Sent once the call's follow-up has handed out what's on it.
 
 ## Guest notebooks

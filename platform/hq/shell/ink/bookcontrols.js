@@ -1,12 +1,14 @@
-// The page's controls on the bar along the book's foot (bookui.js): in its middle the page before, where it is in its
-// chapter ("3 / 12", which opens the notebook's pages by name, the page's title at their head to write in) and the
-// page after; at its right the overview and New page where the page is wide enough (else in its dots menu), and in the
-// dots menu Tear off and send (booktear.js) and the cog for this device's preferences (bookprefs.js). The page's name is
-// its title, drawn at its head (bookunits.js), and its control's label. The board's page goes by tearing it off at its
-// spine's edge onto Submit (booktear.js), and once sent it's locked: the tools give way to a quiet "Sent, locked". An
-// invited person's page goes by its Send key on the bar (bookpagesend.js); none on a page sent, nor on a call's notes
-// page.
-import { button, island, setPressed, lineIcon, beside } from './bookui.js';
+// The page's controls on the bar along the book's foot (bookui.js lays the bar out).
+// - In its middle: the page before, where the page is in its chapter ("3 / 12") and the page after. "3 / 12" opens the
+//   notebook's pages by name, with the page's title at their head to write in.
+// - At its right: the overview and New page. Where the page is narrow they fold into the dots menu.
+// - The dots menu: Tear off and send (booktear.js) and Archive this page (into the overview's archived pages,
+//   bookshelf.js). Then Preferences for this device (bookprefs.js), Sign in another device (pair.js) and Close.
+// The page's name is its title, drawn at its head (bookunits.js), and its control's label. The board's page goes by
+// tearing it off at its spine's edge onto Submit (booktear.js). Once sent it's locked: the tools go, Undo and Redo with
+// them, and on a sketch page Duplicate takes their place, a copy to carry on drawing from (bookpages.js). An invited
+// person's page goes by its Send key on the bar (bookpagesend.js), never on a page already sent or a call's notes page.
+import { button, island, setPressed, lineIcon, beside, DUPLICATE_ICON } from './bookui.js';
 import { mountPrefs } from './bookprefs.js';
 import { esc } from '../../util.js';
 import { nameOf } from './bookhead.js';
@@ -27,6 +29,10 @@ const ICONS = {
   send: lineIcon('<path d="M21 3L3 10.5l7 2.5 2.5 7z"/><path d="M21 3l-11 10"/>'),
   // (a padlock, shut)
   lock: lineIcon('<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>'),
+  // (a box with its lid, as the overview's)
+  archive: lineIcon(
+    '<rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8"/><path d="M10 12h4"/>',
+  ),
   cog: lineIcon(
     '<circle cx="12" cy="12" r="3"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M5.5 18.5l1.7-1.7M16.8 7.2l1.7-1.7"/><circle cx="12" cy="12" r="6.4"/>',
   ),
@@ -34,7 +40,8 @@ const ICONS = {
 import { scope, word } from './bookscope.js';
 
 // book (bookpages.js): { views, cur }. act: what the controls do, bookpages.js's: overview(), level(), turnTo(i),
-// newPage(), send() (an invited person's). Returns { update() }: the controls say where the book is now.
+// newPage(), duplicate() (the page shown's copy), archive() (the page shown), send() (an invited person's). Returns
+// { update() }: the controls say where the book is now.
 export function mountControls(book, act) {
   const over = button({
       icon: ICONS.overview,
@@ -53,19 +60,26 @@ export function mountControls(book, act) {
     island('keys').append(over, add);
   }
   island('book').prepend(cog);
+  const archive = scope ? null : archiveKey(act);
   titleTaps(book, act, name);
   // (the asks still open on the page, counted by its title; in a guest's book, the scraps handed to them.)
   const forYou = mountForYou(book);
   const send = scope ? sendKey(act) : null,
-    locked = scope ? null : lockLine();
+    locked = scope ? null : lockLine(act);
   return {
     update() {
       const far = act.level() !== 'page',
         page = book.views[book.cur]?.page;
       // (the overview open: only its own key, pressed, to come back by: bookstrip.css)
       setPressed(over, far);
+      const still = !far && !!page && shut(page);
       if (send) send.hidden = far || !page || shut(page) || page.kind === 'call';
-      locked?.(!far && !!page && shut(page) && (page.sent || page.sending ? 'Sent, locked' : 'Locked'));
+      locked?.(still && page);
+      // (a locked page takes no change, but a guest's send can still be taken back; once sent, no Tear off and send:
+      // booktear.js)
+      historyKeys(book, page, still);
+      book.tear?.();
+      if (archive) archive.hidden = far || !page;
       before.disabled = mate(book, -1) < 0;
       after.disabled = mate(book, 1) < 0;
       name.disabled = !page;
@@ -77,6 +91,12 @@ export function mountControls(book, act) {
       named(name, page, mates.indexOf(book.cur) + 1, mates.length);
     },
   };
+}
+// Undo and Redo, hidden on a locked page (still), unless it's a guest's page whose send can still be taken back: in its
+// seconds to undo, its step still there (bookpagesend.js).
+function historyKeys(book, page, still) {
+  const undoable = !!scope && !!page?.sending && book.steps.some(s => s.page === page);
+  for (const b of island('history').children) b.hidden = still && !undoable;
 }
 // The page's title tapped in its head: the pages open with it to write in
 function titleTaps(book, act, name) {
@@ -112,7 +132,7 @@ function pageButtons(book, act) {
   return { before, after, name, add };
 }
 // The page before or after in the shown page's chapter (its index in book.views, -1 at the chapter's end): the arrows
-// stay within the tab, never turning on into the next one (board, call 178.)
+// stay within the tab, never turning on into the next one
 function mate(book, step) {
   const mates = matesOf(book);
   return mates[mates.indexOf(book.cur) + step] ?? -1;
@@ -133,52 +153,67 @@ function sendKey(act) {
   island('send').append(send);
   return send;
 }
-// The board's page sent, or else read-only (a call's notes page till its follow-up hands it out): locked, a lock in
-// the tools' place, its words its tooltip, the tools unseen in their room while it shows (bookshare.css). Returns
-// locked(words, or false).
-function lockLine() {
+// Archive this page, in the dots menu
+function archiveKey(act) {
+  const archive = button({ icon: ICONS.archive, label: word('archivePage'), onClick: () => act.archive() });
+  island('menu').append(archive);
+  return archive;
+}
+// The board's page sent, or else read-only (a call's notes page till its follow-up hands it out): locked, the tools
+// unseen in their room (bookshare.css). Read-only, a lock in their place and "Locked"; sent, nothing, the SENT stamp on
+// the page says it. A sketch page's tools give way to Duplicate, lit as the one
+// to press: the board carries on from a page it sent on its copy. The tools'
+// island goes where neither shows. Returns locked(the page shown when locked, or false).
+function lockLine(act) {
   const line = island('tools').closest('.bk-strip'),
-    lock = document.createElement('p');
+    lock = document.createElement('p'),
+    copy = button({
+      icon: DUPLICATE_ICON,
+      text: word('duplicate'),
+      label: word('duplicatePage'),
+      keys: word('duplicatePageHint'),
+      onClick: () => act.duplicate(),
+    });
   lock.className = 'bk-locked';
-  lock.innerHTML = `${ICONS.lock}<span></span>`;
+  lock.innerHTML = `${ICONS.lock}<span>Locked</span>`;
   lock.setAttribute('role', 'status');
-  line.append(lock);
-  return words => {
-    line.toggleAttribute('data-locked', !!words);
-    if (words) lock.lastChild.textContent = words;
+  copy.classList.add('bk-duplicate');
+  line.append(lock, copy);
+  return page => {
+    line.toggleAttribute('data-locked', !!page);
+    lock.hidden = !page || !!(page.sent || page.sending);
+    copy.hidden = !page || page.chapter !== 'sketch';
+    line.hidden = !!page && lock.hidden && copy.hidden;
   };
 }
 
 // The pages of the shown page's tab by name, in order, the one shown marked; a choice turns to it once the title is
-// through. The shown page's title is written in place of its name meanwhile (booktitle.js): the pages close as it ends
-// or its save is refused, and it lasts until it's saved or let go, or its page goes. Their control tapped again closes
-// them as a tap away does, the title saved (board, call 178); write: opened from the page's title, to write it in.
+// through. The shown page's title is written at their head meanwhile (booktitle.js): the pages close as it ends, saved,
+// let go or its page gone, and stay open on a refused save, the refusal under the field. Their control tapped again saves the title as a tap away does; write: opened from the page's
+// title, to write it in.
 let open = null,
   titling = null;
 function menu(book, act, from, write = false) {
-  if (open) return write ? writeIn() : titling ? titling.end(true) : close();
+  if (open) return write ? writeIn() : titling.end(true);
   const card = document.createElement('div');
   card.className = 'bk-card bk-pages-menu';
   card.setAttribute('role', 'menu');
   card.setAttribute('aria-label', word('pages'));
   card.innerHTML = menuOf(book);
-  titling = editTitle(from, book, card, ended => {
-    if (ended) titling = null;
+  titling = editTitle(from, book, card, () => {
+    titling = null;
     close();
   });
   beside(card, from);
   card.addEventListener('click', e => {
     const b = e.target.closest('button');
     if (!b) return;
-    close();
     titling.end(true).then(saved => saved && act.turnTo(Number(b.dataset.i)));
   });
-  // (a tap away closes the pages and saves the title, booktitle.js; Escape is the title's: letting it go closes them. A
-  // tap on their control is its click's.)
-  const away = e => ![card, titling.box, from].some(el => el.contains(e.target)) && close();
-  addEventListener('pointerdown', away, true);
+  // (a tap away and Escape are the title's, booktitle.js: saving it or letting it go closes the pages. A tap on their
+  // control is its click's.)
   from.setAttribute('aria-expanded', 'true');
-  open = { card, from, shut: () => removeEventListener('pointerdown', away, true) };
+  open = { card, from };
   // (a touch screen raises its keyboard over the pages for a focused field: there the shown page's row has the focus,
   // and a tap on the title writes, unless it's the title that was tapped)
   if (write || matchMedia('(pointer: fine)').matches) writeIn();
@@ -192,14 +227,13 @@ function writeIn() {
 // The pages closed, the title left as it is
 function close() {
   if (!open) return;
-  open.shut();
   open.card.remove();
   open.from.setAttribute('aria-expanded', 'false');
   open = null;
 }
 
 // The menu's rows: the shown page's chapter, numbered as the counter shows them ("2/8": 2), each turning to its index
-// in book.views (board, call 178.)
+// in book.views
 function menuOf(book) {
   return `<ul class="bk-menu">${matesOf(book)
     .map(

@@ -88,6 +88,7 @@ import { teamEvent, inTeam } from './team.ts';
 import * as push from './push.ts';
 import * as mail from './mail.ts';   // (askMail, mailKind)
 import * as notices from './notices.ts';
+import * as mailsort from './mailsort.ts';
 import type { MailKind, MailAccess } from './mail.ts';
 import { testSecrets, secret, validNames, processOnly, redact } from './secrets.ts';
 import * as addresses from './addresses.ts';
@@ -135,6 +136,7 @@ import * as notebook from './notebook.ts';   // the Notebook: notebooks and thei
 import * as notebookgroups from './notebookgroups.ts';   // and the groups on its pages
 import * as notebookplaces from './notebookplaces.ts';   // and a sketch page's units' places
 import * as notebooktidy from './notebooktidy.ts';   // and its blank pages let go once left
+import { duplicatePage } from './notebookduplicate.ts'; // and a sketch page duplicated
 import './notebookunits.ts';   // the groups from before scrap units carried into them, once
 import { createScrap } from './notebookscraps.ts';   // a scrap stacked on one
 import * as trypreview from './ink/trypreview.ts';
@@ -503,6 +505,7 @@ const api: Record<string, BoardRoute> = {
   'POST /api/notebooks/pages/order': (q, s, b) => refusal(notebook.orderPages(b)),
   'POST /api/notebooks/pages/archive': (q, s, b) => refusal(notebook.archivePage(b)),
   'POST /api/notebooks/pages/tidy': (q, s, b) => refusal(notebooktidy.tidyPages(b)),
+  'POST /api/notebooks/pages/duplicate': (q, s, b) => refusal(duplicatePage(b)),
   'POST /api/notebooks/pages/title': (q, s, b) => refusal(notebook.titlePage(b)),
   'POST /api/notebooks/pages/zoom': (q, s, b) => refusal(notebook.zoomPage(b)),
   // (at once, never undone: the board's Undo of a send gone.)
@@ -531,11 +534,19 @@ const api: Record<string, BoardRoute> = {
   'POST /api/preview/link': (q, s, b) => preview.link(String(b.url ?? '')),
   'POST /api/jobs': (q, s, b) => jobs.createJob({ agent: b.agent ?? ceo(), title: b.title, prompt: b.prompt ?? b.title, queuedBy: jobs.BOARD }),
   'GET /api/seats': () => seats.listSeats(),
-  'GET /api/mail': () => mail.listMail(),
+  'GET /api/mail': () => mail.listMail(200),   // (every pile's latest)
   'GET /api/mail/one': q => mail.getMail(Number(new URL(q.url ?? '/', 'http://x').searchParams.get('id'))),
   // Mail's "Send to the team" on a mail of the board's own: a job for brand.yaml's mail.forwardTo, the only one that reads it
   // (mail.ts forward).
   'POST /api/mail/forward': (q, s, b) => refusal(mail.forward(Number(b?.id), j => jobs.findAgent(j.agent) ? jobs.createJob(j) : null)),
+  // Mail's one-tap move to another pile (mail.ts setPile), which the sorter learns from (mailsort.ts): Team hands the mail
+  // on as forward does.
+  'POST /api/mail/pile': (q, s, b) => {
+    const id = Number(b?.id), pile = b?.pile;
+    if (!mail.PILES.includes(pile)) return new Refused(400, `a pile is one of ${mail.PILES.join(', ')}`);
+    if (pile === 'team') return refusal(mail.forward(id, j => jobs.findAgent(j.agent) ? jobs.createJob(j) : null));
+    return mail.setPile(id, pile, 'board') ? { pile } : 404;
+  },
   // Mail's and the Gazette's read marks, one set for all the board's devices
   'GET /api/seen': () => seen.all(),
   'POST /api/seen': (q, s, b) => refusal(seen.mark(b?.list, b?.newest)),
@@ -1952,9 +1963,7 @@ const board: RouteTable = {
     const q = url.searchParams;
     const file = workspaces.fileOf(Number(q.get('workspace')), String(q.get('path') ?? ''), q.get('version') ? Number(q.get('version')) : undefined);
     if (!file) return send(res, 404, 'not found', 'text/plain');
-    res.setHeader('content-disposition', `attachment; filename*=UTF-8''${encodeURIComponent(file.path.split('/').at(-1)!)}`);
-    res.setHeader('cache-control', 'private, no-store');
-    return send(res, 200, file.bytes, 'application/octet-stream');
+    return sendDownload(res, file.path.split('/').at(-1)!, file.bytes);
   },
   'GET /api/workspaces/:id(\\d+)': ({ res, params }) => {
     const workspace = workspaces.findWorkspace(Number(params.id));
@@ -2132,6 +2141,7 @@ const hq = routes({
   // (the sign-in pages' look, the guests': pages.ts shell.)
   'GET /pair/look.css': ({ res }) => send(res, 200, guests.signInCss(), TYPES['.css']),
   // The guest desk (guests.ts): an outside colleague's page (and its script), opened by its link and a code by email, never by the board's session
+  ...wrapped(guests.passkeyRoutes, (key, handle) => sameOrigin(handle)),
   '* /guest/*': sameOrigin(({ req, res }) => guests.page(req, res)),
   // A call out's join link (callouts.ts): its page by its token, never the board's session
   'GET /join/*': ({ req, res }) => callline.joinRoute(req, res),
@@ -2175,8 +2185,11 @@ const hq = routes({
 async function sendAttachment(res: ServerResponse, a: ReturnType<typeof mail.attachment>) {
   if (!a) return send(res, 404, 'not found', 'text/plain');
   const bytes = await readFile(a.file), pdf = /\.pdf$/i.test(a.name) && bytes.subarray(0, 5).toString('latin1') === '%PDF-';
-  res.writeHead(200, { 'content-type': pdf ? 'application/pdf' : 'application/octet-stream', 'content-length': bytes.length,
-    'content-disposition': attachment(a.name),
+  return sendDownload(res, a.name, bytes, pdf ? 'application/pdf' : undefined);
+}
+// Outside bytes (a mail's attachment, a shared workspace's file) as a download.
+function sendDownload(res: ServerResponse, name: string, bytes: Buffer, type = 'application/octet-stream') {
+  res.writeHead(200, { 'content-type': type, 'content-length': bytes.length, 'content-disposition': attachment(name),
     'x-content-type-options': 'nosniff', 'content-security-policy': "sandbox; default-src 'none'", 'cache-control': 'private, no-store' });
   return res.end(bytes);
 }
@@ -2282,6 +2295,7 @@ if (import.meta.main) server.listen(PORT, () => {  // tests import app without s
   care.start(); // Care: replies held for Undo go out, cards past their time go
   outbox.start(); // an email cut off mid-send is open again, saying it may have gone
   notices.start(); // an account's notices of the last day without a job get one, then every 10 minutes
+  mailsort.start(); // mail with no pile yet into one
   // a card's files a month after it closed
   cardFilesSweep(); setInterval(cardFilesSweep, 3_600_000);
   // review runs' briefs a week after their pull request settled

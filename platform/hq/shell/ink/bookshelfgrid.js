@@ -1,5 +1,5 @@
 // The Shelf's and a notebook's page grid as plain numbers (bookshelf.js draws them): how many columns fit the paper and
-// how wide each is, the cell under a dragged tile, a page moved in its notebook's order, and the Shelf's order. No DOM,
+// how wide each is, the bookcase's boards, the cell under a dragged tile, a page moved in its notebook's order, and the Shelf's order. No DOM,
 // so node --test reads it (bookshelfgrid.test.js).
 
 // Columns across a width (px): as many as fit at least `least` px wide with `gap` between, at most `most`, never
@@ -7,6 +7,24 @@
 export function gridOf(width, { least, gap, most = Infinity }) {
   const cols = Math.max(1, Math.min(most, Math.floor((width + gap) / (least + gap))));
   return { cols, w: (width - gap * (cols - 1)) / cols };
+}
+
+// The Shelf's bookcase: its books at least this wide, this far apart (bookshelfbooks.css --bk-book-gap), at most this
+// many to a board and this wide; the plant's room at a board's end (its width and the gap before it)
+const BOOKS = { least: 136, gap: 26, most: 6 },
+  BOOK_MOST = 150,
+  PLANT_ROOM = 72;
+// The bookcase's boards across a width (px): the books to a board and how wide each stands (two on a phone, three in
+// the window beside the plant on an iPad), the plant at the end of the first board where its books leave it room
+// ('first'; else 'last', beside the Archive's box), and how far in from each side a board's things start, centred.
+// { cols, book, plant, inset }
+export function shelfFit(width) {
+  const { cols, w } = gridOf(width, BOOKS),
+    book = Math.floor(Math.min(w, BOOK_MOST)),
+    books = cols * book + (cols - 1) * BOOKS.gap,
+    plant = width - books >= PLANT_ROOM ? 'first' : 'last',
+    inset = Math.max(0, Math.floor((width - books - (plant === 'first' ? PLANT_ROOM : 0)) / 2));
+  return { cols, book, plant, inset };
 }
 
 // The cell a point (px from the grid's top-left) falls in, of n: its column and row, each cell w × h with gap between

@@ -6,30 +6,15 @@
 // shelf has every tip as a key and its cards no film, and HQ asks for none. With a folder, it saves the shelf per look.
 //   node platform/hq/manual-check.mjs [screenshot-folder]
 import assert from 'node:assert/strict';
-import { serve } from './serve.mjs';
 import { playwright, openPage, until } from '../../shared/browser/browser.mjs';
-import { lookNames } from './looks.mjs';
+import { DECISION, LOOKS, NAMES, TABLET, base, mockedApi, ringAndControl, server } from './tips.fixture.mjs';
 import { TIPS, ASKS, tipOf } from './shell/tips.js';
 
 const { chromium } = playwright();
-const server = await serve(),
-  base = `http://localhost:${server.address().port}`;
-const LOOKS = lookNames();
-// the sample company's names for its desk phone and intercom, the foundation's
-const NAMES = { phone: 'desk phone', intercom: 'intercom' };
-const TABLET = { width: 1180, height: 820 },
-  PHONE = { width: 390, height: 820 },
+const PHONE = { width: 390, height: 820 },
   NARROW = { width: 1024, height: 768 },
   DESKTOP = { width: 1440, height: 820 };
-const decision = {
-  id: 3,
-  created: new Date().toISOString(),
-  agent: 'wren',
-  kind: 'decision',
-  title: 'A new bench for the garden?',
-  body: 'About a bench.',
-  urgency: 'today',
-};
+const decision = { ...DECISION, created: new Date().toISOString(), urgency: 'today' };
 const library = [
   { path: 'company/CHARTER.md', title: 'Handbook', shelf: 'Handbook', author: 'lyra', html: '<p>Rules.</p>' },
 ];
@@ -83,14 +68,7 @@ async function checkLook(look) {
   for (const at of tipOf('machines', NAMES).steps.map(s => s.at)) {
     await page.waitForSelector('.showme-step:not([hidden])');
     await page.waitForTimeout(300);
-    const [ring, control] = await page.evaluate(
-      at =>
-        [
-          document.querySelector('.showme-ring'),
-          [...document.querySelectorAll(at)].find(e => e.getBoundingClientRect().width > 0),
-        ].map(e => e.getBoundingClientRect().toJSON()),
-      at,
-    );
+    const [ring, control] = await ringAndControl(page, at);
     assert.ok(
       ring.left <= control.left && ring.right >= control.right && ring.top <= control.top,
       `${look}: the ring round ${at}`,
@@ -164,13 +142,7 @@ async function openHq(look, films) {
     if (path === '/api/requests') return r.fulfill({ json: [decision] });
     if (path === '/api/library') return r.fulfill({ json: library });
     if (path === '/api/tips') return r.fulfill({ json: { off: false } });
-    if (path === '/api/book') return r.fulfill({ json: { day: null, today: null, days: [], pages: [] } }); // (the board's book, empty)
-    const mocked = await r.fetch({ url: `${base}/mock${path.slice(4)}.json` });
-    if (mocked.ok()) return r.fulfill({ response: mocked });
-    if (path === '/api/seen') return r.fulfill({ json: {} });
-    if (['/api/gazette', '/api/mail', '/api/review/products', '/api/requests/later'].includes(path))
-      return r.fulfill({ json: [] });
-    return r.fulfill({ status: 404, body: '' });
+    return mockedApi(r, path);
   });
   await page.goto(`${base}/?renderer=${look}&intro=0&hour=11&weather=clear`);
   await until(page, '#loading.gone');

@@ -236,7 +236,7 @@ function outsideJob(m: Message) {
   const [column, source, preamble] = m.guest ? (['guest', m.guest, GUEST] as const) : (['partner', m.partner, PARTNER] as const);
   const waiting = db.prepare(`select j.id from messages x join jobs j on j.id = x.became where x.${column} = ? and x.recipient = ? and x.id != ?
     and j.status = 'queued' and j.session is null order by x.id desc limit 1`).get(source, m.recipient, m.id) as { id: number } | undefined;
-  const job = waiting?.id ?? createJob({ agent: m.recipient, title: m.title ?? `Guest request #${m.guest}`, prompt: preamble }).id;
+  const job = waiting?.id ?? createJob({ agent: m.recipient, title: m.title ?? `Message from ${m.sender}`, prompt: preamble }).id;
   db.prepare('update messages set became = ? where id = ?').run(job, m.id);
   const steps = db.prepare('select text from messages where became = ? order by id').all(job) as { text: string }[];
   db.prepare('update jobs set prompt = ? where id = ?').run(`${preamble}\n\n${steps.map(x => x.text).join('\n')}`, job);

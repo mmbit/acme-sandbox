@@ -1,0 +1,29 @@
+/* The pages to move to (bookmoveto.js pagesCard), a list card (bookcard.css): each page's icon at its row's left, New
+   page's plus; over the page bar, the card's beak points down at it (--beak: from the card's left). */
+.bk-move-pages .bk-page-icon {
+  display: grid;
+  place-items: center;
+}
+.bk-move-pages .bk-page-icon svg {
+  width: 28px;
+  height: 28px;
+}
+.bk-move-pages .bk-list-more {
+  min-height: 52px;
+}
+#book > .bk-move-pages[data-beak] {
+  transform-origin: var(--beak, 50%) 100%;
+}
+#book > .bk-move-pages[data-beak]::after {
+  content: '';
+  position: absolute;
+  bottom: -8px;
+  left: calc(var(--beak, 50%) - 7px);
+  width: 14px;
+  height: 14px;
+  background: inherit;
+  border: inherit;
+  border-top: 0;
+  border-left: 0;
+  rotate: 45deg;
+}

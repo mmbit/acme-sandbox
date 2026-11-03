@@ -77,13 +77,15 @@
   position: absolute;
   pointer-events: none;
 }
-/* The send stamp at the page's head, at its right, under the title's line and over the first day's date, where
-   nothing is written (bookunits.js TITLE_H, masonry.js MARGIN): SENT and the time, ink on the accent as the deck draws
-   it, a little crooked, its ink sunk into the paper, still wet and faint while it sends. (the deck's stamp) */
+/* The send stamp at the page's head, at its right, under the title's line (bookgroups.css .bk-page-title: 22 px down,
+   26 high) and over the first units (bookunits.js TITLE_H, masonry.js MARGIN: 96 px down), where nothing is written,
+   turned whole within that room (bookpagesend.js stamped): SENT and the time, ink on the accent as the deck draws it,
+   a little crooked, its ink sunk into the paper, still wet and faint while it sends. (the deck's stamp. Its top and
+   its turn) */
 #book .bk-send-stamp {
   position: absolute;
   right: 28px;
-  top: 52px;
+  top: 48px;
   pointer-events: none;
 }
 #book .bk-sent {
@@ -94,16 +96,15 @@
 }
 #book .bk-sent svg {
   display: block;
-  /* (its own size, over HQ's icons' 18 px: 38 px high, as wide as its words) */
+  /* (its own size, over HQ's icons' 18 px: as wide as its words, its height set with its turn inside it,
+     bookpagesend.js stamped) */
   width: auto;
-  height: 38px;
-  rotate: -5deg;
 }
 #book .bk-sent.bk-stamp-wet {
   opacity: 0.4;
 }
 #book .bk-sent rect {
-  fill: #d6ea3c;
+  fill: var(--bk-chosen);
   stroke: var(--bk-ink);
   stroke-width: 3;
 }
@@ -140,8 +141,9 @@
   display: block;
   margin: 6px 6px 0;
 }
-/* (what's written, unseen, giving the box its height: the field lies over it) */
-#book .bk-title::after {
+/* (what's written, unseen, giving the box its height: the field lies over it. ::before puts it ahead of the error, so
+   the error shows below the field) */
+#book .bk-title::before {
   content: attr(data-value) ' ';
   display: block;
   visibility: hidden;
@@ -155,11 +157,11 @@
   left: 0;
   right: 0;
   text-align: center;
-  /* (in the card's own ink, as its rows are: the page's ink hardly showed on a dark card. Board, call 178.) */
+  /* (in the card's own ink, as its rows are: the page's ink would hardly show on a dark card) */
   color: var(--bk-ui-ink);
   caret-color: var(--bk-ui-ink);
   cursor: text;
-  /* (the line it's written on, plain enough to read as one to write on, ink while it's written on: board, call 178) */
+  /* (the line it's written on, plain enough to read as one to write on, ink while it's written on) */
   background: linear-gradient(var(--bk-ui-muted), var(--bk-ui-muted)) no-repeat center bottom 20% / calc(100% - 20px)
     1.5px;
   -webkit-tap-highlight-color: transparent;
@@ -175,7 +177,7 @@
   background-image: linear-gradient(var(--bk-refused), var(--bk-refused));
 }
 /* (the field and the box it lies over in the same type; after the field's own rule, which unsets it) */
-#book .bk-title::after,
+#book .bk-title::before,
 #book .bk-title input {
   box-sizing: border-box;
   height: var(--bk-title-h);
@@ -184,7 +186,7 @@
 }
 /* 16px on a touch screen: under it iOS Safari zooms in on a focused field */
 @media (pointer: coarse) {
-  #book .bk-title::after,
+  #book .bk-title::before,
   #book .bk-title input {
     font-size: 16px;
   }

@@ -10,7 +10,7 @@
 //     (a promise: done once it's down, its copy gone.)
 //   fold(rect, picture, to): a page folds in half as it's shared, and goes into where it was shared (to, a box)
 //   plane(rect, picture): a page sent folds into a paper plane and flies off
-//   tear(sheet, fibres, ear): a page torn out of the book at its spine, the tear running down its edge
+//   tear(sheet, fibres): a page torn out of the book at its spine, the tear running down its edge
 //   stamp(node, words): a rubber stamp pressed onto node ("Sent", "Approved"), its ink a little uneven
 //   writing(node): node's words appear as if written letter by letter
 // rect and to are boxes on the screen (getBoundingClientRect()); picture an element (a canvas, a copy of a page),
@@ -248,12 +248,11 @@ function creased(sheet, sy, T, folds) {
 const points = (...xy) => polygon(xy.flatMap((v, i) => (i % 2 ? [] : [[v, xy[i + 1]]])));
 
 // Unlike the others this one plays on the copy where it is (sheet, the page's copy, and fibres, a layer under it in
-// the same box; ear: the px of its top-right corner turned down): it stays torn as it's carried, and never shows on
-// the page itself, which stays whole in the book.
-export function tear(sheet, fibres, ear = 0) {
+// the same box): it stays torn as it's carried, and never shows on the page itself, which stays whole in the book.
+export function tear(sheet, fibres) {
   const { offsetWidth: w, offsetHeight: h } = sheet,
     seed = Math.floor(Math.random() * 2 ** 31),
-    outline = (t, along) => polygon(tornOutline(w, h, { t, seed, ear, fibres: along === fibres }));
+    outline = (t, along) => polygon(tornOutline(w, h, { t, seed, fibres: along === fibres }));
   for (const el of [sheet, fibres]) {
     el.style.clipPath = outline(1, el);
     if (!still())

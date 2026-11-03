@@ -1,5 +1,6 @@
-// Writing in the book: whether a press writes (the Pencil and a mouse on a page whose ink is read, unless the press
-// pans or a tool takes it), and a stroke lifted onto its page, one step for Undo and Redo.
+// Writing in the book: whether a press writes (the Pencil and a mouse on a page whose ink is read and that isn't locked,
+// unless the press pans or a tool takes it: every tool's press passes here), and a stroke lifted onto its page, one step
+// for Undo and Redo.
 import { INKS } from '/__review/ink.js';
 import { at } from './bookview.js';
 import { boxOf } from './bookrow.js';
@@ -33,9 +34,9 @@ export function drawable(book, e, table) {
     (e.pointerType === 'touch' && !book.input?.fingerPans?.());
   if (!writes || table.panning(e) || !e.isPrimary) return false;
   const hit = at(book, e.clientX, e.clientY);
-  if (!hit || book.tools?.press(e)) return false;
-  // (a sent page's own groups are read-only.)
-  if (!hit.view.page.ink || shut(hit.view.page)) return false;
+  // (a page not read yet, or locked (sent, or read-only), takes no tool's press: asked here before any tool is, so none
+  // can draw, move or type on it and a new one can't miss it.)
+  if (!hit || !hit.view.page.ink || shut(hit.view.page) || book.tools?.press(e)) return false;
   table.stop();
   book.target = hit.i;
   book.inking = book.tools?.ink() ?? INK;
@@ -95,10 +96,13 @@ export function dried(book, stroke, hooks) {
   // Only the pen edits content. A highlighter, a pencil or a brush always leaves ink. (no line over words reads or
   // strikes them: they stay ink; the tools say which line may)
   if (book.tools?.gestures() ?? true) {
+    // A stroke that circled a scrap and was carried out of it is the gesture's (bookassign.js), never a scratch-out of
+    // what it circled, however often it went round: lifted on the list it opened, it handed the scrap over or moved
+    // it, and leaves no ink; lifted off any, it's ink.
+    const gesture = book.assign?.claim();
+    if (gesture === 'used') return book.ink.clear();
     // A scratch-out deletes its group without keeping the gesture as ink.
-    if (book.groups?.scratch(v, line)) return book.ink.clear();
-    // A stroke that circled a scrap and was lifted on the list it opened handed the scrap over (bookassign.js).
-    if (book.assign?.claim()) return book.ink.clear();
+    if (!gesture && book.groups?.scratch(v, line)) return book.ink.clear();
   }
   // (into the unit it starts on, else the board's drawing it comes near, else a new unit of its own: bookunits.js.
   page.blank = false;

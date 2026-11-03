@@ -75,7 +75,7 @@ async function workspacePage(id, hq) {
     title = workspace.title;
     return workspaceHtml(workspace, hq);
   } catch (err) {
-    if (err.status !== 404 && !/404/.test(err.message)) throw err;
+    if (err.status !== 404) throw err;
     return '<div class="seats-app co-app"><p class="dim">That workspace isn’t here any more.</p></div>';
   }
 }

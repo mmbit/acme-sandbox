@@ -3,7 +3,7 @@
 // keys, steps and money refused in the book.)
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { harness, type Running } from '../harness.ts';
 
@@ -172,6 +172,46 @@ test('an ask goes to a guest: into their book by its number, its Share part for 
   assert.ok(!guestRead.pages.some(p => p.id === page), 'the guest sees their own page, not the board’s Asks');
   assert.equal((await h.board('/api/requests/answer', { id, answer: 'Same size, quieter colour' })).status, 200);
   assert.equal((await groupsOn(page))[0].asks[0].status, 'answered');
+  await h.finish(lark);
+});
+
+// A design ask that leads with its before-and-after pairs, straight after its words, with a question (the glass for the
+// notebook's bars), its pictures on main
+const GLASS = 'products/_cycles/2026-11-02-ink-real-book/glass';
+const PAIRED = `Three versions of the notebook's tool strip and bottom bar in light glass, from lightly frosted to clearer, built for real in Slate. Each is shown beside today's bars, on your iPhone and an iPad, with the bars close up. About two minutes.
+Before and after:
+${['A Clear frost', 'B Milk glass', 'C Lit rim']
+  .flatMap(v =>
+    [
+      ['the bars close up', 'bars'],
+      ['iPhone', 'phone'],
+      ['iPad', 'ipad'],
+    ].map(([what, f]) => `- ${v}, ${what}: ${GLASS}/now-${f}.jpg ${GLASS}/${v[0].toLowerCase()}-${f}.jpg`),
+  )
+  .join('\n')}
+We recommend A: it keeps the short lip Slate's keys have, so it still reads as ours, with the least glass of the three.`;
+
+test("an answered ask that leads with pairs: its Asks page's picture, the overview's tile, is drawn", async () => {
+  mkdirSync(`${process.env.REPO_DIR}/${GLASS}`, { recursive: true });
+  for (const v of ['now', 'a', 'b', 'c'])
+    for (const f of ['bars', 'phone', 'ipad']) writeFileSync(`${process.env.REPO_DIR}/${GLASS}/${v}-${f}.jpg`, 'jpg');
+  const questions = `${mkdtempSync(`${tmpdir()}/askpages-`)}/questions.json`;
+  writeFileSync(
+    questions,
+    JSON.stringify([{ title: 'Which glass for the bars?', options: ['A Clear frost', 'B Milk glass', 'C Lit rim'] }]),
+  );
+  const lark = await h.start({ agent: 'lark' });
+  const asked = await ask(lark, PAIRED, '--book', 'journal', '--questions', questions);
+  assert.equal(typeof asked, 'object', String(asked));
+  const { id } = asked as { id: number };
+  assert.equal((await h.board('/api/requests/answer', { id, answer: '', answers: ['A Clear frost'] })).status, 200);
+  const mine = (await shelf()).find(n => n.kind === 'mine');
+  const tile = (await h.board(`/api/notebooks/pages?notebook=${mine.id}`)).body.pages.find(
+    (p: any) => p.id === asksPageOf(mine.id),
+  );
+  const res = await fetch(h.base + tile.picture, { headers: { cookie: h.boardCookie } });
+  assert.deepEqual([res.status, res.headers.get('content-type')], [200, 'image/png']);
+  assert.ok((await res.arrayBuffer()).byteLength > 10_000, 'the page drawn');
   await h.finish(lark);
 });
 

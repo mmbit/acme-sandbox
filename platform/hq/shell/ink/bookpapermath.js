@@ -25,20 +25,20 @@ export function crumpleOutline(t, seed = 1, n = 28) {
   });
 }
 // A page torn out along the spine (its right edge), as an outline in its own box (0–100 across and down) for a sheet
-// w by h px with its top-right corner turned down ear px. The tear runs down the spine's side as t goes from 0 (whole,
-// the edge straight) to 1 (torn top to bottom): a line wandering in and out up to TEAR_PX, ragged with small bites,
-// never two alike. fibres: the paper's torn fibres instead, reaching up to FIBRE_PX further out, drawn lighter under the
-// sheet. The same seed tears the same way at every t, with as many points, so the outlines move smoothly between them.
+// w by h px. The tear runs down the spine's side as t goes from 0 (whole, the edge straight) to 1 (torn top to bottom): a
+// line wandering in and out up to TEAR_PX, ragged with small bites, never two alike. fibres: the paper's torn fibres
+// instead, reaching up to FIBRE_PX further out, drawn lighter under the sheet. The same seed tears the same way at every
+// t, with as many points, so the outlines move smoothly between them.
 export const TEAR_PX = 6,
   FIBRE_PX = 2.5;
-export function tornOutline(w, h, { t = 1, seed = 1, ear = 0, fibres = false } = {}) {
+export function tornOutline(w, h, { t = 1, seed = 1, fibres = false } = {}) {
   const random = seeded(seed),
     run = h / 4,
     // (the wander: two slow waves of their own lengths and phases, 0–1)
     waves = [0, 1].map(() => ({ length: 25 + 50 * random(), phase: 2 * Math.PI * random() })),
     wander = y => waves.reduce((sum, { length, phase }) => sum + Math.sin((2 * Math.PI * y) / length + phase), 2) / 4,
     edge = [];
-  for (let y = ear; y < h; y += 1.5 + 3.5 * random()) {
+  for (let y = 0; y < h; y += 1.5 + 3.5 * random()) {
     // (a bite here and there, otherwise a ragged px or so)
     const bite = random() < 0.12 ? 0.25 + 0.3 * random() : 0.12 * random(),
       reach = FIBRE_PX * random() ** 0.6,
@@ -47,7 +47,7 @@ export function tornOutline(w, h, { t = 1, seed = 1, ear = 0, fibres = false } =
     edge.push([fibres ? x + reach * torn : x, y]);
   }
   const [last] = edge.at(-1);
-  return [[0, 0], [w - ear, 0], [w, ear], ...edge, [last, h], [0, h]].map(([x, y]) => [(100 * x) / w, (100 * y) / h]);
+  return [[0, 0], [w, 0], ...edge, [last, h], [0, h]].map(([x, y]) => [(100 * x) / w, (100 * y) / h]);
 }
 
 // A point at f (0–1) round a box's edge, clockwise from its top-left corner

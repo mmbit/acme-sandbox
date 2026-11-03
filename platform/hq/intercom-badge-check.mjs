@@ -10,7 +10,7 @@ import { serve } from './serve.mjs';
 import { playwright, openPage, until } from '../../shared/browser/browser.mjs';
 import { lookNames } from './looks.mjs';
 import { notebookPlay } from './shell/ink/notebookplay.js';
-import { notebookRoute } from './notebookroute.mjs';
+import { notebookRoute } from './book/notebookroute.mjs';
 
 const shots = process.argv.includes('--shots') ? process.argv[process.argv.indexOf('--shots') + 1] : null;
 if (shots) mkdirSync(shots, { recursive: true });
@@ -54,7 +54,7 @@ for (const look of lookNames())
       }
       if (path === '/api/requests' || path === '/api/review/products' || path === '/api/gazette')
         return r.fulfill({ json: [] });
-      // (the book's store, played as dev mode plays it, notebookroute.mjs: the tablet shows the book open, which reads
+      // (the book's store, played as dev mode plays it, book/notebookroute.mjs: the tablet shows the book open, which reads
       // its newest note at once, booknewest.js.)
       if (path.startsWith('/api/notebooks')) return notebookRoute(r, notebook);
       return r.fulfill({ status: 404, body: '' });

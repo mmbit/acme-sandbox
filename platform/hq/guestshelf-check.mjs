@@ -8,9 +8,9 @@
 //   node platform/hq/guestshelf-check.mjs [--shots dir] [--chromium-only]
 import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
-import { coordinator, openVisitor } from './bookguestserver.mjs';
-import { readyNotebook } from './bookguestscreen.mjs';
-import { serveWork, openShare, addPerson, signInByMail, typeNote, close } from './guestpath.mjs';
+import { coordinator, openVisitor } from './book/guestserver.mjs';
+import { readyNotebook } from './book/guestscreen.mjs';
+import { serveWork, openShare, addPerson, signInByMail, typeNote, close } from './book/guestpath.mjs';
 import { playwright, until } from '../../shared/browser/browser.mjs';
 
 const arg = name => (process.argv.includes(name) ? process.argv[process.argv.indexOf(name) + 1] : null);
@@ -94,10 +94,11 @@ async function addToShelf(page, name, email, kind) {
   assert.equal(share.lasting, kind === 'lasting');
 }
 
-// The board hands Sam one of its scraps: an ask for them, on their work
+// The board hands Sam a scrap of its Asks page: an ask for them, on their work
 async function ask() {
-  const { currentPage, mine } = await import('../coordinator/src/notebook.ts');
-  const page = currentPage(mine().id);
+  const { mine } = await import('../coordinator/src/notebook.ts');
+  const { asksPage } = await import('../coordinator/src/ink/askpages.ts');
+  const page = asksPage(mine().id).id;
   const made = await h.board('/api/notebooks/groups/create', {
     page,
     texts: [{ x: 40, y: 40, w: 500, text: 'Would you sign up here?', color: '#292722' }],

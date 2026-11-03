@@ -8,7 +8,7 @@ import { lasted } from '../../../shared/signs/signs.js';
 import { esc, cap, grow, store as saved, roleHtml, stylesheet } from '../util.js';   // (stylesheet).
 // (endTip: a tip filed.)
 import { endTip, loadRequests, loadLater, snoozeRequest, loadArchive, archivePhoto, answerRequest, removeAddress, previewLink,
-  loadChat, sendChat, loadCalls, addCallItem, loadMail, loadMailOne, forwardMail, transcribe, pushKey,
+  loadChat, sendChat, loadCalls, addCallItem, loadMail, loadMailOne, moveMail, transcribe, pushKey,
   uploadPhoto, uploadDocument, sendZipChunk, loadZipField, pictureUrl, guestEmail, guestLang, guestRelease, guestRevoke, guestAdd, outboxSend, outboxDiscard, outboxPreview,
   calloutApprove, calloutDecline, calloutNumber,
   loadShares, makeShare, removeFromShare, endShare, setShareCap, loadPeople, setPersonTitle, guestColleagues, loadLanguage, setLanguage, local } from './data.js';
@@ -40,8 +40,8 @@ import { machineSettings, machinesBack, machinesSummary, machinePages } from './
 import { seatStatus } from './seatstatus.js';
 import { engineMark } from './engine.js';
 import { cardOf, unfenced, shownRecommend, docParts, DOC_CODE } from './card.js';   // (docParts, DOC_CODE)
-import { PIC, CLIP, deckOf, pairsOf, pictureSrc } from './media.js';
-import { viewPictures } from './pictures.js';
+import { CLIP, deckOf, pairsOf } from './media.js';
+import { figuresHtml, pairsHtml, picturesIn, wirePics as wireShared } from './pictures.js';
 import { seen, markSeen } from './seen.js';
 import { emailHtml } from './emailtext.js';
 import { inputHtml, chips, given } from './questions.js';   // a card's questions, the guest page's engine
@@ -262,8 +262,7 @@ function paintPin() {
   b.hidden = !viewing.review || calling;
 }
 // On a call the board scribbles in red for the call's agent: the bar has no Note, and the viewer's page no pin (told
-// now, and in every answer to its hello), as HQ's own has none (pinsetting.js). After the call they're back (the board,
-// call 161.).
+// now, and in every answer to its hello), as HQ's own has none (pinsetting.js). After the call they're back.
 let calling = false;
 function followCall() {
   const set = on => {
@@ -1325,38 +1324,14 @@ const pastCardHtml = (c, pick) => `${textHtml(c.summary[0])}
   ${c.options.length ? `<p class="body">Options: ${c.options.map(esc).join(' · ')}</p>` : ''}
   ${textHtml(c.details)}${laterHtml(c)}`;
 
-// Pictures a card refers to (card.js's PIC), and in the archive the photos the board added to it. A tap shows one big,
-// over the phone.
+// Pictures a card refers to (pictures.js picturesIn), and in the archive the photos the board added to it. A tap shows
+// one big, over the phone.
 const pictures = (r, body = unfenced(r.body || '')) => [
-  ...[...new Set((body || '').match(PIC) || [])].map(p => {
-    const line = (body.split('\n').find(l => l.includes(p)) || '').replace(p, '').replace(/https?:\/\/\S+/g, '').replace(/[`*_]|^[\s\d.)•*-]+|[\s:–—-]+$/g, '').trim();
-    return { src: pictureSrc(p), title: line && line.length <= 60 ? line : pictureTitle(p) };
-  }),
+  ...picturesIn(body),
   ...(r?.photos || []).map((p, i) => p.saved ? { src: archivePhoto(world.dev, r.id, i), title: `Your photo: ${p.label}` } : null).filter(Boolean)];
-// (a picture's file name as its title: slip_front.jpg, "Slip front"; pictureTitle, figuresHtml and picsHtml split out
-// for messageHtml.)
-const pictureTitle = p => {
-  const name = String(p).split('/').pop().replace(/\.\w+$/, '').replace(/[-_]+/g, ' ');
-  return name.charAt(0).toUpperCase() + name.slice(1);
-};
-const figuresHtml = pics => pics.length ? `<div class="pics">${pics.map(p => `<figure><button type="button" data-pic="${esc(p.src)}" data-label="${esc(p.title)}" aria-label="Show ${esc(p.title)} bigger"><img src="${esc(p.src)}" alt="" loading="lazy"></button><figcaption>${esc(p.title)}</figcaption></figure>`).join('')}</div>` : '';
 const picsHtml = (body, r = { body }) => figuresHtml(pictures(r, unfenced(body || '')));
-// A card's before-and-after pairs (card.js pairsOf) lead it: each change as it
-// was and as it is now, side by side, a tap showing one big, and its live link under them
-const pairsHtml = pairs => pairs.length ? `<div class="pairs">${pairs.map((p, i) => `<figure class="pair"><figcaption>${esc(p.label)}</figcaption>
-  <div class="ba">${[['Before', p.before], ['After', p.after]].map(([was, file]) => `<button type="button" data-pic="${esc(pictureSrc(file))}" data-pair="${i}" data-side="${was.toLowerCase()}" aria-label="Show ${esc(p.label)} (${was.toLowerCase()}) bigger"><img src="${esc(pictureSrc(file))}" alt="" loading="lazy"><span>${was}</span></button>`).join('')}</div>
-  ${p.link ? `<p class="live">${inline(p.link)}</p>` : ''}</figure>`).join('')}</div>` : '';
-// A tap opens one viewer for all the pictures beside it (a card's, or one intercom line's: within `each`): the card's
-// pairs first, as they lead it, a pair's two as one (pictures.js), then its other pictures.
-function wirePics(el, { pairs = [], each } = {}) {
-  for (const group of each ? el.querySelectorAll(each) : [el]) {
-    const singles = [...group.querySelectorAll('[data-pic]:not([data-pair])')];
-    const items = [...pairs.map(p => ({ label: p.label, before: pictureSrc(p.before), after: pictureSrc(p.after) })),
-      ...singles.map(b => ({ label: b.dataset.label, src: b.dataset.pic }))];
-    group.querySelectorAll('[data-pair]').forEach(b => b.onclick = () => viewPictures(items, +b.dataset.pair, b.dataset.side, root()));
-    singles.forEach((b, i) => b.onclick = () => viewPictures(items, pairs.length + i, 'before', root()));
-  }
-}
+// (a card's pairs and pictures, and an intercom line's, open in one viewer over the phone: pictures.js wirePics)
+const wirePics = (el, on) => wireShared(el, { ...on, parent: root() });
 
 // ---------------------------------------------------------------- request cards (card.js reads them)
 // a document's file name opens it in the Library (the board reads documents there, never in the repo): card.js docParts
@@ -2315,7 +2290,7 @@ export function openComputer(which = 'home', opts = {}) {
   tab = apps().some(a => a[0] === which) ? which : 'home';
   const app = apps().find(a => a[0] === tab);
   mailWanted = tab === 'mail' ? opts.mail ?? null : null;
-  if (mailWanted != null) mailGroup = 'all';   // (the message is in All, whichever group it's in)
+  if (tab === 'mail') { mailPile = 'board'; mailSaid = ''; }   // Mail opens on the board's own pile, or the pile of the message asked for (inbox)
   callWanted = tab === 'calls' ? opts.call ?? null : null;
   if (tab === 'notes') openReviews(opts.shown);   // (shown)
   section = tab === 'settings' ? opts.section ?? null : null;
@@ -2623,9 +2598,22 @@ export function watchCall(agent, since, id) {
 // A company app can open it at one message (openComputer's opts.mail: mailWanted; here and at the end of inbox)
 let mailWanted = null;
 // The 15 s refresh leaves a message that's open as it is: new mail goes in above it.
-// A row: the subject, then when, who from and to whom on one line. (the when first,
-// the tidy addresses, the groups and the lock below)
-const mailRow = m => `<li><details data-mail="${m.id}"><summary><b>${esc(m.subject || '(no subject)')}</b><span class="dim mailfrom" title="${esc(`${m.sender} → ${m.recipient}`)}">${esc(ago(m.received))} · ${esc(tidyAddress(m.sender))}${mailGroup === 'all' || mailGroup === 'other' ? ` → ${esc(tidyAddress(m.recipient))}` : ''}${m.board && mailMixed() ? LOCK : ''}</span></summary><pre class="mailbody">…</pre></details></li>`;
+// Mail in piles (mail.ts PILES): HQ's sorter puts each mail in one (mailsort.ts),
+// Mail opens on the board's own, and every other pile is one tap away. Under an open mail, one row of buttons moves it
+// to another pile, which the sorter learns from; Team hands it to an agent as a job (mail.ts forward). A row: the
+// subject, then when, who from and to whom on one line (the board's own mail with a small lock), and in Team who has it.
+// (the sender's part gives way on a narrow screen, never whom it's to or the lock)
+const PILES = [['board', 'For you', 'Mail only you need to see. HQ sorted the rest: one tap moves any mail to the right pile.'],
+  ['team', 'Team', 'Your agents have these, or one tap hands them on.'],
+  ['customer', 'Customers', 'Customers’ mail. Each one is a card in Care.'],
+  ['filed', 'Filed', 'Receipts and notices, kept on file. Nobody needs to act on them.'],
+  ['spam', 'Spam', 'Kept, out of sight. Nothing answers them.']];
+const pileOf = m => PILES.some(([k]) => k === m.pile) ? m.pile : 'board';   // (not sorted yet: the board's)
+let mailPile = 'board';
+const jobOf = m => m.forwarded ?? m.handed ?? null;
+// (in Team, who has it comes first: a long address mustn't cut it off)
+const holder = m => pileOf(m) === 'team' ? (jobOf(m) ? `${esc(m.pile_agent ? who(m.pile_agent) : 'The team')}, job #${Number(jobOf(m))} · ` : m.pile_agent ? `For ${esc(who(m.pile_agent))} · ` : '') : '';
+const mailRow = m => `<li><details data-mail="${m.id}"><summary><b>${esc(m.subject || '(no subject)')}</b><span class="dim mailfrom" title="${esc(`${m.sender} → ${m.recipient}`)}"><span>${esc(ago(m.received))} · ${holder(m)}${esc(tidyAddress(m.sender))}</span> <span class="mailto">→ ${esc(tidyAddress(m.recipient))}</span>${m.board ? LOCK : ''}</span></summary><pre class="mailbody">…</pre></details></li>`;
 // An address as it reads at a glance: a bounce address's tags after a + go (bounces+123+ab-x=y.com@… is bounces@…), a long
 // generated name becomes …, and the company's own domain goes (hello@). The whole address is the row's tooltip.
 function tidyAddress(a) {
@@ -2635,38 +2623,36 @@ function tidyAddress(a) {
   const generated = name.length > 24 || /[0-9a-f-]{12,}/i.test(name);
   return `${generated ? '…' : name}@${host.toLowerCase() === String(brand.mail?.domain ?? '').toLowerCase() ? '' : host}`;
 }
-// Inboxes in groups: brand.yaml's mail.groups names them (board, documents…), the address before the @; everything else
-// is Other. A group's one quiet line says whether our agents can read it (mail.boardOnly); where both kinds mix (All,
-// Other), the board's own mail carries a small lock.
-const MAIL_GROUPS = (Array.isArray(brand.mail?.groups) ? brand.mail.groups : []).filter(g => typeof g === 'string' && /^[a-z0-9._-]+$/i.test(g));
-let mailGroup = 'all';
-const recipientNames = m => String(m.recipient ?? '').toLowerCase().match(/[^\s<>,;"]+(?=@)/g) ?? [];
-const groupOf = m => MAIL_GROUPS.find(g => recipientNames(m).includes(g.toLowerCase())) ?? 'other';
-const mailMixed = () => mailGroup === 'all' || mailGroup === 'other';
 const LOCK = icon('lock', 'lock', 'Only you can read it');
-const boardOnlyGroup = g => (Array.isArray(brand.mail?.boardOnly) ? brand.mail.boardOnly : []).some(n => String(n).toLowerCase() === g.toLowerCase());
-const groupLine = g => g === 'all' ? '' : `<p class="mailwho">${g === 'other' ? 'Our agents can read these, except mail with a lock' : boardOnlyGroup(g) ? 'Only you can read this inbox' : 'Our agents can read this inbox'}</p>`;
-function mailGroups(mail) {
-  if (!MAIL_GROUPS.length) return '';
-  const pills = [['all', 'All'], ...MAIL_GROUPS.map(g => [g, cap(g)]), ['other', 'Other']];
-  return `<div class="pills" role="radiogroup" aria-label="Inboxes">${pills.map(([k, l]) => `<button role="radio" aria-checked="${k === mailGroup}" data-group="${esc(k)}">${esc(l)}<i>${k === 'all' ? mail.length : mail.filter(m => groupOf(m) === k).length}</i></button>`).join('')}</div>${groupLine(mailGroup)}`;
+const recipientNames = m => String(m.recipient ?? '').toLowerCase().match(/[^\s<>,;"]+(?=@)/g) ?? [];
+function mailPills(all) {
+  const line = PILES.find(([k]) => k === mailPile)[2];
+  return `<div class="pills mailpiles" role="radiogroup" aria-label="Piles">${PILES.map(([k, l]) => `<button role="radio" aria-checked="${k === mailPile}" data-pile="${k}">${esc(l)}<i>${all.filter(m => pileOf(m) === k).length}</i></button>`).join('')}</div><p class="mailwho">${esc(line)}</p>`;
 }
-// Send to the team: one button on a mail at one of the board's own addresses, which hands it to brand.yaml's
-// mail.forwardTo as a job, the only one that reads it (mail.ts forward). Once handed, it says so with the job's number,
-// and a second click (another device, before a refresh) shows the first job's.
-const handable = m => !!m.board && !!brand.mail?.forwardTo && recipientNames(m).some(boardOnlyGroup);
-const handButton = job => job ? `<button type="button" class="act" disabled>Sent to the team · job #${Number(job)}</button>`
-  : '<button type="button" class="act" data-hand>Send to the team</button>';
-function wireHand(d, row) {
-  const b = d.querySelector('[data-hand]');
-  if (!b) return;
-  b.onclick = async () => {
-    b.disabled = true; sfx.blip();
-    try { row.forwarded = (await forwardMail(world.dev, row.id)).job; b.outerHTML = handButton(row.forwarded); }
-    catch (err) { b.disabled = false; b.textContent = err.refusal?.error ? `${cap(err.refusal.error)}. Try again` : 'That didn’t go through. Try again'; }
-  };
+// The move row under an open mail: its pile pressed, the others one tap each. Team on a mail already handed shows its job.
+const MOVES = { board: 'For you', team: 'Team', customer: 'Customer', filed: 'Filed', spam: 'Spam' };
+const moveRow = m => `<p class="mailmove" role="group" aria-label="Move to"><span class="dim">Move to</span>${PILES.map(([k]) => {
+  // (in Team with no job yet: Team still hands it on)
+  const here = pileOf(m) === k, waits = k === 'team' && here && !jobOf(m);
+  const label = k === 'team' && m.pile_agent && (!here || waits) ? `To ${who(m.pile_agent)}` : MOVES[k];
+  return `<button type="button" class="act" data-move="${k}"${here ? ` aria-pressed="true"${waits ? '' : ' disabled'}` : ''}>${esc(label)}</button>`;
+}).join('')}<span class="msg" aria-live="polite"></span></p>`;
+function wireMove(d, row, redraw) {
+  d.querySelectorAll('[data-move]').forEach(b => b.onclick = async () => {
+    const msg = d.querySelector('.mailmove .msg'), buttons = [...d.querySelectorAll('[data-move]')], was = buttons.map(x => x.disabled);
+    buttons.forEach(x => x.disabled = true); sfx.blip();
+    try {
+      const r = await moveMail(world.dev, row.id, b.dataset.move);
+      row.pile = b.dataset.move; row.pile_by = 'board';
+      if (r.job) row.forwarded = r.job;
+      redraw(`Moved to ${PILES.find(([k]) => k === row.pile)[1]}${r.job ? `: job #${Number(r.job)} has it` : ''}.`);
+    } catch (err) {
+      buttons.forEach((x, n) => x.disabled = was[n]);
+      msg.textContent = err.refusal?.error ? `${cap(err.refusal.error)}. Try again` : 'That didn’t go through. Try again';
+    }
+  });
 }
-const mailCap = n => `<i class="prompt">&gt; </i>${n} MESSAGES · READ-ONLY`;
+const mailCap = (n, all) => `<i class="prompt">&gt; </i>${n} ${mailPile === 'board' ? 'FOR YOU' : esc(PILES.find(([k]) => k === mailPile)[1].toUpperCase())} · ${all} IN ALL`;
 // Mail's count: the mail that came in since Mail was last open on any of the board's devices, like the Gazette's. The
 // newest mail id shown is kept (seen.js; ids go up in the order mail reaches HQ); before anything's recorded, the last
 // day's mail counts as new. (every device) Mail to an address only machines' reports reach (brand.yaml's mail.reports,
@@ -2675,20 +2661,24 @@ const REPORTS = (brand.mail?.reports ?? []).map(name => name.toLowerCase());
 const reportMail = m => { const to = recipientNames(m); return to.length > 0 && to.every(n => REPORTS.includes(n)); };
 const newMail = mail => { if (!seen) return 0;
   const dayAgo = Date.now() - 864e5;
-  return mail.filter(m => !reportMail(m) && (seen.mail == null ? Date.parse(m.received) > dayAgo : m.id > seen.mail)).length; };
+  return mail.filter(m => pileOf(m) === 'board' && !reportMail(m) && (seen.mail == null ? Date.parse(m.received) > dayAgo : m.id > seen.mail)).length; };
+// (mailSaid: what the last move did, shown until the board picks another pile)
+let mailSaid = '';
 async function inbox(el) {
   const all = await loadMail(world.dev), rows = el.querySelector('.rows');
   if (!el.isConnected) return;   // the board left Mail meanwhile: nothing shown, nothing seen
   if (all.length) markSeen('mail', Math.max(...all.map(m => Number(m.id))));   // shown: seen
   if (mailWaiting) { mailWaiting = 0; paintComputerCount(waitingTotal()); }
-  const mail = mailGroup === 'all' ? all : all.filter(m => groupOf(m) === mailGroup);
+  if (mailWanted != null) mailPile = pileOf(all.find(m => Number(m.id) === Number(mailWanted)) ?? { pile: mailPile });
+  const mail = all.filter(m => pileOf(m) === mailPile);
+  const redraw = text => { mailSaid = text ?? ''; el.innerHTML = ''; inbox(el); };
   if (rows && el.querySelector('details[open]')) {
-    const top = Number(rows.querySelector('[data-mail]').dataset.mail);
+    const top = Number(rows.querySelector('[data-mail]')?.dataset.mail ?? 0);
     rows.insertAdjacentHTML('afterbegin', mail.filter(m => m.id > top).map(mailRow).join(''));
-    el.querySelector('.cap').innerHTML = mailCap(mail.length);
-  } else el.innerHTML = all.length ? `<p class="cap">${mailCap(mail.length)}</p>${mailGroups(all)}<ul class="rows mail" data-private>${mail.map(mailRow).join('')}</ul>`
+    el.querySelector('.cap').innerHTML = mailCap(mail.length, all.length);
+  } else el.innerHTML = all.length ? `<p class="cap">${mailCap(mail.length, all.length)}</p>${mailPills(all)}${mailSaid ? `<p class="mailsaid" role="status">${esc(mailSaid)}</p>` : ''}${mail.length ? `<ul class="rows mail" data-private>${mail.map(mailRow).join('')}</ul>` : `<p class="dim">${mailPile === 'board' ? 'Nothing for you right now.' : 'Nothing here.'}</p>`}`
     : `<p><i class="prompt">&gt; </i>No mail yet. Anything sent to ${brand.mail?.domain ? `an @${esc(brand.mail.domain)} address` : 'the company'} lands here.</p>`;
-  el.querySelectorAll('[data-group]').forEach(b => b.onclick = () => { if (mailGroup === b.dataset.group) return; sfx.blip(); mailGroup = b.dataset.group; el.innerHTML = ''; inbox(el); el.scrollTop = 0; });
+  el.querySelectorAll('[data-pile]').forEach(b => b.onclick = () => { if (mailPile === b.dataset.pile) return; sfx.blip(); mailPile = b.dataset.pile; redraw(); el.scrollTop = 0; });
   el.querySelectorAll('[data-mail]').forEach(d => d.ontoggle = async () => {
     if (!d.open || d.dataset.loaded) return;
     const m = await loadMailOne(world.dev, d.dataset.mail), files = JSON.parse(m.attachments || '[]');
@@ -2699,7 +2689,7 @@ async function inbox(el) {
     d.querySelector('.mailbody').innerHTML = emailHtml(text)   // as Care shows an email
       + (kept.length ? `\n\nAttachments: ${kept.map(f => `<a href="/api/mail/file?id=${Number(d.dataset.mail)}&n=${f.n}" download>${esc(f.name)}</a> <span class="dim">(${esc(kb(f.size))})</span>`).join(', ')}` : '');
     const row = all.find(r => String(r.id) === d.dataset.mail);
-    if (row && handable(row)) { d.insertAdjacentHTML('beforeend', `<p class="mailfwd">${handButton(row.forwarded)}</p>`); wireHand(d, row); }
+    if (row) { d.insertAdjacentHTML('beforeend', moveRow(row)); wireMove(d, row, redraw); }
     d.dataset.loaded = 1;
   });
   if (mailWanted == null) return;

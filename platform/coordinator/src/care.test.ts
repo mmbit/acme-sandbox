@@ -114,10 +114,19 @@ const send = async (id: number, text = 'Sorry about that: a new one is on its wa
 const pastUndo = async (id: number) => { db.prepare('update care_cards set send_at = ? where id = ?').run(Date.now() - 1, id); await care.flush(); };
 const more = (ref: string, chat: unknown[], extra: Record<string, unknown> = {}) => careCall('/api/care/cards', { kind: 'more', app: 'pinwheel', case: ref, chat, ...extra });
 
-// an email to the company, as the mail Worker posts it: its id in Mail
-const toCompany = (from: string, text: string, { to = 'hello@testco.example', subject = 'A question', headers = '' } = {}) => fetch(`${h.base}/api/mail/inbound`, { method: 'POST',
+// The mail sorter (mailsort.ts) answering as its model would: a mail with no pile yet goes in `pile` (a customer's, here)
+const sorted = async (id: number, pile = 'customer') => {
+  for (let i = 0; i < 500 && (db.prepare('select pile from mail where id = ?').get(id) as { pile: string | null } | undefined)?.pile === null; i++) {
+    const r = (await h.worker('reads/claim')).body;
+    if (r.reading) await h.worker('reads/answer', { reading: r.reading, result: { structured_output: { pile, agent: null } } });
+    else await new Promise(res => setTimeout(res, 10));
+  }
+};
+// an email to the company, as the mail Worker posts it, once sorted: its id in Mail
+const toCompany = (from: string, text: string, { to = 'hello@testco.example', subject = 'A question', headers = '', pile = 'customer' } = {}) => fetch(`${h.base}/api/mail/inbound`, { method: 'POST',
   headers: { authorization: `Bearer ${MAIL_TOKEN}`, 'x-mail-to': to, 'x-mail-from': from },
-  body: `From: ${from}\r\nTo: ${to}\r\nSubject: ${subject}\r\n${headers}Content-Type: text/plain\r\n\r\n${text}\r\n` }).then(async r => ({ status: r.status, ...await r.json() as any }));
+  body: `From: ${from}\r\nTo: ${to}\r\nSubject: ${subject}\r\n${headers}Content-Type: text/plain\r\n\r\n${text}\r\n` })
+  .then(async r => ({ status: r.status, ...await r.json() as any })).then(async r => { if (r.id) await sorted(r.id, pile); return r; });
 const mailTo = (ref: string, from: string, text: string) => toCompany(from, text, { to: `case-${ref.slice(2)}@testco.example`, subject: 'Re' });
 const toCase = (c: any, from: string, text: string) => toCompany(from, text, { to: `case-${c.case.toLowerCase().replace('-', '')}@testco.example`, subject: 'Re' });
 // the card a mail landed on (Care's line names its mail; no route goes from a mail to its card)
@@ -1914,6 +1923,54 @@ test("a supplier's receipt to hello@ from a billing sender (mail.invoicesFrom) i
       assert.equal(agentSees(r.id), false, to);
     }
   } finally { writeFileSync(file, before); }
+});
+
+// Mail's sorter (mailsort.ts) before a card: a scam to hello@ gets none, nor a draft; a customer sorted Spam by mistake is a
+// tap away, the board's move to Customers makes the card, and a move back out takes it back with nothing sent.
+test('a scam to hello@ sorted as spam gets no card; the board moves a customer in and out of Customers with one tap', async () => {
+  const scam = await toCompany('domains@seo.example', 'Register your shop in search engines: https://seo.example', { subject: 'Submit your shop', pile: 'spam' });
+  assert.equal(await cardOfMail(scam.id), null, 'no card, no draft for the board to discard');
+  const missed = await toCompany('ana@example.org', 'hi is this the shop, my thing never came', { subject: 'hello', pile: 'spam' });
+  assert.equal(await cardOfMail(missed.id), null);
+  assert.equal((await boardCall('/api/mail/pile', { id: missed.id, pile: 'customer' })).status, 200);
+  const c = (await cardOfMail(missed.id))!;
+  assert.deepEqual([c.kind, c.to, c.status], ['email', 'ana@example.org', 'waiting']);
+  assert.ok((await careState()).drafts.some((x: any) => x.case === c.case), 'a draft for the customer');
+  assert.equal((await boardCall('/api/mail/pile', { id: missed.id, pile: 'filed' })).status, 200);
+  assert.equal((await one(c.id)).status, 'closed', 'its card goes back, nothing sent');
+  // a newsletter the sorter took for a customer's: Care leaves it, and it waits in the board's pile, not unseen
+  const list = await toCompany('news@shop.example', 'Our news', { headers: 'List-Unsubscribe: <https://shop.example/u>\r\n' });
+  assert.equal(await cardOfMail(list.id), null);
+  assert.equal((db.prepare('select pile from mail where id = ?').get(list.id) as { pile: string }).pile, 'board');
+});
+
+// an email to the company as the mail Worker posts it, left to the sorter
+const unsortedMail = (from: string, text: string) => fetch(`${h.base}/api/mail/inbound`, { method: 'POST',
+  headers: { authorization: `Bearer ${MAIL_TOKEN}`, 'x-mail-to': 'hello@testco.example', 'x-mail-from': from },
+  body: `From: ${from}\r\nTo: hello@testco.example\r\nSubject: A question\r\nContent-Type: text/plain\r\n\r\n${text}\r\n` }).then(async r => (await r.json()).id as number);
+const pileNow = (id: number) => (db.prepare('select pile, pile_by from mail where id = ?').get(id) as { pile: string | null, pile_by: string | null });
+const claim = async () => (await h.worker('reads/claim')).body.reading as string | undefined;
+
+test("a sort that never happened is no Customers: with the sorter's model failing, a mail to hello@ waits in For you with no card", async () => {
+  const id = await unsortedMail('sam@example.org', 'Do you make these in blue?');
+  for (let tries = 0; tries < 2; ) {
+    const reading = await claim();
+    if (reading) { await h.worker('reads/answer', { reading, error: 'the CLI failed' }); tries++; }
+    else await new Promise(res => setTimeout(res, 10));
+  }
+  await new Promise(res => setTimeout(res, 100));
+  assert.deepEqual({ ...pileNow(id) }, { pile: null, pile_by: null }, 'no pile: For you, and the next start sorts it again');
+  assert.equal(await cardOfMail(id), null);
+});
+
+test("a new sender's health mail to hello@ reaches no model: Customers by rule, a health card with no draft", async () => {
+  const id = await unsortedMail('noor@example.org', 'I am in hospital: is the ink safe?');
+  for (let i = 0; i < 300 && pileNow(id).pile === null; i++) await new Promise(res => setTimeout(res, 10));
+  assert.deepEqual({ ...pileNow(id) }, { pile: 'customer', pile_by: 'rule' });
+  assert.equal(await claim(), undefined, 'no small-model call for it');
+  const c = (await cardOfMail(id))!;
+  assert.equal(c.health, true);
+  assert.equal((await careState()).drafts.some((x: any) => x.case === c.case), false);
 });
 
 test("an email to hello@ becomes a card with a draft (no order details: the address isn't checked); the same sender's next email joins it", async () => {

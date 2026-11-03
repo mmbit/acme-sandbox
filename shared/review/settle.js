@@ -3,7 +3,7 @@
 // note goes into the book with the words heard while it was drawn (the mic's, or on a call the call's own hearing:
 // callnotes.js), and its ink lifts off the page into the book (lift.js), nothing of it left where it was (marks.js
 // paint: rule zero). On a call the note is for the call's agent, never a scrap of the notebook's by itself: its ink
-// stays where it was drawn until the agent's turn on it is done (callnotes.js held; the board, call 161.). Lines drawn while it goes in are drawn at once and make the next mark. A mark the book doesn't take stays, the board is
+// stays where it was drawn until the agent's turn on it is done (callnotes.js held). Lines drawn while it goes in are drawn at once and make the next mark. A mark the book doesn't take stays, the board is
 // told, and it goes in with the next line. This is the one way from a mark to the book: a different flow changes it
 // here.
 import { stopMic } from './dictation.js';

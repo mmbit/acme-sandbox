@@ -1,54 +1,49 @@
 // Two screens on the book's paper: a notebook's pages as a grid (the book's overview, bookzoom.js), and the Shelf of
-// every notebook with the Archive beside it (in its own window over HQ, bookshelfwindow.js).
-// - The pages: split as the book is, under its chapters' tabs (bookshelftiles.js), each a small picture of the page
-//   in the notebook's order, its title under it and a stamp on one that was sent; a tap opens it, in its chapter. New
-//   page at Sketch's end (in My journal). A page dragged to another place (held a moment
-//   first with a finger, so a finger still scrolls) or moved with Alt and the arrows takes it; a page's small box
-//   archives it, crumpled away as a deleted thing is, Undo a tap away, and the
-//   notebook's archived pages show behind "Archived".
-// - My shelf: every notebook a big book with its cover standing on a shelf board, as many to a row as fit, My journal
-//   first, the newest next (bookshelfbooks.js); a tap opens it in the book. Its Archive: the archived notebooks, the
-//   same way. A book's own menu changes its cover (bookshelfcover.js), archives it or brings it back (never My
-//   journal).
+// every notebook with the Archive on it (in its own window over HQ, bookshelfwindow.js). One title line heads each.
+// - The pages: "‹ Shelf", the notebook's name and its options (bookshelfoptions.js), then Search (bookzoom.js); its
+//   pages split as the book is, under its chapters' plain heads (bookshelftiles.js), each a small picture of the page
+//   in the notebook's order, its title and day under it and a stamp on one that was sent; a tap opens it. New page at
+//   Sketch's end (in My journal). A page dragged to another place (held a moment first with a finger, so a finger still
+//   scrolls) or moved with Alt and the arrows takes it. A page archived (from its own dots menu: archivePage) is
+//   crumpled away as a deleted thing is, Undo a tap away; the archived pages show behind the options' Archived pages.
+//   A bookmark tapped while it shows scrolls to its chapter.
+// - My shelf: a bookcase, every notebook standing covers out on its boards, as many to a board as fit, My journal
+//   first, the newest next, the Archive's box after them and the plant (bookshelfbooks.js); a book tapped opens on its
+//   pages. The Archive: the archived notebooks in the same bookcase.
 // What it reads and does is notebookdata.js's; the grid's numbers bookshelfgrid.js's. Drawn at once from what it read
 // last, read again behind.
 import { watchGuestBook } from './bookinvites.js';
 import { esc } from '../../util.js';
 import { scope, word } from './bookscope.js';
 // (the Notebook's store)
-import {
-  archiveNotebook,
-  archivePage,
-  createPage,
-  loadPages as loadNotebook,
-  loadShelf,
-  orderPages,
-} from './notebookdata.js';
-import { gridOf, moved, shelfOrder } from './bookshelfgrid.js';
+import { archivePage, createPage, loadPages as loadNotebook, loadShelf, orderPages } from './notebookdata.js';
+import { gridOf, moved, shelfFit, shelfOrder } from './bookshelfgrid.js';
 import { ICONS, chapterGrids, pageTile } from './bookshelftiles.js';
 import { shelfRows } from './bookshelfbooks.js';
+import { optionTapped, optionsMenu } from './bookshelfoptions.js';
 import { mountCover } from './bookshelfcover.js';
 import { cancel, drags, flip } from './bookshelfdrag.js';
 import { crumple, stamp } from './bookpaper.js';
 import { mountRounds } from './bookshelfround.js';
 import { mountTold, told } from './bookshelftold.js';
 
-// the grids' cells: at least this wide, this far apart, at most this many across (a page's picture this tall to its
-// width: bookshelf.css's aspect-ratio); the Shelf's books the same, bookshelfbooks.css's --bk-book-gap apart (two to
-// a row on an iPad mini upright, as the deck has them)
-const PAGES = { least: 108, gap: 16, most: 8 },
-  BOOKS = { least: 210, gap: 32, most: 6 };
+// the grid's cells: at least this wide, this far apart, at most this many across (a page's picture this tall to its
+// width: bookshelf.css's aspect-ratio)
+const PAGES = { least: 96, gap: 16, most: 8 };
 // the first read of a screen: how long a turn waits for it before it turns onto the screen still filling in
 const FIRST_MS = 200;
 const HTML = `<div class="bk-far-head" role="presentation"><nav class="bk-far-nav"></nav></div>
   <div class="bk-far-body" role="presentation"></div>`;
+// a chapter scrolled to sits this far below the overview's top
+const TOP_GAP = 12;
 
 // far: the overview's element, empty. dev: on mock data. current(): the notebook the book shows now, its id (null: none
 // on the Shelf, whose pages are then the Shelf); page(): the page it shows (its id); saved(): what's drawn
 // saved in the store, before each read. open(page, id): a page of notebook id opened; shelf(): the Shelf (the pages'
 // way back to it); notebook(id): a notebook tapped on the Shelf; archived(): a page archived or brought back.
-// Returns { show(level), again(), hide() }: show draws 'pages' (current()'s) or 'shelf', at once from what it read
-// before of them, and resolves once it's read (the first time only, FIRST_MS at most: a turn never waits on the store).
+// Returns { show(level), again(), hide(), archive(id) }: show draws 'pages' (current()'s) or 'shelf', at once from what
+// it read before of them, and resolves once it's read (the first time only, FIRST_MS at most: a turn never waits on the
+// store); archive(id) archives a page of the notebook shown, as it shows.
 export function mountScreens(far, { dev, current, page, saved, open, shelf, notebook, archived }) {
   far.innerHTML = HTML;
   const s = {
@@ -68,8 +63,8 @@ export function mountScreens(far, { dev, current, page, saved, open, shelf, note
     press: null, // a page pressed, maybe picked up
     undoing: null,
     asking: null, // a round whose Close asks first, while asks are open: { id }
-    menu: null, // the book whose own menu is open (its id, as its tile has it)
-    cols: 1, // the Shelf's books to a row
+    menu: false, // the notebook's options open
+    cols: 1, // the Shelf's books to a board
     playing: null, // a round's envelope moving: { id, kind: 'wrap' or 'unwrap' }
   };
   mountTold(s);
@@ -77,21 +72,25 @@ export function mountScreens(far, { dev, current, page, saved, open, shelf, note
   far.addEventListener('keydown', e => keyed(s, e));
   // (a review round's Close and its envelope: bookshelfround.js; a book's cover: bookshelfcover.js)
   const ui = { draw: () => draw(s), refresh: () => refresh(s), told: words => told(s, words) };
-  Object.assign(s, { rounded: mountRounds(s, ui), cover: mountCover(s, ui) });
+  Object.assign(s, { ui, rounded: mountRounds(s, ui), cover: mountCover(s, ui) });
   drags(s, (from, to, chapter) => reorder(s, from, to, chapter));
   // (the store's notebooks changed: read again while it shows)
   for (const name of ['book:changed', 'book:notebook']) document.addEventListener(name, () => s.level && refresh(s));
   // (a wider or narrower book: the grids' columns again)
   watchGrid(s);
+  // (a bookmark tapped over the pages: its chapter scrolled to, bookmarks.js)
+  document.addEventListener('book:chapter', e => s.level === 'pages' && toChapter(s, e.detail.chapter));
   return {
     show: level => show(s, level),
     again: () => refresh(s),
     hide: () => {
       s.level = null;
-      s.menu = null;
+      s.menu = false;
+      s.asking = null;
       cancel(s);
       told(s, null);
     },
+    archive: id => archiveShown(s, id),
   };
 }
 
@@ -101,8 +100,8 @@ function watchGrid(s) {
   new ResizeObserver(() => {
     if (!s.level || far.clientWidth === width) return;
     width = far.clientWidth;
-    // (the Shelf's rows drawn again for a new count to a row)
-    if (s.level === 'shelf' && shelfCols(s) !== s.cols) draw(s);
+    // (the Shelf's boards drawn again for their new width)
+    if (s.level === 'shelf') draw(s);
     else columns(s);
   }).observe(far);
 }
@@ -160,7 +159,7 @@ function draw(s) {
   columns(s);
 }
 
-// The notebook's pages: its head (back to the Shelf, its name, its archived pages), its chapters' grids (New page at
+// The notebook's pages: its title line (back to the Shelf, its name, its options), its chapters' grids (New page at
 // Sketch's end), then its archived pages
 function drawPages(s) {
   const read = s.read.books.get(s.id),
@@ -169,14 +168,14 @@ function drawPages(s) {
     archived = read?.archived ?? [];
   s.head.innerHTML = `${
     scope
-      ? ''
-      : `<button type="button" class="bk-far-go" data-go="shelf" aria-label="The Shelf: every notebook">${
-          ICONS.shelf
-        }<span>Shelf</span></button>`
-  }<b class="bk-far-title">${esc(book?.name ?? '')}</b>${
-    archived.length || s.archived
-      ? `<button type="button" class="bk-far-go bk-far-toggle" data-archived aria-pressed="${s.archived}">${word('archived')} <small>${archived.length}</small></button>`
-      : ''
+      ? '<span></span>'
+      : `<button type="button" class="bk-far-up" data-go="shelf" aria-label="The Shelf: every notebook">${ICONS.up}<span>Shelf</span></button>`
+  }<h2 class="bk-far-title">${esc(book?.name ?? '')}</h2>${
+    scope || !book
+      ? '<span></span>'
+      : `<button type="button" class="bk-far-more" aria-haspopup="menu" aria-expanded="${s.menu}" aria-label="${esc(
+          `Options: ${book.name}`,
+        )}">${ICONS.more}</button>${optionsMenu(s, book, archived.length)}`
   }`;
   if (!read) return void (s.body.innerHTML = '');
   stamped(s, read);
@@ -184,13 +183,16 @@ function drawPages(s) {
   s.body.innerHTML = `${chapterGrids(read.notebook ?? book, read.pages, {
     here,
     drag: !scope,
-    manage: !scope,
     adds: book?.kind === 'mine',
   })}${
-    s.archived && archived.length
-      ? `<h3 class="bk-far-sub">${word('archived')}</h3><div class="bk-grid" data-grid="pages" role="presentation">${archived
-          .map((p, i) => pageTile(p, i, { here, archived: true }))
-          .join('')}</div>`
+    s.archived
+      ? `<h3 class="bk-far-sub">${esc(word('archivedPages'))}</h3>${
+          archived.length
+            ? `<div class="bk-grid" data-grid="pages" role="presentation">${archived
+                .map(p => pageTile(p, { here, archived: true }))
+                .join('')}</div>`
+            : `<p class="bk-far-none bk-far-empty">${esc(word('noPages'))}</p>`
+        }`
       : ''
   }`;
 }
@@ -208,30 +210,30 @@ function stamped(s, read) {
       }
   });
 }
-// My shelf, or its Archive: its name in hand and its count, the way to the other; its books in rows, each on its shelf
-// board. Guests are invited from the work, Share on it (desk.js): no Invite here
+// My shelf, or its Archive: one title line (the way back from the Archive, its name, the window's Close after it:
+// bookshelfwindow.js), then the bookcase. Guests are invited from the work, Share on it (desk.js): no Invite here
 function drawShelf(s) {
   const read = s.read.shelf,
     archive = s.tab === 'archive',
-    books = read ? shelfOrder(archive ? read.archive : read.shelf) : [],
-    away = read?.archive.length;
-  s.head.innerHTML = `<h2 class="bk-shelf-title">${archive ? 'Archive' : 'My shelf'}</h2>${
-    read ? `<span class="bk-shelf-count">${books.length} ${books.length === 1 ? 'book' : 'books'}</span>` : ''
-  }<button type="button" class="bk-far-go" data-tab="${archive ? 'shelf' : 'archive'}">${
-    archive ? 'My shelf' : `Archive${away ? ` <small>${away}</small>` : ''}`
-  }</button>`;
+    books = read ? shelfOrder(archive ? read.archive : read.shelf) : [];
+  s.head.innerHTML = `${
+    archive
+      ? `<button type="button" class="bk-far-up" data-tab="shelf" aria-label="Back to My shelf">${ICONS.up}<span>My shelf</span></button>`
+      : '<span></span>'
+  }<h2 class="bk-shelf-title">${archive ? 'Archive' : 'My shelf'}</h2>`;
   if (!read) return void (s.body.innerHTML = '');
-  s.cols = shelfCols(s);
-  s.body.innerHTML = books.length
-    ? `<div class="bk-shelf" role="presentation">${shelfRows(books, s.cols, n => ({
-        here: n.id === s.id,
-        menu: s.menu === String(n.id),
-        asking: s.asking?.id === n.id ? n.round.asksOpen : null,
-        playing: s.playing?.id === n.id ? s.playing.kind : null,
-      }))}</div>`
-    : `<p class="bk-far-none">${archive ? 'Nothing archived. A notebook archived from My shelf waits here.' : 'No notebooks yet.'}</p>`;
+  const fit = shelfFit(s.body.clientWidth);
+  s.cols = fit.cols;
+  s.body.innerHTML = `<div class="bk-shelf" role="presentation" style="--bk-book-w:${fit.book}px;--bk-row-in:${fit.inset}px">${shelfRows(
+    books,
+    { cols: s.cols, box: archive ? null : read.archive.length, plant: fit.plant },
+    n => ({ playing: s.playing?.id === n.id ? s.playing.kind : null }),
+  )}</div>${
+    archive && !books.length
+      ? '<p class="bk-far-none">Nothing archived. A notebook archived from its options waits here.</p>'
+      : ''
+  }`;
 }
-const shelfCols = s => gridOf(s.body.clientWidth, BOOKS).cols;
 // The grids' columns for the paper's width now: as many as fit (bookshelfgrid.js)
 function columns(s) {
   for (const grid of s.body.querySelectorAll('.bk-grid')) {
@@ -245,24 +247,17 @@ function columns(s) {
 function clicked(s, e) {
   const t = e.target;
   if (s.swallow) return;
+  if (s.level === 'pages' && optionTapped(s, t, shownBook(s))) return;
   if (t.closest('[data-go=shelf]')) return s.hooks.shelf();
   const tab = t.closest('button[data-tab]');
   if (tab) return switchTab(s, tab.dataset.tab);
-  if (t.closest('[data-archived]')) {
-    s.archived = !s.archived;
-    return draw(s);
-  }
   if (t.closest('.bk-far-lost')) return refresh(s);
   if (t.closest('[data-new]')) return newPage(s);
   const act = t.closest('.bk-tile-act'),
     tile = t.closest('.bk-tile');
-  if (s.level === 'shelf' && menued(s, t)) return;
   if (!tile) return;
   if (tile.dataset.book) {
-    const n = [...s.read.shelf.shelf, ...s.read.shelf.archive].find(b => String(b.id) === tile.dataset.book),
-      shelf = t.closest('[data-shelf]')?.dataset.shelf;
-    if (shelf === 'cover') return s.cover(n);
-    if (shelf) return putAway(s, n, shelf === 'archive');
+    const n = [...s.read.shelf.shelf, ...s.read.shelf.archive].find(b => String(b.id) === tile.dataset.book);
     if (n.kind === 'round' && n.round) {
       const round = t.closest('[data-round]')?.dataset.round;
       if (round) return s.rounded(n, round);
@@ -273,27 +268,31 @@ function clicked(s, e) {
   }
   const read = s.read.books.get(s.id),
     p = [...read.pages, ...read.archived].find(x => String(x.id) === tile.dataset.id);
-  if (act) return archive(s, p, act.dataset.act === 'archive');
+  if (act) return archive(s, p, false);
   if (t.closest('.bk-tile-open')) s.hooks.open(p, s.id);
 }
-
-// A book's own menu: its button opens it (or shuts it again); a tap anywhere else shuts it, and does nothing more
-// unless it's one of its items. Whether the tap's done with.
-function menued(s, t) {
-  const more = t.closest('.bk-book-more'),
-    item = t.closest('.bk-book-menu [role=menuitem]');
-  if (!more && s.menu == null) return false;
-  const id = more?.closest('.bk-tile').dataset.book;
-  s.menu = id && id !== s.menu ? id : null;
-  draw(s);
-  s.body.querySelector('.bk-book-menu [role=menuitem]')?.focus();
-  return !item;
-}
+// The notebook whose pages show, as last read
+const shownBook = s =>
+  s.read.books.get(s.id)?.notebook ??
+  [...(s.read.shelf?.shelf ?? []), ...(s.read.shelf?.archive ?? [])].find(n => n.id === s.id);
 
 function switchTab(s, tab) {
   if (tab === s.tab) return;
   s.tab = tab;
   flip(s, () => draw(s));
+}
+// A chapter's head scrolled to the overview's top
+function toChapter(s, chapter) {
+  const head = s.body.querySelector(`.bk-far-chapter[data-chapter="${CSS.escape(chapter)}"]`);
+  if (!head) return;
+  const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  s.far.scrollTo({ top: head.offsetTop - TOP_GAP, behavior: still ? 'auto' : 'smooth' });
+}
+// A page of the notebook shown archived from its own dots menu: once its grid shows, as a tap on its tile would
+async function archiveShown(s, id) {
+  if (!s.read.books.has(s.id)) await refresh(s);
+  const p = s.read.books.get(s.id)?.pages.find(x => String(x.id) === String(id));
+  if (p) return archive(s, p, true);
 }
 
 // A page archived (or brought back): gone from the grid at once, an archived one's picture crumpled away over it, Undo
@@ -323,23 +322,6 @@ function crumpled(s, p) {
   const paper = s.body.querySelector(`.bk-tile[data-id="${CSS.escape(String(p.id))}"] .bk-tile-paper`);
   if (!paper) return;
   crumple(paper.getBoundingClientRect(), paper.cloneNode(true));
-}
-// A notebook archived or back on the Shelf, the same way
-async function putAway(s, n, archived) {
-  const read = s.read.shelf,
-    moved_ = { ...n, archived };
-  flip(s, () => {
-    read.shelf = archived ? read.shelf.filter(x => x !== n) : [...read.shelf, moved_];
-    read.archive = archived ? [...read.archive, moved_] : read.archive.filter(x => x !== n);
-    draw(s);
-  });
-  told(s, archived ? `${n.name} archived.` : `${n.name} back on the Shelf.`, () => putAway(s, moved_, !archived));
-  try {
-    await archiveNotebook(s.dev, n.id, archived);
-  } catch (e) {
-    told(s, e.message);
-  }
-  if (s.level === 'shelf') refresh(s);
 }
 // New page: a blank one at the notebook's end, opened
 async function newPage(s) {
@@ -383,9 +365,11 @@ async function reorder(s, from, to, chapter) {
 }
 // Alt with an arrow on a page's tile moves it a place back or on, the focus going with it
 function keyed(s, e) {
-  if (e.key === 'Escape' && s.menu != null) {
-    s.menu = null;
-    return draw(s);
+  if (e.key === 'Escape' && s.menu) {
+    s.menu = false;
+    s.asking = null;
+    draw(s);
+    return s.head.querySelector('.bk-far-more')?.focus();
   }
   const step = { ArrowLeft: -1, ArrowUp: -1, ArrowRight: 1, ArrowDown: 1 }[e.key],
     tile = e.target.closest?.('.bk-tile[data-drag]');

@@ -1,13 +1,14 @@
 // The select tool's cut, copy, paste, duplicate and delete (bookselect.js), and its keys: Delete or Backspace, ⌘ or
 // Ctrl with X, C, V, D (a duplicate a little down and right) and A (all on the page shown), Escape to let go, and the
-// arrow keys to nudge (Shift: ten times as far). The bar beside the selection does the same with a Pencil or a finger,
-// and so does the Paste bubble a tap on bare paper brings (bookselectpaste.js).
+// arrow keys to nudge (Shift: ten times as far). The bar beside the selection duplicates, moves to another page and
+// deletes with a Pencil or a finger; a tap on bare paper brings the Paste bubble for what a key copied
+// (bookselectpaste.js).
 //
 // The clip is the book's own: what was copied, kept as it was. The system's clipboard gets a word that names it, so a
 // paste takes the clip only while that word is still there: a picture copied since is booktape.js's to paste, and
 // other words copied since are no paste here. A picture is on its page once (pagescraps.ts), so a pasted one is
 // uploaded again for its page (booktape.js keepAgain), unless it was cut from that page and isn't back on it.
-import { button, MOD } from './bookui.js';
+import { button, lineIcon, MOD, DUPLICATE_ICON } from './bookui.js';
 import { carried } from './bookbrought.js';
 import { sfx } from '../audio.js';
 import { keepAgain } from './booktape.js';
@@ -15,7 +16,7 @@ import { mountTapPaste } from './bookselectpaste.js';
 // (what's deleted balls up and is thrown away)
 import { crumple } from './bookpaper.js';
 import { thingsPicture } from './bookpaperdraw.js';
-import { said } from './booksave.js';
+import { said, shut } from './booksave.js';
 import { word } from './bookscope.js';
 import { mapBox, moveBy, movedScrap, movedStroke, movedText, movedThings, pasteAt, union } from './bookselectmath.js';
 import { bounds, boxOfText, changed, choose, current, framed, letGo, redrawn, swapIn } from './bookselect.js';
@@ -59,7 +60,6 @@ function copy(clip) {
   clip.held = { ...snapshot(sel), cut: false };
   clip.word = `book-selection-${Date.now().toString(36)}`;
   clip.again = null;
-  offered(clip);
   return true;
 }
 const snapshot = sel => ({
@@ -76,7 +76,7 @@ function cut(clip) {
   clip.held.cut = true;
   return remove(clip, false);
 }
-// A copy or cut from a key, heard as it's taken: the bar's Cut and Copy are heard as presses (booksounds.js)
+// A copy or cut from a key, heard as it's taken
 function taken(clip, cutting) {
   if (!(cutting ? cut(clip) : copy(clip))) return false;
   sfx.tick();
@@ -103,12 +103,16 @@ function remove(clip, crumpled = true) {
 }
 // One whole group of a Notebook page picked: what its clip's menu does (bookgroups.js lone); else null
 const lone = sel => sel.book.groups?.lone(sel.view, sel) ?? null;
-// One whole group picked moved to another page, from its menu at the pages (from: the bar's button)
+// What's picked moved to another page, from the menu of pages at the bar's button (from: bookgroups.js)
 function move(clip, from) {
   const { sel } = clip,
-    one = current(sel) && lone(sel);
-  if (!one?.move) return false;
-  one.move(from);
+    groups = sel.book.groups;
+  if (!current(sel) || !groups?.movable(sel.view)) return false;
+  groups.move(
+    sel.view,
+    { ink: sel.ink.slice(), scraps: sel.scraps.slice(), texts: sel.texts.slice(), box: bounds(sel) },
+    from,
+  );
   letGo(sel);
   return true;
 }
@@ -218,6 +222,7 @@ function settle(clip) {
 // ---- the keys and the clipboard
 
 // The keys while the book is open in select mode and has the pointer or the focus, never while a field has the keyboard
+// nor on a locked page
 function keys(clip) {
   document.addEventListener('keydown', e => {
     if (e.altKey || !ours(clip, e)) return;
@@ -250,6 +255,8 @@ function ours(clip, e) {
   const desk = clip.sel.book.desk;
   if (desk.dataset.tool !== 'select' || !['open', 'spread'].includes(document.documentElement.dataset.book))
     return false;
+  const page = clip.sel.book.view()?.page;
+  if (!page || shut(page)) return false;
   if (e.composedPath()[0]?.closest?.(FIELD)) return false;
   const book = desk.closest('#book') ?? desk;
   return book.matches(':hover') || book.contains(document.activeElement);
@@ -299,11 +306,10 @@ function following(clip) {
 
 // ---- the bar
 
-// The bar beside the selection: Cut, Copy, Paste (once the clip holds something: copied, it shows), Duplicate, Delete,
-// Move to page… (one whole group picked, as its clip's menu has it: fit) and Group (what's picked made one group:
-// bookgroups.js.), for a Pencil or a
-// finger (a mouse has them too). Its touches are its own: never the paper's pan or ink,
-// which would take their click. (Paste, its own touches)
+// The bar beside the selection, one line of icons named for screen readers and tipped with their keys: Duplicate,
+// Move to page… (on an open Notebook page: bookgroups.js) and Delete, for a Pencil or a finger (a mouse has them too).
+// Duplicate is the copy and paste, Move to page and a drag the cut. Its
+// touches are its own: never the paper's pan or ink, which would take their click.
 function barOf(clip) {
   const bar = document.createElement('div');
   bar.className = 'bk-sel-bar';
@@ -311,17 +317,15 @@ function barOf(clip) {
   bar.setAttribute('aria-label', word('selection'));
   for (const type of ['pointerdown', 'touchstart', 'touchmove']) bar.addEventListener(type, e => e.stopPropagation());
   const acts = [
-    [word('cut'), `${MOD}+X`, () => cut(clip) && copied(clip)],
-    [word('copy'), `${MOD}+C`, () => copy(clip) && copied(clip)],
-    [word('paste'), `${MOD}+V`, () => pasteBeside(clip)],
-    [word('duplicate'), `${MOD}+D`, () => duplicate(clip)],
-    [word('delete'), 'Delete', () => remove(clip)],
-    [word('moveToPage'), '', b => move(clip, b)],
+    [DUPLICATE_ICON, word('duplicate'), `${MOD}+D`, () => duplicate(clip)],
+    [ICONS.move, word('moveToPage'), '', b => move(clip, b)],
+    [ICONS.delete, word('delete'), 'Delete', () => remove(clip)],
   ];
-  for (const [text, keys, act] of acts)
+  for (const [icon, label, keys, act] of acts)
     bar.append(
       button({
-        text,
+        icon,
+        label,
         keys,
         onClick: e => {
           settle(clip);
@@ -329,41 +333,21 @@ function barOf(clip) {
         },
       }),
     );
-  clip.pasting = bar.children[2];
-  clip.pasting.hidden = !clip.held;
-  clip.moving = bar.children[5];
+  clip.moving = bar.children[1];
   return bar;
 }
-// Move to page… in the bar while one whole group is picked and another page is open to take it
+// (in the controls' line: a page with an arrow coming onto it; a bin)
+const ICONS = {
+  move: lineIcon(
+    '<path d="M10 3h6l4 4v12a2 2 0 0 1-2 2h-8a2 2 0 0 1-2-2v-3"/><path d="M16 3v4h4"/><path d="M3 12h9M9 9l3 3-3 3"/>',
+  ),
+  delete: lineIcon('<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v5M14 11v5"/>'),
+};
+// Move to page… in the bar while what's picked can go to another page
 function fit(clip) {
-  clip.moving.hidden = !lone(clip.sel)?.move;
+  clip.moving.hidden = !clip.sel.book.groups?.movable(clip.sel.view);
 }
-// Paste shown in the bar, coming in as Copy or Cut fills the clip (the bar placed again for its width)
-function offered(clip) {
-  const b = clip.pasting;
-  if (!b?.hidden) return;
-  b.hidden = false;
-  framed(clip.sel);
-  b.animate(
-    [
-      { opacity: 0, scale: 0.6 },
-      { opacity: 1, scale: 1 },
-    ],
-    {
-      duration: matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 180,
-      easing: 'cubic-bezier(.2,.8,.3,1.3)',
-    },
-  );
-}
-// The clip pasted from the bar: a step down and right of what's picked, as Duplicate does
-function pasteBeside(clip) {
-  const { sel } = clip;
-  if (!current(sel)) return paste(clip);
-  const b = bounds(sel),
-    d = STEP_PX / sel.book.scale;
-  return paste(clip, clip.held, null, [(b.x0 + b.x1) / 2 + d, (b.y0 + b.y1) / 2 + d]);
-}
-// (copied by the bar or a key with no event: the clip's word on the system's clipboard too, so ⌘V knows it; a clipboard
+// (copied by a key with no event: the clip's word on the system's clipboard too, so ⌘V knows it; a clipboard
 // that refuses it, the page says so, as ⌘V may then find other words there.)
 const copied = clip =>
   navigator.clipboard

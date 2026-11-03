@@ -19,7 +19,6 @@ import { companyDay } from '../company.ts';
 import { findAgent } from '../jobs.ts';
 import * as pictures from '../pictures.ts';
 import { refuse, reply } from '../uploads.ts';
-import { readBody } from '../../../../shared/routes/routes.ts';
 import { PAGE, cornerOf, grownTo, inkOf, isRefused, labelOf, pageSide, textsOf, type Refused } from '../pagechecks.ts';
 import {
   DIR,
@@ -268,15 +267,8 @@ export async function uploadScrap(req: IncomingMessage, res: ServerResponse, who
   if (!row(id, who)) return refuse(req, res, 404, 'no such page');
   if (who !== BOARD && bookFull(who)) return refuse(req, res, 413, BOOK_FULL);
   if (full(id)) return refuse(req, res, 429, TOO_MANY_UPLOADS);
-  const type = String(req.headers['content-type'] ?? '')
-    .split(';')[0]
-    .trim()
-    .toLowerCase();
-  if (type !== 'image/jpeg' && type !== 'image/png') return refuse(req, res, 415, 'a JPEG or PNG only');
-  const raw = await readBody(req, pictures.MAX_BYTES);
-  if (!raw) return refuse(req, res, 413, 'too large');
-  const p = pictures.picture(raw);
-  if (!p) return reply(res, 400, { error: 'not a picture we can read' }, true);
+  const p = await pictures.readUpload(req, res);
+  if (!p) return;
   const big = tooBig(p.clean);
   if (big) return reply(res, big[0], { error: big[1] }, true);
   // Again, past the await: the page may have been deleted, or filled from another tab, while the body came in

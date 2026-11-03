@@ -2,7 +2,7 @@
 // The Pencil on a call, on HQ held like an iPad mini (744 × 1133): a mark that settles goes to the book's call page
 // for the call's agent (its note, heard as 'pencil:note'), never to the notebook as a scrap, and its ink doesn't lift
 // away: it stays drawn on the screen until the line says the agent's turn on it is done ('call:had'), then it goes, so
-// the board circles afresh. A second mark stays while the first goes. Hung up, any left goes too (the board, call 161).
+// the board circles afresh. A second mark stays while the first goes. Hung up, any left goes too.
 //   node shared/review/callink-check.mjs [--shots dir]
 import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';

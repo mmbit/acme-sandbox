@@ -4,18 +4,21 @@
 // board answers in the room pulled out under it as under an answer's slip (bookslipreply.js), drawn (the ink goes as a
 // picture of it with the answer) or typed with the text tool: no field to type in. It goes to the
 // desk phone's own route, so one answer closes the card in both places. Answered, it reads like a ticked slip with the
-// pick, the words or the drawing.
+// pick, the words or the drawing. Its before-and-after pairs and other pictures show under its words as the desk phone
+// shows them, small, a tap opening them in its one viewer (pictures.js): never their files' paths as words.
 // A card for a secret, a step or built work never comes here: it stays on the desk phone (bookasks.ts deskOnly). Its
 // look: bookasks.css.
 import { esc } from '../../util.js';
-import { parseCard } from '../card.js';
-import { chips, given, inputHtml } from '../questions.js';
+import { unfoldedCard, unfenced } from '../card.js';
+import { given, inputHtml } from '../questions.js';
 import { sfx } from '../audio.js';
+import { figuresHtml, pairsHtml, picturesIn, wirePics } from '../pictures.js';
 import { pictureUrl, uploadPicture } from '../data.js';
 import { answerAsk } from './notebookdata.js';
 import { openSpot } from './bookaskspot.js';
 import { ROOM, roomHtml, wireRoom } from './bookslipreply.js';
 import { SNIP_PAD, inkPicture } from './bookpaperdraw.js';
+import { answerIn, toggled } from './bookanswerreply.js';
 
 // The desk phone's name, the company's (brand.js), told by the board's book (book.js): a guest's page has no HQ brand
 // to read, and shows no asks of the board's
@@ -36,10 +39,10 @@ export const asksHtml = (g, rooms, dev) =>
 // (a card's room, among the page's: its own key, apart from the answers')
 const roomKey = a => `ask-${a.id}`;
 function askHtml(a, spot, rooms, dev) {
-  const c = parseCard(a.body ?? ''),
+  const c = unfoldedCard(a.body ?? ''),
     said = (c.summary[0] || a.title).trim();
   const by = `<b class="slip-by">${esc(a.name ?? 'An agent')} asks</b>`;
-  const head = `${ASK_CLIP}${by}<p class="slip-text">${esc(said)}</p>${spot}`;
+  const head = `${ASK_CLIP}${by}<p class="slip-text">${esc(said)}</p>${picturesHtml(c)}${spot}`;
   const label = `${a.name ?? 'An agent'} asks: ${a.title}`;
   if (a.status === 'answered')
     return `<section class="ask-slip" data-ask="${a.id}" data-answered aria-label="${esc(label)}, answered">${head}${ASK_TICK}${answerHtml(
@@ -68,6 +71,11 @@ function askHtml(a, spot, rooms, dev) {
   return `<section class="ask-slip" data-ask="${a.id}" aria-label="${esc(label)}">${head}${chosen}${asked}${room}<p class="ask-foot"><span>The same card is on your ${esc(phone)}.</span>${
     asked ? '<button type="button" class="ask-send">Send</button>' : ''
   }</p><p class="slip-said" hidden></p></section>`;
+}
+// The card's pairs, then its other pictures (those its text names, but not in a fenced block), small
+function picturesHtml(c) {
+  const shown = pairsHtml(c.pairs) + figuresHtml(picturesIn(unfenced(c.rest)));
+  return shown ? `<div class="ask-pics">${shown}</div>` : '';
 }
 // What a card was answered with, under its tick: the words, and the drawing (drawn: its HTML) or else, with no words,
 // Got it
@@ -106,8 +114,13 @@ export function wireAsks(root, { asks, answered, rooms, hooks }) {
       const { url, selector, text } = spot.dataset;
       openSpot({ url, el: { selector, text } });
     });
-  // (a drawing that went, once it's loaded: the page laid again round its height)
-  for (const img of root.querySelectorAll('img.ask-drawn'))
+  // (a card's pictures open in the desk phone's viewer, over the book; the page laid again round them once loaded, as
+  // round a drawing that went)
+  for (const pics of root.querySelectorAll('.ask-pics')) {
+    const a = asks.get(Number(pics.closest('[data-ask]').dataset.ask));
+    wirePics(pics, { pairs: unfoldedCard(a.body ?? '').pairs, parent: pics.closest('#book') });
+  }
+  for (const img of root.querySelectorAll('img.ask-drawn, .ask-pics img'))
     if (!img.complete) img.addEventListener('load', hooks.relay, { once: true });
   for (const slip of root.querySelectorAll('.ask-slip:not([data-answered])')) {
     const a = asks.get(Number(slip.dataset.ask));
@@ -117,7 +130,8 @@ export function wireAsks(root, { asks, answered, rooms, hooks }) {
 function wireAsk(slip, a, on, rooms, hooks) {
   const said = slip.querySelector('.slip-said'),
     tell = text => Object.assign(said, { textContent: text, hidden: !text });
-  for (const chip of slip.querySelectorAll('.ask-q .chip')) chip.addEventListener('click', () => toggled(chip, a));
+  for (const chip of slip.querySelectorAll('.ask-q .chip'))
+    chip.addEventListener('click', () => toggled(chip, a.questions));
   // (whatever answers it, what's drawn in its room goes with it)
   const room = wireRoom(slip.querySelector('.bk-slip-room'), rooms, {
     ...hooks,
@@ -131,18 +145,6 @@ function wireAsk(slip, a, on, rooms, hooks) {
       go(chip.dataset.choice);
     });
   slip.querySelector('.ask-send')?.addEventListener('click', () => go(undefined));
-}
-// A question's chip tapped: a choice's one on (the others off), a pick-many's on or off
-function toggled(chip, a) {
-  const q = a.questions[Number(chip.closest('[data-q]').dataset.q)],
-    on = !q.many || chip.getAttribute('aria-pressed') !== 'true';
-  if (!q.many)
-    for (const other of chip.parentElement.querySelectorAll('.chip')) {
-      other.classList.remove('on');
-      other.setAttribute('aria-pressed', 'false');
-    }
-  chip.classList.toggle('on', on);
-  chip.setAttribute('aria-pressed', String(on));
 }
 // The card answered as the desk phone answers it (pick: the choice tapped; words typed in its room; ink drawn there,
 // going as a picture of it, uploaded for the card as the desk phone's tray uploads one), then shown ticked with the
@@ -173,10 +175,4 @@ async function answer(slip, a, on, pick, { words = '', ink = [] } = {}) {
   } finally {
     slip.removeAttribute('aria-busy');
   }
-}
-// A question's answer as its field holds it: the chip (or chips) on, or the box's words
-function answerIn(el, q) {
-  if (!chips(q)) return el.querySelector('input')?.value ?? '';
-  const on = [...el.querySelectorAll('.chip.on')].map(c => c.dataset.answer);
-  return q.many ? on : (on[0] ?? '');
 }

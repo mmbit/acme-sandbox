@@ -14,6 +14,7 @@ const { db } = h;
 const { followThroughSweep, read, recordVerdict, START_MS, FINISH_MS, RETELL_MS } = await import('./followthrough.ts');
 const { ceo, roles } = await import('./company.ts');
 const { writePad } = await import('./pad.ts');
+const { setUrgent } = await import('./urgency.ts');
 const { MIN, HOUR, t0, reset, agreed, checks, alarm, told, startCheck } = await followthroughFixture(h);
 
 test('with nothing the board agreed still standing, no check is queued', async () => {
@@ -305,6 +306,36 @@ test("seats at their limits give an unstarted check time to start once one is ba
   agreed();
   seats('login');
   followThroughSweep(t0);
+  followThroughSweep(t0 + START_MS);
+  assert.match(alarm(), /hasn't started 15 min after it was queued/);
+});
+
+test('paced seats give an unstarted check time to start, as seats at their limits do; an urgent check is due at once', () => {
+  const seats = () => {
+    h.jobs.setSeat('claude-1', 'claude', 'sleeping', t0 + 2 * HOUR);
+    h.jobs.setSeat('claude-2', 'claude', 'ready', 0, undefined, {
+      util: 0.1,
+      week: 0.6,
+      weekResets: t0 + 5 * 24 * HOUR,
+      pace: true,
+    });
+    h.jobs.setSeat('claude-3', 'claude', 'paused');
+    h.jobs.setSeat('codex-1', 'codex', 'ready', 0);
+  };
+  reset();
+  agreed();
+  seats();
+  followThroughSweep(t0);
+  followThroughSweep(t0 + HOUR);
+  followThroughSweep(t0 + 2 * HOUR - MIN); // the last minute with claude-1 asleep and claude-2 paced
+  assert.equal(alarm(), null);
+  assert.deepEqual(told(), []);
+  assert.equal(checks().length, 1);
+  reset();
+  agreed();
+  seats();
+  followThroughSweep(t0);
+  assert.equal(typeof setUrgent('task', String(checks()[0].job), true, ceo()), 'object');
   followThroughSweep(t0 + START_MS);
   assert.match(alarm(), /hasn't started 15 min after it was queued/);
 });

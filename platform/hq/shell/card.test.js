@@ -1,9 +1,9 @@
 // node --test platform/hq/shell/card.test.js   (the desk phone's card reader, as plain functions; no DOM)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseCard, cardOf, shownRecommend, FOLD_CHARS, docsIn, docOn, docParts } from './card.js';
+import { parseCard, cardOf, unfoldedCard, shownRecommend, FOLD_CHARS, docsIn, docOn, docParts } from './card.js';
 import { cardProblem, MAX_CARD } from './cardcheck.js';
-import { pairsOf } from './media.js';
+import { PIC, pairsOf } from './media.js';
 import { prose } from './prose.js';
 
 // Three choices, then the card's own text, with lists of its own
@@ -362,6 +362,34 @@ test('a card with before-and-after pairs leads with them: its text folds under M
   assert.doesNotMatch(pairsOf(BACK).rest, /about-before|Before and after/); // (so they aren't shown again as the card's pictures)
   assert.equal(cardProblem(BACK, true), null);
   assert.deepEqual(cardOf('Which?\n\nOptions: Yes | No').pairs, []);
+});
+
+// A design ask's card as an agent filed it, its pairs straight after its words (the glass for the notebook's bars)
+const GLASS_DIR = 'products/_cycles/2026-11-02-ink-real-book/glass';
+const GLASS = `Three versions of the notebook's tool strip and bottom bar in light glass, from lightly frosted to clearer. About two minutes.
+Before and after:
+${['A Clear frost', 'B Milk glass', 'C Lit rim'].flatMap(v => [['the bars close up', 'bars'], ['iPhone', 'phone'], ['iPad', 'ipad']].map(([what, f]) =>
+    `- ${v}, ${what}: ${GLASS_DIR}/now-${f}.jpg ${GLASS_DIR}/${v[0].toLowerCase()}-${f}.jpg`)).join('\n')}
+We recommend A: it keeps the short lip, with the least glass of the three. The bars as they are: ${GLASS_DIR}/now-bars.jpg
+
+Choose:
+- A Clear frost
+- B Milk glass
+- C Lit rim`;
+
+test("a card's slip reads it without its pictures: its pairs apart, and no path in its words", () => {
+  assert.match(parseCard(GLASS).summary[0], /now-bars\.jpg/); // (read whole, the pairs are its words)
+  const c = unfoldedCard(GLASS);
+  assert.equal(c.pairs.length, 9);
+  assert.deepEqual([c.pairs[0].label, c.pairs[0].after], ['A Clear frost, the bars close up', `${GLASS_DIR}/a-bars.jpg`]);
+  assert.equal(c.summary[0], "Three versions of the notebook's tool strip and bottom bar in light glass, from lightly frosted to clearer. About two minutes.\nWe recommend A: it keeps the short lip, with the least glass of the three. The bars as they are: the picture below");
+  assert.deepEqual(c.choices.map(ch => ch.label), ['A Clear frost', 'B Milk glass', 'C Lit rim']);
+  for (const text of [c.summary[0], c.after, c.details, ...c.choices.map(ch => ch.desc)]) {
+    assert.doesNotMatch(text, PIC);
+    assert.doesNotMatch(text, /\.(?:jpe?g|png)\b|_cycles/);
+  }
+  // (the desk phone folds the same read: its pairs lead, its words under More)
+  assert.deepEqual(cardOf(GLASS).pairs, c.pairs);
 });
 
 test('a card that brings work back shows each change before and after, or its clip, or says there is nothing to see', () => {

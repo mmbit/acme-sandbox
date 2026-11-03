@@ -4,8 +4,7 @@
 // where it's in sight, so the Pencil dictates right after scribbling; else a little above the middle of the paper
 // shown; a sent page's on the notebook's current page. One step Undo takes back.
 // Escape lets it go. Nothing heard, or the microphone blocked, says so and goes. The tap is what asks for the
-// microphone (the board, call 158), so nothing on the page ever has to be held (Ink 1.1's deck: one tap and it's
-// listening, no long press anywhere).
+// microphone, so nothing on the page ever has to be held: one tap and it's listening, no long press anywhere.
 //
 // The recording is dictate.js's (pieces cut at the pauses, each transcribed as the board talks; the whole clip
 // the fallback), on a call the call's own microphone.

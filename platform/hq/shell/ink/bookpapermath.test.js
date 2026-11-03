@@ -42,35 +42,34 @@ test('a sheet balls up from its own edge to a jagged ball about its middle, the 
   });
 });
 
-test('a page tears out along its spine, jagged, the tear running down as it goes, its corner kept', () => {
-  const [w, h, ear] = [150, 200, 14],
+test('a page tears out along its spine, jagged, the tear running down as it goes, its top whole', () => {
+  const [w, h] = [150, 200],
     px = points => points.map(([x, y]) => [(x * w) / 100, (y * h) / 100]),
-    torn = px(tornOutline(w, h, { seed: 3, ear })),
-    edge = torn.slice(3, -2);
+    torn = px(tornOutline(w, h, { seed: 3 })),
+    edge = torn.slice(2, -2);
   assert.deepEqual(
-    torn.slice(0, 3),
+    torn.slice(0, 2),
     [
       [0, 0],
-      [w - ear, 0],
-      [w, ear],
+      [w, 0],
     ],
-    'the top and its turned corner whole',
+    'the top whole',
   );
   assert.ok(edge.length > 20, 'ragged a few px apart down the spine');
   for (const [x] of edge)
     assert.ok(x < w && x >= w - FIBRE_PX - TEAR_PX - 1e-9, `${x}: torn, never deeper than the tear`);
   const depths = edge.map(([x]) => w - x);
   assert.ok(Math.max(...depths) - Math.min(...depths) > TEAR_PX / 2, 'in and out: jagged, never a straight cut');
-  const whole = px(tornOutline(w, h, { t: 0, seed: 3, ear }));
+  const whole = px(tornOutline(w, h, { t: 0, seed: 3 }));
   assert.equal(whole.length, torn.length, 'as many points at every t, so it moves smoothly');
-  for (const [x] of whole.slice(3, -2)) assert.equal(x, w, 'not yet torn: the edge straight');
-  const half = px(tornOutline(w, h, { t: 0.5, seed: 3, ear })).slice(3, -2);
+  for (const [x] of whole.slice(2, -2)) assert.equal(x, w, 'not yet torn: the edge straight');
+  const half = px(tornOutline(w, h, { t: 0.5, seed: 3 })).slice(2, -2);
   assert.ok(half[0][0] < w && half.at(-1)[0] === w, 'half way: torn at the top, whole at the foot');
-  const fibres = px(tornOutline(w, h, { seed: 3, ear, fibres: true })).slice(3, -2);
+  const fibres = px(tornOutline(w, h, { seed: 3, fibres: true })).slice(2, -2);
   fibres.forEach(([x], i) =>
     assert.ok(x >= edge[i][0] && x <= edge[i][0] + FIBRE_PX + 1e-9, 'fibres just past the paper'),
   );
-  assert.notDeepEqual(tornOutline(w, h, { seed: 4, ear }), tornOutline(w, h, { seed: 3, ear }), 'never two alike');
+  assert.notDeepEqual(tornOutline(w, h, { seed: 4 }), tornOutline(w, h, { seed: 3 }), 'never two alike');
 });
 
 test('words wrap at the box’s width, keep their line breaks, and a word too long for it breaks', () => {

@@ -66,7 +66,7 @@ import { codeOf } from './jobcodes.ts'; // a card's job's code
 import { withPicks } from './models.ts';
 import * as approvals from './approvals.ts';
 import * as mailout from './mailout.ts';
-import { mailHooks, forget, forgettable } from './mail.ts';
+import { mailHooks, forget, forgettable, customerDesks, incomingOf, pileHooks, setPile } from './mail.ts';   // (customerDesks, incomingOf, pileHooks, setPile)
 import { placedWith, signed } from './payments.ts';
 import { manifest } from './manifests.ts';
 import * as heldLines from './held-lines.ts';   // paid orders held for a person to look at their words
@@ -674,20 +674,25 @@ export const takes = (address: string) => runs() && (toInbox(address) || !!caseO
 export const MAIL_ONLY = 1000;
 export const mailOnly = (): string[] => { try { const v = JSON.parse(setting('care.mailonly') ?? '[]'); return Array.isArray(v) ? v.filter(x => typeof x === 'string') : []; } catch { return []; } };
 const AUTOMATIC = /^(no-?reply|do-?not-?reply|mailer-daemon|postmaster|bounces?)([+@])/i;
-function emailIn(m: Hooked, health: boolean) {
+// A new email that lands on no card waits for mail.ts's sorter (mailsort.ts): only one it puts in Customers becomes a card
+// (sorted), so a scam or a notification never gets a draft. true: it landed on a card.
+function emailIn(m: Hooked, health: boolean, sorted = false): boolean {
   const from = mailout.address(plainAddress(m.sender))?.toLowerCase();
-  if (!from || m.bulk || !toInbox(m.recipient)) return;
+  if (!from || m.bulk || !toInbox(m.recipient)) return false;
   const domain = domainOf(from);
-  if (mailout.domains().includes(domain) || domain === domainOf(claimsTo().to) || AUTOMATIC.test(from) || mailOnly().includes(from)) return;
+  if (mailout.domains().includes(domain) || domain === domainOf(claimsTo().to) || AUTOMATIC.test(from) || mailOnly().includes(from)) return false;
   // a reply to one of our emails that went to hello@ instead of the case's address: on the card its subject names, if it's
   // from the address that card writes to (anyone else's is a card of its own); the same sender's open card takes it too
   const named = /\(([HE]-\d{1,9})\)/.exec(m.subject ?? '')?.[1], card = named ? byCase(named) : undefined;
-  if (card && card.to_addr?.toLowerCase() === from) return landOn(card, m, from, health);
+  if (card && card.to_addr?.toLowerCase() === from) { landOn(card, m, from, health); return true; }
   const open = db.prepare(`select * from care_cards where kind = 'email' and lower(to_addr) = ? and status in ${OPEN} order by id desc limit 1`).get(from) as Card | undefined;
-  if (open) return landOn(open, m, from, health);
+  if (open) { landOn(open, m, from, health); return true; }
+  if (!sorted) return false;
   const today = (db.prepare("select count(*) n from care_cards where kind = 'email' and created > ?").get(new Date(Date.now() - DAY).toISOString()) as { n: number }).n;
-  if (today >= EMAILS_A_DAY || openCards() >= OPEN_CARDS)
-    return log(`an email stays in Mail only (Mail #${m.id}): ${today >= EMAILS_A_DAY ? `${EMAILS_A_DAY} email cards came today` : `${OPEN_CARDS} cards are open`}.`);
+  if (today >= EMAILS_A_DAY || openCards() >= OPEN_CARDS) {
+    log(`an email stays in Mail only (Mail #${m.id}): ${today >= EMAILS_A_DAY ? `${EMAILS_A_DAY} email cards came today` : `${OPEN_CARDS} cards are open`}.`);
+    return false;
+  }
   const ref = nextCase(), words = clean(m.text, MAX.words) || '(an empty email)', now = new Date().toISOString();
   db.prepare(`insert into care_cards (id, case_ref, kind, app, checked, to_addr, lang, words, facts, status, created, since, last_message, updated)
     values (${NEW_ID}, ?, 'email', '', 'none', ?, 'en', ?, ?, 'waiting', ?, ?, ?, ?)`).run(lastCard(), ref, from, words, JSON.stringify({ subject: oneLine(clean(m.subject, 300)) }), now, now, now, now);
@@ -696,6 +701,7 @@ function emailIn(m: Hooked, health: boolean) {
   if (health) healthFound(c);
   else want(c.id);   // (HQ's health-detail check on what the model would read first: want())
   log(`an email from a customer (${ref}, Mail #${m.id}).`);   // (to the team once care has read it: readFirst())
+  return true;
 }
 // "Not a customer's": an email card goes back to Mail (closed, nothing sent), and its sender's later mail stays there
 // (Settings › Care lists them, with Back to Care)
@@ -905,8 +911,31 @@ export function mailIn(m: Hooked) {
   const health = (!!ref || toInbox(m.recipient)) && screened(m.id, m.text, m.subject);
   // a sender the board moved back to Mail ("Not a customer's") stays there, at an email card's own address too
   if (c?.kind === 'email' && mailOnly().includes(plainAddress(m.sender))) return;
-  if (c) landOn(c, m, plainAddress(m.sender), health);
-  else if (!ref) emailIn(m, health);   // (an unknown case's address is nobody's inbox)
+  // (on a card: Care's, in Mail's Customers)
+  if (c) { landOn(c, m, plainAddress(m.sender), health); setPile(m.id, 'customer', 'rule'); }
+  else if (!ref && emailIn(m, health)) setPile(m.id, 'customer', 'rule');   // (an unknown case's address is nobody's inbox)
+}
+// Mail's piles: Care takes customers at its inbox while its service runs. A mail the
+// sorter or the board puts in Customers that's on no card yet becomes one; one the sorter put there that Care leaves in
+// Mail (a list's, our own domain's, a sender the board moved back) goes to the board's pile, so nothing waits unseen. A
+// mail the board moves out of Customers takes back the card it alone made, with nothing sent.
+customerDesks.push(recipient => runs() && toInbox(recipient));
+pileHooks.push(({ id, pile, was, by }) => {
+  if (!runs()) return;
+  if (pile === 'customer' && !db.prepare("select 1 from care_lines where mail = ? and who = 'email'").get(id)) {
+    const m = incomingOf(id)!;
+    if (!toInbox(m.recipient)) return;
+    if (!emailIn(m, screened(m.id, m.text, m.subject), true) && by !== 'board') setPile(id, 'board', 'rule');
+  }
+  if (was === 'customer' && by === 'board') takenBack(id);
+});
+function takenBack(mail: number) {
+  const c = db.prepare(`select c.* from care_cards c join care_lines l on l.card = c.id where l.mail = ? and l.who = 'email' and c.kind = 'email'
+    and c.status = 'waiting'`).get(mail) as Card | undefined;
+  if (!c || db.prepare("select 1 from care_lines where card = ? and who = 'email' and mail is not ?").get(c.id, mail)) return;
+  dropWants(c.id);
+  note(c.id, 'Moved out of Customers in Mail: not a customer’s. Nothing was sent.');
+  set(c.id, { status: 'closed', new_reply: 0 });
 }
 function landOn(c: Card, m: Hooked, from: string, health: boolean) {
   const now = new Date().toISOString();

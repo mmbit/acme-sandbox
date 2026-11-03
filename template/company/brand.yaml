@@ -27,7 +27,10 @@ names:
 # otherwise. Onboarding takes it from the logo it draws (company/playbooks/intake.md).
 colour: '#4f7cff'
 # HQ's colours, when the brand book has them: colours: { ink, cream, paper, muted, red, gold, blue, green, purple,
-# orange } (#hex), over style.css's, which the looks are drawn for. A font: font: { family: "...", href: <Google Fonts URL> }
+# orange } (#hex), over style.css's, which the looks are drawn for. The Notebook's: colours.notebook, its accent and
+# pull tab, and colours.chosen, what's picked or done in it (a chosen version, a ticked fix), else a light tint of the
+# accent.
+# A font: font: { family: "...", href: <Google Fonts URL> }
 # The logo: svg and svgDark, alt, and pixels for the renderer. Left out: the renderer writes the name. The files go in
 # theme/hq/, which HQ serves over its own: the same names (wordmark.svg, wordmark-dark.svg, icon.svg, icon-192.png,
 # icon-512.png, icon-maskable-512.png, apple-touch-icon.png, favicon-32.png, badge-96.png) replace the foundation's.

@@ -30,6 +30,8 @@ const HQ = new URL('../../worker/bin/hq', import.meta.url).pathname;
 const CALL_TIMEOUT_MS = 30_000;
 
 type Reply = { status: number; body: any };
+// send's reply: the raw one, its JSON if it's JSON
+export type Sent = { status: number; headers: Record<string, any>; json: any; text: string };
 // an event of HQ's feed (stream: history, a replayed row; statuses, who's at work now.)
 type Fed = { type: string; agent: string; text: string; history?: boolean; statuses?: Record<string, unknown> };
 export type Running = { id: number; token: string; seat: string; agent: string; [k: string]: any };
@@ -94,18 +96,25 @@ export async function harness(
   const agent = (route: string, token: string, body?: unknown) =>
     call(`/api/agent/${route}`, token, codedBody(route, body));
   const voice = (route: string, body?: unknown) => call(`/api/voice/${route}`, VOICE_TOKEN, body);
-  // Any other caller with its own headers (a product's server with its token, the imitation checkout's page): its raw
-  // reply, a redirect not followed. A body that isn't a string (or bytes, a file's) goes as JSON and makes it a POST.
+  // Any other caller with its own headers (a product's server with its token, the imitation checkout's page, a guest's
+  // browser through Caddy: its host, cookie, origin and x-forwarded-for, the client Caddy names): its raw reply, a
+  // redirect not followed. A body that isn't a string (or bytes, a file's) goes as JSON, URLSearchParams as a form,
+  // each with its type; either makes it a POST. hold: the body's last bytes wait for it, so something can change
+  // meanwhile. (the types and the hold)
   const send = (
     path: string,
     headers: Record<string, string> = {},
     body?: unknown,
     method = body === undefined ? 'GET' : 'POST',
+    hold?: Promise<unknown>,
   ) =>
-    new Promise<{ status: number; headers: Record<string, any>; json: any; text: string }>((resolve, reject) => {
-      const payload =
-        body === undefined || typeof body === 'string' || Buffer.isBuffer(body) ? body : JSON.stringify(body);
-      const q = request(base + path, { method, headers }, res => {
+    new Promise<Sent>((resolve, reject) => {
+      const form = body instanceof URLSearchParams,
+        raw = body === undefined || typeof body === 'string' || Buffer.isBuffer(body);
+      const payload = form ? body.toString() : raw ? (body as string | Buffer | undefined) : JSON.stringify(body);
+      const sized = payload === undefined ? {} : { 'content-length': String(Buffer.byteLength(payload)) },
+        typed = raw ? {} : { 'content-type': form ? 'application/x-www-form-urlencoded' : 'application/json' };
+      const q = request(base + path, { method, headers: { ...sized, ...typed, ...headers } }, res => {
         let text = '';
         res.setEncoding('utf8');
         res.on('data', c => (text += c));
@@ -120,7 +129,9 @@ export async function harness(
         });
       });
       q.on('error', reject);
-      q.end(payload);
+      if (!hold || payload === undefined) return q.end(payload);
+      q.write(payload.slice(0, 10));
+      void hold.then(() => q.end(payload.slice(10)));
     });
 
   // The board, signed in to HQ (a passkey's sign-in, which a test can't make, leaves this session row), from HQ's own
@@ -136,6 +147,9 @@ export async function harness(
     });
     return { status: res.status, body: await res.json().catch(() => null) };
   };
+  // A form posted from HQ's own pages, as a guest's browser posts it (from: the client Caddy names)
+  const postForm = (path: string, fields: Record<string, string>, from: string) =>
+    send(path, { origin: ORIGIN, 'x-forwarded-for': from }, new URLSearchParams(fields));
 
   // The real hq script, as the job's agent runs it (dir: the job's folder, where hq request --park leaves its card for
   // the worker; tmp: its TMPDIR; call: as the voice line runs it, HQ_CALL set; stdin: piped in, for a command's "-")
@@ -234,6 +248,13 @@ export async function harness(
   };
   const answer = (id: number, answer: string, more: Record<string, unknown> = {}) =>
     board('/api/requests/answer', { id, answer, ...more });
+  // A routing job handing notes on (hq job --notes, by none) to another agent's job, then ending: that job, claimed.
+  const handNotes = async (routing: Running, notes: number[], to: { agent: string; title: string }) => {
+    const task = await agent('job', routing.token, { ...to, prompt: '', notes, by: 'none' });
+    assert.equal(task.status, 200, JSON.stringify(task.body));
+    await finish(routing);
+    return claimJob(task.body.id);
+  };
   // A card a running job asks the board live (hq ask): its id.
   const ask = async (job: Running, card: Record<string, unknown> = {}) => {
     const r = await agent('request', job.token, { kind: 'decision', title: 'A question', body: 'Which?', ...card });
@@ -321,6 +342,8 @@ export async function harness(
     voice,
     board,
     boardCookie,
+    postForm,
+    handNotes,
     hq,
     queue,
     capacity,

@@ -536,14 +536,21 @@ const LIST = `select * from review_notes n where status = 'sent' and not exists 
   order by id desc limit 200`;
 // fixed_live: its fix is merged and deployed, so HQ shows it fixed
 // waiting: why a sent note isn't moving, in the board's words: back in routing, or in work that's held (routing.ts waiting)
+// to: an owner is the same for every note of a slug, and finding it reads the product's product.yaml and the org chart,
+// so it is looked up once per slug.
 export const listNotes = () => {
   const notes = db.prepare(LIST).all() as any[];
   const waiting = holds.waiting(notes.map(n => n.id));
-  return notes.map(n => {
-    const o = ownerOf(n.about ?? n.slug);
-    return { ...row(n), fixed_live: !!n.fixed && fixLive(n.fixed_by), waiting: waiting.get(n.id) ?? null,
-      to: { agent: o.agent, name: findAgent(o.agent)?.name ?? o.agent, what: o.name }, job_code: n.job ? codeOf(n.job) : null };
-  });
+  const owners = new Map<string, { agent: string; name: string; what: string }>();
+  const to = (slug: string) => {
+    if (!owners.has(slug)) {
+      const o = ownerOf(slug);
+      owners.set(slug, { agent: o.agent, name: findAgent(o.agent)?.name ?? o.agent, what: o.name });
+    }
+    return owners.get(slug)!;
+  };
+  return notes.map(n => ({ ...row(n), fixed_live: !!n.fixed && fixLive(n.fixed_by), waiting: waiting.get(n.id) ?? null,
+    to: to(n.about ?? n.slug), job_code: n.job ? codeOf(n.job) : null }));
 };
 
 const ids = (v: unknown) => Array.isArray(v) ? [...new Set(v.map(Number).filter(Number.isInteger))] : [];

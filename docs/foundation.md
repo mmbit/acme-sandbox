@@ -52,7 +52,10 @@ where it suffices.
   carry, or Wire falls back to its own Day and Night.
 - **The brand's colours**: `company/brand.yaml`'s `colours`, each a `--<name>` on HQ's `:root` (main.js); its
   `notebook` is the Notebook's accent, the pull tab's colour, asked at onboarding (left out: HQ's ink, never a colour of
-  the platform's own).
+  the platform's own). Its `chosen` lights what's picked or done in the Notebook: a chosen version, a ticked fix, a
+  seen note, the sent stamp, the Shelf's pen and Advice label, and a guest's lit book. It goes on HQ's `:root` and on
+  the guest page's (`servePage`); left out, it's a light tint of the accent (`booklook.css` `--bk-chosen`, and the
+  server's CHOSEN stamp).
 - **Shows**: `company/shows.yaml`.
 - **Artifacts**: found, not registered. A folder with a `deck.json` is a deck (its cover a `thumbnail.jpg`, `cover.jpg`,
   `cover.png` or `thumbnail.png`, else its first slide's picture). A video with a `.render.json` beside it is a film,

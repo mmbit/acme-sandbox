@@ -1,5 +1,5 @@
 // The board's ink on a call's page read for the call's agent (callpage.ts read): its pen stays handwriting, never
-// turned into type on the page, and whoever reads the page reads the strokes as they are (board, call 176). Each of the
+// turned into type on the page, and whoever reads the page reads the strokes as they are. Each of the
 // board's scraps and drawings with ink goes as a picture of its strokes to Haiku 5.5, all of them in one call with the
 // page's own words beside them, so a letter that could be read two ways is read as what fits the rest. Its circles,
 // arrows and ticks are said as marks, and anything it can't tell is said as unsure, for the agent to ask the board. Each
@@ -11,7 +11,7 @@ import { dayAllowance } from '../dayallowance.ts';
 import { answerOf, smallCall } from '../smallmodel.ts';
 import { isRefused, type Refused, type Stroke } from '../pagechecks.ts';
 
-// The model: Haiku 5.5, by its full id (the board, call 176)
+// The model: Haiku 5.5, by its full id (Ink's README: handwriting stays ink)
 export const MODEL = 'claude-haiku-5-5';
 // How long the agent's page read waits for the readings (the voice line gives HQ 15 s): past it, the page is read
 // without them, and readings that come later are kept for its next read, up to READ_MS

@@ -21,7 +21,7 @@ const ERASERS = [12, 28, 56];
 // The pen's smoothing: how far each point goes towards the pointer (ink.js's follow): steady, or as the hand went
 const SMOOTH = { on: 0.42, off: 0.75 };
 
-// The tools down their island, as the board ordered them (card 341's call): the pen, one tool with its card for what
+// The tools down their island, in order (README, The book's frame): the pen, one tool with its card for what
 // draws, its colour and its width (the pen and the marker one key: the one in use shows), then shapes, the eraser,
 // Select and Text (the mic after it: bookvoice.js). Every word here, and every row's name, is a key of the guest words
 // (notebookwords.js).

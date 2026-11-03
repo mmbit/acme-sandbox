@@ -29,7 +29,7 @@ function dateOf(day) {
   return `${DAYS[d.getUTCDay()]} ${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}`;
 }
 // A pencil by the title wherever it can be changed: at the pages' head (booktitle.js), and in the page's own head
-// (bookunitcards.js). (board, call 178.)
+// (bookunitcards.js)
 export const PENCIL = lineIcon(
   '<path d="M4 20l1.2-4.6L15.8 4.8a2 2 0 0 1 2.8 0l.6.6a2 2 0 0 1 0 2.8L8.6 18.8z"/><path d="M14 6.6l3.4 3.4"/>',
 );

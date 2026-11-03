@@ -78,7 +78,7 @@ function take(targets, item) {
   hide(targets);
   targets.act(item.dataset.share, box);
 }
-// The menu's keys: the arrows go round it, Escape puts it away, back on the corner
+// The menu's keys: the arrows go round it, Escape puts it away, back on the dots that opened it
 function keyed(targets, e) {
   const { row } = targets,
     items = targets.items.filter(i => !i.hidden),

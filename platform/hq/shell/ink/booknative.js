@@ -1,10 +1,11 @@
 // The book in a native shell that draws the Apple Pencil itself (platform/ios: Pen.swift): its own ink over the paper,
 // with none of a browser's lag. The shell is told where the paper is and the ink in use while the pen or the
-// highlighter is picked on an open book; with any other tool, in the overview or folded, the Pencil is the page's as in
-// a browser. Each stroke it drew comes back here and is played as the pen's own pointer events, so the book takes it
+// highlighter is picked on an open book; with any other tool, in the overview, folded or on a locked page, the Pencil
+// is the page's as in a browser. Each stroke it drew comes back here and is played as the pen's own pointer events, so the book takes it
 // exactly as one drawn on the page (a scratch-out, ink over words, a tap on a box of words, a step for Undo).
 // In a browser there's no shell: bookpages.js never loads this.
 import { isTap } from '/__review/tap.js';
+import { shut } from './booksave.js';
 
 // the tools whose line the shell draws
 const NATIVE = ['pen', 'highlighter'];
@@ -32,8 +33,10 @@ export function mountNative(book) {
 }
 
 function penOf(book) {
-  const tool = book.tools?.mode();
-  if (!NATIVE.includes(tool) || book.far() || book.desk.closest('[inert]')) return false;
+  const tool = book.tools?.mode(),
+    page = book.view()?.page;
+  // (none on a locked page, where nothing draws (bookwrite.js): its line would land and go.)
+  if (!NATIVE.includes(tool) || book.far() || book.desk.closest('[inert]') || (page && shut(page))) return false;
   const r = book.desk.getBoundingClientRect(),
     x = Math.max(0, r.left),
     y = Math.max(0, r.top),

@@ -1,6 +1,6 @@
 // The book's controls put over its paper (bookui.js islands(): the tools on the right, the bar along the foot), Undo
-// and Redo at the bar's left, by the thumb, for a finger drawing (the Pencil's squeeze and the keys do the same), and
-// Close notebook last in its dots menu. (board, call 190.)
+// and Redo at the bar's left, by the thumb, for a finger drawing (the keys do the same, and Safari hands the Pencil's
+// squeeze no Undo a page can take), and Close notebook last in its dots menu.
 import { button, island, islands, lineIcon, MOD } from './bookui.js';
 import { word } from './bookscope.js';
 

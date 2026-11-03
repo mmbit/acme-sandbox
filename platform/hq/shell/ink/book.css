@@ -1,4 +1,4 @@
-/* The Notebook beside HQ's page (book.js) as a real book seen from the side (board, call 190): its spine at the
+/* The Notebook beside HQ's page (book.js) as a real book seen from the side (README, The book's frame): its spine at the
    screen's right edge, only its left page shown ("the right page is a myth"), the paper running the screen's whole
    height, from its foot up under the status bar's blur, so the blur shows paper. No cover band: beside HQ's page only
    a few px of cover at the outer edge of a slim page block, the bookmarks coming out of it (bookmarks.css); upright
@@ -6,6 +6,21 @@
    blur: the page's drawable part and every control sit below it (--sat). The controls float on two islands over the
    paper (bookstrip.css): the tools on the right, the bar along the foot between the screen's corners. One object under
    one soft shadow; its own look (booklook.css), the same on every HQ look. */
+/* the book's one type: Atkinson Hyperlegible, regular and bold (fonts/OFL-atkinson.txt.) */
+@font-face {
+  font-family: 'Atkinson Hyperlegible';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('fonts/atkinson-latin.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Atkinson Hyperlegible';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('fonts/atkinson-latin-bold.woff2') format('woff2');
+}
 #book {
   /* (its paper's colours, dots and gold are review mode's paper.js, shared with the post-it: book.js) */
   --bk-lamp: #ffd966;
@@ -149,8 +164,8 @@
 }
 /* the page's left edge, a strip from the page block onto the paper: a finger's swipe right that starts there closes
    the book, the board following the finger (bookswing.js). Upright, the page's own left edge at the screen's: a strip
-   just inside it, as Safari takes a swipe from the screen's very edge as Back. (the board's call 171.) It takes no
-   press itself: bookswing.js reads a finger's on the leaf, so the Pencil and the mouse write there as anywhere on the
+   just inside it, as Safari takes a swipe from the screen's very edge as Back. It takes no press
+   itself: bookswing.js reads a finger's on the leaf, so the Pencil and the mouse write there as anywhere on the
    page. */
 #book .bk-stack {
   position: absolute;
@@ -171,7 +186,7 @@
    answer waits to be read; a note that lands in the shut book shows its snip beside it for a moment (bookhandle.js).
    Small to look at, a finger's size to the touch (::after, 44 px across at least). Which side of the edge it hangs is
    its margin, never its translate, whose lift is eased: eased, the tab flicked to the edge's other side and back as the
-   book landed in a phone's spread. --bk-lip-w: its width, which its margin hangs it out by (one width). (smaller to look at, the same touch area: the board's call 171.) */
+   book landed in a phone's spread. --bk-lip-w: its width, which its margin hangs it out by (one width). */
 #book .bk-lip {
   all: unset;
   --bk-lip-w: 16px;
@@ -195,6 +210,15 @@
 @media (orientation: portrait) {
   #book[data-mode='spread'] .bk-lip {
     margin-left: 12px;
+  }
+}
+/* (beside HQ's page, below the bookmarks as long as their words make them: bookmarks.js's --bk-marks-h.) */
+@media (orientation: landscape) {
+  #book:not([data-mode='spread']) .bk-lip {
+    top: max(
+      calc((var(--sat, 0px) + var(--app-h, 100dvh)) / 2),
+      calc(var(--bk-marks-top, 0px) + var(--bk-marks-h, 0px) + 34px)
+    );
   }
 }
 /* (a phone on its side: below the bookmarks, bookmarks.css) */
@@ -280,8 +304,7 @@
   will-change: transform;
 }
 /* the pull tab lifts a little while it's held: up, its shadow deeper (by translate, never scale, which would scale the
-   swing's transform after it too); never out, which opened a gap between it and the cover all through the swing (the
-   board's call 149) */
+   swing's transform after it too); never out, which would open a gap between it and the cover all through the swing */
 #book .bk-lip {
   transition:
     translate 0.16s ease,

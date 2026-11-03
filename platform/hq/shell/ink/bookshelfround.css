@@ -1,7 +1,6 @@
-/* A review round's book on My shelf (bookshelfround.js, bookshelfbooks.js): its Close asked first while asks are open,
-   a small paper popover over its book; away and back, the book in its brown paper envelope standing on the shelf,
-   what's happening over it in hand, a label on it (to the CEO; lime once the Advice is in), wrapped and unwrapped.
-   (out of bookshelf.css: job #14679) */
+/* A review round's book (bookshelfround.js, bookshelfbooks.js): its Close asked first while asks are open, in its
+   options (bookshelfoptions.js); away and back, the book in its brown paper envelope standing on the shelf, what's
+   happening over it, a label on it (to the CEO; the chosen colour once the Advice is in), wrapped and unwrapped. */
 #book .bk-round-ask {
   position: absolute;
   left: -8px;
@@ -31,7 +30,7 @@
   min-height: 38px;
   border-radius: 8px;
   font-size: 14px;
-  font-weight: 700;
+  font-weight: 400;
   text-align: center;
   cursor: pointer;
 }
@@ -57,7 +56,7 @@
 }
 #book .bk-env-note {
   max-width: 100%;
-  font: 700 clamp(16px, 8.6cqi, 21px) / 1.15 var(--bk-hand);
+  font: 400 clamp(12px, 8cqi, 14px) / 1.2 var(--bk-font);
   text-align: center;
   text-wrap: balance;
   color: var(--bk-night);
@@ -89,14 +88,14 @@
   background: #fbf5e7;
   color: #2a2420;
   font-size: clamp(11px, 5.6cqi, 14px);
-  font-weight: 700;
+  font-weight: 400;
   line-height: 1.15;
   text-align: center;
   overflow-wrap: anywhere;
 }
 #book .bk-env-label[data-back] {
   border-width: 2px;
-  background: #d4e83a;
+  background: var(--bk-chosen);
 }
 #book .bk-env-sheet,
 #book .bk-env-flap,

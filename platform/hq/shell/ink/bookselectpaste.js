@@ -6,7 +6,7 @@
 // sends it away.
 import { MOD } from './bookui.js';
 import { sfx } from '../audio.js';
-import { said } from './booksave.js';
+import { said, shut } from './booksave.js';
 import { word } from './bookscope.js';
 import { followPress } from './bookpress.js';
 import * as brought from './bookbrought.js';
@@ -34,7 +34,9 @@ function fingerTaps(tp) {
   book.desk.addEventListener('pointerdown', e => {
     if (e.pointerType !== 'touch' || !e.isPrimary || !book.input.fingerPans() || book.tools?.mode() !== 'select')
       return;
-    if (book.input.claims(e) || e.target.closest(NOT_BARE) || !book.at(e.clientX, e.clientY)) return;
+    // (a locked page takes no paste)
+    const on = book.at(e.clientX, e.clientY);
+    if (book.input.claims(e) || e.target.closest(NOT_BARE) || !on || shut(on.view.page)) return;
     let reach = 0;
     followPress(e, {
       move: m => (reach = Math.max(reach, distance(e, m))),

@@ -63,17 +63,29 @@ function applyMessage(link: links.LinkRow, entry: links.Entry, fields: { agent: 
     .get(String(entry.thread), link.id) as ThreadRow | undefined;
   if (!thread) throw new links.EntryError('a message names a thread this link has not got');
   const text = textOf(entry.text, TEXT_MAX_CHARS, 'text'),
-    urgent = entry.urgent === true;
+    urgent = entry.urgent === true,
+    wakes = urgent && !waking(link);
   const id = insert('workspace_messages', {
     uid: uidOf(entry.uid),
     thread: thread.id,
     text,
     urgent: urgent ? 1 : 0,
     ours: 0,
+    woke: wakes ? 1 : null,
     ...fields,
   });
-  if (urgent) afterStep(() => wake(link, thread, id));
+  if (wakes) afterStep(() => wake(link, thread, id));
 }
+
+// An urgent message of theirs that woke our executive and is still unread here: this one waits for that read or the
+// hourly check. However many urgent messages a company sends, one wake at a time.
+const waking = (link: links.LinkRow) =>
+  !!db
+    .prepare(
+      `select 1 from workspace_messages m join workspace_threads t on t.id = m.thread join workspaces w on w.id = t.workspace
+      where w.link = ? and m.woke = 1 and m.read is null`,
+    )
+    .get(link.id);
 
 function applyFile(link: links.LinkRow, entry: links.Entry, fields: { agent: string; at: string; arrived: string }) {
   const workspace = theirWorkspace(link, entry.workspace);
@@ -81,8 +93,9 @@ function applyFile(link: links.LinkRow, entry: links.Entry, fields: { agent: str
   if (!path) throw new links.EntryError('a file’s path leaves its workspace');
   const bytes = Buffer.from(String(entry.data ?? ''), 'base64');
   if (bytes.length > FILE_MAX_BYTES) throw new links.EntryError('a file is over the size a version may be');
+  if (files.sha256Of(bytes) !== entry.sha256)
+    throw new links.EntryError('a file’s bytes are not the ones its sha256 names');
   const sha256 = files.keep(bytes);
-  if (sha256 !== entry.sha256) throw new links.EntryError('a file’s bytes are not the ones its sha256 names');
   const note = entry.note ? lineOf(entry.note, TITLE_MAX_CHARS, 'note') : '';
   insert('workspace_files', {
     uid: uidOf(entry.uid),
@@ -107,12 +120,11 @@ function applyRead(link: links.LinkRow, entry: links.Entry) {
     ).run(at, lineOf(entry.agent, 60, 'agent'), String(uid), link.id);
 }
 
-// An urgent message of theirs, for our executive now: its running session at the next step, else a job of its own,
-// which the next urgent one from the same workspace joins until it starts. Each is one line of JSON, an envelope their
-// text can't close (outsidewords.ts PARTNER).
+// An urgent message of theirs, for our executive now: its running session at the next step, else a job of its own. Each
+// is one line of JSON, an envelope their text can't close (outsidewords.ts PARTNER).
 function wake(link: links.LinkRow, thread: ThreadRow, message: number) {
   const m = db.prepare('select * from workspace_messages where id = ?').get(message) as MessageRow;
-  const words = JSON.stringify({
+  const fields = {
     company: link.name,
     workspace: thread.workspace,
     thread: thread.id,
@@ -120,7 +132,13 @@ function wake(link: links.LinkRow, thread: ThreadRow, message: number) {
     from: m.agent,
     at: `${minute(m.at)} UTC`,
     text: m.text,
-  });
+  };
+  // (JSON leaves the line breaks past ASCII as they are, the next line and the line and paragraph separators: escaped
+  // too, so it stays one line)
+  const words = JSON.stringify(fields).replace(
+    /[\u0085\u2028\u2029]/g,
+    c => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`,
+  );
   messages.fromPartner(ceo(), thread.workspace, `Urgent from ${link.name}: ${thread.subject}`, words);
 }
 
@@ -138,9 +156,9 @@ function textOf(given: unknown, max: number, what: string) {
   return text;
 }
 
-// A name, title or note of theirs: one line, its control characters gone (links.ts nameOf)
+// A name, title or note of theirs: one line, its control characters and line separators gone (links.ts nameOf)
 const lineOf = (given: unknown, max: number, what: string) =>
-  textOf(typeof given === 'string' ? given.replace(/\p{C}/gu, '') : given, max, what);
+  textOf(typeof given === 'string' ? given.replace(links.NOT_ONE_LINE, '') : given, max, what);
 
 const UID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 

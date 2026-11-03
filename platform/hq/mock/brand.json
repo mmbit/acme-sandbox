@@ -33,8 +33,7 @@
     },
     "mail": {
       "domain": "example.com",
-      "boardOnly": ["board", "claude-1"],
-      "groups": ["board", "documents", "hello"]
+      "boardOnly": ["board", "claude-1"]
     }
   },
   "theme": {},

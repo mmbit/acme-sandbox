@@ -7,8 +7,8 @@
 import { readFile, readdir } from 'node:fs/promises';
 import { parseArgs } from 'node:util';
 import { openProfiled } from './profile-browser.mjs';
-import { playLine } from './bookcall.mjs';
-import { bookAtRest } from './bookkit.mjs';
+import { playLine } from './book/call.mjs';
+import { bookAtRest } from './book/kit.mjs';
 
 const { values: options } = parseArgs({
   options: {
@@ -100,7 +100,7 @@ async function mainThread() {
   return { task: of('TaskDuration'), script: of('ScriptDuration') };
 }
 
-// (the call's line answers it, as the voice line does: bookcall.mjs)
+// (the call's line answers it, as the voice line does: book/call.mjs)
 const { page, errors, cdp, close } = await openProfiled({ ...options, before: playLine });
 if (cdp) await cdp.send('Performance.enable');
 await page.evaluate(meter);

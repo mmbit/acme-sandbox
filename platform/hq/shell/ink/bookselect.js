@@ -4,7 +4,7 @@
 // frame with a handle at each corner: pressed inside and dragged, it moves; a handle scales it about the opposite
 // corner. Select is the only way things move on a page. Cut, copy, paste,
 // duplicate and delete are bookselectclip.js's (the keys, the clipboard and the bar beside the frame); the live move
-// and resize bookselectlift.js's; Assign in the bar and a Pencil's loop out of one scrap, bookassign.js's. Post-its
+// and resize bookselectlift.js's; on an Asks page, Assign in the bar and a Pencil's loop out of one scrap, bookassign.js's. Post-its
 // keep their own order on their sheet and are never picked (booktools.js sends their presses elsewhere).
 //
 // booktools.js mounts it and calls press(e) for a press on the page in select mode, and settle() before Undo or Redo
@@ -48,7 +48,7 @@ export function mountSelect(book, hooks) {
   // (away: a loop gone off the screen's edge, waiting for the Pencil to come back: comingBack)
   const sel = { book, hooks, view: null, ink: [], scraps: [], texts: [], frame: null, last: null, away: null };
   sel.clip = mountClip(sel);
-  sel.assign = mountAssign(sel); // (a scrap circled with the Pencil and a line out of it: handed to a person)
+  sel.assign = mountAssign(sel); // (an Asks page's scrap circled with the Pencil and a line out of it: to a guest)
   hovering(sel);
   comingBack(sel);
   return {

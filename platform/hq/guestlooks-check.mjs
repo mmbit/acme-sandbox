@@ -7,10 +7,10 @@
 //   node platform/hq/guestlooks-check.mjs --shots dir [--looks wire,brownstone,holo] [--sizes phone,ipad,desktop]
 import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
-import { coordinator, openVisitor } from './bookguestserver.mjs';
-import { readyHQ, createNotebook } from './bookinvitechecks.mjs';
-import { readyNotebook, addNote, drawNote } from './bookguestscreen.mjs';
-import { serveWork, openShare, addPerson, signInByMail, typeNote, close } from './guestpath.mjs';
+import { coordinator, openVisitor } from './book/guestserver.mjs';
+import { readyHQ, createNotebook } from './book/invitechecks.mjs';
+import { readyNotebook, addNote, drawNote } from './book/guestscreen.mjs';
+import { serveWork, openShare, addPerson, signInByMail, typeNote, close } from './book/guestpath.mjs';
 import { playwright, until } from '../../shared/browser/browser.mjs';
 
 const arg = name => (process.argv.includes(name) ? process.argv[process.argv.indexOf(name) + 1] : null);
@@ -82,11 +82,12 @@ async function shareSettled(page) {
   );
 }
 
-// The board hands Sam one of its scraps: an ask for them, on their work
+// The board hands Sam a scrap of its Asks page: an ask for them, on their work
 async function ask() {
-  const { currentPage, mine } = await import('../coordinator/src/notebook.ts');
+  const { mine } = await import('../coordinator/src/notebook.ts');
+  const { asksPage } = await import('../coordinator/src/ink/askpages.ts');
   const made = await h.board('/api/notebooks/groups/create', {
-    page: currentPage(mine().id),
+    page: asksPage(mine().id).id,
     texts: [{ x: 40, y: 40, w: 500, text: 'Would you sign up here?', color: '#292722' }],
   });
   assert.equal(made.status, 200, JSON.stringify(made.body));

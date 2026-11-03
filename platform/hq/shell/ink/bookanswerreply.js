@@ -124,7 +124,7 @@ export function wireForm(form, a, send) {
   if (form.hasAttribute('data-answered')) return;
   for (const el of form.querySelectorAll('button, input'))
     for (const type of ['pointerdown', 'touchstart', 'touchmove']) el.addEventListener(type, e => e.stopPropagation());
-  for (const chip of form.querySelectorAll('.chip')) chip.addEventListener('click', () => toggled(chip, a));
+  for (const chip of form.querySelectorAll('.chip')) chip.addEventListener('click', () => toggled(chip, a.form));
   const tell = text => (form.querySelector('.bk-answer-said').textContent = text);
   const button = form.querySelector('.bk-answer-send');
   button.addEventListener('click', async () => {
@@ -179,9 +179,10 @@ export function wireForms(page, layer, { drawn, focused }, send) {
   }
   if (focused?.isConnected) focused.focus({ preventScroll: true });
 }
-// A chip tapped: a choice's one on (the others off), a pick-many's on or off
-function toggled(chip, a) {
-  const q = a.form[Number(chip.closest('[data-q]').dataset.q)],
+// A question's chip tapped (questions: those it's among, a form's or a card's): a choice's one on (the others off), a
+// pick-many's on or off
+export function toggled(chip, questions) {
+  const q = questions[Number(chip.closest('[data-q]').dataset.q)],
     on = !q.many || chip.getAttribute('aria-pressed') !== 'true';
   if (!q.many)
     for (const other of chip.parentElement.querySelectorAll('.chip')) {
@@ -192,7 +193,7 @@ function toggled(chip, a) {
   chip.setAttribute('aria-pressed', String(on));
 }
 // A question's answer as its field holds it: the chip (or chips) on, or the box's words
-function answerIn(el, q) {
+export function answerIn(el, q) {
   if (!chips(q)) return el.querySelector('input')?.value ?? '';
   const on = [...el.querySelectorAll('.chip.on')].map(c => c.dataset.answer);
   return q.many ? on : (on[0] ?? '');

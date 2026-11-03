@@ -11,7 +11,8 @@ const h = await harness('guestshelf', { env: { CADDY_HOST: '127.0.0.1', PUBLIC_H
 const { db } = h;
 lettermint.on();
 const { ORIGIN } = await import('./config.ts');
-const { currentPage, mine } = await import('./notebook.ts');
+const { mine } = await import('./notebook.ts');
+const { asksPage } = await import('./ink/askpages.ts');
 const shares = await import('./shares.ts');
 const { endDue } = await import('./feedback.ts');
 const { timeZone } = await import('./company.ts');
@@ -31,16 +32,10 @@ const share = async (name: string, email: string, lasting: boolean, page = `http
 async function signIn(link: string) {
   const door = new URL(link).pathname,
     from = `192.0.2.${++clients}`;
-  const form = (path: string, fields: Record<string, string>) =>
-    fetch(h.base + path, {
-      method: 'POST',
-      redirect: 'manual',
-      body: new URLSearchParams(fields),
-      headers: { origin: ORIGIN, 'content-type': 'application/x-www-form-urlencoded', 'x-forwarded-for': from },
-    });
+  const form = (path: string, fields: Record<string, string>) => h.postForm(path, fields, from);
   assert.equal((await form(`${door}/send`, {})).status, 200);
   const code = /(\d{6})/.exec(lettermint.taken.at(-1)!.text)![1];
-  const cookie = (await form(`${door}/verify`, { code })).headers.get('set-cookie')!.split(';')[0];
+  const cookie = String((await form(`${door}/verify`, { code })).headers['set-cookie']?.[0]).split(';')[0];
   const go = await fetch(`${h.base}${door}/go`, { headers: { cookie }, redirect: 'manual' });
   const read = async (path: string) =>
     (await fetch(h.base + path, { headers: { cookie }, redirect: 'manual' })) as Response;
@@ -96,7 +91,7 @@ test('an ask for a guest waits in red on their page and the book, until they wri
   const made = await share('Noor Jansen', 'noor@example.org', true);
   const guest = await signIn(shelfOf(made, 'Noor Jansen'));
   const scrap = await h.board('/api/notebooks/groups/create', {
-    page: currentPage(mine().id),
+    page: asksPage(mine().id).id,
     texts: typed('Bigger?'),
   });
   assert.equal(scrap.status, 200, JSON.stringify(scrap.body));

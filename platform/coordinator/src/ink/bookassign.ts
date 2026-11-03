@@ -1,13 +1,13 @@
-// Assigning: one of the board's scraps handed to a person picked from a short list, the people it picked most recently,
-// or from everyone. A guest gets a copy on their own Asks page, kept in step with the original both ways: what either
-// side writes on it shows on the other, so their answer shows on the board's scrap. An agent gets the scrap itself to
-// answer at once (bookanswer.ts answerNow), its answer landing beside the original.
+// Assigning: a scrap on one of the board's Asks pages handed to a guest picked from a short list, the guests it picked
+// most recently, or from every guest. The guest gets a copy on their own Asks page, kept in step with the original both
+// ways: what either side writes on it shows on the other, so their answer shows on the board's scrap. Never an agent:
+// routing is ours, and a sketch's scraps reach their agent by themselves (the Ink README, What a page offers). Scraps
+// handed to an agent before that rule keep their tags.
 import { copyFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { db } from '../db.ts';
 import { org } from '../company.ts';
 import { BOARD } from './book.ts';
-import { answerNow } from './bookanswer.ts';
 import { asksPage } from './askpages.ts';
 import { pageRow, shut, type NotebookPage } from '../notebook.ts';
 import { insertGroup, partsOf, row, shown, write, type Group, type Parts } from '../notebookgroups.ts';
@@ -25,8 +25,8 @@ db.exec(`create table if not exists notebook_assigns (id integer primary key aut
 db.exec(`create table if not exists notebook_assign_pictures (grp integer not null, file text not null,
   key text not null, primary key (grp, file))`);
 
-// to: 'agent:<id>' or a guest's book's 'guest:<grant>' (notebookmembers.ts whoOf), so a name given to someone new
-// later never takes over what went to the one before
+// to: a guest's book's 'guest:<grant>' (notebookmembers.ts whoOf), so a name given to someone new later never takes
+// over what went to the one before; 'agent:<id>' on an older scrap handed to an agent
 export type Person = { to: string; name: string; kind: 'guest' | 'agent' };
 type Assign = {
   id: number;
@@ -39,8 +39,8 @@ type Assign = {
 const SHORT_LIST = 4;
 
 // ---------------------------------------------------------------- the list
-// GET /api/notebooks/people: the short list (the people picked most recently, topped up from everyone) and everyone a
-// scrap can go to: the guests in a book now, and the agents
+// GET /api/notebooks/people: the short list (the guests picked most recently, topped up from everyone) and everyone a
+// scrap can go to: the guests in a book now
 export function listPeople() {
   const everyone = people();
   const picked = (db.prepare('select person from notebook_assigns order by id desc').all() as { person: string }[])
@@ -51,38 +51,30 @@ export function listPeople() {
 }
 function people(): Person[] {
   const named = db.prepare('select distinct guest from notebook_guests').all() as { guest: string }[];
-  const guests = named
+  return named
     .flatMap(g => forGuest(g.guest).slice(0, 1))
-    .map(m => ({ to: whoOf(m), name: m.guest, kind: 'guest' as const }));
-  const staff: { id: string; name?: string; temp?: boolean }[] = (org().departments ?? []).flatMap(
-    (d: any) => d.agents ?? [],
-  );
-  const agents = staff
-    .filter(a => !a.temp)
-    .map(a => ({ to: `agent:${a.id}`, name: a.name ?? a.id, kind: 'agent' as const }));
-  return [...guests, ...agents].sort((a, b) => a.name.localeCompare(b.name));
+    .map(m => ({ to: whoOf(m), name: m.guest, kind: 'guest' as const }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+// The agents, for the tags of older scraps handed to one
+function agents(): Person[] {
+  const staff: { id: string; name?: string }[] = (org().departments ?? []).flatMap((d: any) => d.agents ?? []);
+  return staff.map(a => ({ to: `agent:${a.id}`, name: a.name ?? a.id, kind: 'agent' as const }));
 }
 
 // ---------------------------------------------------------------- handing it over
-// POST /api/notebooks/groups/assign { id, to }: the board's scrap to that person; it stays where it is
+// POST /api/notebooks/groups/assign { id, to }: the scrap on the board's Asks page to that guest; it stays where it is
 export function assignGroup(b: any) {
   const g = row(Number(b?.id));
   const p = g && g.parent === null && g.deleted === null ? pageRow(g.page, BOARD) : undefined;
   if (!g || !p) return [404, 'no such scrap of the board’s'] as Refused;
+  if (p.kind !== 'asks') return [409, 'only a scrap on an Asks page is handed to a guest'] as Refused;
   if (shut(p)) return [409, 'a sent page is read-only: hand over a scrap on an open page'] as Refused;
   const person = people().find(x => x.to === b.to);
-  if (!person)
-    return [400, 'to is someone on the list (GET /api/notebooks/people): a guest in a book, or an agent'] as Refused;
-  const given = person.kind === 'agent' ? toAgent(g, person) : toGuest(g, p, person);
+  if (!person) return [400, 'to is a guest on the list (GET /api/notebooks/people)'] as Refused;
+  const given = toGuest(g, p, person);
   if (Array.isArray(given)) return given;
   return { group: shown(row(g.id)!), to: person };
-}
-// An agent's to answer: it owns the scrap from now, and answers it now
-function toAgent(g: Group, person: Person) {
-  const agent = person.to.slice('agent:'.length);
-  db.prepare('update notebook_groups set owner = ? where id = ?').run(agent, g.id);
-  remember(g.id, person.to, null);
-  answerNow({ grp: g.id }, { id: 0, why: 'The board handed this scrap to you to answer.' });
 }
 // A copy on the guest's Asks page, its last unit and as tall as the original's, its pictures their own
 function toGuest(g: Group, p: NotebookPage, person: Person) {
@@ -179,7 +171,7 @@ function registerKey(grp: number, file: string) {
 export function assignedOf(grp: number) {
   const rows = db.prepare('select * from notebook_assigns where grp = ? order by id').all(grp) as Assign[];
   if (!rows.length) return [];
-  const everyone = people();
+  const everyone = [...people(), ...agents()];
   return [...new Map(rows.map(a => [a.person, a])).values()].flatMap(a => {
     const person = everyone.find(p => p.to === a.person);
     return person ? [{ ...person, answered: answered(a) }] : [];

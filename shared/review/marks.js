@@ -39,7 +39,7 @@ export function intoMark(r, stroke) {
 // snip). This draws only the open mark's lines and those waiting for the next (settle.js), never a note in the book:
 // the book keeps no lines of a note to draw (booknotes.ts), and no tab, screen or call has any to bring back. On a call
 // the board's marks the call's agent hasn't had its turn on yet stay too (r.held, callnotes.js): they're for the agent,
-// and go once its turn is done (the board, call 161).
+// and go once its turn is done.
 export function paint(r, lines = r.strokes) {
   const c = r.inkCanvas,
     g = inkjs.fit(c);

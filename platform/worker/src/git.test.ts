@@ -881,6 +881,15 @@ test("a mirror fetch that can't reach GitHub is told apart from one GitHub refus
   const refused = gitFlow({ mirror: `${work}/refused.git`, remote: `${tmp}/no-such.git`, base: 'main', clones });
   refused.ensureMirror();
   assert.throws(() => refused.fetchMirror(), (e: Error) => !(e instanceof FetchUnreachedError) && /no-such\.git/.test(e.message));
+  // GitHub refusing the worker's token is a snag too: the same token works for the fetches around it
+  const said = `${tmp}/token-refused`;
+  writeFileSync(said, "#!/bin/sh\necho 'remote: Invalid username or token. Password authentication is not supported for Git operations.' >&2\n"
+    + "echo \"fatal: Authentication failed for 'https://github.com/acme/repo.git/'\" >&2\nexit 128\n");
+  chmodSync(said, 0o755);
+  const token = gitFlow({ mirror: `${work}/token.git`, remote: github, base: 'main', clones });
+  token.ensureMirror();
+  git('--git-dir', `${work}/token.git`, 'config', 'remote.origin.uploadpack', said);
+  assert.throws(() => token.fetchMirror(), (e: Error) => e instanceof FetchUnreachedError && /Invalid username or token/.test(e.message));
 });
 
 test("a commit main took outside a pull request is tested against main before it, and main's line has each with its parents", () => {

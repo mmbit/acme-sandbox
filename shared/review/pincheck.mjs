@@ -1,4 +1,4 @@
-// The pin carried and let go (dock.js), as HQ's book-check (bookpin.mjs) and review mode's check on a preview
+// The pin carried and let go (dock.js), as HQ's book-check (book/pin.mjs) and review mode's check on a preview
 // (check.mjs) see it. Let go, it stays exactly where it was dropped, frame after frame until any transition would have
 // ended: nothing sliding in from the bottom or the side. Held, it's the same button lifted: its size and its darker
 // base as at rest, a grab hand over it and a closed one while it's carried.

@@ -1,14 +1,17 @@
 /* A book's chapters as its bookmarks (bookmarks.js), on the cover's edge (book.js) so they move and swing with the
-   book: real bookmarks, each its own card colour for good, never lit (board, call 190). The page's own chapter shows
-   by depth, its tab nearest the page and a little longer, the others from deeper in. Beside HQ's page they stick out
-   of the page block to the left; on a page that is the whole screen they lie folded against its left edge like the
-   pull tab, slivers with their icons, out over the margin while one is picked (the board's pick on card 341). None on
-   the overview or the shelf (data-far, bookpagesfar.js). Never under the status bar's blur (--sat). */
+   book: real bookmarks, each its own card colour for good, never lit (README, The book's frame). The page's own chapter shows by depth, its tab nearest the page and a little longer, the others
+   from deeper in. Beside HQ's page they stick out of the page block to the left; on a page that is the whole screen
+   they lie folded against its left edge like the pull tab, slivers with their icons, out over the margin while one is
+   picked. On the overview too, as on every page (data-far, bookpagesfar.js), a round's guests' list put away there.
+   Never under the status bar's blur (--sat). */
 #book {
   --bk-mk-edge: rgba(60, 45, 20, 0.28);
   --bk-mk-ink: #2a2352;
+  /* (where the tabs start: below the blur and HQ's own keys at the top of its page. The book's pull tab keeps below
+     them, book.css.) */
+  --bk-marks-top: calc(var(--sat, 0px) + 96px);
 }
-#book[data-far] :is(.bk-marks, .bk-mk-guests) {
+#book[data-far] .bk-mk-guests {
   display: none;
 }
 /* a chapter's tab, a bookmark or the overview's (bookmarks.js chapterTab: bookshelf.css places the overview's): its
@@ -26,16 +29,16 @@
   letter-spacing: 0.03em;
   white-space: nowrap;
 }
-#book .bk-mk-tab[data-chapter='asks'] {
+#book :is(.bk-mk-tab, .bk-far-ribbon)[data-chapter='asks'] {
   --bk-mk-card: #c4e2dc;
 }
-#book .bk-mk-tab[data-chapter='calls'] {
+#book :is(.bk-mk-tab, .bk-far-ribbon)[data-chapter='calls'] {
   --bk-mk-card: #e8ccd4;
 }
-#book .bk-mk-tab[data-chapter='guests'] {
+#book :is(.bk-mk-tab, .bk-far-ribbon)[data-chapter='guests'] {
   --bk-mk-card: #d8d3ec;
 }
-#book .bk-mk-tab[data-chapter='advice'] {
+#book :is(.bk-mk-tab, .bk-far-ribbon)[data-chapter='advice'] {
   --bk-mk-card: #dfe5bf;
 }
 /* (a chapter with no pages yet: there, its words dim, unless it's the page's own) */
@@ -79,8 +82,7 @@
 @media (orientation: landscape) {
   #book .bk-marks {
     --bk-mk-reach: 30px;
-    /* (below HQ's own keys at the top of its page, above the book's pull tab at its middle) */
-    top: calc(var(--sat, 0px) + 96px);
+    top: var(--bk-marks-top);
     right: calc(-1 * var(--bk-pages) + 1px);
     gap: 6px;
     align-items: flex-end;
@@ -90,8 +92,7 @@
     justify-content: flex-start;
     gap: 4px;
     width: calc(var(--bk-mk-reach) + 12px);
-    /* (as long as its icon and upright words take, three of them still above the book's pull tab on an iPad
-       sideways) */
+    /* (as long as its icon and upright words take: longer words push the book's pull tab down, book.css) */
     min-height: 72px;
     padding: 6px 12px 5px 0;
     border-right: 0;
@@ -117,9 +118,6 @@
   /* (a phone on its side: HQ's keys run down its page's right, so only icons, between its header keys and its zoom
      keys; the book's pull tab moves down out of their way, book.css) */
   @media (max-height: 520px) {
-    #book .bk-marks {
-      top: calc(var(--sat, 0px) + 96px);
-    }
     #book .bk-marks button {
       min-height: 38px;
       padding-top: 11px;
@@ -137,7 +135,7 @@
   #book .bk-marks {
     --bk-mk-out: 112px;
     left: 100%;
-    top: calc(var(--sat, 0px) + 96px);
+    top: var(--bk-marks-top);
     gap: 6px;
   }
   #book .bk-marks button {

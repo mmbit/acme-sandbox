@@ -1,29 +1,49 @@
-/* The Shelf's own window, floating over HQ (bookshelfwindow.js): the book's
-   paper in a sheet with rounded corners, in the middle of the screen below Safari's strip, as tall as its shelves (the
-   screen's height at most, scrolling then), and HQ dimmed behind it. Its screen is bookshelf.css's overview, clear of
-   no rail; its Close at its head's end. Its potted plant stands on its top edge, above it: the window keeps
-   --bk-plant-room clear over it. */
+/* The Shelf's own window, floating over HQ (bookshelfwindow.js): the window is the bookcase (bookshelfbooks.css), its
+   light wood sides at its edges, its plain back behind the boards, in the middle of the screen below Safari's strip, as
+   wide as three books and the plant and as tall as its boards (the screen's height at most, scrolling then), HQ dimmed
+   behind it. On a phone it fills the screen. Its one title line: its name in the middle, its Close at the right. */
 #book .bk-shelf-window {
-  --bk-plant-room: 72px;
+  --bk-side: 14px; /* (the case's sides) */
+  --bk-case-in: 24px; /* (from a side's inner edge to the boards' things) */
   position: fixed;
-  inset: calc(var(--sat, 0px) + var(--bk-plant-room)) 0 0;
-  width: min(1080px, 100% - 32px);
+  inset: var(--sat, 0px) 0 0;
+  width: min(680px, 100% - 32px);
   max-width: none;
   height: fit-content;
-  max-height: calc(100% - var(--sat, 0px) - var(--bk-plant-room) - 32px);
+  max-height: calc(100% - var(--sat, 0px) - 32px);
   margin: auto;
   padding: 0;
   border: 0;
   border-radius: 18px;
-  overflow: visible; /* (the plant over its edge: its overview scrolls and rounds its own corners) */
-  background: var(--bk-paper2);
+  overflow: hidden;
+  background: linear-gradient(#f1e7d4, #ebdfc8);
   color: var(--bk-night);
   box-shadow:
-    0 28px 70px -12px rgba(10, 8, 20, 0.6),
-    0 0 0 1px rgba(10, 8, 20, 0.14);
+    0 30px 60px -18px rgba(20, 14, 30, 0.55),
+    0 2px 6px rgba(20, 14, 30, 0.25);
+}
+/* (its sides, over the boards' ends, each casting a little shadow inward) */
+#book .bk-shelf-window::before,
+#book .bk-shelf-window::after {
+  content: '';
+  position: absolute;
+  z-index: 5;
+  top: 0;
+  bottom: 0;
+  width: var(--bk-side);
+  background: linear-gradient(90deg, #d9c39b, #e6d3b0 40%, #d6bf96);
+  pointer-events: none;
+}
+#book .bk-shelf-window::before {
+  left: 0;
+  box-shadow: 3px 0 8px -3px rgba(80, 55, 20, 0.35);
+}
+#book .bk-shelf-window::after {
+  right: 0;
+  box-shadow: -3px 0 8px -3px rgba(80, 55, 20, 0.35);
 }
 #book .bk-shelf-window::backdrop {
-  background: rgba(14, 11, 22, 0.42);
+  background: rgba(30, 24, 40, 0.32);
   animation: bk-shelf-dim 0.22s ease-out;
 }
 #book .bk-shelf-window.bk-sinking::backdrop {
@@ -39,78 +59,66 @@
   display: flex;
   flex-direction: column;
 }
+/* its screen: bookshelf.css's overview on the case's back, no dots */
 #book .bk-shelf-window .bk-far {
   position: relative;
   inset: auto;
-  flex: 0 1 auto;
+  flex: 1 1 auto;
   min-height: 0;
-  border-radius: inherit;
-  --bk-far-right: 28px;
-  padding-bottom: 72px; /* (room for Undo over its foot) */
+  --bk-far-left: calc(var(--bk-side) + var(--bk-case-in));
+  --bk-far-right: var(--bk-far-left);
+  padding: 12px var(--bk-far-right) 0 var(--bk-far-left);
+  background: none;
+  outline: none;
+}
+#book .bk-shelf-window .bk-far-body {
+  display: flex;
+  flex: 1 0 auto;
+  flex-direction: column;
 }
 #book .bk-shelf-window .bk-far-head {
-  flex-direction: row;
-  align-items: flex-start;
-}
-#book .bk-shelf-window .bk-far-nav {
-  flex: 1;
-  min-width: 0;
+  padding-bottom: 0;
 }
 #book .bk-shelf-window .bk-shelf-close {
-  justify-content: center;
+  all: unset;
+  position: absolute;
+  top: 0;
+  right: -10px;
+  display: grid;
+  place-items: center;
   width: 44px;
-  min-height: 44px;
-  margin-right: -10px;
-  padding: 0;
+  height: 44px;
+  border-radius: 22px;
+  color: var(--bk-night);
+  cursor: pointer;
 }
 #book .bk-shelf-window .bk-shelf-close svg {
   width: 22px;
   height: 22px;
 }
-/* the plant on the top edge, in from the right corner past Close; the book's ink, paper and a leaf green */
-#book .bk-shelf-window .bk-shelf-plant {
-  position: absolute;
-  right: 34px;
-  bottom: calc(100% - 1px);
-  width: 60px;
-  height: 75px;
-  overflow: visible;
-  pointer-events: none;
-  fill: none;
-  stroke: var(--bk-night);
-  stroke-width: 1.2px; /* (in the drawing's units: about the book's 1.5px line) */
-  stroke-linecap: round;
-  stroke-linejoin: round;
+#book .bk-shelf-window .bk-shelf-close:focus-visible {
+  outline: 2px solid var(--bk-night);
 }
-#book .bk-shelf-plant .bk-plant-leaves {
-  fill: #a9c46a;
-}
-#book .bk-shelf-plant .bk-plant-pot {
-  fill: var(--bk-paper);
-}
-#book .bk-shelf-plant .bk-plant-shade {
-  fill: url(#bk-plant-dots);
-  stroke: none;
-}
-#book .bk-shelf-plant pattern circle {
-  fill: var(--bk-night);
-  stroke: none;
+@media (hover: hover) {
+  #book .bk-shelf-window .bk-shelf-close:hover {
+    background: rgba(80, 55, 20, 0.1);
+  }
 }
 #book .bk-shelf-window .bk-told {
   bottom: calc(24px + var(--sab, 0px));
 }
-/* a phone: nearly all of the screen */
+/* a phone: the whole screen, the title line below the status bar */
 @media (max-width: 560px) {
   #book .bk-shelf-window {
-    width: calc(100% - 16px);
-    max-height: calc(100% - var(--sat, 0px) - var(--bk-plant-room) - 16px);
-    border-radius: 14px;
-  }
-  #book .bk-shelf-window .bk-shelf-plant {
-    right: 22px;
+    --bk-side: 10px;
+    --bk-case-in: 18px;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    max-height: none;
+    border-radius: 0;
   }
   #book .bk-shelf-window .bk-far {
-    --bk-far-left: 18px;
-    --bk-far-right: 18px;
+    padding-top: calc(var(--sat, 0px) + 6px);
   }
 }
