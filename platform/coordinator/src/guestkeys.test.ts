@@ -4,12 +4,12 @@ import assert from 'node:assert/strict';
 import { createHash, generateKeyPairSync, randomBytes, sign } from 'node:crypto';
 import { isoCBOR } from '@simplewebauthn/server/helpers';
 import { harness } from './harness.ts';
+import { cookieOf } from './testdoor.ts';
 const h = await harness('guestkeys', { env: { CADDY_HOST: '127.0.0.1' } });
 const guests = await import('./guests.ts');
 const { ORIGIN, PUBLIC_HOST } = await import('./config.ts');
 const digest = (text: string | Buffer) => createHash('sha256').update(text).digest();
 const encoded = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url');
-const cookieOf = (reply: { headers: Record<string, any> }) => reply.headers['set-cookie'][0].split(';')[0];
 let client = 1;
 async function visitor(name: string) {
   assert.equal(

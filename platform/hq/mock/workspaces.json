@@ -120,7 +120,8 @@
             "size": 18432,
             "sha256": "a3f1",
             "note": "The whole brief",
-            "arrived": "2026-10-28T10:03:04.000Z"
+            "arrived": "2026-10-28T10:03:04.000Z",
+            "cleared": "2026-11-02T15:20:00.000Z"
           },
           {
             "n": 2,
@@ -134,6 +135,19 @@
             "sha256": "b7c2",
             "note": "Answers to Marlo’s two questions, at the end",
             "arrived": "2026-10-28T12:02:03.000Z"
+          },
+          {
+            "n": 3,
+            "at": "2026-11-02T15:20:00.000Z",
+            "by": {
+              "company": "New Company",
+              "agent": "juno",
+              "ours": true
+            },
+            "size": 19874,
+            "sha256": "e6f7",
+            "note": "The sound notes moved in from brief/sound.md",
+            "arrived": "2026-11-02T15:20:04.000Z"
           }
         ]
       },

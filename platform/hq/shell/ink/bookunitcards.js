@@ -3,6 +3,7 @@
 // each moved to its foot. The board's own drawings get no paper and no handle.
 import { bodyIn, drawing, heightOf, partsOf, wordsOf } from './bookunits.js';
 import { heightFor } from './scrapunit.js';
+import { isCanvas, isPush, pushedDown } from './sketchcanvas.js';
 import { ask } from './notebookdata.js';
 import { PENCIL, nameOf } from './bookhead.js';
 import { esc } from '../../util.js';
@@ -36,9 +37,7 @@ export function drawCards(view) {
   }
   const open = !(page.sending || page.sent || page.readonly);
   layer.style.height = `${page.h}px`;
-  layer.innerHTML = `${headDay(page)}${page.headers
-    .map(h => `<p class="bk-day" style="top:${h.y}px;width:${page.w}px">${seen(dayWords(h.day))}</p>`)
-    .join('')}${page.places
+  layer.innerHTML = `${headDay(page)}${page.headers.map(h => dayHtml(page, h)).join('')}${page.places
     .map(p => {
       const body = bodyIn(page, p.id) + wordsOf(page, p.id),
         roomy = body > 0 && p.h - body > 8,
@@ -101,11 +100,17 @@ const headDay = page =>
   page.day && page.kind !== 'call'
     ? `<p class="bk-day bk-head-day" style="width:${page.w}px">${seen(dayWords(page.day))}</p>`
     : '';
+// A later day's date where its units start: across the page, or a sketch page's over its scrap (sketchcanvas.js daysOf)
+function dayHtml(page, h) {
+  const at = h.w === undefined ? `width:${page.w}px` : `left:${h.x}px;width:${h.w}px;text-align:left`;
+  return `<p class="bk-day" style="top:${h.y}px;${at}">${seen(dayWords(h.day))}</p>`;
+}
 // A page's day in the book's language, no comma: "Sat 31 Oct", "za 31 okt"
 const dayWords = day => companyFormats().day(day, bookLang(), { weekday: true, short: true }).replace(',', '');
 
 // A unit's handle dragged: its height follows (never into what's drawn: heightFor), the masonry laid again as it goes,
-// and saved as it's let go (/api/notebooks/groups/resize)
+// and saved as it's let go (/api/notebooks/groups/resize). On a sketch page what's below its foot moves down as its room
+// grows, so it only ever opens room between notes (sketchcanvas.js pushedDown; README, Our scraps)
 function dragged(view, layer) {
   layer.addEventListener('pointerdown', e => {
     const b = e.target.closest('.bk-room-handle');
@@ -119,6 +124,7 @@ function dragged(view, layer) {
     if (!g) return;
     // (the page's px on screen: its masonry's scale, or a sketch page's zoom.)
     const from = heightOf(page, id),
+      at = page.places?.find(p => p.id === id),
       y0 = e.clientY,
       pointer = e.pointerId,
       scale = view.el.getBoundingClientRect().width / view.el.offsetWidth;
@@ -128,6 +134,10 @@ function dragged(view, layer) {
       // (in the store's terms: the words drawn in its body aside)
       const h = heightFor(partsOf(page, id), Math.round(from + (m.clientY - y0) / scale)) - wordsOf(page, id);
       page.resizing = { id, h: Math.max(1, h) };
+      if (isCanvas(page.chapter) && at) {
+        const by = Math.max(0, heightOf(page, id) - from);
+        page.resizing.push = { top: at.y, from: at.y + from, x0: at.x, x1: at.x + at.w, by };
+      }
       view.relay?.();
     };
     const up = u => {
@@ -146,7 +156,8 @@ function dragged(view, layer) {
 // A unit's handle let go: its height saved; let go unmade, as a second finger comes down to pinch, the room as it was
 async function letGo(view, id, g, unmade) {
   const page = view.page,
-    h = page.resizing?.h;
+    h = page.resizing?.h,
+    push = isPush(page.resizing?.push) ? page.resizing.push : undefined;
   if (h === undefined) return;
   if (!unmade)
     try {
@@ -154,8 +165,11 @@ async function letGo(view, id, g, unmade) {
       // with the group the save left, never one it changed since.)
       await page.saving?.catch(() => {});
       const now = page.groups.get(id) ?? g,
-        done = await ask(view.dev, '/api/notebooks/groups/resize', null, { id, since: now.updated, h });
+        done = await ask(view.dev, '/api/notebooks/groups/resize', null, { id, since: now.updated, h, push });
       Object.assign(now, { h: done.h ?? h, updated: done.updated ?? now.updated });
+      // (what it pushed down kept there till the store's own are read again)
+      const placed = [...page.groups.values()].map(u => ({ id: u.id, place: u.place ?? page.pins?.get(u.id) }));
+      for (const u of pushedDown(placed, push)) Object.assign(page.groups.get(u.id), { place: u.place });
     } catch (err) {
       view.refuse?.(err.message);
     }

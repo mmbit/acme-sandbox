@@ -1,5 +1,6 @@
 // book-check.mjs's story of every page pinch-zooming, a page of scraps too (shell/ink/bookview.js zoomOf), so the board
-// writes big: a call's notes page, its scraps across the paper's width, two fingers pinch it in, the Pencil writes big
+// writes big: a call's notes page, its scraps at the paper's left at their own size, as many columns as it holds
+// (masonry.js MOST), two fingers pinch it in, the Pencil writes big
 // there and its ink lands where it was written, two fingers pan it across, a reload opens it as it was left, and
 // pinched out it's back at the paper's width with the words where they were written; on an iPad mini and a phone, and
 // on a desktop by a trackpad's pinch, the wheel and the mouse.
@@ -8,6 +9,7 @@ import { DESKTOP, MINI, until } from './kit.mjs';
 import { mini } from './start.mjs';
 import { callSeed } from './notespage.mjs';
 import { handsOn, inkBox, mouseStroke, pointOn, viewNow, zigzag } from './canvas.mjs';
+import { anotherColumn } from './unitsread.mjs';
 
 const PHONE = { width: 390, height: 844 };
 const CALL = 9101;
@@ -148,7 +150,12 @@ async function notesOpen(page, c, device) {
       right: Math.min(innerWidth, desk.right) - Math.max(...units.map(r => r.right)),
     };
   });
-  assert.ok(sides.left < 48 && sides.right < 48, `the scraps across the paper's width: ${JSON.stringify(sides)}`);
+  // (at their own size at the paper's left, the rest paper: no room right of them for another column at LEAST of its
+  // size.)
+  assert.ok(
+    sides.left < 48 && sides.right < anotherColumn(sides.left),
+    `the scraps at the paper's left, as many columns as it holds: ${JSON.stringify(sides)}`,
+  );
   return viewNow(page);
 }
 // A zigzag word twice the size written from a point on the screen, the view as it is: where its ink is on the page

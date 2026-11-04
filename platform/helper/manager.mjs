@@ -1,9 +1,9 @@
 // The manager a lent machine runs, installed once with its install command (HQ's Settings › Machines, README): it keeps
 // the machine's helpers in step with HQ, a container per helper of each kind of run, so a new kind, a changed kind or new
-// helper code needs nobody at the machine. Its own code is pinned by its hash in the install command, as it alone holds
-// the Docker socket. The helpers' code follows HQ, since they reach nothing but HQ: they sit on a network of their own
-// with no way out but a proxy that connects only to HQ's host and the package registries (FIXED, never HQ's to change),
-// and never to a private address. Everything it makes is named for its HQ, so a machine can lend itself to several.
+// helper code needs nobody at the machine, and new manager code neither: the install command checks the code it starts by
+// its hash, and from then on the manager follows the code HQ serves, its own image included. The helpers reach nothing but HQ: they sit on a network of their own with no way out but a proxy that
+// connects only to HQ's host and the package registries (FIXED in this file, which follows HQ's code), and never to a
+// private address. Everything it makes is named for its HQ, so a machine can lend itself to several.
 // MANAGER=install (re)creates the manager's own container and exits; MANAGER=remove takes all of it away again.
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
@@ -32,12 +32,18 @@ const NETWORK = `${NAME}-net`;
 const PROXY = `${NAME}-proxy`;
 const MANAGER = `${NAME}-manager`;
 const ALLOWED = [`${hq.hostname}:${hq.port || (hq.protocol === 'https:' ? 443 : 80)}`, ...FIXED];
-// The pinned bootstrap that started this code (node -e), so the manager's container starts the same pinned code
-const BOOTSTRAP = process.execArgv[process.execArgv.indexOf('-e') + 1];
+// A container's bootstrap (node -e): the code HQ serves now at /api/helper/<path>, written to its tmpdir as <name>.mjs
+// and run
+const boot = (path, name) =>
+  `fetch(process.env.HQ_URL+'/api/helper/${path}',{redirect:'error'}).then(r=>{if(!r.ok)throw Error('no ${name} code: '+r.status);return r.text()})` +
+  `.then(t=>{const f=require('os').tmpdir()+'/${name}.mjs';require('fs').writeFileSync(f,t);return import(f)})`;
+// The manager's own bootstrap in its container, as the helpers' is (README, "HQ is the only one it trusts")
+const MANAGER_BOOT = boot('manager', 'manager');
 
 const log = (...words) => console.log(new Date().toISOString(), ...words);
 
-// One call to the Docker Engine API over its socket: the answer's JSON (a stream's last line), or null for a 404
+// One call to the Docker Engine API over its socket: the answer's JSON (a stream's last line), or null for a read or
+// removal of something absent (a 404). Its error carries Docker's own words as `said`.
 function docker(method, path, body, headers = {}) {
   return new Promise((resolve, reject) => {
     const req = http.request(
@@ -51,9 +57,17 @@ function docker(method, path, body, headers = {}) {
         let text = '';
         res.on('data', chunk => (text += chunk));
         res.on('end', () => {
-          if (res.statusCode === 404) return resolve(null);
-          if (res.statusCode >= 400)
-            return reject(new Error(`docker ${method} ${path}: ${res.statusCode} ${text.slice(0, 300)}`));
+          if (res.statusCode === 404 && method !== 'POST') return resolve(null);
+          if (res.statusCode >= 400) {
+            let said = text.trim();
+            try {
+              said = JSON.parse(said).message ?? said;
+            } catch {
+              // (not JSON: its text as it is)
+            }
+            const error = new Error(`docker ${method} ${path}: ${res.statusCode} ${text.slice(0, 300)}`);
+            return reject(Object.assign(error, { said: said.slice(0, 300) }));
+          }
           try {
             resolve(text.trim() ? JSON.parse(text.trim().split('\n').at(-1)) : {});
           } catch {
@@ -81,9 +95,8 @@ const u=net.connect(+p,all[0].address,()=>{c.write('HTTP/1.1 200 Connection esta
 s.listen(${PORT});`;
 
 // The helpers' bootstrap: the code HQ serves now, run as the helper (it reaches HQ through the proxy alone)
-const HELPER_BOOT =
-  "fetch(process.env.HQ_URL+'/api/helper/code',{redirect:'error'}).then(r=>{if(!r.ok)throw Error('no helper code: '+r.status);return r.text()})" +
-  ".then(t=>{const f=require('os').tmpdir()+'/helper.mjs';require('fs').writeFileSync(f,t);return import(f)})";
+// (from boot())
+const HELPER_BOOT = boot('code', 'helper');
 
 const withEnv = env => Object.entries(env).map(([k, v]) => `${k}=${v}`);
 
@@ -149,14 +162,14 @@ async function pull(image) {
   log(`pulling ${image}`);
   // (one pinned by its digest goes whole)
   const [name, tag = 'latest'] = image.includes('@') ? [image, ''] : image.split(/:(?=[^/:]+$)/);
-  // (Docker answers a failed pull with a 200 too, its error on the stream's last line: a refused sign-in, an unknown
-  // digest, a full disk)
+  // (Docker refuses a pull it can't start, a refused sign-in or an unknown digest, with a 404 or 500 and its words; one
+  // that fails later, a full disk, still answers a 200, its error on the stream's last line)
   const done = await docker(
     'POST',
     `/images/create?fromImage=${encodeURIComponent(name)}${tag ? `&tag=${encodeURIComponent(tag)}` : ''}`,
     undefined,
     await signIn(image),
-  );
+  ).catch(error => ({ error: error.said ?? error.message }));
   if (!(await docker('GET', `/images/${encodeURIComponent(image)}/json`)))
     throw new Error(`${image} didn't pull${done?.error ? `: ${done.error}` : ''}`);
 }
@@ -218,7 +231,8 @@ async function setup() {
     method: 'POST',
     redirect: 'error',
     headers: { authorization: `Bearer ${key()}`, 'content-type': 'application/json' },
-    body: JSON.stringify({ code: CODE, problems }),
+    // (`follows`, so HQ waits for it to take new code rather than card the board)
+    body: JSON.stringify({ code: CODE, follows: true, problems }),
     signal: AbortSignal.timeout(60_000),
   });
   if (!res.ok) throw new Error(`HQ said ${res.status} to the setup`);
@@ -242,11 +256,23 @@ async function ours() {
 
 async function tick() {
   if (!key()) return log(`waiting for the key in ${KEY_FILE}`);
-  const { kinds, busy = [] } = await setup();
+  const { kinds, busy = [], code } = await setup();
+  // HQ serves other code: Docker starts the container again (unless-stopped), and its bootstrap fetches it
+  if (code && code !== CODE) {
+    log('HQ serves new manager code: starting again on it');
+    process.exit(0);
+  }
+  const self = await ensureSelf().then(
+    () => null,
+    error => {
+      log(`${MANAGER}: ${error.message}`);
+      return error.message;
+    },
+  );
   await ensureNetwork();
   await ensure(PROXY, proxySpec());
   const wanted = new Set([MANAGER, PROXY]);
-  const now = {};
+  const now = self ? { [MANAGER]: self } : {};
   for (const kind of kinds) {
     if (!SAFE.test(kind.name) || typeof kind.image !== 'string') {
       log(`left out a kind HQ named oddly: ${kind.name}`);
@@ -271,23 +297,15 @@ async function tick() {
   }
 }
 
-// The manager's own container, from the code that started this (the old one replaced), with the key if the command
-// carries one
-async function install() {
-  if (process.env.HELPER_KEY) {
-    writeFileSync(`${KEY_FILE}.new`, `${process.env.HELPER_KEY}\n`, { mode: 0o600 });
-    renameSync(`${KEY_FILE}.new`, KEY_FILE);
-  }
-  if (!BOOTSTRAP) throw new Error('run me from the install command');
-  await pull(IMAGE);
-  await docker('DELETE', `/containers/${MANAGER}?force=true`);
-  await docker('POST', `/containers/create?name=${MANAGER}`, {
+// (its bootstrap, its spec's hash on a label, and the swap below)
+// The manager's own container: the bootstrap that follows HQ's code, on the manager's image
+function managerSpec() {
+  return {
     Image: IMAGE,
     User: '0:0',
     Entrypoint: ['node'],
-    Cmd: ['-e', BOOTSTRAP],
+    Cmd: ['-e', MANAGER_BOOT],
     Env: withEnv({ HQ_URL, ...(HQ_PRIVATE ? { HQ_PRIVATE: 1 } : {}) }),
-    Labels: { 'hq.manager': NAME },
     HostConfig: {
       RestartPolicy: { Name: 'unless-stopped' },
       ReadonlyRootfs: true,
@@ -296,6 +314,39 @@ async function install() {
       SecurityOpt: ['no-new-privileges'],
       Binds: [`${SOCKET}:/var/run/docker.sock`, `${VOLUME}:/state`],
     },
+  };
+}
+
+// New code that changes the manager's own container (a new Node image): it can't replace the container it runs in, so a
+// one-off container installs it as the install command does, and ends. None where there's no such container (a test).
+async function ensureSelf() {
+  const spec = managerSpec();
+  const have = await docker('GET', `/containers/${MANAGER}/json`);
+  if (!have || have.Config?.Labels?.['hq.spec'] === hash(spec)) return;
+  await pull(IMAGE);
+  const swap = `${MANAGER}-swap`;
+  await docker('DELETE', `/containers/${swap}?force=true`);
+  await docker('POST', `/containers/create?name=${swap}`, {
+    ...spec,
+    Env: [...spec.Env, 'MANAGER=install'],
+    HostConfig: { ...spec.HostConfig, RestartPolicy: { Name: 'no' }, AutoRemove: true },
+  });
+  await docker('POST', `/containers/${swap}/start`);
+  log(`${MANAGER}: its own container changes, from ${swap}`);
+}
+
+// The manager's own container (the old one replaced), with the key if the command carries one
+async function install() {
+  if (process.env.HELPER_KEY) {
+    writeFileSync(`${KEY_FILE}.new`, `${process.env.HELPER_KEY}\n`, { mode: 0o600 });
+    renameSync(`${KEY_FILE}.new`, KEY_FILE);
+  }
+  const spec = managerSpec();
+  await pull(IMAGE);
+  await docker('DELETE', `/containers/${MANAGER}?force=true`);
+  await docker('POST', `/containers/create?name=${MANAGER}`, {
+    ...spec,
+    Labels: { 'hq.spec': hash(spec), 'hq.manager': NAME },
   });
   await docker('POST', `/containers/${MANAGER}/start`);
   console.log(`Installed. The manager keeps this machine's helpers in step with ${HQ_URL} from now on.`);

@@ -57,7 +57,7 @@ export function jobSheet(j, all, { back = false, findings = null, facts = null }
   return `<div class="pj-pop"><article class="pj-card${turned ? ' flipped' : ''}" role="dialog" aria-label="${esc(nameText(j))}" data-job-open="${Number(j.id)}" data-owner="${esc(j.agent ?? '')}">
     <div class="pj-card-keys"><button class="pj-key" data-close aria-label="Close">${icon('close')}</button></div>
     <div class="pj-card-faces"><section class="pj-front">${frontOf(j, row)}</section>${reverse ? `<section class="pj-back">${reverse}</section>` : ''}</div>
-    ${reverse ? `<button class="pj-turns" data-turn aria-label="${turned ? 'Turn back to its front' : 'Turn over: its record and steps'}">${icon('redo')}</button>` : ''}</article></div>`;
+    ${reverse ? `<button class="pj-turns" data-turn aria-label="${turned ? 'Turn back to its front' : 'Turn over: its record and steps'}">${icon('again')}</button>` : ''}</article></div>`;
 }
 
 // The front: its code and title, who, where it is, that it's urgent, when it starts and is done, and what it waits for

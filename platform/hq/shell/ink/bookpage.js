@@ -2,17 +2,18 @@
 // book's (bookpages.js draws them where the page shows), so the page itself has no edge.
 //
 // The page is its units (bookunits.js): each draws its pictures and dry ink on a canvas of its own at its place, as
-// big as the unit and what's drawn on it. (were tiles across an endless page; what's drawn)
+// big as the unit and what's drawn on it; our scraps' photos are taped onto their post-its under all of the page's ink
+// (photos). (were tiles across an endless page; what's drawn)
 import { draw } from '/__review/ink.js';
 import { layered } from '/__review/inkshape.js';
-import { drawScrap, drawnBox } from './bookscrapdraw.js';
+import { drawScrap, drawnBox, photoOf, tapeOf } from './bookscrapdraw.js';
 import { picture } from '../../util.js';
 import { boxOf, pageBox } from './bookrow.js';
 import { meets, union } from './bookselectmath.js';
 import { landing } from './bookgroupmath.js';
 import { mountAnswers } from './bookanswers.js';
 import { nameOf } from './bookhead.js';
-import { layUnits, reachOn } from './bookunits.js';
+import { fixed, layUnits, reachOn } from './bookunits.js';
 import { drawCards } from './bookunitcards.js';
 
 // zoomed in, a unit's canvas holds what's this share of the view's size beyond each of its sides too, so a pan paints
@@ -40,6 +41,8 @@ export function pageView(page, held = false) {
   refusal.textContent = page.error;
   refusal.hidden = !page.error;
   const view = {
+    // (its ink's: addInk, redraw, rubbed, under, over, drop, hold; its own show over theirs)
+    ...tiles,
     el,
     page,
     // its units laid at the paper's width (CSS px: bookunits.js), the element as big as the page they make, its ink
@@ -61,11 +64,6 @@ export function pageView(page, held = false) {
       // foot.
       el.style.setProperty('--bk-above', `${Math.round(Math.max(0, Math.min(box.y0, pageBox(page).y1 - 140)))}px`);
     },
-    addInk: tiles.addInk,
-    redraw: tiles.redraw,
-    rubbed: tiles.rubbed,
-    drop: tiles.drop,
-    hold: tiles.hold,
     refuse(words) {
       refusal.textContent = words;
       refusal.hidden = !words;
@@ -84,10 +82,12 @@ export function pageView(page, held = false) {
 function unitInk(el, page, held) {
   const st = { el, page, units: new Map(), held, shown: false, stale: false, box: null, r: 1 };
   const paintAll = () => {
+    st.owed = false;
     if (st.held || !st.shown) return void (st.stale = true);
     const places = new Map((page.places ?? []).map(p => [p.id, p]));
     for (const [id, u] of st.units) if (!places.has(id)) drop(u.canvas, st.units, id);
     for (const p of places.values()) paint(st, p);
+    photos(st);
   };
   // (the units' canvases painted again only in a box, where ink went and nothing moved)
   const paintIn = box => {
@@ -114,9 +114,9 @@ function unitInk(el, page, held) {
     // The eraser's rub (bookerase.js): ink gone from a box of the page, nothing moved, so only that box is painted
     // again, as a page of overlapping ink has most of it under any rub
     rubbed: box => paintIn(box),
-    drop() {
-      for (const [id, u] of st.units) drop(u.canvas, st.units, id);
-    },
+    under: on => inkUnder(st, on),
+    over: (g, box) => paintOver(st, g, box),
+    drop: () => st.units.forEach((u, id) => drop(u.canvas, st.units, id)),
     hold(on) {
       st.held = on;
       if (!on && st.stale) {
@@ -143,7 +143,7 @@ function paint(st, p, box = null) {
   }
   // (as big as the unit, and further wherever its ink, a scrap's tape or its shadow reaches past it: nothing drawn is
   // cut.)
-  const scraps = page.scraps.filter(s => s.g === p.id && !landing(page, s)),
+  const scraps = page.scraps.filter(s => s.g === p.id && !landing(page, s) && !fixed(page, s.g)),
     u = units.get(p.id),
     { canvas } = u,
     reach = scraps.map(drawnBox).reduce(union, reachOn(page, p)),
@@ -177,9 +177,39 @@ function paint(st, p, box = null) {
   g.setTransform(k, 0, 0, k, -x * k, -y * k);
   const shows = b => !clip || meets(b, clip);
   for (const s of scraps) if (shows(drawnBox(s))) drawScrap(g, withPicture(st, s));
-  const here = page.ink.filter(s => s.g === p.id && !landing(page, s) && shows(boxOf(s)));
+  const here = page.ink.filter(s => s.g === p.id && inked(st, s) && shows(boxOf(s)));
   draw(g, layered(here));
   g.restore();
+}
+// Whether paint() draws a stroke: not while it's landing, nor while a see-through line is drawn over it (inkUnder)
+const inked = (st, s) => !landing(st.page, s) && (!st.under || s.alpha < 1);
+// A see-through line being drawn (bookwet.js): the units painted without the ink that will lie over it, which
+// paintOver draws to lie over the line; and painted whole again once it's gone, before the screen shows them (a lift's
+// own paint, addInk, comes first).
+function inkUnder(st, on) {
+  if (st.under === on) return;
+  st.under = on;
+  if (on) return st.redraw();
+  st.owed = true;
+  queueMicrotask(() => st.owed && st.redraw());
+}
+// The ink paint() leaves out under a see-through line being drawn, to lie over it: unit by unit from the bottom up (each
+// lies over the ones after it), what its pictures cover cut away and its ink drawn but for its see-through strokes.
+function paintOver(st, g, box) {
+  const { page } = st;
+  for (const p of (page.places ?? []).toReversed()) {
+    const scraps = page.scraps.filter(
+      s => s.g === p.id && !landing(page, s) && !fixed(page, s.g) && meets(drawnBox(s), box),
+    );
+    g.save();
+    g.globalCompositeOperation = 'destination-out';
+    for (const s of scraps) drawScrap(g, s);
+    g.restore();
+    draw(
+      g,
+      page.ink.filter(s => s.g === p.id && !(s.alpha < 1) && !landing(page, s) && meets(boxOf(s), box)),
+    );
+  }
 }
 // What of a unit's reach (page px) its canvas holds, in whole px, and how many device px a page px is on it: the zoom
 // the view rests at (st.r); zoomed in past 1, only what's within NEAR of the paper's view; never more than MOST_PX
@@ -211,6 +241,38 @@ const grown = (b, by) => {
     dy = (b.y1 - b.y0) * by;
   return { x0: b.x0 - dx, y0: b.y0 - dy, x1: b.x1 + dx, y1: b.y1 + dy };
 };
+// Our scraps' photos (bookunits.js fixed), each taped straight onto its post-it as the page's own element, under all
+// the page's ink (bookgroups.css .bk-photos): never on a unit's canvas, so no unit's ink lies under another's photo.
+// What's landing shows once it's down (bookarrive.js). An element kept per picture, so a loaded one never loads again.
+// (README, Our scraps.)
+function photos(st) {
+  const { el, page } = st;
+  let layer = el.querySelector(':scope > .bk-photos');
+  if (!layer) {
+    layer = Object.assign(document.createElement('div'), { className: 'bk-photos' });
+    el.prepend(layer);
+  }
+  const had = new Map([...layer.children].map(c => [c.dataset.url, c]));
+  for (const s of page.scraps) {
+    if (!fixed(page, s.g) || landing(page, s)) continue;
+    let photo = had.get(s.url);
+    had.delete(s.url);
+    if (!photo) {
+      photo = Object.assign(document.createElement('div'), { className: 'bk-photo' });
+      photo.dataset.url = s.url;
+      photo.append(Object.assign(new Image(), { src: s.url, alt: '', draggable: false }));
+    }
+    const at = photoOf(s),
+      tape = tapeOf(s);
+    Object.assign(photo.style, {
+      ...{ left: `${at.x}px`, top: `${at.y}px`, width: `${at.w}px`, height: `${at.h}px`, rotate: `${s.tilt}deg` },
+    });
+    photo.style.setProperty('--bk-tape-w', `${tape.w}px`);
+    photo.style.setProperty('--bk-tape-h', `${tape.h}px`);
+    layer.append(photo);
+  }
+  for (const gone of had.values()) gone.remove();
+}
 // a scrap's picture, drawn again once it has loaded
 function withPicture(st, s) {
   if (s.img) return s;

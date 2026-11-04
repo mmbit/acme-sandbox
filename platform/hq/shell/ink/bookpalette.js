@@ -212,13 +212,14 @@ function card(st) {
   addEventListener('pointerdown', st.away, true);
   addEventListener('keydown', st.away, true);
 }
-// The card's lines, one under another, for the tool: what draws (the pen's nibs and the marker), a shape's kind and
-// fill, the colours (six to a line), the widths (the eraser: its sizes) and smoothing. A rule between lines, and
-// between two rows on one line.
+// The card's lines, one under another, for the tool: what draws (the pen's nibs and the marker) or a shape's kind,
+// the colours (six to a line), the widths (the eraser: its sizes) with smoothing or a shape's fill. A rule between
+// lines, and between two rows on one line: a shape's outline and fill sit by the widths, never among the shapes (the
+// Ink README, the tools' cards).
 function fillCard(st) {
   const lines = [];
   if (INKS.includes(st.mode)) lines.push([inkChoice(st)]);
-  if (st.mode === 'shapes') lines.push(shapeLine(st));
+  if (st.mode === 'shapes') lines.push([shapeRow(st)]);
   if (st.mode === 'eraser') lines.push([eraserRow(st)]);
   else lines.push(...inkLines(st));
   st.card.replaceChildren(
@@ -272,17 +273,17 @@ function pickNib(st, nib) {
   }
   changed(st);
 }
-// The shapes' line: a shape's kind, and filled or not
-const shapeLine = st => [
+// A shape's kind, and its outline or fill
+const shapeRow = st =>
   row(
     'shape',
     SHAPES.map(k => ({ icon: ICONS[k], ...KINDS[k], on: st.shape === k, pick: () => pickShape(st, k) })),
-  ),
+  );
+const fillRow = st =>
   row('fill', [
     { icon: ICONS.outline, word: 'outline', keys: 'F', on: !st.fill, pick: () => setFill(st, false) },
     { icon: ICONS.filled, word: 'filled', keys: 'F', on: st.fill, pick: () => setFill(st, true) },
-  ]),
-];
+  ]);
 const eraserRow = st =>
   row(
     'eraserSizes',
@@ -294,7 +295,7 @@ const eraserRow = st =>
       pick: () => ((st.eraser = i), changed(st)),
     })),
   );
-// The colours' line, six to a row; the widths' but for typed words, the pen's smoothing beside them
+// The colours' line, six to a row; the widths' but for typed words, the pen's smoothing or a shape's fill beside them
 function inkLines(st) {
   const marker = st.mode === 'highlighter',
     k = widthsOf(st);
@@ -328,7 +329,8 @@ function inkLines(st) {
     },
   ]);
   if (st.mode === 'text') return [[colours]];
-  return [[colours], st.mode === 'pen' ? [widths, smooth] : [widths]];
+  const beside = { pen: [smooth], shapes: [fillRow(st)] }[st.mode] ?? [];
+  return [[colours], [widths, ...beside]];
 }
 function pickShape(st, kind) {
   st.shape = kind;

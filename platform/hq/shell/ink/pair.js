@@ -3,12 +3,8 @@
 import { stylesheet } from '../../util.js';
 import { act } from '../data.js';
 import { qrCode, qrPath } from '/shared/qr/qr.js';
-import { button, island, lineIcon } from './bookui.js';
-
-// (a phone with a code on its screen)
-const DEVICE = lineIcon(
-  '<rect x="6.5" y="2.5" width="11" height="19" rx="2.4"/><path d="M10.5 18.5h3"/><path d="M9.5 8.5h2v2h-2zM12.5 8.5h2v2h-2zM9.5 11.5h2v2h-2z" stroke-width="1.3"/>',
-);
+import { button, island } from './bookui.js';
+import { icon } from '../icons.js';
 
 export function initPair() {
   const leaf = document.querySelector('#book .bk-leaf');
@@ -22,7 +18,7 @@ export function initPair() {
   card.setAttribute('data-watchalong-hide', '');
   leaf.append(card);
   const row = button({
-    icon: DEVICE,
+    icon: icon('mobile'),
     label: 'Sign in another device',
     onClick: () => {
       if (!card.hidden) {

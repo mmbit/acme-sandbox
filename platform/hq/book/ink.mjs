@@ -1,7 +1,7 @@
 // book-check.mjs's story of rule zero (the board's, 2026-10-27): nothing stays drawn on HQ, held like an iPad mini, on
 // book-check's played store (shared/review/marks.js paint: the page's ink layer holds only the mark being made).
 // A ring drawn round the computer's Mail shows while it's made; once its note is in the book (saved) the page is clean
-// at once, its lines only in the note's snip. A ring scribbled out (cancelled) goes as well, and no note is made. Notes
+// at once, its lines only in the note's snip. A ring whose post-it is cancelled goes as well, and no note is made. Notes
 // kept from before, with their lines in the store, show nowhere. Sending the sheet, reloading and another tab bring
 // nothing back. nothingDrawn is the assertion, shared with the call's stories (call.mjs).
 import assert from 'node:assert/strict';

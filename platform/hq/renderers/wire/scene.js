@@ -376,7 +376,7 @@ function key(t, big = false) {
     el.dataset.shirt = look.shirt;
     ringOn(el);
     // (each face's corner says it turns over, in the job sheet's icon for it.)
-    const turns = `<span class="turns">${icon('redo')}</span>`;
+    const turns = `<span class="turns">${icon('again')}</span>`;
     el.innerHTML = big
       ? `<div class="faces"><section class="front">${head}<span class="state"></span><p class="doing"></p><ol class="log steplog"></ol><footer class="pace"></footer>${turns}</section>
         <section class="back">${head}<div class="last"><span class="lbl">Last finished</span><p></p></div><div class="next"><span class="lbl">Up next</span><p></p></div><div class="week"></div><p class="who"></p>${turns}</section></div>`

@@ -37,7 +37,15 @@ type Message = {
   read: string | null;
 };
 type Thread = { id: number; subject: string; by: Author; messages: Message[] };
-type Version = { n: number; at: string; by: Author; size: number; note: string; arrived: string | null };
+type Version = {
+  n: number;
+  at: string;
+  by: Author;
+  size: number;
+  note: string;
+  arrived: string | null;
+  cleared: string | null;
+};
 type Workspace = Omit<Summary, 'threads' | 'files'> & {
   threads: Thread[];
   files: { path: string; versions: Version[] }[];
@@ -58,9 +66,10 @@ export const workspace = {
    hq workspace post <workspace> --new "subject"     a message that starts a new thread
        [--urgent] <file | ->
    hq workspace put <workspace> <path> <local file>  a new version of the workspace's file at that path (up to 50 MB),
-       ["note"]                                      with a note on what changed. Nothing is ever overwritten
+       ["note"]                                      with a note on what changed. Each file keeps its newest two
+                                                     versions whole: an older one's bytes are cleared, its line stays
    hq workspace get <workspace> <path>               a version of the workspace's file (the newest without --version)
-       [--version n] <local file>                    written to the local file`,
+       [--version n] <local file>                    written to the local file, unless its bytes were cleared`,
 
   async run([action = '', ...rest]: string[]) {
     if (action === '') return listWorkspaces();
@@ -143,8 +152,9 @@ function printFiles(shared: Workspace) {
     for (const version of file.versions) {
       const note = version.note ? `: ${words(version.by, version.note)}` : '';
       const arrived = version.by.ours && version.arrived === null ? ' (on its way)' : '';
+      const cleared = version.cleared ? `, cleared ${minute(version.cleared)} (no download)` : '';
       print(
-        `      v${version.n} ${minute(version.at)} by ${authorName(version.by)}, ${size(version.size)}${arrived}${note}`,
+        `      v${version.n} ${minute(version.at)} by ${authorName(version.by)}, ${size(version.size)}${arrived}${cleared}${note}`,
       );
     }
   }

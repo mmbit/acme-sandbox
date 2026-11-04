@@ -19,8 +19,9 @@ const LINE_PX = 26;
 // puts on the page is slid into sight before it lands
 const IDLE_MS = 3000;
 
-// The board's hands on the screen: the pointers down, and when it last pressed, moved one down or typed (ms)
-const hands = { down: new Set(), at: 0 };
+// The board's hands on the screen: the pointers down, and when it last pressed, moved one down or typed (ms: -Infinity
+// till then, so a page just opened is idle)
+const hands = { down: new Set(), at: -Infinity };
 for (const type of ['pointerdown', 'pointermove', 'pointerup', 'pointercancel', 'keydown', 'wheel'])
   addEventListener(
     type,

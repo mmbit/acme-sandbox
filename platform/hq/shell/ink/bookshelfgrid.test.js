@@ -55,6 +55,6 @@ test('the Shelf: My journal first, then the newest first', () => {
 test('the bookcase: two to a board on a phone, the plant on the last; three on an iPad, the plant beside them', () => {
   // (the window's boards: a phone 390 wide less its sides and margins, an iPad's 680 wide window less its)
   assert.deepEqual(shelfFit(334), { cols: 2, book: 150, plant: 'last', inset: 4 });
-  assert.deepEqual(shelfFit(604), { cols: 3, book: 150, plant: 'first', inset: 15 });
+  assert.deepEqual(shelfFit(604), { cols: 3, book: 150, plant: 'first', inset: 7 });
   assert.equal(shelfFit(200).cols, 1, 'a narrow window: one to a board');
 });

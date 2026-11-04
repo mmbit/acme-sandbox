@@ -14,14 +14,12 @@ import { createPage, moveGroup } from './notebookdata.js';
 import { CHAPTER_WORDS } from './notebookchapters.js';
 import { nameOf } from './bookhead.js';
 import { newUnit } from './bookunits.js';
-import { lineIcon } from './bookui.js';
+import { icon } from '../icons.js';
 import { cardOf, put } from './bookcard.js';
 
 stylesheet('shell/ink/bookmoveto.css');
 
 const LISTS = ['ink', 'texts', 'scraps'];
-const PAGE = lineIcon('<path d="M6 2.5h8l4.5 4.5v14.5h-12.5z"/><path d="M14 2.5v4.5h4.5"/>'),
-  ADD = lineIcon('<path d="M12 5v14M5 12h14"/>');
 // the list stands this far (px) under the bar's button, or above the page bar, its beak at least this far in from its
 // corners
 const MENU_GAP_PX = 4,
@@ -137,13 +135,13 @@ export function pagesCard(pages, here) {
   const card = cardOf('bk-move-pages', word('moveToPage'));
   const row = (p, i) =>
     `<button type="button" class="bk-row" role="menuitem"${p === here ? ' aria-disabled="true"' : ` data-page="${p.id}"`}
-    style="--i:${i}"><span class="bk-page-icon">${PAGE}</span><span class="bk-name">${esc(nameOf(p))}</span>${
+    style="--i:${i}"><span class="bk-page-icon">${icon('page')}</span><span class="bk-name">${esc(nameOf(p))}</span>${
       p === here ? `<span class="bk-kind">${word('thisPage')}</span>` : ''
     }</button>`;
   card.innerHTML = `<p class="bk-list-head">${word('moveToChapter', {
     chapter: word(CHAPTER_WORDS[here.chapter]),
   })}</p>${pages.map(row).join('')}<button type="button" class="bk-row bk-list-more" role="menuitem" data-page="new"
-    style="--i:${pages.length}"><span class="bk-page-icon">${ADD}</span><span class="bk-name">${word('newPage')}</span>
+    style="--i:${pages.length}"><span class="bk-page-icon">${icon('plus')}</span><span class="bk-name">${word('newPage')}</span>
     </button>`;
   return card;
 }

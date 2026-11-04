@@ -7,11 +7,18 @@ import { settings, avatar } from './company.ts';
 
 // the page's own policy: its one script is review mode's (same origin), its style inline; review.js's screenshot draws
 // the page into a canvas from a data: image, and its notes and voice clips go to /__review/ on this host
-export const CSP = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; "
-  + "connect-src 'self'; media-src 'self' blob:; base-uri 'none'; form-action 'none'";
+export const CSP =
+  "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; " +
+  "connect-src 'self'; media-src 'self' blob:; base-uri 'none'; form-action 'none'";
 
 // the company's own zone (settings.timeZone), named after the time: "14:05 CEST", "14:05 UTC"
-const time = (t: number) => new Date(t).toLocaleTimeString('en-GB', { timeZone: settings.timeZone, hour: '2-digit', minute: '2-digit', timeZoneName: 'short' });
+const time = (t: number) =>
+  new Date(t).toLocaleTimeString('en-GB', {
+    timeZone: settings.timeZone,
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZoneName: 'short',
+  });
 const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
 
 export function page({ model, busy, at = Date.now() }: { model: 'up' | 'down'; busy: boolean; at?: number }) {

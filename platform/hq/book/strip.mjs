@@ -1,9 +1,9 @@
 // book-check.mjs's stories of the board's controls (shell/ink/bookstrip.js, bookinput.js, bookvoice.js, bookpan.js,
 // booktools.js, bookprefs.js): on a desktop with a mouse, the pen in use as the book opens (the rail: bar.mjs; the wheel: wheel.mjs),
-// Ctrl's drag selecting and giving the tool back, a tap on the rail's mic a voice note at once whose words land under
-// the line drawn last, a press held still only a dot, the preferences (in the dots) kept on this device; on a touch screen
+// Ctrl's drag selecting and giving the tool back, a tap on the rail's mic and a spot held a voice note whose words
+// write themselves there, a press held still only a dot, the preferences (in the dots) kept on this device; on a touch screen
 // (Chromium's own touch and pen events, trusted), one finger drawing and two moving the page with no stray line, a
-// slide along the rail picking a tool, drifting off it too, the Pencil tapping the mic right after writing, the
+// slide along the rail picking a tool, drifting off it too, the Pencil tapping the mic and holding a spot, the
 // Pencil held still only ink, and a finger that pans once the pen's been used, as the preferences have it unless
 // turned off (on a fresh device the first pen anywhere in HQ turns that on, once, and only the board turns it off); and
 // by hand at the board's iPad sizes, the Pencil writing and one finger or two scrolling a long page with the text tool
@@ -11,19 +11,20 @@
 import assert from 'node:assert/strict';
 import { desk, freePage, paperBox, savedWhere, colourIn, BLUE } from './mouse.mjs';
 import { press } from './bar.mjs';
-import { HEARD, PREFERENCES, QUIET_MS, MINI, UPRIGHT, middleOf, until, wordsHeard } from './kit.mjs';
+import { PREFERENCES, QUIET_MS, MINI, UPRIGHT, middleOf, until, wordsHeard } from './kit.mjs';
 import { mini } from './start.mjs';
+import { SAID } from './voice.mjs';
 
 // c: book-check.mjs's played store and helpers
 export function stripStories(c) {
   return {
     'controls with a mouse: the pen in use, Ctrl selects': browser => mouse(browser, c),
-    'controls with a mouse: one tap on the mic listens, a second puts the words under the line drawn last; Undo takes them back; a press held still is a dot':
+    'controls with a mouse: the mic tapped, then a spot held, puts the words there as they’re said; Undo takes them back; a press held still is a dot':
       browser => voiceByMouse(browser, c),
     'controls with a mouse: Preferences, from the dots, stick on this device': browser => preferences(browser, c),
     'controls on a touch screen: one finger draws, two move the page, a slide along the rail picks a tool': browser =>
       fingers(browser, c),
-    'controls with the Pencil: a tap on the mic right after writing dictates under it, the Pencil held still is only ink, a finger pans once the pen is in use':
+    'controls with the Pencil: the mic tapped right after writing, then a spot held, dictates there, the Pencil held still is only ink, a finger pans once the pen is in use':
       browser => pencil(browser, c),
     'a fresh iPad: a finger draws till the first pen anywhere in HQ, then scrolls, after a reload too; turned off, it stays off':
       browser => firstPen(browser, c),
@@ -83,7 +84,18 @@ async function voiceByMouse(browser, c) {
     await savedWhere(c, free.id, p => p.ink.length === 1);
     await stroke(page, [mid[0] - 140, mid[1] - 80], [mid[0] + 20, mid[1] - 60]);
     await savedWhere(c, free.id, p => p.ink.length === 2);
-    await dictated(page, c, free, name => press(page, name), 'book-voice-listening');
+    await dictated(
+      page,
+      c,
+      free,
+      {
+        tap: name => press(page, name),
+        down: at => page.mouse.move(...at).then(() => page.mouse.down()),
+        up: () => page.mouse.up(),
+      },
+      [mid[0] - 100, mid[1] + 60],
+      'book-voice-listening',
+    );
     await page.locator('#book').getByRole('button', { name: 'Undo', exact: true }).click();
     await savedWhere(c, free.id, p => p.texts.length === 0);
     assert.deepEqual(errors, []);
@@ -171,7 +183,7 @@ async function pencil(browser, c) {
     // the Pencil held still a second and a half: a dot, and nothing listens or opens
     await stillFor(page, [mid[0] + 120, mid[1] + 200], pen.down, pen.up);
     await savedWhere(c, free.id, p => p.ink.length === 1);
-    // a line written, then the Pencil taps the mic and taps it again: the words under the line
+    // a line written, then the Pencil taps the mic and holds a spot below it: the words there
     await pen.stroke([
       [mid[0] - 120, mid[1] - 60],
       [mid[0] - 40, mid[1] - 50],
@@ -180,7 +192,7 @@ async function pencil(browser, c) {
     await savedWhere(c, free.id, p => p.ink.length === 2);
     const tap = async name =>
       pen.tap(middleOf(await page.locator('#book .bk-strip').getByRole('button', { name, exact: true }).boundingBox()));
-    await dictated(page, c, free, tap, 'book-voice-pencil');
+    await dictated(page, c, free, { tap, down: pen.down, up: pen.up }, [mid[0] - 80, mid[1] + 40], 'book-voice-pencil');
     // the pen used, so "touch always scrolls" on: a finger moves the page and draws nothing
     const ink = stored(c, free).ink.length;
     await touch.stroke([[mid[0] - 80, mid[1] + 100]], [[mid[0] + 40, mid[1] + 120]]);
@@ -310,39 +322,34 @@ async function scrolling(browser, c, viewport) {
 
 // ---- helpers
 
-// The mic tapped (tap(name): the rail's button of that name pressed by the mouse, the Pencil or Safari's): listening at
-// once, the words showing as they're heard; tapped again, they land under the line drawn last, from its left, in its
-// scrap, and the slip goes. shot: the listening's picture's name.
-export async function dictated(page, c, free, tap, shot) {
-  const line = stored(c, free).ink.at(-1),
-    xs = line.points.map(p => p[0]),
-    ys = line.points.map(p => p[1]);
+// The mic tapped (tap(name): the rail's button of that name pressed by the mouse, the Pencil or Safari's), then a spot
+// on the paper held (down(at) and up(at), at: on the screen): the words show there as they're heard, the mic red while
+// it's held; let go, the mic out at once and the words land at the spot. shot: the listening's picture's name.
+export async function dictated(page, c, free, { tap, down, up }, at, shot) {
+  const mic = page.locator('#book .bk-mic');
   await tap('Voice note');
-  await page.locator('#book .bk-voice').waitFor({ timeout: 1000 });
-  assert.equal(
-    await page.locator('#book .bk-mic').getAttribute('aria-pressed'),
-    'true',
-    'the mic lit while it listens',
-  );
+  assert.equal(await mic.getAttribute('aria-pressed'), 'true', 'the mic lit, waiting for a spot');
+  await down(at);
+  await page.locator('#book .bk-heard').waitFor({ timeout: 5000 });
+  assert.equal(await mic.getAttribute('data-listening'), '', 'the mic recording while the spot is held');
   await wordsHeard(page);
   await c.shot(shot, page);
-  await tap('Stop, and put the words on the page');
+  await up(at);
+  assert.equal(await mic.getAttribute('aria-pressed'), 'false', 'let go, the mic out at once');
   const [words] = (await savedWhere(c, free.id, p => p.texts.length === 1)).texts;
-  assert.equal(words.text, HEARD);
-  assert.equal(words.g, line.g, 'the words in the scrap of the line drawn last');
-  assert.ok(words.y >= Math.max(...ys), `the words under the line: ${JSON.stringify([words, ys])}`);
+  assert.equal(words.text, SAID);
+  const box = await page.locator('#book .bk-typed').boundingBox();
   assert.ok(
-    Math.abs(words.x - Math.min(...xs)) <= 8,
-    `the words from the line's left: ${words.x} by ${Math.min(...xs)}`,
+    at[0] >= box.x - 4 && at[0] <= box.x + box.width && at[1] >= box.y - 4 && at[1] <= box.y + box.height,
+    `the words where the spot was held: ${JSON.stringify({ at, box })}`,
   );
-  await until(async () => (await page.locator('#book .bk-voice').count()) === 0, 'the listening slip gone');
-  assert.equal(await page.locator('#book .bk-mic').getAttribute('aria-pressed'), 'false', 'the mic let go');
+  await until(async () => (await page.locator('#book .bk-heard').count()) === 0, 'the words as heard gone');
 }
 // A press held still for a second and a half (down(at), then up(at)): it opens nothing, and nothing listens
 export async function stillFor(page, at, down, up) {
   await down(at);
   await page.waitForTimeout(1500);
-  assert.equal(await page.locator('#book .bk-voice').count(), 0, 'a press held still listens to nothing');
+  assert.equal(await page.locator('#book .bk-heard').count(), 0, 'a press held still listens to nothing');
   assert.equal(await page.locator('#book [role=menu]:visible').count(), 0, 'a press held still opens nothing');
   await up(at);
 }

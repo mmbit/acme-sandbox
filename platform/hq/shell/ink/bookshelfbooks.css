@@ -1,12 +1,38 @@
-/* My shelf as a bookcase (bookshelfbooks.js), in its window (bookshelfwindow.css): light wood boards with a front lip,
-   a plain back, a base at its foot. Books stand covers out on the boards, their feet behind the lip, with a real
-   shadow: each its cloth, a printed plate with its picture, its name and one line; its open asks counted red on its
-   corner. The Archive's lidded box and the potted plant stand on the boards too. bookshelf.js sets the books' width
-   (--bk-book-w) and how far in from each side a board's things start (--bk-row-in). */
+/* My shelf as a bookcase (bookshelfbooks.js), in its window (bookshelfwindow.css), drawn straight on as the books, the
+   box and the plant are: each board seen square from the front, its front edge only, things standing on its top
+   edge with a real shadow on the back behind them, a plinth at its foot. Its wood is bookshelfwindow.css's tones (tinted
+   to the look). Books stand covers out: each its cloth, a printed plate with its picture, its name and one line; its
+   open asks counted red on its corner. The Archive's lidded box and the potted plant stand on the boards too.
+   bookshelf.js sets the books' width (--bk-book-w) and how far in from each side a board's things start (--bk-row-in).
+   A board holds a book's height even empty, so a shelf not read yet stands at its size and its books arrive in place. */
+/* the wood and the card (here and on the window, its case: bookshelfwindow.css), each tone a little of the look's tint
+   (--bk-shelf-tint by --bk-shelf-tint-share; the renderers' skin.css), never dark */
+#book :is(.bk-shelf-window, .bk-shelf) {
+  --bk-tint: var(--bk-shelf-tint, #fff);
+  --bk-tinted: var(--bk-shelf-tint-share, 0%);
+  --bk-wood-hi: color-mix(in oklab, #f0e2c4, var(--bk-tint) var(--bk-tinted));
+  --bk-wood: color-mix(in oklab, #dfc79c, var(--bk-tint) var(--bk-tinted));
+  --bk-wood-lo: color-mix(in oklab, #cdb184, var(--bk-tint) var(--bk-tinted));
+  --bk-back: color-mix(in oklab, #f1e7d4, var(--bk-tint) var(--bk-tinted));
+  --bk-back-lo: color-mix(in oklab, #e9dcc3, var(--bk-tint) var(--bk-tinted));
+  --bk-card-hi: color-mix(in oklab, #d8b98f, var(--bk-tint) var(--bk-tinted));
+  --bk-card: color-mix(in oklab, #cdac80, var(--bk-tint) var(--bk-tinted));
+  --bk-card-lo: color-mix(in oklab, #c09c70, var(--bk-tint) var(--bk-tinted));
+  /* (a board's front edge: its lit arris, the grain's long faint streaks, its lower edge in shade) */
+  --bk-wood-edge:
+    linear-gradient(rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0) 2px),
+    linear-gradient(transparent calc(100% - 2px), rgba(80, 55, 20, 0.22)),
+    repeating-linear-gradient(
+      178.6deg,
+      rgba(120, 80, 30, 0) 0 5px,
+      rgba(120, 80, 30, 0.05) 5px 6px,
+      rgba(120, 80, 30, 0) 6px 11px
+    ),
+    linear-gradient(var(--bk-wood), var(--bk-wood-lo));
+}
 #book .bk-shelf {
   --bk-book-gap: 26px; /* (bookshelf.js BOOKS.gap) */
-  --bk-board: 22px; /* (a board's top and its lip) */
-  --bk-feet: 4px; /* (how far behind the lip things stand) */
+  --bk-board: 18px; /* (a board's front edge) */
   display: flex;
   flex: 1;
   flex-direction: column;
@@ -18,10 +44,12 @@
   display: flex;
   align-items: flex-end;
   gap: var(--bk-book-gap);
-  padding: 40px var(--bk-row-in, 0px) calc(var(--bk-board) - var(--bk-feet));
+  box-sizing: content-box;
+  min-height: calc(var(--bk-book-w, 150px) * 4 / 3);
+  padding: 40px var(--bk-row-in, 0px) var(--bk-board);
 }
-/* (the board, across the case from side to side: its top lit, its lip's front catching the light and its shadow on
-   the back under it, in front of what stands on it) */
+/* (the board's front edge, across the case from side to side: its top arris catching the light, the grain running
+   along it, its underside's shadow on the back below it) */
 #book .bk-shelf-row::after {
   content: '';
   position: absolute;
@@ -30,11 +58,8 @@
   left: calc(-1 * var(--bk-case-in));
   right: calc(-1 * var(--bk-case-in));
   height: var(--bk-board);
-  background:
-    linear-gradient(#e2cda6, #ead9b8) 0 0 / 100% 9px no-repeat,
-    linear-gradient(rgba(255, 255, 255, 0.45), transparent) 0 9px / 100% 1px no-repeat,
-    linear-gradient(#e4cfa8, #d5bc90) 0 9px / 100% 13px no-repeat;
-  box-shadow: 0 7px 10px -4px rgba(80, 55, 20, 0.35);
+  background: var(--bk-wood-edge);
+  box-shadow: 0 8px 10px -5px rgba(80, 55, 20, 0.32);
   pointer-events: none;
 }
 #book .bk-shelf-row > * {
@@ -43,12 +68,33 @@
   flex: 0 1 var(--bk-book-w, 150px);
   min-width: 0;
 }
-/* the case's base under its last board, down to the window's foot */
+/* (a shelf just read: its things arrive in place on the boards it stood with) */
+#book .bk-shelf[data-arriving] .bk-shelf-row > * {
+  animation: bk-shelf-arrive 0.18s ease-out backwards;
+}
+@keyframes bk-shelf-arrive {
+  from {
+    opacity: 0;
+  }
+}
+/* the case under its last board, down to the window's foot: on a screen taller than its things (a phone), more boards
+   at the same spacing, empty, then its plinth */
 #book .bk-shelf-base {
+  --bk-row: calc(var(--bk-book-w, 150px) * 4 / 3 + 40px + var(--bk-board));
   flex: 1 0 34px;
   margin: 0 calc(-1 * var(--bk-case-in));
-  background: linear-gradient(#d9c39b, #cdb489);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  background:
+    linear-gradient(rgba(60, 40, 15, 0.16), transparent 10px) 0 100% / 100% 34px no-repeat,
+    linear-gradient(var(--bk-wood-lo), color-mix(in oklab, var(--bk-wood-lo) 88%, #3c2a14)) 0 100% / 100% 34px no-repeat,
+    linear-gradient(rgba(80, 55, 20, 0.2), transparent 8px) 0 var(--bk-row) / 100% var(--bk-row) repeat-y,
+    linear-gradient(
+        transparent calc(100% - var(--bk-board)),
+        rgba(255, 255, 255, 0.45) calc(100% - var(--bk-board)) calc(100% - var(--bk-board) + 1px),
+        var(--bk-wood) calc(100% - var(--bk-board) + 2px),
+        var(--bk-wood-lo) calc(100% - 2px),
+        rgba(80, 55, 20, 0.3) calc(100% - 1px)
+      )
+      0 0 / 100% var(--bk-row) repeat-y;
 }
 
 /* ---- a book, standing covers out */
@@ -74,7 +120,7 @@
       rgba(0, 0, 0, 0.12) 8cqi,
       transparent 8.5cqi
     ),
-    radial-gradient(130% 70% at 0% 0%, rgba(255, 255, 255, 0.1), transparent 60%), var(--bk-cloth, #3b4a7a);
+    radial-gradient(130% 70% at 0% 0%, rgba(255, 255, 255, 0.1), transparent 60%), var(--bk-shelf-cloth);
   box-shadow:
     0 1px 2px rgba(40, 25, 10, 0.35),
     6px 8px 14px -6px rgba(60, 40, 15, 0.5);
@@ -170,7 +216,7 @@
   position: absolute;
   inset: 18% 0 0;
   border-radius: 2px;
-  background: linear-gradient(#cfae84, #c39f74);
+  background: linear-gradient(var(--bk-card), var(--bk-card-lo));
   box-shadow:
     0 1px 2px rgba(40, 25, 10, 0.3),
     6px 8px 14px -6px rgba(60, 40, 15, 0.45);
@@ -182,7 +228,7 @@
   right: -3px;
   height: 24%;
   border-radius: 2px;
-  background: linear-gradient(#d8b98f, #c9a77c);
+  background: linear-gradient(var(--bk-card-hi), var(--bk-card));
   box-shadow: 0 2px 3px rgba(60, 40, 15, 0.3);
 }
 #book .bk-box-label {
@@ -218,15 +264,13 @@
   outline-offset: 3px;
 }
 
-/* ---- the plant: lit as the books are, its shadow on the back behind it and on the board under its pot */
+/* ---- the plant: lit as the books are, its shadow on the back behind it and on the board under its pot; standing in
+   the middle of the free room after the board's last thing, clear of it */
 #book .bk-shelf-row > .bk-shelf-potted {
   flex: none;
   width: 62px;
-  margin-left: -14px;
+  margin-inline: auto;
   pointer-events: none;
-}
-#book .bk-shelf-row > .bk-shelf-potted:first-child {
-  margin-left: 0;
 }
 #book .bk-shelf-plant {
   display: block;

@@ -554,18 +554,18 @@ function replyHtml(c, d) {
     ${c.translation && !partner && (editing || c.asking) ? `<details class="cr-tr"><summary>Translated</summary><p class="txt">${esc(c.translation)}</p>
       <p class="sm">Machine-made, of the draft as the team wrote it${c.edited ? ': your edits aren’t in it' : ''}. Only the ${esc(String(c.lang).toUpperCase())} text above goes out.</p></details>` : ''}</section>`;
   if (c.status === 'sending' || c.status === 'mailing') return draft + sentHtml(c); // (mailing: past its Undo, with the email service now)
-  if (c.asking) return draft + `<p class="cr-asked">${icon('redo', 'small')}<span>You asked for: <q>${esc(c.asking.ask)}</q></span><button data-unask>Take it back</button></p>
+  if (c.asking) return draft + `<p class="cr-asked">${icon('again', 'small')}<span>You asked for: <q>${esc(c.asking.ask)}</q></span><button data-unask>Take it back</button></p>
     <div class="cr-acts one"><button data-later>Not now</button></div>${ui.msg ? `<p class="cr-msg" role="status">${esc(ui.msg)}</p>` : ''}`;
   if (!editing) return draft;
   const ask = ui.asking ? `<div class="cr-ask"><h4>Ask for changes<em>the team redrafts it, then it’s back here · nothing is sent</em></h4>
       <label class="sr" for="cr-ask">What to change</label><textarea id="cr-ask" rows="3" placeholder="What to change, or what to find out first">${esc(ui.ask ?? '')}</textarea>
-      <div class="cr-two"><button class="cta" data-ask-go>${icon('redo', 'small')}Ask the team</button><button data-ask-cancel>Cancel</button></div></div>` : '';
+      <div class="cr-two"><button class="cta" data-ask-go>${icon('again', 'small')}Ask the team</button><button data-ask-cancel>Cancel</button></div></div>` : '';
   const naming = ui.naming ? `<div class="cr-naming"><p><b>Your name for the sign-off is missing.</b> Every reply ends with it. Set it here (or in Settings), then it sends.</p>
       <div class="cr-name"><label class="sr" for="cr-name">Your name on replies</label><input id="cr-name" maxlength="60" autocomplete="name" placeholder="Your name"><button class="cta" data-name-send>Save and send</button></div></div>` : '';
   // the team redrafts person and question cards; a claim card's emails (to the partner or the customer) and an email's
   // reply are the board's own to edit (and no AI writes a health case's or a data request's)
   const own = c.kind === 'claim' || c.kind === 'rights' || ours(c) || !!c.health;
-  const acts = `<div class="cr-acts${own ? ' two' : ''}"><button data-later>Not now</button>${own ? '' : `<button data-ask${ui.asking ? ' aria-pressed="true"' : ''}>${icon('redo', 'small')}Ask for changes</button>`}<button class="send" data-send>${icon('mail', 'small')}${partner ? `Send to ${esc(name)}` : 'Send by email'}</button></div>`;
+  const acts = `<div class="cr-acts${own ? ' two' : ''}"><button data-later>Not now</button>${own ? '' : `<button data-ask${ui.asking ? ' aria-pressed="true"' : ''}>${icon('again', 'small')}Ask for changes</button>`}<button class="send" data-send>${icon('mail', 'small')}${partner ? `Send to ${esc(name)}` : 'Send by email'}</button></div>`;
   const without = editing && due.length ? `<p class="cr-without"><button data-send-without>Send without the missing ${due.length === 1 ? 'photo' : 'photos'}</button> <span class="sm">If ${due.length === 1 ? 'it comes' : 'they come'} later, ${due.length === 1 ? 'it goes' : 'they go'} with your next email to ${esc(name)}.</span></p>` : '';
   return draft + ask + naming + acts + without + (ui.msg ? `<p class="cr-msg" role="status">${esc(ui.msg)}</p>` : '') + (d.email === false ? '<p class="sm">The email key isn’t on the server yet, so Send can’t send anything.</p>' : '');
 }

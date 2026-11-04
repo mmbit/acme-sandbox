@@ -2,9 +2,10 @@
 // bookstrip.css, bookmarks.css), at the sizes of the board's mock-up: an iPhone upright (390 × 844, its status bar's
 // blur 54 px and home bar 34 px), an iPad sideways (1133 × 744, its blur 24 px) and upright, an iPad mini as the
 // browser has it, and a desktop. At each: the paper running the screen's whole height and to its right edge, no
-// cover band, and the page written on below the blur; the two islands of use (islands.mjs), the bar clear of the
-// home bar; the bookmarks below the blur. What the islands hold: bar.mjs; where the bookmarks lie:
-// bookmarks.mjs. Recorded with --shots, the board's pictures. (the islands' and the bookmarks' checks)
+// cover band, and the page drawn on to every edge, its content below the blur (what's drawn there: edges.mjs); the
+// two islands of use (islands.mjs), the bar clear of the home bar; the bookmarks below the blur. What the islands
+// hold: bar.mjs; where the bookmarks lie: bookmarks.mjs. Recorded with --shots, the board's pictures. (the islands'
+// and the bookmarks' checks)
 import assert from 'node:assert/strict';
 import { atEverySize, toChapter, until } from './kit.mjs';
 import { blurred, islandsSeen, islandsUsable } from './islands.mjs';
@@ -12,7 +13,7 @@ import { tabs } from './bookmarks.mjs';
 import { hqLoaded, restsOpen } from './start.mjs';
 import { typedBoxes } from '../shell/ink/notebookparts.js';
 
-const SIZES = {
+export const SIZES = {
   iphone: { width: 390, height: 844, sat: 54, sab: 34 },
   ipad: { width: 1133, height: 744, sat: 24, sab: 20 },
   'ipad-upright': { width: 744, height: 1133, sat: 24, sab: 20 },
@@ -102,15 +103,16 @@ async function atSize(browser, c, name, size) {
 }
 
 // HQ at a size, with the device's blur and home bar as Safari's env() gives them (style.css's --sat and --sab), the
-// book open: beside HQ's page sideways, the spread upright
-async function opened(browser, c, name, { width, height, sat = 0, sab = 0 }) {
+// book open: beside HQ's page sideways, the spread upright (look: HQ's look as its address names it, '&renderer=wire'
+// for Slate)
+export async function opened(browser, c, name, { width, height, sat = 0, sab = 0, look = '' }, seed = SEED) {
   const context = await c.hqIn(
     browser,
     { width, height },
-    { notebooks: structuredClone(SEED), hasTouch: name !== 'desktop', isMobile: false },
+    { notebooks: structuredClone(seed), hasTouch: name !== 'desktop', isMobile: false },
   );
   if (sat) await blurred(context, { sat, sab });
-  const { page: p, errors } = await hqLoaded(c, context);
+  const { page: p, errors } = await hqLoaded(c, context, look);
   await restsOpen(p, c, { width, height });
   await until(() => p.evaluate(() => !!document.querySelector('#book .bk-marks .bk-mk-tab')), 'the bookmarks');
   return { context, p, errors };
@@ -188,14 +190,17 @@ const settledOn = (p, selector) =>
   );
 
 // The frame judged against the board's points: the paper the screen's whole height and to its right edge, the whole
-// screen upright, and the page written on starting below the blur; the islands of use, and the bar clear of the home
-// bar; each bookmark below the blur
+// screen upright, the page drawn on to every edge and its content set down below the blur; the islands of use, and the bar clear of the home bar; each bookmark below the blur
 function judged(name, { width, height, sat = 0, sab = 0 }, seen, tabs) {
-  const { paper, desk, bar } = seen;
+  const { paper, desk, content, bar } = seen;
   assert.ok(paper.top <= 0 && paper.bottom >= height, `the paper runs the screen's height: ${json(paper)}`);
   assert.ok(paper.right >= width, `the paper reaches the screen's right edge: ${json(paper)}`);
   if (height > width) assert.ok(paper.left <= 0, `upright, the page is the whole screen: ${json(paper)}`);
-  assert.ok(desk.top >= sat, `the page written on starts below the blur: ${desk.top}`);
+  assert.ok(
+    desk.top <= 0 && desk.bottom >= height && desk.right >= width,
+    `the page drawn on to every edge: ${json(desk)}`,
+  );
+  assert.ok(content.top >= sat, `the page's content set down below the blur: ${content.top}`);
   islandsUsable(seen, name);
   assert.ok(bar.bottom <= height - sab, `the bar clear of the home bar: ${json(bar)}`);
   for (const t of tabs) assert.ok(t.top >= sat, `${t.chapter} below the blur: ${t.top}`);

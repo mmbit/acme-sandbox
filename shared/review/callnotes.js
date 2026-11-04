@@ -2,7 +2,8 @@
 // platform/hq/shell/ink/calldraw.js; Ink's folder). While a call is on, a mark
 // goes on the call's page in the book, not on a sheet: the agent on the call is the one listening. No mic of its own:
 // the call hears the board, and what it hears while a mark is drawn is the note's words. The mark goes into the book as
-// every mark does (settle.js), and HQ's call sends it to the agent ('pencil:note', marks.js). It's for the agent:
+// every mark does (settle.js: as the pen has stayed up a moment, whatever its last touch did), and HQ's call sends it to
+// the agent ('pencil:note', marks.js). It's for the agent:
 // nothing of it goes into the notebook by itself (the agent makes a scrap of what it judges worth keeping), and its ink
 // stays drawn (r.held) until the agent's turn on it is done, then goes, so the board circles afresh on a clean screen.
 // The agent's ink isn't the Pencil's: drive.js rings where it aims, over the page, and nothing of it goes in the book

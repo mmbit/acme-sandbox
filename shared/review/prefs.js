@@ -1,12 +1,12 @@
 // Ink's preferences, per device (this browser's own, never synced: a desk's mouse and an iPad's Pencil want different
 // things): whether a finger always pans (off on a new device, so a finger draws; on by itself the first time a pen is
-// used on a page that loads this file, penUsed(), and after that only the board's), and how long review mode's pen held
-// still takes to start a voice note (pentouch.js). The Notebook's cog sets them (platform/hq/shell/ink/bookprefs.js);
-// review mode's finger reads whether it pans too (surface.js). No imports, so
-// the book loads it alone.
+// used on a page that loads this file, penUsed(), and after that only the board's), and how long the Notebook's double
+// tap, held, takes to start a voice note (platform/hq/shell/ink/bookinput.js). The Notebook's cog sets them
+// (bookprefs.js there); review mode's finger reads whether it pans too (surface.js). No imports, so the book loads it
+// alone.
 
 const KEY = 'ink.prefs';
-// Review mode's voice note hold, as the board named them
+// The voice note's hold, as the board named them (ms)
 export const HOLDS = { short: 500, medium: 750, long: 1000 };
 // (only what was set kept; penPans off till a pen is used)
 export const DEFAULTS = { penPans: false, hold: 'medium' };
@@ -48,5 +48,5 @@ function penUsed() {
   if (!kept().penSeen) setPrefs({ penSeen: true, penPans: true });
 }
 addEventListener('pointerdown', e => e.pointerType === 'pen' && penUsed(), true);
-// How long a still press takes to become a voice note (ms)
+// How long a double tap's second press, held still, takes to become a voice note (ms)
 export const holdMs = () => HOLDS[prefs().hold];

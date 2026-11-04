@@ -107,6 +107,7 @@ function applyFile(link: links.LinkRow, entry: links.Entry, fields: { agent: str
     ours: 0,
     ...fields,
   });
+  files.clearOld();
 }
 
 // They read messages of ours: each marked read, if it's ours on this link
@@ -139,6 +140,10 @@ function wake(link: links.LinkRow, thread: ThreadRow, message: number) {
     /[\u0085\u2028\u2029]/g,
     c => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`,
   );
+  // The job it becomes, now or once the session it went to ends without reading it (messages.ts jobEnded), is urgent
+  // (messages.ts outsideJob): it crosses seat pacing and leads the claim after the board's lane and the hourly check
+  // (planner.ts compare), and no sort holds it (sorting.ts holdLoose). Urgent rather than expedited: an expedited job's
+  // pull request merges ahead of its review (review.ts expedites). Until it's read, no other of theirs wakes (waking).
   messages.fromPartner(ceo(), thread.workspace, `Urgent from ${link.name}: ${thread.subject}`, words);
 }
 
@@ -172,8 +177,14 @@ function uidOf(given: unknown) {
   return uid;
 }
 
+// Their times order their versions with ours, and the versions past each file's newest two lose their bytes
+// (workspacefiles.ts clearOld): a time ahead of ours by more than a clock's skew is refused, as it would outrank every
+// version after it
+const SKEW_MS = 60_000;
+
 function timeOf(given: unknown) {
   const at = Date.parse(String(given));
   if (Number.isNaN(at)) throw new links.EntryError('every entry has its time, at');
+  if (at > Date.now() + SKEW_MS) throw new links.EntryError('an entry’s time is ahead of ours by more than a minute');
   return new Date(at).toISOString();
 }

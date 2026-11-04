@@ -123,6 +123,16 @@ body,
   --tile-lip: 0 var(--depth-tile) 0 var(--lip);
   --key-r: 999px;
 }
+/* the Notebook's Shelf (shell/ink/bookshelfwindow.css): its real wood a little towards the colourway (its knop's side
+   over a pale ground, so never dark), lettered in the colourway's ink; on a dark colourway, its ground is the dark ink */
+#book {
+  --bk-shelf-tint: color-mix(in oklab, var(--k-side) 25%, #f2efe8);
+  --bk-shelf-tint-share: 28%;
+  --bk-shelf-ink: var(--k-ink);
+}
+body.wire-dark ~ #book {
+  --bk-shelf-ink: var(--k-ground);
+}
 body {
   background: var(--bg);
   color: var(--ink);
@@ -657,22 +667,15 @@ body.wire-dark .applist .pic img[data-ink] {
   filter: invert(1);
 }
 /* the Notebook's controls as Slate's (shell/ink/bookui.css): its islands and the selection's and typed text's bars panels
-   on a short lip, its cards panels as Share's box, its word the lit key. (:is()
-   gives the bars an id's weight, to outweigh bookselect.css and booktools.css whichever sheet loads first) */
+   on a short lip, its cards lying as the tools' island does (they can't be pressed, so never on a key's base: the Ink
+   README, the tools' cards), its word the lit key. (:is() gives the bars an
+   id's weight, to outweigh bookselect.css and booktools.css whichever sheet loads first) */
 :is(#book .bk-island, .bk-sel-bar, .bk-typed-keys) {
   border-color: transparent;
   box-shadow: 0 var(--depth-pressed) 0 var(--lip);
 }
 #book :is(.bk-card, .bk-share, .bk-asks-open) {
-  border: 0;
   border-radius: var(--r-xl);
-  box-shadow:
-    0 var(--depth-tile) 0 var(--lip-deep),
-    var(--shadow-lg);
-}
-/* (the asks' card's tail edgeless as the card is: body ~ #book outweighs bookshare.css's rule whichever loads first) */
-body ~ #book .bk-asks-open::after {
-  border-color: transparent;
 }
 .bk-btn.bk-text {
   border: 0;

@@ -41,6 +41,15 @@ export function toward(list, from, to) {
 // old self), so a step's replacement goes whole when someone else's change takes away either side of it (forget.
 const originals = new WeakMap();
 export const remade = (old, now) => originals.set(now, old);
+// A page's things replaced by their new selves (a map from each to its new self), each in its place in its list, and
+// kept as their replacements for the step (remade)
+export function swapIn(page, swap) {
+  for (const [old, now] of swap) remade(old, now);
+  for (const k of ['ink', 'scraps', 'texts']) {
+    const list = (page[k] ??= []);
+    list.splice(0, list.length, ...list.map(x => swap.get(x) ?? x));
+  }
+}
 // Every element x was made from, its original's original too, back to the first (a piece rubbed again in the same rub)
 function ancestors(x) {
   const line = [];

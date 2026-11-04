@@ -18,7 +18,8 @@
 import { esc, stylesheet } from '../../util.js';
 import { foley, sfx } from '../audio.js';
 import { toast } from '../toast.js';
-import { button, island, lineIcon } from './bookui.js';
+import { button, island } from './bookui.js';
+import { icon } from '../icons.js';
 import { scope, word } from './bookscope.js';
 import { shut } from './booksave.js';
 import { assignGroup, loadPeople } from './notebookdata.js';
@@ -40,7 +41,6 @@ const CLOSE_PX = 28,
 const TAG_MS = 1600;
 // the rows' pops, a note each, as they come in one by one (bookcard.css's 100 ms apart)
 const NOTES = ['A5', 'C6', 'D6', 'E6', 'G6'];
-const PERSON = lineIcon('<circle cx="12" cy="8" r="4"/><path d="M4.5 20.5c0-4 3.4-6.5 7.5-6.5s7.5 2.5 7.5 6.5"/>');
 
 // sel: bookselect.js's
 export function mountAssign(sel) {
@@ -164,7 +164,7 @@ function fit(as, bar) {
   let b = bar.querySelector('.bk-assign-btn');
   if (!b) {
     // (an icon, as the rest of the bar)
-    b = button({ icon: PERSON, label: word('assign'), onClick: () => fromBar(as) });
+    b = button({ icon: icon('person'), label: word('assign'), onClick: () => fromBar(as) });
     b.classList.add('bk-assign-btn');
     bar.prepend(b);
   }

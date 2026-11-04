@@ -37,11 +37,13 @@ heard. A page outside the shell has no `window.webkit` and sends nothing.
 | `{ pen: false }`  | booknative.js                            | the Pencil the page's                                |
 
 `pen` carries `paper: [x, y, width, height]` (the paper on screen, in the page's px), `tool` (`pen` or
-`highlighter`), `color` (`#rrggbb`), `size` (the line's width on screen) and `alpha`, every one of them always, sent
-again whenever one changes. The other way, the app calls `window.shellPen(points)` with each stroke, `[x, y, pressure
-0–1, ms from its first point]` in the page's px; it resolves once the page has painted the stroke, and only then does
-the canvas's line go. A stroke the page didn't take stays on the canvas until the Pencil is the page's again, and is
-said in the device's log (category `pen`).
+`highlighter`), `color` (`#rrggbb`), `size` (the line's width on screen as it lands: at the board's own zoom while a
+slide has lent one) and `alpha`, every one of them always, sent again whenever
+one changes. The other way, the app calls `window.shellPenDown(x, y)` as the Pencil touches the paper,
+where it touched (a zoom the page lent is the board's again then, as at a press in a browser), and `window.shellPen(points)` with each stroke, `[x, y, pressure 0–1, ms from its first point]` in the
+page's px; it resolves once the page has painted the stroke, and only then does the canvas's line go. A stroke the
+page didn't take stays on the canvas until the Pencil is the page's again, and is said in the device's log (category
+`pen`).
 
 ## The company's part
 

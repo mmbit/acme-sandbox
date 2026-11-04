@@ -918,10 +918,13 @@ export function mailIn(m: Hooked) {
 // Mail's piles: Care takes customers at its inbox while its service runs. A mail the
 // sorter or the board puts in Customers that's on no card yet becomes one; one the sorter put there that Care leaves in
 // Mail (a list's, our own domain's, a sender the board moved back) goes to the board's pile, so nothing waits unseen. A
-// mail the board moves out of Customers takes back the card it alone made, with nothing sent.
+// mail the board moves out of Customers takes back the card it alone made, with nothing sent, and moved back in it opens
+// that card again for a new draft.
 customerDesks.push(recipient => runs() && toInbox(recipient));
 pileHooks.push(({ id, pile, was, by }) => {
   if (!runs()) return;
+  const back = pile === 'customer' && by === 'board' ? cardOf(id, 'closed') : undefined;
+  if (back) return broughtBack(back);
   if (pile === 'customer' && !db.prepare("select 1 from care_lines where mail = ? and who = 'email'").get(id)) {
     const m = incomingOf(id)!;
     if (!toInbox(m.recipient)) return;
@@ -929,13 +932,26 @@ pileHooks.push(({ id, pile, was, by }) => {
   }
   if (was === 'customer' && by === 'board') takenBack(id);
 });
-function takenBack(mail: number) {
+// The email card a mail alone made, in the given status
+function cardOf(mail: number, status: string) {
   const c = db.prepare(`select c.* from care_cards c join care_lines l on l.card = c.id where l.mail = ? and l.who = 'email' and c.kind = 'email'
-    and c.status = 'waiting'`).get(mail) as Card | undefined;
-  if (!c || db.prepare("select 1 from care_lines where card = ? and who = 'email' and mail is not ?").get(c.id, mail)) return;
+    and c.status = ?`).get(mail, status) as Card | undefined;
+  return c && !db.prepare("select 1 from care_lines where card = ? and who = 'email' and mail is not ?").get(c.id, mail) ? c : undefined;
+}
+function takenBack(mail: number) {
+  const c = cardOf(mail, 'waiting');
+  if (!c) return;
   dropWants(c.id);
   note(c.id, 'Moved out of Customers in Mail: not a customer’s. Nothing was sent.');
   set(c.id, { status: 'closed', new_reply: 0 });
+}
+// (a sender the board moved back to Mail stays there, as emailIn keeps them)
+function broughtBack(c: Card) {
+  if (mailOnly().includes(c.to_addr?.toLowerCase() ?? '')) return;
+  const now = new Date().toISOString();
+  note(c.id, 'Moved back into Customers in Mail.');
+  set(c.id, { status: 'waiting', since: now, last_message: now, ...fresh });
+  want(c.id);
 }
 function landOn(c: Card, m: Hooked, from: string, health: boolean) {
   const now = new Date().toISOString();

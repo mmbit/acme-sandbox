@@ -180,12 +180,18 @@ compose="docker compose -f $root/infra/compose.yaml -f $root/infra/generated/pro
       console.table(db.prepare(\"select datetime(ts / 1000, 'unixepoch') at, step, answer from phone_asks where ts > (strftime('%s', 'now') - 7 * 86400) * 1000 order by ts desc limit 40\").all());
       console.log('Twilio account known (from a signed request):', db.prepare(\"select value from settings where key = 'twilio_account'\").get() ? 'yes' : 'no');
     } catch { /* the table is made when the coordinator starts */ }
+    // a sender's domain, cut after its last '@' (a quoted local part can hold one): rtrim strips the domain's own
+    // characters, which are every character but '@', so what's left ends at the last '@'
+    const domain = \"substr(sender, length(rtrim(sender, replace(sender, '@', ''))) + 1)\";
     console.log('== mail (latest 10; no words: the sender is its domain only)');
-    console.table(db.prepare(\"select id, received, recipient, substr(sender, instr(sender, '@') + 1) sender_domain, size from mail order by id desc limit 10\").all());
+    console.table(db.prepare(\"select id, received, recipient, \" + domain + \" sender_domain, size from mail order by id desc limit 10\").all());
     // Mail's piles (mailsort.ts), counted per address and by who placed it: what the sorter did, never what a mail said
     try {
       console.log('== mail by pile (counts only: the last 30 days, per address; by: rule, model, fallback, board, or none yet)');
       console.table(db.prepare(\"select substr(recipient, 1, instr(recipient, '@')) address, ifnull(pile, '-') pile, ifnull(pile_by, '-') by, count(*) n from mail where received > strftime('%Y-%m-%dT%H:%M:%S', 'now', '-30 days') group by 1, 2, 3 order by 1, 2, 3\").all());
+      // Spam hides a mail from everyone, so each one by id and its sender's domain: a real service's notice among them is
+      // a wrong pile to fix in the sorter's examples
+      console.log('mail in Spam, the last 30 days (id, address, sender\'s domain):', db.prepare(\"select group_concat(id || ' ' || substr(recipient, 1, instr(recipient, '@')) || ' ' || \" + domain + \", ', ') ids from (select id, recipient, sender from mail where pile = 'spam' and received > strftime('%Y-%m-%dT%H:%M:%S', 'now', '-30 days') order by id)\").get().ids ?? 'none');
     } catch { /* the columns come with the coordinator's start */ }
     // mail that arrived while storage was full or the disk low (mail.ts room()):
     // only its attachments' names were kept, or an invoice's or agreement's raw message wasn't, so ask the sender again.

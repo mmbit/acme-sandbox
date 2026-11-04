@@ -5,7 +5,7 @@ import { anchorOf, dataUrlPicture, inkOf, picturesOf, refuse, textsOf, wordsOf }
 import { emptyGroup, hasAny, picks, typedBoxes } from './notebookparts.js';
 import { boxOf, scrapSize } from './notebookstack.js';
 import { NOTE_TEXT, ROOM, bodyOf, heightFor, retypedNote, unitOf } from './scrapunit.js';
-import { isCanvas, isPlace, liftedOut } from './sketchcanvas.js';
+import { isCanvas, isPlace, isPush, liftedOut, pushedDown } from './sketchcanvas.js';
 import { chapterOf } from './notebookchapters.js';
 import { answersOf, seenTick } from './notebookplayanswers.js';
 import { assignedOf } from './notebookplaypeople.js';
@@ -70,12 +70,18 @@ function changeWords(s, b) {
   return { ok: `#${g.id} says it now.` };
 }
 // An open unit made h tall by hand (its room's foot, the post-it words aside: scrapunit.js heightFor). since: as edit's.
+// push ({ top, from, x0, x1, by }): on a sketch page, what's below its foot moved down as its room grew
+// (sketchcanvas.js pushedDown).
 function resizeGroup(s, b) {
   const g = openGroup(s, b?.id);
   if (g.parent !== null) refuse(400, "a reply isn't a unit: it has no height of its own");
   if (b.since !== g.updated) refuse(409, CHANGED);
   const h = Number(b.h);
   if (b.h === null || !Number.isFinite(h) || h <= 0) refuse(400, 'h is a positive number');
+  if (b.push != null && !(isPush(b.push) && onCanvas(s, s.page(g.page))))
+    refuse(400, 'push is { top, from, x0, x1, by } on a sketch page');
+  const others = s.groups.filter(x => x.page === g.page && x.parent === null && x.deleted === null && x.id !== g.id);
+  for (const { id, place } of pushedDown(others, b.push)) write(s, s.group(id), partsOf(s.group(id)), { place });
   write(s, g, partsOf(g), { h: Math.round(h) });
   return shown(s, g);
 }

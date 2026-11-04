@@ -5,10 +5,13 @@ import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { harness } from './harness.ts';
 
-const h = await harness('care-credit', { env: { PUBLIC_HOST: 'hq.testco.example' }, before: repo => {
-  mkdirSync(`${repo}/products/care`, { recursive: true });
-  writeFileSync(`${repo}/products/care/product.yaml`, 'name: Care\nowner: wren\n');
-} });
+const h = await harness('care-credit', {
+  env: { PUBLIC_HOST: 'hq.testco.example' },
+  before: repo => {
+    mkdirSync(`${repo}/products/care`, { recursive: true });
+    writeFileSync(`${repo}/products/care/product.yaml`, 'name: Care\nowner: wren\n');
+  },
+});
 const { signed } = await import('./payments.ts');
 
 const post = (body: unknown, token = signed('care:hq')) => h.call('/api/care/credit', token, body);

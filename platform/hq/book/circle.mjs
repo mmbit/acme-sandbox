@@ -6,8 +6,7 @@
 // it goes into the book as a note with its snip, no post-it and no Send, on the call's page, with the words the call
 // heard (the book shows a call's notes once they have a notebook of their own). Nothing of it is left on
 // HQ's page (rule zero: ink.mjs), so the board rings the next thing at once, and a line drawn beside where one was
-// is a note of its own. On a call, the pen held still while talking leaves a voice note there with the words the call
-// heard.
+// is a note of its own. On a call, the pen held still while talking makes no note: nothing waits on a held pen.
 // A mouse's ring with the pin opens its post-it the same way. A finger carries a ring still open onto the open book,
 // its cut-out taped there.
 // A quick tap with the pen, wobbling a few px as a hand's does, clicks what's under it (focused, clicked once), on HQ's
@@ -33,7 +32,7 @@ export function circleStories(c) {
     'a ring off a call saved from its post-it leaves nothing on HQ, a line beside it is a note of its own, a finger carries an open one onto the book':
       browser => offCallStory({ ...c, browser }),
     // (in Wire too: its call bubble sits elsewhere.)
-    "a ring on a call rests into the call's page in the book, nothing left on HQ; held still, a voice note": browser =>
+    "a ring on a call rests into the call's page in the book, nothing left on HQ; held still, no note": browser =>
       c.inLooks(browser, (look, shot) => onCallStory({ ...c, browser, look, shot })),
     "a mouse's ring with the pin on HQ opens its post-it too, saved into the Notebook": browser =>
       mouseStory({ ...c, browser }),
@@ -189,8 +188,8 @@ async function onCallStory(c) {
     await done();
   }
 }
-// The pen held still while talking, on HQ's page (not on the call's own bubble, which takes no ink, in either look): a
-// voice note there, its words the call's
+// The pen held still while talking, on HQ's page (not on the call's own bubble, which takes no ink, in either look):
+// nothing waits on it, so no note goes to the call
 async function heldStill(c, page, line) {
   const from = noted(c).length;
   assert.equal(
@@ -199,13 +198,12 @@ async function heldStill(c, page, line) {
     'the pen held still on HQ’s page',
   );
   await pressAlong(page, [HELD], { lift: false });
-  await page.waitForSelector(ui('.listen:not([hidden])'), { timeout: 3000 });
   line.send({ type: 'heard', text: 'Hold this one' });
-  await page.waitForTimeout(300);
+  await page.waitForTimeout(2000);
   await page.evaluate(() => window.__lift());
-  const voice = await nextNote(c, page, from, SETTLE_MS);
-  assert.deepEqual([voice.words, voice.anchor.ink.length], ['Hold this one', 0], 'a voice note held still, its words');
-  await heardNotes(page, line, RINGS.length + 1);
+  await page.waitForTimeout(SETTLE_MS + 1000);
+  assert.equal(noted(c).length, from, 'the pen held still makes no note');
+  await heardNotes(page, line, RINGS.length);
 }
 // The call's line has heard n notes
 async function heardNotes(page, line, n) {

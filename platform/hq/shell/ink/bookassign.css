@@ -80,10 +80,6 @@
   flex: none;
   width: 20px;
   height: 20px;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 2;
-  stroke-linecap: round;
 }
 .bk-assign-search input {
   all: unset;
@@ -172,11 +168,7 @@
 .bk-tag svg {
   width: 16px;
   height: 16px;
-  fill: none;
-  stroke: var(--bk-ink);
-  stroke-width: 2.2;
-  stroke-linecap: round;
-  stroke-linejoin: round;
+  color: var(--bk-ink);
 }
 /* seen (a note that needs nothing back): the tick and the initial of the agent who read it, its face in the chosen
    colour, as a chosen version is (bookversions.css); in a reply's line, after its words. */

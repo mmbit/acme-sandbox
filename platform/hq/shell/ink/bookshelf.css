@@ -101,9 +101,6 @@
   width: 22px;
   height: 22px;
 }
-#book .bk-far-more svg {
-  stroke-width: 3;
-}
 @media (hover: hover) {
   #book :is(.bk-far-up, .bk-far-more):hover {
     background: var(--bk-ink-soft);

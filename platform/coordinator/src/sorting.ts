@@ -122,7 +122,8 @@ export function hold(job: number, o: { from: string; project: string | null; why
 // one, however HQ made it: a job made with no deliverable to inherit or be given (no `made:` project for its kind, a
 // fault's, a call's follow-up for another agent) waits for the CEO to place it, as a held job (hold). Run before each
 // claim (jobs.ts claim), so whatever placed a job it just made (made.ts, a hold of its own) has done so. A step of a pull
-// request's loop goes where its lead is, an expedited job merges alone, and a job sorted once isn't held again.
+// request's loop goes where its lead is, an expedited job merges alone, urgent work starts now (a linked company's urgent
+// message: workspaceentries.ts wake), and a job sorted once isn't held again.
 export function holdLoose() {
   try {
     if (!projects().requireThread) return;
@@ -132,7 +133,7 @@ export function holdLoose() {
   const loose = db
     .prepare(
       `select j.id from jobs j where j.status = 'queued' and j.kind = 'work' and j.thread is null and j.agent != ?
-      and j.started is null and j.session is null and j.expedite = 0 and j.pr is null and j.branch is null
+      and j.started is null and j.session is null and j.expedite = 0 and j.urgent = 0 and j.pr is null and j.branch is null
       and not exists (select 1 from wakes w where w.job = j.id and w.kind = 'sorted')`,
     )
     .all(ceo()) as { id: number }[];

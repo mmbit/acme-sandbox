@@ -11,8 +11,8 @@ import { compose, develop } from './postit.js';
 import { aim, boxOfLines } from './mark.js';
 import { unpicture } from './pictures.js';
 import { under } from './layer.js';
-import { paint as paintMarks } from './marks.js';
-import { ERASER_PATHS, segmentsApart } from './eraser.js';
+import { openLines, paint as paintMarks } from './marks.js';
+import { ERASER, ERASER_PATHS, erases, touches } from './eraser.js';
 import { heldLines, settleCall } from './callframe.js';
 import { prefs } from './prefs.js';
 
@@ -26,12 +26,26 @@ export const CSS = `
       .veil { pointer-events: auto; position: absolute; inset: 0; touch-action: none; cursor: crosshair;
         box-shadow: inset 0 0 0 4px ${ACCENT}, inset 0 0 60px rgba(255,90,95,.25); background: rgba(255,246,216,.08); }
       .veil[hidden] { display: none; }
-      .veil.call .bar { display: none; }   /* (on a call: red only, and no strip.) */
-      /* over the page while the board marks it: what to do, and the inks */
-      .bar { position: absolute; left: 50%; top: max(14px, env(safe-area-inset-top)); transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 12px; }
+      /* over the page while the board marks it (the veil): what to do, and the inks, below with the post-it up top.
+         While the Pencil's ink is on HQ's page (inking: showStrip), the inks alone: upright at the page's left edge,
+         clear of HQ's bars, or while the post-it's open, lying down where postitplace.js puts it (--strip-y, from the
+         safe area's --inset-*). */
+      .bar { pointer-events: auto; position: absolute; left: 50%; top: max(14px, env(safe-area-inset-top)); transform: translateX(-50%); display: none; flex-direction: column; align-items: center; gap: 12px;
+        --inset-top: env(safe-area-inset-top, 0px); --inset-bottom: env(safe-area-inset-bottom, 0px); }
+      .veil:not([hidden]) + .bar, .bar.inking { display: flex; }
+      .veil[hidden] + .bar .hint { display: none; }
+      .ui.up .bar:not(.inking) { top: auto; bottom: max(14px, env(safe-area-inset-bottom)); }
+      .bar.inking { top: 50%; left: max(10px, env(safe-area-inset-left)); transform: translateY(-50%); }
+      .bar.inking .strip { flex-direction: column; padding: 4px 3px; }
+      .bar.inking .sep { width: 24px; height: 2px; margin: 4px 0; }
+      .ui.noted .bar.inking { top: var(--strip-y); left: 50%; transform: translateX(-50%); }
+      .ui.noted .bar.inking .strip { flex-direction: row; padding: 3px 4px; }
+      .ui.noted .bar.inking .sep { width: 2px; height: 24px; margin: 0 4px; }
+      .veil.call:not([hidden]) + .bar { display: none; }   /* (a call in HQ's viewer: red only, and no strip.) */
+      .bar.call .pot:not(:first-child) { display: none; }   /* (the Pencil on HQ's own call: red only, its eraser and undo) */
       .hint { background: #fff; border-radius: 999px; padding: 10px 18px;
         box-shadow: 0 4px 0 #2b2230, 0 10px 30px rgba(43,34,48,.25); border: 2px solid #2b2230; white-space: nowrap; font-weight: 600; font-size: 15px; display: flex; gap: 10px; align-items: center; }
-      .veil.marked .hint { display: none; }
+      .veil.marked + .bar .hint { display: none; }
       /* the inks: little pots of paint on a strip of card, the one in hand lifted out of its well */
       .strip { display: flex; align-items: center; padding: 3px 4px; border-radius: 999px; cursor: default; touch-action: manipulation;
         background: linear-gradient(#fffdf6, #f1ead8); border: 2px solid #2b2230; box-shadow: 0 4px 0 #2b2230, 0 10px 30px rgba(43,34,48,.25), inset 0 1px 0 #fff; }
@@ -60,16 +74,13 @@ export const CSS = `
       @keyframes land { from { transform: translateY(-40px) scale(1.4); opacity: 0 } }`;
 
 // (the ink and the outline sit outside the veil)
-export const HTML = `<div class="veil" hidden><div class="bar"><div class="hint"><i>${PEN}</i><span>Tap anything <small>or draw on it</small></span></div>
-        <div class="strip" role="toolbar" aria-label="Inks"><span class="sep"></span><button class="undo" aria-label="Undo the last line" title="Undo" disabled>${UNDO}</button></div></div></div>
+export const HTML = `<div class="veil" hidden></div><div class="bar"><div class="hint"><i>${PEN}</i><span>Tap anything <small>or draw on it</small></span></div>
+        <div class="strip" role="toolbar" aria-label="Inks"><span class="sep"></span><button class="undo" aria-label="Undo the last line" title="Undo" disabled>${UNDO}</button></div></div>
       <canvas class="halo" data-watchalong-hide></canvas>
       <canvas class="ink" data-watchalong-hide></canvas><canvas class="wet" data-watchalong-hide></canvas><div class="hl" hidden></div>`;
 
 const MAX_LINES = 64; // a note's, as the coordinator keeps them (feedback.ts inkOf)
 const INK_KEY = '__hq_review_ink';
-// The eraser: passed across the open mark, every line it touches goes (Undo brings them back). What it draws as it goes
-// is its pass, soft and gone as it lifts.
-const ERASER = { name: 'Eraser', color: '#8f88a8', size: 24, alpha: 0.35 };
 
 // (shown: a walk-through's recording follows it) On HQ the page's numbered marks are drawn with them (marks.js); on a
 // call, under them, the marks the call's agent hasn't had its turn on yet (callframe.js.).
@@ -98,7 +109,7 @@ function stroked(r, stroke, e) {
   const area = boxOfLines([stroke]);
   r.penOn.clear();
   settleCall(r); // (on a call the mark goes to its agent once the pen rests: callframe.js.)
-  if (r.eraserInHand) return erase(r, stroke);
+  if (erases(stroke)) return erase(r, stroke);
   if (area.w < 24 && area.h < 24) {
     // a tap: as the first mark, it pins the element under it; beside the note, nothing
     if (r.mode !== 'pick') return;
@@ -113,7 +124,7 @@ function stroked(r, stroke, e) {
     r.msg.textContent = `A note keeps ${MAX_LINES} lines at most: undo one to draw another.`;
     return;
   } else {
-    setLines(r, [...r.strokes, stroke]);
+    addLine(r, stroke);
     if (r.mode === 'pick') r.mark = { kind: 'circle' };
     aim(r);
     // (dry at once as the wet goes, so the first line doesn't blink out until the note lands)
@@ -126,28 +137,45 @@ function stroked(r, stroke, e) {
     develop(r);
   }
 }
-// The open mark's lines, changed (a line drawn, lines erased): a step Undo takes back. Only the veil's marking sets
-// them while it's open (the Pencil's, the call's and the other screen's lines are HQ's, the veil hidden: pencil.js)
-function setLines(r, lines) {
-  r.inkSteps.push({ was: r.strokes });
-  r.strokes = lines;
+// A line drawn on the open mark: a step Undo takes back (restore). Its lines are the veil's while it's up, the Pencil's
+// on HQ (pencil.js).
+export function addLine(r, line) {
+  r.inkSteps.push({ was: r.strokes, heldLines: [] });
+  r.strokes = [...r.strokes, line];
 }
-// The eraser lifted: the open mark's lines its pass touched go
-function erase(r, pass) {
+// The eraser lifted on the open mark: its lines the pass touched go, and those of the held marks given (pencil.js)
+export function erase(r, pass, heldMarks = []) {
   if (r.mode !== 'note') return;
-  const left = r.strokes.filter(s => !touches(pass, s));
-  if (left.length === r.strokes.length) return;
-  setLines(r, left);
-  if (left.length) aim(r); // (all erased: the mark stays on what it was, for Undo to bring its lines back)
+  const step = eraseLines(r, pass, heldMarks);
+  if (!step) return;
+  r.inkSteps.push(step);
+  if (r.strokes.length) aim(r); // (all erased: the mark stays on what it was, for Undo to bring its lines back)
   redrawInk(r);
   develop(r);
 }
-// Whether the eraser's pass goes over a line: some piece of one within their two half-widths of a piece of the other
-function touches(pass, line) {
-  const reach = (pass.size + line.size) / 2,
-    pieces = ({ points }) =>
-      points.length > 1 ? points.slice(1).map((q, i) => [points[i], q]) : [[points[0], points[0]]];
-  return pieces(pass).some(([a, b]) => pieces(line).some(([c, d]) => segmentsApart(a, b, c, d) <= reach));
+// The lines a pass touched go, each measured where it's drawn: the open mark's while one is being made, and those of
+// the held marks given (on a call, those its agent hasn't had its turn on yet: pencil.js). Returns the step restore
+// takes back, or null when the pass touched none. heldLines: [{ mark, lines }], each held mark with its lines before.
+export function eraseLines(r, pass, heldMarks = []) {
+  const kept = (lines, m) => lines.filter(l => !touches(pass, drawnAt(r, l, m)));
+  const open = r.mode === 'note' ? kept(r.strokes, r.mark) : r.strokes,
+    heldNow = heldMarks.map(mark => ({ mark, lines: kept(mark.lines, mark.mark) })),
+    touched = heldNow.filter(({ mark, lines }) => lines.length < mark.lines.length);
+  if (open.length === r.strokes.length && !touched.length) return null;
+  const step = {
+    was: r.mode === 'note' ? r.strokes : null, // (with no mark open, only held marks' lines come back)
+    heldLines: touched.map(({ mark }) => ({ mark, lines: mark.lines })),
+  };
+  r.strokes = open;
+  for (const { mark, lines } of touched) mark.lines = lines;
+  return step;
+}
+// A line where it's drawn now: on HQ it moves with its mark's element (marks.js openLines), elsewhere it stays put
+const drawnAt = (r, line, m) => (r.book ? openLines(r, [line], m)[0] : line);
+// A step taken back: the lines as they were before it
+export function restore(r, { was, heldLines }) {
+  if (was) r.strokes = was;
+  for (const { mark, lines } of heldLines) mark.lines = lines;
 }
 
 // Undo: the last change to the lines goes back (a line drawn, lines erased); the last mark gone, it's back to
@@ -155,7 +183,7 @@ function touches(pass, line) {
 export function undo(r) {
   if (r.mode !== 'note' || r.veil.hidden) return;
   if (r.inkSteps.length) {
-    r.strokes = r.inkSteps.pop().was;
+    restore(r, r.inkSteps.pop());
     if (r.strokes.length || r.mark.kind === 'pin') {
       aim(r);
       redrawInk(r);
@@ -206,6 +234,14 @@ function inks(r) {
     }),
     eraser,
   );
+}
+// The strip on HQ's page, the veil down: shown while the Pencil's ink is on it (marks.js paint), red only on a call. The
+// eraser goes down with it, so the next line draws.
+export function showStrip(r, inking) {
+  r.bar.classList.toggle('inking', inking);
+  r.bar.classList.toggle('call', !!r.call);
+  r.undoButton.disabled = !(r.mark || r.steps?.length);
+  if (!inking && r.eraserInHand) holdEraser(r, false);
 }
 // The eraser in hand, or the ink chosen
 function holdEraser(r, on) {
@@ -300,5 +336,4 @@ export function setupSurface(r) {
   r.veil.addEventListener('pointerdown', () => (r.hl.hidden = true));
   // With lines on it, the page stays as it is under them (its screenshot was taken at the first mark)
   r.veil.addEventListener('wheel', e => r.mode !== 'pick' && e.preventDefault(), { passive: false });
-  r.undoButton.onclick = () => undo(r);
 }

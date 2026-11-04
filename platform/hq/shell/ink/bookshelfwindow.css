@@ -1,10 +1,17 @@
-/* The Shelf's own window, floating over HQ (bookshelfwindow.js): the window is the bookcase (bookshelfbooks.css), its
-   light wood sides at its edges, its plain back behind the boards, in the middle of the screen below Safari's strip, as
-   wide as three books and the plant and as tall as its boards (the screen's height at most, scrolling then), HQ dimmed
-   behind it. On a phone it fills the screen. Its one title line: its name in the middle, its Close at the right. */
+/* The Shelf's own window, floating over HQ (bookshelfwindow.js): the window is the bookcase (bookshelfbooks.css), drawn
+   straight on: its wood sides at its edges, its top board with the shelf's name on a card in a brass label holder, its
+   plain back behind the boards, in the middle of the screen below Safari's strip, as wide as three books and the plant
+   and as tall as its boards (the screen's height at most, scrolling then), HQ dimmed behind it. On a phone it fills the
+   screen. Its name in the middle of the top board, its Close at the right.
+   Real wood, never dark: a look tints it a little towards its own colours (--bk-shelf-tint, by
+   --bk-shelf-tint-share; the renderers' skin.css) and letters it in its own dark ink (--bk-shelf-ink). A pixel look
+   draws it its own way (renderers/brownstone/shelf.css). */
 #book .bk-shelf-window {
   --bk-side: 14px; /* (the case's sides) */
   --bk-case-in: 24px; /* (from a side's inner edge to the boards' things) */
+  /* the words: the look's ink, the quieter lines a little of the paper in it */
+  --bk-night: var(--bk-shelf-ink, var(--ink));
+  --bk-muted: color-mix(in oklab, var(--bk-night) 66%, #fbf5e8);
   position: fixed;
   inset: var(--sat, 0px) 0 0;
   width: min(680px, 100% - 32px);
@@ -16,13 +23,13 @@
   border: 0;
   border-radius: 18px;
   overflow: hidden;
-  background: linear-gradient(#f1e7d4, #ebdfc8);
+  background: linear-gradient(var(--bk-back), var(--bk-back-lo));
   color: var(--bk-night);
   box-shadow:
     0 30px 60px -18px rgba(20, 14, 30, 0.55),
     0 2px 6px rgba(20, 14, 30, 0.25);
 }
-/* (its sides, over the boards' ends, each casting a little shadow inward) */
+/* (its sides, over the boards' ends, seen square on, each casting a little shadow inward) */
 #book .bk-shelf-window::before,
 #book .bk-shelf-window::after {
   content: '';
@@ -31,7 +38,7 @@
   top: 0;
   bottom: 0;
   width: var(--bk-side);
-  background: linear-gradient(90deg, #d9c39b, #e6d3b0 40%, #d6bf96);
+  background: linear-gradient(90deg, var(--bk-wood-lo), var(--bk-wood) 35%, var(--bk-wood-hi) 55%, var(--bk-wood-lo));
   pointer-events: none;
 }
 #book .bk-shelf-window::before {
@@ -67,7 +74,8 @@
   min-height: 0;
   --bk-far-left: calc(var(--bk-side) + var(--bk-case-in));
   --bk-far-right: var(--bk-far-left);
-  padding: 12px var(--bk-far-right) 0 var(--bk-far-left);
+  --bk-crown-top: 0px; /* (room above the top board's label: the status bar's on a phone) */
+  padding: 0 var(--bk-far-right) 0 var(--bk-far-left);
   background: none;
   outline: none;
 }
@@ -76,14 +84,67 @@
   flex: 1 0 auto;
   flex-direction: column;
 }
+/* the top board, across the case between its sides: its front square on, lit along its lower arris, its shadow on the
+   back under it; the way back from the Archive at its left, its Close at its right */
 #book .bk-shelf-window .bk-far-head {
-  padding-bottom: 0;
+  margin: 0 calc(-1 * var(--bk-far-left)) 0 calc(-1 * var(--bk-far-right));
+  padding: calc(var(--bk-crown-top) + 12px) calc(var(--bk-far-right) - 10px) 12px calc(var(--bk-far-left) - 10px);
+  background:
+    linear-gradient(
+      rgba(255, 255, 255, 0) calc(100% - 3px),
+      rgba(255, 255, 255, 0.5) calc(100% - 3px) calc(100% - 2px),
+      rgba(80, 55, 20, 0.25) calc(100% - 1px)
+    ),
+    repeating-linear-gradient(
+      179.2deg,
+      rgba(120, 80, 30, 0) 0 7px,
+      rgba(120, 80, 30, 0.05) 7px 8px,
+      rgba(120, 80, 30, 0) 8px 15px
+    ),
+    linear-gradient(var(--bk-wood-hi), var(--bk-wood));
+  box-shadow: 0 8px 12px -6px rgba(80, 55, 20, 0.35);
+}
+/* the shelf's name: printed on a card slid into a brass label holder screwed to the top board */
+#book .bk-shelf-window .bk-shelf-title {
+  position: relative;
+  max-width: 50vw;
+  padding: 5px 26px 6px;
+  border: 2px solid transparent;
+  border-radius: 3px;
+  background:
+    linear-gradient(#fbf6ea, #f3ead6) padding-box,
+    linear-gradient(160deg, #f2e2ae, #b8924a 40%, #e7d29a 62%, #8f6d2f) border-box;
+  box-shadow:
+    inset 0 1px 2px rgba(80, 55, 20, 0.25),
+    0 1px 0 rgba(255, 255, 255, 0.5),
+    0 2px 3px rgba(60, 40, 15, 0.3);
+  font-size: 18px;
+}
+/* (its two screws, either side of the card) */
+#book .bk-shelf-window .bk-shelf-title::before,
+#book .bk-shelf-window .bk-shelf-title::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  width: 7px;
+  height: 7px;
+  margin-top: -3.5px;
+  border-radius: 50%;
+  background:
+    linear-gradient(135deg, transparent 44%, rgba(70, 50, 15, 0.7) 44% 58%, transparent 58%),
+    radial-gradient(circle at 35% 35%, #f6e7b8, #a4813e 75%);
+}
+#book .bk-shelf-window .bk-shelf-title::before {
+  left: 8px;
+}
+#book .bk-shelf-window .bk-shelf-title::after {
+  right: 8px;
 }
 #book .bk-shelf-window .bk-shelf-close {
   all: unset;
   position: absolute;
-  top: 0;
-  right: -10px;
+  top: calc(var(--bk-crown-top) + 12px);
+  right: calc(var(--bk-far-right) - 18px);
   display: grid;
   place-items: center;
   width: 44px;
@@ -107,7 +168,7 @@
 #book .bk-shelf-window .bk-told {
   bottom: calc(24px + var(--sab, 0px));
 }
-/* a phone: the whole screen, the title line below the status bar */
+/* a phone: the whole screen, the top board's label below the status bar */
 @media (max-width: 560px) {
   #book .bk-shelf-window {
     --bk-side: 10px;
@@ -119,6 +180,6 @@
     border-radius: 0;
   }
   #book .bk-shelf-window .bk-far {
-    padding-top: calc(var(--sat, 0px) + 6px);
+    --bk-crown-top: var(--sat, 0px);
   }
 }

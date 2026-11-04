@@ -303,11 +303,15 @@ function pages() {
 
 // A 'tap' moment for every tap or click: where, with what, and on what (its own name and role, never a field's value)
 function taps() {
+  // (reach: the farthest the pointer got from where it went down, so a quick closed ring is no tap)
   let down = null;
-  const onDown = e => (down = { x: e.clientX, y: e.clientY, at: e.timeStamp });
+  const onDown = e => (down = { x: e.clientX, y: e.clientY, at: e.timeStamp, reach: 0 });
+  const onMove = e => down && (down.reach = Math.max(down.reach, Math.hypot(e.clientX - down.x, e.clientY - down.y)));
   const onUp = e => {
     const tapped =
-      down && Math.hypot(e.clientX - down.x, e.clientY - down.y) < TAP_PX && e.timeStamp - down.at < TAP_MS;
+      down &&
+      Math.max(down.reach, Math.hypot(e.clientX - down.x, e.clientY - down.y)) < TAP_PX &&
+      e.timeStamp - down.at < TAP_MS;
     down = null;
     if (!tapped || !(e.target instanceof Element)) return;
     const x = Math.round(e.clientX),
@@ -316,9 +320,11 @@ function taps() {
   };
   const options = { capture: true, passive: true };
   addEventListener('pointerdown', onDown, options);
+  addEventListener('pointermove', onMove, options);
   addEventListener('pointerup', onUp, options);
   return () => {
     removeEventListener('pointerdown', onDown, options);
+    removeEventListener('pointermove', onMove, options);
     removeEventListener('pointerup', onUp, options);
   };
 }

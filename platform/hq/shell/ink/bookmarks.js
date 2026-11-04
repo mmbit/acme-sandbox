@@ -3,12 +3,13 @@
 // book's frame): each keeps one card colour for good and never lights up; the
 // page's own chapter shows by depth, its tab out of the block's top page, nearest the page and a little longer, the
 // others from deeper in. Beside HQ's page they stick out of the page block at the book's outer edge; on a page that is
-// the whole screen (a phone, an iPad upright) they lie folded against its left edge like the pull tab, slivers with
-// their icons, and a tap or a pull brings them out over the margin. They live on the cover's edge (book.js), so they
-// move and swing with the book (bookmarks.css). Asks carries the count of the asks still open ("Asks · 2"). A tab opens
-// the page its chapter was last on, at first its first page, and the page's own its first page (over the overview,
-// its chapter there); one with no pages yet
-// shows, dim, and opens an empty page of its own, its chapter's name at its head, till another page or tab is chosen.
+// the whole screen (a phone, an iPad upright) they stick out of it the same while the book swings, and once it has
+// landed they lie folded against its left edge like the pull tab, slivers alike with their icons, and a tap or a pull
+// brings them out over the margin (README, Bookmarks). They live on the cover's
+// edge (book.js), so they move and swing with the book (bookmarks.css). Asks carries the count of the asks still open
+// ("Asks · 2"). A tab opens the page its chapter was last on, at first its first page, and the page's own its first
+// page (over the overview, its chapter there); one with no pages yet opens an empty page of its own, its chapter's
+// name at its head, till another page or tab is chosen.
 // A round's Guests tab also opens a short list of its guests, one line each with how far their page is (nothing yet,
 // its notes, done), a tap opening their page.
 import { esc } from '../../util.js';
@@ -39,17 +40,27 @@ const ICONS = {
 };
 const icon = chapter =>
   `<svg class="bk-mk-icon" viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICONS[chapter]}</g></svg>`;
-// Whether the tabs lie folded at the page's left edge (the page the whole screen, upright) rather than out of the page
-// block beside HQ's page: bookmarks.css's split
-const FOLDED = '(orientation: portrait)';
+// Whether the tabs lie folded at the page's left edge (the page the whole screen: data-whole on #book, set by book.js
+// from where the book's going; the book landed) rather than out of the page block (beside HQ's page, an upright iPad's
+// too, or while the book swings): bookmarks.css's split
+const folded = s => s.root.hasAttribute('data-whole') && s.root.dataset.mode === 'spread';
 
 // parts: the book's (book.js): the tabs on its cover's edge, a round's guests' list and a chapter's empty page on its
 // leaf. pages: what the book asks of its pages (bookpages.js's: page(), show(id), dev). The tabs follow the page shown
 // by its leaf turning (a page's element shown or hidden), and read the notebook again when the store says it changed
 // (book:notebook, book:changed).
 export function mountBookmarks({ edge, leaf }, pages) {
-  const s = { pages, book: null, list: [], notebook: null, asked: 0, timer: 0, kept: new Map() };
-  leaf.closest('#book').classList.add('bk-marked');
+  const s = {
+    pages,
+    root: leaf.closest('#book'),
+    book: null,
+    list: [],
+    notebook: null,
+    asked: 0,
+    timer: 0,
+    kept: new Map(),
+  };
+  s.root.classList.add('bk-marked');
   s.nav = Object.assign(document.createElement('nav'), { className: 'bk-marks' });
   s.nav.setAttribute('aria-label', word('chapters'));
   s.nav.setAttribute('data-keep-clear', ''); // (a minimised call keeps clear of the tabs.)
@@ -138,8 +149,8 @@ function drawn(el, html) {
 }
 // A chapter's tab, a bookmark or the overview's (bookshelftiles.js), in its own card colour (bookmarks.css
 // .bk-mk-tab[data-chapter]): its icon and name, Asks with the count of the asks still open ("Asks · 2"), marked
-// (aria-current, never lit) where the page shown is, dim with no pages yet. tag: a bookmark's 'button', or the
-// overview's heading
+// (aria-current, never lit) where the page shown is, data-empty with no pages yet. tag:
+// a bookmark's 'button', or the overview's heading
 export function chapterTab(book, chapter, { here, empty, tag = 'button' }) {
   const open = chapter === 'asks' ? (book.round?.asksOpen ?? book.asks?.open ?? 0) : 0,
     name = word(TITLES[chapter]),
@@ -152,13 +163,13 @@ export function chapterTab(book, chapter, { here, empty, tag = 'button' }) {
 }
 // The folded tabs out over the page's margin, or folded away again (on); beside HQ's page they're always out
 function out(s, on) {
-  s.nav.toggleAttribute('data-out', on && matchMedia(FOLDED).matches);
+  s.nav.toggleAttribute('data-out', on && folded(s));
 }
 // A pull to the right on the folded tabs brings them out, as a tap on them does; never the cover's edge's resize
 // (book.js) nor the page's (its press is the tabs')
 function pulling(s) {
   s.nav.addEventListener('pointerdown', e => {
-    if (!e.isPrimary || s.nav.hasAttribute('data-out') || !matchMedia(FOLDED).matches) return;
+    if (!e.isPrimary || s.nav.hasAttribute('data-out') || !folded(s)) return;
     const x0 = e.clientX,
       move = m => m.pointerId === e.pointerId && m.clientX - x0 > PULL_PX && (stop(), out(s, true)),
       stop = () => {
@@ -176,7 +187,7 @@ function pulling(s) {
 function tapped(s, chapter) {
   if (!chapter) return;
   // (folded, a tap brings them out first: the slivers are too small to pick one by)
-  if (matchMedia(FOLDED).matches && !s.nav.hasAttribute('data-out')) return out(s, true);
+  if (folded(s) && !s.nav.hasAttribute('data-out')) return out(s, true);
   out(s, false);
   // (over the notebook's pages, its overview: there it's scrolled to, bookshelf.js)
   if (s.nav.closest('#book').dataset.far)

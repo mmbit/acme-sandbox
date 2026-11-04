@@ -49,8 +49,11 @@ export function mountTape(book, paper, pages) {
   });
   document.addEventListener('book:tape', e => carried(tape, e));
   // (what the clipboard held, read for Select's Paste bubble, landed at a point on screen: bookselectpaste.js; and a
-  // voice note's words: bookvoice.js)
-  book.tape = { fromClipboard: (got, at) => fromClipboard(tape, got, at), words: words => wordsIn(tape, words, {}) };
+  // voice note's words, at a point on a page where it has one ({ view, x, y }, book.at's): bookvoice.js)
+  book.tape = {
+    fromClipboard: (got, at) => fromClipboard(tape, got, at),
+    words: (words, point = null) => wordsIn(tape, words, { point }),
+  };
 }
 
 // ---- the ways in
@@ -136,10 +139,11 @@ async function pictureAt(url) {
 
 // Words onto the book in boxes (booktexts.js put), where landing() puts them on the page pageFor finds, wrapping at a
 // readable width and kept inside the paper shown. One step Undo takes back. A voice note's words land here too
-// (bookvoice.js, book.tape.words).
-async function wordsIn(tape, words, { at = null }) {
+// (bookvoice.js, book.tape.words). at: [x, y] on screen; point: { view, x, y }, a point on a view's page, the words
+// starting there (a voice note held at it: bookinput.js).
+async function wordsIn(tape, words, { at = null, point = null }) {
   const { book } = tape;
-  const found = await pageFor(tape, { at });
+  const found = point ? { v: point.view } : await pageFor(tape, { at });
   if (!found.v || !book.tools) return;
   const { v } = found,
     page = v.page;
@@ -147,10 +151,12 @@ async function wordsIn(tape, words, { at = null }) {
     await ready(book, v);
     const k = book.views.indexOf(v);
     if (k < 0) return; // (the book went to another notebook meanwhile)
-    const point = found.at && book.at(at[0], at[1]),
+    // (a voice note's words start where it was held)
+    const hit = found.at && book.at(at[0], at[1]),
       view = k === book.cur ? book.shown() : pageBox(page),
-      spot = landing(v, view, point?.i === k ? [point.x, point.y] : null);
-    const texts = book.tools.put({ view: v, x: spot.x, y: spot.y }, words, view.x1 - EDGE, { centre: spot.centre });
+      spot = point ? { x: point.x, y: point.y, centre: false } : landing(v, view, hit?.i === k ? [hit.x, hit.y] : null);
+    // (a voice note's shown there as they were heard: bookheard.js)
+    const texts = book.tools.put({ view: v, x: spot.x, y: spot.y }, words, { centre: spot.centre, there: !!point });
     if (!texts.length) return;
     // (moved as one inside the paper shown, its first line never above it, and in the middle, below what's there
     // already)
@@ -158,7 +164,7 @@ async function wordsIn(tape, words, { at = null }) {
       right = left + texts[0].w,
       dx = Math.max(view.x0 + EDGE - left, Math.min(0, view.x1 - EDGE - right)),
       down = Math.max(0, view.y0 + EDGE - texts[0].y),
-      dy = down + (point || !spot.centre ? 0 : below(v, texts, [dx, down]));
+      dy = down + (hit || !spot.centre ? 0 : below(v, texts, [dx, down]));
     if (dx || dy) {
       texts.forEach(t => Object.assign(t, { x: round(t.x + dx), y: round(t.y + dy) }));
       book.tools.added(v);

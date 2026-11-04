@@ -4,7 +4,7 @@
 // (its messages say deliverable, the board's word for a thread)
 import * as ordering from './ordering.ts';
 import * as carries from './carries.ts';
-import { windowUsed } from '../../worker/src/pace.ts';
+import { seatRunLimit, windowUsed } from '../../worker/src/pace.ts';
 import * as sizes from './sizes.ts';
 import * as predictions from './predictions.ts';
 import * as reviewroom from './reviewroom.ts';
@@ -1864,18 +1864,37 @@ export function seatReadyFor(job: number, t = now(), on: string | null = null, p
 
 // Whether a queued job waits only for seats at their limits or their pace, read as claim reads them (SEAT_READY,
 // pacedTakes): every seat that would take it (seatTakes, or its agent's fallback's before it has started) is draining
-// or asleep until a time still ahead (a reset, its stop level's), or ready but paced, and this job isn't one it takes
-// before its weekly reset. No seat for it, or one signed out, won't come back by itself: that's no such wait. A
-// paused seat takes no work, so it doesn't count.
+// or asleep until a time still ahead (a reset, its stop level's), ready but paced, and this job isn't one it takes
+// before its weekly reset, or ready with its runs at the worker's limit for it (pace.ts seatRunLimit: one run at a time
+// near its stop level), which a run's end or the window's reset frees. No seat for it, or one signed out, won't come
+// back by itself: that's no such wait. A paused seat takes no work, so it doesn't count.
 export function seatsOut(job: number, t = now()) {
   const { agent, board } = db.prepare(`select agent, ${LANE('j')} board from jobs j where id = ?`).get(job) as {
     agent: string;
     board: number;
   };
+  const theirs = seatsTaking(job, agent, t);
+  const placed = theirs.filter(s => s.placed);
+  if (
+    !theirs.length ||
+    placed.some(s => s.pacedUntil === null) ||
+    theirs.some(s => !s.ready && !['draining', 'sleeping'].includes(s.state))
+  )
+    return false;
+  if (!placed.length) return true;
+  const order = ordering.key(job, board, ordering.current(t).timings);
+  return placed.every(s => !pacedTakes(order, s.pacedUntil!));
+}
+
+// The unpaused seats that would take the job (seatTakes, or its agent's fallback's), each with whether it's ready with a
+// run's place free (`placed`: its running jobs under pace.ts seatRunLimit, as the worker gives it places).
+function seatsTaking(job: number, agent: string, t: number) {
   const seats = db
     .prepare(
-      `select id, engine, coalesce(cli, engine) cli, state, ${SEAT_READY} ready,
-      ${PACED_UNTIL} pacedUntil from seats where state != 'paused'`,
+      `select s.id, s.engine, coalesce(s.cli, s.engine) cli, s.state, ${SEAT_READY} ready,
+      ${PACED_UNTIL} pacedUntil, s.util, s.resets, s.week, s.week_resets, s.credits, l.stop,
+      (select count(*) from jobs where status = 'running' and seat = s.id) running
+      from seats s left join seat_list l on l.id = s.id where s.state != 'paused'`,
     )
     .all({ now: t }) as {
     id: string;
@@ -1884,27 +1903,35 @@ export function seatsOut(job: number, t = now()) {
     state: string;
     ready: number;
     pacedUntil: number | null;
+    util: number | null;
+    resets: number | null;
+    week: number | null;
+    week_resets: number | null;
+    credits: number | null;
+    stop: number | null;
+    running: number;
   }[];
   const takes = db.prepare(
     `select ${seatTakes('$seat', '$cli')} own, ${FALLS_BACK} fallsBack from jobs j where j.id = $job`,
   );
-  const theirs = seats.filter(s => {
-    const { own, fallsBack } = takes.get({ job, seat: s.id, cli: s.cli, engine: s.engine }) as {
-      own: number;
-      fallsBack: number;
-    };
-    return own || (fallsBack && models.fallingBackTo(s.engine, s.cli).includes(agent));
+  const limits = plannerCapacity(t)?.seatRuns ?? {};
+  const windows = (s: (typeof seats)[number]) => ({
+    util: s.util ?? undefined,
+    resets: s.resets ?? 0,
+    week: s.week ?? undefined,
+    weekResets: s.week_resets ?? 0,
+    credits: !!s.credits,
+    drainAt: s.stop === null ? undefined : s.stop / 100,
   });
-  const ready = theirs.filter(s => s.ready);
-  if (
-    !theirs.length ||
-    ready.some(s => s.pacedUntil === null) ||
-    theirs.some(s => !s.ready && !['draining', 'sleeping'].includes(s.state))
-  )
-    return false;
-  if (!ready.length) return true;
-  const order = ordering.key(job, board, ordering.current(t).timings);
-  return ready.every(s => !pacedTakes(order, s.pacedUntil!));
+  return seats
+    .filter(s => {
+      const { own, fallsBack } = takes.get({ job, seat: s.id, cli: s.cli, engine: s.engine }) as {
+        own: number;
+        fallsBack: number;
+      };
+      return own || (fallsBack && models.fallingBackTo(s.engine, s.cli).includes(agent));
+    })
+    .map(s => ({ ...s, placed: !!s.ready && s.running < seatRunLimit(windows(s), limits[s.engine], t) }));
 }
 
 // The model and effort a run asks for, those of the engine and CLI the job is on: its fallback's once it moved there, the

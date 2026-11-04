@@ -5,7 +5,8 @@ import assert from 'node:assert/strict';
 import { rmSync, truncateSync, writeFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import sharp from 'sharp';
-import { harness, type Sent } from '../harness.ts';
+import { harness } from '../harness.ts';
+import { cookieOf } from '../testdoor.ts';
 import { fakeLettermint } from '../fixture.ts';
 import { recordedReviews } from '../reviewfixture.ts';
 
@@ -24,8 +25,6 @@ const sketchPeople = await import('./sketchpeople.ts');
 const { DIR } = await import('../pagescraps.ts');
 
 const HELLO = 'hello.preview.company.test'; // (the fixture's product, its owner bolt)
-const cookieOf = (r: Sent) => String(r.headers['set-cookie']?.[0] ?? '').split(';')[0];
-let clients = 0;
 const api = '/guest/notebooks/api';
 const sessions = new Map<string, { cookie: string; name: string; share: number; notebook: number; page: number }>();
 const guest = (ps: string, path: string, body?: unknown) =>
@@ -44,12 +43,7 @@ const send = async (ps: string) => {
 async function invited(name: string, email: string) {
   const r = await h.board('/api/review/shares', { page: `https://${HELLO}/`, name, email, days: 3 });
   assert.equal(r.status, 200, JSON.stringify(r.body));
-  const link = r.body.people.find((p: any) => p.name === name).link,
-    path = new URL(link).pathname,
-    from = `192.0.2.${++clients}`;
-  assert.equal((await h.postForm(`${path}/send`, {}, from)).status, 200);
-  const code = /(\d{6})/.exec(lettermint.taken.at(-1)!.text)![1];
-  const g = cookieOf(await h.postForm(`${path}/verify`, { code }, from));
+  const { g, path } = await h.guestIn(r.body.people.find((p: any) => p.name === name).link, lettermint.code);
   const go = await h.send(`${path}/go`, { cookie: g });
   const handOff = new URL(go.headers.location);
   const ps = cookieOf(await h.send(handOff.pathname + handOff.search, { host: handOff.host }));

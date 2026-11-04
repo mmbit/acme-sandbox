@@ -1437,6 +1437,7 @@ test("a machine set up with its install command: one command with its key, the m
       },
     ],
     busy: [],
+    code: pinned,
   });
   assert.equal((await asServer('/api/helper/setup', {})).status, 403, 'never this server');
 
@@ -1485,24 +1486,51 @@ test("a machine set up with its install command: one command with its key, the m
   await h.finish(job);
 });
 
-// A Docker Engine on a socket for the manager: it has the manager's own image and
-// makes containers, but a kind's image never pulls, its error on the stream's last line with a 200, as Docker answers one
-function fakeDocker(t: TestContext, socket: string) {
-  const docker = createServer((req, res) => {
+// A Docker Engine on a socket for the manager: it has the manager's own image and makes containers, but a kind's image
+// never pulls, in turn refused at once with a 404 and Docker's words (an unknown digest, a refused sign-in), and failing
+// on the way, its error on the stream's last line with a 200 (a full disk). It keeps the containers it's asked to make
+// ({ name: their spec }), and has those `have` names. Its socket, docker.sock in the folder given, is bound and reached
+// by a path relative to that folder: a socket's path holds 107 bytes, a test checkout's temp folder can be longer, and
+// a short folder such as /tmp may not be writable
+function fakeDocker(t: TestContext, folder: string, have: Record<string, unknown> = {}) {
+  let pulls = 0;
+  const made: Record<
+    string,
+    { Cmd: string[]; Env: string[]; Labels?: Record<string, string>; HostConfig: { AutoRemove?: boolean } }
+  > = {};
+  const docker = createServer(async (req, res) => {
     const path = decodeURIComponent(req.url!.replace(/^\/v[\d.]+/, '').split('?')[0]);
     const send = (status: number, body = '') => res.writeHead(status).end(body);
+    const name = new URL(req.url!, 'http://docker').searchParams.get('name');
+    if (req.method === 'POST' && path === '/containers/create' && name) {
+      let body = '';
+      for await (const chunk of req) body += chunk;
+      made[name] = JSON.parse(body);
+      return send(201, '{}');
+    }
+    const one = /^\/containers\/([^/]+)\/json$/.exec(path)?.[1];
+    if (req.method === 'GET' && one && have[one]) return send(200, JSON.stringify(have[one]));
     if (req.method === 'POST' && req.url!.includes('/images/create'))
-      return send(
-        200,
-        '{"status":"Pulling from library/node"}\n{"errorDetail":{"message":"manifest unknown"},"error":"manifest unknown"}\n',
-      );
+      return pulls++ % 2
+        ? send(
+            200,
+            '{"status":"Pulling from library/node"}\n{"errorDetail":{"message":"no space left on device"},"error":"no space left on device"}\n',
+          )
+        : send(404, '{"message":"manifest unknown"}');
     if (req.method === 'GET' && path === '/images/node:24.22.1-slim/json') return send(200, '{}');
     if (req.method === 'GET' && path === '/containers/json') return send(200, '[]');
     if (req.method === 'GET') return send(404);
     send(200, '{}');
   });
-  docker.listen(socket);
+  const here = process.cwd();
+  process.chdir(folder);
+  try {
+    docker.listen('docker.sock');
+  } finally {
+    process.chdir(here);
+  }
   t.after(() => docker.close());
+  return made;
 }
 
 test("a lent machine's manager: HQ keeps its setup calls with the code it runs, shows one on old code or quiet while its helpers ask, and cards the board once with the install command without a key, taken away once it runs HQ's code again", async t => {
@@ -1529,15 +1557,16 @@ test("a lent machine's manager: HQ keeps its setup calls with the code it runs, 
   const bootstrap = / -e "(.*)"$/.exec(install)![1];
   const state = mkdtempSync(`${tmpdir()}/manager-`);
   writeFileSync(`${state}/key`, `${lentKey}\n`);
-  fakeDocker(t, `${state}/docker.sock`);
+  fakeDocker(t, state);
   const manager = spawn(process.execPath, ['-e', bootstrap], {
+    cwd: state,
     env: {
       PATH: process.env.PATH,
       TMPDIR: state,
       HQ_URL: h.base,
       HQ_PRIVATE: '1',
       KEY_FILE: `${state}/key`,
-      DOCKER_SOCKET: `${state}/docker.sock`,
+      DOCKER_SOCKET: 'docker.sock',
       TICK_MS: '200',
     },
     stdio: 'ignore',
@@ -1548,7 +1577,10 @@ test("a lent machine's manager: HQ keeps its setup calls with the code it runs, 
   await until(async () => Object.keys((await machine()).problems).length === 2, 'its problems', 15_000);
   manager.kill();
   const tests1 = Object.keys((await machine()).problems).find(name => name.endsWith('-tests_1'))!;
-  assert.equal((await machine()).problems[tests1], "node:24.22.1-bookworm didn't pull: manifest unknown");
+  assert.deepEqual(Object.values((await machine()).problems).sort(), [
+    "node:24.22.1-bookworm didn't pull: manifest unknown",
+    "node:24.22.1-bookworm didn't pull: no space left on device",
+  ]);
   const looker = await h.start({ agent: 'bolt' });
   assert.match(
     (await hqIn(tmpdir(), looker, 'run', 'helper')).out,
@@ -1623,6 +1655,78 @@ test("a lent machine's manager: HQ keeps its setup calls with the code it runs, 
   assert.equal(cards().length, 4);
   assert.equal(cards()[3].status, 'done');
   assert.match(cards()[3].closing!, /was paused or removed/);
+  await h.finish(job);
+});
+
+test("a lent machine's manager follows HQ's code: its install starts it on what HQ serves, it starts again on HQ's new code by itself and swaps its own container when that changes, and HQ cards nobody meanwhile", async t => {
+  h.declareKinds(t, TESTS_KIND);
+  await lendNone();
+  const added = await lend('the rig');
+  lentKey = added.key;
+  const machine = async () => (await h.board('/api/machines')).body.find((one: { id: unknown }) => one.id === added.id);
+  const cards = () => h.db.prepare("select * from requests where title like '%the rig%' and status = 'open'").all();
+  await asHelper('/api/helper/take', { kind: 'tests', slot: 1, locked: true });
+  const name = `${new URL(h.base).host
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')}-manager`;
+  const state = mkdtempSync(`${tmpdir()}/manager-`);
+  writeFileSync(`${state}/key`, `${lentKey}\n`);
+  const have: Record<string, unknown> = {};
+  const made = fakeDocker(t, state, have);
+  const node = (args: string[], env: Record<string, string> = {}) => {
+    const one = spawn(process.execPath, args, {
+      cwd: state,
+      env: {
+        PATH: process.env.PATH,
+        TMPDIR: state,
+        HQ_URL: h.base,
+        HQ_PRIVATE: '1',
+        KEY_FILE: `${state}/key`,
+        DOCKER_SOCKET: 'docker.sock',
+        TICK_MS: '200',
+        ...env,
+      },
+      stdio: 'ignore',
+    });
+    t.after(() => one.kill());
+    return { one, exit: new Promise<number | null>(resolve => one.on('exit', resolve)) };
+  };
+
+  // the install command checks the code by its hash; the manager's container fetches what HQ serves, with none
+  const install = (await h.board('/api/machines/setup')).body.install as string;
+  assert.equal(await node(['-e', / -e "(.*)"$/.exec(install)![1]], { MANAGER: 'install' }).exit, 0);
+  const boot = made[name].Cmd[1];
+  assert.match(boot, /\/api\/helper\/manager/);
+  assert.doesNotMatch(boot, /createHash/, 'no hash pins it');
+  have[name] = { Config: { Labels: made[name].Labels } };
+  const manager = node(['-e', boot]);
+  await until(async () => (await machine()).manager?.state === 'current', 'it calls with HQ’s code', 15_000);
+  await new Promise(resolve => setTimeout(resolve, 1000));
+  assert.equal(made[`${name}-swap`], undefined, 'its own container as it should be');
+  manager.one.kill();
+
+  // a manager whose own container changes (a new image): a one-off container installs it again, and ends
+  have[name] = { Config: { Labels: { 'hq.spec': 'an older one' } } };
+  const swapping = node(['-e', boot]);
+  await until(async () => made[`${name}-swap`] !== undefined, 'the swap', 15_000);
+  swapping.one.kill();
+  assert.ok(made[`${name}-swap`].Env.includes('MANAGER=install'));
+  assert.equal(made[`${name}-swap`].HostConfig.AutoRemove, true);
+  assert.deepEqual(made[`${name}-swap`].Cmd, made[name].Cmd);
+
+  // code HQ no longer serves: the manager ends by itself, for Docker to start it again on HQ's, and nobody is carded
+  const older = `${state}/older.mjs`;
+  writeFileSync(older, `${await fetch(`${h.base}/api/helper/manager`).then(r => r.text())}\n// an older one\n`);
+  assert.equal(await node([older]).exit, 0);
+  assert.equal((await machine()).manager.state, 'updating');
+  runs.managerCheck();
+  assert.deepEqual(cards(), []);
+  const job = await h.start({ agent: 'bolt' });
+  assert.match(
+    (await hqIn(tmpdir(), job, 'run', 'helper')).out,
+    /the rig: taking.*its manager is taking HQ's new code/,
+  );
   await h.finish(job);
 });
 

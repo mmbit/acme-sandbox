@@ -5,7 +5,8 @@
 // pasted invitation that isn't one is refused in words. The app is on the home screen only with a link or an
 // invitation, lists the workspaces with the other company's name and what's unread, and a workspace opens with its
 // threads (their words as text, never markup; urgent marked; ours arrived, read or on its way) and its files with every
-// version to download. Nothing covered and nothing off the screen. In every look, at desktop and phone width.
+// version, the newest two to download and an older one cleared, its line kept with nothing to download. Nothing covered
+// and nothing off the screen. In every look, at desktop and phone width.
 //   node platform/hq/companies-check.mjs [looks] [--out dir]  (screenshots to a temp folder, printed at the end)
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync } from 'node:fs';
@@ -144,17 +145,19 @@ async function appPages(page, at, shot) {
   const files = await page.$$eval('.co-files > li', l =>
     l.map(e => ({
       path: e.querySelector('.co-path').textContent,
-      versions: e.querySelectorAll('.co-get[href]').length,
+      versions: e.querySelectorAll('.co-versions > li').length,
+      downloads: e.querySelectorAll('.co-get[href]').length,
     })),
   );
   assert.deepEqual(
     files,
     [
-      { path: 'brief/brief.md', versions: 2 },
-      { path: 'assets/notebook-cover-front.png', versions: 2 },
+      { path: 'brief/brief.md', versions: 3, downloads: 2 },
+      { path: 'assets/notebook-cover-front.png', versions: 2, downloads: 2 },
     ],
     at,
   );
+  assert.match(await text(page, '.co-files > li:first-child .co-versions > li:last-child'), /^v1.* · cleared/, at);
   await fits(page, at, 'workspace', ['.co-msg.urgent', '.co-get']);
   await shot('workspace');
   await page.$eval('.co-files', e => e.scrollIntoView({ block: 'start' }));

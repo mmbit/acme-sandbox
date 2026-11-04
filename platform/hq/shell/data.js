@@ -386,6 +386,8 @@ export const pushSubscribe = sub => post('/api/push/subscribe', sub);
 export const pushUnsubscribe = endpoint => post('/api/push/unsubscribe', { endpoint });
 export const pushTest = endpoint => post('/api/push/test', { endpoint });
 export const loadMail = dev => dev ? mockList('mail') : get('/api/mail');
+// Mail's count in each pile (dev: none, so Mail counts its list).
+export const loadMailPiles = dev => dev ? Promise.resolve(null) : get('/api/mail/piles');
 // What the board has read, for all its devices (seen.js). Dev mode starts from
 // mock/seen.json and keeps the rest in memory.
 export const loadSeen = dev => dev ? mockList('seen').then(marks => ({ ...marks })) : get('/api/seen');
@@ -395,9 +397,9 @@ export async function saveSeen(dev, list, newest) {
   marks[list] = newest;
   return { ...marks };
 }
-// Mail's one-tap move to another pile: { pile }, or Team's { job, already } (mail.ts setPile, forward). Dev mode makes up a
+// Mail's one-tap move to another pile: { pile }, or Team's { job, already } (mailsort.ts moveMail). Dev mode makes up a
 // job number.
-export const moveMail = (dev, id, pile) => dev ? Promise.resolve(pile === 'team' ? { job: 9000 + Number(id), already: false } : { pile }) : post('/api/mail/pile', { id, pile });
+export const moveMail = (dev, id, pile) => dev ? Promise.resolve(pile === 'team' ? { job: 9000 + Number(id), already: false } : { pile }) : post('/api/mail/move', { id, pile });
 export const loadMailOne = (dev, id) => dev ? Promise.resolve({ id, body: '(mock) The message text shows here.', attachments: '[]' }) : get(`/api/mail/one?id=${id}`);
 export const loadCalls = dev => dev ? mockList('calls').catch(() => []) : get('/api/calls');
 // "We missed something": one item the board adds to a call (a task for the call's agent), and the call is followed up again.

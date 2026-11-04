@@ -20,7 +20,6 @@ afterEach(() => h.cancelQueued());
 
 const HELLO = 'hello.preview.company.test'; // (the fixture's product)
 const api = '/guest/notebooks/api';
-let clients = 0;
 
 // The board's Share on the work: a lasting guest's or a week's round, as the box sends it
 const share = async (name: string, email: string, lasting: boolean, page = `https://${HELLO}/`) => {
@@ -30,12 +29,7 @@ const share = async (name: string, email: string, lasting: boolean, page = `http
 };
 // Their one link, followed once: the code by email, then their session; its Open leads to their shelf
 async function signIn(link: string) {
-  const door = new URL(link).pathname,
-    from = `192.0.2.${++clients}`;
-  const form = (path: string, fields: Record<string, string>) => h.postForm(path, fields, from);
-  assert.equal((await form(`${door}/send`, {})).status, 200);
-  const code = /(\d{6})/.exec(lettermint.taken.at(-1)!.text)![1];
-  const cookie = String((await form(`${door}/verify`, { code })).headers['set-cookie']?.[0]).split(';')[0];
+  const { g: cookie, path: door } = await h.guestIn(link, lettermint.code);
   const go = await fetch(`${h.base}${door}/go`, { headers: { cookie }, redirect: 'manual' });
   const read = async (path: string) =>
     (await fetch(h.base + path, { headers: { cookie }, redirect: 'manual' })) as Response;

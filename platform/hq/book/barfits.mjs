@@ -8,19 +8,15 @@ import { islandsSeen, islandsUsable } from './islands.mjs';
 // record: bookvoice.js)
 const TOOLS = [/^(Pen|Marker)$/, /^Shapes/, 'Eraser', 'Select', 'Text'],
   MIC = 'Voice note';
-// the paper's width from which the overview and New page are on the bar (bookstrip.css's container query)
-const KEYS_ON_BAR_PX = 460;
 // the most of a phone's height the tools' island takes, upright: well under half (the Ink README, "The book's frame":
 const TOOLS_OF_PHONE = 0.4;
 
-// Both islands of use, and each holding its own keys. Returns whether the paper is wide enough for the page's keys on
-// the bar.
+// Both islands of use, and each holding its own keys
 export async function fits(page) {
   const seen = await islandsSeen(page);
   islandsUsable(seen, 'at rest');
   toolsHeld(seen);
   barHeld(seen);
-  return seen.paperWidth >= KEYS_ON_BAR_PX;
 }
 
 // The tools: in their order with one pen, the mic last where there is one, and well under half a phone's height
@@ -41,8 +37,8 @@ function toolsHeld({ tools, screen }) {
 }
 
 // The bar: on the paper, Undo and Redo at its left, the page's arrows round where it is in its very middle, the
-// overview and New page at its right where the paper is wide enough, then the dots
-function barHeld({ bar, where, paper, screen, paperWidth }) {
+// overview and the dots at its right, two keys at each end at every size
+function barHeld({ bar, where, paper, screen }) {
   assert.ok(
     bar.left >= Math.max(paper.left, 0) - 1 && bar.right <= Math.min(paper.right, screen.width) + 1,
     `the bar on the paper (${JSON.stringify({ bar, paper })})`,
@@ -54,7 +50,6 @@ function barHeld({ bar, where, paper, screen, paperWidth }) {
   );
   const off = middle(where.left, where.right) - middle(bar.left, bar.right);
   assert.ok(Math.abs(off) <= 1, `the page's count in the very middle of the bar: ${off} px off`);
-  const keys = paperWidth >= KEYS_ON_BAR_PX ? [OVERVIEW, 'New page', 'More'] : ['More'];
-  assert.deepEqual(bar.end, keys, `the bar's right on a paper ${Math.round(paperWidth)} px wide`);
+  assert.deepEqual(bar.end, [OVERVIEW, 'More'], "the overview and the dots at the bar's right");
 }
 const middle = (a, b) => (a + b) / 2;

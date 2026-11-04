@@ -1926,18 +1926,22 @@ test("a supplier's receipt to hello@ from a billing sender (mail.invoicesFrom) i
 });
 
 // Mail's sorter (mailsort.ts) before a card: a scam to hello@ gets none, nor a draft; a customer sorted Spam by mistake is a
-// tap away, the board's move to Customers makes the card, and a move back out takes it back with nothing sent.
+// tap away, the board's move to Customers makes the card, a move back out takes it back with nothing sent, and a move
+// back in opens it again.
 test('a scam to hello@ sorted as spam gets no card; the board moves a customer in and out of Customers with one tap', async () => {
   const scam = await toCompany('domains@seo.example', 'Register your shop in search engines: https://seo.example', { subject: 'Submit your shop', pile: 'spam' });
   assert.equal(await cardOfMail(scam.id), null, 'no card, no draft for the board to discard');
   const missed = await toCompany('ana@example.org', 'hi is this the shop, my thing never came', { subject: 'hello', pile: 'spam' });
   assert.equal(await cardOfMail(missed.id), null);
-  assert.equal((await boardCall('/api/mail/pile', { id: missed.id, pile: 'customer' })).status, 200);
+  assert.equal((await boardCall('/api/mail/move', { id: missed.id, pile: 'customer' })).status, 200);
   const c = (await cardOfMail(missed.id))!;
   assert.deepEqual([c.kind, c.to, c.status], ['email', 'ana@example.org', 'waiting']);
   assert.ok((await careState()).drafts.some((x: any) => x.case === c.case), 'a draft for the customer');
-  assert.equal((await boardCall('/api/mail/pile', { id: missed.id, pile: 'filed' })).status, 200);
+  assert.equal((await boardCall('/api/mail/move', { id: missed.id, pile: 'filed' })).status, 200);
   assert.equal((await one(c.id)).status, 'closed', 'its card goes back, nothing sent');
+  assert.equal((await boardCall('/api/mail/move', { id: missed.id, pile: 'customer' })).status, 200);
+  assert.equal((await one(c.id)).status, 'waiting', 'moved back in, its card waits again');
+  assert.ok((await careState()).drafts.some((x: any) => x.case === c.case), 'with a new draft');
   // a newsletter the sorter took for a customer's: Care leaves it, and it waits in the board's pile, not unseen
   const list = await toCompany('news@shop.example', 'Our news', { headers: 'List-Unsubscribe: <https://shop.example/u>\r\n' });
   assert.equal(await cardOfMail(list.id), null);

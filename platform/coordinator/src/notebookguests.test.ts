@@ -24,17 +24,10 @@ const stroke = {
     [40, 40, 0.5, 10],
   ],
 };
-let clients = 0;
 
 async function signIn(link: string) {
-  const door = new URL(link).pathname;
-  const from = `192.0.2.${++clients}`;
-  const form = (path: string, fields: Record<string, string>) => h.postForm(path, fields, from);
-  const sent = await form(`${door}/send`, {});
-  const code = /: (\d{6})/.exec(sent.text)![1];
-  const verified = await form(`${door}/verify`, { code });
-  assert.equal(verified.status, 303);
-  const cookie = String(verified.headers['set-cookie']?.[0]).split(';')[0];
+  // (the code in the door's reply)
+  const { g: cookie } = await h.guestIn(link, sent => /: (\d{6})/.exec(sent.text)![1]);
   return async (path: string, body?: unknown, contentType = 'application/json') => {
     const response = await fetch(h.base + path, {
       method: body === undefined ? 'GET' : 'POST',

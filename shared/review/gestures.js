@@ -1,4 +1,4 @@
-// The Pencil's gestures (pencil.js): a scribble over a mark wipes it, a ring marks what's inside it.
+// Gestures told from a line's points: a ring marks what's inside it (pencil.js), a scribble scratches out (HQ's book).
 import { boxOfLines } from './mark.js';
 import { under } from './layer.js';
 

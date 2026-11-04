@@ -1,9 +1,12 @@
-// What book-check.mjs's story files share: the screens they play on, a wait, the Pencil and fingers, the iPad mini and
-// the microphone's stand-in, review mode's parts and a preview in HQ's viewer.
+// What book-check.mjs's story files share: the screens they play on, a wait, the Shelf opened, the Pencil and fingers,
+// the iPad mini, the microphone's stand-in and review mode's parts.
 import assert from 'node:assert/strict';
-import { fulfilPart } from '../../../shared/review/parts.mjs';
+import { until as untilShown } from '../../../shared/browser/browser.mjs';
 import { en } from '../shell/ink/notebookwordsen.js';
 import { filled } from '../shell/ink/notebookwords.js';
+
+// (the microphone's stand-in, micstandin.mjs)
+export { HEARD, heard, wordsHeard } from './micstandin.mjs';
 
 export const DESKTOP = { width: 1440, height: 900 },
   // an iPad mini in landscape, and held upright
@@ -20,12 +23,27 @@ export async function shelfKey(page) {
   if (!(await key.isVisible())) await page.locator('#btn-more').click();
   return key;
 }
+// HQ in a look (its renderer), its Shelf key pressed: My shelf in its own window, read and at rest
+export async function openShelf(page, c, renderer = 'wire') {
+  await page.goto(`${c.base}/?intro=0&renderer=${renderer}`);
+  await untilShown(page, '#loading.gone');
+  await (await shelfKey(page)).click();
+  const shelf = page.getByRole('dialog', { name: 'The Shelf' });
+  await shelf.locator('.bk-book').first().waitFor();
+  await shelfAtRest(page);
+  await page.waitForTimeout(c.settle);
+  assert.equal(await shelf.locator('.bk-shelf-title').textContent(), 'My shelf');
+  return shelf;
+}
+// The Shelf's window risen, its things moved or arrived
+export const shelfAtRest = page =>
+  page.waitForFunction(() =>
+    [...document.querySelectorAll('#book .bk-shelf-window')].every(d => !d.getAnimations({ subtree: true }).length),
+  );
 // The cog's label on the rail, in the words the board's book shows
 export const PREFERENCES = en.preferences;
-// how long a story waits to be sure something didn't happen (the page is saved this soon after a change), and what the
-// stand-in microphone hears
-export const QUIET_MS = 1200,
-  HEARD = 'order the blue mugs';
+// how long a story waits to be sure something didn't happen (the page is saved this soon after a change)
+export const QUIET_MS = 1200;
 // a tap or a wait on the shared machine under load: taps time out at 30 s there, on main too
 export const LOADED_MS = 90_000;
 
@@ -209,45 +227,15 @@ export function touchOf(cdp) {
 // A box's middle on the screen (a locator's boundingBox()).
 export const middleOf = b => [b.x + b.width / 2, b.y + b.height / 2];
 
-// The listening slip once it shows the stand-in microphone's words
-export const wordsHeard = page =>
-  until(async () => (await page.locator('#book .bk-voice').textContent()).includes(HEARD), 'the words heard');
-// The microphone's stand-in: the recording module answered with one that hears at once, and its words; dictate.js runs
-// for real on it (seconds).
-export async function heard(page) {
-  await page.route('**/shell/voice.js', r =>
-    r.fulfill({
-      contentType: 'text/javascript',
-      body: `export const MAX_SECONDS = 1200, TRANSCRIBER = true, canRecord = true;
-export function record({ onSegment } = {}) {
-  const s = { ready: Promise.resolve(), level: () => 0.4, seconds: () => 1, cancel() {} };
-  setTimeout(() => onSegment?.(new Blob(['piece'], { type: 'audio/wav' })), 100);
-  s.stop = async () => new Blob(['clip'], { type: 'audio/webm' });
-  return s;
-}`,
-    }),
-  );
-  // (and allowed already)
-  await page.route('**/__review/micallowed.js', r =>
-    r.fulfill({
-      contentType: 'text/javascript',
-      body: 'export const micAllowed = () => true, micBlocked = () => false, gotStream = () => {};',
-    }),
-  );
-  await page.route('**/api/voice**', r => r.fulfill({ json: { text: HEARD } }));
-  await page.addInitScript(() => {
-    if (navigator.mediaDevices)
-      navigator.mediaDevices.enumerateDevices = async () => [{ kind: 'audioinput', deviceId: 'mic', label: '' }];
-  });
-}
-
+// Whether the book's page is the whole screen (data-whole on #book, book.js), its bookmarks folded at the left edge
+export const whole = page => page.evaluate(() => document.querySelector('#book').hasAttribute('data-whole'));
 // A chapter's bookmark picked (press(locator): a tap or a click, a click unless given). Where the page is the whole
 // screen they lie folded at its left edge: a press on one's icon brings them out first, unless a pull already did,
 // and the pick folds them away again.
 export async function toChapter(page, chapter, press = loc => loc.click({ timeout: LOADED_MS })) {
   const tab = page.locator(`#book .bk-marks [data-chapter=${chapter}]`),
     out = page.locator('#book .bk-marks[data-out]');
-  if (!(await page.evaluate(() => matchMedia('(orientation: portrait)').matches))) return press(tab);
+  if (!(await whole(page))) return press(tab);
   if (!(await out.count())) await press(tab.locator('.bk-mk-icon'));
   await out.waitFor({ timeout: LOADED_MS });
   await press(tab);
@@ -266,8 +254,8 @@ export const pinOn = (page, on = true) =>
 
 // The next crumple (bookpaper.js) as it starts: whether it plays on a picture of what was deleted (drawn, or a page's
 // tile in the overview), and, with it held and stepped through its length, how far its middle goes sideways, how far
-// up and how far down (px), how far past the screen's right edge it ends (px), its opacity once it's well on its way
-// aside, and its length (ms). Watched for on the whole document: the open book can sit outside body. (thrown, not dropped)
+// up and how far down (px), how far below the screen's foot it ends (px), its opacity once it's well on its way down,
+// and its length (ms). Watched for on the whole document: the open book can sit outside body.
 export const crumpled = page =>
   page.evaluate(
     () =>
@@ -295,60 +283,26 @@ export const crumpled = page =>
             aside = Math.max(aside, Math.abs(now.x - start.x));
             up = Math.max(up, start.y - now.y);
             down = Math.max(down, now.y - start.y);
-            if (aside > 100) shown ??= +getComputedStyle(scrap).opacity;
+            // (once it has begun to fall: one balled up at the screen's foot falls only its own size out of sight)
+            if (down > 12) shown ??= +getComputedStyle(scrap).opacity;
           }
           ball.currentTime = length;
-          const past = middle().x - innerWidth;
+          const below = middle().y - innerHeight;
           ball.play();
-          done({ picture: !!scrap.querySelector('canvas, .bk-tile-paper'), aside, up, down, past, shown, length });
+          done({ picture: !!scrap.querySelector('canvas, .bk-tile-paper'), aside, up, down, below, shown, length });
         }).observe(document.documentElement, { childList: true, subtree: true }),
       ),
   );
-// That crumpled()'s answer is what was deleted, balled up and thrown in an arc off the screen's right edge, still shown
-// as it flies (what: whose throw, for the messages)
-export const thrownAway = ({ picture, aside, up, past, shown }, what) => {
+// That crumpled()'s answer is what was deleted, balled up and fallen straight down past the screen's foot, never
+// aside or up, still shown as it falls (what: whose fall, for the messages; the Ink README, The book's frame)
+export const fellAway = ({ picture, aside, up, below, shown }, what) => {
+  const px = n => Math.round(n * 10) / 10;
   assert.ok(
-    picture && aside > 200 && up > 40 && past > 0,
-    `${what}: crumpled and thrown in an arc off the screen's right edge (${aside} aside, ${up} up, ${past} past)`,
+    picture && aside < 2 && up < 2 && below > 0,
+    `${what}: crumpled and fallen straight down past the screen's foot (${px(aside)} aside, ${px(up)} up, ${px(below)} below it)`,
   );
-  assert.ok(shown > 0.4, `${what}: still shown as it flies (${shown})`);
+  assert.ok(shown > 0.9, `${what}: still shown as it falls (${shown})`);
 };
-
-// ---- a preview in HQ's viewer, review mode running in its frame
-export const PREVIEW = 'https://scrap.preview.test';
-const PREVIEW_PAGE = `<!doctype html><meta name="viewport" content="width=device-width"><title>Basket</title>
-<body style="margin: 0; font: 16px system-ui, sans-serif">
-<h1 style="margin: 24px">Your basket</h1>
-<p style="margin: 24px; max-width: 30em">Two jars of plum jam, gift-wrapped, at the pick-up point by Friday.</p>
-<script src="/__review/review.js"></script>`;
-// The preview at PREVIEW served to context, each note posted from it kept in c.posts (c.reviewJs: review mode's script)
-export async function previewServed(c, context) {
-  await context.route(/\/api\/preview\/link$/, r => r.fulfill({ json: { url: r.request().postDataJSON().url } }));
-  await context.route(`${PREVIEW}/**`, r => {
-    const path = new URL(r.request().url()).pathname;
-    if (fulfilPart(r, path, c.reviewJs)) return;
-    // the board's note: the coordinator makes it a scrap on My journal's current page (bookreview.ts)
-    if (path === '/__review/notes' && r.request().method() === 'POST') {
-      const body = r.request().postDataJSON();
-      c.posts.push({ path, body });
-      const { v, url, el, view, ink } = body.element ?? {},
-        g = context.notebook.route(
-          '/api/notebooks/groups/scrap',
-          {},
-          {
-            anchor: { v, url, el, view, ink },
-            words: body.note,
-            said: body.said === 'spoken' ? 'spoken' : 'typed',
-            snip: body.shot,
-            owner: 'juno',
-          },
-        );
-      return r.fulfill({ json: { ok: true, id: g.id, page: g.page, owner: 'juno', name: 'Juno' } });
-    }
-    if (path.startsWith('/__review/')) return r.fulfill({ json: { show: false } });
-    return r.fulfill({ contentType: 'text/html', body: PREVIEW_PAGE });
-  });
-}
 
 // This device's pen used before, as the board's iPad has it: a finger then moves the page while the pen writes
 export const penPans = page =>

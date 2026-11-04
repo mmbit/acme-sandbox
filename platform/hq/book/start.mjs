@@ -1,6 +1,7 @@
 // Where book-check.mjs's stories start: a page of HQ watched for errors, HQ loaded, the book come to rest open, and the
 // book open on a touch screen with a pen. c: book-check's { hqIn, base, settled }
 import { MINI, chromiumPen, heard, touchOf } from './kit.mjs';
+import { shapeOf } from '../shell/ink/booklayout.js';
 
 // A new page in context, its errors kept as they come
 export async function watchedPage(context) {
@@ -10,13 +11,13 @@ export async function watchedPage(context) {
   return { page, errors };
 }
 
-// A desktop's book spread w CSS px wide beside HQ's page in context, as the board last pulled it out (none: as it
+// The book spread w CSS px wide beside HQ's page in context at viewport, as the board last pulled it out (none: as it
 // opens)
-export async function bookWide(context, w) {
+export async function bookWide(context, viewport, w) {
   if (w)
     await context.addInitScript(
-      w => localStorage.setItem('hq.book.wide', JSON.stringify({ mode: 'open', book: w })),
-      w,
+      ([key, w]) => localStorage.setItem(key, JSON.stringify({ mode: 'open', book: w })),
+      [`hq.book.${shapeOf(viewport.width, viewport.height)}`, w],
     );
 }
 // No microphone in context: on a loaded machine a line's first move can come after the hold, and a press held still

@@ -192,7 +192,7 @@ import * as guests from './guests.ts';
 import { cardProblem } from '../../hq/shell/cardcheck.js';
 import { pairsOf, pictureFile } from '../../hq/shell/media.js';
 import { looks } from '../../hq/looks.mjs';
-import { BOARD_EXTRAS, OPEN_EXTRAS } from '../../hq/extras.mjs';
+import { BOARD_EXTRAS, OPEN_EXTRAS, extraPaths } from '../../hq/extras.mjs';
 import { filmFiles } from '../../hq/films/listing.mjs';
 import * as apps from './apps.ts';
 import * as artifacts from './artifacts.ts';
@@ -534,19 +534,15 @@ const api: Record<string, BoardRoute> = {
   'POST /api/preview/link': (q, s, b) => preview.link(String(b.url ?? '')),
   'POST /api/jobs': (q, s, b) => jobs.createJob({ agent: b.agent ?? ceo(), title: b.title, prompt: b.prompt ?? b.title, queuedBy: jobs.BOARD }),
   'GET /api/seats': () => seats.listSeats(),
-  'GET /api/mail': () => mail.listMail(200),   // (every pile's latest)
+  // (each pile's latest, and every pile's count)
+  'GET /api/mail': () => mail.listPiles(),
+  'GET /api/mail/piles': () => mail.countPiles(),
   'GET /api/mail/one': q => mail.getMail(Number(new URL(q.url ?? '/', 'http://x').searchParams.get('id'))),
   // Mail's "Send to the team" on a mail of the board's own: a job for brand.yaml's mail.forwardTo, the only one that reads it
   // (mail.ts forward).
-  'POST /api/mail/forward': (q, s, b) => refusal(mail.forward(Number(b?.id), j => jobs.findAgent(j.agent) ? jobs.createJob(j) : null)),
-  // Mail's one-tap move to another pile (mail.ts setPile), which the sorter learns from (mailsort.ts): Team hands the mail
-  // on as forward does.
-  'POST /api/mail/pile': (q, s, b) => {
-    const id = Number(b?.id), pile = b?.pile;
-    if (!mail.PILES.includes(pile)) return new Refused(400, `a pile is one of ${mail.PILES.join(', ')}`);
-    if (pile === 'team') return refusal(mail.forward(id, j => jobs.findAgent(j.agent) ? jobs.createJob(j) : null));
-    return mail.setPile(id, pile, 'board') ? { pile } : 404;
-  },
+  'POST /api/mail/forward': (q, s, b) => refusal(mail.forward(Number(b?.id), mailsort.handOn)),   // (handOn)
+  // Mail's one-tap move to another pile (mailsort.ts).
+  'POST /api/mail/move': (q, s, b) => refusal(mailsort.moveMail(Number(b?.id), b?.pile)),
   // Mail's and the Gazette's read marks, one set for all the board's devices
   'GET /api/seen': () => seen.all(),
   'POST /api/seen': (q, s, b) => refusal(seen.mark(b?.list, b?.newest)),
@@ -1495,6 +1491,7 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
   'GET /api/agent/workspaces/file': b => {
     const file = workspaces.fileOf(Number(b.workspace), String(b.path ?? ''), b.version ? Number(b.version) : undefined);
     if (!file) return new Refused(404, `Workspace #${b.workspace} has no ${b.version ? `version ${b.version} of ` : ''}${b.path}.`);
+    if (Array.isArray(file)) return refusal(file); // (cleared.)
     const { bytes, ...about } = file;
     return { ...about, data: bytes.toString('base64') };
   },
@@ -1950,11 +1947,12 @@ function onHost(req: IncomingMessage, res: ServerResponse, url: URL) {
 }
 
 // A table of HQ's extra files (platform/hq/extras.mjs) as routes, a folder's by its files' names (feedback.ts answers
-// review mode's parts).
-const extraRoutes = (table: Record<string, string>): RouteTable => Object.fromEntries(Object.entries(table).map(([address, file]) =>
-  address.endsWith('/')
-    ? [`GET ${address}:file([a-z]+\\.js)`, (request: RouteRequest) => hqFile(`${REPO_DIR}/${file}`, `/${request.params.file}`)(request)]
-    : [`GET ${address}`, hqFile(`${REPO_DIR}/${dirname(file)}`, `/${basename(file)}`)]));
+// review mode's parts). (extraPaths)
+const extraRoutes = (table: Record<string, string>): RouteTable => Object.fromEntries(extraPaths(table).map(({ path, fileOf }) =>
+  [`GET ${path}`, (request: RouteRequest) => {
+    const file = fileOf(request.params);
+    return hqFile(`${REPO_DIR}/${dirname(file)}`, `/${basename(file)}`)(request);
+  }]));
 // The board's own rows, from HQ's pages and its apps (kits.ts)
 const board: RouteTable = {
   '* /api/events': ({ res }) => subscribe(res),
@@ -1963,6 +1961,7 @@ const board: RouteTable = {
     const q = url.searchParams;
     const file = workspaces.fileOf(Number(q.get('workspace')), String(q.get('path') ?? ''), q.get('version') ? Number(q.get('version')) : undefined);
     if (!file) return send(res, 404, 'not found', 'text/plain');
+    if (Array.isArray(file)) return send(res, file[0], file[1], 'text/plain'); // (cleared.)
     return sendDownload(res, file.path.split('/').at(-1)!, file.bytes);
   },
   'GET /api/workspaces/:id(\\d+)': ({ res, params }) => {

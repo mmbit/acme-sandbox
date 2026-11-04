@@ -11,6 +11,7 @@ export function highlightStories(c) {
         ['highlighter only adds marks over groups and typed words', addsMarks],
         ['highlighter erases along its whole length like pen ink', erasesMarks],
         ["a deleted group's ink and highlight leave the page at once, and Undo brings them back", deletesMarks],
+        ['the marker lies under the ink and the words as it is drawn, as once dry: nothing changes at the lift', under],
       ].map(([name, story]) => [
         `${pencil ? 'iPad mini Pencil' : 'desktop mouse'}: ${name}`,
         browser => play(browser, c, pencil, story),
@@ -36,7 +37,7 @@ async function play(browser, c, pencil, story) {
         points.map(([x, y]) => [box.x + x, box.y + y]),
         pencil,
       );
-    await story(page, c, free, draw);
+    await story(page, c, free, draw, pencil);
     assert.deepEqual(
       errors.filter(error => !/No active pointer|can not be found here/.test(error)),
       [],
@@ -141,6 +142,82 @@ async function deletesMarks(page, c, free, draw) {
   assert.deepEqual(await painted(), [0, 0], "Select's bar's Delete takes them off at once too");
 }
 
+// The marker drawn across a pen's line and a box of typed words, held before its lift: what the screen shows round
+// them then is what it shows once the marker is dry, the ink and the words over it both times (the Ink README, The
+// book's frame). Pixels that differ by more than CLOSE in a channel are counted; a line that stays as it was changes
+// at most a few soft-edge pixels, a marker over the ink and the words hundreds.
+async function under(page, c, free, draw, pencil) {
+  await pick(page, 'Pen');
+  await draw([
+    [250, 140],
+    [250, 260],
+  ]);
+  await savedWhere(c, free.id, p => p.ink.length === 1);
+  await pick(page, 'Text');
+  const paper = await paperBox(page);
+  await page.mouse.click(paper.x + 120, paper.y + 300);
+  await page.keyboard.type('Keep these words');
+  await page.keyboard.press('Escape');
+  await savedWhere(c, free.id, p => p.texts.length === 1);
+  const words = await page.locator('#book .bk-typed-words').boundingBox();
+  await pick(page, 'Marker');
+  // (across the line, then down and back across the words)
+  const across = [
+      [150, 200],
+      [350, 200],
+      [words.x - paper.x + words.width + 10, words.y - paper.y + words.height / 2],
+      [words.x - paper.x - 40, words.y - paper.y + words.height / 2],
+    ].map(([x, y]) => [paper.x + x, paper.y + y]),
+    clip = {
+      x: Math.min(paper.x + 140, words.x - 16),
+      y: paper.y + 180,
+      width: Math.max(paper.x + 360, words.x + words.width + 20) - Math.min(paper.x + 140, words.x - 16),
+      height: words.y + words.height + 16 - (paper.y + 180),
+    };
+  const lift = await held(page, across, pencil);
+  await page.waitForTimeout(300);
+  const wet = await page.screenshot({ clip });
+  await lift();
+  // (the mouse off the words, which edge their box under a resting pointer)
+  if (!pencil) await page.mouse.move(paper.x + 20, paper.y + 20);
+  await savedWhere(c, free.id, p => p.ink.length === 2);
+  await page.waitForTimeout(300);
+  const dry = await page.screenshot({ clip }),
+    changed = await page.evaluate(differing, [wet.toString('base64'), dry.toString('base64'), CLOSE]);
+  assert.ok(changed <= STILL, `the marker over the ink and the words changed at its lift: ${changed} px differ`);
+}
+// a channel's difference above it is one an eye sees, and how many such pixels a line that stays as it was may show
+const CLOSE = 24,
+  STILL = 12;
+// A marker's line held down along points, by the mouse or the Pencil, resting at its end till the line has caught up
+// with it (ink.js follows a hand a little behind): → its lift
+async function held(page, points, pencil) {
+  const rest = Array(8).fill(points.at(-1));
+  if (pencil) {
+    const { along, up } = await pressAlong(page, dense(points), { lift: false });
+    await along(rest);
+    return up;
+  }
+  await page.mouse.move(...points[0]);
+  await page.mouse.down();
+  for (const point of points.slice(1)) await page.mouse.move(...point, { steps: 8 });
+  for (const point of rest) await page.mouse.move(...point);
+  return () => page.mouse.up();
+}
+// (in the page) How many pixels of two pictures of one box differ by more than close in a channel
+async function differing([a, b, close]) {
+  const pixels = async png => {
+    const bitmap = await createImageBitmap(await (await fetch(`data:image/png;base64,${png}`)).blob()),
+      g = new OffscreenCanvas(bitmap.width, bitmap.height).getContext('2d');
+    g.drawImage(bitmap, 0, 0);
+    return g.getImageData(0, 0, bitmap.width, bitmap.height).data;
+  };
+  const [p, q] = [await pixels(a), await pixels(b)];
+  let n = 0;
+  for (let i = 0; i < p.length; i += 4) if (Math.max(...[0, 1, 2].map(k => Math.abs(p[i + k] - q[i + k]))) > close) n++;
+  return n;
+}
+
 const offColumn = (ink, x) =>
   ink.every(stroke => stroke.points.every(point => point[0] < x) || stroke.points.every(point => point[0] > x));
 
@@ -170,11 +247,13 @@ async function stroke(page, points, pencil) {
     for (const point of points.slice(1)) await page.mouse.move(...point, { steps: 2 });
     return page.mouse.up();
   }
-  const dense = points.flatMap((point, i) => {
+  await pressAlong(page, dense(points));
+}
+// Points filled in no more than 6 px apart, as a Pencil reports them
+const dense = points =>
+  points.flatMap((point, i) => {
     if (!i) return [point];
     const previous = points[i - 1];
     const n = Math.max(1, Math.ceil(Math.hypot(point[0] - previous[0], point[1] - previous[1]) / 6));
     return Array.from({ length: n }, (_, j) => previous.map((v, k) => v + ((point[k] - v) * (j + 1)) / n));
   });
-  await pressAlong(page, dense);
-}

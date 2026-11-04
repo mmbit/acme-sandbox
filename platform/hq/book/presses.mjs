@@ -1,7 +1,7 @@
 // book-check.mjs's story of the book's sounds (shell/ink/booksounds.js), on
 // journal.mjs's My journal, on an iPad mini with touch and on a desktop: every press answers at once with a sound
 // (a tab, the page arrow, the page count and a page in its list, All pages, a page's tile, the dots), and a page
-// archived from its dots menu is heard crumpled at once and landing once it's thrown, within two seconds.
+// archived from its dots menu is heard crumpled at once and landing below once it has fallen, within two seconds.
 import assert from 'node:assert/strict';
 import { DESKTOP, LOADED_MS, MINI, OVERVIEW, until } from './kit.mjs';
 import { CALLS, landed, onJournal } from './journal.mjs';
@@ -11,16 +11,16 @@ export function pressesStories(c) {
   const touch = { hasTouch: true },
     mouse = { hasTouch: false, isMobile: false, deviceScaleFactor: 1 };
   return {
-    'every press in the book is heard at once, and a page archived is heard crumpled and thrown, on an iPad mini':
+    'every press in the book is heard at once, and a page archived is heard crumpled and fallen, on an iPad mini':
       browser => heard(browser, c, MINI, 'mini', touch),
-    'every press in the book is heard at once, and a page archived is heard crumpled and thrown, on a desktop':
+    'every press in the book is heard at once, and a page archived is heard crumpled and fallen, on a desktop':
       browser => heard(browser, c, DESKTOP, 'desktop', mouse),
   };
 }
 
-// a press is heard this soon (ms), and the thrown ball lands within this (ms after the press)
+// a press is heard this soon (ms), and the fallen ball lands within this (ms after the press)
 const AT_ONCE_MS = 250,
-  THROWN_MS = [500, 2000];
+  FALLEN_MS = [500, 2000];
 
 // What the page hears: each press's time (a click, as the book hears it), and when each sound the sound kit plays is
 // heard (a stereo buffer started: audio.js sample(); the rain's noise is mono)
@@ -75,12 +75,12 @@ const heard = (browser, c, viewport, name, options) =>
       p.locator('#book .bk-more-card').getByRole('menuitem', { name: 'Archive this page', exact: true }),
       'Archive this page',
     );
-    // (the press and the crunch at once, then the ball landing out of sight)
+    // (the press and the crunch at once, then the ball landing out of sight below)
     const sounds = await afterPress(p, 3, `${name}: the page archived`);
     assert.ok(sounds.filter(s => s < AT_ONCE_MS).length >= 2, `${name}: pressed and crumpled at once (${sounds})`);
     assert.ok(
-      sounds.some(s => s >= THROWN_MS[0] && s <= THROWN_MS[1]),
-      `${name}: the thrown ball heard landing within two seconds (${sounds})`,
+      sounds.some(s => s >= FALLEN_MS[0] && s <= FALLEN_MS[1]),
+      `${name}: the fallen ball heard landing within two seconds (${sounds})`,
     );
     await c.shot(`presses-${name}`, p);
   });

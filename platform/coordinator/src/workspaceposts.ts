@@ -104,6 +104,7 @@ export function putFile(given: Record<string, unknown>, by: Poster) {
     const fields = { uid, workspace: row.uid, path, sha256, size: bytes.length, note, agent: by.agent, at };
     const seq = links.record(row.link, { kind: 'file', ...fields });
     insert('workspace_files', { ...fields, workspace: row.id, ours: 1, seq });
+    files.clearOld();
   });
   return { path, version: versionsOf(row.id, path).length };
 }

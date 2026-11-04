@@ -2,7 +2,7 @@
 // along): a case of its own for the person who handles these, with the customer's own words and the moment the chat
 // received them. It needs no yes and no ask for a person. The knowledge never answers or closes it (answers.ts takes
 // questions only) and no model drafts its reply (drafts.ts), so it waits in HQ until a person handles it.
-import { db, now } from './db.ts';
+import { db, now, caseRef } from './db.ts';
 import { t, mask } from './texts.ts';
 import { settings, nameOf } from './company.ts';
 import { healthTerm } from '../public/health.js';
@@ -155,7 +155,7 @@ function others(conversation: number | null, email: string | null, self: number)
   const rows = db
     .prepare('select id, app from cases where id != ? and (conversation = ? or lower(email) = lower(?)) order by id')
     .all(self, conversation, email) as any[];
-  return rows.map(x => `H-${1000 + x.id} (${nameOf(x.app)})`);
+  return rows.map(x => `${caseRef(x.id)} (${nameOf(x.app)})`);
 }
 
 // a moment and a day on the company's clock, as the person handling it reads them

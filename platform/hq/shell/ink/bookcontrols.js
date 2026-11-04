@@ -8,7 +8,8 @@
 // tearing it off at its spine's edge onto Submit (booktear.js). Once sent it's locked: the tools go, Undo and Redo with
 // them, and on a sketch page Duplicate takes their place, a copy to carry on drawing from (bookpages.js). An invited
 // person's page goes by its Send key on the bar (bookpagesend.js), never on a page already sent or a call's notes page.
-import { button, island, setPressed, lineIcon, beside, DUPLICATE_ICON } from './bookui.js';
+import { button, island, setPressed, beside } from './bookui.js';
+import { icon } from '../icons.js';
 import { mountPrefs } from './bookprefs.js';
 import { esc } from '../../util.js';
 import { nameOf } from './bookhead.js';
@@ -16,27 +17,6 @@ import { shut } from './booksave.js';
 import { editTitle } from './booktitle.js';
 import { mountForYou } from './bookforyou.js';
 import { indexesIn } from './notebookchapters.js';
-
-const ICONS = {
-  // (the notebook's pages laid out: four leaves in a grid, as far apart top to bottom as side to side.)
-  overview: lineIcon(
-    '<rect x="4" y="3" width="6.5" height="7.5" rx="1.2"/><rect x="13.5" y="3" width="6.5" height="7.5" rx="1.2"/><rect x="4" y="13.5" width="6.5" height="7.5" rx="1.2"/><rect x="13.5" y="13.5" width="6.5" height="7.5" rx="1.2"/>',
-  ),
-  before: lineIcon('<path d="M14.5 6l-6 6 6 6"/>'),
-  after: lineIcon('<path d="M9.5 6l6 6-6 6"/>'),
-  page: lineIcon('<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4M12 11v6M9 14h6"/>'),
-  // (a paper plane)
-  send: lineIcon('<path d="M21 3L3 10.5l7 2.5 2.5 7z"/><path d="M21 3l-11 10"/>'),
-  // (a padlock, shut)
-  lock: lineIcon('<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>'),
-  // (a box with its lid, as the overview's)
-  archive: lineIcon(
-    '<rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8"/><path d="M10 12h4"/>',
-  ),
-  cog: lineIcon(
-    '<circle cx="12" cy="12" r="3"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M5.5 18.5l1.7-1.7M16.8 7.2l1.7-1.7"/><circle cx="12" cy="12" r="6.4"/>',
-  ),
-};
 import { scope, word } from './bookscope.js';
 
 // book (bookpages.js): { views, cur }. act: what the controls do, bookpages.js's: overview(), level(), turnTo(i),
@@ -44,13 +24,13 @@ import { scope, word } from './bookscope.js';
 // { update() }: the controls say where the book is now.
 export function mountControls(book, act) {
   const over = button({
-      icon: ICONS.overview,
+      icon: icon('grid'),
       label: word('allPages'),
       onClick: () => act.overview(),
       pressed: false,
     }),
-    cog = button({ icon: ICONS.cog, label: word('preferences') });
-  over.classList.add('bk-rare', 'bk-overview-key');
+    cog = button({ icon: icon('app-settings'), label: word('preferences') });
+  over.classList.add('bk-overview-key');
   cog.classList.add('bk-cog');
   mountPrefs(cog);
   const { before, after, name, add } = pageButtons(book, act);
@@ -115,13 +95,13 @@ function named(name, page, at, n) {
 }
 
 // The pages' buttons: the page before and after, where it is (the notebook's pages), and New page (.bk-rare: in the
-// dots menu where the page is narrow, bookstrip.css)
+// dots menu, bookstrip.css)
 function pageButtons(book, act) {
   const name = button({ label: word('notebookPages'), onClick: () => menu(book, act, name) }),
-    before = button({ icon: ICONS.before, label: word('pageBefore'), onClick: () => turnOn(book, act, -1) }),
-    after = button({ icon: ICONS.after, label: word('pageAfter'), onClick: () => turnOn(book, act, 1) }),
+    before = button({ icon: icon('prev'), label: word('pageBefore'), onClick: () => turnOn(book, act, -1) }),
+    after = button({ icon: icon('next'), label: word('pageAfter'), onClick: () => turnOn(book, act, 1) }),
     add = button({
-      icon: ICONS.page,
+      icon: icon('page-new'),
       label: word('newPage'),
       keys: word('newPageHint'),
       onClick: () => act.newPage(),
@@ -144,7 +124,7 @@ function turnOn(book, act, step) {
 // An invited person's Send, on the bar before its dots
 function sendKey(act) {
   const send = button({
-    icon: ICONS.send,
+    icon: icon('send'),
     label: word('send'),
     keys: word('sendHint'),
     onClick: () => act.send(),
@@ -155,7 +135,7 @@ function sendKey(act) {
 }
 // Archive this page, in the dots menu
 function archiveKey(act) {
-  const archive = button({ icon: ICONS.archive, label: word('archivePage'), onClick: () => act.archive() });
+  const archive = button({ icon: icon('box'), label: word('archivePage'), onClick: () => act.archive() });
   island('menu').append(archive);
   return archive;
 }
@@ -168,14 +148,14 @@ function lockLine(act) {
   const line = island('tools').closest('.bk-strip'),
     lock = document.createElement('p'),
     copy = button({
-      icon: DUPLICATE_ICON,
+      icon: icon('duplicate'),
       text: word('duplicate'),
       label: word('duplicatePage'),
       keys: word('duplicatePageHint'),
       onClick: () => act.duplicate(),
     });
   lock.className = 'bk-locked';
-  lock.innerHTML = `${ICONS.lock}<span>Locked</span>`;
+  lock.innerHTML = `${icon('lock')}<span>Locked</span>`;
   lock.setAttribute('role', 'status');
   copy.classList.add('bk-duplicate');
   line.append(lock, copy);

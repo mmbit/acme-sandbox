@@ -157,3 +157,24 @@ export const CATCH_UP = 160;
 export const easeInOut = t => (t < 0.5 ? 4 * t ** 3 : 1 - (-2 * t + 2) ** 3 / 2);
 // How long the open book stays put under a held finger after it lands before a drag resizes it (ms): its weight
 export const HOLD = 200;
+
+// Whether HQ's page blurs as it dissolves, judged swing by swing on the device's own count (bookswing.js keeps it). A
+// swing is slow when the median of its dissolve frames' real times is over SLOW_FRAME (s): the median, so a frame or
+// two of the pages painting as the book shows don't make it slow. Blurred swings slow SLOW_RUN in a row turn the blur
+// off: a passing slow moment on a fast machine (a heavy page, a busy tab) is one swing, and the next fast one forgets
+// it. Off, the blur is tried again on every RETRY-th swing: a slow try keeps it off, a fast one brings it back, as a
+// device is no slower for good than its page, browser or screen at the time.
+export const SLOW_FRAME = 1 / 45,
+  SLOW_RUN = 3,
+  RETRY = 10;
+// The count: blurred swings slow in a row, then one more for each swing while the blur's off, up to TRIED, the count on
+// the swing that tries the blur again
+const TRIED = SLOW_RUN + RETRY - 1;
+export const blurs = count => count < SLOW_RUN || count >= TRIED;
+// The count after a swing, from its dissolve frames' real times (s) and whether it blurred; under three, no verdict
+export function judged(count, frames, blurred) {
+  if (frames.length < 3) return count;
+  if (!blurred) return count + 1;
+  const sorted = [...frames].sort((p, q) => p - q);
+  return sorted[sorted.length >> 1] > SLOW_FRAME ? Math.min(count + 1, SLOW_RUN) : 0;
+}

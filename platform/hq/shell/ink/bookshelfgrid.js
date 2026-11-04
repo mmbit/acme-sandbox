@@ -10,10 +10,11 @@ export function gridOf(width, { least, gap, most = Infinity }) {
 }
 
 // The Shelf's bookcase: its books at least this wide, this far apart (bookshelfbooks.css --bk-book-gap), at most this
-// many to a board and this wide; the plant's room at a board's end (its width and the gap before it)
+// many to a board and this wide; the plant's room at a board's end (its width and the gap before it:
+// bookshelfbooks.css)
 const BOOKS = { least: 136, gap: 26, most: 6 },
   BOOK_MOST = 150,
-  PLANT_ROOM = 72;
+  PLANT_ROOM = 88;
 // The bookcase's boards across a width (px): the books to a board and how wide each stands (two on a phone, three in
 // the window beside the plant on an iPad), the plant at the end of the first board where its books leave it room
 // ('first'; else 'last', beside the Archive's box), and how far in from each side a board's things start, centred.

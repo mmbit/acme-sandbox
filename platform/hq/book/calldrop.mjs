@@ -8,6 +8,7 @@ import { spineOf } from './tearing.mjs';
 import { inputs } from './hands.mjs';
 import { minimiseCall } from './callview.mjs';
 import { MINI, UPRIGHT, middleOf, until } from './kit.mjs';
+import { watchedPage } from './start.mjs';
 
 export function callDropStories(c) {
   return Object.fromEntries(
@@ -28,10 +29,8 @@ async function waitingCall(browser, c, viewport) {
   await context.route(`${c.base}/api/pictures**`, route =>
     route.fulfill({ json: { id: ++uploaded, type: 'image/jpeg' } }),
   );
-  const page = await context.newPage(),
-    errors = [];
+  const { page, errors } = await watchedPage(context);
   const hand = await inputs(browser, page);
-  page.on('pageerror', error => errors.push(error.message));
   try {
     await page.goto(`${c.base}/?intro=0&open=intercom&renderer=brownstone`);
     await page.waitForSelector('#loading.gone');

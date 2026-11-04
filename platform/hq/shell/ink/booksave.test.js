@@ -84,7 +84,7 @@ function bookOf(page) {
     redraws: 0,
     refuse: words => (view.said = words),
   };
-  const book = { dev: false, size: { w: 0, h: 0 }, views: [view], view, undone: [] };
+  const book = { dev: false, size: { w: 0, h: 0, top: 0, right: 0 }, views: [view], view, undone: [] };
   book.steps = stepList(book);
   return book;
 }
@@ -221,7 +221,7 @@ test("the board's Undo takes back only its own: a call agent's change read in be
   assert.ok(store.groups.has(theirs));
 });
 
-// (a stroke moved as Select moves it: its new self in its place, kept as its replacement, bookselect.js swapIn)
+// (a stroke moved as Select moves it: its new self in its place, kept as its replacement, bookedit.js swapIn)
 const moved = (book, hooks, from, x) =>
   edit(book, book.view, hooks, p => {
     const now = { ...from, points: line(x).points };

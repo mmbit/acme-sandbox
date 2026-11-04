@@ -22,6 +22,7 @@ import { setScope, word } from './bookscope.js';
 import { useFaces } from './bookfaces.js';
 import { STYLES } from './bookstyles.js';
 import { mountTones, tones, cover } from './booktable.js';
+import { ROOM_MS, toRoom } from './bookroom.js';
 import { namePhone } from './bookasks.js';
 import * as bookstage from './bookstage.js';
 import { undoKeys } from './bookundokeys.js';
@@ -31,10 +32,6 @@ import { pressesHeard } from './booksounds.js';
 // How long the book slides from one open width to another, pushed aside quick and soft (the swing's: bookswing.js)
 const SLIDE_MS = 240,
   SLIDE_EASE = 'cubic-bezier(0.2, 0.75, 0.25, 1)';
-// HQ's page going to its new room as the book lands: dimmed this quickly to this much (never to black: HQ's ground is
-// dark), laid out, and back in, never an instant jump
-const ROOM_MS = { out: 70, in: 130 },
-  ROOM_DIM = 0.35;
 // With reduced motion the book fades in or out instead, this quickly
 const FADE_MS = 140;
 
@@ -193,6 +190,7 @@ function mountSwing() {
       shift(0);
       away(false);
       if (at.spread) cover(parts.table, true);
+      whole(at.spread);
     },
     widen,
     laidOpen: () => drawn.mode === 'open' && !over,
@@ -235,6 +233,7 @@ function glide(to) {
   moving = movers().map(el => el.animate(frames, timing));
   shift(target.x - laid.x);
   placed = target;
+  whole(to.mode === 'spread');
   const mine = moving;
   mine[0].finished.then(
     () => moving === mine && show(to, { fade: true }),
@@ -277,6 +276,9 @@ const given = l => (over ? 0 : Math.round(l.room));
 // (the spread's margin from the screen's left edge, as the book has at the others: book.css's --bk-gap, none upright)
 const margin = () => parseFloat(getComputedStyle(root).getPropertyValue('--bk-gap'));
 const upright = () => matchMedia('(orientation: portrait)').matches;
+// The book's page the whole screen where it's going (upright, shut or the spread), not beside HQ's page: data-whole on
+// #book, which the bookmarks lie by (bookmarks.js), set as the book's laid out or sets off
+const whole = on => root.toggleAttribute('data-whole', on && upright());
 // The parts laid out where they are (the book at rest): the room HQ's page gives up (faded into when the board moved
 // the book), the table under it, the cover's edge, the leaf (at least to the screen's right edge) and the pull tab at
 // the cover's edge, none moved by a transform
@@ -289,6 +291,7 @@ function place(at, mode, fade) {
   document.documentElement.style.setProperty('--book-over', `${over ? Math.round(room) : 0}px`);
   tones(); // (the table shows round the resting book)
   root.dataset.mode = mode;
+  whole(mode !== 'open');
   cover(parts.table, mode === 'spread', room, fade ? ROOM_MS.out + ROOM_MS.in : 0);
   parts.edge.style.left = `${x}px`;
   parts.leaf.style.left = `${x + EDGE}px`;
@@ -303,31 +306,6 @@ function away(on) {
   root.classList.toggle('bk-away', on);
   pages.away(on);
 }
-// HQ's page in its new room: at once at the start and on a new window size; when the board moved the book, a quick
-// fade out, laid out, and in again, so the page never jumps. The page takes input all the while.
-let roomFade = null;
-function toRoom(px, fade) {
-  const html = document.documentElement.style,
-    was = html.getPropertyValue('--book-room');
-  roomFade?.cancel();
-  roomFade = null;
-  document.body.getAnimations().forEach(a => a.id === 'bk-room' && a.cancel());
-  if (was === `${px}px`) return;
-  if (!fade || !was) return html.setProperty('--book-room', `${px}px`);
-  const out = (roomFade = fadeBody([1, ROOM_DIM], { duration: ROOM_MS.out, fill: 'forwards' }));
-  // (a fade overtaken by the next move leaves the room to that one)
-  out.finished.then(
-    () => {
-      if (roomFade !== out) return;
-      html.setProperty('--book-room', `${px}px`);
-      out.cancel();
-      fadeBody([ROOM_DIM, 1], { duration: ROOM_MS.in, easing: 'ease-out' });
-    },
-    () => {},
-  );
-}
-const fadeBody = ([from, to], timing) =>
-  document.body.animate([{ opacity: from }, { opacity: to }], { id: 'bk-room', ...timing });
 // Mid-drag: the parts moved to an edge by a transform from where they're laid out, the leaf laid out wider only when
 // the book's pulled wider than it is. width: what the book's paper is then.
 function hold(at) {

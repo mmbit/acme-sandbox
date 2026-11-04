@@ -51,3 +51,16 @@ test('every drawing is an SVG with a viewBox, inked in the text colour', () => {
     }
   }
 });
+
+test("every icon the shell and the looks name is in the set, the book's too", () => {
+  const scripts = ['shell', 'renderers'].flatMap(dir =>
+    readdirSync(join(HQ, dir), { recursive: true })
+      .filter(f => f.endsWith('.js') && !f.endsWith('.test.js'))
+      .map(f => join(HQ, dir, f)),
+  );
+  const named = new Set(
+    scripts.flatMap(file => [...readFileSync(file, 'utf8').matchAll(/\bicon\('([a-z0-9-]+)'/g)].map(m => m[1])),
+  );
+  assert.ok(named.has('tool-pen'), "the book's tools are found");
+  assert.deepEqual([...named].filter(n => !every.includes(n)).sort(), [], 'named in code, drawn in no style');
+});

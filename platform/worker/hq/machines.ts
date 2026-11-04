@@ -27,7 +27,8 @@ export type Machine = {
     // the kinds whose helpers on it are asking for work or beating
     kinds: string[];
     // its manager while its helpers ask: in step, on code HQ no longer serves, or not heard from for hours (null: none)
-    manager?: { state: 'current' | 'old' | 'quiet'; seen: string } | null;
+    // ('updating')
+    manager?: { state: 'current' | 'updating' | 'old' | 'quiet'; seen: string } | null;
     // why its helpers aren't in step, as its manager last said while it still calls, helpers present or not: { helper's
     // container: message }
     problems?: Record<string, string>;
@@ -110,6 +111,7 @@ function machineLine({ speed, cpus, memoryGb, gpu, kinds }: Machine['machines'][
 
 function managerLine({ manager }: Machine['machines'][number]) {
   if (!manager || manager.state === 'current') return '';
+  if (manager.state === 'updating') return ", its manager is taking HQ's new code";
   const what =
     manager.state === 'old'
       ? "runs old code (it stops at the machine's next restart)"

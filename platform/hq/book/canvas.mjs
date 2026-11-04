@@ -4,8 +4,8 @@
 // the word reaches, the page pans sideways to it.
 // And it zooms and pans as a near-endless canvas (bookview.js): on an iPad mini two fingers pinch it out and pan it past
 // the first screen, the Pencil writes there, pinched in it writes big and sharp, a reload opens it where it was left and
-// pinched out all of it shows; on a desktop a trackpad's pinch zooms about the pointer and the wheel takes it up and left
-// of its origin, where the mouse draws.
+// pinched out all of it shows; on a desktop a trackpad's pinch zooms about the pointer, the wheel never takes it above
+// or left of its corner, its title's, and takes it down and right, where the mouse draws (the corner).
 import assert from 'node:assert/strict';
 import { DESKTOP, MINI, UPRIGHT, until } from './kit.mjs';
 import { mini } from './start.mjs';
@@ -21,8 +21,8 @@ export const canvasStories = c => ({
   'a sketch stays where it was drawn as the notebook is resized (phone)': browser => onPhone(browser, c),
   'a sketch page pinch-zooms and pans past its first screen, the Pencil writing there (iPad mini)': browser =>
     zoomedOnMini(browser, c),
-  'a sketch page zooms by a trackpad and pans up and left of its origin, the mouse drawing there (desktop)': browser =>
-    zoomedOnDesktop(browser, c),
+  'a sketch page zooms by a trackpad, never pans past its corner, and pans down and right, the mouse drawing there (desktop)':
+    browser => zoomedOnDesktop(browser, c),
 });
 
 async function zoomedOnMini(browser, c) {
@@ -153,15 +153,19 @@ async function zoomedOnDesktop(browser, c) {
       Math.abs(still.x - under.x) < 1 && Math.abs(still.y - under.y) < 1,
       `about the pointer: ${JSON.stringify({ under, still })}`,
     );
-    // the wheel takes it up and left of the page's origin, and the mouse draws there
+    // the wheel never takes it above or left of the page's corner; down and right it does, and the mouse draws there
     await s.page.mouse.move(...at);
     for (let k = 0; k < 4; k++) await s.page.mouse.wheel(-300, -300);
     await s.page.waitForTimeout(800);
+    const held = await viewNow(s.page);
+    assert.ok(held.x === 0 && held.y === 0, `held at the page's corner: ${JSON.stringify(held)}`);
+    for (let k = 0; k < 4; k++) await s.page.mouse.wheel(300, 300);
+    await s.page.waitForTimeout(800);
     const v = await viewNow(s.page);
-    assert.ok(v.x < -100 && v.y < -100, `panned up and left of the origin: ${JSON.stringify(v)}`);
+    assert.ok(v.x > 100 && v.y > 100, `panned down and right: ${JSON.stringify(v)}`);
     await zigzag(points => mouseStroke(s.page, points), [at[0] - 100, at[1]], 2);
     const unit = await savedUnit(c, sheet, 1);
-    assert.ok(unit.x < 0 && unit.y < 0, `saved up and left of the origin, where it was drawn: ${JSON.stringify(unit)}`);
+    assert.ok(unit.x > v.x && unit.y > v.y, `saved down and right, where it was drawn: ${JSON.stringify(unit)}`);
     await c.shot('book-canvas-zoom-desktop', s.page);
     c.noErrorsIn(s.errors);
   } catch (e) {

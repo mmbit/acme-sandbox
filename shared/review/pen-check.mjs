@@ -595,7 +595,7 @@ for (let i = 0; i < 64; i++) {
     y = 340 + Math.floor(i / 7) * 45; // (left of the sheet)
   await page.mouse.move(x, y);
   await page.mouse.down();
-  await page.mouse.move(x + 30, y + 30, { steps: 3 });
+  await page.mouse.move(x + 36, y + 36, { steps: 4 });
   await page.mouse.up();
 }
 assert.match(await page.locator(inUi('.msg')).innerText(), /64 lines at most/, 'the 65th line is refused, and said');

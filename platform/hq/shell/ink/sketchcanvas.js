@@ -12,6 +12,44 @@ export const isCanvas = chapter => chapter === 'sketch';
 // Whether a request's place is one: { x, y }, finite page px
 /** @param {any} v @returns {v is { x: number, y: number }} */
 export const isPlace = v => typeof v === 'object' && Number.isFinite(v?.x) && Number.isFinite(v?.y);
+// Whether a request's push is one: { top, from, x0, x1, by }, finite page px, by above 0
+/** @param {any} v @returns {v is { top: number, from: number, x0: number, x1: number, by: number }} */
+export const isPush = v =>
+  typeof v === 'object' && ['top', 'from', 'x0', 'x1', 'by'].every(k => Number.isFinite(v?.[k])) && v.by > 0;
+
+// How far above a dated scrap's top its date's line starts (its words 14 px down it, bookgroups.css .bk-day), and the
+// room a scrap of a later day gets above it to hold it, as it lands (page px)
+export const DATE_ABOVE = 34;
+const DATED = 20;
+
+// The dates on a canvas: over each of our scraps that's the first of a later day than the page's so far (first: the
+// page's own, in its head), that day's date just above its top-left, as a scrap taped into a sketchbook on another day
+// gets its date; the board's own drawing never dates anything, so free drawing puts no dates on the page (README, Our
+// scraps). units: [{ id, day?, drawn? }] in the page's order; places: id → { x, y }. → [{ day, x, y }] (page px).
+export function daysOf(units, places, first) {
+  let shown = first;
+  const out = [];
+  for (const u of units) {
+    const at = places.get(u.id);
+    if (u.drawn || !u.day || (shown && u.day <= shown) || !at) continue;
+    if (shown) out.push({ day: u.day, x: at.x, y: at.y - DATE_ABOVE });
+    shown = u.day;
+  }
+  return out;
+}
+
+// A note's room dragged taller on a canvas opens room on the page: everything placed at or below its foot as it was
+// (push.from, page px), and whatever starts under the note itself (below its top, push.top, across its width, x0 to
+// x1), moves down as far as the room grew (push.by), so it never runs one note under another; whatever starts beside it
+// stays where it is (README, Our scraps). Shrinking moves nothing. places: [{ id, place }] → the moved ones, [{ id,
+// place }].
+export function pushedDown(places, push) {
+  if (!isPush(push)) return [];
+  const under = ({ x, y }) => y >= push.from || (y > push.top && x < push.x1 && x + UNIT_W > push.x0);
+  return places
+    .filter(u => u.place && under(u.place))
+    .map(u => ({ id: u.id, place: { ...u.place, y: u.place.y + push.by } }));
+}
 
 // The units' places on a canvas. units: [{ id, h, w, below, place?, day?, follows?, column? }] in the page's order, h
 // tall and w wide (what's drawn on it too, from its place's left) in page px, below: how tall what hangs under it is
@@ -43,7 +81,10 @@ export function canvasOf(units, width, edge = { x: 0, y: 0 }) {
     taken.push(...linesOf(tie));
   }
   const loose = units.filter(u => !u.place).map((u, k) => ({ ...u, h: u.h + u.below, ...(!k && { follows: false }) })),
-    top = Math.max(edge.y, ...taken.map(b => b.y + b.h + GAP - MARGIN)),
+    // (a scrap come on a later day than everything placed lands with room above it for its date: daysOf)
+    latest = placed.reduce((d, u) => (u.day > d ? u.day : d), ''),
+    dated = placed.length && loose[0] && !loose[0].drawn && loose[0].day > latest ? DATED : 0,
+    top = Math.max(edge.y, ...taken.map(b => b.y + b.h + GAP - MARGIN)) + dated,
     laid = layout(loose, width),
     s = laid.scale,
     at = new Map(laid.places.map(p => [p.id, { x: (p.x + edge.x) / s, y: p.y / s + top }]));

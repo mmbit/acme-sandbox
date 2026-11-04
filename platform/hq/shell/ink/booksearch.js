@@ -5,6 +5,7 @@
 // store's route is booksearch.ts (played in dev mode by notebookplay.js), the matching booksearchwords.js. It finds in
 // every notebook of the board's own.
 import { esc, titleCase } from '../../util.js';
+import { icon } from '../icons.js';
 import * as world from '../../world/world.js';
 import { ask as fromStore } from './notebookdata.js';
 import { dayName } from './bookhead.js';
@@ -13,10 +14,8 @@ import { marked, termsOf } from './booksearchwords.js';
 // a pause in the writing this long asks the store (Scribble's words land a word at a time)
 const ASK_MS = 150;
 
-const LENS =
-  '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10" cy="10" r="6.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M15 15l5.5 5.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
 const HTML = `<div class="bk-find" role="search">
-  <label class="bk-find-line">${LENS}<input type="search" enterkeyhint="search" autocomplete="off" autocapitalize="off"
+  <label class="bk-find-line">${icon('find')}<input type="search" enterkeyhint="search" autocomplete="off" autocapitalize="off"
     spellcheck="false" placeholder="Search the book" aria-label="Search the book"></label>
   <div class="bk-find-list" hidden><p class="bk-find-say" role="status"></p><ol class="bk-found"></ol></div></div>`;
 

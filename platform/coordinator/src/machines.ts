@@ -24,6 +24,8 @@ export type Machine = {
   // its manager's last setup call, and the hash of the code it said it runs (null: one that says none, older than that)
   manager_seen: string | null;
   manager_code: string | null;
+  // 1 where it said it follows HQ's code (it starts again on new code by itself), 0 for one pinned to its code
+  manager_follows: number;
   // why its helpers aren't in step, as its manager's last setup call said ({ helper's container: message }, JSON), or
   // null for none
   manager_problems: string | null;
@@ -62,8 +64,14 @@ const ENDED_LINES_MS = 10 * 60_000;
 
 db.exec(`create table if not exists machines (id integer primary key autoincrement, name text not null,
   key_hash text not null unique, gpu text, paused integer not null default 0, added text not null, seen text, body text,
-  glow text, manager_seen text, manager_code text, manager_problems text)`);
-for (const column of ['manager_seen text', 'manager_code text', 'manager_problems text'])
+  glow text, manager_seen text, manager_code text, manager_problems text, manager_follows integer not null default 0)`);
+// (manager_follows)
+for (const column of [
+  'manager_seen text',
+  'manager_code text',
+  'manager_problems text',
+  'manager_follows integer not null default 0',
+])
   if (!columnsOf('machines').includes(column.split(' ')[0])) db.exec(`alter table machines add column ${column}`);
 db.exec(`create table if not exists machine_kinds (machine integer not null, kind text not null, asked text,
   seen text not null, cpus integer, memory_gb integer, speed integer, primary key (machine, kind))`);
@@ -192,16 +200,19 @@ export function heard(machine: number, kind: string, report: unknown, asked: boo
 }
 
 // Its manager's setup call (each minute, platform/helper/manager.mjs), with the hash of the code it runs where it says one,
-// and why its helpers aren't in step where it says
+// whether it follows HQ's code, and why its helpers aren't in step where it says
 export function managerHeard(machine: number, said: unknown) {
   const code = isMap(said) && typeof said.code === 'string' && /^[0-9a-f]{64}$/.test(said.code) ? said.code : null;
   const problems = Object.entries(isMap(said) && isMap(said.problems) ? said.problems : {})
     .filter(([name, message]) => /^[\w.-]{1,80}$/.test(name) && typeof message === 'string')
     .slice(0, PROBLEMS_KEPT)
     .map(([name, message]) => [name, (message as string).replace(/\p{Cc}/gu, ' ').slice(0, LINE_MAX_CHARS)]);
-  db.prepare('update machines set manager_seen = ?, manager_code = ?, manager_problems = ? where id = ?').run(
+  db.prepare(
+    'update machines set manager_seen = ?, manager_code = ?, manager_follows = ?, manager_problems = ? where id = ?',
+  ).run(
     new Date().toISOString(),
     code,
+    isMap(said) && said.follows === true ? 1 : 0,
     problems.length ? JSON.stringify(Object.fromEntries(problems)) : null,
     machine,
   );

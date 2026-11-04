@@ -5,7 +5,7 @@
 // why in their place.
 import assert from 'node:assert/strict';
 import { inStory } from './answers.mjs';
-import { FEED_MS, clearOfTools, layer, triedNote } from './answersplay.mjs';
+import { FEED_MS, layer, onPaper, triedNote } from './answersplay.mjs';
 
 // c: book-check's { hqIn, base, store, pages, posts, org, shot, settled, settle, MINI, PHONE, DESKTOP }
 export function versionStories(c) {
@@ -73,5 +73,5 @@ async function under(page, g) {
     at && unit && at.top >= unit.bottom && at.left >= unit.left - 1 && at.right <= unit.right + 1,
     `under the note's unit: ${JSON.stringify([at, unit])}`,
   );
-  await clearOfTools(page, '.bk-versions');
+  await onPaper(page, '.bk-versions');
 }

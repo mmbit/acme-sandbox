@@ -3,17 +3,24 @@
 // bridge:
 //   - the pen picked, the shell is told where the paper is on the screen and the pen's ink;
 //   - a stroke the shell hands back lands on the page shown as the pen's line, its pressure kept, saved to the store;
-//   - a tap the shell hands back is a click where it tapped: on the Eraser, which takes the Pencil back to the page.
+//   - a tap the shell hands back is a click where it tapped: on the Eraser, which takes the Pencil back to the page;
+//   - while an answer's slide has lent the zoom, the shell is told the pen's width at the board's zoom. The Pencil
+//     touching the paper gives that zoom back, and the stroke then drawn lands as drawn at it.
 import assert from 'node:assert/strict';
 import { open } from './notebook.mjs';
 import { tool } from './notebookscreen.mjs';
 import { MINI, middleOf, until } from './kit.mjs';
+import { inStory, slipOf, WENT_LIVE } from './answers.mjs';
+import { FEED_MS, notebookOn } from './answersplay.mjs';
+import { viewNow } from './canvas.mjs';
 
-// c: book-check.mjs's hqIn, base, settled, shot, noErrorsIn
+// c: book-check.mjs's hqIn, base, settled, shot, noErrorsIn, org, settle
 export function nativeStories(c) {
   return {
     "the native shell: the Pencil drawn by the shell lands as the pen's line, a tap a click": browser =>
       inShell(browser, c),
+    "an answer in the native shell: the board's Pencil on the paper gives its zoom back, and its stroke lands as drawn":
+      browser => lentZoom(browser, c),
   };
 }
 
@@ -67,13 +74,76 @@ async function inShell(browser, c) {
   }
 }
 
-// A place on the paper on the screen with bare page under a wave's width (130 × 30 px) from it
+// In a native shell that draws the Pencil itself (booknative.js): a tall note's answer slid into sight zooms out to
+// show both. The Pencil touching the paper gives the board's zoom back (bookgroupshow.js giveBack), as a press does in a
+// browser, so the stroke the shell then draws and plays to the page lands as large as it was drawn at the board's zoom
+async function lentZoom(browser, c) {
+  const nb = notebookOn(c),
+    asked = Object.assign(nb.typed(4170, 'Is this live yet?', 60, 60), {
+      ink: [{ color: '#2b2230', size: 3, points: [20, 1000].map((y, k) => [24, y, 0.5, k * 40]) }],
+    });
+  nb.groups.push(asked);
+  const hqIn = async (...a) => {
+    const context = await c.hqIn(...a);
+    await context.addInitScript(standIn);
+    return context;
+  };
+  await inStory(browser, { ...c, hqIn }, { viewport: MINI, nb }, async (page, play) => {
+    await tool(page, 'Pen');
+    const { size } = await until(() => told(page).then(p => p?.tool === 'pen' && p), 'the shell told of the pen');
+    const { s: boardScale } = await viewNow(page);
+    const { id } = play.answer(asked.id, nb.answer(asked, 'text', WENT_LIVE));
+    await slipOf(page, asked, id).waitFor({ timeout: FEED_MS });
+    let lent;
+    await until(
+      async () => (lent = await stillView(page)) && lent.s < boardScale - 0.01,
+      () => `the paper zoomed out from ${boardScale} to show the note and its answer: ${JSON.stringify(lent)}`,
+      FEED_MS,
+    );
+    // (the shell's line as wide from its first point as the page's will be once the Pencil touches)
+    assert.equal((await told(page)).size, size, `the pen as wide as at the board's zoom while ${lent.s} is lent`);
+    const desk = await page.locator('#book .bk-desk').boundingBox(),
+      [x, y] = await bare(page, [desk.x, desk.y, desk.width, desk.height]),
+      // (a straight slant, every step alike)
+      points = Array.from({ length: 16 }, (_, i) => [x + i * 8, y - 15 + i * 2, 0.5, i * 8]),
+      was = new Set(lines(play).map(s => JSON.stringify(s)));
+    await page.evaluate(([x, y]) => window.shellPenDown(x, y), points[0]);
+    await atZoom(page, boardScale, 'as the Pencil touched the paper');
+    await page.evaluate(points => window.shellPen(points), points);
+    const line = await until(() => lines(play).find(s => !was.has(JSON.stringify(s))), 'the line saved', FEED_MS),
+      // (its last step, where the pen's smoothing has caught up with the hand: the smoothed line trails its ends, so
+      // its whole size is short of the hand's even at the right zoom. A step's size is the same wherever the store
+      // places the unit.)
+      [drawn, landed] = [points.map(([px, py]) => [px / boardScale, py / boardScale]), line.points].map(lastStep);
+    assert.ok(
+      drawn.every((v, k) => Math.abs(v - landed[k]) <= 0.5),
+      `the line as large as it was drawn at the board's zoom, ${boardScale}: ${landed} on the page, drawn ${drawn}`,
+    );
+    await atZoom(page, boardScale, 'once the line landed');
+  });
+}
+// (the board's zoom on the paper, when)
+async function atZoom(page, boardScale, when) {
+  const now = await viewNow(page);
+  assert.ok(Math.abs(now.s - boardScale) < 0.001, `the board's zoom ${boardScale} ${when}: ${JSON.stringify(now)}`);
+}
+// The view once the paper is still (viewNow), or null while it moves
+async function stillView(page) {
+  const was = await viewNow(page);
+  await page.waitForTimeout(300);
+  const now = await viewNow(page);
+  return JSON.stringify(was) === JSON.stringify(now) ? now : null;
+}
+// (the last step of points: [dx, dy])
+const lastStep = points => [0, 1].map(k => points.at(-1)[k] - points.at(-2)[k]);
+// A place on the paper on the screen with bare page under a wave's width (130 × 30 px) from it: no unit, box of words
+// or what hangs under them
 const bare = (page, [left, top, width, height]) =>
   page.evaluate(
     ([left, top, width, height]) => {
       const clear = (x, y) => {
         const el = document.elementFromPoint(x, y);
-        return !!el?.closest('#book .bk-desk') && !el.closest('.bk-unit, .bk-under, .bk-answers, button');
+        return !!el?.closest('#book .bk-desk') && !el.closest('.bk-unit, .bk-typed, .bk-under, .bk-answers, button');
       };
       for (let y = top + 60; y < top + height - 60; y += 20)
         for (let x = left + 40; x < left + width - 180; x += 20)

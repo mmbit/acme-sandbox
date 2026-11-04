@@ -21,14 +21,11 @@ export const CSS = `
 const TYPES = ['audio/webm;codecs=opus', 'audio/ogg;codecs=opus', 'audio/mp4', 'audio/webm'];
 export const canRecord = !!(window.isSecureContext && navigator.mediaDevices?.getUserMedia && window.MediaRecorder);
 
-// r.rec: the recording under way (heard in the board's language, which the coordinator reads). ctx: an audio context
-// made at an earlier gesture (pentouch.js: the pen's touch, the mic asked for only once it draws or holds.)
-export async function startMic(r, ctx = audioContext()) {
-  if (r.framed) {
-    ctx?.close?.();
-    return askHq(r);
-  }
-  const rec = (r.rec = { chunks: [], said: r.text.value.trim(), shown: [], taken: [], ctx });
+// r.rec: the recording under way (heard in the board's language, which the coordinator reads). Called in the mic's tap:
+// the audio context is made there, so Safari lets it run.
+export async function startMic(r) {
+  if (r.framed) return askHq(r);
+  const rec = (r.rec = { chunks: [], said: r.text.value.trim(), shown: [], taken: [], ctx: audioContext() });
   // What the reviewer types meanwhile stays: the words in the note then are theirs, and only words heard after go in
   rec.typed = () => {
     rec.said = r.text.value;
@@ -72,7 +69,7 @@ export async function startMic(r, ctx = audioContext()) {
   }
 }
 // The audio context, made at the tap, so Safari lets it run
-export const audioContext = () => {
+const audioContext = () => {
   const AC = window.AudioContext || window.webkitAudioContext;
   return AC ? new AC() : null;
 };

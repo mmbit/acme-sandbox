@@ -11,7 +11,7 @@ import * as kb from './kb.ts';
 import * as hq from './hq.ts';
 import { linksOk } from './engine.ts';
 import { healthTerm } from '../public/health.js';
-import { db, now } from './db.ts';
+import { db, now, caseRef, caseId } from './db.ts';
 import { t, lang as toLang, languageName, day } from './texts.ts';
 import { settings, nameOf } from './company.ts';
 
@@ -20,7 +20,6 @@ const TRIES = 3;             // model calls that failed (the provider, no answer
 const RETRY_MS = 5 * 60_000;
 const MAIL_TRIES = 5, MAIL_RETRY_MS = Number(process.env.CARE_MAIL_RETRY_MS ?? 60_000); // like the answer email (engine.ts)
 const EVERY_MS = 60_000;
-const ref = (id: number) => `H-${1000 + id}`;
 
 const ANSWER: model.ToolDef = { name: 'write_answer', description: 'The answer to the customer\'s question from the knowledge, or known: false if the knowledge doesn\'t answer it.',
   input_schema: { type: 'object', properties: { known: { type: 'boolean' }, answer: { type: 'string' } }, required: ['known', 'answer'], additionalProperties: false } };
@@ -59,11 +58,11 @@ async function write(c: any): Promise<string | null | undefined> {
     }
   } catch (err: any) {
     if (usage || out) row(ledger.estimate(usage, out, cached.length + content.length), true); // billed all the same
-    console.error(`care: case ${ref(c.id)}: the answer call failed (${err?.status ?? err?.name ?? 'error'})`);
+    console.error(`care: case ${caseRef(c.id)}: the answer call failed (${err?.status ?? err?.name ?? 'error'})`);
     return undefined;
   }
   row(usage ?? { input: 0, cacheWrite: 0, cacheRead: 0, output: 0 });
-  if (!input) { console.error(`care: case ${ref(c.id)}: the answer call ended without ${ANSWER.name}`); return undefined; }
+  if (!input) { console.error(`care: case ${caseRef(c.id)}: the answer call ended without ${ANSWER.name}`); return undefined; }
   const text = typeof input.answer === 'string' ? input.answer.trim().slice(0, 4000) : '';
   return input.known === true && text ? text : null;
 }
@@ -76,7 +75,7 @@ const note = (key: string, line: string) => { if (!said.has(key)) { said.add(key
 // left for HQ's card: the knowledge it couldn't be answered from is kept, so it's tried again only with new knowledge
 const leave = (c: any, why: string) => {
   db.prepare('update cases set answer = null, answer_tried = ? where id = ?').run(kb.version(c.app, toLang(c.lang)), c.id);
-  console.log(`care: case ${ref(c.id)}: not answered by email (${why}): left for HQ's card`);
+  console.log(`care: case ${caseRef(c.id)}: not answered by email (${why}): left for HQ's card`);
 };
 
 // why a named case isn't answered here, or null
@@ -98,7 +97,7 @@ export async function pass(at = now()) {
     const byRef = new Map<string, { folder: string; file: string }[]>();
     for (const n of kb.named()) byRef.set(n.ref, [...(byRef.get(n.ref) ?? []), n]); // named twice: answered once
     for (const [r, places] of byRef) {
-      const c = db.prepare('select * from cases where id = ?').get(Number(r.slice(2)) - 1000) as any;
+      const c = db.prepare('select * from cases where id = ?').get(caseId(r)) as any;
       const why = skip(c, places);
       if (why) { note(`${r} ${why}`, `care: ${r} (named in kb/${places[0].folder}/${places[0].file}): skipped, ${why}`); continue; }
       if (c.answer) { await mail(c, at); continue; }
@@ -117,7 +116,7 @@ export async function pass(at = now()) {
       if (text === null) { leave(c, 'the knowledge doesn\'t answer it'); continue; }
       if (!linksOk(text, c.email)) { leave(c, 'a web address that isn\'t ours'); continue; }
       const l = toLang(c.lang), name = nameOf(c.app);
-      const m = { to: c.email, subject: t('subject_team', l, { app: name, ref: ref(c.id) }), tries: 0, next: 0,
+      const m = { to: c.email, subject: t('subject_team', l, { app: name, ref: caseRef(c.id) }), tries: 0, next: 0,
         text: [t('team_intro', l, { app: name, date: day(c.created, l) }), text, t('team_reply', l), t('sign', l, { app: name })].join('\n\n') };
       // kept until it has gone: a failed send (the email service down) or a restart tries again. A case deleted while the
       // call ran (HQ's `erased`: the customer asked) stores nothing, and nothing goes
@@ -137,11 +136,11 @@ async function mail(c: any, at: number) {
     .catch((e: any) => ({ ok: false as const, error: e?.message }));
   if (x.ok) {
     db.prepare('update cases set answer = null, answered = ? where id = ?').run(now(), c.id);
-    console.log(`care: case ${ref(c.id)}: answered by email from the knowledge`);
+    console.log(`care: case ${caseRef(c.id)}: answered by email from the knowledge`);
     return hq.nudge();
   }
   m.tries = x.refused ? MAIL_TRIES : m.tries + 1;
-  console.error(`care: case ${ref(c.id)}: the answer email failed (${x.refused ? 'refused' : `try ${m.tries} of ${MAIL_TRIES}`}):`, x.error);
+  console.error(`care: case ${caseRef(c.id)}: the answer email failed (${x.refused ? 'refused' : `try ${m.tries} of ${MAIL_TRIES}`}):`, x.error);
   if (m.tries >= MAIL_TRIES) return leave(c, 'the email didn\'t go');
   m.next = at + MAIL_RETRY_MS * m.tries;
   db.prepare('update cases set answer = ? where id = ?').run(JSON.stringify(m), c.id);

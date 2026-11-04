@@ -10,6 +10,7 @@ import assert from 'node:assert/strict';
 import { playLine } from './call.mjs';
 // (the chapter's pick and the wait)
 import { LOADED_MS, atEverySize, pressAlong, toChapter, until } from './kit.mjs';
+import { watchedPage } from './start.mjs';
 const SIZES = {
   phone: { width: 390, height: 844 },
   'phone-sideways': { width: 844, height: 390 },
@@ -32,8 +33,7 @@ async function atSize(browser, c, name, { desktop, ...viewport }) {
   const touch = desktop ? { hasTouch: false, isMobile: false, deviceScaleFactor: 1 } : {},
     context = await c.hqIn(browser, viewport, { notebooks: {}, ...touch }),
     line = await playLine(context),
-    p = await context.newPage(),
-    errors = [],
+    { page: p, errors } = await watchedPage(context),
     seen = [],
     s = {
       p,
@@ -44,7 +44,6 @@ async function atSize(browser, c, name, { desktop, ...viewport }) {
       shot: step => c.shot(`call-${name}-${step}`, p),
       clear: async what => seen.push(...(await overlaps(p)).map(o => `${what}: ${o}`)),
     };
-  p.on('pageerror', e => errors.push(e.message));
   try {
     await p.goto(`${c.base}/?intro=0&open=intercom`);
     await p.waitForSelector('#loading.gone', { timeout: LOADED_MS });

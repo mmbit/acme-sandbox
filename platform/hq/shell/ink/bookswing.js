@@ -41,12 +41,10 @@ import {
   easeInOut,
   CATCH_UP,
   HOLD,
+  blurs,
+  judged,
 } from './bookswingmath.js';
 
-// HQ's page blurs as it dissolves only where frames keep up: the median of its last JUDGED frames slower than this (s)
-// turns the blur off on this device, then and there and for good (a plain fade instead)
-const SLOW_FRAME = 1 / 45,
-  JUDGED = 5;
 // Landed or shut, HQ's page stays gone while it lays itself out in its new room (SETTLE_MAX: bookswingmath.js); then it
 // comes back in over about three of these (s)
 const BACK_IN = 0.35;
@@ -71,7 +69,8 @@ let thudded = true,
   settle = 0,
   raf = 0,
   last = 0,
-  frames = [];
+  frames = [], // this swing's dissolve frames' real times (s), judged as it ends (bookswingmath.js blurs)
+  blurred = true; // HQ's page blurs as it dissolves in this swing (a plain fade where not)
 let shade,
   block,
   lipWidth = 22;
@@ -142,6 +141,7 @@ function begin(a, w) {
   body = { a, w };
   thudded = a > 0.05 ? false : true;
   frames = [];
+  blurred = blurs(store.get('book.slow', 0));
   root.dataset.mode = 'swing';
   root.classList.add('bk-swinging');
   host.moving(true);
@@ -172,7 +172,7 @@ function frame(t) {
     dt = Math.min(SWING.frame, real);
   last = t;
   if (mode) {
-    if (dis > 0 && dis < 1) judge(real);
+    if (dis > 0 && dis < 1) frames.push(real);
     if (mode === 'drag') resize(dt);
     // (held, the finger's angle; resizing, it lies flat whatever the finger does)
     body = step(body, dt, mode, hand && !hand.resize ? angleFor(hand.d, board()) : 0);
@@ -200,6 +200,7 @@ function frame(t) {
 const board = () => innerWidth - geo.x - shift;
 
 function landed() {
+  judge();
   mode = null;
   body = { a: 0, w: 0 };
   const dx = shift;
@@ -216,6 +217,7 @@ function meet() {
   foley('hit', { material: 'card', size: 1.8, force: 0.3 }, { vol: 0.3 });
 }
 function closed() {
+  judge();
   mode = null;
   body = { a: UPRIGHT, w: 0 };
   rest();
@@ -238,16 +240,8 @@ async function settleIn() {
 }
 const framesOut = n => new Promise(done => (n ? requestAnimationFrame(() => framesOut(n - 1).then(done)) : done()));
 const wait = ms => new Promise(done => setTimeout(done, ms));
-// Each dissolve frame judged on its real time (s), not the swing's capped step. Once three are in, a median over
-// SLOW_FRAME turns the blur off from this frame on. The median, so one slow frame (the pages painted as the book shows)
-// doesn't.
-function judge(real) {
-  if (!store.get('book.blur', true)) return;
-  frames.push(real);
-  if (frames.length > JUDGED) frames.shift();
-  const sorted = [...frames].sort((p, q) => p - q);
-  if (frames.length >= 3 && sorted[sorted.length >> 1] > SLOW_FRAME) store.set('book.blur', false);
-}
+// The swing that's ending judged on its dissolve frames' real times, not its capped steps, into the device's count
+const judge = () => store.set('book.slow', judged(store.get('book.slow', 0), frames, blurred));
 
 // The board at its angle: the edge and leaf turned round the spine in perspective, slid off the screen's edge as they
 // near upright; the pull tab at the outer edge's place on the screen; the shade and the block's edge.
@@ -297,11 +291,11 @@ function look(d) {
   const { blur, opacity } = dissolveLook(d),
     page = document.body.style,
     // (and whether it's dissolving at all: the last step to clear draws as the one before it, and was skipped)
-    now = `${store.get('book.blur', true) ? blur : 0} ${opacity.toFixed(3)} ${d >= 0.999} ${d > 0}`;
+    now = `${blurred ? blur : 0} ${opacity.toFixed(3)} ${d >= 0.999} ${d > 0}`;
   if (now === drawnLook) return;
   drawnLook = now;
   ground(d > 0);
-  page.filter = d && store.get('book.blur', true) && blur ? `blur(${blur}px)` : '';
+  page.filter = d && blurred && blur ? `blur(${blur}px)` : '';
   page.opacity = d ? opacity.toFixed(3) : '';
   // (wholly gone, it isn't painted at all)
   page.visibility = d >= 0.999 ? 'hidden' : '';

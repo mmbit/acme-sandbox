@@ -1,8 +1,8 @@
 // Assigning: a scrap on one of the board's Asks pages handed to a guest picked from a short list, the guests it picked
 // most recently, or from every guest. The guest gets a copy on their own Asks page, kept in step with the original both
 // ways: what either side writes on it shows on the other, so their answer shows on the board's scrap. Never an agent:
-// routing is ours, and a sketch's scraps reach their agent by themselves (the Ink README, What a page offers). Scraps
-// handed to an agent before that rule keep their tags.
+// routing is ours, and a sketch's scraps reach their agent by themselves (the Ink README, What a page offers). A stored
+// scrap tagged with an agent keeps its tag.
 import { copyFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { db } from '../db.ts';
@@ -26,7 +26,7 @@ db.exec(`create table if not exists notebook_assign_pictures (grp integer not nu
   key text not null, primary key (grp, file))`);
 
 // to: a guest's book's 'guest:<grant>' (notebookmembers.ts whoOf), so a name given to someone new later never takes
-// over what went to the one before; 'agent:<id>' on an older scrap handed to an agent
+// over what went to the one before; 'agent:<id>' on a stored scrap tagged with an agent
 export type Person = { to: string; name: string; kind: 'guest' | 'agent' };
 type Assign = {
   id: number;
@@ -56,7 +56,7 @@ function people(): Person[] {
     .map(m => ({ to: whoOf(m), name: m.guest, kind: 'guest' as const }))
     .sort((a, b) => a.name.localeCompare(b.name));
 }
-// The agents, for the tags of older scraps handed to one
+// The agents, to name the tags stored scraps may still carry
 function agents(): Person[] {
   const staff: { id: string; name?: string }[] = (org().departments ?? []).flatMap((d: any) => d.agents ?? []);
   return staff.map(a => ({ to: `agent:${a.id}`, name: a.name ?? a.id, kind: 'agent' as const }));

@@ -137,6 +137,23 @@ const PAGES = {
 };
 // (the same sketch, shown on two screens)
 PAGES[7] = PAGES[8] = PAGES[5];
+// (three scraps, for an arrow drawn from one onto the next and kept)
+PAGES[9] = PAGES[4];
+// (the board's wide drawing in the left column, its line reaching into the right, and two scraps after it)
+PAGES[10] = [
+  {
+    column: 0,
+    ink: [
+      [
+        [10, 10],
+        [500, 60],
+      ],
+    ],
+  },
+  ...PAGES[4].slice(0, 2),
+];
+// (the board's small drawing in the left column, a scrap beside it and one under it)
+PAGES[11] = [PAGES[1][0], ...PAGES[4].slice(0, 2)];
 const SEED = {
   notebooks: [{ id: 1, kind: 'mine', name: 'My journal', created: NOW, updated: NOW }],
   pages: Object.keys(PAGES).map((id, k) => ({ id: Number(id), notebook: 1, pos: k, created: NOW, updated: NOW })),
@@ -297,6 +314,63 @@ test('a scribble on the note at the bottom lands on it, and no scrap moves', asy
     ],
   ]);
   assert.equal(page.ink[0].g, 402, 'the scribble is the note’s');
+  assert.deepEqual(cards(page), before, 'every scrap where it was');
+});
+
+test('an arrow from one scrap onto the one beside it moves no scrap, drawn, saved or the page opened again', async () => {
+  const opened = await pageOf(9),
+    { page } = opened.view,
+    [first, next] = [placeOf(page, 900), placeOf(page, 901)],
+    before = cards(page);
+  assert.ok(next.x > first.x + first.w, 'the next scrap beside the first');
+  // (from the first scrap's words into the middle of the next)
+  draw(opened.view, [
+    [
+      [first.x + 200, first.y + 100],
+      [next.x + 60, next.y + 120],
+    ],
+  ]);
+  const drawn = inked(page);
+  assert.equal(page.ink[0].g, 900, 'the arrow is the first scrap’s');
+  assert.deepEqual(cards(page), before, 'every scrap where it was');
+  await save(opened);
+  assert.deepEqual(cards(page), before, '… once saved');
+  const again = (await pageOf(9)).view.page;
+  assert.deepEqual(cards(again), before, '… and with the page opened again');
+  assert.deepEqual(inked(again), drawn, 'the arrow where it was drawn');
+});
+
+test("the board's drawing reaching into the next column takes it: no scrap after it lies over its ink, at every width", async () => {
+  const { view } = await pageOf(10),
+    { page } = view;
+  for (const width of [widthFor(1) + 16, WIDTH, widthFor(3) + 16]) {
+    layUnits(view, width);
+    const xs = page.ink[0].points.map(p => p[0]),
+      ys = page.ink[0].points.map(p => p[1]),
+      [x0, x1, y1] = [Math.min(...xs), Math.max(...xs), Math.max(...ys)];
+    for (const id of [1001, 1002]) {
+      const p = placeOf(page, id);
+      assert.ok(
+        p.y > y1 || p.x > x1 || p.x + p.w < x0,
+        `scrap ${id} at ${p.x},${p.y} clear of the drawing's line at ${width} px`,
+      );
+    }
+  }
+});
+
+test("an arrow from the board's drawing onto the scrap beside it is the scrap's, and moves no scrap", async () => {
+  const { view } = await pageOf(11),
+    { page } = view,
+    [word, next] = [placeOf(page, 1100), placeOf(page, 1101)],
+    before = cards(page);
+  assert.ok(next.x > word.x + word.w, 'the scrap beside the drawing');
+  draw(view, [
+    [
+      [word.x + 100, word.y + 20],
+      [next.x + 60, next.y + 30],
+    ],
+  ]);
+  assert.equal(page.ink.at(-1).g, 1101, 'the arrow is the scrap’s');
   assert.deepEqual(cards(page), before, 'every scrap where it was');
 });
 

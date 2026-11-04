@@ -3,7 +3,7 @@
 // model decides *that* a customer asked for a person (helper.ts's ask_for_person); this code counts the asks and decides
 // what follows: the email card, or first one case for trying here, made once per conversation, if the company chose that
 // (company.ts `chatFirst`).
-import { db, now } from './db.ts';
+import { db, now, caseRef, caseId } from './db.ts';
 import { t, mask, day } from './texts.ts';
 import { settings, nameOf, thingOf, type Outage } from './company.ts';
 import * as sessions from './session.ts';
@@ -155,7 +155,7 @@ function open(c: Ctx, kind: string, r: { to: string; checked: string }, words: s
   const id = Number(db.prepare('insert into cases (app, conversation, kind, email, checked, words, facts, lang, created, health) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
     .run(app, c.conv.id, kind, r.to, r.checked, words, JSON.stringify({ orders, ...(numbers.length ? { numbers } : {}), ...facts }), c.lang, now(), health ? 1 : null).lastInsertRowid);
   hq.nudge();
-  return `H-${1000 + id}`;
+  return caseRef(id);
 }
 
 // The tap sends to the address the card showed (the tap runs exactly what was shown). If the
@@ -210,8 +210,8 @@ function healthCase(c: Ctx, r: { to: string; checked: string }, mid: number) {
 // The email to a person this chat sent (state.handed), as HQ's state last said it stands (hq.ts replies()): when the
 // board's last reply to it went, and whether its card is done (not while an ask for a person waits for HQ to hear it)
 export function handedCase(st: any): { id: number; replied: number | null; settled: boolean } | null {
-  const m = /^H-(\d+)$/.exec(String(st.handed ?? ''));
-  const r = m ? (db.prepare('select id, replied, settled, asked from cases where id = ?').get(Number(m[1]) - 1000) as any) : null;
+  const id = caseId(st.handed);
+  const r = id != null ? (db.prepare('select id, replied, settled, asked from cases where id = ?').get(id) as any) : null;
   return r ? { id: r.id, replied: r.replied ?? null, settled: r.settled === 1 && r.asked == null } : null;
 }
 // An ask for a person after this chat's email to one went: what the chat has since goes to that case's card as for a

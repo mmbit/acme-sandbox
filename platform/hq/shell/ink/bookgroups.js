@@ -32,6 +32,7 @@ import { sendForm, sendReply } from './bookanswersdata.js';
 import { waitingHtml } from './bookanswers.js';
 import { slipInkHtml } from './bookanswerart.js';
 import { CONTROLS } from './bookpan.js';
+import { RESTING } from './bookwrite.js';
 import { mountMoveTo } from './bookmoveto.js';
 
 // a reply can be taken back this long after it's written (notebooksend.ts SEND_MS)
@@ -129,11 +130,12 @@ function draw(gs, view) {
   gs.book.controls?.update();
 }
 // A press on a scrap's words or its answers, kept from the page unless it's the page's: the pen's strokes over words
-// kept from Scribble are ink, and a finger that moves the page (bookpan.js) moves it from a scrap's words as from bare
-// paper, its tap still the field's.
+// kept from Scribble are ink, a finger's from words not being typed in too (a stroke starts anywhere: README, Our
+// scraps), and a finger that moves the page (bookpan.js) moves it from a scrap's words as from bare paper, its tap
+// still the field's.
 function ownTouches(gs, e) {
   const t = e.target,
-    penInk = t.matches('[data-pen]'),
+    penInk = t.matches('[data-pen]') || ((e.pointerType ?? 'touch') === 'touch' && t.matches(RESTING)),
     fingerPan = e.type === 'pointerdown' && e.pointerType === 'touch' && !!gs.book.input?.fingerPans?.(),
     onWords = !!t.closest('.bk-words') && !t.closest(CONTROLS);
   if (penInk || (fingerPan && onWords)) return;
@@ -275,7 +277,7 @@ function lone(gs, view, picked) {
 
 // A group deleted: its elements off the page at once as one step (booksave.js deletes it in the store, and restores
 // it when Undo puts them back), the page drawn again without its ink and highlights, a copy of it crumpled up and
-// thrown away, and Undo in a toast
+// dropped, and Undo in a toast
 function remove(gs, view, id) {
   const { book, hooks } = gs,
     { box, parts } = partsNow(view.page, id);
@@ -290,7 +292,7 @@ function remove(gs, view, id) {
   // (its unit's card goes with it, not when the save deletes the group in the store: bookunits.js unitsOf;
   view.page.groups.get(id).vanished = true;
   hooks.refresh(view);
-  throwAway(gs, view, box, parts);
+  crumpleAway(gs, view, box, parts);
   toastHeard(word('deletedToast'), () => takeBack(book, step));
 }
 // A step taken back from a toast: Undo's own when it's the last, else on its own and off the list
@@ -299,8 +301,8 @@ function takeBack(book, step) {
   keep(book.steps, s => s !== step);
   step.undo();
 }
-// The group's things as they were, crumpled up and thrown away, heard as it goes (bookpaper.js; nothing waits on it)
-function throwAway(gs, view, box, { ink, texts, pictures }) {
+// The group's things as they were, crumpled up and dropped, heard as it goes (bookpaper.js; nothing waits on it)
+function crumpleAway(gs, view, box, { ink, texts, pictures }) {
   if (!box) return;
   // (the group's box, and the pictures' turned corners if they go past it)
   const drawn = boundsOf({ ink, scraps: pictures }, null),

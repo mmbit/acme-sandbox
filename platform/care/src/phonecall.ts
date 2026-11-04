@@ -1,7 +1,7 @@
 // A phone call's record: its conversation in the chat's tables (kind 'phone'), its
 // messages, and the fault notes a caller gives. phone.ts runs the call; phonecode.ts and phonetools.ts change
 // the record through these.
-import { db, now } from './db.ts';
+import { db, now, caseRef } from './db.ts';
 import { aboutOf } from './config.ts';
 import { settings } from './company.ts';
 import type { PhoneCall } from './company.ts';
@@ -169,7 +169,7 @@ export function fault(c: Conv, order: string, what: string, l: string) {
     );
     c.state.phone.faults = [...(c.state.phone.faults ?? []), o];
     save(c);
-    console.log(`care: phone conversation ${c.id}: a fault note is case H-${1000 + id}`);
+    console.log(`care: phone conversation ${c.id}: a fault note is case ${caseRef(id)}`);
   });
 }
 // ---- general feedback from a call (pass_on_feedback): a note for the team, as the chat's (person.ts feedback()), with no

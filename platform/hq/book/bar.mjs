@@ -2,13 +2,14 @@
 // bookcontrols.js, bookrail.js): on a phone (under a home-screen app's blurred strip) and an iPad mini both ways and a
 // desktop with the notebook wide and narrow. The tools upright at the paper's right, centred in the room above the bar,
 // in their order with one pen, and well under half a phone's height; the bar along the foot, Undo and Redo at its left,
-// the page's arrows and where it is ("3 / 12") in its very middle, its dots at its right. The overview and New page on
-// the bar where the paper is 460 px wide or more, else in the dots menu, every row of which does what it says. No
-// island scrolls or leaves the screen, each key is 44 px to the touch, nothing pressable sits above --sat, and what's
+// the page's arrows and where it is ("3 / 12") in its very middle, the overview and its dots at its right, New page in
+// the dots menu at every size, every row of which does what it says. The bar's spacing smaller inward: its margin at
+// its ends the largest, then the room each side of a rule, alike at every rule, then the gap between two keys, alike
+// in every group. No island scrolls or leaves the screen, each key is 44 px to the touch, nothing pressable sits above --sat, and what's
 // written ends left of the tools. Undo, Redo and the page's keys never move. A tool's card opens left of the tools and
 // the bar's above the bar, whole. Press and slide: a press on the pen slid down to Text picks Text the moment it lifts,
 // with no hold (the mouse, and in Chromium a finger). No long press: a tool held picks it and opens nothing. Run with
-// --webkit for the same in the iPad's engine. (the blur set by islands.mjs)
+// --webkit for the same in the iPad's engine. (the blur set by islands.mjs) (at rest once its slide is over)
 import assert from 'node:assert/strict';
 import { freePage } from './mouse.mjs';
 import { OVERVIEW, PREFERENCES, touchOf, until } from './kit.mjs';
@@ -25,8 +26,9 @@ const SIZES = [
   { name: 'desktop-wide', viewport: { width: 1920, height: 1080 }, touch: false },
   { name: 'desktop-narrow', viewport: { width: 1920, height: 1080 }, touch: false, narrow: 420 },
 ];
-// the dots menu's own rows, after the page's keys folded into it on a narrow paper (bookui.js)
+// the dots menu's rows: New page, then its own (bookui.js)
 const ROWS = [
+  'New page',
   'Tear off and send',
   'Archive this page',
   PREFERENCES,
@@ -65,12 +67,13 @@ async function atSize(browser, c, size) {
     if (size.narrow) await narrowed(page, size.narrow);
     await atRest(page);
     await c.shot(`book-islands-${size.name}`, page);
-    const wide = await fits(page);
+    await fits(page);
+    await spaced(page);
     await keysStay(page, size);
     await cards(page, c, size);
     await slides(page, size, browser);
     await noHold(page);
-    await menuRows(page, c, size, wide);
+    await menuRows(page, c, size);
     assert.deepEqual(errors, []);
   } finally {
     await context.close();
@@ -96,13 +99,18 @@ async function narrowed(page, width) {
   await page.mouse.up();
   await page.waitForTimeout(300);
 }
-// The book at rest, its swing over and both islands laid out (on a loaded machine, frames come late)
+// The book at rest, its swing over, its slide too (book.js glide: the cover's edge let go slides the book to its new
+// width, the leaf laid out wide enough for both till it lands) and both islands laid out (on a loaded machine, frames
+// come late: WebKit's slide was still under way a second after the cover's edge was let go)
 const atRest = page =>
   until(
     () =>
       page.evaluate(
         () =>
           !document.querySelector('#book.bk-swinging') &&
+          ['.bk-edge', '.bk-leaf', '.bk-lip'].every(
+            s => !document.querySelector(`#book ${s}`).getAnimations().length,
+          ) &&
           ['.bk-strip', '.bk-bar'].every(s => document.querySelector(`#book ${s}`).getBoundingClientRect().width),
       ),
     'the book at rest, its islands laid out',
@@ -115,6 +123,50 @@ export async function press(page, name) {
   if (await own.isVisible()) return own.click();
   await page.locator('#book .bk-more').click();
   await page.locator('#book .bk-more-card').getByRole('menuitem', { name, exact: true }).click();
+}
+
+// ---- the bar's spacing
+
+// The bar's spacing, smaller inward: its margin at either end the largest; then the room each side of a rule (Undo and
+// Redo's, the page's arrows', the overview's), alike at every rule, so the parts sit apart alike on both sides of the
+// middle; then the gap between two keys, alike in every group (the Ink README, The book's frame)
+async function spaced(page) {
+  const { outer, rules, keys } = await page.evaluate(barGaps),
+    alike = list => Math.max(...list) - Math.min(...list) <= 0.5,
+    said = JSON.stringify({ outer, rules, keys });
+  assert.ok(alike(keys), `the gaps between the bar's keys alike in every group: ${said}`);
+  assert.ok(alike(rules), `the room each side of the bar's rules alike: ${said}`);
+  assert.ok(
+    Math.max(...keys) < Math.min(...rules) && Math.max(...rules) < Math.min(...outer),
+    `the bar's spacing smaller inward (its ends, then its rules, then its keys): ${said}`,
+  );
+}
+// (in the page) The gaps along the bar (px, a tenth's precision): at its two ends (outer), between a key and a rule
+// (rules) and between two keys (keys). A rule is a part's or group's drawn edge.
+function barGaps() {
+  const bar = document.querySelector('#book .bk-bar'),
+    shows = el => el.checkVisibility({ visibilityProperty: true }) && el.getBoundingClientRect().width > 0,
+    stops = [...bar.querySelectorAll('.bk-btn')].filter(shows).map(b => {
+      const r = b.getBoundingClientRect();
+      return { kind: 'key', left: r.left, right: r.right };
+    });
+  for (const el of bar.querySelectorAll('*')) {
+    if (el.closest('.bk-btn') || !shows(el)) continue;
+    const r = el.getBoundingClientRect(),
+      cs = getComputedStyle(el),
+      [l, rr] = [parseFloat(cs.borderLeftWidth), parseFloat(cs.borderRightWidth)];
+    if (l) stops.push({ kind: 'rule', left: r.left, right: r.left + l });
+    if (rr) stops.push({ kind: 'rule', left: r.right - rr, right: r.right });
+  }
+  stops.sort((a, b) => a.left - b.left);
+  const r = bar.getBoundingClientRect(),
+    tenth = n => Math.round(n * 10) / 10,
+    gaps = { outer: [tenth(stops[0].left - r.left), tenth(r.right - stops.at(-1).right)], rules: [], keys: [] };
+  for (let i = 1; i < stops.length; i++)
+    gaps[stops[i - 1].kind === 'key' && stops[i].kind === 'key' ? 'keys' : 'rules'].push(
+      tenth(stops[i].left - stops[i - 1].right),
+    );
+  return gaps;
 }
 
 // ---- what stays where it was
@@ -204,9 +256,9 @@ async function cards(page, c, size) {
 
 // ---- the dots menu
 
-// The dots menu's rows, the page's keys first where the bar has no room for them; each row does what it says: the
-// overview, New page, the tear's targets, the preferences, the tips book, and Close notebook folding the book (last).
-async function menuRows(page, c, size, wide) {
+// The dots menu's rows, New page first; each row does what it says: New page, the tear's targets, the preferences, the
+// tips book, and Close notebook folding the book (last).
+async function menuRows(page, c, size) {
   const dots = page.locator('#book .bk-more'),
     menu = page.locator('#book .bk-more-card'),
     row = name => menu.getByRole('menuitem', { name, exact: true }),
@@ -219,24 +271,24 @@ async function menuRows(page, c, size, wide) {
   await menu.waitFor({ timeout: 5000 });
   await c.shot(`book-islands-${size.name}-more`, page);
   const rows = await menu.getByRole('menuitem').evaluateAll(all => all.map(b => b.textContent));
-  assert.deepEqual(rows, [...(wide ? [] : [OVERVIEW, 'New page']), ...ROWS], "the dots menu's rows");
+  assert.deepEqual(rows, ROWS, "the dots menu's rows");
+  const card = await menu.boundingBox(),
+    view = page.viewportSize();
+  assert.ok(
+    card.x >= 0 && card.y >= 0 && card.x + card.width <= view.width && card.y + card.height <= view.height,
+    `the dots menu whole on the screen: ${JSON.stringify(card)}`,
+  );
   await page.keyboard.press('Escape');
   await menu.waitFor({ state: 'detached', timeout: 5000 });
-  if (!wide) {
-    await picked(OVERVIEW);
-    await page.locator('#book[data-far]').waitFor({ state: 'attached', timeout: 5000 });
-    await press(page, OVERVIEW);
-    await until(() => page.evaluate(() => !document.querySelector('#book[data-far]')), 'the page back');
-    const where = () => page.locator('#book .bk-where').textContent(),
-      [, n] = (await where()).match(/\/ (\d+)$/);
-    // (a blank page is New page's own: a line on it first)
-    await written(page);
-    await picked('New page');
-    await until(
-      async () => (await where()) === `${+n + 1} / ${+n + 1}`,
-      () => `New page making page ${+n + 1}`,
-    );
-  }
+  const where = () => page.locator('#book .bk-where').textContent(),
+    [, n] = (await where()).match(/\/ (\d+)$/);
+  // (a blank page is New page's own: a line on it first)
+  await written(page);
+  await picked('New page');
+  await until(
+    async () => (await where()) === `${+n + 1} / ${+n + 1}`,
+    () => `New page making page ${+n + 1}`,
+  );
   for (const [name, shows, gone] of [
     ['Tear off and send', '#book .bk-share:not([hidden])', '#book .bk-share:not([hidden])'],
     [PREFERENCES, '#book .bk-prefs', '#book .bk-prefs'],

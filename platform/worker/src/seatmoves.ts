@@ -12,26 +12,35 @@
 // Returns the seats to keep off the list; run throws when a command fails.
 import { existsSync } from 'node:fs';
 
-export type MoveOps = { read: (path: string) => string | undefined; run: (cmd: string, args: string[]) => unknown; log: (...a: unknown[]) => void };
+export type MoveOps = {
+  read: (path: string) => string | undefined;
+  run: (cmd: string, args: string[]) => unknown;
+  log: (...a: unknown[]) => void;
+};
 
 export function moveSeats(spec: string, root: string, { read, run, log }: MoveOps): string[] {
-  const done = `${root}/moves-done`, all = spec.split(',').filter(Boolean);
+  const done = `${root}/moves-done`,
+    all = spec.split(',').filter(Boolean);
   const raw = existsSync(done) ? read(done) : '';
   if (raw === undefined || (raw && !raw.endsWith('\n'))) {
     const off = all.map(p => p.split(':')[1] ?? p);
-    const why = raw === undefined ? "can't be read" : 'ends mid-line (a write cut short)', until = raw === undefined ? 'the next start' : 'it\'s mended';
+    const why = raw === undefined ? "can't be read" : 'ends mid-line (a write cut short)',
+      until = raw === undefined ? 'the next start' : "it's mended";
     log(`seat moves: ${done} ${why}, so nothing moves; off until ${until}: ${off.join(', ')}`);
     return off;
   }
-  const lines = raw.split('\n'), pairs = all.filter(p => !lines.includes(p));
+  const lines = raw.split('\n'),
+    pairs = all.filter(p => !lines.includes(p));
   const note = (line: string) => run('sh', ['-c', 'echo "$2" >> "$1"', 'sh', done, line]);
   for (const [i, pair] of pairs.entries()) {
     const [from, to, ...rest] = pair.split(':');
     try {
-      if (rest.length || ![from, to].every(id => /^[a-z0-9-]+$/.test(id ?? '') && id !== 'shared') || from === to) throw new Error('not old:new seat ids');
+      if (rest.length || ![from, to].every(id => /^[a-z0-9-]+$/.test(id ?? '') && id !== 'shared') || from === to)
+        throw new Error('not old:new seat ids');
       if (existsSync(`${root}/${from}`)) {
         note(`moving ${pair}`);
-        run('rm', ['-rf', '--', `${root}/${to}`]); run('mv', ['-T', '--', `${root}/${from}`, `${root}/${to}`]);
+        run('rm', ['-rf', '--', `${root}/${to}`]);
+        run('mv', ['-T', '--', `${root}/${from}`, `${root}/${to}`]);
         log(`seat move: ${to} has ${from}'s login now, and its own is gone`);
       } else if (!lines.includes(`moving ${pair}`)) {
         run('rm', ['-rf', '--', `${root}/${to}`]);

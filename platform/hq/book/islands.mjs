@@ -17,17 +17,19 @@ export const blurred = (context, { sat, sab = 0 }) =>
     { sat, sab },
   );
 
-// The book's frame as the screen shows it: the blur's foot (sat), the paper and the page written on (desk), the tools'
+// The book's frame as the screen shows it: the blur's foot (sat), the paper, the page drawn on (desk) and the part of it
+// its content is laid in (content: below the blur, left of the tools), the tools'
 // island and the bar with the keys that show on each, any other island over the page, and what takes a press above
 // the blur's foot
 export const islandsSeen = async page => ({
   ...(await page.evaluate(frameInPage, TOUCH_PX)),
   underBlur: await page.evaluate(pressableAbove),
+  content: await page.evaluate(contentInPage),
 });
 
 // The islands of use (when: where, for the messages): each one that shows whole on the screen below the blur and
 // scrolling nothing, every key on it whole there and taking a finger's press; the tools and the bar clear of each
-// other, no other island over the page, nothing to press under the blur, and nothing written under the tools
+// other, no other island over the page, nothing to press under the blur, and nothing laid under the tools
 export function islandsUsable(seen, when) {
   const { screen, sat, tools, bar } = seen,
     whole = b => b.top >= sat && b.bottom <= screen.height && b.left >= 0 && b.right <= screen.width;
@@ -50,7 +52,7 @@ export function islandsUsable(seen, when) {
   if (tools.shown && bar.shown) assert.ok(apart(tools, bar), `${when}: the tools and the bar clear of each other`);
   assert.deepEqual(seen.floating, [], `${when}: no other island over the page`);
   assert.deepEqual(seen.underBlur, [], `${when}: nothing to press under the blur (${sat} px)`);
-  if (tools.shown) assert.ok(seen.desk.right <= tools.left + 1, `${when}: nothing written under the tools`);
+  if (tools.shown) assert.ok(seen.content.right <= tools.left + 1, `${when}: nothing laid under the tools`);
 }
 const apart = (a, b) => a.right <= b.left || b.right <= a.left || a.bottom <= b.top || b.bottom <= a.top;
 
@@ -114,6 +116,19 @@ function frameInPage(touchPx) {
     floating: [...document.querySelectorAll('#book .bk-island')]
       .filter(el => el.getBoundingClientRect().width && !el.closest('.bk-strip, .bk-bar, .bk-far'))
       .map(el => el.dataset.island),
+  };
+}
+// (in the page) The page drawn on less its padding, the room its content keeps clear of (bookdesk.css)
+function contentInPage() {
+  const desk = document.querySelector('#book .bk-pages .bk-desk'),
+    r = desk.getBoundingClientRect(),
+    css = getComputedStyle(desk),
+    px = side => parseFloat(css[`padding${side}`]) || 0;
+  return {
+    left: r.left + px('Left'),
+    top: r.top + px('Top'),
+    right: r.right - px('Right'),
+    bottom: r.bottom - px('Bottom'),
   };
 }
 // (in the page) What of the book's takes a press, or is a field, an island or a send stamp, and shows with any of it

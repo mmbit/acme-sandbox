@@ -1,35 +1,60 @@
 /* The book's tools (booktools.js): the tool's card over the rail, the cursors over the paper, and the boxes
    of words typed on a page (booktexts.js). */
 
-/* ---- the colours: a card over the rail (bookstrip.css places it), the colour in use ringed in ink. Its lines one
-   under another (what draws, the colours six to a line, the widths and smoothing), a rule between them and between
-   two rows on one line. */
+/* ---- the tool's card, beside the tools (bookstrip.css places it): its lines one under another (what draws or a shape,
+   the colours six to a line, the widths with smoothing or a shape's fill), a rule between lines and an upright one
+   between two rows on one line. Its spacing narrows inward, as the brand guide's does: the margin at its edge the
+   widest, then the rules', the gaps between its colours and icons the least (the Ink README, the tools' cards). Each choice keeps a key's room to the touch, the colours big discs in it, the one in
+   use ringed in ink. */
 .bk-palette {
+  --bk-cell: 36px;
   pointer-events: auto;
   display: flex;
   flex-direction: column;
-  padding: 4px;
+  align-items: stretch;
+  padding: 20px;
   animation: bk-palette-in 0.12s ease-out;
+}
+@media (pointer: coarse) {
+  .bk-palette {
+    --bk-cell: 44px;
+  }
 }
 .bk-palette-line,
 .bk-palette-row {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 0;
 }
 .bk-palette-row[data-colours] {
   display: grid;
   grid-template-columns: repeat(6, auto);
   justify-content: start;
 }
+/* (a phone's page, too narrow for six beside the tools and clear of the bookmarks folded at the screen's left edge,
+   bookmarks.css: four to a line. Its lines are then of no one width, the widths with a shape's fill wider than four
+   colours: each centred, so the card's margins match at either side. Six to a line, the colours are the card's width
+   and the lines narrower keep to their columns from the left.) */
+@container bk-rail (max-width: 459px) {
+  .bk-palette-row[data-colours] {
+    grid-template-columns: repeat(4, auto);
+  }
+  .bk-palette-line {
+    justify-content: center;
+  }
+}
+.bk-palette .bk-btn {
+  width: var(--bk-cell);
+  height: var(--bk-cell);
+}
 .bk-palette hr {
-  margin: 3px 6px;
+  align-self: stretch;
+  margin: 2px 4px;
   border: 0;
   border-top: 1px solid var(--bk-ui-line);
 }
 .bk-palette-line > hr {
-  align-self: stretch;
-  margin: 6px 3px;
+  margin: 8px 6px;
   border-top: 0;
   border-left: 1px solid var(--bk-ui-line);
 }
@@ -54,8 +79,34 @@
   }
 }
 .bk-palette svg {
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
+}
+@media (pointer: fine) {
+  .bk-palette svg {
+    width: 22px;
+    height: 22px;
+  }
+}
+/* a colour: its disc most of its key, the one in use ringed round the disc rather than the key */
+.bk-palette [data-colours] svg {
+  width: calc(var(--bk-cell) - 10px);
+  height: calc(var(--bk-cell) - 10px);
+  border-radius: 50%;
+}
+.bk-palette [data-colours] .bk-btn[aria-pressed='true'] {
+  box-shadow: none;
+}
+.bk-palette [data-colours] .bk-btn[aria-pressed='true'] svg {
+  box-shadow: 0 0 0 2px var(--bk-ui-ink);
+}
+@media (hover: hover) {
+  .bk-palette [data-colours] .bk-btn:hover {
+    background: transparent;
+  }
+  .bk-palette [data-colours] .bk-btn:hover svg {
+    box-shadow: 0 0 0 2px var(--bk-ui-line);
+  }
 }
 
 /* ---- cursors: the tool's own on the paper (its colour: --bk-tool-cursor) */
@@ -187,20 +238,4 @@
   background: rgba(255, 250, 240, 0.35);
   box-shadow: 0 0 0 1.5px rgba(255, 250, 240, 0.9);
   pointer-events: none;
-}
-
-/* ---- the tool's card: rows of choices (a shape, its fill, the colours, the widths, the eraser's sizes) */
-.bk-palette {
-  flex-direction: column;
-  align-items: stretch;
-}
-.bk-palette-row {
-  display: flex;
-  gap: 2px;
-}
-.bk-palette hr {
-  align-self: stretch;
-  margin: 3px 4px;
-  border: 0;
-  border-top: 1px solid var(--bk-edge);
 }

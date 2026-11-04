@@ -64,6 +64,8 @@ async function seen(browser, c, viewport, size, options = {}) {
     await tick.scrollIntoViewIfNeeded();
     assert.equal((await tick.locator('.bk-face').innerText()).trim(), nb.name[0].toUpperCase(), 'its initial');
     assert.equal(await tick.getAttribute('aria-label'), say('seenBy', { name: nb.name }));
+    // (HQ's tick icon, drawn once its look's file comes)
+    await tick.locator('svg[data-drawn] path').waitFor();
     assert.equal(await tick.locator('svg path').count(), 1, 'a tick by it');
     // (inside its unit, at its bottom-right corner)
     const [t, unit] = [await boxOf(tick), await boxOf(page.locator(`#book .bk-unit[data-unit="${read.id}"]`))];

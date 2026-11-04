@@ -20,6 +20,10 @@ import {
   dissolveStep,
   dissolveLook,
   easeInOut,
+  blurs,
+  judged,
+  SLOW_RUN,
+  RETRY,
 } from './bookswingmath.js';
 
 const FRAME = 1 / 60;
@@ -184,4 +188,41 @@ test('the catch-up eases in and out, from 0 to 1', () => {
   assert.equal(easeInOut(1), 1);
   assert.equal(easeInOut(0.5), 0.5);
   assert.ok(easeInOut(0.1) < 0.1 && easeInOut(0.9) > 0.9);
+});
+
+// The device's count played over swings of frames this long (s): whether each one blurred, and the count after
+const FAST = Array(40).fill(1 / 60),
+  SLOW = Array(40).fill(1 / 20);
+function swings(kinds, count = 0) {
+  const seen = [];
+  for (const frames of kinds) {
+    const blurred = blurs(count);
+    count = judged(count, frames, blurred);
+    seen.push(blurred);
+  }
+  return { seen, count };
+}
+
+test('one slow swing on a fast machine keeps the blur; slow swing after slow swing turns it off', () => {
+  const passing = swings([SLOW, FAST, FAST, SLOW, FAST, FAST]);
+  assert.deepEqual(passing.seen, [true, true, true, true, true, true]);
+  assert.equal(passing.count, 0);
+  const slow = swings(Array(SLOW_RUN + 1).fill(SLOW));
+  assert.deepEqual(slow.seen, [...Array(SLOW_RUN).fill(true), false], 'off from the swing after the run');
+  // (a frame or two of the pages painting as the book shows don't make a swing slow)
+  assert.equal(judged(0, [...Array(30).fill(1 / 60), 0.2, 0.3], true), 0);
+  // (too short a swing to tell: no verdict)
+  assert.equal(judged(1, [0.2, 0.3], true), 1);
+});
+
+test('off, the blur is tried again every RETRY swings: a fast try brings it back, a slow one keeps it off', () => {
+  const off = swings(Array(SLOW_RUN + 2 * RETRY).fill(SLOW));
+  assert.deepEqual(
+    off.seen.slice(SLOW_RUN),
+    [...Array(RETRY - 1).fill(false), true, ...Array(RETRY - 1).fill(false), true],
+    'one try in RETRY on a slow device',
+  );
+  const back = swings([...Array(SLOW_RUN + RETRY - 1).fill(SLOW), FAST, SLOW]);
+  assert.deepEqual(back.seen.slice(-2), [true, true], 'a fast try: the blur back');
+  assert.equal(back.count, 1);
 });

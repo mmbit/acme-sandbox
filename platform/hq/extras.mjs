@@ -58,10 +58,22 @@ export const REVIEW_PARTS = {
   '/__review/liveline.js': 'shared/review/liveline.js',
 };
 
+// A file's name in a folder's address, as a pattern
+const FOLDER_FILE = '[a-z]+\\.js';
+
+// A table's addresses as route paths, each with the file in the repo for the params a request matched there: a
+// folder's by its files' names
+export const extraPaths = table =>
+  Object.entries(table).map(([address, file]) =>
+    address.endsWith('/')
+      ? { path: `${address}:name(${FOLDER_FILE})`, fileOf: params => file + params.name }
+      : { path: address, fileOf: () => file },
+  );
+
 // The file in the repo an address names in one of the tables above, or undefined
 export function extraFile(table, address) {
   const folder = address.slice(0, address.lastIndexOf('/') + 1),
     name = address.slice(folder.length);
   if (Object.hasOwn(table, address)) return table[address];
-  return Object.hasOwn(table, folder) && /^[a-z]+\.js$/.test(name) ? table[folder] + name : undefined;
+  return Object.hasOwn(table, folder) && new RegExp(`^${FOLDER_FILE}$`).test(name) ? table[folder] + name : undefined;
 }

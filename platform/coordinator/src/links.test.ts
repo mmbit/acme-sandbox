@@ -86,6 +86,66 @@ test('a message and a file go across, an urgent answer wakes the executive, and 
   await theirWorkspace(w => everyRead(w) && w.files[0].versions.length === 2);
 });
 
+test('each file keeps its newest two versions: a third clears the first on the side that posts it and the side that takes it', async () => {
+  const film = 'briefs/film.md';
+  const [first, second] = ['Thirty seconds, one hedgehog.', 'Twenty seconds, one hedgehog.'];
+  // (the second's bytes under another path too: kept while that one keeps them)
+  assert.equal((await theirCeo('put', `${shared.theirs}`, 'notes/hedgehog.md', local(second), 'as agreed')).code, 0);
+  await ourWorkspace(w => w.files.length === 2);
+  assert.equal((await ourCeo('put', `${shared.ours}`, film, local('Ten seconds, two hedgehogs.'), 'shorter')).code, 0);
+  const cleared = (w: any) => w.files.find((f: any) => f.path === film).versions.map((v: any) => !!v.cleared);
+  const third = (w: any) => cleared(w).length === 3;
+  for (const w of [await ourWorkspace(third), await theirWorkspace(third)])
+    assert.deepEqual(cleared(w), [true, false, false]);
+  const sides = [files.DIR, `${them.dataDir}/workspaces`];
+  const kept = (text: string) =>
+    sides.map(dir => existsSync(`${dir}/${createHash('sha256').update(text).digest('hex')}`));
+  assert.deepEqual(
+    [kept(first), kept(second)],
+    [
+      [false, false],
+      [true, true],
+    ],
+  );
+
+  // The cleared one stays in the log, with nothing to download, and says which versions keep their bytes
+  const read = await ourCeo('read', `${shared.ours}`);
+  assert.match(read.out, /v1 .*, cleared .* \(no download\): first draft/, read.out);
+  const got = await ourCeo('get', `${shared.ours}`, film, '--version', '1', `${dir}/cleared.md`);
+  assert.equal(got.code, 1, got.out);
+  assert.match(got.out, /v1 of briefs\/film\.md was cleared .*its bytes went.*Kept: v2 and v3\. \(HTTP 410\)/, got.out);
+  assert.ok(!existsSync(`${dir}/cleared.md`));
+  assert.equal((await h.board(`/api/workspaces/file?workspace=${shared.ours}&path=${film}&version=1`)).status, 410);
+
+  // A fourth from them clears the second on both sides, as each applies it: its bytes stay for the other path
+  assert.equal((await theirCeo('put', `${shared.theirs}`, film, local('Five seconds.'), 'shortest')).code, 0);
+  const fourth = (w: any) => cleared(w).length === 4;
+  for (const w of [await ourWorkspace(fourth), await theirWorkspace(fourth)])
+    assert.deepEqual(cleared(w), [true, true, false, false]);
+  assert.deepEqual(kept(second), [true, true]);
+
+  // Two of theirs dated ahead would outrank every version after them, and the next of ours would lose its bytes once
+  // their HQ took it: the push is refused, and ours stays the newest, its bytes on both sides
+  const link = links.findLink((h.db.prepare('select id from links where name = ?').get(THEIRS) as { id: number }).id)!;
+  const { uid } = h.db.prepare('select uid from workspaces where id = ?').get(shared.ours) as { uid: string };
+  const ahead = [1, 2].map(n => {
+    const bytes = Buffer.from(`Their ${n}, from 2099.`);
+    const version = { kind: 'file', uid: randomUUID(), workspace: uid, path: film, agent: 'ash', at: '2099-01-01' };
+    return { ...version, seq: link.received + n, sha256: files.sha256Of(bytes), data: bytes.toString('base64') };
+  });
+  const refused = links.receive(link, { entries: ahead }, workspaceentries.apply) as [number, string];
+  assert.equal(refused[0], 400);
+  assert.match(refused[1], /time is ahead of ours/);
+  const ours = 'Three seconds.';
+  assert.equal((await ourCeo('put', `${shared.ours}`, film, local(ours), 'shorter still')).code, 0);
+  const fifth = (w: any) => cleared(w).length === 5;
+  for (const w of [await ourWorkspace(fifth), await theirWorkspace(fifth)])
+    assert.deepEqual(cleared(w), [true, true, true, false, false]);
+  assert.deepEqual(kept(ours), [true, true]);
+  assert.equal((await ourCeo('get', `${shared.ours}`, film, `${dir}/newest.md`)).code, 0);
+  assert.equal(readFileSync(`${dir}/newest.md`, 'utf8'), ours);
+});
+
 test("a linked company's HQ reaches only its own link's workspaces, with its own key and entries that hold", async () => {
   const at = new Date().toISOString();
   assert.equal((await peer('entries', newKey(), { entries: [] })).status, 401);
@@ -206,6 +266,13 @@ test('an answer past the entries we sent is refused, and takes none of them', as
   assert.deepEqual([link().sent, link().refused], [0, 'that it holds our entry 99, past our last, 3']);
   assert.deepEqual(
     [1, 2, 3].map(seq => links.takenAt(link().id, seq)),
+    [null, null, null],
+  );
+  // A version of ours their HQ hasn't taken keeps its bytes for the push, however many came after it
+  for (const n of [1, 2, 3]) assert.equal((await ourCeo('put', `${opened.id}`, 'plan.md', local(`Plan ${n}`))).code, 0);
+  const plan = (await h.board(`/api/workspaces/${opened.id}`)).body.files[0];
+  assert.deepEqual(
+    plan.versions.map((v: any) => v.cleared),
     [null, null, null],
   );
 });

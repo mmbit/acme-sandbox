@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // HQ's icons in a real browser: in every look, every icon on the HUD, the computer's home screen, the desk phone, the
-// intercom and the projects view (a business in it too, with its way back up) drawn from that look's own style
-// (icons/<style>/), or from the kit the theme dresses it in (/kits/<kit>/icons/), none missing, and a change of look
-// redrawing them all.
+// intercom, the projects view (a business in it too, with its way back up) and Ink's book and its dots menu, drawn
+// from that look's own style (icons/<style>/), or from the kit the theme dresses it in (/kits/<kit>/icons/), none
+// missing, and a change of look redrawing them all.
 //   node platform/hq/icons-check.mjs        (HQ in dev mode, on its mock data)
 import assert from 'node:assert/strict';
 import { serve } from './serve.mjs';
@@ -17,6 +17,12 @@ const SCREENS = {
   home: page => page.evaluate(() => import('/shell/desk.js').then(m => m.openComputer())),
   phone: page => page.evaluate(() => import('/shell/desk.js').then(m => m.openPhone())),
   intercom: page => page.evaluate(() => import('/shell/desk.js').then(m => m.openIntercom())),
+  // Ink's book: its tools and bar, then its dots menu
+  book: page =>
+    page
+      .evaluate(() => import('/shell/ink/book.js').then(m => m.openBook()))
+      .then(() => page.waitForSelector('#book .bk-strip .bk-btn')),
+  'book menu': page => page.click('#book .bk-more').then(() => page.waitForSelector('#book .bk-more-card')),
 };
 
 const browser = await playwright().chromium.launch();

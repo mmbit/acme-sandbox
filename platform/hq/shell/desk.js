@@ -8,7 +8,7 @@ import { lasted } from '../../../shared/signs/signs.js';
 import { esc, cap, grow, store as saved, roleHtml, stylesheet } from '../util.js';   // (stylesheet).
 // (endTip: a tip filed.)
 import { endTip, loadRequests, loadLater, snoozeRequest, loadArchive, archivePhoto, answerRequest, removeAddress, previewLink,
-  loadChat, sendChat, loadCalls, addCallItem, loadMail, loadMailOne, moveMail, transcribe, pushKey,
+  loadChat, sendChat, loadCalls, addCallItem, loadMail, loadMailPiles, loadMailOne, moveMail, transcribe, pushKey,
   uploadPhoto, uploadDocument, sendZipChunk, loadZipField, pictureUrl, guestEmail, guestLang, guestRelease, guestRevoke, guestAdd, outboxSend, outboxDiscard, outboxPreview,
   calloutApprove, calloutDecline, calloutNumber,
   loadShares, makeShare, removeFromShare, endShare, setShareCap, loadPeople, setPersonTitle, guestColleagues, loadLanguage, setLanguage, local } from './data.js';
@@ -2625,10 +2625,12 @@ function tidyAddress(a) {
 }
 const LOCK = icon('lock', 'lock', 'Only you can read it');
 const recipientNames = m => String(m.recipient ?? '').toLowerCase().match(/[^\s<>,;"]+(?=@)/g) ?? [];
-function mailPills(all) {
+function mailPills(counts) {
   const line = PILES.find(([k]) => k === mailPile)[2];
-  return `<div class="pills mailpiles" role="radiogroup" aria-label="Piles">${PILES.map(([k, l]) => `<button role="radio" aria-checked="${k === mailPile}" data-pile="${k}">${esc(l)}<i>${all.filter(m => pileOf(m) === k).length}</i></button>`).join('')}</div><p class="mailwho">${esc(line)}</p>`;
+  return `<div class="pills mailpiles" role="radiogroup" aria-label="Piles">${PILES.map(([k, l]) => `<button role="radio" aria-checked="${k === mailPile}" data-pile="${k}">${esc(l)}<i>${counts[k]}</i></button>`).join('')}</div><p class="mailwho">${esc(line)}</p>`;
 }
+// Every pile's whole count (/api/mail/piles; dev: what the list holds)
+const countsOf = (all, counts) => counts ?? Object.fromEntries(PILES.map(([k]) => [k, all.filter(m => pileOf(m) === k).length]));
 // The move row under an open mail: its pile pressed, the others one tap each. Team on a mail already handed shows its job.
 const MOVES = { board: 'For you', team: 'Team', customer: 'Customer', filed: 'Filed', spam: 'Spam' };
 const moveRow = m => `<p class="mailmove" role="group" aria-label="Move to"><span class="dim">Move to</span>${PILES.map(([k]) => {
@@ -2652,7 +2654,9 @@ function wireMove(d, row, redraw) {
     }
   });
 }
-const mailCap = (n, all) => `<i class="prompt">&gt; </i>${n} ${mailPile === 'board' ? 'FOR YOU' : esc(PILES.find(([k]) => k === mailPile)[1].toUpperCase())} · ${all} IN ALL`;
+const mailCap = counts => `<i class="prompt">&gt; </i>${counts[mailPile]} ${mailPile === 'board' ? 'FOR YOU' : esc(PILES.find(([k]) => k === mailPile)[1].toUpperCase())} · ${Object.values(counts).reduce((sum, n) => sum + n, 0)} IN ALL`;
+// (a pile past what the list holds of it, its latest only)
+const mailShown = (shown, counts) => shown < counts[mailPile] ? `<p class="dim">The latest ${shown} of ${counts[mailPile]}.</p>` : '';
 // Mail's count: the mail that came in since Mail was last open on any of the board's devices, like the Gazette's. The
 // newest mail id shown is kept (seen.js; ids go up in the order mail reaches HQ); before anything's recorded, the last
 // day's mail counts as new. (every device) Mail to an address only machines' reports reach (brand.yaml's mail.reports,
@@ -2665,7 +2669,8 @@ const newMail = mail => { if (!seen) return 0;
 // (mailSaid: what the last move did, shown until the board picks another pile)
 let mailSaid = '';
 async function inbox(el) {
-  const all = await loadMail(world.dev), rows = el.querySelector('.rows');
+  const [all, loaded] = await Promise.all([loadMail(world.dev), loadMailPiles(world.dev)]), rows = el.querySelector('.rows');
+  const counts = countsOf(all, loaded);
   if (!el.isConnected) return;   // the board left Mail meanwhile: nothing shown, nothing seen
   if (all.length) markSeen('mail', Math.max(...all.map(m => Number(m.id))));   // shown: seen
   if (mailWaiting) { mailWaiting = 0; paintComputerCount(waitingTotal()); }
@@ -2675,8 +2680,8 @@ async function inbox(el) {
   if (rows && el.querySelector('details[open]')) {
     const top = Number(rows.querySelector('[data-mail]')?.dataset.mail ?? 0);
     rows.insertAdjacentHTML('afterbegin', mail.filter(m => m.id > top).map(mailRow).join(''));
-    el.querySelector('.cap').innerHTML = mailCap(mail.length, all.length);
-  } else el.innerHTML = all.length ? `<p class="cap">${mailCap(mail.length, all.length)}</p>${mailPills(all)}${mailSaid ? `<p class="mailsaid" role="status">${esc(mailSaid)}</p>` : ''}${mail.length ? `<ul class="rows mail" data-private>${mail.map(mailRow).join('')}</ul>` : `<p class="dim">${mailPile === 'board' ? 'Nothing for you right now.' : 'Nothing here.'}</p>`}`
+    el.querySelector('.cap').innerHTML = mailCap(counts);
+  } else el.innerHTML = all.length ? `<p class="cap">${mailCap(counts)}</p>${mailPills(counts)}${mailSaid ? `<p class="mailsaid" role="status">${esc(mailSaid)}</p>` : ''}${mail.length ? `<ul class="rows mail" data-private>${mail.map(mailRow).join('')}</ul>${mailShown(mail.length, counts)}` : `<p class="dim">${mailPile === 'board' ? 'Nothing for you right now.' : 'Nothing here.'}</p>`}`
     : `<p><i class="prompt">&gt; </i>No mail yet. Anything sent to ${brand.mail?.domain ? `an @${esc(brand.mail.domain)} address` : 'the company'} lands here.</p>`;
   el.querySelectorAll('[data-pile]').forEach(b => b.onclick = () => { if (mailPile === b.dataset.pile) return; sfx.blip(); mailPile = b.dataset.pile; redraw(); el.scrollTop = 0; });
   el.querySelectorAll('[data-mail]').forEach(d => d.ontoggle = async () => {

@@ -43,9 +43,9 @@ test('portrait and half a split screen start folded; portrait opens as the sprea
 });
 
 test("in portrait the cover's edge drawn right still lays the book beside the page, at the width it was let go", () => {
-  const beside = released(...MINI_PORTRAIT, { mode: 'open', book: null }, 400);
-  assert.deepEqual(beside, { mode: 'open', book: 332 });
-  assert.deepEqual(widths(layout(...MINI_PORTRAIT, beside)), [400, EDGE, 332]);
+  const beside = released(...MINI_PORTRAIT, { mode: 'open', book: null }, 320);
+  assert.deepEqual(beside, { mode: 'open', book: 412 });
+  assert.deepEqual(widths(layout(...MINI_PORTRAIT, beside)), [320, EDGE, 412]);
 });
 
 // (HQ's page never under 320 beside the book)
@@ -82,18 +82,18 @@ test("the cover's edge let go stays where it was let go, at any width that leave
   const wide = released(...MINI, open, -260);
   assert.deepEqual(wide, { mode: 'open', book: 761 });
   assert.deepEqual(widths(layout(...MINI, wide)), [360, EDGE, 761]);
-  assert.deepEqual(released(...MINI, open, 160), { mode: 'open', book: 341 });
+  assert.deepEqual(released(...MINI, open, 100), { mode: 'open', book: 401 });
 });
 
-test("the cover's edge never closes the book: dragged right past drawing room it stops at 320; too far left it lies over HQ", () => {
+test("the cover's edge never closes the book: dragged right past the room for its notes it stops at 400; too far left it lies over HQ", () => {
   const open = { mode: 'open', book: 515 };
-  assert.deepEqual(released(...MINI, open, 260), { mode: 'open', book: 320 });
-  assert.deepEqual(released(...MINI, open, 900), { mode: 'open', book: 320 });
+  assert.deepEqual(released(...MINI, open, 260), { mode: 'open', book: 400 });
+  assert.deepEqual(released(...MINI, open, 900), { mode: 'open', book: 400 });
   assert.equal(released(...MINI, open, -320).mode, 'spread');
 });
 
-test('a width the board gave the book stays within the screen: never under 320, never leaving HQ under 320', () => {
-  assert.equal(layout(...MINI, { mode: 'open', book: 100 }).book, 320);
+test('a width the board gave the book stays within the screen: never under 400, never leaving HQ under 320', () => {
+  assert.equal(layout(...MINI, { mode: 'open', book: 100 }).book, 400);
   assert.equal(layout(...MINI, { mode: 'open', book: 2000 }).book, 801);
 });
 
@@ -101,7 +101,7 @@ test("from the spread, the cover's edge drawn right brings HQ's page back beside
   const spread = { mode: 'spread', book: 515 };
   assert.deepEqual(released(...MINI, spread, 500), { mode: 'open', book: 621 });
   assert.equal(released(...MINI, spread, 200).mode, 'spread');
-  assert.deepEqual(released(...MINI, spread, 1100), { mode: 'open', book: 320 });
+  assert.deepEqual(released(...MINI, spread, 1100), { mode: 'open', book: 400 });
 });
 
 test('the pull tab drawn left opens the book at the width it had, once drawn a third of it or flicked; else it stays shut', () => {

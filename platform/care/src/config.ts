@@ -1,7 +1,13 @@
 // Care's settings, read once from the environment (infra/products.py sets them; a local run and the tests set their own).
 // Keys only from here, never logged. What's the company's comes from its plug-in (company.ts).
 const env = process.env;
-const json = (s: string | undefined) => { try { return JSON.parse(s ?? '') ?? {}; } catch { return {}; } };
+const json = (s: string | undefined) => {
+  try {
+    return JSON.parse(s ?? '') ?? {};
+  } catch {
+    return {};
+  }
+};
 
 export const PORT = Number(env.PORT ?? 8080);
 // the address to listen on: every interface unless set (the container's default); the eval sets 127.0.0.1
@@ -14,7 +20,7 @@ export const APPS: Record<string, string> = json(env.CARE_APPS);
 // origin share the cookie, so they share the session: its grants, its thread and its chat, and a checked email's
 // orders come from every app of the shop. A shop not listed is a shop of one, its own app (an app on a host of its own).
 export const SHOPS: Record<string, string[]> = json(env.CARE_SHOPS);
-export const appsOf = (shop: string): string[] => Array.isArray(SHOPS[shop]) ? SHOPS[shop] : [shop];
+export const appsOf = (shop: string): string[] => (Array.isArray(SHOPS[shop]) ? SHOPS[shop] : [shop]);
 // ...and of those, the ones whose orders care can ask for (an order endpoint in CARE_APPS): a shop's own pages (the front)
 // have none
 export const withOrders = (shop: string): string[] => appsOf(shop).filter(a => a in APPS);
@@ -29,7 +35,7 @@ export const phoneStalls = (shop: string): string[] => [
 // the customer is in (engine.ts stall)
 export function aboutOf(shop: string, state: { orderApps?: string[]; stall?: string }): string {
   const a = state.orderApps ?? [];
-  return a.length === 1 ? a[0] : a.length > 1 ? shop : state.stall ?? shop;
+  return a.length === 1 ? a[0] : a.length > 1 ? shop : (state.stall ?? shop);
 }
 // care's own model calls for HQ (inbox.ts: the hello@ email drafts): an app of their own in the ledger (a day cap of
 // its own, CAP.appDay) and in Care › Numbers' month (numbers.ts), which is all the month's cap counts
@@ -58,7 +64,7 @@ export const HQ_TOKEN = env.CARE_HQ_TOKEN ?? '';
 
 // ---- caps in code, on top of the provider console's own monthly limit (docs/switch-on.md, "The model key"), in euros
 export const CAP = {
-  month: Number(env.CARE_CAP_MONTH ?? 19),        // every app and purpose together: set just short of the console's limit (the default, a €20 one)
+  month: Number(env.CARE_CAP_MONTH ?? 19), // every app and purpose together: set just short of the console's limit (the default, a €20 one)
   appDay: Number(env.CARE_CAP_APP_DAY ?? 2),
   // one person's, each for the company's day (ledger.ts): a conversation's, and before any check (level 0) a
   // session's and an IP's
@@ -69,7 +75,7 @@ export const CAP = {
   hqMonth: env.CARE_CAP_HQ_MONTH ? Number(env.CARE_CAP_HQ_MONTH) : null,
   // the phone's own month (phone.ts), over the plug-in's phoneMonth
   phoneMonth: env.CARE_CAP_PHONE_MONTH ? Number(env.CARE_CAP_PHONE_MONTH) : null,
-  calls: 60,                                       // model calls per conversation a day, then the helper offers email
+  calls: 60, // model calls per conversation a day, then the helper offers email
 };
 // a claim photo's body still coming after this is dropped, and its room freed (photos.ts admit()): 3 MB on a slow phone
 // line takes about a minute; the tests shorten it
@@ -109,7 +115,10 @@ if (CREDIT) {
 export const PHONE = {
   port: Number(env.CARE_PHONE_PORT ?? 8081),
   token: env.CARE_PHONE_TOKEN ?? '',
-  shop: env.CARE_PHONE_SHOP || Object.keys(SHOPS).find(s => !s.endsWith('@preview')) || (Object.keys(APPS).length === 1 ? Object.keys(APPS)[0] : ''),
+  shop:
+    env.CARE_PHONE_SHOP ||
+    Object.keys(SHOPS).find(s => !s.endsWith('@preview')) ||
+    (Object.keys(APPS).length === 1 ? Object.keys(APPS)[0] : ''),
 };
 
 // set by the tests and the local harness: plain http on localhost (the cookie's Secure flag stays on in production)

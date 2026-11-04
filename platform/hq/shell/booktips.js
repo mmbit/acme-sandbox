@@ -12,13 +12,10 @@
 import { esc, stylesheet } from '../util.js';
 import { names } from './brand.js';
 import { foley } from './audio.js';
-import { button, island, lineIcon, setPressed } from './ink/bookui.js';
+import { button, island, setPressed } from './ink/bookui.js';
+import { icon } from './icons.js';
 import { PARTS, TIPS } from './booktipslist.js';
 
-// a small open book, its pages lined
-const ICON = lineIcon(
-  '<path d="M12 6.5C10 5 7 4.5 3.5 5v13c3.5-.5 6.5 0 8.5 1.5 2-1.5 5-2 8.5-1.5V5c-3.5-.5-6.5 0-8.5 1.5z"/><path d="M12 6.5v13"/>',
-);
 // The book coming up from the button and put away, a leaf's turn and the cover's (heavier, slower), and reduced
 // motion's crossfade: quick, and never in the way
 const RISE_MS = 220,
@@ -43,7 +40,7 @@ const LAST = TIPS.length;
 export function mountTips() {
   stylesheet('shell/booktips.css');
   stylesheet('shell/booktipsturn.css');
-  control = button({ icon: ICON, label: 'Tips', onClick: () => (root ? close() : open()), pressed: false });
+  control = button({ icon: icon('tips'), label: 'Tips', onClick: () => (root ? close() : open()), pressed: false });
   control.classList.add('bk-tips');
   island('book').append(control);
 }

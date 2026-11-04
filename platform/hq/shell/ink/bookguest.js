@@ -11,10 +11,13 @@ import { notebookRequest } from './bookscope.js';
 import { esc, stylesheet } from '../../util.js';
 import { words, refusal } from './notebookwords.js';
 import { setTimeZone } from '../../world/clock.js';
+import { wearIcons } from '../icons.js';
 
 const text = words[document.documentElement.lang];
 stylesheet('shell/ink/bookguest.css'); // (its shelf, and a round's Marked done)
 stylesheet('shell/ink/booklook.css'); // (the book's colours, its shelf's lit book too)
+// (the book's controls draw HQ's icons: a guest's room wears no look, so the line set)
+wearIcons('line');
 const query = new URLSearchParams(location.search);
 const api = '/guest/notebooks/api';
 const status = document.querySelector('[data-notebook-status]');

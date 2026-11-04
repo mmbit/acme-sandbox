@@ -1,4 +1,4 @@
-// book-check.mjs's pin-flow story (the board's, 27 Oct: shared/review/postit.js, settle.js, lift.js; shell/ink/
+// book-check.mjs's pin-flow story (shared/review/postit.js, settle.js, lift.js; shell/ink/
 // bookgroups.js; Ink's folder), each on its own played store, on an iPad mini with the Pencil, a phone in portrait with
 // a finger and a desktop with a mouse. A mark on HQ's page opens the post-it at the foot of the screen, its photo
 // framed on the mark; words said (the voice line's) or typed; Save, and the mark is gone from the screen at once, the
@@ -14,7 +14,9 @@ import { nothingDrawn } from './ink.mjs';
 import { groupsOf, newestPage, shownScrap } from './played.mjs';
 import { talked, voiceServed } from './voice.mjs';
 import { talkedInViewer, askLeftBehind, pagesWatched } from './talk.mjs';
-import { DESKTOP, MINI, PREVIEW, pinOn, pressAlong, previewServed, ui, until } from './kit.mjs';
+import { DESKTOP, MINI, pinOn, pressAlong, ui, until } from './kit.mjs';
+import { PREVIEW, previewServed } from './preview.mjs';
+import { watchedPage } from './start.mjs';
 
 // ---- the stories
 const IPAD_SCREEN = { name: 'ipad', viewport: MINI, more: {}, starts: 'open', hand: 'pen' },
@@ -51,12 +53,10 @@ export function scrapStories(c) {
 }
 
 async function pinFlow(c, screen) {
-  const context = await c.hqIn(c.browser, screen.viewport, { ...screen.more, notebooks: {} }),
-    errors = [];
+  const context = await c.hqIn(c.browser, screen.viewport, { ...screen.more, notebooks: {} });
   await voiceServed(c, context);
   await previewServed(c, context);
-  const page = await context.newPage();
-  page.on('pageerror', e => errors.push(e.message));
+  const { page, errors } = await watchedPage(context);
   await pagesWatched(page); // (askLeftBehind, talkedInViewer)
   try {
     await page.goto(`${c.base}/?intro=0`);

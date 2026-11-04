@@ -6,10 +6,14 @@ import { settings } from './company.ts';
 
 export type HqState = { busy: 'auto' | 'on' | 'off'; queue: { waiting: number; oldest: string | null } };
 let state: HqState = { busy: 'auto', queue: { waiting: 0, oldest: null } };
-export const set = (s: HqState) => { state = s; };
+export const set = (s: HqState) => {
+  state = s;
+};
 
 export function why(t = Date.now()): string | null {
-  const q = state.queue, oldest = q.oldest ? workingDaysBetween(Date.parse(q.oldest), t) : 0, rule = settings.busy;
+  const q = state.queue,
+    oldest = q.oldest ? workingDaysBetween(Date.parse(q.oldest), t) : 0,
+    rule = settings.busy;
   // past the days we aim for, "we aim for 3" alone would mislead, so it stays on whatever the switch says
   if (oldest > rule.aim) return `an email has waited over ${rule.aim} working days`;
   if (state.busy === 'off') return null;

@@ -8,9 +8,10 @@ import { toast } from '../toast.js';
 // A moment: its sounds, [kit sound, params, { vol, at: s after the moment starts }]
 const MOMENTS = {
   press: [['hit', { material: 'card', size: 0.5, force: 0.3 }, { vol: 0.24 }]],
-  // balled up: the crunch as it's squeezed (bookpaper.js crumple), and the ball landing out of sight once thrown
+  // balled up: the crunch as it's squeezed (bookpaper.js crumple), and the ball landing out of sight below, once it
+  // has fallen past the screen's foot
   crumple: [['crunch', { dur: 0.3, dry: 0.3 }, { vol: 0.35 }]],
-  thrown: [['hit', { material: 'card', size: 1.2, force: 0.3 }, { vol: 0.2 }]],
+  fell: [['hit', { material: 'card', size: 1.2, force: 0.3 }, { vol: 0.2 }]],
   // folded in half, the crease pressed down as it closes (bookpaper.js fold)
   fold: [['flip', { material: 'paper', dur: 0.3 }, { vol: 0.3 }]],
   // a round's envelope, on bookshelfround.css's times: wrapped, the cover slides in, the flap comes down and the string

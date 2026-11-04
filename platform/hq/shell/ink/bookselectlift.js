@@ -21,7 +21,9 @@ import {
   union,
 } from './bookselectmath.js';
 import { boxOf } from './notebookstack.js';
-import { bounds, boxOfText, choose, frameAt, frameDown, letGo, pageOf, swapIn, textEl } from './bookselect.js';
+import { fixed } from './bookunits.js';
+import { bounds, boxOfText, choose, frameAt, frameDown, holdsFixed, letGo, pageOf, textEl } from './bookselect.js';
+import { swapIn } from './bookedit.js';
 import { followPress } from './bookpress.js';
 
 // a press moves or scales once it has moved this far (screen px); let go, the lifted things settle in SETTLE_MS
@@ -35,6 +37,11 @@ const PAD = 2,
 // A press on the selection (corner -1) or on a corner's handle (0 top-left, then clockwise): it lifts once it moves,
 // and lands where it's let go (then: after it's let go, moved or not)
 export function drag(sel, e, { corner, then = null }) {
+  // (one of our scraps picked stays where it is: README, Our scraps)
+  if (holdsFixed(sel)) {
+    followPress(e, { up: () => then?.() });
+    return true;
+  }
   const { book } = sel,
     from = pageOf(book, e),
     b = bounds(sel);
@@ -70,7 +77,7 @@ export function grab(sel, box, e, { keep }) {
   e.preventDefault();
   sel.clip.settle();
   // (a box just typed and emptied is gone by now: booktexts.js commit)
-  if (!box.isConnected || !box.view.page.ink) return true;
+  if (!box.isConnected || !box.view.page.ink || fixed(box.view.page, box.typed.g)) return true;
   letGo(sel);
   choose(sel, box.view, { texts: [box.typed] });
   return drag(sel, e, { corner: -1, then: keep ? null : () => letGo(sel) });

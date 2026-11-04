@@ -105,15 +105,23 @@ export async function sortOne(id: number, live: boolean) {
   // only (older mail waits in Team for the board's tap, so a start never sends a backlog of jobs out)
   const handsOn = pile === 'team' && where === 'business' && live;
   if (handsOn && takeJob()) {
-    const handed = forward(id, j => (findAgent(j.agent) ? createJob(j) : null), {
-      by: 'sorter',
-      agent: agent ?? brand().mail?.forwardTo ?? null,
-    });
+    const handed = forward(id, handOn, { by: 'sorter', agent: agent ?? brand().mail?.forwardTo ?? null });
     if (!Array.isArray(handed)) return;
     console.error(`Mail sorter: mail #${id} not handed on: ${handed[1]}`);
   }
   const waitsForBoard = pile === 'team' && (where !== 'business' || handsOn);
   setPile(id, waitsForBoard ? 'board' : pile, 'model', agent, !live);
+}
+
+// A mail's job, for an agent in org.yaml only (mail.ts forward: the board's hand and the sorter's)
+export const handOn = (j: { agent: string; title: string; prompt: string }) =>
+  findAgent(j.agent) ? createJob(j) : null;
+
+// The board's one tap in HQ's Mail: the mail into another pile, which later sorts learn from (moves). Team hands it on.
+export function moveMail(id: number, pile: unknown) {
+  if (!PILES.includes(pile as Pile)) return [400, `a pile is one of ${PILES.join(', ')}`] as const;
+  if (pile === 'team') return forward(id, handOn);
+  return setPile(id, pile as Pile, 'board') ? { pile } : 404;
 }
 
 // The hard limits on what the model's pile can do: Customers only where a desk answers customers.
@@ -195,13 +203,13 @@ How to choose:
 - The agent: the id of the agent below whose role covers it, else null. Only with "team".
 
 Examples:
-- "Submit your shop to search engines" to hello@, from an unknown domain, asking for a payment: spam.
+- "Submit your shop to search engines" from an unknown domain, asking for a payment: spam.
 - "X has accepted your invitation to join your account" from a payment service: filed.
-- "[REGISTER NOW] Turn your data into deals" from an ads network to board@: spam.
-- "Your receipt from <a service we use> #1234" to invoices@: filed.
-- "Hoi, mijn bestelling is nog niet aangekomen" to hello@: customer.
-- "Can I order one with my dog's name on it?" to hello@ from a free mail address: customer.
-- A printer partner asking which file format we'll send, to partners@: team, the agent who works with that partner.
+- "[REGISTER NOW] Turn your data into deals" from an ads network, even to one of the board's own addresses: spam.
+- "Your receipt from <a service we use> #1234": filed.
+- "Hoi, mijn bestelling is nog niet aangekomen" to an address customers write to: customer.
+- "Can I order one with my dog's name on it?" from a free mail address: customer.
+- A printer partner asking which file format we'll send: team, the agent who works with that partner.
 - "Notice of policy violation: your ad was disapproved" from an ads network: team, the agent running ads.
 - "New sign-in to your account from a new device": board.`;
 

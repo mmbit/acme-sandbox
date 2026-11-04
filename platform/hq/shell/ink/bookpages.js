@@ -25,7 +25,7 @@ import { mountGroups } from './bookgroups.js';
 import { sendShown, stamped } from './bookpagesend.js';
 import { mountControls } from './bookcontrols.js';
 import { turn } from './bookflip.js';
-import { at, away, draw, fitOf, halt, setView, shown, slideTo, viewOf } from './bookview.js';
+import { at, away, contentOf, draw, fitOf, halt, panTo, setView, shown, slideTo, viewOf, zoomOf } from './bookview.js';
 import { placeIn, showsBox } from './bookrow.js';
 import { recordOf, summaryOf } from './bookrecords.js';
 import { stepList, undo, redo } from './bookedit.js';
@@ -35,9 +35,10 @@ import { tidy } from './booktidy.js';
 import { opensAt } from './bookunits.js';
 import { isCanvas } from './sketchcanvas.js';
 import { remember, remembered, shownPage } from './bookplace.js';
+import { wetHooks } from './bookwet.js';
 
 const HTML = `<div class="bk-pages">
-  <div class="bk-desk"><div class="bk-world"></div><canvas class="bk-wet"></canvas><p class="bk-lost" hidden></p></div>
+  <div class="bk-desk"><div class="bk-world"></div><canvas class="bk-wet"></canvas><canvas class="bk-wet bk-wet-over"></canvas><p class="bk-lost" hidden></p></div>
 </div>`;
 
 // paper: the book's paper, empty. dev: on mock data. shelf(): the book shut and the Shelf shown (book.js). undo()
@@ -59,7 +60,7 @@ export function mountPages(paper, { dev, calls = null, shelf = null }) {
   });
   const table = (book.table = panning(book.desk, book, { drawing: () => book.ink.drawing }));
   book.ink = pen(book.desk, paper.querySelector('.bk-wet'), {
-    use: e => drawable(book, e, table),
+    ...wetHooks(book, e => drawable(book, e, table)), // (laid in the page under the pen: bookwet.js)
     // (the wet line as thick on screen as it dries at this zoom)
     ink: () => ({ ...book.inking, size: book.inking.size * book.scale }),
     end: stroke => dried(book, stroke, { lay: () => lay(book), inView: (i, box) => inView(book, i, box) }),
@@ -139,7 +140,7 @@ const bookOf = (paper, { dev, calls }) => ({
   // the page shown when it's held past its end, where a unit's room dragged shorter left it, in bookview.js
   heldPastEnd: null,
   scale: 1,
-  size: { w: 0, h: 0 },
+  size: { w: 0, h: 0, top: 0, right: 0 },
   cams: new WeakMap(), // a page's view as it was left this visit: page → { pan, scale }
   // the book's steps this visit, the last last, for Undo: each { undo(), redo() } (a stroke, a group deleted, a send:
   // one that can't be made again has no redo), and those undone, for Redo (bookedit.js).
@@ -224,7 +225,7 @@ function viewFor(book, page) {
   Object.assign(v, { dev: book.dev, relay: () => lay(book), pinned: () => changed(book, page) });
   v.el.hidden = true;
   book.world.append(v.el);
-  v.place(book.size.w); // (laid at the paper's width once it has one: resized)
+  v.place(contentOf(book).w); // (laid at the paper's width once it has one: resized)
   book.groups.added(v);
   book.tools?.added?.(v);
   stamped(book, page, false, v.el);
@@ -270,10 +271,11 @@ function show1(book, i, place = null) {
   book.views.forEach((v, k) => (v.el.hidden = k !== i));
   const v = viewOf(book);
   if (!v) return;
-  // (at a place on it, or as it was left this visit, or at its top)
-  const to = place ? { pan: { x: place.x ?? 0, y: place.y ?? 0 }, z: place.z } : book.cams.get(v.page),
-    opening = isCanvas(v.page.chapter) ? opensAt(book.size.w) : 1;
-  setView(book, { pan: to?.pan ?? { x: 0, y: 0 }, scale: (to?.z ?? opening) * fitOf(v.page) });
+  // (at a place on it, or as it was left this visit, or at its top-left, below the blur)
+  const cam = place ? null : book.cams.get(v.page),
+    opening = isCanvas(v.page.chapter) ? opensAt(contentOf(book).w) : 1,
+    scale = zoomOf(book, ((place ? place.z : cam?.z) ?? opening) * fitOf(v.page));
+  setView(book, { pan: cam?.pan ?? panTo(book, { x: place?.x ?? 0, y: place?.y ?? 0 }, scale), scale });
   if (!v.page.ink) read(book, v);
   remember(book);
   book.controls?.update();
@@ -282,7 +284,7 @@ function show1(book, i, place = null) {
 // Turned to page i: a leaf turning forward or back (the page shown, at a place: slid there)
 async function turnTo(book, i, place = null) {
   if (i < 0 || i >= book.views.length) return;
-  if (i === book.cur) return place && slideTo(book, { pan: place }, () => remember(book));
+  if (i === book.cur) return place && slideTo(book, { pan: panTo(book, place) }, () => remember(book));
   await turn(book.paper, { dir: i > book.cur ? 1 : -1, midway: () => show1(book, i, place) });
 }
 // A remembered place ({ page: an id, x, y, z }) in the notebook, or its current page when that's gone. Found when the
@@ -296,10 +298,12 @@ function goTo(book, place) {
 }
 // The paper's size taken, and a place waiting for it opened
 function resized(book) {
-  const size = { w: book.desk.clientWidth, h: book.desk.clientHeight };
+  // (the whole paper, and the room its content keeps clear of, the desk's padding: bookdesk.css)
+  const room = getComputedStyle(book.desk),
+    size = { w: book.desk.clientWidth, h: book.desk.clientHeight };
   if (!size.w || !size.h) return;
-  book.size = size;
-  book.world.style.setProperty('--paper-w', `${Math.round(size.w)}px`); // (what a page's paper shows across at 100%)
+  book.size = { ...size, top: parseFloat(room.paddingTop), right: parseFloat(room.paddingRight) };
+  book.world.style.setProperty('--paper-w', `${Math.round(contentOf(book).w)}px`); // (a page's paper across at 100%)
   book.world.dispatchEvent(new Event('bk:paper')); // (a versions page lays its frames to it)
   if (book.waiting === undefined) return lay(book);
   const place = book.waiting;
@@ -370,11 +374,10 @@ async function find(book, { page, notebook = null }) {
 // The view slides to show a box on page i, unless the paper shows it already (turning to that page first), anywhere
 // on the page.
 async function inView(book, i, box) {
-  const centre = {
-    x: (box.x0 + box.x1) / 2 - book.size.w / book.scale / 2,
-    y: (box.y0 + box.y1) / 2 - book.size.h / book.scale / 2,
-  };
+  const { w, h } = contentOf(book),
+    centre = { x: (box.x0 + box.x1 - w / book.scale) / 2, y: (box.y0 + box.y1 - h / book.scale) / 2 };
   if (i !== book.cur) return turnTo(book, i, { ...centre, z: book.scale / fitOf(viewOf(book)?.page) });
-  if (!showsBox(box, book.pan, book.scale, book.size)) slideTo(book, { pan: centre }, () => remember(book));
+  if (!showsBox(box, book.pan, book.scale, book.size))
+    slideTo(book, { pan: panTo(book, centre) }, () => remember(book));
   else draw(book);
 }

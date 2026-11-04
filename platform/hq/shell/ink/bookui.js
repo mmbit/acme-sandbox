@@ -5,11 +5,12 @@
 // the paper running on under them to the screen's edge. Every part of the book makes its controls here, so they look
 // and answer alike. Only the page is paper; the controls are HQ's.
 import { esc } from '../../util.js';
+import { icon } from '../icons.js';
 import { word } from './bookscope.js';
 
 // The islands and their groups: the tools; on the bar Undo and Redo (history), the page's arrows and where it is
-// (pages), the page's own keys where there's room (keys: the overview, New page), a guest's Send; the dots menu's own
-// rows (menu: the page's, book: the book's, Preferences to Close); the overview's tools in its head (bookzoom.js).
+// (pages), the page's own keys (keys: the overview on the bar, New page in the dots), a guest's Send; the dots menu's
+// own rows (menu: the page's, book: the book's, Preferences to Close); the overview's tools in its head (bookzoom.js).
 const BAR = ['history', 'pages', 'keys', 'send', 'menu', 'book'],
   OVERVIEW = 'overview';
 // A tooltip shows after the pointer rests this long on a control (at once on a keyboard's focus, and on the next
@@ -36,13 +37,6 @@ export function button({ icon = '', text = '', label = text, keys = '', onClick,
   return b;
 }
 export const setPressed = (b, on) => b.setAttribute('aria-pressed', on ? 'true' : 'false');
-// An icon in the controls' own line (d: its shapes, on a 24 px square)
-export const lineIcon = d =>
-  `<svg viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${d}</g></svg>`;
-// Duplicate's, on Select's bar and a sent sketch page's tools: two sheets, one over the other
-export const DUPLICATE_ICON = lineIcon(
-  '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/>',
-);
 
 // The island or group named: made once, in its place (islands(), which bookrail.js puts over the paper)
 let controls, more;
@@ -92,13 +86,12 @@ export function islands() {
   one(OVERVIEW, { role: 'toolbar' }).classList.add('bk-far-tools');
   return controls;
 }
-// The dots at the bar's right end: a menu of the page's keys there's no room for on the bar (.bk-rare), then the
-// page's own rows (Tear off and send) and the book's (Preferences, Tips, Close notebook), each pressing its own
+// The dots at the bar's right end: a menu of the page's keys kept off the bar (.bk-rare: New page), then the
+// page's own rows (Tear off and send, Archive this page) and the book's (Preferences, Sign in another device, Tips,
+// Close notebook), each pressing its own
 function moreButton() {
   const b = button({
-    icon: lineIcon(
-      '<circle cx="5.5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="18.5" cy="12" r="1.2"/>',
-    ),
+    icon: icon('more'),
     label: word('more'),
     onClick: () => moreCard(b),
   });

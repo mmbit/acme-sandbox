@@ -4,7 +4,7 @@
 // and stored as data with the conversation and a `bug` case for HQ. Kept until the bug is fixed (fixed() below), 90 days
 // at most (db.ts sweep()): the `bug` case goes then too, its one line on what went wrong with it (the card names that
 // line as part of what's sent, so its promise covers it).
-import { db, now, byRef } from './db.ts';
+import { db, now, byRef, caseRef } from './db.ts';
 import { t, type Lang } from './texts.ts';
 import type { Widget } from './engine.ts';
 
@@ -80,7 +80,7 @@ export function file(o: { app: string; conversation: number; lang: string; probl
       .run(o.app, o.conversation, 'bug', null, 'none', '', redact(o.problem, 300) || null, JSON.stringify(o.handed ? { person_case: o.handed } : {}), o.lang, now()).lastInsertRowid);
     store(o.conversation, id, o.bundle);
     db.exec('commit');
-    return `H-${1000 + id}`;
+    return caseRef(id);
   } catch (err) { db.exec('rollback'); throw err; }
 }
 

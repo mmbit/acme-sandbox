@@ -57,7 +57,7 @@ export function notebookOn(c, page = {}) {
 // book spread this wide (CSS px) beside HQ's page, its columns side by side
 export async function opened(browser, c, viewport, nb, { book, ...options } = {}) {
   const context = await c.hqIn(browser, viewport, { ...options, notebooks: nb.seed });
-  await bookWide(context, book);
+  await bookWide(context, viewport, book);
   const { page, errors } = await hqLoaded(c, context);
   // A phone's book comes to rest folded, an iPad's upright too: its lip opens it as the spread. The lip's own click, in
   // the page: on a loaded worker Playwright's waits on it for longer than its timeout.
@@ -143,7 +143,7 @@ export async function underItsNote(page, g, selector) {
       assert.ok(!overlapping(between, o), `${o.id} at ${JSON.stringify(o)} between it and its note: ${shown}`);
   }
   await inSight(page, `.bk-under[data-g="${g.id}"] ${selector}`);
-  await clearOfTools(page, `.bk-under[data-g="${g.id}"] ${selector}`);
+  await onPaper(page, `.bk-under[data-g="${g.id}"] ${selector}`);
 }
 // A tie (bookunder.js .bk-tie, screen px) from the top of its note's unit to the top of what hangs under it, over no
 // other unit nor what hangs under one
@@ -185,23 +185,25 @@ export async function shownByItsNote(page, g, selector) {
   );
 }
 // The page panned across by the wheel, as a trackpad pans it, till what's at selector in the book shows on the paper
-// left of the tools: what hangs beside a note past the paper's edge
+// left of the tools: what hangs beside a note past the paper's edge. Fails if four turns don't bring it there.
 export async function inSight(page, selector) {
   const slip = page.locator(`#book ${selector}`);
   // (the wheel's px for a screen px of pan: the page's zoom, learned from the first turn)
-  let per = 1;
-  for (let tries = 0; tries < 4; tries++) {
+  let per = 1,
+    by;
+  for (let tries = 0; tries < 5; tries++) {
     const desk = await page.locator('#book .bk-desk').boundingBox(),
       tools = await toolsLeft(page),
-      at = await slip.boundingBox(),
-      by = at.x + at.width > tools - PAD ? at.x + at.width - tools + PAD : Math.min(0, at.x - desk.x - PAD);
-    if (Math.abs(by) < 1) return;
+      at = await slip.boundingBox();
+    by = at.x + at.width > tools - PAD ? at.x + at.width - tools + PAD : Math.min(0, at.x - desk.x - PAD);
+    if (Math.abs(by) < 1 || tries === 4) break;
     await page.mouse.move(desk.x + desk.width / 2, desk.y + desk.height / 2);
     await page.mouse.wheel(by * per, 0);
     await stillAt(page, `#book ${selector}`);
     const moved = at.x - (await slip.boundingBox()).x;
     if (moved) per = (by * per) / moved;
   }
+  assert.ok(Math.abs(by) < 1, `${selector} panned onto the paper left of the tools: still ${by} px off`);
 }
 // (how far inside the paper's side and the tools inSight brings a slip, screen px)
 const PAD = 8;
@@ -218,13 +220,18 @@ const stillAt = (page, sel) =>
   );
 // (how far past its column a slip's tilt takes its corners, screen px: shared/review/slip.js rotates it half a degree)
 const TILT = 3;
-// Every element at selector in the book left of the tools' island floating upright at the paper's right
-export async function clearOfTools(page, selector) {
-  const tools = await toolsLeft(page),
-    rights = await page
+// Every element at selector in the book on the paper, right of its left side (a slip's tilt aside) and left of the
+// tools' island floating upright at the paper's right
+export async function onPaper(page, selector) {
+  const desk = (await page.locator('#book .bk-desk').boundingBox()).x,
+    tools = await toolsLeft(page),
+    boxes = await page
       .locator(`#book ${selector}`)
-      .evaluateAll(els => els.map(el => el.getBoundingClientRect().right));
-  assert.ok(rights.length && rights.every(x => x <= tools), `clear of the tools: ${JSON.stringify([rights, tools])}`);
+      .evaluateAll(els => els.map(el => el.getBoundingClientRect()).map(r => [r.left, r.right]));
+  assert.ok(
+    boxes.length && boxes.every(([left, right]) => left >= desk - TILT && right <= tools),
+    `on the paper, clear of the tools: ${JSON.stringify({ boxes, desk, tools })}`,
+  );
 }
 // (where the tools' island starts, screen px.)
 const toolsLeft = page => page.locator('#book .bk-strip').evaluate(el => el.getBoundingClientRect().left);

@@ -459,4 +459,9 @@ with its manage tool. Off a call the CEO records it. On a live board call, that 
 Until the work model names migrate, milestone identifiers are project keys, job identifiers are `project/slug`,
 and task identifiers are task numbers. Clearing a child flag leaves urgency inherited from its parent or source work, and an expedited task stays urgent. Milestone urgency passes to its jobs and tasks. Job urgency passes to its tasks.
 Reviews and fixes read the urgency of their source work, so clearing its flag clears that inheritance too.
+Urgency goes on the whole milestone the board names. A hold or pause meant for that whole milestone goes there too.
+A flag set piece by piece misses work filed under the milestone later, and that work then waits on pacing.
+Work that must stay out of a milestone's urgency keeps a pause of its own or moves to its own milestone.
+A pause holds urgent work, but expedited work bypasses it. Never pick the pieces by hand.
+
 The flag stays on the existing work tables as the hierarchy names migrate.
