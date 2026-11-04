@@ -1,24 +1,15 @@
 // node platform/hq/book-check.mjs --stories 'microphone|live call' [--webkit]
-// The book's mic tapped uses the call's live microphone on both iPad mini orientations and desktop. Only a mic's tap
-// asks permission: nothing drawn or held in the book does. A refusal is not asked again, and a stream allowed by one recorder can serve another.
+// The book's mic tapped and a spot held uses the call's live microphone on both iPad mini orientations and desktop.
+// Only a mic's tap asks permission: nothing drawn or held in the book does, a double tap held there saying to tap the
+// mic once. A refusal is not asked again, and a stream allowed by one recorder can serve another.
 // A preview offers its mic over a message port, but HQ records only at a tap on its own key after it stops moving.
 import assert from 'node:assert/strict';
 import { freePage, paperBox } from './mouse.mjs';
 import { microphone, voiceServed, SAID } from './voice.mjs';
 import { playLine } from './call.mjs';
 import { press } from './bar.mjs';
-import {
-  DESKTOP,
-  MINI,
-  UPRIGHT,
-  PREVIEW,
-  QUIET_MS,
-  chromiumPen,
-  pressAlong,
-  previewServed,
-  touchOf,
-  ui,
-} from './kit.mjs';
+import { DESKTOP, MINI, UPRIGHT, QUIET_MS, chromiumPen, pressAlong, say, touchOf, ui } from './kit.mjs';
+import { PREVIEW, previewServed } from './preview.mjs';
 import { watchedPage } from './start.mjs';
 
 const HELD = [250, 620]; // (where the pen's held still on HQ's page, clear of the book)
@@ -36,8 +27,8 @@ export function micStories(c) {
       browser => onHq({ ...c, browser }),
     'the microphone not yet allowed: a line drawn, a finger lifted or a press held in the book never asks for it, the book’s mic asks once tapped':
       browser => inBook({ ...c, browser }),
-    'the microphone allowed by the post-it’s mic, the browser not saying: the book’s mic listens at its tap': browser =>
-      across({ ...c, browser }),
+    'the microphone allowed by the post-it’s mic, the browser not saying: the book’s mic opens it at its tap':
+      browser => across({ ...c, browser }),
     'a page in HQ’s viewer offering its mic from its own button’s tap: HQ’s key shows, records nothing, takes no tap as it moves, and answers only the offer’s end':
       browser => pagePosted({ ...c, browser }),
   };
@@ -96,30 +87,50 @@ async function callMic(context) {
   });
 }
 
-// The book's mic tapped: listening at once, with no switch-on prompt; Escape lets it go, or a second tap lands the words
+// The book's mic tapped, then a spot held: recording at once, with no switch-on prompt; Escape lets it go, or letting
+// go lands the words
 async function callTapped(page, cancel = false) {
   await press(page, 'Voice note');
-  const slip = page.locator('#book .bk-voice');
-  await slip.waitFor({ timeout: 1000 });
-  assert.equal(
-    await slip.getAttribute('data-state'),
-    null,
-    `a tap starts listening without a switch-on prompt (the slip: ${await slip.textContent()})`,
-  );
+  const paper = await paperBox(page),
+    at = [paper.x + paper.width * 0.3, paper.y + paper.height * 0.5];
+  await finger(page, 'pointerdown', at);
+  const words = page.locator('#book .bk-heard');
+  await words.waitFor({ timeout: 1000 });
   await page.waitForTimeout(1200);
-  if (!cancel) return press(page, 'Stop, and put the words on the page');
-  await page.keyboard.press('Escape');
-  await slip.waitFor({ state: 'detached' });
-  assert.equal(await page.evaluate(() => window.callTrack.readyState), 'live', 'cancelling keeps the call mic');
+  assert.equal(
+    await page.locator('#book .bk-mic').getAttribute('data-listening'),
+    '',
+    'a spot held records without a switch-on prompt',
+  );
+  if (cancel) {
+    await page.keyboard.press('Escape');
+    await words.waitFor({ state: 'detached' });
+  }
+  await finger(page, 'pointerup', at);
+  if (cancel)
+    assert.equal(await page.evaluate(() => window.callTrack.readyState), 'live', 'cancelling keeps the call mic');
 }
+// A finger's pointer event as Safari hands it over, on what's at its point
+const finger = (page, type, [x, y]) =>
+  page.evaluate(
+    ({ type, x, y }) =>
+      document.elementFromPoint(x, y).dispatchEvent(
+        new PointerEvent(type, {
+          ...{ pointerId: 3, pointerType: 'touch', isPrimary: true, clientX: x, clientY: y },
+          ...{ buttons: type === 'pointerup' ? 0 : 1, bubbles: true, composed: true, cancelable: true },
+        }),
+      ),
+    { type, x, y },
+  );
 
 async function onHq(c) {
   const { page, errors, done } = await unallowed(c, MINI);
   const asked = () => page.evaluate(() => window.micsAsked),
     heldStill = async () => {
+      const shut = await page.locator(ui('.sheet')).isHidden();
       await pressAlong(page, [HELD], { lift: false });
       await page.waitForTimeout(2000);
-      assert.equal(await page.locator(ui('.listen:not([hidden])')).count(), 0, 'the pen held still listens to nothing');
+      assert.equal(await page.locator(ui('.sheet')).isHidden(), shut, 'the pen held still opens and closes nothing');
       await page.evaluate(() => window.__lift());
     };
   try {
@@ -157,13 +168,19 @@ async function inBook(c) {
     // the Pencil held still a second and a half: no voice note, nothing asked
     const held = await pressAlong(page, [at], { lift: false });
     await page.waitForTimeout(1500);
-    assert.equal(await page.locator('#book .bk-voice').count(), 0, 'a press held still listens to nothing');
+    assert.equal(await page.locator('#book .bk-heard').count(), 0, 'a press held still listens to nothing');
     await held.up();
+    // a double tap held: before the microphone is allowed it listens to nothing, a toast saying to tap the mic once
+    const twice = [at[0], at[1] + 60];
+    await pen.tap(twice);
+    await pen.down(twice);
+    await page.locator('.toast', { hasText: say('micFirstTap') }).waitFor({ timeout: 5000 });
+    await pen.up(twice);
     await page.waitForTimeout(QUIET_MS);
     assert.equal(await page.evaluate(() => window.micsAsked), 0, 'nothing asked for the microphone');
     // the book's mic tapped asks, once, and says it's blocked when refused
     await press(page, 'Voice note');
-    await page.locator('#book .bk-voice[data-state="said"]', { hasText: 'blocked' }).waitFor({ timeout: 15_000 });
+    await page.locator('.toast', { hasText: 'blocked' }).waitFor({ timeout: 15_000 });
     assert.equal(await page.evaluate(() => window.micsAsked), 1, 'the mic tapped asked, once');
     c.noErrorsIn(errors.filter(e => !/Refused/.test(e)));
   } finally {
@@ -201,9 +218,10 @@ async function across(c) {
     await page.locator(ui('.sheet .mic')).dispatchEvent('click');
     assert.equal(await page.evaluate(() => window.micsAsked), 1, 'the post-it’s mic recorded');
     await press(page, 'Voice note');
-    await page.locator('#book .bk-voice').waitFor({ timeout: 15_000 });
-    await page.waitForFunction(() => window.micsAsked === 2, null, { timeout: 15_000 }); // (the book's recording)
-    await press(page, 'Stop, and put the words on the page');
+    await page.waitForFunction(() => window.micsAsked === 2, null, { timeout: 15_000 }); // (opened at the mic's tap)
+    assert.equal(await page.locator('#book .bk-mic').getAttribute('aria-pressed'), 'true', 'the mic waits for a spot');
+    await press(page, 'Voice note');
+    assert.equal(await page.locator('#book .bk-mic').getAttribute('aria-pressed'), 'false', 'tapped again, it lets go');
     c.noErrorsIn(errors);
   } finally {
     await done();

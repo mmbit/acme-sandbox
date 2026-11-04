@@ -181,6 +181,7 @@ export async function productHeaders() {
 //   'take': a 202; 'slow': a 202 a second later; 'fail': a 500, which may have gone; 'lose': no answer, the connection
 //   closed; 'refuse': a 422, the email refused; 'refuse:<field>': a 422 naming the field, as Lettermint refuses an address.
 // hold() keeps the answers back until the release it returns is called (the service has the email, HQ no answer yet).
+// code() is the six-digit code in the last email it took.
 export type LettermintAnswer = 'take' | 'slow' | 'fail' | 'lose' | 'refuse' | `refuse:${string}`;
 const LETTERMINT_KEY = 'lm-key-0123456789abcdefghij';
 export async function fakeLettermint() {
@@ -188,6 +189,7 @@ export async function fakeLettermint() {
   const fake = {
     received: [] as any[],
     taken: [] as any[],
+    code: (): string => /(\d{6})/.exec(fake.taken.at(-1)!.text)![1],
     script: [] as LettermintAnswer[],
     answer: 'take' as LettermintAnswer | ((mail: any) => LettermintAnswer),
     hold() {
@@ -221,15 +223,18 @@ export async function fakeLettermint() {
     if (answer === 'take' || answer === 'slow') return response.writeHead(202).end(JSON.stringify({ message_id: id }));
     if (answer === 'fail') return response.writeHead(500).end('{}');
     if (answer === 'lose') return response.destroy();
-    const field = answer.slice('refuse:'.length);
-    const refusal = field
-      ? { message: `The ${field} field is refused (${mail.to[0]}).`, errors: { [field]: ['refused'] } }
-      : { message: 'bad address' };
-    response.writeHead(422, { 'content-type': 'application/json' }).end(JSON.stringify(refusal));
+    response.writeHead(422, { 'content-type': 'application/json' }).end(JSON.stringify(refusalOf(answer, mail)));
   });
   await new Promise<void>(resolve => service.listen(0, resolve));
   const { port } = service.address() as AddressInfo;
   service.unref();
   after(() => service.close());
   return fake;
+}
+// Lettermint's refusal of an email, a 422's body: naming the field where the answer does
+function refusalOf(answer: LettermintAnswer, mail: any) {
+  const field = answer.slice('refuse:'.length);
+  return field
+    ? { message: `The ${field} field is refused (${mail.to[0]}).`, errors: { [field]: ['refused'] } }
+    : { message: 'bad address' };
 }

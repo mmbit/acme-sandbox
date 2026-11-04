@@ -13,6 +13,7 @@ import { redrawInk, reset } from './acts.js';
 import { nextMark, toBook } from './settle.js';
 import { lift } from './lift.js';
 import { openLines, paint as paintInk } from './marks.js';
+import { placed } from './postitplace.js';
 import { PAPER } from './paper.js';
 import { ownerNamed } from './markpage.js';
 import { showNotice } from './postitnotice.js';
@@ -29,6 +30,8 @@ export const CSS = `
         border-radius: 0 0 5px 5px; filter: drop-shadow(0 10px 18px rgba(29,26,47,.28)) drop-shadow(0 1px 2px rgba(29,26,47,.18));
         animation: pop .35s cubic-bezier(.3,1.5,.5,1); max-height: calc(100dvh - 24px - var(--kb, 0px)); overflow: auto; }
       .sheet[hidden] { display: none; }
+      .ui.up .sheet { top: max(12px, env(safe-area-inset-top)); bottom: auto; }   /* (placed: off the ink) */
+      .ui.folded .sheet .polaroid { display: none; }
       .sheet::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 8px; z-index: -1; background: var(--bk-paper);
         clip-path: polygon(0 6px, 4% 3px, 8% 7px, 13% 2px, 18% 6px, 23% 3px, 28% 8px, 34% 3px, 39% 6px, 45% 1px, 50% 7px, 56% 3px, 61% 8px, 67% 2px, 72% 6px, 78% 1px, 83% 7px, 89% 3px, 94% 6px, 100% 2px, 100% 100%, 0 100%); }
       .sheet.away { animation: away .5s cubic-bezier(.6,-.3,.7,.5) forwards; }
@@ -151,8 +154,9 @@ export function towards(r, mark) {
     () => {}, // (the org unread: a plain Send, which still files it)
   );
 }
-// The polaroid, framed on the mark: the page as it was with every line drawn so far
+// The polaroid, framed on the mark: the page as it was with every line drawn so far, and the post-it kept off them
 export function develop(r) {
+  placed(r);
   if (!r.exposure) return;
   const box = r.$('.polaroid .img'),
     picture = box.querySelector('img') ?? box.appendChild(document.createElement('img'));
@@ -179,6 +183,9 @@ export function showSheet(r) {
   r.msg.textContent = '';
   r.sheet.hidden = false;
   r.sheet.classList.remove('away');
+  // (the Pencil's strip placed with it: surface.js)
+  r.ui.classList.add('noted');
+  placed(r);
   showNotice(r);
   if (matchMedia('(pointer: fine)').matches) r.text.focus();
 }

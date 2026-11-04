@@ -133,16 +133,17 @@
 }
 
 /* ---- a card: one of the look's panels floating over the paper (the pairing card, a menu, the page's targets and the
-   asks still open as it goes: bookshare.css), as the viewer's Share box */
+   asks still open as it goes: bookshare.css). It can't be pressed, so it lies as the islands do, their edge and shadow,
+   never a key's base under it (the Ink README, the tools' cards) */
 .bk-card,
 .bk-share,
 .bk-asks-open {
   box-sizing: border-box;
-  border: var(--bw-lg, 1px) solid var(--bk-ui-line);
+  border: var(--bk-ui-border);
   border-radius: var(--r-lg, 14px);
   background: var(--bk-ui-bg);
   color: var(--bk-ui-ink);
-  box-shadow: var(--shadow-xl, var(--bk-lift));
+  box-shadow: var(--shadow-sm, var(--bk-lift));
   font: 15px/1.4 var(--bk-ui-font);
 }
 /* a list in a card: one row each, the current one inked */

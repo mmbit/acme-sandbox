@@ -3,6 +3,7 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import { sizedTime } from './testwords.ts';
 import { harness, type Running } from './harness.ts';
 
@@ -365,6 +366,65 @@ test("HQ's work made in no deliverable waits for the CEO to place it, but the CE
       await h.claim(h.job(free).engine);
       assert.equal(held(free), undefined, `#${free} isn't held`);
     }
+  } finally {
+    writeFileSync(file, 'projects:\n  - { id: game, name: The game, owner: wren }\n');
+  }
+});
+
+// A linked company's urgent message wakes our executive now (workspaceentries.ts wake), at once or once the session it
+// went to ended without reading it (messages.ts jobEnded): its job crosses seat pacing and no sort holds urgent work,
+// whoever's it is. A guest's step and a colleague's message wait as they did.
+test("a linked company's urgent wake is the job a paced seat claims, ahead of the sort; a guest's step and a message aren't", async () => {
+  const file = `${h.repo}/company/projects.yaml`;
+  const colleague = await h.start({ agent: 'bolt' });
+  writeFileSync(file, `requireThread: true\n${readFileSync(file, 'utf8')}`);
+  try {
+    const { ceo } = await import('./company.ts');
+    const messages = await import('./messages.ts');
+    const links = await import('./links.ts');
+    const urgency = await import('./urgency.ts');
+    const said = (await say(colleague, 'kit', 'The lift is slow.')).body.job as number;
+    const desk = h.queue({ agent: ceo(), title: 'Tidy the desk' });
+    const guest = messages.fromGuest('kit', 41, null, 'A step on Plans', '{"ticked":1}').job;
+    const paced = () => h.claim('claude', { pacedUntil: Date.now() + 2 * 24 * 3_600_000 });
+    // A company our board invited, linked as its HQ accepts, pushes a workspace, a thread and an urgent message in it
+    const urgentFrom = async (name: string) => {
+      const { invitation } = links.invite();
+      const key = `link_${randomBytes(32).toString('base64url')}`;
+      const address = `https://${name.toLowerCase()}.example`;
+      const accepted = links.accept({ invitation: invitation.split('#')[1], name, address, key }) as { key: string };
+      const [workspace, thread, at] = [crypto.randomUUID(), crypto.randomUUID(), new Date().toISOString()];
+      const entries = [
+        { kind: 'workspace', uid: workspace, title: 'Ink' },
+        { kind: 'thread', uid: thread, workspace, subject: 'Plans' },
+        { kind: 'message', uid: crypto.randomUUID(), thread, text: 'Now, please', urgent: true },
+      ];
+      const pushed = await h.call('/api/peer/entries', accepted.key, {
+        entries: entries.map((entry, i) => ({ ...entry, seq: i + 1, agent: 'lyra', at })),
+      });
+      assert.deepEqual(pushed, { status: 200, body: { received: 3 } });
+      return () => h.jobs.listJobs().find(j => h.job(j.id).title === `Urgent from ${name}: Plans`)?.id;
+    };
+    const knop = await urgentFrom('Knop');
+    const woken = await paced();
+    assert.equal(woken?.id, knop(), "the CEO's wake starts on the paced seat");
+    // Wire's goes to that running session, which ends without reading it: the job it becomes is as urgent
+    const wire = await urgentFrom('Wire');
+    assert.equal(wire(), undefined, 'the running session hears it');
+    assert.equal((await h.finish(woken!)).status, 200);
+    assert.ok(wire(), 'unread, it became a job of its own');
+    assert.equal((await paced())?.id, wire(), 'its wake starts on the paced seat too');
+    // (urgent work of anyone's isn't held for a sort either, as an expedited job isn't)
+    const loose = h.queue({ agent: 'kit', title: 'Answer Knop', engine: 'claude' });
+    assert.equal(typeof urgency.setUrgent('task', String(loose), true, ceo()), 'object');
+    assert.equal((await paced())?.id, loose);
+    assert.equal(held(loose), undefined, 'no sort holds it');
+    assert.equal((await paced())?.id, undefined, 'nothing else crosses the pace');
+    assert.deepEqual(
+      [desk, guest, said].map(id => h.job(id).status),
+      ['queued', 'queued', 'queued'],
+    );
+    assert.ok(held(said), "the colleague's message waits for its sort");
   } finally {
     writeFileSync(file, 'projects:\n  - { id: game, name: The game, owner: wren }\n');
   }

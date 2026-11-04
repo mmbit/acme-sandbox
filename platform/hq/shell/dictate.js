@@ -55,11 +55,11 @@ export function dictate({ lang = 'en', api, onWords, stream }) {
 // heard, as on HQ's own post-it (shared/review/liveline.js), and onWords hears every word so far, phrase by phrase, a
 // moment after each is said; over() the line's end unasked (its five minutes). The same { ready, level, cancel, stop }
 // as dictate's; where the line can't be had (or drops), stop() has the whole clip transcribed. Called in the tap: the
-// line's audio context is made there, so Safari lets it run.
-export function dictateLive({ lang = 'en', onWords, over }) {
-  const AC = window.AudioContext || window.webkitAudioContext,
-    ctx = AC ? new AC() : null;
-  const rec = record({ lang });
+// line's audio context is made there, so Safari lets it run. The Notebook's voice note (ink/bookvoice.js) gives its
+// own, made at the mic's tap before the press it records, and the microphone it opened then (stream), both the
+// recording's from then on.
+export function dictateLive({ lang = 'en', onWords, over, stream, ctx = audioContext() }) {
+  const rec = record({ lang, stream });
   let line = null,
     said = '',
     cancelled = false;
@@ -93,4 +93,9 @@ export function dictateLive({ lang = 'en', onWords, over }) {
       return { text: ((await transcribe(clip, lang)) || '').trim(), short };
     },
   };
+}
+// An audio context, or null where the browser has none
+export function audioContext() {
+  const AC = window.AudioContext || window.webkitAudioContext;
+  return AC ? new AC() : null;
 }

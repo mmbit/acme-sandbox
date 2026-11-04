@@ -11,14 +11,19 @@ export const EDGE = 12;
 // The page's share of a screen with the book open beside it: 620 of the iPad mini's 1133 landscape points, which
 // leaves the book 501 (the concept's layout, section 2). Wider screens give the book at most BOOK.max of it.
 const PAGE_SHARE = 620 / 1133;
-// The book is never narrower than BOOK.min (too small to draw on): a drag of its edge stops there, never closing it.
-// Wider than BOOK.max by default, it takes a desktop's page for nothing (the concept's desktop column, with the rail's 48
-// now paper). A drag can make it as wide as leaves HQ's page PAGE_MIN.
-export const BOOK = { min: 320, max: 520 };
+// The book is never narrower than BOOK.min: its bar along the foot whole there, a tablet's keys and all. The bar is
+// 325 px at a tablet's 44 px keys: Undo and Redo, as much again on the right so the page's count sits in the middle,
+// the arrows and the count. It sits 8 px in from each side of the paper (bookstrip.css), and the page block takes 4 px
+// (book.css --bk-pages): 345 px. It is 400 for a column of notes at the masonry's LEAST, 0.9x of their size: 400 less
+// the page block (4), the tools beside the paper (66-70 px, a tablet's keys) and the page's insets (2 x 8,
+// bookunits.js) leaves 310-314 px. A drag of its
+// edge stops there, never closing it. Wider than BOOK.max by default, it takes a desktop's page for nothing (the
+// concept's desktop column, with the rail's 48 now paper). A drag can make it as wide as leaves HQ's page PAGE_MIN.
+export const BOOK = { min: 400, max: 520 };
 // At half a split screen (about 560 pt) or less, or in portrait, the book starts folded. In portrait it opens as the
 // spread, as on a phone, until the board drags its cover's edge to a width beside the page: beside HQ's page at its
-// share it is too narrow to read an answer on (an iPad mini upright, 325 px: under 160 px of paper left of the
-// controls).
+// share it is too narrow to read an answer on (an iPad mini upright: 325 px, under BOOK.min, too little paper beside
+// the controls).
 const NARROW = 560;
 // From a laptop's width up, a screen is remembered apart from a tablet's landscape.
 const WIDE = 1280;

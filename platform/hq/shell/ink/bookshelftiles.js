@@ -1,25 +1,20 @@
 // The overview's pages as HTML, under their chapters' plain heads (bookshelf.js draws them; a notebook on the Shelf:
 // bookshelfbooks.js), and its icons.
 import { esc } from '../../util.js';
-import { lineIcon as svg } from './bookui.js';
+import { icon } from '../icons.js';
 import { dayName, untitledPage } from './bookhead.js';
 import { word } from './bookscope.js';
 import { CHAPTER_WORDS, tabsOf } from './notebookchapters.js';
 
+// (HQ's icons, each drawn in the look's own style: icons.js)
 export const ICONS = {
-  // (the way up: a chevron, as the page's arrows)
-  up: svg('<path d="M14.5 5.5L8 12l6.5 6.5"/>'),
-  more: svg('<circle cx="5.5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="18.5" cy="12" r="1.2"/>'),
-  // (a box with its lid, its handle one stroke, as Ink's other line icons)
-  archive: svg(
-    '<rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8"/><path d="M10 12h4"/>',
-  ),
-  restore: svg('<path d="M5 11v8a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-8"/><path d="M12 16V4.5M8 8.5l4-4 4 4"/>'),
-  cover: svg(
-    '<rect x="4" y="4" width="16" height="16" rx="2"/><circle cx="9.5" cy="9.5" r="1.8"/><path d="M5 18l5-5 3 3 2.5-2.5L20 18"/>',
-  ),
-  round: svg('<path d="M4 7h16v12H4z"/><path d="M4 7l8 6 8-6"/>'),
-  add: svg('<path d="M12 5v14M5 12h14"/>'),
+  up: icon('back'),
+  more: icon('more'),
+  archive: icon('box'),
+  restore: icon('restore'),
+  cover: icon('picture'),
+  round: icon('mail'),
+  add: icon('plus'),
 };
 // The sent mark: a rubber stamp's ring and its word, inked unevenly on the page's corner (bookpaper.css's grain), pressed
 // on with bookpaper.js's stamp as a page is seen to go

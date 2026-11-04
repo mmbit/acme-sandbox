@@ -17,7 +17,7 @@ import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, statfsSync, unlinkSync, writeFileSync, writeFile } from 'node:fs';
 import { delimiter, join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { db, now, token, limit } from './db.ts';
+import { db, now, token, limit, caseRef } from './db.ts';
 import { jpegSize } from '../../../shared/pictures/size.ts';
 import { DATA_DIR, HQ_URL, HQ_TOKEN } from './config.ts';
 import { nameOf, thingOf } from './company.ts';
@@ -223,7 +223,7 @@ export async function push() {
   const rows = db.prepare(`select * from (select p.id, p.claim, p.order_id, p.shot, p.sent_hq, row_number() over (partition by p.claim order by p.created, p.id) as n
     from photos p join cases c on c.id = p.claim where p.bytes > 0 and p.replaced is null and c.sent_hq is not null) where sent_hq is null limit 50`).all() as any[];
   for (const r of rows) {
-    const ref = `H-${1000 + r.claim}`, name = `${safeName(r.order_id)}-${r.n}-${r.shot}.jpg`;
+    const ref = caseRef(r.claim), name = `${safeName(r.order_id)}-${r.n}-${r.shot}.jpg`;
     let body: Buffer;
     try { body = readFileSync(fileOf(r.id)); } catch {
       console.error(`care: photo ${r.id} of case ${ref} has no file: not sent`);

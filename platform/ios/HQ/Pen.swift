@@ -44,6 +44,19 @@ final class Pen: NSObject, PKCanvasViewDelegate, UIGestureRecognizerDelegate {
     gate.cancelsTouchesInView = false
     gate.delaysTouchesEnded = false
     gate.delegate = self
+    // (the Pencil on the paper told to the page at once, before its stroke is drawn: a zoom a slide lent is the board's
+    // again then, booknative.js)
+    gate.touched = { [weak self] at in
+      self?.web?.callAsyncJavaScript(
+        "window.shellPenDown(x, y)", arguments: ["x": Self.round(at.x), "y": Self.round(at.y)], in: nil, in: .page
+      ) { [weak self] result in
+        MainActor.assumeIsolated {
+          if case .failure(let error) = result {
+            self?.log.error("the page didn't take the Pencil's touch: \(String(describing: error), privacy: .public)")
+          }
+        }
+      }
+    }
     web.addGestureRecognizer(gate)
     pencil.require(toFail: gate)
     // (a Pencil's touch on the paper never reaches the page as well: the stroke comes to it whole, once drawn)
@@ -170,10 +183,18 @@ final class Pen: NSObject, PKCanvasViewDelegate, UIGestureRecognizerDelegate {
 // which fails PencilKit's gesture for it. On the paper the gate fails at once, and PencilKit draws.
 private final class PaperGate: UIGestureRecognizer {
   var paper = CGRect.null
+  // (told where the Pencil touched the paper, in the web view's points: the page's px)
+  var touched: (CGPoint) -> Void = { _ in }
 
   override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
     guard let view, let touch = touches.first, state == .possible else { return }
-    state = paper.contains(touch.location(in: view)) ? .failed : .began
+    let at = touch.location(in: view)
+    guard paper.contains(at) else {
+      state = .began
+      return
+    }
+    touched(at)
+    state = .failed
   }
 
   override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {

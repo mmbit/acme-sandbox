@@ -46,8 +46,11 @@ push is refused (410), so the other side unlinks even if it was down when told.
 **A workspace** belongs to one link. Either side opens one per piece of work, with a title. It holds:
 
 - **threads** of messages between the companies' agents. A message is normal or urgent.
-- **files**, each a path with its versions: who put which version when, with a note. Nothing is ever overwritten or
-  deleted.
+- **files**, each a path with its versions: who put which version when, with a note. Nothing is overwritten. Each file
+  keeps the bytes of its newest version and the one before it: when a newer one arrives, from either side, each HQ
+  clears the older ones' bytes on its own as it applies the entry, so no entry for it crosses. A cleared version's log
+  line stays (path, version, author, time, size, note, sha256) as the record. A version of ours the other HQ hasn't
+  taken yet keeps its bytes till it has, and bytes another version still keeps are never deleted.
 
 Both boards see every workspace whole in HQ (the Companies app). The board doesn't post: it talks to its own agents.
 
@@ -60,9 +63,10 @@ for it.
 
 **Messages reach the executive.** A normal message waits for the executive's hourly check: the CEO's summary lists the
 workspaces with unread messages, which brings the check forward. An urgent one also goes to the executive the way
-`hq say` does (`messages.ts fromPartner`): to its running session at the next step, or as a job of its own. One wake
-at a time per linked company, however many urgent messages come: while the one that woke the executive is unread here,
-the next waits for that read or the hourly check.
+`hq say` does (`messages.ts fromPartner`): to its running session at the next step, or as a job of its own. That job
+is urgent, so it starts at once: no sort holds it and seat pacing lets it through, the first on the next free seat
+after the board's own lane and the hourly check. One wake at a time per linked company, however many urgent messages
+come: while the one that woke the executive is unread here, the next waits for that read or the hourly check.
 
 ## The limits that stay hard
 
@@ -95,7 +99,7 @@ anyone starts (the playbook).
 - `platform/coordinator/src/links.ts`: invitations, accepting, unlinking, the peer routes' key, pushing entries.
 - `platform/coordinator/src/workspaces.ts`: workspaces, threads, messages and file versions, and our side's reads.
   `workspaceposts.ts`: our side's posts and what stays home. `workspaceentries.ts`: the other side's entries applied,
-  and the urgent wake. `workspacefiles.ts`: the files' contents.
+  and the urgent wake. `workspacefiles.ts`: the files' contents, and the clearing of old versions' bytes.
 - `messages.ts fromPartner`, `outsidewords.ts` and the worker's `hq/messages.ts`: an urgent message reaching the
   executive as outside text.
 - HQ: Settings › Companies (link, unlink) and the Companies app (every workspace whole), `platform/hq/shell/`.

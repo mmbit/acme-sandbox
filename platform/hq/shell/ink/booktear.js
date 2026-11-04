@@ -12,7 +12,8 @@ import { said } from './booksave.js';
 import { callAbout, downloaded, filesOf, mountTargets } from './bookshare.js';
 import { askedFirst, openAsks, submit } from './bookpagesend.js';
 import { shut } from './booksave.js';
-import { button, island, islands, lineIcon } from './bookui.js';
+import { button, island, islands } from './bookui.js';
+import { icon } from '../icons.js';
 import { word } from './bookscope.js';
 import { callWindowAt, holdCallPosition, lightCall } from '../calldrop.js';
 
@@ -21,15 +22,11 @@ import { callWindowAt, holdCallPosition, lightCall } from '../calldrop.js';
 const PEEL_PX = 10,
   SPINE_PX = 32,
   HELD_PX = 150;
-// (a page held at its edge and drawn away: the page's top edge as perforated paper tears)
-const ICON = lineIcon(
-  '<path d="M6 21V3h12v18"/><path d="M6 7.5l2-1.2 2 1.2 2-1.2 2 1.2 2-1.2 2 1.2"/><path d="M12 11v6M9.5 14.5L12 17l2.5-2.5"/>',
-);
 
 // book: bookpages.js's. The page's right edge, by the spine, takes the press; the menu's row follows the page shown, as
 // the bar's controls do (bookcontrols.js update(): book.tear), and goes on a page already sent.
 export function mountTear(book) {
-  const item = button({ icon: ICON, label: word('tearOff'), onClick: () => menu(spine) });
+  const item = button({ icon: icon('tear'), label: word('tearOff'), onClick: () => menu(spine) });
   item.classList.add('bk-tear');
   island('menu').prepend(item); // (before Archive this page)
   const spine = { book, item, files: null, lane: islands(), at: null };
@@ -68,7 +65,7 @@ function menu(spine) {
 function pressed(spine, down) {
   if (!down.isPrimary || (down.pointerType === 'mouse' && down.button !== 0)) return;
   const paper = spine.book.paper.getBoundingClientRect(),
-    top = spine.book.desk.getBoundingClientRect().top;
+    top = spine.book.desk.getBoundingClientRect().top + spine.book.size.top;
   if (down.clientX < Math.min(paper.right, innerWidth) - SPINE_PX || down.clientY < top) return;
   if (down.target.closest?.('.bk-strip, .bk-bar, .bk-card, .bk-share, button, a, input, [contenteditable]')) return;
   if (spine.book.paper.closest('#book')?.hasAttribute('data-far')) return;

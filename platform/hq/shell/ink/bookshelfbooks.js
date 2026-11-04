@@ -2,25 +2,66 @@
 // things standing on it as fit. A notebook stands covers out: its cloth, a printed plate with its picture (the board's
 // or its project's, else a drawing of a pen), its name and one line of news, its open asks counted red on its corner.
 // A review round away to the CEO, or back, is its brown envelope standing there instead. The Archive is a lidded box
-// on a board with its count; the potted plant stands on a board too.
-import { esc } from '../../util.js';
+// on a board with its count; the potted plant stands in the free room on a board of My shelf, never the Archive's.
+import { esc, store } from '../../util.js';
+import { shelfFit, shelfOrder } from './bookshelfgrid.js';
+import { ICONS } from './bookshelftiles.js';
 
 // a book quiet this long reads "quiet this week"
 const QUIET_MS = 7 * 864e5;
-// the books' cloths: My journal's navy, every other book's one of these by its id, the same each time
-const JOURNAL_CLOTH = '#3b4a7a',
+// the books' cloths: My journal's the book's own black cover (booklook.css --bk-cloth), every other book's one of these
+// by its id, the same each time
+const JOURNAL_CLOTH = 'var(--bk-cloth)',
   CLOTHS = ['#3f7d78', '#a5523f', '#c2953c', '#6b4f7c', '#4f7550'];
 
-// The bookcase's boards, each a row of cols. things: the books, the Archive's box after them (its count; none in the
-// Archive itself); plant: the row it stands at the end of ('first' or 'last'). opts(n): a book's (shelfBook's).
-export function shelfRows(books, { cols, box, plant }, opts) {
+// how many things (books and the Archive's box) stood on My shelf when last read, kept on the device: the boards it
+// stands with before it's read
+const SHELF_THINGS = 'book.shelfThings';
+
+// My shelf, or its Archive, in the overview s (bookshelf.js mountScreens): one title line (the way back from the
+// Archive, its name, the window's Close after it: bookshelfwindow.js), then the bookcase, the plant on My shelf only.
+// Not read yet (s.unread while it's drawn so), its boards stand empty, as many as it had last time; once read, its
+// things arrive on them. Guests are invited from the work, Share on it (desk.js): no Invite here
+export function drawShelf(s) {
+  const read = s.read.shelf,
+    archive = s.tab === 'archive',
+    books = read ? shelfOrder(archive ? read.archive : read.shelf) : [];
+  s.head.innerHTML = `${
+    archive
+      ? `<button type="button" class="bk-far-up" data-tab="shelf" aria-label="Back to My shelf">${ICONS.up}<span>My shelf</span></button>`
+      : '<span></span>'
+  }<h2 class="bk-shelf-title">${archive ? 'Archive' : 'My shelf'}</h2>`;
+  const fit = shelfFit(s.body.clientWidth),
+    arriving = read && s.unread;
+  s.cols = fit.cols;
+  s.unread = !read;
+  if (read && !archive) store.set(SHELF_THINGS, books.length + 1);
+  const rows = read
+    ? shelfRows(
+        books,
+        { cols: s.cols, box: archive ? null : read.archive.length, plant: archive ? null : fit.plant },
+        n => ({ playing: s.playing?.id === n.id ? s.playing.kind : null }),
+      )
+    : shelfRows([], { cols: s.cols, box: null, plant: null, least: Math.ceil(store.get(SHELF_THINGS, 4) / s.cols) });
+  s.body.innerHTML = `<div class="bk-shelf" role="presentation"${
+    arriving ? ' data-arriving' : ''
+  } style="--bk-book-w:${fit.book}px;--bk-row-in:${fit.inset}px">${rows}</div>${
+    archive && read && !books.length
+      ? '<p class="bk-far-none">Nothing archived. A notebook archived from its options waits here.</p>'
+      : ''
+  }`;
+}
+// The bookcase's boards, each a row of cols, at least `least` of them (the boards a shelf not read yet stands with).
+// things: the books, the Archive's box after them (its count; none in the Archive itself); plant: the row it stands at
+// the end of ('first' or 'last'; null: none). opts(n): a book's (shelfBook's).
+function shelfRows(books, { cols, box, plant, least = 1 }, opts) {
   const wrapped = n => n.kind === 'round' && ['away', 'back'].includes(n.round?.state),
     things = [...books.filter(n => !wrapped(n)), ...books.filter(wrapped)].map(n => shelfBook(n, opts(n)));
   if (box != null) things.push(archiveBox(box));
   const rows = [];
   for (let i = 0; i < things.length; i += cols) rows.push(things.slice(i, i + cols));
-  if (!rows.length) rows.push([]);
-  rows[plant === 'first' ? 0 : rows.length - 1].push(PLANT);
+  while (rows.length < least) rows.push([]);
+  if (plant) rows[plant === 'first' ? 0 : rows.length - 1].push(PLANT);
   return `${rows
     .map(
       row =>
@@ -39,7 +80,7 @@ function shelfBook(n, { playing }) {
     pages = `${n.pages} ${n.pages === 1 ? 'page' : 'pages'}`;
   return `<div class="bk-tile bk-book" role="listitem" data-book="${esc(n.id)}" data-kind="${esc(n.kind)}"${
     r ? ` data-state="${r.state}"` : ''
-  } style="--bk-cloth:${clothOf(n)}"><button type="button" class="bk-tile-open" aria-label="${esc(
+  } style="--bk-shelf-cloth:${clothOf(n)}"><button type="button" class="bk-tile-open" aria-label="${esc(
     `${n.name}, ${said.words}${asks}, ${pages}`,
   )}"><span class="bk-cover"><span class="bk-cover-plate">${coverArt(n)}<span class="bk-cover-title">${esc(
     n.name,

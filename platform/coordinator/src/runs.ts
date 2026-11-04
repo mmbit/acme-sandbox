@@ -703,7 +703,7 @@ export function addMachine(name: unknown) {
 }
 
 // A machine's install command again, on a new key (the old one is let in no more), shown this once: for a machine
-// whose helpers were started by hand, or whose manager changed (its code is pinned by its hash)
+// whose helpers were started by hand
 export function newInstall(id: number) {
   const key = machines.newKey(id);
   return key ? { install: installCommand(key) } : "There's no such machine.";
@@ -711,8 +711,9 @@ export function newInstall(id: number) {
 
 // The install command: pasted once on a machine with Docker, it starts the manager (manager.mjs), which from then on
 // keeps the machine's helpers in step with HQ, one container per kind's helper, on a network that reaches HQ and the
-// package registries alone. The manager's code is the code it trusts by its hash; the helpers' follows HQ. Pasted in
-// PowerShell, cmd and sh alike, as the start commands are.
+// package registries alone. The command checks the manager's code by its hash; from then on the manager follows HQ's
+// code, as the helpers do. Pasted in PowerShell, cmd and sh alike, as the start
+// commands are.
 function installCommand(key?: string) {
   return managerCommand('install', key);
 }
@@ -746,8 +747,9 @@ function managerBootstrap() {
 const managerCode = () => createHash('sha256').update(readFileSync(MANAGER_CODE)).digest('hex');
 
 // What a lent machine's manager keeps it in step with: every kind's helpers, with their image and caps, and the ones of
-// them that have a run now, which it changes only once that run has ended. Each call is kept with the code the manager
-// says it runs ({ code }, its hash: managerOf).
+// them that have a run now, which it changes only once that run has ended, and the hash of the manager's code HQ serves,
+// which a manager that follows HQ starts again on. Each call is kept with the code the manager says it runs ({ code },
+// its hash, and { follows }: managerOf).
 function managerSetup(helper: Helper, said: unknown) {
   if (helper.name !== 'lent') return new Refusal(403, 'a lent machine sets itself up, never this server');
   machines.managerHeard(helper.machine, said);
@@ -764,7 +766,8 @@ function managerSetup(helper: Helper, said: unknown) {
   const busy = openRuns('running')
     .filter(row => row.machine === helper.machine)
     .map(row => ({ kind: row.kind, slot: row.slot ?? 1 }));
-  return { kinds, busy };
+  // (code)
+  return { kinds, busy, code: managerCode() };
 }
 
 // Docker's sign-in for the manager's pull of a kind's image from a private registry (manager.mjs signIn), for that pull
@@ -811,16 +814,22 @@ function askForKey(name: string, kind: string, image: string) {
 const MANAGER_QUIET_MS = 2 * 3600_000;
 const MANAGER_CARD = 'runs.manager.';
 
-// A lent machine's manager as HQ last heard it: 'current', 'old' (it runs code HQ no longer serves: the install command
-// trusts that code by its hash, so it stops at the machine's next restart, and its helpers keep their images) or 'quiet'
-// (no setup call for MANAGER_QUIET_MS while its helpers ask for work). null for a machine that never had one (its
-// helpers started by hand), or one away: away.ts tells of that.
+// A lent machine's manager as HQ last heard it: 'current', 'updating' (it ran other code at its last call, and follows
+// HQ's: it starts again on HQ's at that call's answer), 'old' (it runs code HQ no longer serves and is pinned to it, as
+// an install from before managers followed HQ: it stops at the machine's next restart, and its helpers keep their
+// images) or 'quiet' (no setup call for MANAGER_QUIET_MS while its helpers ask for work). null for a machine that never
+// had one (its helpers started by hand), or one away: away.ts tells of that.
 function managerOf(machine: machines.Machine, present: boolean, now = Date.now()) {
   if (!machine.manager_seen || !present) return null;
   const quiet = now - Date.parse(machine.manager_seen) >= MANAGER_QUIET_MS;
-  const state = quiet ? 'quiet' : machine.manager_code === managerCode() ? 'current' : 'old';
+  // ('updating')
+  const other = machine.manager_follows ? 'updating' : 'old';
+  const state = quiet ? 'quiet' : machine.manager_code === managerCode() ? 'current' : other;
   return { state, seen: machine.manager_seen } as const;
 }
+
+// A manager that needs nobody at its machine: on HQ's code, or taking it by itself
+const inStep = (manager: ReturnType<typeof managerOf>) => manager?.state === 'current' || manager?.state === 'updating';
 
 // Why a lent machine's helpers aren't in step, as its manager said at its last setup call ({ helper's container:
 // message }), while it still calls: with no helper present too, as when no kind's image pulls on a new machine
@@ -829,7 +838,7 @@ function problemsOf(machine: machines.Machine, now = Date.now()) {
   return JSON.parse(machine.manager_problems ?? '{}') as Record<string, string>;
 }
 
-// Each minute: a card for the board for each lent machine whose manager runs old code or went quiet, with the install
+// Each minute: a card for the board for each lent machine whose manager is pinned to old code or went quiet, with the install
 // command without a key (the machine keeps its own). One a machine until its manager runs HQ's code again, which takes an
 // open one off the desk phone, as the board pausing or removing the machine does. A card is kept with the code its
 // command trusts ('<card> <hash>'): a machine away keeps its card while HQ serves that code, as its manager still needs
@@ -846,14 +855,14 @@ export function managerCheck(now = Date.now()) {
     const [card, trusts] = value.split(' ');
     const gone = !machine || machine.paused;
     const stale = trusts !== managerCode();
-    if (!gone && !stale && managerOf(machine, true, now)?.state !== 'current') continue;
+    if (!gone && !stale && !inStep(managerOf(machine, true, now))) continue;
     remember(key, null);
     if (db.prepare("select 1 from requests where id = ? and status = 'open'").get(Number(card)))
       jobs.endRequest(
         Number(card),
         gone
           ? `${machine?.name ?? 'The machine'} was paused or removed.`
-          : managerOf(machine, true, now)?.state === 'current'
+          : inStep(managerOf(machine, true, now))
             ? `${machine.name}'s manager runs HQ's code again: nothing to paste.`
             : "HQ's manager code changed since, so this command no longer works: a new card has the one that does, " +
               "once the machine's helpers ask for work again if it's away.",
@@ -861,7 +870,7 @@ export function managerCheck(now = Date.now()) {
   }
   for (const [key, machine] of lent) {
     const manager = machine.paused ? null : managerOf(machine, presentOn(machine.id, now), now);
-    if (!manager || manager.state === 'current' || setting(key)) continue;
+    if (!manager || inStep(manager) || setting(key)) continue;
     const card = jobs.createRequest({
       kind: 'action',
       urgency: 'today',
@@ -881,7 +890,8 @@ function managerCard(name: string, manager: NonNullable<ReturnType<typeof manage
   const what =
     manager.state === 'old'
       ? `${name}'s manager (it keeps the machine's helpers in step with HQ) runs code HQ has since changed. It goes on ` +
-        'until the machine or Docker restarts, then stops, and the helpers keep their old images.'
+        'until the machine or Docker restarts, then stops, and the helpers keep their old images. From this install ' +
+        "on, it takes HQ's new code by itself."
       : `${name}'s manager (it keeps the machine's helpers in step with HQ) hasn't checked in since ` +
         `${companyTime(Date.parse(manager.seen))}, while its helpers still take runs. It has most likely stopped, so ` +
         'the helpers keep their old images.';

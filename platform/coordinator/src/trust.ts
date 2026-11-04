@@ -60,8 +60,6 @@ Hold every finding to the trust rule below. Check its case against the code: a g
 systems or one that can't happen, and any fix that falls back, you drop as "trust"; a finding you can't show concretely
 as "unshown". List each drop in "dismissed". Hardening the change itself adds (a guard against our own systems, a check
 for a case that can't happen, a fallback) is a blocking finding with "rule": "trust".${TRUST_RULE}`;
-export const FIX_TRUST = `A fix that adds a guard against our own systems, a check for a case that can't happen, or a
-fallback isn't a fix under the trust rule (CODE_STYLE.md, "Errors"): it's blocking, with "rule": "trust".`;
 export const AUTHOR_TRUST = `Fix each finding where it is, the way CODE_STYLE.md's "Errors" asks: no check, retry or fallback the finding doesn't name.`;
 
 // A reviewer's report as the consolidator reads it: the findings the round weighs, how many it dismissed, and apart

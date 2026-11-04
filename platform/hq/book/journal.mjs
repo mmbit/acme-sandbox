@@ -4,6 +4,7 @@
 // pick)
 import assert from 'node:assert/strict';
 import { LOADED_MS, toChapter, until } from './kit.mjs';
+import { watchedPage } from './start.mjs';
 
 const T0 = '2026-10-31T18:00:00.000Z';
 export const CALLS = 20;
@@ -40,10 +41,8 @@ const SEED = {
 // the page before HQ's own. (toChapter)
 export async function onJournal(browser, c, { viewport, name, options, story, init }, walk) {
   const context = await c.hqIn(browser, viewport, { notebooks: structuredClone(SEED), ...options });
-  const p = await context.newPage(),
-    errors = [];
+  const { page: p, errors } = await watchedPage(context);
   if (init) await p.addInitScript(init);
-  p.on('pageerror', e => errors.push(e.message));
   const press = loc => (options.hasTouch ? loc.tap({ timeout: LOADED_MS }) : loc.click({ timeout: LOADED_MS }));
   try {
     await opened(p, c.base, press);

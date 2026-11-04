@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { fakeLettermint, productHeaders } from './fixture.ts';
 import { harness, type Sent } from './harness.ts';
+import { cookieOf } from './testdoor.ts';
 import { reviewModeOff } from './testreview.ts';
 
 const lettermint = await fakeLettermint();
@@ -73,19 +74,11 @@ const invite = async (body: Record<string, unknown>) => {
 };
 const makeShare = (page: string, name = 'Sam', email = 'sam@example.org', days = 3) =>
   invite({ page, name, email, days });
-const cookieOf = (r: Sent) => String(r.headers['set-cookie']?.[0] ?? '').split(';')[0];
 
 // The outsider's way in: the link's code by email, the door's Open, and the preview host's hand-off. Returns their `ps`
 // cookie and the hand-off they were sent to.
-let clients = 0;
 async function signIn(link: string, door = /for your notes/) {
-  const path = new URL(link).pathname,
-    from = `192.0.2.${++clients}`;
-  assert.equal((await h.postForm(`${path}/send`, {}, from)).status, 200);
-  const code = /(\d{6})/.exec(lettermint.taken.at(-1)!.text)![1];
-  const verified = await h.postForm(`${path}/verify`, { code }, from);
-  assert.equal(verified.status, 303);
-  const g = cookieOf(verified);
+  const { g, path } = await h.guestIn(link, lettermint.code);
   const open = await h.send(path, { cookie: g });
   assert.match(open.text, door);
   const go = await h.send(`${path}/go`, { cookie: g });
@@ -97,7 +90,7 @@ async function signIn(link: string, door = /for your notes/) {
 }
 const check = (ps: string, host: string, uri: string, query = '') =>
   h
-    .send(`/api/preview/check${query}`, { cookie: ps, ...{ 'x-forwarded-host': host, 'x-forwarded-uri': uri } })
+    .send(`/api/preview/check${query}`, { cookie: ps, 'x-forwarded-host': host, 'x-forwarded-uri': uri })
     .then(r => r.status);
 const pinNote = (ps: string, host: string, page: string, note = 'The button is hard to find') =>
   h.send(
@@ -298,11 +291,7 @@ test('a view-only share opens the same pages without review mode, and takes no n
   });
   assert.notEqual(viewOnly.id, share.id);
   assert.deepEqual([share.view, viewOnly.view], [false, true]);
-  const path = new URL(viewOnly.link).pathname,
-    from = '198.51.100.7';
-  await h.postForm(`${path}/send`, {}, from);
-  const code = /(\d{6})/.exec(lettermint.taken.at(-1)!.text)![1];
-  const g = cookieOf(await h.postForm(`${path}/verify`, { code }, from));
+  const { g, path } = await h.guestIn(viewOnly.link, lettermint.code, '198.51.100.7');
   // the door asks for nothing: no notes, no pin
   const door = (await h.send(path, { cookie: g })).text;
   assert.match(door, /is sharing Hello \(platform test\) with you/);
@@ -902,7 +891,8 @@ test("a tester invite on a product with plans: its door says in the product's wo
   // the product knows her by the id Caddy hands it, and takes her voucher for her
   const checked = await h.send('/api/preview/check', {
     cookie: wanda.ps,
-    ...{ 'x-forwarded-host': HOST, 'x-forwarded-uri': '/' },
+    'x-forwarded-host': HOST,
+    'x-forwarded-uri': '/',
   });
   const as = await productHeaders();
   const paid = await h.send(

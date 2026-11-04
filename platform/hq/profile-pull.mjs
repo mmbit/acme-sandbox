@@ -181,11 +181,12 @@ function countResizes() {
     });
   }
 }
-// The book's blur kept on while window.__keepBlur says so
+// The book's blur kept on while window.__keepBlur says so: its count of slow swings held at none (bookswingmath.js
+// blurs)
 function keepBlur() {
   const setItem = Storage.prototype.setItem;
   Storage.prototype.setItem = function (key, value) {
-    if (!(window.__keepBlur && key === 'hq.book.blur')) setItem.call(this, key, value);
+    if (!(window.__keepBlur && key === 'hq.book.slow')) setItem.call(this, key, value);
   };
 }
 
@@ -223,8 +224,8 @@ async function setUp({ pause, hide, blur, noselect = false }) {
       document.documentElement.style.webkitUserSelect = document.documentElement.style.userSelect = noselect
         ? 'none'
         : '';
+      if (blur) localStorage.setItem('hq.book.slow', '0');
       window.__keepBlur = blur;
-      if (blur) localStorage.setItem('hq.book.blur', 'true');
     },
     { pause, hide, blur, noselect },
   );

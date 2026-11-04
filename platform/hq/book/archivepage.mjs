@@ -1,12 +1,12 @@
 // book-check.mjs's story of a page archived from its own dots menu (shell/ink/bookui.js, bookshelf.js), on
 // journal.mjs's My journal (two sketch pages, its Asks page, twenty calls' notes pages), the book open on Calls'
 // page 20: on an iPad mini with touch, on its side and upright, and on a desktop, the dots menu's Archive this page
-// opens All pages at once and crumples the page's tile up there, throwing it away as a deleted thing does
-// (bookpaper.js), the tile gone from the grid and the page archived in the store; Undo brings it back. Archived again,
-// the overview's key goes back to Calls' page 19, not the notebook's first page; Sketch's last page archived, to
-// Sketch's page before it, not Asks. Sketch is picked by its bookmark, two taps upright.
+// opens All pages at once and crumples the page's tile up there, dropping it as a deleted thing does (bookpaper.js),
+// the tile gone from the grid and the page archived in the store; Undo brings it back. Archived again, the overview's
+// key goes back to Calls' page 19, not the notebook's first page; Sketch's last page archived, to Sketch's page before
+// it, not Asks. Sketch is picked by its bookmark, two taps upright.
 import assert from 'node:assert/strict';
-import { DESKTOP, LOADED_MS, MINI, OVERVIEW, UPRIGHT, crumpled, thrownAway, until } from './kit.mjs';
+import { DESKTOP, LOADED_MS, MINI, OVERVIEW, UPRIGHT, crumpled, fellAway, until } from './kit.mjs';
 import { CALLS, landed, onJournal } from './journal.mjs';
 
 // c: book-check.mjs's hqIn, base, shot, noErrorsIn
@@ -33,12 +33,12 @@ const archived = (browser, c, viewport, name, options) =>
       tileOf = id => far.locator(`.bk-far-chapter .bk-tile[data-id="${id}"]`),
       last = tileOf(CALLS_LAST),
       overview = () => p.locator(`#book .bk-bar .bk-btn[aria-label="${OVERVIEW}"]`).dispatchEvent('click');
-    // the page shown archived from the dots menu: All pages opens, and its tile there crumples and is thrown away,
-    // gone from the grid (undo: Undo pressed as it's offered)
+    // the page shown archived from the dots menu: All pages opens, and its tile there crumples and falls away, gone
+    // from the grid (undo: Undo pressed as it's offered)
     const archive = async (what, { undo = false, tile = last } = {}) => {
-      const thrown = crumpled(p),
+      const fall = crumpled(p),
         undone = undo && undoneAsTold(p);
-      thrown.catch(() => {}); // (a failure below shows first; awaiting it later still throws)
+      fall.catch(() => {}); // (a failure below shows first; awaiting it later still throws)
       await press(p.locator('#book .bk-more'));
       await press(p.locator('#book .bk-more-card').getByRole('menuitem', { name: 'Archive this page', exact: true }));
       await far.waitFor({ timeout: LOADED_MS });
@@ -46,7 +46,7 @@ const archived = (browser, c, viewport, name, options) =>
       if (undo)
         assert.deepEqual(await undone, { gone: true, words: 'Page archived.', over: null }, `${gone}, Undo uncovered`);
       else await until(async () => !(await tile.count()), gone, LOADED_MS);
-      thrownAway(await thrown, `${name}: ${what}`);
+      fellAway(await fall, `${name}: ${what}`);
     };
     await landed(p, 'calls', `Call ${CALLS}`, `${CALLS} / ${CALLS}`, `${name}: the book opens on Calls' last page`);
     await archive('archived', { undo: true });

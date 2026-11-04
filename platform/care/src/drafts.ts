@@ -1,6 +1,6 @@
 // What the team writes for the board: drafts of replies to customers, redrafts, and questions restated for the team.
 import * as ledger from './ledger.ts';
-import { db, now } from './db.ts';
+import { db, now, caseRef, caseId } from './db.ts';
 import { settings, nameOf, thingOf } from './company.ts';
 import { boardLang, languageName } from './texts.ts';
 import { healthTerm } from '../public/health.js';
@@ -16,7 +16,6 @@ const QUESTION_MS = 30 * 60_000;
 const EVERY_MS = 2 * 60_000; // the redrafts sweep
 const REDRAFT_TRIES = 5; // one ask of the board's, at most this many model calls (a minute apart)
 const DAY_MS = 864e5;
-const ref = (id: number) => `H-${1000 + id}`;
 
 let onReady: () => void = () => {}; // hq.ts's nudge: a draft that's ready goes to HQ now, not at the next minute
 
@@ -138,7 +137,7 @@ function content(c: any, free: boolean, extra: any = {}) {
   const facts = objectOf(c.facts);
   const lines = c.kind === 'claim' ? [] : chat(c.conversation).map(m => ({ at: m.at, who: m.who, text: m.text }));
   return JSON.stringify({
-    case: ref(c.id),
+    case: caseRef(c.id),
     language: c.lang ?? 'en',
     customer_words: c.words || undefined,
     ...(free ? {} : { facts }),
@@ -156,7 +155,7 @@ async function write(c: any, board?: { ask: string; draft: string }): Promise<Dr
     app: c.app,
     conversation: c.conversation,
     purpose: 'draft-reply',
-    what: `case ${ref(c.id)}`,
+    what: `case ${caseRef(c.id)}`,
     tool: draftTool(languageName(boardLang())),
     system: instructions(c, free, !!board),
     content: content(c, free, board ? { board_ask: board.ask, board_draft: board.draft } : {}),
@@ -195,7 +194,7 @@ async function general(c: any) {
     app: c.app,
     conversation: c.conversation,
     purpose: 'question',
-    what: `case ${ref(c.id)}`,
+    what: `case ${caseRef(c.id)}`,
     tool: GENERAL,
     system: generalRules(c.app),
     content: JSON.stringify({ language: languageName(c.lang ?? 'en'), customer_words: c.words }),
@@ -257,7 +256,10 @@ export function due(t = now()) {
       })
       .catch(err => {
         recordFailure(failed, c.id, t);
-        console.error(`care: case ${ref(c.id)}: ${c.kind === 'question' ? 'summary' : 'draft'} failed:`, err?.message);
+        console.error(
+          `care: case ${caseRef(c.id)}: ${c.kind === 'question' ? 'summary' : 'draft'} failed:`,
+          err?.message,
+        );
       })
       .finally(() => {
         writing.delete(c.id);
@@ -296,20 +298,20 @@ export function redraft(items: unknown, t = now()) {
   if (!Array.isArray(items)) return;
   for (const x of items.slice(0, 20)) {
     const id = typeof x?.id === 'string' || typeof x?.id === 'number' ? String(x.id) : '';
-    const m = /^H-(\d{4,})$/.exec(String(x?.case ?? ''));
-    if (!/^[\w-]{1,80}$/.test(id) || !m || typeof x.ask !== 'string' || typeof x.draft !== 'string') continue;
+    const cid = caseId(x?.case);
+    if (!/^[\w-]{1,80}$/.test(id) || cid == null || typeof x.ask !== 'string' || typeof x.draft !== 'string') continue;
     if (redrafting.has(id) || redrafted.has(id) || answered(id)) continue;
     const tr = tries.get(id);
     if (tr && (tr.n >= REDRAFT_TRIES || t - tr.at < 60_000)) continue;
-    const c = db.prepare('select * from cases where id = ?').get(Number(m[1]) - 1000) as any;
+    const c = db.prepare('select * from cases where id = ?').get(cid) as any;
     if (!c) {
       done(id, t);
-      console.error(`care: redraft ${id}: no case ${m[0]} here (deleted?): nothing to redraft`);
+      console.error(`care: redraft ${id}: no case ${x.case} here (deleted?): nothing to redraft`);
       continue;
     }
     if (c.health) {
       done(id, t);
-      console.error(`care: redraft ${id}: case ${m[0]} carries a health detail: no model drafts for it`);
+      console.error(`care: redraft ${id}: case ${x.case} carries a health detail: no model drafts for it`);
       continue;
     }
     redrafting.add(id);
@@ -322,10 +324,12 @@ export function redraft(items: unknown, t = now()) {
           return;
         }
         if (d) {
-          redrafted.set(id, { ...d, ask: id, app: c.app, case: ref(c.id) });
+          redrafted.set(id, { ...d, ask: id, app: c.app, case: caseRef(c.id) });
           tries.delete(id);
         } else if (tries.get(id)!.n >= REDRAFT_TRIES)
-          console.error(`care: redraft ${id} for case ${ref(c.id)}: no draft after ${REDRAFT_TRIES} tries: stopped`);
+          console.error(
+            `care: redraft ${id} for case ${caseRef(c.id)}: no draft after ${REDRAFT_TRIES} tries: stopped`,
+          );
       })
       .catch(err => console.error(`care: redraft ${id}: failed:`, err?.message))
       .finally(() => {

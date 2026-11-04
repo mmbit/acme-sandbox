@@ -26,7 +26,7 @@ import { changed, currentPage, pageRow, shut, type NotebookPage } from './notebo
 import { judgeEdited, judgeLater } from './ink/bookjudge.ts';
 import { ASK_GONE, askDeleted, askShown } from './ink/bookasks.ts';
 import { keepInStep } from './ink/bookassign.ts';
-import { placeOf, splitOut } from './notebookplaces.ts';
+import { placeOf, resized, splitOut } from './notebookplaces.ts';
 
 // parent: a reply's group. answers: the slip a reply is under. owner: the agent a scrap was cut from the work of (the
 // page's data-owner), who gets it when its page is sent; null, the routing check decides. note: the note it went as.
@@ -147,7 +147,7 @@ export function editGroup(b: any, who = BOARD, by = who) {
 }
 // POST /api/notebooks/groups/resize { id, since, h }: an open unit's height set by hand (its room to write dragged), as
 // the page has it without the post-it words; it's never shown shorter than what's on it (scrapunit.js heightFor), since:
-// as edit's.
+// as edit's. push: on a sketch page, what's below its foot moved down as its room grew (notebookplaces.ts resized).
 export function resizeGroup(b: any, who = BOARD) {
   const g = openGroup(Number(b?.id), who);
   if (isRefused(g)) return g;
@@ -155,12 +155,9 @@ export function resizeGroup(b: any, who = BOARD) {
   if (b.since !== g.updated) return [409, CHANGED, 'noteChanged'] as Refused;
   const h = Number(b.h);
   if (!Number.isFinite(h) || h <= 0) return [400, 'h is a positive number'] as Refused;
-  db.prepare('update notebook_groups set h = ?, updated = ? where id = ?').run(
-    Math.round(h), // (as dragged)
-    new Date().toISOString(),
-    g.id,
-  );
   const p = pageRow(g.page, who)!;
+  const done = resized(p, g, Math.round(h), b.push); // (as dragged)
+  if (isRefused(done)) return done;
   changed(p.notebook, p.id);
   return shown(row(g.id)!);
 }

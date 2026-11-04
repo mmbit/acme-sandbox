@@ -125,6 +125,8 @@ export function fit(canvas) {
 //   under: with halo, a canvas the same size as `wet` under the dry ink, where the live line's white edge goes (ink.js
 //     gives it draw's opacity), so it sits under every line's ink as draw puts it, and the line doesn't change as it
 //     goes on the dry canvas. Without it the edge is drawn on `wet`, under its own line but over older lines' ink.
+//   cleared(): the live line wiped (clear()), for a surface that drew round it as it was drawn (HQ's book: its ink
+//     over a see-through line, as the line will lie once dry.)
 //   shape(e): 'rect' for a rectangle from where it starts to where it is (Shift held, in review mode)
 //   pictured: its dry ink is on canvases a watch-along records (the book's).
 //   end(stroke, e): a stroke finished; the wet canvas still shows it until clear()
@@ -156,8 +158,9 @@ export function pen(surface, wet, opts) {
   };
   function finish(e) {
     if (!line || e.pointerId !== line.id) return;
-    // (no tail, and all of it painted now, not at the next frame: the dry ink takes it from here.)
-    show(line, follow(line, e, 'end'), null, true);
+    // (no tail, and all of it painted now, not at the next frame: the dry ink takes it from here. The lift adds no
+    // point: the line ends where it was drawn as the pen lifted, never where the browser says it went up.)
+    show(line, [], null, true);
     tell('end', line);
     const done = line.stroke;
     line = null;
@@ -171,7 +174,7 @@ export function pen(surface, wet, opts) {
     clear();
     opts.cancel?.();
   };
-  const clear = () => [wet, under].forEach(c => c && fit(c));
+  const clear = () => wipe([wet, under], opts);
   listen(surface, { start, move, finish, cancel });
   return {
     start,
@@ -185,6 +188,11 @@ export function pen(surface, wet, opts) {
   };
 }
 
+// The live line's canvases cleared, and a surface that drew round the line told (opts.cleared)
+function wipe(canvases, opts) {
+  canvases.forEach(c => c && fit(c));
+  opts.cleared?.();
+}
 const listen = (surface, on) => {
   surface.addEventListener('pointerdown', e => on.start(e) && e.preventDefault());
   surface.addEventListener('pointermove', on.move);
@@ -230,10 +238,10 @@ const track = (e, at, ink, { rect = false, halo = false } = {}) => ({
   pressure: 0, // (a pen's last, for a lift that reports none)
 });
 
-// What one pointer event ('start', 'move' or 'end') adds to a line: the indexes of the points it kept. A rectangle's
-// points are all made again each time: null.
+// What one pointer event ('start' or 'move') adds to a line: the indexes of the points it kept. A rectangle's points
+// are all made again each time: null.
 function follow(line, e, phase) {
-  if (line.rect) return phase === 'end' ? [] : (boxed(line, e), null);
+  if (line.rect) return (boxed(line, e), null);
   const kept = [];
   for (const s of phase === 'move' ? samples(e) : [e])
     if (extend(line, s, phase)) kept.push(line.stroke.points.length - 1);
@@ -250,15 +258,14 @@ function extend(line, e, phase = 'move') {
     pts = line.stroke.points,
     prev = pts[pts.length - 1];
   let p;
-  // (a pen lifting says pressure 0 on iPad Safari: it keeps the last, or the line's end would change width)
+  // (a pen's sample with pressure 0, as iPad Safari's can be as it lifts, keeps the last: the end keeps its width)
   if (line.kind === 'pen' && e.pressure > 0) p = line.pressure = e.pressure;
   else if (line.kind === 'pen' && line.pressure) p = line.pressure;
   else {
     if (prev) line.speed += (Math.hypot(x - prev[0], y - prev[1]) / Math.max(1, t - prev[3]) - line.speed) * 0.3;
     p = Math.max(0.3, 0.62 - line.speed * 0.12);
   }
-  // (the lift's point is where the pointer lifted, so a steady line still ends there.)
-  const k = phase === 'end' ? 1 : line.follow;
+  const k = line.follow;
   const q =
     prev && phase !== 'start'
       ? [prev[0] + (x - prev[0]) * k, prev[1] + (y - prev[1]) * k, prev[2] + (p - prev[2]) * 0.5, t]

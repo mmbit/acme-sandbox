@@ -306,6 +306,7 @@ function tookUpTo(id: number, received: number) {
   inOneStep(() => {
     db.prepare('update link_entries set taken = ? where link = ? and seq <= ? and taken is null').run(at, id, received);
     db.prepare('update links set sent = max(sent, ?), reached = ?, refused = null where id = ?').run(received, at, id);
+    files.clearOld(); // (a version of ours that waited for their HQ to take it.)
   });
 }
 

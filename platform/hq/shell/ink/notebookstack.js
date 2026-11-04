@@ -43,7 +43,10 @@ export function boxOf(parts) {
     ...texts.map(t => ({ x: t.x, y: t.y, w: t.w, h: typedHigh(t) })),
     ...pictures.map(c => ({ x: c.x, y: c.y, w: c.w, h: c.h })),
   ];
-  if (!boxes.length) return null;
+  return boxes.length ? boxRound(boxes) : null;
+}
+// The box round boxes, { x, y, w, h } (the book's round a note and its card too: bookgroupshow.js, bookforyou.js.
+export function boxRound(boxes) {
   const x = Math.min(...boxes.map(b => b.x)),
     y = Math.min(...boxes.map(b => b.y));
   return { x, y, w: Math.max(...boxes.map(b => b.x + b.w)) - x, h: Math.max(...boxes.map(b => b.y + b.h)) - y };

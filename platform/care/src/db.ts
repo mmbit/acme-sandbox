@@ -9,10 +9,14 @@ import { DATA_DIR, LINK_KEY } from './config.ts';
 // A DATA_DIR that's set (the server's volume) and can't be used stops the service: in memory, sessions, codes, the link
 // key and the cases waiting for HQ would vanish at the next restart without a word.
 export let db: DatabaseSync;
-try { mkdirSync(DATA_DIR, { recursive: true }); db = new DatabaseSync(join(DATA_DIR, 'care.db'), { timeout: 5000 }); }
-catch (err: any) {
+try {
+  mkdirSync(DATA_DIR, { recursive: true });
+  db = new DatabaseSync(join(DATA_DIR, 'care.db'), { timeout: 5000 });
+} catch (err: any) {
   if (process.env.DATA_DIR) throw new Error(`care: can't use DATA_DIR (${err?.code ?? err?.message})`);
-  console.error(`care: no DATA_DIR and ${DATA_DIR} can't be used (${err?.code ?? err?.message}): the database is in memory, gone at a restart`);
+  console.error(
+    `care: no DATA_DIR and ${DATA_DIR} can't be used (${err?.code ?? err?.message}): the database is in memory, gone at a restart`,
+  );
   db = new DatabaseSync(':memory:');
 }
 // Erased means gone from every file: secure_delete overwrites a deleted row's page, and the rollback journal holding the
@@ -21,7 +25,8 @@ catch (err: any) {
 // the start ("database is locked"), so Care never takes a case it couldn't erase, and the restart switches it.
 db.exec('pragma secure_delete = on; pragma foreign_keys = on;');
 const journal = (db.prepare('pragma journal_mode = delete').get() as { journal_mode: string }).journal_mode;
-if (journal !== 'delete' && journal !== 'memory') throw new Error(`care: care.db stays ${journal}, so erased text would stay in its journal`);
+if (journal !== 'delete' && journal !== 'memory')
+  throw new Error(`care: care.db stays ${journal}, so erased text would stay in its journal`);
 
 // Every create statement includes all of the table's columns.
 db.exec(`
@@ -120,7 +125,8 @@ create table if not exists numbers (app text not null, day text not null, counts
 `);
 // (replied, settled, asked, on a database from before them)
 for (const col of ['replied', 'settled', 'asked'])
-  if (!(db.prepare('pragma table_info(cases)').all() as { name: string }[]).some(c => c.name === col)) db.exec(`alter table cases add column ${col} integer`);
+  if (!(db.prepare('pragma table_info(cases)').all() as { name: string }[]).some(c => c.name === col))
+    db.exec(`alter table cases add column ${col} integer`);
 // A phone call's codes (phone.ts): one per stall of the shop for each code asked for, each hash with its stall and the order
 // number as said. `round` groups one ask's codes (a new ask replaces the last), and its tries are counted on every row of
 // the round
@@ -139,6 +145,13 @@ db.exec(`create table if not exists phone_answers (conversation integer not null
   tries integer not null default 0, next integer not null default 0, primary key (conversation, order_id))`);
 db.exec('create index if not exists conversations_email on conversations (shop, email)');
 
+export const caseRef = (id: number) => `H-${1000 + id}`;
+// A case reference back to its case id, or null when it isn't one.
+export function caseId(ref: unknown) {
+  const m = /^H-(\d{4,9})$/.exec(String(ref));
+  return m ? Number(m[1]) - 1000 : null;
+}
+
 // What HQ's state lists by case reference (`fixed`, `erased`): every reference it gives, each run on its case id, in one
 // transaction. HQ keeps them 90 days, so no cap: one would leave everything past it undone for good. Returns the rows changed.
 export function byRef(refs: unknown, run: (id: number) => number | bigint) {
@@ -147,11 +160,14 @@ export function byRef(refs: unknown, run: (id: number) => number | bigint) {
   db.exec('begin immediate');
   try {
     for (const ref of refs) {
-      const m = /^H-(\d{4,9})$/.exec(String(ref));
-      if (m) n += Number(run(Number(m[1]) - 1000));
+      const id = caseId(ref);
+      if (id != null) n += Number(run(id));
     }
     db.exec('commit');
-  } catch (err) { db.exec('rollback'); throw err; }
+  } catch (err) {
+    db.exec('rollback');
+    throw err;
+  }
   return n;
 }
 
@@ -163,9 +179,18 @@ export const token = (bytes = 24) => randomBytes(bytes).toString('base64url');
 export const linkKey = (() => {
   if (LINK_KEY) return LINK_KEY;
   const path = join(DATA_DIR, 'link.key');
-  try { return readFileSync(path, 'utf8').trim(); } catch { /* first start */ }
+  try {
+    return readFileSync(path, 'utf8').trim();
+  } catch {
+    /* first start */
+  }
   const k = randomBytes(32).toString('hex');
-  try { writeFileSync(path, k, { mode: 0o600, flag: 'wx' }); return k; } catch { return readFileSync(path, 'utf8').trim() || k; }
+  try {
+    writeFileSync(path, k, { mode: 0o600, flag: 'wx' });
+    return k;
+  } catch {
+    return readFileSync(path, 'utf8').trim() || k;
+  }
 })();
 
 // ---- retention: chats never linked to an email (nor a phone call to an order) 30 days after the last message, linked ones
@@ -175,7 +200,9 @@ const DAY_MS = 864e5;
 export function sweep(t = now()) {
   // a phone call linked to an order by its code is kept as a chat linked to an email
   db.prepare('delete from conversations where email is null and linked is null and last < ?').run(t - 30 * DAY_MS);
-  db.prepare('delete from conversations where (email is not null or linked is not null) and last < ?').run(t - 365 * DAY_MS);
+  db.prepare('delete from conversations where (email is not null or linked is not null) and last < ?').run(
+    t - 365 * DAY_MS,
+  );
   // a case (an email to a person, a question) keeps the customer's address and words: 12 months, like a thread; HQ's
   // card keeps its own copy under the same rule
   db.prepare('delete from cases where created < ?').run(t - 365 * DAY_MS);

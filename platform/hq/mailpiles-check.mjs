@@ -96,6 +96,12 @@ for (const look of lookNames())
         return r.fulfill({ json: b });
       }
       if (path === '/api/mail') return r.fulfill({ json: rows });
+      // (each pile's whole count: 300 older spam than the list holds)
+      if (path === '/api/mail/piles') {
+        const counts = { board: 0, team: 0, customer: 0, filed: 0, spam: 300 };
+        for (const m of rows) counts[m.pile ?? 'board']++;
+        return r.fulfill({ json: counts });
+      }
       if (path === '/api/mail/one')
         return r.fulfill({
           json: {
@@ -104,7 +110,7 @@ for (const look of lookNames())
             attachments: '[]',
           },
         });
-      if (path === '/api/mail/pile') {
+      if (path === '/api/mail/move') {
         const { id, pile } = r.request().postDataJSON();
         moves.push([id, pile]);
         const m = rows.find(x => x.id === id);
@@ -158,7 +164,7 @@ for (const look of lookNames())
         ['team', '1'],
         ['customer', '1'],
         ['filed', '2'],
-        ['spam', '2'],
+        ['spam', '302'],
       ],
       at,
     );
@@ -212,6 +218,11 @@ for (const look of lookNames())
       () => document.querySelector('[data-pile="spam"]')?.getAttribute('aria-checked') === 'true',
     );
     assert.deepEqual(await shown(), [8, 7], `${at}: Spam, one tap away`);
+    assert.match(
+      await page.textContent('.rows.mail + p'),
+      /The latest 2 of 302\./,
+      `${at}: a pile's count past its list`,
+    );
     await open(8);
     await page.click('[data-mail="8"] [data-move="customer"]');
     await page.waitForFunction(() => !document.querySelector('[data-mail="8"]'));

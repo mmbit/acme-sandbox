@@ -14,7 +14,7 @@ const { panning } = await import('./bookpan.js');
 const { setView } = await import('./bookview.js');
 
 // The paper and a long page on it (or another page), a finger moving it (as on the board's iPad once a pen was used)
-function paper(page = { w: 800, h: 20_000 }) {
+function paper(page = { w: 800, h: 20_000, ink: [], scraps: [] }) {
   const on = {},
     desk = {
       dataset: {},
@@ -30,7 +30,7 @@ function paper(page = { w: 800, h: 20_000 }) {
       world: { style: {} },
       views: [{ page, show() {} }],
       cur: 0,
-      size: { w: 800, h: 700 },
+      size: { w: 800, h: 700, top: 0, right: 0 },
       pan: { x: 0, y: 0 },
       scale: 1,
       input: { fingerPans: () => true },
@@ -59,7 +59,7 @@ function play(first, n) {
   for (let k = 0, now = first; k < n && frames.length; k++, now += 16) frames.shift()(now);
 }
 
-test("a flick whose glide's first frame lands in the lift's own ms glides on (board, call 176)", () => {
+test("a flick whose glide's first frame lands in the lift's own ms glides on", () => {
   const { book, finger } = paper();
   finger('pointerdown', 600, 0);
   for (let t = 10; t <= 50; t += 10) finger('pointermove', 600 - 6 * t, t);
@@ -157,7 +157,7 @@ test('two fingers flicked glide on as one does', () => {
 
 test('a quick pinch lifted while the fingers still spread stays where it zoomed', () => {
   // (a sketch page)
-  const { book, finger } = paper({ chapter: 'sketch', x: 0, y: 0, w: 800, h: 2_000 });
+  const { book, finger } = paper({ chapter: 'sketch', x: 0, y: 0, w: 800, h: 2_000, ink: [], scraps: [] });
   setView(book, { pan: { x: 0, y: 0 }, scale: 2.5 });
   finger('pointerdown', 600, 0);
   finger('pointerdown', 600, 0, 2);

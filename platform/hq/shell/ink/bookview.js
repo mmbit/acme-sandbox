@@ -3,7 +3,9 @@
 // and its dry ink drawn sharp again at the zoom it comes to rest at.
 //
 // book (bookpages.js): { desk, world, views, cur, size, pan, scale, drawn, heldPastEnd }. The paper's px are CSS px
-// from the desk's top-left; the page's are its own (bookrow.js).
+// from the desk's top-left, the screen's top: the paper runs under the status bar's blur and beside the tools, and
+// ink goes there too; size is its { w, h } and the room its content keeps clear of, { top, right } (the blur's and the
+// tools' island's: README, The book's frame). The page's px are its own (bookrow.js).
 import { canvasPans, dotsShown, drawScale, pageAt, shownBox, unitsPans, unitsZoom, zoomWithin } from './bookrow.js';
 import { isCanvas } from './sketchcanvas.js';
 
@@ -20,6 +22,12 @@ const FOOT_SHOWN = 120;
 // The page shown
 export const viewOf = book => book.views[book.cur] ?? null;
 
+// The paper's part the page's content is laid in and set down to: below the blur, left of the tools ({ w, h }, CSS px)
+export const contentOf = book => ({ w: book.size.w - book.size.right, h: book.size.h - book.size.top });
+// A place on a page (remembered, a find's, a box shown): the page's point at its content's top-left, below the blur,
+// whatever the zoom; and the pan that shows a place there at a zoom of scale
+export const placeOf = book => ({ x: book.pan.x, y: book.pan.y + book.size.top / book.scale });
+export const panTo = (book, place, scale = book.scale) => ({ x: place.x, y: place.y - book.size.top / scale });
 // A page's fit: the scale a page of units is laid at to the paper's width (bookunits.js), the least it zooms out to; a
 // sketch page's 1, its own px
 export const fitOf = page => page?.scale ?? 1;
@@ -35,8 +43,9 @@ export const zoomOf = (book, s) => {
 export function setView(book, { pan = book.pan, scale = book.scale } = {}) {
   const v = viewOf(book);
   if (!v || !book.size.w) return;
-  // (a sketch page zooms and pans any way, a near-endless canvas; a page of units zooms in from its masonry's scale and
-  // pans across it as far as it's zoomed past its width, and down, the paper ending above the tools (bookgroups.css).)
+  // (a sketch page zooms, and pans down and right, a near-endless canvas; a page of units zooms in from its masonry's
+  // scale and pans across it as far as it's zoomed past its width, and down. Neither above or left of its top-left,
+  // its title's corner: bookrow.js.)
   scale = zoomOf(book, scale);
   const zoomed = scale !== book.scale;
   book.scale = scale;

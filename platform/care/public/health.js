@@ -11,23 +11,34 @@
 // "Kinderkrankenhaus"). `#` starts a comment. Email addresses are left out of the check (a step waiting for one mustn't
 // be held for "ill@…").
 
-const fold = (s) => String(s).normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase();
-const escape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-const terms = (list) => list.split('\n').map((l) => l.replace(/#.*/, '').trim()).filter(Boolean);
+const fold = s => String(s).normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase();
+const escape = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const terms = list =>
+  list
+    .split('\n')
+    .map(l => l.replace(/#.*/, '').trim())
+    .filter(Boolean);
 function pattern(term) {
-  const t = fold(term), pre = t.startsWith('*'), post = t.endsWith('*');
-  const core = t.replace(/^\*|\*$/g, '').split(/[\s-]+/).map(escape).join('[\\s\\p{Pd}]+');
+  const t = fold(term),
+    pre = t.startsWith('*'),
+    post = t.endsWith('*');
+  const core = t
+    .replace(/^\*|\*$/g, '')
+    .split(/[\s-]+/)
+    .map(escape)
+    .join('[\\s\\p{Pd}]+');
   // a leading `*` needs nothing before the term: a match may start mid-word (`\p{L}*` there would rescan a long run of
   // letters from every start, quadratic in it). Otherwise the character before the term is taken (Safari has lookbehind
 
   return `${pre ? '' : '(?:^|[^\\p{L}\\p{N}])'}${core}${post ? '\\p{L}*' : ''}(?![\\p{L}\\p{N}])`;
 }
-let ALL = null, ANY = null;
+let ALL = null,
+  ANY = null;
 export let LANG_TERMS = {}; // each language's terms, for the tests and the eval
 export function use(lists = {}) {
   LANG_TERMS = Object.fromEntries(Object.entries(lists).map(([lang, list]) => [lang, terms(list)]));
   ALL = Object.values(LANG_TERMS).flat();
-  ANY = ALL.length ? new RegExp(ALL.map((t) => `(${pattern(t)})`).join('|'), 'u') : null;
+  ANY = ALL.length ? new RegExp(ALL.map(t => `(${pattern(t)})`).join('|'), 'u') : null;
 }
 // from the start of a run only: tried at every letter, it would rescan a long run without an @ from each (quadratic).
 // Safari before 16.4 has no lookbehind. The pattern matches the character before the address, and the replacement
@@ -39,5 +50,5 @@ const EMAIL = /(^|[\s@<>(),;:"'])[^\s@<>(),;:"']+@[^\s@<>(),;:"']+/g;
 export function healthTerm(text) {
   if (!ALL) throw new Error('The health check has no term lists: call use() first');
   const m = ANY?.exec(fold(String(text ?? '').replace(EMAIL, '$1 ')));
-  return m ? ALL[m.slice(1).findIndex((g) => g !== undefined)] : null;
+  return m ? ALL[m.slice(1).findIndex(g => g !== undefined)] : null;
 }

@@ -185,7 +185,7 @@
   pointer-events: auto;
   animation: bk-share-in 0.16s ease-out;
 }
-/* (the tail: at Submit's middle, --bk-tail from the card's left, kept on the card) */
+/* (the tail: at Submit's middle, --bk-tail from the card's left, kept on the card, its edge the card's) */
 #book .bk-asks-open::after {
   content: '';
   position: absolute;
@@ -194,7 +194,7 @@
   width: 16px;
   height: 16px;
   border: solid var(--bk-ui-line);
-  border-width: 0 var(--bw-lg, 1px) var(--bw-lg, 1px) 0;
+  border-width: 0 var(--bw, 1px) var(--bw, 1px) 0;
   background: var(--bk-ui-bg);
   rotate: 45deg;
 }

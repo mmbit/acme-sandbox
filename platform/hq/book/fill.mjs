@@ -2,24 +2,25 @@
 // blurred band at the top (style.css's --sat), sideways (1133 × 744) and upright (744 × 1133), with Chromium's own
 // Pencil and fingers (trusted). Upright, a finger's tap on the pull tab opens the book. Each way up, the paper runs
 // from the screen's top, under the band, to its foot, the page on it from the band's foot, its head never below HQ's
-// buttons. The scraps spread across the page's width. The bookmarks under the band: sideways out of the page block to
-// the book's left, upright folded at the screen's left edge (a finger's tap brings them out); a finger's tap turns to
-// a chapter and back. A call's page has one title, the Pencil near it changing nothing there. The two islands of use
-// under the band (islands.mjs); the Pencil's tap and a finger's each pick a tool. (the islands' checks, the blur
-// and the chapter's pick)
+// buttons. The scraps at their own size at the page's left, as many columns as its width holds. The bookmarks under the band: sideways out of the page block to the book's left,
+// upright folded at the screen's left edge (a finger's tap brings them out); a finger's tap turns to a chapter and
+// back. A call's page has one title, the Pencil near it changing nothing there. The two islands of use under the band
+// (islands.mjs); the Pencil's tap and a finger's each pick a tool. (the islands' checks, the blur and the chapter's
+// pick)
 // The Pencil's line in a scrap's room is saved as that scrap's ink. The Pencil's arrow begun by the page's left edge
 // draws, the book staying open; a finger's taps, each where the page arrows were at the start, turn to a read-only
 // call's page and back, the arrows never moving; and a finger's swipe from that edge still closes the book (only a
 // deliberate pull moves it). Two fingers move the page down and draw nothing. Recorded with --shots.
 import assert from 'node:assert/strict';
 import { MINI, UPRIGHT, chromiumPen, middleOf, toChapter, touchOf, until } from './kit.mjs';
-import { SEED, units } from './unitspage.mjs';
+import { SEED } from './unitspage.mjs';
+import { OWN_W, anotherColumn, units } from './unitsread.mjs';
 import { UNIT_W } from '../shell/ink/scrapunit.js';
 import { bareOf } from './drawn.mjs';
 import { picksByHand } from './fillislands.mjs';
 import { blurred, islandsSeen, islandsUsable } from './islands.mjs';
 import { tabs } from './bookmarks.mjs';
-import { watchedPage } from './start.mjs';
+import { noMicrophone, watchedPage } from './start.mjs';
 
 // an iPad's home-screen app: its status bar and iOS's blurred band under it (style.css)
 const BAND = 24 + 48;
@@ -60,8 +61,7 @@ async function byHand(browser, c, name, viewport, columns) {
     deviceScaleFactor: 1,
   });
   await blurred(context, { sat: BAND });
-  // (no microphone: a press held still before it moves is a voice note, bookinput.js)
-  await context.addInitScript(() => (navigator.mediaDevices.enumerateDevices = async () => []));
+  await noMicrophone(context);
   const { page, errors } = await watchedPage(context);
   try {
     const cdp = await context.newCDPSession(page),
@@ -124,17 +124,21 @@ async function fillsHeight(page) {
   assert.ok(seen.head <= seen.buttons + 1, `the page's head no lower than HQ's buttons (${said})`);
 }
 
-// The scraps' columns across the whole page left of the tools: on each side a margin, never room for a fifth of a scrap
+// The scraps' columns at the page's left, left of the tools: a margin left of them, never room for a fifth of a scrap,
+// and right of them no room for another column at LEAST of its size (masonry.js: never drawn past their own size, the
+// width left over paper.)
 async function fillsWidth(page) {
   const desk = await page.locator('#book .bk-desk').boundingBox(),
     all = await units(page),
     left = Math.min(...all.map(u => u.x)) - desk.x,
     right = desk.x + desk.width - Math.max(...all.map(u => u.x + u.w)),
-    fifth = all[0].w / 5;
+    fifth = all[0].w / 5,
+    another = anotherColumn(left);
   assert.ok(
-    [left, right].every(side => side >= 0 && side < fifth),
-    `the scraps across the page: ${Math.round(left)} px beside them on the left, ${Math.round(right)} on the right, between 0 and ${Math.round(fifth)} wanted`,
+    left >= 0 && left < fifth && right >= 0 && right < another,
+    `the scraps at the page's left: ${Math.round(left)} px beside them on the left (between 0 and ${Math.round(fifth)} wanted), ${Math.round(right)} on the right (under ${Math.round(another)} wanted)`,
   );
+  assert.ok(all[0].w <= OWN_W, `a scrap ${Math.round(all[0].w)} px wide, past its own ${UNIT_W}`);
 }
 
 // The scraps in this many columns, two on an iPad mini upright (board, the Ink 1.1 deck: "Columns that fit the width".

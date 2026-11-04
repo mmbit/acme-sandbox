@@ -1,7 +1,7 @@
 // The workspaces this company shares with linked companies (links.ts): each a link's, with threads of messages between
-// the companies' agents and files with every version kept, as both HQs hold them, and how our side reads them. Our
-// side's posts are workspaceposts.ts, the other company's entries workspaceentries.ts. The design:
-// platform/coordinator/docs/companies.md.
+// the companies' agents and files with each one's newest two versions kept whole (workspacefiles.ts), as both HQs hold
+// them, and how our side reads them. Our side's posts are workspaceposts.ts, the other company's entries
+// workspaceentries.ts. The design: platform/coordinator/docs/companies.md.
 import { db, columnsOf, inOneStep, redacted } from './db.ts';
 import * as links from './links.ts';
 import * as files from './workspacefiles.ts';
@@ -18,7 +18,8 @@ const PATH_MAX_CHARS = 300;
 // uid: the id both HQs know it by; ours: written by our side; agent: who wrote it (theirs: as their HQ names them);
 // seq: ours, its entry in our log for the link (links.ts takenAt: when their HQ took it). arrived: theirs, when it
 // came. read: a message of theirs, when one of us read it (read_by); one of ours, when they said they had. woke: an
-// urgent one of theirs that woke our executive (workspaceentries.ts wake).
+// urgent one of theirs that woke our executive (workspaceentries.ts wake). cleared: a file's version whose bytes went
+// (workspacefiles.ts clearOld).
 db.exec(`create table if not exists workspaces (id integer primary key, uid text not null unique, link integer not null,
   title text not null, ours integer not null, agent text not null, at text not null, seq integer, arrived text)`);
 db.exec(`create table if not exists workspace_threads (id integer primary key, uid text not null unique,
@@ -31,7 +32,9 @@ if (!columnsOf('workspace_messages').includes('woke'))
   db.exec('alter table workspace_messages add column woke integer');
 db.exec(`create table if not exists workspace_files (id integer primary key, uid text not null unique,
   workspace integer not null, path text not null, sha256 text not null, size integer not null, note text not null,
-  ours integer not null, agent text not null, at text not null, seq integer, arrived text)`);
+  ours integer not null, agent text not null, at text not null, seq integer, arrived text, cleared text)`);
+if (!columnsOf('workspace_files').includes('cleared')) db.exec('alter table workspace_files add column cleared text');
+files.clearOld(); // (at each start too, so versions put before the keep follow it)
 db.exec(
   'create index if not exists workspace_messages_unread on workspace_messages (thread) where ours = 0 and read is null',
 );
@@ -49,7 +52,14 @@ export type Row = {
 export type WorkspaceRow = Row & { link: number; title: string };
 export type ThreadRow = Row & { workspace: number; subject: string };
 export type MessageRow = Row & { thread: number; text: string; urgent: number; read: string | null };
-export type FileRow = Row & { workspace: number; path: string; sha256: string; size: number; note: string };
+export type FileRow = Row & {
+  workspace: number;
+  path: string;
+  sha256: string;
+  size: number;
+  note: string;
+  cleared: string | null;
+};
 // Who's posting: the job's agent, or a team member of it speaking as itself
 export type Poster = { job: number; agent: string };
 export type Refusal = [number, string];
@@ -84,13 +94,22 @@ export function findWorkspace(id: number, thread?: number) {
   return { ...summaryOf(row), threads, files: filesOf(row) };
 }
 
-// One version of a file (the newest without `version`, counted from 1), with its bytes
+// One version of a file (the newest without `version`, counted from 1), with its bytes, or a refusal that says they
+// were cleared and which versions keep theirs
 export function fileOf(workspace: number, path: string, version?: number) {
   const row = workspaceRow(workspace);
   const versions = row ? versionsOf(workspace, path) : [];
   const n = version ?? versions.length;
   const file = versions[n - 1];
   if (!row || !file) return null;
+  if (file.cleared) {
+    const kept = new Intl.ListFormat('en').format(versions.flatMap((v, i) => (v.cleared ? [] : [`v${i + 1}`])));
+    return [
+      410,
+      `v${n} of ${path} was cleared ${minute(file.cleared)} UTC: its bytes went, as each file keeps only its newest two ` +
+        `versions. Its log line stays. Kept: ${kept}.`,
+    ] as Refusal;
+  }
   return {
     path,
     version: n,
@@ -210,6 +229,7 @@ function filesOf(workspace: WorkspaceRow) {
       sha256: v.sha256,
       note: v.note,
       arrived: arrivedOf(workspace, v),
+      cleared: v.cleared,
     })),
   }));
 }

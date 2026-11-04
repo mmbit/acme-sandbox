@@ -1,10 +1,11 @@
 // book-check.mjs's stories of the book as an object on a desktop, with a mouse (shell/ink/book.js, bookui.js,
-// pair.js's card; Ink's folder): one object under a strong shadow, its controls floating over its paper in two islands
+// pair.js's card; Ink's folder): one object under one soft shadow, its controls floating over its paper in two islands
 // (the tools upright at its right, the bar along its foot) with the book's own tooltips; the cover's edge let go where
 // it was dragged, never sliding back first; the book opening straight onto its page, no cover, in well under a second
 // (a crossfade with reduced motion); and the dots menu's Sign in another device, its card whole at the book's widest
 // and narrowest; on a laptop-height window, every control whole, the tools never scrolling. Each asserts what the
 // board sees: boxes, pixels, words. (the two islands)
+// (the soft shadow read in Wire)
 import assert from 'node:assert/strict';
 import { shutBook } from './chrome.mjs';
 import { DESKTOP, MINI, shotPixels } from './kit.mjs';
@@ -21,7 +22,7 @@ const SHORT = [
 // c: book-check.mjs's helpers: { hq(browser, viewport, options), shot(name, page), settled(page, mode), settle }
 export function frameStories(c) {
   return {
-    'the book as one object: a strong shadow on HQ beside it, its controls floating over its paper in two islands':
+    'the book as one object: one soft shadow on HQ beside it, its controls floating over its paper in two islands':
       browser => oneObject(browser, c),
     "the cover's edge let go stays where it was let go: no slide back to where it began": browser => letGo(browser, c),
     'opening the book: straight onto its page, no cover, in well under a second; reduced motion, a crossfade':
@@ -38,7 +39,7 @@ export function frameStories(c) {
 // ---- the stories
 
 async function oneObject(browser, c) {
-  const { page, errors, done } = await onDesk(browser, c);
+  const { page, errors, done } = await onDesk(browser, c, { look: WIRE });
   try {
     const paper = await box(page, '#book section > div'),
       spine = await box(page, '#book [role=separator]'),
@@ -53,13 +54,15 @@ async function oneObject(browser, c) {
       bar.width > bar.height && bar.bottom > DESKTOP.height - 40 && tools.left > bar.left,
       `the bar along the foot ${JSON.stringify(bar)}, the tools at the right ${JSON.stringify(tools)}`,
     );
-    // the shadow: HQ's page darker just beside the book than a little further off, on the same rows, below the
-    // bookmarks and the pull tab over HQ's side there
+    // the shadow (the book's frame, One soft shadow): HQ's page darker just beside the book than a little further
+    // off, on the same rows, below the bookmarks and the pull tab over HQ's side there. The soft shadow (book.css,
+    // 0 6px 22px at 0.4) is some 14% darker at 8 px and gone by 70, where no shadow reads the same: 0.9 tells the two
+    // apart. Read on Wire's even ground (the default look's has a gradient of its own)
     const over = [await box(page, '#book .bk-marks'), await box(page, '#book .bk-lip')],
       y = Math.max(...over.map(b => b.y + b.height)) + 20,
       near = await meanLight(page, { x: spine.x - 8, y, width: 6, height: 250 }),
       far = await meanLight(page, { x: spine.x - 70, y, width: 6, height: 250 });
-    assert.ok(near < far * 0.6, `the book's shadow on HQ: ${near} beside the book, ${far} further off`);
+    assert.ok(near < far * 0.9, `the book's shadow on HQ: ${near} beside the book, ${far} further off`);
     // the book's own tooltip on a control, never the browser's title
     const undo = page.locator('#book').getByRole('button', { name: 'Undo' });
     await undo.hover();
@@ -173,7 +176,7 @@ async function pairCard(browser, c) {
 // scrolling none of them away, the islands clear of each other, Undo and Redo the bar's first keys
 async function shortWindow(browser, c) {
   for (const viewport of SHORT) {
-    const { page, errors, done } = await onDesk(browser, c, {}, viewport);
+    const { page, errors, done } = await onDesk(browser, c, { viewport });
     const at = `${viewport.width} × ${viewport.height}`;
     try {
       const paper = await box(page, '#book section > div'),
@@ -246,7 +249,7 @@ async function hardcover(browser, c) {
     ['desktop', DESKTOP],
     ['mini', MINI],
   ]) {
-    const { page, errors, done } = await onDesk(browser, c, {}, viewport);
+    const { page, errors, done } = await onDesk(browser, c, { viewport });
     try {
       await c.shot(`book-hardcover-${name}`, page);
       assert.deepEqual(errors, []);
@@ -269,12 +272,15 @@ async function hardcover(browser, c) {
   }
 }
 
-// HQ on a desktop with a mouse (its window DESKTOP's size unless one is given), the book open
-async function onDesk(browser, c, options = {}, viewport = DESKTOP) {
-  const opened = await c.hq(browser, viewport, { hasTouch: false, deviceScaleFactor: 1, ...options });
+// HQ on a desktop with a mouse (its window DESKTOP's size and the check's own look unless either is given), the book
+// open
+async function onDesk(browser, c, { viewport = DESKTOP, look = '', ...options } = {}) {
+  const opened = await c.hq(browser, viewport, { hasTouch: false, deviceScaleFactor: 1, ...options }, look);
   await c.settled(opened.page, 'open');
   return opened;
 }
+// (HQ in Wire: book-check.mjs hq()'s look)
+const WIRE = '&renderer=wire';
 const box = (page, selector) => page.locator(selector).first().boundingBox();
 // The two islands' boxes: the tools', and the bar's
 const islandsOf = page =>

@@ -6,14 +6,12 @@
 // A person is the store's { to, name, kind } (kind: 'guest', or 'agent' on a tag from before scraps went to guests
 // only).
 import { esc } from '../../util.js';
+import { icon } from '../icons.js';
 import { scope, word } from './bookscope.js';
 import { cardOf } from './bookcard.js';
 
 // what a person is, by their kind
 const KIND_WORDS = { guest: 'kindGuest', agent: 'kindAgent' };
-const TICK = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 8.5l3.5 3.5 7.5-8"/></svg>';
-const LOOK =
-  '<svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5"/><path d="M13 13l4.5 4.5"/></svg>';
 
 // The short list for people (the store's recent), then More… with the count of everyone: a card in the book, not yet
 // placed
@@ -30,7 +28,7 @@ export function shortList(people, total) {
 export function everyoneSheet(people) {
   const card = cardOf('bk-assign-all', word('shareWith'));
   card.innerHTML = `<div class="bk-assign-top"><b>${word('shareWith')}</b><button type="button" class="bk-assign-done"
-    >${word('done')}</button></div><label class="bk-assign-search">${LOOK}<input type="search" autocomplete="off"
+    >${word('done')}</button></div><label class="bk-assign-search">${icon('find')}<input type="search" autocomplete="off"
     placeholder="${esc(word('searchPeopleCount', { n: people.length }))}" aria-label="${esc(word('searchPeople'))}"
     ></label><div class="bk-assign-rows">${people.map(p => rowHtml(p, 0)).join('')}<p class="bk-assign-none" hidden>${word(
       'nobodyByName',
@@ -69,7 +67,7 @@ export function tagsHtml(g) {
   const tags = (g.assigned ?? []).map(p => {
     const label = p.answered ? word('nameAnswered', { name: p.name }) : word('assignedTo', { name: p.name });
     const fresh = popping(g, p) ? ` data-new style="--wait:${Math.round(given.at - performance.now())}ms"` : '';
-    return `<span class="bk-tag" title="${esc(label)}" aria-label="${esc(label)}"${fresh}>${p.answered ? TICK : ''}<span
+    return `<span class="bk-tag" title="${esc(label)}" aria-label="${esc(label)}"${fresh}>${p.answered ? icon('tick') : ''}<span
       class="bk-face">${esc(initial(p.name))}</span></span>`;
   });
   return `<div class="bk-tags" data-g="${g.id}">${tags.join('')}${seen}</div>`;
@@ -77,7 +75,7 @@ export function tagsHtml(g) {
 // Seen: a small tick with the initial of the agent who read it, in the brand's colour
 export function seenHtml(seen) {
   const label = word('seenBy', { name: seen.name });
-  return `<span class="bk-tag" data-seen title="${esc(label)}" aria-label="${esc(label)}" role="img">${TICK}<span
+  return `<span class="bk-tag" data-seen title="${esc(label)}" aria-label="${esc(label)}" role="img">${icon('tick')}<span
       class="bk-face">${esc(initial(seen.name))}</span></span>`;
 }
 // (drawn again after it has popped in, it's just there)

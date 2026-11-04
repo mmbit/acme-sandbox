@@ -8,18 +8,20 @@
 // paste takes the clip only while that word is still there: a picture copied since is booktape.js's to paste, and
 // other words copied since are no paste here. A picture is on its page once (pagescraps.ts), so a pasted one is
 // uploaded again for its page (booktape.js keepAgain), unless it was cut from that page and isn't back on it.
-import { button, lineIcon, MOD, DUPLICATE_ICON } from './bookui.js';
+import { button, MOD } from './bookui.js';
+import { icon } from '../icons.js';
 import { carried } from './bookbrought.js';
 import { sfx } from '../audio.js';
 import { keepAgain } from './booktape.js';
 import { mountTapPaste } from './bookselectpaste.js';
-// (what's deleted balls up and is thrown away)
+// (what's deleted balls up and falls away)
 import { crumple } from './bookpaper.js';
 import { thingsPicture } from './bookpaperdraw.js';
 import { said, shut } from './booksave.js';
 import { word } from './bookscope.js';
 import { mapBox, moveBy, movedScrap, movedStroke, movedText, movedThings, pasteAt, union } from './bookselectmath.js';
-import { bounds, boxOfText, changed, choose, current, framed, letGo, redrawn, swapIn } from './bookselect.js';
+import { bounds, boxOfText, changed, choose, current, framed, letGo, redrawn } from './bookselect.js';
+import { swapIn } from './bookedit.js';
 import { newCut } from './bookstrokes.js';
 
 // a duplicate lands this far (screen px) down and right of what it copies, as does a paste again on the same spot
@@ -317,9 +319,9 @@ function barOf(clip) {
   bar.setAttribute('aria-label', word('selection'));
   for (const type of ['pointerdown', 'touchstart', 'touchmove']) bar.addEventListener(type, e => e.stopPropagation());
   const acts = [
-    [DUPLICATE_ICON, word('duplicate'), `${MOD}+D`, () => duplicate(clip)],
-    [ICONS.move, word('moveToPage'), '', b => move(clip, b)],
-    [ICONS.delete, word('delete'), 'Delete', () => remove(clip)],
+    [icon('duplicate'), word('duplicate'), `${MOD}+D`, () => duplicate(clip)],
+    [icon('move-to'), word('moveToPage'), '', b => move(clip, b)],
+    [icon('bin'), word('delete'), 'Delete', () => remove(clip)],
   ];
   for (const [icon, label, keys, act] of acts)
     bar.append(
@@ -336,13 +338,6 @@ function barOf(clip) {
   clip.moving = bar.children[1];
   return bar;
 }
-// (in the controls' line: a page with an arrow coming onto it; a bin)
-const ICONS = {
-  move: lineIcon(
-    '<path d="M10 3h6l4 4v12a2 2 0 0 1-2 2h-8a2 2 0 0 1-2-2v-3"/><path d="M16 3v4h4"/><path d="M3 12h9M9 9l3 3-3 3"/>',
-  ),
-  delete: lineIcon('<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v5M14 11v5"/>'),
-};
 // Move to page… in the bar while what's picked can go to another page
 function fit(clip) {
   clip.moving.hidden = !clip.sel.book.groups?.movable(clip.sel.view);

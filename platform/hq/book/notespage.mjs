@@ -33,11 +33,9 @@ async function scrapsLand(browser, c, viewport, device) {
   // (a store of its own, My journal made at its first read: the call's page starts empty, whichever story ran before)
   const context = await c.hqIn(browser, viewport, { notebooks: {} });
   const line = await playLine(context);
-  const page = await context.newPage(),
+  const { page, errors } = await watchedPage(context),
     asked = [];
   page.on('request', r => r.url().endsWith('/api/notebooks/call') && asked.push(r.postDataJSON()));
-  const errors = [];
-  page.on('pageerror', e => errors.push(e.message));
   try {
     await page.goto(`${c.base}/?intro=0&open=intercom`);
     await page.waitForSelector('#loading.gone');
@@ -73,7 +71,7 @@ async function scrapsLand(browser, c, viewport, device) {
 async function reachedLate(browser, c) {
   const context = await c.hqIn(browser, c.DESKTOP, { notebooks: {} });
   await playLine(context);
-  const page = await context.newPage(),
+  const { page, errors } = await watchedPage(context),
     asked = [];
   await page.route(`${c.base}/api/notebooks/call`, r => {
     asked.push(Date.now());
@@ -85,8 +83,6 @@ async function reachedLate(browser, c) {
   const paged = [];
   await page.exposeFunction('paged', id => paged.push(id));
   await page.addInitScript(() => document.addEventListener('book:paged', e => window.paged(e.detail?.page)));
-  const errors = [];
-  page.on('pageerror', e => errors.push(e.message));
   try {
     await page.goto(`${c.base}/?intro=0&open=intercom`);
     await page.waitForSelector('#loading.gone');
@@ -111,7 +107,7 @@ async function reachedLate(browser, c) {
 async function notOpened(browser, c) {
   const context = await c.hqIn(browser, c.DESKTOP);
   const line = await playLine(context);
-  const page = await context.newPage(),
+  const { page, errors } = await watchedPage(context),
     asked = [],
     deleted = [],
     unread = [],
@@ -128,8 +124,6 @@ async function notOpened(browser, c) {
   });
   page.on('request', r => r.url().endsWith('/api/book/page/delete') && deleted.push(r.postDataJSON()));
   page.on('console', m => m.type() === 'error' && /page wasn’t looked at/.test(m.text()) && unread.push(m.text()));
-  const errors = [];
-  page.on('pageerror', e => errors.push(e.message));
   try {
     await page.goto(`${c.base}/?intro=0&open=intercom`);
     await page.waitForSelector('#loading.gone');

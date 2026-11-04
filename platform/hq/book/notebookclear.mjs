@@ -1,12 +1,14 @@
 // book-check.mjs's story of where scraps land (the coordinator's notebookscraps.ts, played: shell/ink/notebookplay.js)
 // on the narrowest papers the board reads on, a phone's and an upright iPad mini's book at its least: saved one after
 // another, each scrap's unit and its post-it words lie inside the paper and under none of the controls, the two apart;
-// and on a desktop's at the unit's own width, unscaled. (A page of units at five sizes: unitspage.mjs.)
+// and on a desktop's at the unit's own width, unscaled. (A page of units at five sizes: unitspage.mjs.) (the book's
+// least, BOOK.min)
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { paperBox } from './mouse.mjs';
 import { islandsClearOf } from './islands.mjs';
 import { UNIT_W } from '../shell/ink/scrapunit.js';
+import { BOOK } from '../shell/ink/booklayout.js';
 import { watchedPage } from './start.mjs';
 
 const SEED = JSON.parse(await readFile(new URL('../mock/notebook.json', import.meta.url), 'utf8'));
@@ -70,8 +72,9 @@ async function opened(browser, c, viewport, how) {
   const context = await c.hqIn(browser, viewport, { hasTouch: true, notebooks: seed });
   const { page, errors } = await watchedPage(context);
   if (how === 'least')
-    await page.addInitScript(() =>
-      localStorage.setItem('hq.book.portrait', JSON.stringify({ mode: 'open', book: 320 })),
+    await page.addInitScript(
+      book => localStorage.setItem('hq.book.portrait', JSON.stringify({ mode: 'open', book })),
+      BOOK.min,
     );
   await page.goto(`${c.base}/?intro=0`);
   await page.waitForSelector('#loading.gone');

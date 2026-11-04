@@ -22,6 +22,7 @@ import { recordedPastJobs } from './pastjobs.fixture.ts';
 import { recordedCalls } from './calls.fixture.ts';
 import { storedPlans } from './plan.fixture.ts';
 import { codedArgs, codedBody, word } from './testwords.ts';
+import { testDoor } from './testdoor.ts';
 
 export const WORKER_TOKEN = 'worker-secret',
   VOICE_TOKEN = 'voice-secret';
@@ -99,8 +100,8 @@ export async function harness(
   // Any other caller with its own headers (a product's server with its token, the imitation checkout's page, a guest's
   // browser through Caddy: its host, cookie, origin and x-forwarded-for, the client Caddy names): its raw reply, a
   // redirect not followed. A body that isn't a string (or bytes, a file's) goes as JSON, URLSearchParams as a form,
-  // each with its type; either makes it a POST. hold: the body's last bytes wait for it, so something can change
-  // meanwhile. (the types and the hold)
+  // each with its type. A body makes it a POST unless method says otherwise. hold: the body's last bytes wait for it, so
+  // something can change meanwhile.
   const send = (
     path: string,
     headers: Record<string, string> = {},
@@ -150,6 +151,7 @@ export async function harness(
   // A form posted from HQ's own pages, as a guest's browser posts it (from: the client Caddy names)
   const postForm = (path: string, fields: Record<string, string>, from: string) =>
     send(path, { origin: ORIGIN, 'x-forwarded-for': from }, new URLSearchParams(fields));
+  const { guestIn } = testDoor(postForm);
 
   // The real hq script, as the job's agent runs it (dir: the job's folder, where hq request --park leaves its card for
   // the worker; tmp: its TMPDIR; call: as the voice line runs it, HQ_CALL set; stdin: piped in, for a command's "-")
@@ -343,6 +345,7 @@ export async function harness(
     board,
     boardCookie,
     postForm,
+    guestIn,
     handNotes,
     hq,
     queue,

@@ -12,16 +12,17 @@
 import assert from 'node:assert/strict';
 import { atEverySize, until } from './kit.mjs';
 import { bookWide, noMicrophone, watchedPage } from './start.mjs';
+import { BOOK } from '../shell/ink/booklayout.js';
 import { typedBoxes } from '../shell/ink/notebookparts.js';
-import { DAY_H, GAP } from '../shell/ink/masonry.js';
 import { UNIT_W } from '../shell/ink/scrapunit.js';
+import { line, opened, savedInto, sound, still, strokesBy, units } from './unitsread.mjs';
 
 const T0 = '2026-10-29T15:00:00.000Z';
 const SIZES = {
   phone: { width: 390, height: 844 },
   'ipad-mini-upright': { width: 744, height: 1133 },
   'ipad-mini-sideways': { width: 1133, height: 744 },
-  'desktop-narrow': { width: 1920, height: 1080, book: 380 },
+  'desktop-narrow': { width: 1920, height: 1080, book: BOOK.min },
   // (then a narrower window, its page laid again in fewer columns)
   'desktop-wide': { width: 1920, height: 1080, book: 1500, turned: { width: 1133, height: 744 } },
 };
@@ -149,18 +150,6 @@ async function plainRooms(page, name) {
     assert.ok(Math.abs(u.paperEnds) <= 1, `${what}: its note's paper ends where its room starts`);
   }
 }
-// The book open, tapped open from its tab where it starts folded (a phone's), its n units drawn
-async function opened(page, n) {
-  await page.waitForSelector('#book .bk-desk', { state: 'attached', timeout: 30_000 });
-  await page.waitForFunction(
-    () => document.documentElement.dataset.book && !document.querySelector('#book.bk-swinging'),
-  );
-  if ((await page.evaluate(() => document.documentElement.dataset.book)) === 'folded') {
-    await page.locator('#book .bk-lip').click();
-    await page.waitForFunction(() => !['folded', 'shut'].includes(document.documentElement.dataset.book));
-  }
-  await until(async () => (await units(page)).length === n, `the ${n} units drawn`);
-}
 // The board's annotations: a line in the first unit's room, one in the space under a unit (that unit's, or one of its
 // own right under it), a room dragged taller by its handle. Returns where the line was written under its unit (written).
 // (each at the page's px, so the same place in a scrap at every scale)
@@ -199,26 +188,9 @@ async function written(page, unit) {
       .at(0)?.id,
     had = strokesBy(page);
   await line(page, unit.x + 40 * s, y, 140);
-  let into;
-  await until(
-    () => {
-      const now = strokesBy(page);
-      into = [...now.keys()].find(id => now.get(id) > (had.get(id) ?? 0));
-      return into !== undefined;
-    },
-    'the line written under a unit saved',
-    8000,
-  );
+  const into = await savedInto(page, had, 'the line written under a unit saved');
   return { id: unit.id, down: (y - unit.y) / unit.w, next, into };
 }
-// How many strokes the store keeps in each group of the page: group id → strokes
-const strokesBy = page =>
-  new Map(
-    page
-      .context()
-      .notebook.route('/api/notebooks/pages/groups', { page: 1 })
-      .groups.map(g => [g.id, g.ink.length]),
-  );
 // The page turned to another size once its lines are saved, and opened again from the store: laid in another number
 // of columns, each line still right under the unit it was written under
 async function turned(page, c, name, size, under) {
@@ -250,13 +222,14 @@ function stays(all, { id, down, next, into }, what) {
     `${what} stays by the unit it was written under (${JSON.stringify({ above, made, down, next, into })})`,
   );
 }
-// HQ at a size on the seed, a mouse's desk: its notebook as narrow or wide as the board dragged it (booklayout.js keep)
-async function deskAt(browser, c, size) {
+// HQ at a size on a seed (the story's own by default), a mouse's desk: its notebook as narrow or wide as the board
+// dragged it (booklayout.js keep).
+export async function deskAt(browser, c, size, seed = SEED) {
   const { width, height, book } = size,
     viewport = { width, height },
-    context = await c.hqIn(browser, viewport, { notebooks: structuredClone(SEED), hasTouch: false, isMobile: false });
+    context = await c.hqIn(browser, viewport, { notebooks: structuredClone(seed), hasTouch: false, isMobile: false });
   await noMicrophone(context);
-  await bookWide(context, book);
+  await bookWide(context, viewport, book);
   return context;
 }
 // A unit's room dragged 80 px taller by its handle: the first handle on screen
@@ -316,70 +289,4 @@ async function atFoot(page, c, name) {
   });
   const clear = foot.desk.right <= foot.tools + 1 && foot.right <= foot.tools + 1 && foot.last <= foot.desk.bottom + 1;
   assert.ok(clear, `${name}: the last unit clear of the tools (${JSON.stringify(foot)})`);
-}
-
-// The units on screen, each with what hangs under it: { id, x, y, w, h, bottom } in CSS px
-export const units = page =>
-  page.evaluate(() =>
-    [...document.querySelectorAll('#book .bk-page:not([hidden]) .bk-unit')].map(u => {
-      const r = u.getBoundingClientRect(),
-        under = document.querySelector(`#book .bk-page:not([hidden]) .bk-under[data-g="${u.dataset.unit}"]`),
-        bottom = under ? Math.max(r.bottom, under.getBoundingClientRect().bottom) : r.bottom;
-      return { id: Number(u.dataset.unit), x: r.left, y: r.top, w: r.width, h: r.height, bottom };
-    }),
-  );
-// No two units overlap, units in a column are the same space apart, and the page never scrolls sideways
-async function sound(page, when) {
-  const all = await units(page);
-  for (const a of all)
-    for (const b of all)
-      if (a.id < b.id) {
-        const apart =
-          a.x + a.w <= b.x + 0.5 || b.x + b.w <= a.x + 0.5 || a.bottom <= b.y + 0.5 || b.bottom <= a.y + 0.5;
-        assert.ok(apart, `${when}: units ${a.id} and ${b.id} overlap (${JSON.stringify([a, b])})`);
-      }
-  // (the masonry's GAP at the page's scale; where a day's header starts between them, the unit right under it and the
-  // header at least GAP under the one above: a line the board writes today on yesterday's page starts today.)
-  const days = await page.evaluate(() =>
-      [...document.querySelectorAll('#book .bk-page:not([hidden]) .bk-day')].map(d => d.getBoundingClientRect().top),
-    ),
-    columns = Map.groupBy(all, u => Math.round(u.x));
-  for (const col of columns.values()) {
-    const sorted = col.sort((a, b) => a.y - b.y);
-    for (let k = 1; k < sorted.length; k++) {
-      const [a, b] = [sorted[k - 1], sorted[k]],
-        s = b.w / UNIT_W,
-        day = days.findLast(y => y >= a.bottom - 0.5 && y <= b.y + 0.5),
-        gap = day === undefined ? b.y - a.bottom : b.y - (day + DAY_H * s),
-        room = day === undefined ? gap : day - a.bottom;
-      assert.ok(
-        Math.abs(gap - (day === undefined ? GAP * s : 0)) <= 1.5 && room >= GAP * s - 1.5,
-        `${when}: the space between units ${a.id} and ${b.id} is ${gap} (${day === undefined ? 'no day' : 'a day'} between)`,
-      );
-    }
-  }
-  const sideways = await page.evaluate(() => {
-    const w = document.querySelector('#book .bk-world').style.transform;
-    return /translate3d\((-?[\d.]+)px/.exec(w)?.[1];
-  });
-  assert.equal(Number(sideways ?? 0), 0, `${when}: the page never moves sideways`);
-}
-// The units once they've stopped changing for a second: [{ id, x, y, w, h, bottom }]
-async function still(page) {
-  let was = '';
-  for (let k = 0; k < 20; k++) {
-    const now = await units(page);
-    if (JSON.stringify(now) === was) return now;
-    was = JSON.stringify(now);
-    await page.waitForTimeout(1000);
-  }
-  return units(page);
-}
-// A line written with the mouse from x, y, len px across
-async function line(page, x, y, len) {
-  await page.mouse.move(x, y);
-  await page.mouse.down();
-  for (let k = 1; k <= 12; k++) await page.mouse.move(x + 24 + (len * k) / 12, y + Math.sin(k / 2) * 8);
-  await page.mouse.up();
-  await page.waitForTimeout(250);
 }

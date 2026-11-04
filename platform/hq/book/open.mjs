@@ -168,9 +168,11 @@ async function onAPhone(browser, c) {
 
 // The tab tapped, HQ's page watched on every frame from then into __rooms: its room, gone, blurred, opacity, and the
 // frame's time on two clocks: the wall clock (t), and the swing's own clock (swung), which steps at most SWING.frame a
-// frame, as the swing and its fade do (bookswing.js).
-const tappedWatched = page =>
+// frame, as the swing and its fade do (bookswing.js). The device's count of slow swings is cleared first, so every
+// watched swing blurs, however slow the ones before it were (shell/ink/bookswingmath.js blurs).
+export const tappedWatched = page =>
   page.evaluate(longest => {
+    localStorage.removeItem('hq.book.slow');
     const frames = (window.__rooms = []);
     let swung = 0;
     const watch = t => {
@@ -206,7 +208,6 @@ async function roomWhileGone(browser, c) {
   const { page, errors, done } = await c.hq(browser, MINI),
     times = {};
   try {
-    // (twice round: the first swing on a slow machine still blurs, till the book turns its blur off there)
     for (const [mode, way] of [
       ['folded', 'shut'],
       ['open', 'opened'],
@@ -384,7 +385,7 @@ export const tabAt = page =>
     .boundingBox()
     .then(r => ({ x: r.x + r.width / 2, y: r.y + r.height / 2 }));
 // The book shut by a tap of its tab, settled
-async function shutBy(page, c) {
+export async function shutBy(page, c) {
   await page.click('#book .bk-lip');
   await c.settled(page, 'folded');
   await page.waitForTimeout(400);

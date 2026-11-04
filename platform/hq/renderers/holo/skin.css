@@ -23,6 +23,9 @@ body, #book {
   --scr-bg: rgba(2, 12, 18, .7) repeating-linear-gradient(0deg, rgba(110, 225, 255, .05) 0 1px, transparent 1px 3px); --scr-glow: 0 0 6px rgba(128, 234, 255, .45);
 }
 body { font-weight: 500; }
+/* the Notebook's Shelf (shell/ink/bookshelfwindow.css): its real wood a little towards the deck's cyan, lettered in its
+   deep */
+#book { --bk-shelf-tint: #b4e6f2; --bk-shelf-tint-share: 26%; --bk-shelf-ink: var(--deep); }
 /* (#status > span: the throughput's chips, not the words in them) */
 .brand, .tools button, .tools a.desk, #zoom button, #status > span, .toast, #panel, .device, .bubble, #namecard, #card, #hint {
   -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }

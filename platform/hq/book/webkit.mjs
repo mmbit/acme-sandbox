@@ -1,8 +1,7 @@
 // book-check.mjs's story of the board's controls on an iPad mini in WebKit, the iPad's engine (--stories "in WebKit"
 // --webkit): the Pencil and a finger as Safari hands them over (pointer events on what's under them), the strip slid
 // along to a tool, the Pencil writing and a finger after it drawing nothing (it pans, by default), the Pencil held still
-// only ink, and its tap on the rail's mic a voice note whose words land under the line it wrote. Chromium's trusted
-// touch and pen: strip.mjs.
+// only ink, and its tap on the rail's mic, then a spot held, a voice note whose words write themselves there. Chromium's trusted touch and pen: strip.mjs.
 import assert from 'node:assert/strict';
 import { freePage, paperBox, savedWhere } from './mouse.mjs';
 import { dictated, pressed, stillFor, stored } from './strip.mjs';
@@ -12,7 +11,7 @@ import { bookOnTouch } from './start.mjs';
 // c: book-check.mjs's played store and helpers
 export function webkitStories(c) {
   return {
-    'controls on an iPad mini in WebKit: the strip slid, the Pencil drawing and a finger not, the Pencil held still, its tap on the mic':
+    'controls on an iPad mini in WebKit: the strip slid, the Pencil drawing and a finger not, the Pencil held still, its tap on the mic and a spot held':
       browser => webkit(browser, c),
   };
 }
@@ -54,8 +53,8 @@ async function slidAndDrawn(page, c, free, mid) {
   await page.waitForTimeout(QUIET_MS);
   assert.equal(stored(c, free).ink.length, 1, 'the finger drew nothing');
 }
-// The Pencil held still: a dot, nothing listening or opening; then a line written, and the Pencil's tap on the mic
-// and another: its words under that line
+// The Pencil held still: a dot, nothing listening or opening; then a line written, the Pencil's tap on the mic and a
+// spot held under the line: its words there
 async function voice(page, c, free, mid) {
   const at = [mid[0] + 60, mid[1] + 180];
   await stillFor(
@@ -73,7 +72,14 @@ async function voice(page, c, free, mid) {
     await safari(page, 'pen', 'pointerup', on);
     await safari(page, 'pen', 'click', on);
   };
-  await dictated(page, c, free, tap, 'book-voice-webkit');
+  await dictated(
+    page,
+    c,
+    free,
+    { tap, down: p => safari(page, 'pen', 'pointerdown', p), up: p => safari(page, 'pen', 'pointerup', p) },
+    [mid[0] - 100, mid[1] + 110],
+    'book-voice-webkit',
+  );
 }
 
 // ---- helpers

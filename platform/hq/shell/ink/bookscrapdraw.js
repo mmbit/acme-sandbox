@@ -1,45 +1,54 @@
-// A picture taped into the book (a scrap): drawn in its white border with a strip of tape across its top edge, and a
-// picture file made ready for the store (at most UPLOAD_SIDE a side). Kept from the old Sketchbook's scraps, gone with
-// its app. A scrap here: { x, y, w, h, tilt, img } in its page's units (its box, border included; tilt in degrees).
+// A picture taped into the book (a scrap): the photo taped straight onto what's under it (our scrap's post-it, or the
+// page), a hair of an edge and a strip of tape whole across its top edge, no card or shadow of its own (README, Our
+// scraps), and a picture file made ready for the store (at most UPLOAD_SIDE a side). Kept from the old Sketchbook's
+// scraps, gone with its app. A scrap here: { x, y, w, h, tilt, img } in its page's units (its box, the photo inset in
+// it by its margin; tilt in degrees).
 
 // a picture as HQ uploads it: at most this long a side, and a PNG only while it's this small
 const UPLOAD_SIDE = 2000,
   PNG_MAX = 2_500_000;
 
-// its white border, and the tape across its top edge, in its page's units
+// the margin round the photo in its box, and the tape across its top edge, in its page's units
 const matOf = s => Math.max(3, Math.min(s.w, s.h) * 0.035);
-const tapeOf = s => ({ w: Math.min(s.w * 0.36, 70), h: Math.max(9, Math.min(16, s.h * 0.09)) });
+export const tapeOf = s => ({ w: Math.min(s.w * 0.36, 70), h: Math.max(9, Math.min(16, s.h * 0.09)) });
 const TAPE = 'rgb(246 236 200 / 80%)';
-// the tape's own turn on the scrap, and how far the scrap's shadow reaches past it
+// the tape's own turn on the scrap, and how far past its box a canvas keeps for it
 const TAPE_TURN = -4,
-  SHADOW = { blur: 6, y: 2 };
+  PAD = 4;
 
-// A scrap on a canvas in its page's units, as the page shows it
+// The photo's own box in a scrap's (its page's units): inset by its margin
+export function photoOf(s) {
+  const m = matOf(s);
+  return { x: s.x + m, y: s.y + m, w: s.w - 2 * m, h: s.h - 2 * m };
+}
+
+// A scrap on a canvas in its page's units, as the page shows it (our scraps' photos as bookpage.js lays them)
 export function drawScrap(g, s) {
   const m = matOf(s),
-    tape = tapeOf(s);
+    tape = tapeOf(s),
+    [w, h] = [s.w - 2 * m, s.h - 2 * m];
   g.save();
   g.translate(s.x + s.w / 2, s.y + s.h / 2);
   g.rotate((s.tilt * Math.PI) / 180);
-  Object.assign(g, { shadowColor: 'rgb(40 30 50 / 28%)', shadowBlur: SHADOW.blur, shadowOffsetY: SHADOW.y });
-  g.fillStyle = '#fff';
-  g.fillRect(-s.w / 2, -s.h / 2, s.w, s.h);
-  Object.assign(g, { shadowColor: 'transparent', shadowBlur: 0, shadowOffsetY: 0 });
-  if (s.img?.complete && s.img.naturalWidth) g.drawImage(s.img, -s.w / 2 + m, -s.h / 2 + m, s.w - 2 * m, s.h - 2 * m);
-  g.translate(0, -s.h / 2);
+  if (s.img?.complete && s.img.naturalWidth) g.drawImage(s.img, -w / 2, -h / 2, w, h);
+  g.strokeStyle = 'rgb(80 60 10 / 14%)';
+  g.lineWidth = 1;
+  g.strokeRect(-w / 2 - 0.5, -h / 2 - 0.5, w + 1, h + 1);
+  g.translate(0, -h / 2);
   g.rotate((TAPE_TURN * Math.PI) / 180);
   g.fillStyle = TAPE;
   g.fillRect(-tape.w / 2, -tape.h / 2, tape.w, tape.h);
   g.restore();
 }
 
-// All drawScrap paints of a scrap, in its page's units: its card turned, the tape standing up past its top edge and
-// the shadow round it, so a canvas this big cuts none of it (bookpage.js.)
+// All drawScrap paints of a scrap, in its page's units: its box turned and the tape standing up past the photo's top
+// edge, so a canvas this big cuts none of it (bookpage.js.)
 export function drawnBox(s) {
   const tape = tapeOf(s),
     turn = (s.tilt * Math.PI) / 180,
     t = (TAPE_TURN * Math.PI) / 180,
-    [hw, hh, tw, th] = [s.w / 2, s.h / 2, tape.w / 2, tape.h / 2];
+    [hw, hh, tw, th] = [s.w / 2, s.h / 2, tape.w / 2, tape.h / 2],
+    edge = matOf(s) - hh;
   const corners = [
     [-hw, -hh],
     [hw, -hh],
@@ -50,20 +59,14 @@ export function drawnBox(s) {
       [tw, -th],
       [tw, th],
       [-tw, th],
-    ].map(([x, y]) => [x * Math.cos(t) - y * Math.sin(t), x * Math.sin(t) + y * Math.cos(t) - hh]),
+    ].map(([x, y]) => [x * Math.cos(t) - y * Math.sin(t), x * Math.sin(t) + y * Math.cos(t) + edge]),
   ].map(([x, y]) => [
     s.x + hw + x * Math.cos(turn) - y * Math.sin(turn),
     s.y + hh + x * Math.sin(turn) + y * Math.cos(turn),
   ]);
   const xs = corners.map(c => c[0]),
-    ys = corners.map(c => c[1]),
-    pad = 2 * SHADOW.blur;
-  return {
-    x0: Math.min(...xs) - pad,
-    y0: Math.min(...ys) - pad,
-    x1: Math.max(...xs) + pad,
-    y1: Math.max(...ys) + pad + SHADOW.y,
-  };
+    ys = corners.map(c => c[1]);
+  return { x0: Math.min(...xs) - PAD, y0: Math.min(...ys) - PAD, x1: Math.max(...xs) + PAD, y1: Math.max(...ys) + PAD };
 }
 
 // A picture file as HQ uploads it, drawn again at most UPLOAD_SIDE a side (nothing of the file goes but its pixels):

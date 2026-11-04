@@ -1,5 +1,6 @@
 // A shared workspace whole, in the Companies app (companies.js): its threads, each with its messages in order, and its
-// files, each with every version to download. The other company's words are outside text: escaped, never markup.
+// files, each with its versions (the newest two to download). The other company's words are outside text: escaped,
+// never markup.
 import { esc } from '../util.js';
 import { dayTime } from '../world/clock.js';
 import { workspaceFileUrl } from './data.js';
@@ -48,10 +49,19 @@ const whereOurs = (m, hq) =>
 function fileHtml(w, f, hq) {
   const versions = f.versions.toReversed().map(v => {
     const href = workspaceFileUrl(world.dev, w.id, f.path, v.n);
-    const facts = [when(v.at), size(v.size), v.by.ours && !v.arrived ? 'on its way' : ''].filter(Boolean);
+    // (a version past the newest two has its bytes cleared: its line stays, with nothing to download)
+    const facts = [
+      when(v.at),
+      size(v.size),
+      v.by.ours && !v.arrived ? 'on its way' : '',
+      v.cleared ? 'cleared' : '',
+    ].filter(Boolean);
     const factsHtml = facts.map(fact => `<span class="co-fact">${esc(fact)}</span>`).join(' · ');
+    const get = v.cleared
+      ? ''
+      : `<a class="act co-get" href="${esc(href)}" download="${esc(f.path.split('/').pop())}">Download</a>`;
     return `<li><span class="co-v">v${esc(v.n)}</span><span class="co-vtext">${authorHtml(v.by, hq)} · ${factsHtml}${v.note ? `<span class="co-note">${esc(v.note)}</span>` : ''}</span>
-      <a class="act co-get" href="${esc(href)}" download="${esc(f.path.split('/').pop())}">Download</a></li>`;
+      ${get}</li>`;
   });
   return `<li><b class="co-path">${esc(f.path)}</b><ol class="co-versions">${versions.join('')}</ol></li>`;
 }

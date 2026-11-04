@@ -6,8 +6,9 @@ import * as guests from './guests.ts';
 import { brand } from './company.ts';
 import { PREVIEW, REPO_DIR, ZONE } from './config.ts';
 import { hqDir } from './files.ts';
+import { typeOf } from './types.ts';
 import { looks } from '../../hq/looks.mjs';
-import { BOARD_EXTRAS, OPEN_EXTRAS } from '../../hq/extras.mjs';
+import { BOARD_EXTRAS, OPEN_EXTRAS, extraPaths } from '../../hq/extras.mjs';
 import { reply } from './uploads.ts';
 import type { RouteHandler, RouteTable } from '../../../shared/routes/routes.ts';
 
@@ -18,36 +19,34 @@ const words = {
 };
 export const roomTitle = (lang: guests.Lang) => words[lang].title;
 // The shell's own files under the room's address, as the board's HQ serves them: the looks, HQ's extra modules
-// (extras.mjs), review mode's parts, and the shell's scripts, styles and fonts
+// (extras.mjs), review mode's parts, and the shell's scripts, styles, fonts and icons (the book's controls draw HQ's,
+// icons.js)
 export const fileRoutes = (room: string): RouteTable => ({
   [`GET ${room}/renderers/looks.json`]: ({ res }) => {
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify(looks(hqDir('/'))));
   },
-  ...extraRoutes(room, { ...BOARD_EXTRAS, ...OPEN_EXTRAS }),
+  ...Object.fromEntries(
+    extraPaths(SCRIPTS).map(({ path, fileOf }): [string, RouteHandler] => [
+      `GET ${room}${path}`,
+      ({ res, params }) => sendFile(res, `${REPO_DIR}/${fileOf(params)}`),
+    ]),
+  ),
   [`GET ${room}/review/:part([a-z]+).js`]: ({ res, params }) =>
     sendFile(res, `${REPO_DIR}/shared/review/${params.part}.js`),
-  [`GET ${room}/:path(util\\.js|(?:shell|world|renderers)/[\\w\\/\\-]+\\.(?:js|css|woff2))`]: ({ res, params }) =>
-    sendFile(res, `${hqDir(`/${params.path}`)}/${params.path}`),
+  [`GET ${room}/:path(util\\.js|(?:shell|world|renderers)/[\\w\\/\\-]+\\.(?:js|css|woff2)|icons/(?:smooth|pixel)/[\\w\\-]+\\.svg)`]:
+    ({ res, params }) => sendFile(res, `${hqDir(`/${params.path}`)}/${params.path}`),
   [`GET ${room}/*`]: ({ res }) => reply(res, 404, { error: 'not found' }),
 });
-// The extras' scripts as routes, a folder's by its scripts' names
-const extraRoutes = (room: string, table: Record<string, string>): RouteTable =>
-  Object.fromEntries(
-    Object.entries(table)
-      .filter(([address, file]) => address.endsWith('/') || file.endsWith('.js'))
-      .map(([address, file]): [string, RouteHandler] =>
-        address.endsWith('/')
-          ? [
-              `GET ${room}${address}:name([a-z]+\\.js)`,
-              ({ res, params }) => sendFile(res, `${REPO_DIR}/${file}${params.name}`),
-            ]
-          : [`GET ${room}${address}`, ({ res }) => sendFile(res, `${REPO_DIR}/${file}`)],
-      ),
-  );
+// The extras the shell loads: their scripts, a folder's too
+const SCRIPTS = Object.fromEntries(
+  Object.entries({ ...BOARD_EXTRAS, ...OPEN_EXTRAS }).filter(
+    ([address, file]) => address.endsWith('/') || file.endsWith('.js'),
+  ),
+);
 function sendFile(res: ServerResponse, file: string) {
-  if (!existsSync(file)) return reply(res, 404, { error: 'not found' });
-  const type = file.endsWith('.css') ? 'text/css' : file.endsWith('.woff2') ? 'font/woff2' : 'text/javascript';
+  const type = typeOf(file);
+  if (!type || !existsSync(file)) return reply(res, 404, { error: 'not found' });
   res.writeHead(200, { 'content-type': type, 'cache-control': 'no-cache' });
   res.end(readFileSync(file));
 }

@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import { open } from './notebook.mjs';
 import { pen } from './notebookscreen.mjs';
 import { DESKTOP, UPRIGHT, until } from './kit.mjs';
+import { press } from './bar.mjs';
 
 // a picture of the seed's store (mock/notebook.json)
 const SNIP = 'book-snip-1.svg';
@@ -99,7 +100,7 @@ async function landsOnce(page, c, n, what) {
 
 // New page pressed: the page it makes in the store (its id)
 async function newPage(page, play, c) {
-  await page.locator('#book').getByRole('button', { name: 'New page', exact: true }).click();
+  await press(page, 'New page');
   await page.waitForTimeout(c.settle);
   return play.route('/api/notebooks/pages', { notebook: 1 }).pages.at(-1).id;
 }

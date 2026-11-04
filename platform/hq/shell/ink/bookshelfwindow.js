@@ -2,10 +2,11 @@
 // shuts the book first (book.js). Every notebook stands on its boards as bookshelf.js draws them, with the Archive's
 // box; a notebook tapped puts the window away and opens the book on its pages. A modal <dialog> in #book, so the book's
 // styles are its own, in the top layer over everything: it rises in and sinks away (a fade with reduced motion). Esc,
-// its Close or a tap beside it puts it away. On a phone it fills the screen.
+// its Close or a tap beside it puts it away. On a phone it fills the screen. Its shelf is read ahead, as HQ opens and
+// each time it's put away, so it opens whole.
 import { stylesheet } from '../../util.js';
+import { icon } from '../icons.js';
 import { mountScreens } from './bookshelf.js';
-import { lineIcon } from './bookui.js';
 import { aimAt } from './booknewest.js';
 import { swinging } from './bookswing.js';
 
@@ -15,7 +16,6 @@ stylesheet('shell/ink/bookshelfwindow.css');
 const RISE = { duration: 220, easing: 'cubic-bezier(0.2, 0.75, 0.25, 1)' },
   SINK = { duration: 160, easing: 'cubic-bezier(0.4, 0, 1, 1)', fill: 'forwards' };
 const LIFT = 'translateY(14px) scale(0.97)';
-const CLOSE = lineIcon('<path d="M6 6l12 12M18 6L6 18"/>');
 const still = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 let on = null; // the window: mountShelfWindow's
@@ -53,7 +53,7 @@ export function mountShelfWindow(host, { dev, pages, open, fold }) {
     .querySelector('.bk-far-head')
     .insertAdjacentHTML(
       'beforeend',
-      `<button type="button" class="bk-shelf-close" aria-label="Close the Shelf">${CLOSE}</button>`,
+      `<button type="button" class="bk-shelf-close" aria-label="Close the Shelf">${icon('close')}</button>`,
     );
   dialog.querySelector('.bk-shelf-close').addEventListener('click', () => hide(w));
   dialog.addEventListener('cancel', e => {
@@ -62,6 +62,7 @@ export function mountShelfWindow(host, { dev, pages, open, fold }) {
   });
   // (a tap beside it, on the backdrop, lands on the dialog itself)
   dialog.addEventListener('click', e => e.target === dialog && hide(w));
+  w.screens.ahead();
 }
 
 // The Shelf shown (HQ's Shelf key, the book's way back to it): an open book shut first, its close played, then the
@@ -122,6 +123,7 @@ function hide(w) {
       dialog.classList.remove('bk-sinking');
       going.cancel();
       w.screens.hide();
+      w.screens.ahead();
     },
     () => {} /* cancelled: the Shelf shown again mid-sink (show) */,
   );

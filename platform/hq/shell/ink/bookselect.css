@@ -196,3 +196,7 @@
     transition: none;
   }
 }
+/* (one of our scraps picked: it never moves or scales, so no handles. README, Our scraps.) */
+.bk-sel[data-fixed] .bk-sel-handle {
+  display: none;
+}

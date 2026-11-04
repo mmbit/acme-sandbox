@@ -12,9 +12,8 @@
 import { stylesheet } from '../../util.js';
 import { sfx } from '../audio.js';
 import { grownTo } from './bookrow.js';
-import { remade } from './bookedit.js';
-import { boundsOf, gestureOf, groupOf, membersOf, picked, topAt, union, within } from './bookselectmath.js';
-import { unitAt } from './bookunits.js';
+import { boundsOf, gestureOf, groupOf, membersOf, picked, topAt, union, wholeOf, within } from './bookselectmath.js';
+import { fixed, unitAt } from './bookunits.js';
 import { mountClip } from './bookselectclip.js';
 import { mountAssign } from './bookassign.js';
 import { drag, grab } from './bookselectlift.js';
@@ -220,7 +219,9 @@ export function pageOf(book, e) {
 // ---- the selection
 
 // Things on a view's page picked ({ ink, scraps, texts }, the page's own objects), framed; nothing picked lets go
-export function choose(sel, view, { ink = [], scraps = [], texts = [] }) {
+export function choose(sel, view, things) {
+  // (whatever asks, a loop, a tap or all of a page: our scraps only whole, never a part of one. README, Our scraps)
+  const { ink, scraps, texts } = wholeOf(view.page, things, g => fixed(view.page, g));
   if (!ink.length && !scraps.length && !texts.length) return letGo(sel);
   const fresh = !sel.frame || sel.view !== view;
   if (sel.view !== view) letGo(sel);
@@ -246,6 +247,8 @@ export function letGo(sel) {
   Object.assign(sel, { view: null, ink: [], scraps: [], texts: [], frame: null });
 }
 export const picks = sel => sel.ink.length + sel.scraps.length + sel.texts.length;
+// Whether one of our scraps is picked: it stays where it is (README, Our scraps)
+export const holdsFixed = sel => [...sel.ink, ...sel.scraps, ...sel.texts].some(x => fixed(sel.view.page, x.g));
 // The selection still the page's: on the page shown, its things still on it (a step undone, the eraser, words emptied
 // away), else let go of what's gone
 export function current(sel) {
@@ -298,6 +301,8 @@ export function framed(sel, b = bounds(sel)) {
     sel.frame = { el, bar: sel.clip.bar() };
   }
   const { el, bar } = sel.frame;
+  // (one of our scraps picked: it never moves or scales, so no handles. README, Our scraps)
+  el.toggleAttribute('data-fixed', holdsFixed(sel));
   sel.clip.fit();
   sel.assign.fit(bar);
   // (appended once: a node put back starts its fade in again)
@@ -344,7 +349,7 @@ export function frameDown(sel) {
 
 // ---- a change made
 
-// One change to a view's page as a step for Undo (bookedit.js): act(page) replaces its things (swapIn) or adds new
+// One change to a view's page as a step for Undo (bookedit.js): act(page) replaces its things (bookedit.js swapIn) or adds new
 // ones, and returns those to pick after
 export function changed(sel, view, act) {
   const change = sel.hooks.begin(view);
@@ -362,15 +367,6 @@ export function replaced(sel, view, act) {
   redrawn(sel, view, was && now ? union(was, now) : (was ?? now));
   if (now) choose(sel, view, after);
   else letGo(sel);
-}
-// A page's things replaced by their new selves (a map from each to its new self), each in its place in its list, and
-// kept as their replacements for the step (bookedit.js remade.)
-export function swapIn(page, swap) {
-  for (const [old, now] of swap) remade(old, now);
-  for (const k of ['ink', 'scraps', 'texts']) {
-    const list = (page[k] ??= []);
-    list.splice(0, list.length, ...list.map(x => swap.get(x) ?? x));
-  }
 }
 // A page's boxes drawn again after a change: its size laid, its tiles under the box and its words
 export function redrawn(sel, view, box) {

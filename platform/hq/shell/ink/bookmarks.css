@@ -1,9 +1,11 @@
 /* A book's chapters as its bookmarks (bookmarks.js), on the cover's edge (book.js) so they move and swing with the
-   book: real bookmarks, each its own card colour for good, never lit (README, The book's frame). The page's own chapter shows by depth, its tab nearest the page and a little longer, the others
-   from deeper in. Beside HQ's page they stick out of the page block to the left; on a page that is the whole screen
-   they lie folded against its left edge like the pull tab, slivers with their icons, out over the margin while one is
-   picked. On the overview too, as on every page (data-far, bookpagesfar.js), a round's guests' list put away there.
-   Never under the status bar's blur (--sat). */
+   book: real bookmarks, each its own card colour for good, never lit (README, The book's frame). Card, never drawn: no
+   outline, their shade alone sets them off the paper (README, Bookmarks). The
+   page's own chapter shows by depth, its tab nearest the page and a little longer, the others from deeper in. Beside
+   HQ's page they stick out of the page block to the left; on a page that is the whole screen they stick out of it the
+   same while the book swings, and once it has landed they fold in against the screen's left edge like the pull tab,
+   slivers alike with their icons, out over the margin while one is picked. On the overview too, as on every page
+   (data-far, bookpagesfar.js), a round's guests' list put away there. Never under the status bar's blur (--sat). */
 #book {
   --bk-mk-edge: rgba(60, 45, 20, 0.28);
   --bk-mk-ink: #2a2352;
@@ -14,15 +16,20 @@
 #book[data-far] .bk-mk-guests {
   display: none;
 }
-/* a chapter's tab, a bookmark or the overview's (bookmarks.js chapterTab: bookshelf.css places the overview's): its
-   colour its chapter's, always */
+/* a marked book is a little thicker: the page block's side the swing shows (bookswing.js, book.css .bk-block), out of
+   which its bookmarks stick */
+#book.bk-marked .bk-block {
+  width: 28px;
+}
+/* a chapter's tab, a bookmark (bookmarks.js chapterTab), and the overview's ribbon (bookshelf.css): its colour its
+   chapter's, always */
 #book .bk-mk-tab {
   --bk-mk-card: #e6d9bd;
   display: inline-flex;
   align-items: center;
   gap: 6px;
   box-sizing: border-box;
-  border: 1px solid var(--bk-mk-edge);
+  border: 0;
   background: var(--bk-mk-card);
   color: var(--bk-mk-ink);
   font: 600 13px/1 var(--bk-font);
@@ -40,10 +47,6 @@
 }
 #book :is(.bk-mk-tab, .bk-far-ribbon)[data-chapter='advice'] {
   --bk-mk-card: #dfe5bf;
-}
-/* (a chapter with no pages yet: there, its words dim, unless it's the page's own) */
-#book .bk-mk-tab[data-empty]:not([aria-current]) {
-  color: rgba(42, 35, 82, 0.45);
 }
 #book .bk-mk-icon {
   flex: none;
@@ -77,95 +80,113 @@
   inset: -3px -14px -3px -4px;
 }
 
-/* Beside HQ's page: out of the page block at the book's outer edge, over the table, one under another below the blur,
-   each from its own place in the block: the page's own from its top page, the others a page or two deeper */
-@media (orientation: landscape) {
-  #book .bk-marks {
-    --bk-mk-reach: 30px;
-    top: var(--bk-marks-top);
-    right: calc(-1 * var(--bk-pages) + 1px);
-    gap: 6px;
-    align-items: flex-end;
+/* Out of the page block at the book's outer edge, one under another below the blur, each from its own place in the
+   block: the page's own from its top page, the others a page or two deeper. Beside HQ's page, over the table; on a
+   page the whole screen (book.js's data-whole, never the screen's orientation), while the book swings (data-mode
+   swing) and lies shut */
+#book .bk-marks {
+  --bk-mk-reach: 30px;
+  top: var(--bk-marks-top);
+  right: calc(-1 * var(--bk-pages) + 1px);
+  gap: 6px;
+  align-items: flex-end;
+}
+#book .bk-marks button {
+  flex-direction: column;
+  justify-content: flex-start;
+  gap: 4px;
+  width: calc(var(--bk-mk-reach) + 12px);
+  /* (as long as its icon and upright words take: longer words push the book's pull tab down, book.css) */
+  min-height: 72px;
+  padding: 6px 12px 5px 0;
+  border-radius: 9px 0 0 9px;
+  box-shadow: -1px 1px 3px rgba(42, 35, 82, 0.24);
+  /* (deeper in the block: under a page or two, so a few px short of the paper) */
+  margin-right: 4px;
+}
+#book .bk-marks button:nth-child(3) {
+  margin-right: 6px;
+}
+#book .bk-marks button[aria-current='page'] {
+  z-index: 2;
+  width: calc(var(--bk-mk-reach) + 15px);
+  margin-right: 0;
+  box-shadow: -2px 1px 4px rgba(42, 35, 82, 0.32);
+}
+#book .bk-marks button span {
+  writing-mode: vertical-rl;
+  rotate: 180deg;
+  font-size: 11px;
+}
+/* (a phone on its side: HQ's keys run down its page's right, so only icons, between its header keys and its zoom
+   keys; the book's pull tab moves down out of their way, book.css) */
+@media (max-height: 520px) {
+  #book:not([data-whole]) .bk-marks button {
+    min-height: 38px;
+    padding-top: 11px;
   }
-  #book .bk-marks button {
-    flex-direction: column;
-    justify-content: flex-start;
-    gap: 4px;
-    width: calc(var(--bk-mk-reach) + 12px);
-    /* (as long as its icon and upright words take: longer words push the book's pull tab down, book.css) */
-    min-height: 72px;
-    padding: 6px 12px 5px 0;
-    border-right: 0;
-    border-radius: 9px 0 0 9px;
-    box-shadow: -1px 1px 2px rgba(42, 35, 82, 0.18);
-    /* (deeper in the block: under a page or two, so a few px short of the paper) */
-    margin-right: 4px;
-  }
-  #book .bk-marks button:nth-child(3) {
-    margin-right: 6px;
-  }
-  #book .bk-marks button[aria-current='page'] {
-    z-index: 2;
-    width: calc(var(--bk-mk-reach) + 15px);
-    margin-right: 0;
-    box-shadow: -2px 1px 3px rgba(42, 35, 82, 0.28);
-  }
-  #book .bk-marks button span {
-    writing-mode: vertical-rl;
-    rotate: 180deg;
-    font-size: 11px;
-  }
-  /* (a phone on its side: HQ's keys run down its page's right, so only icons, between its header keys and its zoom
-     keys; the book's pull tab moves down out of their way, book.css) */
-  @media (max-height: 520px) {
-    #book .bk-marks button {
-      min-height: 38px;
-      padding-top: 11px;
-    }
-    #book .bk-marks button span {
-      display: none;
-    }
+  #book:not([data-whole]) .bk-marks button span {
+    display: none;
   }
 }
 
-/* A page the whole screen: folded against its left edge, slivers of each with its icon, the page's own a little
-   further out and in front; a tap or a pull brings them out over the margin, their words read, folded away again
-   once one is picked or the page is touched */
-@media (orientation: portrait) {
-  #book .bk-marks {
-    --bk-mk-out: 112px;
-    left: 100%;
-    top: var(--bk-marks-top);
-    gap: 6px;
+/* A page the whole screen, the book landed (the spread): folded in against its left edge, all alike, slivers as far
+   out each with its icon clear of the edge; their fold in played as it lands. A tap or a pull brings them out over the
+   margin, their words read, the page's own a little longer; folded away again once one is picked or the page is
+   touched. (book.js's data-whole) */
+#book[data-whole] .bk-marks {
+  --bk-mk-out: 112px;
+  --bk-mk-fold: 22px;
+}
+/* (out of the block while it swings by the folded tabs' own translate, the tabs placed by the nav, so landing leaves
+     their translate nothing to ease: only their fold in plays) */
+#book[data-whole]:not([data-mode='spread']) .bk-marks {
+  right: calc(1px + var(--bk-mk-fold) - var(--bk-mk-out));
+}
+#book[data-whole]:not([data-mode='spread']) .bk-marks button {
+  translate: calc(var(--bk-mk-fold) - var(--bk-mk-out)) 0;
+}
+#book[data-whole][data-mode='spread'] .bk-marks {
+  left: 100%;
+  right: auto;
+  align-items: stretch;
+  animation: bk-mk-fold 0.32s cubic-bezier(0.2, 0.8, 0.3, 1);
+}
+#book[data-whole][data-mode='spread'] .bk-marks button {
+  flex-direction: row-reverse;
+  width: var(--bk-mk-out);
+  min-height: 0;
+  height: 54px;
+  margin-right: 0;
+  padding: 0 4px 0 0;
+  border-radius: 0 9px 9px 0;
+  translate: calc(var(--bk-mk-fold) - var(--bk-mk-out)) 0;
+  box-shadow: 1px 1px 3px rgba(42, 35, 82, 0.24);
+}
+#book[data-whole][data-mode='spread'] .bk-marks button span {
+  flex: 1;
+  writing-mode: horizontal-tb;
+  rotate: none;
+  text-align: right;
+  font-size: 14px;
+}
+#book[data-whole][data-mode='spread'] .bk-marks[data-out] button {
+  translate: 0 0;
+  padding-right: 10px;
+  box-shadow: 2px 3px 8px -2px rgba(42, 35, 82, 0.35);
+}
+#book[data-whole][data-mode='spread'] .bk-marks[data-out] button[aria-current='page'] {
+  width: calc(var(--bk-mk-out) + 6px);
+}
+/* (from wholly past the screen's edge to their slivers) */
+@keyframes bk-mk-fold {
+  from {
+    translate: calc(-1 * var(--bk-mk-fold) - 4px) 0;
   }
-  #book .bk-marks button {
-    flex-direction: row-reverse;
-    justify-content: flex-start;
-    width: var(--bk-mk-out);
-    height: 54px;
-    padding: 0 5px 0 0;
-    border-left: 0;
-    border-radius: 0 9px 9px 0;
-    translate: calc(18px - var(--bk-mk-out)) 0;
-    box-shadow: 1px 0 2px rgba(42, 35, 82, 0.2);
-  }
-  #book .bk-marks button[aria-current='page'] {
-    z-index: 2;
-    translate: calc(21px - var(--bk-mk-out)) 0;
-    box-shadow: 1px 1px 4px rgba(42, 35, 82, 0.3);
-  }
-  #book .bk-marks button span {
-    flex: 1;
-    text-align: right;
-    font-size: 14px;
-  }
-  #book .bk-marks[data-out] button {
-    translate: 0 0;
-    padding-right: 10px;
-    box-shadow: 2px 3px 8px -2px rgba(42, 35, 82, 0.35);
-  }
-  #book .bk-marks[data-out] button[aria-current='page'] {
-    width: calc(var(--bk-mk-out) + 6px);
+}
+@media (prefers-reduced-motion: reduce) {
+  #book[data-mode='spread'] .bk-marks {
+    animation: none;
   }
 }
 
@@ -208,10 +229,8 @@
   color: var(--bk-ink, #2a2352);
   font: 15px/1.3 var(--bk-font);
 }
-@media (orientation: portrait) {
-  #book .bk-mk-guests {
-    left: 124px;
-  }
+#book[data-whole] .bk-mk-guests {
+  left: 124px;
 }
 #book .bk-mk-guest {
   display: flex;

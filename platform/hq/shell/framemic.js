@@ -14,7 +14,7 @@
 // again). The page picks where the key goes, so a tap in its first half second there (or since it last moved) isn't
 // taken: it was meant for what was under it.
 // A page that offers hears nothing back until the board taps the key, so it never learns whether HQ's microphone is
-// allowed; a held pen there never listens (shared/review/pentouch.js).
+// allowed.
 // The page picks where the key sits, so while the key listens and writes, the viewer's bar names the host the words go
 // to, on HQ's own page where the frame can't reach.
 import { dictateLive } from './dictate.js';

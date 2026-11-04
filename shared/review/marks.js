@@ -5,15 +5,12 @@
 // that agent's page in today's book; on a call, the call's page. Every change is a step the two-finger tap takes back
 // (pencil.js).
 import * as inkjs from './ink.js';
-import { boxOfLines, nearLines } from './mark.js';
 import { ownerOf, pageOf, send, toNotebook } from './markpage.js';
+import { showStrip } from './acts.js';
 
 // A snip: the page around a mark, the ink on it, with this much margin round the ink (the book shows it at its width)
 const MARGIN = 24;
 const SNIP_MIN = { w: 240, h: 150 };
-// A scribble wipes the mark being made when its ink comes this close to the scribble's box (px), so a quick zigzag that
-// ends a stroke-width short still counts.
-const SCRIBBLE_PX = 10;
 
 // The open mark's lines where its element is now: drawn on the screen as it was at its first line, they move as the
 // element has moved since (the page scrolled under a finger, or a box of it did). m: another mark (a call's held one)
@@ -60,9 +57,8 @@ export function paint(r, lines = r.strokes) {
     shown.push(...r.nextLines);
   }
   inkjs.shown(c, shown, { halo: true });
+  if (r.veil.hidden) showStrip(r, shown.length > 0);
 }
-// Whether a scribble over an area crosses the mark being made (to wipe it)
-export const markAt = (r, area) => r.mode === 'note' && nearLines(area, openLines(r), SCRIBBLE_PX);
 
 // The snip: the screenshot around the mark (its lines on it), at least SNIP_MIN, within the screen (snapshot.js has
 // already read the screenshot, so a page that taints it never gets here)

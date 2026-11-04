@@ -13,7 +13,7 @@
 import assert from 'node:assert/strict';
 import { readFile, rename } from 'node:fs/promises';
 import { clearPlace, clipped, fromBar, inSight, onPaper, pen, stamp, tool, turnTo, where } from './notebookscreen.mjs';
-import { DESKTOP, MINI, crumpled, thrownAway, until } from './kit.mjs';
+import { DESKTOP, MINI, crumpled, fellAway, until } from './kit.mjs';
 import { press } from './bar.mjs';
 import { dragTo } from './tearing.mjs';
 import { watchedPage } from './start.mjs';
@@ -60,13 +60,13 @@ async function onMini(browser, c) {
 
 async function deleteAndUndo(page, play, c) {
   // Delete from Select's bar: gone at once, gone from the store, back with Undo
-  const thrown = crumpled(page);
-  thrown.catch(() => {}); // a failure below shows first; awaiting it later still throws
+  const fall = crumpled(page);
+  fall.catch(() => {}); // a failure below shows first; awaiting it later still throws
   await fromBar(page, WAVE, 'Delete', 'tap');
   await c.shot('notebook-mini-menu', page);
-  const answer = await thrown;
+  const answer = await fall;
   assert.ok(!(await clipped(page)).includes(WAVE), 'the unit goes with its group at once');
-  thrownAway(answer, 'the group');
+  fellAway(answer, 'the group');
   assert.ok(answer.length <= 2000, `over within two seconds (${answer.length} ms)`);
   await page.locator('#toasts .toast', { hasText: 'Deleted' }).waitFor();
   await until(() => !ids(play, NEWEST).includes(WAVE), 'the group deleted in the store');

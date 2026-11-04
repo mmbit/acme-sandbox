@@ -1,0 +1,195 @@
+/* The Notebook's Shelf in the brownstone (shell/ink/bookshelfwindow.css, bookshelfbooks.css): the same bookcase drawn
+   in pixel art, 3 px a pixel, framed as HQ's own windows are, in its ink outline and hard shadow. Its wood is flat
+   stepped bands lit from the upper left, every board outlined in ink and casting a hard shade on the case's back. The
+   shelf's name is on a sign in HQ's pixel type, and its Close is one of HQ's keys with HQ's pixel icon. The Archive's
+   box is pixel card, the plant a pixel snake plant in a clay pot. The books stay themselves: real covers on pixel
+   boards. Untinted, as Ink's README says (The book's frame, My shelf). Every rule leads with `body ~` to outrank the
+   shell's own `#book .bk-shelf-window` rules whichever loads last: a rule here without it wins only some of the time. */
+body ~ #book .bk-shelf-window {
+  --bk-shelf-ink: var(--ink);
+  --bk-side: 15px;
+  --px-wood-hi: #e7b57a;
+  --px-wood: #cc8f55;
+  --px-wood-lo: #a1673a;
+  --px-back: #f3e2c0;
+  --px-seam: #e6cfa4;
+  --px-shade: #dcbf8e; /* (a board's or a side's shade on the back) */
+  --px-cast: rgba(29, 26, 47, 0.16); /* (a thing's shade on the back behind it) */
+  --px-card-hi: #f2d29c;
+  --px-card: #ddb06f;
+  --px-card-lo: #bb8c50;
+  --px-card-lit: #f9e4b9; /* (the lid's lit edge) */
+  --px-paper-lo: #ead9b8; /* (a paper sign's or label's lower edge) */
+  /* (a board's front: its ink arris, lit edge, grain, lower edge and ink underside, 40 by 6 pixels, at the foot of
+     its tile) */
+  --px-board: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 6' preserveAspectRatio='xMidYMax meet' shape-rendering='crispEdges'%3E%3Cpath fill='%231d1a2f' d='M0 0h40v1H0zM0 5h40v1H0z'/%3E%3Cpath fill='%23e7b57a' d='M0 1h40v1H0z'/%3E%3Cpath fill='%23cc8f55' d='M0 2h40v2H0z'/%3E%3Cpath fill='%23b47746' d='M3 2h6v1H3zM25 2h3v1H25zM14 3h7v1H14zM33 3h4v1H33z'/%3E%3Cpath fill='%23a1673a' d='M0 4h40v1H0z'/%3E%3C/svg%3E");
+  border: 3px solid var(--line);
+  border-radius: var(--r-lg);
+  background: repeating-linear-gradient(90deg, var(--px-back) 0 45px, var(--px-seam) 45px 48px);
+  box-shadow: var(--shadow-xl);
+}
+/* (its sides: a lit edge, the wood, a lower edge and an ink line where the back starts; the left one's shade on it) */
+body ~ #book .bk-shelf-window::before {
+  background: linear-gradient(
+    90deg,
+    var(--px-wood-hi) 0 3px,
+    var(--px-wood) 3px calc(var(--bk-side) - 6px),
+    var(--px-wood-lo) calc(var(--bk-side) - 6px) calc(var(--bk-side) - 3px),
+    var(--line) calc(var(--bk-side) - 3px)
+  );
+  box-shadow: 3px 0 0 var(--px-shade);
+}
+body ~ #book .bk-shelf-window::after {
+  background: linear-gradient(
+    90deg,
+    var(--line) 0 3px,
+    var(--px-wood-hi) 3px 6px,
+    var(--px-wood) 6px calc(var(--bk-side) - 3px),
+    var(--px-wood-lo) calc(var(--bk-side) - 3px)
+  );
+  box-shadow: none;
+}
+/* the top board: lit along its top, grained, its lower edge and ink underside, its shade on the back under it */
+body ~ #book .bk-shelf-window .bk-far-head {
+  background:
+    linear-gradient(
+      var(--px-wood-hi) 0 3px,
+      transparent 3px calc(100% - 6px),
+      var(--px-wood-lo) calc(100% - 6px) calc(100% - 3px),
+      var(--line) calc(100% - 3px)
+    ),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 8' shape-rendering='crispEdges'%3E%3Cpath fill='%23b47746' d='M3 2h6v1H3zM22 5h4v1H22zM9 7h7v1H9z'/%3E%3C/svg%3E")
+      0 0 / 120px 24px,
+    var(--px-wood);
+  box-shadow: 0 6px 0 var(--px-shade);
+}
+/* the shelf's name: a paper sign nailed to the top board, in HQ's pixel type */
+body ~ #book .bk-shelf-window .bk-shelf-title {
+  padding: 6px 27px;
+  border: 3px solid var(--line);
+  border-radius: 0;
+  background: var(--paper);
+  box-shadow:
+    inset -3px -3px 0 var(--px-paper-lo),
+    var(--shadow);
+  font: 400 20px/1.2 var(--font);
+}
+body ~ #book .bk-shelf-window .bk-shelf-title::before,
+body ~ #book .bk-shelf-window .bk-shelf-title::after {
+  width: 6px;
+  height: 6px;
+  margin-top: -3px;
+  border-radius: 0;
+  background:
+    linear-gradient(#d9d3e6, #d9d3e6) 0 0 / 3px 3px no-repeat,
+    var(--muted);
+}
+/* its Close: one of HQ's keys (style.css .device .x), HQ's own icon in it */
+body ~ #book .bk-shelf-window .bk-shelf-close {
+  box-sizing: border-box;
+  width: 40px;
+  height: 40px;
+  border: var(--bw) solid var(--line);
+  border-radius: var(--r);
+  background: var(--paper);
+  color: var(--ink);
+  box-shadow: var(--shadow-sm);
+}
+body ~ #book .bk-shelf-window .bk-shelf-close:active {
+  transform: var(--press);
+  box-shadow: var(--shadow-press);
+}
+body ~ #book .bk-shelf-window .bk-shelf-close svg {
+  width: 16px;
+  height: 16px;
+}
+@media (hover: hover) {
+  body ~ #book .bk-shelf-window .bk-shelf-close:hover {
+    background: var(--cream);
+  }
+}
+/* the way back from the Archive, in HQ's type */
+body ~ #book .bk-shelf-window .bk-far-up {
+  border-radius: var(--r);
+  font-family: var(--font);
+}
+
+/* ---- the boards: each front a pixel board, its shade on the back under it; under the last, empty boards at the same
+   spacing down to the plinth */
+body ~ #book .bk-shelf-window .bk-shelf-row::after {
+  background: var(--px-board) 0 0 / 120px var(--bk-board) repeat-x;
+  box-shadow: 0 6px 0 var(--px-shade);
+}
+body ~ #book .bk-shelf-window .bk-shelf-base {
+  flex-basis: 36px;
+  background:
+    linear-gradient(var(--line) 0 3px, var(--px-wood-hi) 3px 6px, var(--px-wood) 6px 27px, var(--px-wood-lo) 27px) 0
+      100% / 100% 36px no-repeat,
+    linear-gradient(var(--px-shade) 0 6px, transparent 6px) 0 var(--bk-row) / 100% var(--bk-row) repeat-y,
+    var(--px-board) 0 0 / 120px var(--bk-row);
+}
+/* (a book's shade on the back: hard, as everything here) */
+body ~ #book .bk-shelf-window .bk-cover {
+  box-shadow: 6px 6px 0 var(--px-cast);
+}
+
+/* ---- the Archive: a lidded box of pixel card, its paper label in HQ's type, a hole to pull it by */
+body ~ #book .bk-shelf-window .bk-shelf-box::before {
+  border: 3px solid var(--line);
+  border-radius: 0;
+  background: var(--px-card);
+  box-shadow:
+    inset 3px 3px 0 var(--px-card-hi),
+    inset -3px -3px 0 var(--px-card-lo),
+    6px 6px 0 var(--px-cast);
+}
+body ~ #book .bk-shelf-window .bk-box-lid {
+  box-sizing: border-box;
+  left: -6px;
+  right: -6px;
+  border: 3px solid var(--line);
+  border-radius: 0;
+  background: var(--px-card-hi);
+  box-shadow:
+    inset 3px 3px 0 var(--px-card-lit),
+    inset -3px -3px 0 var(--px-card),
+    0 3px 0 var(--px-card-lo);
+}
+body ~ #book .bk-shelf-window .bk-box-label {
+  padding: 6px 12px;
+  border-radius: 0;
+  background: var(--paper);
+  box-shadow: inset -3px -3px 0 var(--px-paper-lo);
+  font: 400 16px/1.2 var(--font);
+}
+body ~ #book .bk-shelf-window .bk-box-grip {
+  height: 6px;
+  border-radius: 0;
+  background: #6b4426;
+  box-shadow: inset 0 3px 0 #4a2c18;
+}
+
+/* ---- the plant: a snake plant in a clay pot, 24 by 38 pixels, its shade on the back */
+body ~ #book .bk-shelf-window .bk-shelf-row > .bk-shelf-potted {
+  width: 72px;
+}
+body ~ #book .bk-shelf-window .bk-shelf-plant {
+  width: 72px;
+  height: 114px;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 38' shape-rendering='crispEdges'%3E%3Cpath fill='%231d1a2f' d='M10 0h1v1H10zM9 1h1v1H9zM11 1h1v1H11zM8 2h1v1H8zM12 2h1v1H12zM8 3h1v1H8zM12 3h1v1H12zM14 3h1v1H14zM8 4h1v1H8zM12 4h2v1H12zM15 4h1v1H15zM8 5h1v1H8zM12 5h2v1H12zM16 5h1v1H16zM6 6h1v1H6zM8 6h1v1H8zM12 6h2v1H12zM16 6h1v1H16zM5 7h1v1H5zM7 7h2v1H7zM12 7h1v1H12zM16 7h1v1H16zM5 8h1v1H5zM8 8h1v1H8zM12 8h1v1H12zM16 8h1v1H16zM18 8h1v1H18zM5 9h1v1H5zM8 9h1v1H8zM12 9h1v1H12zM17 9h1v1H17zM19 9h1v1H19zM5 10h1v1H5zM8 10h1v1H8zM12 10h1v1H12zM17 10h1v1H17zM19 10h1v1H19zM5 11h1v1H5zM8 11h1v1H8zM12 11h1v1H12zM17 11h1v1H17zM19 11h1v1H19zM5 12h1v1H5zM8 12h1v1H8zM12 12h1v1H12zM17 12h1v1H17zM19 12h1v1H19zM4 13h2v1H4zM8 13h1v1H8zM11 13h1v1H11zM17 13h1v1H17zM19 13h1v1H19zM3 14h1v1H3zM5 14h1v1H5zM8 14h1v1H8zM11 14h1v1H11zM17 14h1v1H17zM19 14h2v1H19zM2 15h1v1H2zM6 15h1v1H6zM8 15h1v1H8zM11 15h1v1H11zM17 15h1v1H17zM19 15h1v1H19zM21 15h1v1H21zM2 16h1v1H2zM6 16h1v1H6zM8 16h1v1H8zM11 16h1v1H11zM17 16h2v1H17zM22 16h1v1H22zM2 17h1v1H2zM7 17h2v1H7zM11 17h1v1H11zM17 17h2v1H17zM22 17h1v1H22zM3 18h1v1H3zM7 18h2v1H7zM11 18h1v1H11zM16 18h2v1H16zM22 18h1v1H22zM3 19h1v1H3zM8 19h1v1H8zM11 19h1v1H11zM16 19h1v1H16zM21 19h1v1H21zM3 20h1v1H3zM8 20h1v1H8zM11 20h1v1H11zM16 20h1v1H16zM21 20h1v1H21zM4 21h1v1H4zM8 21h1v1H8zM11 21h1v1H11zM16 21h1v1H16zM21 21h1v1H21zM4 22h1v1H4zM8 22h1v1H8zM11 22h1v1H11zM16 22h1v1H16zM20 22h1v1H20zM4 23h1v1H4zM8 23h1v1H8zM11 23h1v1H11zM16 23h1v1H16zM20 23h1v1H20zM5 24h1v1H5zM8 24h1v1H8zM11 24h1v1H11zM16 24h1v1H16zM19 24h1v1H19zM5 25h1v1H5zM8 25h1v1H8zM11 25h1v1H11zM16 25h1v1H16zM19 25h1v1H19zM2 26h3v1H2zM19 26h3v1H19zM2 27h1v1H2zM21 27h1v1H21zM2 28h1v1H2zM21 28h1v1H21zM2 29h1v1H2zM21 29h1v1H21zM3 30h1v1H3zM20 30h1v1H20zM3 31h1v1H3zM20 31h1v1H20zM3 32h1v1H3zM20 32h1v1H20zM4 33h1v1H4zM19 33h1v1H19zM4 34h1v1H4zM19 34h1v1H19zM4 35h1v1H4zM19 35h1v1H19zM5 36h1v1H5zM18 36h1v1H18zM5 37h1v1H5zM18 37h1v1H18z'/%3E%3Cpath fill='%238dc262' d='M10 1h1v1H10zM9 2h1v1H9zM9 3h1v1H9zM9 4h1v1H9zM14 4h1v1H14zM9 5h1v1H9zM14 5h1v1H14zM9 6h1v1H9zM14 6h1v1H14zM9 7h1v1H9zM13 7h1v1H13zM9 8h1v1H9zM13 8h1v1H13zM13 9h1v1H13zM13 10h1v1H13zM3 15h1v1H3zM20 15h1v1H20zM3 16h1v1H3zM19 16h1v1H19zM3 17h1v1H3zM19 17h1v1H19zM18 18h1v1H18z'/%3E%3Cpath fill='%233e7236' d='M10 2h1v1H10zM11 3h1v1H11zM11 4h1v1H11zM11 5h1v1H11zM15 5h1v1H15zM10 6h1v1H10zM6 7h1v1H6zM15 7h1v1H15zM6 8h1v1H6zM15 8h1v1H15zM6 9h1v1H6zM11 9h1v1H11zM15 9h2v1H15zM6 10h1v1H6zM10 10h1v1H10zM14 10h1v1H14zM6 11h2v1H6zM16 11h1v1H16zM6 12h2v1H6zM16 12h1v1H16zM6 13h2v1H6zM15 13h2v1H15zM6 14h2v1H6zM10 14h1v1H10zM14 14h1v1H14zM5 15h1v1H5zM7 15h1v1H7zM13 15h1v1H13zM16 15h1v1H16zM4 16h2v1H4zM7 16h1v1H7zM16 16h1v1H16zM20 16h2v1H20zM6 17h1v1H6zM15 17h2v1H15zM21 17h1v1H21zM10 18h1v1H10zM14 18h1v1H14zM5 19h1v1H5zM7 19h1v1H7zM13 19h1v1H13zM15 19h1v1H15zM20 19h1v1H20zM7 20h1v1H7zM15 20h1v1H15zM20 20h1v1H20zM7 21h1v1H7zM15 21h1v1H15zM19 21h2v1H19zM6 22h1v1H6zM10 22h1v1H10zM14 22h1v1H14zM18 22h1v1H18zM13 23h1v1H13zM15 23h1v1H15zM17 23h1v1H17zM19 23h1v1H19zM15 24h1v1H15zM18 24h1v1H18zM7 25h1v1H7zM15 25h1v1H15zM18 25h1v1H18z'/%3E%3Cpath fill='%232c5229' d='M11 2h1v1H11zM11 6h1v1H11zM15 6h1v1H15zM7 8h1v1H7zM7 9h1v1H7zM18 9h1v1H18zM7 10h1v1H7zM16 10h1v1H16zM18 10h1v1H18zM18 11h1v1H18zM18 12h1v1H18zM18 13h1v1H18zM4 14h1v1H4zM16 14h1v1H16zM18 14h1v1H18zM18 15h1v1H18zM6 18h1v1H6zM15 18h1v1H15zM21 18h1v1H21zM15 22h1v1H15zM19 22h1v1H19z'/%3E%3Cpath fill='%235b9843' d='M10 3h1v1H10zM10 4h1v1H10zM10 5h1v1H10zM10 7h2v1H10zM14 7h1v1H14zM10 8h2v1H10zM14 8h1v1H14zM10 9h1v1H10zM14 9h1v1H14zM11 10h1v1H11zM15 10h1v1H15zM10 11h2v1H10zM14 11h2v1H14zM10 12h2v1H10zM14 12h2v1H14zM10 13h1v1H10zM13 13h2v1H13zM13 14h1v1H13zM15 14h1v1H15zM4 15h1v1H4zM10 15h1v1H10zM14 15h2v1H14zM10 16h1v1H10zM13 16h3v1H13zM4 17h2v1H4zM10 17h1v1H10zM13 17h2v1H13zM20 17h1v1H20zM5 18h1v1H5zM13 18h1v1H13zM19 18h2v1H19zM6 19h1v1H6zM10 19h1v1H10zM14 19h1v1H14zM18 19h2v1H18zM5 20h2v1H5zM10 20h1v1H10zM13 20h2v1H13zM18 20h2v1H18zM6 21h1v1H6zM10 21h1v1H10zM13 21h2v1H13zM18 21h1v1H18zM7 22h1v1H7zM13 22h1v1H13zM17 22h1v1H17zM6 23h2v1H6zM10 23h1v1H10zM14 23h1v1H14zM18 23h1v1H18zM7 24h1v1H7zM10 24h1v1H10zM13 24h2v1H13zM17 24h1v1H17zM10 25h1v1H10zM13 25h2v1H13zM17 25h1v1H17z'/%3E%3Cpath fill='%23cdd56e' d='M9 9h1v1H9zM9 10h1v1H9zM9 11h1v1H9zM13 11h1v1H13zM9 12h1v1H9zM13 12h1v1H13zM9 13h1v1H9zM12 13h1v1H12zM9 14h1v1H9zM12 14h1v1H12zM9 15h1v1H9zM12 15h1v1H12zM9 16h1v1H9zM12 16h1v1H12zM9 17h1v1H9zM12 17h1v1H12zM4 18h1v1H4zM9 18h1v1H9zM12 18h1v1H12zM4 19h1v1H4zM9 19h1v1H9zM12 19h1v1H12zM17 19h1v1H17zM4 20h1v1H4zM9 20h1v1H9zM12 20h1v1H12zM17 20h1v1H17zM5 21h1v1H5zM9 21h1v1H9zM12 21h1v1H12zM17 21h1v1H17zM5 22h1v1H5zM9 22h1v1H9zM12 22h1v1H12zM5 23h1v1H5zM9 23h1v1H9zM12 23h1v1H12zM6 24h1v1H6zM9 24h1v1H9zM12 24h1v1H12zM6 25h1v1H6zM9 25h1v1H9zM12 25h1v1H12z'/%3E%3Cpath fill='%234a2f1d' d='M5 26h14v1H5z'/%3E%3Cpath fill='%23ec9a66' d='M3 27h1v1H3zM6 27h15v1H6zM5 29h1v1H5zM4 30h3v1H4zM4 31h3v1H4zM4 32h3v1H4zM5 33h3v1H5zM5 34h3v1H5zM5 35h3v1H5zM6 36h3v1H6zM6 37h3v1H6z'/%3E%3Cpath fill='%23f6c193' d='M4 27h2v1H4zM4 28h2v1H4zM4 29h1v1H4z'/%3E%3Cpath fill='%23c96b3f' d='M3 28h1v1H3zM6 28h15v1H6zM3 29h1v1H3zM6 29h15v1H6zM7 31h10v1H7zM7 32h10v1H7zM8 33h8v1H8zM8 34h8v1H8zM8 35h8v1H8zM9 36h6v1H9zM9 37h6v1H9z'/%3E%3Cpath fill='%238f4426' d='M7 30h13v1H7zM17 31h3v1H17zM17 32h3v1H17zM16 33h3v1H16zM16 34h3v1H16zM16 35h3v1H16zM15 36h3v1H15zM15 37h3v1H15z'/%3E%3C/svg%3E")
+    0 0 / 100% 100% no-repeat;
+  filter: drop-shadow(6px 6px 0 var(--px-cast));
+}
+body ~ #book .bk-shelf-window .bk-shelf-plant > * {
+  display: none;
+}
+
+/* a phone: the whole screen, no frame of its own */
+@media (max-width: 560px) {
+  body ~ #book .bk-shelf-window {
+    --bk-side: 12px;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+}

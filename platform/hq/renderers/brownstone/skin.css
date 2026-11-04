@@ -1,6 +1,7 @@
 /* The brownstone's UI: pixel art over the shell's look. Pixelify Sans, crisp edges on every icon, and the building and
    its people at whole pixels. */
 /* (Pixelify Sans comes on a <link> of its own: scene.js loadFont) */
+@import url('shelf.css'); /* (the Notebook's Shelf in pixels) */
 :root {
   --font: 'Plain Half', 'Pixelify Sans', ui-monospace, 'Cascadia Mono', monospace;
   --icons: crispEdges;
@@ -99,4 +100,10 @@ body.brownstone #btn-more[aria-expanded='true'] {
   body.brownstone:not(.touring) .tools:not(.more-open) > #btn-walls {
     display: none;
   }
+}
+/* Ink's book draws HQ's pixel icons on its controls (shell/ink/README.md, The book's icons): at 2 px a pixel, their ten
+   squares in 20 px, whatever size the book gives a line icon */
+body ~ #book svg.icon[data-drawn^='icons/pixel/'] {
+  width: 20px;
+  height: 20px;
 }

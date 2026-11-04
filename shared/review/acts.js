@@ -1,7 +1,7 @@
-// What review mode's parts ask of the parts above them: put the note away (reset), the pin pressed (toggle) and the open
-// note's lines. A part imports these from here, never from the part that does them; tool.js, which puts the parts
-// together, hands each one in as it loads (hand). So the imports run one way, tool.js -> the parts -> this, which
-// imports none of them, and form no circle.
+// What review mode's parts ask of the parts above them: put the note away (reset), the pin pressed (toggle), the open
+// note's lines and the strip with them. A part imports these from here, never from the part that does them; tool.js,
+// which puts the parts together, hands each one in as it loads (hand). So the imports run one way, tool.js -> the
+// parts -> this, which imports none of them, and form no circle.
 const doers = {};
 export const hand = acts => void Object.assign(doers, acts);
 
@@ -10,6 +10,7 @@ export const reset = r => doers.reset(r);
 export const toggle = r => doers.toggle(r);
 // (surface.js)
 export const redrawInk = r => doers.redrawInk(r);
+export const showStrip = (r, inking) => doers.showStrip(r, inking);
 // (dictation.js: for hqmic.js, its part in HQ's viewer.)
 export const stopMic = r => doers.stopMic(r);
 export const words = (r, rec, heard) => doers.words(r, rec, heard);

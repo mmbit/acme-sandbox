@@ -35,11 +35,17 @@ const inbound = (to: string, subject: string, text: string, from = 'someone@exam
     body: `From: ${from}\r\nTo: ${to}\r\nSubject: ${subject}\r\nContent-Type: text/plain\r\n\r\n${text}\r\n`,
   }).then(async r => (await r.json()).id as number);
 const row = (id: number) =>
-  ({ ...db.prepare('select pile, pile_by, pile_agent, handed from mail where id = ?').get(id) }) as {
+  ({
+    ...db
+      .prepare(
+        'select pile, pile_by, pile_agent, (select job from mail_forwards where mail = mail.id) as job from mail where id = ?',
+      )
+      .get(id),
+  }) as {
     pile: string | null;
     pile_by: string | null;
     pile_agent: string | null;
-    handed: number | null;
+    job: number | null;
   };
 // The sorter's call as the worker claims it (its prompt), then the model's answer to it
 async function claimed() {
@@ -56,7 +62,7 @@ const settled = async (id: number) => {
   for (let i = 0; i < 200 && row(id).pile === null; i++) await new Promise(done => setTimeout(done, 10));
   return row(id);
 };
-const move = (id: number, pile: string) => h.board('/api/mail/pile', { id, pile });
+const move = (id: number, pile: string) => h.board('/api/mail/move', { id, pile });
 
 test("a scam reaches the model as data, with the company's own line and examples, and lands in Spam: out of the board's pile", async () => {
   const id = await inbound(
@@ -75,7 +81,7 @@ test("a scam reaches the model as data, with the company's own line and examples
   assert.ok(prompt.includes('"id":"juno"'));
   assert.ok(!prompt.includes('"id":"kit"'), 'never one outside roles.businessMail');
   await answer(reading, 'spam');
-  assert.deepEqual(await settled(id), { pile: 'spam', pile_by: 'model', pile_agent: null, handed: null });
+  assert.deepEqual(await settled(id), { pile: 'spam', pile_by: 'model', pile_agent: null, job: null });
   const listed = (await h.board('/api/mail')).body.find((m: { id: number }) => m.id === id);
   assert.equal(listed.pile, 'spam');
 });
@@ -86,7 +92,7 @@ test("the hard limits: the board's own mail and a stranger's never go to an agen
   await answer(c.reading, 'team', 'penny');
   assert.deepEqual(
     await settled(own),
-    { pile: 'board', pile_by: 'model', pile_agent: 'penny', handed: null },
+    { pile: 'board', pile_by: 'model', pile_agent: 'penny', job: null },
     "the board's tap hands it on",
   );
   const stranger = await inbound('hello@testco.example', 'Wholesale?', 'Do you sell to shops?');
@@ -97,7 +103,7 @@ test("the hard limits: the board's own mail and a stranger's never go to an agen
   const customer = await inbound('hello@testco.example', 'My order', 'Where is my kite?');
   c = await claimed();
   await answer(c.reading, 'customer', 'dex');
-  assert.deepEqual(await settled(customer), { pile: 'board', pile_by: 'model', pile_agent: null, handed: null });
+  assert.deepEqual(await settled(customer), { pile: 'board', pile_by: 'model', pile_agent: null, job: null });
   assert.equal(
     (db.prepare('select count(*) n from jobs where title like ?').get('From the%mail #%') as { n: number }).n,
     0,
@@ -115,7 +121,7 @@ test('business mail for an agent becomes their job, which alone reads it; an age
   await answer(c.reading, 'team', 'dex');
   const sorted = await settled(id);
   assert.equal(sorted.pile, 'team');
-  const job = db.prepare('select agent, title, prompt from jobs where id = ?').get(sorted.handed) as {
+  const job = db.prepare('select agent, title, prompt from jobs where id = ?').get(sorted.job) as {
     agent: string;
     title: string;
     prompt: string;
@@ -136,7 +142,7 @@ test('business mail for an agent becomes their job, which alone reads it; an age
     const handed = await settled(other);
     assert.equal(handed.pile_agent, 'juno');
     assert.equal(
-      (db.prepare('select agent from jobs where id = ?').get(handed.handed) as { agent: string }).agent,
+      (db.prepare('select agent from jobs where id = ?').get(handed.job) as { agent: string }).agent,
       'juno',
     );
   }
@@ -145,7 +151,7 @@ test('business mail for an agent becomes their job, which alone reads it; an age
   const receipt = await inbound('partners@testco.example', 'Your receipt', 'Paid', 'billing@printer.example');
   c = await claimed();
   await answer(c.reading, 'filed', 'dex');
-  assert.deepEqual(await settled(receipt), { pile: 'filed', pile_by: 'model', pile_agent: null, handed: null });
+  assert.deepEqual(await settled(receipt), { pile: 'filed', pile_by: 'model', pile_agent: null, job: null });
 });
 
 test("the board's one-tap move stands, teaches the next sort, and Team hands the mail on", async () => {
@@ -154,8 +160,11 @@ test("the board's one-tap move stands, teaches the next sort, and Team hands the
   await answer(c.reading, 'board');
   await settled(id);
   assert.equal((await move(id, 'nowhere')).status, 400);
+  const counted = (await h.board('/api/mail/piles')).body;
   assert.equal((await move(id, 'spam')).status, 200);
   assert.deepEqual(row(id).pile_by, 'board');
+  const now = (await h.board('/api/mail/piles')).body;
+  assert.deepEqual([now.board, now.spam], [counted.board - 1, counted.spam + 1], "Mail's counts are every pile's own");
   const next = await inbound('hello@testco.example', 'Another', 'Text');
   c = await claimed();
   const shown = c.prompt.slice(c.prompt.indexOf('follow its lead'), c.prompt.indexOf('The agents:'));
@@ -192,11 +201,11 @@ test('a sorter with no answer leaves the mail with no pile, in For you, and the 
     await h.worker('reads/answer', { reading: c.reading, error: 'the CLI failed' });
   }
   await new Promise(done => setTimeout(done, 100));
-  assert.deepEqual(row(id), { pile: null, pile_by: null, pile_agent: null, handed: null });
+  assert.deepEqual(row(id), { pile: null, pile_by: null, pile_agent: null, job: null });
   const listed = (await h.board('/api/mail')).body.find((m: { id: number }) => m.id === id);
   assert.equal(listed.pile, null);
   (await import('./mailsort.ts')).start();
   const c = await claimed();
   await answer(c.reading, 'spam');
-  assert.deepEqual(await settled(id), { pile: 'spam', pile_by: 'model', pile_agent: null, handed: null });
+  assert.deepEqual(await settled(id), { pile: 'spam', pile_by: 'model', pile_agent: null, job: null });
 });

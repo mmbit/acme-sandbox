@@ -108,6 +108,15 @@ export function membersOf(page, g) {
   const of = k => (page[k] ?? []).filter(x => x.g === g);
   return { ink: of('ink'), scraps: of('scraps'), texts: of('texts') };
 }
+// Things to pick ({ ink, scraps, texts }) with every group whole(g) says is picked only whole (our scraps: bookunits.js
+// fixed) added whole wherever any of it is among them.
+export function wholeOf(page, { ink = [], scraps = [], texts = [] }, whole) {
+  const out = { ink, scraps, texts },
+    groups = new Set([...ink, ...scraps, ...texts].map(x => x.g).filter(g => g !== undefined && whole(g)));
+  for (const g of groups)
+    for (const [k, xs] of Object.entries(membersOf(page, g))) out[k] = [...new Set([...out[k], ...xs])];
+  return out;
+}
 // Whether a point is on a stroke's line (within its half width and near), or inside a filled one
 function onStroke(s, p, near) {
   const reach = s.size / 2 + near,

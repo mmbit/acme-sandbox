@@ -4,17 +4,21 @@
 // each says its one line under its name and counts its waiting asks on its corner; a round back from Lyra stands there
 // in its envelope, beside the Archive's box and the plant. In the Shelf's own window from HQ's Shelf key
 // (bookshelfwindow.js), at a phone, an iPad mini upright and sideways, and a desktop: every book, the box and the plant
-// inside the window and on a board, clear of each other, names and lines unclipped, two to a board on the phone and
-// three on the iPad on its side; a book tapped opens on its All pages.
+// inside the window and standing on a board, clear of each other, names and lines unclipped, two to a board on the
+// phone and three on the iPad on its side; a book tapped opens on its All pages.
 import assert from 'node:assert/strict';
-import { errorsOf, until } from '../../../shared/browser/browser.mjs';
-import { DESKTOP, MINI, UPRIGHT, shelfKey, until as untilRead } from './kit.mjs';
+import { errorsOf } from '../../../shared/browser/browser.mjs';
+import { DESKTOP, MINI, UPRIGHT, openShelf, until } from './kit.mjs';
 
 const PHONE = { width: 390, height: 844 };
 const DAY = 86_400_000,
   at = ms => new Date(ms).toISOString();
 // books to a board where the screen says so
 const COLS = { phone: 2, 'mini-sideways': 3 };
+// how far a thing's foot stands from its board's top edge (straight on: on it), and how far off that a foot may be (px:
+// bookshelfbooks.css)
+const FOOT_PX = 0,
+  FOOT_SLACK_PX = 3;
 
 // c: book-check.mjs's helpers: { base, hqIn(browser, viewport), settled(page, mode), shot, settle }
 export function myShelfStories(c) {
@@ -58,17 +62,6 @@ async function shelfAt(browser, c, { label, viewport, picture, upload }) {
   }
 }
 
-// HQ's Shelf key pressed: My shelf in its own window
-async function openShelf(page, c) {
-  await page.goto(`${c.base}/?intro=0&renderer=wire`);
-  await until(page, '#loading.gone');
-  await (await shelfKey(page)).click();
-  await page.waitForTimeout(c.settle);
-  const shelf = page.getByRole('dialog', { name: 'The Shelf' });
-  assert.equal(await shelf.locator('.bk-shelf-title').textContent(), 'My shelf');
-  return shelf;
-}
-
 // A book tapped on the Shelf: the window away, the book open on that notebook's All pages, never on a page
 async function opensOnPages(page, shelf, name, label) {
   await shelf.getByRole('button', { name: new RegExp(`^${name},`) }).click();
@@ -93,7 +86,7 @@ async function giveCover(page, shelf, c, label, picture) {
   const chooser = page.waitForEvent('filechooser');
   await far.getByRole('menuitem', { name: 'Change cover' }).click();
   await (await chooser).setFiles({ name: 'lighthouse.png', mimeType: 'image/png', buffer: picture });
-  await untilRead(
+  await until(
     () => /^data:image\/jpeg;base64,/.test(page.context().notebook.route('/api/notebooks').shelf[0].cover ?? ''),
     `${label}: the cover kept as a JPEG`,
   );
@@ -107,7 +100,7 @@ async function giveCover(page, shelf, c, label, picture) {
 }
 
 // Each book's name, line, count and cover as the deck has them; every book, the box and the plant inside the window,
-// on a board and clear of the others; the books to a board the screen holds
+// standing on its board and clear of the others; the books to a board the screen holds
 function shelfChecked(seen, label) {
   const books = seen.things.filter(t => t.book);
   assert.deepEqual(
@@ -142,8 +135,8 @@ function shelfChecked(seen, label) {
   console.log(`  ${label}: books ${seen.width} px, ${seen.across} to a board`);
 }
 
-// Every book, the Archive's box and the plant (seen: shelfSeen's) inside the window, on a board and clear of the
-// others (at: where, for the messages)
+// Every book, the Archive's box and the plant (seen: shelfSeen's) inside the window, standing on its board and clear
+// of the others (at: where, for the messages)
 export function standing(seen, at) {
   const name = t => t.title ?? t.what;
   for (const t of seen.things) {
@@ -152,7 +145,11 @@ export function standing(seen, at) {
       t.left >= seen.window.left && t.right <= seen.window.right,
       `${at}: ${name(t)} inside the window ${where}`,
     );
-    assert.ok(t.onBoard, `${at}: ${name(t)} on a board`);
+    assert.ok(t.board !== null, `${at}: ${name(t)} on a board`);
+    assert.ok(
+      Math.abs(t.bottom - (t.board + FOOT_PX)) <= FOOT_SLACK_PX,
+      `${at}: ${name(t)} stands on its board (its foot at ${t.bottom}, the board's top at ${t.board})`,
+    );
   }
   for (const [i, a] of seen.things.entries())
     for (const b of seen.things.slice(i + 1))
@@ -162,16 +159,20 @@ export function standing(seen, at) {
       );
 }
 
-// What the Shelf shows: the window's sides, and each book's (the Archive's box's, the plant's) box, whether it's on a
-// board (its row's ::after) and which row that is of how many, and a book's name, line, asks and picture
+// What the Shelf shows: the window's sides, and each book's (the Archive's box's, the plant's) box, the top of the
+// board it stands on (its row's ::after) and which row that is of how many, and a book's name, line, asks and picture
 export const shelfSeen = page =>
   page.evaluate(() => {
     const dialog = document.querySelector('#book .bk-shelf-window'),
       w = dialog.getBoundingClientRect();
     const rows = [...dialog.querySelectorAll('.bk-shelf-row')];
-    const onBoard = el => {
+    const boardOf = el => {
       const row = el.closest('.bk-shelf-row');
-      return !!row && getComputedStyle(row, '::after').content !== 'none';
+      if (!row) return null;
+      const board = getComputedStyle(row, '::after'),
+        r = row.getBoundingClientRect();
+      if (board.content === 'none') return null;
+      return Math.round(r.bottom - row.clientTop - parseFloat(board.bottom) - parseFloat(board.height));
     };
     const thing = (el, more) => {
       const b = el.getBoundingClientRect();
@@ -180,7 +181,7 @@ export const shelfSeen = page =>
         right: Math.round(b.right),
         top: Math.round(b.top),
         bottom: Math.round(b.bottom),
-        onBoard: onBoard(el),
+        board: boardOf(el),
         row: rows.indexOf(el.closest('.bk-shelf-row')),
         ...more,
       };

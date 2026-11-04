@@ -16,9 +16,9 @@ export const INK = { color: '#2a2352', size: INKS[0].size };
 // The Pencil and a mouse write on the page once its ink is read, unless the press pans (bookpan.js) or the mouse's
 // tools take it (moving a picture, a text box: booktools.js); a finger does too, unless it moves the page: with the
 // hand, or where this device's preferences say so (on since its first pen) (book.input.fingerPans(): bookinput.js). A text field on a page (a
-// reply's) is the field's: the Pencil writes into it with Scribble. The Pencil on something on the page (a box of
-// words, an answer's slip, a picture) waits: a quick tap there is a click on it, never a dot of ink, and once it
-// moves its line starts where it touched. On bare paper it inks at once, so a dotted i keeps its dot.
+// reply's) is the field's: the Pencil writes into it with Scribble. The Pencil or a finger on something on the page (a
+// box of words, an answer's slip, a scrap's photo or its words) waits: a quick tap there is a click on it, never a dot
+// of ink, and once it moves its line starts where it touched (a stroke starts anywhere: README, Our scraps). On bare paper it inks at once, so a dotted i keeps its dot.
 export function drawable(book, e, table) {
   if (e === book.waited) {
     book.waited = null;
@@ -26,7 +26,10 @@ export function drawable(book, e, table) {
     return true;
   }
   // (a note's words kept from Scribble for the pen take its strokes as ink; a read refused, over the page, is tapped to try again)
-  if (e.target.closest?.('textarea:not([data-pen]), input, [contenteditable], button, .bk-lost')) return false;
+  // (a scrap's words not being typed in are the page's to draw on by touch: README, Our scraps; a mouse's press there
+  // is the field's)
+  const field = e.pointerType === 'mouse' ? 'textarea:not([data-pen])' : `textarea:not([data-pen], ${RESTING})`;
+  if (e.target.closest?.(`${field}, input, [contenteditable], button, .bk-lost`)) return false;
   // (a finger writes too, where it doesn't move the page: bookpan.js.)
   const writes =
     e.pointerType === 'pen' ||
@@ -45,7 +48,10 @@ export function drawable(book, e, table) {
   return true;
 }
 const onSomething = (e, hit) =>
-  !!e.target.closest?.('.bk-typed, .answer-slip') || scrapAt(hit.view.page.scraps, [hit.x, hit.y]) >= 0;
+  !!e.target.closest?.(`.bk-typed, .answer-slip, ${RESTING}`) || scrapAt(hit.view.page.scraps, [hit.x, hit.y]) >= 0;
+// A scrap's words not being typed in: a press there waits like one on its photo, a tap the field's (its caret), a line
+// drawn from it ink on the page
+export const RESTING = 'textarea.bk-scrap-words:not(:focus)';
 // The Pencil held back where it touched: lifted as a tap, it's a click (the browser's own on what's under it; a box of
 // words the ink would draw over is edited); moved past a tap, or lifted slowly, its line from where it touched
 function waitFor(book, down) {
@@ -78,7 +84,9 @@ export function endLostLines(book) {
   const { desk } = book,
     end = () => book.ink.drawing && book.ink.cancel();
   desk.addEventListener('pointerdown', e => (e.pointerType === 'pen' || e.pointerType === 'mouse') && end(), true);
-  desk.addEventListener('lostpointercapture', e => book.ink.cancel(e));
+  // (only the desk's own capture: a finger's press is held by what it lands on until the line takes it to the desk,
+  // and that lost hold is no lost line.)
+  desk.addEventListener('lostpointercapture', e => e.target === desk && book.ink.cancel(e));
   addEventListener('blur', end);
   document.addEventListener('visibilitychange', () => document.hidden && end());
 }

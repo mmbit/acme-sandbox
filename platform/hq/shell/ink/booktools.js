@@ -17,6 +17,7 @@ import { mountShapes } from './bookshapes.js';
 import { mountEraser } from './bookerase.js';
 import { followPress } from './bookpress.js';
 import { wandered } from '/__review/tap.js';
+import { RESTING } from './bookwrite.js';
 
 // a second press this soon and this near the first, on bare paper, is a double click: a box of typed words there
 const DOUBLE_MS = 450,
@@ -66,6 +67,10 @@ function toolsOf(st) {
     added: view => st.texts.added(view),
     // Words set on a page in a box of their own (pasted, dropped, a voice note heard): booktexts.js put.
     put: (...a) => st.texts.put(...a),
+    // The pen's colour now, what words put on a page take (a voice note's as they're heard: bookheard.js)
+    color: () => st.pen,
+    // The dot a double tap's first tap drew taken off, before its second press is held for a voice note (bookinput.js)
+    undot: stepAtPress => undot(st, stepAtPress),
     // One tool on or back along the rail (Ctrl and the wheel: bookpan.js).
     cycle: by => st.strip.cycle(by),
     // (whether words are being typed in a box: a page read again waits for it to be left. leave: a caret alone gives
@@ -110,8 +115,11 @@ function press(st, e) {
   // (a box of words is the highlighter's, the eraser's and a shape's to draw over)
   const over = ['highlighter', 'eraser', 'shapes'].includes(st.mode);
   if (box && (!over || box.matches('[data-editing]'))) return st.texts.press(box, e);
-  // (a scrap's words kept from Scribble for the pen take its strokes, with the tools that draw: ink over them.)
-  const penned = !['select', 'text'].includes(st.mode) && target?.closest('textarea[data-pen]');
+  // (a scrap's words kept from Scribble for the pen, or not being typed in, take a pen's or a finger's strokes, with the
+  // tools that draw: ink over them. README, Our scraps)
+  const penned =
+    !['select', 'text'].includes(st.mode) &&
+    target?.closest(mouse ? 'textarea[data-pen]' : `textarea[data-pen], ${RESTING}`);
   if (!penned && target?.closest('input, textarea, select, [contenteditable], button, a, label')) return true;
   const at = book.at(e.clientX, e.clientY);
   if (!at || !at.view.page.ink) return false;
@@ -121,7 +129,7 @@ function press(st, e) {
     e.preventDefault();
     if (mouse) st.texts.place(at, roomTo(st, e));
     // (a touch's box once it lifts as a tap: an iPad brings up its keyboard only for a caret placed at a lift, never at
-    // a press, and a Pencil that moves on writes nothing with the text tool. board, call 176)
+    // a press, and a Pencil that moves on writes nothing with the text tool.)
     else placeAtLift(st, e, at);
     return true;
   }

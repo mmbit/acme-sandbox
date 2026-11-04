@@ -123,15 +123,18 @@ and which helpers have a run) and keeps it so:
   replaces its helpers once their runs end. Helpers of a kind HQ no longer has go, and so do helpers an old start
   command made by hand for the same HQ.
 - the helpers' code follows HQ: each fetches `GET /api/helper/code` as it starts, with no hash, since a helper reaches
-  nothing but HQ (below). Only the manager, which holds the Docker socket, is pinned: a changed `manager.mjs` stops it
-  at the machine's next restart (Docker's or the machine's), while its old helpers go on taking runs on their old
-  images. So each setup call carries the hash of the code the manager runs (`{ code }`), and HQ keeps the machine's last
-  call: a manager on code HQ no longer serves (or one that sends no hash, older than that) is **out of date**, and one
-  that hasn't called for two hours while its helpers still ask for work has **stopped** (a tick waits for its pulls, and
-  a kind's image can be 12 GB). Settings › Machines and `hq run helper` say so, and the board gets one card per
-  machine with the install command without a key, which starts the manager again on the key it has; HQ takes the card
-  away once the manager calls with HQ's code, and replaces it with a new one once HQ serves other code than its command
-  trusts.
+  nothing but HQ (below). The manager's follows HQ too, after the install command's hash check: its container fetches
+  `GET /api/helper/manager` as it starts, with no hash. Each setup call carries the hash of the code the manager runs
+  (`{ code }`, with `{ follows: true }`), and HQ answers with the hash of the code it serves: on other code the manager
+  ends, and Docker starts it again on HQ's. New code that changes the manager's own container (a new Node image) has a
+  one-off container, `<host>-manager-swap`, install it as the install command does. So nobody pastes anything for new
+  manager code. HQ keeps the machine's last call: a manager that follows is **updating** until its next call. One
+  installed before managers followed HQ is pinned to its code: on code HQ no longer serves (or sending no hash, older
+  still) it's **out of date**, and stops at the machine's next restart. One that hasn't called for two hours while its
+  helpers still ask for work has **stopped** (a tick waits for its pulls, and a kind's image can be 12 GB).
+  Settings › Machines and `hq run helper` say so, and the board gets one card per out-of-date or stopped machine with
+  the install command without a key, which starts the manager again on the key it has; HQ takes the card away once the
+  manager calls with HQ's code, and replaces it with a new one once HQ serves other code than its command trusts.
 - each setup call also carries why a helper isn't in step (`{ problems }`, its container's name and the error: a pull
   in Docker's own words, a refused sign-in, an unknown digest, a full disk, or one waiting for its run to end), so
   `hq run helper` shows them under the machine, with no log to read on it.
@@ -174,7 +177,7 @@ The container connects out to HQ over HTTPS and nowhere else. On a machine set u
 the manager's Docker network with no route out (`internal`), shared with that HQ's other helpers there, and its one
 way out is the manager's proxy, which opens a
 connection (CONNECT) to HQ's host and the package registries only (`registry.npmjs.org`, `pypi.org`,
-`files.pythonhosted.org`: `FIXED` in manager.mjs, which HQ can't change), never to a private address, whatever a name
+`files.pythonhosted.org`: `FIXED` in manager.mjs, whose code follows HQ's), never to a private address, whatever a name
 resolves to. Every run is code from our own repo, but the sandbox
 assumes it could be hostile:
 
@@ -212,16 +215,17 @@ assumes it could be hostile:
   way besides the run's results is its machine's load and the run's newest output, which only the board's HQ shows. A job's environment
   (its test keys) stays here: the bundle is files from the tree only. Our secrets are never in the tree.
 - **HQ is the only one it trusts.** On a machine set up by hand, the helper's code is pinned by its hash in the start
-  command. With the manager, the manager's code is pinned (it holds the Docker socket) and the helpers' follows HQ: a
-  compromised HQ could send hostile helper code or a hostile run, and either stays in the locked container, on a
-  network that reaches HQ and the registries alone. It can't change the manager, the network or the proxy's hosts.
+  command. With the manager, the helpers' code follows HQ: a compromised HQ could send hostile helper code or a hostile
+  run, and either stays in the locked container, on a network that reaches HQ and the registries alone. The manager's
+  code follows HQ too, and it holds the Docker socket, so a compromised HQ could change the manager and with it the
+  machine's Docker, the network and the proxy's hosts. Lend a machine whose Docker you'd trust to HQ.
 
 The helper needs SETUID and SETGID to change user, and a run as the helper's own user could read its key. Docker's own
 seccomp profile still applies under the filter, with user namespaces refused. A run reaches no address: not Docker's DNS, the WSL2 VM, the Windows host or
 its network. It can read what any container sees of the machine (CPU, kernel, memory), which comes back only to the job.
-The code with the network is pinned, but the image's node and perl run it too: HQ can't swap either, but a kind's image
-is trusted like the code, so pin a kind's image by digest when it isn't an official one. A kind's image may be private on
-GitHub's registry (ghcr.io): the manager asks HQ for the sign-in at each pull (`POST /api/helper/pull`, with its key), and
+The code with the network comes with the manager's, which follows HQ, and the image's node and perl run it too, so a
+kind's image is trusted like the code: pin a kind's image by digest when it isn't an official one. A kind's image may be
+private on GitHub's registry (ghcr.io): the manager asks HQ for the sign-in at each pull (`POST /api/helper/pull`, with its key), and
 HQ gives it from its own key, `REGISTRY_GHCR_TOKEN` (read:packages alone), for an image one of its kinds names and
 nothing else; the machine passes it to Docker for that pull and never keeps it. Without the key, HQ puts a card for it
 on the desk phone and the pull waits. A kind with `gpus: true` puts

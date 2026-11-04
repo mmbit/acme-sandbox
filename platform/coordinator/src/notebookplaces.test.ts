@@ -68,3 +68,19 @@ test('a page of scraps places nothing: its masonry lays it', async () => {
   assert.equal(g.place, null, 'a place given is not kept');
   assert.equal((await place(page, [{ id: g.id, x: 1, y: 2 }])).status, 400, 'only a sketch page places its units');
 });
+
+test("a note's room dragged taller on a sketch page pushes what's below it down, never what's beside it", async () => {
+  const page = await newPage(await myNotebook()),
+    made = async (x: number, y: number) => (await create({ page, ink: [stroke(0, 0)], place: { x, y } })).body,
+    note = await made(20, 100),
+    below = await made(20, 400),
+    beside = await made(500, 150);
+  const resize = (push: unknown) =>
+    h.board('/api/notebooks/groups/resize', { id: note.id, since: note.updated, h: 400, push });
+  assert.equal((await resize({ top: 100, from: 300, x0: 20, x1: 340 })).status, 400, 'a push is five numbers');
+  assert.equal((await resize({ top: 100, from: 300, x0: 20, x1: 340, by: 120 })).status, 200);
+  const at = new Map((await groups(page)).map(g => [g.id, g.place]));
+  assert.deepEqual(at.get(below.id), { x: 20, y: 520 }, 'below its foot: down as far as the room grew');
+  assert.deepEqual(at.get(beside.id), { x: 500, y: 150 }, 'beside it: where it was');
+  assert.deepEqual(at.get(note.id), { x: 20, y: 100 }, 'the note itself stays');
+});

@@ -4,7 +4,6 @@
 // head with its count and each page under its own chapter, the page shown in Calls (the book opens on its page 20); a
 // call's page opened from it lands on that page in Calls, and a sketch's in Sketch. Its options open from its title
 // line and Esc shuts them.
-// (company: job #19134 and job #19155, not upstream yet)
 import assert from 'node:assert/strict';
 import { DESKTOP, LOADED_MS, MINI, OVERVIEW, UPRIGHT, until } from './kit.mjs';
 import { CALLS, landed, onJournal } from './journal.mjs';

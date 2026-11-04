@@ -2,17 +2,21 @@
    (bookview.js sets the dots' size and place), its send stamp at its top-left; and the
    controls for moving about (bookcontrols.js, on the rail). (the overview: bookshelf.css.) The book's own look, the same on every HQ look. (was book.css's and booklook.css's head strip, table and row of pages) */
 
-/* (under the status bar's blur only the paper: the page starts below it, --sat.) */
+/* (the page the whole paper, to every edge: README, The book's frame.) */
 #book .bk-pages {
   position: absolute;
-  inset: var(--sat, 0px) 0 0;
+  inset: 0;
   background-color: var(--bk-paper);
 }
-/* the paper: endless, its dots moving with the page. The Pencil and a mouse write; a finger, the middle button, Space
-   held or the hand tool move it (bookpan.js). */
+/* the paper: endless, one surface to every edge, up under the status bar's blur and beside the tools, its dots moving
+   with the page there too. The Pencil and a mouse write anywhere on it; a finger, the middle button, Space held or the
+   hand tool move it (bookpan.js). Its padding is the room the page's content keeps clear of, set down below the blur
+   and laid left of the tools' island (--bk-rail-width), which bookpages.js reads (book.size's top and right). */
 #book .bk-desk {
   position: absolute;
   inset: 0;
+  box-sizing: border-box;
+  padding: var(--sat, 0px) var(--bk-rail-width) 0 0;
   overflow: hidden;
   background-color: var(--bk-paper);
   /* the paper's dots drawn to the zoom (bookview.js's --bk-scale), and eased out as they shrink (--bk-dots-shown,
@@ -42,12 +46,14 @@
   transform-origin: 0 0;
   will-change: transform;
 }
+/* (laid in the page under the pen, bookwet.js: a layer of its own, so a line's paints never paint the page again.) */
 #book .bk-wet {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
   pointer-events: none;
+  will-change: transform;
 }
 #book .bk-lost {
   position: absolute;
@@ -73,8 +79,11 @@
 #book .bk-page[hidden] {
   display: none;
 }
+/* (the page's dry ink lies over everything else on it, a scrap's photo, its words and typed words included: ink drawn
+   over a thing stays on top of it, never under it. A press goes through to what's under it. README, Our scraps.) */
 #book .bk-ink {
   position: absolute;
+  z-index: 3;
   pointer-events: none;
 }
 /* The send stamp at the page's head, at its right, under the title's line (bookgroups.css .bk-page-title: 22 px down,

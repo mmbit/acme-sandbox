@@ -18,8 +18,20 @@ export async function workflowCommit(path: string, subject: string) {
   try {
     // safe.directory: the checkout is root's on the server, mounted read-only for the coordinator's own user;
     // --literal-pathspecs: a file name is never a glob (a merged `*.sha256` would stand for every enrollment file)
-    const args = ['-c', `safe.directory=${REPO_DIR}`, '--literal-pathspecs', '-C', REPO_DIR, 'log', '-1', '--first-parent',
-      '--format=%P%x00%ae%x00%ce%x00%ct%x00%s', 'HEAD', '--', path];
+    const args = [
+      '-c',
+      `safe.directory=${REPO_DIR}`,
+      '--literal-pathspecs',
+      '-C',
+      REPO_DIR,
+      'log',
+      '-1',
+      '--first-parent',
+      '--format=%P%x00%ae%x00%ce%x00%ct%x00%s',
+      'HEAD',
+      '--',
+      path,
+    ];
     line = (await run('git', args, { timeout: 10_000 })).stdout.trim();
   } catch (err) {
     console.error(`Could not read who committed ${path}:`, (err as Error).message);

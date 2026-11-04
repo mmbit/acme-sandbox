@@ -157,12 +157,12 @@ export const TIPS = [
   },
   {
     part: 'The pen and the page',
-    title: 'Hold the pen still and talk to add your words',
+    title: 'Tap a mic and talk to add your words',
     words:
-      'Hold the Pencil still on HQ and talk: what you say goes into the notebook with your mark. In the notebook, tap the mic on the rail, talk, and tap it again: your words land under what you wrote last.',
-    from: 'shared/review/pentouch.js, platform/hq/shell/ink/bookvoice.js',
+      'On HQ, mark something and tap the mic on its note: what you say goes into the notebook with your mark. In the notebook, tap the mic on the rail, talk, and tap it again: your words land under what you wrote last. Or double-tap the page and hold, and talk: they land where you held as you lift.',
+    from: 'shared/review/dictation.js, platform/hq/shell/ink/bookvoice.js, platform/hq/shell/ink/bookinput.js',
     picture: 'tip-voice',
-    alt: 'The Pencil held still on HQ, the words said written out beside the mark',
+    alt: 'A line under a tagline on HQ, the words said written out beside it and on its note in the notebook',
   },
   {
     part: 'The pen and the page',
@@ -234,8 +234,8 @@ export const TIPS = [
     part: 'The feel',
     title: 'Scribble over something to delete it',
     words:
-      'In the notebook, scribble over a scrap: it crumples away, and Undo brings it back. On HQ, scribble over a mark before you rest the pen, and it’s gone.',
-    from: 'platform/hq/shell/ink/bookgroups.js, shared/review/gestures.js',
+      'In the notebook, scribble over a scrap: it crumples away, and Undo brings it back. On HQ, take a line back with the strip’s eraser or Undo.',
+    from: 'platform/hq/shell/ink/bookgroups.js, shared/review/surface.js',
     picture: 'crumple',
     alt: 'A scrap held, crumpled into a ball and thrown off the page',
   },

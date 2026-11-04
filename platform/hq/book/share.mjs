@@ -10,12 +10,13 @@
 // call's window, a picture file dropped there, and a paste once the board pressed in it all go to Juno, the window lit
 // as they come, and the book takes none; a picture taped on the page, picked with Select and carried onto the window
 // or its bubble, goes too, and stays taped where it was. Things deleted crumple over the paper, already gone
-// underneath: the store has them gone at once, a press goes through the crumple, and its throw is over within two seconds.
+// underneath: the store has them gone at once, a press goes through the crumple, and it falls straight down past the
+// screen's foot within two seconds.
 // (the gestures and the presses that aren't a tear: tearing.mjs; a long page's: sharelong.mjs.)
 import assert from 'node:assert/strict';
 import { playLine } from './call.mjs';
 import { freePage, line, paperBox, pick, savedWhere, tool } from './mouse.mjs';
-import { DESKTOP, QUIET_MS, crumpled, until } from './kit.mjs';
+import { DESKTOP, QUIET_MS, crumpled, fellAway, until } from './kit.mjs';
 import { dragTo, notATearStory, spineOf, targetsShown, tearOffMenu } from './tearing.mjs';
 import { watchedPage } from './start.mjs';
 
@@ -241,14 +242,15 @@ async function crumpleStory(browser, c) {
     await tool(page, 'Select').click();
     await page.mouse.move(box.x + 300, box.y + 400);
     await page.keyboard.press('Control+a');
-    const thrown = crumpled(page);
-    thrown.catch(() => {}); // (a failure below shows first; awaiting it later still throws)
+    const fall = crumpled(page);
+    fall.catch(() => {}); // (a failure below shows first; awaiting it later still throws)
     await page.keyboard.press('Delete');
-    // the crumple plays over the paper, the line already gone underneath and in the store, its throw over within two
-    // seconds as every motion in the book
+    // the crumple plays over the paper, the line already gone underneath and in the store, its fall straight down
+    // over within two seconds as every motion in the book
     await page.locator('.bk-fx-sheet').waitFor({ state: 'attached', timeout: 1000 });
-    const { length } = await thrown;
-    assert.ok(length > 0 && length <= 2000, `over within two seconds (${length} ms)`);
+    const answer = await fall;
+    fellAway(answer, 'the selection');
+    assert.ok(answer.length > 0 && answer.length <= 2000, `over within two seconds (${answer.length} ms)`);
     await c.shot('paper-crumple', page);
     assert.equal(
       await page.evaluate(() => getComputedStyle(document.querySelector('.bk-fx')).pointerEvents),

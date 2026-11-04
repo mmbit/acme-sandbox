@@ -1,7 +1,7 @@
 // node --test platform/hq/shell/ink/sketchcanvas.test.js   (a sketch page's units at their places; no DOM)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { canvasOf } from './sketchcanvas.js';
+import { DATE_ABOVE, canvasOf, daysOf, pushedDown } from './sketchcanvas.js';
 import { UNIT_W } from './scrapunit.js';
 import { GAP, layout, widthFor } from './masonry.js';
 
@@ -214,4 +214,45 @@ test('a note with no place yet lands under every placed note and what hangs unde
   assert.deepEqual(fresh, [2]);
   assert.ok(places[1].y >= 100 + 60 + 90, `under the answer: ${places[1].y}`);
   assert.deepEqual(places[1].hung, { x: places[1].x, y: places[1].y + 50, w: UNIT_W, h: 30 });
+});
+
+test("a note's room dragged taller pushes what's under it and below its foot down, never what's beside it", () => {
+  const places = [
+      { id: 1, place: { x: 8, y: 100 } },
+      // (under the note, already over its foot: still pushed, never left under it)
+      { id: 2, place: { x: 8, y: 380 } },
+      // (beside it, starting lower than its top but above its foot: stays)
+      { id: 3, place: { x: 400, y: 150 } },
+      // (below its foot, anywhere across: pushed)
+      { id: 4, place: { x: 400, y: 500 } },
+      { id: 5, place: null },
+    ],
+    push = { top: 100, from: 400, x0: 8, x1: 8 + UNIT_W, by: 120 };
+  assert.deepEqual(pushedDown(places, push), [
+    { id: 2, place: { x: 8, y: 500 } },
+    { id: 4, place: { x: 400, y: 620 } },
+  ]);
+  assert.deepEqual(pushedDown(places, { ...push, by: 0 }), [], 'shrinking moves nothing');
+  assert.deepEqual(pushedDown(places, undefined), []);
+});
+
+test("a sketch page's dates: over the first scrap of each later day, never over the board's drawing", () => {
+  const units = [
+      { id: 1, day: '2026-11-02' },
+      { id: 2, day: '2026-11-03', drawn: true },
+      { id: 3, day: '2026-11-03' },
+      { id: 4, day: '2026-11-03' },
+      { id: 5, day: '2026-11-04', drawn: true },
+    ],
+    places = new Map(units.map((u, k) => [u.id, { x: 8, y: 100 + k * 200 }]));
+  assert.deepEqual(daysOf(units, places, '2026-11-02'), [{ day: '2026-11-03', x: 8, y: 500 - DATE_ABOVE }]);
+  assert.deepEqual(daysOf(units.slice(0, 2), places, '2026-11-02'), [], 'free drawing alone dates nothing');
+});
+
+test('a scrap come on a later day lands with room above it for its date; on the same day, none', () => {
+  const placed = { id: 1, h: 200, w: UNIT_W, below: 0, place: { x: 8, y: 100 }, day: '2026-11-02' },
+    later = { id: 2, h: 200, w: UNIT_W, below: 0, day: '2026-11-03' },
+    same = { ...later, day: '2026-11-02' };
+  const y = u => canvasOf([placed, u], 400, { x: 8, y: 72 }).places[1].y;
+  assert.equal(y(later) - y(same), 20);
 });

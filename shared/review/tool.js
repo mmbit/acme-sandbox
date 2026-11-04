@@ -21,6 +21,7 @@ hand({
   reset,
   toggle,
   redrawInk: surface.redrawInk,
+  showStrip: surface.showStrip,
   stopMic: dictation.stopMic, // (stopMic, words)
   words: dictation.words,
 });
@@ -38,16 +39,7 @@ export function start(config) {
     away: config.away,
   };
   startTrail(r);
-  const css = [
-    BASE_CSS,
-    dock.CSS,
-    surface.CSS,
-    postit.CSS,
-    pictures.CSS,
-    dictation.CSS,
-    pencil.CSS,
-    REDUCED_MOTION_CSS,
-  ].join('');
+  const css = [BASE_CSS, dock.CSS, surface.CSS, postit.CSS, pictures.CSS, dictation.CSS, REDUCED_MOTION_CSS].join('');
   makeHost(r, css, `<div class="ui">${surface.HTML}${pencil.HTML}${postit.HTML}${dock.HTML}</div>`);
   elements(r);
   followPopups(r);
@@ -62,6 +54,7 @@ export function start(config) {
     setupCall(r);
   } else if (r.framed && !r.outside) setupCallFrame(r); // (HQ's viewer on a call)
   setupViewmarks(r);
+  r.undoButton.onclick = () => undo(r);
   return { toggle: () => toggle(r) };
 }
 
@@ -74,6 +67,7 @@ function elements(r) {
     tip: $('.tip'),
     coach: $('.coach'),
     veil: $('.veil'),
+    bar: $('.bar'),
     strip: $('.strip'),
     undoButton: $('.undo'),
     haloCanvas: $('.halo'),
@@ -117,9 +111,18 @@ export function reset(r) {
   r.penOn?.cancel();
   Object.assign(r, { strokes: [], inkSteps: [], undoTo: null, exposure: null });
   r.veil.classList.remove('marked');
+  r.ui.classList.remove('up', 'noted', 'folded');
   r.undoButton.disabled = true;
   surface.paintInk(r, []);
 }
+
+// Undo, the strip's and Cmd or Ctrl+Z's: the Pencil's on HQ (pencil.js), the veil's while it's up (surface.js). The
+// Pencil's may take a note off the book, which can refuse.
+function undo(r) {
+  if (!pencilUndoes(r)) return surface.undo(r);
+  pencil.undo(r).catch(err => console.error('The Pencil: an undo', err));
+}
+const pencilUndoes = r => r.book && r.veil.hidden;
 
 function keys(r) {
   // Escape puts away the note
@@ -140,14 +143,13 @@ function keys(r) {
       if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.key.toLowerCase() !== 'z') return;
       if (r.covered || r.root.activeElement === r.text) return;
       // (the Pencil on HQ: anything; else the last line while marking.)
-      const book = r.book && r.veil.hidden,
-        typing = document.activeElement?.matches('input, textarea, select, [contenteditable]'),
-        pencilUndoes = book && (r.mode === 'note' || (r.mode === 'idle' && r.steps.length && !typing)),
-        surfaceUndoes = !book && r.mode === 'note' && !r.veil.hidden;
-      if (!(pencilUndoes || surfaceUndoes)) return;
+      const typing = document.activeElement?.matches('input, textarea, select, [contenteditable]'),
+        anything = r.mode === 'note' || (r.mode === 'idle' && r.steps.length && !typing),
+        lastLine = r.mode === 'note' && !r.veil.hidden;
+      if (!(pencilUndoes(r) ? anything : lastLine)) return;
       e.preventDefault();
       e.stopPropagation();
-      (book ? pencil.undo : surface.undo)(r);
+      undo(r);
     },
     true,
   );

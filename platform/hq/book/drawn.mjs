@@ -80,7 +80,7 @@ async function blankBook(browser, c, size) {
   const { book, ...viewport } = size,
     context = await c.hqIn(browser, viewport, { hasTouch: false, isMobile: false });
   await noMicrophone(context);
-  await bookWide(context, book);
+  await bookWide(context, viewport, book);
   const { page, errors } = await watchedPage(context);
   await page.goto(`${c.base}/?intro=0`);
   await page.waitForSelector('#book .bk-desk', { state: 'attached', timeout: 30_000 });

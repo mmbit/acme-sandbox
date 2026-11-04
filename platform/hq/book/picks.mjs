@@ -8,7 +8,7 @@
 // The iPad turned after a circle, the circle stays round the version it chose
 import assert from 'node:assert/strict';
 import { inStory } from './answers.mjs';
-import { childrenOf, clearOfTools, layer, stroke, triedNote } from './answersplay.mjs';
+import { childrenOf, layer, onPaper, stroke, triedNote } from './answersplay.mjs';
 
 // The circle sent once the pen rests, read as a pick and the page read again: about a second, but the played store's
 // routes hand a post back several seconds late while the browser's connections are taken (a reply's own wait)
@@ -64,7 +64,7 @@ async function picked(browser, c, { viewport, size, pointer, options = {}, moves
     const frame = id => layer(page).locator(`.bk-version[data-answer="${id}"]`);
     await frame(4612).waitFor({ timeout: LANDS_MS });
     await page.waitForTimeout(c.settle);
-    await clearOfTools(page, '.bk-version-paper');
+    await onPaper(page, '.bk-version-paper');
     await circle(page, 4611, pointer);
     await wetRound(page, 4611);
     await frame(4611).locator('.bk-version-stamp').waitFor({ timeout: LANDS_MS });

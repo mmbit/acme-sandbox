@@ -2,10 +2,10 @@
    screen's right edge, only its left page shown ("the right page is a myth"), the paper running the screen's whole
    height, from its foot up under the status bar's blur, so the blur shows paper. No cover band: beside HQ's page only
    a few px of cover at the outer edge of a slim page block, the bookmarks coming out of it (bookmarks.css); upright
-   (a phone, an iPad held upright) the page is the whole screen, no cover or block at all. Nothing to press under the
-   blur: the page's drawable part and every control sit below it (--sat). The controls float on two islands over the
-   paper (bookstrip.css): the tools on the right, the bar along the foot between the screen's corners. One object under
-   one soft shadow; its own look (booklook.css), the same on every HQ look. */
+   (a phone, an iPad held upright) the page is the whole screen, no cover or block at all. The page is drawn on to every
+   edge, under the blur too; its content and every control sit below it (--sat: bookdesk.css). The controls float on
+   two islands over the paper (bookstrip.css): the tools on the right, the bar along the foot between the screen's
+   corners. One object under one soft shadow; its own look (booklook.css), the same on every HQ look. */
 /* the book's one type: Atkinson Hyperlegible, regular and bold (fonts/OFL-atkinson.txt.) */
 @font-face {
   font-family: 'Atkinson Hyperlegible';
@@ -54,6 +54,13 @@
   -webkit-user-select: none;
   user-select: none;
   -webkit-touch-callout: none;
+}
+/* Only the page pinch-zooms (README, The book's frame): nothing of the book lets the browser zoom the screen, so no
+   pinch can push the islands or their cards off it. A card's list still scrolls by a finger. On every part, as
+   style.css's manipulation is, since WebKit takes a part that scrolls afresh rather than from the parts round it; a
+   part's own (none, pan-y) stays its own. */
+:where(#book, #book *) {
+  touch-action: pan-x pan-y;
 }
 #book > * {
   position: fixed;

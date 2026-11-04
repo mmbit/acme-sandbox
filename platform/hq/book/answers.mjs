@@ -11,10 +11,11 @@
 import assert from 'node:assert/strict';
 import { FEED_MS, inSight, notebookOn, opened, shownByItsNote, underItsNote } from './answersplay.mjs';
 import { press } from './bar.mjs';
-import { OVERVIEW } from './kit.mjs';
+import { OVERVIEW, until } from './kit.mjs';
+import { viewNow } from './canvas.mjs';
 import { watchedPage } from './start.mjs';
 
-const WENT_LIVE = 'Yes: it went live this morning, at 09:12.';
+export const WENT_LIVE = 'Yes: it went live this morning, at 09:12.';
 
 // c: book-check's { hqIn, base, store, pages, posts, org, shot, settled, settle }
 export function answerStories(c) {
@@ -75,7 +76,8 @@ async function postOf(c, from, path) {
   return null;
 }
 // An answer's slip under its note, as the page draws it (in .bk-under: bookgroups.js)
-const slipOf = (page, g, id) => page.locator(`#book .bk-under[data-g="${g.id}"] .answer-slip[data-slip="${id}"]`);
+export const slipOf = (page, g, id) =>
+  page.locator(`#book .bk-under[data-g="${g.id}"] .answer-slip[data-slip="${id}"]`);
 
 // The note asked about (at: the first unless named) on a page of notes (each in the column it was drawn in, where the
 // page has it; tall: a drawing down it, three short notes tall; answered: its answer come already). A wide book lays
@@ -95,10 +97,29 @@ async function answered(browser, c, viewport, size, options = {}, { at = 0, note
   nb.groups.push(...groups);
   nb.seed.slips.push(...before.map((g, k) => ({ id: 4190 + k, ...nb.answer(g, 'text', WENT_LIVE) })));
   await inStory(browser, c, { viewport, nb, options }, async (page, play) => {
+    const { s: boardScale } = await viewNow(page);
     await waitingFor(c, nb, play, page, asked, size);
     await slipped(c, nb, play, page, asked, size);
     for (const [k, g] of before.entries()) await underItsNote(page, g, `.answer-slip[data-slip="${4190 + k}"]`);
+    await givenBack(page, boardScale, options.isMobile);
   });
+}
+// The zoom the board opened the page at, back at its next touch wherever the slides to the answer took it
+// (bookgroupshow.js giveBack): a wheel's turn, or on a phone (no wheel) a finger's tap, which draws a dot there
+async function givenBack(page, boardScale, phone) {
+  const desk = await page.locator('#book .bk-desk').boundingBox(),
+    [x, y] = [desk.x + desk.width / 2, desk.y + desk.height / 2];
+  if (phone) await page.touchscreen.tap(x, y);
+  else {
+    await page.mouse.move(x, y);
+    await page.mouse.wheel(0, 4);
+  }
+  let now;
+  await until(
+    async () => Math.abs((now = await viewNow(page)).s - boardScale) < 0.001,
+    () => `the board's zoom ${boardScale} back: ${JSON.stringify(now)}`,
+    FEED_MS,
+  );
 }
 // (nine short notes in three columns)
 const GRID = Array.from({ length: 9 }, (_, i) => ({ column: i % 3 }));

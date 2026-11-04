@@ -9,6 +9,8 @@
 // px from its top-left) is the page's pan + point / scale. (the page grows every
 // way)
 
+import { MARGIN } from './masonry.js';
+
 // A page's sides as the store makes one, and the most a page grows to either way (pagechecks.ts PAGE and GROWN_MAX)
 export const SIDE = { min: 100, max: 4000 };
 export const GROWN_MAX = 20_000;
@@ -32,29 +34,54 @@ export const pageBox = page => {
 export const ZOOM_OUT = 0.25;
 export const zoomWithin = (s, page, view) =>
   Math.min(ZOOM_MAX, Math.max(Math.min(ZOOM_OUT, view.w / page.w, view.h / page.h), s));
-// How far a sketch page pans at a zoom of s: any way, till only edge px (on screen) of its box (the first screen at
-// least) is left at the paper's side, so a screen of fresh paper is always beyond what's drawn to draw on. → { x0, x1,
-// y0, y1 }, the pan's least and most
+// How far a sketch page pans at a zoom of s: never above or left of its title's corner (README, The book's frame) or of
+// what's drawn beyond it (drawnCorner), the paper's room above it (view.top, the status bar's blur) in sight; down and
+// right till only edge px (on screen) of its box (the first screen at least) is left at the paper's side, so a screen
+// of fresh paper is always beyond what's drawn to draw on. view: the paper's { w, h } and the room its content keeps
+// clear of, { top, right } (CSS px). → { x0, x1, y0, y1 }, the pan's least and most
 export function canvasPans(page, view, s, edge) {
   const p = pageBox(page),
-    b = { x0: Math.min(0, p.x0), y0: Math.min(0, p.y0), x1: Math.max(view.w, p.x1), y1: Math.max(view.h, p.y1) },
-    ex = Math.min(edge, view.w) / s,
-    ey = Math.min(edge, view.h) / s;
-  return { x0: b.x0 - view.w / s + ex, x1: b.x1 - ex, y0: b.y0 - view.h / s + ey, y1: b.y1 - ey };
+    corner = drawnCorner(page),
+    x1 = Math.max(view.w, p.x1),
+    y1 = Math.max(view.h, p.y1);
+  return {
+    x0: corner.x,
+    x1: x1 - Math.min(edge, view.w) / s,
+    y0: corner.y - view.top / s,
+    y1: y1 - Math.min(edge, view.h) / s,
+  };
 }
 // A page of scraps' zoom (bookview.js.): out to its masonry's fit, the paper's
 // width (bookunits.js), and in to ZOOM_MAX, or its fit where that's closer, so the board writes big on a scrap. Within
 // SNAP of the fit it's the fit: two fingers scrolling never zoom the page by their wobble.
 const SNAP = 1.03;
 export const unitsZoom = (s, fit) => (s < fit * SNAP ? fit : Math.min(Math.max(ZOOM_MAX, fit), s));
-// How far a page of scraps pans at a zoom of s: across its width as far as it's zoomed past it, and down to its foot
-// with foot px (on screen) of it left. → { x0, x1, y0, y1 }, the pan's least and most
-export const unitsPans = (page, view, s, foot) => ({
-  x0: 0,
-  x1: Math.max(0, page.w - view.w / s),
-  y0: 0,
-  y1: page.h - Math.min(view.h, foot) / s,
-});
+// How far a page of scraps pans at a zoom of s: never above or left of its top-left or of what's drawn beyond it
+// (drawnCorner), the room above it (view.top) in sight; across its width as far as it's zoomed past the paper's left of
+// the tools (view.right), and down to its foot with foot px (on screen) of it left. → { x0, x1, y0, y1 }, the pan's
+// least and most
+export function unitsPans(page, view, s, foot) {
+  const corner = drawnCorner(page);
+  return {
+    x0: corner.x,
+    x1: Math.max(0, page.w - (view.w - view.right) / s),
+    y0: corner.y - view.top / s,
+    y1: page.h - Math.min(view.h, foot) / s,
+  };
+}
+// The top-left a page pans to: 0,0, its title's corner, or further where its ink or scraps, or what hangs under a unit
+// (its answer, past its row on a sketch page: sketchcanvas.js) with the margin a canvas keeps round it (bookunits.js
+// canvasSize), lie above or left of it. Their own reach, not the page's box: its ROOM_PX to spare would creep the limit
+// out with each line drawn at the edge. A page's ink is null until it's read (bookpage.js).
+function drawnCorner(page) {
+  const corner = { x: 0, y: 0 },
+    hung = (page.places ?? []).filter(p => p.hung).map(({ hung: h }) => ({ x0: h.x - MARGIN, y0: h.y - MARGIN }));
+  for (const box of [...(page.ink ?? []).map(boxOf), ...page.scraps.map(scrapBoxOf), ...hung]) {
+    corner.x = Math.min(corner.x, box.x0);
+    corner.y = Math.min(corner.y, box.y0);
+  }
+  return corner;
+}
 // The pan that keeps a point on the paper (CSS px from its top-left) over the same spot of the page as the zoom goes
 // from s0 to s1: a pinch's middle, the pointer under a trackpad's pinch
 export const zoomAt = (pan, s0, s1, at) => ({ x: pan.x + at.x / s0 - at.x / s1, y: pan.y + at.y / s0 - at.y / s1 });

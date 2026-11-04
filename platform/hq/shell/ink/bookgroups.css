@@ -109,9 +109,12 @@
   box-sizing: border-box;
   margin: 0;
   padding: 0 calc(4px / var(--bk-scale)) 0 calc(var(--bk-head-inset) / var(--bk-scale));
-  overflow: hidden;
+  /* (no wider than the writing paper shows at the page's corner, --paper-w (bookpages.js), so it ends short of what's at
+     the screen's right even on a page wider than the screen.) */
+  max-width: calc(var(--paper-w, 100vw) / var(--bk-scale));
+  /* (nothing clipped here: the title's touch area reaches past its line, and its own words end in an ellipsis,
+     .bk-title-tap > span.) */
   white-space: nowrap;
-  text-overflow: ellipsis;
   font: 600 20px/1.3 var(--bk-font, system-ui, sans-serif);
   color: var(--bk-ink, #2a2352);
   letter-spacing: 0.01em;
@@ -127,6 +130,16 @@
   pointer-events: auto;
   cursor: text;
   -webkit-tap-highlight-color: transparent;
+  position: relative;
+}
+/* (a finger's 44 px to the touch round the title and its pencil, at any zoom (the page's px over --bk-scale): on a
+   phone the pencil is some 8 px across and the title's line 26 px tall, and a finger that misses them draws on the
+   page. README, The book's frame.) */
+#book .bk-title-tap::after {
+  --bk-title-touch: calc(var(--bk-touch) / var(--bk-scale));
+  content: '';
+  position: absolute;
+  inset: min(0px, (1.3em - var(--bk-title-touch)) / 2) min(0px, (0.75em - var(--bk-title-touch)) / 2);
 }
 #book .bk-title-tap > span {
   min-width: 0;
@@ -169,16 +182,28 @@
   position: absolute;
   box-sizing: border-box;
 }
-/* the note's paper, as tall as its body (what an agent put down), lying on the page with its own soft shadow; no
-   turned corner. The board's own drawing has none (bookunitcards.js). */
+/* the note's paper, as tall as its body (what an agent put down): a post-it glued at its top, lying on the page with
+   its own real shadow, its photo taped straight onto it (bookpage.js photos) and its words written on it, one paper and
+   nothing stacked under or between (the board's picked mock-up; README, Our scraps). No turned corner. The board's own
+   drawing has none (bookunitcards.js). */
 #book .bk-unit-paper {
   position: absolute;
   inset: 0 0 auto;
-  border-radius: 3px;
-  background: linear-gradient(180deg, #fffdf4, #fffaea);
+  border-radius: 2px;
+  background: var(--bk-postit);
   box-shadow:
-    0 1px 2px rgba(42, 35, 82, 0.16),
-    0 4px 14px rgba(42, 35, 82, 0.16);
+    0 1px 1px rgba(80, 60, 10, 0.18),
+    0 6px 10px -6px rgba(80, 60, 10, 0.35);
+}
+#book .bk-unit-paper::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto;
+  height: 9px;
+  background: rgba(214, 186, 60, 0.28);
+}
+#book {
+  --bk-postit: #fdf1a9;
 }
 /* the room to write under it: plain page, its dots and all, no inner shadow and no corner; its handle at its foot
    says where it ends */
@@ -224,18 +249,44 @@
 #book .bk-slip-room-pull:focus-visible::before {
   background: rgba(42, 35, 82, 0.4);
 }
-/* what's written on the page ends left of the floating rail (--bk-rail-width: book.css), so nothing is under it; the
-   paper itself runs on under the rail to the book's edge (.bk-paper) */
-#book .bk-pages .bk-desk {
-  right: var(--bk-rail-width);
-}
 /* a scrap's post-it words, part of its body under its picture, the unit's width */
 #book .bk-words {
   width: 320px;
   font: 14px/1.45 var(--bk-font, system-ui, sans-serif);
   color: var(--bk-ink);
 }
+/* (written on the post-it itself: no paper of their own.) */
 #book .bk-words .bk-scrap-words {
   margin: 0;
+  background: none;
   box-shadow: none;
+}
+/* Our scraps' photos (bookpage.js photos): taped straight onto their post-it, over its paper and under all the page's
+   ink, a strip of tape whole across each one's top edge; nothing to press (README, Our scraps). */
+#book .bk-photos {
+  position: absolute;
+  inset: 0 auto auto 0;
+  z-index: 0;
+  pointer-events: none;
+}
+#book .bk-photo {
+  position: absolute;
+  box-shadow: 0 0 0 1px rgba(80, 60, 10, 0.14);
+}
+#book .bk-photo > img {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+#book .bk-photo::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: calc(var(--bk-tape-h) / -2);
+  width: var(--bk-tape-w);
+  height: var(--bk-tape-h);
+  translate: -50% 0;
+  rotate: -4deg;
+  background: rgb(246 236 200 / 80%);
+  box-shadow: 0 1px 2px rgba(29, 26, 47, 0.12);
 }

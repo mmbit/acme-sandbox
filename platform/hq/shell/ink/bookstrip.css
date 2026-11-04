@@ -72,9 +72,10 @@
   display: none;
 }
 /* the pen's and the marker's colour as a dot at the foot of its button (bookpalette.js --bk-dot), ringed in the
-   pressed key's own colour on the one in use */
+   pressed key's own colour on the one in use: the icon lifted so the dot sits clear of its lines, never touching
+   (the Ink README, the tools' cards) */
 #book .bk-strip .bk-btn:is([data-mode='pen'], [data-mode='highlighter']) svg {
-  translate: 0 -3px;
+  translate: 0 -4px;
 }
 #book .bk-strip .bk-btn:is([data-mode='pen'], [data-mode='highlighter'])::before {
   content: '';
@@ -120,9 +121,13 @@
     padding-right: var(--bk-rail-width);
   }
 }
+/* (its spacing smaller inward: the island's own margin round its ends, then the room each side of a rule, then the
+   gap between two keys of a group; both ends' parts against the middle, what one has less of left at its outer
+   edge. The Ink README, The book's frame) */
 #book .bk-bar {
   display: grid;
   grid-template-columns: 1fr auto 1fr;
+  column-gap: 0;
   align-items: center;
   max-width: 100%;
 }
@@ -131,20 +136,20 @@
   align-items: center;
 }
 #book .bk-bar-start {
-  justify-self: start;
+  justify-self: end;
 }
 #book .bk-bar-end {
-  justify-self: end;
+  justify-self: start;
 }
 /* (a quiet rule between the parts) */
 #book .bk-bar-middle {
-  padding: 0 4px;
-  margin: 0 4px;
+  padding: 0 3px;
+  margin: 0 3px;
   border-inline: 1px solid var(--bk-ui-line);
 }
 #book .bk-bar .bk-island[data-island='keys']:has(.bk-btn:not([hidden])) {
-  margin-right: 4px;
-  padding-right: 4px;
+  margin-right: 3px;
+  padding-right: 3px;
   border-right: 1px solid var(--bk-ui-line);
 }
 #book .bk-bar .bk-btn[hidden],
@@ -160,12 +165,9 @@
   letter-spacing: 0.02em;
   color: var(--bk-ui-ink);
 }
-/* (a phone's page, or a narrow one: the overview and New page in the dots menu; on the paper beside HQ's page on an
-   iPad, at the bar's right) */
-@container bk-rail (max-width: 459px) {
-  #book .bk-bar .bk-rare {
-    display: none;
-  }
+/* (New page in the dots menu at every size, so each end holds two keys: Undo and Redo, All pages and the dots) */
+#book .bk-bar .bk-rare {
+  display: none;
 }
 /* (a one-page book's bar, a guest's: nothing in its middle, its two ends side by side) */
 #book .bk-bar:not(:has(.bk-bar-middle .bk-btn)) {
@@ -175,8 +177,8 @@
   display: none;
 }
 #book .bk-bar:not(:has(.bk-bar-middle .bk-btn)) .bk-bar-start {
-  margin-right: 4px;
-  padding-right: 4px;
+  margin-right: 3px;
+  padding-right: 3px;
   border-right: 1px solid var(--bk-ui-line);
 }
 /* a word on the bar (a guest's Send, Mark done and Undo), on two lines where the page is narrow */

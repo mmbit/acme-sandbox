@@ -4,9 +4,10 @@
 // anywhere staying there, with HQ at a phone's width beside it, and never closing the book; the table where the book
 // moves off it in HQ's own ground; the book opening straight onto its page, HQ's page fading into its room; on
 // a phone the book over HQ, its page the whole screen, its tab in reach; a touch on the tab taken from the browser's swipe between pages; a page turned forward and back by one turn played either way. Each
-// asserts what the board sees: boxes, frames, words. (the hardcover's tab and edge)
+// asserts what the board sees: boxes, frames, words. (the hardcover's tab and edge) (the book's least, BOOK.min:
 import assert from 'node:assert/strict';
 import { MINI, middleOf, pixelsIn, touchOf } from './kit.mjs';
+import { BOOK } from '../shell/ink/booklayout.js';
 
 // (longer than a flick's reading of the last moves, booklayout.js: let go where it is)
 const HOLD_MS = 200;
@@ -174,7 +175,7 @@ async function letGo(browser, c) {
     await dragEdge(page, MINI.width - 20);
     await c.settled(page, 'open');
     assert.equal(await page.evaluate(() => document.documentElement.dataset.book), 'open');
-    assert.equal(await bookWidth(page), 320);
+    assert.equal(await bookWidth(page), BOOK.min);
     noErrors(errors);
   } finally {
     await done();

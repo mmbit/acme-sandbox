@@ -18,8 +18,9 @@ import {
   zoomAt,
   zoomWithin,
 } from './bookrow.js';
+import { MARGIN } from './masonry.js';
 
-const view = { w: 455, h: 700 };
+const view = { w: 455, h: 700, top: 0, right: 0 };
 const page = { w: 455, h: 1050 };
 
 // (the page grows every way)
@@ -85,12 +86,45 @@ test('a sketch page zooms in to the most, and out past its least only as far as 
   assert.equal(zoomWithin(1.5, far, view), 1.5);
 });
 
-test('a sketch page pans any way till only an edge of what is on it is left on the paper', () => {
-  const box = { x: -100, y: -50, w: 1000, h: 2000 },
+test('a sketch page pans down and right till only an edge of what is on it is left, never above or left of its corner', () => {
+  const box = { x: -100, y: -50, w: 1000, h: 2000, ink: [], scraps: [] },
     at1 = canvasPans(box, view, 1, 120);
-  assert.deepEqual(at1, { x0: -100 - 455 + 120, x1: 900 - 120, y0: -50 - 700 + 120, y1: 1950 - 120 });
-  const at2 = canvasPans(box, view, 2, 120);
-  assert.equal(at2.x0, -100 - 227.5 + 60, 'zoomed in, the edge in page px is smaller');
+  assert.deepEqual(at1, { x0: 0, x1: 900 - 120, y0: 0, y1: 1950 - 120 });
+  const blurred = { ...view, top: 54 },
+    at2 = canvasPans(box, blurred, 2, 120);
+  assert.equal(at2.x1, 900 - 60, 'zoomed in, the edge in page px is smaller');
+  assert.equal(at2.y0, -27, "the room above the corner, the blur's, in sight at any zoom");
+  assert.equal(at2.x0, 0, 'never left of the corner');
+});
+
+test('a page with ink and a scrap above and left of its corner pans as far as they reach, and no further', () => {
+  const stroke = {
+      size: 4,
+      points: [
+        [-80, -30],
+        [20, 40],
+      ],
+    },
+    scrap = { x: -10, y: -200, w: 100, h: 60 },
+    drawn = { x: -120, y: -240, w: 1000, h: 2000, ink: [stroke], scraps: [scrap] },
+    blurred = { ...view, top: 54 },
+    // (a stroke's reach is its widest line's half past its points: 4 × 0.75 + 1)
+    reach = { x: -80 - 4, y: -200 + 30 - Math.hypot(100, 60) / 2 };
+  const canvas = canvasPans(drawn, blurred, 2, 120);
+  assert.equal(canvas.x0, reach.x, "left to the stroke's left edge, not the page box's");
+  assert.equal(canvas.y0, reach.y - 27, "up to the scrap's top, the blur's room above it");
+  const units = unitsPans({ w: 380, h: 2000, ink: [stroke], scraps: [] }, blurred, 2, 120);
+  assert.deepEqual([units.x0, units.y0], [-84, -30 - 4 - 27], 'a page of scraps the same');
+  const unread = canvasPans({ ...drawn, ink: null, scraps: [] }, blurred, 2, 120);
+  assert.deepEqual([unread.x0, unread.y0], [0, -27], "a page whose ink isn't read yet: its title's corner");
+});
+
+test('a sketch page pans left and up as far as an answer hung past its row reaches, with its margin', () => {
+  const hung = { x: -312, y: 180, w: 320, h: 110 },
+    page = { x: -350, y: 0, w: 2000, h: 1200, ink: [], scraps: [], places: [{ id: 1, x: 40, y: 72, hung }] };
+  assert.equal(canvasPans(page, view, 1, 120).x0, -312 - MARGIN, "left to the answer's left edge and its margin");
+  const above = { ...page, places: [{ id: 1, x: 40, y: 72, hung: { ...hung, x: 40, y: -40 } }] };
+  assert.equal(canvasPans(above, view, 1, 120).y0, -40 - MARGIN, "up to the answer's top and its margin");
 });
 
 // (every page pinch-zooms, a page of scraps too)
@@ -103,11 +137,14 @@ test("a page of scraps zooms in to the most and out to its masonry's fit, never 
 });
 
 test('a page of scraps pans across as far as it is zoomed past its width, and down to its foot', () => {
-  const laid = { w: 380, h: 2000 };
+  const laid = { w: 380, h: 2000, ink: [], scraps: [] };
   assert.deepEqual(unitsPans(laid, view, view.w / laid.w, 120), { x0: 0, x1: 0, y0: 0, y1: 2000 - 120 / (455 / 380) });
   const zoomed = unitsPans(laid, view, 2, 120);
   assert.equal(zoomed.x1, 380 - 455 / 2, 'zoomed in, across to its right side');
   assert.equal(zoomed.y1, 2000 - 60);
+  const blurred = unitsPans(laid, { ...view, top: 54, right: 75 }, 2, 120);
+  assert.equal(blurred.y0, -27, "its corner under the blur's room, never higher");
+  assert.equal(blurred.x1, 380 - (455 - 75) / 2, 'across till its right side is left of the tools');
 });
 
 test("a pinch keeps the page's point under the fingers' middle where it is", () => {

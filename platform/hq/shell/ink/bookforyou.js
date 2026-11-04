@@ -4,14 +4,11 @@
 // on the board (the board's own drawings brought it up as soon as a page had any). In a guest's book, the board's scraps handed to them wait the same way till they write on one (forYou). Its
 // look: bookforyou.css. (by the page's title, as the Ink deck draws it.)
 import { stylesheet } from '../../util.js';
-import { button, lineIcon } from './bookui.js';
+import { button } from './bookui.js';
+import { icon } from '../icons.js';
 import { word } from './bookscope.js';
-import { bringIntoSight, reachOf } from './bookgroupshow.js';
-
-const ICONS = {
-  before: lineIcon('<path d="M6 15l6-6 6 6"/>'),
-  next: lineIcon('<path d="M6 9l6 6 6-6"/>'),
-};
+import { boxesOf, bringIntoSight, reachOf } from './bookgroupshow.js';
+import { boxRound } from './notebookstack.js';
 
 // book: bookpages.js's: the counter in its paper's head, at its right, kept where it is as the page pans and
 // zooms under it. Returns { update(far) }: the counter as the page shown is now (far: the overview open, where it's
@@ -26,8 +23,8 @@ export function mountForYou(book) {
   el.setAttribute('data-no-ink', '');
   el.hidden = true;
   el.innerHTML = '<span class="bk-open" aria-live="polite"></span>';
-  st.before = button({ icon: ICONS.before, onClick: () => step(st, -1) });
-  st.next = button({ icon: ICONS.next, onClick: () => step(st, 1) });
+  st.before = button({ icon: icon('up'), onClick: () => step(st, -1) });
+  st.next = button({ icon: icon('down'), onClick: () => step(st, 1) });
   el.append(st.before, st.next);
   book.paper.querySelector('.bk-pages').append(el);
   return { update: far => update(st, far) };
@@ -37,14 +34,49 @@ export function mountForYou(book) {
 // cards under it inside it too
 export function markOpen(view, layer) {
   const edges = openOn(view.page)
-    .map(g => [g.id, reachOf(view, g.id)])
-    .filter(([, r]) => r)
-    .map(
-      ([id, r]) =>
-        `<div class="bk-for-you" data-g="${id}" style="${boxStyle(r)}" aria-hidden="true"><b>for you</b></div>`,
-    );
+    .map(g => [g.id, boxesOf(view, g.id)])
+    .filter(([, parts]) => parts.length)
+    .map(([id, parts]) => edge(id, parts));
   layer.insertAdjacentHTML('afterbegin', edges.join(''));
 }
+// A group's edge (page px): its box round the unit and its cards, the line drawn a little off each of them, one line
+// where they meet and two where they don't, so it never takes in what lies between them (beside its note on a sketch
+// page, the next note's headline). Its tag at the unit's top right. The line and its glow are a picture of their own
+// (a data: URL, its mask inside it) masking the book's red, so a copy of the page (a turn's, a crumple's) draws it
+// too, with no id to find in the document.
+function edge(id, parts) {
+  const r = boxRound(parts),
+    [unit] = parts,
+    w = r.w + 2 * GLOW_PX,
+    h = r.h + 2 * GLOW_PX;
+  // (each part grown by out page px, its corners rounded to match: shown white, hidden black, in the picture's mask)
+  const grown = (out, fill) =>
+    parts
+      .map(
+        b =>
+          `<rect x="${b.x - r.x - out}" y="${b.y - r.y - out}" width="${b.w + 2 * out}" height="${b.h + 2 * out}" ` +
+          `rx="${RADIUS_PX + out - EDGE_PX}" fill="${fill}"/>`,
+      )
+      .join('');
+  const line =
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${-GLOW_PX} ${-GLOW_PX} ${w} ${h}" width="${w}" height="${h}">` +
+    `<mask id="m"><g opacity="0.18">${grown(GLOW_PX, '#fff')}</g>${grown(EDGE_PX, '#fff')}` +
+    `${grown(EDGE_PX - LINE_PX, '#000')}</mask>` +
+    `<rect x="${-GLOW_PX}" y="${-GLOW_PX}" width="${w}" height="${h}" mask="url(#m)"/></svg>`;
+  const tag = `--tag-top:${unit.y - r.y}px;--tag-right:${r.x + r.w - unit.x - unit.w}px`;
+  return (
+    `<div class="bk-for-you" data-g="${id}" style="${boxStyle(r)}" aria-hidden="true">` +
+    `<i style="left:${-GLOW_PX}px;top:${-GLOW_PX}px;width:${w}px;height:${h}px;` +
+    `--bk-edge:url('data:image/svg+xml,${encodeURIComponent(line)}')"></i>` +
+    `<b style="${tag}">for you</b></div>`
+  );
+}
+// (the edge's line, its outer side EDGE_PX off what it rings, RADIUS_PX its corners; its glow out to GLOW_PX. The
+// pulse's ring sits on the same line: bookforyou.css .bk-reached)
+const EDGE_PX = 10,
+  LINE_PX = 2,
+  RADIUS_PX = 8,
+  GLOW_PX = 14;
 
 function update(st, far) {
   const view = st.book.views[st.book.cur],
@@ -87,13 +119,13 @@ const compare = (a, b) => a.y - b.y || a.x - b.x;
 const openOn = page =>
   [...(page?.groups?.values() ?? [])].filter(g => g.forYou || g.asks?.some(a => a.status === 'open'));
 
-// The group reached ringed once, red: it waits on the board
+// The group reached ringed once, red, its unit and its cards each: it waits on the board
 function pulse(view, to) {
   const layer = view.el.querySelector(':scope > .bk-groups');
-  layer?.querySelector(':scope > .bk-reached')?.remove();
-  layer?.insertAdjacentHTML(
-    'afterbegin',
-    `<div class="bk-reached" data-g="${to.id}" data-open style="${boxStyle(to.r)}" aria-hidden="true"></div>`,
+  layer?.querySelectorAll(':scope > .bk-reached').forEach(el => el.remove());
+  const rings = boxesOf(view, to.id).map(
+    b => `<div class="bk-reached" data-g="${to.id}" data-open style="${boxStyle(b)}" aria-hidden="true"></div>`,
   );
+  layer?.insertAdjacentHTML('afterbegin', rings.join(''));
 }
 const boxStyle = r => `left:${r.x}px;top:${r.y}px;width:${r.w}px;height:${r.h}px`;

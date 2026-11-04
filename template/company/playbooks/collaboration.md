@@ -10,7 +10,8 @@ How the link and the shared workspaces are built, and why: `platform/coordinator
 - **Linking is the board's.** Our board makes an invitation in HQ (Settings › Companies) and gives it to the other
   company's board, who accepts it in their HQ. Either board unlinks there. Agents never link or unlink.
 - **One workspace per piece of work** (`hq workspace open <company> "title"`). Either company opens it. It holds
-  threads between the two companies' agents and files with every version kept. Both boards see all of it in HQ.
+  threads between the two companies' agents and files, each keeping its newest two versions whole: an older
+  version's bytes are cleared on both sides, its line in the log stays. Both boards see all of it in HQ.
 - **The executives own it.** Each company's executive (org.yaml's `company.ceo`) answers for its side: they read the
   workspace on their hourly check and bring in whoever the work needs. Anyone they bring in reads and posts with
   `hq workspace` from their own job.

@@ -1,11 +1,11 @@
 // The Notebook's paper feel: quick stationery effects that play on a copy over everything, never on the thing itself.
 // The change they show is already made underneath before they start. Each returns at once and nothing waits on one,
 // except land(): its promise holds what's landing back till it's down. None ever takes a press (bookpaper.css: the
-// layer takes none). Each is over within about a third of a second, except a crumple with its throw (three quarters
-// of a second) and a plane's flight (one second). With reduced motion each is a short crossfade. The crumple and the
-// fold are heard as they play, from booksounds.js.
-//   crumple(rect, picture): what was deleted or archived balls up and is thrown off the screen, a crunch then the
-//     ball landing out of sight
+// layer takes none). Each is over within about a third of a second, except a crumple with its fall and a plane's
+// flight (each within about a second). With reduced motion each is a short crossfade. The crumple and the fold are
+// heard as they play, from booksounds.js.
+//   crumple(rect, picture): what was deleted or archived balls up and falls straight down off the screen's foot, a
+//     crunch then the ball landing out of sight below (the Ink README, The book's frame)
 //   land(rect, picture, delay): what arrives is set down on the paper from just above, turning flat as it presses on
 //     (a promise: done once it's down, its copy gone.)
 //   fold(rect, picture, to): a page folds in half as it's shared, and goes into where it was shared (to, a box)
@@ -18,10 +18,9 @@
 import { crumpleOutline, letterStep, tornOutline } from './bookpapermath.js';
 import { heard } from './booksounds.js';
 
-// how long each takes (ms): a crumple (to the ball), its throw, a fold, a tear, a stamp, a letter's ink coming up,
-// reduced motion's crossfade, and a landing (what's landing waits on it: bookarrive.js)
+// how long each takes (ms): a crumple (to the ball; its fall takes as long as GRAVITY gives it), a fold, a tear, a
+// stamp, a letter's ink coming up, reduced motion's crossfade, and a landing (what's landing waits on it: bookarrive.js)
 const CRUMPLE_MS = 260,
-  THROW_MS = 480,
   FOLD_MS = 330,
   TEAR_MS = 260,
   STAMP_MS = 230,
@@ -30,13 +29,10 @@ const CRUMPLE_MS = 260,
   PLANE_MS = 1000;
 const FOLD_EASE = 'cubic-bezier(.4,0,.3,1)';
 export const LAND_MS = 380;
-// the ball a crumple ends as, at most this across (px). Its throw: how high it flies over where it was balled up, how
-// far below there it ends, and how far right it goes at least (px). It goes further on a wide screen, always past the
-// screen's edge.
+// the ball a crumple ends as, at most this across (px), and how fast its fall speeds up (px/s²): from the top of a
+// phone's screen to past its foot in about half a second
 const BALL_PX = 64,
-  ARC_PX = 110,
-  FALL_PX = 70,
-  ASIDE_PX = 240;
+  GRAVITY = 6000;
 // how far above the paper a landing starts (px), and its turn then at most (deg)
 const LIFT_PX = 16,
   LAND_TURN = 3;
@@ -47,13 +43,17 @@ export function crumple(rect, picture) {
   const sheet = sheetAt(rect, picture);
   sheet.classList.add('bk-fx-scrap'); // (what's deleted torn out on its bit of paper)
   if (still()) return gone(sheet, fadeOut(sheet));
-  heard('thrown', (CRUMPLE_MS + THROW_MS) / 1000);
   const seed = Math.floor(Math.random() * 2 ** 31),
     outline = t => polygon(crumpleOutline(t, seed)),
     k = Math.min(1, BALL_PX / (0.46 * Math.max(rect.width, rect.height))),
     turn = Math.random() < 0.5 ? -1 : 1,
-    total = CRUMPLE_MS + THROW_MS,
+    // (from where it's balled up to wholly past the screen's foot: a ball's size at least, for one balled up at the
+    // foot or below it, as a tile low in All pages is.)
+    drop = Math.max(BALL_PX, innerHeight - (rect.top + rect.height / 2) + BALL_PX),
+    fall = 1000 * Math.sqrt((2 * drop) / GRAVITY),
+    total = CRUMPLE_MS + fall,
     balled = CRUMPLE_MS / total;
+  heard('fell', total / 1000);
   sheet.insertAdjacentHTML('beforeend', `<svg class="bk-fx-creases" viewBox="0 0 100 100">${creases()}</svg>`);
   sheet.lastChild.animate([{ opacity: 0 }, { opacity: 1, offset: 0.5 }, { opacity: 1 }], {
     duration: CRUMPLE_MS,
@@ -62,32 +62,28 @@ export function crumple(rect, picture) {
   const ball = sheet.animate(
     [
       { clipPath: outline(0), transform: 'none', easing: 'cubic-bezier(.3,.6,.5,1)' },
-      // (each a translate, a scale and a turn, so the throw's spin turns round rather than taking the short way)
+      // (each a translate, a scale and a turn, so the fall's tumble turns round rather than taking the short way)
       {
         clipPath: outline(0.6),
         transform: `translate(0px) scale(${(1 + k) / 2}) rotate(${turn * 6}deg)`,
         offset: balled / 2,
       },
       { clipPath: outline(1), transform: `translate(0px) scale(${k}) rotate(${turn * -10}deg)`, offset: balled },
-      ...thrown(rect, { clipPath: outline(1), k, turn }, balled),
+      ...fallen({ clipPath: outline(1), k, turn, drop }, balled),
     ],
     { duration: total, fill: 'forwards' },
   );
   gone(sheet, ball);
 }
-// The ball's throw, from where it was balled up: up in an arc and down off the screen's right edge, spinning, at an
-// even pace across as a ball thrown flies (its height a parabola), fading only as it goes: the keyframes after offset
-// from (of the whole crumple)
-function thrown(rect, { clipPath, k, turn }, from) {
-  const aside = Math.max(ASIDE_PX, innerWidth - rect.left - rect.width / 2 + BALL_PX);
+// The ball's fall, from where it was balled up: straight down off the screen's foot, never aside or up, speeding up as
+// a dropped ball does (its height a parabola in time) and tumbling a little, shown all the way: the keyframes after
+// offset from (of the whole crumple)
+function fallen({ clipPath, k, turn, drop }, from) {
   return Array.from({ length: 8 }, (_, i) => {
-    const u = (i + 1) / 8,
-      x = aside * u,
-      y = FALL_PX * u - 4 * ARC_PX * u * (1 - u);
+    const u = (i + 1) / 8;
     return {
       clipPath,
-      transform: `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px) scale(${k * (1 - 0.15 * u)}) rotate(${turn * (-10 + 400 * u)}deg)`,
-      opacity: u < 0.75 ? 1 : 1 - (u - 0.75) / 0.25,
+      transform: `translate(0px, ${(drop * u * u).toFixed(1)}px) scale(${k}) rotate(${turn * (-10 + 60 * u)}deg)`,
       offset: from + (1 - from) * u,
     };
   });

@@ -244,12 +244,14 @@ test("a Pencil's four events a frame are painted once a frame, and the lift at o
   assert.equal(wet.length, Math.floor((HANDS.pen.length - 1) / 4) + 1);
 });
 
-test('a pen lifting with pressure 0 ends the line as a lift with its last pressure would', () => {
+test('a line ends where it was drawn as the pen lifted: the lift adds nothing, wherever it says it went up', () => {
   const events = HANDS.pen,
-    last = events[events.length - 2].pressure;
-  const zero = live(events).stroke,
-    kept = live([...events.slice(0, -1), { ...events[events.length - 1], pressure: last }]).stroke;
-  assert.deepEqual(zero, kept);
+    up = events.at(-1);
+  let beforeLift = null;
+  const { stroke } = live([...events.slice(0, -1), { ...up, clientX: up.clientX + 7, clientY: up.clientY - 9 }], RED, {
+    each: ({ e, stroke: drawn }) => e === events.at(-2) && (beforeLift = drawn.points),
+  });
+  assert.deepEqual(stroke.points, beforeLift);
 });
 
 test('a move whose coalesced list is empty still draws its own point', () => {

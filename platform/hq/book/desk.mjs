@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 import { onDesk as onLiveDesk } from './mouse.mjs';
 import { button, namedNotebook } from './chrome.mjs';
 import { DESKTOP, OVERVIEW, shotPixels } from './kit.mjs';
+import { press } from './bar.mjs';
 
 // the book's paper colour (paper.js --bk-paper), and how far a patch of the paper may be from it (its dots)
 const PAPER = [255, 250, 240],
@@ -184,7 +185,7 @@ async function newPage(browser, c) {
   const { page, errors, done } = await onDesk(browser, c);
   try {
     const [, n] = (await where(page)).match(/(\d+) of (\d+)$/);
-    await button(page, 'New page', true).click();
+    await press(page, 'New page');
     await button(page, new RegExp(`Untitled page, ${+n + 1} of ${+n + 1}$`)).waitFor();
     assert.match(await where(page), new RegExp(`Untitled page, ${+n + 1} of ${+n + 1}$`));
     assert.equal(await hiddenCanvases(page), 0, 'the inked page turned past holds no canvas');

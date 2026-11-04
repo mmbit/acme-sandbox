@@ -1,19 +1,21 @@
 // book-check.mjs's stories of a book's bookmarks (shell/ink/bookmarks.js), real bookmarks on the cover's edge. On My
 // journal seeded with two sketch pages, its Asks page with 128 asks open and two calls' notes pages, one stamped Sent
-// by its follow-up and one still with it, at a phone, an iPad mini upright and sideways, a phone sideways and a wide
-// desktop: the page's own alone marked as the page's own, Asks' count in its label ("Asks · 128"), all below the
-// status bar's blur, apart and clear of the book's pull tab. Beside HQ's page they stick out of the page block to the
-// left, never over the paper nor HQ's own keys, their words whole in them; on a page that is the whole screen they lie
-// folded at its left edge, their icons showing, a tap or a pull right brings them out over the margin, a tap on one
-// then opens its chapter and folds them, and a press elsewhere folds them. Each opens its chapter's first page, the bar
-// counting within it, the first call's page stamped Sent; on the overview too, where one picked scrolls it to its
-// chapter. Recorded with --shots. (A chapter with no pages and a round's guests: bookmarkchapters.mjs.) (the long
-// count, the pull tab, the fold, the blur and the chapter's pick)
+// by its follow-up and one still with it, at a phone, an iPad mini upright (its page the whole screen, and beside HQ's
+// page with the book at its least) and sideways, a phone sideways and a wide desktop: the page's own alone marked as
+// the page's own, Asks' count in its label ("Asks · 128"), all below the status bar's blur, apart and clear of the
+// book's pull tab, and lying as they will once the book lands all through its swing open. Beside HQ's page they stick
+// out of the page block to the left, never over the paper nor HQ's own keys, their words whole in them; on a page that
+// is the whole screen they lie folded at its left edge, their icons showing, a tap or a pull right brings them out over
+// the margin, a tap on one then opens its chapter and folds them, and a press elsewhere folds them. Each opens its
+// chapter's first page, the bar counting within it, the first call's page stamped Sent; on the overview too, where one
+// picked scrolls it to its chapter. Recorded with --shots. (A chapter with no pages and a round's guests:
+// bookmarkchapters.mjs.) (the long count, the pull tab, the fold, the blur and the chapter's pick)
 import assert from 'node:assert/strict';
-import { LOADED_MS, OVERVIEW, atEverySize, pressAlong, toChapter, until } from './kit.mjs';
+import { LOADED_MS, OVERVIEW, atEverySize, pressAlong, toChapter, until, whole } from './kit.mjs';
 import { blurred } from './islands.mjs';
 import { typedBoxes } from '../shell/ink/notebookparts.js';
 import { bookWide, watchedPage } from './start.mjs';
+import { BOOK } from '../shell/ink/booklayout.js';
 
 const T0 = '2026-10-29T15:00:00.000Z',
   ENDED = Date.parse('2026-10-29T16:21:00.000Z');
@@ -24,6 +26,8 @@ const touch = { hasTouch: true, isMobile: true },
 export const SIZES = {
   phone: { width: 390, height: 844, sat: SAT_PX, ...touch },
   'ipad-mini-upright': { width: 744, height: 1133, sat: SAT_PX, ...touch },
+  // (beside HQ's page, as the board leaves it with its cover's edge at its least)
+  'ipad-mini-upright-least': { width: 744, height: 1133, sat: SAT_PX, book: BOOK.min, ...touch },
   'ipad-mini-sideways': { width: 1133, height: 744, ...touch },
   'phone-sideways': { width: 844, height: 390, ...touch },
   'desktop-wide': { width: 1920, height: 1080, book: 1100, ...mouse },
@@ -89,7 +93,7 @@ export const SEED = {
 // c: book-check.mjs's hqIn, base, shot, noErrorsIn
 export function bookmarksStories(c) {
   return {
-    "the book's bookmarks: Sketch, Asks and Calls, the page's own marked, out of the page block or folded at the edge by the screen's orientation, clear of the pull tab, and a call's page under Calls stamped by its follow-up":
+    "the book's bookmarks: Sketch, Asks and Calls, the page's own marked, out of the page block beside HQ's page or folded at the edge of a page that is the whole screen, clear of the pull tab, and a call's page under Calls stamped by its follow-up":
       atEverySize(SIZES, (browser, name, size) =>
         onBook(browser, c, name, size, SEED, (p, press) => bookmarks(p, c, name, press)),
       ),
@@ -102,7 +106,7 @@ export async function onBook(browser, c, name, size, seed, walk) {
   const { book, sat, ...viewport } = size,
     { hasTouch, isMobile } = viewport,
     context = await c.hqIn(browser, viewport, { notebooks: structuredClone(seed), hasTouch, isMobile });
-  await bookWide(context, book);
+  await bookWide(context, viewport, book);
   if (sat) await blurred(context, { sat });
   const { page: p, errors } = await watchedPage(context);
   try {
@@ -121,6 +125,12 @@ export async function onBook(browser, c, name, size, seed, walk) {
 // My journal's bookmarks: placed and marked; each chapter picked, and the page after it
 async function bookmarks(p, c, name, press) {
   await p.waitForTimeout(500);
+  // (folded in once the book has landed: WebKit's fold can stall a moment under load.)
+  await until(
+    () => p.evaluate(() => !document.querySelector('#book .bk-marks').getAnimations({ subtree: true }).length),
+    `${name}: the bookmarks at rest`,
+    LOADED_MS,
+  );
   await placed(p, name);
   const asks = (await tabs(p)).find(t => t.chapter === 'asks');
   assert.deepEqual(
@@ -128,7 +138,8 @@ async function bookmarks(p, c, name, press) {
     ['Asks · 128', ' · 128', 'Asks, 128 open'],
     `${name}: Asks' open count in its label`,
   );
-  if (await isFolded(p)) await pulledOut(p, c, name, press);
+  await reopened(p, name, press);
+  if (await whole(p)) await pulledOut(p, c, name, press);
   for (const [chapter, first, where] of [
     ['sketch', 'Ideas', '1 / 2'],
     ['asks', 'Asks', '1 / 1'],
@@ -153,6 +164,27 @@ async function bookmarks(p, c, name, press) {
   assert.deepEqual([moss.where, moss.stamp], ['2 / 2', null], `${name}: with its follow-up, unstamped`);
   await marksOnOverview(p, name, press);
   await c.shot(`bookmarks-${name}-overview`, p);
+}
+
+// The book shut and opened again from its pull tab: from the swing's start the tabs lie as they will once it lands
+// (book.js's data-whole, where it's going), never as they did shut
+async function reopened(p, name, press) {
+  const open = await whole(p),
+    lip = p.locator('#book .bk-lip'),
+    rest = mode =>
+      p.waitForFunction(
+        mode =>
+          (document.documentElement.dataset.book === 'folded') === mode && !document.querySelector('#book.bk-swinging'),
+        mode,
+        { timeout: LOADED_MS },
+      );
+  await press(lip);
+  await rest(true);
+  await press(lip);
+  await p.waitForFunction(() => document.querySelector('#book.bk-swinging'), null, { timeout: LOADED_MS });
+  assert.equal(await whole(p), open, `${name}: the tabs lie as they will once open, mid-swing`);
+  await rest(false);
+  assert.equal(await whole(p), open, `${name}: the tabs lie as before, open again`);
 }
 
 // Folded at the screen's left edge: a tap on them brings them out, their words on the screen, and a press elsewhere
@@ -237,7 +269,6 @@ async function opened(p, c, hasTouch) {
   await until(async () => (await tabs(p)).length === 3, 'three bookmarks');
   await p.waitForFunction(() => !document.querySelector('#book.bk-swinging'), null, { timeout: LOADED_MS });
 }
-const isFolded = p => p.evaluate(() => matchMedia('(orientation: portrait)').matches);
 export const tabs = p =>
   p.evaluate(() =>
     [...document.querySelectorAll('#book .bk-marks button')].map(b => {
@@ -280,11 +311,11 @@ export const shown = p =>
     };
   });
 
-// Where the tabs lie, by the screen's orientation: all below the blur, apart, and clear of the book's pull tab. Upright,
+// Where the tabs lie: all below the blur, apart, and clear of the book's pull tab. On a page that is the whole screen,
 // folded at the screen's left edge, most of each past it and its icon showing. Beside HQ's page: beside().
 async function placed(p, name) {
   const t = await tabs(p),
-    folded = await isFolded(p),
+    isWhole = await whole(p),
     { height } = p.viewportSize(),
     { paper, edge, sat, lip, keys } = await p.evaluate(() => {
       const box = el => {
@@ -304,7 +335,7 @@ async function placed(p, name) {
     });
   for (const [i, a] of t.entries()) {
     assert.ok(a.box.y >= sat && a.box.bottom <= height, `${name}: ${a.chapter} below the blur (${a.box.y} by ${sat})`);
-    if (folded) {
+    if (isWhole) {
       assert.ok(
         a.box.right < a.box.width / 2,
         `${name}: ${a.chapter} folded at the screen's left edge, most of it past it (${a.box.right} px show)`,

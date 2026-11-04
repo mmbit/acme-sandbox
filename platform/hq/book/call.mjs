@@ -339,7 +339,8 @@ async function drawnAfterTheLoss(s, undo) {
   // (its shape: a line joining an open mark is kept where its element was at the mark's first line, marks.js)
   const pts = sent[1].anchor.ink[0].points,
     [dx, dy] = [0, 1].map(k => pts.at(-1)[k] - pts[0][k] - (after.at(-1)[k] - after[0][k]));
-  assert.ok(Math.hypot(dx, dy) < 2, 'the note that went is the line drawn after');
+  // (within a sample of the pointer's way: a line ends where it was drawn as the pen lifted, ink.js)
+  assert.ok(Math.hypot(dx, dy) < 7, 'the note that went is the line drawn after');
   await nothingDrawn(page, `the call hung up as a line went in${undo ? ', after an undo' : ''}`);
   if (undo)
     await page

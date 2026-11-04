@@ -16,12 +16,6 @@ export function boxOfLines(lines) {
     h: Math.max(...ys) - Math.min(...ys),
   };
 }
-// Whether an area (screen px) comes within px of lines' box: on them, or that close beside.
-export function nearLines(area, lines, px) {
-  if (!lines.length) return false;
-  const b = boxOfLines(lines);
-  return area.x < b.x + b.w + px && area.x + area.w > b.x - px && area.y < b.y + b.h + px && area.y + area.h > b.y - px;
-}
 
 // The element as it goes, in the screen's px: its HTML without form values, like the screenshot (hidden and password
 // fields are dropped, other fields lose their value, a button's value is its label, so it stays, and textareas lose

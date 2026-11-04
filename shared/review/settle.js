@@ -4,7 +4,7 @@
 // callnotes.js), and its ink lifts off the page into the book (lift.js), nothing of it left where it was (marks.js
 // paint: rule zero). On a call the note is for the call's agent, never a scrap of the notebook's by itself: its ink
 // stays where it was drawn until the agent's turn on it is done (callnotes.js held). Lines drawn while it goes in are drawn at once and make the next mark. A mark the book doesn't take stays, the board is
-// told, and it goes in with the next line. This is the one way from a mark to the book: a different flow changes it
+// told, and it goes in as the pen next lifts. This is the one way from a mark to the book: a different flow changes it
 // here.
 import { stopMic } from './dictation.js';
 import { reset } from './acts.js';
@@ -25,12 +25,14 @@ let liftedLine;
 export function setupSettle(r, { lifted }) {
   Object.assign(r, { nextLines: [], markAt: 0, nextAt: 0, settleTimer: 0, filing: null, unheard: null });
   liftedLine = lifted;
-  // the Pencil down (or a mouse on the marking veil) holds the mark open; each line it ends gives it SETTLE_MS more.
+  // the Pencil down (or a mouse on the marking veil) holds the mark open; up again, whatever it did (a line, a tap, a
+  // touch on a control of its own), it gives the mark SETTLE_MS more, so no touch leaves a call's ink for good.
   // (Down while the last mark goes in: the next mark's first line, its words heard from here.)
+  const marking = e => e.pointerType === 'pen' || !r.veil.hidden;
   addEventListener(
     'pointerdown',
     e => {
-      if (e.pointerType !== 'pen' && r.veil.hidden) return;
+      if (!marking(e)) return;
       clearTimeout(r.settleTimer);
       if (r.mode === 'idle' || r.mode === 'pick') r.markAt = performance.now();
       else if (r.mode === 'sending' && !r.nextLines.length) r.nextAt = performance.now();
@@ -38,7 +40,9 @@ export function setupSettle(r, { lifted }) {
     true,
   );
   // (only on a call: off one, a mark waits for its post-it's Save, the board's pin flow.)
-  document.addEventListener('ink:stroke', e => e.detail?.phase === 'end' && r.call && settleSoon(r));
+  const settleOnLift = e => marking(e) && r.call && settleSoon(r);
+  addEventListener('pointerup', settleOnLift, true);
+  addEventListener('pointercancel', settleOnLift, true);
 }
 export function settleSoon(r) {
   clearTimeout(r.settleTimer);
@@ -47,11 +51,12 @@ export function settleSoon(r) {
 
 // The mark into the book, then lifted into it; whether it went in. Only where there's a book: on a page without one
 // a mark has its post-it, and goes by its Send. If the book didn't take it, the mark stays,
-// the lines drawn meanwhile with it, and the board is told: the next line drawn tries again as it settles. unheard:
+// the lines drawn meanwhile with it, and the board is told: the pen lifted again tries again as it settles. unheard:
 // the mark whose last try never heard back, so it may be in the book already, with the lines that try carried and
 // when it went (callnotes.js ended)
 export function file(r) {
   if (!r.book || r.mode !== 'note' || !r.mark || !r.sheet.hidden) return;
+  if (r.mark.kind === 'circle' && !r.strokes.length) return; // (every line erased: nothing to go, until undo or the next)
   r.mode = 'sending';
   const mark = r.mark,
     tried = { mark, sent: [...r.strokes], at: r.markAt };

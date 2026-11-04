@@ -3,7 +3,7 @@ import { DAYS, MONTHS, titleCase } from '../../util.js';
 import * as world from '../../world/world.js';
 import { clockWhen } from '../../world/clock.js';
 import { word } from './bookscope.js';
-import { lineIcon } from './bookui.js';
+import { icon } from '../icons.js';
 
 // A page's title: a notebook page's own (its label, '' for one with none), or an old page's: whose sheet it is, a call's
 // (who it was with and when it started, on the company's clock: "00:34" today, "Mon 00:34" another day; just "Call"
@@ -30,6 +30,4 @@ function dateOf(day) {
 }
 // A pencil by the title wherever it can be changed: at the pages' head (booktitle.js), and in the page's own head
 // (bookunitcards.js)
-export const PENCIL = lineIcon(
-  '<path d="M4 20l1.2-4.6L15.8 4.8a2 2 0 0 1 2.8 0l.6.6a2 2 0 0 1 0 2.8L8.6 18.8z"/><path d="M14 6.6l3.4 3.4"/>',
-);
+export const PENCIL = icon('edit');

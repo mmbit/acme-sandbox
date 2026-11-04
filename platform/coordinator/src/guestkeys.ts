@@ -13,7 +13,7 @@ import { ORIGIN, PUBLIC_HOST } from './config.ts';
 import { names } from './company.ts';
 import { clientOf } from './auth.ts';
 import * as challenges from './challenges.ts';
-import { JSON_MAX, parseJson, readBody, type RouteTable } from '../../../shared/routes/routes.ts';
+import { JSON_MAX, parseJson, readBody, type RouteRequest, type RouteTable } from '../../../shared/routes/routes.ts';
 
 db.exec(`create table if not exists guest_credentials (
   id text primary key, guest text not null collate nocase, public_key blob not null,
@@ -46,18 +46,12 @@ export const routeTable = (find: FindIdentity, start: StartSession): RouteTable 
     res.writeHead(200, { 'content-type': 'text/javascript', 'cache-control': 'no-cache' });
     res.end(SCRIPT);
   },
-  '* /guest/:scope(passkeys/enroll|[\\w\\-]{43}/passkey)/:step(options|verify)': ({ req, res, params }) =>
-    passkeyStep(req, res, params.scope, params.step, find, start),
+  'POST /guest/:scope(passkeys/enroll|[\\w\\-]{43}/passkey)/:step(options|verify)': request =>
+    passkeyStep(request, find, start),
 });
-async function passkeyStep(
-  req: IncomingMessage,
-  res: ServerResponse,
-  scope: string,
-  step: string,
-  find: FindIdentity,
-  start: StartSession,
-) {
-  if (req.method !== 'POST' || req.headers.origin !== ORIGIN) return respond(res, 403, { error: 'origin' });
+async function passkeyStep({ req, res, params }: RouteRequest, find: FindIdentity, start: StartSession) {
+  const { scope, step } = params;
+  if (req.headers.origin !== ORIGIN) return respond(res, 403, { error: 'origin' });
   const enroll = scope === enrollmentScope,
     token = scope.split('/')[0];
   const before = find(req, enroll, token);

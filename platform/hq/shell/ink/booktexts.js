@@ -11,12 +11,13 @@
 import { wandered } from '/__review/tap.js';
 import { followPress } from './bookpress.js';
 import { button } from './bookui.js';
+import { icon } from '../icons.js';
 import { boxesOf } from './bookwords.js';
 import { word } from './bookscope.js';
 import { keyOf, landing } from './bookgroupmath.js';
 import { arrive } from './bookarrive.js';
 import { toward } from './bookedit.js';
-import { footOf, pointUnit } from './bookunits.js';
+import { fixed, footOf, pointUnit } from './bookunits.js';
 import { UNIT_W, WORDS_IN } from './scrapunit.js';
 
 // The words' size and line in page px (bookrender.ts TEXT), and the room round them inside the box, for the caret
@@ -40,9 +41,10 @@ export function mountTexts(book, hooks) {
     // A new box at a point of a page ({ view, x, y } in its px), the caret in it, its words wrapping before right
     place: (at, right) => place(tx, at, right),
     // Words put on a page whole, never opened for typing (pasted, dropped, heard): the first line at a point of a page
-    // as place() takes it, or the boxes' middle there (centre), wrapping at a readable width before right (page px),
-    // long words a box per run of paragraphs. One step Undo takes back. Returns the texts added.
-    put: (at, words, right, { centre = false } = {}) => put(tx, at, words, right, centre),
+    // as place() takes it, or the boxes' middle there (centre), wrapping at a readable width (spotFor), long words a
+    // box per run of paragraphs, set down as things arriving are unless there (shown there already: a voice note's).
+    // One step Undo takes back. Returns the texts added.
+    put: (at, words, { centre = false, there = false } = {}) => put(tx, at, words, centre, there),
     // A box edited, the caret at a point on screen ([clientX, clientY])
     edit: (box, at) => edit(tx, box, { at }),
     // The box being typed in kept as it is (a press elsewhere, a key)
@@ -81,14 +83,16 @@ function boxFor(tx, view, t) {
   el.classList.toggle('bk-landing', landing(view.page, t));
   // (words stacked as a note, a call's promise or review mode's general note: a post-it, as a scrap's words are.
   if (view.page.groups?.get(t.g)?.kind === 'note') el.dataset.note = '';
-  // (else its grip at its left: a press there is Select's move of it with any tool, booktools.js. Gone once with the
-  // old move (job #13071), missed by the board: call 176.)
-  else el.insertAdjacentHTML('beforeend', '<i class="bk-typed-grip" aria-hidden="true"></i>');
+  // (else its grip at its left, booktools.js: a box of words moves by its grip, with any tool; none in our scraps, which
+  // never move: README, Our scraps)
+  else if (!fixed(view.page, t.g))
+    el.insertAdjacentHTML('beforeend', '<i class="bk-typed-grip" aria-hidden="true"></i>');
   setBox(el, t);
   view.el.append(el);
   return el;
 }
-function setBox(el, t) {
+// (el: a box, its words in el.words; a voice note's words as they're heard too, bookheard.js)
+export function setBox(el, t) {
   Object.assign(el.style, {
     left: `${t.x - PAD}px`,
     top: `${t.y - PAD}px`,
@@ -108,7 +112,7 @@ function fixes(el) {
   keys.className = 'bk-typed-keys';
   const gone = button({
     label: word('keyDeleteBox'),
-    icon: svg(BIN),
+    icon: icon('bin'),
     onClick() {
       if (!el.words.isContentEditable) return;
       el.words.textContent = '';
@@ -125,9 +129,6 @@ function fixes(el) {
     });
   return keys;
 }
-const svg = body =>
-  `<svg viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${body}</svg>`;
-const BIN = '<path d="M4 6h12M8 6V4h4v2m-6 0 1 10h6l1-10"/>';
 
 // A new box at the point: its first line's middle there, wrapping before right (page px), anywhere on the endless
 // paper
@@ -310,34 +311,24 @@ const round = n => Math.round(n * 100) / 100;
 // to read back
 export const READ = 560;
 
-function put(tx, { view, x, y }, words, right, centre) {
+function put(tx, { view, x, y }, words, centre, there) {
   const page = view.page,
     color = tx.hooks.color(),
-    // Into the scrap the writing started on, or a new one, wrapped inside it (bookunits.js).
-    { g, left, edge } = inUnit(page, x, y);
-  x = Math.max(left, Math.min(centre ? x - (edge - left) / 2 : x, edge - NARROW));
-  right = edge;
-  centre = false;
-  const room = Math.max(NARROW, Math.min(READ, right - x));
-  const texts = boxesOf(words).map(text => ({ x, y, w: room, text, color, g }));
+    at = spotFor(page, { x, y }, centre);
+  const texts = boxesOf(words).map(text => ({ x: at.x, y: at.y, w: at.w, text, color, g: at.g }));
   if (!texts.length) return texts;
   tx.editing?.words.blur();
   const boxes = texts.map(t => boxFor(tx, view, t)),
-    w = Math.round(Math.min(room, Math.max(NARROW, widest(boxes[0].words, texts)))),
+    w = Math.round(Math.min(at.w, Math.max(NARROW, widest(boxes[0].words, texts)))),
     line = TEXT.size * TEXT.line;
   // (each box's height as it wraps at w, a line apart, then the stack placed)
   const heights = boxes.map((el, i) => {
     setBox(el, Object.assign(texts[i], { w }));
     return Math.max(line, el.words.offsetHeight);
   });
-  const tall = heights.reduce((sum, h) => sum + h, 0) + line * (texts.length - 1);
-  // Under what's in its scrap already, a line apart: never over another box.
-  let top = Math.max(
-    centre ? y - tall / 2 : y - line / 2,
-    footOf(page, g) + (page.texts.some(t => t.g === g) ? line / 2 : 0),
-  );
+  let top = at.y;
   texts.forEach((t, i) => {
-    Object.assign(t, { x: round(centre ? x - w / 2 : x - 2), y: round(top) });
+    t.y = round(top);
     setBox(boxes[i], t);
     top += heights[i] + line;
   });
@@ -353,8 +344,23 @@ function put(tx, { view, x, y }, words, right, centre) {
   const after = page.texts.slice();
   tx.hooks.changed(page);
   tx.book.steps.push({ page, undo: () => shown(after, before), redo: () => shown(before, after) });
-  arrive(tx.book, view, texts);
+  if (!there) arrive(tx.book, view, texts);
   return texts;
+}
+// Where words put at a point of a page go: into the scrap there (or a new one), the first line's left at the point (or
+// the scrap's middle there: centre), wrapping inside it at a readable width, under what's in the scrap already, a line
+// apart, never over another box. { g, x, y, w }: the box's scrap, its top-left and the width it wraps at (page px). A
+// voice note's words show there as they're heard (bookheard.js), so they land where they showed.
+export function spotFor(page, { x, y }, centre = false) {
+  const { g, left, edge } = inUnit(page, x, y),
+    line = TEXT.size * TEXT.line,
+    at = Math.max(left, Math.min(centre ? x - (edge - left) / 2 : x, edge - NARROW));
+  return {
+    g,
+    x: round(at - 2),
+    y: round(Math.max(y - line / 2, footOf(page, g) + (page.texts.some(t => t.g === g) ? line / 2 : 0))),
+    w: Math.max(NARROW, Math.min(READ, edge - at)),
+  };
 }
 // The scrap a box written at x, y goes to (the one there, else a new one) and the room across it for words (page px)
 function inUnit(page, x, y) {

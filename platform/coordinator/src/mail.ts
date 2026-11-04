@@ -321,7 +321,7 @@ export function room(writes: storage.Writes) {
 }
 
 // (board: HQ's Mail marks the board's own; forwarded: the job it handed one to, forward; pile, pile_by, pile_agent, handed:
-// where it's sorted and the job that has it)
+// where it's sorted and a plug-in's job that has it)
 const LIST = `select id, received, sender, recipient, subject, length(body) as length, board, (select job from mail_forwards where mail = mail.id) as forwarded,
   pile, pile_by, pile_agent, handed from mail`;
 // ---- an agent's read (hq mail): never the board's own mail, and of the rest only the kinds its agent reads by its work
@@ -443,9 +443,20 @@ export function setPile(id: number, pile: Pile, by: PileBy, agent: string | null
   if (m.pile !== pile && !quiet) for (const hook of pileHooks) try { hook({ id, pile, was: m.pile, by }); } catch (e) { console.error(`Mail #${id}: a pile hook failed:`, e); }
   return true;
 }
+// HQ's Mail: each pile's latest `perPile` (a mail with no pile yet is the board's), so a busy pile never hides another's,
+// and every pile's whole count
+export const listPiles = (perPile = 200) => db.prepare(`${LIST} where id in (select id from (select id, row_number() over
+  (partition by coalesce(pile, 'board') order by id desc) as n from mail) where n <= ?) order by id desc`).all(perPile);
+export function countPiles() {
+  const counts = Object.fromEntries(PILES.map(p => [p, 0])) as Record<Pile, number>;
+  for (const r of db.prepare("select coalesce(pile, 'board') as pile, count(*) as n from mail group by 1").all() as { pile: Pile, n: number }[])
+    counts[r.pile] = r.n;
+  return counts;
+}
 export const pileOf = (id: number) => (db.prepare('select pile, pile_by, pile_agent, handed from mail where id = ?').get(id) as
   { pile: Pile | null, pile_by: PileBy | null, pile_agent: string | null, handed: number | null } | undefined) ?? null;
-// The job a plug-in handed a mail to (an account's notices', a draft's answer's), for Mail's Team pile
+// The job a plug-in handed a mail to (an account's notices', a draft's answer's), for Mail's Team pile (one the board or
+// the sorter hands on is forwardedTo's)
 export const handed = (id: number, job: number) => void db.prepare('update mail set handed = ? where id = ?').run(job, id);
 // A stored mail as the hooks heard it, for a plug-in that takes it later (Care, when the sorter or the board puts it in
 // Customers): its From, Message-ID and thread from its raw copy while that's kept, else the envelope sender alone.
@@ -495,7 +506,6 @@ Read it with \`hq mail ${id}\`, which prints it and saves its attachments; this 
   const created = create({ agent, title: `From ${by === 'board' ? "the board's" : 'the'} mail #${id}`, prompt });
   if (!created) return [409, `nobody to hand it to: ${agent} isn't an agent in org.yaml`];
   db.prepare('insert into mail_forwards (mail, job, at) values (?, ?, ?)').run(id, created.id, new Date().toISOString());
-  handed(id, created.id);
   setPile(id, 'team', by === 'board' ? 'board' : 'model', agent);
   publish({ type: 'log', agent: roles().inbox, text: `Mail #${id}${m.board ? ' for the board' : ''}: handed to ${agent} (job #${created.id})` });
   return { job: created.id, already: false };

@@ -4,8 +4,13 @@
 // HQ counts anything newer as unread. A mark only moves forward, so a device that's behind can't bring old items back.
 import { db } from './db.ts';
 
-const LISTS = new Map<string, 'number' | 'string'>([['mail', 'number'], ['gazette.board', 'string'], ['gazette.company', 'string'],
-  ['desk', 'string'], ['intercom', 'number']]);   // (desk; intercom)
+const LISTS = new Map<string, 'number' | 'string'>([
+  ['mail', 'number'],
+  ['gazette.board', 'string'],
+  ['gazette.company', 'string'],
+  ['desk', 'string'],
+  ['intercom', 'number'],
+]); // (desk; intercom)
 db.exec('create table if not exists seen (list text primary key, newest text not null)');
 
 // { list: newest } for every list the board has read something in
@@ -22,7 +27,8 @@ function fits(type: 'number' | 'string', newest: unknown): newest is number | st
 
 // The board has seen `list` up to `newest`: the marks as they stand after it, or why not
 export function mark(list: unknown, newest: unknown) {
-  const name = String(list), type = LISTS.get(name);
+  const name = String(list),
+    type = LISTS.get(name);
   if (!type) return 'no such list';
   if (!fits(type, newest)) return `newest must be a ${type}`;
   const now = all()[name];
