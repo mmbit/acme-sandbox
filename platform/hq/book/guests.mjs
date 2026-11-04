@@ -6,6 +6,7 @@ import { createNotebook, inviteScreens, createReviewRound, openShelf, readyHQ } 
 import { artifactScrap } from './guestartifact.mjs';
 import { until as waitFor } from './kit.mjs';
 import { refusalStory } from './guestrefusals.mjs';
+import { serveWork } from './guestpath.mjs';
 import {
   readyNotebook,
   addNote,
@@ -39,7 +40,7 @@ export async function guestNotebookStories({ shots = null, webkit = true } = {})
     const invited = await invitedStory(state, board.page);
     console.log('Guest browser: invited notebook complete');
     await pairingStory(state);
-    console.log('Guest browser: device sign-in complete');
+    console.log('Guest browser: pair code complete');
     if (webkit) {
       await tabletStory(state, invited);
       console.log('Guest browser: iPad WebKit complete');
@@ -289,20 +290,30 @@ async function answerNote(state, group, text) {
   console.log('Guest browser: answer job finished');
 }
 
+// A pair code from the viewer's QR opens that page on the phone to view, never HQ and never as the board (pair.ts).
 async function pairingStory(state) {
-  const code = (await state.h.board('/api/notebooks/pair', {})).body.code;
+  const host = `hello${state.preview}`;
+  const code = (await state.h.board('/api/pair-codes', { url: `https://${host}/` })).body.code;
   const other = await openVisitor(state, { width: 390, height: 844 });
+  await serveWork(state, other.context, host);
   await other.page.goto(`${state.origin}/pair#code=${code}`);
   // (the look's logo: a day one and a night one, one shown.)
   await other.page.locator('main h1 img:visible').waitFor();
   await snapshot(state, 'device-sign-in-phone', other.page);
   assert.equal(await other.page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
   await other.page.locator('form button').click();
-  await other.page.waitForURL(state.origin + '/');
+  await other.page.waitForURL(`https://${host}/`);
   const cookies = await other.context.cookies();
-  const session = cookies.find(cookie => cookie.name === 's');
-  assert.ok(session, 'the one-time shortcut signs the second device in');
-  assert.equal((await state.h.send('/api/notebooks', { cookie: `s=${session.value}` })).status, 200);
+  assert.equal(
+    cookies.find(cookie => cookie.name === 's'),
+    undefined,
+    'the code signs no device in to HQ',
+  );
+  assert.deepEqual(
+    cookies.filter(cookie => cookie.domain === host).map(cookie => cookie.name),
+    ['ps'],
+    "the code opens its page as a view-only share, no preview key of the board's",
+  );
 }
 
 async function tabletStory(state, invited) {

@@ -4,11 +4,18 @@ import { under } from './layer.js';
 import { distance, isTap } from './tap.js';
 
 // (ownsPen, theirs and free)
-// A surface with its own pen handling owns its events. Other surfaces, wherever mounted, take HQ's pen.
+// A surface with its own pen handling (data-no-ink) owns its events, its own menus and dialogs too: there the pen draws
+// its ink and taps its menus (a notebook's). Other surfaces, wherever mounted, take HQ's pen.
+// A part of one marked data-takes-ink (a notebook's paper the board lets a call mark) is HQ's pen's again, but for the
+// menus and dialogs in it, which stay the surface's: whichever mark is nearer the touched element decides.
+const POPUP = 'dialog, [popover], [role="dialog"], [role="menu"]';
 export function ownsPen(e) {
+  let popup = false;
   for (const el of e.composedPath()) {
-    if (el.hasAttribute?.('data-no-ink')) return true;
-    if (el.matches?.('dialog, [popover], [role="dialog"], [role="menu"]')) return false;
+    if (!el.hasAttribute) continue;
+    if (el.hasAttribute('data-no-ink')) return true;
+    if (el.hasAttribute('data-takes-ink')) return popup;
+    popup ||= el.matches(POPUP);
   }
   return false;
 }

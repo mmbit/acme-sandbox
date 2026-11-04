@@ -39,8 +39,6 @@ import {
   openJob,
   bookAt,
   closeTool,
-  openLink,
-  PREVIEW,
 } from './desk.js'; // (the intercom's count; openJob; bookAt)
 import { refreshSeen, seen, onSeen } from './seen.js'; // (seen, onSeen: job #7083)
 import { registerWorker, syncPush, urgentCards } from './push.js'; // (urgentCards)
@@ -49,7 +47,6 @@ import { initProjects, openProjects, readAhead } from './projects.js'; // (readA
 import { initTalk } from './talk.js';
 import { initFinder } from './finder.js';
 import { initBook, openBook } from './ink/book.js'; // (Ink's folder)
-import { initPair } from './ink/pair.js';
 import { loadFilms } from './tipcard.js';
 
 const $ = s => document.querySelector(s);
@@ -80,7 +77,6 @@ async function boot() {
   await initBook();
   // The tutorial films load before a tip can open.
   await loadFilms();
-  initPair();
   await stage(q.get('intro') !== '0');
   initFinder();
   initPanel();
@@ -152,8 +148,6 @@ function openAsked(dev) {
     projects: () => openProjects(), // (/?open=projects: HQ at the projects view)
     // (no owner: the book as it is, opened if it's folded, left as it is if not: a call's card.)
     book: ({ owner }) => (owner ? bookAt(owner) : document.documentElement.dataset.book === 'folded' && openBook()),
-    // (/?open=viewer&url=<a preview>: that preview in the viewer, a QR from another device's viewer: viewer.js.)
-    viewer: ({ url }) => PREVIEW.test(url ?? '') && openLink(url),
   };
   navigator.serviceWorker?.addEventListener('message', e => {
     if (tools[e.data?.open]) {
@@ -163,7 +157,7 @@ function openAsked(dev) {
   });
   addEventListener('hq:open', e => openedOnCall(tools, e.detail));
   if (tools[q.get('open')]) {
-    tools[q.get('open')]({ job: q.get('job'), owner: q.get('owner'), card: q.get('card'), url: q.get('url') });
+    tools[q.get('open')]({ job: q.get('job'), owner: q.get('owner'), card: q.get('card') });
     q.delete('open');
     q.delete('job');
     q.delete('owner');

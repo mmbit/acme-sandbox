@@ -19,6 +19,7 @@ import {
   zoomWithin,
 } from './bookrow.js';
 import { MARGIN } from './masonry.js';
+import { UNIT_W } from './scrapunit.js';
 
 const view = { w: 455, h: 700, top: 0, right: 0 };
 const page = { w: 455, h: 1050 };
@@ -86,15 +87,40 @@ test('a sketch page zooms in to the most, and out past its least only as far as 
   assert.equal(zoomWithin(1.5, far, view), 1.5);
 });
 
-test('a sketch page pans down and right till only an edge of what is on it is left, never above or left of its corner', () => {
+test('a sketch page pans down till only an edge of what is on it is left, never above or left of its corner', () => {
   const box = { x: -100, y: -50, w: 1000, h: 2000, ink: [], scraps: [] },
     at1 = canvasPans(box, view, 1, 120);
-  assert.deepEqual(at1, { x0: 0, x1: 900 - 120, y0: 0, y1: 1950 - 120 });
+  assert.deepEqual(at1, { x0: 0, x1: 0, y0: 0, y1: 1950 - 120 });
   const blurred = { ...view, top: 54 },
     at2 = canvasPans(box, blurred, 2, 120);
-  assert.equal(at2.x1, 900 - 60, 'zoomed in, the edge in page px is smaller');
+  assert.equal(at2.y1, 1950 - 60, 'zoomed in, the edge in page px is smaller');
   assert.equal(at2.y0, -27, "the room above the corner, the blur's, in sight at any zoom");
   assert.equal(at2.x0, 0, 'never left of the corner');
+});
+
+// (the board: a Notebook scrolls up and down, never wiggles sideways.)
+test("a sketch page pans across only as far as it's zoomed past the paper or something on it lies past its edge", () => {
+  const blank = { w: 1200, h: 2400, ink: [], scraps: [] };
+  assert.equal(canvasPans(blank, view, 1, 120).x1, 0, "at rest: not into the page box's spare paper");
+  assert.equal(canvasPans(blank, view, 0.9, 120).x1, 0, 'zoomed out: still not');
+  assert.equal(canvasPans(blank, view, 2, 120).x1, view.w / 2, "zoomed in: across the paper's zoomed width");
+  const unit = { ...blank, places: [{ id: 1, x: 40, y: 72 }] };
+  assert.equal(canvasPans(unit, view, 1, 120).x1, 0, 'a note within the paper: no sideways pan');
+  const wide = { ...blank, places: [{ id: 1, x: 300, y: 72 }] };
+  assert.equal(canvasPans(wide, view, 1, 120).x1, 300 + UNIT_W - view.w, 'a note placed past its edge: as far as it');
+  const stroke = {
+    size: 4,
+    points: [
+      [600, 10],
+      [610, 20],
+    ],
+  };
+  assert.equal(
+    canvasPans({ ...blank, ink: [stroke] }, view, 1, 120).x1,
+    614 - view.w,
+    "a line past it: to the line's edge",
+  );
+  assert.equal(canvasPans({ ...blank, ink: null }, view, 1, 120).x1, 1200 - view.w, 'its ink not read yet: its box');
 });
 
 test('a page with ink and a scrap above and left of its corner pans as far as they reach, and no further', () => {

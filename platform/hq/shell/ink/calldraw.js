@@ -27,6 +27,10 @@
 //     the book stays shut. Hung up, the
 //     page goes in as it is and stays in My journal, and nothing on it goes to anyone (its call's follow-up hands it
 //     out), so the book offers no Send on it (bookcontrols.js). (opens)
+//   - What's drawn or written on the call's notes page itself, from any screen (the board's iPad, its guest's: the
+//     coordinator's callguests.ts), goes to the line too once it rests ({ type: 'mark', id, updated }): each of the
+//     page's units the agent didn't make, as it stands once the page has had no news for MARK_REST_MS, sent again as it
+//     changes. The line fetches it with who drew it. (marks)
 import { esc } from '../../util.js';
 import { minimise, share, shown } from '../callscreen.js';
 import { aimed } from '../calldrive.js';
@@ -42,6 +46,9 @@ const FILED_WAIT_MS = 10_000;
 // The notes page asked for again a second later, then a second more each time, at most every 5 s
 const ASK_AGAIN_MS = 1000,
   ASK_AGAIN_MOST_MS = 5000;
+// How long the call's notes page is still before what changed on it goes to the line: a pen lifted a moment, not a
+// mark still being drawn.
+const MARK_REST_MS = 1500;
 
 // From pickup: the Pencil hears the call is on, and the call hears the Pencil
 export function startDrawing(c) {
@@ -73,9 +80,11 @@ export function startDrawing(c) {
   addEventListener('pointerdown', onPen, true);
   for (const type of pen) addEventListener(type, penMoved, true);
   const unwatch = openOnFirstNote(c);
+  const unmark = relayMarks(c);
   notesPage(c);
   c.drawing = () => {
     unwatch();
+    unmark();
     document.removeEventListener('pencil:note', onNote);
     removeEventListener('pointerdown', onPen, true);
     for (const type of pen) removeEventListener(type, penMoved, true);
@@ -97,6 +106,44 @@ function openOnFirstNote(c) {
   const heard = e => onPage(e).catch(err => console.error('[hq] the call’s notes page wasn’t read:', err));
   document.addEventListener('book:notebook', heard);
   return () => document.removeEventListener('book:notebook', heard);
+}
+// The marks on the call's notes page, from any screen, to the line once they rest: the page's units now as they stand
+// (by anyone but the agent), each once per change. What's on it as the call first reads it is known already. → its
+// stop.
+function relayMarks(c) {
+  c.marks = new Map(); // unit id → { updated, sent } (sent on this connection)
+  let known = null,
+    timer = 0;
+  const read = async () => {
+    if (c.over || !c.notesPage) return;
+    const r = await fetch(`/api/notebooks/pages/groups?page=${c.notesPage.id}`, { credentials: 'same-origin' });
+    if (!r.ok) throw new Error(`the store answered ${r.status}`);
+    const units = (await r.json()).groups.filter(g => g.by !== c.agent && g.kind !== 'reply');
+    if (c.over) return;
+    const first = !known;
+    known ??= new Map();
+    for (const g of units) {
+      if (known.get(g.id) === g.updated) continue;
+      known.set(g.id, g.updated);
+      if (!first) c.marks.set(g.id, { updated: g.updated, sent: false });
+    }
+    resend(c);
+  };
+  const heard = e => {
+    if (c.over || !c.notesPage || e.detail?.page !== c.notesPage.id) return;
+    clearTimeout(timer);
+    timer = setTimeout(
+      () => read().catch(err => console.error('[hq] the call’s marks weren’t read:', err)),
+      MARK_REST_MS,
+    );
+  };
+  document.addEventListener('book:notebook', heard);
+  document.addEventListener('book:paged', heard);
+  return () => {
+    clearTimeout(timer);
+    document.removeEventListener('book:notebook', heard);
+    document.removeEventListener('book:paged', heard);
+  };
 }
 // The call's notes page, made as the call is picked up (with the page brought to it, c.brought), and the book turned to
 // it if it's open. HQ asks again while the call is on if the store wasn't reached: an ask the network dropped, or the
@@ -148,8 +195,17 @@ export function resend(c) {
       c.notes.set(id, true);
       c.ws.send(JSON.stringify({ type: 'note', id }));
     }
+  // (and the marks on its notes page.)
+  for (const [id, mark] of c.marks ?? [])
+    if (!mark.sent) {
+      mark.sent = true;
+      c.ws.send(JSON.stringify({ type: 'mark', id, updated: mark.updated }));
+    }
 }
-export const reconnected = c => c.notes?.forEach((_, id) => c.notes.set(id, false));
+export const reconnected = c => {
+  c.notes?.forEach((_, id) => c.notes.set(id, false));
+  c.marks?.forEach(mark => (mark.sent = false));
+};
 
 // What the line says about drawing in (call.js FROM_LINE)
 export const FROM_LINE = {
@@ -157,6 +213,12 @@ export const FROM_LINE = {
   note(c, ev) {
     c.notes?.delete(ev.id);
     if (ev.state === 'done' || ev.state === 'failed') event('call:had', { note: ev.id });
+  },
+  // the line has a mark (state 'received'), or couldn't read it ('failed'): not sent again (unless it changes). A mark
+  // that found the line's pictures full waits there for room.
+  mark(c, ev) {
+    if (ev.state === 'failed') console.error(`[hq] the line couldn’t take mark ${ev.id}: ${ev.why}`);
+    if (c.marks?.get(ev.id)?.updated === ev.updated) c.marks.delete(ev.id);
   },
   heard: (c, ev) => event('call:heard', { text: ev.text }),
   ask: (c, ev) => askCard(c, ev),

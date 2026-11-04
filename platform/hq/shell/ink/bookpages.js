@@ -1,5 +1,5 @@
 // The pages inside the book: one page fills the book's paper, endless (its paper and dots drawn wherever it's panned or
-// zoomed, bookview.js), its title in the bottom bar; a notebook's pages one after another in its order (My
+// zoomed, bookview.js), its title fixed on the view (bookviewhead.js.); a notebook's pages one after another in its order (My
 // Notebook's when the book opens), changed from the pages control or the overview with a turn of the leaf
 // (bookflip.js), never by panning past an edge; the pen writing, the page growing to hold what's on it, and the place
 // it was left, one for the device. A page's content is its groups (knowledge/notes/platform/notebook.md): what's drawn
@@ -24,6 +24,7 @@ import { mountTape } from './booktape.js';
 import { mountGroups } from './bookgroups.js';
 import { sendShown, stamped } from './bookpagesend.js';
 import { mountControls } from './bookcontrols.js';
+import { mountHead } from './bookviewhead.js';
 import { turn } from './bookflip.js';
 import { at, away, contentOf, draw, fitOf, halt, panTo, setView, shown, slideTo, viewOf, zoomOf } from './bookview.js';
 import { placeIn, showsBox } from './bookrow.js';
@@ -74,6 +75,7 @@ export function mountPages(paper, { dev, calls = null, shelf = null }) {
   book.groups = mountGroups(book, groupHooks(book));
   if (!scope) import('./booktear.js').then(m => m.mountTear(book)); // (a page torn off at its spine and shared)
   book.zoom = mountFar(book, paper, { goTo, openNotebook, pagesAgain }); // (the overview.)
+  book.head = mountHead(book); // (the title on the view.)
   book.controls = mountControls(book, controlsOf(book));
   // (the mouse's tools, once they're there: booktools.js)
   import('./booktools.js').then(m => (book.tools = m.mountTools(book, paper, toolHooks(book))));
@@ -303,7 +305,6 @@ function resized(book) {
     size = { w: book.desk.clientWidth, h: book.desk.clientHeight };
   if (!size.w || !size.h) return;
   book.size = { ...size, top: parseFloat(room.paddingTop), right: parseFloat(room.paddingRight) };
-  book.world.style.setProperty('--paper-w', `${Math.round(contentOf(book).w)}px`); // (a page's paper across at 100%)
   book.world.dispatchEvent(new Event('bk:paper')); // (a versions page lays its frames to it)
   if (book.waiting === undefined) return lay(book);
   const place = book.waiting;

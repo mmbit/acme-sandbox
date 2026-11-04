@@ -80,7 +80,7 @@ async function taped(browser, c, name) {
     await c.shot(`taped-${name}-scraps`, p);
     look(name, await p.evaluate(lookOf, ids[0]));
     dated(name, await p.evaluate(datesOf, ids));
-    const hands = await inputs(browser, p),
+    const hands = await inputs(p),
       kept = id => store.route('/api/notebooks/pages/groups', { page: 1 }).groups.find(g => g.id === id);
     // (a fresh device's finger draws; once the Pencil has drawn, a finger moves the page)
     for (const type of ['touch', 'pen'])
@@ -99,13 +99,18 @@ async function taped(browser, c, name) {
 }
 
 // The first of today's scraps in sight, the page panned across to it if the second's arrival slid it off (bookarrive.js:
-// an agent's scrap is slid into sight, at a narrow page's own zoom)
+// an agent's scrap is slid into sight, at a narrow page's own zoom), and down to it if it went up under the title's head
+// (out of sight there once scrolled: bookviewhead.js.)
 async function firstInSight(p, g) {
   const r = await p.locator(`#book .bk-unit[data-unit="${g}"]`).boundingBox(),
-    width = p.viewportSize().width;
-  if (r.x >= 8 && r.x + r.width <= width - 8) return;
-  await p.mouse.move(width / 2, 300);
-  await p.mouse.wheel(r.x - 24, 0);
+    width = p.viewportSize().width,
+    foot = await p.evaluate(() => document.querySelector('#book .bk-view-head').getBoundingClientRect().bottom + 16),
+    across = r.x >= 8 && r.x + r.width <= width - 8 ? 0 : r.x - 24,
+    down = r.y >= foot ? 0 : r.y - foot - 8;
+  if (!across && !down) return;
+  const desk = await p.locator('#book .bk-desk').boundingBox();
+  await p.mouse.move(desk.x + desk.width / 2, desk.y + desk.height / 2);
+  await p.mouse.wheel(across, down);
   await p.waitForTimeout(800);
 }
 // (in the page) A scrap's look: its photo, the post-it under it with its shadow, and whatever else is stacked there
@@ -150,7 +155,7 @@ function look(name, l) {
 
 // (in the page) The dates on the page past its head's, and where today's scraps are
 function datesOf(ids) {
-  const days = [...document.querySelectorAll('#book .bk-page:not([hidden]) .bk-day:not(.bk-head-day)')].map(d => {
+  const days = [...document.querySelectorAll('#book .bk-page:not([hidden]) .bk-day')].map(d => {
       const r = d.querySelector('span').getBoundingClientRect();
       return { text: d.textContent, x: r.left, top: r.top, bottom: r.bottom };
     }),

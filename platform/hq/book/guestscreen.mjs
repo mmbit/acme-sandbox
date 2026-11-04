@@ -155,7 +155,8 @@ const aroundUnits = page =>
     ];
   });
 
-// The new page after a send, untitled: its name in the bar and the pages menu, and the title field, in the guest's words
+// The new page after a send, untitled: its name in the bar and the pages menu, and the title field Rename page opens,
+// in the guest's words
 export async function untitledPage(page) {
   const untitled = await named(page, 'untitledPage');
   // (the bar's page button shows where it is, its name is in its label.)
@@ -164,9 +165,12 @@ export async function untitledPage(page) {
     untitled,
   );
   await page.locator('#book .bk-where').click();
-  const field = page.getByRole('textbox', { name: await named(page, 'pageTitle'), exact: true });
-  assert.equal(await field.getAttribute('placeholder'), untitled);
   await page.getByRole('menu', { name: await named(page, 'pages'), exact: true }).waitFor();
   assert.ok((await page.locator('#book .bk-pages-menu').innerText()).includes(untitled));
+  await page.keyboard.press('Escape');
+  await page.locator('#book .bk-more').click();
+  await page.getByRole('menuitem', { name: await named(page, 'renamePage'), exact: true }).click();
+  const field = page.getByRole('textbox', { name: await named(page, 'pageTitle'), exact: true });
+  assert.equal(await field.getAttribute('placeholder'), untitled);
   await field.press('Escape');
 }

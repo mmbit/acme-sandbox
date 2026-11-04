@@ -1,8 +1,8 @@
 // The book's wet canvases, where a line or a shape shows as it's drawn (ink.js's pen, bookshapes.js): laid in the
-// page it's drawn on, just over that page's dry ink (bookpage.js), so the live line lies where it will once dry, under
-// the page's words and its notes' parts; over it, for a see-through line (the marker's), the ink that will lie over
-// it, taken off the page's own canvases meanwhile. Both cover the paper exactly, so whatever draws on them draws in the
-// paper's px. (the Ink README, The book's frame)
+// page it's drawn on, just over that page's dry ink (bookpage.js) and in its layer (bookdesk.css), so the live line
+// lies where it will once dry, over the page's words and its notes' parts; over it, for a see-through line (the
+// marker's), the ink that will lie over it, taken off the page's own canvases meanwhile. Both cover the paper exactly,
+// so whatever draws on them draws in the paper's px. (the Ink README, The book's frame)
 import { fit } from '/__review/ink.js';
 import { shown } from './bookview.js';
 

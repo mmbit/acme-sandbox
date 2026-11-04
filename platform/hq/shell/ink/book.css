@@ -191,16 +191,17 @@
 /* the pull tab: sewn to the cover's outer edge (booklook.css draws it), hanging out of it over HQ's page and taking none
    of its width; shut, at the screen's edge. book.js puts it at the edge and moves it with the book. A dot when an
    answer waits to be read; a note that lands in the shut book shows its snip beside it for a moment (bookhandle.js).
-   Small to look at, a finger's size to the touch (::after, 44 px across at least). Which side of the edge it hangs is
+   It sticks out further than the bookmarks, a clear gap below them (bookmarks.css), and shut, far enough in from the
+   screen's edge that a drag from it is the tab's, not the iPad's own edge swipe (the board); a finger's size to the touch (::after, 44 px across at least). Which side of the edge it hangs is
    its margin, never its translate, whose lift is eased: eased, the tab flicked to the edge's other side and back as the
    book landed in a phone's spread. --bk-lip-w: its width, which its margin hangs it out by (one width). */
 #book .bk-lip {
   all: unset;
-  --bk-lip-w: 16px;
+  --bk-lip-w: 28px;
   position: fixed;
   top: calc((var(--sat, 0px) + var(--app-h, 100dvh)) / 2);
   width: var(--bk-lip-w);
-  height: 52px;
+  height: 64px;
   margin-left: calc(-1 * var(--bk-lip-w));
   translate: 0 -50%;
   border-radius: 8px 0 0 8px;
@@ -219,16 +220,8 @@
     margin-left: 12px;
   }
 }
-/* (beside HQ's page, below the bookmarks as long as their words make them: bookmarks.js's --bk-marks-h.) */
-@media (orientation: landscape) {
-  #book:not([data-mode='spread']) .bk-lip {
-    top: max(
-      calc((var(--sat, 0px) + var(--app-h, 100dvh)) / 2),
-      calc(var(--bk-marks-top, 0px) + var(--bk-marks-h, 0px) + 34px)
-    );
-  }
-}
-/* (a phone on its side: below the bookmarks, bookmarks.css) */
+/* (a phone on its side: at its foot, the bookmarks at the top below HQ's keys, bookmarks.css; beside HQ's page
+   elsewhere the bookmarks sit just above it) */
 @media (orientation: landscape) and (max-height: 520px) {
   #book:not([data-mode='spread']) .bk-lip {
     top: calc(var(--app-h, 100dvh) - 44px);
@@ -240,15 +233,15 @@
 #book .bk-lip::after {
   content: '';
   position: absolute;
-  left: -28px;
+  left: -16px;
   right: 0;
-  top: -16px;
-  bottom: -16px;
+  top: -10px;
+  bottom: -10px;
 }
 /* (hanging inward over the page, it reaches further over the page to the touch, never off the screen) */
 #book[data-mode='spread'] .bk-lip::after {
   left: 0;
-  right: -28px;
+  right: -16px;
 }
 #book .bk-lip:focus-visible {
   outline: 2px solid var(--bk-lamp);

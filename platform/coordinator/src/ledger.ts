@@ -853,12 +853,13 @@ export function sweep(now = Date.now()) {
   try { askReplies(); } catch (err) { console.error('Owed reply asks:', err); }
 }
 // A call that recorded nothing is deleted, at its hang-up (call.ts handOver) or by the sweep. Its number can come back,
-// so nothing of it may stay for the next call to find: its token, the jobs it queued, its pictures and its watch-along
-// go with it.
+// so nothing of it may stay for the next call to find: its token, the jobs it queued, its guests, its pictures and its
+// watch-along go with it.
 export function forgetCall(call: number) {
   db.prepare('delete from calls where id = ?').run(call);
   db.prepare('delete from call_tokens where call = ?').run(call);
   db.prepare('delete from call_jobs where call = ?').run(call);
+  db.prepare('delete from call_guests where call = ?').run(call);
   pictures.forgetCall(call);
   watchalong.forgetCall(call);
 }

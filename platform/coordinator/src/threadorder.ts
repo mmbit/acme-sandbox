@@ -6,13 +6,13 @@
 // planner.ts precedence (backlog.ts puts them on the queue), the worker through the claim's answer (inThread) and
 // thread-push.
 // (its messages say deliverable, the board's word for a thread)
-import { db, mergePending, prepared } from './db.ts';
+import { db, prepared } from './db.ts';
 import { ceo, type Project } from './company.ts';
 import { findProject, findThread, needsOf, type Thread } from './projects.ts';
 import * as jobs from './jobs.ts';
-import * as reviewclosure from './reviewclosure.ts';
 import type { Planned } from './eta.ts';
 import { mergeBoundaries } from './threadboundary.ts';
+import { needsReader } from './threadneedsopen.ts';
 import { waitsUntil } from './wakes.ts';
 
 // Threads with every thread they need (in the list) before them, otherwise in their order
@@ -103,11 +103,20 @@ type ThreadReading = {
   status: Thread['status'] | undefined;
   round: number | null;
 };
+// A failed task holds the tasks drawn before it ended, which counted on its work. One drawn since (the next step, a
+// failed task's redo queued without --lands) is its owner's call, made knowing it failed, as is work not drawn yet:
+// held, it would wait for a replacement that is already there. (A stopped task's redo takes its place: takeover.ts
+// stopFor.) The failed task still keeps the deliverable unfinished, and its
+// merge wakes the owner (threadends.ts). (drawnAt: when the task was drawn; null for work not drawn yet)
+function failedBefore(before: Task[], drawnAt: string | null) {
+  const countedOn = (t: Task) => drawnAt !== null && (t.finished === null || drawnAt < t.finished);
+  return before.find(t => (t.status === 'failed' || t.status === 'stopped') && countedOn(t))?.id ?? null;
+}
 // The thread's tasks and each one's waits in their turns (inTurn), read once per thread for a whole queue (the claim's,
 // the play's, a list's).
 export function reader() {
   const threads = new Map<string, ThreadReading>();
-  const openNeeds = needsReader();
+  const openNeeds = needsReader(thread => failedHold(thread));
   const of = (thread: string) => {
     if (!threads.has(thread)) {
       const tasks = tasksOf(thread),
@@ -126,38 +135,42 @@ export function reader() {
     }
     return threads.get(thread)!;
   };
+  // The failed task that holds the thread's next task to start, if one does: none of its tasks starts until its owner
+  // acts (failedWords).
+  const failedHold = (thread: string) => {
+    const { turn } = of(thread),
+      at = turn.findIndex(t => OPEN.includes(t.status));
+    return at < 0 ? null : failedBefore(turn.slice(0, at), turn[at].created);
+  };
   const waits = (id: number, thread: string): Waits => {
     const { turn, timedFrom, round } = of(thread),
       at = turn.findIndex(t => t.id === id);
     // (work not in the thread yet, hq when's: at its end, before the tasks waiting for a time)
     const before = at < 0 ? turn.slice(0, timedFrom) : turn.slice(0, at);
     const next = !before.some(t => OPEN.includes(t.status));
-    // A failed task holds the tasks drawn before it ended, which counted on its work. One drawn since (the next step, a
-    // failed task's redo queued without --lands) is its owner's call, made knowing it failed, as is work not drawn yet:
-    // held, it would wait for a replacement that is already there. (A stopped task's redo takes its place: takeover.ts
-    // stopFor.) The failed task still keeps the deliverable unfinished, and its
-    // merge wakes the owner (threadends.ts).
-    const drawnAt = at < 0 ? null : turn[at].created;
-    const countedOn = (t: Task) => drawnAt !== null && (t.finished === null || drawnAt < t.finished);
     return {
       follows: before.findLast(t => OPEN.includes(t.status))?.id ?? null,
-      failed: before.find(t => (t.status === 'failed' || t.status === 'stopped') && countedOn(t))?.id ?? null,
+      failed: failedBefore(before, at < 0 ? null : turn[at].created),
       round: next ? round : null,
       needs: next ? openNeeds(thread) : [],
     };
   };
-  return { of, waits };
+  return { of, waits, failedHold };
 }
-// Each thread's open needs read once a reading, and the branches' review states once for all of them (reading them
-// builds the redraws' relations whole).
-function needsReader() {
-  const needs = new Map<string, ReturnType<typeof needsOpen>>();
-  let statusOf: ReturnType<typeof reviewclosure.statuses> | undefined;
-  const status = (branch: string) => (statusOf ??= reviewclosure.statuses())(branch);
-  return (thread: string) => {
-    if (!needs.has(thread)) needs.set(thread, needsOpen(thread, status));
-    return needs.get(thread)!;
-  };
+// The project's open threads whose next task a failed task holds (reader's failedHold), each with that task: what's
+// drawn next chains past them (newthread.ts chainedAfter).
+export function failedHeld(project: string) {
+  const read = reader();
+  const open = prepared(
+    `select t.id from threads t where t.project = ? and t.status = 'open' and exists (select 1 from jobs j
+      where j.thread = t.id and j.kind = 'work' and j.pr is null and j.status in ('queued', 'running', 'blocked'))`,
+  ).all(project) as { id: string }[];
+  const held = new Map<string, number>();
+  for (const t of open) {
+    const failed = read.failedHold(t.id);
+    if (failed !== null) held.set(t.id, failed);
+  }
+  return held;
 }
 // The open job of the branch's open pull request that pushes to the branch: its author's fix or update, or a ruling
 // that may push touch-ups (review.ts touchupFiles)
@@ -169,45 +182,6 @@ function pushingOn(branch: string) {
   ).get(branch) as { id: number } | undefined;
   return job?.id ?? null;
 }
-// Each thread whose work is still needed, with its last task still to merge. One whose work is all pushed and whose pull
-// request is stuck holds no start: what needs it runs beside it, and merges after it only when they share files
-// (mergeorder.ts).
-function needsOpen(thread: string, status: (branch: string) => string | null) {
-  return needsOf(thread).flatMap(n => {
-    const needed = findThread(n);
-    if (!needed || needed.status === 'done') return [];
-    const last = db
-      .prepare(
-        `select j.id, j.status, j.branch from jobs j where j.thread = ? and j.kind = 'work' and j.pr is null
-        and ${mergePending('j')} order by coalesce(j.seq, j.id) desc, j.id desc limit 1`,
-      )
-      .get(needed.id) as Pick<Task, 'id' | 'status' | 'branch'> | undefined;
-    if (last && stuckAside(needed.id, last, status)) return [];
-    if (!last) {
-      const tasks = prepared(
-        "select id, status, branch from jobs where thread = ? and kind = 'work' and pr is null",
-      ).all(needed.id) as Pick<Task, 'id' | 'status' | 'branch'>[];
-      const settled = (t: (typeof tasks)[number]) =>
-        t.status === 'cancelled' ||
-        (t.status === 'done' && ['merged', 'dropped'].includes(status(jobs.workBranchOf(t)) ?? 'merged'));
-      if (tasks.length && tasks.every(settled)) return [];
-    }
-    return [{ thread: needed.id, task: last?.id ?? null }];
-  });
-}
-// The thread's last task pushed, its pull request stuck (redraws resolved, as for a settled thread above), and none of
-// its tasks still to run
-const stuckAside = (
-  thread: string,
-  last: Pick<Task, 'id' | 'status' | 'branch'>,
-  status: (branch: string) => string | null,
-) =>
-  last.status === 'done' &&
-  status(jobs.workBranchOf(last)) === 'stuck' &&
-  !prepared(
-    "select 1 from jobs where thread = ? and kind = 'work' and pr is null and status in ('queued', 'running', 'blocked')",
-  ).get(thread);
-
 // ---- the queue (backlog.ts): the edges, the branch its review is on
 
 export type Placed = {
@@ -240,9 +214,7 @@ export function placing(placeholders: Pick<Planned, 'id' | 'thread'>[] = [], row
       ...(follows !== null && { follows }),
       ...(needs.some(n => n.task !== null) && { needs: needs.flatMap(n => n.task ?? []) }),
       stalls: [
-        ...(w.failed === null
-          ? []
-          : [`task #${w.failed} before it in its deliverable failed with nothing in its place`]),
+        ...(w.failed === null ? [] : [failedWords(w.failed)]),
         ...needs
           .filter(n => n.task === null)
           .map(n => `it needs ${n.thread}, which has no work to merge: its owner draws it or closes it (hq plan)`),
@@ -259,6 +231,12 @@ export function placing(placeholders: Pick<Planned, 'id' | 'thread'>[] = [], row
     );
   return { place, waits, inOrder, branchTask };
 }
+
+// A failed task's hold, with what ends it: its owner lands its work again, or puts a task queued since in its place
+// (takeover.ts landing, stopFor).
+const failedWords = (failed: number) =>
+  `task #${failed} before it in its deliverable failed with nothing in its place: its owner lands it again ` +
+  `(hq job --lands ${failed}) or puts a queued task in its place (hq stop ${failed} "why" --for <job>)`;
 
 // A finished task's wait follows the last remaining task on its open deliverable's current branch.
 function branchCarrier(

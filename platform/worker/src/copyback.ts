@@ -34,7 +34,7 @@ export function handOut(f: Folders) {
 
 // The folders as the job sees them, each file through the coordinator's mask (a key's value becomes its name): the job's
 // copy, and the shared memory it's handed. A value written there before it was saved as a key stays in the folder (the
-// coordinator scrubs only its own database: db.ts scrub()), so it's masked on the way out, every time. The mask waits on
+// coordinator scrubs only its own database: db.ts scrub() and scrubSaved()), so it's masked on the way out, every time. The mask waits on
 // the coordinator, so each shared text is masked first and then looked up by its raw text when handOut reads it: one
 // changed in between is left out, as an unreadable one is. A folder it can't mask loses its copy, so a resumed job keeps
 // none unmasked: nothing is handed out. A copy that can't be removed throws, and the job doesn't start.

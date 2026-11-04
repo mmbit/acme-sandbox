@@ -1,15 +1,15 @@
-// The page's title, written where its name is listed: while the notebook's pages are open (bookcontrols.js), their
-// card has the page's title at its head, its field ruled like a notebook's line. Enter or a tap away saves what was written, Escape leaves the
-// title as it was (nothing sent: the title route marks what it gets as the board's), and an empty title leaves the
+// The page's title, written where it shows: Rename page in the dots menu (bookcontrols.js) turns the title on the view
+// (bookviewhead.js) into a field ruled like a notebook's line. Enter or a tap
+// away saves what was written, Escape leaves the title as it was (nothing sent: the title route marks what it gets as the board's), and an empty title leaves the
 // page Untitled page. A save that's refused says why quietly under the field, which keeps what was written: Enter or
 // a tap away tries again, Escape or a tap on the note lets it go. While a save is out, the field can't be written in.
 import { titlePage } from './notebookdata.js';
-import { PENCIL, untitledPage } from './bookhead.js';
+import { untitledPage } from './bookhead.js';
 import { word } from './bookscope.js';
 import { named, said } from './booksave.js';
 
-// name: the rail's control the pages opened from, the focus's way back; within: the pages' card, the field at its
-// head, where a tap isn't one away;
+// name: the control it opened from, the focus's way back; within: the view's head (bookviewhead.js), the field at
+// its start, where a tap isn't one away;
 // ended(): called once, as the edit ends (saved, let go, or ended from outside); a refused save keeps it, saying so.
 // Returns { page, box, field, end(keep) }: end(true) saves what was written when it changed,
 // end(false) puts the name back at once, a save still out then landing on its page alone; end resolves true once the
@@ -27,10 +27,16 @@ export function editTitle(name, book, within, ended) {
     end(e.key === 'Enter');
   });
   // (a tap away saves, and tries again after a refusal, for as long as the edit lasts, the field focused or not; the
-  // focus moved on by the keys does too. A blur to nowhere, as a Safari tap on a page's row, leaves it to the tap.)
-  // The rail's control is the pages' own: a tap on it saves as a tap away does (bookcontrols.js).
-  edit.away = e => ![box, within, name].some(el => el.contains(e.target)) && end(true);
+  // focus moved on by the keys does too. A blur to nowhere, as a Safari tap on a page's row, leaves it to the tap.
+  // A tap away on the page is only that: it draws no dot.)
+  edit.away = e => {
+    if ([box, within, name].some(el => el.contains(e.target))) return;
+    if (book.desk.contains(e.target)) e.stopPropagation();
+    end(true);
+  };
   addEventListener('pointerdown', edit.away, true);
+  // (a press on the field or its note is theirs, never the page's under them: the head is on the paper, bookviewhead.js)
+  box.addEventListener('pointerdown', e => e.stopPropagation());
   // (Escape lets it go wherever the focus is, for as long as the edit lasts: the field's own keys stop at the field)
   edit.escape = e => e.key === 'Escape' && end(false);
   addEventListener('keydown', edit.escape);
@@ -79,7 +85,7 @@ function closeEdit(edit) {
   edit.ended();
   return true;
 }
-// The field at the head of the pages' card, and its error, hidden: a tap on it lets the title go
+// The field at the start of the view's head, over the title, and its error, hidden: a tap on it lets the title go
 function mountField(within, was) {
   const box = document.createElement('span'),
     field = document.createElement('input'),
@@ -99,11 +105,7 @@ function mountField(within, was) {
     Object.assign(document.createElement('span'), { textContent: word('keepTitle') }),
   );
   error.hidden = true;
-  box.append(
-    field,
-    Object.assign(document.createElement('span'), { className: 'bk-title-pencil', innerHTML: PENCIL }),
-    error,
-  );
+  box.append(field, error);
   const fit = () => (box.dataset.value = field.value || untitledPage());
   fit();
   field.addEventListener('input', () => {

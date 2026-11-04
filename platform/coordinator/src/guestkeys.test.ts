@@ -1,15 +1,13 @@
 // node --test src/guestkeys.test.ts (real HTTP and signed authenticator responses)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createHash, generateKeyPairSync, randomBytes, sign } from 'node:crypto';
-import { isoCBOR } from '@simplewebauthn/server/helpers';
 import { harness } from './harness.ts';
 import { cookieOf } from './testdoor.ts';
+import { authenticator as passkey } from './testpasskey.ts';
 const h = await harness('guestkeys', { env: { CADDY_HOST: '127.0.0.1' } });
 const guests = await import('./guests.ts');
 const { ORIGIN, PUBLIC_HOST } = await import('./config.ts');
-const digest = (text: string | Buffer) => createHash('sha256').update(text).digest();
-const encoded = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url');
+const authenticator = () => passkey(ORIGIN, PUBLIC_HOST);
 let client = 1;
 async function visitor(name: string) {
   assert.equal(
@@ -44,70 +42,6 @@ async function visitor(name: string) {
   assert.equal(verified.status, 303);
   assert.equal((await form('verify', { code })).status, 400);
   return { name, path, post, session: cookieOf(verified), from };
-}
-function authenticator() {
-  const { publicKey, privateKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
-  const jwk = publicKey.export({ format: 'jwk' }),
-    id = randomBytes(24);
-  const cose = isoCBOR.encode(
-    new Map<number, number | Uint8Array>([
-      [1, 2],
-      [3, -7],
-      [-1, 1],
-      [-2, Buffer.from(jwk.x!, 'base64url')],
-      [-3, Buffer.from(jwk.y!, 'base64url')],
-    ]),
-  );
-  const common = {
-    id: id.toString('base64url'),
-    rawId: id.toString('base64url'),
-    type: 'public-key',
-    clientExtensionResults: {},
-  };
-  const auth = (flags: number, counter: number, host = PUBLIC_HOST) => {
-    const count = Buffer.alloc(4);
-    count.writeUInt32BE(counter);
-    return Buffer.concat([digest(host), Buffer.from([flags]), count]);
-  };
-  return {
-    register(challenge: string) {
-      const size = Buffer.alloc(2);
-      size.writeUInt16BE(id.length);
-      const authData = Buffer.concat([auth(0x45, 0), Buffer.alloc(16), size, id, cose]);
-      const attestation = isoCBOR.encode(
-        new Map<string, string | Uint8Array | Map<string, never>>([
-          ['fmt', 'none'],
-          ['attStmt', new Map<string, never>()],
-          ['authData', authData],
-        ]),
-      );
-      return {
-        ...common,
-        response: {
-          clientDataJSON: encoded({ type: 'webauthn.create', challenge, origin: ORIGIN }),
-          attestationObject: Buffer.from(attestation).toString('base64url'),
-          transports: ['internal'],
-        },
-      };
-    },
-    login(challenge: string, counter = 1, origin = ORIGIN, flags = 0x05, host = PUBLIC_HOST) {
-      const clientDataJSON = encoded({ type: 'webauthn.get', challenge, origin }),
-        authenticatorData = auth(flags, counter, host);
-      const signature = sign(
-        'sha256',
-        Buffer.concat([authenticatorData, digest(Buffer.from(clientDataJSON, 'base64url'))]),
-        privateKey,
-      );
-      return {
-        ...common,
-        response: {
-          clientDataJSON,
-          authenticatorData: authenticatorData.toString('base64url'),
-          signature: signature.toString('base64url'),
-        },
-      };
-    },
-  };
 }
 async function enroll(person: Awaited<ReturnType<typeof visitor>>, key: ReturnType<typeof authenticator>) {
   const options = await person.post('/guest/passkeys/enroll/options', {}, person.session);

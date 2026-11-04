@@ -43,9 +43,10 @@ export const zoomOf = (book, s) => {
 export function setView(book, { pan = book.pan, scale = book.scale } = {}) {
   const v = viewOf(book);
   if (!v || !book.size.w) return;
-  // (a sketch page zooms, and pans down and right, a near-endless canvas; a page of units zooms in from its masonry's
+  // (a sketch page zooms, and pans down, a near-endless canvas, and across only as far as it's zoomed or drawn past
+  // the paper; a page of units zooms in from its masonry's
   // scale and pans across it as far as it's zoomed past its width, and down. Neither above or left of its top-left,
-  // its title's corner: bookrow.js.)
+  // the corner the view's title lies over at rest: bookrow.js.)
   scale = zoomOf(book, scale);
   const zoomed = scale !== book.scale;
   book.scale = scale;
@@ -78,6 +79,7 @@ export function draw(book) {
   desk.backgroundPosition = `${-pan.x * s}px ${-pan.y * s}px`;
   book.drawn ??= drawScale(s);
   book.views.forEach((v, i) => v.show(i === book.cur ? shown(book) : null, book.drawn));
+  book.head.update(); // (the title and the day of what's showing: bookviewhead.js.)
 }
 // The book out of sight (shut past the screen's edge, book.js) or back: its pages paint nothing meanwhile, and what
 // changed is painted as it shows (bookpage.js). Back, it's on the hand, so a finger's first touch moves the page and

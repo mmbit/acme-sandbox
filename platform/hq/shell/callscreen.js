@@ -14,12 +14,14 @@ import * as world from '../world/world.js';
 import { scene, capFps, CALL_FPS, REST_FPS } from './stage.js';
 import { icon } from './icons.js';
 import { tell } from './desk.js';
+import { addGuest } from './callguest.js';
 
 const $ = s => document.querySelector(s);
 const PICTURE = icon('picture');
 const MINIMISE = icon('minimise');
 const EYE = icon('eye');
 const HANG_UP = icon('hangup');
+const GUEST = icon('person');
 // the screen's one share control, in the call's words: its words, and the short ones a phone shows (style.css)
 const SHOW = { words: 'Show my screen', short: 'Share' },
   STOP = { words: 'Stop showing', short: 'Stop' },
@@ -49,8 +51,10 @@ export function openLayer(c) {
       </div>
       <!-- pictures on a call: the strip and the attach button -->
       <ul class="pics" id="call-pics" aria-label="Pictures you showed" aria-live="polite" hidden></ul>
+      <!-- Add a guest's card: their name and address, then a QR code and link (callguest.js) -->
+      <div class="guest-card" id="call-guest-card" role="status" hidden></div>
       <!-- the board interrupts by speaking: Show my screen has the bottom row's middle, Hang up its symbol on a phone -->
-      <div class="row"><button class="mic attach" id="call-attach" title="Show a picture" aria-label="Show a picture">${PICTURE}</button><input type="file" id="call-file" accept="image/*" multiple hidden><button id="call-screenshare" aria-pressed="false" disabled>${EYE}<span>${SHOW.words}</span><span class="short">${SHOW.short}</span></button><button class="hangup" id="call-end" aria-label="Hang up">${HANG_UP}<span>Hang up</span></button></div>
+      <div class="row"><button class="mic attach" id="call-attach" title="Show a picture" aria-label="Show a picture">${PICTURE}</button><input type="file" id="call-file" accept="image/*" multiple hidden><button id="call-screenshare" aria-pressed="false" disabled>${EYE}<span>${SHOW.words}</span><span class="short">${SHOW.short}</span></button><button class="mic attach" id="call-guest" title="Add a guest" aria-label="Add a guest" disabled>${GUEST}</button><button class="hangup" id="call-end" aria-label="Hang up">${HANG_UP}<span>Hang up</span></button></div>
     </div></div>
   </div>`;
   document.querySelector('#call-layer')?.remove(); // (the last call's, still switching off: closeLayer)
@@ -65,6 +69,7 @@ export function openLayer(c) {
   });
   $('#call-min').onclick = () => minimise(c);
   $('#call-screenshare').onclick = () => showScreen(c);
+  $('#call-guest').onclick = () => addGuest(c);
   cue('open');
   capFps(CALL_FPS, 'call');
   restUnderWindow(true);

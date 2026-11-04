@@ -4,7 +4,9 @@
 // whole. Three targets come up over the paper (bookshare.js): Submit to the CEO, PDF and PNG. Let go on Submit, the
 // page goes (bookpagesend.js); on PDF or PNG the copy folds into it and the file downloads; anywhere else, it goes back
 // to the spine. Tear off and send in the bar's dots menu opens the same three as a small menu. With a call on, the
-// call's window takes it too (calldrop.js). Nothing shows at the edge till it's pulled. Its look: bookshare.css.
+// call's window takes it too (calldrop.js). The spine's middle is where a hand takes it, well clear of the screen's
+// corners; nothing shows there till a hand comes, then the page's perforation (booktearedge.js). Its look:
+// bookshare.css.
 import { foley } from '../audio.js';
 import { picture } from './bookflip.js';
 import { fold, tear } from './bookpaper.js';
@@ -13,6 +15,8 @@ import { callAbout, downloaded, filesOf, mountTargets } from './bookshare.js';
 import { askedFirst, openAsks, submit } from './bookpagesend.js';
 import { shut } from './booksave.js';
 import { button, island, islands } from './bookui.js';
+import { mountEdge } from './booktearedge.js';
+import { takePress } from './bookpress.js';
 import { icon } from '../icons.js';
 import { word } from './bookscope.js';
 import { callWindowAt, holdCallPosition, lightCall } from '../calldrop.js';
@@ -22,6 +26,10 @@ import { callWindowAt, holdCallPosition, lightCall } from '../calldrop.js';
 const PEEL_PX = 10,
   SPINE_PX = 32,
   HELD_PX = 150;
+// how far below the blur and above the screen's foot the spine takes no press, at most (an eighth of a short screen's
+// height): iPadOS takes a drag from a window's corner as its resize and one down from the top right as Control Centre,
+// so a tear starts only well clear of them
+const CORNER_PX = 88;
 
 // book: bookpages.js's. The page's right edge, by the spine, takes the press; the menu's row follows the page shown, as
 // the bar's controls do (bookcontrols.js update(): book.tear), and goes on a page already sent.
@@ -29,7 +37,8 @@ export function mountTear(book) {
   const item = button({ icon: icon('tear'), label: word('tearOff'), onClick: () => menu(spine) });
   item.classList.add('bk-tear');
   island('menu').prepend(item); // (before Archive this page)
-  const spine = { book, item, files: null, lane: islands(), at: null };
+  const leaf = book.paper.closest('.bk-leaf'),
+    spine = { book, item, files: null, lane: islands(), at: null, edge: mountEdge(leaf) };
   spine.targets = mountTargets(spine.lane, {
     act: (kind, box) => went(spine, kind, box, null),
     closed: () => backOnDots(spine),
@@ -41,7 +50,34 @@ export function mountTear(book) {
   };
   book.tear = follow;
   follow(); // (mounted late, after the first page's turn)
-  book.paper.closest('.bk-leaf').addEventListener('pointerdown', e => pressed(spine, e));
+  leaf.addEventListener('pointerdown', e => pressed(spine, e));
+  // (the Pencil or the mouse hovering at the spine: its perforation, fainter)
+  leaf.addEventListener('pointermove', e => {
+    if (e.pointerType !== 'touch' && !e.buttons) spine.edge.show(takes(spine, e), 'hover');
+  });
+  leaf.addEventListener('pointerleave', () => spine.edge.show(null, 'hover'));
+}
+
+// The stretch of the spine a hand takes the page by, on the screen: { left, right, top, bottom }, the page's right
+// edge SPINE_PX in, below the blur and clear of the screen's top and foot (CORNER_PX); null over the overview
+function grip(spine) {
+  if (spine.book.paper.closest('#book')?.hasAttribute('data-far')) return null;
+  const paper = spine.book.paper.getBoundingClientRect(),
+    right = Math.min(paper.right, innerWidth),
+    blur = spine.book.desk.getBoundingClientRect().top + spine.book.size.top,
+    corner = Math.min(CORNER_PX, innerHeight / 8);
+  return {
+    left: right - SPINE_PX,
+    right,
+    top: blur + corner,
+    bottom: Math.min(paper.bottom, innerHeight) - corner,
+  };
+}
+// The grip, where a press or a hover e is in it and on no control (on the paper and what lies on it), else null
+function takes(spine, e) {
+  const g = grip(spine);
+  if (!g || e.clientX < g.left || e.clientY < g.top || e.clientY > g.bottom) return null;
+  return e.target.closest?.('.bk-strip, .bk-bar, .bk-card, .bk-share, button, a, input, [contenteditable]') ? null : g;
 }
 
 // The page shown, or null (none yet); whether a page can be sent (a call's notes page goes as its call ends)
@@ -57,21 +93,19 @@ function menu(spine) {
   if (!v) return;
   spine.files = filesOf(spine.book, v.page);
   spine.targets.menu(sendable(v.page));
+  spine.edge.show(grip(spine), 'flash'); // (where the page tears off by hand)
 }
 
-// A press near the page's right edge, by the spine, below the blur and clear of the controls: drawn away to the left,
-// the page comes off with it, the page letting go of the press (bookwrite.js, bookpan.js: lostpointercapture); moved
-// more down than across, or let go first, it was the page's all along
+// A press in the spine's grip, clear of the controls: its perforation shows, and drawn away to the left the strip
+// beyond it gives, then the page comes off with it, the page letting go of the press (bookwrite.js, bookpan.js:
+// lostpointercapture); moved more down than across, or let go first, it was the page's all along
 function pressed(spine, down) {
   if (!down.isPrimary || (down.pointerType === 'mouse' && down.button !== 0)) return;
-  const paper = spine.book.paper.getBoundingClientRect(),
-    top = spine.book.desk.getBoundingClientRect().top + spine.book.size.top;
-  if (down.clientX < Math.min(paper.right, innerWidth) - SPINE_PX || down.clientY < top) return;
-  if (down.target.closest?.('.bk-strip, .bk-bar, .bk-card, .bk-share, button, a, input, [contenteditable]')) return;
-  if (spine.book.paper.closest('#book')?.hasAttribute('data-far')) return;
-  const v = shown(spine.book),
+  const g = takes(spine, down),
+    v = shown(spine.book),
     leaf = spine.book.paper.closest('.bk-leaf');
-  if (!v) return;
+  if (!g || !v) return;
+  spine.edge.show(g);
   let carried = null;
   // (followed on the window, by its pointer: a finger's and the Pencil's stay with the page they pressed)
   const move = e => {
@@ -80,12 +114,17 @@ function pressed(spine, down) {
       dy = e.clientY - down.clientY;
     if (!carried) {
       if (Math.abs(dy) > PEEL_PX && Math.abs(dy) > -dx) return end();
+      spine.edge.give(-dx / PEEL_PX);
       if (-dx < PEEL_PX) return;
+      spine.edge.show(null);
       try {
         leaf.setPointerCapture(down.pointerId);
       } catch {
         // (the window's moves carry it on)
       }
+      // (the press the tear's alone from here: no line, shape or pick made by it, by a finger, the Pencil or a mouse)
+      takePress(down.pointerId);
+      if (spine.book.ink.drawing) spine.book.ink.cancel();
       spine.at = { x: down.clientX, y: down.clientY };
       carried = lift(spine, v, e);
     }
@@ -99,6 +138,7 @@ function pressed(spine, down) {
     drop(spine, carried, target);
   };
   const end = () => {
+    spine.edge.show(null);
     removeEventListener('pointermove', move);
     removeEventListener('pointerup', up);
     removeEventListener('pointercancel', up);

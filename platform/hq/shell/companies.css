@@ -156,7 +156,8 @@
   margin-top: 16px;
 }
 
-/* ---- a workspace: its threads and messages */
+/* ---- a workspace: its threads to open (.co-threads, the list's rows), its files as a tree; a thread opened, its
+   messages folded */
 .co-workspace .seat-top {
   flex-wrap: wrap;
   align-items: baseline;
@@ -176,27 +177,16 @@
   border: 1px dashed var(--scr-dim);
   border-radius: var(--r-sm);
 }
-.co-thread {
-  margin: 0 0 18px;
-}
-/* (a thread's subject, not a section's cap as .crt section h3 has it) */
-.crt .co-thread h3 {
-  margin: 0 0 8px;
-  font-size: 15px;
-  font-weight: 400;
-  color: var(--scr-hi);
-  text-transform: none;
-  letter-spacing: 0;
-  border: 0;
-}
 .co-messages,
-.co-files,
 .co-versions {
   list-style: none;
   margin: 0;
   padding: 0;
   display: grid;
   gap: 10px;
+}
+.co-open-thread .co-messages {
+  margin-top: 14px;
 }
 .co-msg {
   padding: 8px 10px;
@@ -211,6 +201,12 @@
 }
 .co-msg.urgent {
   border-left-color: var(--co-urgent-line);
+}
+.co-msg.co-long {
+  cursor: pointer;
+}
+.co-msg.co-long:hover {
+  outline: 1px solid color-mix(in srgb, var(--scr) 40%, transparent);
 }
 .co-msg p {
   margin: 0;
@@ -244,61 +240,118 @@
   line-height: 1.45;
   color: var(--scr-soft);
 }
+/* a long message folded: its first two lines (long as measured at this width, workspace.js) */
+.co-msg.co-long.fold .co-text {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+.co-msg .co-more {
+  font-size: 12px;
+  color: var(--scr-hi);
+}
+.co-msg .co-more:empty {
+  display: none;
+}
 .co-msg .co-where {
   font-size: 12px;
 }
 
-/* ---- its files: each path with its versions, newest first */
-.co-files > li {
-  display: grid;
-  gap: 6px;
-  padding-bottom: 10px;
-  border-bottom: 1px dashed color-mix(in srgb, var(--scr) 18%, transparent);
+/* the files: a line each, a folder's inside indented along a guide line; a file's older versions open under it */
+.co-tree {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 14px;
 }
-.co-path {
-  font-weight: 400;
-  color: var(--scr-hi);
+.co-tree .co-tree {
+  margin-left: 6px;
+  padding-left: 12px;
+  border-left: 1px dashed color-mix(in srgb, var(--scr) 25%, transparent);
 }
-.co-versions {
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  gap: 6px 10px;
-}
-.co-versions li {
-  grid-column: 1 / -1;
-  display: grid;
-  grid-template-columns: subgrid;
-  row-gap: 4px;
+.co-file,
+.co-tree summary {
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  font-size: 13px;
+  gap: 0 10px;
+  min-height: 30px;
+  padding: 2px 4px;
+  margin: 0 -4px;
+  border-radius: var(--r-sm);
 }
-.co-v {
+.co-tree summary {
+  cursor: pointer;
+  list-style: none;
+}
+.co-file > details {
+  flex: 1 1 100%;
+  min-width: 0;
+}
+.co-tree summary::-webkit-details-marker {
+  display: none;
+}
+.co-tree summary:is(:hover, :focus-visible) {
+  background: color-mix(in srgb, var(--scr) 10%, transparent);
+}
+.co-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--scr-hi);
+  text-decoration: none;
+}
+a.co-name:is(:hover, :focus-visible) {
+  text-decoration: underline;
+}
+.co-dir > details > summary .co-name::before {
+  content: '▸\a0';
   color: var(--scr-dim);
 }
-.co-fact {
+.co-dir > details[open] > summary .co-name::before {
+  content: '▾\a0';
+}
+.co-facts {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--scr-dim);
   white-space: nowrap;
 }
-.co-vtext b {
+.co-vs::after {
+  content: '\a0▸';
+}
+.co-file details[open] .co-vs::after {
+  content: '\a0▾';
+}
+.co-versions {
+  gap: 4px;
+  margin: 2px 0 8px 12px;
+  font-size: 12px;
+  color: var(--scr-dim);
+}
+.co-versions li {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  gap: 8px;
+}
+.co-versions b {
   font-weight: 400;
+  color: var(--scr-soft);
+}
+.co-v {
   color: var(--scr-hi);
 }
 .co-note {
   display: block;
   color: var(--scr-soft);
 }
-.co-app .co-get {
-  display: inline-flex;
-  align-items: center;
-  text-decoration: none;
-}
 @container (max-width: 420px) {
-  .co-versions {
-    grid-template-columns: auto minmax(0, 1fr);
-  }
-  .co-app .co-get {
-    grid-column: 2;
-    justify-self: start;
-  }
   .co-msg.ours {
     margin-left: 12px;
+  }
+  /* (a finger's height on a phone) */
+  .co-file,
+  .co-tree summary {
+    min-height: 40px;
   }
 }

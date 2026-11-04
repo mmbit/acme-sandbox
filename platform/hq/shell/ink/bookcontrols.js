@@ -1,14 +1,15 @@
 // The page's controls on the bar along the book's foot (bookui.js lays the bar out).
 // - In its middle: the page before, where the page is in its chapter ("3 / 12") and the page after. "3 / 12" opens the
-//   notebook's pages by name, with the page's title at their head to write in.
+//   notebook's pages by name.
 // - At its right: the overview and New page. Where the page is narrow they fold into the dots menu.
-// - The dots menu: Tear off and send (booktear.js) and Archive this page (into the overview's archived pages,
-//   bookshelf.js). Then Preferences for this device (bookprefs.js), Sign in another device (pair.js) and Close.
-// The page's name is its title, drawn at its head (bookunits.js), and its control's label. The board's page goes by
+// - The dots menu: Rename page (its title written where it shows, booktitle.js), Tear off and send (booktear.js) and
+//   Archive this page (into the overview's archived pages, bookshelf.js). Then Preferences for this device
+//   (bookprefs.js).
+// The page's name is its title, fixed on the view (bookviewhead.js), and its control's label. The board's page goes by
 // tearing it off at its spine's edge onto Submit (booktear.js). Once sent it's locked: the tools go, Undo and Redo with
 // them, and on a sketch page Duplicate takes their place, a copy to carry on drawing from (bookpages.js). An invited
 // person's page goes by its Send key on the bar (bookpagesend.js), never on a page already sent or a call's notes page.
-import { button, island, setPressed, beside } from './bookui.js';
+import { button, island, setPressed, beside, moreKey } from './bookui.js';
 import { icon } from '../icons.js';
 import { mountPrefs } from './bookprefs.js';
 import { esc } from '../../util.js';
@@ -40,8 +41,8 @@ export function mountControls(book, act) {
     island('keys').append(over, add);
   }
   island('book').prepend(cog);
-  const archive = scope ? null : archiveKey(act);
-  titleTaps(book, act, name);
+  const archive = scope ? null : archiveKey(act),
+    rename = renameKey(book);
   // (the asks still open on the page, counted by its title; in a guest's book, the scraps handed to them.)
   const forYou = mountForYou(book);
   const send = scope ? sendKey(act) : null,
@@ -60,11 +61,11 @@ export function mountControls(book, act) {
       historyKeys(book, page, still);
       book.tear?.();
       if (archive) archive.hidden = far || !page;
+      rename(far, page);
+      book.head.update(); // (the view's title, after a turn or a rename.)
       before.disabled = mate(book, -1) < 0;
       after.disabled = mate(book, 1) < 0;
       name.disabled = !page;
-      // (the title being written goes when its page does, a save still out landing on its page alone)
-      if (titling && (far || titling.page !== page)) titling.end(false);
       forYou?.update(far);
       if (!page) return;
       const mates = matesOf(book);
@@ -78,12 +79,23 @@ function historyKeys(book, page, still) {
   const undoable = !!scope && !!page?.sending && book.steps.some(s => s.page === page);
   for (const b of island('history').children) b.hidden = still && !undoable;
 }
-// The page's title tapped in its head: the pages open with it to write in
-function titleTaps(book, act, name) {
-  book.paper.addEventListener(
-    'click',
-    e => e.target.closest('.bk-title-tap') && !name.disabled && menu(book, act, name, true),
-  );
+// Rename page, first of the page's rows in the dots menu (bookui.js): the title written where it shows, on the view
+// (bookviewhead.js), the focus going back to the dots as it ends. Returns update(far, page): the overview open or the
+// page shown, a sent page keeping the title it went with, and the title being written going when its page does, a save
+// still out landing on its page alone.
+function renameKey(book) {
+  const key = button({ icon: icon('edit'), label: word('renamePage'), onClick: () => renamed(book) });
+  key.classList.add('bk-rename');
+  island('menu').prepend(key);
+  return (far, page) => {
+    key.hidden = far || !page || !!(page.sent || page.sending);
+    if (titling && (far || titling.page !== page)) titling.end(false);
+  };
+}
+function renamed(book) {
+  titling ??= editTitle(moreKey(), book, book.head.el, () => (titling = null));
+  titling.field.focus({ preventScroll: true });
+  titling.field.select();
 }
 // Where the page is in its chapter on the bar ("3 / 12"), its name in the label (and the tooltip)
 function named(name, page, at, n) {
@@ -167,46 +179,39 @@ function lockLine(act) {
   };
 }
 
-// The pages of the shown page's tab by name, in order, the one shown marked; a choice turns to it once the title is
-// through. The shown page's title is written at their head meanwhile (booktitle.js): the pages close as it ends, saved,
-// let go or its page gone, and stay open on a refused save, the refusal under the field. Their control tapped again saves the title as a tap away does; write: opened from the page's
-// title, to write it in.
+// The pages of the shown page's tab by name, in order, the one shown marked; a choice turns to it. A tap away, Escape
+// or their control tapped again closes them.
 let open = null,
   titling = null;
-function menu(book, act, from, write = false) {
-  if (open) return write ? writeIn() : titling.end(true);
+function menu(book, act, from) {
+  if (open) return close();
   const card = document.createElement('div');
   card.className = 'bk-card bk-pages-menu';
   card.setAttribute('role', 'menu');
   card.setAttribute('aria-label', word('pages'));
   card.innerHTML = menuOf(book);
-  titling = editTitle(from, book, card, () => {
-    titling = null;
-    close();
-  });
   beside(card, from);
   card.addEventListener('click', e => {
     const b = e.target.closest('button');
     if (!b) return;
-    titling.end(true).then(saved => saved && act.turnTo(Number(b.dataset.i)));
+    close();
+    act.turnTo(Number(b.dataset.i));
   });
-  // (a tap away and Escape are the title's, booktitle.js: saving it or letting it go closes the pages. A tap on their
-  // control is its click's.)
+  // (a tap on their control is its click's)
+  const away = e => {
+    if (e.type === 'keydown' ? e.key === 'Escape' : !(card.contains(e.target) || from.contains(e.target))) close();
+  };
+  addEventListener('pointerdown', away, true);
+  addEventListener('keydown', away, true);
   from.setAttribute('aria-expanded', 'true');
-  open = { card, from };
-  // (a touch screen raises its keyboard over the pages for a focused field: there the shown page's row has the focus,
-  // and a tap on the title writes, unless it's the title that was tapped)
-  if (write || matchMedia('(pointer: fine)').matches) writeIn();
-  else card.querySelector('[aria-current]')?.focus({ preventScroll: true });
+  open = { card, from, away };
+  card.querySelector('[aria-current]')?.focus({ preventScroll: true });
 }
-// The title's field focused to write in, what's there chosen
-function writeIn() {
-  titling.field.focus({ preventScroll: true });
-  titling.field.select();
-}
-// The pages closed, the title left as it is
+// The pages closed
 function close() {
   if (!open) return;
+  removeEventListener('pointerdown', open.away, true);
+  removeEventListener('keydown', open.away, true);
   open.card.remove();
   open.from.setAttribute('aria-expanded', 'false');
   open = null;

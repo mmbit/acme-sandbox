@@ -2,13 +2,14 @@
 // sketch page stays where it was written as the notebook is made wider, narrower and turned, on an iPad mini with the
 // Pencil and a finger on the book's edge, on a desktop with the mouse, and on a phone turned on its side. Narrower than
 // the word reaches, the page pans sideways to it.
-// And it zooms and pans as a near-endless canvas (bookview.js): on an iPad mini two fingers pinch it out and pan it past
-// the first screen, the Pencil writes there, pinched in it writes big and sharp, a reload opens it where it was left and
+// And it zooms and pans as a near-endless canvas (bookview.js): on an iPad mini two fingers pinch it out and pan it down
+// past the first screen (across only as far as it's zoomed or drawn past the paper), the Pencil writes there beyond the first screen's width, pinched in it writes big and sharp, a reload opens it where it was left and
 // pinched out all of it shows; on a desktop a trackpad's pinch zooms about the pointer, the wheel never takes it above
 // or left of its corner, its title's, and takes it down and right, where the mouse draws (the corner).
 import assert from 'node:assert/strict';
 import { DESKTOP, MINI, UPRIGHT, until } from './kit.mjs';
 import { mini } from './start.mjs';
+import { hands } from './hands.mjs';
 import { freePage, onDesk } from './mouse.mjs';
 
 const PHONE = { width: 390, height: 844 },
@@ -64,8 +65,9 @@ export function handsOn(s, paper) {
   ];
   return { paper, x, y, fingers, apart };
 }
-// Pinched out to half, panned on right and down as far as two fingers take it, and the Pencil writing there: its
-// unit's place, past the first screen
+// Pinched out to half, two screens wide in sight, panned on down as far as two fingers take it (never sideways into
+// paper beyond what's shown), and the Pencil writing there: its unit's place,
+// past the first screen
 async function writtenFarOut(s, c, sheet, { paper, x, y, fingers, apart }) {
   await fingers(apart(160), apart(80));
   assert.ok(Math.abs((await viewNow(s.page)).s - 0.5) < 0.03, `pinched out to half: ${(await viewNow(s.page)).s}`);
@@ -82,7 +84,7 @@ async function writtenFarOut(s, c, sheet, { paper, x, y, fingers, apart }) {
     );
   const out = await viewNow(s.page);
   assert.ok(
-    out.x + paper.width / out.s > 2 * paper.width && out.y + paper.height / out.s > 2 * paper.height,
+    out.x + paper.width / out.s >= 2 * paper.width && out.y + paper.height / out.s > 2 * paper.height,
     `panned on: the paper shows a screen past the first: ${JSON.stringify(out)}`,
   );
   await zigzag(points => s.pen.stroke(points), [x + 80, y], 1);
@@ -128,20 +130,11 @@ async function reopened(s, c, before) {
 async function zoomedOnDesktop(browser, c) {
   const sheet = freePage(c),
     s = await onDesk(browser, c, { viewport: DESKTOP }),
-    cdp = await s.page.context().newCDPSession(s.page);
+    { trackpadPinch } = await hands(s.page);
   try {
     const paper = await s.page.locator('#book .bk-desk').boundingBox(),
       at = [paper.x + paper.width / 2, paper.y + paper.height / 2],
-      // (a trackpad's pinch: a wheel with Ctrl, no Ctrl key down)
-      pinch = deltaY =>
-        cdp.send('Input.dispatchMouseEvent', {
-          type: 'mouseWheel',
-          x: at[0],
-          y: at[1],
-          deltaX: 0,
-          deltaY,
-          modifiers: 2,
-        }),
+      pinch = deltaY => trackpadPinch(at, deltaY),
       from = await viewNow(s.page),
       under = pointOn(from, paper, at);
     for (let k = 0; k < 6; k++) await pinch(-20);
@@ -199,7 +192,13 @@ async function onMini(browser, c) {
     await stillAt(s.page, c, word, 'mini-wider');
     // (near as narrow as the book goes: the word past the paper's right side, the page panned to it with a finger)
     await edgeBy(s.page, 440, s.touch);
-    await panTo(s.page, word, async (from, to) => s.touch.stroke([from], [to]));
+    // (held still before the lift: no flick to glide it on past the word.)
+    await panTo(s.page, word, async (from, to) => {
+      await s.touch.down([from]);
+      await s.touch.move([to]);
+      await s.page.waitForTimeout(200);
+      await s.touch.up();
+    });
     await stillAt(s.page, c, word, 'mini-narrowest');
     await s.page.setViewportSize(UPRIGHT);
     await c.settled(s.page, 'folded');

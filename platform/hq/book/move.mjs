@@ -15,8 +15,6 @@ import { DESKTOP, MINI, pixelsIn, pressAlong, until } from './kit.mjs';
 const NEWEST = 3,
   WAVE = 9,
   SCRAP = 11;
-// the drag, in screen px: to the left, past the left edge of the wave's unit
-const BY = [-45, 0];
 
 // c: book-check.mjs's hqIn, base, settled, shot, noErrorsIn, shots
 export function moveStories(c) {
@@ -74,6 +72,7 @@ async function movesAGroup(page, play, pencil, c, name) {
   // pressed on the wave's first line only
   const [from] = await inSight(page, NEWEST, WAVE, [was.ink[0].points[1].slice(0, 2)]),
     k = await scaleOf(page),
+    by = await dragBy(page, was),
     // (the group's frame: on the units page its lines move inside their unit, which stays in its place.)
     clip = () => rectOf(page, '#book .bk-sel');
   const held = await press(page, from, pencil);
@@ -82,7 +81,7 @@ async function movesAGroup(page, play, pencil, c, name) {
     const clipWas = await clip();
     const steps = 8;
     for (let i = 1; i <= steps; i++) {
-      const at = [from[0] + (BY[0] * i) / steps, from[1] + (BY[1] * i) / steps];
+      const at = [from[0] + (by[0] * i) / steps, from[1] + (by[1] * i) / steps];
       await held.move(at);
       // every frame: the group's frame with the pointer, as far as it's come
       const now = await clip();
@@ -103,14 +102,23 @@ async function movesAGroup(page, play, pencil, c, name) {
   } finally {
     await held.up();
   }
-  const moved = await landed(page, play, { was, k, clip, clipHeld: await clip() });
+  const moved = await landed(page, play, { was, by, k, clip, clipHeld: await clip() });
   await shows(page, moved);
   await c.shot(`move-${name}-group-moved`, page);
 }
+// The drag, in screen px: to the left, the lines' left edge to halfway between their unit's left and the paper's, past
+// the unit's edge and still on the paper (a column drawn at its own size has only its margin left of it: masonry.js),
+// and 40 px down, each of its steps a drag (bookselectlift.js DRAG_PX).
+async function dragBy(page, was) {
+  const [[left]] = await onPaper(page, [[boxOf(was.ink).x0, 0]], WAVE),
+    unit = await page.locator(`#book .bk-page:not([hidden]) .bk-unit[data-unit="${WAVE}"]`).boundingBox(),
+    paper = await page.locator('#book .bk-page:not([hidden])').boundingBox();
+  return [(Math.max(0, paper.x) + unit.x) / 2 - left, 40];
+}
 // Let go: the store has every line moved by the same, and the frame where it was let go (no jump)
-async function landed(page, play, { was, k, clip, clipHeld }) {
-  const dx = BY[0] / k,
-    dy = BY[1] / k;
+async function landed(page, play, { was, by, k, clip, clipHeld }) {
+  const dx = by[0] / k,
+    dy = by[1] / k;
   const moved = await until(() => {
     const g = group(play, WAVE);
     return !near(g.ink[0].points[0], was.ink[0].points[0], 0.01) && g;

@@ -1,5 +1,5 @@
-// The book's eraser as plain numbers: cutting strokes where it passes. No DOM, so node tests it (bookstrokes.test.js);
-// bookerase.js uses it. Its shapes are bookinkmath.js's.
+// The book's eraser as plain numbers: cutting strokes where it passes, and how near two marks on a page come. No DOM,
+// so node tests it (bookstrokes.test.js); bookerase.js and bookunitfor.js use it. Its shapes are bookinkmath.js's.
 //
 // A stroke is ink.js's { color, size, alpha?, fill?, points: [[x, y, pressure, t], ...] } in its page's px.
 // (review mode's eraser reaches by the same distances)
@@ -111,6 +111,37 @@ function closer(s, a, b, r, box) {
     out.push(q);
   }
   return out;
+}
+
+// ---- how near
+
+// How far apart two marks on a page come (page px; 0 where they meet): a mark is a stroke ({ points, fill? }: its
+// line, and a filled shape's inside) or a box ({ x0, y0, x1, y1 }: typed words, a picture, all of it). A stroke's
+// box is never the stroke: a word written in a drawing's empty frame is as far from it as from its nearest line
+// (bookunitfor.js).
+export function apart(a, b) {
+  if (within(a, b) || within(b, a)) return 0;
+  let d = Infinity;
+  for (const [p, q] of piecesOf(a)) for (const [c, e] of piecesOf(b)) d = Math.min(d, segmentsApart(p, q, c, e));
+  return d;
+}
+// A mark's line as segments: a stroke's, one point a segment of none; a box's four sides
+function piecesOf(m) {
+  const pts = m.points ?? [
+    [m.x0, m.y0],
+    [m.x1, m.y0],
+    [m.x1, m.y1],
+    [m.x0, m.y1],
+    [m.x0, m.y0],
+  ];
+  return pts.length > 1 ? pts.slice(1).map((q, i) => [pts[i], q]) : [[pts[0], pts[0]]];
+}
+// Whether mark a lies wholly inside what b fills (a box, a filled shape): with no line of the two crossing, its first
+// point is in it
+function within(a, b) {
+  const [x, y] = a.points?.[0] ?? [a.x0, a.y0];
+  if (b.points) return !!b.fill && inside(b.points, [x, y]);
+  return x >= b.x0 && x <= b.x1 && y >= b.y0 && y <= b.y1;
 }
 
 // ---- geometry

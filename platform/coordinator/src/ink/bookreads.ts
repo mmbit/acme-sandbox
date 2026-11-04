@@ -4,7 +4,8 @@
 // readers (callRead).
 import { readFileSync } from 'node:fs';
 import sharp from 'sharp';
-import { db } from '../db.ts';
+import { db, scrubbed } from '../db.ts';
+import * as latency from '../latency.ts';
 import { BOARD, COLUMNS, row, summary, type Page } from './book.ts';
 import { pictureOf } from './bookpicture.ts';
 import type { Refused } from '../pagechecks.ts';
@@ -32,6 +33,7 @@ export async function getForAgent(id: number, reader: Reader) {
   if (access !== true) return access;
   const file = await pictureOf(p);
   if (!file) return 404; // (deleted while it was drawn)
+  await latency.exclude(scrubbed()); // (its call's summary read after a save's scrub: db.ts scrubSaved)
   const data = readFileSync(`${DIR}/${file}`).toString('base64');
   return { ...shownTo(p, reader), from: ownerOf(p.who), picture: { type: 'image/png', data } };
 }

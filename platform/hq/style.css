@@ -794,22 +794,47 @@ body.touring #zoom, body.touring #status, body.touring #hint { display: none; }
 .intercom .call #call-screenshare svg.icon { width: 20px; height: 20px; }
 .intercom .call #call-screenshare[aria-pressed="true"] svg.icon { color: var(--red); }
 .intercom .call #call-screenshare:disabled { opacity: .55; }
-/* (in the bottom row between the picture key and Hang up, its words always on one line. The three keys at their full
-   size need 412 px of row in Brownstone, the widest look there: a narrower call (the usual box's always is) sets them as a phone does. Set so, they
-   need 353 px in Brownstone: under it, a phone's, Hang up is its symbol and the share key says Share or Stop, all three
-   on the one row down to a 320 px screen (219 px of the 230 there in Brownstone).) */
+/* (in the bottom row between the picture key and Add a guest, its words always on one line. The four keys at their
+   full size need 475 px of row in Brownstone, the widest look there: a narrower call sets them as a phone does. Set so,
+   they need 412 px in Brownstone: under it, a phone's, Hang up is its symbol and the share key says Share or Stop, and
+   they need 278 px. Under 280 px the share key is its symbol too (its word still its name), the four keys 226 px in
+   every look: a 320 px screen has 230 px of row in Brownstone.) */
 #call-screen { container: call-keys / inline-size; }
 .intercom .call .row .short, .intercom .call .row .hangup svg.icon { display: none; }
-@container call-keys (width < 412px) {
+@container call-keys (width < 475px) {
   .intercom .call .row { gap: 8px; } .intercom .call .row button { padding: 0 14px; font-size: 16px; }
   .intercom .call #call-screenshare { padding: 0 10px; gap: 6px; }
 }
-@container call-keys (width < 353px) {
+@container call-keys (width < 412px) {
   .intercom .call #call-screenshare > span { display: none; } .intercom .call #call-screenshare > .short { display: inline; }
   .intercom .call .row .hangup { display: grid; place-items: center; width: 52px; padding: 0; }
   .intercom .call .row .hangup svg.icon { display: block; width: 24px; height: 24px; fill: currentColor; shape-rendering: var(--icons, auto); }
   .intercom .call .row .hangup > span { display: none; }
 }
+@container call-keys (width < 280px) {
+  .intercom .call .row { gap: 6px; }
+  .intercom .call #call-screenshare { justify-content: center; width: 52px; padding: 0; }
+  .intercom .call #call-screenshare > .short { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+}
+/* Add a guest (callguest.js): its key beside the share key, as the picture key looks, and its card over the transcript
+   just above the keys, which stay where they are: their name, address and language, then the QR code beside its words
+   (under them when narrow), then the link. */
+#call-screen { position: relative; }
+.intercom .call .guest-card { position: absolute; z-index: 2; left: 4px; right: 4px; bottom: calc(52px + 22px); display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;
+  padding: 12px 14px; text-align: left; font-size: 14px; line-height: 1.35; background: var(--paper); color: var(--ink); border: var(--bw) solid var(--line); border-radius: var(--r);
+  box-shadow: var(--shadow); max-height: calc(100% - 52px - 30px); overflow-y: auto; backdrop-filter: blur(8px); }
+.intercom .call .guest-card[hidden] { display: none; }
+.intercom .call .guest-card > b { flex: 1 0 100%; font-size: 15px; }
+.intercom .call .guest-card form { flex: 1 0 100%; display: grid; gap: 8px; }
+.intercom .call .guest-card label { display: grid; gap: 3px; font-size: 13px; }
+.intercom .call .guest-card :is(input, select) { min-height: 40px; padding: 0 10px; font: inherit; font-size: 16px; color: var(--ink); background: var(--cream); border: var(--bw) solid var(--line); border-radius: 8px; }
+.intercom .call .guest-card .guest-keys { display: flex; gap: 8px; flex-wrap: wrap; }
+.intercom .call .guest-card .guest-qr { flex: none; width: 140px; height: 140px; margin: 0 auto; }
+.intercom .call .guest-card .guest-qr path { fill: #000; } /* (a look's own icon colour would fade the code) */
+.intercom .call .guest-card p { flex: 1 1 150px; margin: 0; }
+.intercom .call .guest-card .guest-link { flex: 1 0 100%; font-size: 12px; overflow-wrap: anywhere; color: inherit; }
+.intercom .call .guest-card button { min-height: 40px; padding: 0 14px; font-size: 14px; border: var(--bw) solid var(--line); background: var(--cream); color: var(--ink); }
+.intercom .call .guest-card button[type=submit] { background: var(--ink); color: var(--paper); }
 .intercom .call .pics { display: flex; gap: 8px; margin: 0 0 14px; padding: 0 0 2px; list-style: none; overflow-x: auto; }
 .intercom .call .pics[hidden] { display: none; }
 .intercom .call .pics li { flex: none; width: 84px; }
@@ -1256,8 +1281,8 @@ body.keys .push-now { padding: 3px 10px 4px; border-radius: 999px; font-size: 12
   .intercom.big #call-screen .note { font-size: 20px; line-height: 1.45; }
   .intercom.big #call-screen .pics li { width: 112px; } .intercom.big #call-screen .pics .thumb { height: 84px; }
 }
-/* (its keys scaled up where their row holds them, Show my screen on one line: 530 px in Brownstone, the widest look.) */
-@container call-keys (width >= 530px) {
+/* (its keys scaled up where their row holds them, Show my screen on one line: 610 px in Brownstone, the widest look.) */
+@container call-keys (width >= 610px) {
   .intercom.big #call-screen .row { gap: 16px; }
   .intercom.big #call-screen .row button { min-height: 64px; padding: 0 30px; font-size: 22px; }
   .intercom.big #call-screen .row .attach { width: 64px; padding: 0; } .intercom.big #call-screen .attach svg.icon { width: 24px; height: 24px; }

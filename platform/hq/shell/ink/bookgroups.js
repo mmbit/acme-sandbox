@@ -52,10 +52,11 @@ export function mountGroups(book, hooks) {
   }
   const gs = { book, hooks, menu: null };
   mountShow(book); // (a scrap just saved, shown)
-  // (an answer coming on a page drawn before the scene placed the agents shows its agent's initial: their face once a
-  // look is worn, stage.js stage:look.)
+  // (an answer coming or a seen mark on a page drawn before the scene placed the agents shows its agent's initial: their
+  // face once a look is worn, stage.js stage:look.: the seen mark's)
   document.addEventListener('stage:look', () => {
-    for (const view of book.views) if ([...(view.page.groups?.values() ?? [])].some(g => g.waiting)) draw(gs, view);
+    for (const view of book.views)
+      if ([...(view.page.groups?.values() ?? [])].some(g => g.waiting || g.seen)) draw(gs, view);
   });
   return {
     added: view => layerOf(gs, view),
@@ -123,8 +124,10 @@ function draw(gs, view) {
   for (const el of layer.querySelectorAll('.bk-words, .bk-under'))
     for (const type of ['pointerdown', 'touchstart']) el.addEventListener(type, e => ownTouches(gs, e));
   if (caret) caretBack(layer, caret);
-  // What hangs under each unit is counted in its place and moved to its foot (bookunits.js).
+  // What hangs under each unit is counted in its place and moved to its foot (bookunits.js), again once the book's font
+  // is in where the words were measured in another
   view.relay?.();
+  if (document.fonts?.status === 'loading') document.fonts.ready.then(() => view.el.isConnected && view.relay?.());
   markOpen(view, layer);
   hung(gs.book, view);
   gs.book.controls?.update();

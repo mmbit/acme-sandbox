@@ -8,11 +8,12 @@
 // in every group. No island scrolls or leaves the screen, each key is 44 px to the touch, nothing pressable sits above --sat, and what's
 // written ends left of the tools. Undo, Redo and the page's keys never move. A tool's card opens left of the tools and
 // the bar's above the bar, whole. Press and slide: a press on the pen slid down to Text picks Text the moment it lifts,
-// with no hold (the mouse, and in Chromium a finger). No long press: a tool held picks it and opens nothing. Run with
+// with no hold (the mouse, and a finger). No long press: a tool held picks it and opens nothing. Run with
 // --webkit for the same in the iPad's engine. (the blur set by islands.mjs) (at rest once its slide is over)
 import assert from 'node:assert/strict';
 import { freePage } from './mouse.mjs';
-import { OVERVIEW, PREFERENCES, touchOf, until } from './kit.mjs';
+import { OVERVIEW, PREFERENCES, until } from './kit.mjs';
+import { hands } from './hands.mjs';
 import { fits } from './barfits.mjs';
 import { blurred } from './islands.mjs';
 import { watchedPage } from './start.mjs';
@@ -26,16 +27,9 @@ const SIZES = [
   { name: 'desktop-wide', viewport: { width: 1920, height: 1080 }, touch: false },
   { name: 'desktop-narrow', viewport: { width: 1920, height: 1080 }, touch: false, narrow: 420 },
 ];
-// the dots menu's rows: New page, then its own (bookui.js)
-const ROWS = [
-  'New page',
-  'Tear off and send',
-  'Archive this page',
-  PREFERENCES,
-  'Sign in another device',
-  'Tips',
-  'Close notebook',
-];
+// the dots menu's rows: New page, then its own (bookui.js), Rename page first of the page's, no Close notebook (the pull
+// tab closes the book).
+const ROWS = ['New page', 'Rename page', 'Tear off and send', 'Archive this page', PREFERENCES, 'Tips'];
 // a slide's lift picks its tool this soon (ms)
 const PICK_MS = 100;
 
@@ -71,7 +65,7 @@ async function atSize(browser, c, size) {
     await spaced(page);
     await keysStay(page, size);
     await cards(page, c, size);
-    await slides(page, size, browser);
+    await slides(page, size);
     await noHold(page);
     await menuRows(page, c, size);
     assert.deepEqual(errors, []);
@@ -256,8 +250,8 @@ async function cards(page, c, size) {
 
 // ---- the dots menu
 
-// The dots menu's rows, New page first; each row does what it says: New page, the tear's targets, the preferences, the
-// tips book, and Close notebook folding the book (last).
+// The dots menu's rows, New page first; each row does what it says: New page, the tear's targets, the preferences and
+// the tips book; and the pull tab, in reach at every size, folds the book.
 async function menuRows(page, c, size) {
   const dots = page.locator('#book .bk-more'),
     menu = page.locator('#book .bk-more-card'),
@@ -299,10 +293,10 @@ async function menuRows(page, c, size) {
     await page.keyboard.press('Escape');
     await page.locator(gone).waitFor({ state: 'detached', timeout: 10_000 });
   }
-  await picked('Close notebook');
+  await page.locator('#book .bk-lip').click();
   await until(
     () => page.evaluate(() => ['folded', 'shut'].includes(document.documentElement.dataset.book)),
-    'Close notebook folding the book',
+    'the pull tab folding the book',
   );
 }
 
@@ -321,9 +315,9 @@ async function written(page) {
 // ---- the tools picked
 
 // A press on the pen slid down the tools to Text, then let go: Text in use within PICK_MS of the lift, with no hold
-// before the slide; by the mouse everywhere, and by a finger in Chromium on a touch screen. Then a plain tap on the
+// before the slide; by the mouse everywhere, and by a finger on a touch screen. Then a plain tap on the
 // pen picks it.
-async function slides(page, size, browser) {
+async function slides(page, size) {
   const tools = page.locator('#book [data-island=tools]'),
     at = async name => {
       const b = await tools.getByRole('button', { name, exact: true }).boundingBox();
@@ -356,8 +350,8 @@ async function slides(page, size, browser) {
   // a tap picks at once
   await tools.getByRole('button', { name: 'Pen', exact: true }).click();
   await until(async () => (await pressed()) === 'Pen', 'the pen picked by a tap', 2000);
-  if (!size.touch || browser.browserType().name() !== 'chromium') return;
-  const touch = touchOf(await page.context().newCDPSession(page));
+  if (!size.touch) return;
+  const { touch } = await hands(page);
   await watch();
   await touch.down([pen]);
   // (drifting a little left of the island as it goes: the tool level with the finger)

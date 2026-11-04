@@ -76,6 +76,7 @@ type Card = {
 };
 
 // What the reader reads: the card as filed, why the board wanted the work it comes from, and the three ways on
+// (its third check, asking only what only the board can answer; its cut to no questions)
 function brief(card: Card) {
   const item = card.job === null ? undefined : carried(card.job);
   // (whole, in hq ask's --questions shape, which hq rewrite takes back)
@@ -84,12 +85,13 @@ function brief(card: Card) {
     `${card.agent} filed card #${card.id} for the board's desk phone. Every colleague's card comes to you first and waits off the desk phone until you pass it on or answer it. Read it as the board will: on a tablet, between other things, without having followed the work.`,
     `The card (${card.kind}, ${card.urgency}${card.topic ? `, under "${card.topic}"` : ''}):\n\nTitle: ${card.title}\n\n${card.body}${questions ? `\n\nIts questions, the fields the board answers in:\n${questions}` : ''}`,
     item ? goalLine(item) : '',
-    `Ask two things.
+    `Ask three things.
 1. Is it the board's to decide? Read company/CHARTER.md ("Who's who") and company/AUTHORITY.md for what this company reserves for the board. A change to what it asked for that would lose what it wanted it for also goes to it. Keys, approvals and steps only it can take are its own too. How work is done, whether it's done well enough, proof, measurements, sizes, order, and scope that still gives the board what it wanted are the owner's or yours.
-2. Does it read at once? One plain question in everyday words, as you'd ask it across a table: no names of our deliverables, tools or measures the board hasn't heard, nothing it has to decode.`,
+2. Does it read at once? One plain question in everyday words, as you'd ask it across a table: no names of our deliverables, tools or measures the board hasn't heard, nothing it has to decode.
+3. Does it ask only what it must? Every question and photo costs the board time: keep only what changes the work and only the board can answer, not what anything else can tell (a photo the author can read, their own files, how the thing is made). Photos or questions, never both for the same thing. Cut the rest.`,
     `Then one of these:
-- It's the board's and reads at once: \`hq card pass ${card.id}\`.
-- It's the board's but doesn't read at once: \`hq rewrite ${card.id} <file>\` with the card in plain words (the same choices, steps and questions, within the same limits)${questions ? `, with \`--questions <file.json>\`: its questions above in the same shape, each title, detail and option in plain words, the board's answer still meaning the same to the work waiting for it` : ''}. Then \`hq card pass ${card.id} --title "the title in plain words"\` if its title needs it too, else \`hq card pass ${card.id}\`.
+- It's the board's, reads at once and asks only what it must: \`hq card pass ${card.id}\`.
+- It's the board's but doesn't read at once or asks more than it must: \`hq rewrite ${card.id} <file>\` with the card in plain words and cut to what it must ask (the same choices and steps, its questions only those that pass 3, within the same limits)${questions ? `, with \`--questions <file.json>\`: its questions above in the same shape, each title, detail and option in plain words, the board's answers to those kept still meaning the same to the work waiting for it, or \`[]\` when none pass (its photos or text ask it all)` : ''}. Then \`hq card pass ${card.id} --title "the title in plain words"\` if its title needs it too, else \`hq card pass ${card.id}\`.
 - It isn't the board's: \`hq card settle ${card.id} <file>\`, your answer, judged from what the board wants. ${card.agent} and the work waiting for the card hear it as they would the board's, and the board never sees the card.
 Say in your report which you did and why, in a line.`,
   ]

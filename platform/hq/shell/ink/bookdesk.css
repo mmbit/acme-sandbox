@@ -46,9 +46,11 @@
   transform-origin: 0 0;
   will-change: transform;
 }
-/* (laid in the page under the pen, bookwet.js: a layer of its own, so a line's paints never paint the page again.) */
+/* (laid in the page under the pen, bookwet.js: a layer of its own, so a line's paints never paint the page again. In
+   the dry ink's layer, laid after it: the line shows over a note's picture as it's drawn, where it dries.) */
 #book .bk-wet {
   position: absolute;
+  z-index: 3;
   inset: 0;
   width: 100%;
   height: 100%;
@@ -86,8 +88,8 @@
   z-index: 3;
   pointer-events: none;
 }
-/* The send stamp at the page's head, at its right, under the title's line (bookgroups.css .bk-page-title: 22 px down,
-   26 high) and over the first units (bookunits.js TITLE_H, masonry.js MARGIN: 96 px down), where nothing is written,
+/* The send stamp at the page's head, at its right, under the view's title line at rest (.bk-view-head: 18 px below
+   the blur, 26 high) and over the first units (bookunits.js TITLE_H, masonry.js MARGIN: 96 px down), where nothing is written,
    turned whole within that room (bookpagesend.js stamped): SENT and the time, ink on the accent as the deck draws it,
    a little crooked, its ink sunk into the paper, still wet and faint while it sends. (the deck's stamp. Its top and
    its turn) */
@@ -141,20 +143,97 @@
   display: none;
 }
 
-/* ---- the page's title, written at the head of the notebook's pages (booktitle.js, bookcontrols.js): on a ruled line,
-   an error quietly under it. */
+/* ---- the page's title on the view (bookviewhead.js; README, The book's frame): at the top left of the paper's
+   content, below the status bar's blur, in the screen's px whatever the page's zoom and pan; the day of what's showing
+   under it. It takes no press, so the page under it is drawn on as anywhere. The head is a band across the paper from
+   the screen's top, under the tools' glass too, so it has no edge beside them; the words at its left end short of the
+   tools, or of the open asks' counter while that shows (bookforyou.css). */
+#book .bk-view-head {
+  --bk-head-fade: 16px;
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: calc(var(--sat, 0px) + 18px) calc(var(--bk-rail-width, 0px) + 8px) 8px 28px;
+  pointer-events: none;
+  color: var(--bk-ink, #2a2352);
+  isolation: isolate;
+}
+#book:has(.bk-for-you-count:not([hidden], .bk-turn-picture *)) .bk-view-head {
+  padding-right: calc(var(--bk-rail-width, 0px) + var(--bk-count-at) + var(--bk-count-w) + 8px);
+}
+/* While the page is scrolled with something of it under the head (data-over), the band is frosted paper, no edge of its
+   own: its foot fades out over --bk-head-fade, so what's scrolled under the words goes quietly out of sight, a scrap or
+   a date between days alike, never cut by a box; enough paper that the words read where a screen draws no blur. At
+   rest, or over bare paper, it's not there. */
+#book .bk-view-head::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 calc(-1 * var(--bk-head-fade));
+  z-index: -1;
+  background: color-mix(in srgb, var(--bk-paper) 90%, transparent);
+  -webkit-backdrop-filter: blur(14px) saturate(1.2);
+  backdrop-filter: blur(14px) saturate(1.2);
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - var(--bk-head-fade)), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - var(--bk-head-fade)), transparent);
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+#book .bk-view-head[data-over]::before {
+  opacity: 1;
+}
+/* (a date between days scrolled up to the head's foot, or heading the units whose day the head shows: out of sight on
+   the page, bookviewhead.js.) */
+#book .bk-units > .bk-day {
+  transition: opacity 0.15s;
+}
+#book .bk-units > .bk-day[data-under] {
+  opacity: 0;
+}
+#book .bk-view-head[hidden],
+#book .bk-view-day[hidden],
+#book .bk-view-head:has(> .bk-title) .bk-page-title {
+  display: none;
+}
+#book .bk-page-title {
+  max-width: 100%;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 600 20px/1.3 var(--bk-font, system-ui, sans-serif);
+  letter-spacing: 0.01em;
+}
+#book .bk-view-day {
+  margin: 6px 0 0;
+  font: 500 12px/1 var(--bk-font, system-ui, sans-serif);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--bk-muted, #8a849c);
+}
+/* The title written where it shows (Rename page: booktitle.js), on a ruled line over a patch of the paper, an error
+   quietly under it */
 #book .bk-title {
   --bk-refused: #b3261e;
-  --bk-title-h: 40px;
+  --bk-title-h: 30px;
   position: relative;
   display: block;
-  margin: 6px 6px 0;
+  max-width: 100%;
+  pointer-events: auto;
+  border-radius: 6px;
+  background: var(--bk-paper);
+  box-shadow: 0 0 0 6px var(--bk-paper);
 }
-/* (what's written, unseen, giving the box its height: the field lies over it. ::before puts it ahead of the error, so
-   the error shows below the field) */
+/* (what's written, unseen, giving the box its width and height: the field lies over it. ::before puts it ahead of the
+   error, so the error shows below the field) */
 #book .bk-title::before {
   content: attr(data-value) ' ';
   display: block;
+  min-width: 8em;
   visibility: hidden;
   white-space: pre;
   overflow: hidden;
@@ -164,67 +243,42 @@
   position: absolute;
   top: 0;
   left: 0;
-  right: 0;
-  text-align: center;
-  /* (in the card's own ink, as its rows are: the page's ink would hardly show on a dark card) */
-  color: var(--bk-ui-ink);
-  caret-color: var(--bk-ui-ink);
+  width: 100%;
+  color: var(--bk-ink);
+  caret-color: var(--bk-ink);
   cursor: text;
   /* (the line it's written on, plain enough to read as one to write on, ink while it's written on) */
-  background: linear-gradient(var(--bk-ui-muted), var(--bk-ui-muted)) no-repeat center bottom 20% / calc(100% - 20px)
-    1.5px;
+  background: linear-gradient(var(--bk-muted), var(--bk-muted)) no-repeat left bottom / 100% 1.5px;
   -webkit-tap-highlight-color: transparent;
 }
 #book .bk-title input:focus {
-  background-image: linear-gradient(var(--bk-ui-ink), var(--bk-ui-ink));
+  background-image: linear-gradient(var(--bk-ink), var(--bk-ink));
 }
 #book .bk-title input::placeholder {
-  color: var(--bk-ui-muted);
+  color: var(--bk-muted);
   opacity: 1;
 }
 #book .bk-title input[aria-invalid='true'] {
   background-image: linear-gradient(var(--bk-refused), var(--bk-refused));
 }
-/* (the field and the box it lies over in the same type; after the field's own rule, which unsets it) */
+/* (the field and the box it lies over in the title's own type; after the field's own rule, which unsets it) */
 #book .bk-title::before,
 #book .bk-title input {
   box-sizing: border-box;
   height: var(--bk-title-h);
-  padding: 0 34px;
-  font: 700 14px/var(--bk-title-h) var(--bk-font, system-ui, sans-serif);
-}
-/* 16px on a touch screen: under it iOS Safari zooms in on a focused field */
-@media (pointer: coarse) {
-  #book .bk-title::before,
-  #book .bk-title input {
-    font-size: 16px;
-  }
-}
-/* (the field's pencil, at its line's right end: the title can be changed.) */
-#book .bk-title-pencil {
-  position: absolute;
-  top: calc(var(--bk-title-h) / 2 - 9px);
-  right: 14px;
-  width: 16px;
-  height: 16px;
-  color: var(--bk-ui-muted);
-  pointer-events: none;
-}
-#book .bk-title-pencil svg {
-  display: block;
-  width: 100%;
-  height: 100%;
+  padding: 0 2px;
+  font: 600 20px/var(--bk-title-h) var(--bk-font, system-ui, sans-serif);
+  letter-spacing: 0.01em;
 }
 #book .bk-title-error {
   display: block;
-  margin-top: 4px;
+  margin-top: 8px;
   padding: 4px 10px;
   border-radius: 8px;
   background: var(--bk-paper);
   box-shadow: 0 0 0 1px var(--bk-edge);
   font-size: 12px;
   line-height: 1.3;
-  text-align: center;
   text-wrap: balance;
   color: var(--bk-refused);
   cursor: pointer;
@@ -251,11 +305,13 @@
     filter: brightness(1.05);
   }
 }
+/* (the numbers quieter than the names, in the controls' own ink, which reads on their card at 4.5:1 or more in every
+   look, dark ones too.) */
 #book .bk-where small,
 #book .bk-pages-menu small {
   font-weight: 400;
   font-variant-numeric: tabular-nums;
-  color: var(--bk-muted);
+  color: color-mix(in srgb, var(--bk-ui-muted) 65%, var(--bk-ui-ink));
 }
 #book .bk-pages-menu {
   min-width: 200px;

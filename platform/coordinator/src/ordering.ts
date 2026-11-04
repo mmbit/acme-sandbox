@@ -1,6 +1,6 @@
 // The live claim's latest starts and eligibility, from the same inputs as the plan.
 import { orderingInParts } from './backlog.ts';
-import { db } from './db.ts';
+import { db, scrubbed } from './db.ts';
 import { onPublish } from './events.ts';
 import * as latency from './latency.ts';
 import * as claimobservation from './claimobservation.ts';
@@ -125,10 +125,13 @@ async function playInTurns(now: number, newest: number) {
 }
 // The plan played (fresh), then a route's synchronous step on it: every read of the plan in that step is it while it
 // holds, and a job queued or a change published in the step (a run given up on, jobs.ts requeueAbandoned; a wake met)
-// plays it again.
+// plays it again. A save's scrub under way (db.ts scrubSaved) is waited for after the play's last turn, as the step reads
+// what an agent is given, and the plan played again after it.
 let stepOn: Kept | undefined;
 export async function withPlan<T>(step: () => T) {
-  stepOn = await latency.exclude(fresh());
+  let played = await latency.exclude(fresh());
+  while (await latency.exclude(scrubbed())) played = await latency.exclude(fresh());
+  stepOn = played;
   try {
     return step();
   } finally {

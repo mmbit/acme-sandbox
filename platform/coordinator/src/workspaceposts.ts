@@ -40,6 +40,26 @@ export function openWorkspace(company: unknown, title: unknown, by: Poster) {
   return { workspace: summaryOf(workspaceRow(id)!) };
 }
 
+// A new title for a workspace our side opened (the opening company names it), for both HQs. held: their HQ doesn't take
+// renames yet, so it shows the old title until it does (linklog.ts).
+export function renameWorkspace(given: Record<string, unknown>, by: Poster) {
+  const row = workspaceRow(Number(given.workspace));
+  if (!row) return [404, `There's no workspace #${String(given.workspace)}.`] as Refusal;
+  if (!linkOpen(row)) return [409, `${companyOf(row)} is unlinked: the workspace can be read, not changed.`] as Refusal;
+  if (!row.ours)
+    return [
+      403,
+      `${companyOf(row)} opened workspace #${row.id}, so its title is theirs to change: ask them.`,
+    ] as Refusal;
+  const title = ourWords(given.title, TITLE_MAX_CHARS, 'title', by);
+  if (Array.isArray(title)) return title;
+  const seq = inOneStep(() => {
+    db.prepare('update workspaces set title = ? where id = ?').run(title, row.id);
+    return links.record(row.link, { kind: 'title', workspace: row.uid, title, agent: by.agent, at: now() });
+  });
+  return { workspace: summaryOf(workspaceRow(row.id)!), held: seq === null };
+}
+
 // A message in a thread of the workspace, or the first of a new one (subject)
 export function post(given: Record<string, unknown>, by: Poster) {
   const row = workspaceRow(Number(given.workspace));

@@ -47,6 +47,16 @@ test('with no spot it lands in the middle of what the paper shows of the page, a
   assert.deepEqual([b.x - a.x, b.y - a.y], [28, 22]);
 });
 
+test('on a page with nothing on it yet, smaller than the paper, it lands in the middle of what the paper shows', () => {
+  // (a new page: its title's height, the paper showing it from its top)
+  const s = placeScrap(
+    { nw: 240, nh: 160 },
+    { w: 500, h: 72 },
+    { view: { x0: 0, y0: 0, x1: 500, y1: 1000 }, rand: 0.5 },
+  );
+  assert.deepEqual([s.x + s.w / 2, s.y + s.h / 2], [250, 500]);
+});
+
 test('a press finds the scrap on top, turned as it lies; a moved one keeps its middle on the page', () => {
   const flat = { x: 100, y: 100, w: 200, h: 100, tilt: 0 },
     turned = { x: 150, y: 120, w: 200, h: 100, tilt: 30 };

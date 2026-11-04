@@ -19,43 +19,29 @@ import {
   type WorkspaceRow,
 } from './workspaces.ts';
 
+type Fields = { agent: string; at: string; arrived: string };
+
 // One entry of theirs, checked as outside input: its shape, and only workspaces of this link. Their company is the
 // link's, whatever an entry says.
 export function apply(link: links.LinkRow, entry: links.Entry) {
-  const at = timeOf(entry.at),
-    arrived = now(),
-    agent = lineOf(entry.agent, 60, 'agent');
-  if (entry.kind === 'workspace') {
-    insert('workspaces', {
-      uid: uidOf(entry.uid),
-      link: link.id,
-      title: lineOf(entry.title, TITLE_MAX_CHARS, 'title'),
-      ours: 0,
-      agent,
-      at,
-      arrived,
-    });
-  } else if (entry.kind === 'thread') {
-    const workspace = theirWorkspace(link, entry.workspace);
-    insert('workspace_threads', {
-      uid: uidOf(entry.uid),
-      workspace: workspace.id,
-      subject: lineOf(entry.subject, TITLE_MAX_CHARS, 'subject'),
-      ours: 0,
-      agent,
-      at,
-      arrived,
-    });
-  } else if (entry.kind === 'message') {
-    applyMessage(link, entry, { agent, at, arrived });
-  } else if (entry.kind === 'file') {
-    applyFile(link, entry, { agent, at, arrived });
-  } else if (entry.kind === 'read') {
-    applyRead(link, entry);
-  } else throw new links.EntryError(`no entry is a "${String(entry.kind)}"`);
+  const fields = { at: timeOf(entry.at), arrived: now(), agent: lineOf(entry.agent, 60, 'agent') };
+  const kind = String(entry.kind);
+  if (!Object.hasOwn(APPLY, kind)) throw new links.EntryError(`no entry is a "${kind}"`);
+  APPLY[kind](link, entry, fields);
 }
 
-function applyMessage(link: links.LinkRow, entry: links.Entry, fields: { agent: string; at: string; arrived: string }) {
+function applyWorkspace(link: links.LinkRow, entry: links.Entry, fields: Fields) {
+  const title = lineOf(entry.title, TITLE_MAX_CHARS, 'title');
+  insert('workspaces', { uid: uidOf(entry.uid), link: link.id, title, ours: 0, ...fields });
+}
+
+function applyThread(link: links.LinkRow, entry: links.Entry, fields: Fields) {
+  const workspace = theirWorkspace(link, entry.workspace);
+  const subject = lineOf(entry.subject, TITLE_MAX_CHARS, 'subject');
+  insert('workspace_threads', { uid: uidOf(entry.uid), workspace: workspace.id, subject, ours: 0, ...fields });
+}
+
+function applyMessage(link: links.LinkRow, entry: links.Entry, fields: Fields) {
   const thread = db
     .prepare(
       'select t.* from workspace_threads t join workspaces w on w.id = t.workspace where t.uid = ? and w.link = ?',
@@ -87,7 +73,7 @@ const waking = (link: links.LinkRow) =>
     )
     .get(link.id);
 
-function applyFile(link: links.LinkRow, entry: links.Entry, fields: { agent: string; at: string; arrived: string }) {
+function applyFile(link: links.LinkRow, entry: links.Entry, fields: Fields) {
   const workspace = theirWorkspace(link, entry.workspace);
   const path = pathOf(entry.path);
   if (!path) throw new links.EntryError('a file’s path leaves its workspace');
@@ -120,6 +106,26 @@ function applyRead(link: links.LinkRow, entry: links.Entry) {
       and thread in (select t.id from workspace_threads t join workspaces w on w.id = t.workspace where w.link = ?)`,
     ).run(at, lineOf(entry.agent, 60, 'agent'), String(uid), link.id);
 }
+
+// A new title for a workspace they opened: only the opening company renames one
+function applyTitle(link: links.LinkRow, entry: links.Entry) {
+  const workspace = theirWorkspace(link, entry.workspace);
+  if (workspace.ours) throw new links.EntryError('a title names a workspace we opened');
+  const title = lineOf(entry.title, TITLE_MAX_CHARS, 'title');
+  db.prepare('update workspaces set title = ? where id = ?').run(title, workspace.id);
+}
+
+// Each kind of entry we take, and what it does here. The kinds go back in every answer to a push, so their HQ holds
+// back one we don't take (linklog.ts).
+const APPLY: Record<string, (link: links.LinkRow, entry: links.Entry, fields: Fields) => void> = {
+  workspace: applyWorkspace,
+  thread: applyThread,
+  message: applyMessage,
+  file: applyFile,
+  read: applyRead,
+  title: applyTitle,
+};
+export const TAKES = Object.keys(APPLY);
 
 // An urgent message of theirs, for our executive now: its running session at the next step, else a job of its own. Each
 // is one line of JSON, an envelope their text can't close (outsidewords.ts PARTNER).

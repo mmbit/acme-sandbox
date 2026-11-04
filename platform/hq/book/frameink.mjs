@@ -4,7 +4,8 @@
 // ('call:had'), and hung up, any left goes. Off a call the artifact's pin flow is as it was: the post-it opens.
 import assert from 'node:assert/strict';
 import { fulfilPart } from '../../../shared/review/parts.mjs';
-import { DESKTOP, chromiumPen, until } from './kit.mjs';
+import { DESKTOP, until } from './kit.mjs';
+import { hands } from './hands.mjs';
 import { watchedPage } from './start.mjs';
 
 const ARTIFACT = 'https://shop.preview.test';
@@ -75,16 +76,16 @@ async function opened(c, context) {
   const frame = await (await page.$('#viewer iframe')).contentFrame();
   await frame.waitForSelector('review-mode .fab', { state: 'attached' });
   await page.waitForTimeout(1500); // (its hello answered: desk.js ASK_MS)
-  // (Chromium's own Pencil, its points in the artifact's px: the veil it draws on holds the pen as a real one does)
+  // (the Pencil, its points in the artifact's px: the veil it draws on holds the pen as a real one does)
   const box = await page.locator('#viewer iframe').boundingBox(),
-    cdp = chromiumPen(await context.newCDPSession(page));
+    { pen } = await hands(page, { frame });
   return {
     page,
     frame,
     scraps,
     errors,
     tell,
-    draw: points => cdp.stroke(points.map(([x, y]) => [box.x + x, box.y + y])),
+    draw: points => pen.stroke(points.map(([x, y]) => [box.x + x, box.y + y])),
     sheetShown: () =>
       frame.evaluate(() => !document.querySelector('review-mode').shadowRoot.querySelector('.sheet').hidden),
     callNotes: () =>

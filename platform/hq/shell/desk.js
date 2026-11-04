@@ -56,6 +56,7 @@ import * as notebook from './ink/notebooklink.js';
 import { mountMarks, shareMarks } from './ink/viewmarks.js';
 import { mountStage } from './viewer.js';   // (the viewer's frames)
 import { mountPin, pinOn, setPin, tellPin } from './pinsetting.js';   // (Settings › Pin on HQ.)
+import { callMarksOn, setCallMarks } from './ink/bookcallmarks.js';   // (Settings › Call marks in the Notebook.)
 import { mountTips } from './booktips.js';   // (the tips book)
 import { previewsOn } from './previews.js';
 import { frameMic, helloFrom, stopFrameMic } from './framemic.js';   // (review mode's mic for the viewer's page; helloFrom)
@@ -164,7 +165,7 @@ function show(kind, html, force = false) {
   opened(kind);
   return true;
 }
-// What's open on HQ's page told on the document (hq:open: { open, app }), for a second screen to follow (pair.js).
+// What's open on HQ's page told on the document (hq:open: { open, app }), for a call to follow (main.js openedOnCall).
 const opened = kind => document.dispatchEvent(new CustomEvent('hq:open', { detail: { open: kind, ...(kind === 'computer' && { app: tab }) } }));
 export const toolOpen = () => !!open;
 const previews = previewsOn(location.hostname, local);
@@ -2428,7 +2429,7 @@ function settings(el) {
 }
 // Settings' sections in its order, each under its caption: the compute, Seats (seats.js, with pages of its own: a seat,
 // Add a seat) and Machines (machines.js, the same way); the company, a company app's box (its settings()) and the
-// Overseer's key (oversight.js), the linked companies (companylinks.js) and the board's Language (languages); this device, Notifications, Look and Pin on HQ, a
+// Overseer's key (oversight.js), the linked companies (companylinks.js) and the board's Language (languages); this device, Notifications, Look, Pin on HQ and Call marks in the Notebook, a
 // switch on its row (on, set); tools, Reload HQ, which runs at once (run). HQ's search finds each by its name, a page in it by the page's name (pages: a seat, a
 // machine) and a section by a choice on it (choices: a language, a look, the one set now first). The built-in ids start
 // "sys:", so a company app can't take one.
@@ -2449,6 +2450,7 @@ export function settingsSections() {
     { caption: 'THIS DEVICE', id: 'sys:alerts', name: 'Notifications' },
     { caption: 'THIS DEVICE', id: 'sys:look', name: 'Look', choices: async () => Promise.all(chosen((await looks).map(l => l.name), look).map(lookName)) },
     { caption: 'THIS DEVICE', id: 'sys:pin', name: `Pin on ${names.hq}`, on: pinOn, set: setPin },
+    { caption: 'THIS DEVICE', id: 'sys:bookcallmarks', name: 'Call marks in the Notebook', on: callMarksOn, set: setCallMarks },
     { caption: 'TOOLS', id: 'sys:reload', name: `Reload ${names.hq}`, mark: '↻', run: () => location.reload() },
   ];
 }

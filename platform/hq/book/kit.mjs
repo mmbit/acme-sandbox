@@ -1,5 +1,8 @@
-// What book-check.mjs's story files share: the screens they play on, a wait, the Shelf opened, the Pencil and fingers,
-// the iPad mini, the microphone's stand-in and review mode's parts.
+// What book-check.mjs's story files share: the screens they play on, a wait, the Shelf opened, the Pencil pressed along
+// a line, the iPad mini, the microphone's stand-in and review mode's parts (the Pencil and fingers in either engine:
+// hands.mjs.). pressAlong is a second player of Safari's Pencil beside hands.mjs's;
+// its stories (those that lift by window.__lift: call, circle, lasso among them) and webkit.mjs's own in-page one move
+// onto hands() in a follow-up.
 import assert from 'node:assert/strict';
 import { until as untilShown } from '../../../shared/browser/browser.mjs';
 import { en } from '../shell/ink/notebookwordsen.js';
@@ -12,6 +15,14 @@ export const DESKTOP = { width: 1440, height: 900 },
   // an iPad mini in landscape, and held upright
   MINI = { width: 1133, height: 744 },
   UPRIGHT = { width: MINI.height, height: MINI.width };
+// HQ's looks as the board sees them: Slate by day and by night, Brownstone and Holo, each its renderer and the colour
+// scheme the device asks for (Slate's colourway follows it).
+export const LOOK_SCHEMES = {
+  slate: { renderer: 'wire', colorScheme: 'light' },
+  'slate-night': { renderer: 'wire', colorScheme: 'dark' },
+  brownstone: { renderer: 'brownstone', colorScheme: 'light' },
+  holo: { renderer: 'holo', colorScheme: 'light' },
+};
 // The label of the overview's key on the book's rail (bookcontrols.js).
 export const OVERVIEW = en.allPages;
 // A word of the book's by its key, as it says it in English with its {places} filled (notebookwords.js): a copy edit
@@ -169,63 +180,12 @@ function sendPointer({ points, press, lift, type }) {
   if (lift) window.__lift();
 }
 
-// Chromium's own Pencil (cdp: the page's CDP session), whose events are trusted: their clicks and pointer capture are
-// the browser's. Chromium only.
-export function chromiumPen(cdp) {
-  const send = (type, [x, y], down) =>
-    cdp.send('Input.dispatchMouseEvent', {
-      type,
-      x,
-      y,
-      button: down || type === 'mouseReleased' ? 'left' : 'none',
-      buttons: down ? 1 : 0,
-      clickCount: 1,
-      pointerType: 'pen',
-      force: down ? 0.5 : 0,
-    });
-  const pen = {
-    down: at => send('mousePressed', at, true),
-    move: at => send('mouseMoved', at, true),
-    up: at => send('mouseReleased', at, false),
-    // down at the first point, along the rest, and up at the last
-    stroke: async points => {
-      await pen.down(points[0]);
-      for (const p of points.slice(1)) await pen.move(p);
-      await pen.up(points.at(-1));
-    },
-    tap: at => pen.stroke([at]),
-  };
-  return pen;
-}
-// Fingers (cdp: the page's CDP session, Chromium's trusted touch events): down at points, moved to others in steps,
-// lifted
-export function touchOf(cdp) {
-  let last = [];
-  const points = all => all.map(([x, y], id) => ({ x, y, id, radiusX: 4, radiusY: 4, force: 1 }));
-  const t = {
-    down: async at => {
-      last = at;
-      await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: points(at) });
-    },
-    move: async (to, steps = 12) => {
-      const from = last;
-      for (let i = 1; i <= steps; i++) {
-        const now = from.map(([x, y], k) => [x + ((to[k][0] - x) * i) / steps, y + ((to[k][1] - y) * i) / steps]);
-        await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: points(now) });
-      }
-      last = to;
-    },
-    up: () => cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }),
-    stroke: async (from, to) => {
-      await t.down(from);
-      await t.move(to);
-      await t.up();
-    },
-  };
-  return t;
-}
 // A box's middle on the screen (a locator's boundingBox()).
 export const middleOf = b => [b.x + b.width / 2, b.y + b.height / 2];
+// The points from a to b in n even steps, both ends included: a line as a hand's pen samples it (ink.js's smoothing
+// keeps each point only part of the way towards the pointer, so a few long jumps draw a line that stops short).
+export const steps = (a, b, n) =>
+  Array.from({ length: n + 1 }, (_, i) => [0, 1].map(j => a[j] + ((b[j] - a[j]) * i) / n));
 
 // Whether the book's page is the whole screen (data-whole on #book, book.js), its bookmarks folded at the left edge
 export const whole = page => page.evaluate(() => document.querySelector('#book').hasAttribute('data-whole'));

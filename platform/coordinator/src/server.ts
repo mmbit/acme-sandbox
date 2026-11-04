@@ -12,14 +12,14 @@ import { pipeline } from 'node:stream/promises';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { PORT, REPO_DIR, KITS_DIR, COMMIT, WORKER_TOKEN, VOICE_TOKEN, ORIGIN, ZONE } from './config.ts';
-import { isAuthed, enrollOptions, enrollVerify, loginOptions, loginVerify, keepOwnDevice } from './auth.ts';
+import { isAuthed, enrollOptions, enrollVerify, loginOptions, loginVerify, keepOwnDevice, startAppSession } from './auth.ts';
 import { loginPage, enrollPage, pairPage, csp, checkoutCsp, hqIndex, hqManifest, darkLogo, logo } from './pages.ts';
 import { brand, brandLook, theme, gazette, watchGazette, ceo, roles, reads } from './company.ts';
 import { library, unshelvedProblem } from './library.ts';
 import { TYPES } from './types.ts';
 import { attachment, findFile, inside, rangeOf, HQ_DIR, THEME_DIR, hqDir } from './files.ts';
 import { subscribe, publish, endAll } from './events.ts';
-import { db, companyOnce, scrubOnStart, optimize, inOneStep } from './db.ts'; // (db: the artifact's tip.)
+import { db, companyOnce, scrubOnStart, scrubbed, scrubbing, optimize, inOneStep } from './db.ts'; // (db: the artifact's tip.)
 import * as jobs from './jobs.ts';
 import * as engineOnly from './engineonly.ts';
 import * as room from './room.ts';
@@ -148,7 +148,7 @@ import * as notebookshelf from './notebookshelf.ts'; // and a notebook's cover
 import * as callnotes from './ink/callnotes.ts';   // and a call's notes page
 import * as callitems from './callitems.ts';   // an item on a call's list, checked whole
 import * as callpage from './ink/callpage.ts';   // the agent working it
-import * as pair from './pair.ts';   // two of the board's devices paired for a session
+import * as pair from './pair.ts';   // a one-time code that opens the viewer's page on another device
 import { NOTE_MAX, SAVE_MAX, isRefused } from './pagechecks.ts';
 import * as seen from './seen.ts';   // what the board has read, for every device
 import * as language from './language.ts';   // the board's language
@@ -206,6 +206,7 @@ import * as callouts from './callouts.ts';   // calls out to partners, filed by 
 import * as callcard from './callcard.ts';   // their card on the desk phone, Call and Don't call
 import * as callsweep from './callsweep.ts';   // the dial, and the sweep every minute
 import * as callline from './callline.ts';   // and the call itself: the voice line's routes, Twilio's word, the join page
+import * as callguests from './callguests.ts'; // the board's guest on its call.
 import * as voiceprints from './voiceprints.ts'; // the voices calls recognise.
 import * as watchalong from './watchalong.ts';
 import * as callviews from './callviews.ts';
@@ -361,14 +362,15 @@ async function cyclePage(req: IncomingMessage, res: ServerResponse, path: string
 type BoardRoute = (req: IncomingMessage, res: ServerResponse, body: any) => unknown;
 // Its sign-in, before it has a session (auth.ts)
 const signIn: Record<string, BoardRoute> = {
-  'POST /api/notebooks/pair/join': (q, s, b) => pair.joinDevice(q, s, b),
   'POST /api/enroll/options': enrollOptions,
   'POST /api/enroll/verify': enrollVerify,
   'POST /api/login/options': loginOptions,
   'POST /api/login/verify': loginVerify,
 };
+// A pair code's, from /pair on a device without a session: it opens a page, never HQ (pair.ts).
+const pairing: Record<string, BoardRoute> = { 'POST /api/pair-codes/open': (q, _, b) => pair.openCode(q, b) };
 const api: Record<string, BoardRoute> = {
-  'POST /api/notebooks/pair': q => pair.createCode(q),
+  'POST /api/pair-codes': (q, _, b) => pair.createCode(q, b),
   // (machines: the machines lent for long runs, live, as GET /api/machines has them, for every look's rig; shows: On
   // Air's, by name and hosts, for Brownstone's recording booth)
   // (studio: the photo studio's darkroom, or null: studio.ts office.)
@@ -423,6 +425,8 @@ const api: Record<string, BoardRoute> = {
   'GET /api/calls': () => call.calls(),
   // "We missed something": one item the board adds to a call, and the call is followed up again (ledger.ts missed())
   'POST /api/calls/item': (q, s, b) => ledger.missed(Number(b.call), b.what),
+  // the board's guest on its live call, with a pen on the call's page: their door's link (callguests.ts).
+  'POST /api/calls/guest': (q, s, b) => refusal(callguests.addGuest(b)),
   // a watch-along on the board's live call, by the call's key (watchalong.ts).
   'POST /api/watchalong/start': (q, s, b) => watchalong.startOnCall(Number(b.call), String(b.key ?? '')),
   'POST /api/chat': (q, s, b) => refusal(chat.fromBoard(String(b.text ?? ''), b.pictures)),
@@ -634,7 +638,7 @@ const worker: Record<string, (b: any) => unknown> = {
   'POST /api/worker/claim': b => ordering.withPlan(() => sizes.withSize(projects.withOwnedProject(review.withTold(jobs.claim(b.seat, b.engine, b.kind === 'chat' || b.kind === 'incident' ? b.kind : undefined, b.probe === true ? 0 : util(b.util), b.probe === true,
     typeof b.slot === 'string' ? b.slot : undefined, Number.isInteger(b.room) && b.room >= 0 ? b.room : undefined,
     Number.isInteger(b.pacedUntil) && b.pacedUntil > 0 ? b.pacedUntil : undefined)))) ?? meetingseats.holding(b.slot)),
-  // (never held, so the run keeps its lease: past its job's share of HQ's time, the beat's dear part waits, jobs.ts reined)
+  // (never reined, so the run keeps its lease: past its job's share of HQ's time, the beat's dear part waits, jobs.ts reined)
   'POST /api/worker/heartbeat': b => ordering.withPlan(() => !jobs.runsOn(Number(b.job), b.seat) ? 409 : jobs.heartbeat(Number(b.job), {
     util: b.util === undefined ? undefined : util(b.util), probe: b.probe === true, reined: reins.heldFor(Number(b.job)) > 0,
     short: b.short === true, capped: Array.isArray(b.capped) ? b.capped.filter((e: unknown) => typeof e === 'string') : [] })),
@@ -1424,7 +1428,7 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
     return !agent ? 403 : jobs.setTopic(Number(b.id), agent, b.topic, me.id, agent !== me.agent); },
   // hq request checks its card here before it parks: the worker files it once the job has ended, too late to fix it.
   // (parks: hq request's, which a job doing a call's work can't: later.ts parkProblem)
-  'POST /api/agent/card-check': (b, me) => { const problem = cardIssue(b) ?? unshelvedProblem(String(b.body ?? '')) ?? laterProblem(b) ?? jobs.questionsProblem(b.questions) ?? (b.parks ? later.parkProblem(me.id) : null) ?? unseenProblem(b, me); return problem ? new Refused(400, problem) : { ok: true }; },
+  'POST /api/agent/card-check': (b, me) => { const problem = cardIssue(b) ?? unshelvedProblem(String(b.body ?? '')) ?? laterProblem(b) ?? jobs.questionsProblem(b.questions, b.id !== undefined) ?? (b.parks ? later.parkProblem(me.id) : null) ?? unseenProblem(b, me); return problem ? new Refused(400, problem) : { ok: true }; },   // (b.id: a rewrite's)
   'GET /api/agent/phone': () => ({ number: secret('TWILIO_PHONE_NUMBER') || null }), // hq phone: public anyway, it goes on the Imprint pages
   'GET /api/agent/phone/check': async () => ({ lines: await checkLine() }), // hq phone --check
   // hq jobs [agent]: what's in flight (open work jobs), everyone's or one agent's, but not the caller's own job.
@@ -1486,6 +1490,7 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
   'GET /api/agent/workspaces': () => ({ links: workspaces.linksWithCounts().links.map(({ id, name, state }) => ({ id, name, state })), workspaces: workspaces.summaries() }),
   'POST /api/agent/workspaces/open': (b, me) => refusal(workspaceposts.openWorkspace(b.company, b.title, poster(b, me))),
   'POST /api/agent/workspaces/read': (b, me) => refusal(workspaces.readFor(Number(b.workspace), b.thread == null ? undefined : Number(b.thread), poster(b, me))),
+  'POST /api/agent/workspaces/rename': (b, me) => refusal(workspaceposts.renameWorkspace(b, poster(b, me))),
   'POST /api/agent/workspaces/post': (b, me) => refusal(workspaceposts.post(b, poster(b, me))),
   'POST /api/agent/workspaces/put': (b, me) => refusal(workspaceposts.putFile(b, poster(b, me))),
   'GET /api/agent/workspaces/file': b => {
@@ -1779,6 +1784,8 @@ const voice: Record<string, (b: any) => unknown> = {
   'POST /api/voice/sketch': async b => refusal(await bookreads.forVoice(b)),
   // (a note the board drew on the live call, as the Pencil lifted: bookcalls.ts.)
   'GET /api/voice/note': b => bookcalls.forVoice(Number(b.id), Number(b.call)),
+  // (a mark on the call's notes page, with who drew it: callguests.ts.)
+  'GET /api/voice/drawn': b => callguests.markForVoice(Number(b.id), Number(b.call)),
   // (a call's notes page: the agent's notes, one per change, and its title. callnotes.ts)
   'POST /api/voice/write-down': async b => refusal(await callnotes.writeDown(b)),
   'POST /api/voice/title': b => refusal(callnotes.title(b)),
@@ -1853,8 +1860,9 @@ const answered = async (
 };
 // A job's request within its share of HQ's time (reins.ts): held while the job is past it, at most half of what its caller
 // waits for the answer (x-hq-wait-ms: a worker report's or a timed hq command's own deadline), the other half left for
-// HQ's answer, and at most half a run's lapse when it gives none (a run's heartbeat is never held: forWorker). Its
-// handler's and answer's work, after their awaits too, is spent from its share (charged), and it's told on its answer.
+// HQ's answer, and at most half a run's lapse when it gives none (a run's heartbeat is never reined, forWorker, and waits
+// only for a saved key's scrub, afterScrub). Its handler's and answer's work, after their awaits too, is spent from its
+// share (charged), and it's told on its answer.
 // (a held request's wait holds nothing: latency.ts exclude, app's heldLong.)
 async function reined(res: ServerResponse, job: number, handle: () => unknown, waitsMs: number) {
   const heldMs = waitsMs > 0 ? await latency.exclude(reins.admit(job, Math.min(waitsMs, jobs.STALE_MS) / 2)) : 0;
@@ -1862,17 +1870,25 @@ async function reined(res: ServerResponse, job: number, handle: () => unknown, w
   if (told) res.setHeader('x-hq-rein', told);
   return reins.charged(job, () => answer(res, routeReply));
 }
+// What an agent reads (a job's, a call's, the worker's claim and heartbeat, the Overseer's) waits while a saved key's scrub
+// still has rows to visit (db.ts scrubSaved), so none reads the key in old text: right before the read, once the request's
+// body is in and its reins let it through, so a save during those awaits is waited for too, and the handler starts in the
+// same step as the check that found none
+const afterScrub = <A extends unknown[], R>(handle: (...args: A) => R | Promise<R>) => async (...args: A): Promise<R> => {
+  while (scrubbing()) await latency.exclude(scrubbed());
+  return handle(...args);
+};
 // A table's rows, each handler inside its wrapper
 type Wrap<H> = (key: string, handle: H) => RouteHandler;
 const wrapped = <H>(table: Record<string, H>, wrap: Wrap<H>) => Object.fromEntries(Object.entries(table).map(([key, handle]) => [key, wrap(key, handle)]));
 const forWorker: Wrap<(b: any) => unknown> = (key, handle) => request => {
   if (!workerAuthed(request.req.headers.authorization)) return send(request.res, 401, { error: 'worker token' });
   jobs.workerHeard();   // (the intercom says when it isn't: chat.ts paused)
-  return answered(request, handle, key === 'POST /api/worker/blocked' ? BLOCKED_MAX : undefined, b => Number(b.job) || undefined,
+  return answered(request, afterScrub(handle), key === 'POST /api/worker/blocked' ? BLOCKED_MAX : undefined, b => Number(b.job) || undefined,
     key !== 'POST /api/worker/heartbeat');
 };
 const forVoice: Wrap<(b: any) => unknown> = (key, handle) => request =>
-  voiceAuthed(request.req.headers.authorization) ? answered(request, handle) : send(request.res, 401, { error: 'voice token' });
+  voiceAuthed(request.req.headers.authorization) ? answered(request, afterScrub(handle)) : send(request.res, 401, { error: 'voice token' });
 const forAgent: Wrap<(b: any, me: Me) => unknown> = (key, handle) => request => {
   const me = agentOf(bearer(request.req.headers.authorization));
   if (!me) return send(request.res, 401, { error: 'agent token' });
@@ -1880,7 +1896,7 @@ const forAgent: Wrap<(b: any, me: Me) => unknown> = (key, handle) => request => 
   if (me.call && !CALL_ROUTES.has(key)) return send(request.res, 403, { error: "a call can't do this, as none of the call's tools reaches it: the call's follow-up does it" });
   if (me.callout && !PARTNER_ROUTES.has(key)) return send(request.res, 403, { error: ERRORS[403] });
   // (a card's files come in its JSON: cardfiles.ts JSON_MAX)
-  return answered(request, b => handle(b, me), FILE_ROUTES.has(key) ? cardFiles.JSON_MAX : key === WORKSPACE_PUT ? workspaces.ENTRIES_JSON_MAX : undefined, () => me.id || undefined);
+  return answered(request, afterScrub(b => handle(b, me)), FILE_ROUTES.has(key) ? cardFiles.JSON_MAX : key === WORKSPACE_PUT ? workspaces.ENTRIES_JSON_MAX : undefined, () => me.id || undefined);
 };
 // A job's token, a live call's (call.ts) or a call out's (callline.ts)
 function agentOf(token: string): Me | undefined {
@@ -2109,7 +2125,7 @@ const hq = routes({
   // What the Overseer reads, with its own key: the status report and the CEO's notes (oversight.ts). x-as-of: the time
   // to ask what changed since, next time.
   'GET /api/overseer/*': async ({ req, res, url }) => {
-    const reading = await oversight.read(url.pathname.slice('/api/overseer/'.length), req.headers.authorization, url.searchParams.get('since'));
+    const reading = await afterScrub(oversight.read)(url.pathname.slice('/api/overseer/'.length), req.headers.authorization, url.searchParams.get('since'));
     res.setHeader('cache-control', 'private, no-store');
     if (reading.asOf) res.setHeader('x-as-of', reading.asOf);
     return send(res, reading.status, reading.text, 'text/markdown; charset=utf-8');
@@ -2121,7 +2137,7 @@ const hq = routes({
     const link = links.peerOf(req.headers.authorization);
     if (typeof link === 'number') return send(res, link, { error: link === 410 ? 'unlinked' : 'link key' });
     const body = await jsonBody(workspaces.ENTRIES_JSON_MAX);
-    return answer(res, refusal(body ? links.receive(link, body, workspaceentries.apply) : [400, 'the body: JSON']));
+    return answer(res, refusal(body ? links.receive(link, body, workspaceentries) : [400, 'the body: JSON']));
   },
   'POST /api/peer/unlink': ({ req, res }) => {
     const link = links.peerOf(req.headers.authorization);
@@ -2134,9 +2150,12 @@ const hq = routes({
   ...wrapped(voice, forVoice),
 
   // From HQ's own pages, or a page of its own without the board's session
-  ...wrapped(signIn, (key, handle) => sameOrigin(boardJson(handle, JSON_MAX))),
+  ...wrapped({ ...signIn, ...pairing }, (key, handle) => sameOrigin(boardJson(handle, JSON_MAX))),
+  // The native app's web view, with the one-time code its sign-in sheet got (auth.ts createAppCode).
+  'GET /app/signed-in': ({ res, url }) => redirect(res,
+    startAppSession(res, url.searchParams.get('code') ?? '', url.searchParams.get('verifier') ?? '') ? '/' : '/login'),
   'GET /pair': ({ res }) => send(res, 200, pairPage(brand(), guests.logoHtml()), TYPES['.html']),
-  'GET /pair/signin.js': hqFile(hqDir('/pairsignin.js'), '/pairsignin.js'),
+  'GET /pair/page.js': hqFile(hqDir('/pairpage.js'), '/pairpage.js'),
   // (the sign-in pages' look, the guests': pages.ts shell.)
   'GET /pair/look.css': ({ res }) => send(res, 200, guests.signInCss(), TYPES['.css']),
   // The guest desk (guests.ts): an outside colleague's page (and its script), opened by its link and a code by email, never by the board's session

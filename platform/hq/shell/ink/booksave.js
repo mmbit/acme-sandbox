@@ -14,7 +14,6 @@ import { arrive } from './bookarrive.js';
 import { laidOf, localOf, madeUnit } from './bookunits.js';
 import { nameOf } from './bookhead.js';
 import { forget } from './bookedit.js';
-import { retitle } from './bookunitcards.js';
 
 // a page is saved this long after its last stroke, so a burst of writing is one save
 const SAVE_MS = 600;
@@ -235,11 +234,8 @@ function drawn(book, page) {
 export function named(book, page, title) {
   page.label = title;
   const view = book.views.find(v => v.page === page);
-  if (view) {
-    view.el.ariaLabel = nameOf(page);
-    // (and in its head.)
-    retitle(view);
-  }
+  if (view) view.el.ariaLabel = nameOf(page);
+  // (and on the view and the bar: bookviewhead.js, bookcontrols.js.)
   book.controls?.update();
 }
 // (the page's own saves come back as the store's change too: nothing new in them, nothing's drawn again. Its answers,

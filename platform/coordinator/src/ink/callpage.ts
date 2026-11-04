@@ -15,6 +15,7 @@ import { drawn } from '../drawing.ts';
 import { exclude } from '../latency.ts';
 import { findAgent } from '../jobs.ts';
 import { BOARD } from './book.ts';
+import { guestOf } from './sketchpeople.ts';
 import { shut } from '../notebook.ts';
 import {
   createGroup,
@@ -72,25 +73,36 @@ export async function read(b: any) {
   const lines = groups.map(g => lineOf(g, at.agent)),
     // (a group's ink is strokes as the store took them: pagechecks.ts inkOf)
     inked = groups
-      .filter(g => g.by === BOARD && partsOf(g).ink.length)
+      .filter(g => g.by !== at.agent && partsOf(g).ink.length) // (anyone's but the agent's.)
       .map(g => ({ id: g.id, updated: g.updated, ink: partsOf(g).ink as Stroke[] }));
   const readings = await readInk(inked, lines.join('\n'));
   if (isRefused(readings)) return readings;
   const head = `The call's notes in order (x, y, width and height in each note's own px, ${UNIT_W} wide, y down):`;
-  return { ok: [head, ...groups.map((g, i) => lines[i] + readingOf(g, readings))].join('\n') };
+  return { ok: [head, ...groups.map((g, i) => lines[i] + readingOf(g, readings, at.agent))].join('\n') };
 }
-// What the board's ink on a group says, after its line: or, unread, that it's to be asked about
-function readingOf(g: Group, readings: Map<number, Reading>) {
-  if (g.by !== BOARD || !partsOf(g).ink.length) return '';
+// What someone's ink on a group says, after its line: or, unread, that it's to be asked about
+function readingOf(g: Group, readings: Map<number, Reading>, agent: string) {
+  if (g.by === agent || !partsOf(g).ink.length) return '';
   const r = readings.get(g.id);
-  if (!r) return "; its ink couldn't be read just now: ask the board what it says if it matters";
-  const said = [r.words && `written “${r.words}”`, r.marks && `drawn: ${r.marks}`].filter(Boolean).join('; ');
-  return `; its ink, read: ${said || 'nothing anyone could read'}${r.unsure ? `; not sure: ${r.unsure}: ask the board` : ''}`;
+  if (!r) return "; its ink couldn't be read just now: ask whoever drew it what it says if it matters";
+  const said = [r.words && `written ${quoted(g, r.words)}`, r.marks && `drawn: ${quoted(g, r.marks, ['', ''])}`];
+  const unsure = r.unsure ? `; not sure: ${quoted(g, r.unsure, ['', ''])}: ask whoever drew it` : '';
+  return `; its ink, read: ${said.filter(Boolean).join('; ') || 'nothing anyone could read'}${unsure}`;
 }
+// Words on a group as its line quotes them. A guest's are a JSON string, which can't close its quote or start a line of
+// its own that reads as the board's.
+const quoted = (g: Group, words: string, [open, close] = ['“', '”']) =>
+  guestOf(g.by) ? JSON.stringify(words) : open + words + close;
 function lineOf(g: Group, agent: string) {
   const parts = partsOf(g),
     box = boxOf(parts);
-  const who = g.by === agent ? 'yours' : g.by === BOARD ? "the board's" : `${findAgent(g.by)?.name ?? g.by}'s`;
+  // (a guest's on the call: their name.)
+  const who =
+    g.by === agent
+      ? 'yours'
+      : g.by === BOARD
+        ? "the board's"
+        : `${guestOf(g.by)?.name ?? findAgent(g.by)?.name ?? g.by}'s`;
   const what =
     g.kind === 'scrap'
       ? 'note with a picture'
@@ -105,7 +117,7 @@ function lineOf(g: Group, agent: string) {
   const asks = asksOf(g.id).length ? ' (an ask)' : '';
   const place = box ? ` at ${boxWords(box)}` : '';
   // (its words whole)
-  return `#${g.id} ${who} ${what}${asks}${words ? `: “${words}”` : ''}${ink}${place}`;
+  return `#${g.id} ${who} ${what}${asks}${words ? `: ${quoted(g, words)}` : ''}${ink}${place}`;
 }
 
 // POST /api/voice/mark { call, mark, around?, box?, points?, filled? }: a mark in the agent's ink on the scrap around

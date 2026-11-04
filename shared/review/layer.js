@@ -16,6 +16,8 @@ export function makeHost(r, css, html) {
     .ui { right: var(--book-room, 0px); }
     .halo, .ink, .wet { width: 100vw; height: 100dvh; }
     :host([data-spread]) .dock, :host([data-covered]) .dock { display: none; }
+    :host([data-under-book]) .bar { display: none; }
+    :host([data-under-book]) :is(.halo, .ink, .wet, .hl) { visibility: hidden; }
   `;
   // (a stylesheet of its own rather than a <style>, so a page whose CSP admits no inline style, like HQ's, still draws it)
   try {
@@ -55,7 +57,6 @@ function opening(r, el) {
 // reshow: a popup opened or closed, so the host joins the top layer again, after it
 function liftHost(r, reshow) {
   const { host } = r;
-  showSpread(r);
   r.popups = r.popups.filter(e => e.isConnected);
   // Floating controls own their pen events and their lifetime, so the ink stays outside their layer.
   const modal = activeModal(r),
@@ -64,6 +65,7 @@ function liftHost(r, reshow) {
     if (host.parentNode !== document.documentElement) document.documentElement.append(host);
     if (r.book) showHost(host, reshow);
     else host.removeAttribute('popover');
+    showSpread(r);
     return;
   }
   let showAgain = reshow;
@@ -72,9 +74,18 @@ function liftHost(r, reshow) {
     showAgain = true;
   } // (out of the document, a popover is hidden)
   showHost(host, showAgain);
+  showSpread(r);
 }
+// The book's spread covers HQ's page, and with it what's drawn on it here: the ink and the strip on HQ's page, though
+// the host is in the top layer, are hidden under it (not the host in a popup over the book, whose ink is the popup's).
+// While a part is marked data-takes-ink (a book's paper given to HQ's pen), the ink and the strip show over the book.
 function showSpread(r) {
-  r.host.toggleAttribute('data-spread', r.book && document.documentElement.dataset.book === 'spread');
+  const spread = r.book && document.documentElement.dataset.book === 'spread';
+  r.host.toggleAttribute('data-spread', spread);
+  r.host.toggleAttribute(
+    'data-under-book',
+    spread && r.host.parentNode === document.documentElement && !document.querySelector('[data-takes-ink]'),
+  );
 }
 function showHost(host, again) {
   host.popover = 'manual';
@@ -100,7 +111,13 @@ export function followPopups(r) {
     // (or a popup, or the host in it, taken out)
     if (changed || !r.host.isConnected || r.popups.some(e => !e.isConnected)) liftHost(r, changed);
   });
-  watch.observe(document, { attributes: true, attributeFilter: ['open', 'data-book'], childList: true, subtree: true });
+  // (data-takes-ink too, for showSpread.)
+  watch.observe(document, {
+    attributes: true,
+    attributeFilter: ['open', 'data-book', 'data-takes-ink'],
+    childList: true,
+    subtree: true,
+  });
   addEventListener(
     'beforetoggle',
     e => {

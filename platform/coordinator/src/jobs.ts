@@ -13,7 +13,18 @@ import { lastPlayed } from './forecast.ts';
 import { deadlinePressure, pacedTakes, spareOnly, type Order } from './planner.ts';
 import { measuredMb, plannerCapacity, pauseBudget } from './room.ts';
 import { taskUrgent } from './urgency.ts';
-import { db, inOneStep, mergePending, once, OPEN_PRS, planChange, prepared, scrub, workBranch } from './db.ts';
+import {
+  db,
+  inOneStep,
+  mergePending,
+  once,
+  OPEN_PRS,
+  planChange,
+  prepared,
+  scrubCurrent,
+  scrubSaved,
+  workBranch,
+} from './db.ts';
 export { OPEN_PRS, workBranch } from './db.ts';
 import { codeIn, codeOf, numbered } from './jobcodes.ts';
 import { publish, redact, redactJob, status, type RunningJob } from './events.ts';
@@ -54,7 +65,8 @@ import {
 import type { ChangedLines } from './findings.ts';
 import { announceRequest } from './push.ts';
 import * as tips from './tips.ts';
-import { saveSecrets, stored, secret, addressKeys } from './secrets.ts';
+import { saveSecrets, stored, secret, addressKeys, masksOf, type Mask } from './secrets.ts';
+import { maskReports } from './oversight.ts';
 import * as addresses from './addresses.ts';
 import * as approvals from './approvals.ts';
 import * as photos from './photos.ts';
@@ -602,7 +614,8 @@ export function openJobs(o: { agent?: string; except?: number; awaitingMerge?: b
     .prepare(
       redraws.query(`select id, code, agent, title, step, round, kind, status, after, queued_by, downtime, pr, ${heldWith('jobs')} paused_with,
     (select json_group_array(id) from (${outstanding('jobs.id')})) waits,
-    (select json_group_array(request) from (${openCards('jobs.id')})) cards
+    (select json_group_array(request) from (${openCards('jobs.id')})) cards,
+    coalesce((select ${AFTER_ENDED('a')} from jobs a where a.id = jobs.after), 0) after_ended
     from jobs where kind = 'work' and ${o.awaitingMerge ? mergePending('jobs') : `status in ${OPEN_JOBS}`} and id != ? and (?2 is null or agent = ?2) order by id`),
     )
     .all(o.except ?? 0, o.agent ?? null) as (Omit<OpenJob, 'waits' | 'cards' | 'wakes'> & {
@@ -610,9 +623,12 @@ export function openJobs(o: { agent?: string; except?: number; awaitingMerge?: b
     paused_with: string | null;
     waits: string;
     cards: string;
+    after_ended: number;
   })[];
-  const open = rows.map(({ kind, paused_with, ...row }) => ({
+  // (an --after that ended and released it, as the claim reads it (AFTER_MET), holds nothing: not said)
+  const open = rows.map(({ kind, paused_with, after_ended, ...row }) => ({
     ...row,
+    after: after_ended ? null : row.after,
     waits: JSON.parse(row.waits) as number[],
     cards: JSON.parse(row.cards) as number[],
     wakes:
@@ -1138,10 +1154,12 @@ export function strandedWaits(prior: Named & { id: number; agent: string }, how:
 // before it in its own thread is that thread's order instead (threadorder.ts afterInOrder).
 // Wrap statements using this predicate in redraws.query().
 // (AFTER_MET: its after's part, which stillHolds reads too)
+// (AFTER_ENDED: the after `a` ended and its work left review, which openJobs' line reads too.)
+const AFTER_ENDED = (a: string) => `(${a}.status in ('done', 'failed', 'stopped', 'cancelled')
+    and not exists (select 1 from prs where branch = ${a}.branch and status in ('open', 'stuck', 'board'))
+    and not exists (select 1 from review_waiting_pushes w where w.push ->> 'branch' = coalesce(${a}.branch, 'job/' || ${a}.id)))`;
 const AFTER_MET = `(j.after is null or exists (select 1 from jobs a where a.id = j.after and (${threadorder.afterInOrder('j', 'a')}
-    or a.status in ('done', 'failed', 'stopped', 'cancelled')
-    and not exists (select 1 from prs where branch = a.branch and status in ('open', 'stuck', 'board'))
-    and not exists (select 1 from review_waiting_pushes w where w.push ->> 'branch' = coalesce(a.branch, 'job/' || a.id)))))`;
+    or ${AFTER_ENDED('a')})))`;
 const READY = `j.status = 'queued' and j.not_before <= $now
   and ${AFTER_MET}
   and not exists (${outstanding('j.id')}) and not exists (${openCards('j.id')})
@@ -2969,10 +2987,12 @@ export function topicOf(t: unknown): { ok: true; topic: string | null } | { ok: 
   return tidy && tidy.length <= 40 ? { ok: true, topic: tidy } : { ok: false };
 }
 // What's wrong with a card's questions (hq ask --questions), worded for the agent, or null
-export function questionsProblem(v: unknown) {
-  const q = v === undefined || v === null ? null : asking.questions(v);
+// rewrite: hq rewrite's, whose empty list takes a card's last questions off (cutQuestions)
+export function questionsProblem(v: unknown, rewrite = false) {
+  const q = v === undefined || v === null || (rewrite && cutQuestions(v)) ? null : asking.questions(v);
   return typeof q === 'string' ? `its --questions: ${q}` : null;
 }
+const cutQuestions = (v: unknown) => Array.isArray(v) && !v.length;
 // A card rings at once from the board's own work or work the pass gives a latest start (a windowed thread's, or what one
 // waits for).
 const urgentWork = (job?: number) => {
@@ -3412,19 +3432,20 @@ function keysAnswered(req: any, secrets: Record<string, unknown>, address: { use
   const labelRefused = label === null ? null : addresses.refusal(label);
   if (labelRefused) return [400, labelRefused, { refused: {} }];
   if (use) secrets = Object.fromEntries(names.map((n, i) => [n, use[i]]));
+  // (asked before the save: its keys change the store's stamp, so after it the answer is always no and every save would
+  // run the whole scrub().)
+  const current = scrubCurrent();
+  // (the values the save replaces, for the kept status reports: scrubKeys)
+  const before = masksOf(stored(names));
   const saveOutcome = saveSecrets(names, secrets);
   if (typeof saveOutcome === 'string') return [400, saveOutcome, { refused: {} }];
   const { saved, refused } = saveOutcome,
     missing = names.filter(n => !stored([n]).length),
     refusedNames = Object.keys(refused);
-  if (saved.length) {
-    scrub();
-    // The current status uses the newly saved keys too
-    for (const current of status.values()) {
-      current.task = redact(current.task);
-      if (current.jobs) current.jobs = current.jobs.map(redactJob);
-    }
-  }
+  // the address the board keeps under its label holds the card's keys, so it goes in their scrub
+  const kept =
+    label !== null && !missing.length && !refusedNames.length ? addresses.save(label, names.map(secret)) : null;
+  if (saved.length) scrubKeys(kept ? [...saved, kept] : saved, current, before);
   // some keys still to come, or refused (each with why, for the desk phone): the
   // request stays on the desk phone with what's saved
   if (missing.length || refusedNames.length) {
@@ -3446,10 +3467,22 @@ function keysAnswered(req: any, secrets: Record<string, unknown>, address: { use
   // all of a credential grant's keys: saving them is the board's yes (approvals.ts), recorded here only
   const grant = req.kind === 'credential' && !req.approves ? approvals.credentialGrant(names) : null;
   if (grant) approvals.record(grant, req.id);
-  if (label !== null) addresses.save(label, names.map(secret));
   return `Saved on the server: ${names.join(', ')}. ${
     grant ? approvals.credential(grant)!.saved : 'Jobs get the test keys as environment variables (without _TEST_).'
   }`;
+}
+
+// Saved keys leave what's written, the kept status reports, and the current status too. The reports lose the values the save replaced as well: one published
+// after an earlier save's pass, or kept while that pass failed, still holds the old value, which redact() masks only
+// until now.
+function scrubKeys(names: string[], current: boolean, before: Mask[]) {
+  scrubSaved(names, current);
+  const replaced = before.filter(([, name]) => names.includes(name));
+  maskReports([...masksOf(names), ...replaced].sort((a, b) => b[0].length - a[0].length));
+  for (const running of status.values()) {
+    running.task = redact(running.task);
+    if (running.jobs) running.jobs = running.jobs.map(redactJob);
+  }
 }
 
 // The lines a card's photo, zip and document fields add to its answer, or the status refusing it while one it requires
@@ -3695,7 +3728,7 @@ export const agentCard = (id: number) => {
 
 // An agent rewrites its own open request (hq rewrite). The CEO may rewrite any an agent filed, and the card reader any
 // waiting for their read, to keep the desk phone short. questions: its question fields in their place, as hq ask's
-// --questions, never on a notice. Never on a card for keys, an
+// --questions, never on a notice, or [] for none left, a photo or the text asking it all. Never on a card for keys, an
 // approval or a sign-in (answerBox), nor one whose questions a merge decision gave it (decisions.ts mergeQuestions).
 // team: a team member's own request is the one its job filed (its name may be another job's member's too).
 export function rewriteRequest(
@@ -3724,15 +3757,16 @@ export function rewriteRequest(
       from: from ?? 0,
     }) as { kind: string; secrets: string | null; approves: string | null; seat: string | null } | undefined;
   if (!theirs) return 404;
-  const asked = questions === undefined ? undefined : asking.questions(questions);
+  const cut = cutQuestions(questions);
+  const asked = questions === undefined || cut ? undefined : asking.questions(questions);
   if (typeof asked === 'string') return [400, `its --questions: ${asked}`] as const;
   if (asked && theirs.kind === 'notice') return [400, 'a notice asks nothing: rewrite its text only'] as const;
-  if (asked && (theirs.secrets || theirs.approves || theirs.seat || decisions.mergeCard(id)))
+  if ((asked || cut) && (theirs.secrets || theirs.approves || theirs.seat || decisions.mergeCard(id)))
     return [
       409,
       "this card's answer fields are HQ's own (keys, an approval, a sign-in or a merge decision): rewrite its text only",
     ] as const;
-  newBody(id, body.trim(), asked && JSON.stringify(asked));
+  newBody(id, body.trim(), cut ? null : asked && JSON.stringify(asked));
   return { ok: true };
 }
 // hq topic: an agent sets or changes the topic of an open card it filed, of any kind (an email draft's or a guest's too).
@@ -3754,16 +3788,16 @@ export function setTopic(id: number, agent: string, topic: unknown, from?: numbe
 }
 // An open card whose text changes (hq rewrite) comes back as a new one: first on the desk phone,
 // unread in HQ, and ringing the board's devices as a new card would. The same text again changes nothing. A card for later
-// stays silent: it rings, if it's urgent, when it shows (later.ts).
-function newBody(id: number, body: string, questions?: string) {
+// stays silent: it rings, if it's urgent, when it shows (later.ts). questions: undefined keeps the card's, null takes them off.
+function newBody(id: number, body: string, questions?: string | null) {
   const now = new Date().toISOString();
   const r = db
     .prepare(
-      `update requests set body = @body, questions = coalesce(@questions, questions), changed = @now where id = @id
-      and (body != @body or @questions is not null and questions is not @questions)
+      `update requests set body = @body, questions = iif(@keep, questions, @questions), changed = @now where id = @id
+      and (body != @body or not @keep and questions is not @questions)
       returning kind, title, urgency, approves, hidden_until`,
     )
-    .get({ body, questions: questions ?? null, now, id }) as
+    .get({ body, questions: questions ?? null, keep: questions === undefined ? 1 : 0, now, id }) as
     { kind: string; title: string; urgency: string; approves: string | null; hidden_until: string | null } | undefined;
   if (r && !later.held(id) && !later.isHidden(r.hidden_until, now))
     announceRequest({

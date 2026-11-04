@@ -40,7 +40,7 @@ export const TIPS = [
     part: 'The book',
     title: 'Turn the page with ‹ and ›',
     words:
-      '‹ and › on the rail turn to the page before or after in the chapter. Tap the count between them to list its pages by name, and to give this page a title.',
+      '‹ and › on the rail turn to the page before or after in the chapter. Tap the count between them to list its pages by name. Rename page, in the dots menu, gives this page a title.',
     from: 'platform/hq/shell/ink/bookcontrols.js, platform/hq/shell/ink/booktitle.js',
     picture: 'bars-final',
     alt: 'The page bar with ‹ and ›, the page’s title and its number',

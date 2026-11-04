@@ -130,10 +130,11 @@ function inSight(r, boardScale) {
   return { pan: panTo(book, { x: across, y: down }, s), scale: s };
 }
 // The paper the board sees (screen px): its content's part (bookview.js contentOf), ending left of the tools' island
-// where it floats upright over the paper's right (bookstrip.css; while it's hidden, the whole content's)
+// where it floats upright over the paper's right (bookstrip.css; while it's hidden, the whole content's, and while its
+// stylesheet is still on its way as the book opens on a newer scrap too: unstyled, it lies flat across the whole paper.
 function seenPaper() {
   const paper = contentOf(book),
     tools = island('tools').closest('.bk-strip').getBoundingClientRect();
-  if (!tools.width) return paper;
+  if (!tools.width || !tools.height) return paper;
   return { w: Math.min(paper.w, tools.left - book.desk.getBoundingClientRect().left), h: paper.h };
 }

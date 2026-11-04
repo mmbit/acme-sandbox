@@ -31,14 +31,14 @@ export function refusal(label: unknown) {
   return null;
 }
 
-// Saves the four parts under the label (refusal() checked first); false if a part isn't one line
+// Saves the four parts under the label (refusal() checked first): the name of the key that holds them, or null if a part
+// isn't one line
 export function save(label: string, parts: string[]) {
-  if (refusal(label) || parts.length !== 4 || !parts.every(p => PART.test(p))) return false;
+  if (refusal(label) || parts.length !== 4 || !parts.every(p => PART.test(p))) return null;
   const { lastInsertRowid } = db
     .prepare('insert into addresses (label, created) values (?, ?)')
     .run(label.trim(), new Date().toISOString());
-  keepAddress(Number(lastInsertRowid), parts);
-  return true;
+  return keepAddress(Number(lastInsertRowid), parts);
 }
 
 // The four parts of a saved address, or null if it's gone

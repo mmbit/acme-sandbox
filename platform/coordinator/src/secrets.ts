@@ -176,13 +176,13 @@ export const forget = (names: string[]) => { for (const n of names) if (validNam
 // parts on four lines, kept like a key: never a name a card can ask for (validNames), never handed to a job (testSecrets),
 // masked in text by redact() like a key, line by line.
 const saved = (id: number) => `SAVED_ADDRESS_${id}`;
-export const keepAddress = (id: number, parts: string[]) => { writeFileSync(`${DIR}/${saved(id)}`, parts.join('\n'), { mode: 0o600 }); held = null; };
+export const keepAddress = (id: number, parts: string[]) => { writeFileSync(`${DIR}/${saved(id)}`, parts.join('\n'), { mode: 0o600 }); held = null; return saved(id); };
 export const savedAddress = (id: number) => { const parts = secret(saved(id)).split('\n'); return parts.length === 4 ? parts : null; };
 export const dropAddress = (id: number) => { rmSync(`${DIR}/${saved(id)}`, { force: true }); held = null; };
 
 // A key's value is never kept in text an agent can read, whatever the text is about (the board, 2026-10-06): the
 // coordinator's free-text columns go through redact() as they're written (db.ts redacted()), which puts the key's name
-// where its value was, and saving a key scrubs it out of what's already there (db.ts scrub()), so a key the board said on
+// where its value was, and saving a key scrubs it out of what's already there (db.ts scrubSaved()), so a key the board said on
 // a call or pasted in the intercom before saving it goes too; so does each long line of a key on several lines (a PEM
 // key), and the worker's own text sent back to the company (POST /api/worker/redact). Values of 12 characters or more
 // only: a short one (a PIN) would turn up in ordinary words, and masking it would tell whoever wrote every 4-digit string
@@ -196,15 +196,23 @@ const LONG = 12;
 const PUBLIC = ['TWILIO_PHONE_NUMBER', 'BACKUP_AGE_RECIPIENT'];
 // (only the server's own: a partner key's value is a credential, and a test one reaches every job)
 const publicKeys = () => new Set([...PUBLIC, ...((brand().publicKeys ?? []) as string[]).filter(n => Object.hasOwn(OWN, n))]);
-const masked = () => { const shown = publicKeys(); return readdirSync(DIR).filter(n => !shown.has(n)); };
+const masked = (names = readdirSync(DIR)) => { const shown = publicKeys(); return names.filter(n => !shown.has(n)); };
+// A form of a key's value, and the key's name redact() puts where it was
+export type Mask = [form: string, name: string];
 // The store is written only through saveSecrets, keepMadeKey and forget (and the saved addresses'), which reset `held`.
-let held: [string, string][] | null = null;   // [value, name], longest first; null: read the key store again
-export function redact<T>(text: T): T {
+let held: Mask[] | null = null;   // null: read the key store again
+export const redact = <T>(text: T): T => maskWith(text, (held ??= masksOf(readdirSync(DIR))));
+// The forms redact() masks for these keys, longest first: never a public one's, and only those of LONG or more
+export const masksOf = (names: string[]) =>
+  masked(names)
+    .flatMap(name => forms(secret(name)).map(form => [form, name] as Mask))
+    .filter(([form]) => form.length >= LONG)
+    .sort((a, b) => b[0].length - a[0].length);
+// text with each of these forms replaced by its key's name (db.ts scrubSaved masks with a save's own)
+export function maskWith<T>(text: T, masks: Mask[]): T {
   if (typeof text !== 'string' || text.length < LONG) return text;
-  held ??= masked().flatMap(n => forms(secret(n)).map(x => [x, n] as [string, string]))
-    .filter(([v]) => v.length >= LONG).sort((a, b) => b[0].length - a[0].length);
   let out: string = text;
-  for (const [v, n] of held) if (out.includes(v)) out = out.split(v).join(`[${n}]`);
+  for (const [form, name] of masks) if (out.includes(form)) out = out.split(form).join(`[${name}]`);
   return out as T;
 }
 // What redact() masks as of now, without a value: each masked key's name, size and time, and the rules' own source below
@@ -228,17 +236,18 @@ function forms(value: string) {
 }
 // JSON kept as text (a call's lines, a card's questions or switches): each string in it, a property's name too, is redacted
 // as it reads and the JSON written again, so a key's form ending in a quote never takes a string's own quote with it. Text
-// with nothing to mask stays as it was written.
-export function redactJson<T>(text: T): T {
+// with nothing to mask stays as it was written. maskJson: the same with another mask
+export const redactJson = <T>(text: T): T => maskJson(text, redact);
+export function maskJson<T>(text: T, mask: (text: string) => string): T {
   if (typeof text !== 'string' || text.length < LONG) return text;
   let masked = false;
-  const string = (v: string) => { const r = redact(v); masked ||= r !== v; return r; };
+  const string = (v: string) => { const r = mask(v); masked ||= r !== v; return r; };
   const walk = (v: unknown): unknown => typeof v === 'string' ? string(v) : Array.isArray(v) ? v.map(walk)
     : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [string(k), walk(x)])) : v;
   const out = JSON.stringify(walk(JSON.parse(text)));
   return (masked ? out : text) as T;
 }
-export const REDACT_RULES = [LONG, secret, forms, redact, redactJson].join('\n');
+export const REDACT_RULES = [LONG, secret, forms, masksOf, maskWith, redact, maskJson, redactJson].join('\n');
 
 // PRINTAPI_TEST_CLIENT_ID reaches a job as PRINTAPI_CLIENT_ID. A Stripe key goes only if it really is a test key, so a
 // live key pasted into a test field never reaches an agent. A key with a shape of its own goes only in that shape, and

@@ -7,6 +7,7 @@
 import assert from 'node:assert/strict';
 import { DESKTOP, MINI, until } from './kit.mjs';
 import { mini } from './start.mjs';
+import { hands } from './hands.mjs';
 import { callSeed } from './notespage.mjs';
 import { handsOn, inkBox, mouseStroke, pointOn, viewNow, zigzag } from './canvas.mjs';
 import { anotherColumn } from './unitsread.mjs';
@@ -110,11 +111,10 @@ async function byTrackpad(browser, c) {
 // A trackpad's pinch in at the paper's middle (a wheel with Ctrl, no Ctrl key down), about the pointer. → the view,
 // the pointer, and the pinch (pinch(deltaY))
 async function trackpadIn(page, fit) {
-  const cdp = await page.context().newCDPSession(page),
+  const { trackpadPinch } = await hands(page),
     paper = await page.locator('#book .bk-desk').boundingBox(),
     at = [paper.x + paper.width / 2, paper.y + paper.height / 2],
-    pinch = deltaY =>
-      cdp.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: at[0], y: at[1], deltaX: 0, deltaY, modifiers: 2 }),
+    pinch = deltaY => trackpadPinch(at, deltaY),
     under = pointOn(fit, paper, at);
   for (let k = 0; k < 6; k++) await pinch(-20);
   await page.waitForTimeout(800);

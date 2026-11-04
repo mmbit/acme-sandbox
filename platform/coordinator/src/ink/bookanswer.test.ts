@@ -417,6 +417,87 @@ test("the page's picture shows an answer on its slip under its scrap, and grows 
   assert.ok(info.height > was, `the picture reaches down to it (${was} → ${info.height})`);
 });
 
+// A page drawn before a key was saved: its picture is drawn again with the key's name where the value was (db.ts scrubStamp)
+test("a key saved after the page's picture was drawn leaves the picture as it leaves the slip", async () => {
+  const KEY = 'sk_live_' + 'P3'.repeat(20);
+  const { page, run } = await asked('Which key does the shop use?');
+  await h.finish(run, { status: 'done', result: `The one the board said: ${KEY}` });
+  const picture = async () =>
+    Buffer.from(
+      await (
+        await fetch(`${h.base}/api/book/picture?id=${page}`, { headers: { cookie: h.boardCookie } })
+      ).arrayBuffer(),
+    );
+  const drawn = await picture(),
+    kept = () => (db.prepare('select picture from book_pages where id = ?').get(page) as { picture: string }).picture,
+    file = kept();
+  assert.ok(drawn.equals(await picture()) && kept() === file, 'kept while nothing changed');
+
+  const bolt = await h.start({ agent: 'bolt' });
+  const card = await h.ask(bolt, {
+    kind: 'credential',
+    title: 'Stripe',
+    body: 'Paste the key.',
+    secrets: 'STRIPE_LIVE_SECRET_KEY',
+  });
+  assert.equal((await h.answer(card, '', { secrets: { STRIPE_LIVE_SECRET_KEY: KEY } })).status, 200);
+  const slip = db.prepare("select text from book_slips where text like 'The one the board said%'").get() as {
+    text: string;
+  };
+  assert.equal(slip.text, 'The one the board said: [STRIPE_LIVE_SECRET_KEY]');
+  const again = await picture();
+  assert.notEqual(kept(), file, 'drawn again');
+  assert.ok(!again.equals(drawn), "the slip's words drawn as they read now");
+});
+
+// A picture asked for while a save's scrub is still under way: its file's name carries the pass's stamp, so the picture
+// drawn after the pass is kept, the slip's words masked in it (db.ts scrubStamp). The pass is held part way, however quick
+// the machine, by a row it can't mask (a JSON column holding no JSON, written past the triggers): its slice fails and is
+// tried again each second until the row goes.
+test("a page's picture asked for while a key's scrub is under way is drawn and kept with the key's name", async t => {
+  const { DatabaseSync } = await import('node:sqlite');
+  const { scrubbed, scrubOnStart, setting } = await import('../db.ts');
+  const KEY = 'sk_live_' + 'Q7'.repeat(20),
+    NAME = 'STRIPE_LIVE_SECRET_KEY';
+  scrubOnStart(); // (the store as the last pass left it, so the save scrubs with a pass of its own)
+  const { page, run } = await asked('Which key does the till use?');
+  await h.finish(run, { status: 'done', result: `The till's own: ${KEY}` });
+  const picture = async () =>
+    Buffer.from(
+      await (
+        await fetch(`${h.base}/api/book/picture?id=${page}`, { headers: { cookie: h.boardCookie } })
+      ).arrayBuffer(),
+    );
+  const kept = () =>
+    (db.prepare('select picture from book_pages where id = ?').get(page) as { picture: string }).picture;
+  const said = await picture();
+
+  const other = new DatabaseSync(`${h.dataDir}/hq.db`),
+    letGo = () => other.prepare('delete from review_waiting_pushes where pr = 1000000').run();
+  t.after(() => {
+    letGo();
+    other.close();
+  });
+  other.prepare("insert into review_waiting_pushes (pr, push, at) values (1000000, ?, 't')").run(`no JSON: ${KEY}`);
+  const bolt = await h.start({ agent: 'bolt' });
+  const card = await h.ask(bolt, { kind: 'credential', title: 'Stripe', body: 'Paste the key.', secrets: NAME });
+  const before = setting('scrubbed');
+  assert.equal((await h.answer(card, '', { secrets: { [NAME]: KEY } })).status, 200);
+  assert.equal(setting('scrubbed'), before, 'the pass is still under way');
+  const drawing = picture();
+  letGo();
+  const drawn = await drawing;
+  await scrubbed();
+  const stamp = setting('scrubbed')!;
+  assert.notEqual(stamp, before, 'the pass is done');
+  assert.match(kept(), new RegExp(`^${page}-x[^]*-${stamp.slice(0, 6)}-[0-9a-f]{8}\\.png$`), "the pass's stamp");
+  const file = kept();
+  assert.ok(drawn.equals(await picture()) && kept() === file, 'kept after the pass: not drawn again');
+  // the same page drawn afresh now, from its masked words
+  db.prepare('update book_pages set picture = null where id = ?').run(page);
+  assert.ok(drawn.equals(await picture()) && !drawn.equals(said), "the slip's words as they read now: the key's name");
+});
+
 test('hq answer --source: kept with its picture and read back; refused without a picture, or longer than a line', async () => {
   const { writeFileSync, mkdtempSync } = await import('node:fs');
   const dir = mkdtempSync(`${h.dataDir}/hq-source-`);

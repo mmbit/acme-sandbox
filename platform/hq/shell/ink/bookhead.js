@@ -1,9 +1,8 @@
 // The names the book gives its pages in the bar, overview and search.
 import { DAYS, MONTHS, titleCase } from '../../util.js';
 import * as world from '../../world/world.js';
-import { clockWhen } from '../../world/clock.js';
-import { word } from './bookscope.js';
-import { icon } from '../icons.js';
+import { clockWhen, companyFormats } from '../../world/clock.js';
+import { bookLang, word } from './bookscope.js';
 
 // A page's title: a notebook page's own (its label, '' for one with none), or an old page's: whose sheet it is, a call's
 // (who it was with and when it started, on the company's clock: "00:34" today, "Mon 00:34" another day; just "Call"
@@ -28,6 +27,6 @@ function dateOf(day) {
   const d = new Date(`${day}T12:00:00Z`);
   return `${DAYS[d.getUTCDay()]} ${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}`;
 }
-// A pencil by the title wherever it can be changed: at the pages' head (booktitle.js), and in the page's own head
-// (bookunitcards.js)
-export const PENCIL = icon('edit');
+// A page's day in the book's language, no comma: "Sat 31 Oct", "za 31 okt" (a date between days on the page,
+// bookunitcards.js, and the view's, bookviewhead.js).
+export const dayWords = day => companyFormats().day(day, bookLang(), { weekday: true, short: true }).replace(',', '');

@@ -77,6 +77,13 @@ Later:
   on `hq ask` or `hq request`: a yes or no, a number with its unit, a short text, or a choice (the shape `hq` shows).
   Each is its own field on the desk phone, and the answer lists each with the board's answer. Never numbered lines in
   the text, and never under the `---`, which is background the board probably won't need.
+- **The fewest questions, and never one a photo answers** (the board, 4 November, on a test parcel's card of 24
+  questions: "What am I, your errand bot?"). A question earns its place only when its answer changes what we do and
+  nothing else can give it: not a photo, which we read ourselves; not our own files or the order; not what we know of
+  how the thing is made. Ask for photos, and then don't also ask what they show. Ask questions only for what a photo
+  can't carry (how sturdy it feels, a measurement), and for as few photos as the decision needs. A test of a physical
+  thing is a few photos and one or two questions at most, never a checklist. Whoever files a card cuts it to this
+  before filing, and a card reader (org.yaml `roles.cards`) holds the cards it reads to it too.
 - **A card that brings work back for a look** ("good now, or more changes?", `--back`) leads with pictures: under a
   line `Before and after:`, one line per change, `- What changed: <before picture> <after picture> <its live link>`.
   The desk phone shows the two side by side, the link under them (in HQ's viewer, with review mode), and the card's

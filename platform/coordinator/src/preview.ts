@@ -36,8 +36,10 @@ import { mirrorOpens, sha256 } from './previewfiles.ts';
 
 export { PREVIEW }; // (config.ts's.)
 const DAYS = 30;
-// A link for another device stays good while its page may show it, and the access it hands on lasts an hour
-const HANDED_LINK_MS = 15 * 60_000,
+// A one-time link from HQ stays good for two minutes. One for another device stays good while its page may show it,
+// and the access it hands on lasts an hour (a pair code's too, pair.ts).
+export const LINK_MS = 120_000,
+  HANDED_LINK_MS = 15 * 60_000,
   HANDED_ACCESS_MS = 60 * 60_000;
 // host: the one preview host a key handed to another device opens (none: the whole preview domain).
 db.exec('create table if not exists preview_keys (key text primary key, expires integer not null, host text)');
@@ -152,7 +154,7 @@ function signedLink(target: string) {
   let to: URL;
   try { to = new URL(target); } catch { return null; }
   if (to.protocol !== 'https:' || !to.hostname.endsWith(PREVIEW)) return null;
-  return boardLink(to.host, to.pathname + to.search, { keyMs: DAYS * 864e5, linkMs: 120_000 });
+  return boardLink(to.host, to.pathname + to.search, { keyMs: DAYS * 864e5, linkMs: LINK_MS });
 }
 // host: the key opens that host alone (a link handed to another device), or every preview (null)
 function boardLink(at: string, to: string, o: { keyMs: number; linkMs: number; host?: string }) {

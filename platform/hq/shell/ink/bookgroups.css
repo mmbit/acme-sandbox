@@ -95,71 +95,7 @@
   inset: 0 auto auto 0;
   pointer-events: none;
 }
-/* The page's head (bookunits.js TITLE_H) has room for one title line, at its left as the Ink deck draws it, in line
-   with the scraps. At its right it ends 4 px short of the writing paper's edge at the screen's scale; while the open asks' counter shows (the book's own, not a page turn's picture of it), it
-   ends 8 px short of the counter's left edge instead (its place and width bookforyou.css's), so the two never touch.
-   The title stays where it is, only ending sooner. */
-#book {
-  --bk-head-inset: 28px;
-}
-#book .bk-page-title {
-  position: absolute;
-  top: 22px;
-  left: 0;
-  box-sizing: border-box;
-  margin: 0;
-  padding: 0 calc(4px / var(--bk-scale)) 0 calc(var(--bk-head-inset) / var(--bk-scale));
-  /* (no wider than the writing paper shows at the page's corner, --paper-w (bookpages.js), so it ends short of what's at
-     the screen's right even on a page wider than the screen.) */
-  max-width: calc(var(--paper-w, 100vw) / var(--bk-scale));
-  /* (nothing clipped here: the title's touch area reaches past its line, and its own words end in an ellipsis,
-     .bk-title-tap > span.) */
-  white-space: nowrap;
-  font: 600 20px/1.3 var(--bk-font, system-ui, sans-serif);
-  color: var(--bk-ink, #2a2352);
-  letter-spacing: 0.01em;
-}
-/* (the title a button over the paper with the handles, a pencil after it saying it can be changed: a tap opens it to
-   write in, bookunitcards.js.) */
-#book .bk-title-tap {
-  all: unset;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4em;
-  max-width: 100%;
-  pointer-events: auto;
-  cursor: text;
-  -webkit-tap-highlight-color: transparent;
-  position: relative;
-}
-/* (a finger's 44 px to the touch round the title and its pencil, at any zoom (the page's px over --bk-scale): on a
-   phone the pencil is some 8 px across and the title's line 26 px tall, and a finger that misses them draws on the
-   page. README, The book's frame.) */
-#book .bk-title-tap::after {
-  --bk-title-touch: calc(var(--bk-touch) / var(--bk-scale));
-  content: '';
-  position: absolute;
-  inset: min(0px, (1.3em - var(--bk-title-touch)) / 2) min(0px, (0.75em - var(--bk-title-touch)) / 2);
-}
-#book .bk-title-tap > span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-#book .bk-title-tap svg {
-  flex: none;
-  width: 0.75em;
-  height: 0.75em;
-  color: var(--bk-muted, #8a849c);
-}
-#book .bk-title-tap:focus-visible {
-  border-radius: 4px;
-  outline: 2px solid var(--bk-ink, #2a2352);
-  outline-offset: 2px;
-}
-#book:has(.bk-for-you-count:not([hidden], .bk-turn-picture *)) .bk-page-title {
-  padding-right: calc((var(--bk-count-at) + var(--bk-count-w) + 8px) / var(--bk-scale));
-}
+/* (the page's title is on the view: bookdesk.css .bk-view-head) */
 #book .bk-day {
   position: absolute;
   left: 0;
@@ -171,13 +107,6 @@
   text-transform: uppercase;
   color: var(--bk-muted, #8a849c);
 }
-/* (the page's first day, under its title in the page's head, in line with it) */
-#book .bk-head-day {
-  top: 46px;
-  box-sizing: border-box;
-  padding: 0 0 0 calc(var(--bk-head-inset) / var(--bk-scale));
-  text-align: left;
-}
 #book .bk-unit {
   position: absolute;
   box-sizing: border-box;
@@ -185,7 +114,8 @@
 /* the note's paper, as tall as its body (what an agent put down): a post-it glued at its top, lying on the page with
    its own real shadow, its photo taped straight onto it (bookpage.js photos) and its words written on it, one paper and
    nothing stacked under or between (the board's picked mock-up; README, Our scraps). No turned corner. The board's own
-   drawing has none (bookunitcards.js). */
+   drawing has none (bookunitcards.js). One flat colour, no band across it: on a note of one line a band read as a
+   second note under it (the board). */
 #book .bk-unit-paper {
   position: absolute;
   inset: 0 0 auto;
@@ -195,12 +125,11 @@
     0 1px 1px rgba(80, 60, 10, 0.18),
     0 6px 10px -6px rgba(80, 60, 10, 0.35);
 }
-#book .bk-unit-paper::before {
-  content: '';
-  position: absolute;
-  inset: 0 0 auto;
-  height: 9px;
-  background: rgba(214, 186, 60, 0.28);
+/* (a note's typed words written on it, booktexts.js: the paper reaches 6 px round them, the words' only paper.) */
+#book .bk-unit[data-note] .bk-unit-paper {
+  inset: -6px -6px auto;
+  box-sizing: content-box;
+  padding-bottom: 12px;
 }
 #book {
   --bk-postit: #fdf1a9;

@@ -1,10 +1,10 @@
-// book-check.mjs's story of the board's ink staying where it drew it on a call's notes page (shell/ink/bookunits.js), by
-// hand on its iPad at 1133 × 744 and 744 × 1133 with Chromium's own pen and touch: a circle drawn beside a scrap stays
-// put as the scrap's room to write is dragged taller and as writing past its foot grows it; a scribble started over a
-// scrap and across it lands on it, every scrap where it was; one finger, then two, scroll the page and nothing on it
-// moves, the scribble drawn all the while.
+// book-check.mjs's story of the board's ink staying where it drew it on a call's notes page (shell/ink/bookunits.js),
+// by hand on its iPad at 1133 × 744 and 744 × 1133 with the Pencil and fingers (hands.mjs): a circle drawn beside a
+// scrap stays put as the scrap's room to write is dragged taller and as writing past its foot grows it; a scribble
+// started over a scrap and across it lands on it, every scrap where it was; one finger, then two, scroll the page and
+// nothing on it moves, the scribble drawn all the while.
 import assert from 'node:assert/strict';
-import { MINI, UPRIGHT, strokes, unitOf, until } from './kit.mjs';
+import { MINI, UPRIGHT, steps, strokes, unitOf, until } from './kit.mjs';
 import { mini } from './start.mjs';
 import { callSeed, fillCall } from './notespage.mjs';
 
@@ -76,21 +76,32 @@ async function beside({ page, pen }, c, held) {
   assert.ok(taller.h > before.h + 60, `the room dragged taller: ${JSON.stringify([before, taller, refused])}`);
   stillAt(await page.evaluate(inkIn, clip), drawn, 'as its room is dragged taller');
   await c.shot(`book-ink-stays-${held}-dragged`, page);
-  // (written in, past its foot)
-  const foot = taller.y + taller.h;
-  await pen.stroke([
-    [taller.x + 40, foot - 30],
-    [taller.x + 120, foot + 20],
-    [taller.x + 200, foot + 60],
-  ]);
+  // (written in, past its foot, in a hand's small steps.)
+  const foot = taller.y + taller.h,
+    [a, b, d] = [
+      [taller.x + 40, foot - 30],
+      [taller.x + 120, foot + 20],
+      [taller.x + 200, foot + 60],
+    ];
+  await pen.stroke([...steps(a, b, 16), ...steps(b, d, 16).slice(1)]);
   await page.waitForTimeout(1500);
   const grown = await page.evaluate(unitOf, card.g);
   assert.ok(grown.h > taller.h + 40, `the room grew to hold the writing: ${JSON.stringify([taller, grown])}`);
   stillAt(await page.evaluate(inkIn, clip), drawn, 'as writing past its foot grows its room');
 }
 // A scribble started in the space over a scrap and drawn across it: it's the scrap's, and no scrap moves
-async function across({ page, pen }, c, held) {
-  const target = await page.evaluate(cardUnder);
+async function across({ page, pen, touch }, c, held) {
+  // (the page can sit at its foot once the call's scraps have come: a finger scrolls it back up till one is in sight.
+  let target = await page.evaluate(cardUnder);
+  const paper = await page.locator('#book .bk-desk').boundingBox(),
+    [x, y] = [paper.x + paper.width / 2, paper.y + paper.height / 3];
+  for (let k = 0; !target && k < 8; k++) {
+    await touch.down([[x, y]]);
+    await touch.move([[x, y + 160]]);
+    await touch.up();
+    await page.waitForTimeout(800);
+    target = await page.evaluate(cardUnder);
+  }
   assert.ok(target, 'a scrap in sight with one over it');
   const before = await page.evaluate(cardsOnPage);
   await pen.stroke([

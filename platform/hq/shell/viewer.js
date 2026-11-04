@@ -9,7 +9,7 @@ import { sfx } from './audio.js';
 import { DEVICES, GAP, HEAD, devicesFor, fit, chosen, bookChoice } from './viewerfit.js';
 import { shapeOf } from './ink/booklayout.js';
 import { openBook, foldBook, layOver } from './ink/book.js';
-import { pairLink, qrSvg } from './ink/pair.js';
+import { pairCode, qrSvg } from './paircode.js';
 
 // A frame that scrolled leads for this long after its last scroll: the other's scrolls meanwhile are its own following
 // (or stopping short at its end), never passed back
@@ -39,9 +39,10 @@ export function mountStage(v, url) {
     leader: null,
     ledAt: 0,
     closed: false,
+    qr: null, // (the QR card's code while it shows: showQr)
   };
   v.querySelector('.bar .pin').before(me.choices);
-  // (its QR signs a device in as the board: never in a call's recording, shared/watchalong.)
+  // (its QR opens this page on whatever device scans it: never in a call's recording, shared/watchalong.)
   me.qrCard.setAttribute('data-watchalong-hide', '');
   v.append(me.qrCard);
   me.choices.addEventListener('click', e => choose(me, e.target.closest('button')));
@@ -295,23 +296,27 @@ function linkScroll(me, e) {
   for (const f of frames) if (f !== from) f.contentWindow?.postMessage({ hq: 'hq', scrollTo: y }, '*');
 }
 
-// The QR: a one-time sign-in for a phone or tablet that opens this same view there, the notebook live on both. A new
-// code takes the old one's place as it expires, while the card is open.
+// The QR: a one-time pair code that opens this page on a phone or tablet, to view for an hour, never HQ (paircode.js):
+// the square to scan and the numbers to type at /pair. It's good once, for a minute, and the card closes as it ends.
 function toggleQr(me) {
   me.qrCard.hidden = !me.qrCard.hidden;
   paintChoices(me);
+  me.qr = null;
   if (me.qrCard.hidden) me.qrCard.innerHTML = '';
   else showQr(me);
 }
 async function showQr(me) {
   const card = me.qrCard;
-  card.innerHTML ||= '<p>Making a code…</p>';
+  card.innerHTML = '<p>Making a code…</p>';
   try {
-    const pairing = await pairLink(me.url);
-    if (card.hidden || me.closed) return;
-    card.innerHTML = `${qrSvg(pairing.link, 'Scan to open this on your phone or tablet')}
-      <div><b>Open on your phone or tablet</b><p>Scan with the camera. The notebook stays live on both.</p></div>`;
-    setTimeout(() => !card.hidden && !me.closed && showQr(me), Math.max(1000, pairing.expires - Date.now()));
+    const pairing = await pairCode(me.url);
+    if (card.hidden || me.closed || me.qr) return;
+    me.qr = pairing;
+    card.innerHTML = `${qrSvg(pairing.link, 'Scan to open this page on your phone or tablet')}
+      <div><b>Open this page on a phone or tablet</b><p>Scan with the camera, or open <b>${location.host}/pair</b> and enter <b class="pair-digits"></b>.</p>
+      <p class="dim">That device can view this work for an hour, without notes. Good once, for a minute.</p></div>`;
+    card.querySelector('.pair-digits').textContent = pairing.code.replace(/^(\d{3})/, '$1 ');
+    setTimeout(() => me.qr === pairing && !me.closed && toggleQr(me), Math.max(0, pairing.expires - Date.now()));
   } catch (error) {
     card.textContent = error.message;
   }

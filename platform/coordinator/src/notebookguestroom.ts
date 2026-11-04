@@ -5,6 +5,7 @@ import { voice } from './feedback.ts';
 import { fetchGuestPicture } from './ink/bookfetch.ts';
 import * as files from './notebookguestfiles.ts';
 import * as notebooks from './notebookguests.ts';
+import * as callguests from './callguests.ts';
 import * as members from './notebookmembers.ts';
 import { shelfOf } from './notebookguestshelf.ts';
 import * as pictures from './notebookpictures.ts';
@@ -27,7 +28,8 @@ const ROOM = '/guest/notebooks',
 
 guests.addRoom({
   path: 'notebooks',
-  opens: name => members.forGuest(name).length > 0,
+  // (and for the board's guest on a live call: callguests.ts.)
+  opens: name => members.forGuest(name).length > 0 || callguests.onACall(name),
   label: files.roomTitle,
   link: notebooks.roomLink,
   serve: (req, res) => room(req, res),
@@ -38,12 +40,14 @@ const nameOf = (req: IncomingMessage) => guests.signedIn(req)!.name;
 
 // What a write on one of the guest's pages gets: the guest, their membership and round, the page and who they write as
 // there, and whether they're still in (signed in and a member of the page) after any wait
+// (by: who they write as; on a page of their own, who.)
 type OnPage = {
   name: string;
-  member: members.Membership;
+  member: members.Membership | undefined;
   round: rounds.Round | undefined;
   page: number;
   who: string;
+  by: string;
   stillOpen: () => boolean;
 };
 // Where a write's page is: its body's page, its own id (a page's), a group's or an answer slip's
@@ -58,6 +62,8 @@ const byPage = (b: any) => Number(b?.page),
 // write names how its page is found, what it does, and whether it answers an agent (ANSWERS: a closed round still
 // takes it).
 const ANSWERS = true;
+// (and CALL: a call's guest writes it on the call's page too, onPage.)
+const CALL = true;
 const room = routes({
   [`GET ${ROOM}`]: ({ res, url }) => {
     res.writeHead(302, { location: `${ROOM}/${url.search}`, 'cache-control': 'no-store' });
@@ -68,9 +74,15 @@ const room = routes({
     return files.servePage(res, guest.name, guests.langOf(guest));
   },
   [`GET ${API}/shelf`]: ({ req, res }) => answer(res, shelfOf(nameOf(req))),
-  [`GET ${API}/list`]: read((name, q) => notebooks.listNotebooks(name, Number(q.get('notebook')) || undefined)),
-  [`GET ${API}/pages`]: read((name, q) => notebooks.guestPages({ notebook: q.get('notebook') }, name)),
-  [`GET ${API}/pages/groups`]: read((name, q) => notebooks.listGroups({ page: q.get('page') }, name)),
+  [`GET ${API}/list`]: read(
+    (name, q) => onCall(name, q)?.list ?? notebooks.listNotebooks(name, Number(q.get('notebook')) || undefined),
+  ),
+  [`GET ${API}/pages`]: read(
+    (name, q) => onCall(name, q)?.pages ?? notebooks.guestPages({ notebook: q.get('notebook') }, name),
+  ),
+  [`GET ${API}/pages/groups`]: read(
+    (name, q) => callGroups(name, q) ?? notebooks.listGroups({ page: q.get('page') }, name),
+  ),
   [`GET ${API}/pictures`]: ({ req, res, url }) => PICTURES.pictures(req, res, url, nameOf(req)),
   [`GET ${API}/book/picture`]: ({ req, res, url }) => PICTURES.bookPicture(req, res, url, nameOf(req)),
   [`GET ${API}/book/slip/picture`]: ({ req, res, url }) => PICTURES.slipPicture(req, res, url, nameOf(req)),
@@ -83,10 +95,11 @@ const room = routes({
   [`POST ${API}/pages/send`]: onPage(byId, (b, on) => rounds.handIn(on.page, on.who, on.stillOpen)),
   [`POST ${API}/pages/undo`]: onPage(byId, (b, on) => rounds.takeBack(on.page, on.who)),
   [`POST ${API}/pages/title`]: onPage(byId, (b, on) => notebook.titlePage(b, on.who)),
-  [`POST ${API}/groups/create`]: onPage(byPage, (b, on) => groups.createGroup(b, on.who)),
-  [`POST ${API}/groups/edit`]: onPage(byGroup, (b, on) => groups.editGroup(b, on.who)),
-  [`POST ${API}/groups/delete`]: onPage(byGroup, (b, on) => groups.deleteGroup(b, on.who)),
-  [`POST ${API}/groups/restore`]: onPage(byGroup, restoreGroup),
+  // (and a call's guest on the call's page: CALL.)
+  [`POST ${API}/groups/create`]: onPage(byPage, (b, on) => groups.createGroup(b, on.who, on.by), false, CALL),
+  [`POST ${API}/groups/edit`]: onPage(byGroup, (b, on) => groups.editGroup(b, on.who, on.by), false, CALL),
+  [`POST ${API}/groups/delete`]: onPage(byGroup, (b, on) => groups.deleteGroup(b, on.who), false, CALL),
+  [`POST ${API}/groups/restore`]: onPage(byGroup, restoreGroup, false, CALL),
   [`POST ${API}/groups/move`]: onPage(byGroup, moveGroup),
   [`POST ${API}/groups/resize`]: onPage(byGroup, (b, on) => groups.resizeGroup(b, on.who)),
   [`POST ${API}/groups/split`]: onPage(byGroup, (b, on) => groups.splitGroup(b, on.who)),
@@ -137,18 +150,52 @@ const stillSignedIn = (req: IncomingMessage, name: string) =>
   guests.signedIn(req)?.name.toLowerCase() === name.toLowerCase();
 
 // A write on one of the guest's pages: refused unless they're a member of the page it names, and in a closed round
-// unless it answers an agent
-function onPage(page: (b: any) => number, writing: (b: any, on: OnPage) => unknown, answering = false) {
+// unless it answers an agent. call: it's one a call's guest makes on the call's page too, as themselves, on what's
+// theirs there only (callguests.ts).
+function onPage(page: (b: any) => number, writing: (b: any, on: OnPage) => unknown, answering = false, call = false) {
   return write(async (b, name, stillIn) => {
     const at = page(b),
       member = notebooks.pageMember(at, name);
-    if (!member) return 404;
+    if (!member) return call ? onCallPage(at, b, name, stillIn, writing) : 404;
     const round = rounds.roundOf(member.notebook);
     if (round?.closed && !answering) return [409, 'the round has closed', 'roundClosed'] as Refused;
     const stillOpen = () => stillIn() && !!notebooks.pageMember(at, name);
-    const on = { name, member, round, page: at, who: members.whoOf(member), stillOpen };
+    const who = members.whoOf(member);
+    const on = { name, member, round, page: at, who, by: who, stillOpen };
     return (await writing(b, on)) ?? { ok: true };
   });
+}
+async function onCallPage(
+  at: number,
+  b: any,
+  name: string,
+  stillIn: () => boolean,
+  writing: (b: any, on: OnPage) => unknown,
+) {
+  const guest = callguests.onCallPage(at, name);
+  if (!guest) return 404;
+  const g = b?.id == null ? undefined : groups.row(Number(b.id));
+  if (g && g.by !== guest.by) return 404;
+  const stillOpen = () => stillIn() && !!callguests.onCallPage(at, name);
+  const on = { name, member: undefined, round: undefined, page: at, ...guest, stillOpen };
+  return (await writing(b, on)) ?? { ok: true };
+}
+// The call's page as the guest's shell reads a notebook of theirs: its list and pages, its groups. undefined: not a
+// call's page of theirs.
+function onCall(name: string, q: URLSearchParams) {
+  const book = callguests.notebookFor(name, Number(q.get('notebook')));
+  return (
+    book && {
+      list: { notebooks: [book], limits: notebooks.listNotebooks(name).limits },
+      pages: { notebook: book, pages: book.pages, archived: [] },
+    }
+  );
+}
+function callGroups(name: string, q: URLSearchParams) {
+  const on = callguests.onCallPage(Number(q.get('page')), name);
+  if (!on) return undefined;
+  const listed = groups.listGroups({ page: q.get('page') }, on.who);
+  return typeof listed === 'number' ? listed : { ...listed, groups: listed.groups.map(g => ({ ...g, asks: [] })) };
 }
 
 function createPage(b: any, name: string) {
@@ -168,7 +215,7 @@ function restoreGroup(b: any, on: OnPage) {
 
 // (onto another page of the same notebook only)
 function moveGroup(b: any, on: OnPage) {
-  if (notebooks.pageMember(Number(b.page), on.name)?.notebook !== on.member.notebook) return 404;
+  if (!on.member || notebooks.pageMember(Number(b.page), on.name)?.notebook !== on.member.notebook) return 404;
   return groups.moveGroup(b, on.who);
 }
 
@@ -187,8 +234,10 @@ type PictureServer = (req: IncomingMessage, res: ServerResponse, who: string) =>
 function picture(page: (query: URLSearchParams) => number, serve: PictureServer) {
   return (req: IncomingMessage, res: ServerResponse, url: URL, name?: string) => {
     const member = notebooks.pageMember(page(url.searchParams), name);
-    if (!member) return reply(res, 404, { error: 'not found' });
-    return serve(req, res, members.whoOf(member));
+    // (a call's page, to its guest.)
+    const call = !member && name ? callguests.onCallPage(page(url.searchParams), name) : undefined;
+    if (!member && !call) return reply(res, 404, { error: 'not found' });
+    return serve(req, res, member ? members.whoOf(member) : call!.who);
   };
 }
 export const PICTURES = {

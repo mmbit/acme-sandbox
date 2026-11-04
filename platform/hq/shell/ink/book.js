@@ -28,6 +28,7 @@ import * as bookstage from './bookstage.js';
 import { undoKeys } from './bookundokeys.js';
 import { mountShelfWindow, openShelf } from './bookshelfwindow.js';
 import { pressesHeard } from './booksounds.js';
+import { mountCallMarks } from './bookcallmarks.js';
 
 // How long the book slides from one open width to another, pushed aside quick and soft (the swing's: bookswing.js)
 const SLIDE_MS = 240,
@@ -58,8 +59,8 @@ export async function initBook({ scope = null } = {}) {
   await Promise.all(STYLES.map(href => stylesheet(href)));
   mountRoot();
   state = recall(store, shape());
-  if (scope) state.mode = 'open';
-  mountRail(parts.rail, { undo: () => pages.undo(), redo: () => pages.redo(), close: () => foldBook() });
+  if (scope) state.mode = scope.spread ? 'spread' : 'open'; // (spread: a call's page, its guest's.)
+  mountRail(parts.rail, { undo: () => pages.undo(), redo: () => pages.redo() });
   const calls = scope ? null : await import('../calldrop.js');
   pages = mountPages(parts.paper, { dev: world.dev, calls, shelf: scope ? null : openShelf });
   if (!scope) mountBookmarks(parts, pages); // (the board's books' chapters: bookmarks.js)
@@ -103,6 +104,8 @@ function watchSize() {
 function mountRoot() {
   root = document.createElement('div');
   root.id = 'book';
+  // (the whole book is its own pen's: review mode's pen leaves it, its menus too, to the book.)
+  root.setAttribute('data-no-ink', '');
   root.style.cssText = PAPER;
   root.innerHTML = `<div class="bk-table" data-no-ink></div><div class="bk-edge" data-no-ink><span class="bk-edge-grip" role="separator"
     aria-orientation="vertical" aria-label="${word('notebookEdge')}"></span></div>
@@ -115,6 +118,7 @@ function mountRoot() {
   parts = Object.fromEntries(
     ['table', 'edge', 'leaf', 'paper', 'stack', 'rail', 'lip'].map(k => [k, root.querySelector(`.bk-${k}`)]),
   );
+  mountCallMarks(parts.paper); // (the call's to mark, when Settings say so.)
 }
 // What the book shows now: { mode, shape, page, edge, book, room }
 export const bookLayout = () => drawn;

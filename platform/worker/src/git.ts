@@ -165,20 +165,24 @@ export const runAs = (agent: Agent, cmd: string, args: string[], input?: string)
   });
 };
 
+// A ref GitHub rejected for its own server error, a transient fault on its side: "(failed)", "(failure)" (after
+// `remote: fatal error in commit_refs`), "(Internal Server Error)" and its 5xx kin.
+const SERVER_ERROR_REJECTION =
+  /\[remote rejected\] [^\n]* \((failed|failure|(Internal Server|Bad Gateway|Service Unavailable|Gateway Time-?out)( Error)?)\)[ \t\r]*$/gim;
 // Whether a failed push (or the mirror's fetch) was lost on the way to GitHub
 // rather than refused by it.
 // A refused ref ([rejected], [remote rejected]: not a fast-forward, a workflow file without the scope, a lease that no
-// longer holds) means GitHub answered. A push our timeout killed, a dropped connection, or a 5xx can go again, and so
-// can a ref GitHub rejects with no reason but "(failed)", a transient error on GitHub's side.
+// longer holds) means GitHub answered. A push our timeout killed, a dropped connection or a 5xx can go again. So can a
+// ref rejected only for GitHub's own server error.
 function lostOnTheWay(e: { killed?: boolean; stderr?: unknown }) {
   const said = String(e.stderr ?? '');
-  const withoutFailedRefs = said.replace(/\[remote rejected\] [^\n]* \(failed\)$/gm, '');
-  const hadFailedRef = withoutFailedRefs !== said;
-  if (/\[(remote )?rejected\]|HTTP 4\d\d|returned error: 4\d\d|remote unpack failed/i.test(withoutFailedRefs))
+  const withoutServerErrors = said.replace(SERVER_ERROR_REJECTION, '');
+  const hadServerError = withoutServerErrors !== said;
+  if (/\[(remote )?rejected\]|HTTP 4\d\d|returned error: 4\d\d|remote unpack failed/i.test(withoutServerErrors))
     return false;
   return (
     !!e.killed ||
-    hadFailedRef ||
+    hadServerError ||
     /RPC failed|remote end hung up|unexpected disconnect|early EOF|Could not resolve host|Failed to connect|Connection (timed out|reset|refused)|Operation timed out|returned error: 5\d\d/i.test(
       said,
     )

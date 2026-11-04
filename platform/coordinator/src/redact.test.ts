@@ -1,10 +1,11 @@
 // node --test src/redact.test.ts: a key's value never stays in text an agent can read, whatever the text is about, and
-// the board sees every card whole (the board, 2026-10-06): secrets.ts redact(), db.ts redacted() and scrub(), jobs.ts.
-import { test } from 'node:test';
+// the board sees every card whole (the board, 2026-10-06): secrets.ts redact(), db.ts redacted(), scrub() and
+// scrubSaved(), jobs.ts.
+import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, utimesSync, writeFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
-import { harness, type Running } from './harness.ts';
+import { harness, WORKER_TOKEN, type Running } from './harness.ts';
 
 const h = await harness('redact');
 const { board, agent } = h;
@@ -101,6 +102,54 @@ test('a key with a quote and a backslash leaves a call\'s lines and what search 
   assert.ok(!shown.includes(TOKEN) && shown.includes('[TWILIO_AUTH_TOKEN]'), shown);
 });
 
+test("a request under way when a save's pass starts waits for it at the read: a claim's body and a search's embedding done mid-pass", async t => {
+  const { setting } = await import('./db.ts'), SAID = 'pa' + '4a'.repeat(12), NAME = 'PRINTAPI_LIVE_INFLIGHT_KEY';
+  scrubOnStart();   // (the store as the last pass left it, so the save scrubs for its own key alone)
+  const penny = await h.start({ agent: 'penny' });
+  await h.finish(await h.start({ agent: 'penny' }), { result: `the wombatline order key is ${SAID}` });
+  await memory.refresh();
+  h.queue({ agent: 'wren', engine: 'printapi-inflight', title: 'Order', prompt: `use ${SAID}` });
+  // the question's embedding, and the claim's body, each let go once the pass is under way
+  let embedded!: () => void, sent!: () => void, asked!: () => void;
+  const embeds = new Promise<void>(r => (embedded = r)), body = new Promise<void>(r => (sent = r)), embedding = new Promise<void>(r => (asked = r));
+  memory.setEmbedder(async (texts, kind) => {
+    if (kind === 'query') {
+      asked();
+      await embeds;
+    }
+    return texts.map(() => Float32Array.from([1, 0, 0]));
+  }, 'fake-inflight');
+  t.after(() => memory.setEmbedder(null));
+  const searching = agent('search?q=wombatline', penny.token);
+  await embedding;
+  const reached = new Promise(r => h.server!.once('request', r));
+  const claiming = h.send('/api/worker/claim', { authorization: `Bearer ${WORKER_TOKEN}` }, { seat: 'seat-inflight', engine: 'printapi-inflight' }, 'POST', body);
+  await reached;
+  const { letGo } = holdPass(t, SAID), before = setting('scrubbed');
+  await save(bolt, NAME, SAID);
+  assert.equal(setting('scrubbed'), before, 'the pass is still under way');
+  sent();
+  embedded();
+  letGo();
+  const [claimed, searched] = await Promise.all([claiming, searching]);
+  assert.equal(claimed.json.prompt, `use [${NAME}]`);
+  const shown = (searched.body.hits as any[]).map(x => x.snippet).join('\n');
+  assert.ok(!shown.includes(SAID) && shown.includes(`[${NAME}]`), shown);
+});
+
+test("a claim whose plan is still playing when a key is saved reads its job after the save's pass", async t => {
+  const ordering = await import('./ordering.ts'), SAID = 'pa' + '3b'.repeat(12), NAME = 'PRINTAPI_LIVE_PLAYING_KEY';
+  scrubOnStart();
+  const card = await h.ask(bolt, { kind: 'credential', title: NAME, body: 'Paste the key.', secrets: NAME });
+  const job = h.queue({ agent: 'wren', engine: 'printapi-playing', title: 'Order', prompt: `use ${SAID}` });   // (the plan played again)
+  const { letGo } = holdPass(t, SAID);
+  const reading = ordering.withPlan(() => (h.db.prepare('select prompt from jobs where id = ?').get(job) as { prompt: string }).prompt);
+  const saved = h.jobs.answerRequest(card, '', { [NAME]: SAID });   // (saved while the plan plays)
+  assert.ok(!Array.isArray(saved) && typeof saved === 'object', JSON.stringify(saved));
+  letGo();
+  assert.equal(await reading, `use [${NAME}]`);
+});
+
 test('a start goes over old text again only when the key store or redact()\'s rules changed since the last pass, so a write past the triggers waits for that', async () => {
   const other = new DatabaseSync(`${h.dataDir}/hq.db`);   // without the triggers: no such writer exists, this stands in for one
   const write = () => Number(other.prepare("insert into chat (ts, who, text) values ('t', 'board', ?)").run(`it was ${KEY}`).lastInsertRowid);
@@ -117,6 +166,81 @@ test('a start goes over old text again only when the key store or redact()\'s ru
   scrubOnStart();
   assert.equal(await line(again), 'it was [STRIPE_LIVE_SECRET_KEY]');
   other.close();
+});
+
+// A save's own pass (db.ts scrubSaved), held part way however quick the machine: a row it can't mask (a JSON column
+// holding no JSON, written past the triggers) in a table it visits before chat, calls and jobs fails its slice, which it
+// tries again each second until letGo() takes the row away.
+const HELD_PR = 1_000_000;
+function holdPass(t: TestContext, value: string) {
+  const other = new DatabaseSync(`${h.dataDir}/hq.db`);
+  other.prepare("insert into review_waiting_pushes (pr, push, at) values (?, ?, 't')").run(HELD_PR, `no JSON: ${value}`);
+  const letGo = () => other.prepare('delete from review_waiting_pushes where pr = ?').run(HELD_PR);
+  t.after(() => {
+    letGo();
+    other.close();
+  });
+  return { other, letGo };
+}
+const today = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Amsterdam' }).format(new Date());
+
+test("what an agent reads waits for a save's pass: a claim, the intercom and a call right after the answer hold the key's name", async t => {
+  const { setting, scrubbed } = await import('./db.ts'), SAID = 'pa' + '6e'.repeat(12), NAME = 'PRINTAPI_LIVE_SCRUB_KEY';
+  const penny = await h.start({ agent: 'penny' });
+  await say(`the order key is ${SAID}`);
+  const ctx = (await h.voice('call-context?agent=bolt&request=0')).body;
+  await h.voice('call-end', { agent: 'bolt', lines: [`Board: the order key is ${SAID}`], request: 0, token: ctx.token });
+  h.queue({ agent: 'wren', engine: 'printapi', title: 'Order', prompt: `use ${SAID}` });
+  const { other, letGo } = holdPass(t, SAID), before = setting('scrubbed');
+  await save(bolt, NAME, SAID);
+  assert.equal(setting('scrubbed'), before, 'the pass is still under way');
+  const reading = Promise.all([h.claim('printapi'), agent(`intercom?day=${today()}`, penny.token), agent(`call?id=${ctx.call}`, penny.token)]);
+  letGo();
+  const read = await reading;
+  assert.ok(!JSON.stringify(read).includes(SAID));
+  assert.equal(read[0]!.prompt, `use [${NAME}]`);
+  assert.deepEqual(read[2].body.lines, [`Board: the order key is [${NAME}]`]);
+  await h.finish(read[0]!, { result: 'Done.' });
+  await scrubbed();
+  const id = Number(other.prepare("insert into chat (ts, who, text) values ('t', 'board', ?)").run(`it was ${SAID}`).lastInsertRowid);
+  scrubOnStart();
+  assert.equal(await line(id), `it was ${SAID}`, 'the pass kept its stamp: a start reads nothing again');
+  other.prepare('delete from chat where id = ?').run(id);
+});
+
+test('a key replaced while the pass for its first value is under way leaves the old text all the same', async t => {
+  const { setting, scrubbed } = await import('./db.ts'), FIRST = 'pa' + '7d'.repeat(12), SECOND = 'pa' + '8c'.repeat(12);
+  const NAME = 'PRINTAPI_LIVE_SCRUB_KEY', { other, letGo } = holdPass(t, FIRST);
+  const id = Number(other.prepare("insert into chat (ts, who, text) values ('t', 'board', ?)").run(`it was ${FIRST}`).lastInsertRowid);
+  // (both cards filed first: filing one is an agent's request, which waits for a pass under way)
+  const cards = [await h.ask(bolt, { kind: 'credential', title: NAME, body: 'Paste the key.', secrets: NAME }),
+    await h.ask(bolt, { kind: 'credential', title: NAME, body: 'Paste the new key.', secrets: NAME })];
+  const before = setting('scrubbed');
+  assert.equal((await h.answer(cards[0], '', { secrets: { [NAME]: FIRST } })).status, 200);
+  assert.equal((await h.answer(cards[1], '', { secrets: { [NAME]: SECOND } })).status, 200);
+  assert.equal(setting('scrubbed'), before, "the first value's pass is still under way");
+  letGo();
+  await scrubbed();
+  assert.equal(await line(id), `it was [${NAME}]`);
+});
+
+test('a save after a key was put in by hand scrubs that key out too, as its stamp says', async () => {
+  const HAND = 'ha' + '9b'.repeat(12), other = new DatabaseSync(`${h.dataDir}/hq.db`);
+  const id = Number(other.prepare("insert into chat (ts, who, text) values ('t', 'board', ?)").run(`it was ${HAND}`).lastInsertRowid);
+  writeFileSync(`${h.dataDir}/secrets/HAND_PUT_SCRUB_KEY`, HAND);
+  await save(bolt, 'PRINTAPI_TEST_SCRUB_KEY', 'pa' + '5f'.repeat(12));
+  assert.equal(await line(id), 'it was [HAND_PUT_SCRUB_KEY]');
+  other.close();
+});
+
+test("a key with a quote in a JSON snippet on a call leaves the call's lines with a save's pass", async () => {
+  const { scrubbed } = await import('./db.ts'), TOKEN = 'tw"ef\\gh' + 'Y'.repeat(16), penny = await h.start({ agent: 'penny' });
+  scrubOnStart();   // (the store as the last pass left it, so the save scrubs for its own key alone)
+  const ctx = (await h.voice('call-context?agent=bolt&request=0')).body;
+  await h.voice('call-end', { agent: 'bolt', lines: [`Board: the config is ${JSON.stringify({ token: TOKEN })}`], request: 0, token: ctx.token });
+  await save(bolt, 'PRINTAPI_TEST_QUOTE_KEY', TOKEN);
+  await scrubbed();
+  assert.deepEqual((await agent(`call?id=${ctx.call}`, penny.token)).body.lines, ['Board: the config is {"token":"[PRINTAPI_TEST_QUOTE_KEY]"}']);
 });
 
 // A made-up key in the double quotes a .env line puts round it, said without them.

@@ -2,7 +2,7 @@
 // status report whole or what changed, the CEO's notes, and the key the board gives it from Settings › Overseer.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { gzipSync } from 'node:zlib';
 import { harness } from './harness.ts';
 
@@ -154,4 +154,101 @@ test('a call with the board, whole: every line, its items and its follow-ups, bu
   h.db.prepare("update calls set status = 'live' where id = 90").run();
   assert.equal((await overseer('call/90', key)).status, 404, 'still going on');
   assert.equal((await overseer('call/91', key)).status, 404);
+});
+
+// A key the board saves after a report was written leaves that report as it's read, whole and in what changed
+test('a key saved after a report was kept is masked in it, for the Overseer and for hq report', async () => {
+  const { key } = (await h.board('/api/oversight')).body;
+  const KEY = 'sk_live_' + 'R4'.repeat(20);
+  rmSync(REPORTS, { recursive: true, force: true });
+  report('2026-10-17T10:00:00Z', FIRST);
+  report('2026-10-17T10:10:00Z', FIRST.replace('job 7\n', `job 7: the board said ${KEY}\n`));
+  const bolt = await h.start({ agent: 'bolt' });
+  assert.match((await h.hq(bolt, 'report')).out, new RegExp(KEY), 'not a key yet');
+
+  const card = await h.ask(bolt, {
+    kind: 'credential',
+    title: 'Stripe',
+    body: 'Paste the key.',
+    secrets: 'STRIPE_LIVE_SECRET_KEY',
+  });
+  assert.equal((await h.answer(card, '', { secrets: { STRIPE_LIVE_SECRET_KEY: KEY } })).status, 200);
+  const masked = 'job 7: the board said [STRIPE_LIVE_SECRET_KEY]';
+  for (const read of [
+    (await overseer('status', key)).text,
+    (await overseer('status?since=2026-10-17T10:05:00Z', key)).text,
+    (await h.hq(bolt, 'report')).out,
+    (await h.hq(bolt, 'report', '--since', '2026-10-17T10:05:00Z')).out,
+  ]) {
+    assert.ok(read.includes(masked), read);
+    assert.ok(!read.includes(KEY));
+  }
+});
+
+// The save masks the report's file itself, so a key replaced later (redact() then knows only its new value) stays masked
+test('a key saved after a report was kept stays masked in it once the key is replaced', async () => {
+  const { key } = (await h.board('/api/oversight')).body;
+  const FIRST_KEY = 'sk_live_' + 'S5'.repeat(20),
+    NEW_KEY = 'sk_live_' + 'T6'.repeat(20);
+  rmSync(REPORTS, { recursive: true, force: true });
+  report('2026-10-17T10:00:00Z', FIRST);
+  report('2026-10-17T10:10:00Z', FIRST.replace('job 7\n', `job 7: the board said ${FIRST_KEY}\n`));
+  const file = `${REPORTS}/20261017T101000Z.md.gz`,
+    written = Math.round(statSync(file).mtimeMs / 1000);
+  const bolt = await h.start({ agent: 'bolt' });
+  const cards = [
+    await h.ask(bolt, {
+      kind: 'credential',
+      title: 'Stripe',
+      body: 'Paste the key.',
+      secrets: 'STRIPE_LIVE_SECRET_KEY',
+    }),
+    await h.ask(bolt, {
+      kind: 'credential',
+      title: 'Stripe',
+      body: 'Paste the new key.',
+      secrets: 'STRIPE_LIVE_SECRET_KEY',
+    }),
+  ];
+  assert.equal((await h.answer(cards[0], '', { secrets: { STRIPE_LIVE_SECRET_KEY: FIRST_KEY } })).status, 200);
+  assert.equal((await h.answer(cards[1], '', { secrets: { STRIPE_LIVE_SECRET_KEY: NEW_KEY } })).status, 200);
+  assert.equal(redact(FIRST_KEY), FIRST_KEY, 'the store holds the new value alone');
+  const masked = 'job 7: the board said [STRIPE_LIVE_SECRET_KEY]';
+  for (const read of [
+    (await overseer('status', key)).text,
+    (await overseer('status?since=2026-10-17T10:05:00Z', key)).text,
+    (await h.hq(bolt, 'report')).out,
+    (await h.hq(bolt, 'report', '--since', '2026-10-17T10:05:00Z')).out,
+  ]) {
+    assert.ok(read.includes(masked), read);
+    assert.ok(!read.includes(FIRST_KEY));
+  }
+  assert.equal(
+    Math.round(statSync(file).mtimeMs / 1000),
+    written,
+    'the file keeps its time, which its two days count from',
+  );
+});
+
+// A report published after a save's pass (its build read hq.db before the save) still holds the key: replacing the key
+// masks the old value in it before redact() forgets it
+test('a report published after the save keeps the old value masked once the key is replaced', async () => {
+  const { key } = (await h.board('/api/oversight')).body;
+  const FIRST_KEY = 'sk_live_' + 'U7'.repeat(20),
+    NEW_KEY = 'sk_live_' + 'V8'.repeat(20);
+  rmSync(REPORTS, { recursive: true, force: true });
+  const bolt = await h.start({ agent: 'bolt' });
+  const card = () =>
+    h.ask(bolt, { kind: 'credential', title: 'Stripe', body: 'Paste the key.', secrets: 'STRIPE_LIVE_SECRET_KEY' });
+  assert.equal((await h.answer(await card(), '', { secrets: { STRIPE_LIVE_SECRET_KEY: FIRST_KEY } })).status, 200);
+  await h.hq(bolt, 'report'); // (the save's pass is over)
+  report('2026-10-17T10:00:00Z', FIRST);
+  report('2026-10-17T10:10:00Z', FIRST.replace('job 7\n', `job 7: the board said ${FIRST_KEY}\n`));
+  assert.equal((await h.answer(await card(), '', { secrets: { STRIPE_LIVE_SECRET_KEY: NEW_KEY } })).status, 200);
+  assert.equal(redact(FIRST_KEY), FIRST_KEY, 'the store holds the new value alone');
+  const masked = 'job 7: the board said [STRIPE_LIVE_SECRET_KEY]';
+  for (const read of [(await overseer('status', key)).text, (await h.hq(bolt, 'report')).out]) {
+    assert.ok(read.includes(masked), read);
+    assert.ok(!read.includes(FIRST_KEY));
+  }
 });

@@ -77,6 +77,8 @@ import { notebookRoute } from './book/notebookroute.mjs';
 import { notebookStories } from './book/notebook.mjs';
 import { notebookPhoneStories } from './book/notebookphone.mjs';
 import { realBookStories } from './book/realbook.mjs';
+import { glassStories } from './book/glass.mjs';
+import { notebookLookStories } from './book/notebooklook.mjs';
 import { edgeStories } from './book/edges.mjs';
 import { tapedStories } from './book/taped.mjs';
 import { menuStories } from './book/menus.mjs';
@@ -105,11 +107,12 @@ import { tabPagesStories } from './book/tabpages.mjs';
 import { pressesStories } from './book/presses.mjs';
 import { pageArrowsStories } from './book/pagearrows.mjs';
 import { pageListStories } from './book/pagelist.mjs';
-import { titleTapStories } from './book/titletap.mjs';
+import { viewTitleStories } from './book/viewtitle.mjs';
 import { pinchFrameStories } from './book/pinchframe.mjs';
 import { blankPagesStories } from './book/blankpages.mjs';
 import { callSizesStories } from './book/callsizes.mjs';
 import { overlayStories, mediaStories } from './book/overlays.mjs';
+import { penOwnedStories } from './book/penowned.mjs';
 import { pictureStories } from './book/picture.mjs';
 import { messageStories } from './book/messages.mjs';
 import { callKeyStories } from './book/callkeys.mjs';
@@ -447,8 +450,10 @@ async function hqIn(browser, viewport = IPAD_MINI.viewport, { notebooks, pen = t
     const body =
       r.request().method() === 'POST' && url.pathname !== '/api/book/scrap' ? r.request().postDataJSON() : null;
     if (url.pathname === '/api/org') return r.fulfill({ json: org });
-    // (a call reads the board's language before it dials, and its Show starts a watch-along: nothing recorded here)
-    if (url.pathname === '/api/language') return r.fulfill({ json: { lang: 'en' } });
+    // (a call reads the board's language before it dials, and its Show starts a watch-along: nothing recorded here;
+    // HQ's settings and the Notebook's name the language from the route's list.
+    if (url.pathname === '/api/language')
+      return r.fulfill({ json: { lang: 'en', languages: [{ code: 'en', name: 'English', own: 'English' }] } });
     // (nobody invited: the rail draws its faces only once it has read who has a book.)
     if (url.pathname === '/api/book/people') return r.fulfill({ json: [] });
     if (url.pathname === '/api/watchalong/start') return r.fulfill({ json: { id: 1, events: null } });
@@ -483,6 +488,8 @@ async function hqIn(browser, viewport = IPAD_MINI.viewport, { notebooks, pen = t
     // counterpart.)
     if (['/api/requests', '/api/gazette', '/api/book/people', '/api/artifacts'].includes(url.pathname))
       return r.fulfill({ json: [] });
+    // (nor earlier versions: the viewer asks for a preview's beside it.)
+    if (url.pathname === '/api/artifacts/earlier-versions') return r.fulfill({ json: { versions: [], unlisted: 0 } });
     return r.fulfill({ status: 404, body: '' });
   });
   return context;
@@ -554,6 +561,8 @@ function STORIES() {
     ...notebookStories({ hqIn, base, settled, shot, noErrorsIn, shots }),
     ...notebookPhoneStories({ hqIn, base, settled, shot, noErrorsIn, shots }),
     ...realBookStories({ hqIn, base, settled, shot, noErrorsIn }),
+    ...glassStories({ hqIn, base, settled, shot }),
+    ...notebookLookStories({ hqIn, base, settled, shot }),
     ...edgeStories({ hqIn, base, settled, shot, noErrorsIn }),
     ...tapedStories({ hqIn, base, settled, shot, noErrorsIn }),
     ...menuStories({ hqIn, base, settled, shot, noErrorsIn }),
@@ -588,8 +597,8 @@ function STORIES() {
     ...pageArrowsStories({ hqIn, base, shot, noErrorsIn }),
     // (the page list showing only the tab's pages.)
     ...pageListStories({ hqIn, base, shot, noErrorsIn }),
-    // (a page's title looking editable, the page count closing its list.)
-    ...titleTapStories({ hqIn, base, shot, noErrorsIn }),
+    // (the page's title on the view, renamed from the dots menu.)
+    ...viewTitleStories({ hqIn, base, settled, shot, noErrorsIn }),
     // (only the page pinch-zooms: never the islands or their cards.)
     ...pinchFrameStories({ hqIn, base, shot, noErrorsIn }),
     // (the overview split as the book is.)
@@ -669,6 +678,7 @@ function STORIES() {
     ...mediaStories({ hqIn, base, shot, noErrorsIn, shots }),
     ...callKeyStories({ hqIn, base, shot, noErrorsIn }),
     ...overlayStories({ hqIn, base, shot, noErrorsIn, shots, SNIP }),
+    ...penOwnedStories({ hqIn, base, shot, settled, noErrorsIn }),
     ...messageStories({ hqIn, base, settled, shot, noErrorsIn, shots, reviewJs }),
     ...pictureStories({ hqIn, base, shot, noErrorsIn, shots }),
     ...agentPageStories({ hqIn, base, shot, settled, noErrorsIn, DESKTOP }),

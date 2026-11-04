@@ -7,10 +7,7 @@
 import * as inkjs from './ink.js';
 import { ownerOf, pageOf, send, toNotebook } from './markpage.js';
 import { showStrip } from './acts.js';
-
-// A snip: the page around a mark, the ink on it, with this much margin round the ink (the book shows it at its width)
-const MARGIN = 24;
-const SNIP_MIN = { w: 240, h: 150 };
+import { snipBox } from './snipbox.js';
 
 // The open mark's lines where its element is now: drawn on the screen as it was at its first line, they move as the
 // element has moved since (the page scrolled under a finger, or a box of it did). m: another mark (a call's held one)
@@ -60,15 +57,10 @@ export function paint(r, lines = r.strokes) {
   if (r.veil.hidden) showStrip(r, shown.length > 0);
 }
 
-// The snip: the screenshot around the mark (its lines on it), at least SNIP_MIN, within the screen (snapshot.js has
-// already read the screenshot, so a page that taints it never gets here)
+// The snip: the screenshot around the mark (its lines on it), in its box (snipbox.js) (snapshot.js has already read the
+// screenshot, so a page that taints it never gets here).
 export function snipOf({ c, k }, area) {
-  const W = c.width / k,
-    H = c.height / k;
-  const w = Math.min(W, Math.max(SNIP_MIN.w, area.w + 2 * MARGIN)),
-    h = Math.min(H, Math.max(SNIP_MIN.h, area.h + 2 * MARGIN));
-  const x = Math.min(W - w, Math.max(0, area.x + area.w / 2 - w / 2)),
-    y = Math.min(H - h, Math.max(0, area.y + area.h / 2 - h / 2));
+  const { x, y, w, h } = snipBox(area, c.width / k, c.height / k);
   const out = document.createElement('canvas');
   out.width = Math.round(w * k);
   out.height = Math.round(h * k);

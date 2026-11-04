@@ -18,7 +18,6 @@ const SHOP_BOOK = 30,
   ASK = 950;
 const SHOP = 'https://shop.preview.company.test',
   SPOT = { url: `${SHOP}/#hero`, el: { selector: 'section#hero > h1', text: 'Made to last' } };
-const repo = path => new URL(`../../../${path}`, import.meta.url);
 
 // c: book-check.mjs's hqIn, base, settled, shot, noErrorsIn, shots, reviewJs
 export function notebookSpotStories(c) {
@@ -110,12 +109,12 @@ async function inTheOpen(page, frame) {
   assert.deepEqual(covers, [], `the headline is clear of HQ's page, not under ${covers.join(', ')}`);
 }
 
-// The seeded scrap's picture, and the shop's preview with review mode in it, as HQ's viewer opens it
+// The seeded scrap's picture, and the shop's preview with review mode in it, as HQ's viewer opens it (in the system's
+// font: no company's brand here.)
 async function served(page, c) {
   const context = page.context(),
     picture = await readFile(new URL('../mock/ask-spot-1.jpg', import.meta.url)),
-    shop = await readFile(new URL('../mock/ask-shop.html', import.meta.url)),
-    font = await readFile(repo('kits/brand/fonts/bricolage-grotesque.woff2'));
+    shop = await readFile(new URL('../mock/ask-shop.html', import.meta.url));
   await context.route(/\/api\/notebooks\/pictures\?file=ask-spot-1\.jpg$/, r =>
     r.fulfill({ contentType: 'image/jpeg', body: picture }),
   );
@@ -124,7 +123,6 @@ async function served(page, c) {
     const path = new URL(r.request().url()).pathname;
     if (fulfilPart(r, path, c.reviewJs)) return;
     if (path.startsWith('/__review/')) return r.fulfill({ json: { show: false } });
-    if (path.startsWith('/fonts/')) return r.fulfill({ contentType: 'font/woff2', body: font });
     return r.fulfill({ contentType: 'text/html', body: shop });
   });
 }

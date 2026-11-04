@@ -17,7 +17,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { Worker } from 'node:worker_threads';
-import { columnsOf, db, inOneStep, once, redacted, setting } from './db.ts';
+import { columnsOf, db, inOneStep, once, redacted, scrubbed, setting } from './db.ts';
 import { DATA_DIR, REPO_DIR } from './config.ts';
 import * as jobs from './jobs.ts';
 import type { Reader } from './jobs.ts';
@@ -55,8 +55,8 @@ db.exec(`
 once('2026-10-22-memory-stamps', () => {
   if (!columnsOf('memory_docs').includes('stamp')) db.exec('alter table memory_docs add column stamp text');
 });
-// What a hit shows comes from these rows, so a key saved just now leaves them at once (db.ts scrub()), and the word index
-// with the next pass.
+// What a hit shows comes from these rows, so a key saved just now leaves them with its save's pass (db.ts scrubSaved()), and
+// the word index with the next pass.
 redacted('memory', 'title', 'body');
 // A search counts the chunks, and the archive's, on each question (ranked()): from this index, not by reading every chunk's
 // row with its text and vector.
@@ -457,6 +457,8 @@ async function ranked(q: string, reader: Reader, n: number, scope: Scope = 'all'
   // The question's meaning first, and the vectors, so all the rest runs after the awaits: an index pass can run while it
   // embeds (and reuse an id), and nothing read before them is trusted after. Every hit is still checked against its live row below.
   const m = await meaning(q), vs = 'v' in m ? [...(await vectors()).values()] : [];
+  // and a key saved meanwhile is scrubbed out of the rows first (db.ts scrubSaved)
+  await latency.exclude(scrubbed());
   const terms = [...new Set(q.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [])];
   // Small words (each language's, language.ts) and words in more than a fifth of all chunks ("company") only
   // drown the rest: dropped, unless that's all there is and the index isn't all embedded yet ("what are we for": by

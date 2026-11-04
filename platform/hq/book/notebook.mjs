@@ -237,11 +237,12 @@ async function failedSave(page, play) {
 
 // HQ at a size on the played Notebook seeded as dev mode's, the groups drawn (folded: tapped open from its tab). (also
 // notebookasks.mjs's and notebookrow.mjs's)
-export async function open(browser, c, viewport, { record, folded, ...more }) {
+// (look: HQ's look asked for, '&renderer=wire' or '&renderer=holo'; Brownstone with none.)
+export async function open(browser, c, viewport, { record, folded, look = '', ...more }) {
   const video = record && c.shots ? { recordVideo: { dir: c.shots, size: viewport } } : {};
   const context = await c.hqIn(browser, viewport, { notebooks: structuredClone(SEED), ...more, ...video });
   const { page, errors } = await watchedPage(context);
-  await page.goto(`${c.base}/?intro=0`);
+  await page.goto(`${c.base}/?intro=0${look}`);
   await page.waitForSelector('#book .bk-desk', { state: 'attached', timeout: 30_000 });
   if (folded) {
     await c.settled(page, 'folded');

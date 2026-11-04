@@ -128,7 +128,7 @@ async function boardSide(look, size, viewport, watched) {
   await page.waitForFunction(name => document.querySelector('.bi-watch h1')?.textContent === name, watched.name);
   await until(page, '.ng-groups', /menu be easier/);
   await snap(`board-watching-${tag}`, page);
-  const { code } = (await h.board('/api/notebooks/pair', {})).body;
+  const { code } = (await h.board('/api/pair-codes', { url: `https://hello${preview}/` })).body;
   await page.goto(`${origin}/pair#code=${code}`);
   await page.locator('main h1 :is(img, svg):visible').waitFor();
   await page.evaluate(() => document.fonts.ready);

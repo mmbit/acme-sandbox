@@ -69,7 +69,7 @@ export function hqManifest(json: string, b: any) {
   return JSON.stringify(m, null, 2);
 }
 
-// The pages you see before you're logged in: the passkey's two, and a device code's (pair.ts). Before HQ knows who's
+// The pages you see before you're logged in: the passkey's two, and a pair code's (pair.ts: it opens a page to view). Before HQ knows who's
 // there they wear the guest pages' look, the default with the company's colours (guests.ts signInCss, served as
 // /pair/look.css), never a look of their own: a card with the guest pages' logo (guests.ts logoHtml) over the heading.
 // `body` goes under the heading, with #msg for what went wrong; `scripts` runs the page.
@@ -87,15 +87,19 @@ const $ = s => document.querySelector(s), post = (u, b) => fetch(u, {method: 'PO
   headers: {'content-type': 'application/json'}, body: JSON.stringify(b ?? {})});
 ${script}</script>`);
 
+// ?app=<challenge>: the native app's sign-in sheet, whose unlock hands the app its one-time code (auth.ts
+// createAppCode), and says so.
 export const loginPage = (b: any = {}, logoHtml = '') => passkey('Unlock', `
+const app = new URLSearchParams(location.search).get('app') ?? undefined;
+if (app) { $('#go').textContent = 'Sign in the app'; $('#msg').textContent = 'This unlocks HQ’s app on this device. Go on only if HQ’s app just opened it.'; }
 $('#go').onclick = async () => {
   try {
-    const o = await post('/api/login/options');
+    const o = await post('/api/login/options', { app });
     if (!o.ok) throw new Error('HQ is busy right now. Try again in a few minutes.');
     const opts = await o.json();
     const r = await post('/api/login/verify', await SimpleWebAuthnBrowser.startAuthentication({ optionsJSON: opts }));
     if (!r.ok) throw new Error('That passkey is not enrolled here.');
-    location.href = '/';
+    location.href = app ? 'hq-shell://signed-in?code=' + (await r.json()).app : '/';
   } catch (e) { $('#msg').textContent = e.message; }
 };`, b, logoHtml);
 
@@ -113,10 +117,10 @@ $('#go').onclick = async () => {
 };`, b, logoHtml);
 
 
-// Another of the board's devices signs in with a one-time code (pair.ts); its script is HQ's file (pairsignin.js)
-export const pairPage = (b: any = {}, logoHtml = '') => shell('Sign in on this device', b, logoHtml, `<h2>Sign in on this device</h2>
-<p>On a device that’s signed in, open the Notebook’s Shelf and press Devices. Scan its square with this device’s camera,
-or type the code it shows.</p>
+// A one-time pair code opens the page HQ's viewer showed on this device, to view (pair.ts), never HQ. Its script is HQ's
+// file (pairpage.js).
+export const pairPage = (b: any = {}, logoHtml = '') => shell('Open a shared page', b, logoHtml, `<h2>Open a shared page</h2>
+<p>Point this device’s camera at the square on the other screen, or type the code shown beside it.</p>
 <form><label for="code">One-time code</label><input id="code" name="code" inputmode="numeric" autocomplete="one-time-code"
-pattern="[0-9 ]{6,7}" maxlength="7" required autofocus><button>Sign in</button></form>
-<p id="msg" role="alert"></p><a href="/login">Use a passkey instead</a>`, '<script type="module" src="/pair/signin.js"></script>');
+pattern="[0-9 ]{6,7}" maxlength="7" required autofocus><button>Open</button></form>
+<p id="msg" role="alert"></p>`, '<script type="module" src="/pair/page.js"></script>');

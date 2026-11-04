@@ -7,6 +7,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { ORIGIN } from './config.ts';
 import { afterStep, db, inOneStep } from './db.ts';
 import { brand } from './companyfiles.ts';
+import * as linklog from './linklog.ts';
 import * as secrets from './secrets.ts';
 import * as files from './workspacefiles.ts';
 
@@ -35,10 +36,6 @@ type Refusal = [number, string];
 db.exec(`create table if not exists links (id integer primary key, state text not null, invitation_hash text unique,
   name text, address text, key_hash text unique, made text not null, linked text, unlinked text, unlinked_by text,
   sent integer not null default 0, received integer not null default 0, reached text, heard text, refused text)`);
-// Our log for each link, numbered from 1: each entry as JSON (a file's without its bytes, workspacefiles.ts), and when
-// their HQ took it
-db.exec(`create table if not exists link_entries (link integer not null, seq integer not null, body text not null,
-  at text not null, taken text, primary key (link, seq))`);
 
 // A push holds this much JSON at most, so neither HQ reads more than this into memory at once; an entry bigger than
 // this (a file near workspaces.ts FILE_MAX_BYTES) goes alone.
@@ -160,24 +157,25 @@ export class EntryError extends Error {}
 
 // A push of their entries, applied in one step or not at all, to the link as the step reads it (410 once unlinked: it
 // can change while the body comes). Each applies once, in order: one we hold already is skipped, and a gap ends the
-// push there (they send the rest again). Its answer is the highest entry we hold.
-export function receive(peer: LinkRow, body: Record<string, unknown>, apply: (link: LinkRow, entry: Entry) => void) {
-  const entries = body.entries;
-  if (!Array.isArray(entries)) return [400, 'A push is { entries: [...] }.'] as Refusal;
+// push there (they send the rest again). Its answer is the highest entry we hold, and the kinds we take (their HQ holds
+// back any other, linklog.ts).
+export function receive(peer: LinkRow, body: Record<string, unknown>, applier: Applier) {
+  const pushed = body.entries;
+  if (!Array.isArray(pushed)) return [400, 'A push is { entries: [...] }.'] as Refusal;
   try {
     return inOneStep(() => {
       const link = findLink(peer.id)!;
       if (link.state !== 'linked') return [410, 'unlinked'] as Refusal;
       let received = link.received;
-      for (const entry of entries as Entry[]) {
+      for (const entry of pushed as Entry[]) {
         if (!Number.isSafeInteger(entry?.seq)) throw new EntryError('every entry has its number, seq');
         if (entry.seq <= received) continue;
         if (entry.seq !== received + 1) break;
-        apply(link, entry);
+        applier.apply(link, entry);
         received = entry.seq;
       }
       db.prepare('update links set received = ?, heard = ? where id = ?').run(received, now(), link.id);
-      return { received };
+      return { received, takes: applier.TAKES };
     });
   } catch (err) {
     if (err instanceof EntryError) return [400, `Refused: ${err.message}.`] as Refusal;
@@ -187,44 +185,37 @@ export function receive(peer: LinkRow, body: Record<string, unknown>, apply: (li
 
 // ---- our entries, and pushing them
 
-// What one side tells the other: kind and its fields (workspaces.ts), and its number in the sender's log
-export type EntryBody = { kind: string; [field: string]: unknown };
-export type Entry = EntryBody & { seq: number };
+export type Entry = linklog.Entry;
+// The kinds of entry we apply, and how (workspaceentries.ts)
+type Applier = { apply: (link: LinkRow, entry: Entry) => void; TAKES: string[] };
 
-// Adds an entry to the link's log, pushed once the step it's in is kept. Its number, for the row that made it.
-export function record(link: number, body: EntryBody) {
-  const { seq } = db.prepare('select coalesce(max(seq), 0) + 1 seq from link_entries where link = ?').get(link) as {
-    seq: number;
-  };
-  db.prepare('insert into link_entries (link, seq, body, at) values (?, ?, ?, ?)').run(
-    link,
-    seq,
-    JSON.stringify(body),
-    now(),
-  );
+// Adds an entry to the link's log, pushed once the step it's in is kept. Its number, for the row that made it, or null
+// while it waits for their HQ to take its kind (linklog.ts).
+export function record(link: number, body: linklog.EntryBody) {
+  const seq = linklog.add(link, body);
   afterStep(() => void push(link));
   return seq;
 }
 
-// When their HQ took entry `seq` of ours, or null while it's on its way
-export function takenAt(link: number, seq: number | null) {
-  const row =
-    seq === null ? undefined : db.prepare('select taken from link_entries where link = ? and seq = ?').get(link, seq);
-  return (row as { taken: string | null } | undefined)?.taken ?? null;
-}
-
 const pushing = new Set<number>();
-// Our entries their HQ hasn't taken, in order, in pushes of at most PUSH_BYTES, until it has them all or refuses
+// Our entries their HQ hasn't taken, in order, in pushes of at most PUSH_BYTES, until it has them all or refuses. With
+// none waiting but some held, one push of none asks it what it takes now.
 export async function push(id: number) {
   if (pushing.has(id)) return;
   pushing.add(id);
   try {
-    for (let link = findLink(id); link?.state === 'linked' && waitingOf(link).count > 0; link = findLink(id)) {
-      const entries = batchOf(link);
+    let asks = linklog.holds(id);
+    for (
+      let link = findLink(id);
+      link?.state === 'linked' && (asks || waitingOf(link).count > 0);
+      link = findLink(id)
+    ) {
+      asks = false;
+      const entries = linklog.batchOf(id, link.sent, PUSH_BYTES);
       const answer = await call(link.address!, '/api/peer/entries', secrets.secret(keyName(id)), { entries });
       if (answer.status === 410) return markUnlinked(id, 'them');
       const received = Number(answer.body?.received),
-        last = entries.at(-1)!.seq;
+        last = entries.at(-1)?.seq ?? link.sent;
       // (one past our last: an HQ that says it holds more of ours than it was sent, a rewound log of ours or a wrong one)
       const refused =
         answer.status !== 200 || !Number.isSafeInteger(received)
@@ -235,6 +226,7 @@ export async function push(id: number) {
         return;
       }
       tookUpTo(id, received);
+      linklog.heard(id, answer.body?.takes);
       if (received < last) return;
     }
   } finally {
@@ -242,14 +234,10 @@ export async function push(id: number) {
   }
 }
 
-// Each minute (server.ts): every link with entries still waiting
+// Each minute (server.ts): every link with entries still waiting, or held for its HQ
 export async function sweep() {
-  const waiting = db
-    .prepare(
-      "select l.id from links l where l.state = 'linked' and exists (select 1 from link_entries e where e.link = l.id and e.seq > l.sent)",
-    )
-    .all() as { id: number }[];
-  for (const { id } of waiting) await push(id);
+  const linked = db.prepare("select * from links where state = 'linked'").all() as LinkRow[];
+  for (const link of linked) if (waitingOf(link).count > 0 || linklog.holds(link.id)) await push(link.id);
 }
 
 // What the CEO's summary says of the links (summary.ts): a company whose HQ hasn't taken our entries for longer than a
@@ -281,40 +269,16 @@ export const findLink = (id: number) => db.prepare('select * from links where id
 
 export const ourName = () => String(brand().name ?? '');
 
-function batchOf(link: LinkRow) {
-  const rows = db
-    .prepare('select seq, body from link_entries where link = ? and seq > ? order by seq')
-    .iterate(link.id, link.sent) as Iterable<{ seq: number; body: string }>;
-  const entries: Entry[] = [];
-  let bytes = 0;
-  for (const row of rows) {
-    const body = JSON.parse(row.body) as EntryBody;
-    const entry: Entry = {
-      ...body,
-      seq: row.seq,
-      ...(body.kind === 'file' ? { data: files.read(String(body.sha256)).toString('base64') } : {}),
-    };
-    bytes += JSON.stringify(entry).length;
-    if (entries.length && bytes > PUSH_BYTES) break;
-    entries.push(entry);
-  }
-  return entries;
-}
-
 function tookUpTo(id: number, received: number) {
   const at = now();
   inOneStep(() => {
-    db.prepare('update link_entries set taken = ? where link = ? and seq <= ? and taken is null').run(at, id, received);
+    linklog.tookUpTo(id, received, at);
     db.prepare('update links set sent = max(sent, ?), reached = ?, refused = null where id = ?').run(received, at, id);
     files.clearOld(); // (a version of ours that waited for their HQ to take it.)
   });
 }
 
-function waitingOf(link: LinkRow) {
-  return db
-    .prepare('select count(*) count, min(at) since from link_entries where link = ? and seq > ?')
-    .get(link.id, link.sent) as { count: number; since: string | null };
-}
+const waitingOf = (link: LinkRow) => linklog.waitingOf(link.id, link.sent);
 
 function markUnlinked(id: number, by: 'us' | 'them') {
   db.prepare(

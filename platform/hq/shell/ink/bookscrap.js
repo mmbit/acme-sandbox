@@ -1,6 +1,7 @@
 // A picture taped into the book, as plain numbers: how big it lands, where, and how askew. No DOM, so node tests it
 // (bookscrap.test.js); booktape.js tapes it.
 import { pageBox } from './bookrow.js';
+import { union } from './bookselectmath.js';
 
 // A taped picture is at most this much of its page's width and of the paper's height, and never smaller than MIN a side
 const OF_WIDTH = 0.5,
@@ -15,7 +16,7 @@ const DEALT = [28, 22];
 export const tiltOf = rand => Math.round((rand * 2 - 1) * TILT * 10) / 10;
 
 // A picture of nw × nh px taped on a page (its box: bookrow.js), centred on `at` ([x, y] on the page) or the middle of the
-// band of it the paper shows (view: { x0, y0, x1, y1 } on the page), kept on the page. i: its place among several
+// band of it the paper shows (view: { x0, y0, x1, y1 } on the page), kept on the page or that band. i: its place among several
 // taped at once. Returns the scrap's place { x, y, w, h, tilt } (its box, white border included, as bookscrapdraw.js
 // draws it).
 export function placeScrap({ nw, nh }, page, { at = null, view, i = 0, rand = Math.random() }) {
@@ -24,8 +25,9 @@ export function placeScrap({ nw, nh }, page, { at = null, view, i = 0, rand = Ma
     w = round(Math.max(MIN, nw * f)),
     h = round(Math.max(MIN, nh * f));
   const [cx, cy] = at ?? [(view.x0 + view.x1) / 2, (view.y0 + view.y1) / 2];
-  // (kept on the page, any way from its origin.)
-  const on = pageBox(page),
+  // (kept on the page, any way from its origin, or on the paper shown of it: a page with little on it yet is smaller
+  // than that, and grows to hold what's put there.)
+  const on = union(pageBox(page), view),
     keep = (c, side, from, to) => Math.min(Math.max(c, from + side / 2), Math.max(from + side / 2, to - side / 2));
   const x = keep(cx + i * DEALT[0], w, on.x0, on.x1) - w / 2,
     y = keep(cy + i * DEALT[1], h, on.y0, on.y1) - h / 2;

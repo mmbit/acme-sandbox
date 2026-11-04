@@ -81,7 +81,8 @@ function boxFor(tx, view, t) {
   el.typed = t;
   el.view = view;
   el.classList.toggle('bk-landing', landing(view.page, t));
-  // (words stacked as a note, a call's promise or review mode's general note: a post-it, as a scrap's words are.
+  // (words stacked as a note, a call's promise or review mode's general note: written on its unit's post-it, as a
+  // scrap's words are.
   if (view.page.groups?.get(t.g)?.kind === 'note') el.dataset.note = '';
   // (else its grip at its left, booktools.js: a box of words moves by its grip, with any tool; none in our scraps, which
   // never move: README, Our scraps)

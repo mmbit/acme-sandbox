@@ -1,6 +1,7 @@
-// book-check.mjs's story of a notebook page as a masonry of scrap units (shell/ink/bookunits.js), on a page seeded as
-// the end of a test call: an agent's six scraps of mixed heights (pictures with words, plain notes, one with an answer
-// under it). Then the board's annotations: a line written in a scrap's room, a line between scraps (the nearer
+// book-check.mjs's story of a notebook page as a masonry of scrap units (shell/ink/bookunits.js), on an Asks page (a
+// masonry the board draws on) seeded with an agent's six scraps of mixed heights (pictures with words, plain notes, one
+// with an answer under it). First the same scraps on a sketch page, each pinned clear of the one under it, the page's
+// day in the board's English. Then the board's annotations: a line written in a scrap's room, a line between scraps (the nearer
 // scrap's), a room dragged taller by its handle, a line under the tallest column's last
 // scrap. At a phone, an iPad mini upright
 // and sideways, and a wide desktop. Each time: no two units (with what hangs under them) overlap, the space between
@@ -53,7 +54,8 @@ const note = (id, words) => {
 export const SEED = {
   notebooks: [{ id: 1, kind: 'mine', name: 'My journal', archived: false, created: T0, updated: T0 }],
   pages: [
-    { id: 1, notebook: 1, pos: 0, label: 'Call with Moss: the cover', created: T0, updated: T0, w: 1200, h: 1600 },
+    // (an Asks page: a masonry the board draws on, README A page of scrap units.)
+    { id: 1, notebook: 1, pos: 0, kind: 'asks', label: 'Asks', created: T0, updated: T0, w: 1200, h: 1600 },
   ],
   groups: [
     scrap(1, 'scrap', [picture('book-snip-1.svg', 137)], 'The masthead, warmer: the hand-lettered face.', 137 + 96),
@@ -92,14 +94,14 @@ export function unitsPageStories(c) {
 }
 
 async function atSize(browser, c, name, size) {
+  await onSketch(browser, c, name, size);
   const context = await deskAt(browser, c, size);
   const { page, errors } = await watchedPage(context);
   try {
     await page.goto(`${c.base}/?intro=0`);
     await opened(page, 6);
     await page.waitForTimeout(400);
-    await sound(page, `${name}, as the call left it`);
-    await boardDays(page, name);
+    await sound(page, `${name}, as the agent left it`);
     await plainRooms(page, name);
     await c.shot(`units-${name}-1-call`, page);
     const low = await annotate(page, name);
@@ -108,7 +110,7 @@ async function atSize(browser, c, name, size) {
     await c.shot(`units-${name}-2-annotated`, page);
     await atFoot(page, c, name);
     const tallest = await underTallest(page, name);
-    if (size.turned) await turned(page, c, name, size.turned, [low, tallest]);
+    if (size.turned) await turned(page, c, name, size.turned, [low, tallest], errors);
     c.noErrorsIn(errors);
   } catch (e) {
     await c.shot(`units-${name}-failed`, page);
@@ -118,9 +120,30 @@ async function atSize(browser, c, name, size) {
     await context.close();
   }
 }
+// The same scraps arriving on a sketch page (My journal's, a canvas: sketchcanvas.js): each pinned clear of the one
+// under it once its words are measured (bookunits.js), the view's day in the board's English.
+async function onSketch(browser, c, name, size) {
+  const sketch = { ...SEED, pages: SEED.pages.map(p => ({ ...p, kind: undefined, label: 'Cover notes' })) },
+    context = await deskAt(browser, c, size, sketch),
+    { page, errors } = await watchedPage(context);
+  try {
+    await page.goto(`${c.base}/?intro=0`);
+    await opened(page, 6);
+    await page.waitForTimeout(400);
+    await sound(page, `${name}, on a sketch page`);
+    await boardDays(page, name);
+    await c.shot(`units-${name}-0-sketch`, page);
+    c.noErrorsIn(errors);
+  } finally {
+    await context.close();
+  }
+}
 // The board's page days in its English with no comma, "Sat 31 Oct", in WebKit too, whose en-GB writes "Sat, 31 Oct"
 async function boardDays(page, name) {
-  const days = await page.evaluate(() => [...document.querySelectorAll('#book .bk-day')].map(d => d.textContent));
+  // (the view's day under the title, and the page's dates between days.)
+  const days = await page.evaluate(() =>
+    [...document.querySelectorAll('#book :is(.bk-day, .bk-view-day:not([hidden]))')].map(d => d.textContent),
+  );
   assert.ok(days.length, `${name}: the book shows a page day`);
   for (const day of days) assert.match(day, /^[A-Z][a-z]{2} \d{1,2} [A-Z][a-z]{2}$/, `${name}: the board's page day`);
 }
@@ -193,14 +216,17 @@ async function written(page, unit) {
 }
 // The page turned to another size once its lines are saved, and opened again from the store: laid in another number
 // of columns, each line still right under the unit it was written under
-async function turned(page, c, name, size, under) {
+async function turned(page, c, name, size, under, errors) {
   await until(async () => (await units(page)).every(u => u.id > 0), 'the lines saved', 8000);
   const columns = async () => new Set((await units(page)).map(u => Math.round(u.x))).size,
     were = await columns(),
     n = (await units(page)).length;
   await page.setViewportSize(size);
+  const before = errors.length;
   await page.reload();
   await opened(page, n);
+  // (WebKit tells the requests a reload cut off, HQ's events and the like, as refused: not the page's.
+  errors.splice(before, Infinity, ...errors.slice(before).filter(e => !/due to access control checks/.test(e)));
   const all = await still(page);
   assert.notEqual(await columns(), were, `${name}: turned, the page laid in another number of columns`);
   for (const at of under) stays(all, at, `${name}, turned: the line written under unit ${at.id}`);
@@ -275,15 +301,17 @@ async function atFoot(page, c, name) {
   for (let k = 0; k < 12; k++) await page.mouse.wheel(0, 600);
   await page.waitForTimeout(500);
   await c.shot(`units-${name}-3-foot`, page);
-  // (what's written ends left of the tools' island, and the last unit scrolls up into the paper's view.)
+  // (what's written ends left of the tools' island, the paper running on under it with nothing laid there, and the last
+  // unit scrolls up into the paper's view.)
   const foot = await page.evaluate(() => {
     const tools = document.querySelector('#book .bk-strip').getBoundingClientRect(),
-      desk = document.querySelector('#book .bk-desk').getBoundingClientRect(),
+      el = document.querySelector('#book .bk-desk'),
+      desk = el.getBoundingClientRect(),
       all = [...document.querySelectorAll('#book .bk-page:not([hidden]) .bk-unit')].map(u => u.getBoundingClientRect());
     return {
       last: Math.max(...all.map(u => u.bottom)),
       right: Math.max(...all.map(u => u.right)),
-      desk: { bottom: desk.bottom, right: desk.right },
+      desk: { bottom: desk.bottom, right: desk.right - parseFloat(getComputedStyle(el).paddingRight) },
       tools: tools.left,
     };
   });

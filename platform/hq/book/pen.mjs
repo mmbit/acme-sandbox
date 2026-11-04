@@ -1,13 +1,14 @@
 // book-check.mjs's stories of the Pencil on the book's paper (shell/ink/bookwrite.js, booktexts.js, bookselect.js,
-// bookselectclip.js, booktape.js; Ink's folder), with Chromium's own pen events
-// (trusted: their clicks and capture are the browser's): a quick tap on a box of words or a picture is a click, never a
-// dot, while bare paper keeps its dot; a select box taken off the screen's edge and back still selecting; a picture
-// taped in drawn on and scaled by its frame at once; Duplicate, and a paste of words; a box of words moved by Select with nothing drawn, the
-// handwriting beside it keeping its focus, a letter deleted and a space put in without a keyboard, and new boxes in a
-// row (by hand at the board's iPad sizes: penhand.mjs). Each asserts what the board sees and what the store keeps.
+// bookselectclip.js, booktape.js; Ink's folder), with the Pencil in either engine (hands.mjs): a quick tap on a box of
+// words or a picture is a click, never a dot, while bare paper keeps its dot; a select box taken off the screen's edge
+// and back still selecting; a picture taped in drawn on and scaled by its frame at once; Duplicate, and a paste of
+// words; a box of words moved by Select with nothing drawn, the handwriting beside it keeping its focus, a letter
+// deleted and a space put in without a keyboard, and new boxes in a row (by hand at the board's iPad sizes:
+// penhand.mjs). Each asserts what the board sees and what the store keeps.
 import assert from 'node:assert/strict';
 import { freePage, onDesk, paperBox, pasteGreen, pick, savedWhere } from './mouse.mjs';
-import { MINI, chromiumPen, middleOf, until } from './kit.mjs';
+import { MINI, middleOf, until } from './kit.mjs';
+import { hands } from './hands.mjs';
 import { restsOpen, watchedPage } from './start.mjs';
 
 // how long a story waits to be sure something didn't happen (the page is saved this soon after a change)
@@ -131,8 +132,16 @@ async function picture(browser, c) {
 async function duplicates(browser, c) {
   const free = freePage(c);
   const { page, pen, errors, done } = await onMini(browser, c);
-  // (the Paste bubble reads the clipboard, as Safari lets a tap do)
-  await page.context().grantPermissions(['clipboard-read', 'clipboard-write'], { origin: c.base });
+  // (the Paste bubble reads the clipboard, as Safari lets a tap do; WebKit's Playwright grants it none, so there a
+  // stand-in holds the words copied.)
+  if (browser.browserType().name() === 'chromium')
+    await page.context().grantPermissions(['clipboard-read', 'clipboard-write'], { origin: c.base });
+  else
+    await page.evaluate(() => {
+      let held = '';
+      const writeText = async text => void (held = text);
+      Object.defineProperty(navigator, 'clipboard', { value: { writeText, readText: async () => held } });
+    });
   try {
     // (its select box starting right of the tool strip down the paper's left)
     const paper = await paperBox(page),
@@ -275,14 +284,11 @@ async function onMini(browser, c) {
   const { page, errors } = await watchedPage(context);
   await page.goto(`${c.base}/?intro=0`);
   await restsOpen(page, c, MINI);
-  return { page, pen: chromiumPen(await page.context().newCDPSession(page)), errors, done: () => context.close() };
+  return { page, pen: (await hands(page)).pen, errors, done: () => context.close() };
 }
-// A tool's button tapped with a finger, unless it's the one in hand (pressed again, it opens its card over the paper
-// beside the strip.)
-export async function tool(page, name) {
-  const b = page.locator('#book').getByRole('button', { name, exact: true }).first();
-  if ((await b.getAttribute('aria-pressed')) !== 'true') await b.tap();
-}
+// A tool taken in hand by a finger's tap, unless it's in hand already (pressed again, it opens its card over the paper
+// beside the strip): the marker picked on the pen's card where the rail shows the pen alone (mouse.mjs pick).
+export const tool = (page, name) => pick(page, name, 'tap');
 export const key = (page, name) =>
   page.locator('#book .bk-typed[data-editing] .bk-typed-keys').getByRole('button', { name });
 const bar = page => page.locator('#book .bk-sel-bar');
@@ -297,23 +303,16 @@ export const editing = (page, n = 1) =>
       !!document.activeElement?.closest('#book .bk-typed[data-editing]'),
     n,
   );
-// A picture pasted onto the page in view, picked as it lands: its middle on the screen
+// A picture pasted onto the page in view, picked as it lands: its middle on the screen, between its frame's corners
+// as the page draws them (a sketch page's box is only as big as what's on it, so it's no measure of the page's px).
 async function tapedIn(page, c, free) {
   const n = stored(c, free).scraps.length;
   await pasteGreen(page);
-  const { scraps } = await savedWhere(c, free.id, p => p.scraps.length === n + 1);
+  await savedWhere(c, free.id, p => p.scraps.length === n + 1);
   await bar(page).waitFor({ timeout: 2000 });
-  const s = scraps.at(-1);
-  return onScreen(page, free, [s.x + s.w / 2, s.y + s.h / 2]);
-}
-// A point of the page shown (its px, the page with the selection's bar) on the screen, at its pan and zoom
-const onScreen = (page, free, [x, y]) =>
-  page.evaluate(
-    ([w, x, y]) => {
-      const r = document.querySelector('#book .bk-sel-bar').closest('.bk-page').getBoundingClientRect(),
-        k = r.width / w;
-      return [r.left + x * k, r.top + y * k];
-    },
-    [free.w, x, y],
+  const [a, b] = await Promise.all(
+    [0, 2].map(k => page.locator(`#book .bk-sel-handle[data-corner="${k}"]`).boundingBox().then(middleOf)),
   );
+  return [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+}
 const stored = (c, free) => c.pages.find(p => p.id === free.id);

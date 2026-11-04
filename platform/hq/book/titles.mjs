@@ -1,27 +1,26 @@
-// book-check.mjs's story of the pages' titles (shell/ink/bookcontrols.js, booktitle.js): a title written at the head of
-// the pages list, opened from the bar's count ("2 / 3"), on a desktop, a phone and an iPad mini, saved by Enter and by a
-// tap away, Escape sending nothing, a refused save said under the field, the pages left open, tried again by each tap away and let go by a
-// tap on its note, an empty title Untitled page, and one from another screen, each read in the page's head (whole on
-// the desktop) and the count's label, with nothing else on a blank page; a save still out when its page turns or the
-// overview opens, refused later on its own page and never on the bar. Touch opens the pages with the shown page's row
-// focused (no keyboard over them); a tap on the title writes.
+// book-check.mjs's story of the pages' titles (shell/ink/bookcontrols.js, booktitle.js, bookviewhead.js): a title
+// written where it shows on the view, opened by Rename page in the dots menu, on a desktop, a phone and an iPad mini,
+// saved by Enter and by a tap away, Escape sending nothing, a refused save said under the field, which stays, tried
+// again by each tap away and let go by a tap on its note, an empty title Untitled page, and one from another screen,
+// each read on the view (whole on the desktop) and in the count's label, with nothing written on a blank page; a save
+// still out when its page turns or the overview opens, refused later on its own page and never on the view.
 import assert from 'node:assert/strict';
 import { errorsOf, until } from '../../../shared/browser/browser.mjs';
 import { press } from './bar.mjs';
 import { button, namedNotebook } from './chrome.mjs';
-import { DESKTOP, MINI, OVERVIEW, until as untilRead } from './kit.mjs';
+import { DESKTOP, MINI, OVERVIEW } from './kit.mjs';
 
-// the page's title in its head, and where it is on the bar (its label names the page)
-const nameIn = page => page.locator('#book .bk-page:not([hidden]) .bk-page-title'),
+// the page's title on the view, and where it is on the bar (its label names the page)
+const nameIn = page => page.locator('#book .bk-view-head .bk-page-title'),
   countIn = page => page.locator('#book .bk-bar .bk-where'),
   titleField = page => page.getByRole('textbox', { name: 'Page title' });
 
 // c: book-check.mjs's helpers: { base, hqIn(browser, viewport, more), settled(page, mode), shot }
 export function titleStories(c) {
   return {
-    "page titles: written at the head of the pages list on desktop, phone and iPad mini, read in the page's head":
+    'page titles: renamed from the dots menu where they show on desktop, phone and iPad mini, read on the view':
       browser => titles(browser, c),
-    "a call page's longest title whole in the page's head on an iPad mini, upright and on its side": browser =>
+    "a call page's longest title whole on the view on an iPad mini, upright and on its side": browser =>
       callTitle(browser, c),
   };
 }
@@ -110,15 +109,12 @@ async function editTitle(page, c, s) {
   await refused(page, c, s);
   await emptied(page, s);
 }
-// The title opens at the head of the pages list, and Enter saves it
+// The title opens where it shows, and Enter saves it
 async function inPlace(page, c, { screen, touch }) {
   const field = titleField(page);
-  // The title opens at the head of the pages list, with no form or Save button; the bar's count stays.
+  // The title opens where it shows, on the view, with no form or Save button; the bar's count stays.
   await open(page, touch);
-  assert.ok(
-    await field.evaluate(el => !!el.closest('.bk-pages-menu')?.firstElementChild.contains(el)),
-    'the title written at the head of the pages list',
-  );
+  assert.ok(await field.evaluate(el => !!el.closest('.bk-view-head')), 'the title written where it shows');
   assert.match(await countIn(page).innerText(), /^\d+ \/ \d+$/, 'the count on the bar while it is written');
   assert.equal(await page.getByRole('button', { name: /Save/ }).count(), 0, 'no Save button');
   // Enter saves
@@ -128,7 +124,7 @@ async function inPlace(page, c, { screen, touch }) {
   await saveWithoutEcho(page, () => field.press('Enter'), 'Garden layout');
   assert.ok(!(await field.isVisible()), 'the name back after Enter');
 }
-// Escape keeps the title and a tap away saves it; the pages opened and left send nothing
+// Escape keeps the title and a tap away saves it; the title opened and left sends nothing
 async function savedOrKept(page, c, { touch, mode, viewport }, sent) {
   const name = nameIn(page),
     field = titleField(page);
@@ -146,7 +142,7 @@ async function savedOrKept(page, c, { touch, mode, viewport }, sent) {
   await tapAway(page, touch, viewport);
   await namedBar(page, 'Planting plan');
   assert.deepEqual(sent.at(-1), { id: 2, title: 'Planting plan' });
-  // Opening the pages and leaving them sends nothing
+  // Opening the title and leaving it sends nothing
   await open(page, touch);
   await page.keyboard.press('Escape');
   assert.equal(sent.length, before + 1, 'an unchanged title sends nothing');
@@ -158,10 +154,9 @@ async function savedOrKept(page, c, { touch, mode, viewport }, sent) {
 // A refused save, tried again and let go
 async function refused(page, c, { screen, touch, viewport }) {
   const field = titleField(page),
-    error = page.locator('#book .bk-title [role="status"]'),
-    pages = page.locator('#book .bk-pages-menu');
+    error = page.locator('#book .bk-title [role="status"]');
   let sent = 0;
-  // A refused save says so under the title, which keeps what was written, the pages left open
+  // A refused save says so under the title, which keeps what was written, the field left open
   await page.route('**/api/notebooks/pages/title', r => {
     sent += 1;
     return r.fulfill({ status: 409, json: { error: 'That title could not be saved.' } });
@@ -172,53 +167,33 @@ async function refused(page, c, { screen, touch, viewport }) {
   assert.equal(await error.locator('span').first().innerText(), 'That title could not be saved.');
   assert.equal(await field.inputValue(), 'Refused title');
   assert.ok(await error.isVisible(), 'the refusal shown');
-  assert.ok(await pages.isVisible(), 'the pages left open, the title saying so at their head');
-  await refusedShot(page, c, screen);
+  await c.shot(`page-title-${screen}-refused`, page);
   // A tap away tries again, refused too, and so does the next, once each
   for (const n of [2, 3]) {
     await refusedBy(page, () => tapAway(page, touch, viewport));
     assert.equal(sent, n, 'each tap away sends the title once');
     assert.ok(await error.isVisible(), 'still saying so');
-    assert.ok(await pages.isVisible(), 'the pages still open');
+    assert.ok(await field.isVisible(), 'the field still open');
   }
   // A tap on the note lets it go, by touch as by a mouse
   if (touch) await error.tap();
   else await error.click();
   await namedBar(page, 'Planting plan');
   assert.equal(await field.count(), 0);
-  assert.equal(await pages.count(), 0, 'the pages closed with it');
   assert.equal(sent, 3, 'letting it go sends nothing');
-  // Escape lets it go too once refused, the focus taken on by Tab from the field into the pages under it
+  // Escape lets it go too once refused, the focus taken on by Tab from the field (which tries again, as a tap away does)
   if (!touch) {
     await open(page, touch);
     await write(field, 'Refused title', touch);
     await refusedBy(page, () => field.press('Enter'));
-    await field.press('Tab');
-    assert.ok(
-      await pages.evaluate(el => el.querySelector('.bk-menu').contains(document.activeElement)),
-      'the focus on the pages',
-    );
+    await refusedBy(page, () => field.press('Tab'));
+    assert.equal(sent, 5, 'the focus moved on by Tab tries again');
     await page.keyboard.press('Escape');
     await namedBar(page, 'Planting plan');
     assert.equal(await field.count(), 0, 'Escape lets it go');
-    assert.equal(await pages.count(), 0, 'the pages closed with it');
-    assert.equal(sent, 4, 'Escape sends nothing');
+    assert.equal(sent, 5, 'Escape sends nothing');
   }
   await page.unroute('**/api/notebooks/pages/title');
-}
-// The refusal's shot, once the pages, grown by it, are placed again clear of the bar (WebKit does so a frame or more
-// later)
-async function refusedShot(page, c, screen) {
-  await untilRead(
-    () =>
-      page.evaluate(
-        () =>
-          document.querySelector('#book .bk-pages-menu').getBoundingClientRect().bottom <=
-          document.querySelector('#book .bk-bar').getBoundingClientRect().top,
-      ),
-    'the refused pages clear of the bar',
-  );
-  await c.shot(`page-title-${screen}-refused`, page);
 }
 // An empty title leaves the page Untitled page
 async function emptied(page, { touch }) {
@@ -253,14 +228,13 @@ async function pageGoes(page, c, { touch, mode }) {
     await until(page, '#book .bk-title input[readonly]');
     await press(page, leave);
     assert.equal(await field.count(), 0, 'the title goes with its page');
-    assert.equal(await page.locator('#book .bk-pages-menu').count(), 0, 'the pages list gone with it');
     if (leave === 'The page before') await namedBar(page, 'Cover ideas');
     await page.evaluate(() => (window.__focused = document.activeElement));
     const answered = page.waitForResponse('**/api/notebooks/pages/title');
     refuse();
     await answered;
     await page.locator('#book .bk-refusal', { hasText: words }).waitFor({ state: 'attached' });
-    assert.equal(await page.locator('#book .bk-title').count(), 0, 'no title or note back on the bar');
+    assert.equal(await page.locator('#book .bk-title').count(), 0, 'no field or note back on the view');
     assert.ok(await page.evaluate(() => document.activeElement === window.__focused), 'the focus left where it was');
     assert.deepEqual(sent, [{ id: 2, title: 'Meant for page two' }]);
     await page.unroute('**/api/notebooks/pages/title');
@@ -284,14 +258,15 @@ async function refusedBy(page, save) {
   await answered;
   await until(page, '#book .bk-title input[aria-invalid="true"]:not([readonly])');
 }
-// The pages opened by the bar's count: on a desktop the title has the focus, all of it chosen; on a touch screen the
-// shown page's row has it
+// Rename page from the dots menu: the title has the focus, all of it chosen
 async function open(page, touch) {
-  await countIn(page).click();
+  const dots = page.locator('#book .bk-more'),
+    rename = page.locator('#book .bk-more-card').getByRole('menuitem', { name: 'Rename page', exact: true });
+  await (touch ? dots.tap() : dots.click());
+  await (touch ? rename.tap() : rename.click());
   const field = titleField(page);
   await field.waitFor();
-  if (touch) assert.ok(await page.evaluate(() => document.activeElement?.hasAttribute('aria-current')));
-  else assert.ok(await field.evaluate(el => el === document.activeElement && el.selectionEnd === el.value.length));
+  assert.ok(await field.evaluate(el => el === document.activeElement && el.selectionEnd === el.value.length));
 }
 async function write(field, text, touch) {
   if (touch) await field.tap();
@@ -326,26 +301,20 @@ async function saveWithoutEcho(page, save, title) {
 // A page's tile in the overview, by its title
 const tileIn = (page, title) =>
   page.getByRole('list', { name: 'The overview' }).getByRole('button', { name: title, exact: true });
-// This fixture's open page is blank: its title in its head the only words on it, no date or anything else over the
-// writing space
+// This fixture's open page is blank: named title, no words on it at all, the title on the view
 async function blankCanvas(page, title) {
   const canvas = page.locator('#book .bk-page:not([hidden])');
   assert.ok(await canvas.isVisible());
   assert.equal(await canvas.getAttribute('aria-label'), title);
-  // (and the page's day, under its title: bookunitcards.js headDay)
-  const words = await canvas.evaluate(el => {
-    const copy = el.cloneNode(true);
-    copy.querySelector('.bk-head-day')?.remove();
-    return copy.textContent.trim();
-  });
-  assert.equal(words, title, 'only the title on the blank canvas');
+  assert.equal((await canvas.textContent()).trim(), '', 'nothing written on the blank canvas');
 }
 
-// The page named title: in its head, and in the label of its count on the bar
+// The page named title: on the view, no field over it, and in the label of its count on the bar
 const namedBar = (page, title) =>
   page.waitForFunction(
     title =>
-      document.querySelector('#book .bk-page:not([hidden]) .bk-page-title')?.innerText === title &&
+      !document.querySelector('#book .bk-view-head .bk-title') &&
+      document.querySelector('#book .bk-view-head .bk-page-title')?.innerText === title &&
       document.querySelector('#book .bk-bar .bk-where').getAttribute('aria-label').includes(title),
     title,
     { timeout: 10_000, polling: 100 },

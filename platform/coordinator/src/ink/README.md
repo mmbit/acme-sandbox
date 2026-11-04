@@ -76,6 +76,13 @@ email-code and passkey sign-in. Its `/api/list` contains only the signed-in pers
 notebooks. Send and reply recheck both the session and the invitation after rendering, before saving anything.
 The room serves its notebook scripts, stylesheet and shared utility module. It does not expose HQ's other files.
 
+A call's guest (`../callguests.ts`): the board adds someone in the room on its
+live call (`POST /api/calls/guest`), their door says the agent is an AI and the call is written down, and it opens this
+room at the call's notes page alone, its list and groups read as the board's (`onCall`, `callGroups`). They create,
+change, delete and restore only their own groups there (`onPage`'s `CALL`), as their grant's `guest:<id>`; nothing
+else of the board's book. The call ended, the page closes to them. Every mark on that page reaches the call's agent
+with who drew it: HQ's call relays it (`calldraw.js` relayMarks), and the line fetches it (`GET /api/voice/drawn`).
+
 A round notebook may allow `colleagues` (Reviews never does). In those notebooks, `/api/invite` takes
 `{ notebook, name, email }` and returns the new person's link. The guest can invite three colleagues at their own
 company domain, as on checklist cards. Shared mail domains are excluded. The notebook's `invites` field gives the

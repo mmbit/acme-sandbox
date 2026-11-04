@@ -1,7 +1,7 @@
-// book-check.mjs's stories of the Pencil on the book's paper by hand, at the board's iPad sizes (shell/ink/booktexts.js,
-// bookpan.js, bookscope.js; Ink's folder), with Chromium's own pen events: a Pencil's tap on a box's bin deleting it
-// (Undo bringing it back), and a box tapped past its scrap's edge kept, a refusal out of shape
-// said plainly. Each asserts what the board sees and what the store keeps.
+// book-check.mjs's stories of the Pencil on the book's paper by hand, at the board's iPad sizes
+// (shell/ink/booktexts.js, bookpan.js, bookscope.js; Ink's folder), with the Pencil in either engine (hands.mjs): a
+// Pencil's tap on a box's bin deleting it (Undo bringing it back), and a box tapped past its scrap's edge kept, a
+// refusal out of shape said plainly. Each asserts what the board sees and what the store keeps.
 import assert from 'node:assert/strict';
 import { freePage, paperBox, savedWhere } from './mouse.mjs';
 import { MINI, UPRIGHT, middleOf, until } from './kit.mjs';
@@ -75,8 +75,8 @@ async function keys(browser, c, viewport) {
 }
 
 // The board's way by hand at its iPad's sizes: the text tool on, the Pencil taps the paper right of the column, past
-// any scrap's edge, and writes. The box sits inside its scrap and is kept, and a request the store refuses as out of
-// shape shows a plain line on the page, never the store's words ("texts are a list of …").
+// any scrap's edge (beside the tools), and writes. The box sits inside its scrap and is kept, and a request the store
+// refuses as out of shape shows a plain line on the page, never the store's words ("texts are a list of …").
 async function pastTheEdge(browser, c, viewport) {
   const free = freePage(c);
   const { page, pen, errors, done } = await mini(browser, c, { viewport });
@@ -85,7 +85,8 @@ async function pastTheEdge(browser, c, viewport) {
   try {
     const paper = await paperBox(page);
     await tool(page, 'Text');
-    await pen.tap([paper.x + paper.width - 60, paper.y + 220]);
+    // (left of the tools at the paper's right.)
+    await pen.tap([(await page.locator('#book .bk-strip').boundingBox()).x - 40, paper.y + 220]);
     await until(() => editing(page), `a new box at the paper's right (${size})`);
     await page.keyboard.type('by the edge');
     await page.keyboard.press('Escape');
@@ -113,17 +114,19 @@ async function pastTheEdge(browser, c, viewport) {
 
 const KEYS = ['Delete the text box'];
 // Whether the page refuses the Pencil's move from a point on the screen, as an iPad hears it (Chromium's CDP pen has
-// no touches, and its touches no touchType: the Pencil's, as Safari gives it)
+// no touches, and its touches no touchType: the Pencil's, as Safari gives it; Linux's headless WebKit has no Touch to
+// make, so a touch event's lists filled as Safari fills them.)
 const refused = (page, [x, y]) =>
   page.evaluate(
     ([x, y]) => {
       const el = document.elementFromPoint(x, y),
-        touch = Object.defineProperty(new Touch({ identifier: 7, target: el, clientX: x, clientY: y }), 'touchType', {
-          value: 'stylus',
-        }),
+        touch = { identifier: 7, target: el, clientX: x, clientY: y, touchType: 'stylus' },
         fire = type =>
           el.dispatchEvent(
-            new TouchEvent(type, { touches: [touch], changedTouches: [touch], bubbles: true, cancelable: true }),
+            Object.defineProperties(new Event(type, { bubbles: true, cancelable: true }), {
+              touches: { value: [touch] },
+              changedTouches: { value: [touch] },
+            }),
           );
       fire('touchstart');
       const no = !fire('touchmove');

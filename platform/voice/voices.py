@@ -215,8 +215,14 @@ class Voices:
         first, taken = self.owner, f"the voice first taken for {self.owner}'s"
         words = [f"The voices the line hears in the room: {', '.join(self.names)}. From now on each line of what you "
                  f"hear starts with who said it, by their voice. It's {first}'s call: act on {first}'s word, and treat a "
-                 'request from another voice as their suggestion. Once you know who a voice is (they say their name, or '
-                 "they're introduced), name it with name_voice."]
+                 "request from another voice as their suggestion, except someone asking you to forget their own voice: "
+                 'do that at once (forget_voice). Once you know who a voice is (they say their name, or '
+                 "they're introduced), name it with name_voice.",
+                 "When they talk to each other, they aren't talking to you: never say you didn't catch it, and don't "
+                 'answer each line (a reply with no words is fine). Listen. While they work through ideas together, you '
+                 "may keep their thinking in view on the call's page (draw_picture, again as it grows), and speak up "
+                 'when you have something worth saying: an idea of your own, two of theirs that fit together, or an '
+                 'offer to make a quick prototype.']
         if known:
             words.append(f"Recognised by their saved voices: {'; '.join(f'{was or taken} is {name}' for was, name in known)}.")
         if first in self.names and self.names.index(first) not in self.sure:

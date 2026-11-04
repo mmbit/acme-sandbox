@@ -1,12 +1,39 @@
 /* A page sent or shared by tearing it off at its spine (booktear.js, bookshare.js): the page held by its spine's edge,
    torn out there, and the three targets it's let go on, over the middle of the paper while the islands make way, a
    menu too; the card that asks first when asks are still open on it (bookpagesend.js). The book's own look, the
-   deck's shapes. Nothing shows at the edge till it's pulled. */
+   deck's shapes. Nothing shows at the edge till a hand comes to it: then its perforation. */
 
 /* the paper's right edge, where the spine is, right of what's written (.bk-desk): a finger or the Pencil drawn away
    from it tears the page off, never starts the browser's pan, which would cancel the press */
 #book .bk-paper {
   touch-action: none;
+}
+
+/* the page's perforation by its spine (booktearedge.js), on the paper under the controls: a line of fine punched slits
+   down the stretch a hand takes it by, fading at its ends, the strip between it and the spine shading as it lifts
+   (--give, 0 to 1). Shown only while a hand is there (data-shown): a hover fainter. It takes no press. */
+#book .bk-perf {
+  --give: 0;
+  position: absolute;
+  z-index: 7;
+  opacity: 0;
+  pointer-events: none;
+  background:
+    /* (the slits, punched through: dark, with the light catching each one's lower lip) */
+    linear-gradient(180deg, rgba(60, 45, 20, 0.6) 0 3px, rgba(255, 255, 255, 0.8) 3px 4px, transparent 4px) 0 0 / 2px
+      7px repeat-y,
+    /* (the strip beyond lifting off the page, its shade under it deepening as it's drawn away) */
+    linear-gradient(90deg, rgba(60, 45, 20, calc(0.1 + var(--give) * 0.22)), transparent 60%) 2px 0 / 100% 100%
+      no-repeat;
+  mask-image: linear-gradient(180deg, transparent, #000 28px, #000 calc(100% - 28px), transparent);
+  translate: calc(var(--give) * -2px) 0;
+  transition: opacity 0.2s ease;
+}
+#book .bk-perf[data-shown='hover'] {
+  opacity: 0.6;
+}
+#book .bk-perf:is([data-shown='press'], [data-shown='flash']) {
+  opacity: 1;
 }
 
 /* the page in hand: a small copy held tilted by its spine's edge, torn there (bookpaper.js's tear() draws the edge) */

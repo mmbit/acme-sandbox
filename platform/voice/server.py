@@ -33,7 +33,7 @@ from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
 from aloud import DAYS, aloud, number, respelt
-from drawing import ASK_WORDS, INK_SECONDS, INK_WORDS, Drawing, note_said, notes_lost, one_line
+from drawing import ASK_WORDS, INK_SECONDS, INK_WORDS, Drawing, marks_lost, note_said, notes_lost, one_line
 from driving import DRIVE_WORDS, OPEN_WORDS, Driving
 from callnotes import (CHANGE_WORDS, DRAW_WORDS, MARK_WORDS, PAGE_WORDS, TITLE_WORDS_SAID, TRY_WORDS, WRITE_DOWN_WORDS,
                        CallNotes)
@@ -414,6 +414,19 @@ def fetch_note(hq, note_id, call):
     if not isinstance(got, dict) or type(got.get('n')) is not int or got['n'] < 1 or picture is not None and not takes(picture):
         return None
     return {'id': f"note {got['n']}", 'note': {'n': got['n'], 'words': one_line(got.get('words')), 'url': one_line(got.get('url'))},
+            'type': picture and picture['type'], 'data': picture and picture['data']}
+
+
+def fetch_mark(hq, mark_id, call):
+    """A mark on this live call's notes page, by the board from any screen or by its guest (the coordinator's drawn
+    route): an entry for the call's pictures as a note's is, with who drew it under 'note', and its picture (the mark as
+    it stands on the page). None if it's unreadable. Raises if the coordinator (hq) refuses it."""
+    got = hq('GET', f'drawn?id={mark_id}&call={call}')
+    picture = got.get('picture') if isinstance(got, dict) else None
+    if not isinstance(got, dict) or type(got.get('n')) is not int or not isinstance(got.get('who'), str) \
+            or picture is not None and not takes(picture):
+        return None
+    return {'id': f"mark {got['n']}", 'note': {'n': got['n'], 'words': one_line(got.get('words')), 'who': one_line(got['who'])},
             'type': picture and picture['type'], 'data': picture and picture['data']}
 
 
@@ -1184,6 +1197,7 @@ class Call:
         self.writing = threading.Lock()  # a transcript write, from its check of ended to its last byte (end() runs in a thread)
         self.pictures = []    # pictures the board shared that haven't gone to the agent yet, in the order it shared them
         self.known = set()    # the number of every picture HQ sent: HQ sends one again until it hears back (show)
+        self.blocked = {}     # marks that found the pictures full, by id: their latest change, for the next turn (unblock)
         # The board's notes the agent has had in a turn not yet done (HQ's ids): HQ takes their ink off the board's screen
         # once one is (scribbled).
         self.scribbles = []
@@ -1385,7 +1399,7 @@ class Call:
         (the board, call 161). A turn the board talked over keeps them for the next."""
         done, self.scribbles = self.scribbles, []
         for note_id in done:
-            await self.tell_note(note_id, 'done')
+            await self.tell_drawn('note', note_id, 'done')
 
     def open(self, greeting, at=None):
         """A call out: the other side has picked up and said its first words (greeting), or nothing for a while: the
@@ -1863,41 +1877,78 @@ class Call:
         self.showing = asyncio.create_task(self.unprompted())
 
     async def note(self, note_id):
-        """A note the board just drew on this call's page in its book: fetched
-        from the coordinator, it takes its place with the pictures (show), its picture the page around it, which counts
-        against SESSION_BYTES: one that doesn't fit goes without it, and the agent hears so. HQ hears that the line has
-        it ('received'), or why not ('failed'), and sends it again until it does: a known id is let be."""
+        """A note the board just drew on this call's page in its book, in its place with the pictures (place), its
+        picture the page around it. HQ hears that the line has it ('received'), or why not ('failed'), and sends it again
+        until it does: a known id is let be."""
         if ('note', note_id) in self.known:
             return
         self.known.add(('note', note_id))
         if len(self.pictures) >= PICTURES:
-            return await self.tell_note(note_id, 'failed', 'too many')
-        # (no note: still on its way. ink: HQ's id, for its ink to go once the agent's turn on it is done.)
-        entry = {'id': None, 'note': None, 'type': None, 'data': None, 'ink': note_id}
-        self.pictures.append(entry)
-        try:
-            fetched = await asyncio.to_thread(fetch_note, self.wiring.hq, note_id, self.brain.call)
-        except Exception as err:
-            print(f'call: {self.agent} could not fetch note {note_id}: {err}', flush=True)
-            fetched = None
-        if self.ended:
+            return await self.tell_drawn('note', note_id, 'failed', 'too many')
+        # (ink: HQ's id, for its ink to go once the agent's turn on it is done.)
+        placed = await self.place('note', fetch_note, note_id, ink=note_id)
+        if placed is None:
             return
-        if fetched is None:
-            self.pictures.remove(entry)
-            await self.tell_note(note_id, 'failed', 'unreadable')
-        else:
-            # (beside what a compaction would leave)
-            if fetched['data'] and self.picture_bytes - self.screen['bytes'] + len(fetched['data']) > self.limits.session_bytes:
-                fetched.update(type=None, data=None, note={**fetched['note'], 'full': True})
-            entry.update(fetched)
-            self.picture_bytes += len(entry['data'] or '')
-            await self.tell_note(note_id, 'received')
+        await self.tell_drawn('note', note_id, *(('received',) if placed else ('failed', 'unreadable')))
         if not self.ended and self.ready():
             self.nudge()
 
-    async def tell_note(self, note_id, state, why=None):
-        """HQ hears how far a note got, as a picture's word (tell), kept for a resumed connection (retell)."""
-        event = self.told[('note', note_id)] = {'type': 'note', 'id': note_id, 'state': state, **({'why': why} if why else {})}
+    async def mark(self, mark_id, updated):
+        """A mark on the call's notes page as it rests (HQ's calldraw.js: the board's from any screen, its guest's),
+        in its place with the pictures as a note is (place), with who drew it. Each change of it comes once: HQ hears
+        the line has it ('received'), or couldn't read it ('failed'), and sends it again until it does. One that finds
+        the pictures full waits for the next turn to make room (unblock)."""
+        told = self.told.get(('mark', mark_id))
+        if told and told['updated'] == updated:
+            return await self.send_event(told)
+        if ('mark', mark_id, updated) in self.known:
+            return
+        if len(self.pictures) >= PICTURES:
+            self.blocked[mark_id] = updated
+            return
+        self.known.add(('mark', mark_id, updated))
+        self.blocked.pop(mark_id, None)  # (an older change of it goes with this one)
+        placed = await self.place('mark', fetch_mark, mark_id)
+        if placed is None:
+            return
+        await self.tell_drawn('mark', mark_id, *(('received',) if placed else ('failed', 'unreadable')), updated=updated)
+        if not self.ended and self.ready():
+            self.nudge()
+
+    def unblock(self):
+        """A turn took the pictures waiting: the marks that found them full take their places now, in turn (mark)."""
+        blocked, self.blocked = self.blocked, {}
+        for mark_id, updated in blocked.items():
+            asyncio.create_task(self.mark(mark_id, updated))
+
+    async def place(self, kind, fetch, drawn_id, **entry):
+        """A note or a mark in its place with the pictures (show), fetched from the coordinator. Its picture counts
+        against SESSION_BYTES: one that doesn't fit goes without it, and the agent hears so. Whether it was placed:
+        False if it's unreadable, None if the call ended meanwhile."""
+        # (no note: still on its way.)
+        entry = {'id': None, 'note': None, 'type': None, 'data': None, **entry}
+        self.pictures.append(entry)
+        try:
+            fetched = await asyncio.to_thread(fetch, self.wiring.hq, drawn_id, self.brain.call)
+        except Exception as err:
+            print(f'call: {self.agent} could not fetch {kind} {drawn_id}: {err}', flush=True)
+            fetched = None
+        if self.ended:
+            return None
+        if fetched is None:
+            self.pictures.remove(entry)
+            return False
+        # (beside what a compaction would leave)
+        if fetched['data'] and self.picture_bytes - self.screen['bytes'] + len(fetched['data']) > self.limits.session_bytes:
+            fetched.update(type=None, data=None, note={**fetched['note'], 'full': True})
+        entry.update(fetched)
+        self.picture_bytes += len(entry['data'] or '')
+        return True
+
+    async def tell_drawn(self, kind, drawn_id, state, why=None, **more):
+        """HQ hears how far a note or a mark got, as a picture's word (tell), kept for a resumed connection (retell)."""
+        event = {'type': kind, 'id': drawn_id, **more, 'state': state, **({'why': why} if why else {})}
+        self.told[(kind, drawn_id)] = event
         await self.send_event(event)
 
     def ready(self):
@@ -1940,7 +1991,9 @@ class Call:
             # (a note's ink, for HQ to take off once the turn is done: scribbled.)
             if 'ink' in picture and picture['id'] not in self.held and picture['ink'] not in self.scribbles:
                 self.scribbles.append(picture['ink'])
-            if picture['id'] not in self.held and picture['data']:  # (a note's picture too, which HQ hears nothing of)
+            # (a note's picture too, which HQ hears nothing of. A mark's newer picture takes the place of its older one.)
+            if picture['data'] and (picture['id'] not in self.held or str(picture['id']).startswith('mark ')):
+                self.held.pop(picture['id'], None)
                 self.held[picture['id']] = picture
                 if 'note' not in picture:
                     await self.tell(picture['id'], 'seen')
@@ -1955,14 +2008,16 @@ class Call:
         # (the next turn brings the screen's picture again, and the session holds none)
         self.screen.update(seen=0, pictures=0, bytes=0, refused=0)
         self.picture_bytes = sum(len(picture['data'] or '') for picture in self.pictures)
-        # (a note's id is 'note <n>': it's named in the recap, and HQ hears nothing)
+        # (a note's id is 'note <n>', a mark's 'mark <n>': they're named in the recap, and HQ hears nothing)
         notes = [picture_id.split()[1] for picture_id in lost if str(picture_id).startswith('note ')]
-        lost = [picture_id for picture_id in lost if not str(picture_id).startswith('note ')]
+        marks = [picture_id.split()[1] for picture_id in lost if str(picture_id).startswith('mark ')]
+        lost = [picture_id for picture_id in lost if not str(picture_id).startswith(('note ', 'mark '))]
         for picture_id in lost:
             await self.tell(picture_id, 'failed', 'lost')
         numbers = ', '.join(f'#{picture_id}' for picture_id in lost)
-        return (f"\n(You can't see {'picture' if len(lost) == 1 else 'pictures'} {numbers} any more: they were in the "
-                'stopped session. Ask the board to share them again if you need them.)' if lost else '') + notes_lost(notes)
+        pictures_lost = (f"\n(You can't see {'picture' if len(lost) == 1 else 'pictures'} {numbers} any more: they were "
+                         'in the stopped session. Ask the board to share them again if you need them.)' if lost else '')
+        return pictures_lost + notes_lost(notes) + marks_lost(marks)
 
     async def tell(self, picture_id, state, why=None):
         """HQ hears how far a picture got. The line keeps the last word on each, as an event sent while HQ was away is
@@ -2167,13 +2222,17 @@ class Call:
         # session's recap has that line, not the picture.
         shown = self.ready()
         del self.pictures[:len(shown)]
+        self.unblock()
         # (notes)
         shared, notes = [p for p in shown if 'note' not in p], [p for p in shown if 'note' in p]
         if shared:
             numbers = ', '.join(f"#{picture['id']}" for picture in shared)
             self.write(f"Board: (shared {'picture' if len(shared) == 1 else 'pictures'} {numbers} on screen)")
         for note in notes:
-            self.write(f"Board: (drew note {note['note']['n']} on {note['note']['url']})")
+            if note['note'].get('who'):  # (a mark on the call's notes page.)
+                self.write(f"{note['note']['who']}: (drew #{note['note']['n']} on the call's notes page)")
+            else:
+                self.write(f"Board: (drew note {note['note']['n']} on {note['note']['url']})")
         turn = self.last = {'text': text, 'n': len(self.lines), 'heard': None, 'back': False, 'sounds': 0, 'at': at}
         spoke, asked, worded_at = self.spoke, self.wiring.monotonic(), None  # (the reply's timing line: timed())
         # (what's written down and what the agent reads; taken back, it's as heard)
@@ -2827,6 +2886,9 @@ async def app_call(ws, make_call=Call, wiring=Wiring()):
             # (note, asked, inked.)
             elif kind == 'note' and isinstance(e.get('id'), int):  # (a note's place among the pictures, as theirs)
                 asyncio.create_task(call.note(e['id']))
+            # (a mark on the call's notes page, as a note.)
+            elif kind == 'mark' and isinstance(e.get('id'), int) and isinstance(e.get('updated'), str):
+                asyncio.create_task(call.mark(e['id'], e['updated']))
             elif kind == 'asked' and isinstance(e.get('id'), int):
                 call.drawing.asked(e['id'], e.get('answer'))
             elif kind == 'inked' and isinstance(e.get('id'), int):

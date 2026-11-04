@@ -1,7 +1,7 @@
 // A notebook page as the deck draws it: paper-wide at its fit, zoomed in from there to write big (bookview.js.), its scrap units laid as a masonry (masonry.js) at the page's width, each a sticky note
 // at its place with its room to write under its body and a handle at its foot to drag that room taller or shorter.
-// The page's title is at its top with its first day, and a later day's date across every column where its units
-// start. (The cards, title and dates drawn: bookunitcards.js.)
+// Its head is room the view's title and day lie over at rest (bookviewhead.js), and a later day's date goes across
+// every column where its units start. (The cards and dates drawn: bookunitcards.js.)
 //
 // The page's lists (page.ink, page.scraps, page.texts: what the tools work on) hold each unit's elements at its place
 // on the page, in the page's px: a unit's own scrap px moved by its origin (page.origins: id → { x, y }). The store
@@ -31,14 +31,14 @@ import { underOf } from './bookunder.js';
 import { canvasOf, daysOf, isCanvas, pushedDown } from './sketchcanvas.js';
 import { unitFor } from './bookunitfor.js';
 
-// the page's px above its grid, for its title and first day
+// the page's px above its grid, where the view's title and day lie at rest
 export const TITLE_H = 72;
 // kept off the paper's left and right edges besides the masonry's margin (the close-swipe strip on the left takes
 // 28 px: book.css), in CSS px
 const INSET = 8;
 // a new unit on a page not laid yet starts this far above its first stroke
 const PAD = 12;
-const LISTS = { ink: 'ink', texts: 'texts', pictures: 'scraps' };
+export const LISTS = { ink: 'ink', texts: 'texts', pictures: 'scraps' };
 
 // A unit's page origin, at the top-left before it is laid
 const originOf = (page, id) => page.origins?.get(id) ?? { x: 0, y: 0 };
@@ -81,6 +81,12 @@ export function heightOf(page, id) {
 }
 // How tall a scrap's post-it words are, drawn in its body under its picture (page px; 0 for none)
 export const wordsOf = (page, id) => page.words?.get(id) ?? 0;
+// Whether a scrap has post-it words the page hasn't drawn and measured yet (bookgroups.js draws a scrap's words: the
+// board's typing, else the store's).
+function wordsUnread(page, id) {
+  const g = page.groups?.get(id);
+  return g?.kind === 'scrap' && !!(page.typed?.get(id) ?? g.words) && !page.words?.has(id);
+}
 // How far down the page (its px) what's on a unit reaches: its picture, words and ink, its post-it words too; its top
 // when it has nothing
 export function footOf(page, id) {
@@ -117,11 +123,11 @@ export function layUnits(view, width) {
   page.origins ??= new Map();
   for (const [kind, list] of Object.entries(LISTS))
     for (const el of page[list] ?? []) if (!homed(page, el)) home(page, kind, el);
+  // (only words drawn: a page hidden lays out none of them.)
   page.words = new Map(
-    [...view.el.querySelectorAll(':scope > .bk-groups > .bk-words')].map(w => [
-      Number(w.dataset.g),
-      w.offsetHeight + 8,
-    ]),
+    [...view.el.querySelectorAll(':scope > .bk-groups > .bk-words')]
+      .filter(w => w.offsetHeight)
+      .map(w => [Number(w.dataset.g), w.offsetHeight + 8]),
   );
   const units = unitsOf(page).map(u => ({ ...u, below: underOf(view, u.id) })),
     l = (isCanvas(page.chapter) ? canvasLaid : masonryLaid)(page, units, width),
@@ -191,7 +197,12 @@ function canvasLaid(page, units, width) {
     wide = units.map(u => ({ ...u, w: widthOn(page, u.id), ...(pushed.has(u.id) && { place: pushed.get(u.id) }) })),
     { places, fresh } = canvasOf(wide, inner, { x: INSET, y: TITLE_H });
   page.pins ??= new Map();
-  for (const p of places) if (fresh.includes(p.id) && page.groups.has(p.id)) page.pins.set(p.id, { x: p.x, y: p.y });
+  // (pinned only once every scrap among them has its post-it words measured, in the book's own font: one laid before is
+  // too short or too tall, and what's pinned under it would lie under its words or a gap away. bookgroups.js lays the
+  // page again once the font is in.)
+  const measured = globalThis.document?.fonts?.status !== 'loading' && fresh.every(id => !wordsUnread(page, id));
+  for (const p of places)
+    if (measured && fresh.includes(p.id) && page.groups.has(p.id)) page.pins.set(p.id, { x: p.x, y: p.y });
   const at = new Map(places.map(p => [p.id, p])),
     first = units.find(u => u.day !== undefined)?.day;
   return {
@@ -220,11 +231,12 @@ function besideOn(page, id) {
 // phone's, the narrowest book's, its margin at the right giving way first as on a page of units)
 export const opensAt = width => scaleOf(width - 2 * INSET, 1);
 // A canvas as big as what's on it and what hangs under its units reach, any way from its origin, the paper's width
-// (page px) at least
+// (page px) at least. The board's drawing has no paper: only its ink counts, never a scrap's width from where it starts
 function canvasSize(page, width) {
-  const reach = page.places.map(({ hung: b, ...p }) =>
-      union(reachOn(page, p), { x0: b.x, y0: b.y, x1: b.x + b.w, y1: b.y + b.h }),
-    ),
+  const reach = page.places.map(({ hung: b, ...p }) => {
+      const r = reachOn(page, drawing(page, p.id) ? { ...p, w: 0, h: 0 } : p);
+      return b.h ? union(r, { x0: b.x, y0: b.y, x1: b.x + b.w, y1: b.y + b.h }) : r;
+    }),
     x = Math.min(0, ...reach.map(r => r.x0 - MARGIN)),
     y = Math.min(0, ...reach.map(r => r.y0 - MARGIN));
   return {
@@ -270,10 +282,12 @@ function inside(el, o) {
 const homed = (page, el) => page.groups.has(el.g) || page.gone?.has(el.g) || page.pending?.some(p => p.id === el.g);
 // An element with no unit yet (a picture taped in, words typed on the page, a shape): its unit as a stroke's
 function home(page, kind, el) {
-  el.g = unitFor(page, startOf(kind, el), boxOf(kind, el));
+  const box = boxOf(kind, el);
+  el.g = unitFor(page, startOf(kind, el), box, kind === 'ink' ? el : box);
 }
-// The unit a stroke goes to (page px): the one it starts on, else the board's drawing it comes near, else a new one
-export const inkUnit = (page, stroke) => unitFor(page, stroke.points[0], boxOf('ink', stroke));
+// The unit a stroke goes to (page px): the one it starts on, else the board's drawing whose ink it comes near, else a
+// new one.
+export const inkUnit = (page, stroke) => unitFor(page, stroke.points[0], boxOf('ink', stroke), stroke);
 // The unit what is put at a point goes to (typed words), as a stroke starting there
 export const pointUnit = (page, x, y) => unitFor(page, [x, y], { x0: x, y0: y, x1: x, y1: y });
 // The unit at a point on the page (its px), or undefined in the space between units

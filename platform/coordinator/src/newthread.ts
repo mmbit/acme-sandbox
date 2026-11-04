@@ -20,7 +20,7 @@ import {
 } from './projects.ts';
 import { noProject, placeOf, taskClash } from './names.ts';
 import { oneTaskSql } from './made.ts';
-import { refusal } from './threadorder.ts';
+import { failedHeld, refusal } from './threadorder.ts';
 import { waitsUntil } from './wakes.ts';
 import { needDrawn } from './threadneeds.ts';
 import { boardHold, cardHeld, drawnWords, holdAndAge } from './boardheld.ts';
@@ -70,9 +70,10 @@ export function newThread(
 // held by a pause it was never part of: that one is named (paused) for the drawer to judge. A thread whose open work all
 // waits for a time still to come (hq job --when <time>, a week's read), with no pull request open, is passed over too,
 // and so is one whose open work all waits for an open card of the board's (boardheld.ts: its answer's expected time
-// keeps sliding while nobody answers), each with every thread that needs it at any depth, so ready work never queues
-// behind it: the one the chain would end on without that is named (passed), with what holds it, for the drawer to
-// judge. (the card)
+// keeps sliding while nobody answers), or whose next task a failed task holds until its owner acts (threadorder.ts
+// failedHeld), each with every thread that needs it at any depth, so ready work never queues behind it: the one the
+// chain would end on without that is named (passed), with what holds it, for the drawer to judge. (the card)
+// (the failed task)
 function chainedAfter(project: string, job: number | undefined): Chain {
   const own = job ? threadOf(job) : null;
   const openJob = (t: string, which = 'true') =>
@@ -85,14 +86,16 @@ function chainedAfter(project: string, job: number | undefined): Chain {
   const bookedOnly = (t: string) => `(${openJob(t)} and not ${ready(t)})`;
   // the open threads whose work is all booked for later or held by a card ($cards), and every thread that needs one
   const held = `(with recursive held(id) as (select b.id from threads b where b.status = 'open' and ${bookedOnly('b.id')}
-    union select value from json_each($cards)
+    union select value from json_each($cards) union select value from json_each($failed)
     union select n.thread from thread_needs n join held h on n.needs = h.id) select id from held)`;
-  const cards = JSON.stringify(cardHeld());
+  const cards = JSON.stringify(cardHeld()),
+    failing = failedHeld(project),
+    failed = JSON.stringify([...failing.keys()]);
   // The newest thread chained from the start, where `going` holds for the start and no thread on the way is in `over`
   // (paused ones left out unless paused)
   const lastIn = ({ going, over, paused = false }: { going: Going; over?: string; paused?: boolean }) => {
     const newest = (where: string, at: Record<string, string>) =>
-      newestOpen(project, where, over ? { ...at, cards } : at, paused);
+      newestOpen(project, where, over ? { ...at, cards, failed } : at, paused);
     const starts = going('t.id') + (over ? ` and t.id not in ${over}` : '');
     const start = (own && newest(`t.id = $own and ${starts}`, { own })) || newest(starts, {});
     const chained = `t.id in (with recursive chained(id) as (select $start
@@ -106,15 +109,15 @@ function chainedAfter(project: string, job: number | undefined): Chain {
   return {
     after: after?.id,
     paused: paused?.paused ? paused.id : undefined,
-    passed: passed && passed.id !== after?.id ? passedWords(passed.id, bookedOnly) : undefined,
+    passed: passed && passed.id !== after?.id ? passedWords(passed.id, bookedOnly, failing) : undefined,
   };
 }
 type Going = (thread: string) => string;
 type Chain = { after?: string; paused?: string; passed?: { thread: string; why: string } };
 
 // What holds a thread the chain passed over: the thread it waits for at any depth, or itself, whose work is all booked
-// for later, else one held by a card, one it needs first
-function passedWords(thread: string, bookedOnly: Going): Chain['passed'] {
+// for later, else one held by a failed task (failing), else one held by a card, one it needs first
+function passedWords(thread: string, bookedOnly: Going, failing: Map<string, number>): Chain['passed'] {
   const needed = (
     db
       .prepare(
@@ -129,6 +132,11 @@ function passedWords(thread: string, bookedOnly: Going): Chain['passed'] {
       thread,
       why: booked.id === thread ? 'waits for a time booked ahead' : `waits for ${booked.id}, booked for a time ahead,`,
     };
+  const stalled = needed.find(n => failing.has(n.id));
+  if (stalled) {
+    const words = `held by task #${failing.get(stalled.id)}, which failed with nothing in its place,`;
+    return { thread, why: stalled.id === thread ? `is ${words}` : `waits for ${stalled.id}, ${words}` };
+  }
   // (its work waits with the card of a thread it needs: that one is named)
   const carded =
     needed.find(n => n.id !== thread && n.card && 'card' in n.card) ?? needed.find(n => n.card && 'card' in n.card);

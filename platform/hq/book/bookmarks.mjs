@@ -2,9 +2,11 @@
 // journal seeded with two sketch pages, its Asks page with 128 asks open and two calls' notes pages, one stamped Sent
 // by its follow-up and one still with it, at a phone, an iPad mini upright (its page the whole screen, and beside HQ's
 // page with the book at its least) and sideways, a phone sideways and a wide desktop: the page's own alone marked as
-// the page's own, Asks' count in its label ("Asks · 128"), all below the status bar's blur, apart and clear of the
-// book's pull tab, and lying as they will once the book lands all through its swing open. Beside HQ's page they stick
-// out of the page block to the left, never over the paper nor HQ's own keys, their words whole in them; on a page that
+// the page's own, Asks' count in its label ("Asks, 128 open"), all below the status bar's blur, apart, thin, sticking
+// out less than the book's pull tab and a clear gap above it, each icon in a
+// deeper tone of its own ribbon and no words on any, and lying as they will once the book lands all through its swing
+// open. Beside HQ's page they stick out of the page block to the left, never over the paper nor HQ's own keys, their
+// icons on the ribbon where it shows; on a page that
 // is the whole screen they lie folded at its left edge, their icons showing, a tap or a pull right brings them out over
 // the margin, a tap on one then opens its chapter and folds them, and a press elsewhere folds them. Each opens its
 // chapter's first page, the bar counting within it, the first call's page stamped Sent; on the overview too, where one
@@ -133,11 +135,7 @@ async function bookmarks(p, c, name, press) {
   );
   await placed(p, name);
   const asks = (await tabs(p)).find(t => t.chapter === 'asks');
-  assert.deepEqual(
-    [asks.words, asks.count, asks.label],
-    ['Asks · 128', ' · 128', 'Asks, 128 open'],
-    `${name}: Asks' open count in its label`,
-  );
+  assert.deepEqual([asks.words, asks.label], ['', 'Asks, 128 open'], `${name}: Asks' open count in its label alone`);
   await reopened(p, name, press);
   if (await whole(p)) await pulledOut(p, c, name, press);
   for (const [chapter, first, where] of [
@@ -187,7 +185,7 @@ async function reopened(p, name, press) {
   assert.equal(await whole(p), open, `${name}: the tabs lie as before, open again`);
 }
 
-// Folded at the screen's left edge: a tap on them brings them out, their words on the screen, and a press elsewhere
+// Folded at the screen's left edge: a tap on them brings them out, their icons on the screen, and a press elsewhere
 // (the page count on the bar) folds them; a pull right brings them out too
 async function pulledOut(p, c, name, press) {
   const out = p.locator('#book .bk-marks[data-out]'),
@@ -198,7 +196,7 @@ async function pulledOut(p, c, name, press) {
   await p.waitForTimeout(400);
   for (const t of await tabs(p)) {
     assert.ok(t.box.x >= -1, `${name}: ${t.chapter} out, wholly on the screen (${t.box.x})`);
-    assert.ok(t.wordsBox.x >= 0 && t.wordsBox.width > 20, `${name}: ${t.chapter}'s words read once out`);
+    assert.ok(t.icon.x >= 4 && t.icon.right <= t.box.right, `${name}: ${t.chapter}'s icon on it once out`);
   }
   assert.equal((await shown(p)).title, title, `${name}: bringing them out turns no page`);
   await c.shot(`bookmarks-${name}-out`, p);
@@ -278,13 +276,14 @@ export const tabs = p =>
       };
       return {
         chapter: b.dataset.chapter,
-        words: b.querySelector('span').textContent,
-        count: b.querySelector('.bk-mk-count')?.textContent ?? null,
+        words: b.textContent.trim(),
         label: b.getAttribute('aria-label'),
         here: b.getAttribute('aria-current') === 'page',
         box: box(b),
         icon: box(b.querySelector('svg.bk-mk-icon')),
-        wordsBox: box(b.querySelector('span')),
+        // (its icon's colour and its ribbon's, as rgb)
+        ink: getComputedStyle(b.querySelector('svg.bk-mk-icon')).color,
+        card: getComputedStyle(b).getPropertyValue('--bk-mk-card').trim(),
       };
     }),
   );
@@ -304,15 +303,18 @@ export const shown = p =>
   p.evaluate(() => {
     const stamp = document.querySelector('#book .bk-page:not([hidden]) [data-slot=stamp].bk-stamped svg');
     return {
-      title: document.querySelector('#book .bk-page:not([hidden]) .bk-page-title')?.textContent ?? '',
+      title: document.querySelector('#book .bk-view-head .bk-page-title')?.textContent ?? '',
       where: document.querySelector('#book .bk-where')?.textContent || null,
       here: document.querySelector('#book .bk-marks [aria-current=page]')?.dataset.chapter ?? null,
       stamp: stamp?.getAttribute('aria-label') ?? null,
     };
   });
 
-// Where the tabs lie: all below the blur, apart, and clear of the book's pull tab. On a page that is the whole screen,
-// folded at the screen's left edge, most of each past it and its icon showing. Beside HQ's page: beside().
+// Where the tabs lie: all below the blur, apart, and clear of the book's pull tab; thin ribbons, the last a clear gap
+// above the pull tab where the screen has the room (a phone on its side puts its pull tab at the foot), each sticking
+// out less than it, each icon tinted from its own ribbon (README, Bookmarks).
+// On a page that is the whole screen, folded at the screen's left edge, most of each past it and its icon showing.
+// Beside HQ's page: beside().
 async function placed(p, name) {
   const t = await tabs(p),
     isWhole = await whole(p),
@@ -344,22 +346,53 @@ async function placed(p, name) {
         a.icon.x + a.icon.width / 2 >= 0 && a.icon.right <= a.box.right,
         `${name}: ${a.chapter}'s icon showing (${a.icon.x}–${a.icon.right})`,
       );
-    } else beside(name, a, { edge, paper, keys, height });
+    } else beside(name, a, { edge, paper, keys });
+    assert.ok(a.box.height <= 30, `${name}: ${a.chapter} a thin ribbon (${a.box.height} px)`);
+    const reach = isWhole ? a.box.right : edge.x - a.box.x;
+    assert.ok(
+      reach < lip.right - lip.x,
+      `${name}: ${a.chapter} out ${reach} px, less than the pull tab's ${lip.right - lip.x}`,
+    );
+    tinted(name, a);
     const b = t[i + 1];
     if (b) assert.ok(a.box.bottom <= b.box.y, `${name}: ${a.chapter} and ${b.chapter} apart`);
     const underLip = lip.y < a.box.bottom && a.box.y < lip.bottom && lip.x < a.box.right && a.box.x < lip.right;
     assert.ok(!underLip, `${name}: ${a.chapter} clear of the book's pull tab (${JSON.stringify([a.box, lip])})`);
   }
+  const last = t.at(-1).box;
+  if (height > 520)
+    assert.ok(lip.y - last.bottom >= 32, `${name}: the pull tab well below them (${last.bottom} to ${lip.y})`);
+  assert.equal(new Set(t.map(a => a.ink)).size, t.length, `${name}: each icon in its own colour`);
 }
-// A tab beside HQ's page: on the screen, out of the page block, never over the paper nor HQ's own keys, and its words
-// whole in it where the screen is tall enough to show them (a phone on its side shows icons only)
-function beside(name, a, { edge, paper, keys, height }) {
+// An icon in a deeper tone of its own ribbon's colour: its hue near the ribbon's, and far darker
+function tinted(name, { chapter, ink, card }) {
+  const [r, g, b] = ink.match(/\d+(\.\d+)?/g).map(Number),
+    [cr, cg, cb] = [1, 3, 5].map(i => parseInt(card.slice(i, i + 2), 16)),
+    hue = (r, g, b) => {
+      const max = Math.max(r, g, b),
+        d = max - Math.min(r, g, b),
+        h = max === r ? (g - b) / d : max === g ? 2 + (b - r) / d : 4 + (r - g) / d;
+      return (h * 60 + 360) % 360;
+    },
+    apart = Math.abs(hue(r, g, b) - hue(cr, cg, cb)),
+    light = (r, g, b) => 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  assert.ok(Math.min(apart, 360 - apart) < 25, `${name}: ${chapter}'s icon (${ink}) the hue of its ribbon (${card})`);
+  assert.ok(
+    light(r, g, b) < light(cr, cg, cb) * 0.6,
+    `${name}: ${chapter}'s icon (${ink}) deeper than its ribbon (${card})`,
+  );
+}
+// A tab beside HQ's page: on the screen, out of the page block, never over the paper nor HQ's own keys, and its icon on
+// the ribbon where it shows, out of the block and over its edge
+function beside(name, a, { edge, paper, keys }) {
   assert.ok(a.box.x >= 0, `${name}: ${a.chapter} on the screen`);
   assert.ok(a.box.x < edge.x, `${name}: ${a.chapter} out of the page block (${a.box.x} by ${edge.x})`);
   assert.ok(a.box.right <= paper.x + 1, `${name}: ${a.chapter} never over the paper (${a.box.right} > ${paper.x})`);
-  const w = a.wordsBox,
-    whole = w.x >= a.box.x && w.right <= a.box.right && w.y >= a.box.y && w.bottom <= a.box.bottom;
-  if (height > 520) assert.ok(whole, `${name}: ${a.chapter}'s words whole in it (${JSON.stringify([w, a.box])})`);
+  const i = a.icon;
+  assert.ok(
+    i.x >= a.box.x && i.x < edge.x && i.right <= paper.x,
+    `${name}: ${a.chapter}'s icon on the ribbon where it shows (${JSON.stringify([i, a.box])})`,
+  );
   const covered = keys.filter(k => k.x < a.box.right && a.box.x < k.right && k.y < a.box.bottom && a.box.y < k.bottom);
   assert.deepEqual(covered, [], `${name}: ${a.chapter} clear of HQ's own keys (${JSON.stringify(a.box)})`);
 }

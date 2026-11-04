@@ -14,7 +14,7 @@ export type Kind = 'project' | 'sentence' | 'thread' | 'goal' | 'task' | 'meetin
 // answered.
 db.exec(`create table if not exists board_names (kind text not null, id text not null, words text not null, plain text,
   error text, claimed integer, primary key (kind, id))`);
-// (a key saved later leaves a report's copy and its summary too, as it leaves the report: db.ts scrub())
+// (a key saved later leaves a report's copy and its summary too, as it leaves the report: db.ts scrubSaved())
 redacted('board_names', 'words', 'plain', 'error');
 
 // The tasks the model names, of the jobs as `j`: work, never a review's seats (HQ names those) nor one marked before as

@@ -4,8 +4,9 @@
    paper at rest and frosts only what scrolls under it. One type at one weight: the book's (--bk-font). */
 #book .bk-far {
   position: absolute;
-  /* (from the screen's top, the pages scrolling up under the status bar's band: .bk-pages starts below it) */
-  inset: calc(-1 * var(--sat, 0px)) 0 0;
+  /* (the paper's whole height from the screen's top, its head set down below the status bar's band, the pages
+     scrolling up under it.) */
+  inset: 0;
   z-index: 3;
   overflow: auto;
   overscroll-behavior: contain;

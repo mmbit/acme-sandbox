@@ -3,21 +3,24 @@
 import { execFile } from 'node:child_process';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { readFile, rename, stat, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { promisify } from 'node:util';
-import { gunzipSync } from 'node:zlib';
+import { gunzip, gunzipSync, gzip } from 'node:zlib';
 import { DATA_DIR, ORIGIN } from './config.ts';
 import { db, remember, setting } from './db.ts';
 import * as ledger from './ledger.ts';
 import * as memory from './memory.ts';
 import * as overseer from './overseer.ts';
-import { keepMadeKey, secret } from './secrets.ts';
+import { keepMadeKey, maskWith, redact, secret, type Mask } from './secrets.ts';
 
 const KEY_NAME = 'OVERSEER_READ_KEY';
 // The server's status reports (infra/report.sh writes each here whole, gzipped, named by its UTC time, and keeps two days)
 const REPORTS = process.env.STATUS_REPORTS_DIR ?? `${DATA_DIR}/status`;
 const REPORT_NAME = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z\.md\.gz$/;
-const run = promisify(execFile);
+const run = promisify(execFile),
+  unzip = promisify(gunzip),
+  zip = promisify(gzip);
 
 export type Reading = { status: number; text: string; asOf?: string };
 
@@ -94,6 +97,7 @@ export async function report({
   since?: number | null;
   at?: number | null;
 }): Promise<Reading> {
+  await masking;
   const kept = reports(),
     shown = at === null ? kept.at(-1) : kept.findLast(r => Date.parse(r.at) <= at);
   if (!kept.length) return { status: 404, text: 'No status report has reached HQ yet.' };
@@ -127,7 +131,37 @@ function reports() {
       return { at: `${y}-${mo}-${d}T${h}:${mi}:${s}Z`, file: `${REPORTS}/${name}` };
     });
 }
-const unpacked = (file: string) => gunzipSync(readFileSync(file)).toString('utf8');
+// A kept report as read, with every key saved now masked: report.sh masks only keys of a known shape, and a key saved
+// after the report was written (or while it read hq.db) is in its text as the board said it
+const unpacked = (file: string) => redact(gunzipSync(readFileSync(file)).toString('utf8'));
+// A saved key leaves the kept reports' files too, masked with the save's own values (db.ts scrubSaved's masks), so a key
+// replaced or forgotten later shows its old value in none of them: redact() above masks only what the store holds now. One
+// file at a time, off the event loop, and report() waits for it; a report written while the save ran is masked as it's
+// read, and loses the old value when the key is replaced (jobs.ts scrubKeys). Each
+// file keeps its time, which report.sh's two days count from.
+let masking = Promise.resolve();
+export function maskReports(masks: Mask[]) {
+  if (!masks.length) return;
+  masking = masking
+    .then(async () => {
+      for (const { file } of reports()) {
+        let text: string;
+        try {
+          text = (await unzip(await readFile(file))).toString('utf8');
+        } catch (err) {
+          if ((err as NodeJS.ErrnoException).code === 'ENOENT') continue; // (past its two days: report.sh deleted it)
+          throw err;
+        }
+        if (!masks.some(([form]) => text.includes(form))) continue;
+        const { atime, mtime } = await stat(file),
+          part = `${REPORTS}/.masked-${file.slice(REPORTS.length + 1)}`;
+        await writeFile(part, await zip(maskWith(text, masks)), { mode: 0o600 });
+        await utimes(part, atime, mtime);
+        await rename(part, file);
+      }
+    })
+    .catch(err => console.error('Could not mask a saved key in the kept status reports:', err));
+}
 
 // git's diff of two texts, its file header left out. Each hunk's header carries the nearest `== ` heading above it.
 async function diff(before: string, after: string) {

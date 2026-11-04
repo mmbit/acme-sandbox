@@ -1,12 +1,13 @@
 // book-check.mjs's stories of the paper's space on an iPad (shell/ink/bookpan.js, bookrow.js, ink.js's pen; Ink's
-// folder): two fingers never pan above or left of a page's corner, its title's, and pan down and right of it, the
-// Pencil writing there, kept where it was written through a reload (the corner); a pinch out stops on the page at its corner, never in the overview; and
+// folder): two fingers never pan above or left of a page's corner, its title's, and pan down of it, never sideways
+//, the Pencil writing there, kept where it was written through a reload (the corner); a pinch out stops on the page at its corner, never in the overview; and
 // the freeze (a finger and the Pencil whose lifts never came, a text box open as the page turned) leaves the paper
-// answering: two fingers pan, two pinch, the Pencil writes. Fingers and the Pencil are Chromium's own (CDP), the lifts
-// that never came are events made without their ends.
+// answering: two fingers pan, two pinch, the Pencil writes. Fingers and the Pencil in either engine (hands.mjs), the
+// lifts that never came are events made without their ends.
 import assert from 'node:assert/strict';
 import { BLUE, freePage, paperBox, pick, savedWhere, tool } from './mouse.mjs';
-import { MINI, chromiumPen, middleOf, shotPixels } from './kit.mjs';
+import { MINI, middleOf, shotPixels } from './kit.mjs';
+import { hands } from './hands.mjs';
 import { press } from './bar.mjs';
 import { restsOpen, watchedPage } from './start.mjs';
 
@@ -16,7 +17,7 @@ const NEAR_PX = 3;
 // c: book-check.mjs's played store and helpers: { hqIn, base, store, pages, settled, shot, noErrorsIn, settle }
 export function spaceStories(c) {
   return {
-    "on an iPad: two fingers never pan past the page's corner, pan down and right, the Pencil writes there, and it stays after a reload":
+    "on an iPad: two fingers never pan past the page's corner, pan down and never sideways, the Pencil writes there, and it stays after a reload":
       browser => downAndRight(browser, c),
     'on an iPad: a pinch out stops at the least zoom on the page, never the overview': browser => pinchOut(browser, c),
     'on an iPad: lifts that never came and a text box open as the page turned leave pan, pinch and the Pencil working':
@@ -34,25 +35,25 @@ async function downAndRight(browser, c) {
       from = await originAt(page),
       mid = middleOf(await paperBox(page));
     // two fingers drag the page right and down: it holds at its corner, its title's (one finger draws); up and left, the
-    // paper shows what's down and right of it
+    // paper shows what's down of it, never sideways (the board: a Notebook scrolls up and down.)
     await pan(fingers, mid, [180, 140]);
     near(await originAt(page), from, [0, 0], "two fingers never pan above or left of the page's corner");
     await pan(fingers, mid, [-180, -140]);
-    near(await originAt(page), from, [-180, -140], 'two fingers pan down and right');
+    near(await originAt(page), from, [0, -140], 'two fingers pan down, never sideways');
     await tool(page, 'Pen').tap();
     await page.getByRole('menuitemradio', { name: 'Blue' }).tap();
     // (the card stays open over the paper beside the strip for a width too: Escape closes it.)
     await page.keyboard.press('Escape');
     const origin = await originAt(page),
-      start = [origin.x + 520, origin.y + 420];
+      start = [origin.x + 320, origin.y + 420];
     await pen(Array.from({ length: 16 }, (_, i) => [start[0] + i * 8, start[1] + 3 * Math.sin(i / 2)]));
     await savedWhere(c, free.id, p => p.ink.length === 1);
     // (kept in its unit's own px, the unit at its place on the sketch page)
     const unit = c.notebook.route('/api/notebooks/pages/groups', { page: free.id }).groups.find(g => g.ink.length),
       written = unit.ink[0].points.map(([x, y]) => [x + unit.place.x, y + unit.place.y]);
     assert.ok(
-      written.every(([x, y]) => Math.abs(x - 520) < 140 && Math.abs(y - 420) < 20),
-      `the ink down and right of the corner, where it was written: ${JSON.stringify(written[0])}`,
+      written.every(([x, y]) => Math.abs(x - 320) < 140 && Math.abs(y - 420) < 20),
+      `the ink down of the corner, where it was written: ${JSON.stringify(written[0])}`,
     );
     await c.shot('book-space-down-right', page);
     c.noErrorsIn(pad.errors);
@@ -124,8 +125,8 @@ async function noFreeze(browser, c) {
     await page.waitForTimeout(c.settle);
     // the paper answers: two fingers pan,
     const from = await originAt(page);
-    await pan(fingers, [x, y], [-70, -50]);
-    near(await originAt(page), from, [-70, -50], 'two fingers pan');
+    await pan(fingers, [x, y], [0, -50]);
+    near(await originAt(page), from, [0, -50], 'two fingers pan');
     // two fingers pinch,
     const scale = await scaleOf(page);
     await fingers(
@@ -185,7 +186,7 @@ async function onPad(browser, c, { keep = false } = {}) {
   await restsOpen(page, c, MINI);
   return {
     page,
-    ...handsOn(page, await context.newCDPSession(page), c.settle),
+    ...handsOn(page, await hands(page), c.settle),
     errors,
     done: async () => {
       if (!context.pages().length) return;
@@ -194,19 +195,17 @@ async function onPad(browser, c, { keep = false } = {}) {
     },
   };
 }
-// Chromium's own fingers and Pencil on the page (CDP)
-function handsOn(page, cdp, settle) {
+// The fingers and the Pencil on the page (hands.mjs), each let go after a rest
+function handsOn(page, { touch, pen: pencil }, settle) {
   const fingers = async (from, to, steps = 10) => {
-    const at = k => from.map(([x, y], i) => ({ x: x + (to[i][0] - x) * k, y: y + (to[i][1] - y) * k, id: i + 1 }));
-    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: at(0) });
-    for (let i = 1; i <= steps; i++)
-      await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: at(i / steps) });
+    await touch.down(from);
+    await touch.move(to, steps);
     await page.waitForTimeout(200);
-    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await touch.up();
     await page.waitForTimeout(settle);
   };
   const pen = async points => {
-    await chromiumPen(cdp).stroke(points);
+    await pencil.stroke(points);
     await page.waitForTimeout(settle);
   };
   return { fingers, pen };

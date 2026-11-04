@@ -86,7 +86,7 @@ const atRest = p =>
 export async function landed(p, chapter, title, where, what) {
   const shown = () =>
     p.evaluate(() => ({
-      title: document.querySelector('#book .bk-page:not([hidden]) .bk-page-title')?.textContent ?? '',
+      title: document.querySelector('#book .bk-view-head .bk-page-title')?.textContent ?? '',
       where: document.querySelector('#book .bk-where')?.textContent || null,
       here: document.querySelector('#book .bk-marks [aria-current=page]')?.dataset.chapter ?? null,
     }));

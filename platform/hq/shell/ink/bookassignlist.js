@@ -9,6 +9,7 @@ import { esc } from '../../util.js';
 import { icon } from '../icons.js';
 import { scope, word } from './bookscope.js';
 import { cardOf } from './bookcard.js';
+import { portrait } from './bookfaces.js';
 
 // what a person is, by their kind
 const KIND_WORDS = { guest: 'kindGuest', agent: 'kindAgent' };
@@ -67,16 +68,23 @@ export function tagsHtml(g) {
   const tags = (g.assigned ?? []).map(p => {
     const label = p.answered ? word('nameAnswered', { name: p.name }) : word('assignedTo', { name: p.name });
     const fresh = popping(g, p) ? ` data-new style="--wait:${Math.round(given.at - performance.now())}ms"` : '';
-    return `<span class="bk-tag" title="${esc(label)}" aria-label="${esc(label)}"${fresh}>${p.answered ? icon('tick') : ''}<span
+    return `<span class="bk-tag" title="${esc(label)}" aria-label="${esc(label)}"${fresh}>${p.answered ? TICK : ''}<span
       class="bk-face">${esc(initial(p.name))}</span></span>`;
   });
   return `<div class="bk-tags" data-g="${g.id}">${tags.join('')}${seen}</div>`;
 }
-// Seen: a small tick with the initial of the agent who read it, in the brand's colour
+// Seen: the face of the agent who read it, as HQ's look draws them (their initial where it draws none), a small tick on
+// it in the brand's colour (the board: its avatar, not a letter.)
 export function seenHtml(seen) {
-  const label = word('seenBy', { name: seen.name });
-  return `<span class="bk-tag" data-seen title="${esc(label)}" aria-label="${esc(label)}" role="img">${icon('tick')}<span
-      class="bk-face">${esc(initial(seen.name))}</span></span>`;
+  const label = word('seenBy', { name: seen.name }),
+    picture = portrait(seen.by);
+  const face = picture
+    ? `<span class="bk-face" data-portrait style="background-image:url(${picture})"></span>`
+    : `<span class="bk-face">${esc(initial(seen.name))}</span>`;
+  return `<span class="bk-tag" data-seen title="${esc(label)}" aria-label="${esc(label)}" role="img">${face}${TICK}</span>`;
 }
+// A tick drawn as the Notebook's own ink, never HQ's pixel icons, which stay on its menus and bars (the board: nothing
+// in the Notebook is pixel art.)
+const TICK = `<svg class="bk-tick" viewBox="0 0 16 16" aria-hidden="true"><path d="M3.6 8.6c1.1.9 2 1.9 2.8 3.1 1.4-2.9 3.3-5.3 6-7.4"/></svg>`;
 // (drawn again after it has popped in, it's just there)
 const popping = (g, p) => given?.g === g.id && given.to === p.to && performance.now() < given.at;

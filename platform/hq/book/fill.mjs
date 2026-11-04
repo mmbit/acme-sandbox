@@ -1,18 +1,19 @@
 // book-check.mjs's story of the notebook on the board's iPad, held and used by hand: HQ as a home-screen app with iOS's
-// blurred band at the top (style.css's --sat), sideways (1133 × 744) and upright (744 × 1133), with Chromium's own
-// Pencil and fingers (trusted). Upright, a finger's tap on the pull tab opens the book. Each way up, the paper runs
-// from the screen's top, under the band, to its foot, the page on it from the band's foot, its head never below HQ's
-// buttons. The scraps at their own size at the page's left, as many columns as its width holds. The bookmarks under the band: sideways out of the page block to the book's left,
-// upright folded at the screen's left edge (a finger's tap brings them out); a finger's tap turns to a chapter and
-// back. A call's page has one title, the Pencil near it changing nothing there. The two islands of use under the band
-// (islands.mjs); the Pencil's tap and a finger's each pick a tool. (the islands' checks, the blur and the chapter's
-// pick)
-// The Pencil's line in a scrap's room is saved as that scrap's ink. The Pencil's arrow begun by the page's left edge
-// draws, the book staying open; a finger's taps, each where the page arrows were at the start, turn to a read-only
-// call's page and back, the arrows never moving; and a finger's swipe from that edge still closes the book (only a
-// deliberate pull moves it). Two fingers move the page down and draw nothing. Recorded with --shots.
+// blurred band at the top (style.css's --sat), sideways (1133 × 744) and upright (744 × 1133), with the Pencil and
+// fingers in either engine (hands.mjs). Upright, a finger's tap on the pull tab opens the book. Each way up, the paper
+// runs from the screen's top, under the band, to its foot, the page on it from the band's foot, its head never below
+// HQ's buttons. The scraps at their own size at the page's left, as many columns as its width holds. The bookmarks
+// under the band: sideways out of the page block to the book's left, upright folded at the screen's left edge (a
+// finger's tap brings them out); a finger's tap turns to a chapter and back. A call's page has one title, the Pencil
+// near it changing nothing there. The two islands of use under the band (islands.mjs); the Pencil's tap and a finger's
+// each pick a tool. (the islands' checks, the blur and the chapter's pick) The Pencil's line in a scrap's room is saved
+// as that scrap's ink. The Pencil's arrow begun by the page's left edge draws, the book staying open; a finger's taps,
+// each where the page arrows were at the start, turn to a read-only call's page and back, the arrows never moving; and
+// a finger's swipe from that edge still closes the book (only a deliberate pull moves it). Two fingers move the page
+// down and draw nothing. Recorded with --shots.
 import assert from 'node:assert/strict';
-import { MINI, UPRIGHT, chromiumPen, middleOf, toChapter, touchOf, until } from './kit.mjs';
+import { MINI, UPRIGHT, middleOf, toChapter, until } from './kit.mjs';
+import { hands } from './hands.mjs';
 import { SEED } from './unitspage.mjs';
 import { OWN_W, anotherColumn, units } from './unitsread.mjs';
 import { UNIT_W } from '../shell/ink/scrapunit.js';
@@ -64,8 +65,7 @@ async function byHand(browser, c, name, viewport, columns) {
   await noMicrophone(context);
   const { page, errors } = await watchedPage(context);
   try {
-    const cdp = await context.newCDPSession(page),
-      hand = { pen: chromiumPen(cdp), touch: touchOf(cdp) };
+    const hand = await hands(page);
     await opened(page, c, hand, viewport);
     await c.shot(`fill-${name}-1-open`, page);
     await fillsHeight(page);
@@ -103,24 +103,27 @@ async function opened(page, c, { touch }, viewport) {
   await until(async () => (await units(page)).length === LONG.groups.length, 'the scraps drawn');
 }
 
-// The book's paper from the screen's top, under the blurred band, to its foot; the page on it from the band's foot, its
-// head no lower than HQ's buttons
+// The book's paper from the screen's top, under the blurred band, to its foot; the page on it up under the band too, its
+// content from the band's foot (README, The book's frame), its head no lower than HQ's buttons
 async function fillsHeight(page) {
   const seen = await page.evaluate(() => {
       const paper = document.querySelector('#book .bk-paper').getBoundingClientRect(),
+        desk = document.querySelector('#book .bk-pages .bk-desk'),
         buttons = [...document.querySelectorAll('#hud button')]
           .map(b => b.getBoundingClientRect())
           .filter(r => r.width);
       return {
         paper: [paper.top, paper.bottom],
-        head: document.querySelector('#book .bk-pages').getBoundingClientRect().top,
+        page: document.querySelector('#book .bk-pages').getBoundingClientRect().top,
+        head: desk.getBoundingClientRect().top + parseFloat(getComputedStyle(desk).paddingTop),
         buttons: Math.min(...buttons.map(r => r.top)),
         screen: innerHeight,
       };
     }),
     said = JSON.stringify(seen);
   assert.ok(seen.paper[0] <= 1 && seen.paper[1] >= seen.screen - 1, `the paper the screen's height (${said})`);
-  assert.ok(Math.abs(seen.head - BAND) <= 1, `the page from the blur's foot (${said})`);
+  assert.ok(seen.page <= 1, `the page up under the blur (${said})`);
+  assert.ok(Math.abs(seen.head - BAND) <= 1, `the page's content from the blur's foot (${said})`);
   assert.ok(seen.head <= seen.buttons + 1, `the page's head no lower than HQ's buttons (${said})`);
 }
 
@@ -128,7 +131,7 @@ async function fillsHeight(page) {
 // and right of them no room for another column at LEAST of its size (masonry.js: never drawn past their own size, the
 // width left over paper.)
 async function fillsWidth(page) {
-  const desk = await page.locator('#book .bk-desk').boundingBox(),
+  const desk = await page.locator('#book .bk-desk:not(.bk-turn-picture *)').boundingBox(),
     all = await units(page),
     left = Math.min(...all.map(u => u.x)) - desk.x,
     right = desk.x + desk.width - Math.max(...all.map(u => u.x + u.w)),
@@ -267,9 +270,14 @@ async function tabsBeside(page, { touch }, viewport) {
 async function oneTitle(page, { pen }) {
   const head = () =>
       page.evaluate(() => {
+        // (the title and day on the view, the dates on the page above its first scrap.)
         const shown = document.querySelector('#book .bk-page:not([hidden])'),
           first = Math.min(...[...shown.querySelectorAll('.bk-unit')].map(u => u.getBoundingClientRect().top));
-        return [...shown.querySelectorAll('.bk-page-title, .bk-day')]
+        return [
+          ...document.querySelectorAll('#book .bk-view-head :is(.bk-page-title, .bk-view-day)'),
+          ...shown.querySelectorAll('.bk-day'),
+        ]
+          .filter(el => el.checkVisibility())
           .map(el => ({ words: el.textContent, top: Math.round(el.getBoundingClientRect().top) }))
           .filter(el => el.top < first);
       }),
@@ -279,7 +287,7 @@ async function oneTitle(page, { pen }) {
     ['29 Oct, 15:00, Ink walk-through'],
     `one title in the page's head: ${JSON.stringify(was)}`,
   );
-  const title = await page.locator('#book .bk-page:not([hidden]) .bk-page-title span').boundingBox(),
+  const title = await page.locator('#book .bk-view-head .bk-page-title span').boundingBox(),
     y = title.y + title.height + 10;
   await pen.stroke(Array.from({ length: 10 }, (_, k) => [title.x + title.width + 16 + k * 8, y + Math.sin(k) * 4]));
   await page.waitForTimeout(800);
@@ -290,7 +298,10 @@ async function oneTitle(page, { pen }) {
 // finger near a handle is the handle's: Chromium's touch adjustment takes it there): it moves down, and nothing new is
 // drawn
 async function scrolls(page, { touch }) {
-  const desk = await page.locator('#book .bk-desk').boundingBox(),
+  // (the last page turn landed first: its pictures hold copies of the page's scraps, and headless WebKit's slow frames
+  // keep one turning past the steps before.)
+  await page.waitForFunction(() => !document.querySelector('#book .bk-turn-picture'), null, { timeout: 30_000 });
+  const desk = await page.locator('#book .bk-desk:not(.bk-turn-picture *)').boundingBox(),
     [[left, right], y] = await page.evaluate(desk => {
       const handles = [...document.querySelectorAll('#book .bk-room-handle')].map(h => h.getBoundingClientRect()),
         clear = (x, y) =>

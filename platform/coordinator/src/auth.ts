@@ -84,10 +84,12 @@ export const clientOf = async (req: IncomingMessage) => {
   const all = tail ? [...head, ...Array(8 - head.length - tail.length).fill('0'), ...tail] : head;
   return all.slice(0, 4).map(g => parseInt(g, 16).toString(16)).join(':') + '::/64';
 };
-async function hold(req: IncomingMessage, res: ServerResponse, challenge: string, enrollHash?: string) {
+// What a held challenge answers for: an enrollment's code (its hash), or the native app's sign-in (app, below)
+type Pending = { enrollHash?: string; app?: string };
+async function hold(req: IncomingMessage, res: ServerResponse, challenge: string, context: Pending = {}) {
   const client = await clientOf(req);
   const key = randomBytes(16).toString('base64url');
-  if (!challenges.hold('board', key, client, challenge, { enrollHash })) return false;
+  if (!challenges.hold('board', key, client, challenge, context)) return false;
   setCookie(res, 'c', key, challenges.CHALLENGE_MS / 1000);
   return true;
 }
@@ -95,8 +97,8 @@ async function hold(req: IncomingMessage, res: ServerResponse, challenge: string
 function take(req: IncomingMessage) {
   const key = cookies(req).c;
   if (!key) return;
-  const pending = challenges.take<{ enrollHash?: string }>('board', key);
-  return pending && { challenge: pending.challenge, enrollHash: pending.context.enrollHash };
+  const pending = challenges.take<Pending>('board', key);
+  return pending && { challenge: pending.challenge, ...pending.context };
 }
 
 // Enrollment codes are committed to the repo only as hashes: infra/enroll/<expiry-epoch>.sha256
@@ -126,7 +128,7 @@ export async function enrollOptions(req: IncomingMessage, res: ServerResponse, b
     // then, where 'preferred' let Safari skip it and the verify step refused the passkey.
     attestationType: 'none', authenticatorSelection: { residentKey: 'required', userVerification: 'required' },
   });
-  return await hold(req, res, options.challenge, hash) ? options : 429;
+  return await hold(req, res, options.challenge, { enrollHash: hash }) ? options : 429;
 }
 
 export async function enrollVerify(req: IncomingMessage, res: ServerResponse, body: any) {
@@ -142,9 +144,37 @@ export async function enrollVerify(req: IncomingMessage, res: ServerResponse, bo
   return { ok: true };
 }
 
-export async function loginOptions(req: IncomingMessage, res: ServerResponse) {
+// The native app's sign-in (platform/ios, README "Signing in"). A web view's passkey needs the app tied to HQ's domain
+// (Apple's associated domains, a paid developer account), so the app opens /login?app=<challenge> in Apple's sign-in
+// sheet, a browser of its own where the passkey works, and the passkey unlocks a one-time code instead of a session: the
+// sheet hands it to the app (hq-shell://signed-in?code=…), and the app's web view trades it for a session at
+// /app/signed-in with the verifier only the app that opened the sheet holds, sha256(verifier) being the challenge. A
+// code taken on the way (another app on the device claiming the scheme) opens nothing without it; one passkey's unlock
+// makes one code, good once for a minute. The page can't tell which app opened it, though: another app that opens
+// /login?app=… itself gets the session if the board unlocks there, so the page asks for an unlock only when HQ's app
+// has just opened it. Only an app tied to HQ's domain closes that.
+const APP_CODE_MS = 60_000;
+const APP_CHALLENGE = /^[A-Za-z0-9_-]{43}$/;   // (a sha256, base64url)
+const sha256 = (value: string) => createHash('sha256').update(value).digest('base64url');
+// The code, held by its sha256 with the app's challenge; undefined when the store is full
+function createAppCode(client: string, app: string) {
+  const code = randomBytes(32).toString('base64url');
+  return challenges.hold('app', sha256(code), client, app, {}, APP_CODE_MS) ? code : undefined;
+}
+// GET /app/signed-in?code=…&verifier=…: whether the code and verifier started the app's session
+export function startAppSession(res: ServerResponse, code: string, verifier: string) {
+  const held = challenges.take('app', sha256(code));
+  if (!held || sha256(verifier) !== held.challenge) return false;
+  startSession(res);
+  return true;
+}
+
+// {app}: the native app's challenge, when the passkey signs in the app (above)
+export async function loginOptions(req: IncomingMessage, res: ServerResponse, body: any = {}) {
+  const app = body?.app == null ? undefined : String(body.app);
+  if (app !== undefined && !APP_CHALLENGE.test(app)) return 400;
   const options = await generateAuthenticationOptions({ rpID: PUBLIC_HOST, userVerification: 'required' });
-  return await hold(req, res, options.challenge) ? options : 429;
+  return await hold(req, res, options.challenge, { app }) ? options : 429;
 }
 
 export async function loginVerify(req: IncomingMessage, res: ServerResponse, body: any) {
@@ -157,6 +187,10 @@ export async function loginVerify(req: IncomingMessage, res: ServerResponse, bod
   });
   if (!verified) return 403;
   db.prepare('update credentials set counter = ? where id = ?').run(authenticationInfo.newCounter, row.id);
+  if (p.app) {
+    const code = createAppCode(await clientOf(req), p.app);
+    return code ? { app: code } : 429;
+  }
   startSession(res);
   return { ok: true };
 }

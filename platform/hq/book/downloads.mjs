@@ -83,9 +83,10 @@ async function downloadEnvironment(context, c) {
     navigator.share = async () => {
       window.shareSheets++;
     };
-    const microphone = navigator.mediaDevices.getUserMedia;
-    navigator.mediaDevices.getUserMedia = async () => {
-      const stream = await microphone();
+    // (on MediaDevices' prototype, as mic.mjs's: WebKit may make the page's navigator.mediaDevices again without it.
+    const microphone = MediaDevices.prototype.getUserMedia;
+    MediaDevices.prototype.getUserMedia = async function (...asked) {
+      const stream = await microphone.apply(this, asked);
       window.callTrack = stream.getAudioTracks()[0];
       return stream;
     };

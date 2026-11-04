@@ -160,7 +160,8 @@ async function pan(browser, c) {
     await drag(page, at, [-120, -80], 'left');
     await page.keyboard.up('Space');
     await page.waitForTimeout(c.settle);
-    near(await originAt(page), from, [-120, -80], 'Space and a drag');
+    // (down, never sideways: the board, a Notebook scrolls up and down.)
+    near(await originAt(page), from, [0, -80], 'Space and a drag');
     // the middle button drags it back
     await drag(page, at, [120, 80], 'middle');
     await page.waitForTimeout(c.settle);

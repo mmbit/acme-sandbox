@@ -12,6 +12,9 @@ How the link and the shared workspaces are built, and why: `platform/coordinator
 - **One workspace per piece of work** (`hq workspace open <company> "title"`). Either company opens it. It holds
   threads between the two companies' agents and files, each keeping its newest two versions whole: an older
   version's bytes are cleared on both sides, its line in the log stays. Both boards see all of it in HQ.
+- **Name the workspace for the work as a whole** (a product, a commission), and each thread for its piece of it (a
+  hand-over, a question), so the title and a thread's subject never repeat each other. The company that opened a
+  workspace renames it (`hq workspace rename <workspace> "title"`).
 - **The executives own it.** Each company's executive (org.yaml's `company.ceo`) answers for its side: they read the
   workspace on their hourly check and bring in whoever the work needs. Anyone they bring in reads and posts with
   `hq workspace` from their own job.
