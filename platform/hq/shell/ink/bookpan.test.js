@@ -35,6 +35,7 @@ function paper(page = { w: 800, h: 20_000, ink: [], scraps: [] }) {
       scale: 1,
       input: { fingerPans: () => true },
       remember() {},
+      head: { update() {} },
     };
   panning(desk, book, { drawing: () => false });
   // (bare paper)

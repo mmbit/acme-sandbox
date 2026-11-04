@@ -1,6 +1,7 @@
 // Where book-check.mjs's stories start: a page of HQ watched for errors, HQ loaded, the book come to rest open, and the
 // book open on a touch screen with a pen. c: book-check's { hqIn, base, settled }
-import { MINI, chromiumPen, heard, touchOf } from './kit.mjs';
+import { MINI, heard } from './kit.mjs';
+import { hands } from './hands.mjs';
 import { shapeOf } from '../shell/ink/booklayout.js';
 
 // A new page in context, its errors kept as they come
@@ -67,11 +68,9 @@ export async function bookOnTouch(browser, c, viewport = MINI, more = {}) {
   return { context, page, errors };
 }
 
-// The iPad mini as a touch screen with a pen, in Chromium (its own touch and pen events, trusted), the book open:
-// upright (viewport UPRIGHT) it starts folded, and its lip opens it as the spread over HQ; more: the context's own
-// options
+// The iPad mini as a touch screen with a pen in either engine (hands.mjs), the book open: upright (viewport UPRIGHT) it
+// starts folded, and its lip opens it as the spread over HQ; more: the context's own options.
 export async function mini(browser, c, { viewport = MINI, ...more } = {}) {
   const { context, page, errors } = await bookOnTouch(browser, c, viewport, more);
-  const cdp = await context.newCDPSession(page);
-  return { page, pen: chromiumPen(cdp), touch: touchOf(cdp), errors, done: () => context.close() };
+  return { page, ...(await hands(page)), errors, done: () => context.close() };
 }

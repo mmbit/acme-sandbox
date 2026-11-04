@@ -1,13 +1,14 @@
 // book-check.mjs's stories of the board's controls (shell/ink/bookstrip.js, bookinput.js, bookvoice.js, bookpan.js,
-// booktools.js, bookprefs.js): on a desktop with a mouse, the pen in use as the book opens (the rail: bar.mjs; the wheel: wheel.mjs),
-// Ctrl's drag selecting and giving the tool back, a tap on the rail's mic and a spot held a voice note whose words
-// write themselves there, a press held still only a dot, the preferences (in the dots) kept on this device; on a touch screen
-// (Chromium's own touch and pen events, trusted), one finger drawing and two moving the page with no stray line, a
-// slide along the rail picking a tool, drifting off it too, the Pencil tapping the mic and holding a spot, the
-// Pencil held still only ink, and a finger that pans once the pen's been used, as the preferences have it unless
-// turned off (on a fresh device the first pen anywhere in HQ turns that on, once, and only the board turns it off); and
-// by hand at the board's iPad sizes, the Pencil writing and one finger or two scrolling a long page with the text tool
-// on, leaving no ink and no box of words. Each asserts what the board sees and what the store keeps.
+// booktools.js, bookprefs.js): on a desktop with a mouse, the pen in use as the book opens (the rail: bar.mjs; the
+// wheel: wheel.mjs), Ctrl's drag selecting and giving the tool back, a tap on the rail's mic and a spot held a voice
+// note whose words write themselves there, a press held still only a dot, the preferences (in the dots) kept on this
+// device; on a touch screen (the fingers and the Pencil in either engine, hands.mjs), one finger drawing and two moving
+// the page with no stray line, a slide along the rail picking a tool, drifting off it too, the Pencil tapping the mic
+// and holding a spot, the Pencil held still only ink, and a finger that pans once the pen's been used, as the
+// preferences have it unless turned off (on a fresh device the first pen anywhere in HQ turns that on, once, and only
+// the board turns it off); and by hand at the board's iPad sizes, the Pencil writing and one finger or two scrolling a
+// long page with the text tool on, leaving no ink and no box of words. Each asserts what the board sees and what the
+// store keeps.
 import assert from 'node:assert/strict';
 import { desk, freePage, paperBox, savedWhere, colourIn, BLUE } from './mouse.mjs';
 import { press } from './bar.mjs';

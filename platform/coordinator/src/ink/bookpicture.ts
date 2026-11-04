@@ -3,7 +3,8 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, rmSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { db } from '../db.ts';
+import { db, scrubbed, scrubStamp } from '../db.ts';
+import * as latency from '../latency.ts';
 import { keepFile } from '../uploads.ts';
 import { render, underHigh, type Drawn, type Said, type Under } from './bookrender.ts';
 import { DIR, notFound, serveFile } from '../pagescraps.ts';
@@ -39,8 +40,9 @@ const DRAWING = 'x';
 // The page's picture's file in DIR: the one kept since its last change, or drawn now and kept. null: the page was
 // deleted while it was drawn.
 export async function pictureOf(p: Page): Promise<string | null> {
-  // (and the cards and tries under its units: a card answered or a try ended changes no page.
-  const drawing = `${p.id}-${DRAWING}${unitsMark(p.id)}-`,
+  // (and the cards and tries under its units: a card answered or a try ended changes no page. And the keys its words
+  // were scrubbed for: a saved key's value leaves the picture as it leaves the words, db.ts scrubStamp)
+  const drawing = `${p.id}-${DRAWING}${unitsMark(p.id)}-${scrubStamp().slice(0, 6)}-`,
     current = p.picture?.startsWith(drawing);
   if (current && existsSync(`${DIR}/${p.picture}`)) return p.picture;
   const page = db.prepare('select notebook from book_pages where id = ?').get(p.id) as { notebook: number | null };
@@ -82,24 +84,12 @@ export async function unitsPage(page: number): Promise<Drawn> {
     .all(page) as Group[];
   const units: Unit[] = [];
   for (const g of tops) {
+    // (each unit's parts read after a save's scrub under way: db.ts scrubSaved; the top groups, read before, keep the text
+    // they had.)
+    await latency.exclude(scrubbed());
     const parts = partsOf(g),
       h = heightFor(parts, g.h!),
-      read = shown(g),
-      slips = slipsUnder(read.children)
-        .map((c): Said =>
-          c.kind === 'reply'
-            ? { name: null, text: c.words || (c.ink.length ? 'Written reply' : '') }
-            : { name: c.name, text: c.text, ...slipPicture(c.id), ...formOf(c) },
-        )
-        .filter(said => said.text?.trim() || said.form); // (an answer still being written has nothing to show yet)
-    // (its cards and its try's versions)
-    const text = g.kind === 'scrap' ? g.words : '',
-      asks = read.asks.map(askedOf),
-      tried = triedOf(read);
-    const under =
-      text || slips.length || asks.length || tried
-        ? { ...underAt({ x: 0, y: 0, w: UNIT_W, h: 0 }, g.kind), text, slips, asks, ...(tried ? { tried } : {}) }
-        : null;
+      under = underOf(g);
     const below = under ? CAPTION.top + (await underHigh(under, DIR)) : 0;
     const place = g.place ? JSON.parse(g.place) : undefined,
       box = boxOf(parts),
@@ -125,6 +115,23 @@ export async function unitsPage(page: number): Promise<Drawn> {
     texts: on.flatMap(u => u.parts.texts) as Typed[],
     under: on.flatMap(u => (u.under ? [{ ...u.under, x: u.under.x + u.at.hung.x, y: u.under.y + u.at.hung.y }] : [])),
   };
+}
+// What's under a unit: a scrap's words, the answers and replies slipped under it, its cards and its try's versions
+function underOf(g: Group): Under | null {
+  const read = shown(g),
+    slips = slipsUnder(read.children)
+      .map((c): Said =>
+        c.kind === 'reply'
+          ? { name: null, text: c.words || (c.ink.length ? 'Written reply' : '') }
+          : { name: c.name, text: c.text, ...slipPicture(c.id), ...formOf(c) },
+      )
+      .filter(said => said.text?.trim() || said.form); // (an answer still being written has nothing to show yet)
+  const text = g.kind === 'scrap' ? g.words : '',
+    asks = read.asks.map(askedOf),
+    tried = triedOf(read);
+  return text || slips.length || asks.length || tried
+    ? { ...underAt({ x: 0, y: 0, w: UNIT_W, h: 0 }, g.kind), text, slips, asks, ...(tried ? { tried } : {}) }
+    : null;
 }
 // A unit of a notebook page: h tall and w wide (its parts', page px), with what's under it below tall (unitsPage)
 type Unit = { id: number; h: number; w: number; below: number; parts: Parts; under: Under | null; follows: boolean } & {

@@ -65,13 +65,14 @@ const LAPTOP = { width: 1440, height: 900 },
   MINI_UP = { width: 744, height: 1133 },
   PHONE = { width: 390, height: 844 };
 
-// fromQr: HQ opened at the address the QR's sign-in sends a phone to, the viewer at url
 // before: the page's earlier versions, and unlisted how many older changes it has past them; look: HQ's look, its own
 // where not given
+// How long the mocked pair code lasts (ms): a minute, or a moment for the card that closes as it ends
+let expiresIn = 60_000;
 async function opened(
   browser,
   viewport,
-  { url = `${STAGING}/shop`, touch = false, fromQr = false, before = [], unlisted = 0, look = '' } = {},
+  { url = `${STAGING}/shop`, touch = false, before = [], unlisted = 0, look = '' } = {},
 ) {
   const { context, page, errors } = await openPage(browser, {
     viewport,
@@ -80,8 +81,8 @@ async function opened(
   });
   await context.route(`${base}/mock/artifacts.json`, r => r.fulfill({ json: [artifacts, unlived] }));
   await context.route(`${base}/mock/earlier-versions.json`, r => r.fulfill({ json: { versions: before, unlisted } }));
-  await context.route(`${base}/api/notebooks/pair`, r =>
-    r.fulfill({ json: { code: '482913', expires: Date.now() + 60_000 } }),
+  await context.route(`${base}/api/pair-codes`, r =>
+    r.fulfill({ json: { code: '482913', expires: Date.now() + expiresIn } }),
   );
   for (const host of [STAGING, LIVE.replace('/shop', ''), 'https://atlas.preview.test', EARLIER, EARLIER_2])
     await context.route(`${host}/**`, r => {
@@ -93,11 +94,9 @@ async function opened(
       if (path.startsWith('/__review/')) return r.fulfill({ json: { show: false } });
       return r.fulfill({ contentType: 'text/html', body: shopPage(staging) });
     });
-  await page.goto(
-    `${base}/?intro=0${look ? `&renderer=${look}` : ''}${fromQr ? `&${new URLSearchParams({ open: 'viewer', url })}` : ''}`,
-  );
+  await page.goto(`${base}/?intro=0${look ? `&renderer=${look}` : ''}`);
   await until(page, '#loading.gone');
-  if (!fromQr) await page.evaluate(u => import('/shell/desk.js').then(m => m.openLink(u)), url);
+  await page.evaluate(u => import('/shell/desk.js').then(m => m.openLink(u)), url);
   await until(page, '#viewer .pane.after iframe');
   await page.waitForTimeout(1500); // (review mode's hello answered: desk.js ASK_MS)
   return { context, page, errors };
@@ -287,10 +286,20 @@ await story('a laptop: live beside staging, linked scroll, four device sizes, th
     await page.click('#viewer .bar .qr');
     await until(page, '#viewer .qrcard .pair-qr');
     const href = await page.evaluate(() =>
-      import('/shell/ink/pair.js').then(m => m.pairLink('https://shop.preview.test/shop')),
+      import('/shell/paircode.js').then(m => m.pairCode('https://shop.preview.test/shop')),
     );
-    assert.match(href.link, /\/pair#code=482913&view=https%3A%2F%2Fshop\.preview\.test%2Fshop$/);
+    // (the link carries the code alone, no address for HQ to open.)
+    assert.match(href.link, /\/pair#code=482913$/);
+    assert.match(await page.$eval('#viewer .qrcard', c => c.textContent), /\/pair and enter 482 913\./);
     await shot(page, 'laptop-qr');
+    // as its minute ends, the card closes: no expired code left on screen
+    expiresIn = 1500;
+    await page.click('#viewer .bar .qr');
+    await page.click('#viewer .bar .qr');
+    await until(page, '#viewer .qrcard .pair-qr');
+    await page.waitForFunction(() => document.querySelector('#viewer .qrcard').hidden, null, { timeout: 3000 });
+    assert.equal(await page.$eval('#viewer .qrcard', c => c.innerHTML), '');
+    expiresIn = 60_000;
     assert.deepEqual(errors, []);
   } finally {
     await context.close();
@@ -375,8 +384,8 @@ for (const [name, viewport] of [
     }
   });
 
-await story("a phone from the laptop's QR: HQ opens on the same viewer, live and staging as tabs", async () => {
-  const { context, page, errors } = await opened(browser, PHONE, { touch: true, fromQr: true });
+await story("a phone at HQ's viewer address: HQ opens on the same viewer, live and staging as tabs", async () => {
+  const { context, page, errors } = await opened(browser, PHONE, { touch: true });
   try {
     await until(page, '#viewer .pane.before iframe');
     assert.match(await page.$eval('#viewer .pane.after iframe', f => f.src), /shop\.preview\.test\/shop$/);

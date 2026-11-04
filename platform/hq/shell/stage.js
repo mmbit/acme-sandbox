@@ -84,11 +84,12 @@ export async function mount(name, intro = false) {
   }
   cv.replaceWith(next); cv = next; scene = fresh; timers = mine; look = name; dressed = entry.dressed;
   wearIcons(style, kit);
-  // (the look worn, its skin loaded and its agents placed: for what takes its tones from HQ's page, the book's table, and
-  // its faces, the answers' (bookanswers.js).)
-  document.dispatchEvent(new CustomEvent('stage:look', { detail: { look: name } }));
   audio.wear(sounds);
   resize(); scene.focus({ kind: 'home' }, { instant: true });
+  // (the look worn, its skin loaded and its agents placed, which a look that lays itself out for the screen does as it's
+  // sized: for what takes its tones from HQ's page, the book's table, and its faces, the answers' and the seen marks'
+  // (bookanswers.js, bookgroups.js).)
+  document.dispatchEvent(new CustomEvent('stage:look', { detail: { look: name } }));
   bindControls();
   return true;
 }

@@ -30,7 +30,7 @@ async function waitingCall(browser, c, viewport) {
     route.fulfill({ json: { id: ++uploaded, type: 'image/jpeg' } }),
   );
   const { page, errors } = await watchedPage(context);
-  const hand = await inputs(browser, page);
+  const hand = await inputs(page);
   try {
     await page.goto(`${c.base}/?intro=0&open=intercom&renderer=brownstone`);
     await page.waitForSelector('#loading.gone');

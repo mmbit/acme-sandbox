@@ -18,6 +18,7 @@ const CARD_USAGE = `[KEY,KEY | live:<slug> | site:<slug>] [--address] [--photo "
                                                      [--product <slug>]... [--back <slug>]... [--visible-from <day>] [--decides <id>] --topic "topic"`;
 // (--questions; a question's "optional": true)
 
+// The help's "Questions:" paragraph: ask only what the board alone can answer
 export const ask = {
   help: `
    hq ask <kind> <urgency> "title" <body-file> ${CARD_USAGE} [--when deployed:<job>]... [--walk]
@@ -75,7 +76,12 @@ export const ask = {
                                                      <request>-<label>). The answer gives the folder, what it holds and what was left
                                                      out; its _import.md lists each folder and every video.
                                                      Questions: anything the board must answer is a field, never a line in
-                                                     the text or under "More". --questions names a JSON list, each one
+                                                     the text or under "More". Ask the fewest: only what changes what
+                                                     you do and nothing else can tell you (a photo, which you read
+                                                     yourself; your own files; how the thing is made). Photos or
+                                                     questions, never both for the same thing: with photos, ask only
+                                                     what a photo can't carry (how it feels, a measurement).
+                                                     --questions names a JSON list, each one
                                                      {"title": "...", "detail": "one optional line"} and a "type":
                                                      "yes-no" (it taps Yes or No), "number" (with a "unit" like "mm"),
                                                      none for a short text, or "options": [...] to tap one (the guest
@@ -662,11 +668,13 @@ export const requests = {
 };
 
 export const rewrite = {
+  // (--questions [])
   help: `
    hq rewrite <id> <body-file> [--questions <file.json>]
                                                      replace your own open request's text (the CEO: any request's;
                                                      the card reader: a request waiting for their read), and with
-                                                     --questions its question fields too, in hq ask's shape`,
+                                                     --questions its question fields too, in hq ask's shape ([]: none
+                                                     left, a photo or the text asking it all)`,
 
   async run([id, bodyPath, ...rest]: string[]) {
     const usage = 'usage: hq rewrite <id> <body-file> [--questions <file.json>]';

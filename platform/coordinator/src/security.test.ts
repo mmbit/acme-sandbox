@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { completeTriage } from './reviewfixture.ts';
 import { harness, WORKER_TOKEN, VOICE_TOKEN, type Running } from './harness.ts';
 import { commitFile, git, splitPlatform, savedNames as names } from './fixture.ts'; // (savedNames)
+import { authenticator } from './testpasskey.ts';
 
 // "Caddy" connects over IPv4 loopback here; a job over ::1 (L3)
 const h = await harness('sec', { env: { CADDY_HOST: '127.0.0.1' } });
@@ -929,6 +930,55 @@ test('I4: an enrollment code counts only from the Enroll device workflow\'s own 
     renameSync(`${repo}/.git-away`, `${repo}/.git`);
   }
   assert.equal(await enroll('while-git-is-gone'), 200);
+});
+
+test("the native app's sign-in: the passkey's unlock gives a one-time code, which opens HQ only with the app's verifier", async () => {
+  const { PUBLIC_HOST } = await import('./config.ts');
+  const key = authenticator(ORIGIN, PUBLIC_HOST);
+  const b64url = (text: string) => createHash('sha256').update(text).digest('base64url');
+  const cookieOf = (r: Response, name: string) => r.headers.getSetCookie().find(c => c.startsWith(`${name}=`))?.split(';')[0];
+  const post = (path: string, body: unknown, cookie = '') => fetch(`${h.base}${path}`,
+    { method: 'POST', headers: { origin: ORIGIN, 'content-type': 'application/json', cookie }, body: JSON.stringify(body) });
+  // the board's device enrolled, as the Enroll device workflow's link does it
+  const code = 'app-sign-in-test';
+  commitFile(`infra/enroll/${Math.floor(Date.now() / 1000) + 600}.sha256`, createHash('sha256').update(code).digest('hex'), ENROLL);
+  const enrolling = await post('/api/enroll/options', { code });
+  const enrolled = await post('/api/enroll/verify', key.register((await enrolling.json()).challenge), cookieOf(enrolling, 'c'));
+  assert.equal(enrolled.status, 200);
+  let counter = 1;
+  const unlock = async (body: object) => {
+    const options = await post('/api/login/options', body);
+    assert.equal(options.status, 200);
+    return post('/api/login/verify', key.login((await options.json()).challenge, counter++), cookieOf(options, 'c'));
+  };
+  const signedIn = (query: Record<string, string>) => fetch(`${h.base}/app/signed-in?${new URLSearchParams(query)}`, { redirect: 'manual' });
+  assert.equal((await post('/api/login/options', { app: 'not-a-challenge' })).status, 400);
+
+  // the sheet's unlock: a code, and no session in the sheet
+  const verifier = 'the-apps-own-secret', app = b64url(verifier);
+  let sheet = await unlock({ app });
+  const first = (await sheet.json()).app;
+  assert.match(first, /^[A-Za-z0-9_-]{43}$/);
+  assert.equal(cookieOf(sheet, 's'), undefined);
+  assert.equal((db.prepare("select count(*) n from challenges where audience = 'app'").get() as { n: number }).n, 1);   // (kept through a restart)
+  // a code without the app's verifier opens nothing, and is spent
+  let back = await signedIn({ code: first, verifier: 'a-guess' });
+  assert.deepEqual([back.status, back.headers.get('location'), cookieOf(back, 's')], [302, '/login', undefined]);
+  back = await signedIn({ code: first, verifier });
+  assert.deepEqual([back.headers.get('location'), cookieOf(back, 's')], ['/login', undefined]);
+
+  // with it, the app's web view gets its session, once
+  sheet = await unlock({ app });
+  const second = (await sheet.json()).app;
+  back = await signedIn({ code: second, verifier });
+  assert.equal(back.headers.get('location'), '/');
+  const session = cookieOf(back, 's')!;
+  assert.equal((await fetch(`${h.base}/api/org`, { headers: { cookie: session } })).status, 200);
+  assert.equal(cookieOf(await signedIn({ code: second, verifier }), 's'), undefined);
+  // and a browser's unlock still signs in as ever
+  const browser = await unlock({});
+  assert.deepEqual(await browser.json(), { ok: true });
+  assert.ok(cookieOf(browser, 's'));
 });
 
 test('L3: X-Forwarded-For counts only from Caddy: a job on coordinator:8080 is one client, whatever it writes there', async () => {

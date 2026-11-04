@@ -54,7 +54,8 @@ export const held = groups =>
 export const where = page =>
   page.evaluate(
     () =>
-      `${document.querySelector('#book .bk-page:not([hidden]) .bk-page-title')?.textContent ?? ''} ${document.querySelector('#book .bk-where')?.textContent ?? ''}`,
+      // (the title on the view.)
+      `${document.querySelector('#book .bk-view-head .bk-page-title')?.textContent ?? ''} ${document.querySelector('#book .bk-where')?.textContent ?? ''}`,
   );
 // Where the page shown is in its chapter, as the bar counts it: [2, 3] for "2 / 3" (null: no count yet)
 export const pageAt = async page => {

@@ -53,7 +53,7 @@ export async function recording(browser, c, viewport, { hasTouch = true } = {}) 
     fed: 0,
     viewport,
     c,
-    hand: await inputs(browser, page),
+    hand: await inputs(page),
     done: async () => {
       await mirrors.closeAll();
       await context.close();

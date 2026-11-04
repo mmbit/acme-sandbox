@@ -1736,14 +1736,16 @@ test("a lent machine's manager that calls before any of its helpers asks for wor
   const added = await lend('the new rig');
   lentKey = added.key;
   const machine = async () => (await h.board('/api/machines')).body.find((one: { id: unknown }) => one.id === added.id);
-  const problems = { 'hq-tests_1': "node:24.22.1-bookworm didn't pull: manifest unknown" };
-  await asHelper('/api/helper/setup', { problems });
+  // in Docker's own shape: a digest-pinned image named twice before its reason, kept whole
+  const image = `ghcr.io/acme1/worker-tests@sha256:${'c'.repeat(64)}`;
+  const why = `${image} didn't pull: failed to resolve reference "${image}": ${image}: not found`;
+  await asHelper('/api/helper/setup', { problems: { 'hq-tests_1': why } });
   assert.equal((await machine()).manager, null, 'no helper present: no word on its manager');
-  assert.deepEqual((await machine()).problems, problems);
+  assert.deepEqual((await machine()).problems, { 'hq-tests_1': why });
   const job = await h.start({ agent: 'bolt' });
   assert.match(
     (await hqIn(tmpdir(), job, 'run', 'helper')).out,
-    /the new rig: away.*\n {4}hq-tests_1 isn't in step: node:24.22.1-bookworm didn't pull: manifest unknown/,
+    /the new rig: away.*\n {4}hq-tests_1 isn't in step: .*: not found$/m,
   );
   // a manager quiet for hours: its last words are old, so none
   h.db

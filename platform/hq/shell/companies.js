@@ -1,11 +1,11 @@
 // HQ-OS › Companies: the work shared with linked companies (platform/coordinator/docs/companies.md), read-only, since
-// the board talks to its own agents and never posts here. The list of workspaces, the other company's name on each, and
-// a workspace whole: its threads and its files (workspace.js). desk.js loads it as a platform app, on the home screen
-// only while the company has a link or an open invitation (shown). Linking itself is Settings › Companies
-// (companylinks.js).
+// the board talks to its own agents and never posts here. The list of workspaces, the other company's name on each; a
+// workspace, its threads and its files; and a thread opened (workspace.js).
+// desk.js loads it as a platform app, on the home screen only while the company has a link or an open invitation
+// (shown). Linking itself is Settings › Companies (companylinks.js).
 import { esc, stylesheet } from '../util.js';
 import { loadLinks, loadWorkspaces, loadWorkspace } from './data.js';
-import { workspaceHtml } from './workspace.js';
+import { foldable, plural, threadHtml, workspaceHtml } from './workspace.js';
 import { sfx } from './audio.js';
 
 // ---- what HQ calls
@@ -16,8 +16,10 @@ export const app = {
   group: 'talk',
 };
 
-// What the board has open: null (the list) or a workspace's id
+// What the board has open: null (the list) or a workspace's id, and in it null (its threads and files) or a thread's
 let opened = null;
+let thread = null;
+let openPaths = new Set(); // the open workspace's folders and files the board opened (data-path), kept while in a thread
 let shownEl = null;
 let drawn = ''; // the markup shown: an unchanged one leaves the screen, the board's place and selection alone
 let seq = 0;
@@ -26,18 +28,20 @@ let seq = 0;
 export async function draw(el, hq) {
   if (el !== shownEl) {
     shownEl = el;
-    opened = null;
+    opened = thread = null;
     drawn = '';
   }
   await stylesheet('shell/companies.css');
   await paint(el, hq);
 }
 
-// The header's back button: from a workspace back to the list (true), else the computer's (false)
+// The header's back button: from a thread back to its workspace, from a workspace back to the list (true), else the
+// computer's (false)
 export function back() {
   if (opened === null || !shownEl?.isConnected) return false;
   sfx.blip();
-  opened = null;
+  if (thread !== null) thread = null;
+  else opened = null;
   shownEl.scrollTop = 0;
   paint(shownEl, lastHq);
   return true;
@@ -54,30 +58,44 @@ let title = ''; // the open workspace's, for the header
 async function paint(el, hq) {
   lastHq = hq;
   const me = ++seq;
-  const want = opened;
-  const html = want === null ? listHtml((await loadWorkspaces(hq.dev)).workspaces, hq) : await workspacePage(want, hq);
-  if (me !== seq || !el.isConnected || want !== opened) return;
-  crumb(el, want === null ? '' : title);
+  const html = opened === null ? listHtml((await loadWorkspaces(hq.dev)).workspaces, hq) : await workspacePage(el, hq);
+  if (me !== seq || !el.isConnected) return;
+  crumb(el, opened === null ? '' : title);
   el.closest('.device')?.classList.add('co-wide');
-  if (html === drawn) return;
+  if (html === drawn) return foldable(el); // (measured again: the width may have changed)
+  const newThread = thread !== null && !el.querySelector('.co-open-thread');
   el.innerHTML = drawn = html;
-  for (const button of el.querySelectorAll('[data-workspace]'))
+  foldable(el);
+  if (newThread) toNewest(el);
+  for (const button of el.querySelectorAll('[data-workspace], [data-thread]'))
     button.onclick = () => {
       sfx.blip();
-      opened = Number(button.dataset.workspace);
+      if (button.dataset.workspace) [opened, openPaths] = [Number(button.dataset.workspace), new Set()];
+      else thread = Number(button.dataset.thread);
       el.scrollTop = 0;
       paint(el, hq);
     };
 }
-async function workspacePage(id, hq) {
+// The workspace open, or its thread, with what the board has opened in it (read off the screen) kept as it is
+async function workspacePage(el, hq) {
   try {
-    const workspace = await loadWorkspace(hq.dev, id);
+    const workspace = await loadWorkspace(hq.dev, opened);
     title = workspace.title;
-    return workspaceHtml(workspace, hq);
+    if (el.querySelector('.co-tree'))
+      openPaths = new Set([...el.querySelectorAll('details[open][data-path]')].map(d => d.dataset.path));
+    const unfolded = new Set([...el.querySelectorAll('.co-msg:not(.fold)')].map(li => Number(li.dataset.message)));
+    const shown = workspace.threads.find(t => t.id === thread);
+    if (!shown) thread = null;
+    return shown ? threadHtml(workspace, shown, hq, unfolded) : workspaceHtml(workspace, hq, openPaths);
   } catch (err) {
     if (err.status !== 404) throw err;
     return '<div class="seats-app co-app"><p class="dim">That workspace isn’t here any more.</p></div>';
   }
+}
+// A thread just opened shows its newest message at the top of the screen
+function toNewest(el) {
+  const newest = el.querySelector('.co-msg:last-child');
+  if (newest) el.scrollTop += newest.getBoundingClientRect().top - el.getBoundingClientRect().top - 8;
 }
 // The header's crumb after the app's name: the workspace open, if one is
 function crumb(el, title) {
@@ -107,4 +125,3 @@ function listHtml(workspaces, hq) {
     ${workspaces.length ? `<ul class="rows settings co-list">${workspaces.map(row).join('')}</ul>` : none}
     <p class="co-foot dim">Read-only: your agents post here, and you talk to them as always.</p></div>`;
 }
-export const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;

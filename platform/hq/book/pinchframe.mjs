@@ -7,7 +7,12 @@
 import assert from 'node:assert/strict';
 import { MINI, PREFERENCES, until } from './kit.mjs';
 import { CALLS, landed, onJournal } from './journal.mjs';
-import { PHONE, sat } from './titletap.mjs';
+import { SIZES } from './bookmarks.mjs';
+
+// The board's iPhone, and its home-screen app's blurred strip at the top (style.css's standalone --sat), set as HQ loads
+const { sat: SAT, width, height } = SIZES.phone,
+  PHONE = { width, height },
+  sat = `document.addEventListener('DOMContentLoaded', () => document.documentElement.style.setProperty('--sat', '${SAT}px'))`;
 
 // the points looked at, this many px apart across the screen
 const STEP_PX = 3;

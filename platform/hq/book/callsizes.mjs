@@ -125,8 +125,7 @@ async function underCalls({ p, line, context, name, shot, clear }, notesPage) {
     timeout: LOADED_MS,
   });
   await toChapter(p, 'calls');
-  const title = () =>
-    p.evaluate(() => document.querySelector('#book .bk-page:not([hidden]) .bk-page-title')?.textContent ?? '');
+  const title = () => p.evaluate(() => document.querySelector('#book .bk-view-head .bk-page-title')?.textContent ?? '');
   await until(
     async () => /^Call with Lyra/.test(await title()),
     () => `${name}: the call's page under Calls`,
@@ -161,6 +160,8 @@ async function thrownAway(p, c, { name, shot, clear }) {
     deleted.push(r.request().postDataJSON());
     return r.fulfill({ json: { ok: true } });
   });
+  // (the intercom again: a hang-up closes it with the call.)
+  if (!(await p.locator('#call').count())) await p.evaluate(() => document.querySelector('#btn-intercom').click());
   await p.locator('#call').dispatchEvent('click');
   const notes = p.locator('#call-cards [data-card="notes"]');
   await notes.waitFor({ timeout: LOADED_MS });
@@ -181,7 +182,8 @@ async function thrownAway(p, c, { name, shot, clear }) {
 // What's wrong with the small call and the call's cards where they are: off the screen, over another or over a tool
 // the board taps, or something else over them (what's on top at each one's middle isn't its own); the small call over
 // anything the board reads on the book's page shown (marked data-keep-in-sight: its heading, dates and scraps); review
-// mode's ink lifted into the top layer with them, over the book (no dialog of HQ's is open in the story)
+// mode's ink or its strip on HQ's page showing over the book's spread, which covers that page (no dialog of HQ's is
+// open in the story)
 function overlaps(p) {
   return p.evaluate(TOOLS => {
     const shown = el => {
@@ -199,7 +201,9 @@ function overlaps(p) {
       ),
       read = [...document.querySelectorAll('#book .bk-page:not([hidden]) [data-keep-in-sight]')].filter(shown),
       found = calls.length ? [] : ['no call shows'];
-    if (document.querySelector('review-mode')?.matches(':popover-open')) found.push("review mode's ink over the book");
+    const review = s => document.querySelector('review-mode')?.shadowRoot?.querySelector(s);
+    if (document.documentElement.dataset.book === 'spread' && ['.bar', '.ink'].map(review).some(el => el && shown(el)))
+      found.push("review mode's ink over the book");
     for (const el of calls) {
       const r = el.getBoundingClientRect();
       if (r.left < 0 || r.top < 0 || r.right > innerWidth + 0.5 || r.bottom > innerHeight + 0.5)

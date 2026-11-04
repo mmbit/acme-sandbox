@@ -190,8 +190,9 @@ test("the reader reads a card's questions whole and rewrites them in plain words
     JSON.parse(card('Seat stops: close?').questions).map((q: any) => [q.title, q.options]),
     plain.map(q => [q.title, q.options]),
   );
-  const unreadable = await h.hq(juno, 'rewrite', String(filed.id), file('Done?'), '--questions', file('[]'));
-  assert.equal(unreadable.code, 1, 'refused as hq ask refuses it');
+  const cut = await h.hq(juno, 'rewrite', String(filed.id), file('Send a photo of it.'), '--questions', file('[]'));
+  assert.equal(cut.code, 0, cut.out);
+  assert.equal(card('Seat stops: close?').questions, null, 'its last question taken off');
 
   const notice = await h.hq(
     kit,
@@ -216,6 +217,65 @@ test("the reader reads a card's questions whole and rewrites them in plain words
   );
   assert.equal(asking.code, 1, 'a notice asks nothing, as hq ask refuses it');
   assert.equal(card('Seats stop sooner').questions, null);
+});
+
+test("a card is filed with questions or none, never an empty list; HQ's own answer fields are never cut", async () => {
+  const kit = await running('kit');
+  const empty = await h.hq(
+    kit,
+    'ask',
+    'decision',
+    'today',
+    'Asks nothing?',
+    file('Which seat?'),
+    '--questions',
+    file('[]'),
+    '--topic',
+    'seats',
+  );
+  assert.equal(empty.code, 1, 'hq ask refuses an empty question list: only a rewrite cuts to none');
+  assert.equal(card('Asks nothing?'), undefined);
+  const check = (more: Record<string, unknown>) =>
+    h.agent('card-check', kit.token, {
+      kind: 'decision',
+      title: 'Asks nothing?',
+      body: 'Which seat?',
+      questions: [],
+      ...more,
+    });
+  assert.equal((await check({})).status, 400, "hq ask's pre-check refuses it");
+  assert.equal((await check({ id: 1 })).status, 200, "hq rewrite's takes it");
+
+  const cut = (id: number) => h.agent('request-rewrite', kit.token, { id, body: 'Send a photo of it.', questions: [] });
+  const keys = await h.ask(kit, {
+    kind: 'credential',
+    title: 'The keys',
+    body: 'Paste them',
+    secrets: 'STRIPE_TEST_KEY',
+  });
+  const approval = await h.ask(kit, {
+    kind: 'approval',
+    title: 'Open it?',
+    body: 'May it open?',
+    approves: 'live:hello',
+  });
+  for (const id of [keys, approval]) {
+    const r = await cut(id);
+    assert.equal(r.status, 409, JSON.stringify(r.body));
+  }
+  const merge = await h.ask(kit, { questions: [{ title: 'Merge it?', type: 'yes-no' }] });
+  const questions = db.prepare('select questions from requests where id = ?').get(merge) as { questions: string };
+  const decision = db
+    .prepare("insert into decisions (name, by, at, request) values ('A look', 'kit', ?, ?) returning id")
+    .get(new Date().toISOString(), merge) as { id: number };
+  db.prepare("insert into decision_merges (pr, decision, sha, scope) values (90001, ?, 'abc', 'pr')").run(decision.id);
+  const r = await cut(merge);
+  assert.equal(r.status, 409, JSON.stringify(r.body));
+  assert.deepEqual(
+    db.prepare('select questions from requests where id = ?').get(merge),
+    questions,
+    'a merge decision keeps its questions',
+  );
 });
 
 test('a parked card (hq request) waits for the reader the same way', async () => {

@@ -620,6 +620,34 @@ test('missing deadlines show once for a deliverable, excluding served windows an
   }
 });
 
+// hq/the-card-reader was drawn after hq/push-tests-live, whose next step a failed task held, and hq/pushes-ride-out after
+// it: none had an ETA (job #23890)
+test('a deliverable drawn naming no needs passes over one whose next task a failed task holds', () => {
+  db.exec('delete from pauses; delete from thread_needs');
+  const stalled = thread('stalled');
+  const failed = queued(stalled),
+    next = queued(stalled);
+  db.prepare("update jobs set status = 'failed', finished = ? where id = ?").run(
+    new Date(T + MINUTE).toISOString(),
+    failed,
+  );
+  const draw = (name: string) => newThread({ project: 'game', name, goal: 'It goes on' }, { agent: 'wren' }) as any;
+  try {
+    const card = draw('Card');
+    assert.deepEqual(card.needs, [], `#${next} waits for its owner to land #${failed}: passed over`);
+    assert.match(
+      card.chain,
+      new RegExp(
+        `^game/stalled is held by task #${failed}, which failed with nothing in its place, and was passed over: `,
+      ),
+    );
+    queued(card.id);
+    assert.deepEqual(draw('Push').needs, [card.id], 'what is drawn next chains after the ready one');
+  } finally {
+    db.exec('delete from thread_needs');
+  }
+});
+
 test('a deliverable drawn naming no needs after a read booked days ahead plays now: the read and its chain passed over', () => {
   db.exec('delete from pauses; delete from thread_needs');
   const read = thread('read');

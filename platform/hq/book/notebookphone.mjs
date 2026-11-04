@@ -53,6 +53,7 @@ async function drawnReply(page, play, slip) {
   const replies = () => group(play, 3).children.filter(r => r.kind === 'reply').length;
   const had = replies();
   assert.equal(await slip.locator('textarea, input').count(), 0, 'no field under the answer');
+  await upTheScreen(page, slip.locator('.bk-slip-room-pull'));
   await slip.locator('.bk-slip-room-pull').tap();
   const room = slip.locator('.bk-slip-room-paper');
   await until(async () => (await room.boundingBox())?.height > 60, 'the room pulled out');
@@ -91,6 +92,31 @@ async function drawnReply(page, play, slip) {
   await undo.waitFor();
   await drawn.scrollIntoViewIfNeeded();
   return { undo, replies, had };
+}
+
+// The page panned on (a wheel's turn on the paper, bookpan.js: mobile WebKit's Playwright has no wheel to turn, and a
+// finger draws on a fresh device) till el is in the screen's upper half, with room under it to pull out and draw in,
+// clear of the bar at the foot: the book's paper pans by itself, so a scroll into view moves nothing
+async function upTheScreen(page, el) {
+  const { height } = page.viewportSize();
+  await until(async () => {
+    const b = await el.boundingBox();
+    if (b && b.y < height / 2) return true;
+    await page.evaluate(() => {
+      const desk = document.querySelector('#book .bk-desk'),
+        r = desk.getBoundingClientRect();
+      desk.dispatchEvent(
+        new WheelEvent('wheel', {
+          deltaY: 300,
+          clientX: r.left + r.width / 3,
+          clientY: r.top + r.height / 2,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    });
+    await page.waitForTimeout(300);
+  }, 'the answer panned into sight');
 }
 
 // A new answer from the store under its group within seconds (the store's event, not a read on a timer), with a

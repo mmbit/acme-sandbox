@@ -993,7 +993,10 @@ test("a task drawn after a failed one is its owner's call: a redo queued without
     [`task #${one} before it failed`],
     'drawn before it failed, it counted on its work',
   );
-  const stall = { on: 'stalled', why: `task #${one} before it in its deliverable failed with nothing in its place` };
+  const stall = {
+    on: 'stalled',
+    why: `task #${one} before it in its deliverable failed with nothing in its place: its owner lands it again (hq job --lands ${one}) or puts a queued task in its place (hq stop ${one} "why" --for <job>)`,
+  };
   assert.deepEqual(
     predictions
       .outlook(Date.now())
@@ -1013,6 +1016,30 @@ test("a task drawn after a failed one is its owner's call: a redo queued without
   );
   assert.equal((await claim())?.id, redo, 'the claim starts it');
   assert.equal(projects.findThread(t)!.status, 'open', 'the failed task still keeps the deliverable unfinished');
+});
+
+// #23814 failed at 10:15 on 4 Nov with its next step #23835 drawn; hq/the-card-reader, drawn needing that deliverable,
+// then hq/pushes-ride-out needing the card reader, had no ETA and never started (job #23890)
+test('a deliverable whose next task a failed task holds holds none of the deliverables that need it', async () => {
+  const engine = thread('stalled'),
+    art = thread('beside');
+  assert.deepEqual(plan.need(art, engine, 'wren'), { ok: true });
+  const [one, two] = [task(engine), task(engine)];
+  await h.finish((await claim())!, { status: 'failed', branch: `job/${one}`, result: 'the push failed' });
+  assert.deepEqual(h.job(two).wakes, [`task #${one} before it failed`], 'its next step counted on its work');
+  const drawn = task(art, 'moss');
+  assert.deepEqual(h.job(drawn).wakes, [], 'it waits for its owner, not for its merge');
+  const placed = backlog.orderingSnapshot(Date.now()).jobs.find(j => j.id === drawn)!;
+  assert.deepEqual([placed.needs, placed.reasons], [undefined, []], 'the play holds it on nothing');
+  assert.equal((await claim())?.id, drawn, 'the claim starts it');
+  // its owner puts the next step in the failed one's place
+  const takeover = await import('./takeover.ts');
+  assert.equal(typeof takeover.stopFor(one, two, 'wren', 'the next step does its work'), 'object');
+  assert.deepEqual(
+    backlog.orderingSnapshot(Date.now()).jobs.find(j => j.id === two)!.reasons,
+    [],
+    'the step in its place plays',
+  );
 });
 
 // A run that exited nonzero or was stopped after pushing a commit of its own reports it (the worker's ownCommit)

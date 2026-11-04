@@ -8,7 +8,8 @@ import { freePage, paperBox } from './mouse.mjs';
 import { microphone, voiceServed, SAID } from './voice.mjs';
 import { playLine } from './call.mjs';
 import { press } from './bar.mjs';
-import { DESKTOP, MINI, UPRIGHT, QUIET_MS, chromiumPen, pressAlong, say, touchOf, ui } from './kit.mjs';
+import { DESKTOP, MINI, UPRIGHT, QUIET_MS, pressAlong, say, ui } from './kit.mjs';
+import { hands } from './hands.mjs';
 import { PREVIEW, previewServed } from './preview.mjs';
 import { watchedPage } from './start.mjs';
 
@@ -153,12 +154,10 @@ async function onHq(c) {
 }
 
 async function inBook(c) {
-  const { page, errors, done, context } = await unallowed(c, MINI, { hasTouch: true, deviceScaleFactor: 1 });
+  const { page, errors, done } = await unallowed(c, MINI, { hasTouch: true, deviceScaleFactor: 1 });
   try {
     await page.waitForSelector('#book .bk-desk', { timeout: 30_000 });
-    const cdp = await context.newCDPSession(page),
-      pen = chromiumPen(cdp),
-      touch = touchOf(cdp),
+    const { pen, touch } = await hands(page),
       paper = await paperBox(page),
       at = [paper.x + paper.width / 2 - 60, paper.y + 200];
     await pen.down([at[0], at[1] + 120]);
@@ -182,7 +181,8 @@ async function inBook(c) {
     await press(page, 'Voice note');
     await page.locator('.toast', { hasText: 'blocked' }).waitFor({ timeout: 15_000 });
     assert.equal(await page.evaluate(() => window.micsAsked), 1, 'the mic tapped asked, once');
-    c.noErrorsIn(errors.filter(e => !/Refused/.test(e)));
+    // (HQ's sounds wake at a touch's end, as Safari lets them: Linux's headless WebKit has no audio output to start.
+    c.noErrorsIn(errors.filter(e => !/Refused|AudioDestinationNode is not initialized/.test(e)));
   } finally {
     await done();
   }

@@ -3,6 +3,7 @@
 // them, and how our side reads them. Our side's posts are workspaceposts.ts, the other company's entries
 // workspaceentries.ts. The design: platform/coordinator/docs/companies.md.
 import { db, columnsOf, inOneStep, redacted } from './db.ts';
+import * as linklog from './linklog.ts';
 import * as links from './links.ts';
 import * as files from './workspacefiles.ts';
 
@@ -241,7 +242,7 @@ export const versionsOf = (workspace: number, path: string) =>
     .all(workspace, path) as FileRow[];
 
 const arrivedOf = (workspace: WorkspaceRow, row: Row) =>
-  row.ours ? links.takenAt(workspace.link, row.seq) : row.arrived;
+  row.ours ? linklog.takenAt(workspace.link, row.seq) : row.arrived;
 const authorOf = (workspace: WorkspaceRow, row: Row) => ({
   company: row.ours ? links.ourName() : companyOf(workspace),
   agent: row.agent,

@@ -39,13 +39,14 @@ import { viewerId } from './viewers.ts';
 // - cap: the most a voucher pays in cents, delivery included, from the board's Share box.
 // - ended_by: why it ended.
 // - lasting: 1 for a lasting guest's share, open till the board ends it (LASTING_ENDS).
+// - device: 1 for a pair code's view (forDevice), with nobody on it.
 // - review_share_people.voucher, ordered: the person's tester voucher and the session that spent it.
 // - review_share_sessions.guest: the person whose session it is.
 // - host: where it was handed, or null for the share's own host.
 db.exec(`create table if not exists review_shares (id integer primary key, created text not null, about text not null,
     host text not null, prefix text not null, start text not null, ends text not null, ended text,
     linked text, view integer not null default 0, tester integer not null default 0, cap integer, ended_by text,
-    lasting integer not null default 0);
+    lasting integer not null default 0, device integer not null default 0);
   create table if not exists review_share_people (share integer not null, guest text not null collate nocase,
     nonce text not null, link text not null unique, added text not null, opened text, removed text,
     voucher text, ordered text, primary key (share, guest));
@@ -54,6 +55,7 @@ db.exec(`create table if not exists review_shares (id integer primary key, creat
 db.exec('create unique index if not exists review_share_vouchers on review_share_people (voucher)');
 if (lacks('review_shares', 'lasting'))
   db.exec('alter table review_shares add column lasting integer not null default 0');
+if (lacks('review_shares', 'device')) db.exec('alter table review_shares add column device integer not null default 0');
 
 // about: what the notes are about (owed.about), and so whose they are; prefix: the paths it opens on host; start: the
 // page it opens at; ended: when it ended, and ended_by why: the board ended it or its date passed (null: ended before we
@@ -73,6 +75,7 @@ export type Share = {
   tester: number;
   cap: number | null;
   lasting: number;
+  device: number;
 };
 // One of a share's people: their own link, when they first opened it, or were removed
 export type Person = {
@@ -150,7 +153,7 @@ export const openFor = (scope: Pick<Scope, 'host' | 'prefix'>, kind: Kind = 'not
   db
     .prepare(
       `select * from review_shares where host = ? and prefix = ? and view = ? and tester = ? and lasting = ?
-      and ended is null and ends > ? order by id desc`,
+      and device = 0 and ended is null and ends > ? order by id desc`,
     )
     .get(
       scope.host,
@@ -162,14 +165,14 @@ export const openFor = (scope: Pick<Scope, 'host' | 'prefix'>, kind: Kind = 'not
     ) as Share | undefined;
 
 // A new share: scope and linked from feedback.ts (scopeOf, linkedFrom), open for days (a lasting one till the board
-// ends it), of a kind, with nobody on it yet (invite).
-export function create(scope: Scope, linked: Reach[], days: number, kind: Kind = 'notes') {
+// ends it), of a kind, with nobody on it yet (invite). device: a pair code's (forDevice).
+export function create(scope: Scope, linked: Reach[], days: number, kind: Kind = 'notes', device = false) {
   const now = new Date();
   const ends = kind === 'lasting' ? LASTING_ENDS : new Date(now.getTime() + days * 864e5).toISOString();
   const { lastInsertRowid } = db
     .prepare(
-      `insert into review_shares (created, about, host, prefix, start, ends, linked, view, tester, lasting)
-      values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `insert into review_shares (created, about, host, prefix, start, ends, linked, view, tester, lasting, device)
+      values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       now.toISOString(),
@@ -182,6 +185,7 @@ export function create(scope: Scope, linked: Reach[], days: number, kind: Kind =
       kind === 'view' ? 1 : 0,
       kind === 'tester' ? 1 : 0,
       kind === 'lasting' ? 1 : 0,
+      device ? 1 : 0,
     );
   return byId(Number(lastInsertRowid))!;
 }
@@ -227,10 +231,10 @@ export function end(id: number) {
   return true;
 }
 
-// HQ's Reviews: the open shares, and those ended in the last KEEP_DAYS.
+// HQ's Reviews: the open shares, and those ended in the last KEEP_DAYS. A pair code's view has nobody to show.
 export const list = () =>
   db
-    .prepare('select * from review_shares where ended is null or ended > ? order by id desc')
+    .prepare('select * from review_shares where device = 0 and (ended is null or ended > ?) order by id desc')
     .all(new Date(Date.now() - KEEP_DAYS * 864e5).toISOString()) as Share[];
 
 // ---------------------------------------------------------------- ending (feedback.ts endDue)
@@ -291,8 +295,10 @@ function handOff(
 // it now. → the link, or null when they have too many open.
 export const handOn = (session: Session, host: string, to: string, o: { linkMs: number; accessMs: number }) =>
   handOff(session, session.guest, guests.seal(session.guest) ?? '', host, to, o);
-// A person may be on the share: it's open, they're on it, and their address is the one they proved
+// A person may be on the share: it's open, they're on it, and their address is the one they proved. A pair code's view
+// has nobody on it: it's open or it isn't.
 const admitted = (s: Share | undefined, guest: string, seal: string) => {
+  if (s?.device) return isOpen(s);
   const p = s ? person(s.id, guest) : undefined;
   return !!s && !!p && isOpen(s) && onIt(p) && guests.seal(guest) === seal;
 };
@@ -355,6 +361,14 @@ export function onward(guest: string, url: string) {
       .all(guest) as Share[]
   ).find(x => isOpen(x) && opens(x, u.host, u.pathname + u.search));
   return s ? handOff(s, guest, seal, u.host, u.pathname + u.search + u.hash) : null;
+}
+
+// A pair code's (pair.ts): the page the board's viewer shows, opened on the device that typed or scanned the code, as a
+// view-only share of that page opens it (scope and linked: feedback.ts scopeOf, linkedFrom). Its one session lasts
+// accessMs from when the device opens the link, and hands on nothing. → the one-time link, good for linkMs.
+export function forDevice(scope: Scope, linked: Reach[], o: { linkMs: number; accessMs: number }) {
+  const s = create(scope, linked, (o.linkMs + o.accessMs) / 864e5, 'view', true);
+  return handOff(s, '', '', s.host, s.start, o)!;
 }
 
 // Where a share reaches: its own host and path, and the previews its pages link to.

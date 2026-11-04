@@ -24,9 +24,10 @@ async function webkit(browser, c) {
       mid = middleOf(paper);
     await slidAndDrawn(page, c, free, mid);
     await voice(page, c, free, mid);
-    // (a made-up pointer can't be captured in WebKit, as a real one can: the other WebKit stories leave it out too)
+    // (a made-up pointer can't be captured, as a real one can: the other WebKit stories leave it out too, and so in
+    // Chromium, where the whole check runs it as well.)
     assert.deepEqual(
-      errors.filter(e => !/can not be found here/.test(e)),
+      errors.filter(e => !/can not be found here|No active pointer with the given id/.test(e)),
       [],
     );
   } finally {

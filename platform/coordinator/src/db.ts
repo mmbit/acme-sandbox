@@ -1,9 +1,9 @@
 // Coordinator storage, schema and migrations.
-import { DatabaseSync } from 'node:sqlite';
+import { DatabaseSync, type StatementSync } from 'node:sqlite';
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { DATA_DIR, REPO_DIR } from './config.ts';
-import { redact, redactJson, keysStamp, REDACT_RULES } from './secrets.ts';
+import { redact, redactJson, keysStamp, masksOf, maskWith, maskJson, REDACT_RULES, type Mask } from './secrets.ts';
 
 // ---- the connection and its helpers
 
@@ -79,7 +79,7 @@ export const workBranch = (j: string) => `coalesce(${j}.branch, 'job/' || ${j}.i
 // A key's value never stays in the free text an agent can read (secrets.ts redact()): a module that keeps such text names
 // its columns once its table exists, and every insert and update of them is redacted as it's written. The triggers are
 // this connection's own (temp), so the file holds none: report.sh, the backup's copy or an older coordinator open it
-// without redact(). scrub(): the same over what's already written, when a key is saved.
+// without redact(). scrub() and scrubSaved(): the same over what's already written, at a start and when a key is saved.
 db.function('redact', { varargs: false }, (t: unknown) => redact(t) as string | null);
 // (and a JSON column's, string by string: redactedJson.)
 db.function('redact_json', { varargs: false }, (t: unknown) => redactJson(t) as string | null);
@@ -104,6 +104,90 @@ export function scrub() {
   const keysAndColumns = scrubbedFor();
   for (const [t, c, fn] of guarded) db.exec(`update ${t} set ${c} = ${fn}(${c}) where ${c} is not ${fn}(${c})`);
   remember('scrubbed', keysAndColumns);
+}
+// A save scrubs for the keys it saved alone, when every other key was scrubbed out before (scrubCurrent()): text holding
+// none of their forms can't change. One statement over every row holds the event loop while it reads them all, so the rows
+// go newest first, SLICE_ROWS a statement, as many as fit in SLICE_MS, then the loop's next turn. What an agent reads
+// waits for the pass meanwhile, right before its read (scrubbed(): server.ts afterScrub, ordering.ts withPlan, memory.ts
+// ranked()), and the pass masks with the values it was started for, so a key
+// replaced before its slices are done still goes. Its stamp is kept once its slices are done, so a restart before then
+// runs the whole scrub().
+type Masking = 'redact' | 'redact_json';
+type Slices = { below: number; next: StatementSync; slice: StatementSync };
+type Pass = { stamp: string; masks: Mask[]; forms: Record<Masking, string[]>; tables: Slices[] };
+const passes: Pass[] = [];
+const waiting: (() => void)[] = [];
+// a turn's budget, and the rows one statement reads
+const SLICE_MS = 40, SLICE_ROWS = 256;
+// the pass whose slice runs now, for scrub_holds() and scrub_mask(): set only around the slice's statement (scrubSlice)
+let masking: Pass | null = null;
+db.function('scrub_holds', { varargs: false }, (text: unknown, kind: unknown) =>
+  typeof text === 'string' && masking!.forms[kind as Masking].some(form => text.includes(form)) ? 1 : 0);
+db.function('scrub_mask', { varargs: false }, (text: unknown, kind: unknown) => {
+  const masks = masking!.masks, mask = <T>(t: T) => maskWith(t, masks);
+  return (kind === 'redact_json' ? maskJson(text, mask) : mask(text)) as string | null;
+});
+// The stamp of the keys what's written is scrubbed for, or will be once the passes under way are done: a copy of that text
+// kept outside hq.db (a book page's picture: ink/bookpicture.ts pictureOf) is made again once it changes
+export const scrubStamp = () => passes.at(-1)?.stamp ?? setting('scrubbed') ?? '';
+// Whether every key in the store now was scrubbed out of what's written, or will be once the passes under way are done:
+// a save asks before it writes its keys
+export const scrubCurrent = () => scrubStamp() === scrubbedFor();
+export function scrubSaved(names: string[], current: boolean) {
+  if (!current) return scrub();
+  const masks = masksOf(names), plain = [...new Set(masks.map(([form]) => form))];
+  // a JSON column holds a string's own escapes: redactJson() reads a JSON snippet's string in it escaped once more
+  const forms = { redact: plain, redact_json: [...plain, ...plain.map(form => JSON.stringify(form).slice(1, -1))] };
+  passes.push({ stamp: scrubbedFor(), masks, forms, tables: masks.length ? tableSlices() : [] });
+  if (passes.length === 1) scrubSlices();
+}
+// Whether a pass has rows left to visit, and a promise resolved once none has, to whether one had
+export const scrubbing = () => passes.length > 0;
+export const scrubbed = () => new Promise<boolean>(resolve => (passes.length ? waiting.push(() => resolve(true)) : resolve(false)));
+// Each guarded table's two statements: where its next slice starts, and the slice's masking
+function tableSlices(): Slices[] {
+  return [...Map.groupBy(guarded, ([table]) => table)].map(([table, guards]) => {
+    // (a column one module guards twice, as a test's fresh import does, is masked once)
+    const columns = [...new Map(guards.map(([, column, kind]) => [column, kind]))];
+    const setMasked = columns.map(([c, kind]) => `${c} = scrub_mask(${c}, '${kind}')`).join(', ');
+    const whereHolding = columns.map(([c, kind]) => `scrub_holds(${c}, '${kind}')`).join(' or ');
+    return {
+      below: Number.MAX_SAFE_INTEGER,
+      next: db.prepare(`select rowid as start from ${table} where rowid < ? order by rowid desc limit 1 offset ${SLICE_ROWS - 1}`),
+      slice: db.prepare(`update ${table} set ${setMasked} where rowid >= ? and rowid < ? and (${whereHolding})`),
+    };
+  });
+}
+// The passes in turn, a turn's budget of slices at a time
+function scrubSlices() {
+  const end = performance.now() + SLICE_MS;
+  try {
+    while (passes.length && performance.now() < end) scrubSlice(passes[0]);
+  } catch (err) {
+    // (a timer's throw would end HQ: the same slice again in a second, its stamp still unkept)
+    console.error("Could not scrub a saved key out of what's written:", err);
+    return void setTimeout(scrubSlices, 1000);
+  }
+  if (passes.length) return void setTimeout(scrubSlices, 0);
+  for (const resolve of waiting.splice(0)) resolve();
+}
+// The next slice of the pass's first table left, or its stamp once none is left
+function scrubSlice(pass: Pass) {
+  const slices = pass.tables[0];
+  if (!slices) {
+    remember('scrubbed', pass.stamp);
+    passes.shift();
+    return;
+  }
+  const start = (slices.next.get(slices.below) as { start: number } | undefined)?.start ?? Number.MIN_SAFE_INTEGER;
+  masking = pass;
+  try {
+    slices.slice.run(start, slices.below);
+  } finally {
+    masking = null;
+  }
+  slices.below = start;
+  if (start === Number.MIN_SAFE_INTEGER) pass.tables.shift();
 }
 export function scrubOnStart() {
   if (setting('scrubbed') !== scrubbedFor()) scrub();
@@ -460,6 +544,9 @@ db.exec(`create table if not exists call_tokens (hash text primary key, agent te
 // to while it goes on (call.ts addToJob), and the only ones an ask the board takes off its page cancels (ink/callasks.ts
 // takenOff).
 db.exec('create table if not exists call_jobs (call integer not null, job integer not null, primary key (call, job))');
+// The board's guests on its live calls (callguests.ts), each with their door's link.
+db.exec(`create table if not exists call_guests (id integer primary key, call integer not null,
+  guest text not null collate nocase, link text not null default '', added text not null)`);
 // The call ledger (ledger.ts): what each call asked for, decided or explained, and what was promised on it, one item
 // each. `what` is the one plain line the board sees; `quote` (the words on the call, verbatim) and `lines` (the
 // transcript range) stay with the agents. An item is open until its job ends done, or it's linked to a request or a ref
@@ -1008,4 +1095,10 @@ once('2026-11-02-followthrough-next-look', () => {
 once('2026-11-02-urgent-work', () => {
   for (const table of ['projects', 'threads', 'jobs'])
     if (lacks(table, 'urgent')) db.exec(`alter table ${table} add column urgent integer not null default 0`);
+});
+
+// The pair codes' old tables go (pair.ts keeps its codes in pair_codes). No session or preview key ends with them: a
+// device signed in stays signed in (the board, 4 November: ending them all cost every device its enrolment for nothing).
+once('2026-11-04-pair-handed-keys-ended', () => {
+  db.exec('drop table if exists notebook_pair_codes; drop table if exists notebook_pair_attempts');
 });

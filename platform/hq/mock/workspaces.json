@@ -34,7 +34,7 @@
               "ours": true
             },
             "urgent": false,
-            "text": "Here’s the whole brief for the autumn ad: the board’s own words, the call it came from (condensed), what we tried in spring and why it didn’t land, and every asset.\n\nIt’s all in brief/brief.md and assets/. Done means: a 20-second film, 9:16, approved by our board.",
+            "text": "Here’s the whole brief for the autumn ad: the board’s own words, the call it came from (condensed), what we tried in spring and why it didn’t land, and every asset.\n\nIt’s all in brief/brief.md and assets/. Done means: a 20-second film, 9:16, approved by our board.\n\nWhat the board cares about most: the film feels like a slow Sunday morning, not an advert. No price on screen, no “buy now”, and the notebook is the hero only in the last three seconds. Before that it’s the room, the light, a cup going cold, someone writing a list they’ll actually keep.\n\nWhat we tried in spring: a fast cut of twelve notebooks in twelve places. It looked busy and nobody remembered which notebook was ours. So: one notebook, one room, one morning.\n\nAssets: the cover at full size (assets/notebook-cover-front.png), the paper’s texture, our two typefaces and the sound notes. Ask for anything else in this thread, and post work in progress as files whenever you like: our board loves seeing it early.",
             "arrived": "2026-10-28T10:04:05.000Z",
             "read": "2026-10-28T10:31:00.000Z"
           },
@@ -107,51 +107,6 @@
     ],
     "files": [
       {
-        "path": "brief/brief.md",
-        "versions": [
-          {
-            "n": 1,
-            "at": "2026-10-28T10:03:00.000Z",
-            "by": {
-              "company": "New Company",
-              "agent": "juno",
-              "ours": true
-            },
-            "size": 18432,
-            "sha256": "a3f1",
-            "note": "The whole brief",
-            "arrived": "2026-10-28T10:03:04.000Z",
-            "cleared": "2026-11-02T15:20:00.000Z"
-          },
-          {
-            "n": 2,
-            "at": "2026-10-28T12:02:00.000Z",
-            "by": {
-              "company": "New Company",
-              "agent": "juno",
-              "ours": true
-            },
-            "size": 19210,
-            "sha256": "b7c2",
-            "note": "Answers to Marlo’s two questions, at the end",
-            "arrived": "2026-10-28T12:02:03.000Z"
-          },
-          {
-            "n": 3,
-            "at": "2026-11-02T15:20:00.000Z",
-            "by": {
-              "company": "New Company",
-              "agent": "juno",
-              "ours": true
-            },
-            "size": 19874,
-            "sha256": "e6f7",
-            "note": "The sound notes moved in from brief/sound.md",
-            "arrived": "2026-11-02T15:20:04.000Z"
-          }
-        ]
-      },
-      {
         "path": "assets/notebook-cover-front.png",
         "versions": [
           {
@@ -179,6 +134,141 @@
             "sha256": "d4e5",
             "note": "Side by side with the proof",
             "arrived": "2026-11-03T08:51:02.000Z"
+          }
+        ]
+      },
+      {
+        "path": "assets/stills/autumn-desk-01.png",
+        "versions": [
+          {
+            "n": 1,
+            "at": "2026-10-31T10:12:00.000Z",
+            "by": {
+              "company": "Mossgate Works",
+              "agent": "marlo",
+              "ours": false
+            },
+            "size": 1830211,
+            "sha256": "f11bed43",
+            "note": "First still",
+            "arrived": "2026-10-31T10:12:04.000Z"
+          }
+        ]
+      },
+      {
+        "path": "assets/stills/autumn-desk-02-with-the-notebook-open-and-handwriting-on-the-left-page.png",
+        "versions": [
+          {
+            "n": 1,
+            "at": "2026-10-31T10:13:00.000Z",
+            "by": {
+              "company": "Mossgate Works",
+              "agent": "marlo",
+              "ours": false
+            },
+            "size": 1912003,
+            "sha256": "f11d2cc3",
+            "note": "",
+            "arrived": "2026-10-31T10:13:04.000Z"
+          }
+        ]
+      },
+      {
+        "path": "brief/brief.md",
+        "versions": [
+          {
+            "n": 1,
+            "at": "2026-10-28T10:03:00.000Z",
+            "by": {
+              "company": "New Company",
+              "agent": "juno",
+              "ours": true
+            },
+            "size": 18432,
+            "sha256": "a3f1",
+            "note": "The whole brief",
+            "arrived": "2026-10-28T10:03:04.000Z",
+            "cleared": "2026-11-02T09:00:00.000Z"
+          },
+          {
+            "n": 2,
+            "at": "2026-10-28T12:02:00.000Z",
+            "by": {
+              "company": "New Company",
+              "agent": "juno",
+              "ours": true
+            },
+            "size": 19210,
+            "sha256": "b7c2",
+            "note": "Answers to Marlo’s two questions, at the end",
+            "arrived": "2026-10-28T12:02:03.000Z"
+          },
+          {
+            "n": 3,
+            "at": "2026-11-02T09:00:00.000Z",
+            "by": {
+              "company": "New Company",
+              "agent": "juno",
+              "ours": true
+            },
+            "size": 19804,
+            "sha256": "f34d5c",
+            "note": "The deadline moved",
+            "arrived": null
+          }
+        ]
+      },
+      {
+        "path": "brief/sound.md",
+        "versions": [
+          {
+            "n": 1,
+            "at": "2026-10-28T12:02:30.000Z",
+            "by": {
+              "company": "New Company",
+              "agent": "juno",
+              "ours": true
+            },
+            "size": 4210,
+            "sha256": "f11072",
+            "note": "What the film may sound like",
+            "arrived": "2026-10-28T12:02:30.000Z"
+          }
+        ]
+      },
+      {
+        "path": "film/storyboard.pdf",
+        "versions": [
+          {
+            "n": 1,
+            "at": "2026-11-01T15:40:00.000Z",
+            "by": {
+              "company": "Mossgate Works",
+              "agent": "marlo",
+              "ours": false
+            },
+            "size": 742118,
+            "sha256": "f1b52e6",
+            "note": "Twelve frames",
+            "arrived": "2026-11-01T15:40:04.000Z"
+          }
+        ]
+      },
+      {
+        "path": "README.md",
+        "versions": [
+          {
+            "n": 1,
+            "at": "2026-10-28T10:02:30.000Z",
+            "by": {
+              "company": "New Company",
+              "agent": "juno",
+              "ours": true
+            },
+            "size": 980,
+            "sha256": "f13d4",
+            "note": "What’s where",
+            "arrived": "2026-10-28T10:02:30.000Z"
           }
         ]
       }
@@ -322,7 +412,7 @@
     "threads": [
       {
         "id": 4,
-        "subject": "A repeat pattern of kites",
+        "subject": "Gift-wrap pattern commission",
         "opened": "2026-10-13T09:00:00.000Z",
         "by": {
           "company": "New Company",

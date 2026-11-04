@@ -382,6 +382,7 @@ test("a linked company's urgent wake is the job a paced seat claims, ahead of th
     const { ceo } = await import('./company.ts');
     const messages = await import('./messages.ts');
     const links = await import('./links.ts');
+    const workspaceentries = await import('./workspaceentries.ts');
     const urgency = await import('./urgency.ts');
     const said = (await say(colleague, 'kit', 'The lift is slow.')).body.job as number;
     const desk = h.queue({ agent: ceo(), title: 'Tidy the desk' });
@@ -402,7 +403,8 @@ test("a linked company's urgent wake is the job a paced seat claims, ahead of th
       const pushed = await h.call('/api/peer/entries', accepted.key, {
         entries: entries.map((entry, i) => ({ ...entry, seq: i + 1, agent: 'lyra', at })),
       });
-      assert.deepEqual(pushed, { status: 200, body: { received: 3 } });
+      // (with the kinds of entry our HQ takes: links.ts receive.)
+      assert.deepEqual(pushed, { status: 200, body: { received: 3, takes: workspaceentries.TAKES } });
       return () => h.jobs.listJobs().find(j => h.job(j.id).title === `Urgent from ${name}: Plans`)?.id;
     };
     const knop = await urgentFrom('Knop');

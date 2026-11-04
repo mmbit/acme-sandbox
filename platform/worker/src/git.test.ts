@@ -413,32 +413,49 @@ test("a push that doesn't reach GitHub goes again after a pause; one GitHub refu
   assert.equal(tried(), 1);
 });
 
-test('pushes stop on HTTP, unpack or ref refusals and recover from server or DNS failures or a bare (failed)', async t => {
+test("a push stops at GitHub's refusal and goes again when it never got there or GitHub's server failed", async t => {
   const { as, dropping, tried } = pushConnection(t);
-  for (const [i, { says, refused }] of [
-    { says: 'error: RPC failed; HTTP 401 curl 22 The requested URL returned error: 401', refused: true },
-    { says: 'error: RPC failed; HTTP 403 curl 22 The requested URL returned error: 403', refused: true },
-    { says: 'error: RPC failed; HTTP 413 curl 22 The requested URL returned error: 413', refused: true },
-    { says: 'remote: fatal: pack exceeds maximum allowed size\nerror: remote unpack failed: index-pack abnormal exit', refused: true },
-    { says: 'error: RPC failed; HTTP 502 curl 22 The requested URL returned error: 502', refused: false },
-    { says: 'fatal: Could not resolve host: github.com', refused: false },
-    // A bare (failed) is GitHub's transient error. A ref it rejects with a reason stays refused
-    { says: ' ! [remote rejected] 8376b5221008963ac2574dfc7ae324c693fc98fd -> job/106 (failed)\nerror: failed to push some refs', refused: false },
-    { says: ' ! [remote rejected] HEAD -> job/107 (pre-receive hook declined)\nerror: failed to push some refs', refused: true },
-    { says: ' ! [remote rejected] HEAD -> job/108 (protected branch hook declined)', refused: true },
-    { says: ' ! [remote rejected] HEAD -> job/109 (failed)\n ! [remote rejected] HEAD -> job/109 (stale info)', refused: true },
-  ].entries()) {
+  const refusals = [
+    'error: RPC failed; HTTP 401 curl 22 The requested URL returned error: 401',
+    'error: RPC failed; HTTP 403 curl 22 The requested URL returned error: 403',
+    'error: RPC failed; HTTP 413 curl 22 The requested URL returned error: 413',
+    'remote: fatal: pack exceeds maximum allowed size\nerror: remote unpack failed: index-pack abnormal exit',
+    ' ! [remote rejected] HEAD -> job/107 (pre-receive hook declined)\nerror: failed to push some refs',
+    ' ! [remote rejected] HEAD -> job/108 (protected branch hook declined)',
+    ' ! [remote rejected] HEAD -> job/113 (refusing to allow an OAuth App to create or update workflow `.github/workflows/x.yml` without `workflow` scope)',
+    // A server error beside a real refusal is still a refusal.
+    ' ! [remote rejected] HEAD -> job/109 (failed)\n ! [remote rejected] HEAD -> job/109 (stale info)',
+    ' ! [remote rejected] HEAD -> job/112 (Internal Server Error)\n ! [remote rejected] HEAD -> job/112 (stale info)',
+  ];
+  const retried = [
+    'error: RPC failed; HTTP 502 curl 22 The requested URL returned error: 502',
+    'fatal: Could not resolve host: github.com',
+    ' ! [remote rejected] 8376b5221008963ac2574dfc7ae324c693fc98fd -> job/106 (failed)\nerror: failed to push some refs',
+    'remote: fatal error in commit_refs\n ! [remote rejected] 8376b5221008963ac2574dfc7ae324c693fc98fd -> job/111 (failure)\nerror: failed to push some refs',
+    // GitHub's whole answer to a push its server failed, padding and all.
+    'remote: Request ID A5A2:159DC4:539E30C:743887B:6AEB1213        \nremote: Time 2026-11-04T11:08:05Z\nTo https://github.com/o/r.git\n ! [remote rejected]     6c44f539d4e1e603518cbd6161be3a43a08193f0 -> job/110 (Internal Server Error)\nerror: failed to push some refs to \'https://github.com/o/r.git\'',
+    ' ! [remote rejected] HEAD -> job/114 (Bad Gateway)',
+    ' ! [remote rejected] HEAD -> job/115 (Service Unavailable)',
+    ' ! [remote rejected] HEAD -> job/116 (Gateway Timeout)',
+    ' ! [remote rejected] HEAD -> job/117 (Gateway Time-out)',
+  ];
+  let n = 100;
+  const pushing = (says: string) => {
     dropping(1, says);
-    const branch = `job/${100 + i}`, dir = newJob(100 + i, 'a.md', 'push\n');
-    if (refused) {
-      await assert.rejects(() => as.push(dir, branch), /GitHub refused/);
-      assert.equal(tried(), 1);
-      assert.equal(remoteRef(branch), null);
-    } else {
-      const pushed = await as.push(dir, branch);
-      assert.equal(tried(), 2);
-      assert.equal(remoteRef(branch), pushed.sha);
-    }
+    n += 1;
+    return { dir: newJob(n, 'a.md', 'push\n'), branch: `job/${n}` };
+  };
+  for (const says of refusals) {
+    const { dir, branch } = pushing(says);
+    await assert.rejects(() => as.push(dir, branch), /GitHub refused/, says);
+    assert.equal(tried(), 1, says);
+    assert.equal(remoteRef(branch), null);
+  }
+  for (const says of retried) {
+    const { dir, branch } = pushing(says);
+    const pushed = await as.push(dir, branch);
+    assert.equal(tried(), 2, says);
+    assert.equal(remoteRef(branch), pushed.sha);
   }
 });
 

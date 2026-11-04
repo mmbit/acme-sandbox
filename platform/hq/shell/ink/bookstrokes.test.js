@@ -13,7 +13,7 @@ registerHooks({
     ),
 });
 const { SHAPE_P, shape } = await import('./bookinkmath.js');
-const { cut, inside, radius, rub } = await import('./bookstrokes.js');
+const { apart, cut, inside, radius, rub } = await import('./bookstrokes.js');
 const { fills } = await import('/__review/inkshape.js');
 
 const INK = { color: '#2a2352', size: 4 };
@@ -195,4 +195,47 @@ test("a point is inside a closed run of points or it isn't", () => {
   ];
   assert.ok(inside(sq, [5, 5]));
   assert.ok(!inside(sq, [15, 5]));
+});
+
+test("a word in a drawing's empty frame is as far from it as from its nearest line, not 0 for being in its box", () => {
+  // (an outline 280 by 220 round 150, 130, empty inside; a word in its middle)
+  const round = line(
+      Array.from({ length: 49 }, (_, i) => [
+        150 + 140 * Math.cos((i / 48) * 2 * Math.PI),
+        130 + 110 * Math.sin((i / 48) * 2 * Math.PI),
+      ]),
+    ),
+    word = line([
+      [110, 120],
+      [190, 140],
+    ]);
+  assert.ok(apart(word, round) > 64, `inside the box, ${apart(word, round)} px from the ink`);
+  assert.equal(
+    apart(
+      word,
+      line([
+        [100, 150],
+        [200, 110],
+      ]),
+    ),
+    0,
+    'crossing a line, 0',
+  );
+  assert.ok(
+    Math.abs(
+      apart(
+        line([
+          [12, 130],
+          [40, 130],
+        ]),
+        round,
+      ) - 2,
+    ) < 0.5,
+    'by the outline, as far as it is',
+  );
+  // (filled, its inside is ink; a box, all of it is)
+  assert.equal(apart(word, { ...round, fill: true }), 0, 'in a filled shape, 0');
+  assert.equal(apart(word, { x0: 100, y0: 100, x1: 300, y1: 200 }), 0, 'in a picture’s box, 0');
+  assert.equal(apart({ x0: 0, y0: 0, x1: 10, y1: 10 }, { x0: 20, y0: 0, x1: 30, y1: 10 }), 10, 'two boxes, their gap');
+  assert.equal(apart(line([[5, 5]]), line([[5, 9]])), 4, 'a dot, as a point');
 });

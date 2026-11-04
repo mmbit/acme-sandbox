@@ -4,7 +4,8 @@
 // (WebKit's), and at every frame: a flash would be a frame or two near the screen's middle, where the book last lay
 // open. Run it in WebKit too (--webkit).
 import assert from 'node:assert/strict';
-import { MINI, UPRIGHT, middleOf, touchOf } from './kit.mjs';
+import { MINI, UPRIGHT, middleOf } from './kit.mjs';
+import { hands } from './hands.mjs';
 import { HOLD } from '../shell/ink/bookswingmath.js';
 import { restsAsLoaded, watchedPage } from './start.mjs';
 
@@ -83,9 +84,11 @@ async function pull(page, dir, share) {
     at = i => [Math.round(x + (dir * share * width * i) / steps), Math.round(y)],
     finger = await fingerOf(page);
   await finger.down(at(0));
+  // (a frame between moves, however long the engine takes to draw one: headless WebKit's come about a second apart
+  // here.)
   for (let i = 1; i <= steps; i++) {
     await finger.move(at(i));
-    await page.waitForTimeout(16);
+    await page.evaluate(() => new Promise(r => requestAnimationFrame(() => r())));
   }
   // (still for less than HOLD: longer, the pull-in from shut would turn into a resize)
   await page.waitForTimeout(HOLD / 2);
@@ -98,21 +101,13 @@ async function pull(page, dir, share) {
   await finger.up();
   return seen;
 }
-// A finger at [x, y]: Chromium's own touch events; WebKit has none to play, so its mouse, the same pointer events to
-// the tab
+// A finger at [x, y] (hands.mjs)
 async function fingerOf(page) {
-  if (page.context().browser().browserType().name() !== 'chromium')
-    return {
-      down: at => page.mouse.move(...at).then(() => page.mouse.down()),
-      move: at => page.mouse.move(...at),
-      up: () => page.mouse.up(),
-    };
-  const cdp = await page.context().newCDPSession(page),
-    touch = touchOf(cdp);
+  const { touch } = await hands(page);
   return {
     down: at => touch.down([at]),
     move: at => touch.move([at], 1),
-    up: () => touch.up().then(() => cdp.detach()),
+    up: () => touch.up(),
   };
 }
 // Where the tab showed ahead of the finger pulling it dir: it trails the hand (the board's weight lags it), it never

@@ -135,8 +135,8 @@ const PAGES = {
     },
   ],
 };
-// (the same sketch, shown on two screens)
-PAGES[7] = PAGES[8] = PAGES[5];
+// (the same sketch, shown on two screens, and on one for a word near its right edge)
+PAGES[7] = PAGES[8] = PAGES[14] = PAGES[5];
 // (three scraps, for an arrow drawn from one onto the next and kept)
 PAGES[9] = PAGES[4];
 // (the board's wide drawing in the left column, its line reaching into the right, and two scraps after it)
@@ -154,6 +154,25 @@ PAGES[10] = [
 ];
 // (the board's small drawing in the left column, a scrap beside it and one under it)
 PAGES[11] = [PAGES[1][0], ...PAGES[4].slice(0, 2)];
+// (the board's duck in the left column: its round outline, 280 by 220 and empty inside, and its beak; a page of units,
+// and the same as a sketch)
+const ROUND = Array.from({ length: 49 }, (_, i) => [
+  150 + 140 * Math.cos((i / 48) * 2 * Math.PI),
+  130 + 110 * Math.sin((i / 48) * 2 * Math.PI),
+]);
+PAGES[12] = PAGES[13] = [
+  {
+    column: 0,
+    ink: [
+      ROUND,
+      [
+        [285, 110],
+        [320, 125],
+        [285, 140],
+      ],
+    ],
+  },
+];
 const SEED = {
   notebooks: [{ id: 1, kind: 'mine', name: 'My journal', created: NOW, updated: NOW }],
   pages: Object.keys(PAGES).map((id, k) => ({ id: Number(id), notebook: 1, pos: k, created: NOW, updated: NOW })),
@@ -374,6 +393,43 @@ test("an arrow from the board's drawing onto the scrap beside it is the scrap's,
   assert.deepEqual(cards(page), before, 'every scrap where it was');
 });
 
+// "QUAK" as the board writes it, a letter a stroke, its top-left at x, y on the page
+const quak = (x, y) =>
+  [0, 1, 2, 3].map(k => [
+    [x + 24 * k, y],
+    [x + 24 * k + 16, y + 24],
+    [x + 24 * k, y + 30],
+  ]);
+
+for (const [id, kind, open] of [
+  [12, 'a page of units', () => pageOf(12)],
+  [13, 'a sketch page', () => sketchOf(13, WIDTH)],
+])
+  test(`a word written in the empty frame of the board's drawing stays apart from it; by its ink, it joins it (${kind})`, async () => {
+    const shown = await open(),
+      { view } = shown,
+      { page } = view,
+      duck = placeOf(page, id * 100),
+      [cx, cy] = [duck.x + 150, duck.y + 130];
+    // (in the middle of the outline, over 64 px from every line of it, the frame's box all round it)
+    draw(view, quak(cx - 48, cy - 15));
+    const word = page.ink.slice(-4).map(el => el.g);
+    assert.ok(
+      word.every(g => g !== id * 100),
+      `QUAK isn't the duck's: ${word}`,
+    );
+    assert.equal(new Set(word).size, 1, 'its letters are one drawing of their own');
+    // (a word inside the outline by its left side, within 64 px of its ink)
+    draw(view, quak(duck.x + 22, duck.y + 115));
+    assert.ok(
+      page.ink.slice(-4).every(el => el.g === id * 100),
+      'written by the outline, it is the duck’s',
+    );
+    await save(shown);
+    const kept = page.ink.filter(el => el.g === page.ink.at(-8).g);
+    assert.equal(kept.length, 4, 'saved and read again, QUAK is still a unit of its own');
+  });
+
 test("a scrap's room grown keeps every scrap in its column", async () => {
   const { view } = await pageOf(4),
     { page } = view,
@@ -487,6 +543,20 @@ test("a sketch's strokes stay where they were drawn at any notebook width, the o
   assert.ok(far && page.groups.get(far.id).place.y < 0, 'a unit of its own where it was drawn, kept by the store');
   assert.ok(page.x <= -300 && page.y <= -200, `the page reaches it up and left: ${page.x}, ${page.y}`);
   assert.deepEqual(inked(page).slice(0, drawn.length), drawn, 'and nothing else moved');
+});
+
+test("a sketch page's word written apart near its right edge leaves the page the paper's width", async () => {
+  const { view } = await sketchOf(14, WIDTH),
+    { page } = view;
+  // (a short word near the paper's right edge, far from the board's word and the scrap)
+  draw(view, [
+    [
+      [WIDTH - 90, 520],
+      [WIDTH - 40, 540],
+    ],
+  ]);
+  assert.ok(page.ink.at(-1).g < 0, 'a unit of its own');
+  assert.equal(page.w, WIDTH, 'the page no wider than the paper: the board’s drawing has no paper of its own');
 });
 
 test("a unit another screen wrote on first keeps that screen's strokes as this screen's place for it is saved", async () => {

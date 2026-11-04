@@ -52,7 +52,10 @@ if (!shelved.ok || (response && (!response.ok || !read.notebooks.length))) {
       api,
       notebook: notebook.id,
       page: work?.page ?? notebook.pages.at(-1)?.id,
-      singlePage: !!work || notebook.kind === 'round',
+      // (a call's page alone, for its guest: callguests.ts.)
+      singlePage: !!work || notebook.kind === 'round' || notebook.kind === 'call',
+      // (and over the whole screen, the spread, with nothing of the room's beside it)
+      spread: notebook.kind === 'call',
       limits: read.limits,
     },
   });

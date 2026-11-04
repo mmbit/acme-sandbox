@@ -1,15 +1,14 @@
 // A book's chapters as its bookmarks, the board's on every book of its own (notebookchapters.js): Sketch, Asks and
-// Calls, or a round's (notebookrounds.ts) Guests, Asks and Advice (once the round is done). Real bookmarks (README, The
-// book's frame): each keeps one card colour for good and never lights up; the
-// page's own chapter shows by depth, its tab out of the block's top page, nearest the page and a little longer, the
-// others from deeper in. Beside HQ's page they stick out of the page block at the book's outer edge; on a page that is
-// the whole screen (a phone, an iPad upright) they stick out of it the same while the book swings, and once it has
-// landed they lie folded against its left edge like the pull tab, slivers alike with their icons, and a tap or a pull
-// brings them out over the margin (README, Bookmarks). They live on the cover's
-// edge (book.js), so they move and swing with the book (bookmarks.css). Asks carries the count of the asks still open
-// ("Asks · 2"). A tab opens the page its chapter was last on, at first its first page, and the page's own its first
-// page (over the overview, its chapter there); one with no pages yet opens an empty page of its own, its chapter's
-// name at its head, till another page or tab is chosen.
+// Calls, or a round's (notebookrounds.ts) Guests, Asks and Advice (once the round is done). Real ribbon bookmarks
+// (README, Bookmarks): each keeps one colour for good and never lights up, its icon on it and no words; the page's own
+// chapter shows by depth, its ribbon out of the block's top page, a little longer, the others from deeper in. Beside
+// HQ's page they stick out of the page block at the book's outer edge; on a page that is the whole screen (a phone, an
+// iPad upright) they stick out of it the same while the book swings, and once it has landed they lie folded against
+// its left edge like the pull tab, slivers alike with their icons, and a tap or a pull brings them out over the
+// margin. They live on the cover's edge (book.js), so they move and swing with the book (bookmarks.css). Asks' label
+// carries the count of the asks still open ("Asks, 2 open"). A tab opens the page its chapter was last on, at first
+// its first page, and the page's own its first page (over the overview, its chapter there); one with no pages yet
+// opens an empty page of its own, its chapter's name at its head, till another page or tab is chosen.
 // A round's Guests tab also opens a short list of its guests, one line each with how far their page is (nothing yet,
 // its notes, done), a tap opening their page.
 import { esc } from '../../util.js';
@@ -69,9 +68,6 @@ export function mountBookmarks({ edge, leaf }, pages) {
   s.blank = Object.assign(document.createElement('div'), { className: 'bk-mk-blank', hidden: true });
   edge.append(s.nav);
   leaf.append(s.panel, s.blank);
-  // (their height, which the book's pull tab keeps below: book.css.)
-  const book = leaf.closest('#book');
-  new ResizeObserver(() => book.style.setProperty('--bk-marks-h', `${s.nav.offsetHeight}px`)).observe(s.nav);
   s.nav.addEventListener('click', e => tapped(s, e.target.closest('[data-chapter]')?.dataset.chapter));
   pulling(s);
   s.panel.addEventListener('click', e => chose(s, e.target.closest('[data-name]')));
@@ -147,19 +143,17 @@ function draw(s) {
 function drawn(el, html) {
   if (el.html !== html) el.innerHTML = el.html = html;
 }
-// A chapter's tab, a bookmark or the overview's (bookshelftiles.js), in its own card colour (bookmarks.css
-// .bk-mk-tab[data-chapter]): its icon and name, Asks with the count of the asks still open ("Asks · 2"), marked
-// (aria-current, never lit) where the page shown is, data-empty with no pages yet. tag:
-// a bookmark's 'button', or the overview's heading
+// A chapter's bookmark, in its own colours (bookmarks.css .bk-mk-tab[data-chapter]): its icon alone, its name its
+// label, Asks' with the count of the asks still open ("Asks, 2 open"), marked (aria-current, never lit) where the page
+// shown is, data-empty with no pages yet. tag: a bookmark's 'button'
 export function chapterTab(book, chapter, { here, empty, tag = 'button' }) {
   const open = chapter === 'asks' ? (book.round?.asksOpen ?? book.asks?.open ?? 0) : 0,
     name = word(TITLES[chapter]),
     label = open > 0 ? `${name}, ${word('openCount', { n: open })}` : name,
-    count = open > 0 ? `<b class="bk-mk-count"> · ${open}</b>` : '',
     buttonAttributes = tag === 'button' ? ' type="button"' : '',
     flagAttributes = `${here ? ' aria-current="page"' : ''}${empty ? ' data-empty' : ''}`,
     opening = `<${tag} class="bk-mk-tab" data-chapter="${chapter}"${buttonAttributes} aria-label="${esc(label)}"${flagAttributes}>`;
-  return `${opening}${icon(chapter)}<span>${esc(name)}${count}</span></${tag}>`;
+  return `${opening}${icon(chapter)}</${tag}>`;
 }
 // The folded tabs out over the page's margin, or folded away again (on); beside HQ's page they're always out
 function out(s, on) {

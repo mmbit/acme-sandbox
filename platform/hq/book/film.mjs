@@ -1,7 +1,7 @@
 // book-check.mjs's film stories that no build thread's story walks, on HQ's
 // mock book, held like an iPad mini:
 // A morning: the book open on its newest page beside HQ's page; from its pages' list, the page sent yesterday, stamped
-// with its time, Moss's answer under its scrap with Moss's name, a box to tick it and a line to reply on; and on to the
+// with its time, Moss's answer under its scrap with Moss's name, a box to tick it and room to reply in; and on to the
 // newest page again.
 // HQ's page never under the book, at any width it keeps a page at: half an iPad mini's split screen, a split laptop
 // window, an iPad Air upright, a 10-inch iPad, a 13-inch, a big desktop. Open there, or folded and pulled open, the
@@ -29,16 +29,17 @@ export async function morningStory(browser, c) {
     // (the turn's picture of the leaf gone first: it copies the pages it turns.)
     await page.waitForFunction(() => !document.querySelector('#book .bk-turn-picture'), null, { timeout: 5000 });
     // (what went, and when)
-    // (the red stamp's words, its label)
+    // (the red stamp's words, its label: SENT and the time.)
     const stamp = shown.locator('[data-slot=stamp] svg');
-    assert.match(await stamp.getAttribute('aria-label'), /^Sent \w+ \d\d:\d\d/, 'the page stamped');
+    assert.match(await stamp.getAttribute('aria-label'), /^Sent \d\d:\d\d$/, 'the page stamped');
     assert.match(await shown.locator('.bk-scrap-words').first().textContent(), /headline be a touch warmer/);
     await slip.scrollIntoViewIfNeeded();
     const answer = slip.getByText('Warmer it is', { exact: false });
     assert.ok(await c.inBook(page, answer), "the answer under its scrap, on the book's paper");
     assert.equal(await slip.getByText('Moss', { exact: true }).isVisible(), true, 'under its name');
     assert.equal(await slip.getByRole('button', { name: 'Tick it: done' }).isVisible(), true, 'a box to tick');
-    assert.equal(await slip.getByRole('textbox', { name: 'Reply to Moss' }).isVisible(), true, 'a line to reply on');
+    // (no field under it: room to answer in, pulled out by its handle, Ink's README.
+    assert.equal(await slip.getByRole('button', { name: 'Room to answer Moss' }).isVisible(), true, 'room to reply');
     await c.shot('book-morning', page);
     await list.click();
     await page.locator('#book').getByRole('menuitem').last().click();

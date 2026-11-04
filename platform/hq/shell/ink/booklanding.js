@@ -4,14 +4,13 @@
 // lands on its page, where its photo shows; one saved with no mark to fly ('book:scrap' { id, page }, an artifact's
 // Save) is turned to.
 import { snapScale } from '/__review/snapshot.js';
+import { snipBox } from '/__review/snipbox.js';
 import { foley } from '../audio.js';
 import { pageOf, showGroup } from './bookgroupshow.js';
 import { scrapSize } from './notebookstack.js';
+import { photoOf } from './bookscrapdraw.js';
 import { TITLE_H, nextPlace } from './bookunits.js';
 
-// A snip as review mode cuts it (marks.js): the ink with this much room round it, at least this big
-const MARGIN = 24,
-  SNIP_MIN = { w: 240, h: 150 };
 // Into the handle the ink shrinks to this wide at most (px)
 const IN_HANDLE = 34;
 // How long a page made for a note may take to be read into the book (ms)
@@ -57,7 +56,9 @@ function landGroup(desk, pages, ask) {
     page = ask.page ?? pages.page()?.id ?? null;
   if (id && page) showGroup(pages, { page, id });
   ask.land = underGroups(desk, pages, page, from);
-  ask.aim = () => (id ? onPhoto(desk, pages, { id, page, from }) : null);
+  // (asked again on the way: on its photo once the scrap's read; till then where its page, read by now if it wasn't at
+  // the lift, lays its next unit.)
+  ask.aim = () => (id ? (onPhoto(desk, pages, { id, page, from }) ?? underGroups(desk, pages, page, from)) : null);
 }
 // Where the ink lands on a page: where the page lays its next unit, the store's next scrap (notebookscraps.ts), the
 // snip's picture as the store sizes it (notebookstack.js scrapSize), kept in the paper's visible part; on a page not
@@ -65,15 +66,17 @@ function landGroup(desk, pages, ask) {
 function underGroups(desk, pages, page, from) {
   const onPage = page && pages.page()?.id === page ? desk.querySelector('.bk-world .bk-page:not([hidden])') : null,
     d = desk.getBoundingClientRect(),
-    snip = snipOf(from),
+    snip = snipBox(from, innerWidth, innerHeight),
     // (the snip's picture is cut at the screenshot's pixels per px.)
     px = snapScale(innerWidth, innerHeight),
     { w, h } = scrapSize(snip.w * px, snip.h * px);
   const laid = pageOf(page),
     spot = (laid && nextPlace(laid, h)) ?? { x: 0, y: TITLE_H },
     origin = onPage?.getBoundingClientRect() ?? { left: d.left, top: d.top },
-    k = onPage ? scaleOf(onPage) : 1;
-  return within(inkIn({ x: origin.left + spot.x * k, y: origin.top + spot.y * k, w: w * k, h: h * k }, from), d);
+    k = onPage ? scaleOf(onPage) : 1,
+    // (the photo inset in its scrap's box by its margin, as the page draws it.)
+    p = photoOf({ ...spot, w, h });
+  return within(inkIn({ x: origin.left + p.x * k, y: origin.top + p.y * k, w: p.w * k, h: p.h * k }, from), d);
 }
 // Where the ink is on a scrap's photo once its page shows with the scrap read (the photo's one of the page's pictures,
 // in its group: bookpage.js draws it)
@@ -83,12 +86,26 @@ function onPhoto(desk, pages, { id, page, from }) {
   if (!photo || !onPage?.offsetWidth) return null;
   const o = onPage.getBoundingClientRect(),
     k = scaleOf(onPage),
-    rect = { x: o.left + photo.x * k, y: o.top + photo.y * k, w: photo.w * k, h: photo.h * k };
-  return { ...within(inkIn(rect, from), desk.getBoundingClientRect()), turn: photo.tilt ?? 0 };
+    p = photoOf(photo), // (inset by its margin, as the page draws it.)
+    rect = { x: o.left + p.x * k, y: o.top + p.y * k, w: p.w * k, h: p.h * k },
+    turn = photo.tilt ?? 0;
+  return { ...within(turned(inkIn(rect, from), rect, turn), desk.getBoundingClientRect()), turn };
+}
+// The ink's rect on a photo turned by deg round the photo's centre, as the page turns it: its centre moved with the
+// turn (the ink turns round its own centre in flight).
+function turned(ink, photo, deg) {
+  const a = (deg * Math.PI) / 180,
+    [cx, cy] = [photo.x + photo.w / 2, photo.y + photo.h / 2],
+    [dx, dy] = [ink.x + ink.w / 2 - cx, ink.y + ink.h / 2 - cy];
+  return {
+    ...ink,
+    x: cx + dx * Math.cos(a) - dy * Math.sin(a) - ink.w / 2,
+    y: cy + dx * Math.sin(a) + dy * Math.cos(a) - ink.h / 2,
+  };
 }
 // The ink's place on a picture of its snip (a rect on screen) as the snip has it
 function inkIn(rect, from) {
-  const snip = snipOf(from);
+  const snip = snipBox(from, innerWidth, innerHeight);
   return {
     x: rect.x + ((from.x - snip.x) / snip.w) * rect.w,
     y: rect.y + ((from.y - snip.y) / snip.h) * rect.h,
@@ -115,19 +132,6 @@ function inHandle(lip, from) {
   return { x: b.left - w / 2, y: b.top + b.height / 2 - h / 2, w, h, handle: true };
 }
 
-// The snip review mode cut round the ink: its box on HQ's page
-function snipOf(from) {
-  const W = innerWidth,
-    H = innerHeight,
-    w = Math.min(W, Math.max(SNIP_MIN.w, from.w + 2 * MARGIN)),
-    h = Math.min(H, Math.max(SNIP_MIN.h, from.h + 2 * MARGIN));
-  return {
-    x: Math.min(W - w, Math.max(0, from.x + from.w / 2 - w / 2)),
-    y: Math.min(H - h, Math.max(0, from.y + from.h / 2 - h / 2)),
-    w,
-    h,
-  };
-}
 // A rect moved (and shrunk, if it must) into a box, with a little room at its edges
 function within(r, box, pad = 12) {
   const f = Math.min(1, (box.width - 2 * pad) / Math.max(r.w, 1), (box.height - 2 * pad) / Math.max(r.h, 1)),

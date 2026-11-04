@@ -57,6 +57,8 @@ const LINES_KEPT = 100;
 const LINE_MAX_CHARS = 300;
 // A manager's problems kept from a setup call: one a helper, a few kinds of a few helpers each
 const PROBLEMS_KEPT = 20;
+// Each kept whole up to here: Docker names a digest-pinned image (~95 characters) twice before its reason
+const PROBLEM_MAX_CHARS = 1_000;
 // The helper sends at most 4 KB of a run's output a beat (platform/helper)
 const LINES_MAX_CHARS = 8_000;
 // An ended run's lines stay this long for its job to read the last of them (hq run lines polls every 5 s)
@@ -206,7 +208,7 @@ export function managerHeard(machine: number, said: unknown) {
   const problems = Object.entries(isMap(said) && isMap(said.problems) ? said.problems : {})
     .filter(([name, message]) => /^[\w.-]{1,80}$/.test(name) && typeof message === 'string')
     .slice(0, PROBLEMS_KEPT)
-    .map(([name, message]) => [name, (message as string).replace(/\p{Cc}/gu, ' ').slice(0, LINE_MAX_CHARS)]);
+    .map(([name, message]) => [name, (message as string).replace(/\p{Cc}/gu, ' ').slice(0, PROBLEM_MAX_CHARS)]);
   db.prepare(
     'update machines set manager_seen = ?, manager_code = ?, manager_follows = ?, manager_problems = ? where id = ?',
   ).run(

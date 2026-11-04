@@ -97,21 +97,19 @@ async function noneOpen(page, play, count, c, name) {
   await c.shot(`for-you-${name}-none-open`, page);
 }
 
-// The page's long title in its head ends in an ellipsis, its pencil whole and short of the counter (bookgroups.css)
+// The page's long title on the view ends in an ellipsis, short of the counter (bookdesk.css .bk-view-head)
 async function titleEnds(page, count, c, name) {
   await c.shot(`for-you-${name}-title`, page);
   const seen = await page.evaluate(() => {
-      const shown = [...document.querySelectorAll('#book .bk-page')].find(p => !p.hidden),
-        b = shown.querySelector('.bk-title-tap'),
-        words = b.firstElementChild;
+      const words = document.querySelector('#book .bk-view-head .bk-page-title');
       return {
         cut: words.scrollWidth > words.clientWidth + 1 && getComputedStyle(words).textOverflow === 'ellipsis',
-        end: b.querySelector('svg').getBoundingClientRect().right,
+        end: words.getBoundingClientRect().right,
       };
     }),
     counter = await count.boundingBox();
   assert.ok(seen.cut, `${name}: the long title ends in an ellipsis`);
-  assert.ok(seen.end <= counter.x, `${name}: its pencil (to ${seen.end}) short of the counter (from ${counter.x})`);
+  assert.ok(seen.end <= counter.x, `${name}: the title (to ${seen.end}) short of the counter (from ${counter.x})`);
 }
 // The seed with two more cards on the sent page's groups: one open on its scrap, one answered on its first drawing
 function seeded() {

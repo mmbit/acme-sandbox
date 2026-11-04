@@ -124,7 +124,9 @@ function fly(layer, from, land, aim) {
 function pathTo(from, land) {
   const c0 = centre(from),
     c1 = centre(land),
-    s1 = Math.max(0.04, Math.min(land.w / Math.max(from.w, 1), land.h / Math.max(from.h, 1))),
+    // (it ends as big as the rect each way, as a photo drawn there stretches its ink.)
+    sx = Math.max(0.04, land.w / Math.max(from.w, 1)),
+    sy = Math.max(0.04, land.h / Math.max(from.h, 1)),
     up = { x: c0.x, y: c0.y - RISE_PX },
     dist = Math.hypot(c1.x - up.x, c1.y - up.y),
     ctrl = { x: (up.x + c1.x) / 2, y: Math.min(up.y, c1.y) - Math.min(120, Math.max(24, dist * 0.22)) },
@@ -132,10 +134,14 @@ function pathTo(from, land) {
   return t => {
     if (t <= PICKUP) {
       const u = easeOut(t / PICKUP);
-      return { ...lerp(c0, up, u), s: 1 + (GROW - 1) * u, r: TILT_DEG * u };
+      const s = 1 + (GROW - 1) * u;
+      return { ...lerp(c0, up, u), sx: s, sy: s, r: TILT_DEG * u };
     }
     const u = easeInOut((t - PICKUP) / (1 - PICKUP));
-    return { ...bezier(up, ctrl, c1, u), s: GROW + (s1 - GROW) * u, r: TILT_DEG + (turn - TILT_DEG) * u };
+    return {
+      ...bezier(up, ctrl, c1, u),
+      ...{ sx: GROW + (sx - GROW) * u, sy: GROW + (sy - GROW) * u, r: TILT_DEG + (turn - TILT_DEG) * u },
+    };
   };
 }
 // A path that leaves another from t0 on, easing over to a new one by the end
@@ -144,18 +150,18 @@ const bent = (path, t0, next) => t => {
   if (t <= t0) return a;
   const b = next(t),
     u = easeInOut((t - t0) / (1 - t0));
-  return { ...lerp(a, b, u), s: a.s + (b.s - a.s) * u, r: a.r + (b.r - a.r) * u };
+  return { ...lerp(a, b, u), sx: a.sx + (b.sx - a.sx) * u, sy: a.sy + (b.sy - a.sy) * u, r: a.r + (b.r - a.r) * u };
 };
 // A path as the host's keyframes: moved from where the ink is, the ink fading from fadeFrom on
 function framesOf(path, from, fadeFrom) {
   const c0 = centre(from);
   return Array.from({ length: STEPS + 1 }, (_, i) => {
     const t = i / STEPS,
-      { x, y, s, r } = path(t);
+      { x, y, sx, sy, r } = path(t);
     return {
       offset: t,
       opacity: t <= fadeFrom ? 1 : 1 - easeIn((t - fadeFrom) / (1 - fadeFrom)),
-      transform: `translate(${(x - c0.x).toFixed(2)}px, ${(y - c0.y).toFixed(2)}px) rotate(${r.toFixed(2)}deg) scale(${s.toFixed(4)})`,
+      transform: `translate(${(x - c0.x).toFixed(2)}px, ${(y - c0.y).toFixed(2)}px) rotate(${r.toFixed(2)}deg) scale(${sx.toFixed(4)}, ${sy.toFixed(4)})`,
     };
   });
 }

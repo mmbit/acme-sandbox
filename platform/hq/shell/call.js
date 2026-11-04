@@ -30,6 +30,7 @@ import { startDrop, stopDrop } from './calldrop.js';
 import { forgetHeard, heldCall, holdCall, letCallGo, lostCall, rejoined, resend, sendFrame } from './callheld.js';
 import { FROM_LINE as DRAWING, reconnected, startDrawing, stopDrawing } from './ink/calldraw.js'; // (Ink's folder)
 import { FROM_LINE as DRIVING, stopDriving, wiped } from './calldrive.js';
+import { guestKey } from './callguest.js';
 import { ceoName, closeTool, openIntercom, openComputer, intercomOpen, notesComing, tell, watchCall } from './desk.js';
 
 const $ = s => document.querySelector(s);
@@ -192,6 +193,7 @@ const FROM_LINE = {
     c.face.lit(true); // (the agent's little screen switches on)
     picturesLive(c);
     shareKey(c); // (Show my screen, once picked up)
+    guestKey(c);
     startDrawing(c);
   },
   state(c, ev) {
@@ -239,6 +241,7 @@ const FROM_LINE = {
   clear: c => stopPlayback(c),
   picture: (c, ev) => pictureState(c, ev),
   note: DRAWING.note,
+  mark: DRAWING.mark,
   ask: DRAWING.ask,
   ink: DRAWING.ink,
   open: DRIVING.open,

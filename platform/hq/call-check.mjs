@@ -23,7 +23,7 @@
 // It rings from the tap, while the microphone starts, until the line picks up, and the agent's handset clacks then, both
 // in the call's own sound, which its speaker plays while the microphone starts, and the call screen says it's dialling
 // until the line picks up. The agent's little screen is dark while it rings, and switches on at pickup and off at either
-// side's hang-up. On a 320 px phone its three keys share one row inside the screen, in every look, and on a phone on its side, in a short
+// side's hang-up. On a 320 px phone its four keys share one row inside the screen, in every look, and on a phone on its side, in a short
 // laptop window or on a short phone, upright or on its side, under the note that the screen isn't reaching the agent they
 // all show without scrolling.
 // With an artifact open mid-call on the iPad mini, the agent's face stays drawn on its little screen and in the bubble.
@@ -721,8 +721,8 @@ async function shareScreen() {
 }
 await shareScreen();
 
-// On a 320 px phone the call's three keys share one row in every look, inside the screen: the picture, Share and Hang up
-// as its symbol, still named Hang up, each key's words on one line.
+// On a 320 px phone the call's four keys share one row in every look, inside the screen: the picture, Share as its
+// symbol, still named Share, Add a guest and Hang up as its symbol, still named Hang up, each key's words on one line.
 async function keysOnOneRow() {
   for (const look of lookNames()) {
     const { context, page, errors } = await callPage({ width: 320, height: 640 });
@@ -745,14 +745,77 @@ async function keysOnOneRow() {
     }));
     await context.close();
     assert.deepEqual(errors, []);
-    assert.deepEqual(keys.map(k => k.name), ['Show a picture', 'Share', 'Hang up'], `${look}: ${JSON.stringify(keys)}`);
+    assert.deepEqual(keys.map(k => k.name), ['Show a picture', 'Share', 'Add a guest', 'Hang up'], `${look}: ${JSON.stringify(keys)}`);
     assert.ok(keys.every(k => Math.abs(k.top - keys[0].top) < 4 && k.inside), `${look}: the call's keys don't share one row: ${JSON.stringify(keys)}`);
     assert.ok(keys.every(k => k.symbol), `${look}: a key's symbol is hidden: ${JSON.stringify(keys)}`);
-    assert.deepEqual(keys.map(k => k.lines), [[], [1], []], `${look}: a key's words wrap, or Hang up shows more than its symbol: ${JSON.stringify(keys)}`);
+    assert.ok(keys.every(k => k.lines.every(n => n <= 1)) && !keys[3].lines.length, `${look}: a key's words wrap, or Hang up shows more than its symbol: ${JSON.stringify(keys)}`);
   }
   console.log('ok: on a 320 px phone the call\'s keys share one row in every look, Hang up as its symbol');
 }
 await keysOnOneRow();
+
+// Add a guest: once picked up, the key opens a card over the transcript (their name, address and language, the call's
+// own first), and their link comes back as a QR code and the link, all inside the screen above the keys, on a phone
+// and on the board's laptop.
+async function guestCard() {
+  for (const viewport of [{ width: 390, height: 844 }, { width: 1440, height: 900 }]) {
+    const { context, page, errors } = await callPage(viewport);
+    const asked = [];
+    await context.route(`${base}/api/calls/guest`, r => { asked.push(r.request().postDataJSON()); r.fulfill({ json: { link: 'https://hq.example.org/guest/abcdefghijklmnopqrstuvwxyz0123456789', name: 'Ilse', address: 'i…@example.org' } }); });
+    await pickUp(context);
+    await page.goto(`${base}/?intro=0&open=intercom`);
+    await page.click('#call');
+    await page.waitForFunction(() => !document.querySelector('#call-guest').disabled);
+    await page.click('#call-guest');
+    await page.fill('#call-guest-card [name=name]', 'Ilse');
+    await page.fill('#call-guest-card [name=email]', 'ilse@example.org');
+    const form = await page.$eval('#call-guest-card', el => { const r = el.getBoundingClientRect(); return [r.top >= 0, r.bottom <= innerHeight, r.left >= 0, r.right <= innerWidth]; });
+    if (process.env.SHOTS) await page.screenshot({ path: `${process.env.SHOTS}/guest-form-${viewport.width}.png` });
+    await page.click('#call-guest-card [type=submit]');
+    await page.waitForSelector('#call-guest-card .guest-qr');
+    const qr = await page.$eval('#call-guest-card', el => { const r = el.getBoundingClientRect(), q = el.querySelector('.guest-qr').getBoundingClientRect(), keys = document.querySelector('#call-screen .row').getBoundingClientRect(); return [r.top >= 0, r.bottom <= keys.top, q.width >= 120, el.querySelector('.guest-link').textContent]; });
+    if (process.env.SHOTS) await page.screenshot({ path: `${process.env.SHOTS}/guest-qr-${viewport.width}.png` });
+    await context.close();
+    assert.deepEqual(errors, []);
+    assert.deepEqual(asked.map(a => [a.name, a.email, a.lang]), [['Ilse', 'ilse@example.org', 'en']]);
+    assert.deepEqual(form, [true, true, true, true], `${viewport.width}: the guest card runs off the screen`);
+    assert.deepEqual(qr, [true, true, true, 'https://hq.example.org/guest/abcdefghijklmnopqrstuvwxyz0123456789'], `${viewport.width}: the QR card ${JSON.stringify(qr)}`);
+  }
+  console.log('ok: Add a guest asks for their name and address, then shows their QR code and link above the call\'s keys');
+}
+await guestCard();
+
+// The marks on the call's notes page from any screen (the board's iPad, its guest's) reach the line once the page rests,
+// each once per change, with its updated: never what was on it at pickup, never the agent's own.
+async function marksReachTheLine() {
+  const { context, page, errors } = await callPage();
+  const unit = (id, by, kind, updated) => ({ id, by, kind, updated, children: [], ink: [], texts: [], pictures: [] });
+  let groups = [unit(1, 'board', 'scrap', 't0')];
+  await context.route(u => u.pathname === '/api/notebooks/pages/groups' && u.searchParams.get('page') === '1', r => r.fulfill({ json: { groups } }));
+  const marks = [];
+  await pickUp(context, () => {}, (e, ws) => { if (e.type === 'mark') { marks.push([e.id, e.updated]); ws.send(JSON.stringify(e)); } });
+  await page.goto(`${base}/?intro=0&open=intercom`);
+  await page.click('#call');
+  await page.waitForFunction(() => !document.querySelector('#call-guest').disabled);
+  await page.waitForTimeout(2000); // (the page as it was at pickup, read)
+  const news = () => page.evaluate(() => document.dispatchEvent(new CustomEvent('book:notebook', { detail: { page: 1 } })));
+  groups = [...groups, unit(2, 'guest:3', 'drawing', 't1'), unit(3, 'juno', 'scrap', 't1')];
+  await news();
+  await page.waitForTimeout(500);
+  const early = [...marks];
+  await page.waitForTimeout(1500);
+  groups = groups.map(g => (g.id === 2 ? { ...g, updated: 't2' } : g));
+  await news();
+  await page.waitForTimeout(2000);
+  await news(); // (nothing changed: nothing sent)
+  await page.waitForTimeout(2000);
+  await context.close();
+  assert.deepEqual(errors, []);
+  assert.deepEqual(early, [], 'a mark went before the page rested');
+  assert.deepEqual(marks, [[2, 't1'], [2, 't2']], `the line heard ${JSON.stringify(marks)}`);
+  console.log('ok: the marks on the call\'s page reach the line as they rest, once per change, never the agent\'s or what was there');
+}
+await marksReachTheLine();
 
 // On a phone on its side, in a short laptop window and on a short phone, upright or on its side, with the note that the
 // screen isn't reaching the agent above the transcript, the call's keys show without scrolling, in every look and in both

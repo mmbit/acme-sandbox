@@ -10,10 +10,14 @@ import { en } from '../shell/ink/notebookwordsen.js';
 
 // a home-screen app's blurred band at the top (style.css's standalone --sat)
 const SAT_PX = 48;
+// how far below the blur and above the screen's foot the spine takes no press (booktear.js CORNER_PX, at most an
+// eighth of the screen's height)
+export const cornerOf = height => Math.min(88, height / 8);
 
 // On the board's iPad held upright, the book spread over HQ and a home-screen app's blur at the top: the Pencil and a
-// finger moved down the spine, and a finger pressed at the spine under the blur or on a tool and drawn to the left,
-// tear nothing; drawn to the left from the spine below them, the page comes off
+// finger moved down the spine, and a finger pressed at the spine under the blur, by the top right corner (where iPadOS
+// resizes the window) or on a tool and drawn to the left, tear nothing; drawn to the left from the spine's grip, the
+// page comes off
 export async function notATearStory(browser, c) {
   const context = await c.hqIn(browser, UPRIGHT, { hasTouch: true });
   await blurred(context, { sat: SAT_PX });
@@ -21,7 +25,7 @@ export async function notATearStory(browser, c) {
   try {
     await page.goto(`${c.base}/?intro=0`);
     await restsOpen(page, c, UPRIGHT);
-    const hand = await inputs(browser, page),
+    const hand = await inputs(page),
       [x, y] = await spineOf(page);
     await watchTears(page);
     await hand.stroke('pen', [
@@ -43,6 +47,11 @@ export async function notATearStory(browser, c) {
       return [r.right - 4, r.top + r.height / 2];
     });
     await hand.stroke('touch', [key, [key[0] - 160, key[1] + 10]]);
+    // (the board's: from the top right corner, below the blur, where iPadOS resizes the window)
+    await hand.stroke('touch', [
+      [x, SAT_PX + 30],
+      [x - 160, SAT_PX + 40],
+    ]);
     await page.waitForTimeout(QUIET_MS);
     assert.equal(await page.evaluate(() => window.__tore), false, 'nothing torn off');
     await c.shot('share-not-a-tear', page);
@@ -78,15 +87,15 @@ export async function dragTo(page, how, kind, held = async () => {}) {
 }
 // A hand pressed at a point: the mouse, or a finger or the Pencil held across awaits
 async function handOf(page, how, at) {
-  if (how !== 'mouse') return (await inputs(page.context().browser(), page)).hold(how, at);
+  if (how !== 'mouse') return (await inputs(page)).hold(how, at);
   await page.mouse.move(...at);
   await page.mouse.down();
   return { move: to => page.mouse.move(...to, { steps: 10 }), up: () => page.mouse.up() };
 }
-// A point at the page's right edge, where the spine is, as near the top of the page as a hand would press there: below
-// the status bar's blur, on the page and not on a control or anything over it. Once nothing's turning (a turn's picture
-// of the page is over it), and the page can be torn (booktear.js mounted after the first page: its row in the dots'
-// menu, there for a page not yet sent).
+// A point at the page's right edge, where the spine is, as near the top of its grip as a hand would press there: below
+// the status bar's blur and cornerOf() clear of it, on the page and not on a control or anything over it. Once
+// nothing's turning (a turn's picture of the page is over it), and the page can be torn (booktear.js mounted after the
+// first page: its row in the dots' menu, there for a page not yet sent).
 export async function spineOf(page) {
   await page.waitForFunction(
     () =>
@@ -95,17 +104,18 @@ export async function spineOf(page) {
     null,
     { timeout: 10_000 },
   );
-  const at = await page.evaluate(() => {
+  const at = await page.evaluate(corner => {
     const paper = document.querySelector('#book .bk-paper').getBoundingClientRect(),
       desk = document.querySelector('#book .bk-desk').getBoundingClientRect(),
-      x = Math.min(paper.right, innerWidth) - 8;
-    for (let y = desk.top + 40; y < desk.bottom; y += 8) {
+      x = Math.min(paper.right, innerWidth) - 8,
+      top = desk.top + parseFloat(getComputedStyle(document.querySelector('#book .bk-desk')).paddingTop) + corner;
+    for (let y = top + 8; y < Math.min(desk.bottom, innerHeight) - corner; y += 8) {
       const under = document.elementFromPoint(x, y);
       if (under?.closest('#book .bk-leaf') && !under.closest('.bk-controls > *, button, a, input, [contenteditable]'))
         return [x, y];
     }
     return null;
-  });
+  }, cornerOf(page.viewportSize().height));
   assert.ok(at, 'a place to press at the spine');
   return at;
 }
@@ -127,7 +137,7 @@ export const targetsShown = page =>
     };
   });
 // Whether a page comes off from now on: window.__tore once the page is in hand or the targets show
-const watchTears = page =>
+export const watchTears = page =>
   page.evaluate(() => {
     window.__tore = false;
     const torn = () => !!document.querySelector('#book > .bk-held, #book .bk-controls[data-targets]');

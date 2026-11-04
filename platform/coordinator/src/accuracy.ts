@@ -1,7 +1,7 @@
 // How well HQ's estimates held (hq estimate --accuracy): each stored prediction (predictions.ts) set against what
 // happened, its agent time and its ETA, the worst misses with what moved; and the matching tried again on the work done
 // lately, each job sized from the jobs done before it was queued, beside the simpler ways it could be done.
-import { db } from './db.ts';
+import { db, scrubbed } from './db.ts';
 import { workBranch } from './jobs.ts';
 import {
   ORIGIN,
@@ -34,6 +34,7 @@ export async function report(ask: taskaudit.AuditAsk) {
   await turn('the diagnostic pool', pastJobsSoon());
   const { ways, byThread, bySchedule } = replayed(`${days}/${ask.until ?? 'live'}`, window);
   await turn('the matching diagnostics');
+  await latency.exclude(scrubbed()); // (the titles read after a save's scrub: db.ts scrubSaved)
   const kept = db.prepare(KEPT).all(since, window.until) as Kept[];
   return {
     tasks,

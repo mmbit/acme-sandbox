@@ -19,9 +19,15 @@ What it adds:
   among them: a voice note). With any other
   tool, in the overview or with the book folded, the Pencil is the page's, as in a browser; in a browser nothing of
   this loads.
-- **Signing in with a code.** A passkey works in an app only when Apple ties the app to HQ's domain (associated
-  domains, a paid developer account). So HQ's sign-in page gives way to its one-time device code (`/pair`): on a
-  device already signed in, the Notebook's Shelf › Devices shows the code.
+- **Signing in with the passkey, in Apple's sign-in sheet.** A passkey works in a web view only when Apple ties the
+  app to HQ's domain (associated domains, a paid developer account). So when HQ asks for its sign-in, the app opens
+  HQ's sign-in page in Apple's sheet (ASWebAuthenticationSession), a browser of its own where the passkey works: tap
+  Sign in the app, unlock with the passkey as in Safari, and HQ opens in the app. The unlock gives the sheet a
+  one-time code (good once, for a minute) instead of a session, the app trades it for its own session with a secret
+  only the app that opened the sheet holds, and nothing of the sheet's is kept (coordinator `auth.ts`,
+  `createAppCode`). The secret stops a code taken on the way, not another app that opens the sign-in page itself:
+  unlock in the sheet only when HQ's app has just opened it. Only the associated domains close that. A pair code
+  (`/pair`) never signs a device in: it opens one shared page to view.
 - **The microphone without asking again**: HQ's own pages get it once the app has the system's permission.
 
 ## The bridge
@@ -66,5 +72,6 @@ An app signed with a personal team runs for 7 days, then needs another Run from 
 
 Nothing here has been built on a Mac yet. The first Run proves what no check here can: that it compiles, that
 PencilKit's gesture draws from the web view it's moved onto (the canvas's own touch stays off, so fingers reach the
-page), and that the Pencil off the paper still presses the tools. The page's side is checked in a browser
-(`platform/hq/book/native.mjs`, the book's check).
+page), that the Pencil off the paper still presses the tools, and that the passkey signs in through the sheet. The
+page's side is checked in a browser (`platform/hq/book/native.mjs`, the book's check), and the sign-in's server side in
+the coordinator's `security.test.ts`.

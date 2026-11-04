@@ -12,12 +12,14 @@
 // or its bubble, goes too, and stays taped where it was. Things deleted crumple over the paper, already gone
 // underneath: the store has them gone at once, a press goes through the crumple, and it falls straight down past the
 // screen's foot within two seconds.
-// (the gestures and the presses that aren't a tear: tearing.mjs; a long page's: sharelong.mjs.)
+// (the gestures and the presses that aren't a tear: tearing.mjs; torn where a hand finds it: tearhand.mjs; a long
+// page's: sharelong.mjs.)
 import assert from 'node:assert/strict';
 import { playLine } from './call.mjs';
 import { freePage, line, paperBox, pick, savedWhere, tool } from './mouse.mjs';
 import { DESKTOP, QUIET_MS, crumpled, fellAway, until } from './kit.mjs';
 import { dragTo, notATearStory, spineOf, targetsShown, tearOffMenu } from './tearing.mjs';
+import { tearHandStories } from './tearhand.mjs';
 import { watchedPage } from './start.mjs';
 
 // longer than a native drag's light lasts (calldrop.js LIT_MS, 300 ms), so a light that goes out is caught
@@ -28,8 +30,9 @@ export function shareStories(c) {
   return {
     "a page torn off at its spine onto PNG and PDF with a finger, a mouse and the Pencil; the dots' Tear off and send, the same as a menu; onto a call's window":
       browser => shareStory(browser, c),
-    'a press moved down the spine, under the blur or on the tools is never a tear': browser =>
+    'a press moved down the spine, under the blur, at its top corner or on the tools is never a tear': browser =>
       notATearStory(browser, c),
+    ...tearHandStories(c),
     'things deleted crumple over the paper, gone at once underneath, never in the way': browser =>
       crumpleStory(browser, c),
   };
@@ -174,7 +177,7 @@ async function tapedOntoTheCall(c, s, free) {
   await page.waitForFunction(
     () =>
       !document.querySelector('#book .bk-turn-picture') &&
-      document.querySelector('#book .bk-page:not([hidden]) .bk-page-title')?.textContent.includes('Shop: the price'),
+      document.querySelector('#book .bk-view-head .bk-page-title')?.textContent.includes('Shop: the price'),
   );
   const box = await paperBox(page);
   await pick(page, 'Select');

@@ -307,7 +307,7 @@ const laidOut = page =>
     return {
       units: [...view.querySelectorAll('.bk-unit')].map(el => box(el)),
       words: [...view.querySelectorAll('.bk-words')].map(el => box(el)),
-      // (the post-it's paper reaches 6 px round its words: booktools.css)
+      // (the post-it's paper reaches 6 px round its words: bookgroups.css .bk-unit[data-note].)
       notes: [...view.querySelectorAll('.bk-typed[data-note]')].map(el => box(el, 6)),
     };
   });

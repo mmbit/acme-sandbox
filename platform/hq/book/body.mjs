@@ -6,7 +6,8 @@
 // a phone the book over HQ, its page the whole screen, its tab in reach; a touch on the tab taken from the browser's swipe between pages; a page turned forward and back by one turn played either way. Each
 // asserts what the board sees: boxes, frames, words. (the hardcover's tab and edge) (the book's least, BOOK.min:
 import assert from 'node:assert/strict';
-import { MINI, middleOf, pixelsIn, touchOf } from './kit.mjs';
+import { MINI, middleOf, pixelsIn } from './kit.mjs';
+import { hands } from './hands.mjs';
 import { BOOK } from '../shell/ink/booklayout.js';
 
 // (longer than a flick's reading of the last moves, booklayout.js: let go where it is)
@@ -96,8 +97,7 @@ async function tapped(browser, c) {
 }
 
 // Shut, the tab is at the screen's edge, where Safari's swipe between pages starts: every touch on it is taken from the
-// browser (its touchstart's default prevented), its tap opens the book once, and a finger's pull still pulls it (in
-// Chromium, whose touches a story can play).
+// browser (its touchstart's default prevented), its tap opens the book once, and a finger's pull still pulls it.
 async function touched(browser, c) {
   const { page, errors, done } = await c.hq(browser, MINI, { hasTouch: true, deviceScaleFactor: 1 });
   try {
@@ -114,20 +114,13 @@ async function touched(browser, c) {
     await c.settled(page, 'open');
     await page.waitForTimeout(600);
     assert.equal(await page.evaluate(() => document.documentElement.dataset.book), 'open', 'a tap opened it once');
-    // (a finger's pull: Chromium's own touch events, which WebKit has none of to play)
-    const pulled = page.context().browser().browserType().name() === 'chromium';
-    if (pulled) {
-      await putAway(page, c);
-      const [x, y] = await centre();
-      await touchOf(await page.context().newCDPSession(page)).stroke([[x, y]], [[x - 480, y]]);
-      await c.settled(page, 'open');
-    }
+    // (a finger's pull.)
+    await putAway(page, c);
+    const [x, y] = await centre();
+    await (await hands(page)).touch.stroke([[x, y]], [[x - 480, y]]);
+    await c.settled(page, 'open');
     const taken = await page.evaluate(() => window.taken);
-    assert.deepEqual(
-      taken,
-      [true, true, ...(pulled ? [true] : [])],
-      `which touches were taken from the browser: ${taken}`,
-    );
+    assert.deepEqual(taken, [true, true, true], `which touches were taken from the browser: ${taken}`);
     noErrors(errors);
   } finally {
     await done();

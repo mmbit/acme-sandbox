@@ -111,9 +111,17 @@ export function namedNotebook() {
   };
 }
 
+// (My journal with a line on today's page: a blank one would go as New page leaves it, README's rules.
+function writtenToday() {
+  const seed = namedNotebook(),
+    points = Array.from({ length: 12 }, (_, i) => [200 + i * 20, 300 + 8 * Math.sin(i), 0.5, i * 16]);
+  const line = { id: 1, page: 2, kind: 'drawing', by: 'board', ink: [{ color: '#2a2352', size: 6, points }] };
+  return { ...seed, groups: [{ ...line, texts: [], pictures: [], created: seed.pages[1].created }] };
+}
+
 // (in headless WebKit: the never-finishing swing, as overview's note says)
 async function names(browser, c) {
-  const context = await c.hqIn(browser, MINI, { notebooks: namedNotebook() });
+  const context = await c.hqIn(browser, MINI, { notebooks: writtenToday() });
   const page = await context.newPage(),
     errors = errorsOf(page);
   try {
@@ -127,7 +135,8 @@ async function names(browser, c) {
     await press(page, 'New page');
     await button(page, "The notebook's pages: Untitled page, 3 of 3", true).waitFor({ state: 'attached' });
     assert.equal(await where(), "The notebook's pages: Untitled page, 3 of 3");
-    // written on, it keeps its name
+    // written on, it keeps its name (once the new page has turned over.)
+    await page.waitForFunction(() => !document.querySelector('#book .bk-turn-picture, #book .bk-turn-leaf'));
     const desk = await page.locator('#book .bk-desk').boundingBox();
     await page.mouse.move(desk.x + 120, desk.y + 200);
     await page.mouse.down();

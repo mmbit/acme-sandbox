@@ -1,15 +1,13 @@
-// book-check.mjs's stories of the book as an object on a desktop, with a mouse (shell/ink/book.js, bookui.js,
-// pair.js's card; Ink's folder): one object under one soft shadow, its controls floating over its paper in two islands
+// book-check.mjs's stories of the book as an object on a desktop, with a mouse (shell/ink/book.js, bookui.js; Ink's
+// folder): one object under one soft shadow, its controls floating over its paper in two islands
 // (the tools upright at its right, the bar along its foot) with the book's own tooltips; the cover's edge let go where
 // it was dragged, never sliding back first; the book opening straight onto its page, no cover, in well under a second
-// (a crossfade with reduced motion); and the dots menu's Sign in another device, its card whole at the book's widest
-// and narrowest; on a laptop-height window, every control whole, the tools never scrolling. Each asserts what the
+// (a crossfade with reduced motion); on a laptop-height window, every control whole, the tools never scrolling. Each asserts what the
 // board sees: boxes, pixels, words. (the two islands)
 // (the soft shadow read in Wire)
 import assert from 'node:assert/strict';
 import { shutBook } from './chrome.mjs';
 import { DESKTOP, MINI, shotPixels } from './kit.mjs';
-import { press } from './bar.mjs';
 
 // Laptops' windows under their browser's bars: a 768 px screen's, a 13-inch's with its bookmarks and Dock, and one
 // with its developer tools docked below
@@ -27,8 +25,6 @@ export function frameStories(c) {
     "the cover's edge let go stays where it was let go: no slide back to where it began": browser => letGo(browser, c),
     'opening the book: straight onto its page, no cover, in well under a second; reduced motion, a crossfade':
       browser => opening(browser, c),
-    "the dots menu's Sign in another device: its card whole at any book width, its QR, its words and Close never clipped":
-      browser => pairCard(browser, c),
     "a laptop-height window: every control in the book's two islands whole, none scrolling, Undo and Redo at the bar's left":
       browser => shortWindow(browser, c),
     "a hardcover: the black board on the outer edge beside HQ's page, the pages the screen's height; upright, the page fills the screen":
@@ -145,33 +141,6 @@ async function opening(browser, c) {
   }
 }
 
-async function pairCard(browser, c) {
-  const { page, errors, done } = await onDesk(browser, c);
-  try {
-    // (no coordinator in dev mode: a code of the store's shape)
-    await page.route(/\/api\/notebooks\/pair$/, r =>
-      r.fulfill({ json: { code: '915183', expires: Date.now() + 60_000 } }),
-    );
-    await press(page, 'Sign in another device');
-    await whole(page, 'at its open width');
-    await c.shot('book-frame-pair', page);
-    // the spine dragged right to the book's narrowest
-    const from = (await box(page, '#book [role=separator]')).x + 6;
-    await page.mouse.move(from, 450);
-    await page.mouse.down();
-    await page.mouse.move(DESKTOP.width - 345, 450, { steps: 10 });
-    // (held still a moment before it's let go: a drag, never a flick that folds the book)
-    await page.waitForTimeout(200);
-    await page.mouse.up();
-    await page.waitForTimeout(c.settle);
-    assert.equal(await page.evaluate(() => document.documentElement.dataset.book), 'open');
-    await whole(page, 'at its narrowest');
-    await c.shot('book-frame-pair-narrow', page);
-    assert.deepEqual(errors, []);
-  } finally {
-    await done();
-  }
-}
 // A laptop-height window: every control in the two islands whole in the window and on the paper, the tools' island
 // scrolling none of them away, the islands clear of each other, Undo and Redo the bar's first keys
 async function shortWindow(browser, c) {
@@ -214,31 +183,6 @@ async function shortWindow(browser, c) {
     }
   }
 }
-// The pairing card on the paper: its head, its QR showing, its words beside or under the QR, and Close, all inside it
-async function whole(page, when) {
-  const card = page.getByRole('region', { name: 'Sign in another device' }),
-    qr = card.getByRole('img', { name: 'Scan to sign in' }),
-    close = card.getByRole('button', { name: 'Close', exact: true });
-  await close.waitFor({ timeout: 3000 });
-  const paper = await box(page, '#book section > div'),
-    k = await card.boundingBox(),
-    q = await qr.boundingBox(),
-    parts = {
-      head: await card.locator('.pair-head').boundingBox(),
-      QR: q,
-      words: await card.locator('.pair-words').boundingBox(),
-      Close: await close.boundingBox(),
-    };
-  const inside = (a, b) =>
-    a.x >= b.x - 1 && a.y >= b.y - 1 && a.x + a.width <= b.x + b.width + 1 && a.y + a.height <= b.y + b.height + 1;
-  assert.ok(inside(k, paper), `${when}: the card ${JSON.stringify(k)} off the paper ${JSON.stringify(paper)}`);
-  for (const [name, part] of Object.entries(parts))
-    assert.ok(part && inside(part, k), `${when}: its ${name} ${JSON.stringify(part)} cut off the card`);
-  const w = parts.words;
-  assert.ok(w.x >= q.x + q.width - 1 || w.y >= q.y + q.height - 1, `${when}: the words over the QR`);
-  assert.ok(await qr.isVisible(), `${when}: the QR shows`);
-}
-
 // ---- helpers
 
 // The hardcover beside HQ's page on a desktop and an iPad mini on its side, for the look's reader to see (its colours

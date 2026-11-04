@@ -1,10 +1,10 @@
 // book-check.mjs's story of a call's notes page in the board's hands on its iPad (shell/ink/bookunits.js,
 // bookunitcards.js, bookgroups.css; the store's stacking, notebookstack.js), by hand at 1133 × 744 and 744 × 1133 with
-// Chromium's own touch and pen: a call's scraps, a tall crop among them, read as separate pieces, each card holding its
-// picture and words with room before the next, none cut at the paper's edge, the tall crop no taller than the cap; the
-// board writes a scrap's words longer with the pen's keyboard and the next still keeps clear. A note the agent adds
-// while the page is idle is scrolled to and pops in; one whose slide a scroll stops on the way shows at once; one added
-// while the Pencil is down moves nothing.
+// the Pencil and fingers in either engine (hands.mjs): a call's scraps, a tall crop among them, read as separate
+// pieces, each card holding its picture and words with room before the next, none cut at the paper's edge, the tall
+// crop no taller than the cap; the board writes a scrap's words longer with the pen's keyboard and the next still keeps
+// clear. A note the agent adds while the page is idle is scrolled to and pops in; one whose slide a scroll stops on the
+// way shows at once; one added while the Pencil is down moves nothing.
 import assert from 'node:assert/strict';
 import { MINI, UPRIGHT, until } from './kit.mjs';
 import { mini } from './start.mjs';
@@ -184,7 +184,7 @@ const cards = page =>
         ...box(el),
         g: el.closest('[data-g]').dataset.g,
       })),
-      // (an agent's note: a post-it reaching 6 px round its words, booktools.css)
+      // (an agent's note: a post-it reaching 6 px round its words, bookgroups.css .bk-unit[data-note].
       notes: [...view.querySelectorAll('.bk-typed[data-note]')].map(el => {
         const r = el.getBoundingClientRect();
         return { x: r.left - 6, y: r.top - 6, w: r.width + 12, h: r.height + 12, g: String(el.typed?.g) };

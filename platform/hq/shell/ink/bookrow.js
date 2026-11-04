@@ -10,6 +10,7 @@
 // way)
 
 import { MARGIN } from './masonry.js';
+import { UNIT_W } from './scrapunit.js';
 
 // A page's sides as the store makes one, and the most a page grows to either way (pagechecks.ts PAGE and GROWN_MAX)
 export const SIDE = { min: 100, max: 4000 };
@@ -34,19 +35,22 @@ export const pageBox = page => {
 export const ZOOM_OUT = 0.25;
 export const zoomWithin = (s, page, view) =>
   Math.min(ZOOM_MAX, Math.max(Math.min(ZOOM_OUT, view.w / page.w, view.h / page.h), s));
-// How far a sketch page pans at a zoom of s: never above or left of its title's corner (README, The book's frame) or of
-// what's drawn beyond it (drawnCorner), the paper's room above it (view.top, the status bar's blur) in sight; down and
-// right till only edge px (on screen) of its box (the first screen at least) is left at the paper's side, so a screen
-// of fresh paper is always beyond what's drawn to draw on. view: the paper's { w, h } and the room its content keeps
-// clear of, { top, right } (CSS px). → { x0, x1, y0, y1 }, the pan's least and most
+// How far a sketch page pans at a zoom of s: never above or left of its corner, 0,0, where the view's title lies at
+// rest (README, The book's frame), or of
+// what's drawn beyond it (drawnCorner), the paper's room above it (view.top, the status bar's blur) in sight; down till
+// only edge px (on screen) of its box (the first screen at least) is left at the paper's foot, so a screen of fresh
+// paper is always below what's drawn to draw on. Across only as far as it's zoomed past the paper's width or something
+// on it lies past the paper's right edge (drawnRight), never into the page box's spare paper: the board scrolls a
+// Notebook up and down, with no sideways wiggle (the board). view: the paper's
+// { w, h } and the room its content keeps clear of, { top, right } (CSS px). → { x0, x1, y0, y1 }, the pan's least
+// and most
 export function canvasPans(page, view, s, edge) {
   const p = pageBox(page),
     corner = drawnCorner(page),
-    x1 = Math.max(view.w, p.x1),
     y1 = Math.max(view.h, p.y1);
   return {
     x0: corner.x,
-    x1: x1 - Math.min(edge, view.w) / s,
+    x1: Math.max(corner.x, Math.max(view.w, page.ink ? drawnRight(page) : p.x1) - view.w / s),
     y0: corner.y - view.top / s,
     y1: y1 - Math.min(edge, view.h) / s,
   };
@@ -69,7 +73,7 @@ export function unitsPans(page, view, s, foot) {
     y1: page.h - Math.min(view.h, foot) / s,
   };
 }
-// The top-left a page pans to: 0,0, its title's corner, or further where its ink or scraps, or what hangs under a unit
+// The top-left a page pans to: 0,0, where the view's title lies at rest, or further where its ink or scraps, or what hangs under a unit
 // (its answer, past its row on a sketch page: sketchcanvas.js) with the margin a canvas keeps round it (bookunits.js
 // canvasSize), lie above or left of it. Their own reach, not the page's box: its ROOM_PX to spare would creep the limit
 // out with each line drawn at the edge. A page's ink is null until it's read (bookpage.js).
@@ -81,6 +85,18 @@ function drawnCorner(page) {
     corner.y = Math.min(corner.y, box.y0);
   }
   return corner;
+}
+// The right edge of what's on a sketch page (its ink, scraps, units at their places and what hangs under them), in its px:
+// 0 for a page with nothing on it. (A page whose ink isn't read yet pans across its box till it is, so a place it's
+// opened at, remembered, is kept: canvasPans.)
+function drawnRight(page) {
+  const places = (page.places ?? []).flatMap(p => [p.x + UNIT_W, ...(p.hung ? [p.hung.x + p.hung.w] : [])]);
+  return Math.max(
+    0,
+    ...(page.ink ?? []).map(st => boxOf(st).x1),
+    ...page.scraps.map(sc => scrapBoxOf(sc).x1),
+    ...places,
+  );
 }
 // The pan that keeps a point on the paper (CSS px from its top-left) over the same spot of the page as the zoom goes
 // from s0 to s1: a pinch's middle, the pointer under a trackpad's pinch

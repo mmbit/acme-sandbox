@@ -1,7 +1,7 @@
-// book-check.mjs's stories of a book's bookmarks as real card (shell/ink/bookmarks.css; the Ink README, Bookmarks). On
+// book-check.mjs's stories of a book's bookmarks as real ribbon (shell/ink/bookmarks.css; the Ink README, Bookmarks). On
 // a phone, all the while the book swings open (and held mid-swing by a finger), they stick straight out of its
 // fore-edge, never over its page, out of a page block thicker for them, and fold in at the screen's left edge only once
-// it has landed. Folded, all three alike: the same colour (Asks with no pages as strong as the others), the same
+// it has landed. Folded, all three alike: as strong (Asks with no pages as strong as the others), the same
 // shade, the same length out, each icon as clear of the screen's edge. And no outline on any of them, folded or out on
 // the phone, on an iPad upright and sideways and on a desktop: their shade alone sets them off the paper. On My journal
 // with no Asks page yet, open on a sketch (Sketch the page's own). Recorded with --shots: the phone mid-swing,
@@ -10,6 +10,7 @@ import assert from 'node:assert/strict';
 import { LOADED_MS, pressAlong, until } from './kit.mjs';
 import { blurred } from './islands.mjs';
 import { SEED, SIZES, onBook, tabs } from './bookmarks.mjs';
+import { SIZES as REAL, opened } from './realbook.mjs';
 
 // My journal with no Asks page, so its tab is an empty chapter's, as on the board's phone
 const NO_ASKS = { ...SEED, pages: SEED.pages.filter(p => p.kind !== 'asks') };
@@ -21,10 +22,14 @@ export function bookmarksFoldStories(c) {
   return {
     "the book's bookmarks on a phone: out of the book's fore-edge while it swings open, its page block thicker for them, folded at the screen's edge only once it lands":
       browser => swingIn(browser, c),
-    "the book's bookmarks folded alike: the same colour and shade, the same length out, each icon clear of the screen's edge":
+    "the book's bookmarks folded alike: as strong and the same shade, the same length out, each icon clear of the screen's edge":
       async browser => {
         for (const name of ['phone', 'ipad-mini-upright'])
           await onBook(browser, c, name, SIZES[name], NO_ASKS, p => alike(p, c, name));
+      },
+    "the book's bookmarks the same ribbons in every look, Slate, Brownstone and Holo, folded and out, beside HQ's page and on a desktop":
+      async browser => {
+        for (const name of ['iphone', 'ipad', 'ipad-upright', 'desktop']) await inEveryLook(browser, c, name);
       },
     "the book's bookmarks have no outline, only their shade, folded and out, beside HQ's page and on a desktop":
       async browser => {
@@ -172,15 +177,15 @@ const atRest = p =>
     LOADED_MS,
   );
 
-// Folded at the screen's left edge, the three alike: the same ink and shade, as far out, each icon as far in from the
-// screen's edge and clear of it; each tab's first fault, all of them told
+// Folded at the screen's left edge, the three alike: as strong (each in its own colours) and the same shade, as far
+// out, each icon as far in from the screen's edge and clear of it; each tab's first fault, all of them told
 async function alike(p, c, name) {
   await atRest(p);
   const t = await tabs(p),
     looks = await p.evaluate(() =>
       [...document.querySelectorAll('#book .bk-marks button')].map(b => {
         const s = getComputedStyle(b);
-        return { ink: s.color, shade: s.boxShadow, opacity: s.opacity };
+        return { shade: s.filter, opacity: s.opacity };
       }),
     );
   await c.shot(`bookmarksfold-${name}-folded`, p);
@@ -189,13 +194,52 @@ async function alike(p, c, name) {
   assert.equal(t.find(a => a.chapter === 'asks')?.here, false, `${name}: Asks not the page's own`);
   for (const [i, a] of t.entries())
     judged(failed, () => {
-      assert.deepEqual(looks[i], first, `${name}: ${a.chapter} the same colour and shade as ${t[0].chapter}`);
+      assert.deepEqual(looks[i], first, `${name}: ${a.chapter} as strong and shaded as ${t[0].chapter}`);
       assert.ok(Math.abs(a.box.right - t[0].box.right) < 0.5, `${name}: ${a.chapter} out ${a.box.right} px, as far`);
       assert.ok(Math.abs(a.icon.x - t[0].icon.x) < 0.5, `${name}: ${a.chapter}'s icon ${a.icon.x} px in, as far`);
       assert.ok(a.icon.x >= 3, `${name}: ${a.chapter}'s icon clear of the screen's edge (${a.icon.x} px in)`);
     });
   assert.deepEqual(failed, [], failed.join('\n'));
 }
+
+// The bookmarks at a size (realbook.mjs's) in Slate, Brownstone and Holo: drawn alike in each, their colours, shape
+// and shade the book's own, never the look's (the Ink README, The book's icons). Shot in each look, a phone's out too.
+async function inEveryLook(browser, c, name) {
+  const drawn = [];
+  for (const look of ['wire', 'brownstone', 'holo']) {
+    const { context, p, errors } = await opened(browser, c, name, { ...REAL[name], look: `&renderer=${look}` });
+    try {
+      await atRest(p);
+      drawn.push(await ribbons(p));
+      await c.shot(`bookmarks-look-${name}-${look}`, p);
+      if (name === 'iphone') {
+        await p.locator('#book .bk-marks [data-chapter=calls] .bk-mk-icon').click();
+        await p.locator('#book .bk-marks[data-out]').waitFor({ timeout: LOADED_MS });
+        await atRest(p);
+        await c.shot(`bookmarks-look-${name}-${look}-out`, p);
+      }
+      c.noErrorsIn(errors);
+    } finally {
+      await context.close();
+    }
+  }
+  for (const d of drawn.slice(1)) assert.deepEqual(d, drawn[0], `${name}: the bookmarks the same in every look`);
+}
+// Each bookmark as it's drawn: its cloth's colours and cut, its icon's colour, its shade
+const ribbons = p =>
+  p.evaluate(() =>
+    [...document.querySelectorAll('#book .bk-marks button')].map(b => {
+      const s = getComputedStyle(b),
+        cloth = getComputedStyle(b, '::before');
+      return {
+        chapter: b.dataset.chapter,
+        cloth: [cloth.backgroundImage, cloth.backgroundColor, cloth.clipPath],
+        ink: getComputedStyle(b.querySelector('svg')).color,
+        shade: s.filter,
+        size: [b.offsetWidth, b.offsetHeight],
+      };
+    }),
+  );
 
 // No outline on any tab, folded and out on a page the whole screen, beside HQ's page and on a desktop: card set off the
 // paper by its shade
@@ -220,7 +264,7 @@ const noOutline = async (p, name) => {
         outline: sides.filter(
           k => parseFloat(s[`border${k}Width`]) > 0 && !/, 0\)$|transparent/.test(s[`border${k}Color`]),
         ),
-        shade: s.boxShadow,
+        shade: s.filter,
       };
     }),
   );

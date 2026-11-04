@@ -332,8 +332,11 @@ const stampOf = page =>
       box: box(node.getBoundingClientRect()),
       ink: node.querySelector('rect') && box(node.querySelector('rect').getBoundingClientRect()),
       paper: box(document.querySelector('#book .bk-desk').getBoundingClientRect()),
-      // (the title by its words' own box: its line runs the page's width)
-      over: [...shown.querySelectorAll('.bk-unit, .bk-page-title, .bk-day')].map(el => {
+      // (the title and the day on the view, and the page's dates, by their words' own box)
+      over: [
+        ...shown.querySelectorAll('.bk-unit, .bk-day'),
+        ...document.querySelectorAll('#book .bk-view-head :is(.bk-page-title, .bk-view-day:not([hidden]))'),
+      ].map(el => {
         const words = document.createRange();
         words.selectNodeContents(el);
         return box(el.matches('.bk-unit') ? el.getBoundingClientRect() : words.getBoundingClientRect());

@@ -97,12 +97,13 @@ async function emptyChapter(p, c, name, press) {
 // guest's line opens their page and lets the list go
 async function guests(p, c, name, press) {
   const list = p.locator('#book .bk-mk-guests'),
-    words = async () => (await tabs(p)).map(t => t.words).join(', ');
+    // (the bookmarks show icons only: each read by its label)
+    labels = async () => (await tabs(p)).map(t => t.label).join('; ');
   // (the round's book opened at Anna's page, as a card's Open in the book does)
   await p.evaluate(() => document.dispatchEvent(new CustomEvent('book:find', { detail: { notebook: 1, page: 11 } })));
   await until(async () => (await shown(p)).title === 'Anna', `${name}: the round's book open`, LOADED_MS);
   await until(
-    async () => (await words()) === 'Guests, Asks · 2, Advice',
+    async () => (await labels()) === 'Guests; Asks, 2 open; Advice',
     () => `${name}: a round's chapters`,
   );
   await toChapter(p, 'guests', press);

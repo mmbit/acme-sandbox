@@ -5,6 +5,7 @@ import { recording, cross, screen, sameInk } from './picture.mjs';
 import { playLine } from './call.mjs';
 import { MINI, UPRIGHT, DESKTOP, PREFERENCES, middleOf, until, bookOpen } from './kit.mjs';
 import { minimiseCall } from './callview.mjs';
+import { nothingDrawn } from './ink.mjs';
 
 export function overlayStories(c) {
   return Object.fromEntries(
@@ -29,14 +30,11 @@ async function mediaPicture(browser, c, viewport) {
   const { page } = s;
   try {
     const line = await prepare(s, true);
-    await page.locator('#book .bk-lip').click();
-    await page.waitForFunction(() => !['folded', 'shut'].includes(document.documentElement.dataset.book));
-    await page.waitForTimeout(900);
-    await page.locator('#book [data-island=tools]').getByRole('button', { name: 'Pen', exact: true }).click();
-    const control = page.locator('.bk-palette').getByRole('menuitemradio', { name: 'Blue', exact: true });
+    // (a control of HQ's own: the Notebook's are its pen's, never marked.)
+    const control = page.locator('#btn-intercom');
     await control.waitFor();
     const centre = middleOf(await control.boundingBox());
-    const box = { x: centre[0] - 50, y: centre[1] - 35, width: 100, height: 70 };
+    const box = { x: centre[0] - 50, y: Math.max(2, centre[1] - 35), width: 100, height: 70 };
     await cross(s.hand, box);
     await until(() => s.notes.length > 0, 'the marked control reaches the call');
     const picture = await screen(s, 'media-controls');
@@ -87,7 +85,8 @@ async function overlays(browser, c, viewport) {
     await controlTapped(page, 'Tips');
     await page.waitForSelector('.tb-book:not(.tb-shut)');
     await page.waitForTimeout(900);
-    await marked(s, line, '.tb-title', 'tips');
+    // (the Notebook's own surfaces, its tips, preferences and colours, are its pen's: no call ink on them.)
+    await notMarked(s, '.tb-title', 'tips');
     // Finger navigation and a pen tap still work after drawing on the book.
     await page.locator('.tb-on').tap();
     await page.waitForTimeout(600);
@@ -98,8 +97,8 @@ async function overlays(browser, c, viewport) {
     await page.waitForTimeout(450); // Let the pen tap's native click finish before the next finger tap.
     await page.keyboard.press('Escape');
     await page.waitForSelector('.tb', { state: 'detached' });
-    await cardMarked(s, line, PREFERENCES, '.bk-prefs', 'preferences');
-    await cardMarked(s, line, 'Pen', '.bk-palette', 'colours');
+    await cardNotMarked(s, PREFERENCES, '.bk-prefs', 'preferences');
+    await cardNotMarked(s, 'Pen', '.bk-palette', 'colours');
     await bookOpen(page, false);
     await pageOverlays(s, line);
     await dialogs(s, line);
@@ -175,10 +174,10 @@ async function prepare(s, mouse = false) {
   return line;
 }
 
-// A card of the book's controls opened and marked by the pen
-async function cardMarked(s, line, name, selector, label) {
+// A card of the book's controls opened, and the pen drawn across it leaving no call ink
+async function cardNotMarked(s, name, selector, label) {
   await controlTapped(s.page, name);
-  await marked(s, line, selector, label);
+  await notMarked(s, selector, label);
   await s.page.keyboard.press('Escape');
 }
 
@@ -212,6 +211,21 @@ async function marked(s, line, selector, name) {
   console.log(`Pen and shared picture: ${name}`);
 }
 
+// The pen drawn across one of the Notebook's own surfaces: no note goes to the call, no ink of HQ's pen stays on it
+async function notMarked(s, selector, name) {
+  const target = s.page.locator(selector).first();
+  await target.waitFor();
+  await s.page.waitForTimeout(350);
+  const b = await target.boundingBox();
+  const box = { x: b.x + 12, y: b.y + 12, width: Math.min(100, b.width - 24), height: Math.min(50, b.height - 24) };
+  const before = s.notes.length;
+  await cross(s.hand, box);
+  await s.page.waitForTimeout(1500);
+  assert.equal(s.notes.length, before, `${name}: no note of the call's pen on the Notebook`);
+  await nothingDrawn(s.page, `${name}: the Notebook's own`);
+  console.log(`The Notebook's own: ${name}`);
+}
+
 async function futureSurfaces(s, line) {
   await s.page.evaluate(() => {
     dispatchEvent(new CustomEvent('review:cover', { detail: true }));
@@ -228,7 +242,7 @@ async function futureSurfaces(s, line) {
     dialog.style.cssText = 'width:350px;height:250px;background:#faf5e7';
     dialog.innerHTML =
       '<div popover="manual" style="width:280px;height:180px;background:#e0e9db">A nested future popover</div>';
-    document.querySelector('#book .bk-paper').append(dialog);
+    document.body.append(dialog);
     dialog.showModal();
     dialog.firstElementChild.showPopover();
   });

@@ -1,7 +1,7 @@
 // book-check.mjs's story of the board's Undo on a call's notes page while the call's agent works it (the store's
-// ink/callpage.ts, played: shell/ink/notebookplay.js `by`), by hand on its iPad at 1133 × 744 and 744 × 1133 with
-// Chromium's own pen and touch: the agent puts a note on, the board draws, the agent puts another on,
-// the board draws again. The Pencil's taps on the rail's Undo take back the board's two lines, the last first, and
+// ink/callpage.ts, played: shell/ink/notebookplay.js `by`), by hand on its iPad at 1133 × 744 and 744 × 1133 with the
+// Pencil and fingers in either engine (hands.mjs): the agent puts a note on, the board draws, the agent puts another
+// on, the board draws again. The Pencil's taps on the rail's Undo take back the board's two lines, the last first, and
 // nothing of the agent's: its notes stay on the page and in the store, a third Undo has nothing to take, and a finger
 // on Redo puts only the board's line back (shell/ink/bookedit.js: someone else's change is no step).
 import assert from 'node:assert/strict';

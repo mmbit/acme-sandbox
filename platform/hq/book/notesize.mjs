@@ -51,7 +51,7 @@ async function atSize(browser, c, name, size) {
 // title's words), and as many columns as the page holds: no room right of them for another
 async function ownSize(page, name) {
   const seen = await page.evaluate(() => {
-      const title = document.querySelector('#book .bk-page:not([hidden]) .bk-title-tap > span').getBoundingClientRect(),
+      const title = document.querySelector('#book .bk-view-head .bk-page-title span').getBoundingClientRect(),
         desk = document.querySelector('#book .bk-desk').getBoundingClientRect();
       return { left: desk.left, right: desk.right, title: title.left };
     }),

@@ -28,7 +28,8 @@ export async function markedSlip(page, lang) {
 export async function pageDate(page, lang) {
   const [shown, theirs, english] = await page.evaluate(lang => {
     const weekday = locale => new Date().toLocaleDateString(locale, { weekday: 'short' });
-    return [document.querySelector('#book .bk-day').textContent, weekday(lang), weekday('en-GB')];
+    // (the day under the title on the view.)
+    return [document.querySelector('#book .bk-view-day').textContent, weekday(lang), weekday('en-GB')];
   }, lang);
   assert.ok(shown.startsWith(theirs), `${shown}: the page's date is in ${lang}`);
   assert.ok(!shown.includes(english), `${shown}: not the board's English`);

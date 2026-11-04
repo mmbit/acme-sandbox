@@ -165,15 +165,44 @@
   height: 26px;
   font: 700 13px/1 var(--bk-font, system-ui, sans-serif);
 }
-.bk-tag svg {
+/* a tick drawn in the Notebook's own ink (bookassignlist.js TICK), never one of HQ's pixel icons */
+.bk-tag .bk-tick {
+  flex: none;
   width: 16px;
   height: 16px;
-  color: var(--bk-ink);
+  fill: none;
+  stroke: var(--bk-ink);
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
-/* seen (a note that needs nothing back): the tick and the initial of the agent who read it, its face in the chosen
-   colour, as a chosen version is (bookversions.css); in a reply's line, after its words. */
+/* seen (a note that needs nothing back): the face of the agent who read it, as HQ's look draws them (else their
+   initial), ringed and ticked in the chosen colour, as a chosen version is (bookversions.css); in a reply's line, after
+   its words. */
+.bk-tag[data-seen] {
+  position: relative;
+}
 .bk-tag[data-seen] .bk-face {
+  width: 30px;
+  height: 30px;
+  border-color: var(--bk-chosen);
+  background: var(--bk-chosen) center / cover no-repeat;
+}
+.bk-tag[data-seen] .bk-face[data-portrait] {
+  image-rendering: pixelated;
+}
+.bk-tag[data-seen] .bk-tick {
+  position: absolute;
+  left: -7px;
+  bottom: -3px;
+  width: 17px;
+  height: 17px;
+  padding: 1px;
+  box-sizing: border-box;
+  border-radius: 50%;
   background: var(--bk-chosen);
+  box-shadow: 0 0 0 1.5px var(--bk-paper, #fffaf0);
+  stroke-width: 2;
 }
 .bk-reply .bk-tag[data-seen] {
   display: inline-flex;

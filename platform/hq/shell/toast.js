@@ -21,6 +21,8 @@ export function toast(html, onClick, { sticky = false } = {}) {
   // under the HUD as it stands: its rows of tools wrap to however many the company's apps need
   const hud = $('#hud')?.getBoundingClientRect();
   if (hud?.height) $('#toasts').style.top = `${Math.round(hud.bottom + 8)}px`;
+  // (a call's cards keep clear of the toasts as laid out, a new one's drop in from above aside: floating.js)
+  $('#toasts').setAttribute('data-keep-clear', '');
   $('#toasts').append(t);
   if (sticky) return t; // stays until tapped
   setTimeout(() => t.classList.add('gone'), 5200);

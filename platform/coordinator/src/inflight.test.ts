@@ -209,6 +209,20 @@ test('further waits (hq waits) hold a job until each is done and its latest pull
   assert.match((await open(lark, after)).line, new RegExp(`^${named(after)} lark, queued after #${deps[0]}, and until #\\d+ is done and merged: After one$`));
 });
 
+// #23851 waited --after #23848, a fix run that failed while #23852 fixed and merged its pull request: the claim had let
+// it go, but its line still said "queued after #23848" (job #23890)
+test("an --after that ended and let its job go isn't said in its line", async () => {
+  reset();
+  const fix = await ended('The fix run', 'failed');
+  db.prepare('update jobs set branch = ? where id = ?').run(`job/${fix}`, fix);
+  h.storedPr(9000 + fix, fix, 'open');
+  const after = queue('lark', 'Next', { after: fix });
+  const lark = (await h.start({ agent: 'lark', title: 'Lining up' })).token;
+  assert.equal((await open(lark, after)).line, `${named(after)} lark, queued after #${fix}: Next`, 'its pull request open');
+  db.prepare("update prs set status = 'merged' where number = ?").run(9000 + fix);
+  assert.equal((await open(lark, after)).line, `${named(after)} lark, queued: Next`, 'merged by the next fix run');
+});
+
 test('a wait on work that ends without merging holds until whoever queued the waiting job moves or drops it, and they get a job to', async () => {
   reset();
   const lark = (await h.start({ agent: 'lark', title: 'Lining up' })).token, quill = (await h.start({ agent: 'quill' })).token;

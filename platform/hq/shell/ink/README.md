@@ -12,7 +12,7 @@ scoped pages. (HQ's Sketchbook app on the computer, `sketch*`, is gone: the book
 - `book.js` opens the book beside HQ's page. `bookpages.js`, `bookpage.js` and `booksave.js` draw and keep its pages,
   `bookgroups.js` a page's groups, a paperclip on each of two or more things, and the answers under them, `booktear.js` and `bookpagesend.js` a page torn off at its right edge, where the spine is, onto Submit, PDF or PNG (a guest's, its Send),
   `bookforyou.js` what's still the board's to answer (an open ask edged "for you", counted over the page's name, its arrows going to each),
-  `bookrail.js` Undo and Redo on the bar and Close notebook in its dots menu, `bookshelf*.js` the overview and the Shelf, `booksearch*.js` Search. `notebook*.js` read
+  `bookrail.js` Undo and Redo on the bar, `bookviewhead.js` the page's title and day on the view, `bookshelf*.js` the overview and the Shelf, `booksearch*.js` Search. `notebook*.js` read
   and write the Notebook's routes (`notebookdata.js`), and play them in dev mode and book-check (`notebookplay*.js`).
   (the Notebook's groups and the sheets gone)
 - `bookanswers*.js` draw a try's versions on a notebook page and what the board writes on them, and a slip's form
@@ -25,7 +25,7 @@ scoped pages. (HQ's Sketchbook app on the computer, `sketch*`, is gone: the book
 - `bookscrapdraw.js` draws a taped picture (a scrap) in its border and tape, and makes a picture file ready to upload.
 - `calldraw.js` is the Pencil on a call, with the call's agent on the same page, and the call's notes page opened as
   it's picked up.
-- `pair.js` shows a one-time sign-in code for another device. Notebook content syncs through its model.
+- Notebook content syncs through its model.
   Marks on the viewed work travel live between the board’s devices through `viewmarks.js` and the board feed.
   Review mode’s `sharing.js` places them on the same element at each screen size. They disappear with the open
   note and are never kept in the feed’s history. A disconnected device’s marks expire after three missed refreshes.
@@ -67,8 +67,6 @@ The board set these for Ink. Code and checks that keep one say it, or name it he
   Eraser, Shapes, Text, then Undo and Redo, with the page's controls at its foot.
 - **The page arrows stay put and within the tab.** They never move as pages turn, and they never turn on into the next
   tab. The page list shows only the tab's pages, numbered as its counter is.
-- **A title that can change shows a pencil.** A tap on a page's title opens the page list with the title to write in.
-  A call page's longest title shows whole on an iPad mini.
 - **A sent page stays where it is.** No page is made after it, even after the last.
 - **What an agent puts down lands in sight only on an idle page.** The paper never slides to it while the board draws.
 - **Ink stays where it was drawn.** A line beside a scrap stays put as the scrap's room grows or is dragged, and the
@@ -134,10 +132,12 @@ HQ's page share:
   whatever hangs under it) and gives every place. A new day on the page starts under a date across every column
   (`headers`). `placeAt` finds the unit under a pen, and `pointIn` turns the pen's point into that unit's px.
 - **The page** is HQ's (`bookunits.js`): it measures its width, calls `layout` again whenever the width or a unit's
-  height changes, and draws each unit at its place as a sticky note, the page's title on top and a date where a day
-  starts. It pinch-zooms from its fit (the paper's width) in to `ZOOM_MAX`, panning across as far as it's zoomed past
+  height changes, and draws each unit at its place as a sticky note, and a date where a later day starts (the title
+  and the day of what's showing are the view's: The book's frame). It pinch-zooms from its fit (the paper's width) in to `ZOOM_MAX`, panning across as far as it's zoomed past
   its width (`bookview.js`, its limits in `bookrow.js`), and is laid left of the rail of controls (`--bk-rail-width`), its paper running on under them. A stroke goes to the unit it
-  starts on, else to the board's own drawing it comes near, else it's a new unit of its own, the page's last, kept in
+  starts on, else to the board's own drawing it comes near, by its ink, never the empty frame round it (a word written
+  inside a drawing's outline, away from its lines, is apart: `bookstrokes.js` `apart`),
+  else it's a new unit of its own, the page's last, kept in
   the column it was drawn in (masonry's and the store's `column`), its ink where it was drawn; a unit's canvas reaches all its ink. The
   board's own drawings have no paper card. A scrap's words are part of its body; under an agent's body its
   room shows, with a handle at its foot (`heightFor`, saved with `/api/notebooks/groups/resize`). The page's lists hold
@@ -147,9 +147,10 @@ HQ's page share:
   apart from every unit is a unit of its own where it's drawn. A unit with no place yet is laid as the masonry lays it
   and pinned there (`/api/notebooks/groups/place`: the first screen's place stands). What hangs under a unit goes
   where it covers no other. The page opens at scale 1 (a column's fit on a phone: `opensAt`), zooms from `ZOOM_OUT`
-  (further out where what's drawn needs it) to `ZOOM_MAX`, and pans down and right till an edge of what's on it is
-  left, never above or left of its title's corner or of what's already drawn beyond it (The book's frame).
-
+  (further out where what's drawn needs it) to `ZOOM_MAX`, and pans down till an edge of what's on it is left, never
+  above or left of its corner or of what's already drawn beyond it (The book's frame).
+  It pans across only as far as it's zoomed past the paper's width or something on it lies past the paper's right edge:
+  no sideways wiggle (the board's).
 
 ## Our scraps
 
@@ -192,8 +193,17 @@ The board's rules for the book as a real book, seen from the side.
   control's (`bookdesk.css`). Its dots zoom with it there too. Only its content is set down below the blur and laid
   left of the tools: the desk's padding, read as `book.size`'s `top` and `right` (`bookview.js`). A place on a page
   (remembered, a find's, a box shown) is its point at that content's top-left.
-- **The title is the page's top-left corner:** the title and its date stay on the page there, and zoom and pan never go
-  above it or left of it, only down and to the right (`bookrow.js` `canvasPans`, `unitsPans`).
+- **The title on the view:** the page's title, and under it the day of what's showing (the topmost scrap or drawing
+  seen below it; none on a call's page, whose title has its date), sit fixed at the view's top left below the blur,
+  never zoomed or panned with the page (`bookviewhead.js`). Once the page is scrolled, what passes under them goes
+  quietly out of sight under a band of frosted paper across the page, from the screen's top to just below the date,
+  its foot fading out: never cut by a box. It takes no press: the page under it is drawn on. The dates between days
+  stay on the page, each handing its day to the title as it reaches it, so no second date shows under it. Zoom and pan never go above or left
+  of the page's corner, where the title lies at rest (`bookrow.js` `canvasPans`, `unitsPans`). Rename page, first of
+  the page's rows in the dots menu, writes it where it shows (`booktitle.js`); a sent page keeps its title. The page
+  list from the count names the pages only, its numbers readable in every look. A call page's longest title shows
+  whole on an iPad mini. The book closes by its pull tab or a swipe from the page's left edge, not from the page's
+  menu.
 - **One soft shadow:** the book is one object under its single soft drop shadow on HQ's page, the same in every look,
   and no other shadows or lines (`book.css`).
 - **Nothing to press under the blur:** at rest the controls, the bookmarks and the page's own buttons all start below
@@ -201,21 +211,25 @@ The board's rules for the book as a real book, seen from the side.
 - **Only the page pinch-zooms:** nothing else in the book lets the browser zoom the screen, the islands, their cards
   and the gaps between them included, so no pinch can push a control off the screen. A pinch begun on a control does
   nothing; a card's list still scrolls (`book.css`). HQ's own page beside the book zooms as ever.
-- **The title is one tap away:** a tap on the page's title or its pencil opens it to write in, a finger's 44 px round
-  them at any zoom, so a finger aimed at the small pencil never draws beside it instead (`bookgroups.css`).
 - **Two islands** float over the paper, HQ's own controls in HQ's look (`bookui.js`, `bookstrip.css`). Only the page is
   paper. The tools stand on the right, upright and short: on a phone, well under half the screen's height. The bar runs
   along the foot between the screen's corners: Undo and Redo at its left, the page's arrows and count exactly in its
   middle, All pages and its dots menu at its right. What's written is laid left of the tools, but ink goes under and
   beside them.
+- **The islands are glass:** the tools' island and the bar are lightly frosted glass over the page, in every look: the
+  look's panel two thirds opaque, what's under it blurred, a line of light on its top edge, the look's own edge kept
+  (`bookstrip.css`, the renderers' skin.css). A dark panel dims what it lets through, so it stays dark and its keys
+  read. While the book swings or its tab is held, the frost is off, so the swing keeps its frames. Never overdone: a
+  hairline rim at most.
 - **The bar's spacing** gets smaller inward: its margin at its ends the largest, then the room each side of a rule,
   alike at every rule, then the gap between two keys, alike in every group. Each end holds two keys at every size, New
   page in the dots menu, so the parts sit against the middle alike on both sides (`bookstrip.css`).
 - **The tools,** in order: the pen, shapes, the eraser, Select, Text and the mic (`bookpalette.js`). The pen and the
   marker are one tool. Its card holds what draws, its colour and its width, one tap away. A tap picks a tool, and
   nothing waits on a hold.
-- **The marker under the ink:** a see-through line (the marker's, the pencil's) lies under the pen's ink and the
-  page's words while it's drawn, just as it dries, so nothing changes as it's lifted (`bookwet.js`).
+- **The marker under the ink:** a see-through line (the marker's, the pencil's) lies under the pen's ink while it's
+  drawn, and over the page's words and a note's picture as all ink does, just as it dries, so nothing changes as it's
+  lifted (`bookwet.js`).
 - **Delete crumples and falls:** what's deleted or archived balls up and falls straight down off the screen's foot,
   never thrown aside or up, heard landing below (`bookpaper.js` `crumple`).
 - **A voice note at a spot:** the mic tapped lights and waits; a spot then pressed and held on the page records there
@@ -237,12 +251,15 @@ The board's rules for the book as a real book, seen from the side.
 - **Notes** lie on the page as plain paper, with no inner shadow or turned corner on the room under them
   (`bookgroups.css`).
 - **The tear:** a press at the page's right edge, where the spine is, drawn to the left, tears a copy off (`booktear.js`).
-  It shrinks into the hand, to be let go on Submit, PDF or PNG. Nothing shows at the edge till it's pulled. Tear off
-  and send in the bar's dots menu opens the same three.
+  It shrinks into the hand, to be let go on Submit, PDF or PNG. The hand takes it along the spine's middle, well clear
+  of the screen's corners, where iPadOS resizes the window (call 193). Nothing shows at the edge till a hand comes: a
+  press there, or the Pencil hovering, shows the page's perforation, the strip beyond it giving as it's drawn away
+  (`booktearedge.js`); never a button, and a line drawn there still draws. Tear off and send in the bar's dots menu
+  opens the same three, the perforation showing a moment.
 - **All pages** (the overview, `bookshelf.js`) is the page's own paper and dots top to bottom, with one title line ("‹
   Shelf", the notebook's name, its options: Change cover, Archived pages, a project book's Archive this book), the
   search as an island, plain chapter heads and page pictures with no outline or button on any. A page is archived from
-  the bar's dots menu, where Sign in another device sits under Preferences. One type at one weight, Atkinson
+  the bar's dots menu. One type at one weight, Atkinson
   (`fonts/`).
 - **My shelf** stays HQ's own window from its Shelf key, and the window is a bookcase (`bookshelfbooks.js`), drawn
   straight on as the things on it are: books covers out standing on the boards' top edges, two to
@@ -292,14 +309,17 @@ page that is the whole screen (upright, not beside HQ's page: `book.js`'s `data-
 going) they lie folded at its left edge, slivers with their icons, and a tap brings them out. A call's notes page is
 under Calls, shut at hang-up and stamped Sent once the call's follow-up has handed out what's on it.
 
-The board's rules for them as real card:
+The board's rules for them as real ribbon:
 
-- **No outline:** card has no drawn edge. Their soft shade alone sets them off the paper or the table, as the book's
+- **Made by a person:** each a thin ribbon, notched at its end, with its icon alone on it in a deeper tone of its own
+  colour and no words (its name is its label). It sticks out about as far as the pull tab, and they sit just above it,
+  one group, never sprawling over HQ's page (`bookmarks.css`).
+- **No outline:** ribbon has no drawn edge. Their soft shade alone sets them off the paper or the table, as the book's
   labels and pull tab are (`bookmarks.css`).
 - **Out of the book while it swings:** on a page that is the whole screen, while the book swings open or shut they
   stick straight out of its fore-edge as they do beside HQ's page, never over its page, and the book is a little
   thicker for them. They fold in at the screen's left edge only once it has landed.
-- **Folded alike:** the three slivers are the same colour and shade (an empty chapter's no paler), stick out exactly
+- **Folded alike:** the three slivers are as strong and the same shade (an empty chapter's no paler), stick out exactly
   as far, and each icon sits clear of the screen's edge. The page's own shows only once they're brought out, a little
   longer than the others.
 

@@ -40,6 +40,8 @@ export const setPressed = (b, on) => b.setAttribute('aria-pressed', on ? 'true' 
 
 // The island or group named: made once, in its place (islands(), which bookrail.js puts over the paper)
 let controls, more;
+// The dots at the bar's right end, where the focus goes back to from a row's own card or field (bookcontrols.js)
+export const moreKey = () => more;
 const made = new Map();
 export function island(name) {
   if (!['tools', ...BAR, OVERVIEW].includes(name)) throw new Error(`No island ${name} in the book`);
@@ -87,8 +89,8 @@ export function islands() {
   return controls;
 }
 // The dots at the bar's right end: a menu of the page's keys kept off the bar (.bk-rare: New page), then the
-// page's own rows (Tear off and send, Archive this page) and the book's (Preferences, Sign in another device, Tips,
-// Close notebook), each pressing its own
+// page's own rows (Rename page first, Tear off and send, Archive this page) and the book's (Preferences, Sign in
+// another device, Tips), each pressing its own. The pull tab closes the book (bookhandle.js).
 function moreButton() {
   const b = button({
     icon: icon('more'),
@@ -104,9 +106,9 @@ function moreCard(from) {
   hide();
   const usable = b => !b.disabled && !b.hidden,
     folded = [...made.get('keys').querySelectorAll('.bk-rare')].filter(b => usable(b) && b.offsetParent === null),
-    // (Close notebook last of the book's rows, whatever came after it: Tips)
-    book = [...made.get('book').children].sort((a, b) => a.matches('.bk-close') - b.matches('.bk-close')),
-    groups = [folded, [...made.get('menu').children], book]
+    // (Rename page first of the page's rows, whatever's put before it: the tear's.)
+    page = [...made.get('menu').children].sort((a, b) => b.matches('.bk-rename') - a.matches('.bk-rename')),
+    groups = [folded, page, [...made.get('book').children]]
       .map(list => list.filter(usable))
       .filter(list => list.length);
   const card = Object.assign(document.createElement('div'), { className: 'bk-card bk-menu bk-more-card' });

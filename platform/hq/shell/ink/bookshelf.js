@@ -32,7 +32,8 @@ import { mountTold, told } from './bookshelftold.js';
 const PAGES = { least: 96, gap: 16, most: 8 };
 // the first read of a screen: how long a turn waits for it before it turns onto the screen still filling in
 const FIRST_MS = 200;
-const HTML = `<div class="bk-far-head" role="presentation"><nav class="bk-far-nav"></nav></div>
+// (the title line the book's own, its pen's too when a call may mark the paper: bookcallmarks.js.)
+const HTML = `<div class="bk-far-head" role="presentation" data-no-ink><nav class="bk-far-nav"></nav></div>
   <div class="bk-far-body" role="presentation"></div>`;
 // a chapter scrolled to sits this far below the overview's top
 const TOP_GAP = 12;

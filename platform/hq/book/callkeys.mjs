@@ -19,7 +19,7 @@ async function readable(browser, c, viewport) {
   const context = await c.hqIn(browser, viewport, { notebooks: {}, hasTouch: true });
   const { page, errors } = await watchedPage(context);
   await playLine(context);
-  const hand = await inputs(browser, page);
+  const hand = await inputs(page);
   try {
     await page.goto(`${c.base}/?intro=0&open=intercom&renderer=wire`);
     await page.waitForSelector('#loading.gone');

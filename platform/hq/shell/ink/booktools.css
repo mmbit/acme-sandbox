@@ -129,16 +129,8 @@
   cursor: text;
   transition: box-shadow 0.12s;
 }
-/* words stacked as a note (booktexts.js): a post-it under them, as a scrap's words have (bookgroups.css
-   .bk-scrap-words). */
-.bk-typed[data-note]::before {
-  content: '';
-  position: absolute;
-  z-index: -1;
-  inset: -6px;
-  background: #fff3a8;
-  box-shadow: 0 1px 3px rgba(42, 35, 82, 0.18);
-}
+/* (words stacked as a note, booktexts.js's data-note: written on their unit's post-it, bookgroups.css .bk-unit-paper,
+   with no paper of their own, so a post-it is one clean layer.) */
 .bk-typed-words {
   min-height: 1.4em;
   font: 18px/1.4 var(--bk-font, system-ui, sans-serif);

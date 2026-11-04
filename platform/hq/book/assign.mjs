@@ -19,7 +19,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { group, ids, open } from './notebook.mjs';
 import { inSight, onPaper, tool } from './notebookscreen.mjs';
-import { DESKTOP, MINI, pressAlong, until } from './kit.mjs';
+import { DESKTOP, MINI, pressAlong, steps, until } from './kit.mjs';
 import { GAP } from '../shell/ink/masonry.js';
 import { UNIT_W } from '../shell/ink/scrapunit.js';
 
@@ -270,7 +270,8 @@ async function sideways(browser, c) {
 // press(point on the screen)
 async function pick(page, play, id, press, on = ASKS) {
   await press((await inSight(page, on, id, [middleOf(play, id)]))[0]);
-  await page.locator('#book .bk-sel').waitFor();
+  // (the page turned to keeps the last page's frame in its picture a moment.)
+  await page.locator('#book .bk-sel:not(.bk-turn-picture *)').waitFor();
 }
 // Assign in Select's bar, when it's shown
 const assignIn = page => page.locator('#book .bk-sel-bar').getByRole('button', { name: 'Assign', exact: true });
@@ -372,7 +373,6 @@ async function outOf(page, play, id, away, inward = true, twice = false) {
   const end = [Math.min(Math.max(x, 24), width - 24), Math.min(y1 + away / 2, height - 24)];
   return [...ring, ...steps(ring.at(-1), end, 16).slice(1)];
 }
-const steps = (a, b, n) => Array.from({ length: n + 1 }, (_, i) => [0, 1].map(j => a[j] + ((b[j] - a[j]) * i) / n));
 // A Pencil's stroke along points on the screen, a few at a time as a hand draws (lift false: held, { along, up })
 async function drawn(page, points, { lift = true } = {}) {
   const pen = await pressAlong(page, points.slice(0, 2), { lift: false });

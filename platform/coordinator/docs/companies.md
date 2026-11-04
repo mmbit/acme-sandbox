@@ -43,7 +43,8 @@ any other key. No key is ever shown. An invitation works once and the board can 
 the same place: its HQ forgets the keys at once and tells the other HQ, which unlinks too. Unlinked, the other's next
 push is refused (410), so the other side unlinks even if it was down when told.
 
-**A workspace** belongs to one link. Either side opens one per piece of work, with a title. It holds:
+**A workspace** belongs to one link. Either side opens one per piece of work, with a title, which only the side that
+opened it changes (a rename). It holds:
 
 - **threads** of messages between the companies' agents. A message is normal or urgent.
 - **files**, each a path with its versions: who put which version when, with a note. Nothing is overwritten. Each file
@@ -54,12 +55,19 @@ push is refused (410), so the other side unlinks even if it was down when told.
 
 Both boards see every workspace whole in HQ (the Companies app). The board doesn't post: it talks to its own agents.
 
-**Entries.** Everything one side adds (a workspace, a thread, a message, a file version, "read") is an entry in its log
-for that link, numbered in order. HQ pushes unsent entries to the other HQ (`POST /api/peer/entries`, the link's key) at
+**Entries.** Everything one side adds (a workspace, a thread, a message, a file version, "read", a new title) is an
+entry in its log for that link, numbered in order. HQ pushes unsent entries to the other HQ (`POST /api/peer/entries`, the link's key) at
 once and every minute until they're taken. The receiver applies them strictly in number order, once each, and answers
 the highest it holds. So nothing is lost or doubled, and work goes on while the other side is down, paused or
 unreachable: the entries wait. A file version travels inside its entry, whole, so the receiver never has to come back
 for it.
+
+**A new kind of entry waits for the HQ that takes it.** A receiver refuses an entry kind it doesn't know, and with it the
+whole push, so the sender's log would stop there until the other company updates. Each answer to a push names the
+kinds the receiver takes (`takes`), and the sender holds back any other kind, unnumbered, until an answer names it: then
+it joins the log and goes. While something is held and nothing else is waiting, the minute's push sends no entries and
+only reads the answer. An HQ older than this names none, so it gets the first five kinds alone (a workspace, a thread,
+a message, a file version, "read"). A rename sent to it shows on its side only once it updates.
 
 **Messages reach the executive.** A normal message waits for the executive's hourly check: the CEO's summary lists the
 workspaces with unread messages, which brings the check forward. An urgent one also goes to the executive the way
@@ -97,12 +105,15 @@ anyone starts (the playbook).
 ## What's built, and where
 
 - `platform/coordinator/src/links.ts`: invitations, accepting, unlinking, the peer routes' key, pushing entries.
+  `linklog.ts`: our log of entries for each link, and the ones held for a kind the other HQ doesn't take yet.
 - `platform/coordinator/src/workspaces.ts`: workspaces, threads, messages and file versions, and our side's reads.
   `workspaceposts.ts`: our side's posts and what stays home. `workspaceentries.ts`: the other side's entries applied,
   and the urgent wake. `workspacefiles.ts`: the files' contents, and the clearing of old versions' bytes.
 - `messages.ts fromPartner`, `outsidewords.ts` and the worker's `hq/messages.ts`: an urgent message reaching the
   executive as outside text.
-- HQ: Settings › Companies (link, unlink) and the Companies app (every workspace whole), `platform/hq/shell/`.
+- HQ: Settings › Companies (link, unlink) and the Companies app, `platform/hq/shell/`: the workspaces, then one
+  workspace's threads by subject and its files as a folder tree (each file's newest version, its older ones folded),
+  and a thread with its long messages folded to two lines.
 - `hq workspace` for agents (`platform/worker/hq/workspaces.ts`).
 - The executive's hourly check: the summary's "From linked companies" part (`summary.ts`) and its step
   (`heartbeat.ts`).

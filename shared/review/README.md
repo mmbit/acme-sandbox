@@ -182,7 +182,11 @@ it's the page's width and the book's spread covers it with the page; over a dial
   it touched, it clicks what's under it (`layer.js` under, inside open shadow roots too), focused, on HQ's page and
   over a dialog. (`pentouch.js` has the pen's and the fingers' touches.) (pointers)
 - **Not for ink**: a page's floating control marked `data-no-ink` (HQ's minimised call) takes the pen as a finger, to
-  drag or tap, never ink (`pentouch.js` theirs).
+  drag or tap, never ink (`pentouch.js` theirs). A surface with a pen of its own marked so (HQ's Notebook) owns
+  everything in it, its menus and dialogs too: there the pen draws its ink and taps its menus. A part inside one marked `data-takes-ink` (HQ's Notebook's paper on a call, when the board's
+  Settings let the call mark it) takes review mode's pen again: the pen marks it as it marks the page, while its menus
+  and dialogs, and anything in it marked `data-no-ink` again, stay the surface's. While such a part is on the page,
+  review mode's ink and strip show over the book (`layer.js`), not under its spread.
 - **Written words** stay ink: the mark's lines are on its note's snip, and whoever reads the note reads them there
   (a job by its picture, the book's judge with it). Nothing reads them into type.
 - **Ring something** and the mark is on what's inside the ring. Nothing asks "are you sure?". An undo the book refuses

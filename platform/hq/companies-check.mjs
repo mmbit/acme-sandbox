@@ -3,10 +3,11 @@
 // and address at the top; each linked company with its HQ's answers and Unlink, which asks in place before it unlinks;
 // the unlinked ones quieter; Make an invitation shows it once and Copy puts it on the clipboard; Withdraw asks first; a
 // pasted invitation that isn't one is refused in words. The app is on the home screen only with a link or an
-// invitation, lists the workspaces with the other company's name and what's unread, and a workspace opens with its
-// threads (their words as text, never markup; urgent marked; ours arrived, read or on its way) and its files with every
-// version, the newest two to download and an older one cleared, its line kept with nothing to download. Nothing covered
-// and nothing off the screen. In every look, at desktop and phone width.
+// invitation, lists the workspaces with the other company's name and what's unread, and a workspace opens on its
+// threads to tap into and its files as a folder tree (a line a file, its older versions folded, the newest two to get
+// and an older one cleared, its line kept with nothing to get). A thread opens at its newest message, the long ones
+// folded (their words as text, never markup; urgent marked; ours arrived, read or on its way). Nothing covered and
+// nothing off the screen. In every look, at desktop and phone width.
 //   node platform/hq/companies-check.mjs [looks] [--out dir]  (screenshots to a temp folder, printed at the end)
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync } from 'node:fs';
@@ -112,7 +113,8 @@ async function settingsPage(page, at, shot) {
   await page.$eval('[name="invitation"]', e => e.blur());
 }
 
-// The app: on the home screen, its list, a workspace with its threads and files, and back
+// The app: on the home screen, its list; a workspace with its threads to open and its files as a tree; a thread with
+// its long messages folded; and back
 async function appPages(page, at, shot) {
   await desk(page, 'openComputer', 'home');
   await page.waitForSelector('[data-app="companies"]');
@@ -122,7 +124,7 @@ async function appPages(page, at, shot) {
   assert.equal(rows.length, 3, at);
   assert.match(
     rows[0],
-    /Autumn ad for the pocket notebooks › Mossgate Works · 2 threads · 2 files .* 2 unread · 1 urgent/,
+    /Autumn ad for the pocket notebooks › Mossgate Works · 2 threads · 7 files .* 2 unread · 1 urgent/,
     at,
   );
   assert.match(rows[2], /Unlinked/i, at);
@@ -130,46 +132,128 @@ async function appPages(page, at, shot) {
   await shot('list');
 
   await tap(page, '[data-workspace="1"]');
-  await page.waitForSelector('.co-workspace');
+  await page.waitForSelector('.co-workspace .co-threads');
   assert.match(await page.$eval('.computer header b span', e => e.textContent), /Companies › Autumn ad/, at);
-  assert.equal(await page.$$eval('.co-thread', l => l.length), 2, at);
-  const musicMessage = await page.$eval('.co-thread .co-msg:nth-child(2) .co-text', e => ({
+  await fileTree(page, at);
+  await fits(page, at, 'workspace', ['[data-thread="2"]', '.co-file .co-name', '.co-vs']);
+  await shot('workspace');
+  await page.$eval('.co-tree', e => e.scrollIntoView({ block: 'start' }));
+  await shot('files');
+
+  await thread(page, at, shot);
+  await tap(page, '[data-home]');
+  await page.waitForSelector('.co-list');
+  await tap(page, '[data-workspace="2"]');
+  await page.waitForSelector('.co-threads');
+  await fits(page, at, 'a long title', ['[data-thread="3"]']);
+  await tap(page, '[data-thread="3"]');
+  await until(page, '.co-open-thread', /On its way/);
+  await fits(page, at, 'a long title', ['.co-msg:last-child']);
+  await tap(page, '[data-home]');
+  await page.waitForSelector('.co-threads');
+  await tap(page, '[data-home]');
+  await page.waitForSelector('.co-list');
+  // (a thread named as its workspace: no heading that repeats the title)
+  await tap(page, '[data-workspace="3"]');
+  await page.waitForSelector('.co-threads');
+  await tap(page, '[data-thread="4"]');
+  await page.waitForSelector('.co-open-thread');
+  assert.equal(
+    await page.$('.co-open-thread .seat-name'),
+    null,
+    `${at}: a thread heading repeats the workspace's title`,
+  );
+  await tap(page, '[data-home]');
+  await page.waitForSelector('.co-threads');
+  await tap(page, '[data-home]');
+  await page.waitForSelector('.co-list');
+}
+
+// The threads, the latest first with what's unread; the files a line each, folders closed until tapped, a file's older
+// versions folded under it, its name a download
+async function fileTree(page, at) {
+  const threads = await page.$$eval('.co-threads li', l => l.map(e => e.innerText.replace(/\s+/g, ' ')));
+  assert.match(threads[0], /Print proof colours look off › Marlo · 2 messages · last .* 2 unread · 1 urgent/, at);
+  assert.match(threads[1], /The brief, and what counts as done › Juno, Marlo · 3 messages/, at);
+  const lines = () =>
+    page.$$eval('.co-tree li', l => l.filter(e => e.checkVisibility()).map(e => e.innerText.split('\n')[0]));
+  assert.deepEqual(await lines(), ['assets/', 'brief/', 'film/', 'README.md'], at);
+  await tap(page, '[data-path="brief/"] > summary');
+  await tap(page, '[data-path="assets/"] > summary');
+  await tap(page, '[data-path="assets/stills/"] > summary');
+  const brief = await text(page, '[data-path="brief/brief.md"] > summary');
+  assert.match(brief, /^brief\.md v3 · .* 19\.3 KB · on its way$/, at);
+  assert.equal(await page.$$eval('.co-versions li', l => l.filter(e => e.checkVisibility()).length), 0, at);
+  await tap(page, '[data-path="brief/brief.md"] .co-vs');
+  const versions = await page.$$eval('[data-path="brief/brief.md"] .co-versions li', l =>
+    l.map(e => [
+      e.querySelector('.co-v').textContent,
+      !!e.querySelector('a.co-v[href][download]'),
+      e.innerText.replace(/\s+/g, ' '),
+    ]),
+  );
+  assert.deepEqual(
+    versions.map(([v, get]) => [v, get]),
+    [
+      ['v3', true],
+      ['v2', true],
+      ['v1', false],
+    ],
+    `${at}: the newest two to get, an older one cleared`,
+  );
+  assert.match(versions[1][2], /Juno \(New Company\) .* 18\.8 KB Answers to Marlo/, at);
+  assert.match(versions[2][2], /^v1 .* · cleared/, at);
+  const get = await page.$eval('[data-path="brief/brief.md"] a.co-name', a => [a.textContent, a.download, !!a.href]);
+  assert.deepEqual(get, ['brief.md', 'brief.md', true], at);
+  // (what the board opened stays open through a thread and back)
+  await tap(page, '[data-thread="1"]');
+  await page.waitForSelector('.co-open-thread');
+  await tap(page, '[data-home]');
+  await page.waitForSelector('.co-threads');
+  const open = await page.$$eval('details[open]', l => l.map(d => d.dataset.path));
+  assert.deepEqual(open, ['assets/', 'assets/stills/', 'brief/', 'brief/brief.md'], at);
+}
+
+// A thread: opened at its newest message, the long ones before it folded to two lines until tapped, their words as text
+async function thread(page, at, shot) {
+  await tap(page, '[data-thread="1"]');
+  await page.waitForSelector('.co-open-thread');
+  assert.match(await text(page, '.co-open-thread .seat-name'), /^The brief, and what counts as done$/, at);
+  const newest = await page.$eval('.co-msg:last-child', li => {
+    const screen = li.closest('.screen').getBoundingClientRect(),
+      r = li.getBoundingClientRect();
+    return { folded: li.classList.contains('fold'), inView: r.top >= screen.top && r.top < screen.bottom };
+  });
+  assert.deepEqual(newest, { folded: false, inView: true }, `${at}: the newest message, open and in view`);
+  const first = '.co-msg:first-child';
+  const clipped = () => page.$eval(`${first} .co-text`, e => e.scrollHeight > e.clientHeight + 1);
+  assert.equal(await clipped(), true, `${at}: a long message folds`);
+  assert.match(await text(page, `${first} .co-more`), /More/, at);
+  await shot('thread');
+  await tap(page, first);
+  assert.equal(await clipped(), false, `${at}: a tap unfolds it`);
+  assert.match(await text(page, `${first} .co-text`), /one notebook, one room, one morning/, at);
+  const musicMessage = await page.$eval('.co-msg:nth-child(2) .co-text', e => ({
     tags: e.children.length,
     text: e.textContent,
   }));
   assert.equal(musicMessage.tags, 0, `${at}: their words are never markup`);
   assert.match(musicMessage.text, /<b>music<\/b>/, at);
   assert.match(musicMessage.text, /\n1\. May the notebook/, `${at}: line breaks kept`);
-  assert.match(await text(page, '.co-thread'), /Read by them .* Arrived .*not read yet/, at);
-  assert.match(await text(page, '.co-msg.urgent'), /Marlo \(Mossgate Works\) .* Urgent New/i, at);
-  const files = await page.$$eval('.co-files > li', l =>
-    l.map(e => ({
-      path: e.querySelector('.co-path').textContent,
-      versions: e.querySelectorAll('.co-versions > li').length,
-      downloads: e.querySelectorAll('.co-get[href]').length,
-    })),
-  );
-  assert.deepEqual(
-    files,
-    [
-      { path: 'brief/brief.md', versions: 3, downloads: 2 },
-      { path: 'assets/notebook-cover-front.png', versions: 2, downloads: 2 },
-    ],
-    at,
-  );
-  assert.match(await text(page, '.co-files > li:first-child .co-versions > li:last-child'), /^v1.* · cleared/, at);
-  await fits(page, at, 'workspace', ['.co-msg.urgent', '.co-get']);
-  await shot('workspace');
-  await page.$eval('.co-files', e => e.scrollIntoView({ block: 'start' }));
-  await shot('files');
+  assert.match(await text(page, '.co-open-thread'), /Read by them .* Arrived .*not read yet/, at);
+  await fits(page, at, 'thread', [first, '.co-msg:last-child']);
+  await shot('unfolded');
+  await tap(page, first);
+  assert.equal(await clipped(), true, `${at}: a second tap folds it again`);
 
   await tap(page, '[data-home]');
-  await page.waitForSelector('.co-list');
-  await tap(page, '[data-workspace="2"]');
-  await until(page, '.co-workspace', /On its way/);
-  await fits(page, at, 'a long title', ['.co-get']);
+  await page.waitForSelector('.co-threads');
+  await tap(page, '[data-thread="2"]');
+  await page.waitForSelector('.co-open-thread');
+  assert.match(await text(page, '.co-msg.urgent'), /Marlo \(Mossgate Works\) .* Urgent New/i, at);
+  await fits(page, at, 'urgent thread', ['.co-msg.urgent']);
   await tap(page, '[data-home]');
-  await page.waitForSelector('.co-list');
+  await page.waitForSelector('.co-threads');
 }
 
 // Unlink asks in place, then the company moves to the unlinked ones

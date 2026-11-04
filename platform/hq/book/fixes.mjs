@@ -1,7 +1,7 @@
 // book-check.mjs's stories of Ink 1.1's answers that ask for nothing but a tick (shell/ink/bookassignlist.js seenHtml,
 // shared/review/slip.js; the coordinator's ink/groupanswers.ts seenTick and ink/bookfix.ts), each on a Notebook of
 // its own played by HQ's one stand-in (answersplay.mjs), on an iPad mini by finger and a desktop by mouse:
-//   - Seen: a note that needs nothing back wears a small tick with its agent's initial at its unit's corner, gone once
+//   - Seen: a note that needs nothing back wears its agent's face with a small tick on it at its unit's corner, gone once
 //     an answer comes; a picture's answer says where its numbers came from in one small line under it.
 //   - A fix: a box to tick by its line, or round its drawing; ticked, it's built once the page is sent (from the
 //     dots' Tear off and send, Submit), and its slip then says who's building it, its box ticked for good.
@@ -16,7 +16,7 @@ const SOURCE = "From HQ's speed checker, last 7 days";
 // c: book-check's { hqIn, base, shot, MINI, DESKTOP, … }
 export function fixStories(c) {
   return {
-    'a seen tick with its agent’s initial at a note’s corner, gone once answered; a picture’s source under it, on an iPad mini and a desktop':
+    'a seen tick on its agent’s face at a note’s corner, gone once answered; a picture’s source under it, on an iPad mini and a desktop':
       async browser => {
         await seen(browser, c, c.MINI, 'mini');
         await seen(browser, c, c.DESKTOP, 'desktop', { hasTouch: false, deviceScaleFactor: 1 });
@@ -62,11 +62,13 @@ async function seen(browser, c, viewport, size, options = {}) {
     const tick = page.locator(`#book .bk-tags[data-g="${read.id}"] .bk-tag[data-seen]`);
     await tick.waitFor({ timeout: FEED_MS });
     await tick.scrollIntoViewIfNeeded();
-    assert.equal((await tick.locator('.bk-face').innerText()).trim(), nb.name[0].toUpperCase(), 'its initial');
+    // (the agent's own face as HQ's look draws them, no letter; a tick drawn as the Notebook's ink, never HQ's pixel
+    // icon.)
+    const face = tick.locator('.bk-face[data-portrait]');
+    assert.match(await face.evaluate(el => el.style.backgroundImage), /^url\("data:image\//, 'its face');
+    assert.equal((await face.innerText()).trim(), '', 'no letter');
     assert.equal(await tick.getAttribute('aria-label'), say('seenBy', { name: nb.name }));
-    // (HQ's tick icon, drawn once its look's file comes)
-    await tick.locator('svg[data-drawn] path').waitFor();
-    assert.equal(await tick.locator('svg path').count(), 1, 'a tick by it');
+    assert.equal(await tick.locator('svg.bk-tick:not([data-icon]) path').count(), 1, 'a tick on it');
     // (inside its unit, at its bottom-right corner)
     const [t, unit] = [await boxOf(tick), await boxOf(page.locator(`#book .bk-unit[data-unit="${read.id}"]`))];
     const at = JSON.stringify({ t, unit });
